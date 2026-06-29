@@ -506,15 +506,6 @@ impl<'a> Snapshots<'a> {
                 bun_core::scoped_log!(inline_snapshot, "-> Found byte {}", next_start);
 
                 let (final_start, final_end, needs_pre_comma): (i32, i32, bool) = 'blk: {
-                    if !file_text[next_start..].is_empty() {
-                        match file_text[next_start] {
-                            b' ' | b'.' => {
-                                // work around off-by-1 error in `expect("§").toMatchInlineSnapshot()`
-                                next_start += 1;
-                            }
-                            _ => {}
-                        }
-                    }
                     let fn_name = ils.kind;
                     if !strings::starts_with(&file_text[next_start..], fn_name) {
                         log.add_error_fmt(

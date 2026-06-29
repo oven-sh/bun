@@ -305,6 +305,18 @@ impl PathWatcher {
         }
     }
 
+    /// Like [`emit`](Self::emit), but without per-handler duplicate suppression.
+    /// The `IN_IGNORED` retiring a deleted inode's wd lands in the same
+    /// millisecond as its `IN_DELETE_SELF`, with the same path and type, so
+    /// `should_emit` would fold the two into one; node (libuv) delivers both.
+    /// Caller holds `manager.mutex`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn emit_unsuppressed(&mut self, event_type: EventType, rel_path: &[u8], is_file: bool) {
+        for &ctx in self.handlers.keys() {
+            (FSWatcher::ON_PATH_UPDATE)(Some(ctx), event_type.to_event(rel_path.into()), is_file);
+        }
+    }
+
     #[cfg(not(any(windows, target_os = "freebsd")))]
     fn emit_error(&mut self, err: &sys::Error) {
         for &ctx in self.handlers.keys() {
@@ -922,14 +934,38 @@ impl Linux {
                 i += core::mem::size_of::<InotifyEvent>() + ev.name_len as usize;
                 let wd = ev.watch_descriptor;
 
-                // Kernel retired this wd (rm_watch, or the watched inode is gone).
+                // Kernel retired this wd: `remove_watch` issued an explicit
+                // `inotify_rm_watch` (it deletes the `wd_map` entry first, so no
+                // owners remain to notify) or the watched inode is gone. libuv
+                // turns the latter into one more "rename" after IN_DELETE_SELF,
+                // so a deleted watch root reports two. Recursive sub-wds stay
+                // silent; their parent directory's IN_DELETE already reported it.
                 if ev.mask & IN::IGNORED != 0 {
                     // SAFETY: holding manager.mutex; exclusive access to `wd_map`.
                     let wd_map = unsafe { &mut (*plat).wd_map };
                     if let Some(owners) = wd_map.get_mut(&wd) {
                         for o in owners.drain(..) {
+                            // SAFETY: o.watcher live under manager.mutex. `path` is
+                            // read through the raw pointer (a separate ZBox heap
+                            // allocation) so the slice is not derived from the
+                            // `&mut` formed below, as in the dispatch loop.
+                            let (w_is_file, w_recursive, w_path): (bool, bool, &[u8]) = unsafe {
+                                (
+                                    (*o.watcher).is_file,
+                                    (*o.watcher).recursive,
+                                    &*std::ptr::from_ref::<[u8]>((*o.watcher).path.as_bytes()),
+                                )
+                            };
                             // SAFETY: o.watcher live under manager.mutex.
                             let w = unsafe { &mut *o.watcher };
+                            if o.subpath.as_bytes().is_empty() && (w_is_file || !w_recursive) {
+                                w.emit_unsuppressed(
+                                    EventType::Rename,
+                                    path::basename(w_path),
+                                    w_is_file,
+                                );
+                                let _ = handle_oom(touched.get_or_put(o.watcher));
+                            }
                             if let Some(idx) = w.platform.wds.iter().position(|&x| x == wd) {
                                 w.platform.wds.swap_remove(idx);
                             }
@@ -1021,7 +1057,16 @@ impl Linux {
                     let rel: &[u8] = if watcher_is_file {
                         path::basename(watcher_path)
                     } else if owner_subpath.is_empty() {
-                        name
+                        if name.is_empty() && !watcher_recursive {
+                            // A nameless event on the root wd is about the watched
+                            // directory itself (IN_DELETE_SELF, IN_MOVE_SELF,
+                            // IN_ATTRIB); libuv reports basename(watched path),
+                            // same as for a file. node's recursive watcher uses
+                            // root-relative paths instead, so those keep "".
+                            path::basename(watcher_path)
+                        } else {
+                            name
+                        }
                     } else if name.is_empty() {
                         owner_subpath
                     } else {

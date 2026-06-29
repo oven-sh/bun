@@ -159,7 +159,7 @@ pub mod bun {
     pub mod h2_frame_parser {
         pub use crate::api::h2_frame_parser_body::ErrorCode;
         pub use crate::api::h2_frame_parser_body::H2FrameParser;
-        // js2native thunks (`$zig(h2_frame_parser.zig, …)` in generated_js2native.rs).
+        // js2native thunks (`$rust(h2_frame_parser.rs, …)` in generated_js2native.rs).
         pub use crate::api::h2_frame_parser_body::h2_frame_parser_constructor;
         pub use crate::api::h2_frame_parser_body::js_assert_settings;
         pub use crate::api::h2_frame_parser_body::js_get_packed_settings;
@@ -258,6 +258,21 @@ pub(crate) fn with_text_format_source<R>(
         _str_hold = input_value.to_slice(global)?;
         _str_hold.slice()
     };
+
+    // Every parser reached from here records source positions as an `i32`
+    // (`ast::Loc` via `usize2loc` for JSONC/TOML, JSON5's token locs, YAML's
+    // `Pos`), so an input those offsets cannot represent panics inside the
+    // lexer instead of reporting an error. Reject it before parsing.
+    if bytes.len() > i32::MAX as usize {
+        return Err(global.throw_range_error(
+            bytes.len() as i64,
+            bun_jsc::RangeErrorOptions {
+                field_name: b"input.byteLength",
+                max: i64::from(i32::MAX),
+                ..Default::default()
+            },
+        ));
+    }
 
     let mut log = bun_ast::Log::init();
     let source = bun_ast::Source::init_path_string(path, bytes);

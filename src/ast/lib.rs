@@ -2713,7 +2713,7 @@ impl ErrorPositionState {
     /// the column to 0, `\r\n` counts as a single line break, U+2028/U+2029
     /// are line breaks). Returns `true` if a line break was crossed.
     fn advance(&mut self, contents: &[u8], from: usize, to: usize) -> bool {
-        use bun_core::immutable::{CodepointIterator, Cursor};
+        use bun_core::strings::{CodepointIterator, Cursor};
         let iter_ = CodepointIterator::init(&contents[from..to]);
         let mut iter = Cursor::default();
         let mut crossed_line_break = false;
@@ -2771,7 +2771,7 @@ impl ErrorPositionState {
 /// Byte offset of the line break at or after `offset` (the end of the line
 /// containing `offset`), or the end of the file if this is the last line.
 fn scan_line_end(contents: &[u8], offset: usize) -> usize {
-    use bun_core::immutable::{CodepointIterator, Cursor};
+    use bun_core::strings::{CodepointIterator, Cursor};
     let iter_ = CodepointIterator::init(&contents[offset..]);
     let mut iter = Cursor::default();
 
@@ -2983,7 +2983,7 @@ impl Source {
 
     pub fn range_of_operator_before(&self, loc: Loc, op: &[u8]) -> Range {
         let text = &self.contents[0..loc.i()];
-        let index = bun_core::immutable::index(text, op);
+        let index = bun_core::strings::index(text, op);
         if index >= 0 {
             return Range {
                 loc: Loc {
@@ -3035,7 +3035,7 @@ impl Source {
 
     pub fn range_of_operator_after(&self, loc: Loc, op: &[u8]) -> Range {
         let text = &self.contents[loc.i()..];
-        let index = bun_core::immutable::index(text, op);
+        let index = bun_core::strings::index(text, op);
         if index >= 0 {
             return Range {
                 loc: Loc {
@@ -3063,6 +3063,9 @@ impl Source {
         state.to_error_position(scan_line_end(contents, offset))
     }
 
+    /// Byte offset of 1-based (`line`, `col`) in `source_contents`, resuming the
+    /// scan from (`start_line`, `start_col`). Columns count UTF-16 code units,
+    /// the convention of JSC stack traces and source-map mappings.
     pub fn line_col_to_byte_offset(
         source_contents: &[u8],
         start_line: u64,
@@ -3070,7 +3073,7 @@ impl Source {
         line: u64,
         col: u64,
     ) -> Option<usize> {
-        use bun_core::immutable::{CodepointIterator, Cursor};
+        use bun_core::strings::{CodepointIterator, Cursor};
         let iter_ = CodepointIterator::init(source_contents);
         let mut iter = Cursor::default();
 
@@ -3102,7 +3105,7 @@ impl Source {
                     column_number = 1;
                 }
                 _ => {
-                    column_number += 1;
+                    column_number += if c > 0xFFFF { 2 } else { 1 };
                 }
             }
 
@@ -3155,7 +3158,7 @@ pub(crate) fn source_from_file_at(
 ) -> bun_sys::Maybe<Source> {
     let mut bytes = bun_sys::file::File::read_from(dir_fd, path)?;
     if opts.convert_bom {
-        if let Some(bom) = bun_core::immutable::BOM::detect(&bytes) {
+        if let Some(bom) = bun_core::strings::BOM::detect(&bytes) {
             bytes = bom.remove_and_convert_to_utf8_and_free(bytes);
         }
     }

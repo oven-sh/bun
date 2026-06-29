@@ -181,10 +181,6 @@ mod strings {
         without_trailing_slash_windows_path,
     };
     pub(super) use bun_paths::strings::*;
-    #[inline]
-    pub(super) fn index_of_any(slice: &[u8], chars: &'static [u8]) -> Option<usize> {
-        bun_core::strings::index_of_any(slice, chars)
-    }
 }
 // bun_sys shim — adds the `std.fs`-shaped dir-open surface the resolver names
 // (`openDirAbsoluteZ` / `Dir.openDirZ`) on top of the real `::bun_sys` crate.

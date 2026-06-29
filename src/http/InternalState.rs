@@ -43,6 +43,15 @@ pub struct InternalState<'a> {
     pub original_request_body: HTTPRequestBody<'a>,
     pub request_sent_len: usize,
     pub fail: Option<Error>,
+    /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
+    /// 0 otherwise. The JS side turns it into the resolver error
+    /// (`ENOTFOUND`, ...) with `syscall`/`hostname`, matching `node:dns`.
+    pub dns_error: i32,
+    /// Owned copy of the hostname the failed lookup was for
+    /// (`connected_url.hostname`: the proxy's when one is configured, else
+    /// the post-redirect target). Captured on the HTTP thread at the failure
+    /// so the JS side never dereferences the client's borrowed URL buffers.
+    pub dns_hostname: Option<Box<[u8]>>,
     pub request_stage: HTTPStage,
     pub response_stage: HTTPStage,
     pub certificate_info: Option<CertificateInfo>,
@@ -74,6 +83,7 @@ pub struct InternalStateFlags {
     /// check passed (and implicitly by `InternalState::reset()` on every
     /// redirect hop / failure, so each hop re-parks independently).
     pub is_waiting_for_cert_check: bool,
+    pub receive_paused: bool,
     /// Set once `HTTPClient::compress_body_for_send` has run for this attempt.
     /// Guards header-retry re-entries from compressing again. Cleared by
     /// `reset()`/`init()` so each redirect/retry hop re-compresses from the
@@ -93,6 +103,7 @@ impl InternalStateFlags {
             resend_request_body_on_redirect: false,
             clear_hostname_on_redirect: false,
             is_waiting_for_cert_check: false,
+            receive_paused: false,
             body_compressed: false,
         }
     }
@@ -126,6 +137,8 @@ impl Default for InternalState<'_> {
             original_request_body: HTTPRequestBody::Bytes(b""),
             request_sent_len: 0,
             fail: None,
+            dns_error: 0,
+            dns_hostname: None,
             request_stage: HTTPStage::Pending,
             response_stage: HTTPStage::Pending,
             certificate_info: None,
@@ -311,7 +324,11 @@ impl<'a> InternalState<'a> {
                     }
                 }
 
-                let result = deflater.decompressor_mut().decompress(
+                let decompressor = deflater
+                    .decompressor
+                    .as_deref_mut()
+                    .expect("set in HttpThread::deflater()");
+                let result = decompressor.decompress(
                     buffer,
                     &mut deflater.shared_buffer,
                     match self.encoding {
@@ -347,23 +364,12 @@ impl<'a> InternalState<'a> {
                 }
             }
 
-            if let Err(err) = self
-                .decompressor
-                .update_buffers(self.encoding, buffer, body_out_str)
+            let is_done = self.is_done();
+            if let Err(err) =
+                self.decompressor
+                    .decompress_chunk(self.encoding, buffer, body_out_str, is_done)
             {
-                self.compressed_body.reset();
-                return Err(err);
-            }
-            // While `update_buffers` is gated, `read_all` on Decompressor::None is a silent
-            // no-op (Decompressor.rs:148). Surface an error instead of pretending the body
-            // was decompressed and discarding the bytes — §Forbidden silent-no-op.
-            if matches!(self.decompressor, Decompressor::None) && self.encoding.is_compressed() {
-                self.compressed_body.reset();
-                return Err(bun_core::err!("DecompressionNotImplemented"));
-            }
-
-            if let Err(err) = self.decompressor.read_all(self.is_done()) {
-                if self.is_done() || err != bun_core::err!("ShortRead") {
+                if is_done || err != bun_core::err!("ShortRead") {
                     bun_core::pretty_errorln!(
                         "<r><red>Decompression error: {}<r>",
                         bstr::BStr::new(err.name()),

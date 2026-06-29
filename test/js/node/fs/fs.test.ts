@@ -1179,6 +1179,23 @@ it("readdirSync throws when given a file path with trailing slash", () => {
   }
 });
 
+// Node returns Buffer[] for { encoding: "buffer" }, not Uint8Array[].
+it("readdir with { encoding: 'buffer' } returns Buffer entries", async () => {
+  using dir = tempDir("readdir-buffer-entries", { "a.txt": "", "b.txt": "" });
+  const summarize = (entries: Buffer[]) =>
+    entries.map(entry => [Buffer.isBuffer(entry), entry.toString("utf8")]).sort((a, b) => (a[1] < b[1] ? -1 : 1));
+  const expected = [
+    [true, "a.txt"],
+    [true, "b.txt"],
+  ];
+  expect(summarize(readdirSync(String(dir), { encoding: "buffer" }))).toEqual(expected);
+  expect(summarize(readdirSync(String(dir), { encoding: "buffer", recursive: true }))).toEqual(expected);
+  expect(summarize(await promises.readdir(String(dir), { encoding: "buffer" }))).toEqual(expected);
+  expect(
+    summarize((await promisify(fs.readdir)(String(dir), { encoding: "buffer" } as const)) as unknown as Buffer[]),
+  ).toEqual(expected);
+});
+
 // The error cleanup path previously called MarkedArrayBuffer.destroy() on
 // structs stored by-value inside the entries ArrayList, which passed interior
 // ArrayList pointers to the allocator (freeing entries.items.ptr for index 0 and
@@ -1223,6 +1240,48 @@ it.skipIf(isWindows)(
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ELOOP", exitCode: 0 });
   },
 );
+
+// The per-task pending_err mutex was acquired via `lock()` (returns `()`) instead of
+// `lock_guard()`, so it was never released: the next failing subtask on the same worker
+// panicked "Deadlock detected" (debug) or blocked forever and the promise never settled.
+it.skipIf(isWindows)("promises.readdir({recursive: true}) settles when multiple subtasks fail", async () => {
+  using dir = tempDir("readdir-recursive-multi-error", {
+    "keep.txt": "x",
+  });
+  // Self-referencing symlinks: opening one with O_DIRECTORY fails with
+  // ELOOP, which is not swallowed by the recursive walker, so every
+  // enqueued subtask hits the pending_err path.
+  for (let i = 0; i < 64; i++) {
+    const link = join(String(dir), `loop${i}`);
+    fs.symlinkSync(link, link);
+  }
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+          const fs = require("fs");
+          fs.promises.readdir(${JSON.stringify(String(dir))}, { recursive: true }).then(
+            r => console.log("resolved", r.length),
+            e => console.log("rejected", e.code),
+          );
+        `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    timeout: 10_000,
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "rejected ELOOP",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
 
 describe("readSync", () => {
   it("rejects the read when the length argument detaches the destination buffer during coercion", () => {
@@ -1438,6 +1497,46 @@ describe("writeSync", () => {
       expect(count).toBe(4);
     }
     closeSync(fd);
+  });
+
+  // writeSync(fd, string[, position[, encoding]]): the encoding used to be
+  // parsed but never applied, so utf16le/hex/base64/latin1 all wrote raw UTF-8.
+  it("honors the encoding argument for strings", () => {
+    const dest = join(tmpdirSync(), "writeSync-string-encoding.bin");
+    const cases: [args: unknown[], expected: Buffer][] = [
+      [["abc", 0, "utf16le"], Buffer.from("abc", "utf16le")],
+      // Node consumes the position slot whatever its type; the encoding is
+      // always the following argument.
+      [["abc", null, "ucs2"], Buffer.from("abc", "utf16le")],
+      [["abc", undefined, "utf16le"], Buffer.from("abc", "utf16le")],
+      [["61626364", 0, "hex"], Buffer.from("abcd")],
+      [["aGk=", null, "base64"], Buffer.from("hi")],
+      [["\u00ff", 0, "latin1"], Buffer.from([0xff])],
+      // Node writes UTF-8 for the "buffer" encoding name; it must not fall
+      // into the latin1-narrowing path.
+      [["\u00e9", 0, "buffer"], Buffer.from([0xc3, 0xa9])],
+      // Same for a 16-bit string, which would otherwise hit a separate
+      // low-byte-narrowing encoder (U+4E2D -> 0x2d).
+      [["a\u00e9\u4e2d", 0, "buffer"], Buffer.from([0x61, 0xc3, 0xa9, 0xe4, 0xb8, 0xad])],
+      // A lone string in the position slot is not an encoding.
+      [["ab", "utf16le"], Buffer.from("ab")],
+      [["abc", 0], Buffer.from("abc")],
+      [["abc"], Buffer.from("abc")],
+    ];
+    for (const [args, expected] of cases) {
+      const fd = openSync(dest, "w");
+      let written: number;
+      try {
+        written = (writeSync as Function)(fd, ...args);
+      } finally {
+        closeSync(fd);
+      }
+      expect({ args, written, bytes: [...readFileSync(dest)] }).toEqual({
+        args,
+        written: expected.length,
+        bytes: [...expected],
+      });
+    }
   });
 });
 
@@ -3438,6 +3537,61 @@ describe("fs.write", () => {
     });
   });
 
+  // Same bug as the writeSync case: the encoding was parsed but never applied.
+  it("honors a non-utf8 encoding for strings", async () => {
+    const expected = [...Buffer.from("bun", "utf16le")];
+    const dest = join(tmpdirSync(), "fs-write-string-encoding.bin");
+
+    // fs.write(fd, string, position, encoding, callback)
+    {
+      const fd = fs.openSync(dest, "w");
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      fs.write(fd, "bun", null, "utf16le", (err, written) => (err ? reject(err) : resolve(written)));
+      try {
+        expect(await promise).toBe(6);
+      } finally {
+        closeSync(fd);
+      }
+      expect([...readFileSync(dest)]).toEqual(expected);
+    }
+
+    // filehandle.write(string, position, encoding)
+    {
+      const handle = await promises.open(dest, "w");
+      try {
+        expect((await handle.write("bun", 0, "utf16le")).bytesWritten).toBe(6);
+      } finally {
+        await handle.close();
+      }
+      expect([...readFileSync(dest)]).toEqual(expected);
+    }
+  });
+
+  // Node rejects a non-string, non-view buffer with ERR_INVALID_ARG_TYPE
+  // before validating the encoding against it. `{ length: 3 }` with "hex"
+  // would otherwise be rejected by validateEncoding with the wrong code.
+  it("rejects a non-string, non-view buffer before the encoding is validated", async () => {
+    const dest = join(tmpdirSync(), "fs-write-buffer-type.bin");
+    const badBuffer = { length: 3 } as unknown as string;
+    const fd = fs.openSync(dest, "w");
+    try {
+      expect(() => fs.write(fd, badBuffer, 0, "hex", () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+      expect(() => fs.writeSync(fd, badBuffer, 0, "hex")).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    } finally {
+      closeSync(fd);
+    }
+    const handle = await promises.open(dest, "w");
+    try {
+      const outcome = await handle.write(badBuffer, 0, "hex").then(
+        () => "resolved",
+        err => err.code,
+      );
+      expect(outcome).toBe("ERR_INVALID_ARG_TYPE");
+    } finally {
+      await handle.close();
+    }
+  });
+
   it("should work with (fd, string, position, callback)", done => {
     const path = `${tmpdir()}/bun-fs-write-4-${Date.now()}.txt`;
     const fd = fs.openSync(path, "w");
@@ -3699,6 +3853,99 @@ it("test syscall errno, issue#4198", () => {
   rmdirSync(path);
 });
 
+describe("error.syscall is node's operation name, not the raw kernel syscall", () => {
+  // Node documents err.syscall as a stable, platform-independent operation
+  // name ("stat", "lstat", "utime", ...). On Linux, Bun implements stat via
+  // statx(2) and utimes via utimensat(2); the implementation detail must not
+  // leak into err.syscall.
+  const missing = join(tmpdir(), "fs-syscall-" + Date.now(), "nope");
+  const badfd = 2147483640;
+  const syscallOf = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (e: any) {
+      return e.syscall;
+    }
+    throw new Error("expected to throw");
+  };
+  const syscallOfAsync = async (fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+    } catch (e: any) {
+      return e.syscall;
+    }
+    throw new Error("expected to reject");
+  };
+
+  it("sync", () => {
+    expect({
+      stat: syscallOf(() => statSync(missing)),
+      lstat: syscallOf(() => lstatSync(missing)),
+      fstat: syscallOf(() => fstatSync(badfd)),
+      utimes: syscallOf(() => fs.utimesSync(missing, 1, 1)),
+      lutimes: syscallOf(() => fs.lutimesSync(missing, 1, 1)),
+      futimes: syscallOf(() => fs.futimesSync(badfd, 1, 1)),
+    }).toEqual({
+      stat: "stat",
+      lstat: "lstat",
+      fstat: "fstat",
+      utimes: "utime",
+      lutimes: "lutime",
+      futimes: "futime",
+    });
+  });
+
+  it("syscall appears in the error message", () => {
+    expect(() => statSync(missing)).toThrow(/, stat '/);
+    expect(() => lstatSync(missing)).toThrow(/, lstat '/);
+    expect(() => fs.utimesSync(missing, 1, 1)).toThrow(/, utime '/);
+    expect(() => fs.lutimesSync(missing, 1, 1)).toThrow(/, lutime '/);
+  });
+
+  it("async (fs/promises)", async () => {
+    expect({
+      stat: await syscallOfAsync(() => promises.stat(missing)),
+      lstat: await syscallOfAsync(() => promises.lstat(missing)),
+      utimes: await syscallOfAsync(() => promises.utimes(missing, 1, 1)),
+      lutimes: await syscallOfAsync(() => promises.lutimes(missing, 1, 1)),
+    }).toEqual({
+      stat: "stat",
+      lstat: "lstat",
+      utimes: "utime",
+      lutimes: "lutime",
+    });
+  });
+
+  it("async (callback)", async () => {
+    const cb = (fn: (cb: (err: any) => void) => void) =>
+      new Promise<string>(resolve => fn(err => resolve(err?.syscall)));
+    expect({
+      stat: await cb(done => fs.stat(missing, done)),
+      lstat: await cb(done => fs.lstat(missing, done)),
+      utimes: await cb(done => fs.utimes(missing, 1, 1, done)),
+      lutimes: await cb(done => fs.lutimes(missing, 1, 1, done)),
+    }).toEqual({
+      stat: "stat",
+      lstat: "lstat",
+      utimes: "utime",
+      lutimes: "lutime",
+    });
+  });
+
+  it("FileHandle.read after close reports 'read', not 'fsync'", async () => {
+    using dir = tempDir("fs-syscall-fh", { "f.txt": "hello" });
+    const handle = await promises.open(join(String(dir), "f.txt"), "r");
+    await handle.close();
+    let err: any;
+    try {
+      await handle.read(Buffer.alloc(1), 0, 1, 0);
+    } catch (e) {
+      err = e;
+    }
+    expect({ code: err?.code, syscall: err?.syscall }).toEqual({ code: "EBADF", syscall: "read" });
+  });
+});
+
 it.if(isWindows)("writing to windows hidden file is possible", () => {
   const temp = tmpdir();
   writeFileSync(join(temp, "file.txt"), "FAIL");
@@ -3864,6 +4111,15 @@ it("open flags verification", async () => {
   expect(() => fs.open(__filename, 4294967298.5, () => {})).toThrow(
     RangeError(`The value of "flags" is out of range. It must be an integer. Received 4294967298.5`),
   );
+});
+
+// Node's stringToFlags throws ERR_INVALID_ARG_VALUE for every unrecognized
+// flag string; Bun threw ERR_INVALID_ARG_TYPE.
+it("an unrecognized flag string throws ERR_INVALID_ARG_VALUE", () => {
+  for (const flag of ["bogus", "", "z", Buffer.alloc(32, "w").toString()]) {
+    expect(() => fs.openSync(__filename, flag)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+    expect(() => fs.open(__filename, flag, () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+  }
 });
 
 it("open mode verification", async () => {

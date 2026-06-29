@@ -113,9 +113,9 @@ struct addrinfo_result {
     int error;
 };
 
-/* Dispatch — defined out-of-library (Zig: src/deps/uws/dispatch.zig). loop.c
+/* Dispatch — defined out-of-library (src/runtime/socket/uws_dispatch.rs). loop.c
  * never reads s->group->vtable directly; it calls these and the closed-world
- * switch on s->kind decides whether to direct-call into Zig/C++ or fall back
+ * switch on s->kind decides whether to direct-call into Rust/C++ or fall back
  * to the vtable. Signatures track the vtable entries (us_dispatch_handshake
  * drops the trailing custom_data — dispatch always passes NULL). */
 extern struct us_socket_t *us_dispatch_open(us_socket_r s, int is_client, char *ip, int ip_length);
@@ -271,6 +271,9 @@ struct us_socket_t {
    * spilled (see ssl_flush_write_batch); the shutdown re-runs once the
    * spill drains so those records are not cut off by our FIN/close_notify. */
   unsigned char ssl_shutdown_after_spill : 1;
+  /* Same as ssl_shutdown_after_spill but for us_internal_ssl_close: the
+   * close re-runs from the writable event once the spill drains. */
+  unsigned char ssl_close_after_spill : 1;
   /* Set while SSL_do_handshake/SSL_read is on the stack: JS run from inside
    * those calls (ALPN/SNI/keylog callbacks) may destroy the socket, and the
    * SSL must not be freed under BoringSSL's feet - the detach is deferred to
@@ -309,7 +312,11 @@ struct us_connecting_socket_t {
     struct us_socket_t *connecting_head;
     int options;
     int socket_ext_size;
-    unsigned int closed : 1, shutdown : 1, shutdown_read : 1, pending_resolve_callback : 1;
+    /* error_is_dns: `error` holds the raw getaddrinfo(3) return code for a
+     * failed name lookup rather than an errno. The two constant sets are
+     * different namespaces that overlap numerically, so consumers of `error`
+     * must check this bit first. */
+    unsigned int closed : 1, shutdown : 1, shutdown_read : 1, pending_resolve_callback : 1, error_is_dns : 1;
     unsigned char timeout;
     unsigned char long_timeout;
     unsigned char kind;

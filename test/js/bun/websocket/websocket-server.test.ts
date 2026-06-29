@@ -1,8 +1,8 @@
-import type { Server, Subprocess, WebSocketHandler } from "bun";
+import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, forceGuardMalloc, isWindows } from "harness";
-import { isIP } from "node:net";
+import net, { isIP } from "node:net";
 import path from "node:path";
 
 const strings = [
@@ -385,6 +385,80 @@ describe("Server", () => {
     expect(subscriptions.length).toBe(2);
     expect(subscriptions).toContain("topic1");
     expect(subscriptions).toContain("topic3");
+  });
+
+  it.concurrent("publish() then unsubscribe() from last topic in same tick delivers queued messages", async () => {
+    const aDone = Promise.withResolvers<string[]>();
+    const bDone = Promise.withResolvers<string[]>();
+    const ready = { a: Promise.withResolvers<void>(), b: Promise.withResolvers<void>() };
+    const publishResults: number[] = [];
+
+    using server = serve({
+      port: 0,
+      fetch(req, server) {
+        const id = new URL(req.url).searchParams.get("id")!;
+        if (server.upgrade(req, { data: { id } })) return;
+        return new Response("no", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          ws.subscribe("room");
+          ws.send("ready");
+        },
+        message(ws, msg) {
+          if (msg !== "go") return;
+          for (let i = 0; i < 5; i++) {
+            publishResults.push(server.publish("room", "msg" + i));
+          }
+          // Unsubscribing from the only topic used to free the uWS Subscriber
+          // without draining its queued publish() messages, dropping them.
+          ws.unsubscribe("room");
+          // Sentinel: once this arrives, anything queued for this socket
+          // has either been delivered ahead of it or dropped.
+          ws.send("done");
+        },
+      },
+    });
+
+    const collect = (id: "a" | "b", done: PromiseWithResolvers<string[]>, isDone: (data: string) => boolean) => {
+      const received: string[] = [];
+      const ws = new WebSocket(`ws://localhost:${server.port}/?id=${id}`);
+      ws.onmessage = e => {
+        const data = e.data as string;
+        if (data === "ready") return ready[id].resolve();
+        received.push(data);
+        if (isDone(data)) done.resolve([...received]);
+      };
+      const fail = (e: unknown) => {
+        ready[id].reject(e);
+        done.reject(e);
+      };
+      ws.onerror = fail;
+      ws.onclose = () => fail(new Error("closed before done"));
+      return ws;
+    };
+
+    // A never unsubscribes and never receives "done"; resolve once the full batch arrives.
+    const a = collect("a", aDone, data => data === "msg4");
+    // B must wait for the sentinel so we capture everything delivered before it.
+    const b = collect("b", bDone, data => data === "done");
+    try {
+      await Promise.all([ready.a.promise, ready.b.promise]);
+      b.send("go");
+
+      const [aReceived, bReceived] = await Promise.all([aDone.promise, bDone.promise]);
+      // publish() reported the message as queued for every call
+      expect(publishResults).toEqual([4, 4, 4, 4, 4]);
+      // A never unsubscribed; it must receive the full batch.
+      expect(aReceived).toEqual(["msg0", "msg1", "msg2", "msg3", "msg4"]);
+      // B unsubscribed in the same tick; it must still receive the batch
+      // that publish() had already accepted before the unsubscribe.
+      expect(bReceived).toEqual(["msg0", "msg1", "msg2", "msg3", "msg4", "done"]);
+    } finally {
+      a.onclose = b.onclose = null;
+      a.close();
+      b.close();
+    }
   });
 
   describe("websocket", () => {
@@ -864,6 +938,74 @@ describe("ServerWebSocket", () => {
       }));
     }
   });
+  // With the default publishToSelf: false, a ws.publish() from a socket that has never
+  // subscribed to anything must still deliver to other subscribers.
+  describe("publish() from a socket not subscribed to anything", () => {
+    const big = Buffer.alloc(20 * 1024, "x").toString();
+    const cases = [
+      ["publish", "publish", "small-text"],
+      ["publishText", "publishText", "small-text"],
+      ["publishBinary", "publishBinary", Buffer.from("small-binary")],
+      ["publish (>= cork buffer)", "publish", big],
+    ] as const;
+    for (const [label, method, payload] of cases) {
+      it.concurrent(label, async () => {
+        const subscribed = Promise.withResolvers<void>();
+        const received = Promise.withResolvers<string | ArrayBuffer>();
+        const published = Promise.withResolvers<number>();
+        let nextId = 0;
+        using server = serve({
+          port: 0,
+          fetch(req, server) {
+            if (server.upgrade(req, { data: { id: nextId++ } })) return;
+            return new Response();
+          },
+          websocket: {
+            open(ws) {
+              if (ws.data.id === 0) {
+                ws.subscribe("chat");
+                subscribed.resolve();
+              } else {
+                expect(ws.isSubscribed("chat")).toBe(false);
+                // @ts-expect-error dynamic method dispatch
+                published.resolve(ws[method]("chat", payload));
+              }
+            },
+            message() {},
+          },
+        });
+        const url = `ws://${server.hostname}:${server.port}/`;
+        // A socket that errors or closes before the server's open() handler ran would
+        // otherwise leave one of the awaited slots pending until the test timeout.
+        const fail = (who: string) => (ev: Event) => {
+          const err = new Error(`${who} websocket ${ev.type}`);
+          subscribed.reject(err);
+          published.reject(err);
+          received.reject(err);
+        };
+        const sub = new WebSocket(url);
+        sub.binaryType = "arraybuffer";
+        sub.onmessage = e => received.resolve(e.data);
+        sub.onerror = sub.onclose = fail("subscriber");
+        await subscribed.promise;
+        expect(server.subscriberCount("chat")).toBe(1);
+        const pub = new WebSocket(url);
+        pub.onmessage = e => received.reject(new Error("publisher must not receive: " + e.data));
+        pub.onerror = pub.onclose = fail("publisher");
+
+        const ret = await published.promise;
+        expect(ret).toBe(Buffer.byteLength(payload));
+        const got = await received.promise;
+        if (typeof payload === "string") {
+          expect(got).toBe(payload);
+        } else {
+          expect(Buffer.from(got as ArrayBuffer)).toEqual(Buffer.from(payload));
+        }
+        sub.close();
+        pub.close();
+      });
+    }
+  });
   describe("ping()", () => {
     test("(no argument)", done => ({
       open(ws) {
@@ -1207,4 +1349,183 @@ it("server.upgrade() with Sec-WebSocket-Protocol in options.headers does not use
     stderr: "",
   });
   expect(exitCode).toBe(0);
+});
+
+// publish() fans out to N subscribers and must report backpressure/drops the
+// same way ws.send() does for a single socket.
+describe.concurrent("publish() return value reflects subscriber backpressure", () => {
+  // One paused raw-TCP subscriber; the server-side handle is captured so the
+  // test can compare publish() to send() on the same socket.
+  async function withSlowSubscriber(
+    run: (ctx: { server: Server; slow: ServerWebSocket<string>; sender: ServerWebSocket<string> }) => void,
+  ) {
+    const sockets: Record<string, ServerWebSocket<string>> = {};
+    const opened = { slow: Promise.withResolvers<void>(), sender: Promise.withResolvers<void>() };
+    await using server = serve<string, {}>({
+      port: 0,
+      websocket: {
+        backpressureLimit: 64 * 1024,
+        idleTimeout: 0,
+        open(ws) {
+          sockets[ws.data] = ws;
+          ws.subscribe("t");
+          opened[ws.data]?.resolve();
+        },
+        message() {},
+        close(ws) {
+          delete sockets[ws.data];
+        },
+      },
+      fetch(req, server) {
+        if (server.upgrade(req, { data: new URL(req.url).pathname.slice(1) })) return;
+        return new Response("no upgrade", { status: 400 });
+      },
+    });
+
+    // "sender": ws.publish() excludes the sender, so we need a second socket
+    // distinct from the slow subscriber to exercise the per-socket path.
+    const sender = new WebSocket(`ws://127.0.0.1:${server.port}/sender`);
+    sender.binaryType = "arraybuffer";
+    sender.onmessage = () => {};
+    {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      sender.onopen = () => resolve();
+      sender.onerror = e => reject(e);
+      sender.onclose = () => reject(new Error("sender closed before open"));
+      await promise;
+    }
+
+    // "slow": raw RFC6455 client that handshakes then pauses its read side so
+    // the server accumulates backpressure for it.
+    const handshake = Promise.withResolvers<void>();
+    const slow = net.connect({ port: server.port, host: "127.0.0.1" }, () => {
+      slow.write(
+        "GET /slow HTTP/1.1\r\n" +
+          "Host: x\r\n" +
+          "Upgrade: websocket\r\n" +
+          "Connection: Upgrade\r\n" +
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+          "Sec-WebSocket-Version: 13\r\n\r\n",
+      );
+    });
+    // Buffer until the response headers are complete; the 101 may be split
+    // across TCP segments.
+    let response = "";
+    slow.on("data", (d: Buffer) => {
+      response += d.toString("latin1");
+      if (!response.includes("\r\n\r\n")) return;
+      if (response.includes(" 101 ")) {
+        slow.pause();
+        handshake.resolve();
+      } else {
+        handshake.reject(new Error("upgrade failed: " + response));
+      }
+    });
+    slow.on("error", handshake.reject);
+    slow.on("close", () => handshake.reject(new Error("slow socket closed before upgrade")));
+    try {
+      await handshake.promise;
+      await opened.slow.promise;
+      await opened.sender.promise;
+      run({ server, slow: sockets.slow, sender: sockets.sender });
+    } finally {
+      sender.close();
+      slow.destroy();
+    }
+  }
+
+  function histogram(results: number[]) {
+    let positive = 0;
+    let dropped = 0;
+    let backpressure = 0;
+    let other = 0;
+    for (const r of results) {
+      if (r > 0) positive++;
+      else if (r === 0) dropped++;
+      else if (r === -1) backpressure++;
+      else other++;
+    }
+    return { positive, dropped, backpressure, other };
+  }
+
+  it("returns 0 when the topic has no subscribers", async () => {
+    await withSlowSubscriber(({ server, sender }) => {
+      expect(server.publish("no-such-topic", "x")).toBe(0);
+      expect(sender.publish("no-such-topic", "x")).toBe(0);
+    });
+  });
+
+  it("ws.publish() returns 0 when the sender is the sole subscriber", async () => {
+    await withSlowSubscriber(({ sender }) => {
+      // "self" only has the sender subscribed; ws.publish() excludes the
+      // sender, so there are zero receivers on both the batched and direct
+      // send paths.
+      sender.subscribe("self");
+      expect({
+        small: sender.publish("self", Buffer.alloc(8000, "x").toString()),
+        big: sender.publish("self", Buffer.alloc(20000, "x").toString()),
+      }).toEqual({ small: 0, big: 0 });
+    });
+  });
+
+  for (const [label, size] of [
+    ["batched (<16KB)", 8000],
+    ["direct (>=16KB)", 20000],
+  ] as const) {
+    it(`server.publish() ${label} reports dropped / backpressure`, async () => {
+      await withSlowSubscriber(({ server, slow }) => {
+        const payload = Buffer.alloc(size, "x").toString();
+        // Enough iterations to blow well past backpressureLimit regardless of
+        // how much the kernel accepts before blocking.
+        const N = 1000;
+        const results: number[] = [];
+        for (let i = 0; i < N; i++) results.push(server.publish("t", payload));
+        const h = histogram(results);
+        // ws.send() on the same over-limit socket agrees the data is dropped;
+        // publish() must have reported the same for the majority of calls.
+        expect({ sendProbe: slow.send("probe"), histogram: h }).toEqual({
+          sendProbe: 0,
+          histogram: { ...h, other: 0 },
+        });
+        expect(h.dropped).toBeGreaterThan(0);
+        // Every call returned one of the documented values.
+        expect(h.positive + h.backpressure + h.dropped).toBe(N);
+      });
+    });
+
+    it(`ws.publish() ${label} reports dropped / backpressure`, async () => {
+      await withSlowSubscriber(({ slow, sender }) => {
+        const payload = Buffer.alloc(size, "x").toString();
+        const N = 1000;
+        const results: number[] = [];
+        for (let i = 0; i < N; i++) results.push(sender.publish("t", payload));
+        const h = histogram(results);
+        expect({ sendProbe: slow.send("probe"), histogram: h }).toEqual({
+          sendProbe: 0,
+          histogram: { ...h, other: 0 },
+        });
+        expect(h.dropped).toBeGreaterThan(0);
+        expect(h.positive + h.backpressure + h.dropped).toBe(N);
+      });
+    });
+  }
+
+  it("ws.publishText() and ws.publishBinary() report dropped", async () => {
+    await withSlowSubscriber(({ slow, sender }) => {
+      const text = Buffer.alloc(8000, "x").toString();
+      const bin = Buffer.alloc(8000, 0x61);
+      let sawDroppedText = false;
+      let sawDroppedBinary = false;
+      for (let i = 0; i < 1000; i++) {
+        if (sender.publishText("t", text) === 0) sawDroppedText = true;
+        if (sender.publishBinary("t", bin) === 0) sawDroppedBinary = true;
+        if (sawDroppedText && sawDroppedBinary) break;
+      }
+      expect({ sawDroppedText, sawDroppedBinary, sendProbe: slow.send("probe") }).toEqual({
+        sawDroppedText: true,
+        sawDroppedBinary: true,
+        sendProbe: 0,
+      });
+    });
+  });
 });

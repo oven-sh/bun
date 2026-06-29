@@ -1649,9 +1649,6 @@ impl BlobExt for Blob {
 
         assignment_result.ensure_still_alive();
 
-        // assert that it was updated
-        debug_assert!(!signal.get().is_dead());
-
         if let Some(err) = assignment_result.to_error() {
             // SAFETY: release our +1 ref on the sink.
             unsafe { webcore::FileSink::deref(file_sink) };
@@ -2747,9 +2744,17 @@ impl BlobExt for Blob {
 
         if could_be_all_ascii.is_none() || !could_be_all_ascii.unwrap() {
             // if to_utf16_alloc returns None, it means there are no non-ASCII characters
-            if let Some(external) = strings::to_utf16_alloc(buf, false, false)
-                .map_err(|_| global.throw_out_of_memory())?
-            {
+            let converted = match strings::to_utf16_alloc(buf, false, false) {
+                Ok(converted) => converted,
+                Err(_) => {
+                    if LIFETIME == Lifetime::Temporary {
+                        // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
+                        unsafe { drop(bun_core::heap::take(raw_bytes)) };
+                    }
+                    return Err(global.throw_out_of_memory());
+                }
+            };
+            if let Some(external) = converted {
                 if LIFETIME != Lifetime::Temporary {
                     self.set_is_ascii_flag(false);
                 }
@@ -2985,7 +2990,9 @@ impl BlobExt for Blob {
         let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
 
         if could_be_all_ascii.is_none() || !could_be_all_ascii.unwrap() {
-            if let Some(external) = strings::to_utf16_alloc(buf, false, false).ok().flatten() {
+            if let Some(external) = strings::to_utf16_alloc(buf, false, false)
+                .map_err(|_| global.throw_out_of_memory())?
+            {
                 if LIFETIME != Lifetime::Temporary {
                     self.set_is_ascii_flag(false);
                 }
@@ -3960,23 +3967,62 @@ struct FormDataContext<'a> {
     global_this: &'a JSGlobalObject,
 }
 
-/// WHATWG HTML "multipart/form-data encoding algorithm": percent-encode `"`,
-/// CR and LF in field names and filenames so they cannot terminate the
-/// quoted-string or inject part headers. Returns `None` when nothing needs
-/// escaping so the caller can keep using the original bytes without a copy.
-fn escape_form_data_name(bytes: &[u8]) -> Option<Box<[u8]>> {
-    if !bytes.iter().any(|&b| matches!(b, b'"' | b'\r' | b'\n')) {
-        return None;
-    }
-    let mut out = Vec::with_capacity(bytes.len() + 6);
-    for &b in bytes {
+/// Which piece of a `multipart/form-data` entry a string is, selecting the
+/// transforms the WHATWG "multipart/form-data encoding algorithm" applies to
+/// it: <https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#multipart-form-data>
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FormDataComponent {
+    /// Entry name: newlines normalized to CRLF, then `"`/CR/LF percent-encoded.
+    Name,
+    /// Non-File entry value: newlines normalized to CRLF, emitted unescaped.
+    StringValue,
+    /// Filename: `"`/CR/LF percent-encoded only; the spec does not normalize it.
+    Filename,
+}
+
+/// WHATWG HTML "multipart/form-data encoding algorithm". Names and non-File
+/// values first have every CR, LF, and CRLF replaced with CRLF; names and
+/// filenames are then percent-encoded (`"` -> `%22`, CR -> `%0D`, LF -> `%0A`)
+/// so they cannot terminate the quoted-string or inject part headers. Returns
+/// `None` when no byte needs either transform so the caller can keep using the
+/// original bytes without a copy.
+fn encode_form_data_component(bytes: &[u8], component: FormDataComponent) -> Option<Box<[u8]>> {
+    let escape = component != FormDataComponent::StringValue;
+    let normalize = component != FormDataComponent::Filename;
+    // Only the bytes a transform rewrites are needles; for a string value a
+    // `"` stays literal and must not force a copy.
+    let needles: &'static [u8] = if escape { b"\"\r\n" } else { b"\r\n" };
+
+    // SIMD scan; the first hit doubles as the "needs a copy at all?" fast
+    // path. `highway` directly: `bun_core::immutable::index_of_any` narrows
+    // the index to `u32`, which a multi-GiB string value can overflow.
+    let mut i = bun_highway::index_of_any_char(bytes, needles)?;
+    let mut remain = bytes;
+    let mut out = Vec::with_capacity(bytes.len() + 8);
+    loop {
+        out.extend_from_slice(&remain[..i]);
+        let b = remain[i];
+        let mut consumed = 1;
         match b {
+            // `"` is a needle only when `escape` is set.
             b'"' => out.extend_from_slice(b"%22"),
+            _ if normalize => {
+                // CR, LF, and CRLF all normalize to one CRLF before escaping.
+                out.extend_from_slice(if escape { b"%0D%0A" } else { b"\r\n" });
+                if b == b'\r' && remain.get(i + 1) == Some(&b'\n') {
+                    consumed = 2;
+                }
+            }
             b'\r' => out.extend_from_slice(b"%0D"),
-            b'\n' => out.extend_from_slice(b"%0A"),
-            _ => out.push(b),
+            _ => out.extend_from_slice(b"%0A"),
+        }
+        remain = &remain[i + consumed..];
+        match bun_highway::index_of_any_char(remain, needles) {
+            Some(next) => i = next,
+            None => break,
         }
     }
+    out.extend_from_slice(remain);
     Some(out.into_boxed_slice())
 }
 
@@ -3985,13 +4031,16 @@ impl FormDataContext<'_> {
     /// borrowed case points into a WTF string owned by the `DOMFormData` being
     /// serialized, which outlives `joiner.done()` in `from_dom_form_data`; an owned slice
     /// (UTF-16 / non-ASCII Latin-1 conversion) transfers its allocation to the
-    /// joiner. When `escape` is set, `"`/CR/LF are percent-encoded into a copy.
-    fn push_string_slice(joiner: &mut StringJoiner<'_>, slice: ZigStringSlice, escape: bool) {
-        if escape {
-            if let Some(escaped) = escape_form_data_name(slice.slice()) {
-                joiner.push_owned(escaped);
-                return;
-            }
+    /// joiner. `component` selects the spec's newline-normalization and
+    /// percent-encoding transforms, which copy when they apply.
+    fn push_string_slice(
+        joiner: &mut StringJoiner<'_>,
+        slice: ZigStringSlice,
+        component: FormDataComponent,
+    ) {
+        if let Some(encoded) = encode_form_data_component(slice.slice(), component) {
+            joiner.push_owned(encoded);
+            return;
         }
         if matches!(slice, ZigStringSlice::Owned(_)) {
             // `into_vec` moves the buffer out of an `Owned` slice without copying.
@@ -4022,16 +4071,16 @@ impl FormDataContext<'_> {
         joiner.push_static(b"\r\n");
 
         joiner.push_static(b"Content-Disposition: form-data; name=\"");
-        Self::push_string_slice(joiner, name.to_slice(), true);
+        Self::push_string_slice(joiner, name.to_slice(), FormDataComponent::Name);
 
         match entry {
             FormDataEntry::String(value) => {
                 joiner.push_static(b"\"\r\n\r\n");
-                Self::push_string_slice(joiner, value.to_slice(), false);
+                Self::push_string_slice(joiner, value.to_slice(), FormDataComponent::StringValue);
             }
             FormDataEntry::File { blob, filename } => {
                 joiner.push_static(b"\"; filename=\"");
-                Self::push_string_slice(joiner, filename.to_slice(), true);
+                Self::push_string_slice(joiner, filename.to_slice(), FormDataComponent::Filename);
                 joiner.push_static(b"\"\r\n");
 
                 // Borrowed from the blob, which the `DOMFormData` keeps alive
@@ -6861,8 +6910,8 @@ impl Internal {
 
     pub fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let bytes_without_bom = strings::without_utf8_bom(&self.bytes);
-        if let Some(out) =
-            strings::to_utf16_alloc(bytes_without_bom, false, false).unwrap_or(Some(Vec::new()))
+        if let Some(out) = strings::to_utf16_alloc(bytes_without_bom, false, false)
+            .map_err(|_| global_this.throw_out_of_memory())?
         {
             let out_len = out.len();
             // Ownership transfers to JSC's external-string finalizer.

@@ -308,10 +308,11 @@ for (const { name, connect } of tests) {
         expect(cert.subject.CN).toBe("bun.sh");
         expect(cert.subjectaltname).toContain("DNS:bun.sh");
         expect(cert.infoAccess).toBeDefined();
-        // we just check the types this can change over time
+        // The live cert's AIA contents change on reissue (public CAs stopped
+        // including OCSP URIs in 2025), so only assert the stable CA Issuers
+        // entry here; exact parsing is covered by the fixed-fixture x509 tests.
         const infoAccess = cert.infoAccess as NodeJS.Dict<string[]>;
-        expect(infoAccess["OCSP - URI"]).toBeDefined();
-        expect(infoAccess["CA Issuers - URI"]).toBeDefined();
+        expect(infoAccess["CA Issuers - URI"]).toEqual(expect.arrayContaining([expect.stringMatching(/^https?:\/\//)]));
         expect(cert.ca).toBeFalse();
         expect(cert.bits).toBeInteger();
         // These can change:

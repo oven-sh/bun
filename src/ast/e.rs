@@ -1482,7 +1482,8 @@ impl EString {
         } else {
             // PERF: transcodes to a heap Vec then copies into the bump
             // arena — profile.
-            let utf16 = strings::to_utf16_alloc_for_real(utf8, false, false).expect("unreachable"); // fail_if_invalid=false → never errors
+            // `fail_if_invalid = false` means the only possible error is `OutOfMemory`.
+            let utf16 = bun_core::handle_oom(strings::to_utf16_alloc_for_real(utf8, false, false));
             let arena_slice: &mut [u16] = bump.alloc_slice_copy(&utf16);
             Self::init_utf16(arena_slice)
         }

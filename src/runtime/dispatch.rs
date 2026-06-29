@@ -424,6 +424,10 @@ pub fn run_task(
                 global,
             );
         }
+        task_tag::MemoryPressureTask => {
+            // `ptr` is the packed level (NOTE_MEMORYSTATUS_PRESSURE_* bits), not a pointer.
+            crate::node::memory_pressure::emit(global, task.ptr as usize as i32);
+        }
         task_tag::NativePromiseContextDeferredDerefTask => {
             // `ptr` packs an int, not a pointer.
             NativePromiseContextDeferredDerefTask::run_from_js_thread(task.ptr as usize);
@@ -579,7 +583,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 96,
+    task_tag::COUNT == 97,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -678,6 +682,10 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             let proc = owner.ptr.cast::<Process>();
             // SAFETY: `proc` carries the +1 ref taken at queue time; this drops it.
             unsafe { Process::on_wait_pid_from_event_loop_task(proc) };
+        }
+        poll_tag::MEMORY_PRESSURE => {
+            // SAFETY: `poll` is live per `__bun_run_file_poll`'s contract.
+            crate::node::memory_pressure::on_poll(unsafe { &mut *poll }, size_or_offset);
         }
         poll_tag::PARENT_DEATH_WATCHDOG => {
             let wd = owner_as!(bun_io::parent_death_watchdog::ParentDeathWatchdog);

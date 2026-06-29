@@ -280,6 +280,7 @@ pub struct PendingValue {
     pub on_readable_stream_available:
         Option<fn(ctx: *mut c_void, global_this: &JSGlobalObject, readable: ReadableStream)>,
     pub on_stream_cancelled: Option<fn(ctx: Option<*mut c_void>)>,
+    pub on_stream_drained: Option<fn(ctx: Option<*mut c_void>)>,
     pub size_hint: blob::SizeType,
 
     pub deinit: bool,
@@ -309,6 +310,7 @@ impl Default for PendingValue {
             on_start_streaming: None,
             on_readable_stream_available: None,
             on_stream_cancelled: None,
+            on_stream_drained: None,
             size_hint: 0,
             deinit: false,
             action: Action::None,
@@ -877,10 +879,14 @@ impl Value {
                     },
                 );
 
-                if let Some(on_cancelled) = locked.on_stream_cancelled {
-                    if let Some(task) = locked.task {
+                if let Some(task) = locked.task {
+                    if let Some(on_cancelled) = locked.on_stream_cancelled {
                         reader.cancel_handler.set(Some(on_cancelled));
                         reader.cancel_ctx.set(Some(task));
+                    }
+                    if let Some(on_drained) = locked.on_stream_drained {
+                        reader.drain_handler.set(Some(on_drained));
+                        reader.drain_ctx.set(Some(task));
                     }
                 }
 
@@ -920,9 +926,11 @@ impl Value {
 
                 Ok(locked.readable.get(global_this).unwrap().value)
             }
-            Value::Error(_) => {
-                // TODO: handle error properly
-                ReadableStream::empty(global_this)
+            Value::Error(err) => {
+                // Leave `self` as `Error` so the promise-returning readers
+                // (`handle_body_error`) still reject too.
+                let reason = err.to_js(global_this);
+                ReadableStream::errored(global_this, reason)
             }
         }
     }
@@ -1560,6 +1568,17 @@ impl Value {
             unreachable!()
         };
 
+        if let Some(task) = locked.task {
+            if let Some(on_cancelled) = locked.on_stream_cancelled {
+                reader.cancel_handler.set(Some(on_cancelled));
+                reader.cancel_ctx.set(Some(task));
+            }
+            if let Some(on_drained) = locked.on_stream_drained {
+                reader.drain_handler.set(Some(on_drained));
+                reader.drain_ctx.set(Some(task));
+            }
+        }
+
         let context_ptr: *mut ByteStream = &raw mut reader.context;
         locked.readable = webcore::readable_stream::Strong::init(
             ReadableStream {
@@ -1619,6 +1638,13 @@ impl Value {
 
         if matches!(self, Value::Null) {
             return Ok(Value::Null);
+        }
+
+        // A failed body clones as failed, so the clone's readers reject via
+        // `handle_body_error` instead of falling through to `Empty` below and
+        // resolving as an empty "successful" body.
+        if let Value::Error(err) = self {
+            return Ok(Value::Error(err.dupe(global_this)));
         }
 
         Ok(Value::Empty)
@@ -1765,6 +1791,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         if matches!(value, Value::Used) {
             return Ok(handle_body_already_used(global_object));
         }
+        if let Some(rejected) = handle_body_error(value, global_object) {
+            return Ok(rejected);
+        }
 
         if matches!(value, Value::Locked(_)) {
             if let Some(readable) = self.get_body_readable_stream(global_object) {
@@ -1835,6 +1864,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         if matches!(value, Value::Used) {
             return Ok(handle_body_already_used(global_object));
         }
+        if let Some(rejected) = handle_body_error(value, global_object) {
+            return Ok(rejected);
+        }
 
         if matches!(value, Value::Locked(_)) {
             if let Some(readable) = self.get_body_readable_stream(global_object) {
@@ -1881,6 +1913,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         if matches!(value, Value::Used) {
             return Ok(handle_body_already_used(global_object));
+        }
+        if let Some(rejected) = handle_body_error(value, global_object) {
+            return Ok(rejected);
         }
 
         if matches!(value, Value::Locked(_)) {
@@ -1934,6 +1969,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         if matches!(value, Value::Used) {
             return Ok(handle_body_already_used(global_object));
         }
+        if let Some(rejected) = handle_body_error(value, global_object) {
+            return Ok(rejected);
+        }
 
         if matches!(value, Value::Locked(_)) {
             if let Some(readable) = self.get_body_readable_stream(global_object) {
@@ -1981,6 +2019,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         if matches!(value, Value::Used) {
             return Ok(handle_body_already_used(global_object));
+        }
+        if let Some(rejected) = handle_body_error(value, global_object) {
+            return Ok(rejected);
         }
 
         if matches!(value, Value::Locked(_)) {
@@ -2075,6 +2116,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         if matches!(value, Value::Used) {
             return Ok(handle_body_already_used(global_object));
         }
+        if let Some(rejected) = handle_body_error(value, global_object) {
+            return Ok(rejected);
+        }
 
         if matches!(value, Value::Locked(_)) {
             if let Some(readable) = self.get_body_readable_stream(global_object) {
@@ -2158,6 +2202,16 @@ fn handle_body_already_used(global_object: &JSGlobalObject) -> JSValue {
             format_args!("Body already used"),
         )
         .reject()
+}
+
+/// If the body already failed, reject the read with that error. Every body
+/// reader must call this before its `Locked` handling: `Value::Error` would
+/// otherwise fall through to `use_as_any_blob_*` and resolve empty.
+fn handle_body_error(value: &mut Value, global_object: &JSGlobalObject) -> Option<JSValue> {
+    let Value::Error(err) = value else {
+        return None;
+    };
+    Some(JSPromise::rejected_promise(global_object, err.to_js(global_object)).to_js())
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -2311,6 +2365,13 @@ impl<'a> ValueBufferer<'a> {
     }
 
     fn on_stream_pipe(&mut self, stream: &streams::Result) {
+        if let streams::Result::Err(err) = stream {
+            bun_core::scoped_log!(BodyValueBufferer, "onStreamPipe error");
+            let js_err = err.to_js(self.global);
+            let ref_ = jsc::strong::Optional::create(js_err, self.global);
+            (self.on_finished_buffering)(self.ctx, b"", Some(ValueError::JSValue(ref_)), true);
+            return;
+        }
         let chunk = stream.slice();
         bun_core::scoped_log!(BodyValueBufferer, "onStreamPipe chunk {}", chunk.len());
         let _ = self.stream_buffer.write(chunk);
@@ -2444,6 +2505,22 @@ impl<'a> ValueBufferer<'a> {
                     // If we've received the complete body by the time this function is called
                     // we can avoid streaming it and just send it all at once.
                     if byte_stream.has_received_last_chunk.get() {
+                        if let streams::Result::Err(err) = &byte_stream.pending.get().result {
+                            bun_core::scoped_log!(
+                                BodyValueBufferer,
+                                "byte stream has_received_last_chunk error"
+                            );
+                            let js_err = err.to_js(self.global);
+                            let ref_ = jsc::strong::Optional::create(js_err, self.global);
+                            (self.on_finished_buffering)(
+                                self.ctx,
+                                b"",
+                                Some(ValueError::JSValue(ref_)),
+                                false,
+                            );
+                            stream.done(self.global);
+                            return Ok(());
+                        }
                         bun_core::scoped_log!(
                             BodyValueBufferer,
                             "byte stream has_received_last_chunk {}",
@@ -2477,6 +2554,13 @@ impl<'a> ValueBufferer<'a> {
         };
 
         if locked.on_receive_value.is_some() || locked.task.is_some() {
+            // ValueBufferer wants the whole body; tell the producer to never
+            // pause for JS backpressure before the stream is materialised.
+            if let (Some(on_start_buffering), Some(task)) =
+                (locked.on_start_buffering.take(), locked.task)
+            {
+                on_start_buffering(task);
+            }
             // someone else is waiting for the stream or waiting for `onStartStreaming`
             let readable = value
                 .to_readable_stream(self.global)

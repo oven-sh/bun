@@ -2314,8 +2314,17 @@ mod posix_impl {
         }
     }
 
+    // `syscall` is the JS-facing `err.syscall` tag (`stat`/`lstat`/`fstat`):
+    // node reports the operation name, never the `statx(2)` implementation
+    // detail, and the non-statx fallback below already uses those same tags.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn statx_impl(fd: Fd, path: Option<&ZStr>, flags: c_int, mask: u32) -> Maybe<PosixStat> {
+    fn statx_impl(
+        fd: Fd,
+        path: Option<&ZStr>,
+        flags: c_int,
+        mask: u32,
+        syscall: Tag,
+    ) -> Maybe<PosixStat> {
         use core::sync::atomic::Ordering;
         let mut buf = core::mem::MaybeUninit::<lx::statx>::uninit();
         let pathname: *const c_char = match path {
@@ -2356,7 +2365,7 @@ mod posix_impl {
                 }
                 return Err(Error {
                     errno: raw_errno as _,
-                    syscall: Tag::statx,
+                    syscall,
                     ..Default::default()
                 });
             }
@@ -2400,11 +2409,17 @@ mod posix_impl {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn fstatx(fd: Fd, mask: u32) -> Maybe<PosixStat> {
-        statx_impl(fd, None, libc::AT_EMPTY_PATH, mask)
+        statx_impl(fd, None, libc::AT_EMPTY_PATH, mask, Tag::fstat)
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn statx(path: &ZStr, mask: u32) -> Maybe<PosixStat> {
-        statx_impl(Fd::from_native(libc::AT_FDCWD), Some(path), 0, mask)
+        statx_impl(
+            Fd::from_native(libc::AT_FDCWD),
+            Some(path),
+            0,
+            mask,
+            Tag::stat,
+        )
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn lstatx(path: &ZStr, mask: u32) -> Maybe<PosixStat> {
@@ -2413,6 +2428,7 @@ mod posix_impl {
             Some(path),
             libc::AT_SYMLINK_NOFOLLOW,
             mask,
+            Tag::lstat,
         )
     }
 
@@ -5384,6 +5400,7 @@ pub mod linux {
     pub mod EPOLL {
         pub const IN: u32 = libc::EPOLLIN as u32;
         pub const OUT: u32 = libc::EPOLLOUT as u32;
+        pub const PRI: u32 = libc::EPOLLPRI as u32;
         pub const ERR: u32 = libc::EPOLLERR as u32;
         pub const HUP: u32 = libc::EPOLLHUP as u32;
         pub const RDHUP: u32 = libc::EPOLLRDHUP as u32;
@@ -5665,6 +5682,9 @@ pub mod darwin {
         pub const TIMER: i16 = libc::EVFILT_TIMER;
         pub const USER: i16 = libc::EVFILT_USER;
         pub const MACHPORT: i16 = libc::EVFILT_MACHPORT;
+        /// xnu-private filter used by libdispatch's `DISPATCH_SOURCE_TYPE_MEMORYPRESSURE`.
+        /// Not in `<sys/event.h>` (only `<sys/event_private.h>`), so hard-code the value.
+        pub const MEMORYSTATUS: i16 = -14;
     }
     /// kqueue event flags (Darwin).
     pub mod EV {
@@ -5694,6 +5714,11 @@ pub mod darwin {
         pub const LINK: u32 = libc::NOTE_LINK;
         pub const RENAME: u32 = libc::NOTE_RENAME;
         pub const REVOKE: u32 = libc::NOTE_REVOKE;
+        /// `EVFILT_MEMORYSTATUS` fflags (xnu `<sys/event_private.h>`). Values are
+        /// ABI-stable; libdispatch depends on them for `DISPATCH_MEMORYPRESSURE_*`.
+        pub const MEMORYSTATUS_PRESSURE_NORMAL: u32 = 0x00000001;
+        pub const MEMORYSTATUS_PRESSURE_WARN: u32 = 0x00000002;
+        pub const MEMORYSTATUS_PRESSURE_CRITICAL: u32 = 0x00000004;
     }
     /// Re-export of the platform errno enum so `bun_threading::Futex` can
     /// match `c::E::INTR` etc. against `__ulock_*` return codes.
@@ -8713,18 +8738,21 @@ mod win_symlink_impl {
                     WindowsSymlinkOptions::denied();
                     continue;
                 }
-                if let Some(sys_errno) = win_err.to_system_errno() {
-                    let e: E = sys_errno.to_e();
-                    // Only ENOENT/EEXIST keep `has_failed_to_create_symlink`
-                    // unset; every other failure flips the sticky bit so
-                    // `symlinkOrJunction` falls through to junctions next time.
-                    if !matches!(e, E::NOENT | E::EXIST) {
-                        WindowsSymlinkOptions::set_has_failed_to_create_symlink(true);
-                    }
-                    return Err(Error::from_code(e, Tag::symlink));
+                // `to_e()` falls back to `E::UNKNOWN` for Win32 codes not in
+                // the errno table. Filter drivers, network redirectors, and
+                // security software hooking `CreateSymbolicLinkW` can return
+                // codes outside the mapped set; treating those as success
+                // would leave the caller believing a symlink exists when it
+                // does not. Returning an error lets `symlink_or_junction`
+                // fall through to a junction.
+                let e: E = win_err.to_e();
+                // Only ENOENT/EEXIST keep `has_failed_to_create_symlink`
+                // unset; every other failure flips the sticky bit so
+                // `symlinkOrJunction` falls through to junctions next time.
+                if !matches!(e, E::NOENT | E::EXIST) {
+                    WindowsSymlinkOptions::set_has_failed_to_create_symlink(true);
                 }
-                // Win32 error without an errno mapping — treat as success
-                // (the `if let` yields `null`).
+                return Err(Error::from_code(e, Tag::symlink));
             }
             return Ok(());
         }

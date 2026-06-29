@@ -3160,9 +3160,8 @@ declare module "bun" {
    *
    * @see [Bun.password API docs](https://bun.com/guides/util/hash-a-password)
    *
-   * The underlying implementation of these functions are provided by the Zig
-   * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
-   * work on this.
+   * The underlying implementation of these functions is provided by the
+   * `rust-argon2` and `bcrypt` Rust crates.
    *
    * @example
    * **Example with argon2**
@@ -3267,9 +3266,8 @@ declare module "bun" {
      * Warning: password hashing is slow, consider using {@link Bun.password.verify}
      * instead which runs in a worker thread.
      *
-     * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
-     * work on this.
+     * The underlying implementation of these functions is provided by the
+     * `rust-argon2` and `bcrypt` Rust crates.
      *
      * @example
      * **Example with argon2**
@@ -3312,9 +3310,8 @@ declare module "bun" {
      * Warning: password hashing is slow, consider using {@link Bun.password.hash}
      * instead which runs in a worker thread.
      *
-     * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
-     * work on this.
+     * The underlying implementation of these functions is provided by the
+     * `rust-argon2` and `bcrypt` Rust crates.
      *
      * @example
      * **Example with argon2**
@@ -4443,8 +4440,10 @@ declare module "bun" {
 
     /**
      * Closes the WebSocket connection
-     * @param code A numeric value indicating the status code
-     * @param reason A human-readable string explaining why the connection is closing
+     * @param code A close code an endpoint is allowed to send (RFC 6455): `1000`-`1014` except
+     * the reserved `1004`-`1006`, or `3000`-`4999`. Any other code throws an `InvalidAccessError`.
+     * @param reason A human-readable string explaining why the connection is closing. Throws a
+     * `SyntaxError` if longer than 123 bytes of UTF-8
      */
     close(code?: number, reason?: string): void;
 

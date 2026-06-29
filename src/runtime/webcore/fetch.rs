@@ -985,7 +985,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 if let Some(proxy_arg) = obj.get(global_this, "proxy")? {
                     // Handle string format: proxy: "http://proxy.example.com:8080"
                     if proxy_arg.is_string() && proxy_arg.get_length(ctx)? > 0 {
-                        let href = jsc::URL::href_from_js(proxy_arg, global_this)?;
+                        // `href_from_js` returns a +1 WTFStringImpl ref; `bun_core::String`
+                        // is `Copy` with no `Drop`, so wrap in `OwnedString` for scope-exit
+                        // deref (mirrors `defer href.deref()` in fetch.zig).
+                        let href = bun_core::OwnedString::new(jsc::URL::href_from_js(
+                            proxy_arg,
+                            global_this,
+                        )?);
                         if href.tag() == BunStringTag::Dead {
                             let err = ctx.to_type_error(
                                 jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -1020,7 +1026,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         if let Some(proxy_url_arg) = proxy_arg.get(global_this, "url")? {
                             if !proxy_url_arg.is_undefined_or_null() {
                                 if proxy_url_arg.is_string() && proxy_url_arg.get_length(ctx)? > 0 {
-                                    let href = jsc::URL::href_from_js(proxy_url_arg, global_this)?;
+                                    // +1 ref; see the string-format branch above.
+                                    let href = bun_core::OwnedString::new(jsc::URL::href_from_js(
+                                        proxy_url_arg,
+                                        global_this,
+                                    )?);
                                     if href.tag() == BunStringTag::Dead {
                                         let err = ctx.to_type_error(
                                             jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -1032,7 +1042,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                             ),
                                         );
                                     }
-                                    // `defer href.deref()` → Drop.
                                     let mut buffer: Vec<u8> =
                                         Vec::with_capacity(url_proxy_buffer.len());
                                     buffer.extend_from_slice(&url_proxy_buffer);
@@ -1410,8 +1419,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         };
         let url_path_decoded = &path_buf2[0..decoded_len as usize];
 
+        // Carries a +1 WTFStringImpl ref on both assignment arms (`create_format`
+        // for blob:, `file_url_from_string` → `Bun::toStringRef` for file:).
+        // `Response::init` wraps it in `OwnedString` and adopts that +1, so it
+        // is passed by value below without an extra `.clone()`.
         let url_string: BunString;
-        // `defer url_string.deref()` → Drop.
 
         // This can be a blob: url or a file: url.
         let blob_to_use: Blob = 'blob: {
@@ -1533,7 +1545,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 ..Default::default()
             },
             Body::new(BodyValue::Blob(blob_to_use)),
-            url_string.clone(),
+            url_string,
             false,
         )));
 

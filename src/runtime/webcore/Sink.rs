@@ -661,13 +661,11 @@ impl<T: JsSinkAbi> JSSink<T> {
         // encoded JSValue bits (never a real Rust pointer); bitcast back.
         let value = JSValue::from_encoded(ptr.as_ptr() as usize);
         value.unprotect();
-        // `${abi}__detachPtr`
-        // calls the JS `onClose` callback via the bare `JSC::call(...)`
-        // overload (no NakedPtr/TopExceptionScope of its own), so
-        // `executeCallImpl`'s ThrowScope is the outermost scope and its dtor
-        // `simulateThrow()` leaves `m_needExceptionCheck` set. Wrap in a
-        // TopExceptionScope so the
-        // verifier is satisfied; discard the result.
+        // `${abi}__detachPtr` runs the JS `onClose` callback through the bare
+        // `AsyncContextFrame::call` overload (no TopExceptionScope of its own)
+        // and RELEASE_AND_RETURNs its ThrowScope, so `m_needExceptionCheck` is
+        // left set when it returns into this scope-less thunk. Wrap in a
+        // TopExceptionScope so the verifier is satisfied; discard the result.
         // TODO: properly propagate exception upwards.
         let _ = ::bun_jsc::call_check_slow(_global, || T::detach_ptr_extern(value));
     }

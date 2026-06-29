@@ -143,9 +143,9 @@ macro_rules! lol_content_ops {
             global_object: &JSGlobalObject,
             content: ZigString,
             content_options: Option<ContentOptions>,
-        ) -> JSValue {
+        ) -> JsResult<JSValue> {
             let Some(raw) = lolhtml::$Raw::from_ptr(self.$field.get()) else {
-                return $null_ret;
+                return Ok($null_ret);
             };
             let content_slice = content.to_slice();
             if callback(
@@ -155,9 +155,10 @@ macro_rules! lol_content_ops {
             )
             .is_err()
             {
-                return create_lolhtml_error(global_object);
+                let err = create_lolhtml_error(global_object);
+                return Err(global_object.throw_value(err));
             }
-            this_object
+            Ok(this_object)
         }
 
         $(
@@ -168,7 +169,7 @@ macro_rules! lol_content_ops {
                 global_object: &JSGlobalObject,
                 content: ZigString,
                 content_options: Option<ContentOptions>,
-            ) -> JSValue {
+            ) -> JsResult<JSValue> {
                 self.content_handler(
                     lolhtml::$Raw::$name,
                     call_frame.this(),
@@ -187,7 +188,7 @@ macro_rules! lol_content_ops {
                 call_frame: &CallFrame,
             ) -> JsResult<JSValue> {
                 let (content, opts) = eat_content_args(global, call_frame)?;
-                Ok(self.$name_(call_frame, global, content, opts))
+                self.$name_(call_frame, global, content, opts)
             }
         )*
     };
@@ -943,7 +944,10 @@ impl BufferOutputSink {
         if !captured.is_empty() {
             captured.ensure_still_alive();
             captured.unprotect();
-            return Ok(captured);
+            // Throw directly: the callers gate on `JSValue::to_error()`, which
+            // only recognises `ErrorInstance`/`Exception`, so an abort reason
+            // (a DOMException or any user value) would be returned instead.
+            return Err(global.throw_value(captured));
         }
 
         response_js_value.ensure_still_alive();
@@ -986,20 +990,25 @@ impl BufferOutputSink {
         // refcount > 0 so the allocation is live.
         let global = unsafe { (*sink).global };
 
-        if let Some(err) = js_err {
+        if let Some(mut err) = js_err {
             // SAFETY: (*sink).response is the heap Response allocated in init()
             // and kept alive by (*sink).response_value (Strong root).
             let sink_body_value = unsafe { (*(*sink).response).get_body_value() };
             let sink_ptr_usize = sink as usize;
-            if matches!(sink_body_value, webcore::body::Value::Locked(l)
-                if l.task.map_or(0, |p| p as usize) == sink_ptr_usize && l.promise.is_none())
+            // If a `.body` readable is already attached, stay `Locked` so
+            // `to_error_instance` delivers the error to its ByteStream; clearing
+            // to `Empty` here would strand any pending `reader.read()` forever.
+            let has_readable = match sink_body_value {
+                webcore::body::Value::Locked(l) => l.readable.has(),
+                _ => false,
+            };
+            if !has_readable
+                && matches!(sink_body_value, webcore::body::Value::Locked(l)
+                    if l.task.map_or(0, |p| p as usize) == sink_ptr_usize && l.promise.is_none())
             {
-                if let webcore::body::Value::Locked(l) = sink_body_value {
-                    l.readable.deinit();
-                }
+                // No reader and no pending read: normalize to `Empty` so
+                // `to_error_instance` takes the simple (non-`Locked`) path.
                 *sink_body_value = webcore::body::Value::Empty;
-                // is there a pending promise?
-                // we will need to reject it
             } else if matches!(sink_body_value, webcore::body::Value::Locked(l)
                 if l.task.map_or(0, |p| p as usize) == sink_ptr_usize && l.promise.is_some())
             {
@@ -1012,17 +1021,14 @@ impl BufferOutputSink {
                 let _ = sink_body_value.to_error_instance(err.dupe(&global), &global);
                 // TODO: properly propagate exception upwards
             } else {
-                let ret_err = create_lolhtml_error(&global);
+                let ret_err = err.to_js(&global);
                 ret_err.ensure_still_alive();
                 ret_err.protect();
                 Self::write_tmp_sync_error(sink, ret_err);
             }
-            // SAFETY: rewriter set by init(). Read into a local before the
-            // call — `end()` re-enters `OutputSink::done(&mut *sink)`.
-            let rewriter = unsafe { (*sink).rewriter };
-            // SAFETY: `rewriter` was created via `builder.build()` in `init()`
-            // and is not yet freed (destroyed only in `Drop` at refcount zero).
-            let _ = unsafe { lolhtml::HTMLRewriter::end(rewriter) };
+            // Do not `end()` the rewriter: that would run `done()`, replacing
+            // the error just stored on the body with the truncated output.
+            // `Drop` destroys the rewriter once the sink's refcount hits zero.
             return;
         }
 
@@ -1623,6 +1629,20 @@ fn html_string_value(
     html_string_to_js(input, global_object)
 }
 
+/// lol-html's optional string getters (`lol_html_element_get_attribute`,
+/// `lol_html_doctype_*_get`) signal "absent" with a NULL `data` pointer; a
+/// present-but-empty value comes back with a non-null pointer and `len == 0`.
+/// Map only the former to `null` so `<div a="">` reads as `""`, not `null`.
+fn html_string_or_null(
+    input: lolhtml::HTMLString,
+    global_object: &JSGlobalObject,
+) -> JsResult<JSValue> {
+    if input.ptr.is_null() {
+        return Ok(JSValue::NULL);
+    }
+    html_string_to_js(input, global_object)
+}
+
 // ─────────────────────────── TextChunk ───────────────────────────────────
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
@@ -1717,42 +1737,27 @@ impl DocType {
 
     /// The doctype name.
     #[bun_jsc::host_fn(getter)]
-    pub fn name(&self, global_object: &JSGlobalObject) -> JSValue {
+    pub fn name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let Some(dt) = lolhtml::DocType::from_ptr(self.doctype.get()) else {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         };
-        let owned = dt.get_name();
-        let str = owned.slice();
-        if str.is_empty() {
-            return JSValue::NULL;
-        }
-        ZigString::init(str).to_js(global_object)
+        html_string_or_null(dt.get_name(), global_object)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn system_id(&self, global_object: &JSGlobalObject) -> JSValue {
+    pub fn system_id(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let Some(dt) = lolhtml::DocType::from_ptr(self.doctype.get()) else {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         };
-        let owned = dt.get_system_id();
-        let str = owned.slice();
-        if str.is_empty() {
-            return JSValue::NULL;
-        }
-        ZigString::init(str).to_js(global_object)
+        html_string_or_null(dt.get_system_id(), global_object)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn public_id(&self, global_object: &JSGlobalObject) -> JSValue {
+    pub fn public_id(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let Some(dt) = lolhtml::DocType::from_ptr(self.doctype.get()) else {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         };
-        let owned = dt.get_public_id();
-        let str = owned.slice();
-        if str.is_empty() {
-            return JSValue::NULL;
-        }
-        ZigString::init(str).to_js(global_object)
+        html_string_or_null(dt.get_public_id(), global_object)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2167,7 +2172,7 @@ impl Element {
             return Ok(JSValue::NULL);
         };
         if function.is_undefined_or_null() || !function.is_callable() {
-            return Ok(ZigString::init_utf8(b"Expected a function").to_js(global_object));
+            return Err(global_object.throw_type_error(format_args!("Expected a function")));
         }
 
         // `protected()` takes the gcProtect ref up front; if registration
@@ -2203,24 +2208,21 @@ impl Element {
             return Ok(JSValue::NULL);
         };
         let slice = name.to_slice();
-        let attr = el.get_attribute(slice.slice());
-
-        if attr.len == 0 {
-            return Ok(JSValue::NULL);
-        }
-
-        html_string_to_js(attr, global_object)
+        html_string_or_null(el.get_attribute(slice.slice()), global_object)
     }
 
     /// Returns a boolean indicating whether an attribute exists on the element.
-    pub fn has_attribute_(&self, global: &JSGlobalObject, name: ZigString) -> JSValue {
+    pub fn has_attribute_(&self, global: &JSGlobalObject, name: ZigString) -> JsResult<JSValue> {
         let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
-            return JSValue::FALSE;
+            return Ok(JSValue::FALSE);
         };
         let slice = name.to_slice();
         match el.has_attribute(slice.slice()) {
-            Ok(b) => JSValue::from(b),
-            Err(_) => create_lolhtml_error(global),
+            Ok(b) => Ok(JSValue::from(b)),
+            Err(_) => {
+                let err = create_lolhtml_error(global);
+                Err(global.throw_value(err))
+            }
         }
     }
 
@@ -2231,9 +2233,9 @@ impl Element {
         global_object: &JSGlobalObject,
         name_: ZigString,
         value_: ZigString,
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         };
 
         // Mutating the attribute Vec (push → possible realloc) invalidates the
@@ -2246,9 +2248,10 @@ impl Element {
             .set_attribute(name_slice.slice(), value_slice.slice())
             .is_err()
         {
-            return create_lolhtml_error(global_object);
+            let err = create_lolhtml_error(global_object);
+            return Err(global_object.throw_value(err));
         }
-        call_frame.this()
+        Ok(call_frame.this())
     }
 
     /// Removes the attribute.
@@ -2257,9 +2260,9 @@ impl Element {
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
         name: ZigString,
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         };
 
         // Vec::remove shifts trailing elements and shrinks len, leaving any
@@ -2268,9 +2271,10 @@ impl Element {
 
         let name_slice = name.to_slice();
         if el.remove_attribute(name_slice.slice()).is_err() {
-            return create_lolhtml_error(global_object);
+            let err = create_lolhtml_error(global_object);
+            return Err(global_object.throw_value(err));
         }
-        call_frame.this()
+        Ok(call_frame.this())
     }
 
     // ── instance-method arg-decode wrappers (attribute ops) ──────────────
@@ -2301,7 +2305,7 @@ impl Element {
         let args = call_frame.arguments_old::<1>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let name = eat_zig_string(&mut iter, global)?;
-        Ok(self.has_attribute_(global, name))
+        self.has_attribute_(global, name)
     }
 
     pub fn set_attribute(
@@ -2313,7 +2317,7 @@ impl Element {
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let name = eat_zig_string(&mut iter, global)?;
         let value = eat_zig_string(&mut iter, global)?;
-        Ok(self.set_attribute_(call_frame, global, name, value))
+        self.set_attribute_(call_frame, global, name, value)
     }
 
     pub fn remove_attribute(
@@ -2324,7 +2328,7 @@ impl Element {
         let args = call_frame.arguments_old::<1>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let name = eat_zig_string(&mut iter, global)?;
-        Ok(self.remove_attribute_(call_frame, global, name))
+        self.remove_attribute_(call_frame, global, name)
     }
 
     lol_content_ops! { Element, element, JSValue::UNDEFINED;
@@ -2422,13 +2426,14 @@ impl Element {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_attributes(&self, global_object: &JSGlobalObject) -> JSValue {
+    pub fn get_attributes(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         };
 
         let Some(iter) = el.attributes() else {
-            return create_lolhtml_error(global_object);
+            let err = create_lolhtml_error(global_object);
+            return Err(global_object.throw_value(err));
         };
         let attr_iter = bun_core::heap::into_raw(Box::new(AttributeIterator {
             ref_count: Cell::new(1),
@@ -2444,7 +2449,7 @@ impl Element {
         self.attribute_iterators.with_mut(|v| v.push(attr_iter));
         // SAFETY: attr_iter is live (refcount==2 now); ownership is shared with
         // the GC wrapper via the intrusive refcount (`finalize` → `deref`).
-        unsafe { AttributeIterator::to_js_ptr(attr_iter, global_object) }
+        Ok(unsafe { AttributeIterator::to_js_ptr(attr_iter, global_object) })
     }
 }
 

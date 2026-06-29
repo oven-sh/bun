@@ -3731,6 +3731,7 @@ fn lowbox_dos_name_fallback(
         let mut map = Vec::new();
         {
             let mut cwd = bun_paths::w_path_buffer_pool::get();
+            // SAFETY: cwd.0 is valid for cwd.0.len() writes.
             let n =
                 unsafe { kernel32::GetCurrentDirectoryW(cwd.0.len() as u32, cwd.0.as_mut_ptr()) }
                     as usize;

@@ -1,5 +1,6 @@
 import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
 import { createTest } from "node-harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs";
 import http2 from "node:http2";
 import net from "node:net";
@@ -1606,6 +1607,44 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
     });
   }
 }
+
+// A stream's events run in the async context captured when request() was called (Node's
+// Http2Stream is an async resource), even when that context is empty and the session's
+// own socket callbacks carry the connect-time store.
+it("client stream events observe the request-time async context, not the session's", async () => {
+  const als = new AsyncLocalStorage();
+  const server = http2.createServer();
+  let client;
+  try {
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const { promise: connected, resolve: onConnect, reject } = Promise.withResolvers();
+    client = als.run({ id: "connect" }, () => http2.connect(`http://localhost:${server.address().port}`));
+    client.on("error", reject);
+    client.on("connect", onConnect);
+    await connected;
+    // The await above resumed the test's own (empty) async context: this request
+    // captures an empty snapshot while the socket's callbacks carry { id: "connect" }.
+    const stores = [];
+    const { promise: closed, resolve: onClose, reject: onStreamError } = Promise.withResolvers();
+    const req = client.request({ ":path": "/" });
+    req.on("response", () => stores.push(als.getStore()));
+    req.on("data", () => stores.push(als.getStore()));
+    req.on("end", () => stores.push(als.getStore()));
+    req.on("close", onClose);
+    req.on("error", onStreamError);
+    req.end();
+    await closed;
+    expect(stores.length).toBeGreaterThanOrEqual(3);
+    expect(stores).toEqual(new Array(stores.length).fill(undefined));
+  } finally {
+    client?.close?.();
+    server.close();
+  }
+});
 
 it("sensitive headers should work", async () => {
   const server = http2.createServer();

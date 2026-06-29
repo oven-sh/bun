@@ -29,6 +29,14 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     expect(Bun.deepEquals(a, b, false)).toBe(false);
   });
 
+  it("invalid dates are equal", () => {
+    expect(deepEquals(new Date(NaN), new Date(NaN))).toBe(true);
+    expect(new Date(NaN)).toEqual(new Date(NaN));
+    expect(new Date(NaN)).toStrictEqual(new Date(NaN));
+    expect(deepEquals(new Date(NaN), new Date(0))).toBe(false);
+    expect(deepEquals(new Date(0), new Date(NaN))).toBe(false);
+  });
+
   // https://github.com/nodejs/node/issues/10258
   it("fake dates are not equal", () => {
     function FakeDate() {}

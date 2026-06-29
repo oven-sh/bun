@@ -22,8 +22,11 @@ function isFunction(value) {
   return typeof value === "function";
 }
 
-const deepEquals = Bun.deepEquals;
-const isDeepStrictEqual = (a, b) => deepEquals(a, b, true);
+let internalDeepEqual;
+function isDeepStrictEqual(val1, val2) {
+  internalDeepEqual ??= require("internal/util/comparisons").isDeepStrictEqual;
+  return internalDeepEqual(val1, val2);
+}
 
 const parseArgs = $newRustFunction("parse_args.rs", "parseArgs", 1);
 

@@ -1172,7 +1172,10 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         JSC::DateInstance* left = uncheckedDowncast<DateInstance>(c1);
         JSC::DateInstance* right = uncheckedDowncast<DateInstance>(c2);
 
-        return left->internalNumber() == right->internalNumber();
+        double leftTime = left->internalNumber();
+        double rightTime = right->internalNumber();
+        // Invalid dates are equal to each other: SameValue, not ==.
+        return leftTime == rightTime || (std::isnan(leftTime) && std::isnan(rightTime));
     }
     case RegExpObjectType: {
         if (c2Type != RegExpObjectType) {

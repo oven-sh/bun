@@ -21,47 +21,35 @@
 
 "use strict";
 
-const { SafeMap, SafeSet, SafeWeakSet } = require("internal/primordials");
-const {
-  isKeyObject,
-  isPromise,
-  isRegExp,
-  isMap,
-  isSet,
-  isDate,
-  isWeakSet,
-  isWeakMap,
-  isAnyArrayBuffer,
-} = require("node:util/types");
+const { isPromise, isRegExp } = require("node:util/types");
 const { innerOk } = require("internal/assert/utils");
 const { validateFunction } = require("internal/validators");
 
-const ArrayFrom = Array.from;
 const ArrayPrototypeIndexOf = Array.prototype.indexOf;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSlice = Array.prototype.slice;
-const ArrayBufferIsView = ArrayBuffer.isView;
 const NumberIsNaN = Number.isNaN;
 const ObjectAssign = Object.assign;
 const ObjectIs = Object.is;
 const ObjectKeys = Object.keys;
 const ObjectPrototypeIsPrototypeOf = Object.prototype.isPrototypeOf;
-const ReflectHas = Reflect.has;
-const ReflectOwnKeys = Reflect.ownKeys;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeSplit = String.prototype.split;
-const SymbolIterator = Symbol.iterator;
 
 type nodeAssert = typeof import("node:assert");
 
-function isDeepEqual(a, b) {
-  return Bun.deepEquals(a, b, false);
-}
-function isDeepStrictEqual(a, b) {
-  return Bun.deepEquals(a, b, true);
+let isDeepEqual;
+let isDeepStrictEqual;
+let isPartialStrictEqual;
+
+function lazyLoadComparison() {
+  const comparison = require("internal/util/comparisons");
+  isDeepEqual = comparison.isDeepEqual;
+  isDeepStrictEqual = comparison.isDeepStrictEqual;
+  isPartialStrictEqual = comparison.isPartialStrictEqual;
 }
 
 var _inspect;
@@ -247,6 +235,7 @@ assert.deepEqual = function deepEqual(actual, expected, message) {
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
   }
+  if (isDeepEqual === undefined) lazyLoadComparison();
   if (!isDeepEqual(actual, expected)) {
     innerFail({
       actual,
@@ -269,6 +258,7 @@ assert.notDeepEqual = function notDeepEqual(actual, expected, message) {
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
   }
+  if (isDeepEqual === undefined) lazyLoadComparison();
   if (isDeepEqual(actual, expected)) {
     innerFail({
       actual,
@@ -293,6 +283,7 @@ assert.deepStrictEqual = function deepStrictEqual(actual, expected, message) {
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
   }
+  if (isDeepEqual === undefined) lazyLoadComparison();
   if (!isDeepStrictEqual(actual, expected)) {
     innerFail({
       actual,
@@ -317,6 +308,7 @@ function notDeepStrictEqual(actual, expected, message) {
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
   }
+  if (isDeepEqual === undefined) lazyLoadComparison();
   if (isDeepStrictEqual(actual, expected)) {
     innerFail({
       actual,
@@ -372,181 +364,20 @@ assert.notStrictEqual = function notStrictEqual(actual, expected, message) {
   }
 };
 
-function isSpecial(obj) {
-  return obj == null || typeof obj !== "object" || Error.isError(obj) || isRegExp(obj) || isDate(obj);
-}
-
-const typesToCallDeepStrictEqualWith = [isKeyObject, isWeakSet, isWeakMap, Buffer.isBuffer];
-const SafeSetPrototypeIterator = SafeSet.prototype[SymbolIterator];
-const SafeMapPrototypeIterator = SafeMap.prototype[SymbolIterator];
-const SafeMapPrototypeHas = SafeMap.prototype.has;
-const SafeMapPrototypeGet = SafeMap.prototype.get;
-const SafeMapPrototypeSet = SafeMap.prototype.set;
-const SafeMapPrototypeDelete = SafeMap.prototype.delete;
-
 /**
- * Compares two objects or values recursively to check if they are equal.
- * @param {any} actual - The actual value to compare.
- * @param {any} expected - The expected value to compare.
- * @param {Set} [comparedObjects=new Set()] - Set to track compared objects for handling circular references.
- * @returns {boolean} - Returns `true` if the actual value matches the expected value, otherwise `false`.
- * @example
- * compareBranch({a: 1, b: 2, c: 3}, {a: 1, b: 2}); // true
- */
-function compareBranch(actual, expected, comparedObjects?) {
-  // Check for Map object equality (subset check for partialDeepStrictEqual)
-  if (isMap(actual) && isMap(expected)) {
-    if (expected.size > actual.size) {
-      return false; // `expected` can't be a subset if it has more elements
-    }
-
-    comparedObjects ??= new SafeWeakSet();
-
-    // Handle circular references
-    if (comparedObjects.has(actual)) {
-      return true;
-    }
-    comparedObjects.add(actual);
-
-    const expectedIterator = SafeMapPrototypeIterator.$call(expected);
-
-    for (const { 0: key, 1: expectedValue } of expectedIterator) {
-      if (!SafeMapPrototypeHas.$call(actual, key)) {
-        return false;
-      }
-      const actualValue = SafeMapPrototypeGet.$call(actual, key);
-      if (!compareBranch(actualValue, expectedValue, comparedObjects)) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  // Check for ArrayBuffer object equality
-  if (
-    ArrayBufferIsView(actual) ||
-    isAnyArrayBuffer(actual) ||
-    ArrayBufferIsView(expected) ||
-    isAnyArrayBuffer(expected)
-  ) {
-    return Bun.deepEquals(actual, expected, true);
-  }
-
-  for (const type of typesToCallDeepStrictEqualWith) {
-    if (type(actual) || type(expected)) {
-      return isDeepStrictEqual(actual, expected);
-    }
-  }
-
-  // Check for Set object equality
-  if (isSet(actual) && isSet(expected)) {
-    if (expected.size > actual.size) {
-      return false; // `expected` can't be a subset if it has more elements
-    }
-
-    const actualArray = ArrayFrom(SafeSetPrototypeIterator.$call(actual));
-    const expectedIterator = SafeSetPrototypeIterator.$call(expected);
-    const usedIndices = new SafeSet();
-
-    expectedIteration: for (const expectedItem of expectedIterator) {
-      for (let actualIdx = 0; actualIdx < actualArray.length; actualIdx++) {
-        if (!usedIndices.has(actualIdx) && isDeepStrictEqual(actualArray[actualIdx], expectedItem)) {
-          usedIndices.add(actualIdx);
-          continue expectedIteration;
-        }
-      }
-      return false;
-    }
-
-    return true;
-  }
-
-  // Check if expected array is a subset of actual array
-  if ($isArray(actual) && $isArray(expected)) {
-    if (expected.length > actual.length) {
-      return false;
-    }
-
-    // Create a map to count occurrences of each element in the expected array
-    const expectedCounts = new SafeMap();
-    for (const expectedItem of expected) {
-      let found = false;
-      for (const { 0: key, 1: count } of expectedCounts) {
-        if (isDeepStrictEqual(key, expectedItem)) {
-          SafeMapPrototypeSet.$call(expectedCounts, key, count + 1);
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
-        SafeMapPrototypeSet.$call(expectedCounts, expectedItem, 1);
-      }
-    }
-
-    // Create a map to count occurrences of relevant elements in the actual array
-    for (const actualItem of actual) {
-      for (const { 0: key, 1: count } of expectedCounts) {
-        if (isDeepStrictEqual(key, actualItem)) {
-          if (count === 1) {
-            SafeMapPrototypeDelete.$call(expectedCounts, key);
-          } else {
-            SafeMapPrototypeSet.$call(expectedCounts, key, count - 1);
-          }
-          break;
-        }
-      }
-    }
-
-    return !expectedCounts.size;
-  }
-
-  // Comparison done when at least one of the values is not an object
-  if (isSpecial(actual) || isSpecial(expected)) {
-    return isDeepStrictEqual(actual, expected);
-  }
-
-  // Use Reflect.ownKeys() instead of Object.keys() to include symbol properties
-  const keysExpected = ReflectOwnKeys(expected);
-
-  comparedObjects ??= new SafeWeakSet();
-
-  // Handle circular references
-  if (comparedObjects.has(actual)) {
-    return true;
-  }
-  comparedObjects.add(actual);
-
-  if (AssertionError === undefined) loadAssertionError();
-  // Check if all expected keys and values match
-  for (let i = 0; i < keysExpected.length; i++) {
-    const key = keysExpected[i];
-    assert(
-      ReflectHas(actual, key),
-      new AssertionError({ message: `Expected key ${String(key)} not found in actual object` }),
-    );
-    if (!compareBranch(actual[key], expected[key], comparedObjects)) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-/**
- * The strict equivalence assertion test between two objects
+ * The partial deep strict equivalence assertion tests a partial deep strict
+ * equality relation.
  * @param {any} actual
  * @param {any} expected
  * @param {string | Error} [message]
  * @returns {void}
  */
 assert.partialDeepStrictEqual = function partialDeepStrictEqual(actual, expected, message) {
-  // emitExperimentalWarning("assert.partialDeepStrictEqual");
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
   }
-
-  if (!compareBranch(actual, expected)) {
+  if (isDeepEqual === undefined) lazyLoadComparison();
+  if (!isPartialStrictEqual(actual, expected)) {
     innerFail({
       actual,
       expected,
@@ -644,6 +475,7 @@ function expectedException(actual, expected, message, fn) {
       } else if (keys.length === 0) {
         throw $ERR_INVALID_ARG_VALUE("error", expected, "may not be an empty object");
       }
+      if (isDeepEqual === undefined) lazyLoadComparison();
       for (const key of keys) {
         if (
           typeof actual[key] === "string" &&

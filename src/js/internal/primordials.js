@@ -171,6 +171,7 @@ export default {
   ),
   SetPrototypeGetSize: getGetter(Set, "size"),
   String,
+  TypedArrayPrototypeGetByteLength: getGetter(Uint8Array, "byteLength"),
   TypedArrayPrototypeGetLength: getGetter(Uint8Array, "length"),
   TypedArrayPrototypeGetSymbolToStringTag: getGetter(Uint8Array, Symbol.toStringTag),
   Uint8ClampedArray,

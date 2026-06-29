@@ -57,6 +57,7 @@ observer.observe({ entryTypes: ["dns", "resource"] });
 // Each operation is awaited so the entries are recorded in a fixed order.
 await new Promise((resolve, reject) => dns.lookup("localhost", error => (error ? reject(error) : resolve(undefined))));
 await dns.promises.lookup("localhost", { order: "ipv6first" });
+await dns.promises.lookup("localhost", { all: true });
 await new Promise((resolve, reject) =>
   dns.lookupService("127.0.0.1", 80, error => (error ? reject(error) : resolve(undefined))),
 );

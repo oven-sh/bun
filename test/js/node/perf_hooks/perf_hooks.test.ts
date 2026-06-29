@@ -50,7 +50,8 @@ test("node:dns operations are observable as 'dns' performance entries", async ()
     exitCode: 0,
     entries: [
       "dns:lookup", // dns.lookup()
-      "dns:lookup", // dns.promises.lookup()
+      "dns:lookup", // dns.promises.lookup(hostname, { order: "ipv6first" })
+      "dns:lookup", // dns.promises.lookup(hostname, { all: true })
       "dns:lookupService", // dns.lookupService()
       "dns:lookupService", // dns.promises.lookupService()
       "dns:queryA", // dns.resolve4()
@@ -72,8 +73,8 @@ test("node:dns operations are observable as 'dns' performance entries", async ()
   }
 
   // detail carries the same fields and values Node records for each operation
-  // kind, including the caller-visible result (strings without {ttl: true},
-  // {address, ttl} objects with it).
+  // kind, always in the shape the caller receives: address strings unless
+  // {all: true} or {ttl: true} asked for objects.
   expect(entries[0].detail).toEqual({
     hostname: "localhost",
     family: 0,
@@ -93,13 +94,14 @@ test("node:dns operations are observable as 'dns' performance entries", async ()
     order: "ipv6first",
     addresses: expect.any(Array),
   });
-  expect(entries[2].detail).toEqual({
+  expect(entries[2].detail.addresses[0]).toEqual({ address: expect.any(String), family: expect.any(Number) });
+  expect(entries[3].detail).toEqual({
     host: "127.0.0.1",
     port: 80,
     hostname: expect.any(String),
     service: expect.any(String),
   });
-  expect(entries[4].detail).toEqual({ host: "a.test", ttl: false, result: ["127.0.0.1"] });
-  expect(entries[6].detail).toEqual({ host: "a.test", ttl: true, result: [{ address: "127.0.0.1", ttl: 60 }] });
-  expect(entries[7].detail).toEqual({ host: "a.test", ttl: false, result: [["hello"]] });
+  expect(entries[5].detail).toEqual({ host: "a.test", ttl: false, result: ["127.0.0.1"] });
+  expect(entries[7].detail).toEqual({ host: "a.test", ttl: true, result: [{ address: "127.0.0.1", ttl: 60 }] });
+  expect(entries[8].detail).toEqual({ host: "a.test", ttl: false, result: [["hello"]] });
 });

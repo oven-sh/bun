@@ -288,10 +288,13 @@ function observeLookup(hostname, options, promise) {
   });
   return promise.then(res => {
     // An empty result reaches the caller as ENODATA (see throwIfEmpty), so it
-    // records nothing, like every other failed lookup. The recorded addresses
-    // are ordered the way the caller will receive them.
-    if (res.length)
-      stopPerf(ctx, kPerfEntry, { detail: { addresses: sortByOrder(res, options.order).map(mapResolveX) } });
+    // records nothing, like every other failed lookup. The addresses are
+    // recorded in the shape and order the caller receives them.
+    if (res.length) {
+      sortByOrder(res, options.order);
+      const addresses = options.all ? res.map(mapLookupAll) : res.map(mapResolveX);
+      stopPerf(ctx, kPerfEntry, { detail: { addresses } });
+    }
     return res;
   });
 }

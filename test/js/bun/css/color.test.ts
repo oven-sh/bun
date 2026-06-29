@@ -194,6 +194,35 @@ describe("weird", () => {
   });
 });
 
+describe("number inputs are opaque", () => {
+  test.each([
+    [0xff0000, { r: 255, g: 0, b: 0, a: 1 }],
+    [0x00ff00, { r: 0, g: 255, b: 0, a: 1 }],
+    [0x0000ff, { r: 0, g: 0, b: 255, a: 1 }],
+    [0x000000, { r: 0, g: 0, b: 0, a: 1 }],
+    [0xffffff, { r: 255, g: 255, b: 255, a: 1 }],
+  ])("color(%d, '{rgba}')", (input, expected) => {
+    expect(color(input, "{rgba}")).toEqual(expected);
+  });
+
+  test("alpha is opaque in every output format", () => {
+    expect(color(0xff0000, "[rgba]")).toEqual([255, 0, 0, 255]);
+    expect(color(0xff0000, "rgba")).toBe("rgba(255, 0, 0, 1)");
+    expect(color(0xff0000, "css")).toBe("red");
+    expect(color(0xff0000)).toBe("red");
+  });
+
+  test("round-trips through the number format", () => {
+    expect(color(color("pink", "number")!, "css")).toBe("pink");
+    expect(color(color([255, 0, 0, 255], "number")!, "[rgba]")).toEqual([255, 0, 0, 255]);
+  });
+
+  test("values wider than 24 bits keep the explicit alpha byte", () => {
+    expect(color(0x80ff0000, "[rgba]")).toEqual([255, 0, 0, 128]);
+    expect(color(0xffff0000, "{rgba}")).toEqual({ r: 255, g: 0, b: 0, a: 1 });
+  });
+});
+
 test("0 args", () => {
   expect(() => color()).toThrow(
     expect.objectContaining({

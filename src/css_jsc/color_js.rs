@@ -226,7 +226,13 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             let blue = (int & 0xff) as u8;
             let green = ((int >> 8) & 0xff) as u8;
             let red = ((int >> 16) & 0xff) as u8;
-            let alpha = ((int >> 24) & 0xff) as u8;
+            // A 24-bit 0xRRGGBB number has no alpha byte and means an opaque
+            // color; only values wider than 24 bits carry alpha in the top byte.
+            let alpha = if int > 0x00ff_ffff {
+                (int >> 24) as u8
+            } else {
+                255
+            };
 
             break 'brk Ok(CssColor::Rgba(RGBA {
                 alpha,

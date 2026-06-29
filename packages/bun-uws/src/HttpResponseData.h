@@ -53,6 +53,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         // Ensure we don't call a timeout callback
         onTimeout = nullptr;
 
+        hasCompletedResponse = true;
+
         /* We are done with this request */
         this->state &= ~HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
 
@@ -118,6 +120,13 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     uint8_t idleTimeout = 10; // default HTTP_TIMEOUT 10 seconds
     bool fromAncientRequest = false;
     bool isConnectRequest = false;
+    /* Mirror of HttpContextData::flags.hasNodeReceiveTimeouts, copied at
+     * accept time so the hot resetTimeout() path only reads this struct. */
+    bool hasNodeReceiveTimeouts = false;
+    /* Set once the first response on this socket completes: distinguishes a
+     * connection that never produced a complete request (headersTimeout
+     * applies) from an idle keep-alive socket between messages (it doesn't). */
+    bool hasCompletedResponse = false;
     /* When set, the response carries no body framing at all: no Content-Length,
      * no chunked encoding, no terminating chunk. writeStatus() sets it for 1xx
      * and 204 (RFC 9110 8.6); node:http additionally sets it for 304. */

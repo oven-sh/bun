@@ -124,6 +124,46 @@ private:
     /* Minimum allowed receive throughput per second (clients uploading less than 16kB/sec get dropped) */
     static constexpr int HTTP_RECEIVE_THROUGHPUT_BYTES = 16 * 1024;
 
+public:
+    /* node:http receive phase of a socket (only meaningful when
+     * hasNodeReceiveTimeouts is set): Headers from connection (or completion
+     * of the previous keep-alive exchange) until a message's header section
+     * is fully parsed, Body until its body is fully received, None while a
+     * handler/response is in flight or the keep-alive socket is idle after a
+     * completed exchange. CONNECT tunnels stream forever and have no phase. */
+    enum class NodeReceivePhase : unsigned char { None, Headers, Body };
+
+    static NodeReceivePhase nodeReceivePhase(HttpResponseData<SSL> *httpResponseData) {
+        if (httpResponseData->isConnectRequest) {
+            return NodeReceivePhase::None;
+        }
+        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) {
+            return httpResponseData->isReceivingHttpBody() ? NodeReceivePhase::Body : NodeReceivePhase::None;
+        }
+        return (httpResponseData->hasPartialRequest() || !httpResponseData->hasCompletedResponse)
+            ? NodeReceivePhase::Headers : NodeReceivePhase::None;
+    }
+
+    /* While a receive phase is active its deadline owns the per-socket timer;
+     * every legacy resetTimeout()/pause() routes back through here so it
+     * cannot be disarmed early. Returns false outside the receive phases, in
+     * which case the caller falls back to the legacy idle timeout. */
+    static bool tryArmNodeReceiveTimeout(us_socket_t *s, HttpResponseData<SSL> *httpResponseData) {
+        switch (nodeReceivePhase(httpResponseData)) {
+            case NodeReceivePhase::Body:
+                us_socket_timeout(s, getSocketContextDataS(s)->nodeRequestTimeoutSeconds);
+                return true;
+            case NodeReceivePhase::Headers:
+                us_socket_timeout(s, getSocketContextDataS(s)->nodeHeadersTimeoutSeconds);
+                return true;
+            case NodeReceivePhase::None:
+                return false;
+        }
+        return false;
+    }
+
+private:
+
     /* Not constexpr — the ordinals are linked from `src/uws_sys/SocketKind.rs`
      * so a reorder there can't silently mis-route us. Only ever read
      * at runtime (listen/adopt). */
@@ -184,13 +224,19 @@ private:
 
     static us_socket_t *onOpen(us_socket_t *s, int /*is_client*/, char * /*ip*/, int /*ip_length*/) {
         /* Init socket ext */
-        new (us_socket_ext(s)) HttpResponseData<SSL>;
-          /* Any connected socket should timeout until it has a request */
+        auto *httpResponseData = new (us_socket_ext(s)) HttpResponseData<SSL>;
+        HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
+        /* Any connected socket should timeout until it has a request */
+        if (httpContextData->flags.hasNodeReceiveTimeouts) {
+            /* node:http: no implicit idle timeout; the headersTimeout receive
+             * deadline owns the socket timer until a complete request arrives. */
+            httpResponseData->hasNodeReceiveTimeouts = true;
+            httpResponseData->idleTimeout = 0;
+        }
         ((HttpResponse<SSL> *) s)->resetTimeout();
 
         if(!SSL) {
             /* Call filter */
-            HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
             }
@@ -437,6 +483,12 @@ private:
                 ((HttpResponse<SSL> *) s)->resetTimeout();
             }
 
+            if (httpContextData->flags.hasNodeReceiveTimeouts) {
+                /* Receive-phase deadline, or restore the idle timeout (which
+                 * disarms a body deadline once the message is complete). */
+                ((HttpResponse<SSL> *) s)->resetTimeout();
+            }
+
             /* We need to check if we should close this socket here now */
             if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
@@ -565,6 +617,33 @@ private:
         AsyncSocket<SSL> *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
         // Node.js by default closes the connection but they emit the timeout event before that
         HttpResponseData<SSL> *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(asyncSocket->getAsyncSocketData());
+        HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
+
+        /* node:http headersTimeout/requestTimeout expiry: like Node, emit
+         * 'clientError' (ERR_HTTP_REQUEST_TIMEOUT) and answer with a canned
+         * 408 when nothing was written for the current message, then close.
+         * No 'timeout' events are emitted for these deadlines. The write-state
+         * bits are only meaningful for the dispatched (Body phase) message; in
+         * the Headers phase they are leftovers from the previous keep-alive
+         * response. */
+        auto nodePhase = httpResponseData->hasNodeReceiveTimeouts
+            ? nodeReceivePhase(httpResponseData) : NodeReceivePhase::None;
+        if (nodePhase != NodeReceivePhase::None
+            && !(nodePhase == NodeReceivePhase::Body
+                && (httpResponseData->state & (HttpResponseData<SSL>::HTTP_STATUS_CALLED | HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_END_CALLED)))) {
+            if (httpContextData->onClientError) {
+                httpContextData->onClientError(SSL, s, HTTP_PARSER_ERROR_REQUEST_TIMEOUT, nullptr, 0);
+            }
+            /* The 'clientError' listener may have closed the socket already */
+            if (us_socket_is_closed(s)) {
+                return s;
+            }
+            if (!us_socket_is_shut_down(s)) {
+                us_socket_write(s, httpErrorResponses[HTTP_ERROR_408_REQUEST_TIMEOUT].data(), (int) httpErrorResponses[HTTP_ERROR_408_REQUEST_TIMEOUT].length());
+                us_socket_shutdown(s);
+            }
+            return asyncSocket->close();
+        }
 
         if (httpResponseData->onTimeout) {
             httpResponseData->onTimeout((HttpResponse<SSL> *)s, httpResponseData->userData);

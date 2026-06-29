@@ -663,6 +663,7 @@ declare function $ERR_INVALID_STATE_TypeError(message: string): TypeError;
 declare function $ERR_INVALID_STATE_RangeError(message: string): RangeError;
 declare function $ERR_UNESCAPED_CHARACTERS(arg): TypeError;
 declare function $ERR_HTTP_INVALID_STATUS_CODE(code): RangeError;
+declare function $ERR_HTTP_REQUEST_TIMEOUT(message: string): Error;
 declare function $ERR_UNHANDLED_ERROR(err?): Error;
 declare function $ERR_BUFFER_OUT_OF_BOUNDS(name?: string): RangeError;
 declare function $ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE(value, expected): TypeError;

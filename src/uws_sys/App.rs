@@ -136,6 +136,21 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_set_max_http_header_size(Self::SSL_FLAG, self.as_raw(), max_header_size)
     }
 
+    /// node:http only: enable headersTimeout/requestTimeout receive deadlines
+    /// (seconds, 0 disables that phase's deadline).
+    pub fn set_node_receive_timeouts(
+        &mut self,
+        headers_timeout_seconds: u32,
+        request_timeout_seconds: u32,
+    ) {
+        c::uws_app_set_node_receive_timeouts(
+            Self::SSL_FLAG,
+            self.as_raw(),
+            headers_timeout_seconds,
+            request_timeout_seconds,
+        )
+    }
+
     pub fn clear_routes(&mut self) {
         c::uws_app_clear_routes(Self::SSL_FLAG, self.as_raw())
     }
@@ -518,6 +533,12 @@ pub mod c {
             ssl: i32,
             app: &mut uws_app_t,
             max_header_size: u64,
+        );
+        pub(crate) safe fn uws_app_set_node_receive_timeouts(
+            ssl: i32,
+            app: &mut uws_app_t,
+            headers_timeout_seconds: u32,
+            request_timeout_seconds: u32,
         );
         pub(crate) fn uws_app_get(
             ssl: i32,

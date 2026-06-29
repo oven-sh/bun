@@ -34,6 +34,10 @@ struct HttpFlags {
     bool requireHostHeader: 1 = true;
     bool isAuthorized: 1 = false;
     bool useStrictMethodValidation: 1 = false;
+    /* node:http only: per-socket receive deadlines (headersTimeout /
+     * requestTimeout) drive the socket timer instead of the legacy 10s
+     * pre-request idle timeout. Never set for Bun.serve. */
+    bool hasNodeReceiveTimeouts: 1 = false;
 };
 
 template <bool SSL>
@@ -70,6 +74,11 @@ private:
     OnClientErrorCallback onClientError = nullptr;
 
     uint64_t maxHeaderSize = 0; // 0 means no limit
+
+    /* node:http receive deadlines in seconds (0 = disabled); only read when
+     * flags.hasNodeReceiveTimeouts is set. */
+    unsigned int nodeHeadersTimeoutSeconds = 0;
+    unsigned int nodeRequestTimeoutSeconds = 0;
 
     // TODO: SNI
     void clearRoutes() {

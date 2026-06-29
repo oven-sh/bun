@@ -66,6 +66,13 @@ public:
     void resetTimeout() {
         auto* data = getHttpResponseData();
 
+        /* node:http receive deadlines (headersTimeout/requestTimeout) own the
+         * timer while a message is being received; they must not be replaced
+         * by the generic idle timeout. */
+        if (data->hasNodeReceiveTimeouts && HttpContext<SSL>::tryArmNodeReceiveTimeout((us_socket_t *) this, data)) {
+            return;
+        }
+
         Super::timeout(data->idleTimeout);
     }
     /* Write an unsigned 32-bit integer in hex */
@@ -399,6 +406,12 @@ public:
     /* Throttle reads and writes */
     HttpResponse *pause() {
         Super::pause();
+        /* A paused node:http socket is still subject to its receive deadline:
+         * the message bytes the peer owes us have not arrived yet. */
+        auto* data = getHttpResponseData();
+        if (data->hasNodeReceiveTimeouts && HttpContext<SSL>::tryArmNodeReceiveTimeout((us_socket_t *) this, data)) {
+            return this;
+        }
         Super::timeout(0);
         return this;
     }

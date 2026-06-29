@@ -102,6 +102,8 @@ const GlobalPromise = globalThis.Promise;
 const kEmptyBuffer = Buffer.alloc(0);
 const ObjectKeys = Object.keys;
 const MathMin = Math.min;
+const MathMax = Math.max;
+const MathCeil = Math.ceil;
 const MathFloor = Math.floor;
 
 let cluster;
@@ -910,6 +912,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       true,
       typeof this.maxHeaderSize !== "undefined" ? this.maxHeaderSize : getMaxHTTPHeaderSize(),
       onServerClientError.bind(this),
+      // headersTimeout/requestTimeout are enforced natively in whole seconds (0 = disabled).
+      this.headersTimeout > 0 ? MathMax(1, MathCeil(this.headersTimeout / 1000)) : 0,
+      this.requestTimeout > 0 ? MathMax(1, MathCeil(this.requestTimeout / 1000)) : 0,
     );
 
     if (this?._unref) {
@@ -970,6 +975,7 @@ enum HttpParserError {
   HTTP_PARSER_ERROR_INVALID_EOF = 8,
   HTTP_PARSER_ERROR_INVALID_METHOD = 9,
   HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN = 10,
+  HTTP_PARSER_ERROR_REQUEST_TIMEOUT = 11,
 }
 function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, rawPacket: ArrayBuffer) {
   const self = this as Server;
@@ -995,11 +1001,18 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
       err = $HPE_HEADER_OVERFLOW("Parse Error: Header overflow");
       err.bytesParsed = rawPacket.byteLength;
       break;
+    case HttpParserError.HTTP_PARSER_ERROR_REQUEST_TIMEOUT:
+      // headersTimeout/requestTimeout expired; like Node, the error carries
+      // neither rawPacket nor bytesParsed.
+      err = $ERR_HTTP_REQUEST_TIMEOUT("Request timeout");
+      break;
     default:
       err = $HPE_INTERNAL("Parse Error");
       break;
   }
-  err.rawPacket = rawPacket;
+  if (errorCode !== HttpParserError.HTTP_PARSER_ERROR_REQUEST_TIMEOUT) {
+    err.rawPacket = rawPacket;
+  }
   // A prior request on this keep-alive connection may already have wrapped
   // the native handle (the native side returns the existing handle); a second
   // wrapper would overwrite its onclose/duplex and strand the first one in

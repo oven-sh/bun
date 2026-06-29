@@ -25,6 +25,7 @@ import http, {
 import https, { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
+import { connect as tlsConnect } from "node:tls";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { PassThrough, Writable } from "node:stream";
@@ -3748,4 +3749,207 @@ it("OutgoingMessage outputData is per-instance and _flushOutput is defined", () 
   const d = new OutgoingMessage();
   c.outputData.push({ data: "y", encoding: "utf8", callback: null });
   expect(d.outputData.length).toBe(0);
+});
+
+// node:http Server.headersTimeout / Server.requestTimeout enforcement.
+// Node answers an expired receive deadline with a canned
+// "HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n" (only when no
+// 'clientError' listener is installed) and emits 'clientError' with
+// ERR_HTTP_REQUEST_TIMEOUT. The deadline check granularity is
+// connectionsCheckingInterval in Node and ~4s in Bun, so these use small
+// configured values and only await events.
+describe("server headersTimeout/requestTimeout enforcement", () => {
+  const REQUEST_TIMEOUT_408_RESPONSE = "HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n";
+  const timeoutOptions = {
+    headersTimeout: 500,
+    requestTimeout: 1000,
+    connectionsCheckingInterval: 100,
+  };
+
+  it.each([["http"], ["https"]] as const)(
+    "%s: stalled request headers are answered with a 408 and the socket is closed",
+    async protocol => {
+      const isHttps = protocol === "https";
+      const server = isHttps
+        ? createHttpsServer({ ...timeoutOptions, key: tlsCert.key, cert: tlsCert.cert }, () => {})
+        : createServer(timeoutOptions, () => {});
+      try {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const { port } = server.address() as AddressInfo;
+        const socket = isHttps
+          ? tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+          : connect(port, "127.0.0.1");
+        const received: Buffer[] = [];
+        const closed = new Promise<void>((resolve, reject) => {
+          socket.on("close", () => resolve());
+          socket.on("error", err => reject(err));
+        });
+        socket.on("data", chunk => received.push(chunk));
+        await once(socket, isHttps ? "secureConnect" : "connect");
+        socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nX-Partial: ");
+        await closed;
+        expect(Buffer.concat(received).toString()).toBe(REQUEST_TIMEOUT_408_RESPONSE);
+      } finally {
+        server.closeAllConnections();
+        server.close();
+      }
+    },
+    20_000,
+  );
+
+  it("emits 'clientError' with ERR_HTTP_REQUEST_TIMEOUT when the headers stall", async () => {
+    const server = createServer(timeoutOptions, () => {});
+    const { promise: clientError, resolve: onClientError } = Promise.withResolvers<Error>();
+    server.on("clientError", (err, socket) => {
+      onClientError(err);
+      socket.destroy();
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nX-Partial: ");
+      const err: any = await clientError;
+      expect(err.code).toBe("ERR_HTTP_REQUEST_TIMEOUT");
+      expect(err.message).toBe("Request timeout");
+      expect(err.name).toBe("Error");
+      await closed;
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
+  it("a dispatched request whose body stalls is aborted with a 408", async () => {
+    const { promise: handlerCalled, resolve: onHandler } = Promise.withResolvers<void>();
+    const { promise: aborted, resolve: onAborted } = Promise.withResolvers<void>();
+    const server = createServer(timeoutOptions, (req, res) => {
+      onHandler();
+      req.on("aborted", () => onAborted());
+      req.on("error", () => {});
+      res.on("error", () => {});
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const received: Buffer[] = [];
+      socket.on("data", chunk => received.push(chunk));
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nab");
+      await handlerCalled;
+      await aborted;
+      await closed;
+      expect(Buffer.concat(received).toString()).toBe(REQUEST_TIMEOUT_408_RESPONSE);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
+  it("stalled headers of a second keep-alive request are answered with a 408", async () => {
+    const server = createServer(timeoutOptions, (req, res) => {
+      res.end("first-response");
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      const chunks: Buffer[] = [];
+      let firstResponse: ((value: void) => void) | undefined;
+      const receivedFirstResponse = new Promise<void>(resolve => (firstResponse = resolve));
+      socket.on("data", chunk => {
+        chunks.push(chunk);
+        if (Buffer.concat(chunks).toString().endsWith("first-response")) {
+          firstResponse!();
+        }
+      });
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await receivedFirstResponse;
+      expect(Buffer.concat(chunks).toString()).toStartWith("HTTP/1.1 200 OK\r\n");
+      chunks.length = 0;
+      socket.write("GET /second HTTP/1.1\r\nHost: localhost\r\nX-Partial: ");
+      await closed;
+      expect(Buffer.concat(chunks).toString()).toBe(REQUEST_TIMEOUT_408_RESPONSE);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
+  it("requestTimeout does not apply to a fully received request with a slow handler", async () => {
+    // The receive deadlines stop once the message is fully received; only the
+    // sweep slack (~4s in Bun) plus the handler delay bound this test.
+    const server = createServer(
+      { headersTimeout: 1000, requestTimeout: 1000, connectionsCheckingInterval: 100 },
+      (req, res) => {
+        setTimeout(() => {
+          res.end("slow-but-fine");
+        }, 5500);
+      },
+    );
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const received: Buffer[] = [];
+      socket.on("data", chunk => received.push(chunk));
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      await closed;
+      const response = Buffer.concat(received).toString();
+      expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
+      expect(response).toEndWith("slow-but-fine");
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
+  it("disabled timeouts (0) do not close a stalled connection", async () => {
+    // Negative contract bounded by an awaited condition: a sibling server with
+    // the timeouts enabled answers its own stalled request with a 408 first,
+    // proving more than enough time elapsed for the disabled one to be reaped.
+    const disabledServer = createServer(
+      { headersTimeout: 0, requestTimeout: 0, connectionsCheckingInterval: 100 },
+      () => {},
+    );
+    const enabledServer = createServer(timeoutOptions, () => {});
+    try {
+      disabledServer.listen(0, "127.0.0.1");
+      enabledServer.listen(0, "127.0.0.1");
+      await Promise.all([once(disabledServer, "listening"), once(enabledServer, "listening")]);
+
+      const disabledSocket = connect((disabledServer.address() as AddressInfo).port, "127.0.0.1");
+      disabledSocket.on("error", () => {});
+      let disabledClosed = false;
+      disabledSocket.on("close", () => (disabledClosed = true));
+      disabledSocket.write("GET / HTTP/1.1\r\nHost: localhost\r\nX-Partial: ");
+
+      const enabledSocket = connect((enabledServer.address() as AddressInfo).port, "127.0.0.1");
+      enabledSocket.on("error", () => {});
+      const enabledClosed = new Promise<void>(resolve => enabledSocket.on("close", () => resolve()));
+      enabledSocket.write("GET / HTTP/1.1\r\nHost: localhost\r\nX-Partial: ");
+
+      await enabledClosed;
+      expect(disabledClosed).toBe(false);
+      expect(disabledSocket.destroyed).toBe(false);
+    } finally {
+      disabledServer.closeAllConnections();
+      disabledServer.close();
+      enabledServer.closeAllConnections();
+      enabledServer.close();
+    }
+  }, 20_000);
 });

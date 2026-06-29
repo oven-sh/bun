@@ -65,6 +65,9 @@ namespace uWS
         HTTP_PARSER_ERROR_INVALID_EOF = 8,
         HTTP_PARSER_ERROR_INVALID_METHOD = 9,
         HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN = 10,
+        /* Not a parse error: a node:http headersTimeout/requestTimeout receive
+         * deadline expired before the message was fully received. */
+        HTTP_PARSER_ERROR_REQUEST_TIMEOUT = 11,
     };
 
 
@@ -1039,6 +1042,18 @@ namespace uWS
     }
 
 public:
+    /* True while a dispatched message still has body bytes outstanding
+     * (Content-Length not yet satisfied, or chunked body not terminated). */
+    bool isReceivingHttpBody() const {
+        return remainingStreamingBytes != 0;
+    }
+
+    /* True when incomplete request bytes are buffered, i.e. a message started
+     * arriving but its header section has not been fully parsed yet. */
+    bool hasPartialRequest() const {
+        return fallback.length() > 0;
+    }
+
     HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
         /* This resets BloomFilter by construction, but later we also reset it again.
         * Optimize this to skip resetting twice (req could be made global) */

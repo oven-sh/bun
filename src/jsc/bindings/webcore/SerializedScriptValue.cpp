@@ -3830,7 +3830,7 @@ private:
             // a Buffer structure so Buffer.isBuffer() is true after the round trip.
             auto* globalObject = defaultGlobalObject(m_globalObject);
             // Buffers over resizable/growable ArrayBuffers use a distinct structure;
-            // see constructFromArrayBuffer in JSBuffer.cpp.
+            // see constructBufferFromArrayBuffer in JSBuffer.cpp.
             JSC::Structure* structure = arrayBuffer->isResizableOrGrowableShared()
                 ? globalObject->JSResizableOrGrowableSharedBufferSubclassStructure()
                 : globalObject->JSBufferSubclassStructure();

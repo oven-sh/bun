@@ -113,7 +113,7 @@ var config = {
 
 **TOML loader**. Default for `.toml`.
 
-TOML files can be directly imported. Bun parses them with its native TOML parser.
+TOML files can be directly imported. Bun parses them with its fast native TOML parser.
 
 ```ts
 import config from "./bunfig.toml";
@@ -157,7 +157,7 @@ export default {
 
 **YAML loader**. Default for `.yaml` and `.yml`.
 
-YAML files can be directly imported. Bun parses them with its native YAML parser.
+YAML files can be directly imported. Bun parses them with its fast native YAML parser.
 
 ```ts
 import config from "./config.yaml";
@@ -201,7 +201,7 @@ export default {
 
 **JSON5 loader**. Default for `.json5`.
 
-JSON5 files can be directly imported. Bun parses them with its native JSON5 parser. JSON5 is a superset of JSON that adds comments, trailing commas, unquoted keys, and single-quoted strings.
+JSON5 files can be directly imported. Bun parses them with its fast native JSON5 parser. JSON5 is a superset of JSON that adds comments, trailing commas, unquoted keys, single-quoted strings, and more.
 
 ```ts
 import config from "./config.json5";

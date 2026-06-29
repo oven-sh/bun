@@ -1093,6 +1093,20 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     expect(dag).toEqual(["linkA/file.txt", "linkB/file.txt", "realdir/file.txt"]);
   });
 
+  // Symlinks to the same target in *different* subtrees are not a cycle: a
+  // followed link recorded in one subtree must not suppress its cousin.
+  test("** with followSymlinks descends cousin symlinks that share a target", () => {
+    using dir = tempDir("glob-scan-symlink-cousins", {
+      "shared/file.txt": "x",
+      "a/keep.txt": "x",
+      "b/keep.txt": "x",
+    });
+    fs.symlinkSync(path.join("..", "shared"), path.join(String(dir), "a", "link"), "dir");
+    fs.symlinkSync(path.join("..", "shared"), path.join(String(dir), "b", "link"), "dir");
+    const result = norm(Array.from(new Glob("**/*.txt").scanSync({ cwd: String(dir), followSymlinks: true })));
+    expect(result).toEqual(["a/keep.txt", "a/link/file.txt", "b/keep.txt", "b/link/file.txt", "shared/file.txt"]);
+  });
+
   test("async ** with followSymlinks does not descend into a symlink that resolves to one of its own ancestors", async () => {
     using dir = tempDir("glob-scan-symlink-self-cycle-async", {
       "top/file.txt": "x",

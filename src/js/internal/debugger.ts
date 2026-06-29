@@ -806,9 +806,11 @@ function isOriginAllowed(origin: string | null): boolean {
 
 // Host header values the /json discovery endpoints may reflect into their
 // responses: "localhost", an IPv4 literal, or a bracketed IPv6 literal, each
-// with an optional port — the same set Node's inspector accepts.
+// with an optional port — the same set Node's inspector accepts. The bracketed
+// alternative permits dots so IPv4-mapped IPv6 literals like
+// `[::ffff:127.0.0.1]` are accepted, matching uv_inet_pton(AF_INET6, ...).
 function isAllowedHostHeader(host: string): boolean {
-  return /^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:]+\])(:\d{1,5})?$/i.test(host);
+  return /^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:.]+\])(:\d{1,5})?$/i.test(host);
 }
 
 function randomId() {

@@ -3283,23 +3283,35 @@ EncodedJSValue constructBufferFromArrayBuffer(JSC::ThrowScope& throwScope, JSGlo
         double offsetD = offsetValue.toNumber(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
         if (std::isnan(offsetD)) offsetD = 0;
+        // Node range-checks the offset before truncating it, so a fractional
+        // offset past the end is out of bounds. Offsets at or below -1 must be
+        // rejected here: truncateDoubleToUint64 would wrap them.
+        if (offsetD > static_cast<double>(byteLength) || std::trunc(offsetD) < 0)
+            return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, lexicalGlobalObject, "offset"_s);
         offset = truncateDoubleToUint64(offsetD);
-        if (offset > byteLength) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, lexicalGlobalObject, "offset"_s);
         length -= offset;
     }
 
     if (!lengthValue.isUndefined()) {
         double lengthD = lengthValue.toNumber(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
-        if (std::isnan(lengthD)) lengthD = 0;
-        length = truncateDoubleToUint64(lengthD);
-        if (length > byteLength - offset) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, lexicalGlobalObject, "length"_s);
+        // Node range-checks a positive length before truncating it and clamps
+        // everything else (NaN, -0, negative) to an empty view.
+        if (lengthD > 0) {
+            if (lengthD > static_cast<double>(byteLength - offset)) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, lexicalGlobalObject, "length"_s);
+            length = truncateDoubleToUint64(lengthD);
+        } else {
+            length = 0;
+        }
     }
 
     auto isResizableOrGrowableShared = jsBuffer->isResizableOrGrowableShared();
     if (isResizableOrGrowableShared) {
         auto* subclassStructure = globalObject->JSResizableOrGrowableSharedBufferSubclassStructure();
-        auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), offset, std::nullopt);
+        // Node only returns a length-tracking Buffer when no explicit length is given.
+        std::optional<size_t> viewLength;
+        if (!lengthValue.isUndefined()) viewLength = length;
+        auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), offset, viewLength);
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!uint8Array) [[unlikely]] {
             throwOutOfMemoryError(globalObject, throwScope);

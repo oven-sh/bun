@@ -471,6 +471,10 @@ static void ssl_update_handshake(struct us_socket_t *s);
  * re-enters the SSL layer). */
 
 int passphrase_cb(char *buf, int size, int rwflag, void *u) {
+  /* No passphrase configured: behave like Node's PasswordCallback and try an
+   * empty password, so an encrypted key fails with BAD_DECRYPT instead of
+   * BoringSSL's default callback failing with BAD_PASSWORD_READ. */
+  if (u == NULL) return 0;
   const char *passphrase = (const char *)u;
   size_t passphrase_length = strlen(passphrase);
   if (passphrase_length > (size_t)size) return -1;
@@ -765,6 +769,66 @@ end:
   return ret;
 }
 
+/* Present the issuer path OpenSSL's auto-chain would build for a leaf-only
+ * certificate, so unrelated `ca` entries are never presented. Node relies on
+ * auto-chain: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1640 */
+static void add_auto_chain_from_store(SSL_CTX *ctx) {
+  X509 *leaf = SSL_CTX_get0_certificate(ctx);
+  X509_STORE *store = SSL_CTX_get_cert_store(ctx);
+  if (leaf == NULL || store == NULL) return;
+  X509_STORE_CTX *walk = X509_STORE_CTX_new();
+  if (walk == NULL) {
+    ERR_clear_error();
+    return;
+  }
+  if (X509_STORE_CTX_init(walk, store, leaf, NULL)) {
+    /* The walk only builds the chain; an unverifiable path is not an error
+     * here (OpenSSL's ssl_add_cert_chain ignores it the same way). */
+    (void)X509_verify_cert(walk);
+    STACK_OF(X509) *chain = X509_STORE_CTX_get0_chain(walk);
+    for (size_t i = 1, n = chain ? sk_X509_num(chain) : 0; i < n; i++) {
+      if (!SSL_CTX_add1_chain_cert(ctx, sk_X509_value(chain, i))) break;
+    }
+  }
+  X509_STORE_CTX_free(walk);
+  ERR_clear_error();
+}
+
+/* The context's own cert store for mutation: the process-shared root store and
+ * the still-empty SSL_CTX_new() store are first replaced by a private full
+ * default-root copy, and the context is marked so the per-socket attach keeps
+ * it. https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1831 */
+static X509_STORE *us_ssl_ctx_get_own_cert_store(SSL_CTX *ctx) {
+  X509_STORE *store = SSL_CTX_get_cert_store(ctx);
+  /* us_get_shared_default_ca_store() up-refs before returning, so release
+   * the reference taken just for this comparison. */
+  X509_STORE *shared = us_get_shared_default_ca_store();
+  int store_is_shared = store != NULL && store == shared;
+  X509_STORE_free(shared);
+  us_ex_idx_ensure();
+  int store_is_empty = 0;
+  if (store != NULL && !store_is_shared) {
+    const STACK_OF(X509_OBJECT) *objs = X509_STORE_get0_objects(store);
+    store_is_empty = objs == NULL || sk_X509_OBJECT_num(objs) == 0;
+  }
+  /* A user `ca` can legitimately add zero certificates (a key PEM is ignored,
+   * like Node), leaving an intentionally-empty pin set: only a context with
+   * no `ca` configured at all may be seeded with the default roots here. */
+  int user_ca = SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx) != NULL;
+  if (store == NULL || store_is_shared || (store_is_empty && !user_ca)) {
+    X509_STORE *own = us_get_default_ca_store();
+    if (own == NULL) {
+      return NULL;
+    }
+    SSL_CTX_set_cert_store(ctx, own);
+    store = own;
+  }
+  /* Without this marker us_internal_ssl_attach() would hand client sockets
+   * the shared default roots, discarding the store configured here. */
+  SSL_CTX_set_ex_data(ctx, us_ctx_user_ca_ex_idx, (void *)1);
+  return store;
+}
+
 static int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content, X509_STORE *store) {
   X509 *x = NULL;
   ERR_clear_error();
@@ -864,8 +928,8 @@ end:
 
 static int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
   /* Always continue; the user inspects via us_socket_verify_error after
-   * on_handshake. See SSL_verify_cb docs — returning 1 lets us defer the
-   * decision to JS without aborting mid-handshake. */
+   * on_handshake. Returning 1 defers the decision to JS without aborting
+   * mid-handshake - the same model as Node (crypto_tls.cc VerifyCallback). */
   return 1;
 }
 
@@ -920,8 +984,10 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
 #else
     SSL_CTX_set_default_passwd_cb_userdata(ssl_context, (void *)strdup(options.passphrase));
 #endif
-    SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
   }
+  /* Installed unconditionally: with no userdata it supplies an empty password
+   * (see passphrase_cb), matching Node's key-decryption error shape. */
+  SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
 
   /* Multiple identities (e.g. an RSA and an EC pair, the way Node accepts
    * arrays of key/cert or several pfx entries) must be loaded pair-wise:
@@ -1030,6 +1096,18 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
         us_verify_callback);
   }
 
+  /* A leaf-only `cert` whose intermediate arrives via `ca` or `caFile` must
+   * still present that intermediate. Node gets this from OpenSSL auto-chain;
+   * BoringSSL has none, so build the same issuer path explicitly. */
+  if ((options.ca_file_name || (options.ca && options.ca_count > 0)) &&
+      ((options.cert && options.cert_count > 0) || options.cert_file_name)) {
+    STACK_OF(X509) *existing_chain = NULL;
+    SSL_CTX_get0_chain_certs(ssl_context, &existing_chain);
+    if (existing_chain == NULL || sk_X509_num(existing_chain) == 0) {
+      add_auto_chain_from_store(ssl_context);
+    }
+  }
+
   if (options.dh_params_file_name) {
     DH *dh_2048 = NULL;
     FILE *paramfile = fopen(options.dh_params_file_name, "r");
@@ -1074,6 +1152,65 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     SSL_CTX_set_options(ssl_context, options.secure_options);
   }
 
+  if (options.crl && options.crl_count > 0) {
+    /* Mirrors Node's SecureContext::AddCRL: each PEM CRL is added to the
+     * context's OWN store (never the process-shared default root store) and
+     * CRL checking is enabled for the whole chain. */
+    X509_STORE *crl_store = us_ssl_ctx_get_own_cert_store(ssl_context);
+    if (!crl_store) {
+      *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;
+      ssl_ctx_build_fail(ssl_context);
+      return NULL;
+    }
+    for (unsigned int i = 0; i < options.crl_count; i++) {
+      BIO *crl_bio = BIO_new_mem_buf(options.crl[i], -1);
+      if (!crl_bio) {
+        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;
+        ssl_ctx_build_fail(ssl_context);
+        return NULL;
+      }
+      X509_CRL *crl = PEM_read_bio_X509_CRL(crl_bio, NULL, NULL, NULL);
+      BIO_free(crl_bio);
+      if (!crl) {
+        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;
+        ssl_ctx_build_fail(ssl_context);
+        return NULL;
+      }
+      int added = X509_STORE_add_crl(crl_store, crl);
+      X509_CRL_free(crl);
+      if (!added) {
+        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;
+        ssl_ctx_build_fail(ssl_context);
+        return NULL;
+      }
+    }
+    X509_STORE_set_flags(crl_store,
+                         X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL);
+  }
+
+  if (options.session_timeout > 0) {
+    SSL_CTX_set_timeout(ssl_context, options.session_timeout);
+  }
+
+  if (options.allow_partial_trust_chain) {
+    /* Mirrors Node's SecureContext::SetAllowPartialTrustChain, which also
+     * flags only the context's own store. A store that cannot be prepared
+     * fails context creation: the user explicitly asked for the option. */
+    X509_STORE *partial_store = us_ssl_ctx_get_own_cert_store(ssl_context);
+    if (!partial_store) {
+      ssl_ctx_build_fail(ssl_context);
+      return NULL;
+    }
+    X509_STORE_set_flags(partial_store, X509_V_FLAG_PARTIAL_CHAIN);
+  }
+
+  if (options.sigalgs) {
+    if (!SSL_CTX_set1_sigalgs_list(ssl_context, options.sigalgs)) {
+      ssl_ctx_build_fail(ssl_context);
+      return NULL;
+    }
+  }
+
   /* Surface resumable sessions through the new-session callback the way Node
    * does: for TLS 1.3 the resumable session only exists once the peer's
    * NewSessionTicket arrives, and BoringSSL only exposes it here. NO_INTERNAL
@@ -1094,40 +1231,13 @@ int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
   if (!ctx || !content) {
     return 0;
   }
-  X509_STORE *store = SSL_CTX_get_cert_store(ctx);
-  /* Clone-on-write: a context that shares the process-wide default root
-   * store must get its own copy before a CA is appended, or the addition
-   * would be visible to every other context in the process - the same
-   * root_cert_store check Node's SecureContext::AddCACert performs.
-   * us_get_shared_default_ca_store() up-refs before returning, so release
-   * the reference taken just for this comparison. */
-  X509_STORE *shared = us_get_shared_default_ca_store();
-  int store_is_shared = store && store == shared;
-  X509_STORE_free(shared);
-  /* A default context built without ca/requestCert keeps the empty store from
-   * SSL_CTX_new() (verification for it normally comes from the per-socket
-   * shared-root override). addCACert must EXTEND the default trust set the
-   * way Node does, so when the store is the shared one - or still empty -
-   * replace it with a fresh full default store (bundled roots, NODE_EXTRA_CA
-   * certificates, system CAs when enabled) before appending the user's CA. */
-  int store_is_empty = 0;
-  if (store && !store_is_shared) {
-    const STACK_OF(X509_OBJECT) *objs = X509_STORE_get0_objects(store);
-    store_is_empty = objs == NULL || sk_X509_OBJECT_num(objs) == 0;
-  }
-  if (store_is_shared || store_is_empty) {
-    X509_STORE *own = us_get_default_ca_store();
-    if (!own) {
-      return 0;
-    }
-    SSL_CTX_set_cert_store(ctx, own);
-    store = own;
-  }
+  /* addCACert must EXTEND the default trust set the way Node does: the
+   * own-store helper replaces a shared or still-empty store with a private
+   * full default-root copy before the user's CA is appended. */
+  X509_STORE *store = us_ssl_ctx_get_own_cert_store(ctx);
   if (!store) {
     return 0;
   }
-  us_ex_idx_ensure();
-  SSL_CTX_set_ex_data(ctx, us_ctx_user_ca_ex_idx, (void *)1);
   return add_ca_cert_to_ctx_store(ctx, content, store);
 }
 
@@ -1457,7 +1567,10 @@ static void ssl_park_fatal_reason(struct us_socket_t *s) {
   struct loop_ssl_data *loop_ssl_data =
       (struct loop_ssl_data *) s->group->loop->data.ssl_data;
   if (loop_ssl_data && s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
-    unsigned long ssl_queue_err = ERR_peek_last_error();
+    /* The OLDEST queued entry is the root cause and is what node reports
+     * (https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L860);
+     * later entries wrap it or belong to another socket on this thread. */
+    unsigned long ssl_queue_err = ERR_peek_error();
     if (ssl_queue_err != 0) {
       ERR_error_string_n(ssl_queue_err, loop_ssl_data->ssl_last_fatal_error,
                          sizeof(loop_ssl_data->ssl_last_fatal_error));
@@ -2236,7 +2349,8 @@ struct us_socket_t *us_socket_tls_feed(struct us_socket_t *s, const char *data, 
 struct us_socket_t *us_socket_adopt_tls(struct us_socket_t *s,
                                         struct us_socket_group_t *group,
                                         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
-                                        const char *sni, int is_client, int old_ext_size,
+                                        const char *sni, int is_client, int request_cert,
+                                        int reject_unauthorized, int old_ext_size,
                                         int ext_size) {
   if (us_socket_is_closed(s)) return NULL;
 
@@ -2247,6 +2361,15 @@ struct us_socket_t *us_socket_adopt_tls(struct us_socket_t *s,
    * `new tls.TLSSocket(acceptedSocket, { isServer: true })`); there is no
    * listener for an adopted socket, so SNI resolves from the single ssl_ctx. */
   us_internal_ssl_attach(new_s, ssl_ctx, is_client, sni, NULL);
+  if (!is_client && request_cert && new_s->ssl) {
+    /* No listener carries the verify mode here and a SecureContext's SSL_CTX
+     * is deliberately mode-neutral (see us_internal_ssl_attach): apply Node's
+     * TLSWrap::SetVerifyMode per socket so the CertificateRequest goes out. */
+    SSL_set_verify(new_s->ssl,
+                   SSL_VERIFY_PEER |
+                       (reject_unauthorized ? SSL_VERIFY_FAIL_IF_NO_PEER_CERT : 0),
+                   us_verify_callback);
+  }
   us_socket_resume(new_s);
   /* Do NOT kick the handshake or dispatch on_open here — the caller hasn't
    * repointed the ext slot yet, so any dispatch (open/handshake/close) would

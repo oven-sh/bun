@@ -71,6 +71,9 @@ pub fn create_bun_socket_error_to_js(
                 format_args!("Invalid ciphers"),
             )
             .to_js(),
+        create_bun_socket_error_t::invalid_crl => global_object
+            .err(bun_jsc::ErrorCode::BORINGSSL, format_args!("Invalid CRL"))
+            .to_js(),
     }
 }
 

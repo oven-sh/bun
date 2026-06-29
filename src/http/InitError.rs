@@ -8,6 +8,8 @@ pub enum InitError {
     InvalidCAFile,
     #[error("InvalidCA")]
     InvalidCA,
+    #[error("InvalidCRL")]
+    InvalidCRL,
 }
 
 bun_core::named_error_set!(InitError);

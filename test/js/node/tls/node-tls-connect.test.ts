@@ -747,3 +747,237 @@ it("https.request reports an impossible version window as a TLS error, not a cer
   await once(response, "end");
   expect(body).toBe("ok");
 });
+
+describe("rejectUnauthorized only treats a literal `false` as opting out", () => {
+  // Node applies `options.rejectUnauthorized !== false`, so other falsy
+  // values must keep peer verification enabled.
+  it.each([null, 0, ""])("rejects a self-signed peer when rejectUnauthorized is %p", async value => {
+    const server = tls.createServer({ ...COMMON_CERT_ }, s => s.end());
+    let client: TLSSocket | undefined;
+    try {
+      server.listen(0);
+      await once(server, "listening");
+      const { promise, resolve, reject } = Promise.withResolvers<Error & { code?: string }>();
+      client = tlsConnect({ port: (server.address() as AddressInfo).port, rejectUnauthorized: value as any }, () =>
+        reject(new Error("secureConnect must not be reached")),
+      );
+      client.on("error", resolve);
+      const error = await promise;
+      expect(error.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  it("still completes the handshake unauthorized for a literal `false`", async () => {
+    const server = tls.createServer({ ...COMMON_CERT_ }, s => s.end());
+    let client: TLSSocket | undefined;
+    try {
+      server.listen(0);
+      await once(server, "listening");
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      client = tlsConnect({ port: (server.address() as AddressInfo).port, rejectUnauthorized: false }, resolve);
+      client.on("error", reject);
+      await promise;
+      expect(client.authorized).toBe(false);
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+});
+
+it("a server using `crl` must not poison the process-wide default CA store", async () => {
+  // An mTLS server with `crl` and no `ca` shares the process-wide default
+  // root store; the CRL flags must land on a private copy or every later
+  // default-CA verification in the process fails with UNABLE_TO_GET_CRL.
+  const fixturesDir = join(import.meta.dir, "fixtures");
+  const agent6KeyPath = join(fixturesDir, "agent6-key.pem");
+  const agent6CertPath = join(fixturesDir, "agent6-cert.pem");
+  const crlPath = join(import.meta.dir, "..", "test", "fixtures", "keys", "ca2-crl.pem");
+  const script = `
+    const tls = require("node:tls");
+    const { readFileSync } = require("node:fs");
+    const { once } = require("node:events");
+    const key = readFileSync(${JSON.stringify(agent6KeyPath)}, "utf8");
+    const cert = readFileSync(${JSON.stringify(agent6CertPath)}, "utf8");
+    const crl = readFileSync(${JSON.stringify(crlPath)}, "utf8");
+    async function main() {
+      const poison = tls.createServer({ key, cert, requestCert: true, crl });
+      poison.listen(0);
+      await once(poison, "listening");
+      const server = tls.createServer({ key, cert }, s => s.end());
+      server.listen(0);
+      await once(server, "listening");
+      // No \`ca\`: relies on NODE_EXTRA_CA_CERTS reaching the default store.
+      const socket = tls.connect({ port: server.address().port, checkServerIdentity: () => undefined });
+      await once(socket, "secureConnect");
+      console.log("authorized=" + socket.authorized);
+      socket.end();
+      poison.close();
+      server.close();
+    }
+    main().catch(error => {
+      console.error(error?.code || error?.message || String(error));
+      process.exit(1);
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(fixturesDir, "ca1-cert.pem") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // stderr is drained but only surfaced on failure: debug builds may emit
+  // benign warnings, so it must never be asserted to be empty.
+  expect({ stdout: stdout.trim(), exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
+    stdout: "authorized=true",
+    exitCode: 0,
+    failureDetail: "",
+  });
+});
+
+it("a no-`ca` tls.connect({ crl }) applies the CRL to its own copy of the default roots", async () => {
+  // The context starts on SSL_CTX_new()'s empty store; it must be seeded with
+  // a private copy of the default roots that the per-socket attach keeps, so
+  // CRL checking fails closed exactly like Node (no CRL covers the ca1 chain).
+  const fixturesDir = join(import.meta.dir, "fixtures");
+  const crlPath = join(import.meta.dir, "..", "test", "fixtures", "keys", "ca2-crl.pem");
+  const script = `
+    const tls = require("node:tls");
+    const { readFileSync } = require("node:fs");
+    const { once } = require("node:events");
+    const key = readFileSync(${JSON.stringify(join(fixturesDir, "agent6-key.pem"))}, "utf8");
+    const cert = readFileSync(${JSON.stringify(join(fixturesDir, "agent6-cert.pem"))}, "utf8");
+    const crl = readFileSync(${JSON.stringify(crlPath)}, "utf8");
+    async function main() {
+      const server = tls.createServer({ key, cert }, s => s.end());
+      server.listen(0);
+      await once(server, "listening");
+      const socket = tls.connect({ port: server.address().port, checkServerIdentity: () => undefined, crl });
+      socket.on("error", error => {
+        console.log("error=" + error.code);
+        process.exit(0);
+      });
+      await once(socket, "secureConnect");
+      console.log("authorized=" + socket.authorized);
+      process.exit(0);
+    }
+    main().catch(error => {
+      console.error(error?.code || error?.message || String(error));
+      process.exit(1);
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(fixturesDir, "ca1-cert.pem") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // stderr is drained but only surfaced on failure (debug builds may warn).
+  expect({ stdout: stdout.trim(), exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
+    stdout: "error=UNABLE_TO_GET_CRL",
+    exitCode: 0,
+    failureDetail: "",
+  });
+});
+
+it("TLSSocket._requestCert follows Node's _init rule", () => {
+  // Clients always request the peer certificate; servers only when asked.
+  // Must be decided in the constructor, before a server wrap starts its
+  // upgrade: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L845-L848
+  // Like the JSStreamSocket test above, the detached wrappers are not
+  // destroyed: tearing down a never-connected duplex wrap is its own quirk.
+  const cases = [
+    new TLSSocket(new stream.PassThrough()), // client
+    new TLSSocket(new stream.PassThrough(), { isServer: true }),
+    new TLSSocket(new stream.PassThrough(), { isServer: true, requestCert: true }),
+  ];
+  expect(cases.map(s => (s as any)._requestCert)).toEqual([true, false, true]);
+});
+
+it("socket.ssl is assignable like Node's plain own property", async () => {
+  // Node assigns `this.ssl` in _init and nulls it in _destroySSL, so it must
+  // accept writes; a getter-only accessor would throw in strict mode.
+  const server = tls.createServer({ ...COMMON_CERT_ }, s => s.end());
+  let client: TLSSocket | undefined;
+  try {
+    server.listen(0);
+    await once(server, "listening");
+    const connected = Promise.withResolvers<void>();
+    client = tlsConnect({ port: (server.address() as AddressInfo).port, rejectUnauthorized: false }, connected.resolve);
+    client.on("error", connected.reject);
+    await connected.promise;
+    expect(typeof (client as any).ssl?.verifyError).toBe("function");
+    (client as any).ssl = null;
+    expect((client as any).ssl).toBeNull();
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
+it("rejects a `ca` option that contains no certificates at construction time", () => {
+  // Deliberately stricter than Node here: Node tolerates an unusable `ca`
+  // (zero certificates parse) and only fails later at verification with an
+  // empty trust store; Bun rejects the option itself, so a misconfigured pin
+  // can never silently fall back to any other roots.
+  let err: any;
+  try {
+    tls.createSecureContext({ ca: "\n" });
+  } catch (e) {
+    err = e;
+  }
+  expect(err?.message).toBe("Invalid CA");
+});
+
+it("a `ca` that parses to zero certificates is an empty pin set, never the default roots", async () => {
+  // A key PEM passed as `ca` is tolerated (like Node) and adds nothing; the
+  // resulting empty own store must fail closed instead of falling back to the
+  // default roots, which NODE_EXTRA_CA_CERTS makes able to verify this chain:
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1831
+  const fixturesDir = join(import.meta.dir, "fixtures");
+  const script = `
+    const tls = require("node:tls");
+    const { readFileSync } = require("node:fs");
+    const { once } = require("node:events");
+    const key = readFileSync(${JSON.stringify(join(fixturesDir, "agent6-key.pem"))}, "utf8");
+    const cert = readFileSync(${JSON.stringify(join(fixturesDir, "agent6-cert.pem"))}, "utf8");
+    async function main() {
+      const server = tls.createServer({ key, cert }, s => s.end());
+      server.listen(0);
+      await once(server, "listening");
+      const socket = tls.connect({
+        port: server.address().port,
+        ca: key,
+        allowPartialTrustChain: true,
+        checkServerIdentity: () => undefined,
+      });
+      socket.on("error", error => {
+        console.log("error=" + error.code);
+        server.close();
+      });
+      socket.on("secureConnect", () => {
+        console.log("secureConnect authorized=" + socket.authorized);
+        socket.end();
+        server.close();
+      });
+    }
+    main();
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(fixturesDir, "ca1-cert.pem") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
+    stdout: "error=UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+    exitCode: 0,
+    failureDetail: "",
+  });
+});

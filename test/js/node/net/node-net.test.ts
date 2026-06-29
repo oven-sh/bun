@@ -999,3 +999,182 @@ describe("paused socket whose peer sends RST", () => {
     expect(errors.map(e => e.code)).not.toContain("ENOEXEC");
   });
 });
+
+describe("net.Socket onread flow control", () => {
+  it("redelivers the rest of a chunk after the callback returns false and the socket resumes", async () => {
+    // Node never loses the bytes a pausing onread callback has not consumed
+    // (its reads are bounded by the user buffer, so they wait in the kernel
+    // until resume()): a 12-byte burst through a 4-byte buffer with a pause
+    // after the first slice must still deliver all three slices in order.
+    const server = createServer(c => c.end(Buffer.from("abcdefghijkl")));
+    const received: string[] = [];
+    const done = Promise.withResolvers<void>();
+    let socket: Socket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, () => {
+        server.off("error", listening.reject);
+        listening.resolve();
+      });
+      await listening.promise;
+      socket = createConnection({
+        port: (server.address() as import("node:net").AddressInfo).port,
+        onread: {
+          buffer: Buffer.alloc(4),
+          callback(n: number, buf: Buffer) {
+            received.push(buf.toString("latin1", 0, n));
+            if (received.length === 1) {
+              queueMicrotask(() => socket!.resume());
+              return false;
+            }
+            if (received.join("").length === 12) done.resolve();
+            return true;
+          },
+        },
+      });
+      socket.on("error", done.reject);
+      socket.on("close", () => done.reject(new Error(`closed before all data was delivered: ${received.join("|")}`)));
+      await done.promise;
+      expect(received).toEqual(["abcd", "efgh", "ijkl"]);
+    } finally {
+      socket?.destroy();
+      server.close();
+    }
+  });
+});
+
+describe("net.Socket onread with a zero-length buffer", () => {
+  // Node installs the zero-length buffer and libuv then reports ENOBUFS for
+  // the read ("user can't handle the read"), destroying the socket: it is
+  // neither a validation error nor an infinite delivery loop.
+  it.each(["static buffer", "buffer factory"])("errors with ENOBUFS (%s)", async kind => {
+    const { promise, resolve, reject } = Promise.withResolvers<Error & { code?: string; syscall?: string }>();
+    const server = createServer(c => c.end("some data"));
+    let socket: Socket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, () => {
+        server.off("error", listening.reject);
+        listening.resolve();
+      });
+      await listening.promise;
+      socket = createConnection({
+        port: (server.address() as import("node:net").AddressInfo).port,
+        onread: {
+          buffer: kind === "static buffer" ? Buffer.alloc(0) : () => Buffer.alloc(0),
+          callback: () => reject(new Error("onread callback must not be invoked")),
+        },
+      });
+      socket.on("error", resolve);
+      socket.on("close", () => reject(new Error("closed without emitting an error")));
+      const error = await promise;
+      expect({ message: error.message, code: error.code, syscall: error.syscall, destroyed: socket.destroyed }).toEqual(
+        { message: "read ENOBUFS", code: "ENOBUFS", syscall: "read", destroyed: true },
+      );
+    } finally {
+      socket?.destroy();
+      server.close();
+    }
+  });
+});
+
+it("onread: nothing is delivered between a false return and resume()", async () => {
+  // Node's readStop contract: after the callback returns false the callback
+  // does not fire again until resume(), even when more data arrives meanwhile.
+  const serverSockets: Socket[] = [];
+  const server = createServer(c => {
+    serverSockets.push(c);
+    c.write("aaaa");
+  });
+  const received: string[] = [];
+  const done = Promise.withResolvers<void>();
+  const firstDelivery = Promise.withResolvers<void>();
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, () => listening.resolve());
+    await listening.promise;
+    client = createConnection({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      onread: {
+        buffer: Buffer.alloc(64),
+        callback(n: number, buf: Buffer) {
+          received.push(buf.toString("latin1", 0, n));
+          if (received.length === 1) {
+            firstDelivery.resolve();
+            return false;
+          }
+          if (received.join("").length === 12) done.resolve();
+          return true;
+        },
+      },
+    });
+    client.on("error", done.reject);
+    await firstDelivery.promise;
+    // More data arrives while paused; flush it and give the client's loop
+    // turns to (incorrectly) deliver it before checking nothing fired.
+    await new Promise<void>(resolve => serverSockets[0].end("bbbbcccc", () => resolve()));
+    for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve));
+    expect(received).toEqual(["aaaa"]);
+    client.resume();
+    await done.promise;
+    expect(received.join("")).toBe("aaaabbbbcccc");
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
+it("onread: a false return on the last slice of a redelivered tail stays paused until resume()", async () => {
+  // Node's readStop contract holds for every false return
+  // (stream_base_commons.js#L176-L198): draining the queued tail must not
+  // auto-resume the handle when its final slice returns false.
+  const serverSockets: Socket[] = [];
+  const server = createServer(c => {
+    serverSockets.push(c);
+    c.write("abcdefgh"); // two slices for the client's 4-byte onread buffer
+  });
+  const received: string[] = [];
+  const firstDelivery = Promise.withResolvers<void>();
+  const secondDelivery = Promise.withResolvers<void>();
+  const done = Promise.withResolvers<void>();
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, () => listening.resolve());
+    await listening.promise;
+    client = createConnection({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      onread: {
+        buffer: Buffer.alloc(4),
+        callback(n: number, buf: Buffer) {
+          received.push(buf.toString("latin1", 0, n));
+          if (received.length === 1) firstDelivery.resolve();
+          if (received.length === 2) secondDelivery.resolve();
+          if (received.length === 3) done.resolve();
+          return false;
+        },
+      },
+    });
+    client.on("error", done.reject);
+    await firstDelivery.promise;
+    client.resume();
+    await secondDelivery.promise;
+    expect(received).toEqual(["abcd", "efgh"]);
+    // Paused by the second false (an empty tail): later data must wait for
+    // the next resume() even though the queued tail was fully consumed.
+    await new Promise<void>(resolve => serverSockets[0].end("wxyz", () => resolve()));
+    for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve));
+    expect(received).toEqual(["abcd", "efgh"]);
+    client.resume();
+    await done.promise;
+    expect(received).toEqual(["abcd", "efgh", "wxyz"]);
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});

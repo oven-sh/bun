@@ -3527,6 +3527,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                 &mut *((*tls_ptr).owned_ssl_ctx.get().unwrap()),
                 sni,
                 !is_server,
+                // A server-side upgrade applies these per socket: the
+                // SecureContext's SSL_CTX is mode-neutral on purpose.
+                cfg.is_some_and(|c| c.request_cert != 0),
+                cfg.is_some_and(|c| c.reject_unauthorized != 0),
                 core::mem::size_of::<*mut c_void>() as i32,
                 core::mem::size_of::<*mut c_void>() as i32,
             )

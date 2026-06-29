@@ -287,6 +287,12 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     ),
     parse_param!("--use-openssl-ca                  Use OpenSSL's default CA store"),
     parse_param!("--use-bundled-ca                  Use bundled CA store"),
+    parse_param!("--tls-min-v1.0                    Set the default TLS minimum to TLSv1.0"),
+    parse_param!("--tls-min-v1.1                    Set the default TLS minimum to TLSv1.1"),
+    parse_param!("--tls-min-v1.2                    Set the default TLS minimum to TLSv1.2"),
+    parse_param!("--tls-min-v1.3                    Set the default TLS minimum to TLSv1.3"),
+    parse_param!("--tls-max-v1.2                    Set the default TLS maximum to TLSv1.2"),
+    parse_param!("--tls-max-v1.3                    Set the default TLS maximum to TLSv1.3"),
     parse_param!("--redis-preconnect                Preconnect to $REDIS_URL at startup"),
     parse_param!("--sql-preconnect                  Preconnect to PostgreSQL at startup"),
     parse_param!(
@@ -1330,6 +1336,17 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             // `Bun__Node__UseSystemCA` is written unconditionally,
             // even when no CA flag/env was supplied (default bundled ⇒ false).
             Bun__Node__UseSystemCA.store(false, core::sync::atomic::Ordering::Relaxed);
+        }
+
+        // Node refuses --tls-min-v1.3 together with --tls-max-v1.2 at option
+        // parse time, before any module loads (the constraint is checked in
+        // node_options.cc). The flags themselves are read by node:tls when it
+        // loads; only the conflict is enforced here.
+        if args.flag(b"--tls-min-v1.3") && args.flag(b"--tls-max-v1.2") {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --tls-min-v1.3 sets default TLS minimum to TLSv1.3 and is not compatible with --tls-max-v1.2, which sets default TLS maximum to TLSv1.2; use one or the other, not both"
+            );
+            Global::exit(1);
         }
     }
 

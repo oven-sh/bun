@@ -191,6 +191,7 @@ pub(super) mod ffi {
             mode: c_int,
             callback: super::boringssl::SSL_verify_cb,
         );
+        pub(crate) safe fn SSL_is_server(ssl: &SSL) -> c_int;
         // Opaque-ZST `&SSL` + opaque `*mut c_void` payload (BoringSSL stores
         // it verbatim, never derefs) ⇒ no caller-side precondition.
         pub(crate) safe fn SSL_set_ex_data(ssl: &SSL, idx: c_int, data: *mut c_void) -> c_int;
@@ -456,9 +457,13 @@ pub(super) fn get_peer_certificate(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
+    // `this.is_server()` reflects the handlers' mode, which stays client-mode
+    // for a socket adopted by `upgradeTLS` (the STARTTLS wrap); the SSL knows
+    // which side of the handshake it actually ran.
+    let is_server_ssl = ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) != 0;
 
     if abbreviated {
-        if this.is_server() {
+        if is_server_ssl {
             // SSL_get_peer_certificate returns a +1 reference; we must free it.
             // X509::to_js only borrows the pointer (X509View is non-owning).
             let cert = ffi::SSL_get_peer_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
@@ -481,7 +486,7 @@ pub(super) fn get_peer_certificate(
     }
 
     let mut cert: *mut boringssl::X509 = core::ptr::null_mut();
-    if this.is_server() {
+    if is_server_ssl {
         // SSL_get_peer_certificate returns a +1 reference; we must free it.
         cert = ffi::SSL_get_peer_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
     }
@@ -1013,14 +1018,14 @@ pub(super) fn get_ephemeral_key_info(
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // only available for clients
-    if this.is_server() {
-        return Ok(JSValue::NULL);
-    }
-
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::NULL);
     };
+    // Only available for clients. The SSL knows its own handshake side (the
+    // handlers' mode stays client-mode for `upgradeTLS`-adopted servers).
+    if ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) != 0 {
+        return Ok(JSValue::NULL);
+    }
     let result = JSValue::create_empty_object(global, 0);
 
     // TODO: investigate better option or compatible way to get the key

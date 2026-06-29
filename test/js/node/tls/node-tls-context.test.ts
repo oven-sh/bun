@@ -3,6 +3,8 @@
 
 import { describe, expect, it } from "bun:test";
 
+import { tempDir } from "harness";
+import { X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -498,4 +500,120 @@ describe("Bun.serve SNI", () => {
       ).toBe(true);
     }
   });
+});
+
+describe("server certificate chain built from `ca`", () => {
+  // Node never presents the whole `ca` set: OpenSSL auto-chain walks the
+  // trust store from the leaf and sends only the resulting issuer path.
+  it("does not present `ca` entries unrelated to the leaf's issuer chain", async () => {
+    // agent6-cert.pem is the agent6 leaf followed by the ca3 intermediate
+    // that signed it; ca2 is a trust anchor unrelated to that chain.
+    const [agent6Leaf, ca3Cert] = agent6Cert.split(/(?=-----BEGIN CERTIFICATE-----)/);
+    const ca2Serial = new X509Certificate(ca2).serialNumber.toUpperCase();
+    const ca3Serial = new X509Certificate(ca3Cert).serialNumber.toUpperCase();
+    const server = tls.createServer({ key: agent6Key, cert: agent6Leaf, ca: [ca3Cert, ca2] }, s => s.end());
+    // Any server-side failure must reject the awaited steps below instead of
+    // letting the test hang to the suite timeout.
+    const failure = Promise.withResolvers<never>();
+    server.on("error", failure.reject);
+    server.on("tlsClientError", failure.reject);
+    let socket: tls.TLSSocket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.listen(0, listening.resolve);
+      await Promise.race([listening.promise, failure.promise]);
+      const secured = Promise.withResolvers<void>();
+      socket = tls.connect(
+        {
+          port: (server.address() as AddressInfo).port,
+          rejectUnauthorized: false,
+          checkServerIdentity: () => undefined,
+        },
+        secured.resolve,
+      );
+      socket.on("error", secured.reject);
+      await Promise.race([secured.promise, failure.promise]);
+      const presentedSerials: string[] = [];
+      let current: any = socket.getPeerCertificate(true);
+      while (current) {
+        presentedSerials.push(String(current.serialNumber).toUpperCase());
+        const issuer = current.issuerCertificate;
+        if (!issuer || issuer === current) break;
+        current = issuer;
+      }
+      expect(presentedSerials).toContain(ca3Serial);
+      expect(presentedSerials).not.toContain(ca2Serial);
+    } finally {
+      socket?.destroy();
+      server.close();
+    }
+  });
+
+  it("presents the issuer path when the leaf and intermediate are loaded from files", async () => {
+    // Same auto-chain rule for the `certFile`/`caFile` loading path.
+    const [agent6Leaf, ca3Cert] = agent6Cert.split(/(?=-----BEGIN CERTIFICATE-----)/);
+    const ca3Serial = new X509Certificate(ca3Cert).serialNumber.toUpperCase();
+    using dir = tempDir("tls-cafile-chain", {
+      "leaf.pem": agent6Leaf,
+      "ca3.pem": ca3Cert,
+      "key.pem": agent6Key,
+    });
+    using server = Bun.serve({
+      port: 0,
+      tls: {
+        keyFile: join(String(dir), "key.pem"),
+        certFile: join(String(dir), "leaf.pem"),
+        caFile: join(String(dir), "ca3.pem"),
+      },
+      fetch: () => new Response("ok"),
+    });
+    const secured = Promise.withResolvers<void>();
+    const socket = tls.connect(
+      { port: server.port, rejectUnauthorized: false, checkServerIdentity: () => undefined },
+      secured.resolve,
+    );
+    socket.on("error", secured.reject);
+    try {
+      await secured.promise;
+      const presentedSerials: string[] = [];
+      let current: any = socket.getPeerCertificate(true);
+      while (current) {
+        presentedSerials.push(String(current.serialNumber).toUpperCase());
+        const issuer = current.issuerCertificate;
+        if (!issuer || issuer === current) break;
+        current = issuer;
+      }
+      expect(presentedSerials).toContain(ca3Serial);
+    } finally {
+      socket.destroy();
+    }
+  });
+});
+
+it("rejects an unsupported ecdhCurve with Node's error shape", () => {
+  // Node: THROW_ERR_CRYPTO_OPERATION_FAILED sets `code` without renaming the
+  // error, so String(err) still matches the upstream tests' /Error: .../ regex:
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1973-L1975
+  let err: any;
+  try {
+    tls.createSecureContext({ ecdhCurve: "not-a-real-curve" });
+  } catch (e) {
+    err = e;
+  }
+  expect({ name: err?.name, code: err?.code, message: err?.message, text: String(err) }).toEqual({
+    name: "Error",
+    code: "ERR_CRYPTO_OPERATION_FAILED",
+    message: "Failed to set ECDH curve",
+    text: "Error: Failed to set ECDH curve",
+  });
+});
+
+it("validates sigalgs on every secure context like Node's configSecureContext", () => {
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L213-L217
+  expect(() => tls.createSecureContext({ sigalgs: "" })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+  );
+  expect(() => tls.createSecureContext({ sigalgs: 42 as never })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+  );
 });

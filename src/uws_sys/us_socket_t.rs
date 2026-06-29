@@ -281,6 +281,8 @@ impl us_socket_t {
         ssl_ctx: &mut SslCtx,
         sni: Option<&core::ffi::CStr>,
         is_client: bool,
+        request_cert: bool,
+        reject_unauthorized: bool,
         old_ext: i32,
         new_ext: i32,
     ) -> Option<NonNull<us_socket_t>> {
@@ -294,6 +296,8 @@ impl us_socket_t {
                 ssl_ctx,
                 sni.map_or(ptr::null(), |s| s.as_ptr()),
                 is_client as i32,
+                request_cert as i32,
+                reject_unauthorized as i32,
                 old_ext,
                 new_ext,
             ))
@@ -585,6 +589,8 @@ mod c {
             ssl_ctx: *mut SslCtx,
             sni: *const c_char,
             is_client: i32,
+            request_cert: i32,
+            reject_unauthorized: i32,
             old_ext_size: i32,
             ext_size: i32,
         ) -> *mut us_socket_t;

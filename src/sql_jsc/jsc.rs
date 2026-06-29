@@ -142,6 +142,9 @@ pub(crate) fn create_bun_socket_error_to_js(
         E::invalid_ciphers => global
             .err(ErrorCode::BORINGSSL, format_args!("Invalid ciphers"))
             .to_js(),
+        E::invalid_crl => global
+            .err(ErrorCode::BORINGSSL, format_args!("Invalid CRL"))
+            .to_js(),
     }
 }
 

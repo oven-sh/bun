@@ -3980,12 +3980,13 @@ fn encode_form_data_component(bytes: &[u8], component: FormDataComponent) -> Opt
     let escape = component != FormDataComponent::StringValue;
     let normalize = component != FormDataComponent::Filename;
     // Only the bytes a transform rewrites are needles; for a string value a
-    // `"` stays literal and must not force a copy. With >= 2 needles
-    // `bun_core::immutable::index_of_any` uses the highway SIMD scan.
+    // `"` stays literal and must not force a copy.
     let needles: &'static [u8] = if escape { b"\"\r\n" } else { b"\r\n" };
 
-    // The first scan doubles as the "needs a copy at all?" fast path.
-    let mut i = bun_core::immutable::index_of_any(bytes, needles)? as usize;
+    // SIMD scan; the first hit doubles as the "needs a copy at all?" fast
+    // path. `highway` directly: `bun_core::immutable::index_of_any` narrows
+    // the index to `u32`, which a multi-GiB string value can overflow.
+    let mut i = bun_highway::index_of_any_char(bytes, needles)?;
     let mut remain = bytes;
     let mut out = Vec::with_capacity(bytes.len() + 8);
     loop {
@@ -4006,8 +4007,8 @@ fn encode_form_data_component(bytes: &[u8], component: FormDataComponent) -> Opt
             _ => out.extend_from_slice(b"%0A"),
         }
         remain = &remain[i + consumed..];
-        match bun_core::immutable::index_of_any(remain, needles) {
-            Some(next) => i = next as usize,
+        match bun_highway::index_of_any_char(remain, needles) {
+            Some(next) => i = next,
             None => break,
         }
     }

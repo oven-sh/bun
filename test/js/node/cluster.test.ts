@@ -203,10 +203,13 @@ const requestCount = 8;
 if (cluster.isPrimary) {
   const reported = [];
   const listening = [];
-  const { promise: allReady, resolve: ready } = Promise.withResolvers();
+  const { promise: allReady, resolve: ready, reject: fail } = Promise.withResolvers();
   const check = () => {
     if (reported.length === workerCount && listening.length === workerCount) ready();
   };
+  cluster.on("exit", (worker, code, signal) => {
+    fail(new Error("worker " + worker.id + " exited before readiness (" + (signal ?? code) + ")"));
+  });
   cluster.on("message", (worker, message) => {
     reported.push(message.port);
     check();
@@ -217,10 +220,25 @@ if (cluster.isPrimary) {
   });
   for (let i = 0; i < workerCount; i++) cluster.fork();
   await allReady;
+  cluster.removeAllListeners("exit");
+  cluster.removeAllListeners("message");
+  cluster.removeAllListeners("listening");
+
+  const port = reported[0];
+
+  // A worker whose listen(0) arrives after the port is already resolved takes
+  // the primary handle's answered-up-front path (the same one every worker of
+  // a fixed-port server takes) and must join P, not bind a fresh port.
+  const { promise: lateReady, resolve: lateDone, reject: lateFail } = Promise.withResolvers();
+  const late = cluster.fork();
+  late.on("message", lateDone);
+  late.on("exit", (code, signal) => {
+    lateFail(new Error("late worker exited before listening (" + (signal ?? code) + ")"));
+  });
+  const lateReport = await lateReady;
 
   // Every request to the one reported port must be answered by a worker: the
   // primary never owns a competing socket that would swallow connections.
-  const port = reported[0];
   let served = 0;
   for (let i = 0; i < requestCount; i++) {
     let body;
@@ -244,6 +262,7 @@ if (cluster.isPrimary) {
       distinctReportedPorts: new Set(reported).size,
       distinctListeningPorts: new Set(listening).size,
       listeningMatchesReported: new Set([...reported, ...listening]).size === 1,
+      lateWorkerSharesPort: lateReport.port === port,
       served,
     }),
   );
@@ -288,6 +307,7 @@ test.concurrent.each(["net", "http"])(
       distinctReportedPorts: 1,
       distinctListeningPorts: 1,
       listeningMatchesReported: true,
+      lateWorkerSharesPort: true,
       served: 8,
     });
     expect(exitCode).toBe(0);

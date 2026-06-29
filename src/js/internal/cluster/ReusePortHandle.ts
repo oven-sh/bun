@@ -1,15 +1,6 @@
-// Node's cluster primary owns a single listening socket per server key and
-// hands accepted connections to workers over IPC (RoundRobinHandle), or shares
-// the listening fd itself (SharedHandle). Bun cannot send socket handles over
-// IPC yet, so every worker instead binds its own SO_REUSEPORT socket and the
-// kernel load-balances between them. The primary never binds anything; this
-// class only makes every worker of a key agree on one port.
-//
-// Fixed ports and pipe paths are known up front, so `add` answers immediately.
-// For listen(0) the first worker to ask is told to bind port 0 itself; the
-// kernel-assigned port comes back through that worker's `listening` message
-// (primary.ts forwards it to `onListening`), and every worker that asked in
-// the meantime waits in `pending` until then.
+// Bun cannot pass socket handles from a cluster primary to workers over IPC
+// (Node's RoundRobinHandle/SharedHandle need that), so every worker binds its
+// own SO_REUSEPORT socket; this class only makes them all agree on one port.
 export default class ReusePortHandle {
   key;
   // Every live worker sharing this key, keyed by worker id.

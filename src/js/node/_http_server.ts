@@ -495,12 +495,12 @@ Server.prototype.listen = function () {
     // what makes the workers agree on one port: for listen(0) the primary
     // records the first worker's kernel-assigned port and hands it to the
     // rest. See internal/cluster/ReusePortHandle.ts.
-    // Node keys the handle on the host (or the resolved path, with port -1,
-    // for pipes) and reports it back through cluster's `listening` event.
+    // Node keys the handle on the host (or the resolved path, with port -1 and
+    // addressType -1, for pipes) and reports it through cluster's `listening`.
     const serverQuery = {
       address: socketPath != null ? socketPath : (host ?? null),
       port: socketPath != null ? -1 : port,
-      addressType: 4,
+      addressType: socketPath != null ? -1 : 4,
       fd: undefined,
       flags: 0,
     };

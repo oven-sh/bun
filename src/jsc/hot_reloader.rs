@@ -1155,132 +1155,118 @@ where
                             }
                         }
 
-                        if let Some(dir_ent) = entries_option {
-                            // SAFETY: dir_ent points into rfs.entries (or a tombstoned copy);
-                            // both outlive this loop iteration.
-                            let dir_ent = unsafe { &mut *dir_ent };
-                            let mut last_file_hash: bun_watcher::HashType =
-                                bun_watcher::HashType::MAX;
+                        // Map each changed name onto the watchlist by joining it to the
+                        // watched directory's path. The per-file watch cannot be relied
+                        // on here: it follows the inode, so a file replaced by an atomic
+                        // save (write temp + rename) stops reporting the moment the
+                        // rename lands, and this directory event is the only signal left.
+                        // The resolver's directory cache (`entries_option`) can't be the
+                        // source of truth either: its `abs_path` is populated lazily per
+                        // cache generation, so after any unrelated write in the directory
+                        // busts it, already-watched files map to an empty path and the
+                        // reload used to be dropped (leaving the file unwatched forever).
+                        let mut last_file_hash: bun_watcher::HashType = bun_watcher::HashType::MAX;
+                        let dir_path = strings::trim_right(file_path, &[SEP]);
 
-                            for i in 0..affected_len {
-                                let changed_name: &[u8] = if IS_KQUEUE {
-                                    affected_kqueue[i]
-                                } else {
-                                    affected_inotify[i].unwrap().as_bytes()
-                                };
-                                if changed_name.is_empty()
-                                    || changed_name[0] == b'~'
-                                    || changed_name[0] == b'.'
+                        for i in 0..affected_len {
+                            let changed_name: &[u8] = if IS_KQUEUE {
+                                affected_kqueue[i]
+                            } else {
+                                match affected_inotify[i] {
+                                    Some(z) => z.as_bytes(),
+                                    None => continue,
+                                }
+                            };
+                            if changed_name.is_empty()
+                                || changed_name[0] == b'~'
+                                || changed_name[0] == b'.'
+                            {
+                                continue;
+                            }
+
+                            // `ctx` is a BACKREF that outlives the reloader.
+                            let loader = self
+                                .ctx
+                                .get_loaders()
+                                .get(PathName::find_extname(changed_name))
+                                .copied()
+                                .unwrap_or(bun_ast::Loader::File);
+                            if loader == bun_ast::Loader::File {
+                                continue;
+                            }
+
+                            // The resolver must re-stat this entry on its next
+                            // resolution. Bookkeeping only; never gates the reload.
+                            if let Some(dir_ent) = entries_option {
+                                // SAFETY: dir_ent points into rfs.entries (or a tombstoned
+                                // copy); both outlive this loop iteration.
+                                if let Fs::EntriesOption::Entries(dir_entries) =
+                                    unsafe { &*dir_ent }
+                                    && let Some(file_ent) = dir_entries.get(changed_name)
                                 {
+                                    let ent = file_ent.entry();
+                                    // Every cached-`Entry` rewrite takes the per-entry mutex.
+                                    let _entry_guard = ent.mutex.lock_guard();
+                                    ent.set_cache_fd(Fd::INVALID);
+                                    ent.need_stat.set(true);
+                                }
+                            }
+
+                            if dir_path.len() + 1 + changed_name.len()
+                                >= _on_file_update_path_buf.len()
+                            {
+                                continue;
+                            }
+                            _on_file_update_path_buf[0..dir_path.len()].copy_from_slice(dir_path);
+                            _on_file_update_path_buf[dir_path.len()] = SEP;
+                            _on_file_update_path_buf
+                                [dir_path.len() + 1..dir_path.len() + 1 + changed_name.len()]
+                                .copy_from_slice(changed_name);
+                            let changed_path: &[u8] = &_on_file_update_path_buf
+                                [0..dir_path.len() + 1 + changed_name.len()];
+                            let file_hash = Watcher::get_hash(changed_path);
+
+                            // skip consecutive duplicates
+                            if last_file_hash == file_hash {
+                                continue;
+                            }
+                            last_file_hash = file_hash;
+
+                            for (entry_id, hash) in hashes.iter().enumerate() {
+                                if *hash != file_hash {
                                     continue;
                                 }
-
-                                // `ctx` is a BACKREF that outlives the reloader.
-                                let loader = self
-                                    .ctx
-                                    .get_loaders()
-                                    .get(PathName::find_extname(changed_name))
-                                    .copied()
-                                    .unwrap_or(bun_ast::Loader::File);
-                                // Note: the post-assignment `_ = prev_entry_id`
-                                // below documents the intentional dead store.
-                                let mut prev_entry_id: usize = usize::MAX;
-                                if loader != bun_ast::Loader::File {
-                                    // Both arms of `'brk` assign these before
-                                    // any read.
-                                    let path_string: bun_ptr::Interned;
-                                    let file_hash: bun_watcher::HashType;
-                                    let abs_path: &[u8] = 'brk: {
-                                        if let Some(file_ent) = dir_ent.entries().get(changed_name)
-                                        {
-                                            // reset the file descriptor
-                                            let ent = file_ent.entry();
-                                            {
-                                                // Every cached-`Entry` rewrite takes
-                                                // the per-entry mutex.
-                                                let _entry_guard = ent.mutex.lock_guard();
-                                                ent.set_cache_fd(Fd::INVALID);
-                                                ent.need_stat.set(true);
-                                            }
-                                            path_string = ent.abs_path;
-                                            file_hash = Watcher::get_hash(path_string.as_bytes());
-                                            for (entry_id, hash) in hashes.iter().enumerate() {
-                                                if *hash == file_hash {
-                                                    if file_descriptors[entry_id].is_valid() {
-                                                        if prev_entry_id != entry_id {
-                                                            record_changed_path(
-                                                                path_string.as_bytes(),
-                                                            );
-                                                            current_task.append(hashes[entry_id]);
-                                                            if self.verbose {
-                                                                Self::debug(format_args!(
-                                                                    "Removing file: {}",
-                                                                    bstr::BStr::new(
-                                                                        path_string.as_bytes()
-                                                                    )
-                                                                ));
-                                                            }
-                                                            ctx.remove_at_index(
-                                                                bun_watcher::Kind::File,
-                                                                entry_id as u16,
-                                                                0,
-                                                                &[],
-                                                            );
-                                                        }
-                                                    }
-
-                                                    prev_entry_id = entry_id;
-                                                    _ = prev_entry_id;
-                                                    break;
-                                                }
-                                            }
-
-                                            break 'brk path_string.as_bytes();
-                                        } else {
-                                            let file_path_without_trailing_slash =
-                                                strings::trim_right(file_path, &[SEP]);
-                                            _on_file_update_path_buf
-                                                [0..file_path_without_trailing_slash.len()]
-                                                .copy_from_slice(file_path_without_trailing_slash);
-                                            _on_file_update_path_buf
-                                                [file_path_without_trailing_slash.len()] = SEP;
-
-                                            // The separator written at index `len` is
-                                            // immediately overwritten by the
-                                            // `changed_name` copy, and the slice takes
-                                            // one stale byte past the copy. Deliberate:
-                                            // changing it would change the resulting
-                                            // path hash.
-                                            _on_file_update_path_buf
-                                                [file_path_without_trailing_slash.len()
-                                                    ..file_path_without_trailing_slash.len()
-                                                        + changed_name.len()]
-                                                .copy_from_slice(changed_name);
-                                            let path_slice = &_on_file_update_path_buf[0
-                                                ..file_path_without_trailing_slash.len()
-                                                    + changed_name.len()
-                                                    + 1];
-                                            file_hash = Watcher::get_hash(path_slice);
-                                            break 'brk path_slice;
-                                        }
-                                    };
-
-                                    // skip consecutive duplicates
-                                    if last_file_hash == file_hash {
-                                        continue;
-                                    }
-                                    last_file_hash = file_hash;
-
+                                if file_descriptors[entry_id].is_valid() {
+                                    let watched_path: &[u8] = &file_paths[entry_id];
+                                    record_changed_path(watched_path);
+                                    current_task.append(file_hash);
                                     if self.verbose {
                                         Self::debug(format_args!(
-                                            "File change: {}",
-                                            bstr::BStr::new(bun_paths::resolve_path::relative(
-                                                fs.top_level_dir,
-                                                abs_path,
-                                            ))
+                                            "Removing file: {}",
+                                            bstr::BStr::new(watched_path)
                                         ));
                                     }
+                                    // The entry's watch (and cached fd) may point at the
+                                    // replaced inode; evict it so the reload re-arms a
+                                    // watch on the current one.
+                                    ctx.remove_at_index(
+                                        bun_watcher::Kind::File,
+                                        entry_id as u16,
+                                        0,
+                                        &[],
+                                    );
                                 }
+                                break;
+                            }
+
+                            if self.verbose {
+                                Self::debug(format_args!(
+                                    "File change: {}",
+                                    bstr::BStr::new(bun_paths::resolve_path::relative(
+                                        fs.top_level_dir,
+                                        changed_path
+                                    ))
+                                ));
                             }
                         }
 

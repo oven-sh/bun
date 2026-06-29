@@ -1115,4 +1115,24 @@ describe.concurrent("process.nextTick interleaving with the microtask queue", ()
     );
     expect(result).toEqual({ order: ["p1", "p2", "p3", "tick1"], stderr: "", exitCode: 0 });
   });
+
+  // Long after the one-shot top-level checkpoint, a lazily required module leaves the checkpoint
+  // flag set with nothing to consume it. An enterWith in a later microtask must not read that
+  // stale flag and drain nextTick ahead of the microtask queue.
+  it("steady-state AsyncLocalStorage.enterWith after a lazy require does not preempt", async () => {
+    const result = await runFresh(
+      "file",
+      `const { AsyncLocalStorage } = require("async_hooks");
+       const als = new AsyncLocalStorage();
+       process.nextTick(() => {});
+       setImmediate(() => {
+         require("./dep.js");
+         const L = [];
+         Promise.resolve().then(() => { L.push("p1"); process.nextTick(() => L.push("tick")); als.enterWith({}); });
+         Promise.resolve().then(() => L.push("p2"));
+         setImmediate(() => console.log(JSON.stringify(L)));
+       });`,
+    );
+    expect(result).toEqual({ order: ["p1", "p2", "tick"], stderr: "", exitCode: 0 });
+  });
 });

@@ -363,14 +363,18 @@ extern "C" JSC::EncodedJSValue BunObject__createBunStdout(JSC::JSGlobalObject*);
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 {
     auto* globalObject = defaultGlobalObject();
-    // moduleLoaderEvaluate marks the microtask that ran a module graph's top-level code.
+    // moduleLoaderEvaluate / evaluateCommonJSModuleOnce mark the microtask that ran a module
+    // graph's top-level code. Consume the mark even after the handoff so it can't go stale.
     bool atModuleTopLevelBoundary = std::exchange(globalObject->nextTickQueueCheckpointAtEndOfMicrotask, false);
+    if (globalObject->nextTickQueueHandoffDone)
+        return;
     if (auto queue = globalObject->m_nextTickQueue.get()) {
         // Node runs nextTick callbacks queued by the main script's top-level code before the
         // promise jobs it queued, but drains the whole microtask queue before nextTick callbacks
         // queued from inside an ordinary microtask; Bun runs both inside the microtask queue.
         if (!atModuleTopLevelBoundary && !vm.defaultMicrotaskQueue().isEmpty())
             return;
+        globalObject->nextTickQueueHandoffDone = true;
         globalObject->resetOnEachMicrotaskTick();
         queue->drain(vm, globalObject);
     }
@@ -381,10 +385,9 @@ static void cleanupAsyncHooksData(JSC::VM& vm)
     auto* globalObject = defaultGlobalObject();
     globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
     globalObject->asyncHooksNeedsCleanup = false;
-    // Hand the slot back to the bootstrap hook unconditionally: the nextTick queue can now exist
-    // with its handoff still deferred to the end of the microtask queue. The hook nulls itself
-    // out via resetOnEachMicrotaskTick once that handoff happens, so this stays one-shot.
-    vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
+    // Put the bootstrap hook (or nothing, once its one-shot handoff is done) back in the slot
+    // this cleanup step borrowed, then give it the microtask boundary it would otherwise miss.
+    globalObject->resetOnEachMicrotaskTick();
     checkIfNextTickWasCalledDuringMicrotask(vm);
 }
 
@@ -429,7 +432,7 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
     if (this->asyncHooksNeedsCleanup) {
         vm.setOnEachMicrotaskTick(&cleanupAsyncHooksData);
     } else {
-        if (this->m_nextTickQueue) {
+        if (this->nextTickQueueHandoffDone) {
             vm.setOnEachMicrotaskTick(nullptr);
         } else {
             vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);

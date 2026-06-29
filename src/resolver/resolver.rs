@@ -4472,6 +4472,26 @@ impl<'a> Resolver<'a> {
                             {
                                 return Ok(None);
                             }
+                            // A permission-denied ANCESTOR (queue not yet at the
+                            // requested directory) exists but cannot be
+                            // enumerated. Sandboxed processes (e.g. a Windows
+                            // AppContainer) hit this for every walk on the
+                            // system drive: `C:\` and the profile dirs carry no
+                            // ACE for the container, while the project tree
+                            // does. Treat the ancestor as an opaque, empty
+                            // directory and keep walking instead of failing the
+                            // whole resolution; nothing above the readable tree
+                            // can contribute a package.json or node_modules
+                            // anyway. Errors on the requested directory itself
+                            // stay fatal.
+                            if queue_slice_len > 0
+                                && (err == bun_core::err!("EPERM")
+                                    || err == bun_core::err!("EACCES")
+                                    || err == bun_core::err!("AccessDenied")
+                                    || err == bun_core::err!("PermissionDenied"))
+                            {
+                                break 'open_dir FD::INVALID;
+                            }
                             let cached_dir_entry_result = rfs!()
                                 .entries
                                 .get_or_put(queue_top_unsafe_path)
@@ -4506,7 +4526,9 @@ impl<'a> Resolver<'a> {
                 }
             };
 
-            if !queue_top.fd.is_valid() {
+            // `open_dir` is INVALID for a permission-denied ancestor treated as
+            // an opaque directory; there is nothing to track or close then.
+            if !queue_top.fd.is_valid() && open_dir.is_valid() {
                 Fs::FileSystem::set_max_fd(open_dir.native());
                 // these objects mostly just wrap the file descriptor, so it's fine to keep it.
                 bufs!(open_dirs)[open_dir_count.get()] = open_dir;
@@ -4600,27 +4622,31 @@ impl<'a> Resolver<'a> {
                 // still rehash from there (cheap relative to starting at 0).
                 new_entry.data.reserve(64);
 
-                let mut dir_iterator = bun_sys::iterate_dir(open_dir);
-                // NOTE: `WrappedIterator::next` returns
-                // `Result<Option<IteratorResult>>`, so use `?`-style break-on-error.
-                // Hoist the `FilenameStore` singleton resolve out of the per-entry loop
-                // (see `DirEntry::add_entry` doc-comment) and reuse the appender state.
-                let mut filename_store = FilenameStoreAppender::new();
-                loop {
-                    let _value = match dir_iterator.next() {
-                        Ok(Some(v)) => v,
-                        Ok(None) => break,
-                        Err(_) => break,
-                    };
-                    new_entry
-                        .add_entry_with_store(
-                            // SAFETY: see block-wide note above.
-                            in_place.map(|existing| unsafe { &mut (*existing).data }),
-                            &_value,
-                            &mut filename_store,
-                            (),
-                        )
-                        .expect("unreachable");
+                // A permission-denied ancestor has no fd to enumerate; its
+                // entry set stays empty.
+                if open_dir.is_valid() {
+                    let mut dir_iterator = bun_sys::iterate_dir(open_dir);
+                    // NOTE: `WrappedIterator::next` returns
+                    // `Result<Option<IteratorResult>>`, so use `?`-style break-on-error.
+                    // Hoist the `FilenameStore` singleton resolve out of the per-entry loop
+                    // (see `DirEntry::add_entry` doc-comment) and reuse the appender state.
+                    let mut filename_store = FilenameStoreAppender::new();
+                    loop {
+                        let _value = match dir_iterator.next() {
+                            Ok(Some(v)) => v,
+                            Ok(None) => break,
+                            Err(_) => break,
+                        };
+                        new_entry
+                            .add_entry_with_store(
+                                // SAFETY: see block-wide note above.
+                                in_place.map(|existing| unsafe { &mut (*existing).data }),
+                                &_value,
+                                &mut filename_store,
+                                (),
+                            )
+                            .expect("unreachable");
+                    }
                 }
                 if let Some(existing) = in_place {
                     // SAFETY: see block-wide note above.

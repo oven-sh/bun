@@ -1,7 +1,7 @@
 import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 
-import { disableAggressiveGCScope, isIPv6, isMacOS, isWindows } from "harness";
+import { bunEnv, bunExe, disableAggressiveGCScope, isIPv6, isMacOS, isWindows } from "harness";
 import path from "path";
 import { nodeDataCases } from "./testdata";
 
@@ -414,4 +414,34 @@ describe("membership on an unbound socket", () => {
     await listening;
     socket.close();
   });
+});
+
+// "listening" is now emitted from inside dns.lookup's callback when bind()
+// gets a hostname. A throw from a listener must not re-enter that callback
+// as a lookup error and reset the bind state (see node-dns.test.js).
+test("a throwing 'listening' listener on a hostname bind() does not corrupt the socket", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const s = require("dgram").createSocket("udp4");
+      process.on("uncaughtException", () => {});
+      s.on("error", e => console.log("error:" + e.message));
+      s.bind(0, "localhost", () => {
+        const port = s.address().port;
+        setImmediate(() => {
+          s.send("x", port, "127.0.0.1", () => {
+            console.log(s.address().port === port ? "same-port" : "rebound");
+            s.close();
+          });
+        });
+        throw new Error("boom from the listening listener");
+      });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "same-port\n", exitCode: 0 });
 });

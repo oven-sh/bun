@@ -306,6 +306,9 @@ function lookup(hostname, options, callback) {
     return;
   }
 
+  // The callback runs from process.nextTick so that if it throws, the chained
+  // `.catch` cannot see the throw and invoke the callback a second time (node
+  // surfaces it as an uncaughtException). `throwIfEmpty` still needs `.catch`.
   dns
     .lookup(hostname, options)
     .then(res => {
@@ -318,10 +321,10 @@ function lookup(hostname, options, callback) {
       }
 
       if (options?.all) {
-        callback(null, res.map(mapLookupAll));
+        process.nextTick(callback, null, res.map(mapLookupAll));
       } else {
         const [{ address, family }] = res;
-        callback(null, address, family);
+        process.nextTick(callback, null, address, family);
       }
     })
     .catch(err => {
@@ -333,7 +336,7 @@ function lookup(hostname, options, callback) {
         err.hostname = hostname;
         err.message = `${syscall} ${err.code} ${hostname}`;
       }
-      callback(err, undefined, undefined);
+      process.nextTick(callback, err, undefined, undefined);
     });
 }
 

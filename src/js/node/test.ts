@@ -684,11 +684,12 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
     resetTestContextSignal(context);
     // bun:test owns the per-test timeout, so use its per-test completion
     // hook; it runs for timed out tests too, where `endTest` never does.
-    // It throws inside a concurrent test, where the runner cannot attribute
-    // a per-test hook; there the signal is simply never aborted.
     try {
       bunTest().onTestFinished(() => abortTestContext(context));
-    } catch {}
+    } catch {
+      // onTestFinished() throws inside a concurrent test, where the runner
+      // cannot attribute a per-test hook; the signal is simply never aborted.
+    }
     const endTest = (error?: unknown) => {
       try {
         done(error);

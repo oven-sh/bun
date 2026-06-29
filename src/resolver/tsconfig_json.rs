@@ -73,7 +73,9 @@ impl JsonCache {
     }
 
     /// Parses package.json source into the cache arena, optionally forcing
-    /// UTF-8 string allocation.
+    /// UTF-8 string allocation. Full `E::Object` AST on purpose: the
+    /// package.json walker records per-value `Loc`s (exports/imports map
+    /// diagnostics) that the simple containers do not carry.
     #[inline]
     pub fn parse_package_json(
         &mut self,

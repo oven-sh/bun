@@ -102,6 +102,33 @@ fn bench_json(c: &mut Criterion) {
                 std::hint::black_box(&e);
             })
         });
+        // Like parse_nowarn/parse_simple but with a *retained* arena heap
+        // (`reset_retain_with_limit`) instead of a fresh `mi_heap_new` per
+        // parse. This mirrors callers with a long-lived arena (the resolver's
+        // `JsonCache`, whose arena is never reset): the flat ~5us heap-creation
+        // cost the simple-mode row tape pays on a fresh arena is amortized
+        // away, isolating the parser-only delta on small documents.
+        for (name_suffix, simple) in [("parse_nowarn_warm", false), ("parse_simple_warm", true)] {
+            group.bench_function(BenchmarkId::new(name_suffix, &name), |b| {
+                let mut bump = Bump::new();
+                b.iter(|| {
+                    let _store_scope = js_ast::StoreResetGuard::new();
+                    let mut log = js_ast::Log::init();
+                    bump.reset_retain_with_limit(64 << 20);
+                    let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
+                    let opts = json::JSONOptions {
+                        is_json: true,
+                        json_warn_duplicate_keys: false,
+                        simple_objects: simple,
+                        ..json::JSONOptions::DEFAULT
+                    };
+                    let e =
+                        json::parse_package_json_utf8_with_opts_rt(opts, &source, &mut log, &bump)
+                            .expect("parse failed");
+                    std::hint::black_box(&e);
+                })
+            });
+        }
         // Mirrors the real callers (npm.rs PackageManifest::parse, package_json.rs):
         // thread-local AST stores reset per parse, fresh Log + Bump per parse.
         group.bench_function(BenchmarkId::new("parse_utf8", &name), |b| {

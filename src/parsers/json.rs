@@ -357,6 +357,9 @@ pub fn parse_utf8_registry(
 }
 
 /// Parse package.json (comments & trailing commas allowed, strings UTF-8).
+/// Deliberately the full `E::Object` AST: these callers (install, `bun pm pkg`,
+/// lockfile, init) mutate and re-print the tree, which the read-only simple
+/// containers cannot represent.
 pub fn parse_package_json_utf8(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -477,6 +480,10 @@ pub fn parse_for_bundling(
 }
 
 /// `tsconfig.json` / `.jsonc` / `Bun.JSONC.parse`.
+///
+/// Deliberately the full `E::Object` AST: the resolver's tsconfig walker warns
+/// with the `Loc` of individual `paths` array elements (`E::JsonValue` has no
+/// per-value `Loc`), and the bundler's JSONC loader / bunfig need `Expr` nodes.
 #[inline]
 pub fn parse_ts_config<const FORCE_UTF8: bool>(
     source: &bun_ast::Source,

@@ -395,7 +395,7 @@ coveragePathIgnorePatterns = [
 
 ### Sourcemap Handling
 
-Bun transpiles every file, so coverage results pass through sourcemaps before they're reported. `coverageIgnoreSourcemaps` opts out of this, but the results can be confusing: during transpilation, Bun may move code around and rename variables. The option is mostly useful for debugging coverage issues.
+Bun transpiles every file, so coverage results pass through sourcemaps before they're reported. `coverageIgnoreSourcemaps` opts out of this, but the results will be confusing: during transpilation, Bun may move code around and rename variables. The option is mostly useful for debugging coverage issues.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]

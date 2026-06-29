@@ -9045,11 +9045,10 @@ declare module "bun" {
   }
 
   /**
-   * A class for creating and extracting tar archives with optional gzip compression.
+   * Create and extract tar archives, with optional gzip compression.
    *
-   * `Bun.Archive` provides a fast, native implementation for working with tar archives.
-   * It supports creating archives from in-memory data or extracting existing archives
-   * to disk or memory.
+   * `Bun.Archive` builds an archive from in-memory data, or wraps an existing
+   * archive so you can extract it to disk or memory.
    *
    * @example
    * **Create an archive from an object:**
@@ -9108,8 +9107,7 @@ declare module "bun" {
      * @param data - The input data for the archive:
      *   - **Object**: Creates a new tarball with the object's keys as file paths and values as file contents
      *   - **Blob/TypedArray/ArrayBuffer**: Wraps existing archive data (tar or tar.gz)
-     * @param options - Optional archive options including compression settings.
-     *   Defaults to no compression if omitted.
+     * @param options - Archive options, including compression settings
      *
      * @example
      * **From an object (creates uncompressed tarball):**
@@ -9142,10 +9140,10 @@ declare module "bun" {
     constructor(data: ArchiveInput, options?: ArchiveOptions);
 
     /**
-     * Create and write an archive directly to disk in one operation.
+     * Create an archive and write it to disk in one operation.
      *
-     * This is more efficient than creating an archive and then writing it separately,
-     * as it streams the data directly to disk.
+     * The data streams directly to disk, which is more efficient than creating an
+     * archive and then writing it separately.
      *
      * @param path - The file path to write the archive to
      * @param data - The input data for the archive (same as `new Archive()`)
@@ -9174,7 +9172,7 @@ declare module "bun" {
      * Extract the archive contents to a directory on disk.
      *
      * Creates the target directory and any necessary parent directories if they don't exist.
-     * Existing files will be overwritten.
+     * Existing files are overwritten.
      *
      * @param path - The directory path to extract to
      * @param options - Optional extraction options
@@ -9310,14 +9308,14 @@ declare module "bun" {
   }
 
   /**
-   * Generate a UUIDv7, which is a sequential ID based on the current timestamp with a random component.
+   * Generate a UUIDv7, a sequential ID based on the current timestamp with a random component.
    *
    * When the same timestamp is used multiple times, a monotonically increasing
    * counter is appended to allow sorting. The final 8 bytes are
    * cryptographically random. When the timestamp changes, the counter resets to
-   * a psuedo-random integer.
+   * a pseudo-random integer.
    *
-   * @param encoding "hex" | "base64" | "base64url"
+   * @param encoding Output encoding for the UUID
    * @param timestamp Unix timestamp in milliseconds, defaults to `Date.now()`
    *
    * @example
@@ -9327,12 +9325,12 @@ declare module "bun" {
    *   randomUUIDv7(),
    *   randomUUIDv7(),
    *   randomUUIDv7(),
-   * ]
-   * [
-   *   "0192ce07-8c4f-7d66-afec-2482b5c9b03c",
-   *   "0192ce07-8c4f-7d67-805f-0f71581b5622",
-   *   "0192ce07-8c4f-7d68-8170-6816e4451a58"
-   * ]
+   * ];
+   * // [
+   * //   "0192ce07-8c4f-7d66-afec-2482b5c9b03c",
+   * //   "0192ce07-8c4f-7d67-805f-0f71581b5622",
+   * //   "0192ce07-8c4f-7d68-8170-6816e4451a58"
+   * // ]
    * ```
    */
   function randomUUIDv7(
@@ -9347,9 +9345,9 @@ declare module "bun" {
   ): string;
 
   /**
-   * Generate a UUIDv7 as a Buffer
+   * Generate a UUIDv7 as a `Buffer`.
    *
-   * @param encoding "buffer"
+   * @param encoding Pass `"buffer"` to get the UUID as bytes instead of a string
    * @param timestamp Unix timestamp in milliseconds, defaults to `Date.now()`
    */
   function randomUUIDv7(
@@ -9361,24 +9359,23 @@ declare module "bun" {
   ): Buffer;
 
   /**
-   * Generate a UUIDv5, which is a name-based UUID based on the SHA-1 hash of a namespace UUID and a name.
+   * Generate a UUIDv5, a name-based UUID derived from the SHA-1 hash of a namespace UUID and a name.
    *
-   * @param name The name to use for the UUID
-   * @param namespace The namespace to use for the UUID
-   * @param encoding The encoding to use for the UUID
-   *
+   * @param name The name to hash
+   * @param namespace A namespace UUID, or one of the predefined namespaces `"dns"`, `"url"`, `"oid"`, or `"x500"`
+   * @param encoding Output encoding for the UUID
    *
    * @example
    * ```js
    * import { randomUUIDv5 } from "bun";
    * const uuid = randomUUIDv5("www.example.com", "dns");
-   * console.log(uuid); // "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+   * console.log(uuid); // "2ed6657d-e927-568b-95e1-2665a8aea6a2"
    * ```
    *
    * ```js
    * import { randomUUIDv5 } from "bun";
    * const uuid = randomUUIDv5("www.example.com", "url");
-   * console.log(uuid); // "6ba7b811-9dad-11d1-80b4-00c04fd430c8"
+   * console.log(uuid); // "b63cdfa4-3df9-568e-97ae-006c5b8fd652"
    * ```
    */
   function randomUUIDv5(
@@ -9391,17 +9388,17 @@ declare module "bun" {
   ): string;
 
   /**
-   * Generate a UUIDv5 as a Buffer
+   * Generate a UUIDv5 as a `Buffer`.
    *
-   * @param name The name to use for the UUID
-   * @param namespace The namespace to use for the UUID
-   * @param encoding The encoding to use for the UUID
+   * @param name The name to hash
+   * @param namespace A namespace UUID, or one of the predefined namespaces `"dns"`, `"url"`, `"oid"`, or `"x500"`
+   * @param encoding Pass `"buffer"` to get the UUID as bytes instead of a string
    *
    * @example
    * ```js
    * import { randomUUIDv5 } from "bun";
    * const uuid = randomUUIDv5("www.example.com", "url", "buffer");
-   * console.log(uuid); // <Buffer 6b a7 b8 11 9d ad 11 d1 80 b4 00 c0 4f d4 30 c8>
+   * console.log(uuid); // <Buffer b6 3c df a4 3d f9 56 8e 97 ae 00 6c 5b 8f d6 52>
    * ```
    */
   function randomUUIDv5(
@@ -9411,7 +9408,7 @@ declare module "bun" {
   ): Buffer;
 
   /**
-   * Types for `bun.lock`
+   * The structure of Bun's lockfile, `bun.lock`
    */
   type BunLockFile = {
     lockfileVersion: 0 | 1 | 2;
@@ -9433,7 +9430,7 @@ declare module "bun" {
      * `0` / `undefined` for projects created before v1.3.2, `1` for projects created after.
      *
      * ---
-     * Right now this only changes the default [install linker strategy](https://bun.com/docs/pm/cli/install#isolated-installs):
+     * This only affects the default [install linker strategy](https://bun.com/docs/pm/cli/install#isolated-installs):
      * - With `0`, the linker is hoisted.
      * - With `1`, the linker is isolated for workspaces and hoisted for single-package projects.
      */
@@ -9453,7 +9450,7 @@ declare module "bun" {
      * git         -> [ "name@git+repo", INFO, .bun-tag string (TODO: remove this) ]
      * github      -> [ "name@github:user/repo", INFO, .bun-tag string (TODO: remove this) ]
      * ```
-     * */
+     */
     packages: {
       [pkg: string]: BunLockFilePackageArray;
     };
@@ -9480,7 +9477,7 @@ declare module "bun" {
     bundled?: true;
   };
 
-  /** @see {@link BunLockFile.packages} for more info */
+  /** @see {@link BunLockFile.packages} */
   type BunLockFilePackageArray =
     /** npm */
     | [pkg: string, registry: string, info: BunLockFilePackageInfo, integrity: string]
@@ -9522,7 +9519,7 @@ declare module "bun" {
   type CookieSameSite = "strict" | "lax" | "none";
 
   /**
-   * A class for working with a single cookie
+   * A single HTTP cookie: its name, value, and attributes.
    *
    * @example
    * ```js
@@ -9532,7 +9529,7 @@ declare module "bun" {
    */
   class Cookie {
     /**
-     * Create a new cookie
+     * Creates a cookie from a name, value, and optional attributes
      * @param name - The name of the cookie
      * @param value - The value of the cookie
      * @param options - Optional cookie attributes
@@ -9540,14 +9537,14 @@ declare module "bun" {
     constructor(name: string, value: string, options?: CookieInit);
 
     /**
-     * Create a new cookie from a cookie string
-     * @param cookieString - The cookie string
+     * Creates a cookie by parsing a serialized cookie string
+     * @param cookieString - A serialized cookie string, like `"name=value; Path=/"`
      */
     constructor(cookieString: string);
 
     /**
-     * Create a new cookie from a cookie object
-     * @param cookieObject - The cookie object
+     * Creates a cookie from an attributes object
+     * @param cookieObject - The cookie's name, value, and attributes
      */
     constructor(cookieObject?: CookieInit);
 
@@ -9562,52 +9559,52 @@ declare module "bun" {
     value: string;
 
     /**
-     * The domain of the cookie
+     * The cookie's `Domain` attribute, or `undefined` if not set
      */
     domain?: string;
 
     /**
-     * The path of the cookie
+     * The cookie's `Path` attribute. Defaults to `/`.
      */
     path: string;
 
     /**
-     * The expiration date of the cookie
+     * The cookie's expiration date, or `undefined` if not set
      */
     expires?: Date;
 
     /**
-     * Whether the cookie is secure
+     * Whether the cookie has the `Secure` attribute
      */
     secure: boolean;
 
     /**
-     * The same-site attribute of the cookie
+     * The cookie's `SameSite` attribute. Defaults to `lax`.
      */
     sameSite: CookieSameSite;
 
     /**
-     * Whether the cookie is partitioned
+     * Whether the cookie has the `Partitioned` attribute
      */
     partitioned: boolean;
 
     /**
-     * The maximum age of the cookie in seconds
+     * The cookie's maximum age in seconds, or `undefined` if not set
      */
     maxAge?: number;
 
     /**
-     * Whether the cookie is HTTP-only
+     * Whether the cookie has the `HttpOnly` attribute
      */
     httpOnly: boolean;
 
     /**
-     * Whether the cookie is expired
+     * Returns `true` if the cookie has expired
      */
     isExpired(): boolean;
 
     /**
-     * Serialize the cookie to a string
+     * Serializes the cookie to a string
      *
      * @example
      * ```ts
@@ -9622,33 +9619,31 @@ declare module "bun" {
     serialize(): string;
 
     /**
-     * Serialize the cookie to a string
-     *
-     * Alias of {@link Cookie.serialize}
+     * Serializes the cookie to a string. Alias of {@link Cookie.serialize}.
      */
     toString(): string;
 
     /**
-     * Serialize the cookie to a JSON object
+     * Returns the cookie's name, value, and attributes as a plain object
      */
     toJSON(): CookieInit;
 
     /**
-     * Parse a cookie string into a Cookie object
-     * @param cookieString - The cookie string
+     * Parses a serialized cookie string into a `Cookie`
+     * @param cookieString - A serialized cookie string, like `"name=value; Path=/"`
      */
     static parse(cookieString: string): Cookie;
 
     /**
-     * Create a new cookie from a name and value and optional options
+     * Creates a cookie from a name, value, and optional attributes
      */
     static from(name: string, value: string, options?: CookieInit): Cookie;
   }
 
   /**
-   * A Map-like interface for working with collections of cookies.
+   * A Map-like collection of cookies.
    *
-   * Implements the `Iterable` interface, allowing use with `for...of` loops.
+   * Iterable, so it works with `for...of` loops.
    */
   class CookieMap implements Iterable<[string, string]> {
     /**
@@ -9670,9 +9665,9 @@ declare module "bun" {
     get(name: string): string | null;
 
     /**
-     * Gets an array of values for Set-Cookie headers in order to apply all changes to cookies.
+     * Returns the `Set-Cookie` header values that apply the changes made to this map.
      *
-     * @returns An array of values for Set-Cookie headers
+     * @returns An array of `Set-Cookie` header values
      */
     toSetCookieHeaders(): string[];
 
@@ -9725,7 +9720,7 @@ declare module "bun" {
     /**
      * Converts the cookie map to a serializable format.
      *
-     * @returns An array of name/value pairs
+     * @returns An object mapping cookie names to values
      */
     toJSON(): Record<string, string>;
 

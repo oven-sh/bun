@@ -88,6 +88,43 @@ describe("vm", () => {
     });
   });
 
+  describe("Object.preventExtensions(globalThis)", () => {
+    // https://github.com/oven-sh/bun/issues/33075
+    // The error is thrown inside the vm realm, so assert on `.name` rather than
+    // a cross-realm `instanceof TypeError`.
+    test.each(["Object.freeze", "Object.seal", "Object.preventExtensions"])(
+      "%s(globalThis) throws a TypeError in a contextified context",
+      op => {
+        const context = createContext();
+        let caught: unknown;
+        try {
+          runInContext(`${op}(globalThis);`, context);
+        } catch (e) {
+          caught = e;
+        }
+        expect((caught as Error)?.name).toBe("TypeError");
+      },
+    );
+
+    test("a rejected freeze leaves the contextified global usable", () => {
+      const context = createContext();
+      let caught: unknown;
+      try {
+        runInContext("Object.freeze(globalThis);", context);
+      } catch (e) {
+        caught = e;
+      }
+      expect((caught as Error)?.name).toBe("TypeError");
+      // The freeze was rejected, so the context's global stays extensible.
+      expect(runInContext("globalThis.__x = 1; typeof globalThis.__x;", context)).toBe("number");
+    });
+
+    test("a DONT_CONTEXTIFY global can still be frozen, matching Node", () => {
+      const context = createContext(constants.DONT_CONTEXTIFY);
+      expect(() => runInContext("Object.freeze(globalThis);", context)).not.toThrow();
+    });
+  });
+
   describe("compileFunction()", () => {
     test("options properties can be undefined", () => {
       const result = compileFunction("return 1 + 1;", [], {

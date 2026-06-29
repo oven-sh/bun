@@ -262,6 +262,18 @@ impl PosixLoop {
         };
     }
 
+    /// Backs `performance.eventLoopUtilization()`. Returns `(uptime_ns,
+    /// idle_ns)`: the time since this loop was created and the cumulative
+    /// time it has spent blocked in its I/O poll, both from the same
+    /// monotonic clock so `active = uptime - idle`.
+    pub fn idle_metrics(&mut self) -> (u64, u64) {
+        let mut uptime_ns = 0u64;
+        let mut idle_ns = 0u64;
+        // SAFETY: self is a valid loop pointer; the out-params live for the call.
+        unsafe { c::us_loop_get_idle_metrics(self, &raw mut uptime_ns, &raw mut idle_ns) };
+        (uptime_ns, idle_ns)
+    }
+
     /// Free everything queued on `loop->data.closed_head` /
     /// `closed_connecting_head`. Normally `loop_post()` does this once per
     /// tick; at process/Worker teardown the loop has stopped, so
@@ -476,6 +488,18 @@ impl WindowsLoop {
         unsafe { c::us_loop_pump(self) };
     }
 
+    /// Backs `performance.eventLoopUtilization()`. Returns `(uptime_ns,
+    /// idle_ns)`: the time since this loop was created and the cumulative
+    /// time it has spent blocked in its I/O poll (from libuv's
+    /// `uv_metrics_idle_time`), both on libuv's `uv_hrtime` clock.
+    pub fn idle_metrics(&mut self) -> (u64, u64) {
+        let mut uptime_ns = 0u64;
+        let mut idle_ns = 0u64;
+        // SAFETY: self is a valid loop pointer; the out-params live for the call.
+        unsafe { c::us_loop_get_idle_metrics(self, &raw mut uptime_ns, &raw mut idle_ns) };
+        (uptime_ns, idle_ns)
+    }
+
     pub fn drain_quic_if_necessary(&mut self) {
         if self.internal_loop_data.quic_head.is_null() {
             return;
@@ -641,6 +665,11 @@ mod c {
         #[cfg(not(windows))]
         pub(super) fn us_loop_run_bun_tick(loop_: *mut Loop, timeout_ms: *const Timespec);
         pub(super) fn us_internal_free_closed_sockets(loop_: *mut Loop);
+        pub(super) fn us_loop_get_idle_metrics(
+            loop_: *mut Loop,
+            uptime_ns: *mut u64,
+            idle_ns: *mut u64,
+        );
         pub(super) fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
         #[cfg(not(windows))]
         pub(super) safe fn uws_get_loop() -> *mut Loop;

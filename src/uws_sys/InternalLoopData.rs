@@ -55,6 +55,13 @@ pub struct InternalLoopData {
     // Higher tier (`bun_runtime`) casts this back when reading.
     pub jsc_vm: *const c_void,
     pub tick_depth: c_int,
+    /// Monotonic ns timestamp captured in `us_create_loop`; backs the loop
+    /// uptime half of `us_loop_get_idle_metrics`.
+    pub loop_start_ns: u64,
+    /// Cumulative ns the loop has spent blocked in its I/O poll. Written only
+    /// by the epoll/kqueue backend; the libuv (Windows) backend reads
+    /// `uv_metrics_idle_time()` instead and leaves this 0.
+    pub idle_time_ns: u64,
 }
 
 impl InternalLoopData {

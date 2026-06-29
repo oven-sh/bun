@@ -426,6 +426,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject * globalObj
 // Extern declarations for the native timer implementation
 extern "C" void Timer_enableEventLoopDelayMonitoring(void* vm, JSC::EncodedJSValue histogram, int32_t resolution);
 extern "C" void Timer_disableEventLoopDelayMonitoring(void* vm);
+// src/runtime/node/node_perf_hooks_binding.rs
+extern "C" void Bun__getEventLoopIdleMetrics(void* vm, double* uptimeMs, double* idleMs);
 
 // Create histogram for event loop delay monitoring
 JSC_DEFINE_HOST_FUNCTION(jsFunction_monitorEventLoopDelay, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -515,6 +517,24 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_disableEventLoopDelay, (JSGlobalObject * glo
     Timer_disableEventLoopDelayMonitoring(bunVM(globalObject));
 
     return JSValue::encode(jsUndefined());
+}
+
+// Returns [loopUptimeMs, idleMs] for this VM's event loop: the time since the
+// loop was created and the cumulative time it has spent blocked in its I/O
+// poll, from one monotonic clock. perf_hooks.ts derives active = uptime - idle.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_getEventLoopIdleMetrics, (JSGlobalObject * globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    double uptimeMs = 0;
+    double idleMs = 0;
+    Bun__getEventLoopIdleMetrics(bunVM(globalObject), &uptimeMs, &idleMs);
+
+    MarkedArgumentBuffer values;
+    values.append(jsDoubleNumber(uptimeMs));
+    values.append(jsDoubleNumber(idleMs));
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values)));
 }
 
 // Extern function for native code to record delays

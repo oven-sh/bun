@@ -51,6 +51,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunction_createHistogram);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_monitorEventLoopDelay);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_enableEventLoopDelay);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_disableEventLoopDelay);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_getEventLoopIdleMetrics);
 
 class HistogramData {
 public:

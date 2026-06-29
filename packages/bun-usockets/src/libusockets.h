@@ -490,6 +490,10 @@ void *us_loop_ext(us_loop_r loop) nonnull_fn_decl;
 /* Blocks the calling thread and drives the event loop until no more non-fallthrough polls are scheduled */
 void us_loop_run(us_loop_r loop) nonnull_fn_decl;
 
+/* Backs performance.eventLoopUtilization(): fills the loop's uptime (ns since
+ * us_create_loop) and the cumulative ns it has spent blocked inside its I/O
+ * poll. Both come from the same monotonic clock, so active = uptime - idle. */
+void us_loop_get_idle_metrics(us_loop_r loop, uint64_t *nonnull_arg uptime_ns, uint64_t *nonnull_arg idle_ns) nonnull_fn_decl;
 
 /* Signals the loop from any thread to wake up and execute its wakeup handler from the loop's own running thread.
  * This is the only fully thread-safe function and serves as the basis for thread safety */

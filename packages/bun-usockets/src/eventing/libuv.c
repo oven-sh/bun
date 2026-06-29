@@ -162,6 +162,12 @@ struct us_loop_t *us_create_loop(void *hint,
   loop->uv_loop = hint ? hint : uv_loop_new();
   loop->is_default = hint != 0;
 
+  /* Idle-time accounting for performance.eventLoopUtilization(). libuv only
+   * records it once the loop is configured with UV_METRICS_IDLE_TIME; Node
+   * does the same unconditionally in Environment::InitializeLibuv. */
+  uv_loop_configure(loop->uv_loop, UV_METRICS_IDLE_TIME);
+  loop->data.loop_start_ns = uv_hrtime();
+
   loop->uv_pre = malloc(sizeof(uv_prepare_t));
   uv_prepare_init(loop->uv_loop, loop->uv_pre);
   uv_prepare_start(loop->uv_pre, prepare_cb);
@@ -216,6 +222,13 @@ void us_loop_run(struct us_loop_t *loop) {
   uv_update_time(loop->uv_loop);
 
   uv_run(loop->uv_loop, UV_RUN_ONCE);
+}
+
+void us_loop_get_idle_metrics(struct us_loop_t *loop, uint64_t *uptime_ns, uint64_t *idle_ns) {
+  /* uv_hrtime() is the clock libuv's idle accounting uses, so loop_start_ns
+   * (captured from it in us_create_loop) subtracts cleanly. */
+  *uptime_ns = uv_hrtime() - loop->data.loop_start_ns;
+  *idle_ns = uv_metrics_idle_time(loop->uv_loop);
 }
 
 struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,

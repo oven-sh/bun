@@ -34,6 +34,19 @@ void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout);
 
+/* Single clock source for loop_start_ns / idle_time_ns so uptime and idle
+ * stay subtractable. Backs performance.eventLoopUtilization(). */
+static uint64_t us_loop_monotonic_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t) ts.tv_sec * 1000000000ull + (uint64_t) ts.tv_nsec;
+}
+
+void us_loop_get_idle_metrics(struct us_loop_t *loop, uint64_t *uptime_ns, uint64_t *idle_ns) {
+    *uptime_ns = us_loop_monotonic_ns() - loop->data.loop_start_ns;
+    *idle_ns = loop->data.idle_time_ns;
+}
+
 /* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
 #define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
 #define CLEAR_POINTER_TAG(p) ((void *) ((uintptr_t) (p) & UNSET_BITS_49_UNTIL_64))
@@ -188,6 +201,7 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
     loop->fd = kqueue();
 #endif
 
+    loop->data.loop_start_ns = us_loop_monotonic_ns();
     us_internal_loop_data_init(loop, wakeup_cb, pre_cb, post_cb);
     return loop;
 }
@@ -329,7 +343,9 @@ void us_loop_run(struct us_loop_t *loop) {
         /* Emit pre callback */
         us_internal_loop_pre(loop);
 
-        /* Fetch ready polls */
+        /* Fetch ready polls. NULL timeout: this poll always waits, so all of
+         * its wall time is provider idle time. */
+        const uint64_t poll_start_ns = us_loop_monotonic_ns();
 #ifdef LIBUS_USE_EPOLL
         loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, NULL);
 #else
@@ -337,6 +353,7 @@ void us_loop_run(struct us_loop_t *loop) {
             loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, LIBUS_MAX_READY_POLLS, 0, NULL);
         } while (IS_EINTR(loop->num_ready_polls));
 #endif
+        loop->data.idle_time_ns += us_loop_monotonic_ns() - poll_start_ns;
 
         us_internal_dispatch_ready_polls(loop);
         us_internal_drain_ready_polls(loop);
@@ -386,6 +403,11 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     if (will_idle_inside_event_loop && loop->data.jsc_vm)
         Bun__JSC_onBeforeWait(loop->data.jsc_vm);
 
+    /* Provider idle time (performance.eventLoopUtilization): only bracket
+     * polls that may actually wait, mirroring libuv's uv__io_poll which skips
+     * uv__metrics_set_provider_entry_time when timeout == 0. */
+    const uint64_t poll_start_ns = will_idle_inside_event_loop ? us_loop_monotonic_ns() : 0;
+
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
     /* A zero timespec already has a fast path in ep_poll (fs/eventpoll.c):
@@ -405,6 +427,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
             timeout);
     } while (IS_EINTR(loop->num_ready_polls));
 #endif
+
+    if (poll_start_ns)
+        loop->data.idle_time_ns += us_loop_monotonic_ns() - poll_start_ns;
 
     us_internal_dispatch_ready_polls(loop);
     us_internal_drain_ready_polls(loop);

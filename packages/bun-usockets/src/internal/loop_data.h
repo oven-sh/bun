@@ -80,6 +80,14 @@ struct us_internal_loop_data_t {
      * sockets must be deferred to the outermost tick so the outer dispatch
      * doesn't read a freed poll. */
     int tick_depth;
+    /* Monotonic timestamp (ns) taken when the loop was created. Read back by
+     * us_loop_get_idle_metrics() to compute the loop's uptime for
+     * performance.eventLoopUtilization(). */
+    uint64_t loop_start_ns;
+    /* Cumulative ns this loop has spent blocked inside its I/O poll
+     * (epoll_pwait2/kevent64). libuv only: stays 0 because the libuv backend
+     * reads uv_metrics_idle_time() instead (see eventing/libuv.c). */
+    uint64_t idle_time_ns;
 };
 
 #endif // LOOP_DATA_H

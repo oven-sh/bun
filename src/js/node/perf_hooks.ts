@@ -7,6 +7,15 @@ const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp"
   figures: number,
 ) => import("node:perf_hooks").RecordableHistogram;
 
+// [0] the calling VM's event-loop uptime and [1] the cumulative time its I/O
+// poll has spent blocked, in milliseconds from one monotonic clock. See
+// us_loop_get_idle_metrics in packages/bun-usockets/src/eventing/.
+const cppGetEventLoopIdleMetrics = $newCppFunction(
+  "JSNodePerformanceHooksHistogramPrototype.cpp",
+  "jsFunction_getEventLoopIdleMetrics",
+  0,
+) as () => [loopUptimeMs: number, idleMs: number];
+
 var {
   Performance,
   PerformanceEntry,
@@ -92,16 +101,49 @@ function createPerformanceNodeTiming() {
   const object = Object.create(PerformanceNodeTiming.prototype);
 
   object.bootstrapComplete = object.environment = object.nodeStart = object.v8Start = performance.timeOrigin;
-  object.loopStart = object.idleTime = 1;
+  // Bun's loop is created during VM init, within a millisecond of
+  // performance.timeOrigin; there is no separately observable loop-start
+  // milestone. Any positive value avoids Node's `loopStart <= 0` sentinel.
+  object.loopStart = 1;
   object.loopExit = -1;
+  // Own accessor, not a class-body getter: $toClass resets the prototype
+  // object and would drop it. Node also defines nodeTiming's fields as
+  // per-instance accessors.
+  Object.defineProperty(object, "idleTime", {
+    __proto__: null,
+    configurable: true,
+    enumerable: true,
+    get: function idleTime() {
+      return cppGetEventLoopIdleMetrics()[1];
+    },
+  });
   return object;
 }
 
-function eventLoopUtilization(_utilization1, _utilization2) {
+// Node's internalEventLoopUtilization (internal/perf/event_loop_utilization.js)
+// with `active = now() - loopStart - idleTime` replaced by the equivalent
+// `active = loopUptime - idleTime` (one native read, so one clock).
+function eventLoopUtilization(utilization1?, utilization2?) {
+  if (utilization2) {
+    const idle = utilization1.idle - utilization2.idle;
+    const active = utilization1.active - utilization2.active;
+    return { idle, active, utilization: active / (idle + active) };
+  }
+
+  const metrics = cppGetEventLoopIdleMetrics();
+  const idle = metrics[1];
+  const active = metrics[0] - idle;
+
+  if (!utilization1) {
+    return { idle, active, utilization: active / (idle + active) };
+  }
+
+  const idleDelta = idle - utilization1.idle;
+  const activeDelta = active - utilization1.active;
   return {
-    idle: 0,
-    active: 0,
-    utilization: 0,
+    idle: idleDelta,
+    active: activeDelta,
+    utilization: activeDelta / (idleDelta + activeDelta),
   };
 }
 

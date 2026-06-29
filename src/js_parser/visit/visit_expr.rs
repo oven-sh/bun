@@ -1050,7 +1050,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
             }
             _ => {
+                // The target visit above may have set this for the enclosing
+                // `e_call` to consume. Hide it across the index visit so a call
+                // nested in the index does not consume it instead.
+                let method_call_must_be_replaced_with_undefined =
+                    core::mem::replace(&mut p.method_call_must_be_replaced_with_undefined, false);
                 p.visit_expr(&mut e_.index);
+                p.method_call_must_be_replaced_with_undefined =
+                    method_call_must_be_replaced_with_undefined;
 
                 let unwrapped = e_.index.unwrap_inlined();
                 if let Some(mut s) = unwrapped.data.e_string() {

@@ -119,6 +119,22 @@ describe("bundler", () => {
     run: { stdout: "undefined" },
     drop: ["Bun"],
   });
+  // The drop flag set by the target must be consumed by the enclosing call,
+  // not by a call nested inside the computed index. Getting this wrong emits
+  // `console[undefined]("dropped")`, which throws at runtime.
+  itBundled("drop/ComputedDynamicIndex", {
+    files: {
+      "/a.js": /* js */ `
+        function lvl() {
+          return "log";
+        }
+        console[lvl()]("dropped");
+        globalThis.console.log("done");
+      `,
+    },
+    run: { stdout: "done" },
+    drop: ["console"],
+  });
   itBundled("drop/AssignTarget", {
     files: {
       "/a.js": `console.log(

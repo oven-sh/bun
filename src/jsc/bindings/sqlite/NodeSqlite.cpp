@@ -769,6 +769,11 @@ void JSDatabaseSync::closeInternal()
     // re-register it, matching Node); drop the GC root so the callback and
     // whatever it closes over can be collected.
     m_authorizer.clear();
+    // open() re-applies m_config.allowExtension to the next connection, so
+    // re-sync the wrapper-side gate with it; otherwise a pre-close
+    // enableLoadExtension(false) makes loadExtension() report "not allowed"
+    // on a connection that is configured to allow it.
+    m_enableLoadExtension = m_config.allowExtension;
 }
 
 void JSDatabaseSync::deleteTrackedSessions()

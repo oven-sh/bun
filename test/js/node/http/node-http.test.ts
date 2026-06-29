@@ -1389,6 +1389,23 @@ describe("node https server", async () => {
       }
     });
 
+    it("honors ciphers and maxVersion", async () => {
+      const server = createHttpsServer(
+        { ...httpsOptions, maxVersion: "TLSv1.2", ciphers: "ECDHE-RSA-AES128-GCM-SHA256" },
+        (req, res) => res.end("ok"),
+      );
+      const port = await listenTLS(server);
+      try {
+        const socket = await tlsHandshake(port);
+        expect(socket.getProtocol()).toBe("TLSv1.2");
+        expect(socket.getCipher().name).toBe("ECDHE-RSA-AES128-GCM-SHA256");
+        socket.end();
+      } finally {
+        server.closeAllConnections();
+        server.close();
+      }
+    });
+
     it("validates secure context options synchronously like node:tls", () => {
       expect(() => createHttpsServer({ ...httpsOptions, ciphers: "BOGUS-CIPHER-123" })).toThrow(
         expect.objectContaining({ code: "ERR_SSL_NO_CIPHER_MATCH" }),

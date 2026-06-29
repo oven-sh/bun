@@ -6299,9 +6299,8 @@ declare module "bun" {
 
   interface SocketHandler<Data = unknown, DataBinaryType extends BinaryType = "buffer"> {
     /**
-     * Is called when the socket connects, or in case of TLS if no handshake is provided
-     * this will be called only after handshake
-     * @param socket
+     * Called when the socket connects. For TLS sockets with no `handshake`
+     * handler, this is called only after the handshake completes.
      */
     open?(socket: Socket<Data>): void | Promise<void>;
     close?(socket: Socket<Data>, error?: Error): void | Promise<void>;
@@ -6310,31 +6309,30 @@ declare module "bun" {
     drain?(socket: Socket<Data>): void | Promise<void>;
 
     /**
-     * When handshake is completed, this functions is called.
-     * @param socket
-     * @param success Indicates if the server authorized despite the authorizationError.
-     * @param authorizationError Certificate Authorization Error or null.
+     * Called when the TLS handshake completes.
+     * @param success Whether the server authorized the connection despite `authorizationError`
+     * @param authorizationError The certificate authorization error, or `null` if there was none
      */
     handshake?(socket: Socket<Data>, success: boolean, authorizationError: Error | null): void;
 
     /**
-     * When the socket has been shutdown from the other end, this function is
-     * called. This is a TCP FIN packet.
+     * Called when the other end shuts down its side of the socket by sending
+     * a TCP FIN packet.
      */
     end?(socket: Socket<Data>): void | Promise<void>;
 
     /**
-     * When the socket fails to be created, this function is called.
+     * Called when the socket fails to be created.
      *
      * The promise returned by `Bun.connect` rejects **after** this function is
      * called.
      *
-     * When `connectError` is specified, the rejected promise will not be
-     * added to the promise rejection queue (so it won't be reported as an
-     * unhandled promise rejection, since connectError handles it).
+     * When `connectError` is specified, the rejected promise is not added to
+     * the promise rejection queue (so it isn't reported as an unhandled
+     * promise rejection, since `connectError` handles it).
      *
-     * When `connectError` is not specified, the rejected promise will be added
-     * to the promise rejection queue.
+     * When `connectError` is not specified, the rejected promise is added to
+     * the promise rejection queue.
      */
     connectError?(socket: Socket<Data>, error: Error): void | Promise<void>;
 
@@ -6343,18 +6341,13 @@ declare module "bun" {
      */
     timeout?(socket: Socket<Data>): void | Promise<void>;
     /**
-     * Choose what `ArrayBufferView` is returned in the {@link SocketHandler.data} callback.
+     * Choose what `ArrayBufferView` is passed to the {@link SocketHandler.data} callback.
      *
      * @default "buffer"
      *
      * @remarks
-     * This lets you select the desired binary type for the `data` callback.
-     * It's a small performance optimization to let you avoid creating extra
-     * ArrayBufferView objects when possible.
-     *
-     * Bun originally defaulted to `Uint8Array` but when dealing with network
-     * data, it's more useful to be able to directly read from the bytes which
-     * `Buffer` allows.
+     * A small performance optimization: picking the type you need avoids
+     * creating extra `ArrayBufferView` objects when possible.
      */
     binaryType?: BinaryType;
   }
@@ -6408,9 +6401,6 @@ declare module "bun" {
      * When `false` (default), other sockets may be able to bind to the same port
      * depending on the operating system's socket sharing capabilities and settings.
      *
-     * Exclusive mode is useful in scenarios where you want to ensure only one
-     * instance of your server can bind to a specific port at a time.
-     *
      * @default false
      */
     exclusive?: boolean;
@@ -6442,7 +6432,7 @@ declare module "bun" {
      */
     port: number;
     /**
-     * TLS Configuration with which to create the socket
+     * TLS configuration with which to create the socket
      */
     tls?: TLSOptions | boolean;
     /**
@@ -6453,9 +6443,6 @@ declare module "bun" {
      *
      * When `false` (default), other sockets may be able to bind to the same port
      * depending on the operating system's socket sharing capabilities and settings.
-     *
-     * Exclusive mode is useful in scenarios where you want to ensure only one
-     * instance of your server can bind to a specific port at a time.
      *
      * @default false
      */
@@ -6471,14 +6458,14 @@ declare module "bun" {
     unix: string;
 
     /**
-     * TLS Configuration with which to create the socket
+     * TLS configuration with which to create the socket
      */
     tls?: TLSOptions | boolean;
   }
 
   interface FdSocketOptions<Data = undefined> extends SocketOptions<Data> {
     /**
-     * TLS Configuration with which to create the socket
+     * TLS configuration with which to create the socket
      */
     tls?: TLSOptions | boolean;
     /**
@@ -6488,13 +6475,13 @@ declare module "bun" {
   }
 
   /**
-   * Create a TCP client that connects to a server via a TCP socket
+   * Create a TCP client that connects to a server
    *
    * @category HTTP & Networking
    */
   function connect<Data = undefined>(options: TCPSocketConnectOptions<Data>): Promise<Socket<Data>>;
   /**
-   * Create a TCP client that connects to a server via a unix socket
+   * Create a client that connects to a server over a Unix socket
    *
    * @category HTTP & Networking
    */
@@ -6507,7 +6494,7 @@ declare module "bun" {
    */
   function listen<Data = undefined>(options: TCPSocketListenOptions<Data>): TCPSocketListener<Data>;
   /**
-   * Create a TCP server that listens on a unix socket
+   * Create a server that listens on a Unix socket
    *
    * @category HTTP & Networking
    */
@@ -6583,7 +6570,7 @@ declare module "bun" {
       unref(): void;
       close(): void;
       /**
-       * Enable or disable SO_BROADCAST socket option.
+       * Enable or disable the SO_BROADCAST socket option.
        * @param enabled Whether to enable broadcast
        * @returns The enabled value
        */
@@ -6601,7 +6588,7 @@ declare module "bun" {
        */
       setMulticastTTL(ttl: number): number;
       /**
-       * Enable or disable IP_MULTICAST_LOOP socket option.
+       * Enable or disable the IP_MULTICAST_LOOP socket option.
        * @param enabled Whether to enable multicast loopback
        * @returns The enabled value
        */
@@ -6662,7 +6649,7 @@ declare module "bun" {
   /**
    * Create a UDP socket
    *
-   * @param options The options to use when creating the server
+   * @param options The options to use when creating the socket
    * @param options.socket The socket handler to use
    * @param options.hostname The hostname to listen on
    * @param options.port The port to listen on
@@ -6764,12 +6751,12 @@ declare module "bun" {
        * - `ArrayBufferView`, `Blob`, `Bun.file()`, `Response`, `Request`: The process will read from buffer/stream.
        * - `number`: The process will read from the file descriptor
        *
-       * For stdout and stdin you may pass:
+       * For stdout and stderr you may pass:
        *
        * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process will have no standard output/error
        * - `"inherit"`: The process will inherit the standard output/error of the current process
-       * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
+       * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
        * - `number`: The process will write to the file descriptor
        *
        * At indices >= 3, `"socket-fd"` (POSIX only) is also accepted:
@@ -6802,7 +6789,7 @@ declare module "bun" {
        * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process will have no standard output/error
        * - `"inherit"`: The process will inherit the standard output/error of the current process
-       * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
+       * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
        * - `number`: The process will write to the file descriptor
        *
        * @default "pipe"
@@ -6814,7 +6801,7 @@ declare module "bun" {
        * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process will have no standard output/error
        * - `"inherit"`: The process will inherit the standard output/error of the current process
-       * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
+       * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
        * - `number`: The process will write to the file descriptor
        *
        * @default "inherit" for `spawn`
@@ -6829,7 +6816,7 @@ declare module "bun" {
        *
        * Warning: this may run before the `Bun.spawn` function returns.
        *
-       * A simple alternative is `await subprocess.exited`.
+       * An alternative is `await subprocess.exited`.
        *
        * @example
        *
@@ -6847,7 +6834,7 @@ declare module "bun" {
         exitCode: number | null,
         signalCode: number | null,
         /**
-         * If an error occurred in the call to waitpid2, this will be the error.
+         * If an error occurred in the call to waitpid2, this is the error.
          */
         error?: ErrorLike,
       ): void | Promise<void>;
@@ -6895,14 +6882,14 @@ declare module "bun" {
       onDisconnect?(): void | Promise<void>;
 
       /**
-       * When specified, Bun will open an IPC channel to the subprocess. The passed callback is called for
+       * When specified, Bun opens an IPC channel to the subprocess. The passed callback is called for
        * incoming messages, and `subprocess.send` can send messages to the subprocess. Messages are serialized
-       * using the JSC serialize API, which allows for the same types that `postMessage`/`structuredClone` supports.
+       * using the JSC serialize API, which allows the same types that `postMessage`/`structuredClone` supports.
        *
-       * The subprocess can send and receive messages by using `process.send` and `process.on("message")`,
-       * respectively. This is the same API as what Node.js exposes when `child_process.fork()` is used.
+       * The subprocess can send and receive messages with `process.send` and `process.on("message")`,
+       * respectively. This is the same API that Node.js exposes when `child_process.fork()` is used.
        *
-       * Currently, this is only compatible with processes that are other `bun` instances.
+       * This is only compatible with processes that are other `bun` instances.
        */
       ipc?(
         message: any,
@@ -6933,21 +6920,21 @@ declare module "bun" {
       windowsVerbatimArguments?: boolean;
 
       /**
-       * Path to the executable to run in the subprocess. This defaults to `cmds[0]`.
+       * Path to the executable to run in the subprocess.
        *
-       * One use-case for this is for applications which wrap other applications or to simulate a symlink.
+       * Use this to wrap another application or to simulate a symlink.
        *
        * @default cmds[0]
        */
       argv0?: string;
 
       /**
-       * An {@link AbortSignal} that can be used to abort the subprocess.
+       * An {@link AbortSignal} that kills the subprocess when aborted.
        *
-       * This is useful for aborting a subprocess when some other part of the
-       * program is aborted, such as a `fetch` response.
+       * Use this to abort the subprocess when another part of the program is
+       * aborted, such as a `fetch`.
        *
-       * If the signal is aborted, the process will be killed with the signal
+       * If the signal is aborted, the process is killed with the signal
        * specified by `killSignal` (defaults to SIGTERM).
        *
        * @example
@@ -6971,7 +6958,7 @@ declare module "bun" {
       /**
        * The maximum amount of time the process is allowed to run in milliseconds.
        *
-       * If the timeout is reached, the process will be killed with the signal
+       * If the timeout is reached, the process is killed with the signal
        * specified by `killSignal` (defaults to SIGTERM).
        *
        * @example
@@ -7019,8 +7006,8 @@ declare module "bun" {
     interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable>
       extends BaseOptions<In, Out, Err> {
       /**
-       * If true, stdout and stderr pipes will not automatically start reading
-       * data. Reading will only begin when you access the `stdout` or `stderr`
+       * If true, the stdout and stderr pipes don't automatically start reading
+       * data. Reading begins only when you access the `stdout` or `stderr`
        * properties.
        *
        * This can improve performance when you don't need to read output
@@ -7129,7 +7116,7 @@ declare module "bun" {
       total: number;
     };
     /**
-     * The maximum amount of resident set size (in bytes) used by the process during its lifetime.
+     * The maximum resident set size (in bytes) used by the process during its lifetime.
      */
     maxRSS: number;
 
@@ -7168,7 +7155,7 @@ declare module "bun" {
      */
     signalCount: number;
     /**
-     *  The number of times the process was swapped out of main memory.
+     * The number of times the process was swapped out of main memory.
      */
     swapCount: number;
   }

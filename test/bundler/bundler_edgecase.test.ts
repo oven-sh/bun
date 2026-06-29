@@ -2496,6 +2496,27 @@ describe("bundler", () => {
       stdout: "",
     },
   });
+  itBundled("edgecase/MacroProtoKeyIsOwnProperty", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { getData } from "./macro.ts" with { type: "macro" };
+        const data = getData();
+        console.write(JSON.stringify([
+          Object.getPrototypeOf(data) === Object.prototype,
+          Object.hasOwn(data, "__proto__"),
+          data.x,
+          JSON.stringify(data),
+        ]));
+      `,
+      "/macro.ts": /* js */ `
+        export function getData() {
+          return JSON.parse('{"__proto__": {"x": 1}, "a": 2}');
+        }
+      `,
+    },
+    target: "bun",
+    run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
+  });
   itBundled("edgecase/NodeBuiltinWithoutPrefix", {
     files: {
       "/entry.ts": `

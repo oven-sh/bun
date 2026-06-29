@@ -1043,6 +1043,9 @@ impl MarkedArrayBuffer {
                 // took the pointer from a non-empty default-allocator `Box<[u8]>`.
                 unsafe { bun_alloc::default_alloc::free(self.buffer.ptr.cast()) };
             }
+            // Neutralize the handle so a later `slice()` or handoff cannot
+            // observe the freed pointer, mirroring `to_js`/`to_node_buffer`.
+            self.buffer = ArrayBuffer::EMPTY;
         }
     }
 

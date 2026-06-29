@@ -93,7 +93,7 @@ A specific version takes precedence over the package's `package.json` version:
 Workspaces have a few major benefits.
 
 - **Code can be split into logical parts.** If one package relies on another, add it as a dependency in `package.json`. If package `b` depends on `a`, `bun install` installs your local `packages/a` directory into `node_modules` instead of downloading it from the npm registry.
-- **Dependencies can be de-duplicated.** If `a` and `b` share a common dependency, it is _hoisted_ to the root `node_modules` directory. This saves disk space and avoids the "dependency hell" of multiple versions of a package installed at once.
+- **Dependencies can be de-duplicated.** If `a` and `b` share a common dependency, it is _hoisted_ to the root `node_modules` directory. This saves disk space and minimizes the "dependency hell" of multiple versions of a package installed at once.
 - **Run scripts in multiple packages.** Use the [`--filter` flag](/pm/filter) to run `package.json` scripts in several packages at once, or `--workspaces` to run scripts across all workspaces.
 
 ## Share versions with Catalogs

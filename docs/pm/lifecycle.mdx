@@ -10,7 +10,7 @@ Packages on `npm` can define _lifecycle scripts_ in their `package.json`. These 
 - `preuninstall`: Runs before the package is uninstalled
 - `prepublishOnly`: Runs before the package is published
 
-These scripts are arbitrary shell commands that the package manager is expected to run at the appropriate time. Because running arbitrary code is a security risk, Bun does not execute lifecycle scripts by default, unlike other `npm` clients.
+These scripts are arbitrary shell commands that the package manager is expected to run at the appropriate time. Because running arbitrary code is a security risk, Bun does not execute arbitrary lifecycle scripts by default, unlike other `npm` clients.
 
 ---
 

@@ -259,18 +259,17 @@ FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCoun
     WebCore::ScriptExecutionContext::postTaskTo(wrapper.m_contextId, [&wrapper] { wrapper.ref(); }, [argsVec = WTF::move(argsVec), argTypesVec = WTF::move(argTypesVec), wrapper = &wrapper](WebCore::ScriptExecutionContext& ctx) mutable {
         auto protectedWrapper = adoptRef(*wrapper);
         auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(ctx.jsGlobalObject());
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         JSC::MarkedArgumentBuffer arguments;
-        {
-            auto& vm = JSC::getVM(globalObject);
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            for (size_t i = 0; i < argsVec.size(); ++i) {
-                // JSBigInt::createFrom can throw (e.g. OOM). Leave the exception
-                // pending on the VM, matching invokeFFICallback.
-                JSC::JSValue arg = decodeThreadsafeCallbackArgument(globalObject, argsVec[i], argTypesVec[i]);
-                RETURN_IF_EXCEPTION(scope, void());
-                arguments.appendWithCrashOnOverflow(arg);
-            }
+        for (size_t i = 0; i < argsVec.size(); ++i) {
+            // JSBigInt::createFrom can throw (e.g. OOM). Leave the exception
+            // pending on the VM, matching invokeFFICallback.
+            JSC::JSValue arg = decodeThreadsafeCallbackArgument(globalObject, argsVec[i], argTypesVec[i]);
+            RETURN_IF_EXCEPTION(scope, void());
+            arguments.appendWithCrashOnOverflow(arg);
         }
+        scope.release();
         invokeFFICallback(globalObject, protectedWrapper->m_function.get(), arguments);
     });
 }

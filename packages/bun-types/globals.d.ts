@@ -113,9 +113,9 @@ declare var Worker: Bun.__internal.UseLibDomIfAvailable<
     prototype: Worker;
     new (scriptURL: string | URL, options?: Bun.WorkerOptions | undefined): Worker;
     /**
-     * This is the cloned value of the `data` property passed to `new Worker()`
+     * The cloned value of the `data` property passed to `new Worker()`.
      *
-     * This is Bun's equivalent of `workerData` in Node.js.
+     * Bun's equivalent of `workerData` in Node.js.
      */
     data: any;
   }
@@ -126,7 +126,7 @@ declare var Worker: Bun.__internal.UseLibDomIfAvailable<
  */
 interface WebSocket extends Bun.__internal.LibEmptyOrBunWebSocket {}
 /**
- * A WebSocket client implementation
+ * A WebSocket client implementation.
  */
 declare var WebSocket: Bun.__internal.UseLibDomIfAvailable<
   "WebSocket",
@@ -136,8 +136,8 @@ declare var WebSocket: Bun.__internal.UseLibDomIfAvailable<
     /**
      * Creates a new WebSocket instance with the given URL and options.
      *
-     * @param url The URL to connect to.
-     * @param options The options to use for the connection.
+     * @param url The URL to connect to
+     * @param options Connection options: protocols, headers, TLS, proxy, and compression
      *
      * @example
      * ```ts
@@ -154,8 +154,8 @@ declare var WebSocket: Bun.__internal.UseLibDomIfAvailable<
     /**
      * Creates a new WebSocket instance with the given URL and protocols.
      *
-     * @param url The URL to connect to.
-     * @param protocols The protocols to use for the connection.
+     * @param url The URL to connect to
+     * @param protocols One or more subprotocols to request from the server
      *
      * @example
      * ```ts
@@ -227,7 +227,7 @@ interface TextEncoder extends Bun.__internal.LibEmptyOrNodeUtilTextEncoder {
    * const { read, written } = encoder.encodeInto(src, dest);
    * ```
    * @param src The text to encode.
-   * @param dest The array to hold the encode result.
+   * @param dest The array that receives the encoded bytes.
    */
   encodeInto(src?: string, dest?: Bun.BufferSource): import("node:util").TextEncoderEncodeIntoResult;
 }
@@ -245,7 +245,8 @@ declare var TextEncoder: Bun.__internal.UseLibDomIfAvailable<
  *
  * ```js
  * const decoder = new TextDecoder();
- * const uint8array = decoder.decode('this is some data');
+ * const text = decoder.decode(new Uint8Array([104, 105])); // "hi"
+ * ```
  */
 interface TextDecoder extends Bun.__internal.LibEmptyOrNodeUtilTextDecoder {}
 declare var TextDecoder: Bun.__internal.UseLibDomIfAvailable<
@@ -269,7 +270,7 @@ interface Event {
   composedPath(): [EventTarget?];
   /** Alias for event.target. */
   readonly currentTarget: EventTarget | null;
-  /** Is true if cancelable is true and event.preventDefault() has been called. */
+  /** `true` if `cancelable` is `true` and `event.preventDefault()` has been called. */
   readonly defaultPrevented: boolean;
   /** This is not used in Node.js and is provided purely for completeness. */
   readonly eventPhase: number;
@@ -289,7 +290,7 @@ interface Event {
   readonly target: EventTarget | null;
   /** The millisecond timestamp when the Event object was created. */
   readonly timeStamp: number;
-  /** Returns the type of event, e.g. "click", "hashchange", or "submit". */
+  /** The type of event, for example "click", "hashchange", or "submit". */
   readonly type: string;
 }
 declare var Event: {
@@ -316,7 +317,7 @@ interface EventTarget {
     listener: EventListener | EventListenerObject,
     options?: AddEventListenerOptions | boolean,
   ): void;
-  /** Dispatches a synthetic event event to target and returns true if either event's cancelable attribute value is false or its preventDefault() method was not invoked, and false otherwise. */
+  /** Dispatches a synthetic event `event` to target and returns true if either event's cancelable attribute value is false or its preventDefault() method was not invoked, and false otherwise. */
   dispatchEvent(event: Event): boolean;
   /** Removes the event listener in target's event listener list with the same type, callback, and options. */
   removeEventListener(
@@ -341,9 +342,9 @@ declare var File: Bun.__internal.UseLibDomIfAvailable<
     /**
      * Create a new [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
      *
-     * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
-     * @param `name` - The name of the file
-     * @param `options` - An object containing properties to be added to the [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
+     * @param parts An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
+     * @param name The name of the file
+     * @param options Properties for the file, such as `type` and `lastModified`
      */
     new (
       parts: Bun.BlobPart[],
@@ -354,29 +355,29 @@ declare var File: Bun.__internal.UseLibDomIfAvailable<
 >;
 
 /**
- * ShadowRealms are a distinct global environment, with its own global object
- * containing its own intrinsics and built-ins (standard objects that are not
- * bound to global variables, like the initial value of Object.prototype).
+ * A [ShadowRealm](https://github.com/tc39/proposal-shadowrealm/blob/main/explainer.md#introduction)
+ * is a distinct global environment with its own global object containing its
+ * own intrinsics and built-ins (standard objects that are not bound to global
+ * variables, like the initial value of Object.prototype).
  *
  * @example
  *
  * ```js
  * const red = new ShadowRealm();
  *
- * // realms can import modules that will execute within it's own environment.
- * // When the module is resolved, it captured the binding value, or creates a new
+ * // Realms can import modules that execute within their own environment.
+ * // When the module resolves, it captures the binding value, or creates a new
  * // wrapped function that is connected to the callable binding.
  * const redAdd = await red.importValue('./inside-code.js', 'add');
  *
- * // redAdd is a wrapped function exotic object that chains it's call to the
+ * // redAdd is a wrapped function exotic object that chains its call to the
  * // respective imported binding.
  * let result = redAdd(2, 3);
  *
  * console.assert(result === 5); // yields true
  *
- * // The evaluate method can provide quick code evaluation within the constructed
- * // shadowRealm without requiring any module loading, while it still requires CSP
- * // relaxing.
+ * // The evaluate method runs code inside the ShadowRealm without loading a
+ * // module, though it still requires CSP relaxing.
  * globalThis.someValue = 1;
  * red.evaluate('globalThis.someValue = 2'); // Affects only the ShadowRealm's global
  * console.assert(globalThis.someValue === 1);
@@ -394,40 +395,16 @@ declare var File: Bun.__internal.UseLibDomIfAvailable<
  */
 interface ShadowRealm {
   /**
-   * Creates a new [ShadowRealm](https://github.com/tc39/proposal-shadowrealm/blob/main/explainer.md#introduction)
+   * Imports `bindingName` from the module at `specifier`, executed inside the
+   * realm, and resolves with its value. Functions come back as wrapped
+   * functions that chain their calls to the binding inside the realm.
    *
    * @example
    *
    * ```js
    * const red = new ShadowRealm();
-   *
-   * // realms can import modules that will execute within it's own environment.
-   * // When the module is resolved, it captured the binding value, or creates a new
-   * // wrapped function that is connected to the callable binding.
    * const redAdd = await red.importValue('./inside-code.js', 'add');
-   *
-   * // redAdd is a wrapped function exotic object that chains it's call to the
-   * // respective imported binding.
-   * let result = redAdd(2, 3);
-   *
-   * console.assert(result === 5); // yields true
-   *
-   * // The evaluate method can provide quick code evaluation within the constructed
-   * // shadowRealm without requiring any module loading, while it still requires CSP
-   * // relaxing.
-   * globalThis.someValue = 1;
-   * red.evaluate('globalThis.someValue = 2'); // Affects only the ShadowRealm's global
-   * console.assert(globalThis.someValue === 1);
-   *
-   * // The wrapped functions can also wrap other functions the other way around.
-   * const setUniqueValue =
-   * await red.importValue('./inside-code.js', 'setUniqueValue');
-   *
-   * // setUniqueValue = (cb) => (cb(globalThis.someValue) * 2);
-   *
-   * result = setUniqueValue((x) => x ** 3);
-   *
-   * console.assert(result === 16); // yields true
+   * console.assert(redAdd(2, 3) === 5);
    * ```
    */
   importValue(specifier: string, bindingName: string): Promise<any>;
@@ -456,22 +433,22 @@ interface Timer {
 }
 
 /**
- * Cancel a repeating timer by its timer ID.
- * @param id timer id
+ * Cancel a repeating timer.
+ * @param id the timer returned by {@link setInterval}, or its numeric id
  */
 declare function clearInterval(id?: number | Timer): void;
 /**
- * Cancel a delayed function call by its timer ID.
- * @param id timer id
+ * Cancel a delayed function call.
+ * @param id the timer returned by {@link setTimeout}, or its numeric id
  */
 declare function clearTimeout(id?: number | Timer): void;
 /**
- * Cancel an immediate function call by its immediate ID.
- * @param id immediate id
+ * Cancel an immediate function call.
+ * @param id the immediate returned by {@link setImmediate}, or its numeric id
  */
 declare function clearImmediate(id?: number | Timer): void;
 /**
- * Run a function immediately after main event loop is vacant
+ * Run a function immediately after the main event loop is vacant
  * @param handler function to call
  */
 declare function setImmediate(handler: Bun.TimerHandler, ...arguments: any[]): Timer;
@@ -482,9 +459,9 @@ declare function setImmediate(handler: Bun.TimerHandler, ...arguments: any[]): T
  */
 declare function setInterval(handler: Bun.TimerHandler, interval?: number, ...arguments: any[]): Timer;
 /**
- * Run a function after `timeout` (milliseconds)
+ * Run a function after `timeout` milliseconds
  * @param handler function to call
- * @param timeout milliseconds to wait between calls
+ * @param timeout milliseconds to wait before the call
  */
 declare function setTimeout(handler: Bun.TimerHandler, timeout?: number, ...arguments: any[]): Timer;
 
@@ -510,7 +487,7 @@ declare function removeEventListener(
 ): void;
 
 /**
- * Events providing information related to errors in scripts or in files.
+ * An event that provides information about an error in a script or in a file.
  */
 interface ErrorEvent extends Event {
   readonly colno: number;
@@ -550,7 +527,7 @@ declare var MessageEvent: Bun.__internal.UseLibDomIfAvailable<
 >;
 
 interface CustomEvent<T = any> extends Event {
-  /** Returns any custom data event was created with. Typically used for synthetic events. */
+  /** Any custom data the event was created with. Typically used for synthetic events. */
   readonly detail: T;
 }
 
@@ -589,7 +566,7 @@ interface AddEventListenerOptions extends Bun.EventListenerOptions {
 }
 
 /**
- * Low-level JavaScriptCore API for accessing the native ES Module loader (not a Bun API)
+ * Low-level JavaScriptCore API for accessing the native ES module loader (not a Bun API)
  *
  * Before using this, be aware of a few things:
  *
@@ -597,32 +574,28 @@ interface AddEventListenerOptions extends Bun.EventListenerOptions {
  *
  * This API may change any time JavaScriptCore is updated.
  *
- * Bun may rewrite ESM import specifiers to point to bundled code. This will
- * be confusing when using this API, as it will return a string like
- * "/node_modules.server.bun".
+ * Bun may rewrite ESM import specifiers to point to bundled code, so this API
+ * can return a string like "/node_modules.server.bun".
  *
- * Bun may inject additional imports into your code. This usually has a `bun:` prefix.
+ * Bun may inject additional imports into your code. These usually have a `bun:` prefix.
  */
 declare var Loader: {
   /**
-   * ESM module registry
+   * The ES module registry. Keys are module specifiers; values are metadata
+   * about the module.
    *
-   * This lets you implement live reload in Bun. If you
-   * delete a module specifier from this map, the next time it's imported, it
-   * will be re-transpiled and loaded again.
-   *
-   * The keys are the module specifiers and the
-   * values are metadata about the module.
+   * Use this to implement live reloading: delete a module specifier from this
+   * map and the next import re-transpiles and reloads the module.
    *
    * The keys are an implementation detail for Bun that will change between
    * versions.
    *
-   * - Userland modules are an absolute file path
-   * - Virtual modules have a `bun:` prefix or `node:` prefix
+   * - Userland modules are absolute file paths
+   * - Virtual modules have a `bun:` or `node:` prefix
    * - JS polyfills start with `"/bun-vfs/"`. `"buffer"` is an example of a JS polyfill
-   * - If you have a `node_modules.bun` file, many modules will point to that file
+   * - If you have a `node_modules.bun` file, many modules point to that file
    *
-   * Virtual modules and JS polyfills are embedded in bun's binary. They don't
+   * Virtual modules and JS polyfills are embedded in Bun's binary. They don't
    * point to anywhere in your local filesystem.
    */
   registry: Map<
@@ -630,9 +603,7 @@ declare var Loader: {
     {
       key: string;
       /**
-       * This refers to the state the ESM module is in
-       *
-       * TODO: make an enum for this number
+       * The load state of the ESM module
        */
       state: number;
       fetch: Promise<any>;
@@ -653,9 +624,9 @@ declare var Loader: {
     }
   >;
   /**
-   * For an already-evaluated module, return the dependencies as module specifiers
+   * Returns the dependencies of an already-evaluated module as module specifiers
    *
-   * This list is already sorted and uniqued.
+   * The list is sorted and deduplicated.
    *
    * @example
    *
@@ -679,10 +650,9 @@ declare var Loader: {
   /**
    * The function JavaScriptCore internally calls when you use an import statement.
    *
-   * This may return a path to `node_modules.server.bun`, which will be confusing.
-   *
-   * Consider {@link Bun.resolve} or {@link ImportMeta.resolve}
-   * instead.
+   * This may return a path to `node_modules.server.bun` rather than the
+   * original specifier. Consider {@link Bun.resolve} or
+   * {@link ImportMeta.resolve} instead.
    *
    * @param specifier - module specifier as it appears in transpiled source code
    * @param referrer - module specifier that is resolving this specifier
@@ -697,14 +667,15 @@ interface QueuingStrategy<T = any> {
 
 interface QueuingStrategyInit {
   /**
-   * Creates a new ByteLengthQueuingStrategy with the provided high water mark.
+   * The high water mark for the new queuing strategy.
    *
-   * Note that the provided high water mark will not be validated ahead of time. Instead, if it is negative, NaN, or not a number, the resulting ByteLengthQueuingStrategy will cause the corresponding stream constructor to throw.
+   * The value is not validated ahead of time. If it is negative, NaN, or not a
+   * number, the stream constructor the strategy is passed to throws.
    */
   highWaterMark: number;
 }
 
-/** This Streams API interface provides a built-in byte length queuing strategy that can be used when constructing streams. */
+/** A built-in byte-length queuing strategy for use when constructing streams. */
 interface ByteLengthQueuingStrategy extends QueuingStrategy<ArrayBufferView> {
   readonly highWaterMark: number;
   // changed from QueuingStrategySize<BufferSource>
@@ -767,8 +738,8 @@ declare var ReadableStreamDefaultController: {
 interface ReadableStreamDefaultReader<R = any> extends ReadableStreamGenericReader {
   read(): Promise<Bun.ReadableStreamDefaultReadResult<R>>;
   /**
-   * Only available in Bun. If there are multiple chunks in the queue, this will return all of them at the same time.
-   * Will only return a promise if the data is not immediately available.
+   * Only available in Bun. If there are multiple chunks in the queue, returns all of them at once.
+   * Returns a promise only if the data is not immediately available.
    */
   readMany(): Promise<Bun.ReadableStreamDefaultReadManyResult<R>> | Bun.ReadableStreamDefaultReadManyResult<R>;
   releaseLock(): void;
@@ -794,13 +765,16 @@ interface ReadableStreamDefaultReadValueResult<T> {
   value: T;
 }
 
+/**
+ * A `{ readable, writable }` pair, such as a transform stream.
+ *
+ * `pipeThrough()` pipes the source stream into the pair's writable side and
+ * returns the readable side for further use. Piping locks the source stream
+ * for the duration of the pipe, preventing any other consumer from acquiring
+ * a reader.
+ */
 interface ReadableWritablePair<R = any, W = any> {
   readable: ReadableStream<R>;
-  /**
-   * Provides a convenient, chainable way of piping this readable stream through a transform stream (or any other { writable, readable } pair). It simply pipes the stream into the writable side of the supplied pair, and returns the readable side for further use.
-   *
-   * Piping a stream will lock it for the duration of the pipe, preventing any other consumer from acquiring a reader.
-   */
   writable: WritableStream<W>;
 }
 
@@ -813,7 +787,7 @@ declare var WritableStreamDefaultController: {
   new (): WritableStreamDefaultController;
 };
 
-/** This Streams API interface is the object returned by WritableStream.getWriter() and once created locks the < writer to the WritableStream ensuring that no other streams can write to the underlying sink. */
+/** The object returned by `WritableStream.getWriter()`. Once created, it locks the writer to the `WritableStream`, ensuring that no other streams can write to the underlying sink. */
 interface WritableStreamDefaultWriter<W = any> {
   readonly closed: Promise<void>;
   readonly desiredSize: number | null;
@@ -855,31 +829,44 @@ declare var TransformStreamDefaultController: {
   new (): TransformStreamDefaultController;
 };
 
+/**
+ * Options that control how piping behaves under errors and closure.
+ *
+ * Piping a stream locks it for the duration of the pipe, preventing any other
+ * consumer from acquiring a reader. Errors and closures of the source and
+ * destination streams propagate as follows:
+ *
+ * An error in the source readable stream aborts the destination, unless
+ * `preventAbort` is truthy. The returned promise rejects with the source's
+ * error, or with any error that occurs while aborting the destination.
+ *
+ * An error in the destination cancels the source readable stream, unless
+ * `preventCancel` is truthy. The returned promise rejects with the
+ * destination's error, or with any error that occurs while canceling the source.
+ *
+ * When the source readable stream closes, the destination is closed, unless
+ * `preventClose` is truthy. The returned promise fulfills once this process
+ * completes, unless an error occurs while closing the destination, in which
+ * case it rejects with that error.
+ *
+ * If the destination starts out closed or closing, the source readable stream
+ * is canceled, unless `preventCancel` is true. The returned promise rejects
+ * with an error indicating piping to a closed stream failed, or with any error
+ * that occurs while canceling the source.
+ *
+ * `signal` can be set to an `AbortSignal` to abort an ongoing pipe operation
+ * with the corresponding `AbortController`. In this case, the source readable
+ * stream is canceled and the destination aborted, unless `preventCancel` or
+ * `preventAbort` is set.
+ */
 interface StreamPipeOptions {
   preventAbort?: boolean;
   preventCancel?: boolean;
-  /**
-   * Pipes this readable stream to a given writable stream destination. The way in which the piping process behaves under various error conditions can be customized with a number of passed options. It returns a promise that fulfills when the piping process completes successfully, or rejects if any errors were encountered.
-   *
-   * Piping a stream will lock it for the duration of the pipe, preventing any other consumer from acquiring a reader.
-   *
-   * Errors and closures of the source and destination streams propagate as follows:
-   *
-   * An error in this source readable stream will abort destination, unless preventAbort is truthy. The returned promise will be rejected with the source's error, or with any error that occurs during aborting the destination.
-   *
-   * An error in destination will cancel this source readable stream, unless preventCancel is truthy. The returned promise will be rejected with the destination's error, or with any error that occurs during canceling the source.
-   *
-   * When this source readable stream closes, destination will be closed, unless preventClose is truthy. The returned promise will be fulfilled once this process completes, unless an error is encountered while closing the destination, in which case it will be rejected with that error.
-   *
-   * If destination starts out closed or closing, this source readable stream will be canceled, unless preventCancel is true. The returned promise will be rejected with an error indicating piping to a closed stream failed, or with any error that occurs during canceling the source.
-   *
-   * The signal option can be set to an AbortSignal to allow aborting an ongoing pipe operation via the corresponding AbortController. In this case, this source readable stream will be canceled, and destination aborted, unless the respective options preventCancel or preventAbort are set.
-   */
   preventClose?: boolean;
   signal?: AbortSignal;
 }
 
-/** This Streams API interface provides a built-in byte length queuing strategy that can be used when constructing streams. */
+/** A built-in chunk-counting queuing strategy for use when constructing streams. */
 interface CountQueuingStrategy extends QueuingStrategy {
   readonly highWaterMark: number;
   readonly size: QueuingStrategySize;

@@ -1248,9 +1248,9 @@ pub mod package_manifest {
                 // (`heap::into_raw(SaveTask { task: .. })`). The thread-pool
                 // contract — not the Rust caller — guarantees `task` is live
                 // and points at `SaveTask.task`, so the precondition is
-                // discharged locally (matches `HardLinkWindowsInstallTask::
-                // run_from_thread_pool` in PackageInstall.rs). Safe `fn`
-                // coerces to the `unsafe fn(*mut Task)` field type.
+                // discharged locally (matches `UninstallTask::run` in
+                // PackageInstall.rs). Safe `fn` coerces to the
+                // `unsafe fn(*mut Task)` field type.
                 pub(crate) fn run(task: *mut PoolTask) {
                     use bun_threading::IntrusiveWorkTask as _;
                     let _tracer = bun_core::perf::trace("PackageManifest.Serializer.save");

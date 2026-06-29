@@ -5,14 +5,15 @@ use bun_core::Progress::Progress;
 use bun_core::{Global, Output};
 use bun_core::{MutableString, ZStr};
 use bun_paths::strings;
-use bun_paths::{self as path, OSPathChar, OSPathSlice, PathBuffer, SEP, SEP_STR};
+#[cfg(not(windows))]
+use bun_paths::OSPathChar;
+use bun_paths::{self as path, OSPathSlice, PathBuffer, SEP, SEP_STR};
 use bun_semver::String as SemverString;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
 use bun_sys::{self as sys, Dir, EntryKind, Fd, FdExt, walker_skippable};
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode};
 use bun_threading::work_pool::Task as WorkPoolTask;
-use bun_threading::{ThreadPool, WaitGroup};
 
 use crate::package_installer::NodeModulesFolder;
 use crate::{
@@ -354,8 +355,7 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
         },
     }
 
-    // Use the thread-local WPathBuffer pool so we don't add 64 KB
-    // of stack on ThreadPool worker threads (HardLinkWindowsInstallTask::run).
+    // Use the thread-local WPathBuffer pool so we don't add 64 KB to the stack.
     let mut working_mem = bun_paths::w_path_buffer_pool::get();
     working_mem[..usize::from(len)].copy_from_slice(path);
 
@@ -447,242 +447,73 @@ fn open_dir_a(dir: Fd, subpath: &[u8]) -> Result<Dir, bun_core::Error> {
 // (takes `Fd`/`&ZStr`, returns `Maybe<()>`). The wrapper preserves the errno
 // via `Error::get_errno()` for the per-errno branching below.
 
-// ───────────────────────────── NewTaskQueue ─────────────────────────────
-
-pub struct NewTaskQueue<TaskType> {
-    pub thread_pool: &'static ThreadPool,
-    /// One-shot, first-write-wins handoff of the failed task from a worker
-    /// thread to the consumer that called `wait()`. A `Mutex<Option<Box<_>>>`
-    /// makes ownership explicit (vs. the original `AtomicPtr`, which forced
-    /// every reader to remember `Box::from_raw` and risked leaks/double-free).
-    pub errored_task: bun_threading::Guarded<Option<Box<TaskType>>>,
-    pub wait_group: WaitGroup,
-}
-
-impl<TaskType> NewTaskQueue<TaskType> {
-    pub fn complete_one(&self) {
-        self.wait_group.finish();
-    }
-
-    /// # Safety
-    /// `task` must point to a live, Box-allocated `TaskType` whose ownership is
-    /// being handed to the thread pool; the worker reclaims it in its callback.
-    pub unsafe fn push(&self, task: *mut TaskType)
-    where
-        TaskType: HasWorkPoolTask,
-    {
-        self.wait_group.add_one();
-        // SAFETY: caller contract — `task` is a valid Box-allocated task; `.task()`
-        // is the intrusive node field.
-        self.thread_pool.schedule(Batch::from(unsafe {
-            std::ptr::from_mut::<WorkPoolTask>((*task).task())
-        }));
-    }
-
-    pub fn wait(&self) {
-        self.wait_group.wait();
-    }
-}
-
-pub trait HasWorkPoolTask {
-    fn task(&mut self) -> &mut WorkPoolTask;
-}
-
-// ───────────────────────────── HardLinkWindowsInstallTask ─────────────────────────────
-
+/// Create `dest_buf[..dest_len]` as a hardlink to `src_buf[..src_len]` (both
+/// NUL-terminated wide paths), creating missing destination directories on
+/// demand and falling back to `CopyFileW` when the volume rejects the link.
 #[cfg(windows)]
-pub(crate) struct HardLinkWindowsInstallTask {
-    /// Layout: `[src .. , 0, dest .. , 0]`. `src` and `dest` are reconstructed
-    /// on demand from `src_len` instead of storing self-referential pointers
-    /// (which would be invalidated when this `Box<[u16]>` is moved into `Self`
-    /// and again whenever `&mut self` reasserts uniqueness over it).
-    bytes: Box<[u16]>,
+fn hardlink_file_windows(
+    dest_buf: &mut [u16],
+    dest_len: usize,
+    basename_len: usize,
+    src_buf: &[u16],
     src_len: usize,
-    basename: u16,
-    task: WorkPoolTask,
-    err: Option<bun_core::Error>,
-}
+) -> Result<(), bun_core::Error> {
+    use bun_sys::windows;
+    debug_assert_eq!(dest_buf[dest_len], 0);
+    debug_assert_eq!(src_buf[src_len], 0);
 
-#[cfg(windows)]
-impl HasWorkPoolTask for HardLinkWindowsInstallTask {
-    fn task(&mut self) -> &mut WorkPoolTask {
-        &mut self.task
+    // `windows::CreateHardLinkW` is the safe wrapper (logs + Option<&mut SA>).
+    if windows::CreateHardLinkW(dest_buf.as_ptr(), src_buf.as_ptr(), None) != 0 {
+        return Ok(());
     }
-}
 
-#[cfg(windows)]
-pub(crate) type HardLinkQueue = NewTaskQueue<HardLinkWindowsInstallTask>;
-
-// PORTING.md §Global mutable state: written once on the main thread by
-// `init_queue()` before any worker `run_from_thread_pool` reads it; workers
-// only ever take `&HardLinkQueue` (all queue methods are `&self`).
-#[cfg(windows)]
-static HARDLINK_QUEUE: bun_core::RacyCell<core::mem::MaybeUninit<HardLinkQueue>> =
-    bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
-
-#[cfg(windows)]
-impl HardLinkWindowsInstallTask {
-    pub(crate) fn init_queue() -> &'static HardLinkQueue {
-        // SAFETY: called once per install batch on the install main thread before any
-        // push(). Returns a shared ref so worker threads in run_from_thread_pool() may
-        // safely alias it via HARDLINK_QUEUE.assume_init_ref(); all queue methods take
-        // &self.
-        //
-        // `INITIALIZED` is *not* the cross-thread publication edge — it is read and
-        // written only here, on the main thread, so `Relaxed` is sufficient. Workers
-        // never observe HARDLINK_QUEUE until after `push()` → `ThreadPool::schedule()`,
-        // whose internal Release/Acquire on the task queue is what publishes the
-        // first-call `MaybeUninit::write` below.
-        //
-        // We must NOT re-assign the whole struct each call: even though `copy()` always reaches `queue.wait()`
-        // before returning (see the loop_err handling there), `WaitGroup::wait()` can
-        // return while the last worker is still inside `WaitGroup::finish()` *after*
-        // its `fetch_sub` — touching `mutex`/`cond` for the lock-unlock-signal dance.
-        // Overwriting `wait_group` (or forming `&mut HardLinkQueue` at all) would race
-        // with that trailing access. Instead, on re-init we only drain `errored_task`
-        // through its own mutex; `wait_group`'s counter is already 0 and its
-        // Mutex/Condvar are `Sync`, so a stale `finish()` tail concurrently
-        // locking/signalling them is well-defined. `thread_pool` points at the
-        // process-wide `PackageManager` singleton and never changes.
-        static INITIALIZED: core::sync::atomic::AtomicBool =
-            core::sync::atomic::AtomicBool::new(false);
-        unsafe {
-            if INITIALIZED.swap(true, Ordering::Relaxed) {
-                let q = (*HARDLINK_QUEUE.get()).assume_init_ref();
-                *q.errored_task.lock() = None;
-                debug_assert_eq!(
-                    q.thread_pool as *const ThreadPool,
-                    core::ptr::from_ref(&PackageManager::get().thread_pool),
-                    "PackageManager singleton changed between install batches",
+    match windows::Win32Error::get() {
+        windows::Win32Error::ALREADY_EXISTS
+        | windows::Win32Error::FILE_EXISTS
+        | windows::Win32Error::CANNOT_MAKE => {
+            // Race condition: this shouldn't happen
+            if cfg!(debug_assertions) {
+                bun_output::scoped_log!(
+                    install,
+                    "CreateHardLinkW returned EEXIST, this shouldn't happen: {}",
+                    bun_core::fmt::fmt_path_u16(&dest_buf[..dest_len], Default::default())
                 );
-            } else {
-                (*HARDLINK_QUEUE.get()).write(HardLinkQueue {
-                    thread_pool: &PackageManager::get().thread_pool,
-                    errored_task: bun_threading::Guarded::new(None),
-                    wait_group: WaitGroup::init(),
-                });
             }
-            (*HARDLINK_QUEUE.get()).assume_init_ref()
-        }
-    }
-
-    pub(crate) fn init(
-        src: &[OSPathChar],
-        dest: &[OSPathChar],
-        basename: &[OSPathChar],
-    ) -> *mut Self {
-        let allocation_size = src.len() + 1 + dest.len() + 1;
-
-        let mut combined = vec![0u16; allocation_size].into_boxed_slice();
-        combined[..src.len()].copy_from_slice(src);
-        combined[src.len()] = 0;
-        let remaining = &mut combined[src.len() + 1..];
-        remaining[..dest.len()].copy_from_slice(dest);
-        remaining[dest.len()] = 0;
-
-        bun_core::heap::into_raw(Box::new(Self {
-            bytes: combined,
-            src_len: src.len(),
-            basename: basename.len() as u16, // @truncate
-            task: WorkPoolTask {
-                callback: Self::run_from_thread_pool,
-                node: ThreadPoolNode::default(),
-            },
-            err: None,
-        }))
-    }
-
-    fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        // SAFETY: task points to the `task` field of a HardLinkWindowsInstallTask.
-        let self_: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
-        // SAFETY: HARDLINK_QUEUE initialized by init_queue() before scheduling.
-        let queue = unsafe { (*HARDLINK_QUEUE.get()).assume_init_ref() };
-        scopeguard::defer! { queue.complete_one(); }
-
-        // SAFETY: self_ is valid until we reclaim the Box below.
-        if let Some(err) = unsafe { (*self_).run() } {
-            unsafe { (*self_).err = Some(err) };
-            // SAFETY: self_ was heap-allocated in init(); reclaim ownership now.
-            let boxed = unsafe { bun_core::heap::take(self_) };
-            // First-write-wins: keep only the first error. Any later failing task
-            // simply drops its Box here (leaking it would also leak the inner
-            // `Box<[u16]>` per failed file).
-            let mut slot = queue.errored_task.lock();
-            if slot.is_none() {
-                *slot = Some(boxed);
+            // SAFETY: FFI — dest is a valid NUL-terminated u16 buffer.
+            unsafe { windows::DeleteFileW(dest_buf.as_ptr()) };
+            if windows::CreateHardLinkW(dest_buf.as_ptr(), src_buf.as_ptr(), None) != 0 {
+                return Ok(());
             }
-            return;
         }
-        // SAFETY: self_ was heap-allocated in init().
-        unsafe { drop(bun_core::heap::take(self_)) };
+        _ => {}
     }
 
-    fn run(&mut self) -> Option<bun_core::Error> {
-        use bun_sys::windows;
-        // Read scalar fields before borrowing `bytes` so no `&mut self` reborrow
-        // overlaps the slice borrows below.
-        let src_len = self.src_len;
-        let basename = usize::from(self.basename);
-        // Disjoint borrows into the single backing buffer: `src` is read-only,
-        // `dest` is mutated in place (temporary NUL for the dirpath).
-        let (src, dest) = self.bytes.split_at_mut(src_len + 1);
-        let src: &[u16] = &src[..src_len];
-        let dest_len = dest.len() - 1;
-        debug_assert_eq!(dest[dest_len], 0);
+    let dirpath_len = dest_len - basename_len - 1;
+    dest_buf[dirpath_len] = 0;
+    let dirpath = bun_core::WStr::from_buf(dest_buf, dirpath_len);
+    let _ = mkdir_recursive_os_path(dirpath);
+    dest_buf[dirpath_len] = bun_paths::SEP_WINDOWS as u16;
 
-        // `windows::CreateHardLinkW` is the safe wrapper (logs + Option<&mut SA>).
-        if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) != 0 {
-            return None;
-        }
-
-        match windows::Win32Error::get() {
-            windows::Win32Error::ALREADY_EXISTS
-            | windows::Win32Error::FILE_EXISTS
-            | windows::Win32Error::CANNOT_MAKE => {
-                // Race condition: this shouldn't happen
-                if cfg!(debug_assertions) {
-                    bun_output::scoped_log!(
-                        install,
-                        "CreateHardLinkW returned EEXIST, this shouldn't happen: {}",
-                        bun_core::fmt::fmt_path_u16(&dest[..dest_len], Default::default())
-                    );
-                }
-                // SAFETY: FFI — dest is a valid NUL-terminated u16 buffer.
-                unsafe { windows::DeleteFileW(dest.as_ptr()) };
-                if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) != 0 {
-                    return None;
-                }
-            }
-            _ => {}
-        }
-
-        let dirpath_len = dest_len - basename - 1;
-        dest[dirpath_len] = 0;
-        let dirpath = bun_core::WStr::from_buf(dest, dirpath_len);
-        let _ = mkdir_recursive_os_path(dirpath);
-        dest[dirpath_len] = bun_paths::SEP_WINDOWS as u16;
-
-        if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) != 0 {
-            return None;
-        }
-
-        if PackageManager::verbose_install() {
-            bun_core::run_once! {{
-                bun_core::warn!(
-                    "CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n",
-                    bun_core::fmt::fmt_os_path(src, Default::default()),
-                    bun_core::fmt::fmt_os_path(&dest[..dest_len], Default::default()),
-                );
-            }}
-        }
-
-        // SAFETY: FFI — src/dest are valid NUL-terminated u16 buffers.
-        if unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 0) } != 0 {
-            return None;
-        }
-
-        Some(windows::get_last_error())
+    if windows::CreateHardLinkW(dest_buf.as_ptr(), src_buf.as_ptr(), None) != 0 {
+        return Ok(());
     }
+
+    if PackageManager::verbose_install() {
+        bun_core::run_once! {{
+            bun_core::warn!(
+                "CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n",
+                bun_core::fmt::fmt_os_path(&src_buf[..src_len], Default::default()),
+                bun_core::fmt::fmt_os_path(&dest_buf[..dest_len], Default::default()),
+            );
+        }}
+    }
+
+    // SAFETY: FFI — src/dest are valid NUL-terminated u16 buffers.
+    if unsafe { windows::CopyFileW(src_buf.as_ptr(), dest_buf.as_ptr(), 0) } != 0 {
+        return Ok(());
+    }
+
+    Err(windows::get_last_error())
 }
 
 // ───────────────────────────── UninstallTask ─────────────────────────────
@@ -1376,8 +1207,10 @@ impl<'a> PackageInstall<'a> {
                         _ => continue,
                     }
 
-                    if entry.path.len() > head1.len() - to_copy_into1_offset
-                        || entry.path.len() > head2.len() - to_copy_into2_offset
+                    // `>=` so the NUL terminator written at `head[len]` stays in
+                    // bounds when the path exactly fills the buffer tail.
+                    if entry.path.len() >= head1.len() - to_copy_into1_offset
+                        || entry.path.len() >= head2.len() - to_copy_into2_offset
                     {
                         return Err(bun_core::err!("NameTooLong"));
                     }
@@ -1616,28 +1449,8 @@ impl<'a> PackageInstall<'a> {
             let _ = (to_copy_into1_offset, head1, to_copy_into2_offset, head2);
             #[cfg(windows)]
             let _ = destination_dir;
-            #[cfg(windows)]
-            let queue = HardLinkWindowsInstallTask::init_queue();
-            // on Windows, tasks already pushed to `queue` are running on
-            // worker threads; an early `?` here would return before `queue.wait()`,
-            // letting the caller re-enter `init_queue()` and reset the WaitGroup
-            // while workers are still inside `complete_one()` (data race on the
-            // counter/condvar). Capture loop errors and always fall through to wait.
-            #[cfg(windows)]
-            let mut loop_err: Option<bun_core::Error> = None;
 
-            loop {
-                let entry = match walker.next() {
-                    Ok(Some(e)) => e,
-                    Ok(None) => break,
-                    #[cfg(not(windows))]
-                    Err(e) => return Err(e.into()),
-                    #[cfg(windows)]
-                    Err(e) => {
-                        loop_err = Some(e.into());
-                        break;
-                    }
-                };
+            while let Some(entry) = walker.next()? {
                 #[cfg(unix)]
                 {
                     match entry.kind {
@@ -1684,54 +1497,47 @@ impl<'a> PackageInstall<'a> {
                 }
                 #[cfg(not(unix))]
                 {
-                    match entry.kind {
-                        EntryKind::File => {}
+                    let is_dir = match entry.kind {
+                        EntryKind::File => false,
+                        EntryKind::Directory => true,
                         _ => continue,
-                    }
+                    };
 
-                    if entry.path.len() > head1.len() - to_copy_into1_offset
-                        || entry.path.len() > head2.len() - to_copy_into2_offset
+                    // `>=` so the NUL terminator written at `head[len]` stays in
+                    // bounds when the path exactly fills the buffer tail.
+                    if entry.path.len() >= head1.len() - to_copy_into1_offset
+                        || entry.path.len() >= head2.len() - to_copy_into2_offset
                     {
-                        loop_err = Some(bun_core::err!("NameTooLong"));
-                        break;
+                        return Err(bun_core::err!("NameTooLong"));
                     }
 
                     let dest_len = to_copy_into1_offset + entry.path.len();
                     head1[to_copy_into1_offset..dest_len].copy_from_slice(entry.path.as_slice());
                     head1[dest_len] = 0;
-                    let dest = bun_core::WStr::from_buf(head1, dest_len);
+
+                    if is_dir {
+                        // The walker yields a directory before its contents, so each
+                        // file's first CreateHardLinkW finds its parent (mirrors the
+                        // unix arm's make_path; failures surface on the file ladder).
+                        let _ = sys::mkdir_w(bun_core::WStr::from_buf(head1, dest_len));
+                        continue;
+                    }
 
                     let src_len = to_copy_into2_offset + entry.path.len();
                     head2[to_copy_into2_offset..src_len].copy_from_slice(entry.path.as_slice());
                     head2[src_len] = 0;
-                    let src = bun_core::WStr::from_buf(head2, src_len);
 
-                    // SAFETY: `init` returns a fresh Box-allocated task; ownership
-                    // transfers to the thread pool, reclaimed in `run_from_thread_pool`.
-                    unsafe {
-                        queue.push(HardLinkWindowsInstallTask::init(
-                            src.as_slice(),
-                            dest.as_slice(),
-                            entry.basename.as_slice(),
-                        ));
-                    }
+                    // Linked serially on this thread: fanning links out to the pool
+                    // produces synchronized CreateHardLinkW bursts that the AV filter
+                    // pends 20-180ms each; link creation is kernel-serialized anyway.
+                    hardlink_file_windows(
+                        head1,
+                        dest_len,
+                        entry.basename.as_slice().len(),
+                        head2,
+                        src_len,
+                    )?;
                     real_file_count += 1;
-                }
-            }
-
-            #[cfg(windows)]
-            {
-                queue.wait();
-
-                if let Some(err) = loop_err {
-                    return Err(err);
-                }
-
-                // No tasks are running after `wait()`, so `.take()` is uncontended.
-                if let Some(task) = queue.errored_task.lock().take() {
-                    if let Some(err) = task.err {
-                        return Err(err);
-                    }
                 }
             }
 
@@ -1760,12 +1566,6 @@ impl<'a> PackageInstall<'a> {
         self.file_count = match result {
             Ok(n) => n,
             Err(err) => {
-                #[cfg(windows)]
-                {
-                    if err == bun_core::err!("FailedToCopyFile") {
-                        return Ok(InstallResult::fail(err, Step::CopyingFiles, None));
-                    }
-                }
                 #[cfg(not(windows))]
                 {
                     if err == bun_core::err!("NotSameFileSystem") || err == bun_core::err!("ENXIO")
@@ -1877,8 +1677,10 @@ impl<'a> PackageInstall<'a> {
                         _ => continue,
                     }
 
-                    if entry.path.len() > head1.len() - to_copy_into1_offset
-                        || entry.path.len() > head2.len() - to_copy_into2_offset
+                    // `>=` so the NUL terminator written at `head[len]` stays in
+                    // bounds when the path exactly fills the buffer tail.
+                    if entry.path.len() >= head1.len() - to_copy_into1_offset
+                        || entry.path.len() >= head2.len() - to_copy_into2_offset
                     {
                         return Err(bun_core::err!("NameTooLong"));
                     }

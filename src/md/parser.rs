@@ -148,9 +148,6 @@ pub enum ParserError {
     /// The document needs more than [`MAX_BLOCK_BYTES`] of block metadata,
     /// so the parser's `u32` block offsets cannot address it.
     TooManyBlocks,
-    /// Resolving link reference definitions would emit more than
-    /// `Parser::max_ref_def_output` bytes of destination/title text.
-    RefDefOutputTooLarge,
 }
 
 bun_core::oom_from_alloc!(ParserError);
@@ -269,19 +266,18 @@ impl<'a> Parser<'a> {
         Ok(aligned)
     }
 
-    /// Charge one resolved reference link/image against the remaining
-    /// reference-definition output budget (`max_ref_def_output`).
-    pub(crate) fn charge_ref_def_output(
-        &mut self,
-        dest_len: usize,
-        title_len: usize,
-    ) -> Result<(), ParserError> {
+    /// Charge one resolved reference link/image against the reference-definition
+    /// output budget (`max_ref_def_output`). On exhaustion the budget is zeroed, so
+    /// this and every later reference degrade to literal text (md4c, mity/md4c#238).
+    pub(crate) fn charge_ref_def_output(&mut self, dest_len: usize, title_len: usize) -> bool {
         let n = dest_len as u64 + title_len as u64;
-        if n > self.max_ref_def_output {
-            return Err(ParserError::RefDefOutputTooLarge);
+        if n < self.max_ref_def_output {
+            self.max_ref_def_output -= n;
+            true
+        } else {
+            self.max_ref_def_output = 0;
+            false
         }
-        self.max_ref_def_output -= n;
-        Ok(())
     }
 
     fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Result<Parser<'a>, ParserError> {
@@ -324,7 +320,7 @@ impl<'a> Parser<'a> {
             ref_def_labels: bun_collections::StringSet::new(),
             last_line_has_list_loosening_effect: false,
             last_list_item_starts_with_two_blank_lines: false,
-            max_ref_def_output: (16 * (size as u64)).max(1024 * 1024).min(16 * 1024 * 1024),
+            max_ref_def_output: 16 * (size as u64).min(1024 * 1024 / 16),
             stack_check: StackCheck::init(),
         };
         p.build_mark_char_map();

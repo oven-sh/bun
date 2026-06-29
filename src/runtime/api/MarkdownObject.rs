@@ -69,9 +69,6 @@ fn parser_err_to_js(
                 ),
             )
             .throw(),
-        ParserError::RefDefOutputTooLarge => global_this.throw(format_args!(
-            "Markdown link reference definitions expand to more output than the parser supports"
-        )),
     }
 }
 

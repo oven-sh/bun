@@ -545,7 +545,9 @@ impl Parser<'_> {
                     {
                         return Ok(None);
                     }
-                    self.charge_ref_def_output(dest.len(), title.len())?;
+                    if !self.charge_ref_def_output(dest.len(), title.len()) {
+                        return Ok(None);
+                    }
                     let leave = self.enter_label_span(&dest, &title, is_image)?;
                     return Ok(Some(LabelParse {
                         label_start: start + 1,
@@ -578,7 +580,9 @@ impl Parser<'_> {
                 {
                     return Ok(None);
                 }
-                self.charge_ref_def_output(dest.len(), title.len())?;
+                if !self.charge_ref_def_output(dest.len(), title.len()) {
+                    return Ok(None);
+                }
                 let leave = self.enter_label_span(&dest, &title, is_image)?;
                 return Ok(Some(LabelParse {
                     label_start: start + 1,

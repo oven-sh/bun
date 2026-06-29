@@ -1118,9 +1118,16 @@ describe("pathological reference definition inputs", () => {
     for (let i = 0; i < 1000; i++) {
       lines.push("[a]", "", "[a][]", "", "[text][a]", "");
     }
-    expect(() => Markdown.html(lines.join("\n"))).toThrow(
-      "Markdown link reference definitions expand to more output than the parser supports",
-    );
+    // The budget is md4c's: min(16 * input size, 1 MiB). On exhaustion the parse
+    // still succeeds; remaining references degrade to literal bracket text.
+    const html = Markdown.html(lines.join("\n"));
+    const resolved = html.match(/<a href=/g)!.length;
+    expect(resolved).toBeGreaterThan(0);
+    expect(resolved).toBeLessThan(3000);
+    expect(html).toStartWith(`<p><a href="${dest}" title="${title}">a</a></p>`);
+    expect(html).toContain("<p>[a]</p>");
+    expect(html).toContain("<p>[a][]</p>");
+    expect(html).toContain("<p>[text][a]</p>");
 
     const small = Markdown.html('[a]: /url "title"\n\n[a]\n\n[a][]\n\n[text][a]\n');
     expect(small).toBe(

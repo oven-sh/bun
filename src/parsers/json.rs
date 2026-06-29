@@ -158,16 +158,14 @@ struct ParseOutput {
 fn parse_impl(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
-    bump: &Bump,
     opts: JSONOptions,
-    force_utf8: bool,
     check_len: bool,
 ) -> Result<ParseOutput, bun_core::Error> {
     let contents: &[u8] = &source.contents;
 
     let mut sidx = StructuralIndex::new(contents);
     let log_mark = (log.errors, log.warnings, log.msgs.len());
-    let result = run_stage2(source, log, bump, &mut sidx, opts, force_utf8, check_len);
+    let result = run_stage2(source, log, &mut sidx, opts, check_len);
 
     // Index-layer errors take precedence: the index stream was truncated at
     // the offending byte, so whatever stage 2 logged about the truncated
@@ -205,22 +203,12 @@ fn parse_impl(
 fn run_stage2<'s>(
     source: &'s bun_ast::Source,
     log: &mut bun_ast::Log,
-    bump: &Bump,
     sidx: &mut StructuralIndex<'s>,
     opts: JSONOptions,
-    force_utf8: bool,
     check_len: bool,
 ) -> Result<ParseOutput, bun_core::Error> {
-    debug_assert!(
-        !opts.simple_objects || force_utf8,
-        "simple_objects requires force_utf8 string handling"
-    );
-    let mut parser = Parser::new(source, log, bump, sidx, opts, force_utf8);
-    let root = if opts.simple_objects {
-        parser.parse_value::<true>()?
-    } else {
-        parser.parse_value::<false>()?
-    };
+    let mut parser = Parser::new(source, log, sidx, opts);
+    let root = parser.parse_value()?;
     if check_len && !parser.at_trailing_end() {
         return Err(parser.unexpected_here());
     }
@@ -314,7 +302,11 @@ fn guess_indentation(s: &[u8]) -> Indentation {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Parse JSON.
-/// This leaves UTF-16 strings as UTF-16 strings (the printer handles both).
+///
+/// `FORCE_UTF8` is accepted for source compatibility but no longer changes
+/// anything: the parser stores every string as UTF-8 (WTF-8 for the lone
+/// surrogates JSON escapes can produce), which the printer and `to_js`
+/// handle. The old `false` mode stored non-ASCII strings as UTF-16.
 #[inline]
 pub fn parse<const FORCE_UTF8: bool>(
     source: &bun_ast::Source,
@@ -324,10 +316,7 @@ pub fn parse<const FORCE_UTF8: bool>(
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
-    if FORCE_UTF8 {
-        return Ok(parse_classic(source, log, bump, JSON_OPTS, false)?.root);
-    }
-    Ok(parse_impl(source, log, bump, JSON_OPTS, FORCE_UTF8, false)?.root)
+    Ok(parse_classic(source, log, bump, JSON_OPTS, false)?.root)
 }
 
 /// Parse JSON, eagerly transcoding every string to UTF-8.
@@ -353,11 +342,11 @@ pub fn parse_utf8_impl<const CHECK_LEN: bool>(
 }
 
 /// Shared driver for the classic-output (`E::Object` / `E::Array`) entry
-/// points whose strings are UTF-8: parse into the simple AST — the only
-/// form stage 2 builds for these — and [`materialize`] the classic tree the
-/// caller expects at the boundary, with every node's exact source location.
-/// The document's row tape dies here; everything was copied out of it (into
-/// the AST store, and `bump` for decoded strings).
+/// points: parse into the simple AST — the only form stage 2 builds — and
+/// [`materialize`] the classic tree the caller expects at the boundary, with
+/// every node's exact source location. The document's row tape dies here;
+/// everything was copied out of it (into the AST store, and `bump` for
+/// decoded strings).
 fn parse_classic(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -365,17 +354,7 @@ fn parse_classic(
     opts: JSONOptions,
     check_len: bool,
 ) -> Result<ParseOutput, bun_core::Error> {
-    let mut out = parse_impl(
-        source,
-        log,
-        bump,
-        JSONOptions {
-            simple_objects: true,
-            ..opts
-        },
-        true,
-        check_len,
-    )?;
+    let mut out = parse_impl(source, log, opts, check_len)?;
     out.root = materialize_impl(&out.root, source, bump, opts.was_originally_macro);
     // The classic tree borrows nothing from the row tape: drop it.
     out.tape = None;
@@ -401,6 +380,44 @@ pub fn parse_utf8_registry(
     parse_simple(source, log, REGISTRY_OPTS)
 }
 
+/// package.json (comments & trailing commas allowed), as the document's
+/// rows. See [`ParsedJson`].
+pub fn parse_package_json_utf8_simple(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+) -> Result<ParsedJson, bun_core::Error> {
+    const OPTS: JSONOptions = JSONOptions {
+        simple_objects: true,
+        ..PACKAGE_JSON_OPTS
+    };
+    parse_simple(source, log, OPTS)
+}
+
+/// Strict JSON, as the document's rows. See [`ParsedJson`].
+pub fn parse_utf8_simple(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+) -> Result<ParsedJson, bun_core::Error> {
+    const OPTS: JSONOptions = JSONOptions {
+        simple_objects: true,
+        ..JSON_OPTS
+    };
+    parse_simple(source, log, OPTS)
+}
+
+/// The tsconfig/`.jsonc` dialect (comments, trailing commas), as the
+/// document's rows. See [`ParsedJson`].
+pub fn parse_ts_config_simple(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+) -> Result<ParsedJson, bun_core::Error> {
+    const OPTS: JSONOptions = JSONOptions {
+        simple_objects: true,
+        ..TSCONFIG_OPTS
+    };
+    parse_simple(source, log, OPTS)
+}
+
 /// Shared driver for the simple-AST entry points. No arena: the document's
 /// [`E::JsonTape`] owns everything the parse allocates and is returned to
 /// the caller.
@@ -411,15 +428,20 @@ fn parse_simple(
 ) -> Result<ParsedJson, bun_core::Error> {
     debug_assert!(opts.simple_objects);
     if source.contents.is_empty() {
+        // Empty input parses as `{}`, like the classic entry points: a
+        // rowless object backed by an empty tape, so consumers checking for
+        // an `EObjectSimple` root see one.
+        let tape = Box::new(E::JsonTape::empty());
+        let root = Expr::init(
+            E::ObjectSimple::new(&tape, 0, 0, true, bun_ast::Loc::EMPTY),
+            bun_ast::Loc { start: 0 },
+        );
         return Ok(ParsedJson {
-            root: empty_object_expr(),
-            tape: None,
+            root,
+            tape: Some(tape),
         });
     }
-    // The parser only reaches for an arena on paths the simple AST never
-    // takes (`!force_utf8` string storage); this one borrows the process
-    // heap and is never allocated from.
-    let out = parse_impl(source, log, &Bump::borrowing_default(), opts, true, false)?;
+    let out = parse_impl(source, log, opts, false)?;
     Ok(ParsedJson {
         root: out.root,
         tape: out.tape,
@@ -502,7 +524,7 @@ pub fn parse_package_json_utf8_with_opts_rt(
     // Callers that ask for the simple AST own its tape; everyone else gets
     // the classic tree materialized out of it.
     let out = if opts.simple_objects {
-        parse_impl(source, log, &Bump::borrowing_default(), opts, true, false)?
+        parse_impl(source, log, opts, false)?
     } else {
         parse_classic(source, log, bump, opts, false)?
     };
@@ -521,7 +543,7 @@ pub fn parse_for_macro(
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
-    Ok(parse_impl(source, log, bump, MACRO_JSON_OPTS, false, false)?.root)
+    Ok(parse_classic(source, log, bump, MACRO_JSON_OPTS, false)?.root)
 }
 
 pub struct JSONParseResult {
@@ -548,7 +570,7 @@ pub fn parse_for_bundling(
             tag: JSONParseResultTag::Empty,
         });
     }
-    let out = parse_impl(source, log, bump, JSON_OPTS, false, false)?;
+    let out = parse_classic(source, log, bump, JSON_OPTS, false)?;
     Ok(JSONParseResult {
         tag: if out.is_ascii_only {
             JSONParseResultTag::Ascii
@@ -561,12 +583,12 @@ pub fn parse_for_bundling(
 
 /// `tsconfig.json` / `.jsonc` (the dialect: comments, trailing commas).
 ///
-/// Classic `E::Object` AST — the tsconfig walker and bunfig pattern-match
-/// `Expr` nodes and report diagnostics with per-value `Loc`s, so the simple
-/// parse is [`materialize`]d at this boundary with every location intact.
-/// `FORCE_UTF8 = false` (the bundler's `.jsonc` module loader, whose strings
-/// become JavaScript) still builds the classic AST directly: only that mode
-/// can represent a string as UTF-16.
+/// Classic `E::Object` AST — the tsconfig walker, bunfig, and the bundler's
+/// `.jsonc` module loader pattern-match `Expr` nodes (and the first two
+/// report diagnostics with per-value `Loc`s), so the simple parse is
+/// [`materialize`]d at this boundary with every location intact.
+/// `FORCE_UTF8` is accepted for source compatibility but no longer changes
+/// anything (see [`parse`]).
 #[inline]
 pub fn parse_ts_config<const FORCE_UTF8: bool>(
     source: &bun_ast::Source,
@@ -576,10 +598,7 @@ pub fn parse_ts_config<const FORCE_UTF8: bool>(
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
-    if FORCE_UTF8 {
-        return Ok(parse_classic(source, log, bump, TSCONFIG_OPTS, false)?.root);
-    }
-    Ok(parse_impl(source, log, bump, TSCONFIG_OPTS, FORCE_UTF8, false)?.root)
+    Ok(parse_classic(source, log, bump, TSCONFIG_OPTS, false)?.root)
 }
 
 /// `Bun.JSONC.parse`: the same dialect as tsconfig (comments, trailing
@@ -612,7 +631,7 @@ pub fn parse_env_json(
 
     match contents[0] {
         b'{' | b'[' | b'0'..=b'9' | b'"' | b'\'' => {
-            Ok(parse_impl(source, log, bump, DOTENV_JSON_OPTS, false, false)?.root)
+            Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
         }
         _ => {
             // Keyword fast paths: the first token decides (matching the old

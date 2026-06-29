@@ -8,18 +8,23 @@
 //!   - in whitespace gaps, only on error paths and for `is_single_line`
 //!     newline checks (gaps are empty in minified JSON)
 //!
-//! Behavior (accepted inputs, error messages, `E::String` storage choice,
-//! duplicate-key warnings, `is_single_line`) matches the previous
-//! lexer+parser; see `json.rs` for the entry points.
+//! Behavior (accepted inputs, error messages, duplicate-key warnings,
+//! `is_single_line`) matches the previous lexer+parser; see `json.rs` for
+//! the entry points.
+//!
+//! The only thing built here is the compact "simple" AST (`E::ObjectSimple`
+//! / `E::ArraySimple` rows on the document's [`E::JsonTape`], one `Expr` per
+//! container); the classic `E::Object` tree some entry points return is
+//! materialized from it at their boundary (`json::materialize`). Strings are
+//! always UTF-8 (WTF-8 for lone surrogates), zero-copy from the source
+//! unless they contain escapes.
 use bun_alloc::Arena as Bump;
-use bun_ast as js_ast;
 use bun_ast::LexerLog;
 use bun_ast::expr::Data;
-use bun_ast::{E, Expr, G, Loc, Log, Range, Source, usize2loc};
+use bun_ast::{E, Expr, Loc, Log, Range, Source, usize2loc};
 use bun_core::StackCheck;
 use bun_core::strings;
 use bun_core::strings::CodePoint;
-use js_ast::ExprNodeList;
 
 use crate::json::JSONOptions;
 use crate::json_index::{self as jidx, StructuralIndex};
@@ -34,33 +39,25 @@ pub(crate) struct Parser<'a, 's, 'i> {
     contents: &'s [u8],
     source: &'s Source,
     log: &'a mut Log,
-    bump: &'a Bump,
     idx: &'i mut StructuralIndex<'s>,
     pub cursor: usize,
     opts: JSONOptions,
-    force_utf8: bool,
-    /// Whether any string in the document *may* need a body scan.
     /// Start of the token currently being parsed; error locations point here.
     token_start: usize,
     prev_error_loc: Loc,
     stack_check: StackCheck,
-    /// Reusable build stacks for container contents: children are pushed
-    /// here and moved into an exactly-sized `AstAlloc` vec when the
-    /// container closes (no growth in an allocator that cannot free).
-    scratch_props: Vec<G::Property>,
-    scratch_items: Vec<Expr>,
-    /// Simple-mode (`JSONOptions::simple_objects`) row stacks: see
-    /// `E::ObjectSimple`.
+    /// Reusable build stacks for container contents: a closing container's
+    /// direct children are appended to the tape as one contiguous block.
     scratch_simple_props: Vec<E::PropertySimple>,
     scratch_json_items: Vec<E::JsonValue>,
-    /// Simple mode: the document's [`E::JsonTape`], heap-allocated and owned
-    /// by the parser (raw, from `Box::leak`) until [`Self::take_tape`] hands
-    /// it to the caller; [`Drop`] reclaims it on the error paths that never
-    /// get there. `None` outside simple mode.
+    /// The document's [`E::JsonTape`], heap-allocated and owned by the
+    /// parser (raw, from `Box::leak`) until [`Self::take_tape`] hands it to
+    /// the caller; [`Drop`] reclaims it on the error paths that never get
+    /// there. `None` only after `take_tape`.
     tape: Option<core::ptr::NonNull<E::JsonTape>>,
-    /// Parallel to `scratch_props` (only when duplicate-key warnings are on):
-    /// the wyhash of every key of the in-progress objects, so duplicate
-    /// detection is a contiguous `u64` scan instead of pointer-chasing.
+    /// Parallel to `scratch_simple_props` (only when duplicate-key warnings
+    /// are on): the wyhash of every key of the in-progress objects, so
+    /// duplicate detection is a contiguous `u64` scan, not pointer-chasing.
     dup_hashes: Vec<u64>,
     /// Duplicate-key spill maps for objects with more than `DUP_LINEAR_MAX`
     /// keys, one per nesting level of such objects (`spill_depth` is the
@@ -131,34 +128,24 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     pub(crate) fn new(
         source: &'s Source,
         log: &'a mut Log,
-        bump: &'a Bump,
         idx: &'i mut StructuralIndex<'s>,
         opts: JSONOptions,
-        force_utf8: bool,
     ) -> Self {
         Parser {
             contents: &source.contents,
             source,
             log,
-            bump,
             idx,
             cursor: 0,
             opts,
-            force_utf8,
             token_start: 0,
             prev_error_loc: Loc::EMPTY,
             stack_check: StackCheck::init(),
-            scratch_props: Vec::new(),
-            scratch_items: Vec::new(),
             scratch_simple_props: Vec::new(),
             scratch_json_items: Vec::new(),
-            tape: if opts.simple_objects {
-                Some(core::ptr::NonNull::from(Box::leak(Box::new(
-                    E::JsonTape::empty(),
-                ))))
-            } else {
-                None
-            },
+            tape: Some(core::ptr::NonNull::from(Box::leak(Box::new(
+                E::JsonTape::empty(),
+            )))),
             dup_hashes: Vec::new(),
             dup_maps: Vec::new(),
             spill_depth: 0,
@@ -417,11 +404,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         self.unexpected(self.cursor)
     }
 
-    /// `SIMPLE` selects the JSON-only compact containers (`E::ObjectSimple`
-    /// / `E::ArraySimple`, see `JSONOptions::simple_objects`) instead of
-    /// `E::Object` / `E::Array`. Everything else — strings, numbers,
-    /// keywords, every error path — is shared.
-    pub(crate) fn parse_value<const SIMPLE: bool>(&mut self) -> PResult<Expr> {
+    /// A value as an `Expr`: only the document root (and the exotic-
+    /// whitespace re-dispatch) needs one — containers inside the document
+    /// are [`E::JsonValue`] rows (see [`Self::parse_json_value`]).
+    pub(crate) fn parse_value(&mut self) -> PResult<Expr> {
         let cursor = self.cursor;
         let start = self.pos_at(cursor);
         if start >= self.contents.len() {
@@ -431,13 +417,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let loc = usize2loc(start);
         self.token_start = start;
         match self.contents[start] {
-            b'{' => self.parse_object::<SIMPLE>(loc),
-            b'[' => self.parse_array::<SIMPLE>(loc),
+            b'{' => self.parse_object(loc),
+            b'[' => self.parse_array(loc),
             b'"' | b'\'' => {
                 let s = self.parse_string()?;
                 Ok(Expr::init(s, loc))
             }
-            _ => self.parse_scalar::<SIMPLE>(loc),
+            _ => self.parse_scalar(loc),
         }
     }
 
@@ -479,11 +465,11 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         span
     }
 
-    /// A value in `SIMPLE` mode: nested containers and strings become inline
-    /// [`E::JsonValue`]s (no `Expr`, no Store node); every other kind of
-    /// token goes through the ordinary scalar path, whose `Expr` payload is
-    /// inline in `Data` (numbers, booleans, null) — so the only Store
-    /// traffic left in a simple-mode document is one node per container.
+    /// A container's child value: nested containers and strings become
+    /// inline [`E::JsonValue`]s (no `Expr`, no Store node); every other kind
+    /// of token goes through the ordinary scalar path, whose `Expr` payload
+    /// is inline in `Data` (numbers, booleans, null) — so the only Store
+    /// traffic in a document is one node per container.
     #[inline(always)]
     fn parse_json_value(&mut self) -> PResult<E::JsonValue> {
         let cursor = self.cursor;
@@ -496,26 +482,22 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         self.token_start = start;
         match self.contents[start] {
             b'{' => {
-                let e = self.parse_object::<true>(loc)?;
+                let e = self.parse_object(loc)?;
                 let Data::EObjectSimple(r) = e.data else {
                     unreachable!()
                 };
                 Ok(E::JsonValue::Object(r))
             }
             b'[' => {
-                let e = self.parse_array::<true>(loc)?;
+                let e = self.parse_array(loc)?;
                 let Data::EArraySimple(r) = e.data else {
                     unreachable!()
                 };
                 Ok(E::JsonValue::Array(r))
             }
-            b'"' | b'\'' => {
-                // Simple mode implies `force_utf8` (asserted by the driver),
-                // so the string body is plain UTF-8 bytes.
-                Ok(E::JsonValue::String(self.parse_string_utf8_at(start)?))
-            }
+            b'"' | b'\'' => Ok(E::JsonValue::String(self.parse_string_utf8_at(start)?)),
             _ => {
-                let e = self.parse_scalar::<true>(loc)?;
+                let e = self.parse_scalar(loc)?;
                 Ok(match e.data {
                     Data::ENumber(n) => E::JsonValue::Number(n),
                     Data::EBoolean(b) => E::JsonValue::Boolean(b.value),
@@ -536,17 +518,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     // ── strings ──────────────────────────────────────────────────────────
 
-    /// Locate the body of the string whose opening quote is at the cursor's
-    /// index and whether it needs a body scan (a `\` or a control character
-    /// may be inside). Advances the cursor past both quote indices.
-    #[inline(always)]
-    fn string_body(&mut self) -> PResult<(&'s [u8], bool)> {
-        let open = self.pos_at(self.cursor);
-        self.string_body_at(open)
-    }
-
-    /// [`Self::string_body`] when the caller already resolved the opening
-    /// quote's byte position (`open == pos_at(self.cursor)`).
+    /// Locate the body of the string whose opening quote is at `open` (the
+    /// byte position of the cursor's index, which every caller has already
+    /// resolved) and whether it needs a body scan (a `\` or a control
+    /// character may be inside). Advances the cursor past both quote indices.
     #[inline(always)]
     fn string_body_at(&mut self, open: usize) -> PResult<(&'s [u8], bool)> {
         let i = self.cursor;
@@ -566,56 +541,31 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         Ok((body, dirty))
     }
 
-    /// Parse the string whose opening quote is at the cursor's index.
+    /// Parse the string whose opening quote is at the cursor's index into an
+    /// `E::String` node (the document root; everything nested stores the
+    /// bare [`E::Str`] of [`Self::parse_string_utf8_at`]).
     fn parse_string(&mut self) -> PResult<E::EString> {
-        let (body, dirty) = self.string_body()?;
-        if dirty {
-            return self.parse_string_slow(body);
-        }
-        self.make_clean_string(body)
+        let open = self.pos_at(self.cursor);
+        Ok(E::EString::init(self.parse_string_utf8_at(open)?.slice()))
     }
 
-    /// [`Self::parse_string`] for callers that only keep the string's bytes
-    /// and never store UTF-16 (`force_utf8`, implied by simple mode): the
-    /// clean-string fast path is just the body slice, no `E::EString`.
+    /// [`Self::parse_string`] for callers that only keep the string's bytes:
+    /// the clean-string fast path is just the body slice, no `E::EString`.
     /// `open` is the opening quote's byte position (`pos_at(self.cursor)`),
     /// which every caller has already resolved.
     #[inline(always)]
     fn parse_string_utf8_at(&mut self, open: usize) -> PResult<E::Str> {
-        debug_assert!(self.force_utf8);
         let (body, dirty) = self.string_body_at(open)?;
         if dirty {
-            // `force_utf8` makes the decoded result UTF-8.
             return Ok(self.parse_string_slow(body)?.data);
         }
         Ok(E::Str::new(body))
     }
 
-    /// Where decoded string bytes the AST keeps alive belong: the document's
-    /// [`E::JsonTape`] in simple mode (it owns everything the simple AST
-    /// allocates), the caller's arena otherwise.
+    /// Copy decoded string bytes the AST keeps alive into the document's
+    /// [`E::JsonTape`] (which owns everything the AST allocates).
     fn alloc_owned_str(&mut self, bytes: &[u8]) -> E::Str {
-        if self.tape.is_some() {
-            return self.tape_mut().alloc_str(bytes);
-        }
-        E::Str::new(self.bump.alloc_slice_copy(bytes))
-    }
-
-    /// A string with no escapes and no control characters.
-    #[inline]
-    fn make_clean_string(&mut self, body: &'s [u8]) -> PResult<E::EString> {
-        if self.force_utf8
-            || self.idx.flags & jidx::FLAG_HAS_NON_ASCII == 0
-            || strings::first_non_ascii(body).is_none()
-        {
-            return Ok(E::EString::init(body));
-        }
-        // !force_utf8 and the body has non-ASCII: the old parser stored these
-        // as UTF-16 (decoded via the codepoint iterator), so keep doing that.
-        self.is_ascii_only = false;
-        // fail_if_invalid=false: invalid sequences are replaced, never an error.
-        let utf16 = strings::to_utf16_alloc_for_real(body, false, false).expect("infallible");
-        Ok(E::String::init_utf16(self.bump.alloc_slice_copy(&utf16)))
+        self.tape_mut().alloc_str(bytes)
     }
 
     /// Dirty-block path: find the first `\` or control character; decode if
@@ -630,28 +580,22 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             }
         }
         let Some(k) = first_special else {
-            return self.make_clean_string(body);
+            return Ok(E::EString::init(body));
         };
         if body[k] != b'\\' {
             // Raw control character inside a string.
             return Err(self.string_control_char_error(body[k]));
         }
         // Escape decode (the old `decode_escape_sequences`), with the main
-        // loop's raw-control-character check folded in.
+        // loop's raw-control-character check folded in. The decoded UTF-16
+        // is stored as UTF-8 — WTF-8 for the lone surrogates `\uXXXX` can
+        // produce, which the printer and `to_js` both understand.
         self.is_ascii_only = false;
         let mut buf: Vec<u16> = Vec::with_capacity(body.len());
         self.decode_escapes(body, &mut buf)?;
-        if self.force_utf8 {
-            let utf8 = strings::to_utf8_alloc(&buf);
-            let owned = self.alloc_owned_str(&utf8);
-            return Ok(E::EString::init(owned.slice()));
-        }
-        if strings::first_non_ascii16(&buf).is_some() {
-            Ok(E::EString::init_utf16(self.bump.alloc_slice_copy(&buf)))
-        } else {
-            let out = self.bump.alloc_slice_fill_with(buf.len(), |i| buf[i] as u8);
-            Ok(E::EString::init(out))
-        }
+        let utf8 = strings::to_utf8_alloc(&buf);
+        let owned = self.alloc_owned_str(&utf8);
+        Ok(E::EString::init(owned.slice()))
     }
 
     #[cold]
@@ -681,7 +625,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     /// Parse the scalar run at the cursor. Hot for `true`/`false`/`null` and
     /// numbers; everything else is the cold path.
-    fn parse_scalar<const SIMPLE: bool>(&mut self, loc: Loc) -> PResult<Expr> {
+    fn parse_scalar(&mut self, loc: Loc) -> PResult<Expr> {
         let cursor = self.cursor;
         let run = self.run(cursor);
         debug_assert!(!run.is_empty());
@@ -699,7 +643,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 Ok(Expr::init(E::Null {}, loc))
             }
             b'0'..=b'9' | b'.' | b'-' => self.parse_number(loc),
-            _ => self.parse_scalar_cold::<SIMPLE>(loc),
+            _ => self.parse_scalar_cold(loc),
         }
     }
 
@@ -732,16 +676,12 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     // ── containers ───────────────────────────────────────────────────────
 
-    fn parse_array<const SIMPLE: bool>(&mut self, loc: Loc) -> PResult<Expr> {
+    fn parse_array(&mut self, loc: Loc) -> PResult<Expr> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(bun_core::err!("StackOverflow"));
         }
         self.cursor += 1; // [
-        let mark = if SIMPLE {
-            self.scratch_json_items.len()
-        } else {
-            self.scratch_items.len()
-        };
+        let mark = self.scratch_json_items.len();
         let here = self.pos_at(self.cursor);
         let mut is_single_line = !self.newline_before(here);
         let result: PResult = loop {
@@ -760,12 +700,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 self.cursor += 1;
                 break Ok(());
             }
-            let len_now = if SIMPLE {
-                self.scratch_json_items.len()
-            } else {
-                self.scratch_items.len()
-            };
-            if len_now != mark {
+            if self.scratch_json_items.len() != mark {
                 // Expect a `,` here.
                 if b != b',' {
                     if let Some(msg) = Self::js_punct_message(b) {
@@ -801,57 +736,28 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     is_single_line = false;
                 }
             }
-            if SIMPLE {
-                match self.parse_json_value() {
-                    Ok(item) => self.scratch_json_items.push(item),
-                    Err(e) => break Err(e),
-                }
-            } else {
-                match self.parse_value::<false>() {
-                    Ok(item) => self.scratch_items.push(item),
-                    Err(e) => break Err(e),
-                }
+            match self.parse_json_value() {
+                Ok(item) => self.scratch_json_items.push(item),
+                Err(e) => break Err(e),
             }
         };
         if let Err(e) = result {
-            if SIMPLE {
-                self.scratch_json_items.truncate(mark);
-            } else {
-                self.scratch_items.truncate(mark);
-            }
+            self.scratch_json_items.truncate(mark);
             return Err(e);
         }
-        if SIMPLE {
-            let (first, count) = self.push_items_block(mark);
-            return Ok(Expr::init(
-                E::ArraySimple::new(self.tape_ref(), first, count, is_single_line, Loc::EMPTY),
-                loc,
-            ));
-        }
-        let mut items: ExprNodeList =
-            Vec::with_capacity_in(self.scratch_items.len() - mark, bun_alloc::AstAlloc);
-        items.extend(self.scratch_items.drain(mark..));
+        let (first, count) = self.push_items_block(mark);
         Ok(Expr::init(
-            E::Array {
-                items,
-                is_single_line,
-                was_originally_macro: self.opts.was_originally_macro,
-                ..Default::default()
-            },
+            E::ArraySimple::new(self.tape_ref(), first, count, is_single_line, Loc::EMPTY),
             loc,
         ))
     }
 
-    fn parse_object<const SIMPLE: bool>(&mut self, loc: Loc) -> PResult<Expr> {
+    fn parse_object(&mut self, loc: Loc) -> PResult<Expr> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(bun_core::err!("StackOverflow"));
         }
         self.cursor += 1; // {
-        let mark = if SIMPLE {
-            self.scratch_simple_props.len()
-        } else {
-            self.scratch_props.len()
-        };
+        let mark = self.scratch_simple_props.len();
         let hmark = self.dup_hashes.len();
         let here = self.pos_at(self.cursor);
         let mut is_single_line = !self.newline_before(here);
@@ -873,12 +779,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 self.cursor += 1;
                 break Ok(());
             }
-            let len_now = if SIMPLE {
-                self.scratch_simple_props.len()
-            } else {
-                self.scratch_props.len()
-            };
-            if len_now != mark {
+            if self.scratch_simple_props.len() != mark {
                 if b != b',' {
                     if let Some(msg) = Self::js_punct_message(b) {
                         self.add_error(p + 1, format_args!("Unsupported syntax: {msg}"));
@@ -920,24 +821,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             let key_start = p;
             debug_assert_eq!(key_start, self.pos_at(key_cursor));
             self.token_start = key_start;
-            let key_str = if b == b'"' || b == b'\'' {
-                if SIMPLE {
-                    // Simple mode implies `force_utf8`; only `.data` (and, for
-                    // the duplicate-key warning, the hash) of the key is used.
-                    match self.parse_string_utf8_at(key_start) {
-                        Ok(d) => E::EString::init(d.slice()),
-                        Err(e) => break Err(e),
-                    }
-                } else {
-                    match self.parse_string() {
-                        Ok(mut s) => {
-                            if self.force_utf8 {
-                                s.to_utf8(self.bump).expect("to_utf8 cannot fail");
-                            }
-                            s
-                        }
-                        Err(e) => break Err(e),
-                    }
+            let key = if b == b'"' || b == b'\'' {
+                match self.parse_string_utf8_at(key_start) {
+                    Ok(d) => d,
+                    Err(e) => break Err(e),
                 }
             } else {
                 // Not a string key: report like the old parser
@@ -947,11 +834,11 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             };
             let key_loc = usize2loc(key_start);
 
-            if warn_dup && self.check_duplicate_key::<SIMPLE>(mark, hmark, &key_str) {
+            if warn_dup && self.check_duplicate_key(mark, hmark, key.slice()) {
                 // Cold: the warning is the only consumer of the key's full
                 // range (`token_range` re-derives it from the index window).
                 let key_range = self.token_range(key_cursor);
-                self.warn_duplicate_key(&key_str, key_range);
+                self.warn_duplicate_key(key.slice(), key_range);
             }
 
             // ── : ──
@@ -965,30 +852,15 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             }
 
             // ── value ──
-            if SIMPLE {
-                let value = match self.parse_json_value() {
-                    Ok(v) => v,
-                    Err(e) => break Err(e),
-                };
-                self.scratch_simple_props.push(E::PropertySimple {
-                    key: key_str.data,
-                    key_loc,
-                    value,
-                });
-            } else {
-                let key = Expr::init(key_str, key_loc);
-                let value = match self.parse_value::<false>() {
-                    Ok(v) => v,
-                    Err(e) => break Err(e),
-                };
-                self.scratch_props.push(G::Property {
-                    key: Some(key),
-                    value: Some(value),
-                    kind: G::PropertyKind::Normal,
-                    initializer: None,
-                    ..Default::default()
-                });
-            }
+            let value = match self.parse_json_value() {
+                Ok(v) => v,
+                Err(e) => break Err(e),
+            };
+            self.scratch_simple_props.push(E::PropertySimple {
+                key,
+                key_loc,
+                value,
+            });
         };
         // If this object spilled past the linear window, release its map.
         if self.dup_hashes.len() - hmark > Self::DUP_LINEAR_MAX {
@@ -997,31 +869,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
         self.dup_hashes.truncate(hmark);
         if let Err(e) = result {
-            if SIMPLE {
-                self.scratch_simple_props.truncate(mark);
-            } else {
-                self.scratch_props.truncate(mark);
-            }
+            self.scratch_simple_props.truncate(mark);
             return Err(e);
         }
 
-        if SIMPLE {
-            let (first, count) = self.push_props_block(mark);
-            return Ok(Expr::init(
-                E::ObjectSimple::new(self.tape_ref(), first, count, is_single_line, Loc::EMPTY),
-                loc,
-            ));
-        }
-        let mut properties: G::PropertyList =
-            Vec::with_capacity_in(self.scratch_props.len() - mark, bun_alloc::AstAlloc);
-        properties.extend(self.scratch_props.drain(mark..));
+        let (first, count) = self.push_props_block(mark);
         Ok(Expr::init(
-            E::Object {
-                properties,
-                is_single_line,
-                was_originally_macro: self.opts.was_originally_macro,
-                ..Default::default()
-            },
+            E::ObjectSimple::new(self.tape_ref(), first, count, is_single_line, Loc::EMPTY),
             loc,
         ))
     }
@@ -1030,8 +884,9 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     /// from a linear scan of the object's key hashes to the spill map.
     const DUP_LINEAR_MAX: usize = 32;
 
-    /// Is `key` a duplicate of an earlier key of the object whose properties
-    /// start at `scratch_props[mark]` / `dup_hashes[hmark]`? Records the key.
+    /// Is `key` (decoded UTF-8) a duplicate of an earlier key of the object
+    /// whose properties start at `scratch_simple_props[mark]` /
+    /// `dup_hashes[hmark]`? Records the key.
     ///
     /// Hash-first: small objects scan their contiguous hash stack and confirm
     /// a hit by comparing the actual keys. An object past `DUP_LINEAR_MAX`
@@ -1043,13 +898,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     /// poison its parent's membership test and made the map monotonically
     /// grow: on a large registry manifest a quarter of the parse went to
     /// growing and probing it.)
-    fn check_duplicate_key<const SIMPLE: bool>(
-        &mut self,
-        mark: usize,
-        hmark: usize,
-        key: &E::String,
-    ) -> bool {
-        let h = key.hash();
+    fn check_duplicate_key(&mut self, mark: usize, hmark: usize, key: &[u8]) -> bool {
+        let h = bun_wyhash::hash(key);
         let n_prior = self.dup_hashes.len() - hmark;
         let dup = if n_prior <= Self::DUP_LINEAR_MAX {
             if n_prior == Self::DUP_LINEAR_MAX {
@@ -1072,17 +922,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     // Hash hit: confirm against the real key (the property at
                     // `mark + i` — hashes and completed properties stay in
                     // step because the hash is pushed before the value).
-                    if SIMPLE {
-                        // Simple-mode keys are always UTF-8 (`force_utf8`).
-                        self.scratch_simple_props[mark + i].key.slice() == key.slice8()
-                    } else {
-                        let prior = &self.scratch_props[mark + i];
-                        prior
-                            .key
-                            .as_ref()
-                            .and_then(|k| k.data.as_e_string())
-                            .is_some_and(|k| estring_eq(&k, key))
-                    }
+                    self.scratch_simple_props[mark + i].key.slice() == key
                 }
             }
         } else {
@@ -1096,9 +936,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     #[cold]
-    fn warn_duplicate_key(&mut self, key: &E::String, key_range: Range) {
+    fn warn_duplicate_key(&mut self, key_text: &[u8], key_range: Range) {
         let source = self.source;
-        let key_text = key.string(self.bump).expect("string() cannot fail");
         self.log.add_range_warning_fmt(
             Some(source),
             key_range,
@@ -1395,7 +1234,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     /// unicode whitespace, `\uXXXX`-escaped identifiers, identifiers, and
     /// garbage. Never taken by well-formed JSON.
     #[cold]
-    fn parse_scalar_cold<const SIMPLE: bool>(&mut self, loc: Loc) -> PResult<Expr> {
+    fn parse_scalar_cold(&mut self, loc: Loc) -> PResult<Expr> {
         let cursor = self.cursor;
         let run = self.run(cursor);
         let start = self.pos_at(cursor);
@@ -1413,8 +1252,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             if p != start {
                 if p == self.pos_at(self.cursor) {
                     // Whitespace-only run (BOM, exotic unicode spaces):
-                    // re-dispatch on the next token in the same mode.
-                    return self.parse_value::<SIMPLE>();
+                    // re-dispatch on the next token.
+                    return self.parse_value();
                 }
                 return self.parse_scalar_tail(p, loc);
             }
@@ -1558,21 +1397,6 @@ fn push_codepoint(buf: &mut Vec<u16>, cp: CodePoint) {
         return;
     }
     strings::push_codepoint_utf16(buf, cp as u32);
-}
-
-/// Compare two `E::String`s by content representation (the duplicate-key
-/// check). Different representations (UTF-8 vs UTF-16) never compare equal,
-/// matching the old hash-based detection.
-#[inline]
-fn estring_eq(a: &E::String, b: &E::String) -> bool {
-    if a.is_utf16 != b.is_utf16 {
-        return false;
-    }
-    if a.is_utf16 {
-        a.slice16() == b.slice16()
-    } else {
-        a.slice8() == b.slice8()
-    }
 }
 
 /// Port of the old `decode_escape_sequences` (JSON arm) over a byte body,

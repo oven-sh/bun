@@ -235,6 +235,13 @@ fn scalar_index(contents: &[u8], mut bufs: ScratchBufs) -> Result<StructuralInde
     let n = s.len();
     let mut i = 0;
     let mut prev_scalar = false;
+    // A backslash outside of a string "escapes" the next byte exactly like
+    // the SIMD kernel's global odd-backslash-run parity does: the only thing
+    // that changes is whether a following `"` opens a string. (Such input is
+    // never valid JSON — both indexers feed stage 2 a junk token — but the
+    // two indexers must agree bit-for-bit so they can be tested against each
+    // other.)
+    let mut pending_escape = false;
 
     macro_rules! mark_dirty {
         ($pos:expr) => {{
@@ -245,8 +252,12 @@ fn scalar_index(contents: &[u8], mut bufs: ScratchBufs) -> Result<StructuralInde
 
     while i < n {
         let c = s[i];
+        let was_escaped = pending_escape;
+        pending_escape = false;
         match c {
-            b'"' | b'\'' => {
+            // An escaped quote outside a string does not open one; the byte
+            // is an ordinary scalar-run byte (falls to the `_` arm below).
+            b'"' | b'\'' if !was_escaped => {
                 if c == b'\'' {
                     flags |= FLAG_HAS_SINGLE_QUOTE;
                 }
@@ -333,6 +344,9 @@ fn scalar_index(contents: &[u8], mut bufs: ScratchBufs) -> Result<StructuralInde
                 }
             }
             _ => {
+                if c == b'\\' && !was_escaped {
+                    pending_escape = true;
+                }
                 if c >= 0x80 {
                     flags |= FLAG_HAS_NON_ASCII;
                 }
@@ -361,6 +375,56 @@ fn is_ls_ps(s: &[u8], i: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The scalar indexer is also the reference model for the SIMD kernel:
+    /// on documents without comments or single quotes (where the SIMD path is
+    /// taken) both must produce the same indices and flags.
+    fn build_both(contents: &[u8]) -> Option<(Vec<u32>, u32, Vec<u32>, u32)> {
+        let simd = build(contents).ok()?;
+        let (si, sf) = (simd.indices()[..simd.len()].to_vec(), simd.flags);
+        simd.release();
+        let scalar = scalar_index(contents, scratch_get()).ok()?;
+        let (ci, cf) = (scalar.indices()[..scalar.len()].to_vec(), scalar.flags);
+        scalar.release();
+        Some((si, sf, ci, cf))
+    }
+
+    #[test]
+    fn simd_and_scalar_indexers_agree() {
+        // Deterministic pseudo-random JSON-ish documents over a hostile
+        // alphabet (quotes, escapes, structurals, non-ASCII), all lengths
+        // around the 64-byte block size.
+        let mut state = 0x9E3779B97F4A7C15u64;
+        let mut rng = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let alphabet: &[u8] = b"{}[]:,\"\\ \t\n\r0123456789aetfn.-+\x01\x1f\x80\xc3\xa9";
+        for _ in 0..20_000 {
+            let len = (rng() % 200) as usize;
+            let mut buf = Vec::with_capacity(len);
+            for _ in 0..len {
+                buf.push(alphabet[(rng() as usize) % alphabet.len()]);
+            }
+            // Skip docs the SIMD path rejects (none: the alphabet has no '/'
+            // or '\'' so the SIMD path is always taken).
+            let Some((si, sf, ci, cf)) = build_both(&buf) else { continue };
+            assert_eq!(si, ci, "index mismatch for {:?}", bstr::BStr::new(&buf));
+            assert_eq!(sf, cf, "flag mismatch for {:?}", bstr::BStr::new(&buf));
+        }
+        // Real-shaped documents: long strings, escapes at block boundaries.
+        for pad in 40..=96usize {
+            let doc = format!(
+                "{{\"{}\": \"x\", \"k\": [1, -2.5e7, true, \"{}\\n\"]}}",
+                "a".repeat(pad),
+                "é".repeat(pad / 2),
+            );
+            let (si, sf, ci, cf) = build_both(doc.as_bytes()).unwrap();
+            assert_eq!((si, sf), (ci, cf), "mismatch for {doc:?}");
+        }
+    }
 
     fn idx(s: &str) -> (Vec<u32>, u32) {
         let r = build(s.as_bytes()).map_err(|_| ()).expect("index error");

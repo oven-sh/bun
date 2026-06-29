@@ -15,7 +15,7 @@
 //!   - `callbacks`      — lsquic → Rust glue (on_hsk_done / on_stream_* / …)
 //!   - `PendingConnect` — DNS-pending connect resolution
 
-use core::sync::atomic::AtomicU32;
+use core::sync::atomic::{AtomicU32, AtomicU64};
 
 #[path = "h3_client/AltSvc.rs"]
 pub mod alt_svc;
@@ -54,6 +54,13 @@ pub static live_sessions: AtomicU32 = AtomicU32::new(0);
 pub static live_streams: AtomicU32 = AtomicU32::new(0);
 pub use live_sessions as LIVE_SESSIONS;
 pub use live_streams as LIVE_STREAMS;
+
+/// Test-only: the HTTP/3 application error code (RFC 9114 §8.1) Bun.serve's
+/// h3 server last observed on a peer RESET_STREAM or STOP_SENDING. Written
+/// only by the debug-build `x-bun-test-100-then-data` hook's abort handler;
+/// always 0 in release. Read via `TestingAPIs.quicTestPeerStreamError`.
+#[allow(non_upper_case_globals)]
+pub static test_last_peer_stream_error: AtomicU64 = AtomicU64::new(0);
 
 // H3TestingAPIs lives in bun_http_jsc and is accessed via the
 // extension-trait pattern there.

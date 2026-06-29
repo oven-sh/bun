@@ -2708,12 +2708,26 @@ where
         }
         #[cfg(bun_debug)]
         {
-            // Test hook: HEADERS(100) + DATA + FIN with no final response, a
+            // Test hook: HEADERS(100) then DATA with no final response, a
             // sequence no conformant handler can produce (RFC 9114 §4.1).
             // Exercised by fetch-http3-adversarial.test.ts on debug builds.
             if let Some(body) = req.header(b"x-bun-test-100-then-data") {
+                use core::sync::atomic::Ordering;
+                http::h3_client::test_last_peer_stream_error.store(0, Ordering::Relaxed);
                 resp.write_continue();
-                resp.test_end_after_informational(body);
+                // Leaves the stream open, so it can only close once the
+                // client's stream error arrives and the code is recordable.
+                resp.test_data_after_informational(body);
+                // Record the stream error the client puts on the wire in
+                // response, so the test can assert it is H3_MESSAGE_ERROR
+                // (RFC 9114 §4.1.2) and not a clean close.
+                resp.on_aborted(
+                    |_s: &mut Self, r: &mut uws::H3::Response| {
+                        http::h3_client::test_last_peer_stream_error
+                            .store(r.peer_error_code(), Ordering::Relaxed);
+                    },
+                    core::ptr::from_mut(self),
+                );
                 return;
             }
         }

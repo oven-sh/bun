@@ -429,6 +429,13 @@ export const fetchH3Internals = {
     sessions: number;
     streams: number;
   },
+  /**
+   * HTTP/3 application error code (RFC 9114 §8.1) that Bun.serve's h3 server
+   * last observed on a peer RESET_STREAM or STOP_SENDING. Only ever written
+   * by the debug-build `x-bun-test-100-then-data` server hook's abort
+   * handler; always 0 in release builds.
+   */
+  lastPeerStreamError: $newRustFunction("http/H3Client.rs", "TestingAPIs.quicTestPeerStreamError", 0) as () => number,
 };
 
 export const fileSinkInternals = {

@@ -11,6 +11,31 @@ bun_opaque::opaque_ffi! {
     pub struct Stream;
 }
 
+/// HTTP/3 application error code (RFC 9114 §8.1), carried on RESET_STREAM
+/// and STOP_SENDING frames. Mirrors `http_types::h2::ErrorCode`.
+#[repr(transparent)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct ErrorCode(pub u64);
+impl ErrorCode {
+    pub const NO_ERROR: Self = Self(0x0100);
+    pub const GENERAL_PROTOCOL_ERROR: Self = Self(0x0101);
+    pub const INTERNAL_ERROR: Self = Self(0x0102);
+    pub const STREAM_CREATION_ERROR: Self = Self(0x0103);
+    pub const CLOSED_CRITICAL_STREAM: Self = Self(0x0104);
+    pub const FRAME_UNEXPECTED: Self = Self(0x0105);
+    pub const FRAME_ERROR: Self = Self(0x0106);
+    pub const EXCESSIVE_LOAD: Self = Self(0x0107);
+    pub const ID_ERROR: Self = Self(0x0108);
+    pub const SETTINGS_ERROR: Self = Self(0x0109);
+    pub const MISSING_SETTINGS: Self = Self(0x010a);
+    pub const REQUEST_REJECTED: Self = Self(0x010b);
+    pub const REQUEST_CANCELLED: Self = Self(0x010c);
+    pub const REQUEST_INCOMPLETE: Self = Self(0x010d);
+    pub const MESSAGE_ERROR: Self = Self(0x010e);
+    pub const CONNECT_ERROR: Self = Self(0x010f);
+    pub const VERSION_FALLBACK: Self = Self(0x0110);
+}
+
 // `Stream` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so `&mut Stream` is
 // ABI-identical to a non-null `*mut Stream` with no `noalias`/`readonly`
 // attribute. Shims taking only the handle + value types are `safe fn`; the
@@ -19,7 +44,8 @@ unsafe extern "C" {
     safe fn us_quic_stream_socket(s: &mut Stream) -> *mut Socket;
     safe fn us_quic_stream_shutdown(s: &mut Stream);
     safe fn us_quic_stream_close(s: &mut Stream);
-    safe fn us_quic_stream_reset(s: &mut Stream);
+    safe fn us_quic_stream_reset(s: &mut Stream, code: u64);
+    safe fn us_quic_stream_peer_error_code(s: &mut Stream) -> u64;
     safe fn us_quic_stream_header_count(s: &mut Stream) -> c_uint;
     safe fn us_quic_stream_header(s: &mut Stream, i: c_uint) -> *const Header;
     safe fn us_quic_stream_ext(s: &mut Stream) -> *mut c_void;
@@ -52,8 +78,16 @@ impl Stream {
         us_quic_stream_close(self)
     }
 
-    pub fn reset(&mut self) {
-        us_quic_stream_reset(self)
+    /// Signal an HTTP/3 stream error carrying `code` (RFC 9114 §8.1):
+    /// RESET_STREAM if the send half is still open, STOP_SENDING otherwise.
+    pub fn reset(&mut self, code: ErrorCode) {
+        us_quic_stream_reset(self, code.0)
+    }
+
+    /// Application error code from the peer's RESET_STREAM or STOP_SENDING
+    /// frame (RFC 9114 §8.1), or `NO_ERROR`'s absence (0) if none arrived.
+    pub fn peer_error_code(&mut self) -> u64 {
+        us_quic_stream_peer_error_code(self)
     }
 
     pub fn header_count(&mut self) -> c_uint {

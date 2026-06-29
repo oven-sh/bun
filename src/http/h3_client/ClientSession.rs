@@ -176,7 +176,7 @@ impl ClientSession {
             // is the correct "I'm abandoning this send half" so lsquic reaps
             // the stream instead of leaking it on the pooled session.
             if !request_body_done {
-                qs.reset();
+                qs.reset(quic::ErrorCode::REQUEST_CANCELLED);
             }
         }
         st.qstream = None;
@@ -199,6 +199,19 @@ impl ClientSession {
             // detach() nulled cl.h3 but the HTTPClient itself is alive.
             client_mut(cl).fail_from_h2(err);
         }
+    }
+
+    /// Fail `stream` for a malformed response. RFC 9114 §4.1.2 requires this
+    /// to be a stream error of type H3_MESSAGE_ERROR, not the clean close
+    /// `fail()` would put on the wire (a FIN reads as normal completion).
+    /// Mirrors `h2_client::ClientSession::rst_stream(PROTOCOL_ERROR)`.
+    pub fn fail_malformed(&mut self, stream: *mut Stream) {
+        // Must run before abort()/detach(): their close() sets lsquic's
+        // U_WRITE_DONE, which neuters lsquic_stream_maybe_reset.
+        if let Some(qs) = stream_mut(stream).qstream_mut() {
+            qs.reset(quic::ErrorCode::MESSAGE_ERROR);
+        }
+        self.fail(stream, crate::Error::HTTP3ProtocolError);
     }
 
     /// A stream closed before any response headers arrived. If the request

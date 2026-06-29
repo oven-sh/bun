@@ -140,17 +140,25 @@ void uws_h3_res_pause(uws_h3_res_t* res) { ((Http3Response*)res)->pause(); }
 void uws_h3_res_resume(uws_h3_res_t* res) { ((Http3Response*)res)->resume(); }
 void uws_h3_res_write_continue(uws_h3_res_t* res) { ((Http3Response*)res)->writeContinue(); }
 
+/* Application error code from the peer's RESET_STREAM or STOP_SENDING
+ * (RFC 9114 §8.1), or 0 if none has arrived yet. */
+uint64_t uws_h3_res_peer_error_code(uws_h3_res_t* res)
+{
+    return us_quic_stream_peer_error_code((us_quic_stream_t*)res);
+}
+
 #ifdef BUN_DEBUG
-/* Test-only: DATA + FIN with no final HEADERS, a sequence a conformant
+/* Test-only: DATA with no final-response HEADERS, a sequence a conformant
  * handler cannot produce (RFC 9114 §4.1). Queued via backpressure so the
  * bytes flush after lsquic's stashed 1xx header block (stream writes are
- * refused until STREAM_HEADERS_SENT). */
-void uws_h3_res_test_end_after_informational(uws_h3_res_t* res, const char* data, size_t length)
+ * refused until STREAM_HEADERS_SENT). Deliberately leaves both halves of
+ * the stream open: it must only close via the client's stream error, so
+ * the test can read the error code from the on_stream_close callback. */
+void uws_h3_res_test_data_after_informational(uws_h3_res_t* res, const char* data, size_t length)
 {
     Http3ResponseData* d = ((Http3Response*)res)->getHttpResponseData();
     d->state |= Http3ResponseData::HTTP_STATUS_CALLED | Http3ResponseData::HTTP_WRITE_CALLED;
     d->backpressure.append(data, length);
-    d->endAfterDrain = true;
     us_quic_stream_want_write((us_quic_stream_t*)res, 1);
 }
 #endif

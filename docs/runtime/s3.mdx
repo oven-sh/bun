@@ -401,7 +401,7 @@ const supabase = new S3Client({
 
 ### Using Bun's S3Client with S3 Virtual Hosted-Style endpoints
 
-When using a virtual hosted-style endpoint (the bucket name is part of the hostname instead of the path), set the `virtualHostedStyle` option to `true`.
+When using a virtual hosted-style endpoint, set the `virtualHostedStyle` option to `true`.
 
 <Note>
   - If you don't specify an endpoint, Bun determines the AWS S3 endpoint from the provided region and bucket. - If no

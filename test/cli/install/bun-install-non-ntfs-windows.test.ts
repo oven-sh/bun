@@ -1,21 +1,13 @@
-// `bun install` replaces `bun.lock` through `NtSetInformationFile` with the
-// `FileRenameInformationEx` information class. That class (and
-// `FILE_RENAME_POSIX_SEMANTICS`) is only implemented by NTFS: exFAT and FAT32
-// volumes (external drives, USB sticks, cloud and VeraCrypt mounts) reject it
-// with `STATUS_INVALID_PARAMETER`, so saving the lockfile failed with
-// "EINVAL: Failed to replace old lockfile with new lockfile on disk" and
-// aborted every `bun install` / `bun add` in a project on such a volume.
-// Bun now retries through the legacy `FileRenameInformation` class, mirroring
-// the fallback `DeleteFileBun` already had for `FileDispositionInformationEx`.
-// https://github.com/oven-sh/bun/issues/10169
-//
-// Creating and formatting a FAT32 volume requires elevation, so the suite
-// skips where diskpart cannot run; the elevated Windows lanes exercise it.
+// `FileRenameInformationEx`, the NT rename class bun replaces `bun.lock` with,
+// is only implemented by NTFS, so exFAT and FAT32 volumes need the legacy
+// `FileRenameInformation` fallback. https://github.com/oven-sh/bun/issues/10169
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
+setDefaultTimeout(1000 * 60 * 5);
 
 // `net session` exits non-zero with "Access is denied" unless the process is
 // elevated; diskpart's `create vdisk` / `attach vdisk` need elevation too.
@@ -76,15 +68,24 @@ describe.skipIf(!isElevatedWindows)("bun install on a non-NTFS Windows volume", 
       mkdirSync(cache);
       const project = join(mount, "project");
       mkdirSync(project);
+      const lockPath = join(project, "bun.lock");
+      const manifest = (dependencies: Record<string, string>) =>
+        JSON.stringify({ name: "fat32-project", version: "1.0.0", dependencies });
       copyFileSync(join(import.meta.dir, "bar-0.0.2.tgz"), join(project, "bar-0.0.2.tgz"));
-      writeFileSync(
-        join(project, "package.json"),
-        JSON.stringify({ name: "fat32-project", version: "1.0.0", dependencies: { bar: "file:./bar-0.0.2.tgz" } }),
-      );
+      copyFileSync(join(import.meta.dir, "baz-0.0.3.tgz"), join(project, "baz-0.0.3.tgz"));
+      writeFileSync(join(project, "package.json"), manifest({ bar: "file:./bar-0.0.2.tgz" }));
 
-      // The first run creates bun.lock; the second must replace the existing
-      // one. Both go through the same NtSetInformationFile rename.
+      // The first run creates bun.lock. The second adds a dependency so bun has
+      // to re-save (an unchanged install skips the save entirely) and replace
+      // the existing lockfile through the same rename.
+      let lockAfterCreate = "";
       for (const run of ["create", "replace"]) {
+        if (run === "replace") {
+          writeFileSync(
+            join(project, "package.json"),
+            manifest({ bar: "file:./bar-0.0.2.tgz", baz: "file:./baz-0.0.3.tgz" }),
+          );
+        }
         await using proc = Bun.spawn({
           cmd: [bunExe(), "install"],
           cwd: project,
@@ -99,10 +100,16 @@ describe.skipIf(!isElevatedWindows)("bun install on a non-NTFS Windows volume", 
           stdout: expect.any(String),
           stderr: expect.any(String),
         });
-        expect(existsSync(join(project, "bun.lock"))).toBe(true);
+        expect(existsSync(lockPath)).toBe(true);
+        if (run === "create") lockAfterCreate = readFileSync(lockPath, "utf8");
       }
 
-      // The dependency was linked onto the FAT32 volume, not just resolved.
+      // The second save replaced the lockfile the first one wrote.
+      const lockAfterReplace = readFileSync(lockPath, "utf8");
+      expect(lockAfterReplace).toContain("baz-0.0.3.tgz");
+      expect(lockAfterReplace).not.toBe(lockAfterCreate);
+
+      // The dependencies were linked onto the FAT32 volume, not just resolved.
       expect(JSON.parse(readFileSync(join(project, "node_modules", "bar", "package.json"), "utf8"))).toEqual({
         name: "bar",
         version: "0.0.2",

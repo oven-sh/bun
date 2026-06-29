@@ -2385,7 +2385,9 @@ function destroyStreamForSessionDestroy(error: Error | undefined, rstCode: numbe
 const kNoAsyncContextSwap = Symbol("noAsyncContextSwap");
 function enterStreamAsyncContext(stream: Http2Stream) {
   const snapshot = stream[bunHTTP2StreamAsyncContext];
-  if (snapshot === undefined) return kNoAsyncContextSwap;
+  // kNoAsyncContextSwap = never captured (server streams); a captured EMPTY
+  // context (undefined) must still be swapped to, like Node's AsyncResource.
+  if (snapshot === kNoAsyncContextSwap) return kNoAsyncContextSwap;
   const previous = $getInternalField($asyncContext, 0);
   if (previous === snapshot) return kNoAsyncContextSwap;
   $putInternalField($asyncContext, 0, snapshot);
@@ -2410,8 +2412,8 @@ class Http2Stream extends Duplex {
   [kAborted]: boolean = false;
   [kHeadRequest]: boolean = false;
   // Async-context snapshot for native dispatches (see enterStreamAsyncContext); only client
-  // streams capture one.
-  [bunHTTP2StreamAsyncContext] = undefined;
+  // streams capture one (possibly an empty context, i.e. undefined).
+  [bunHTTP2StreamAsyncContext] = kNoAsyncContextSwap;
   constructor(streamId, session, headers) {
     super({
       decodeStrings: false,

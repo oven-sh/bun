@@ -20,11 +20,11 @@
 
 use bun_alloc::Arena as Bump;
 
-use bun_core::{self};
 use bun_ast as js_ast;
 use bun_ast::Indentation;
 use bun_ast::{E, Expr};
 use bun_collections::VecExt;
+use bun_core::{self};
 
 use crate::json_index::{self, IndexError, StructuralIndex};
 use crate::json_stage2::Parser;
@@ -73,7 +73,10 @@ impl Default for JSONOptions {
 // Option presets (one per entry point family)
 // ──────────────────────────────────────────────────────────────────────────
 
-const JSON_OPTS: JSONOptions = JSONOptions { is_json: true, ..JSONOptions::DEFAULT };
+const JSON_OPTS: JSONOptions = JSONOptions {
+    is_json: true,
+    ..JSONOptions::DEFAULT
+};
 
 const DOTENV_JSON_OPTS: JSONOptions = JSONOptions {
     is_json: true,
@@ -250,7 +253,11 @@ fn guess_indentation(s: &[u8]) -> Indentation {
                     i += 1;
                     count += 1;
                 }
-                return Indentation { character, scalar: count, ..Indentation::default() };
+                return Indentation {
+                    character,
+                    scalar: count,
+                    ..Indentation::default()
+                };
             }
             continue;
         }
@@ -312,8 +319,11 @@ pub fn parse_utf8_registry(
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
-    const REGISTRY_OPTS: JSONOptions =
-        JSONOptions { is_json: true, json_warn_duplicate_keys: false, ..JSONOptions::DEFAULT };
+    const REGISTRY_OPTS: JSONOptions = JSONOptions {
+        is_json: true,
+        json_warn_duplicate_keys: false,
+        ..JSONOptions::DEFAULT
+    };
     Ok(parse_impl(source, log, bump, REGISTRY_OPTS, true, false)?.root)
 }
 
@@ -378,10 +388,16 @@ pub fn parse_package_json_utf8_with_opts_rt(
     bump: &Bump,
 ) -> Result<JsonResult, bun_core::Error> {
     if source.contents.is_empty() {
-        return Ok(JsonResult { root: empty_object_expr(), indentation: Indentation::default() });
+        return Ok(JsonResult {
+            root: empty_object_expr(),
+            indentation: Indentation::default(),
+        });
     }
     let out = parse_impl(source, log, bump, opts, true, false)?;
-    Ok(JsonResult { root: out.root, indentation: out.indentation })
+    Ok(JsonResult {
+        root: out.root,
+        indentation: out.indentation,
+    })
 }
 
 pub fn parse_for_macro(
@@ -414,11 +430,18 @@ pub fn parse_for_bundling(
     bump: &Bump,
 ) -> Result<JSONParseResult, bun_core::Error> {
     if source.contents.is_empty() {
-        return Ok(JSONParseResult { expr: empty_object_expr(), tag: JSONParseResultTag::Empty });
+        return Ok(JSONParseResult {
+            expr: empty_object_expr(),
+            tag: JSONParseResultTag::Empty,
+        });
     }
     let out = parse_impl(source, log, bump, JSON_OPTS, false, false)?;
     Ok(JSONParseResult {
-        tag: if out.is_ascii_only { JSONParseResultTag::Ascii } else { JSONParseResultTag::Expr },
+        tag: if out.is_ascii_only {
+            JSONParseResultTag::Ascii
+        } else {
+            JSONParseResultTag::Expr
+        },
         expr: out.root,
     })
 }
@@ -553,7 +576,11 @@ fn log_string_error(
 ) -> Result<Expr, bun_core::Error> {
     log.add_error_fmt_opts(
         format_args!("{}", bstr::BStr::new(msg)),
-        bun_ast::AddErrorOptions { source: Some(source), loc: bun_ast::Loc { start: 0 }, ..Default::default() },
+        bun_ast::AddErrorOptions {
+            source: Some(source),
+            loc: bun_ast::Loc { start: 0 },
+            ..Default::default()
+        },
     );
     Err(bun_core::err!("SyntaxError"))
 }
@@ -622,11 +649,20 @@ impl<'a, 'bump> PackageJSONVersionChecker<'a, 'bump> {
         if self.source.contents.is_empty() {
             return Ok(empty_object_expr());
         }
-        let root =
-            parse_impl(self.source, self.log, self.bump, PKG_JSON_CHECKER_OPTS, true, false)?.root;
+        let root = parse_impl(
+            self.source,
+            self.log,
+            self.bump,
+            PKG_JSON_CHECKER_OPTS,
+            true,
+            false,
+        )?
+        .root;
         if let js_ast::expr::Data::EObject(obj) = &root.data {
             for prop in obj.properties.iter() {
-                let (Some(key), Some(value)) = (&prop.key, &prop.value) else { continue };
+                let (Some(key), Some(value)) = (&prop.key, &prop.value) else {
+                    continue;
+                };
                 let (Some(key_s), Some(val_s)) = (key.data.as_e_string(), value.data.as_e_string())
                 else {
                     continue;
@@ -667,8 +703,8 @@ const PKG_JSON_CHECKER_OPTS: JSONOptions = JSONOptions {
 // Recursively converts a value into a `js_ast.Expr` via a trait with
 // per-type impls. Struct/enum/union support would require a derive macro.
 
-use bun_ast::{ExprNodeList, G};
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
+use bun_ast::{ExprNodeList, G};
 
 pub trait ToAst {
     fn to_ast(&self, bump: &Bump) -> Result<Expr, bun_core::Error>;
@@ -733,7 +769,10 @@ impl<T: ToAst> ToAst for [T] {
             exprs.push(ex.to_ast(bump)?);
         }
         Ok(Expr::init(
-            E::Array { items: ExprNodeList::from_slice(exprs.into_bump_slice()), ..Default::default() },
+            E::Array {
+                items: ExprNodeList::from_slice(exprs.into_bump_slice()),
+                ..Default::default()
+            },
             bun_ast::Loc::EMPTY,
         ))
     }
@@ -748,7 +787,10 @@ impl<T: ToAst, const N: usize> ToAst for [T; N] {
 // Byte arrays emit `E::String` (not `E::Array`).
 impl<const N: usize> ToAst for [u8; N] {
     fn to_ast(&self, _bump: &Bump) -> Result<Expr, bun_core::Error> {
-        Ok(Expr::init(E::String::init(self.as_slice()), bun_ast::Loc::EMPTY))
+        Ok(Expr::init(
+            E::String::init(self.as_slice()),
+            bun_ast::Loc::EMPTY,
+        ))
     }
 }
 
@@ -766,7 +808,10 @@ impl<T: ToAst> ToAst for Option<T> {
 
 impl ToAst for () {
     fn to_ast(&self, _bump: &Bump) -> Result<Expr, bun_core::Error> {
-        Ok(Expr { data: js_ast::expr::Data::ENull(E::Null {}), loc: bun_ast::Loc::default() })
+        Ok(Expr {
+            data: js_ast::expr::Data::ENull(E::Null {}),
+            loc: bun_ast::Loc::default(),
+        })
     }
 }
 
@@ -929,7 +974,11 @@ mod tests {
             let Some(root) = &p.root else {
                 panic!("failed to parse (first error: {:?}): {input}", p.first_msg)
             };
-            assert_eq!(p.errors, 0, "unexpected error {:?} for {input}", p.first_msg);
+            assert_eq!(
+                p.errors, 0,
+                "unexpected error {:?} for {input}",
+                p.first_msg
+            );
             let mut got = String::new();
             to_json_string(root, &mut got);
             assert_eq!(got, expected_compact_json, "input: {input}");
@@ -964,7 +1013,10 @@ mod tests {
         assert_parses_to("null", "null");
         assert_parses_to("\"\"", "\"\"");
         assert_parses_to("\"hello\"", "\"hello\"");
-        assert_parses_to("\"he\\\"llo\\n\\t\\u00e9\\\\\"", "\"he\\\"llo\\n\\u0009é\\\\\"");
+        assert_parses_to(
+            "\"he\\\"llo\\n\\t\\u00e9\\\\\"",
+            "\"he\\\"llo\\n\\u0009é\\\\\"",
+        );
         assert_parses_to(r#""\ud83d\ude00""#, "\"😀\"");
         assert_parses_to("\"日本 🎉\"", "\"日本 🎉\"");
         assert_parses_to("[1,2,3]", "[1,2,3]");
@@ -974,7 +1026,10 @@ mod tests {
             "{\"a\":1,\"b\":[true,false,null],\"c\":{\"d\":\"e\"}}",
         );
         assert_parses_to("{ \"sp\" : [ 1 , 2 ] }", "{\"sp\":[1,2]}");
-        assert_parses_to("{\n  \"p\": {\n    \"m\": \"l\"\n  }\n}", "{\"p\":{\"m\":\"l\"}}");
+        assert_parses_to(
+            "{\n  \"p\": {\n    \"m\": \"l\"\n  }\n}",
+            "{\"p\":{\"m\":\"l\"}}",
+        );
     }
 
     #[test]
@@ -1019,14 +1074,23 @@ mod tests {
     fn comments_rejected_in_plain_json() {
         let p = run(b"{\"a\": 1} // nope", Which::Utf8);
         assert!(p.errors > 0);
-        assert!(p.first_msg.contains("JSON does not support comments"), "{}", p.first_msg);
+        assert!(
+            p.first_msg.contains("JSON does not support comments"),
+            "{}",
+            p.first_msg
+        );
         expect_error("{\"a\": /* x */ 1}", "JSON does not support comments");
     }
 
     #[test]
     fn trailing_comma_rejected_in_plain_json() {
         let p = run(b"[1, 2,]", Which::Utf8);
-        assert!(p.first_msg.contains("JSON does not support trailing commas"), "{}", p.first_msg);
+        assert!(
+            p.first_msg
+                .contains("JSON does not support trailing commas"),
+            "{}",
+            p.first_msg
+        );
     }
 
     #[test]
@@ -1057,8 +1121,12 @@ mod tests {
         ] {
             let p = run(src.as_bytes(), Which::Utf8);
             assert_eq!(p.errors, 0, "{src}: {}", p.first_msg);
-            let Data::EArray(a) = &p.root.as_ref().unwrap().data else { panic!() };
-            let Data::ENumber(n) = &a.items[0].data else { panic!("{src}") };
+            let Data::EArray(a) = &p.root.as_ref().unwrap().data else {
+                panic!()
+            };
+            let Data::ENumber(n) = &a.items[0].data else {
+                panic!("{src}")
+            };
             assert_eq!(n.value(), want, "{src}");
         }
     }
@@ -1092,7 +1160,11 @@ mod tests {
         let p = run(br#"{"a":1,"b":2,"a":3}"#, Which::Utf8);
         assert_eq!(p.errors, 0);
         assert_eq!(p.warnings, 1, "exactly one duplicate-key warning");
-        assert!(p.first_msg.contains("Duplicate key \"a\""), "{}", p.first_msg);
+        assert!(
+            p.first_msg.contains("Duplicate key \"a\""),
+            "{}",
+            p.first_msg
+        );
         // Same key in different (nested) objects: no warning.
         let p = run(br#"{"a":{"a":1},"b":{"a":2}}"#, Which::Utf8);
         assert_eq!(p.warnings, 0);
@@ -1116,10 +1188,17 @@ mod tests {
         let p = run(doc.as_bytes(), Which::Utf8);
         assert_eq!(p.errors, 0);
         assert_eq!(p.warnings, 1, "outer duplicate after a nested large object");
-        assert!(p.first_msg.contains("Duplicate key \"k3\""), "{}", p.first_msg);
+        assert!(
+            p.first_msg.contains("Duplicate key \"k3\""),
+            "{}",
+            p.first_msg
+        );
 
         // Sibling large objects with identical key sets: no warnings.
-        let p = run(format!("{{\"a\":{inner},\"b\":{inner}}}").as_bytes(), Which::Utf8);
+        let p = run(
+            format!("{{\"a\":{inner},\"b\":{inner}}}").as_bytes(),
+            Which::Utf8,
+        );
         assert_eq!(p.errors, 0);
         assert_eq!(p.warnings, 0);
 
@@ -1131,22 +1210,33 @@ mod tests {
             Which::Utf8,
         );
         assert_eq!(p.errors, 0);
-        assert_eq!(p.warnings, 2, "one for the inner \"y\", one for the outer \"x\"");
+        assert_eq!(
+            p.warnings, 2,
+            "one for the inner \"y\", one for the outer \"x\""
+        );
     }
 
     #[test]
     fn is_single_line_matches_source_layout() {
         let p = run(b"{\"a\":1}", Which::Utf8);
-        let Data::EObject(o) = &p.root.as_ref().unwrap().data else { panic!() };
+        let Data::EObject(o) = &p.root.as_ref().unwrap().data else {
+            panic!()
+        };
         assert!(o.is_single_line);
         let p = run(b"{\n\"a\":1\n}", Which::Utf8);
-        let Data::EObject(o) = &p.root.as_ref().unwrap().data else { panic!() };
+        let Data::EObject(o) = &p.root.as_ref().unwrap().data else {
+            panic!()
+        };
         assert!(!o.is_single_line);
         // Newline inside a nested value does not affect the outer object.
         let p = run(b"{\"a\": [1,\n2]}", Which::Utf8);
-        let Data::EObject(o) = &p.root.as_ref().unwrap().data else { panic!() };
+        let Data::EObject(o) = &p.root.as_ref().unwrap().data else {
+            panic!()
+        };
         assert!(o.is_single_line);
-        let Data::EArray(a) = &o.properties[0].value.as_ref().unwrap().data else { panic!() };
+        let Data::EArray(a) = &o.properties[0].value.as_ref().unwrap().data else {
+            panic!()
+        };
         assert!(!a.is_single_line);
     }
 
@@ -1205,7 +1295,10 @@ mod tests {
             assert_eq!(root_string(&p), want, "{src}");
         }
         let p = run(b"true", Which::Env);
-        assert!(matches!(p.root.as_ref().unwrap().data, Data::EBoolean(E::Boolean { value: true })));
+        assert!(matches!(
+            p.root.as_ref().unwrap().data,
+            Data::EBoolean(E::Boolean { value: true })
+        ));
         let p = run(b"undefined", Which::Env);
         assert!(matches!(p.root.as_ref().unwrap().data, Data::EUndefined(_)));
         let p = run(b"\"quoted\"", Which::Env);

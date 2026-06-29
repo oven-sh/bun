@@ -147,10 +147,12 @@ void PerformanceObserver::deliver()
 
 Vector<String> PerformanceObserver::supportedEntryTypes(ScriptExecutionContext& context)
 {
+    // This list is the feature-detection surface: a type belongs here only if
+    // an entry of that type can exist. Nothing in Bun calls
+    // Performance::addResourceTiming, so "resource" is not advertised.
     Vector<String> entryTypes = {
         "mark"_s,
-        "measure"_s,
-        "resource"_s
+        "measure"_s
     };
 
     // if (context.settingsValues().performanceNavigationTimingAPIEnabled)

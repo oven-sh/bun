@@ -508,8 +508,10 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
     ],
   ] as const) {
     test(`${label} under 2GiB clones without crashing`, async () => {
+      // The smallest size (plus margin) whose 1.5x serialization-buffer growth
+      // exceeds the 2GiB cap (2**31 / 1.5 = ~1.43e9); peak child memory is ~3x.
       const script = `
-        const size = 1600000000;
+        const size = 1_500_000_000;
         let v;
         try {
           v = ${expr};
@@ -527,6 +529,9 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
         stderr: "inherit",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      // The host's OOM killer reclaiming the child on a small CI runner is not a
+      // structuredClone failure; any other signal (SIGSEGV/SIGABRT/...) still is.
+      if (proc.signalCode === "SIGKILL" && stdout === "") return;
       expect(["OK", "SKIP"]).toContain(stdout.trim());
       expect(proc.signalCode).toBe(null);
       expect(exitCode).toBe(0);

@@ -389,6 +389,7 @@ delete assert.CallTracker;
 delete assert.strict;
 
 let checkNotInsideTest: (ctx: TestContext | undefined, fn: string) => void;
+let abortTestContext: (ctx: TestContext) => void;
 
 /**
  * @link https://nodejs.org/api/test.html#class-testcontext
@@ -531,6 +532,12 @@ class TestContext {
     checkNotInsideTest = (ctx: TestContext | undefined, fn: string) => {
       if (ctx) ctx.#checkNotInsideTest(fn);
     };
+    // Node aborts `t.signal` when its test ends (timed out, failed, or
+    // passed). Create the controller if `t.signal` was never read so a
+    // late reader still sees an already-aborted signal.
+    abortTestContext = (ctx: TestContext) => {
+      (ctx.#abortController ??= new AbortController()).abort();
+    };
   }
 }
 
@@ -668,6 +675,10 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
   const runTest = (done: (error?: unknown) => void) => {
     const originalContext = ctx;
     ctx = context;
+    // bun:test owns the per-test timeout, so use its per-test completion
+    // hook; it runs for timed out tests too, where `endTest` never does.
+    const { onTestFinished } = bunTest();
+    onTestFinished(() => abortTestContext(context));
     const endTest = (error?: unknown) => {
       try {
         done(error);

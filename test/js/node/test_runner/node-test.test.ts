@@ -52,6 +52,18 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  test("should abort t.signal when its test ends", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["07-test-context-signal.js"]);
+    // Node aborts t.signal when the test ends: at the timeout for the first
+    // test, and on normal completion for the second. Neither listener was
+    // ever invoked before.
+    expect(stdout).toContain("TIMEOUT_SIGNAL_ABORTED name=AbortError");
+    expect(stdout).toContain("COMPLETION_SIGNAL_ABORTED");
+    // the first test still fails (it timed out); the second passes
+    expect(stderr).toContain(" 1 pass\n 1 fail\n");
+    expect(exitCode).toBe(1);
+  });
 });
 
 async function runTests(filenames: string[]) {

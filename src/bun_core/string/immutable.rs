@@ -1563,7 +1563,17 @@ pub fn replace_invalid_utf8<'a>(bytes: &'a [u8], arena: &'a MimallocArena) -> &'
     if is_valid_utf8(bytes) {
         return bytes;
     }
-    let mut out = ArenaVec::with_capacity_in(bytes.len() + UNICODE_REPLACEMENT_STR.len(), arena);
+    // Size exactly: each maximal ill-formed subsequence (1-3 bytes) becomes
+    // one 3-byte U+FFFD.
+    let out_len = bytes.utf8_chunks().fold(0usize, |len, chunk| {
+        let replacement = if chunk.invalid().is_empty() {
+            0
+        } else {
+            UNICODE_REPLACEMENT_STR.len()
+        };
+        len + chunk.valid().len() + replacement
+    });
+    let mut out = ArenaVec::with_capacity_in(out_len, arena);
     for chunk in bytes.utf8_chunks() {
         out.extend_from_slice(chunk.valid().as_bytes());
         if !chunk.invalid().is_empty() {

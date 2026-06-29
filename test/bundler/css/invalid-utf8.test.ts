@@ -108,11 +108,11 @@ describe("css with invalid utf-8", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
 
     const out = new Uint8Array(await Bun.file(join(String(dir), "out", "in.css")).arrayBuffer());
     expect(Buffer.from(out).includes(Buffer.from('content: "caf\uFFFD"'))).toBe(true);
     expect(Buffer.from(out).includes(0xe9)).toBe(false);
+    expect(exitCode).toBe(0);
   });
 
   test.concurrent("escaped invalid byte does not swallow the bytes after it", async () => {
@@ -143,7 +143,6 @@ describe("css with invalid utf-8", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
 
     const out = await Bun.file(join(String(dir), "out", "in.css")).text();
     // Selector: `yz` used to be eaten out of the class name.
@@ -153,5 +152,6 @@ describe("css with invalid utf-8", () => {
     // The closing quote used to be eaten, absorbing the rest of the rule.
     expect(out).toContain('content: "\uFFFD";');
     expect(out).toContain("color: green;");
+    expect(exitCode).toBe(0);
   });
 });

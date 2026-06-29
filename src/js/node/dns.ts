@@ -306,9 +306,6 @@ function lookup(hostname, options, callback) {
     return;
   }
 
-  // The callback runs from process.nextTick so that if it throws, the chained
-  // `.catch` cannot see the throw and invoke the callback a second time (node
-  // surfaces it as an uncaughtException). `throwIfEmpty` still needs `.catch`.
   dns
     .lookup(hostname, options)
     .then(res => {
@@ -320,11 +317,15 @@ function lookup(hostname, options, callback) {
         res.sort((a, b) => b.family - a.family);
       }
 
-      if (options?.all) {
-        process.nextTick(callback, null, res.map(mapLookupAll));
-      } else {
-        const [{ address, family }] = res;
-        process.nextTick(callback, null, address, family);
+      try {
+        if (options?.all) {
+          callback(null, res.map(mapLookupAll));
+        } else {
+          const [{ address, family }] = res;
+          callback(null, address, family);
+        }
+      } catch (err) {
+        rethrowAsUncaughtException(err);
       }
     })
     .catch(err => {
@@ -336,8 +337,21 @@ function lookup(hostname, options, callback) {
         err.hostname = hostname;
         err.message = `${syscall} ${err.code} ${hostname}`;
       }
-      process.nextTick(callback, err, undefined, undefined);
+      try {
+        callback(err, undefined, undefined);
+      } catch (err) {
+        rethrowAsUncaughtException(err);
+      }
     });
+}
+
+// Re-raises a throw from a user-supplied lookup() callback as an
+// uncaughtException, matching node. Without this the chained `.catch` above
+// would receive it and invoke the callback a second time.
+function rethrowAsUncaughtException(err) {
+  queueMicrotask(() => {
+    throw err;
+  });
 }
 
 function lookupService(address, port, callback) {

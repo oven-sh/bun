@@ -3871,6 +3871,15 @@ describe("Buffer.fill offset/end argument handling", () => {
     );
   });
 
+  it("treats a null encoding like an absent one, as Node's normalizeEncoding does", () => {
+    expect(Buffer.alloc(5, 0xaa).fill("a", 1, 3, null).toString("hex")).toBe("aa6161aaaa");
+    expect(Buffer.alloc(3, "a", null).toString("hex")).toBe("616161");
+    // toString goes through Node's getEncodingOps, not normalizeEncoding, so a
+    // null encoding there is still ERR_UNKNOWN_ENCODING. Pins that the null
+    // handling lives at the fill/alloc gates, not inside parseEncoding.
+    expect(() => Buffer.from("ab").toString(null)).toThrow(expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }));
+  });
+
   // Differential test: the fixture enumerates every fill() argument shape and
   // prints the resulting bytes or the thrown error class + code. Running it
   // under Node.js and under Bun must produce byte-identical output.

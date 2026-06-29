@@ -33,6 +33,10 @@ const cases = [
   ['fill("ab", 0, undefined, "utf16le")', b => b.fill("ab", 0, undefined, "utf16le")],
   ['fill("a", 1, undefined, "bogus")', b => b.fill("a", 1, undefined, "bogus")],
 
+  // A null encoding is the same as an absent one (Node's normalizeEncoding).
+  ['fill("a", 1, 3, null)', b => b.fill("a", 1, 3, null)],
+  ['fill("a", undefined, undefined, null)', b => b.fill("a", undefined, undefined, null)],
+
   // No arguments: Node routes an undefined value into the numeric path (0).
   ["fill()", b => b.fill()],
   ["fill(undefined)", b => b.fill(undefined)],

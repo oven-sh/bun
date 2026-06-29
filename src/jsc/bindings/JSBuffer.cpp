@@ -662,7 +662,9 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSGlobalOb
             WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
             if (callFrame->argumentCount() > 2) {
                 EnsureStillAliveScope arg2 = callFrame->uncheckedArgument(2);
-                if (!arg2.value().isUndefined()) {
+                // A null encoding is the same as an absent one (Node's
+                // normalizeEncoding tests `enc == null`), not an error.
+                if (!arg2.value().isUndefinedOrNull()) {
                     encoding = parseEncoding(scope, lexicalGlobalObject, arg2.value(), true);
                     RETURN_IF_EXCEPTION(scope, {});
                 }
@@ -1361,8 +1363,9 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObjec
     // encoding error wins. parseEncoding is also the first
     // user-JS-visible call: `toString` on an object encoding can detach
     // or resize castedThis; the post-coercion clamp further down reads
-    // byteLength() once more to catch any such effect.
-    if (!encodingValue.isUndefined() && value.isString()) {
+    // byteLength() once more to catch any such effect. A null encoding is the
+    // same as an absent one (Node's normalizeEncoding tests `enc == null`).
+    if (!encodingValue.isUndefinedOrNull() && value.isString()) {
         encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, true);
         RETURN_IF_EXCEPTION(scope, {});
     }

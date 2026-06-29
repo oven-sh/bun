@@ -372,10 +372,17 @@ describe("membership on an unbound socket", () => {
 
       // Handle unreliable transmission in UDP: keep re-sending until the
       // receiver sees a datagram, like the other send tests in this file.
+      // `send()` reports errors only through this callback, never "error".
       const port = receiver.address().port;
       function sendRec() {
         if (done) return;
-        sender.send("via implicit bind", port, LO4, () => setTimeout(sendRec, 10));
+        sender.send("via implicit bind", port, LO4, err => {
+          if (err) {
+            received.reject(err);
+            return;
+          }
+          setTimeout(sendRec, 10);
+        });
       }
       sendRec();
 

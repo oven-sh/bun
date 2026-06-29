@@ -41,3 +41,33 @@ describe("spawnSync", () => {
     expect([join(import.meta.dir, "spawnSync-counters-fixture.ts")]).toRun();
   });
 });
+
+describe("uid/gid", () => {
+  const isRoot = process.getuid?.() === 0;
+
+  it("rejects a non-integer uid", () => {
+    expect(() => Bun.spawnSync({ cmd: [bunExe()], env: bunEnv, uid: 1.5 })).toThrow();
+    expect(() => Bun.spawnSync({ cmd: [bunExe()], env: bunEnv, gid: 1.5 })).toThrow();
+  });
+
+  it.if(isPosix && isRoot)("applies uid/gid and drops supplementary groups", () => {
+    const result = Bun.spawnSync({ cmd: ["id"], uid: 65534, gid: 65534 });
+    const out = result.stdout.toString();
+    expect(out).toContain("uid=65534");
+    expect(out).toContain("gid=65534");
+    expect(result.exitCode).toBe(0);
+
+    const groups = Bun.spawnSync({ cmd: ["id", "-G"], uid: 65534, gid: 65534 });
+    expect(groups.stdout.toString().trim()).toBe("65534");
+  });
+
+  it.if(isPosix && !isRoot)("throws EPERM for a uid the process cannot set", () => {
+    let thrown: any;
+    try {
+      Bun.spawnSync({ cmd: ["id"], uid: 0 });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown?.code).toBe("EPERM");
+  });
+});

@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/resource.h>
+#include <grp.h>
 
 #if OS(LINUX)
 #include <sys/syscall.h>
@@ -102,6 +103,10 @@ typedef struct bun_spawn_request_t {
     bun_spawn_file_action_list_t actions;
     int pty_slave_fd; // -1 if not using PTY, otherwise the slave fd to set as controlling terminal
     int linux_pdeathsig; // 0 = unset; otherwise signal delivered to child when parent thread dies
+    uint32_t uid; // setuid(uid) in the child before exec when set_uid is true
+    uint32_t gid; // setgid(gid) in the child before exec when set_gid is true
+    bool set_uid;
+    bool set_gid;
 } bun_spawn_request_t;
 
 // Raw exit syscall that doesn't go through libc.
@@ -292,6 +297,35 @@ extern "C" ssize_t posix_spawn_bun(
             }
             }
         }
+
+        // libuv order: setgroups (best-effort) -> setgid -> setuid, just before exec.
+        // Linux MUST use raw syscalls here: this is a vfork child sharing the parent's
+        // memory, and glibc's set*id wrappers broadcast SIGSETXID to every (parent) thread.
+        if (request->set_uid || request->set_gid) {
+            int savedErrno = errno;
+#if OS(LINUX)
+            (void)syscall(SYS_setgroups, 0, (const gid_t*)NULL);
+#else
+            (void)setgroups(0, NULL);
+#endif
+            errno = savedErrno;
+        }
+
+#if OS(LINUX)
+        if (request->set_gid && syscall(SYS_setgid, (gid_t)request->gid) != 0) {
+            return childFailed();
+        }
+        if (request->set_uid && syscall(SYS_setuid, (uid_t)request->uid) != 0) {
+            return childFailed();
+        }
+#else
+        if (request->set_gid && setgid((gid_t)request->gid) != 0) {
+            return childFailed();
+        }
+        if (request->set_uid && setuid((uid_t)request->uid) != 0) {
+            return childFailed();
+        }
+#endif
 
         sigprocmask(SIG_SETMASK, &childmask, 0);
         if (!envp)

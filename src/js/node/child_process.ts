@@ -567,6 +567,8 @@ function spawnSync(file, args, options) {
       cwd: options.cwd || undefined,
       stdio: bunStdio,
       detached: options.detached,
+      uid: options.uid,
+      gid: options.gid,
       windowsVerbatimArguments: options.windowsVerbatimArguments,
       windowsHide: options.windowsHide,
       argv0: options.args[0],
@@ -1407,6 +1409,8 @@ class ChildProcess extends EventEmitter {
         cwd: options.cwd || undefined,
         env: env,
         detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
+        uid: options.uid,
+        gid: options.gid,
         onExit: (handle, exitCode, signalCode, err) => {
           this.#handle = handle;
           this.pid = this.#handle.pid;
@@ -1486,6 +1490,11 @@ class ChildProcess extends EventEmitter {
           this.#stdioOptions[2] = "undefined";
         }
       } else {
+        if (exCode !== undefined) {
+          // Node throws errors that are not in the deferred list above
+          // synchronously, with `syscall: "spawn"` (no file appended).
+          ex.syscall = "spawn";
+        }
         throw ex;
       }
     }

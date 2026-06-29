@@ -6792,6 +6792,20 @@ declare module "bun" {
       detached?: boolean;
 
       /**
+       * Sets the user identity of the child process (see setuid(2)).
+       *
+       * POSIX only. On Windows the spawn fails with `ENOTSUP`.
+       */
+      uid?: number;
+
+      /**
+       * Sets the group identity of the child process (see setgid(2)).
+       *
+       * POSIX only. On Windows the spawn fails with `ENOTSUP`.
+       */
+      gid?: number;
+
+      /**
        * The environment variables of the process
        *
        * Defaults to `process.env` as it was when the current Bun process launched.

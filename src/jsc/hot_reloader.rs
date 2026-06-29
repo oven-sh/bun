@@ -466,21 +466,6 @@ unsafe extern "C" {
     safe fn BunDebugger__willHotReload();
 }
 
-/// `access(path, F_OK)` with the NUL-terminated scratch copy the raw syscall
-/// needs. Returns `false` for paths too long to fit a `PathBuffer`.
-#[cfg(not(windows))]
-fn path_exists(path: &[u8]) -> bool {
-    let mut zbuf = PathBuffer::uninit();
-    if path.len() >= zbuf.len() {
-        return false;
-    }
-    zbuf[..path.len()].copy_from_slice(path);
-    zbuf[path.len()] = 0;
-    // SAFETY: zbuf is NUL-terminated at len.
-    let z = ZStr::from_buf(&zbuf[..], path.len());
-    bun_sys::access(z, libc::F_OK).is_ok()
-}
-
 // Rust can't put a static in a generic impl, so HotReloader and WatchReloader
 // share this. That is fine in practice: the flag is derived from the same CLI
 // clear-screen setting and written only during single-threaded reloader init,
@@ -499,17 +484,16 @@ pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
 
     pub tombstones: StringHashMap<*mut Fs::EntriesOption>,
 
-    /// Absolute path → watch hash for file watch items evicted because the
-    /// file itself was deleted (`DELETE` on the item's own watch). The
-    /// per-inode watch dies with the inode, so by the time the recreated
-    /// file shows up as a `CREATE`/`WRITE` on its parent directory, the
-    /// watchlist scan in `on_file_update`'s directory arm can no longer
-    /// find it and `--hot` would serve the old module forever. When the
-    /// parent directory reports a change and one of these paths exists
-    /// again, we enqueue a reload; the re-import re-adds the watch on the
-    /// new inode and the entry is dropped here. This is the general form
-    /// of the entrypoint-only recovery in [`MainFile`]. Watcher-thread
-    /// only, like `tombstones`.
+    /// Absolute path → watch hash for file watch entries evicted because
+    /// the file was deleted. Once evicted, a recreated file at the same
+    /// path no longer maps to any file watch item (on POSIX the per-inode
+    /// watch died with the inode; on Windows the path-matched entry is
+    /// gone), so only the parent directory's watch can observe it and
+    /// `--hot` would serve the old module forever. The directory arms of
+    /// `on_file_update` consume this via `reenqueue_recreated_files`; the
+    /// enqueued reload's re-import re-adds the per-file watch. This is the
+    /// general form of the entrypoint-only recovery in [`MainFile`].
+    /// Watcher-thread only, like `tombstones`.
     pub deleted_watched_files: StringHashMap<bun_watcher::HashType>,
 
     _event_loop: PhantomData<*mut EventLoopType>,
@@ -858,14 +842,44 @@ where
     }
 
     /// Record a file watch entry that is being evicted while its path is
-    /// gone from disk. The per-inode watch is dead and the reload being
-    /// enqueued can't re-import the file, so nothing would ever re-arm the
-    /// watch: `--hot` would keep serving the stale module. The directory arm
-    /// of `on_file_update` consults this and re-enqueues a reload once the
-    /// path exists again.
-    #[cfg(not(windows))]
+    /// gone from disk. No-op if the path still exists, because then the
+    /// reload being enqueued re-imports and re-watches it. When it is gone
+    /// the reload can't, so nothing would ever re-arm the watch and `--hot`
+    /// would keep serving the stale module; the directory arms of
+    /// `on_file_update` consume this via [`Self::reenqueue_recreated_files`]
+    /// once the path exists again.
     fn remember_deleted_watch(&mut self, path: &[u8], hash: bun_watcher::HashType) {
+        if bun_sys::exists(path) {
+            return;
+        }
         bun_core::handle_oom(self.deleted_watched_files.put(path, hash));
+    }
+
+    /// Directory-arm half of the recreated-import recovery: for every
+    /// [`Self::remember_deleted_watch`]ed path directly under `dir_path` that
+    /// exists on disk again, enqueue a reload and forget it. The reload's
+    /// re-import re-adds the per-file watch on the new inode; the existing
+    /// watchlist scan can't, because the delete already evicted the entry.
+    fn reenqueue_recreated_files(
+        &mut self,
+        dir_path: &[u8],
+        task: &mut Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>,
+    ) {
+        if self.deleted_watched_files.is_empty() {
+            return;
+        }
+        let dir_no_slash = strings::paths::without_trailing_slash_windows_path(dir_path);
+        self.deleted_watched_files.retain(|deleted_path, hash| {
+            let deleted_path: &[u8] = deleted_path;
+            if bun_core::dirname(deleted_path) != Some(dir_no_slash)
+                || !bun_sys::exists(deleted_path)
+            {
+                return true;
+            }
+            record_changed_path(deleted_path);
+            task.append(*hash);
+            false
+        });
     }
 
     #[cfg(not(windows))]
@@ -976,10 +990,9 @@ where
                         || (event.op.contains(WatchOp::RENAME) && IS_KQUEUE)
                     {
                         ctx.remove_at_index(bun_watcher::Kind::File, event.index, 0, &[]);
-                        // kqueue delivers `NOTE_DELETE` on our still-open fd as
-                        // soon as the path is unlinked; see the directory arm
-                        // for the inotify equivalent.
-                        #[cfg(not(windows))]
+                        // kqueue's NOTE_DELETE and Windows' FILE_ACTION_REMOVED
+                        // fire on unlink; Linux holds the source fd open, so
+                        // `rm` reaches us via the directory arm instead.
                         self.remember_deleted_watch(file_path, current_hash);
                     }
 
@@ -1032,6 +1045,9 @@ where
                         let _ = self.ctx_mut().bust_dir_cache(
                             strings::paths::without_trailing_slash_windows_path(file_path),
                         );
+                        // Exception: a recreated import has no watchlist entry
+                        // left, so no file event matches it. Re-arm it here.
+                        self.reenqueue_recreated_files(file_path, &mut current_task);
                         continue;
                     }
                     #[cfg(not(windows))]
@@ -1180,7 +1196,7 @@ where
                                 if changed_name != main_basename {
                                     continue;
                                 }
-                                if path_exists(self.main.file) {
+                                if bun_sys::exists(self.main.file) {
                                     record_changed_path(self.main.file);
                                     current_task.append(self.main.hash);
                                 }
@@ -1190,23 +1206,8 @@ where
 
                         // Same inode-replacement recovery, generalized to every
                         // import: its delete evicted the watchlist entry, so the
-                        // `hashes` scan below can't see the recreated file. The
-                        // reload's re-import re-adds the per-file watch.
-                        if !self.deleted_watched_files.is_empty() {
-                            let dir_no_slash = strings::trim_right(file_path, &[SEP]);
-                            let task = &mut *current_task;
-                            self.deleted_watched_files.retain(|deleted_path, hash| {
-                                let deleted_path: &[u8] = deleted_path;
-                                if bun_core::dirname(deleted_path) != Some(dir_no_slash)
-                                    || !path_exists(deleted_path)
-                                {
-                                    return true;
-                                }
-                                record_changed_path(deleted_path);
-                                task.append(*hash);
-                                false
-                            });
-                        }
+                        // `hashes` scan below can't see the recreated file.
+                        self.reenqueue_recreated_files(file_path, &mut current_task);
 
                         if let Some(dir_ent) = entries_option {
                             // SAFETY: dir_ent points into rfs.entries (or a tombstoned copy);
@@ -1278,13 +1279,10 @@ where
                                                             // only here: the source fd we hold
                                                             // pins the unlinked inode, deferring
                                                             // `IN_DELETE_SELF` past this cycle.
-                                                            if !path_exists(path_string.as_bytes())
-                                                            {
-                                                                self.remember_deleted_watch(
-                                                                    path_string.as_bytes(),
-                                                                    hashes[entry_id],
-                                                                );
-                                                            }
+                                                            self.remember_deleted_watch(
+                                                                path_string.as_bytes(),
+                                                                hashes[entry_id],
+                                                            );
                                                         }
                                                     }
 

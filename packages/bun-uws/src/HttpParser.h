@@ -683,7 +683,10 @@ namespace uWS
             }
         }
 
-        /* RFC 9112 3.2.2: Host = uri-host [ ":" port ] (RFC 3986 3.2.2 authority characters) */
+        /* RFC 9112 3.2.2: Host = uri-host [ ":" port ] (RFC 3986 3.2.2 authority characters).
+         * Same byte set as Request::is_valid_host_header (src/runtime/webcore/Request.rs), which
+         * covers requests this check never sees (HTTP/1.0, validateHostHeaderValue == false) and
+         * the empty value (a valid zero-length reg-name here); keep the two in sync. */
         static inline bool isHostFieldValueByte(unsigned char c) {
             if (((c >= 'a') & (c <= 'z')) | ((c >= '0') & (c <= '9')) | (c == '.') | (c == '-') | (c == ':')) [[likely]] {
                 return true;

@@ -1517,4 +1517,82 @@ describe("Host header field value validation", () => {
       server.close();
     }
   });
+
+  async function sendRawRequestUntilClose(server: { port: number }, payload: string): Promise<string> {
+    const client = net.connect(server.port, "127.0.0.1");
+    return await new Promise<string>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      client.on("error", reject);
+      client.on("data", chunk => chunks.push(chunk));
+      client.on("end", () => resolve(Buffer.concat(chunks).toString()));
+      client.write(payload);
+    });
+  }
+
+  test("accepts an empty Host header field value on HTTP/1.1, serving a request URL with no host", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response(req.url);
+      },
+    });
+
+    const response = await sendRawRequestUntilClose(
+      server,
+      "GET /index HTTP/1.1\r\nHost:\r\nConnection: close\r\n\r\n",
+    );
+    expect(response).toContain("HTTP/1.1 200");
+    expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/index");
+  });
+
+  test.each([
+    [0x21, 0x40],
+    [0x41, 0x60],
+    [0x61, 0x7e],
+  ])(
+    "the HTTP/1.1 parser charset and the HTTP/1.0 request-URL charset accept the same Host bytes (%i-%i)",
+    async (firstByte, lastByte) => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response(req.url);
+        },
+      });
+
+      // RFC 3986 `uri-host [ ":" port ]`: unreserved / sub-delims / "%" / ":" / "[" / "]"
+      const isHostByte = (char: string) => /^[A-Za-z0-9._~%!$&'()*+,;=:\[\]-]$/.test(char);
+
+      async function checkByte(byte: number) {
+        const char = String.fromCharCode(byte);
+        const host = `a${char}b`;
+        // HTTP/1.1: the parser (HttpParser.h isHostFieldValueByte) decides with a 400.
+        // HTTP/1.0: the parser check is skipped; Request::is_valid_host_header decides
+        // whether the Host header becomes the request URL's authority.
+        const [http11, http10] = await Promise.all([
+          sendRawRequestUntilClose(server, `GET /p HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`),
+          sendRawRequestUntilClose(server, `GET /p HTTP/1.0\r\nHost: ${host}\r\n\r\n`),
+        ]);
+        return {
+          char,
+          http11Accepted: http11.startsWith("HTTP/1.1 200"),
+          http10Url: http10.slice(http10.indexOf("\r\n\r\n") + 4),
+        };
+      }
+
+      const bytes = Array.from({ length: lastByte - firstByte + 1 }, (_, i) => firstByte + i);
+      const results = await Promise.all(bytes.map(checkByte));
+      expect(results).toEqual(
+        bytes.map(byte => {
+          const char = String.fromCharCode(byte);
+          const accepted = isHostByte(char);
+          return {
+            char,
+            http11Accepted: accepted,
+            // `req.url` carries the lowercased host (URL host normalization).
+            http10Url: accepted ? `http://a${char.toLowerCase()}b/p` : "/p",
+          };
+        }),
+      );
+    },
+  );
 });

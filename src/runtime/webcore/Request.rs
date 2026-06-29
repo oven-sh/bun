@@ -905,6 +905,9 @@ impl Request {
         }
     }
 
+    /// Same RFC 3986 `uri-host [":" port]` byte set as `isHostFieldValueByte` (uws/HttpParser.h);
+    /// keep them in sync. Load-bearing where the parser check does not run (HTTP/1.0,
+    /// `validateHostHeaderValue == false`) and for the empty value (a valid reg-name, but no URL).
     fn is_valid_host_header(host: &[u8]) -> bool {
         !host.is_empty()
             && host.iter().all(|&c| {

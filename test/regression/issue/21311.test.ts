@@ -6,9 +6,7 @@ describeWithContainer(
   "postgres",
   {
     image: "postgres_plain",
-    env: {},
     concurrent: true,
-    args: [],
   },
   async container => {
     let databaseUrl: string;

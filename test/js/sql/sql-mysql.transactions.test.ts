@@ -6,8 +6,6 @@ describeWithContainer(
   "mysql",
   {
     image: "mysql_plain",
-    env: {},
-    args: [],
   },
   container => {
     // Use a getter to avoid reading port/host at define time

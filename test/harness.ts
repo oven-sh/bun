@@ -1088,19 +1088,7 @@ export async function waitForPort(port: number, timeout: number = 60_000): Promi
 
 export async function describeWithContainer(
   label: string,
-  {
-    image,
-    env = {},
-    args = [],
-    archs,
-    concurrent = false,
-  }: {
-    image: string;
-    env?: Record<string, string>;
-    args?: string[];
-    archs?: NodeJS.Architecture[];
-    concurrent?: boolean;
-  },
+  { image, concurrent = false }: { image: string; concurrent?: boolean },
   fn: (container: { port: number; host: string; ready: Promise<void> }) => void,
 ) {
   // Check if this is one of our docker-compose services

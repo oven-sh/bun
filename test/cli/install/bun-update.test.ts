@@ -296,6 +296,73 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
   });
 }
 
+// https://github.com/oven-sh/bun/issues/13388
+// `bun update` with no package names must write the same resolved version into
+// bun.lock's workspace entries that it writes into package.json. Previously the
+// lockfile kept the pre-resolution literal ("latest" under --latest, the stale
+// range otherwise) and the very next `bun install` rewrote it.
+for (const args of [
+  ["update", "--latest"],
+  ["update"],
+]) {
+  it(`${args.join(" ")} saves the resolved version range into the lockfile, issue#13388`, async () => {
+    const run = async (cmd: string[]) => {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), ...cmd, "--linker=hoisted"],
+        cwd: package_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      return { out, err };
+    };
+
+    const urls: string[] = [];
+    // `~0.0.3` so the plain `bun update` variant can move within the range once 0.0.5 appears.
+    const registry: Record<string, any> = { "0.0.3": {}, latest: "0.0.3" };
+    setHandler(dummyRegistry(urls, registry));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "baz": "~0.0.3",
+          "baz-alias": "npm:baz@~0.0.3",
+        },
+      }),
+    );
+
+    // Text lockfile so the workspace entries can be asserted directly.
+    await run(["install", "--save-text-lockfile"]);
+
+    // A newer version within the range appears; both variants resolve to 0.0.5.
+    registry["0.0.5"] = {};
+    registry.latest = "0.0.5";
+    setHandler(dummyRegistry(urls, registry));
+    await run(args);
+
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "baz": "~0.0.5",
+        "baz-alias": "npm:baz@~0.0.5",
+      },
+    });
+    const lockfile = await file(join(package_dir, "bun.lock")).text();
+    expect(lockfile).toContain(`"baz": "~0.0.5"`);
+    expect(lockfile).toContain(`"baz-alias": "npm:baz@~0.0.5"`);
+    expect(lockfile).not.toContain("latest");
+
+    // package.json and bun.lock agree, so the next install has nothing to rewrite.
+    const { err } = await run(["install"]);
+    expect(err).not.toContain("Saved lockfile");
+  });
+}
+
 it("lockfile should not be modified when there are no version changes, issue#5888", async () => {
   // Install packages
   const urls: string[] = [];

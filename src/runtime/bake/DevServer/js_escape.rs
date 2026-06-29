@@ -167,7 +167,7 @@ pub(crate) fn decode_js_escape_sequences<'a>(
                                 return Ok(());
                             }
                         } else {
-                            // Fixed-length `\uXXXX`.
+                            // Fixed-length `\uHHHH`.
                             let mut j: usize = 0;
                             while j < 4 {
                                 match hex_digit_value_u32(c3 as u32) {

@@ -47,7 +47,7 @@ console.log(data);
 
 Bun's TOML parser implements the full [TOML v1.1.0 specification](https://github.com/toml-lang/toml/releases/tag/1.1.0) and passes the complete official [toml-test](https://github.com/toml-lang/toml-test) conformance suite.
 
-- **Strings**: basic (`"..."`) and literal (`'...'`), including multi-line, with all escapes (`\uXXXX`, `\UXXXXXXXX`, and TOML 1.1's `\xHH` and `\e`)
+- **Strings**: basic (`"..."`) and literal (`'...'`), including multi-line, with all escapes (`\uHHHH`, `\UHHHHHHHH`, and TOML 1.1's `\xHH` and `\e`)
 - **Integers**: decimal, hex (`0x`), octal (`0o`), and binary (`0b`). Integers that cannot be represented losslessly as a JavaScript number — outside ±(2^53 − 1) — throw
 - **Floats**: including `inf` and `nan`
 - **Booleans**: `true` and `false`

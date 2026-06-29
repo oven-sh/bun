@@ -6,10 +6,9 @@ test("Bun.TOML.parse with non-string input throws", () => {
   expect(() => Bun.TOML.parse(null as any)).toThrow();
 });
 
-// https://github.com/oven-sh/bun/issues/30893 (crash) and
-// https://github.com/oven-sh/bun/issues/32025 (acceptance): `\u{…}` is a JS
-// escape, not TOML — TOML only defines \uXXXX and \UXXXXXXXX. The old parser
-// both accepted it and could crash on it; it must now be a clean SyntaxError.
+// https://github.com/oven-sh/bun/issues/30893
+// https://github.com/oven-sh/bun/issues/32025
+// `\u{…}` is a JavaScript escape, not TOML.
 test("Bun.TOML.parse rejects JS-style \\u{XX} escapes (#30893, #32025)", () => {
   let err: unknown;
   try {

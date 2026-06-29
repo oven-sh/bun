@@ -1628,6 +1628,10 @@ pub enum ScopeMode {
     Normal,
     Skip,
     Todo,
+    /// Node's `todo` semantics (`node:test` only, via `$rust("jest.rs", ...)`):
+    /// the callback always runs and the result is reported as todo whether it
+    /// passes or fails. `Todo` runs only under `--todo`, where passing is a failure.
+    TodoRun,
     Failing,
     FilteredOut,
 }
@@ -1639,6 +1643,7 @@ impl ScopeMode {
             Self::Normal => "normal",
             Self::Skip => "skip",
             Self::Todo => "todo",
+            Self::TodoRun => "todo_run",
             Self::Failing => "failing",
             Self::FilteredOut => "filtered_out",
         }

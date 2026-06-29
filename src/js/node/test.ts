@@ -9,6 +9,22 @@ const kDefaultName = "<anonymous>";
 const kDefaultFunction = () => {};
 const kDefaultOptions = kEmptyObject;
 
+/**
+ * bun:test's `test`/`describe` object. `.concurrent` and `.serial` return the
+ * same shape with the corresponding modifier applied.
+ */
+type ScopeFunction = {
+  (name: string, fn: unknown, options?: unknown): void;
+  concurrent: ScopeFunction;
+  serial: ScopeFunction;
+};
+
+// In Node a `todo` test's body runs and its outcome is reported as todo either
+// way; bun:test's `test.todo` never runs the body (or, under `--todo`, fails
+// the run when it passes). These register tests/suites with Node's semantics.
+const kTodoTest: ScopeFunction = $rust("jest.rs", "nodeTestTodo");
+const kTodoDescribe: ScopeFunction = $rust("jest.rs", "nodeDescribeTodo");
+
 function run() {
   throwNotImplemented("run()", 5090, "Use `bun:test` in the interim.");
 }
@@ -503,7 +519,7 @@ class TestContext {
     if (options.only) {
       test.only(name, fn);
     } else if (options.todo) {
-      test.todo(name, fn);
+      kTodoTest(name, fn);
     } else if (options.skip) {
       test.skip(name, fn);
     } else {
@@ -512,12 +528,12 @@ class TestContext {
   }
 
   describe(arg0: unknown, arg1: unknown, arg2: unknown) {
-    const { name, fn } = createDescribe(arg0, arg1, arg2);
+    const { name, fn, options } = createDescribe(arg0, arg1, arg2);
 
     this.#checkNotInsideTest("describe");
 
     const { describe } = bunTest();
-    describe(name, fn);
+    applyConcurrency(options.todo ? kTodoDescribe : describe, options.concurrency)(name, fn);
   }
 
   #checkNotInsideTest(fn: string) {
@@ -538,30 +554,45 @@ function bunTest() {
   return jest(Bun.main);
 }
 
+/**
+ * Maps Node's `concurrency` suite option onto bun:test's `.concurrent`/`.serial`
+ * modifiers: `true` or an integer >= 2 runs the suite's tests in parallel (Bun
+ * applies its global --max-concurrency cap rather than a per-suite limit),
+ * `false` or `1` forces serial, and unset inherits from the parent.
+ */
+function applyConcurrency(describe: ScopeFunction, concurrency: unknown): ScopeFunction {
+  if (concurrency === undefined || concurrency === null) {
+    return describe;
+  }
+  if (typeof concurrency !== "boolean") {
+    validateInteger(concurrency, "options.concurrency", 1);
+  }
+  return concurrency === true || (concurrency as number) >= 2 ? describe.concurrent : describe.serial;
+}
+
 let ctx: TestContext | undefined = undefined;
 
 function describe(arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn } = createDescribe(arg0, arg1, arg2);
+  const { name, fn, options } = createDescribe(arg0, arg1, arg2);
   const { describe } = bunTest();
-  describe(name, fn);
+  applyConcurrency(options.todo ? kTodoDescribe : describe, options.concurrency)(name, fn);
 }
 
 describe.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn } = createDescribe(arg0, arg1, arg2);
+  const { name, fn, options } = createDescribe(arg0, arg1, arg2);
   const { describe } = bunTest();
-  describe.skip(name, fn);
+  applyConcurrency(describe.skip, options.concurrency)(name, fn);
 };
 
 describe.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn } = createDescribe(arg0, arg1, arg2);
-  const { describe } = bunTest();
-  describe.todo(name, fn);
+  const { name, fn, options } = createDescribe(arg0, arg1, arg2);
+  applyConcurrency(kTodoDescribe, options.concurrency)(name, fn);
 };
 
 describe.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn } = createDescribe(arg0, arg1, arg2);
+  const { name, fn, options } = createDescribe(arg0, arg1, arg2);
   const { describe } = bunTest();
-  describe.only(name, fn);
+  applyConcurrency(describe.only, options.concurrency)(name, fn);
 };
 
 function test(arg0: unknown, arg1: unknown, arg2: unknown) {
@@ -571,7 +602,7 @@ function test(arg0: unknown, arg1: unknown, arg2: unknown) {
   // in Node it is a no-op unless --test-only is passed, whereas bun:test's
   // test.only() unconditionally skips siblings.
   if (options.todo) {
-    test.todo(name, fn, options);
+    kTodoTest(name, fn, options);
   } else if (options.skip) {
     test.skip(name, fn, options);
   } else {
@@ -587,8 +618,7 @@ test.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 
 test.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createTest(arg0, arg1, arg2);
-  const { test } = bunTest();
-  test.todo(name, fn, options);
+  kTodoTest(name, fn, options);
 };
 
 test.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {

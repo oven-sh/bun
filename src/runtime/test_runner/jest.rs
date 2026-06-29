@@ -511,6 +511,31 @@ pub mod Jest {
     }
 }
 
+/// Backs `$rust("jest.rs", "nodeTestTodo")` in `node:test`. Node's `todo` runs
+/// the body and reports the result as todo whether it passes or fails, which
+/// neither bun:test `test.todo` mode matches (see `ScopeMode::TodoRun`).
+pub(crate) fn node_test_todo(global: &JSGlobalObject) -> JsResult<JSValue> {
+    create_bound(
+        global,
+        ScopeKind::Test,
+        JSValue::ZERO,
+        BaseScopeCfg { self_mode: ScopeMode::TodoRun, ..Default::default() },
+        bun_core::String::static_str("todo"),
+    )
+}
+
+/// `describe` counterpart of [`node_test_todo`]: tests declared inside inherit
+/// Node's `todo` semantics, so their bodies run too.
+pub(crate) fn node_describe_todo(global: &JSGlobalObject) -> JsResult<JSValue> {
+    create_bound(
+        global,
+        ScopeKind::Describe,
+        JSValue::ZERO,
+        BaseScopeCfg { self_mode: ScopeMode::TodoRun, ..Default::default() },
+        bun_core::String::static_str("todo"),
+    )
+}
+
 pub mod on_unhandled_rejection {
     use super::*;
 

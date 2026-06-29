@@ -52,7 +52,54 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  // Node runs todo bodies and reports the outcome as todo whether it passes or
+  // fails; a failing todo never fails the run. The fixture logs one LOG: line
+  // per body that executed.
+  test("todo test bodies run and never fail the run", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["09-todo.js"]);
+    expect({
+      exitCode,
+      logs: stdout.split("\n").filter(line => line.startsWith("LOG:")),
+      summary: summarize(stderr),
+    }).toEqual({
+      exitCode: 0,
+      logs: [
+        "LOG:passing-todo-option",
+        "LOG:failing-todo-option",
+        "LOG:passing-todo-modifier",
+        "LOG:failing-todo-modifier",
+        "LOG:todo-reason-string",
+        "LOG:regular",
+        "LOG:todo-suite-modifier",
+        "LOG:todo-suite-option",
+      ],
+      summary: { pass: 1, fail: 0, todo: 8 },
+    });
+  });
+
+  test("describe honors the concurrency option", async () => {
+    const { exitCode, stderr } = await runTests(["10-describe-concurrency.js"]);
+    expect({ exitCode, summary: summarize(stderr) }).toEqual({
+      exitCode: 0,
+      summary: { pass: 9, fail: 0, todo: 0 },
+    });
+  });
+
+  test("describe rejects invalid concurrency values", async () => {
+    const { exitCode, stderr } = await runTests(["11-describe-concurrency-invalid.js"]);
+    expect({ exitCode, summary: summarize(stderr) }).toEqual({
+      exitCode: 0,
+      summary: { pass: 1, fail: 0, todo: 0 },
+    });
+  });
 });
+
+/** Extracts the pass/fail/todo counts from a `bun test` summary. */
+function summarize(stderr: string) {
+  const count = (label: string) => Number(stderr.match(new RegExp(`(\\d+) ${label}\\n`))?.[1] ?? 0);
+  return { pass: count("pass"), fail: count("fail"), todo: count("todo") };
+}
 
 async function runTests(filenames: string[]) {
   const testPaths = filenames.map(filename => join(import.meta.dirname, "fixtures", filename));

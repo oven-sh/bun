@@ -664,6 +664,8 @@ impl Execution {
             sequence.result = match sequence.entry_mode() {
                 ScopeMode::Failing => Result::FailBecauseFailingTestPassed,
                 ScopeMode::Todo => Result::FailBecauseTodoPassed,
+                // Node never fails a todo test that passes.
+                ScopeMode::TodoRun => Result::Todo,
                 _ => Result::Pass,
             };
         }
@@ -794,7 +796,7 @@ impl Execution {
                 }
                 HandleUncaughtExceptionResult::HideError // failing tests prevent the error from being displayed
             }
-            ScopeMode::Todo => {
+            ScopeMode::Todo | ScopeMode::TodoRun => {
                 if sequence.result == Result::Pending {
                     sequence.result = Result::Todo; // executing test() callback
                 }
@@ -1045,7 +1047,7 @@ fn step_sequence_one(
                     sequence.result = Result::Skip;
                 }
             }
-            ScopeMode::Todo => {
+            ScopeMode::Todo | ScopeMode::TodoRun => {
                 if sequence.result == Result::Pending {
                     sequence.result = Result::Todo;
                 }

@@ -39,7 +39,9 @@ describe("Headers", () => {
       expect(headers.get("content-type")).toBeNull();
       expect(headers.get("user-agent")).toBe("bun");
     });
-    test("constructing headers from an object captures its entries before converting values", () => {
+    // Web IDL record conversion interleaves Get with value conversion: mutations made by a
+    // value's toString() are observed by the keys that follow it.
+    test("constructing headers from an object interleaves Get with value conversion", () => {
       const record: any = {
         "x-first": {
           toString() {
@@ -53,8 +55,27 @@ describe("Headers", () => {
       };
       const headers = new Headers(record);
       expect(headers.get("x-first")).toBe("first");
-      expect(headers.get("x-second")).toBe("second");
-      expect(headers.get("x-third")).toBe("third");
+      expect(headers.get("x-second")).toBe("replaced");
+      expect(headers.get("x-third")).toBeNull();
+    });
+    test("constructing headers from an object with a getter interleaves Get with value conversion", () => {
+      const record: any = {
+        "x-first": {
+          toString() {
+            record["x-second"] = "replaced";
+            delete record["x-third"];
+            return "first";
+          },
+        },
+        "x-second": "second",
+        "x-third": "third",
+      };
+      Object.defineProperty(record, "x-fourth", { get: () => "fourth", enumerable: true });
+      const headers = new Headers(record);
+      expect(headers.get("x-first")).toBe("first");
+      expect(headers.get("x-second")).toBe("replaced");
+      expect(headers.get("x-third")).toBeNull();
+      expect(headers.get("x-fourth")).toBe("fourth");
     });
     test("can create headers from object with duplicates", () => {
       const headers = new Headers({

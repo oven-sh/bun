@@ -237,7 +237,9 @@ describe("url", () => {
     });
   });
 
-  it("URLSearchParams constructed from an object captures its entries before converting values", () => {
+  // Web IDL record conversion interleaves Get with value conversion: mutations made by a
+  // value's toString() are observed by the keys that follow it. Node agrees.
+  it("URLSearchParams constructed from an object interleaves Get with value conversion", () => {
     const record: any = {
       first: {
         toString() {
@@ -251,7 +253,7 @@ describe("url", () => {
     };
     const params = new URLSearchParams(record);
     expect(params.get("first")).toBe("1");
-    expect(params.get("second")).toBe("2");
-    expect(params.get("third")).toBe("3");
+    expect(params.get("second")).toBe("replaced");
+    expect(params.get("third")).toBeNull();
   });
 });

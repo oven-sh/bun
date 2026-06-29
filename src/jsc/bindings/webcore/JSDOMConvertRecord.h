@@ -28,7 +28,6 @@
 #include "IDLTypes.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMGlobalObject.h"
-#include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
 namespace WebCore {
@@ -123,30 +122,52 @@ private:
         }
 
         if (canUseFastPath) {
+            // Only the identifiers and offsets are snapshotted here: no user code runs inside
+            // forEachProperty, so the property table cannot be mutated out from under it.
             Vector<JSC::Identifier, 8> identifiers;
-            JSC::MarkedArgumentBuffer values;
+            Vector<JSC::PropertyOffset, 8> offsets;
             structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                 if (entry.attributes() & PropertyAttribute::DontEnum) {
                     return true;
                 }
 
                 identifiers.append(Identifier::fromUid(vm, entry.key()));
-                values.append(object->getDirect(entry.offset()));
+                offsets.append(entry.offset());
                 return true;
             });
 
-            if (values.hasOverflowed()) [[unlikely]] {
-                throwOutOfMemoryError(&lexicalGlobalObject, scope);
-                return {};
-            }
-
             for (size_t i = 0; i < identifiers.size(); ++i) {
+                const auto& identifier = identifiers[i];
+
+                // Converter<V>::convert below can run user code. The snapshotted offsets are only
+                // valid while the object keeps its original structure; any mutation transitions it.
+                bool structureIsUnchanged = object->structure() == structure;
+                JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+                if (!structureIsUnchanged) [[unlikely]] {
+                    // 1. Let desc be ? O.[[GetOwnProperty]](key).
+                    bool hasProperty = object->methodTable()->getOwnPropertySlot(object, &lexicalGlobalObject, identifier, slot);
+                    RETURN_IF_EXCEPTION(scope, {});
+
+                    // 2. If desc is not undefined and desc.[[Enumerable]] is true:
+                    if (!hasProperty || (slot.attributes() & JSC::PropertyAttribute::DontEnum))
+                        continue;
+                }
+
                 // 1. Let typedKey be key converted to an IDL value of type K.
-                auto typedKey = Detail::IdentifierConverter<K>::convert(lexicalGlobalObject, identifiers[i]);
+                auto typedKey = Detail::IdentifierConverter<K>::convert(lexicalGlobalObject, identifier);
                 RETURN_IF_EXCEPTION(scope, {});
 
                 // 2. Let value be ? Get(O, key).
-                JSC::JSValue value = values.at(i);
+                JSC::JSValue value;
+                if (structureIsUnchanged) [[likely]]
+                    value = object->getDirect(offsets[i]);
+                else {
+                    if (!slot.isTaintedByOpaqueObject()) [[likely]]
+                        value = slot.getValue(&lexicalGlobalObject, identifier);
+                    else
+                        value = object->get(&lexicalGlobalObject, identifier);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
 
                 // 3. Let typedValue be value converted to an IDL value of type V.
                 auto typedValue = Converter<V>::convert(lexicalGlobalObject, value, args...);

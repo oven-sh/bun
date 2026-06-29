@@ -1964,7 +1964,10 @@ impl PackageManifest {
         // bulk-frees via `reset_retain_with_limit` on the next call — see
         // `initialize_mini_store` in lib.rs for why.
         let bump = bun_alloc::Arena::new();
-        let json = match JSON::parse_utf8(&source, log, &bump) {
+        // Registry manifests get no duplicate-key warnings: nothing ever
+        // reads them for this log, and they cost a measurable fraction of
+        // every manifest parse.
+        let json = match JSON::parse_utf8_registry(&source, log, &bump) {
             Ok(j) => j,
             Err(_) => {
                 // don't use the arena memory!

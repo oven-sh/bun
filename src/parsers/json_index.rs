@@ -124,13 +124,15 @@ impl StructuralIndex {
 // Scratch pool
 // ──────────────────────────────────────────────────────────────────────────
 //
-// The index buffer for a document of N bytes needs N+66 u32 entries in the
-// worst case. To keep the hot path free of both `memset` and `unsafe`, the
-// buffer is kept at its high-water *length* (not just capacity) and reused
-// across parses on the same thread: the SIMD kernel overwrites the prefix it
-// needs and tells us how much, and only growth beyond the previous high-water
-// mark pays a zero-fill. Buffers above `MAX_POOLED_BYTES` are not returned to
-// the pool so one huge document doesn't pin memory forever.
+// The index buffer for a document of N bytes needs capacity for N+66 u32
+// entries in the worst case (every byte structural). The buffers are pooled
+// per thread so steady-state parses (every package.json / manifest in an
+// install) reuse warm memory; oversized buffers are shrunk on release so one
+// huge document doesn't pin hundreds of MB.
+//
+// The SIMD kernel writes into the spare capacity and reports how much it
+// initialized: zero-filling a buffer this large every parse would cost more
+// than the rest of the parse for big documents.
 
 struct ScratchBufs {
     indices: Vec<u32>,
@@ -151,11 +153,14 @@ fn scratch_get() -> ScratchBufs {
 
 fn scratch_put(mut bufs: ScratchBufs) {
     if bufs.indices.capacity() * 4 > MAX_POOLED_BYTES {
-        return; // let it free
+        bufs.indices = Vec::new();
+        bufs.dirty = Vec::new();
+    } else {
+        bufs.indices.clear();
+        bufs.dirty.clear();
     }
     SCRATCH.with_borrow_mut(|slot| {
         if slot.is_none() {
-            bufs.indices.clear();
             *slot = Some(bufs);
         }
     });
@@ -172,19 +177,25 @@ pub fn build(contents: &[u8]) -> Result<StructuralIndex, IndexError> {
 
     // SIMD fast path: native targets, no comments / single quotes.
     if bun_core::env::IS_NATIVE && !contents.is_empty() {
-        // High-water-mark sizing: `resize` only writes the *growth* region, so
-        // a reused buffer pays nothing here. See the module-level note.
         let need = contents.len() + 64 + SENTINELS;
-        if bufs.indices.len() < need {
-            bufs.indices.resize(need, 0);
-        }
-        let dirty_words = (contents.len().div_ceil(64)).div_ceil(64) + 1;
-        if bufs.dirty.len() < dirty_words {
-            bufs.dirty.resize(dirty_words, 0);
-        }
-        let (n, flags) =
-            bun_highway::json_structural_index(contents, &mut bufs.indices, &mut bufs.dirty);
+        let dirty_words = (contents.len().div_ceil(64)).div_ceil(64);
+        bufs.indices.clear();
+        bufs.indices.reserve(need);
+        bufs.dirty.clear();
+        bufs.dirty.reserve(dirty_words);
+        let (n, flags) = bun_highway::json_structural_index(
+            contents,
+            &mut bufs.indices.spare_capacity_mut()[..need],
+            &mut bufs.dirty.spare_capacity_mut()[..dirty_words],
+        );
         if flags & FLAG_ODDITY == 0 {
+            // SAFETY: per `json_structural_index`'s contract (no ODDITY), the
+            // kernel initialized `indices[..n + SENTINELS]` and
+            // `dirty[..dirty_words]`, both within the reserved capacity.
+            unsafe {
+                bufs.indices.set_len(n + SENTINELS);
+                bufs.dirty.set_len(dirty_words);
+            }
             return Ok(StructuralIndex { bufs, n, flags, first_comment: None });
         }
         // fall through to the scalar indexer
@@ -215,6 +226,8 @@ fn scalar_index(contents: &[u8], mut bufs: ScratchBufs) -> Result<StructuralInde
     let dirty_words = (contents.len().div_ceil(64)).div_ceil(64) + 1;
     bufs.dirty.clear();
     bufs.dirty.resize(dirty_words, 0);
+    // (The scalar path is the cold path; a zero-filled dirty bitmap of
+    // len/512 bytes is noise here.)
 
     let mut flags: u32 = 0;
     let mut first_comment: Option<Range> = None;

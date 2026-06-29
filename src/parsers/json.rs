@@ -299,6 +299,24 @@ pub fn parse_utf8_impl<const CHECK_LEN: bool>(
     Ok(parse_impl(source, log, bump, JSON_OPTS, true, CHECK_LEN)?.root)
 }
 
+/// Parse a JSON document fetched from a registry/HTTP API (npm package
+/// manifests): strict JSON, strings forced to UTF-8, and **no duplicate-key
+/// warnings** — these documents are machine-generated, the warnings are never
+/// surfaced to anyone, and computing them costs a measurable fraction of
+/// every manifest parse.
+pub fn parse_utf8_registry(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    bump: &Bump,
+) -> Result<Expr, bun_core::Error> {
+    if source.contents.is_empty() {
+        return Ok(empty_object_expr());
+    }
+    const REGISTRY_OPTS: JSONOptions =
+        JSONOptions { is_json: true, json_warn_duplicate_keys: false, ..JSONOptions::DEFAULT };
+    Ok(parse_impl(source, log, bump, REGISTRY_OPTS, true, false)?.root)
+}
+
 /// Parse package.json (comments & trailing commas allowed, strings UTF-8).
 pub fn parse_package_json_utf8(
     source: &bun_ast::Source,

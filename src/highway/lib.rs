@@ -601,30 +601,41 @@ pub fn count_mapping_delims(bytes: &[u8]) -> usize {
 /// `src/jsc/bindings/highway_json.cpp` for the kernel and
 /// `bun_parsers::json_index` for the consumer and the output contract.
 ///
-/// Requirements (asserted): `out.len() >= input.len() + 66` (CompressStore may
-/// overshoot by a vector and two sentinels are appended) and
-/// `dirty.len() >= (input.len()/64 + 63)/64 + 1`. Neither buffer needs to be
-/// zeroed: the kernel assigns every slot it makes visible.
+/// The output buffers are intentionally `MaybeUninit`: an index buffer is
+/// `input.len() + 66` entries (hundreds of MB for the largest npm manifests)
+/// and zero-filling it would cost more than the whole parse. The kernel
+/// initializes exactly the prefix it reports.
 ///
-/// Returns `(n, flags)`. When `flags & ODDITY == 0`, `out[..n + 2]` holds the
-/// `n` structural indices in document order plus two `input.len()` sentinels,
-/// and `dirty` holds one bit per 64-byte input block ("contains a backslash
-/// or control char inside a string").
+/// Requirements (asserted): `out.len() >= input.len() + 66` (CompressStore may
+/// overshoot by a vector, and two sentinels are appended) and
+/// `dirty.len() >= ceil(ceil(input.len()/64)/64)`.
+///
+/// Returns `(n, flags)`. When `flags & ODDITY == 0`:
+///   - `out[..n + 2]` is initialized: the `n` structural indices in document
+///     order plus two `input.len()` sentinels
+///   - `dirty[..ceil(ceil(input.len()/64)/64)]` is initialized: one bit per
+///     64-byte input block ("contains a backslash or control char inside a
+///     string")
 #[inline(always)]
-pub fn json_structural_index(input: &[u8], out: &mut [u32], dirty: &mut [u64]) -> (usize, u32) {
+pub fn json_structural_index(
+    input: &[u8],
+    out: &mut [core::mem::MaybeUninit<u32>],
+    dirty: &mut [core::mem::MaybeUninit<u64>],
+) -> (usize, u32) {
     assert!(out.len() >= input.len() + 66);
-    assert!(dirty.len() >= (input.len() / 64).div_ceil(64) + 1);
+    assert!(dirty.len() >= (input.len().div_ceil(64)).div_ceil(64));
     let mut flags: u32 = 0;
     // SAFETY: pointers/lengths come from live slices whose sizes satisfy the
-    // kernel's documented requirements (asserted above); the kernel writes at
-    // most `input.len() + 2` index entries and `ceil(ceil(len/64)/64)` dirty
-    // words, and `out_flags` is a valid out-pointer.
+    // kernel's documented requirements (asserted above); the kernel writes
+    // only within them (at most `input.len() + 66` index entries and
+    // `ceil(nblocks/64)` dirty words) and `out_flags` is a valid out-pointer.
+    // `MaybeUninit<T>` has the same layout as `T`.
     let n = unsafe {
         highway_json_index(
             input.as_ptr(),
             input.len(),
-            out.as_mut_ptr(),
-            dirty.as_mut_ptr(),
+            out.as_mut_ptr().cast::<u32>(),
+            dirty.as_mut_ptr().cast::<u64>(),
             &mut flags,
         )
     };

@@ -89,7 +89,17 @@ describe("bundler", () => {
               set: __exportSetter.bind(all, name)
             });
         };
-        var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
+        var __esm = (fn, res, err) => () => {
+          if (err)
+            throw err[0];
+          if (fn)
+            try {
+              res = fn(fn = 0);
+            } catch (e) {
+              throw err = [e], e;
+            }
+          return res;
+        };
         var __promiseAll = (args) => Promise.all(args);
 
         // StoreDependencyAsync.ts
@@ -164,7 +174,7 @@ describe("bundler", () => {
         var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
         AsyncEntryPoint2();
 
-        //# debugId=42062903F19477CF64756E2164756E21
+        //# debugId=3EF63DB2CB2ED5F664756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);
@@ -354,7 +364,17 @@ describe("bundler", () => {
               set: __exportSetter.bind(all, name)
             });
         };
-        var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
+        var __esm = (fn, res, err) => () => {
+          if (err)
+            throw err[0];
+          if (fn)
+            try {
+              res = fn(fn = 0);
+            } catch (e) {
+              throw err = [e], e;
+            }
+          return res;
+        };
 
         // SecondElementImport.ts
         function SecondElementImport() {
@@ -410,7 +430,7 @@ describe("bundler", () => {
         var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
         AsyncEntryPoint2();
 
-        //# debugId=BF876FBF618133C264756E2164756E21
+        //# debugId=71E152310DE2511464756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);

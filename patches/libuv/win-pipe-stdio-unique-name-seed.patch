@@ -1,0 +1,15 @@
+--- a/src/win/pipe.c
++++ b/src/win/pipe.c
+@@ -438,8 +438,11 @@ int uv__create_stdio_pipe_pair(uv_loop_t* loop,
+     client_flags |= UV_NONBLOCK_PIPE;
+   }
+ 
++  /* `server_pipe` is still INVALID_HANDLE_VALUE here, so every stdio pipe in
++   * the process probed the same name sequence: a linear scan over every live
++   * stdio pipe. `parent_pipe` is heap-allocated and unique among live pipes. */
+   err = uv__create_pipe_pair(&server_pipe, &client_pipe,
+-          server_flags, client_flags, 1, (uintptr_t) server_pipe);
++          server_flags, client_flags, 1, (uintptr_t) parent_pipe);
+   if (err)
+     goto error;
+ 

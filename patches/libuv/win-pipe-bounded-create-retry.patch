@@ -1,0 +1,30 @@
+--- a/src/win/pipe.c
++++ b/src/win/pipe.c
+@@ -210,9 +210,14 @@ static int uv__pipe_server(
+     HANDLE* pipeHandle_ptr, DWORD access,
+     char* name, size_t nameSize, unsigned long long random) {
+   HANDLE pipeHandle;
++  int attempt;
+   int err;
+ 
+-  for (;;) {
++  /* Bounded: in an AppContainer every CreateNamedPipeA returns
++   * ERROR_ACCESS_DENIED, so an unbounded retry spins forever at 100% CPU. The
++   * bound must exceed the max concurrently-live uv pipes (each occupied name
++   * is one of them); 1e5 is far past per-process handle limits. */
++  for (attempt = 0; attempt < 100000; attempt++) {
+     uv__unique_pipe_name(random, name, nameSize);
+ 
+     pipeHandle = CreateNamedPipeA(name,
+@@ -234,6 +239,11 @@ static int uv__pipe_server(
+     random++;
+   }
+ 
++  if (pipeHandle == INVALID_HANDLE_VALUE) {
++    /* Retries exhausted; err holds the last GetLastError(). */
++    goto error;
++  }
++
+   *pipeHandle_ptr = pipeHandle;
+ 
+   return 0;

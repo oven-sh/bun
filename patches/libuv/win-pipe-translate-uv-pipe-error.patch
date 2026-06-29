@@ -1,0 +1,15 @@
+--- a/src/win/pipe.c
++++ b/src/win/pipe.c
+@@ -373,8 +373,11 @@ int uv_pipe(uv_file fds[2], int read_flags, int write_flags) {
+                              write_flags,
+                              0,
+                              (uintptr_t) &fds[0]);
++  /* uv__create_pipe_pair returns a raw (positive) Windows error code. The
++   * public uv_pipe() must return a negative UV_* error: a positive value
++   * reads as success to callers that check for `rc < 0`. */
+   if (err != 0)
+-    return err;
++    return uv_translate_sys_error(err);
+   temp[0] = _open_osfhandle((intptr_t) readh, 0);
+   if (temp[0] == -1) {
+     if (errno == UV_EMFILE)

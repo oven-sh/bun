@@ -40,15 +40,30 @@ export const libuv: Dependency = {
     commit: LIBUV_COMMIT,
   }),
 
-  // Re-arm the AFD ioctl before poll_cb (matching wepoll's
-  // port__update_events_if_polling-before-return). AFD is level-triggered
-  // (ReactOS AfdSelect: `Events & FCB->PollState` checked on IRP arrival),
-  // so a peer RST that lands during poll_cb is caught by the freshly-
-  // submitted req. Upstream libuv re-arms *after* poll_cb, leaving a gap
-  // an in-process loopback fetch().abort() can fall into. To upstream:
-  // send to libuv/libuv with the wepoll/ReactOS references in the patch
-  // comment as the rationale.
-  patches: ["patches/libuv/win-poll-rearm-before-callback.patch"],
+  patches: [
+    // Re-arm the AFD ioctl before poll_cb (matching wepoll's
+    // port__update_events_if_polling-before-return). AFD is level-triggered
+    // (ReactOS AfdSelect: `Events & FCB->PollState` checked on IRP arrival),
+    // so a peer RST that lands during poll_cb is caught by the freshly-
+    // submitted req. Upstream libuv re-arms *after* poll_cb, leaving a gap
+    // an in-process loopback fetch().abort() can fall into. To upstream:
+    // send to libuv/libuv with the wepoll/ReactOS references in the patch
+    // comment as the rationale.
+    "patches/libuv/win-poll-rearm-before-callback.patch",
+    // uv__pipe_server retries CreateNamedPipeA forever on ERROR_ACCESS_DENIED
+    // (assumed name collision); an AppContainer denies the whole \\?\pipe
+    // namespace, so any piped uv_spawn spins at 100% CPU. Upstream to libuv.
+    "patches/libuv/win-pipe-bounded-create-retry.patch",
+    // The public uv_pipe() returns uv__create_pipe_pair's raw positive
+    // GetLastError(), unlike every sibling API; callers checking `rc < 0`
+    // (bun's from_uv_rc) read it as success. Translate it. Upstream to libuv.
+    "patches/libuv/win-pipe-translate-uv-pipe-error.patch",
+    // uv__create_stdio_pipe_pair seeds the pipe name with `(uintptr_t)
+    // server_pipe`, a constant (INVALID_HANDLE_VALUE), so every stdio pipe
+    // linearly probes one shared name sequence. Seed with the unique
+    // parent_pipe pointer instead. Upstream to libuv.
+    "patches/libuv/win-pipe-stdio-unique-name-seed.patch",
+  ],
 
   build: () => ({
     kind: "direct",

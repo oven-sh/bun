@@ -815,16 +815,17 @@ impl SubscriptionPushMessage {
         SUBSCRIPTION_PUSH_MESSAGES.get(bytes).copied()
     }
 
+    /// Pattern (`p`-prefixed) and sharded (`s`-prefixed) variants of the
+    /// `Subscribe`/`Unsubscribe` push kinds; the unprefixed kinds are matched by
+    /// `from_bytes` before this is consulted.
     #[inline]
     pub fn is_reply_kind(kind: &[u8]) -> bool {
-        matches!(
-            kind,
-            b"subscribe"
-                | b"unsubscribe"
-                | b"psubscribe"
-                | b"punsubscribe"
-                | b"ssubscribe"
-                | b"sunsubscribe"
-        )
+        match kind.split_first() {
+            Some((b'p' | b's', base)) => matches!(
+                Self::from_bytes(base),
+                Some(Self::Subscribe | Self::Unsubscribe)
+            ),
+            _ => false,
+        }
     }
 }

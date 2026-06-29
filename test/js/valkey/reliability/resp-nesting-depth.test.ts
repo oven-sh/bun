@@ -39,11 +39,13 @@ function countRespCommands(data: Buffer): number {
 
 /**
  * Creates a minimal mock Redis server that parses incoming RESP command
- * frames. The first command (HELLO handshake) gets +OK; all subsequent
- * commands receive the crafted payload. Handles the case where multiple
+ * frames. The first command (HELLO handshake) gets +OK; each subsequent
+ * command receives the next crafted payload (the last one is repeated when
+ * there are more commands than payloads). Handles the case where multiple
  * commands arrive in a single TCP chunk.
  */
-function createMockRedisServer(payload: Buffer): Promise<{ server: net.Server; port: number }> {
+function createMockRedisServer(payload: Buffer | Buffer[]): Promise<{ server: net.Server; port: number }> {
+  const payloads = Array.isArray(payload) ? payload : [payload];
   return new Promise((resolve, reject) => {
     const server = net.createServer(socket => {
       let commandsSeen = 0;
@@ -55,8 +57,8 @@ function createMockRedisServer(payload: Buffer): Promise<{ server: net.Server; p
             // Respond to HELLO handshake with a simple OK
             socket.write("+OK\r\n");
           } else {
-            // All subsequent commands get the crafted payload
-            socket.write(payload);
+            // Each subsequent command gets the next crafted payload
+            socket.write(payloads[Math.min(commandsSeen - 1, payloads.length - 1)]);
           }
           commandsSeen++;
         }
@@ -253,6 +255,31 @@ describe("Valkey: RESP push frame routing", () => {
       try {
         const result = await client.send("PING", []);
         expect(result).toBe("PONG");
+      } finally {
+        client.close();
+      }
+    } finally {
+      server.close();
+    }
+  });
+
+  test("a psubscribe ack push consumes its own promise pair without desyncing pipelined replies", async () => {
+    const psubscribeAck = Buffer.from(">3\r\n$10\r\npsubscribe\r\n$6\r\nnews.*\r\n:1\r\n");
+    const pong = Buffer.from("+PONG\r\n");
+
+    const { server, port } = await createMockRedisServer([psubscribeAck, pong]);
+    try {
+      const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, {
+        autoReconnect: false,
+        connectionTimeout: 2000,
+      });
+
+      try {
+        const psubscribed = client.psubscribe("news.*");
+        const pinged = client.send("PING", []);
+
+        expect(await psubscribed).toEqual({ type: "psubscribe", data: ["news.*", 1] });
+        expect(await pinged).toBe("PONG");
       } finally {
         client.close();
       }

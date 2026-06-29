@@ -19,8 +19,15 @@ function check(name) {
 // Minimal RFC 6455 server: completes the upgrade, sends one text frame,
 // then starts the closing handshake.
 const server = net.createServer(socket => {
-  socket.once("data", data => {
-    const key = /Sec-WebSocket-Key: (.*)\r\n/i.exec(data.toString())[1].trim();
+  // The upgrade request may be split across TCP chunks: buffer until the
+  // header block is complete before parsing it.
+  let request = Buffer.alloc(0);
+  socket.on("data", function onHandshakeData(chunk) {
+    request = Buffer.concat([request, chunk]);
+    if (!request.includes("\r\n\r\n")) return;
+    socket.off("data", onHandshakeData);
+
+    const key = /Sec-WebSocket-Key: (.*)\r\n/i.exec(request.toString())[1].trim();
     const accept = createHash("sha1").update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64");
     socket.write(
       "HTTP/1.1 101 Switching Protocols\r\n" +

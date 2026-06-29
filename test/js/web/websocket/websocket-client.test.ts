@@ -351,7 +351,10 @@ describe("WebSocket AsyncLocalStorage context", () => {
     // The upgrade never completes: the server destroys the socket, so the
     // client goes down the connection-error path (error + close events).
     const tcpServer = createServer(socket => socket.destroy());
-    await new Promise<void>(resolve => tcpServer.listen(0, "127.0.0.1", resolve));
+    const listening = Promise.withResolvers<void>();
+    tcpServer.once("error", listening.reject);
+    tcpServer.listen(0, "127.0.0.1", listening.resolve);
+    await listening.promise;
     const { port } = tcpServer.address() as AddressInfo;
 
     try {

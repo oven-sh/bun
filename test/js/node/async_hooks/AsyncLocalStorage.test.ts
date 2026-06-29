@@ -668,8 +668,9 @@ describe("async context passes through", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({
+    expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
       stdout: JSON.stringify(["a:first", "b:first", "c:third", "d:fourth"]),
+      stderr: "",
       exitCode: 0,
     });
   });

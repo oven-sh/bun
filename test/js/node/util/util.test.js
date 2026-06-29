@@ -436,3 +436,82 @@ describe("util.parseEnv", () => {
     expect(util.parseEnv(new String("FOO=bar"))).toEqual({ FOO: "bar" });
   });
 });
+
+describe("isDeepStrictEqual skipPrototype (third argument)", () => {
+  class Foo {
+    constructor(a) {
+      this.a = a;
+    }
+  }
+  class Bar {
+    constructor(a) {
+      this.a = a;
+    }
+  }
+
+  it("has length 3 to match Node", () => {
+    expect(util.isDeepStrictEqual.length).toBe(3);
+  });
+
+  it("skips the prototype check when the third argument is truthy", () => {
+    // https://github.com/oven-sh/bun/issues/33074
+    expect(util.isDeepStrictEqual(new Foo(1), new Bar(1), true)).toBe(true);
+  });
+
+  it("keeps the prototype check without the third argument", () => {
+    expect(util.isDeepStrictEqual(new Foo(1), new Bar(1))).toBe(false);
+    expect(util.isDeepStrictEqual(new Foo(1), new Bar(1), false)).toBe(false);
+  });
+
+  it("coerces the third argument like Node (truthiness)", () => {
+    expect(util.isDeepStrictEqual(new Foo(1), new Bar(1), 1)).toBe(true);
+    expect(util.isDeepStrictEqual(new Foo(1), new Bar(1), "x")).toBe(true);
+    expect(util.isDeepStrictEqual(new Foo(1), new Bar(1), {})).toBe(true);
+    expect(util.isDeepStrictEqual(new Foo(1), new Bar(1), 0)).toBe(false);
+    expect(util.isDeepStrictEqual(new Foo(1), new Bar(1), "")).toBe(false);
+    expect(util.isDeepStrictEqual(new Foo(1), new Bar(1), null)).toBe(false);
+    expect(util.isDeepStrictEqual(new Foo(1), new Bar(1), undefined)).toBe(false);
+  });
+
+  it("still enforces the other strict rules when skipping prototypes", () => {
+    expect(util.isDeepStrictEqual(new Foo(1), new Bar(2), true)).toBe(false);
+    const extra = new Bar(1);
+    extra.b = 2;
+    expect(util.isDeepStrictEqual(new Foo(1), extra, true)).toBe(false);
+    expect(util.isDeepStrictEqual([], {}, true)).toBe(false);
+    expect(util.isDeepStrictEqual(new Date(0), {}, true)).toBe(false);
+  });
+
+  it("treats plain, null-prototype and class objects as equal", () => {
+    expect(util.isDeepStrictEqual({ a: 1 }, new Foo(1), true)).toBe(true);
+    expect(util.isDeepStrictEqual(Object.create(null), {}, true)).toBe(true);
+  });
+
+  it("applies recursively to nested values", () => {
+    expect(util.isDeepStrictEqual({ x: new Foo(1) }, { x: new Bar(1) }, true)).toBe(true);
+    expect(util.isDeepStrictEqual({ a: { b: { c: new Foo(1) } } }, { a: { b: { c: new Bar(1) } } }, true)).toBe(true);
+
+    const g1 = {};
+    Object.defineProperty(g1, "x", { enumerable: true, get: () => new Foo(1) });
+    const g2 = {};
+    Object.defineProperty(g2, "x", { enumerable: true, get: () => new Bar(1) });
+    expect(util.isDeepStrictEqual(g1, g2, true)).toBe(true);
+  });
+
+  it("applies recursively through arrays, Maps and Sets", () => {
+    class MyMap extends Map {}
+    expect(util.isDeepStrictEqual([new Foo(1)], [new Bar(1)], true)).toBe(true);
+    expect(util.isDeepStrictEqual(new MyMap([["a", 1]]), new Map([["a", 1]]), true)).toBe(true);
+    expect(util.isDeepStrictEqual(new Map([["k", new Foo(1)]]), new Map([["k", new Bar(1)]]), true)).toBe(true);
+    expect(util.isDeepStrictEqual(new Map([[new Foo(1), 1]]), new Map([[new Bar(1), 1]]), true)).toBe(true);
+    expect(util.isDeepStrictEqual(new Map([[new Foo(1), 1]]), new Map([[new Bar(1), 2]]), true)).toBe(false);
+    expect(util.isDeepStrictEqual(new Set([new Foo(1)]), new Set([new Bar(1)]), true)).toBe(true);
+  });
+
+  it("skips the prototype check for boxed String objects", () => {
+    class MyStr extends String {}
+    expect(util.isDeepStrictEqual(new String("a"), new MyStr("a"), true)).toBe(true);
+    expect(util.isDeepStrictEqual(new String("a"), new MyStr("a"))).toBe(false);
+    expect(util.isDeepStrictEqual(new String("a"), new MyStr("b"), true)).toBe(false);
+  });
+});

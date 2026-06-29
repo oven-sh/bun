@@ -648,10 +648,10 @@ JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, ui
     return JSValue();
 }
 
-template<bool isStrict, bool enableAsymmetricMatchers>
+template<bool isStrict, bool enableAsymmetricMatchers, bool skipPrototype = false>
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2);
 
-template<bool isStrict, bool enableAsymmetricMatchers>
+template<bool isStrict, bool enableAsymmetricMatchers, bool skipPrototype>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, bool addToStack)
 {
     VM& vm = globalObject->vm();
@@ -730,10 +730,10 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     JSCell* c2 = v2.asCell();
     ASSERT(c1);
     ASSERT(c2);
-    std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers>(globalObject, gcBuffer, stack, scope, c1, c2);
+    std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, gcBuffer, stack, scope, c1, c2);
     RETURN_IF_EXCEPTION(scope, false);
     if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
-    isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers>(globalObject, gcBuffer, stack, scope, c2, c1);
+    isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, gcBuffer, stack, scope, c2, c1);
     if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
     JSObject* o1 = v1.getObject();
     JSObject* o2 = v2.getObject();
@@ -780,7 +780,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 }
             }
 
-            auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, left, right, gcBuffer, stack, scope, true);
+            auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, left, right, gcBuffer, stack, scope, true);
             RETURN_IF_EXCEPTION(scope, false);
             if (!eql) return false;
         }
@@ -835,7 +835,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 return false;
             }
 
-            auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
+            auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
             RETURN_IF_EXCEPTION(scope, false);
             if (!eql) return false;
         }
@@ -845,7 +845,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         return true;
     }
 
-    if constexpr (isStrict) {
+    if constexpr (isStrict && !skipPrototype) {
         if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
             return false;
         }
@@ -883,7 +883,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     RETURN_IF_EXCEPTION(scope, false);
                     if (same) return true;
 
-                    auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, left, right, gcBuffer, stack, scope, true);
+                    auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, left, right, gcBuffer, stack, scope, true);
                     RETURN_IF_EXCEPTION(scope, false);
                     if (!eql) {
                         result = false;
@@ -919,7 +919,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     RETURN_IF_EXCEPTION(scope, false);
                     if (same) return true;
 
-                    auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, left, right, gcBuffer, stack, scope, true);
+                    auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, left, right, gcBuffer, stack, scope, true);
                     RETURN_IF_EXCEPTION(scope, false);
                     if (!eql) {
                         result = false;
@@ -1007,7 +1007,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
+        auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
         RETURN_IF_EXCEPTION(scope, false);
         if (!eql) return false;
     }
@@ -1028,7 +1028,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     return true;
 }
 
-template<bool isStrict, bool enableAsymmetricMatchers>
+template<bool isStrict, bool enableAsymmetricMatchers, bool skipPrototype>
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2)
 {
     VM& vm = globalObject->vm();
@@ -1065,7 +1065,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             JSValue key2;
             bool foundMatchingKey = false;
             while (iter2->next(globalObject, key2)) {
-                bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false);
+                bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, key1, key2, gcBuffer, stack, scope, false);
                 RETURN_IF_EXCEPTION(scope, {});
                 if (equal) {
                     foundMatchingKey = true;
@@ -1108,7 +1108,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 JSValue key2;
                 bool foundMatchingKey = false;
                 while (iter2->nextKeyValue(globalObject, key2, value2)) {
-                    bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false);
+                    bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, key1, key2, gcBuffer, stack, scope, false);
                     RETURN_IF_EXCEPTION(scope, {});
                     if (keysEqual) {
                         foundMatchingKey = true;
@@ -1123,7 +1123,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 // Compare both values below.
             }
 
-            bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value1, value2, gcBuffer, stack, scope, false);
+            bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, value1, value2, gcBuffer, stack, scope, false);
             RETURN_IF_EXCEPTION(scope, {});
             if (!valuesEqual) {
                 return false;
@@ -1255,7 +1255,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             RETURN_IF_EXCEPTION(scope, {});
             auto rightCause = right->get(globalObject, cause);
             RETURN_IF_EXCEPTION(scope, {});
-            bool causesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, leftCause, rightCause, gcBuffer, stack, scope, true);
+            bool causesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, leftCause, rightCause, gcBuffer, stack, scope, true);
             RETURN_IF_EXCEPTION(scope, {});
             if (!causesEqual) {
                 return false;
@@ -1305,7 +1305,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                     return false;
                 }
 
-                bool propertiesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
+                bool propertiesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
                 RETURN_IF_EXCEPTION(scope, {});
                 if (!propertiesEqual) {
                     return false;
@@ -1421,8 +1421,10 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        if (!equal(JSObject::calculatedClassName(c1->getObject()), JSObject::calculatedClassName(c2->getObject()))) {
-            return false;
+        if constexpr (!skipPrototype) {
+            if (!equal(JSObject::calculatedClassName(c1->getObject()), JSObject::calculatedClassName(c2->getObject()))) {
+                return false;
+            }
         }
 
         JSString* s1 = c1->toStringInline(globalObject);
@@ -1584,6 +1586,10 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     }
     return std::nullopt;
 }
+
+// isDeepStrictEqual's skipPrototype mode (Node's third argument) is only used from
+// BunObject.cpp, so force this instantiation here where the definition is visible.
+template bool Bun__deepEquals<true, false, true>(JSC::JSGlobalObject*, JSValue, JSValue, MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>&, ThrowScope&, bool);
 
 /**
  * @brief `Bun.deepMatch(a, b)`

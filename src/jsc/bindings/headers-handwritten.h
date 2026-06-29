@@ -429,7 +429,8 @@ extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject* global, JSC::E
 extern "C" void Bun__EventLoop__runCallback3(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3);
 
 /// @note throws a JS exception and returns false if a stack overflow occurs
-template<bool isStrict, bool enableAsymmetricMatchers>
+/// @note skipPrototype skips the prototype/class-name comparison (Node's isDeepStrictEqual third argument)
+template<bool isStrict, bool enableAsymmetricMatchers, bool skipPrototype = false>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope& scope, bool addToStack);
 
 /**

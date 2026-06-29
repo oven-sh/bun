@@ -698,13 +698,17 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
     JSC::JSValue arg1 = callFrame->uncheckedArgument(0);
     JSC::JSValue arg2 = callFrame->uncheckedArgument(1);
     JSC::JSValue strict = callFrame->argument(2);
+    // Node's isDeepStrictEqual third argument: skip the prototype/class comparison.
+    // Only meaningful in strict mode; loose mode never compares prototypes.
+    bool skipPrototype = callFrame->argument(3).toBoolean(globalObject);
 
     Vector<std::pair<JSValue, JSValue>, 16> stack;
     MarkedArgumentBuffer gcBuffer;
 
     if (strict.isBoolean() && strict.asBoolean()) {
-
-        bool isEqual = Bun__deepEquals<true, false>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
+        bool isEqual = skipPrototype
+            ? Bun__deepEquals<true, false, true>(globalObject, arg1, arg2, gcBuffer, stack, scope, true)
+            : Bun__deepEquals<true, false, false>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsBoolean(isEqual));
     } else {

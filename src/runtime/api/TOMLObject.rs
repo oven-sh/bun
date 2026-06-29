@@ -112,11 +112,6 @@ type StringifyResult<T> = Result<T, StringifyError>;
 /// must be emitted as TOML floats so they round-trip through any reader.
 const MAX_SAFE_INTEGER_F: f64 = 9007199254740991.0;
 
-/// Epoch-millisecond bounds of years 0000-9999, the range a TOML
-/// offset date-time's 4-digit year can express.
-const MIN_DATE_MS: i64 = -62_167_219_200_000;
-const MAX_DATE_MS: i64 = 253_402_300_799_999;
-
 /// How a property value is laid out in the document.
 enum Layout {
     /// `key = value` on the current table's line block.
@@ -441,62 +436,28 @@ impl Stringifier {
     }
 
     /// A JS Date as a TOML offset date-time (`1979-05-27T07:32:00.999Z`).
+    /// A TOML offset date-time is RFC 3339, which the 24-byte
+    /// `YYYY-MM-DDTHH:mm:ss.sssZ` form of `Date.prototype.toISOString` is.
     fn append_datetime(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
-        let ms_f = value.get_unix_timestamp();
-        if ms_f.is_nan() {
+        let mut buf = [0u8; 64];
+        let Some(iso) = value.to_iso_string(global, &mut buf) else {
             return Err(global
                 .throw(format_args!(
                     "TOML.stringify cannot serialize an invalid Date"
                 ))
                 .into());
-        }
-        let ms = ms_f as i64;
-        if !(MIN_DATE_MS..=MAX_DATE_MS).contains(&ms) {
+        };
+        // The expanded-year form (leading `+`/`-`) has a 6-digit year, which
+        // TOML's 4-digit `date-fullyear` cannot carry.
+        if !iso[0].is_ascii_digit() {
             return Err(global
                 .throw(format_args!(
                     "TOML.stringify cannot serialize a Date outside years 0000-9999"
                 ))
                 .into());
         }
-
-        let days = ms.div_euclid(86_400_000);
-        let ms_of_day = ms.rem_euclid(86_400_000) as u32;
-
-        // Howard Hinnant's civil_from_days (public domain).
-        let z = days + 719_468;
-        let era = z.div_euclid(146_097);
-        let doe = (z - era * 146_097) as u64; // [0, 146096]
-        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
-        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
-        let mp = (5 * doy + 2) / 153; // [0, 11]
-        let day = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
-        let month = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32; // [1, 12]
-        let year = (yoe as i64 + era * 400 + i64::from(month <= 2)) as u32;
-
-        self.append_padded(year, 4);
-        self.builder.append_lchar(b'-');
-        self.append_padded(month, 2);
-        self.builder.append_lchar(b'-');
-        self.append_padded(day, 2);
-        self.builder.append_lchar(b'T');
-        self.append_padded(ms_of_day / 3_600_000, 2);
-        self.builder.append_lchar(b':');
-        self.append_padded(ms_of_day / 60_000 % 60, 2);
-        self.builder.append_lchar(b':');
-        self.append_padded(ms_of_day / 1000 % 60, 2);
-        self.builder.append_lchar(b'.');
-        self.append_padded(ms_of_day % 1000, 3);
-        self.builder.append_lchar(b'Z');
+        self.builder.append_latin1(iso);
         Ok(())
-    }
-
-    fn append_padded(&mut self, value: u32, width: u32) {
-        let mut divisor = 10u32.pow(width - 1);
-        while divisor > 0 {
-            self.builder
-                .append_lchar(b'0' + (value / divisor % 10) as u8);
-            divisor /= 10;
-        }
     }
 
     // ── errors ─────────────────────────────────────────────────────────────

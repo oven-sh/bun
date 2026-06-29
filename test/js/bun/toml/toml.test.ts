@@ -609,11 +609,20 @@ describe("TOML.stringify", () => {
     // parse returns datetimes as source-text strings.
     expect(TOML.parse(TOML.stringify({ d }))).toEqual({ d: "1979-05-27T07:32:00.999Z" });
     expect(TOML.stringify({ d: new Date(0) })).toBe("d = 1970-01-01T00:00:00.000Z\n");
+    // The 4-digit-year bounds (`Date.UTC(0, ...)` remaps year 0 to 1900, so raw ms).
+    expect(TOML.stringify({ d: new Date(-62167219200000) })).toBe("d = 0000-01-01T00:00:00.000Z\n");
+    expect(TOML.stringify({ d: new Date(Date.UTC(9999, 11, 31, 23, 59, 59, 999)) })).toBe(
+      "d = 9999-12-31T23:59:59.999Z\n",
+    );
   });
 
   test("invalid and unrepresentable Dates throw", () => {
     expect(stringifyError({ d: new Date(NaN) }).message).toBe("TOML.stringify cannot serialize an invalid Date");
+    // One millisecond before year 0000, and the first instant of year 10000.
     expect(stringifyError({ d: new Date(-62167219200001) }).message).toBe(
+      "TOML.stringify cannot serialize a Date outside years 0000-9999",
+    );
+    expect(stringifyError({ d: new Date(Date.UTC(10000, 0, 1)) }).message).toBe(
       "TOML.stringify cannot serialize a Date outside years 0000-9999",
     );
   });

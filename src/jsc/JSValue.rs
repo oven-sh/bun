@@ -1054,6 +1054,20 @@ impl JSValue {
     pub fn get_unix_timestamp(self) -> f64 {
         JSC__JSValue__getUnixTimestamp(self)
     }
+    /// `Date.prototype.toISOString` output via JSC's date cache: `None` when
+    /// `self` is not a `Date` or its time value is `NaN`; years outside
+    /// 0000-9999 use ECMAScript's expanded `+YYYYYY`/`-YYYYYY` form.
+    pub fn to_iso_string<'a>(
+        self,
+        global: &JSGlobalObject,
+        buf: &'a mut [u8; 64],
+    ) -> Option<&'a [u8]> {
+        let len = JSC__JSValue__toISOString(self, global, buf);
+        if len <= 0 {
+            return None;
+        }
+        Some(&buf[..len as usize])
+    }
     /// Returns `(ptr, len)` of the cell's `ClassInfo` name (static C string).
     pub fn get_class_info_name(self) -> Option<&'static [u8]> {
         if !self.is_cell() {
@@ -2009,6 +2023,13 @@ unsafe extern "C" {
         exception: &mut ZigException,
     );
     safe fn JSC__JSValue__getUnixTimestamp(this: JSValue) -> f64;
+    // safe: `&mut [u8; 64]` is ABI-identical to the non-null 64-byte out-buffer
+    // the C++ side requires (`Bun::toISOString` writes at most 28 bytes).
+    safe fn JSC__JSValue__toISOString(
+        this: JSValue,
+        global: &JSGlobalObject,
+        buf: &mut [u8; 64],
+    ) -> i32;
     safe fn JSC__JSValue__isPrimitive(this: JSValue) -> bool;
     safe fn JSC__JSValue__getOwnByValue(
         this: JSValue,

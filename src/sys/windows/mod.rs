@@ -3632,7 +3632,11 @@ fn final_name_raw(h: HANDLE, flags: DWORD, buf: &mut [u16]) -> Option<usize> {
     let n =
         unsafe { externs::GetFinalPathNameByHandleW(h, buf.as_mut_ptr(), buf.len() as u32, flags) }
             as usize;
-    if n == 0 || n >= buf.len() { None } else { Some(n) }
+    if n == 0 || n >= buf.len() {
+        None
+    } else {
+        Some(n)
+    }
 }
 
 fn eq_w_ascii_case_insensitive(a: &[u16], b: &[u16]) -> bool {
@@ -3690,7 +3694,9 @@ fn learn_nt_device(map: &mut Vec<(Vec<u16>, u16)>, dos: &[u16]) {
     unsafe {
         let _ = externs::CloseHandle(h);
     }
-    let Some((nt_len, none_len)) = got else { return };
+    let Some((nt_len, none_len)) = got else {
+        return;
+    };
     if none_len >= nt_len {
         return;
     }
@@ -3705,7 +3711,10 @@ fn learn_nt_device(map: &mut Vec<(Vec<u16>, u16)>, dos: &[u16]) {
     if map.iter().any(|(d, _)| d == device) {
         return;
     }
-    map.push((device.to_vec(), u16::from((dos[0] as u8).to_ascii_uppercase())));
+    map.push((
+        device.to_vec(),
+        u16::from((dos[0] as u8).to_ascii_uppercase()),
+    ));
 }
 
 /// `VOLUME_NAME_DOS` was denied (sandboxed token). Answer with
@@ -3720,8 +3729,9 @@ fn lowbox_dos_name_fallback(
         let mut map = Vec::new();
         {
             let mut cwd = bun_paths::w_path_buffer_pool::get();
-            let n = unsafe { kernel32::GetCurrentDirectoryW(cwd.0.len() as u32, cwd.0.as_mut_ptr()) }
-                as usize;
+            let n =
+                unsafe { kernel32::GetCurrentDirectoryW(cwd.0.len() as u32, cwd.0.as_mut_ptr()) }
+                    as usize;
             if n > 0 && n < cwd.0.len() {
                 learn_nt_device(&mut map, &cwd.0[..n]);
             }

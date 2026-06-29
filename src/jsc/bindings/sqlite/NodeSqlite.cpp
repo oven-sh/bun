@@ -84,6 +84,23 @@ namespace Bun {
 using namespace JSC;
 using namespace WebCore;
 
+// SQLite never validates UTF-8, so every byte string it hands back (TEXT
+// values, column/table/parameter names, error messages that echo SQL,
+// expanded_sql) can be invalid. WTF::String::fromUTF8 returns a *null* String
+// for those, which jsString() renders as "" — silent data loss. Decode
+// leniently instead (U+FFFD), matching Node's V8 decoder and bun:sqlite. The
+// one strict fromUTF8 left in this file is the Uint8Array database-*path*
+// input in validateDatabasePath(), which validates and throws on purpose.
+static WTF::String stringFromSqlite(const void* bytes, size_t length)
+{
+    return WTF::String::fromUTF8ReplacingInvalidSequences({ static_cast<const unsigned char*>(bytes), length });
+}
+
+static WTF::String stringFromSqlite(const char* text)
+{
+    return text ? stringFromSqlite(text, strlen(text)) : WTF::String();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Error helpers (match Node.js node_sqlite.cc shapes)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -95,9 +112,9 @@ static JSObject* createNodeSqliteError(JSGlobalObject* globalObject, sqlite3* db
     const char* errstr = sqlite3_errstr(errcode);
     const char* errmsg = sqlite3_errmsg(db);
     auto* zigGlobal = defaultGlobalObject(globalObject);
-    JSObject* error = createError(zigGlobal, ErrorCode::ERR_SQLITE_ERROR, WTF::String::fromUTF8(errmsg));
+    JSObject* error = createError(zigGlobal, ErrorCode::ERR_SQLITE_ERROR, stringFromSqlite(errmsg));
     error->putDirect(vm, Identifier::fromString(vm, "errcode"_s), jsNumber(errcode), 0);
-    error->putDirect(vm, Identifier::fromString(vm, "errstr"_s), jsString(vm, WTF::String::fromUTF8(errstr)), 0);
+    error->putDirect(vm, Identifier::fromString(vm, "errstr"_s), jsString(vm, stringFromSqlite(errstr)), 0);
     return error;
 }
 
@@ -113,7 +130,7 @@ static void throwSqliteMessage(JSGlobalObject* globalObject, ThrowScope& scope, 
     JSObject* error = createError(zigGlobal, ErrorCode::ERR_SQLITE_ERROR, message);
     const char* errstr = sqlite3_errstr(errcode);
     error->putDirect(vm, Identifier::fromString(vm, "errcode"_s), jsNumber(errcode), 0);
-    error->putDirect(vm, Identifier::fromString(vm, "errstr"_s), jsString(vm, WTF::String::fromUTF8(errstr)), 0);
+    error->putDirect(vm, Identifier::fromString(vm, "errstr"_s), jsString(vm, stringFromSqlite(errstr)), 0);
     scope.throwException(globalObject, error);
 }
 
@@ -264,7 +281,7 @@ static JSValue sqliteValueToJS(JSGlobalObject* globalObject, TopExceptionScope& 
         size_t len = sqlite3_value_bytes(value);
         const unsigned char* text = sqlite3_value_text(value);
         if (len == 0 || text == nullptr) return jsEmptyString(vm);
-        return jsString(vm, WTF::String::fromUTF8({ reinterpret_cast<const char*>(text), len }));
+        return jsString(vm, stringFromSqlite(text, len));
     }
     case SQLITE_NULL:
         return jsNull();
@@ -606,7 +623,7 @@ static inline JSValue columnToJS(JSGlobalObject* globalObject, ThrowScope& scope
         size_t len = sqlite3_column_bytes(stmt, i);
         const unsigned char* text = sqlite3_column_text(stmt, i);
         if (len == 0 || text == nullptr) return jsEmptyString(vm);
-        return jsString(vm, WTF::String::fromUTF8({ reinterpret_cast<const char*>(text), len }));
+        return jsString(vm, stringFromSqlite(text, len));
     }
     case SQLITE_NULL:
         return jsNull();
@@ -641,7 +658,7 @@ static JSValue rowToObject(JSGlobalObject* globalObject, ThrowScope& scope, sqli
         // Column names are user-controlled (`SELECT 1 AS "0"`); an
         // index-string key must go to indexed storage, not through
         // putDirect's named-property path (which asserts !parseIndex).
-        row->putDirectMayBeIndex(globalObject, Identifier::fromString(vm, WTF::String::fromUTF8(name)), v);
+        row->putDirectMayBeIndex(globalObject, Identifier::fromString(vm, stringFromSqlite(name)), v);
         RETURN_IF_EXCEPTION(scope, {});
     }
     return row;
@@ -782,7 +799,7 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
             throwSqliteError(globalObject, scope, db);
             sqlite3_close_v2(db);
         } else {
-            throwSqliteMessage(globalObject, scope, r, WTF::String::fromUTF8(sqlite3_errstr(r)));
+            throwSqliteMessage(globalObject, scope, r, stringFromSqlite(sqlite3_errstr(r)));
         }
         return false;
     }
@@ -1017,7 +1034,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncLocation, (JSGlobalObject * globalObject,
     if (filename == nullptr || filename[0] == '\0') {
         return JSValue::encode(jsNull());
     }
-    return JSValue::encode(jsString(vm, WTF::String::fromUTF8(filename)));
+    return JSValue::encode(jsString(vm, stringFromSqlite(filename)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncEnableLoadExtension, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -1072,7 +1089,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncLoadExtension, (JSGlobalObject * globalOb
     char* errmsg = nullptr;
     int r = sqlite3_load_extension(self->connection(), pathUtf8.data(), entryPtr, &errmsg);
     if (r != SQLITE_OK) {
-        WTF::String message = errmsg ? WTF::String::fromUTF8(errmsg) : WTF::String::fromUTF8(sqlite3_errstr(r));
+        WTF::String message = errmsg ? stringFromSqlite(errmsg) : stringFromSqlite(sqlite3_errstr(r));
         if (errmsg) sqlite3_free(errmsg);
         Bun::throwError(globalObject, scope, ErrorCode::ERR_LOAD_SQLITE_EXTENSION, message);
         return {};
@@ -1341,7 +1358,7 @@ static int applyChangesetXFilter(void* pCtx, const char* zTab)
     if (scope.exception()) [[unlikely]]
         return 0;
     MarkedArgumentBuffer args;
-    args.append(jsString(vm, WTF::String::fromUTF8(zTab)));
+    args.append(jsString(vm, stringFromSqlite(zTab)));
     auto callData = JSC::getCallData(ctx->filter);
     JSValue ret = JSC::call(globalObject, ctx->filter, callData, jsNull(), args);
     if (scope.exception()) [[unlikely]] {
@@ -1459,7 +1476,7 @@ static int nodeSqliteAuthorizerCallback(void* userData, int actionCode, const ch
         return SQLITE_OK;
 
     auto toJS = [&](const char* s) -> JSValue {
-        return s ? jsString(vm, WTF::String::fromUTF8(s)) : jsNull();
+        return s ? jsString(vm, stringFromSqlite(s)) : jsNull();
     };
 
     MarkedArgumentBuffer args;
@@ -2101,7 +2118,7 @@ Structure* JSStatementSync::ensureRowStructure(JSGlobalObject* globalObject)
             m_columnOffsets.clear();
             return nullptr;
         }
-        auto id = Identifier::fromString(vm, WTF::String::fromUTF8(name));
+        auto id = Identifier::fromString(vm, stringFromSqlite(name));
         // Structure::addPropertyTransition asserts !parseIndex() —
         // a column aliased to "0", "1", … must go through indexed
         // storage instead. Bail to the generic path, which handles
@@ -2220,7 +2237,7 @@ bool JSStatementSync::bindParams(JSGlobalObject* globalObject, ThrowScope& scope
                 for (int i = 1; i <= paramCount; ++i) {
                     const char* full = sqlite3_bind_parameter_name(m_stmt, i);
                     if (full == nullptr || full[0] == '\0') continue;
-                    WTF::String fullStr = WTF::String::fromUTF8(full);
+                    WTF::String fullStr = stringFromSqlite(full);
                     WTF::String bareName = fullStr.substring(1);
                     auto it = bare.find(bareName);
                     if (it != bare.end()) {
@@ -2448,7 +2465,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncColumns, (JSGlobalObject * globalObject,
         JSObject* col = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
         RETURN_IF_EXCEPTION(scope, {});
         auto putStr = [&](ASCIILiteral key, const char* val) {
-            col->putDirect(vm, Identifier::fromString(vm, key), val ? jsString(vm, WTF::String::fromUTF8(val)) : jsNull(), 0);
+            col->putDirect(vm, Identifier::fromString(vm, key), val ? jsString(vm, stringFromSqlite(val)) : jsNull(), 0);
         };
 #ifdef SQLITE_ENABLE_COLUMN_METADATA
         putStr("column"_s, sqlite3_column_origin_name(self->statement(), i));
@@ -2500,7 +2517,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsStatementSyncSourceSQL, (JSGlobalObject * globalObjec
         return throwNodeState(globalObject, scope, "statement has been finalized"_s);
     }
     const char* sql = sqlite3_sql(self->statement());
-    return JSValue::encode(jsString(vm, WTF::String::fromUTF8(sql ? sql : "")));
+    return JSValue::encode(jsString(vm, stringFromSqlite(sql ? sql : "")));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsStatementSyncExpandedSQL, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -2517,7 +2534,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsStatementSyncExpandedSQL, (JSGlobalObject * globalObj
         throwSqliteMessage(globalObject, scope, SQLITE_NOMEM, "Expanded SQL text would exceed configured limits"_s);
         return {};
     }
-    JSValue result = jsString(vm, WTF::String::fromUTF8(expanded));
+    JSValue result = jsString(vm, stringFromSqlite(expanded));
     sqlite3_free(expanded);
     return JSValue::encode(result);
 }
@@ -3447,7 +3464,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
             throwSqliteError(globalObject, scope, dest);
             sqlite3_close_v2(dest);
         } else {
-            throwSqliteMessage(globalObject, scope, r, WTF::String::fromUTF8(sqlite3_errstr(r)));
+            throwSqliteMessage(globalObject, scope, r, stringFromSqlite(sqlite3_errstr(r)));
         }
         return rejectWithPending();
     }
@@ -3515,7 +3532,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
         // that also clears some codes), so asking `dest` can yield
         // "not an error"/errcode 0. Node's BackupJob uses the step
         // return code directly for the rejected error — do the same.
-        throwSqliteMessage(globalObject, scope, r, WTF::String::fromUTF8(sqlite3_errstr(r)));
+        throwSqliteMessage(globalObject, scope, r, stringFromSqlite(sqlite3_errstr(r)));
         sqlite3_backup_finish(backup);
         sqlite3_close_v2(dest);
         return rejectWithPending();
@@ -3523,7 +3540,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
 
     r = sqlite3_backup_finish(backup);
     if (r != SQLITE_OK) {
-        throwSqliteMessage(globalObject, scope, r, WTF::String::fromUTF8(sqlite3_errstr(r)));
+        throwSqliteMessage(globalObject, scope, r, stringFromSqlite(sqlite3_errstr(r)));
         sqlite3_close_v2(dest);
         return rejectWithPending();
     }

@@ -348,6 +348,19 @@ describe("DatabaseSync", () => {
     expect(stmt.get()).toEqual({ __proto__: null, v: 42 });
     db.close();
   });
+
+  test("TEXT containing invalid UTF-8 decodes with U+FFFD, not as an empty string", () => {
+    const db = new DatabaseSync(":memory:");
+    // SQLite never validates TEXT as UTF-8; CAST(x'..' AS TEXT) yields the
+    // raw bytes, and 0xFF is never a valid UTF-8 byte. Node's V8 decoder
+    // replaces invalid sequences with U+FFFD. A strict WTF::String::fromUTF8
+    // returns a null String, which jsString renders as "": silent data loss.
+    expect(db.prepare("SELECT CAST(x'616263FF' AS TEXT) AS v").get().v).toBe("abc\uFFFD");
+    // The same decoder feeds user-defined function arguments.
+    db.function("f", (x: string) => x.length);
+    expect(db.prepare("SELECT f(CAST(x'FF' AS TEXT)) AS n").get().n).toBe(1);
+    db.close();
+  });
 });
 
 describe("DatabaseSync.prototype.function()", () => {

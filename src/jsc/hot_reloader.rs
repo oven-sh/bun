@@ -856,10 +856,10 @@ where
         if self.deleted_watched_files.is_empty() {
             return;
         }
-        // A queued, not-yet-started reload reads the live filesystem and
-        // re-adds every recorded path that has reappeared by now. Appending
-        // would only stack a duplicate; re-check on the next directory event.
-        if self.pending_count.load(Ordering::Relaxed) > 0 {
+        // A queued reload, or one this batch has already buffered, reads the
+        // live filesystem and re-adds every recorded path that has reappeared
+        // by then; appending would only stack a duplicate. Re-check next event.
+        if self.pending_count.load(Ordering::Relaxed) > 0 || task.count > 0 {
             return;
         }
         let dir_no_slash = strings::paths::without_trailing_slash_windows_path(dir_path);

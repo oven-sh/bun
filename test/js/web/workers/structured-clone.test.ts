@@ -379,6 +379,34 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
             structuredCloneFn(blob, { transfer: [blob] });
           }).toThrow(DOMException);
         });
+        // https://html.spec.whatwg.org/multipage/structured-data.html#dom-structuredclone
+        // `transfer` is a WebIDL sequence<object>: it is converted (and may throw)
+        // before anything is serialized, so a rejected call must not detach buffers.
+        test("an invalid entry in transfer throws TypeError without detaching other entries", () => {
+          const buffer = new ArrayBuffer(8);
+          for (const entry of [null, undefined, 42, "x", true, Symbol("s"), 123n]) {
+            expect(() => structuredCloneFn({ buffer }, { transfer: [buffer, entry as any] })).toThrow(TypeError);
+            expect(buffer.byteLength).toBe(8);
+          }
+        });
+        test("a transfer value that is not a sequence throws TypeError", () => {
+          const buffer = new ArrayBuffer(8);
+          for (const transfer of [5, "abc", {}, null, true]) {
+            expect(() => structuredCloneFn({ buffer }, { transfer: transfer as any })).toThrow(TypeError);
+            expect(buffer.byteLength).toBe(8);
+          }
+        });
+        test("options that are not an object throw TypeError", () => {
+          for (const options of [42, "x", true, Symbol("s")]) {
+            expect(() => structuredCloneFn(1, options as any)).toThrow(TypeError);
+          }
+        });
+        test("transfer accepts any iterable of transferables", () => {
+          const buffer = new ArrayBuffer(8);
+          const cloned = structuredCloneFn({ buffer }, { transfer: new Set([buffer]) as any });
+          expect(cloned.buffer.byteLength).toBe(8);
+          expect(buffer.byteLength).toBe(0);
+        });
       });
     }
   });
@@ -648,5 +676,30 @@ describe("deserializing a version 13 payload", () => {
     expect(+cloned[0]).toBe(5);
     expect(+cloned[1]).toBe(5);
     expect(cloned[0]).not.toBe(cloned[1]);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/32981
+// %Object.prototype% is an immutable prototype exotic object that the structured
+// serialization spec carves out of the exotic-object rejection, so it clones to
+// an empty plain object instead of throwing a DataCloneError.
+describe("structuredClone(Object.prototype)", () => {
+  test("clones to an empty plain object", () => {
+    const cloned = structuredClone(Object.prototype);
+    expect(cloned).toEqual({});
+    expect(Object.keys(cloned)).toEqual([]);
+    expect(cloned).not.toBe(Object.prototype);
+    expect(Object.getPrototypeOf(cloned)).toBe(Object.prototype);
+  });
+
+  test("clones when nested inside another object", () => {
+    const cloned = structuredClone({ a: Object.prototype, b: 1 });
+    expect(cloned).toEqual({ a: {}, b: 1 });
+    expect(cloned.a).not.toBe(Object.prototype);
+  });
+
+  test("bun:jsc serialize/deserialize round-trips it too", () => {
+    const cloned = deserialize(serialize(Object.prototype));
+    expect(cloned).toEqual({});
   });
 });

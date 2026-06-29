@@ -1991,6 +1991,46 @@ for (let withOverridenBufferWrite of [false, true]) {
             expect(input.join("")).toBe(demo.join(""));
           });
         }
+
+        // Node copies min(encodedLength, fillLength) raw bytes of the
+        // pattern's encoding (node_buffer.cc `Fill`): a pattern longer than
+        // the destination is cut mid code unit, not restarted on a boundary.
+        it("byte-truncates a ucs2 pattern longer than the destination", () => {
+          // "abc" encodes to 61 00 62 00 63 00
+          expect(Array.from(Buffer.alloc(3, "abc", "ucs2"))).toEqual([0x61, 0x00, 0x62]);
+          expect(Array.from(Buffer.alloc(5, "abc", "ucs2"))).toEqual([0x61, 0x00, 0x62, 0x00, 0x63]);
+          expect(Array.from(Buffer.alloc(1, "abc", "ucs2"))).toEqual([0x61]);
+          expect(Array.from(Buffer.alloc(3, "abc", "utf16le"))).toEqual([0x61, 0x00, 0x62]);
+          expect(Array.from(Buffer.alloc(3).fill("abc", "ucs2"))).toEqual([0x61, 0x00, 0x62]);
+          // an odd start offset exercises the unaligned destination path
+          expect(Array.from(Buffer.alloc(6).fill("abc", 1, 6, "ucs2"))).toEqual([0x00, 0x61, 0x00, 0x62, 0x00, 0x63]);
+          // a two-byte source string (U+0101 forces UTF-16 storage) agrees
+          expect(Array.from(Buffer.alloc(3, "\u0101bc", "ucs2"))).toEqual([0x01, 0x01, 0x62]);
+          // when the pattern fits, it still repeats
+          expect(Array.from(Buffer.alloc(7, "abc", "ucs2"))).toEqual([0x61, 0x00, 0x62, 0x00, 0x63, 0x00, 0x61]);
+          expect(Array.from(Buffer.alloc(8, "ab", "ucs2"))).toEqual([0x61, 0x00, 0x62, 0x00, 0x61, 0x00, 0x62, 0x00]);
+        });
+
+        it("byte-truncates a utf8 pattern longer than the destination", () => {
+          // "a\xe9" encodes to 61 c3 a9
+          expect(Array.from(Buffer.alloc(2, "a\xe9"))).toEqual([0x61, 0xc3]);
+          expect(Array.from(Buffer.alloc(1, "\xe9\xe9"))).toEqual([0xc3]);
+          // when the pattern fits, it still repeats
+          expect(Array.from(Buffer.alloc(3, "a\xe9"))).toEqual([0x61, 0xc3, 0xa9]);
+          expect(Array.from(Buffer.alloc(4, "a\xe9"))).toEqual([0x61, 0xc3, 0xa9, 0x61]);
+        });
+
+        // A lone high surrogate encodes as U+FFFD (ef bf bd), the same as
+        // every other UTF-16 -> UTF-8 path in Node. It is not an error.
+        it("encodes a lone high surrogate as U+FFFD in fill and write", () => {
+          expect(Array.from(Buffer.alloc(4, "\ud800"))).toEqual([0xef, 0xbf, 0xbd, 0xef]);
+          expect(Array.from(Buffer.alloc(3, "\ud800"))).toEqual([0xef, 0xbf, 0xbd]);
+          expect(Array.from(Buffer.alloc(2, "\ud800"))).toEqual([0xef, 0xbf]);
+          expect(Array.from(Buffer.alloc(4).fill("\ud800"))).toEqual([0xef, 0xbf, 0xbd, 0xef]);
+          const b = Buffer.alloc(4);
+          expect(b.write("\ud800")).toBe(3);
+          expect(Array.from(b)).toEqual([0xef, 0xbf, 0xbd, 0x00]);
+        });
       });
 
       it("Buffer.fill 1 char string", () => {

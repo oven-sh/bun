@@ -421,6 +421,15 @@ pub struct HTTPClientResult<'a> {
     pub is_http2: bool,
 
     pub fail: Option<bun_core::Error>,
+    /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
+    /// 0 otherwise. Lets the JS side report the resolver error (`ENOTFOUND`,
+    /// ...) with `syscall`/`hostname` instead of a generic connect failure.
+    pub dns_error: i32,
+    /// Owned copy of the hostname the failed lookup was for (the proxy's
+    /// when one is configured, else the post-redirect target). Owned so the
+    /// JS side never dereferences the client's borrowed URL buffers, which
+    /// the HTTP thread frees after the result callback returns.
+    pub dns_hostname: Option<Box<[u8]>>,
 
     /// Owns the response metadata aka headers, url and status code
     pub metadata: Option<HTTPResponseMetadata>,
@@ -478,6 +487,8 @@ impl<'a> HTTPClientResult<'a> {
             can_stream: self.can_stream,
             is_http2: self.is_http2,
             fail: self.fail,
+            dns_error: self.dns_error,
+            dns_hostname: self.dns_hostname,
             metadata: self.metadata,
             body_size: self.body_size,
             certificate_info: self.certificate_info,
@@ -1955,8 +1966,25 @@ impl<'a> HTTPClient<'a> {
         GenHttpContext::<IS_SSL>::terminate_socket(socket);
     }
 
-    pub fn on_connect_error(&mut self) {
-        bun_core::scoped_log!(fetch, "onConnectError  {}\n", BStr::new(self.url.href));
+    /// `dns_error` is the raw `getaddrinfo(3)` return code when the name
+    /// lookup itself failed; 0 for a connect failure past name resolution.
+    pub fn on_connect_error(&mut self, dns_error: i32) {
+        bun_core::scoped_log!(
+            fetch,
+            "onConnectError  {} dns_error={}\n",
+            BStr::new(self.url.href),
+            dns_error
+        );
+        if dns_error != 0 {
+            self.state.dns_error = dns_error;
+            // `connected_url.hostname` is the exact name the connect resolved
+            // (the proxy's when one is set, else the post-redirect `url`), set
+            // by `HTTPContext::connect` and valid for the connect attempt.
+            // Copy it: the JS side outlives this client's borrowed URL buffers.
+            self.state.dns_hostname = Some(self.connected_url.hostname.into());
+            self.fail(err!(DNSResolveFailed));
+            return;
+        }
         self.fail(err!(ConnectionRefused));
     }
 
@@ -3946,6 +3974,8 @@ impl<'a> HTTPClient<'a> {
             can_stream,
             is_http2,
             fail,
+            dns_error,
+            dns_hostname,
             metadata,
             body_size,
             certificate_info,
@@ -3957,6 +3987,8 @@ impl<'a> HTTPClient<'a> {
                 r.can_stream,
                 r.is_http2,
                 r.fail,
+                r.dns_error,
+                r.dns_hostname,
                 r.metadata,
                 r.body_size,
                 r.certificate_info,
@@ -4098,6 +4130,8 @@ impl<'a> HTTPClient<'a> {
             can_stream,
             is_http2,
             fail,
+            dns_error,
+            dns_hostname,
             metadata,
             body_size,
             certificate_info,
@@ -4141,6 +4175,8 @@ impl<'a> HTTPClient<'a> {
             can_stream,
             is_http2,
             fail,
+            dns_error,
+            dns_hostname,
             metadata,
             body_size,
             certificate_info,
@@ -4152,6 +4188,8 @@ impl<'a> HTTPClient<'a> {
                 r.can_stream,
                 r.is_http2,
                 r.fail,
+                r.dns_error,
+                r.dns_hostname,
                 r.metadata,
                 r.body_size,
                 r.certificate_info,
@@ -4179,6 +4217,8 @@ impl<'a> HTTPClient<'a> {
             can_stream,
             is_http2,
             fail,
+            dns_error,
+            dns_hostname,
             metadata,
             body_size,
             certificate_info,
@@ -4343,6 +4383,8 @@ impl<'a> HTTPClient<'a> {
                 body: body_out::opt_mut(self.state.body_out_str),
                 redirected: self.flags.redirected,
                 fail: self.state.fail,
+                dns_error: self.state.dns_error,
+                dns_hostname: self.state.dns_hostname.take(),
                 // check if we are reporting cert errors, do not have a fail state and we are not done
                 has_more: certificate_info.is_some()
                     || (self.state.fail.is_none() && !self.state.is_done()),
@@ -4359,6 +4401,8 @@ impl<'a> HTTPClient<'a> {
             metadata: None,
             redirected: self.flags.redirected,
             fail: self.state.fail,
+            dns_error: self.state.dns_error,
+            dns_hostname: self.state.dns_hostname.take(),
             // check if we are reporting cert errors, do not have a fail state and we are not done
             has_more: certificate_info.is_some()
                 || (self.state.fail.is_none() && !self.state.is_done()),

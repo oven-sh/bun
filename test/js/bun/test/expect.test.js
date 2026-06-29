@@ -1169,6 +1169,8 @@ describe("expect()", () => {
     expect(w).toEqual(w);
   });
 
+  // Allocation-heavy by design (GC stress for #14256); measured at ~4 minutes
+  // under a debug+ASAN build, far past the 5s default per-test timeout.
   test("deepEquals Set/Map stress test", () => {
     const arr1 = [];
     const arr2 = [];
@@ -1193,7 +1195,7 @@ describe("expect()", () => {
       let innerMap = new Map(arr4);
       Bun.deepEquals(outerMap, innerMap);
     }
-  });
+  }, 480_000);
 
   test("deepEquals - Date", () => {
     let d = new Date();
@@ -2387,6 +2389,18 @@ describe("expect()", () => {
     ["😄", "😄"],
     ["", ""],
     [[1, 2, 3], 1],
+    // toContain uses === like Jest (Array.prototype.indexOf), so -0 and +0 match.
+    [[-0], 0],
+    [[0], -0],
+    [new Float64Array([-0]), 0],
+    [
+      {
+        *[Symbol.iterator]() {
+          yield -0;
+        },
+      },
+      0,
+    ],
     [["a", "b", "c"], "c"],
     [[null, undefined], undefined],
     [[1n, "abc", null, -1n, undefined], -1n],
@@ -2419,6 +2433,10 @@ describe("expect()", () => {
     [new String("hello"), ""],
     ["emoji: 😃", "😄"],
     [[1, 2, 3], -1],
+    // toContain uses === like Jest (Array.prototype.indexOf), so NaN never matches.
+    [[NaN], NaN],
+    [new Float64Array([NaN]), NaN],
+    [new Set([NaN]), NaN],
     [[1, 2, 3], 1n],
     [["a", "b", "c"], "d"],
     [[Symbol.for("a")], Symbol("a")],

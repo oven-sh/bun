@@ -268,6 +268,7 @@ describe("named colors are ASCII case-insensitive", () => {
 // Every component of lab()/lch()/oklab()/oklch() accepts <number> and
 // <percentage>. The expected values are anchored to the equivalent syntax
 // that was already supported, per the reference ranges in CSS Color 4.
+// https://github.com/oven-sh/bun/issues/16727
 describe("lab-like function component syntax", () => {
   test("lab() accepts percentage a/b (the docs' own example)", () => {
     expect(color("lab(50% 50% 50%)", "hex")).toBe("#db3702"); // == lab(50% 62.5 62.5)

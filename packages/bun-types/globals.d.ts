@@ -905,8 +905,8 @@ interface ErrnoException extends Error {
 }
 
 /**
- * An abnormal event (called an exception) which occurs as a result of calling a
- * method or accessing a property of a web API
+ * An abnormal event (called an exception) that occurs when calling a method or
+ * accessing a property of a web API
  */
 interface DOMException extends Error {
   readonly message: string;
@@ -1067,7 +1067,7 @@ interface ArrayBufferConstructor {
 
 interface ArrayBuffer {
   /**
-   * Read-only. The length of the ArrayBuffer (in bytes).
+   * The length of the ArrayBuffer in bytes.
    */
   readonly byteLength: number;
 
@@ -1101,7 +1101,7 @@ interface ArrayConstructor {
    * ```
    *
    * @param arrayLike - The iterable or async iterable to convert to an array.
-   * @returns A {@link Promise} whose fulfillment is a new {@link Array} instance containing the values from the iterator.
+   * @returns A {@link Promise} that resolves with a new {@link Array} containing the awaited values
    */
   fromAsync<T>(arrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>): Promise<Awaited<T>[]>;
 
@@ -1120,7 +1120,7 @@ interface ArrayConstructor {
    * @param arrayLike - The iterable or async iterable to convert to an array.
    * @param mapFn - A mapper function that transforms each element of `arrayLike` after awaiting them.
    * @param thisArg - The `this` to which `mapFn` is bound.
-   * @returns A {@link Promise} whose fulfillment is a new {@link Array} instance containing the values from the iterator.
+   * @returns A {@link Promise} that resolves with a new {@link Array} containing the awaited values
    */
   fromAsync<T, U>(
     arrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>,
@@ -1157,14 +1157,14 @@ interface Console {
    * newline or spaces between arguments. You can pass it strings or bytes or
    * any combination of the two.
    *
+   * Not available in browsers.
+   *
    * ```ts
-   * console.write("hello world!", "\n"); // "hello world\n"
+   * console.write("hello world!", "\n"); // "hello world!\n"
    * ```
    *
    * @param data - The data to write
    * @returns The number of bytes written
-   *
-   * This function is not available in the browser.
    */
   write(...data: Array<string | ArrayBufferView | ArrayBuffer>): number;
 
@@ -1177,7 +1177,7 @@ interface Console {
 
   /**
    * Increment a [count](https://www.youtube.com/watch?v=2AoxCkySv34&t=22s)
-   * @param label label counter
+   * @param label Label for the counter
    */
   count(label?: string): void;
   countReset(label?: string): void;
@@ -1201,7 +1201,7 @@ interface Console {
   info(...data: any[]): void;
   log(...data: any[]): void;
   /**
-   * Try to construct a table with the columns of the properties of `tabularData` (or use `properties`) and rows of `tabularData` and log it. Falls back to just
+   * Try to construct a table with the columns of the properties of `tabularData` (or use `properties`) and rows of `tabularData` and log it. Falls back to
    * logging the argument if it can't be parsed as tabular.
    *
    * ```js
@@ -1301,9 +1301,8 @@ interface ImportMeta {
    */
   readonly path: string;
   /**
-   * Absolute path to the directory containing the source file.
-   *
-   * Does not have a trailing slash
+   * Absolute path to the directory containing the source file, without a
+   * trailing slash
    */
   readonly dir: string;
   /**
@@ -1320,11 +1319,11 @@ interface ImportMeta {
   readonly env: Bun.Env & NodeJS.ProcessEnv & ImportMetaEnv;
 
   /**
-   * @deprecated Use `require.resolve` or `Bun.resolveSync(moduleId, path.dirname(parent))` instead
-   *
    * Resolve a module ID the same as if you imported it
    *
    * The `parent` argument is optional, and defaults to the current module's path.
+   *
+   * @deprecated Use `require.resolve` or `Bun.resolveSync(moduleId, path.dirname(parent))` instead
    */
   resolveSync(moduleId: string, parent?: string): string;
 
@@ -1339,7 +1338,7 @@ interface ImportMeta {
   require: NodeJS.Require;
 
   /**
-   * Did the current file start the process?
+   * `true` if the current file started the process
    *
    * @example
    * ```ts
@@ -1400,11 +1399,8 @@ interface EventSourceInit {
 
 interface PromiseConstructor {
   /**
-   * Create a deferred promise, with exposed `resolve` and `reject` methods which can be called
-   * separately.
-   *
-   * This is useful when you want to return a Promise and have code outside the Promise
-   * resolve or reject it.
+   * Create a deferred promise with its `resolve` and `reject` functions exposed,
+   * so code outside the promise can settle it.
    *
    * @example
    * ```ts
@@ -1424,12 +1420,12 @@ interface PromiseConstructor {
   };
 
   /**
-   * Try to run a function and return the result.
-   * If the function throws, return the result of the `catch` function.
+   * Run a function and return a promise of its result. If the function throws,
+   * the returned promise rejects with the thrown error.
    *
    * @param fn - The function to run
    * @param args - The arguments to pass to the function. This is similar to `setTimeout` and avoids the extra closure.
-   * @returns The result of the function or the result of the `catch` function
+   * @returns A promise that resolves with the function's result
    */
   try<T, A extends any[] = []>(fn: (...args: A) => T | PromiseLike<T>, ...args: A): Promise<T>;
 }
@@ -1486,10 +1482,9 @@ interface Blob {
    * Read the data from the blob as a {@link FormData} object.
    *
    * This first decodes the data from UTF-8, then parses it as a
-   * `multipart/form-data` body or a `application/x-www-form-urlencoded` body.
+   * `multipart/form-data` body or an `application/x-www-form-urlencoded` body.
    *
-   * The `type` property of the blob is used to determine the format of the
-   * body.
+   * The blob's `type` property determines the format of the body.
    *
    * This is a non-standard addition to the `Blob` API, to make it conform more
    * closely to the `BodyMixin` API.
@@ -1507,7 +1502,7 @@ interface Blob {
   arrayBuffer(): Promise<ArrayBuffer>;
 
   /**
-   * Returns a promise that resolves to the contents of the blob as a Uint8Array (array of bytes) its the same as `new Uint8Array(await blob.arrayBuffer())`
+   * Returns a promise that resolves to the contents of the blob as a Uint8Array (array of bytes). Equivalent to `new Uint8Array(await blob.arrayBuffer())`
    */
   bytes(): Promise<Uint8Array<ArrayBuffer>>;
 
@@ -1528,7 +1523,6 @@ declare var Blob: Bun.__internal.UseLibDomIfAvailable<
 interface Uint8Array {
   /**
    * Convert the Uint8Array to a base64 encoded string
-   * @returns The base64 encoded string representation of the Uint8Array
    */
   toBase64(options?: { alphabet?: "base64" | "base64url"; omitPadding?: boolean }): string;
 
@@ -1546,22 +1540,21 @@ interface Uint8Array {
      */
     read: number;
     /**
-     * The number of bytes written to the Uint8Array
-     * Will never be greater than the `.byteLength` of this Uint8Array
+     * The number of bytes written to the Uint8Array.
+     * Never greater than the `.byteLength` of this Uint8Array
      */
     written: number;
   };
 
   /**
    * Convert the Uint8Array to a hex encoded string
-   * @returns The hex encoded string representation of the Uint8Array
    */
   toHex(): string;
 
   /**
    * Set the contents of the Uint8Array from a hex encoded string
    * @param hex The hex encoded string to decode into the array. The string must have
-   * an even number of characters, be valid hexadecimal characters and contain no whitespace.
+   * an even number of characters, contain only hexadecimal characters, and contain no whitespace.
    */
   setFromHex(hex: string): {
     /**
@@ -1569,8 +1562,8 @@ interface Uint8Array {
      */
     read: number;
     /**
-     * The number of bytes written to the Uint8Array
-     * Will never be greater than the `.byteLength` of this Uint8Array
+     * The number of bytes written to the Uint8Array.
+     * Never greater than the `.byteLength` of this Uint8Array
      */
     written: number;
   };
@@ -1580,7 +1573,7 @@ interface Uint8ArrayConstructor {
   /**
    * Create a new Uint8Array from a base64 encoded string
    * @param base64 The base64 encoded string to convert to a Uint8Array
-   * @param options Optional options for decoding the base64 string
+   * @param options Options for decoding the base64 string
    * @returns A new Uint8Array containing the decoded data
    */
   fromBase64(
@@ -1618,19 +1611,20 @@ declare var URL: Bun.__internal.UseLibDomIfAvailable<
      */
     canParse(url: string, base?: string): boolean;
     /**
-     * Create a URL from an object.
+     * Create a `blob:` URL for a {@link Blob}.
      *
-     * @param object - The object to create a URL from.
+     * @param object - The Blob to create a URL for.
      */
     createObjectURL(object: Blob): `blob:${string}`;
     /**
-     * Revoke a URL.
+     * Revoke a `blob:` URL created with `URL.createObjectURL`.
      *
      * @param url - The URL to revoke.
      */
     revokeObjectURL(url: string): void;
     /**
-     * Parse a URL.
+     * Parse a string into a {@link URL}. Returns `null` if the string is not a
+     * valid URL.
      *
      * @param url - The URL to parse.
      * @param base - The base URL to use.
@@ -1640,7 +1634,8 @@ declare var URL: Bun.__internal.UseLibDomIfAvailable<
 >;
 
 /**
- * The **`AbortController`** interface represents a controller object that allows you to abort one or more Web requests as and when desired.
+ * An **`AbortController`** cancels one or more Web requests: pass its `signal`
+ * to a request, then call `abort()`.
  *
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/AbortController)
  */
@@ -1668,21 +1663,18 @@ declare var AbortSignal: Bun.__internal.UseLibDomIfAvailable<
     prototype: AbortSignal;
     new (): AbortSignal;
     /**
-     * Create an AbortSignal that will be aborted after a timeout
+     * Create an AbortSignal that aborts after a timeout
      * @param ms The timeout in milliseconds
-     * @returns An AbortSignal that will be aborted after the timeout
      */
     timeout(ms: number): AbortSignal;
     /**
      * Create an immediately-aborted AbortSignal
      * @param reason The reason for the abort
-     * @returns An AbortSignal that is already aborted
      */
     abort(reason?: any): AbortSignal;
     /**
-     * Create an AbortSignal that will be aborted if any of the signals are aborted
+     * Create an AbortSignal that aborts as soon as any of the given signals aborts
      * @param signals The signals to combine
-     * @returns An AbortSignal that will be aborted if any of the signals are aborted
      */
     any(signals: AbortSignal[]): AbortSignal;
   }

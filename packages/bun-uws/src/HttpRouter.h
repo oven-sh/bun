@@ -165,8 +165,11 @@ private:
             }
             /* Dot-segments can only start right after a '/'; dotfile segments (".well-known") are not dot-segments */
             if (c == '/' && i + 1 < url.length() && (url[i + 1] == '.' || isEncodedDotAt(url, i + 1))) {
-                size_t segmentEnd = url.find_first_of("/\\?#", i + 1);
-                std::string_view segment = url.substr(i + 1, (segmentEnd == std::string_view::npos ? url.length() : segmentEnd) - i - 1);
+                size_t segmentEnd = i + 1;
+                while (segmentEnd < url.length() && url[segmentEnd] != '/' && url[segmentEnd] != '\\' && url[segmentEnd] != '?' && url[segmentEnd] != '#') {
+                    segmentEnd++;
+                }
+                std::string_view segment = url.substr(i + 1, segmentEnd - i - 1);
                 if (isSingleDotSegment(segment) || isDoubleDotSegment(segment)) {
                     return true;
                 }
@@ -198,9 +201,12 @@ private:
             std::string_view segment = url.substr(segmentStart, i - segmentStart);
             if (isDoubleDotSegment(segment)) {
                 /* Pop the previous segment, never above the root */
-                size_t lastSlash = normalizedUrlBuffer.rfind('/');
-                if (lastSlash != std::string::npos) {
-                    normalizedUrlBuffer.resize(lastSlash);
+                size_t lastSlash = normalizedUrlBuffer.length();
+                while (lastSlash > 0 && normalizedUrlBuffer[lastSlash - 1] != '/') {
+                    lastSlash--;
+                }
+                if (lastSlash > 0) {
+                    normalizedUrlBuffer.resize(lastSlash - 1);
                 }
                 if (endsPath) {
                     normalizedUrlBuffer += '/';

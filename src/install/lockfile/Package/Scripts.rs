@@ -336,12 +336,11 @@ impl Scripts {
         log: &mut bun_ast::Log,
         folder_path: &mut bun_paths::AutoAbsPath,
     ) -> Result<(), bun_core::Error> {
-        // The JSON
-        // parser uses a bump arena. Scoped here since the AST is consumed
-        // immediately into the string builder. `json_buf` is hoisted so the
-        // source bytes outlive the parsed `Expr` (which may borrow them).
-        let bump = bun_alloc::Arena::new();
+        // `json_buf` and `parsed` are hoisted so the source bytes and the
+        // document's tape outlive every `Expr` reached from `json` (which
+        // borrows both).
         let json_buf;
+        let parsed;
         let json: Expr = {
             // `defer save.restore()` — `save()` returns an RAII guard that
             // restores the path length on Drop and derefs to the path.
@@ -352,7 +351,8 @@ impl Scripts {
             let json_src = bun_ast::Source::init_path_string(save.slice(), json_buf.as_slice());
 
             initialize_store();
-            bun_json::parse_package_json_utf8(&json_src, log, &bump)?
+            parsed = bun_json::parse_package_json_utf8_simple(&json_src, log)?;
+            parsed.root
         };
 
         Scripts::parse_count(string_builder, json);

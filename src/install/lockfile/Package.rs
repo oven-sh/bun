@@ -10,7 +10,7 @@ use bun_semver::semver_query::Wildcard;
 use bun_semver::version::VersionInt;
 use bun_semver::{self as semver, ExternalString, String, Version as SemverVersion};
 
-use crate::bun_json::{Expr, ExprData};
+use crate::bun_json::{E, Expr, ExprData};
 use crate::dependency::{Behavior, DependencyExt as _, TagExt as _};
 use crate::repository::RepositoryExt as _;
 use crate::{
@@ -61,6 +61,119 @@ impl ExprStr for Expr {
         }
         None
     }
+}
+
+/// `"key": value` rows of a JSON object expression, yielded as
+/// `(key, value string, key location)` so the property loops below accept
+/// both shapes `parse_with_json` receives: the simple `EObjectSimple`
+/// produced by `parse_package_json_utf8_simple`, and the classic `EObject`
+/// of cached/edited documents (`WorkspacePackageJSONCache`).
+///
+/// A non-string value yields `None`. Classic UTF-16 strings are transcoded
+/// into `bump`; simple rows are already decoded UTF-8 borrowing the
+/// document's source or tape.
+enum JsonObjectStringRows<'a> {
+    Classic(
+        core::slice::Iter<'a, bun_ast::G::Property>,
+        &'a bun_alloc::Arena,
+    ),
+    Simple(core::slice::Iter<'a, E::PropertySimple>),
+}
+
+impl<'a> JsonObjectStringRows<'a> {
+    /// `None` when `expr` is not a JSON object of either representation.
+    fn new(expr: &'a Expr, bump: &'a bun_alloc::Arena) -> Option<Self> {
+        match &expr.data {
+            ExprData::EObject(obj) => Some(Self::Classic(obj.properties.slice().iter(), bump)),
+            ExprData::EObjectSimple(obj) => Some(Self::Simple(obj.get().properties().iter())),
+            _ => None,
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Classic(iter, _) => iter.len(),
+            Self::Simple(iter) => iter.len(),
+        }
+    }
+}
+
+impl<'a> Iterator for JsonObjectStringRows<'a> {
+    type Item = (&'a [u8], Option<&'a [u8]>, bun_ast::Loc);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Classic(iter, bump) => {
+                let prop = iter.next()?;
+                let key = prop.key.expect("infallible: prop has key");
+                let value = prop.value.expect("infallible: prop has value");
+                Some((
+                    key.as_utf8(*bump)
+                        .expect("infallible: JSON object keys are strings"),
+                    value.as_utf8(*bump),
+                    key.loc,
+                ))
+            }
+            Self::Simple(iter) => {
+                let row = iter.next()?;
+                Some((row.key.slice(), row.value.as_str(), row.key_loc))
+            }
+        }
+    }
+}
+
+/// The classic `E::Array` behind `expr` (a JSON array of either
+/// representation): a classic array is returned as-is; the simple
+/// representation is materialized from `source` at `loc` (the array's own
+/// `[`) so item diagnostics keep their exact source positions.
+fn classic_names_array(
+    expr: &Expr,
+    loc: bun_ast::Loc,
+    source: &bun_ast::Source,
+    bump: &bun_alloc::Arena,
+) -> bun_ast::StoreRef<E::Array> {
+    if let ExprData::EArray(arr) = &expr.data {
+        return *arr;
+    }
+    debug_assert!(expr.is_array());
+    let materialized = crate::bun_json::materialize(
+        &Expr {
+            data: expr.data,
+            loc,
+        },
+        source,
+        bump,
+    );
+    match materialized.data {
+        ExprData::EArray(arr) => arr,
+        _ => unreachable!("materializing a JSON array yields a classic array"),
+    }
+}
+
+/// Cold path: the location of the value of the property whose key string
+/// starts at `key_loc`. The simple JSON AST stores only key locations, so a
+/// diagnostic that points at a value re-scans the source it was parsed from;
+/// the key's location is the fallback when the bytes don't match.
+pub(crate) fn value_loc_of(source: &bun_ast::Source, key_loc: bun_ast::Loc) -> bun_ast::Loc {
+    crate::bun_json::property_value_loc(&source.contents, key_loc).unwrap_or(key_loc)
+}
+
+/// `trustedDependencies` type error, reported at the property's key both
+/// when the value is not an array and when an item is not a string.
+#[cold]
+fn invalid_trusted_dependencies(
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
+    loc: bun_ast::Loc,
+) -> bun_core::Error {
+    let _ = log.add_error_fmt(
+        source,
+        loc,
+        format_args!(
+            "trustedDependencies expects an array of strings, e.g.\n  <r><green>\"trustedDependencies\"<r>: [\n    <green>\"package_name\"<r>\n  ]"
+        ),
+    );
+    bun_core::err!("InvalidPackageJSON")
 }
 
 // `SemverIntType` defaults to `u64`, the only instantiation the lockfile/PM
@@ -1618,13 +1731,10 @@ impl Package<u64> {
         features: Features,
     ) -> Result<(), bun_core::Error> {
         initialize_store();
-        // The returned
-        // `Expr` tree only needs to live until `parse_with_json` finishes, so
-        // a function-local arena is sufficient (matches Scripts.rs / lockfile.rs
-        // call sites) and avoids leaking.
-        let bump = bun_alloc::Arena::new();
-        let json = match crate::bun_json::parse_package_json_utf8(source, log, &bump) {
-            Ok(j) => j,
+        // `parsed` owns the tape every `Expr` reached from `parsed.root`
+        // borrows, so it must stay alive until `parse_with_json` returns.
+        let parsed = match crate::bun_json::parse_package_json_utf8_simple(source, log) {
+            Ok(p) => p,
             Err(err) => {
                 let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                 bun_core::pretty_errorln!(
@@ -1636,7 +1746,7 @@ impl Package<u64> {
             }
         };
 
-        self.parse_with_json::<R>(lockfile, pm, log, source, json, resolver, features)
+        self.parse_with_json::<R>(lockfile, pm, log, source, parsed.root, resolver, features)
     }
 
     /// Borrow-splitting bridge for `PackageManager` callers
@@ -1691,7 +1801,6 @@ impl Package<u64> {
         external_alias: ExternalString,
         version: &[u8],
         key_loc: bun_ast::Loc,
-        value_loc: bun_ast::Loc,
     ) -> Result<Option<Dependency>, bun_core::Error> {
         #[cfg(windows)]
         let external_version = 'brk: {
@@ -1803,7 +1912,7 @@ impl Package<u64> {
                 ) else {
                     log.add_error_fmt(
                         source,
-                        value_loc,
+                        value_loc_of(source, key_loc),
                         format_args!(
                             "Dependency \"{}\" has an unsafe folder path",
                             bstr::BStr::new(external_alias.slice(buf)),
@@ -2055,7 +2164,9 @@ impl Package<u64> {
                         text: text.into(),
                         location: bun_ast::Location::init_or_null(
                             Some(source),
-                            source.range_of_string(*entry.value_ptr),
+                            // The map stores the first occurrence's key
+                            // location; the note points at its value.
+                            source.range_of_string(value_loc_of(source, *entry.value_ptr)),
                         ),
                         ..Default::default()
                     });
@@ -2072,7 +2183,7 @@ impl Package<u64> {
                 }
             }
 
-            *entry.value_ptr = value_loc;
+            *entry.value_ptr = key_loc;
         }
 
         Ok(Some(this_dep))
@@ -2156,12 +2267,10 @@ impl Package<u64> {
         }
 
         if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
-            if let ExprData::EObject(obj) = &patched_deps.expr.data {
-                for prop in obj.properties.slice() {
-                    let key = prop.key.expect("infallible: prop has key");
-                    let value = prop.value.expect("infallible: prop has value");
-                    if key.is_string() && value.is_string() {
-                        string_builder.count(value.as_utf8(&bump).unwrap());
+            if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
+                for (_, value, _) in rows {
+                    if let Some(value) = value {
+                        string_builder.count(value);
                     }
                 }
             }
@@ -2176,35 +2285,21 @@ impl Package<u64> {
         }
         'bin: {
             if let Some(bin) = json.as_property(b"bin") {
-                match &bin.expr.data {
-                    ExprData::EObject(obj) => {
-                        for bin_prop in obj.properties.slice() {
-                            let Some(k) = bin_prop
-                                .key
-                                .expect("infallible: prop has key")
-                                .as_utf8(&bump)
-                            else {
-                                break 'bin;
-                            };
-                            string_builder.count(k);
-                            let Some(v) = bin_prop
-                                .value
-                                .expect("infallible: prop has value")
-                                .as_utf8(&bump)
-                            else {
-                                break 'bin;
-                            };
-                            string_builder.count(v);
-                        }
+                if let Some(rows) = JsonObjectStringRows::new(&bin.expr, &bump) {
+                    for (k, v, _) in rows {
+                        string_builder.count(k);
+                        let Some(v) = v else {
+                            break 'bin;
+                        };
+                        string_builder.count(v);
+                    }
+                    break 'bin;
+                }
+                if bin.expr.is_string() {
+                    if let Some(str_) = bin.expr.as_utf8(&bump) {
+                        string_builder.count(str_);
                         break 'bin;
                     }
-                    ExprData::EString(_) => {
-                        if let Some(str_) = bin.expr.as_utf8(&bump) {
-                            string_builder.count(str_);
-                            break 'bin;
-                        }
-                    }
-                    _ => {}
                 }
             }
 
@@ -2261,27 +2356,56 @@ impl Package<u64> {
 
         if FEATURES.peer_dependencies {
             if let Some(peer_dependencies_meta) = json.as_property(b"peerDependenciesMeta") {
-                if let ExprData::EObject(obj) = &peer_dependencies_meta.expr.data {
-                    let props = obj.properties.slice();
-                    optional_peer_dependencies.ensure_unused_capacity(props.len())?;
-                    for prop in props {
-                        if let Some(optional) = prop
-                            .value
-                            .expect("infallible: prop has value")
-                            .as_property(b"optional")
-                        {
-                            if !matches!(
-                                &optional.expr.data,
-                                ExprData::EBoolean(b) if b.value
-                            ) {
+                match &peer_dependencies_meta.expr.data {
+                    ExprData::EObject(obj) => {
+                        let props = obj.properties.slice();
+                        optional_peer_dependencies.ensure_unused_capacity(props.len())?;
+                        for prop in props {
+                            if let Some(optional) = prop
+                                .value
+                                .expect("infallible: prop has value")
+                                .as_property(b"optional")
+                            {
+                                if !matches!(
+                                    &optional.expr.data,
+                                    ExprData::EBoolean(b) if b.value
+                                ) {
+                                    continue;
+                                }
+
+                                let key = prop
+                                    .key
+                                    .expect("infallible: prop has key")
+                                    .as_utf8(&bump)
+                                    .expect("unreachable");
+                                optional_peer_dependencies.put_assume_capacity(
+                                    semver::string::Builder::string_hash(key),
+                                    key,
+                                );
+                                // Reserve space for a synthesised entry. If the
+                                // matching name later appears in `peerDependencies`
+                                // the slot just goes unused.
+                                string_builder.count(key);
+                                string_builder.count(b"*");
+                                total_dependencies_count += 1;
+                            }
+                        }
+                    }
+                    ExprData::EObjectSimple(obj) => {
+                        let props = obj.get().properties();
+                        optional_peer_dependencies.ensure_unused_capacity(props.len())?;
+                        for row in props {
+                            let Some(meta) = row.value.as_object() else {
+                                continue;
+                            };
+                            let Some(optional) = meta.get(b"optional") else {
+                                continue;
+                            };
+                            if !matches!(optional, E::JsonValue::Boolean(true)) {
                                 continue;
                             }
 
-                            let key = prop
-                                .key
-                                .expect("infallible: prop has key")
-                                .as_utf8(&bump)
-                                .expect("unreachable");
+                            let key: &[u8] = row.key.slice();
                             optional_peer_dependencies.put_assume_capacity(
                                 semver::string::Builder::string_hash(key),
                                 key,
@@ -2294,6 +2418,7 @@ impl Package<u64> {
                             total_dependencies_count += 1;
                         }
                     }
+                    _ => {}
                 }
             }
         }
@@ -2301,168 +2426,173 @@ impl Package<u64> {
         for group in &dependency_groups {
             if let Some(dependencies_q) = json.as_property(group.prop) {
                 'brk: {
-                    match &dependencies_q.expr.data {
-                        ExprData::EArray(arr) => {
-                            if !group.behavior.is_workspace() {
+                    if dependencies_q.expr.is_array() {
+                        if !group.behavior.is_workspace() {
+                            let _ = bun_ast::add_error_pretty!(
+                                log,
+                                source,
+                                dependencies_q.loc,
+                                "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
+                                bstr::BStr::new(group.prop)
+                            );
+                            return Err(bun_core::err!("InvalidPackageJSON"));
+                        }
+                        let arr = classic_names_array(
+                            &dependencies_q.expr,
+                            value_loc_of(source, dependencies_q.loc),
+                            source,
+                            &bump,
+                        );
+                        total_dependencies_count += workspace_names.process_names_array(
+                            &mut pm.workspace_package_json_cache,
+                            log,
+                            &*arr,
+                            source,
+                            dependencies_q.loc,
+                            Some(&mut string_builder),
+                        )?;
+                        break 'brk;
+                    }
+
+                    if let Some(rows) = JsonObjectStringRows::new(&dependencies_q.expr, &bump) {
+                        if group.behavior.is_workspace() {
+                            // yarn workspaces expects a "workspaces" property shaped like this:
+                            //
+                            //    "workspaces": {
+                            //        "packages": [
+                            //           "path/to/package"
+                            //        ]
+                            //    }
+                            //
+                            if let Some(packages_query) =
+                                dependencies_q.expr.as_property(b"packages")
+                            {
+                                let packages_expr = packages_query.expr;
+                                // The simple representation locates a looked-up
+                                // value at its key; recover the value's own
+                                // location for the diagnostics below.
+                                let packages_loc =
+                                    if matches!(dependencies_q.expr.data, ExprData::EObject(_)) {
+                                        packages_expr.loc
+                                    } else {
+                                        value_loc_of(source, packages_query.loc)
+                                    };
+                                if !packages_expr.is_array() {
+                                    let _ = log.add_error_fmt(
+                                        source,
+                                        packages_loc,
+                                        format_args!(
+                                            "\"workspaces.packages\" expects an array of strings, e.g.\n  \"workspaces\": {{\n    \"packages\": [\n      \"path/to/package\"\n    ]\n  }}"
+                                        ),
+                                    );
+                                    return Err(bun_core::err!("InvalidPackageJSON"));
+                                }
+                                let packages_arr = classic_names_array(
+                                    &packages_expr,
+                                    packages_loc,
+                                    source,
+                                    &bump,
+                                );
+                                total_dependencies_count += workspace_names.process_names_array(
+                                    &mut pm.workspace_package_json_cache,
+                                    log,
+                                    &*packages_arr,
+                                    source,
+                                    packages_loc,
+                                    Some(&mut string_builder),
+                                )?;
+                            }
+
+                            break 'brk;
+                        }
+                        let count = rows.len() as u32;
+                        for (key, value, key_loc) in rows {
+                            let Some(value) = value else {
                                 let _ = bun_ast::add_error_pretty!(
                                     log,
                                     source,
-                                    dependencies_q.loc,
+                                    value_loc_of(source, key_loc),
                                     "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
                                     bstr::BStr::new(group.prop)
                                 );
                                 return Err(bun_core::err!("InvalidPackageJSON"));
-                            }
-                            total_dependencies_count += workspace_names.process_names_array(
-                                &mut pm.workspace_package_json_cache,
-                                log,
-                                &**arr,
-                                source,
-                                dependencies_q.loc,
-                                Some(&mut string_builder),
-                            )?;
-                        }
-                        ExprData::EObject(obj) => {
-                            if group.behavior.is_workspace() {
-                                // yarn workspaces expects a "workspaces" property shaped like this:
-                                //
-                                //    "workspaces": {
-                                //        "packages": [
-                                //           "path/to/package"
-                                //        ]
-                                //    }
-                                //
-                                if let Some(packages_query) = obj.as_property(b"packages") {
-                                    let packages_expr = packages_query.expr;
-                                    if !matches!(packages_expr.data, ExprData::EArray(_)) {
-                                        let _ = log.add_error_fmt(
-                                            source,
-                                            packages_expr.loc,
-                                            format_args!(
-                                                "\"workspaces.packages\" expects an array of strings, e.g.\n  \"workspaces\": {{\n    \"packages\": [\n      \"path/to/package\"\n    ]\n  }}"
-                                            ),
-                                        );
-                                        return Err(bun_core::err!("InvalidPackageJSON"));
-                                    }
-                                    let ExprData::EArray(packages_arr) = &packages_expr.data else {
-                                        unreachable!()
-                                    };
-                                    total_dependencies_count += workspace_names
-                                        .process_names_array(
-                                            &mut pm.workspace_package_json_cache,
-                                            log,
-                                            &**packages_arr,
-                                            source,
-                                            packages_expr.loc,
-                                            Some(&mut string_builder),
-                                        )?;
+                            };
+
+                            string_builder.count(key);
+                            string_builder.count(value);
+
+                            // If it's a folder or workspace, pessimistically assume we will need a maximum path
+                            match dependency::version::Tag::infer(value) {
+                                dependency::version::Tag::Folder
+                                | dependency::version::Tag::Workspace => {
+                                    string_builder.cap += MAX_PATH_BYTES;
                                 }
-
-                                break 'brk;
+                                _ => {}
                             }
-                            for item in obj.properties.slice() {
-                                let key = item
-                                    .key
-                                    .expect("infallible: prop has key")
-                                    .as_utf8(&bump)
-                                    .unwrap();
-                                let Some(value) = item
-                                    .value
-                                    .expect("infallible: prop has value")
-                                    .as_utf8(&bump)
-                                else {
-                                    let _ = bun_ast::add_error_pretty!(
-                                        log,
-                                        source,
-                                        item.value.expect("infallible: prop has value").loc,
-                                        "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
-                                        bstr::BStr::new(group.prop)
-                                    );
-                                    return Err(bun_core::err!("InvalidPackageJSON"));
-                                };
-
-                                string_builder.count(key);
-                                string_builder.count(value);
-
-                                // If it's a folder or workspace, pessimistically assume we will need a maximum path
-                                match dependency::version::Tag::infer(value) {
-                                    dependency::version::Tag::Folder
-                                    | dependency::version::Tag::Workspace => {
-                                        string_builder.cap += MAX_PATH_BYTES;
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            total_dependencies_count += obj.properties.len_u32();
                         }
-                        _ => {
-                            if group.behavior.is_workspace() {
-                                let _ = bun_ast::add_error_pretty!(
-                                    log,
-                                    source,
-                                    dependencies_q.loc,
-                                    "\"workspaces\" expects an array of strings, e.g.\n  <r><green>\"workspaces\"<r>: [\n    <green>\"path/to/package\"<r>\n  ]"
-                                );
-                            } else {
-                                let _ = bun_ast::add_error_pretty!(
-                                    log,
-                                    source,
-                                    dependencies_q.loc,
-                                    "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
-                                    bstr::BStr::new(group.prop)
-                                );
-                            }
-                            return Err(bun_core::err!("InvalidPackageJSON"));
-                        }
+                        total_dependencies_count += count;
+                        break 'brk;
                     }
+
+                    if group.behavior.is_workspace() {
+                        let _ = bun_ast::add_error_pretty!(
+                            log,
+                            source,
+                            dependencies_q.loc,
+                            "\"workspaces\" expects an array of strings, e.g.\n  <r><green>\"workspaces\"<r>: [\n    <green>\"path/to/package\"<r>\n  ]"
+                        );
+                    } else {
+                        let _ = bun_ast::add_error_pretty!(
+                            log,
+                            source,
+                            dependencies_q.loc,
+                            "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
+                            bstr::BStr::new(group.prop)
+                        );
+                    }
+                    return Err(bun_core::err!("InvalidPackageJSON"));
                 }
             }
         }
 
         if FEATURES.trusted_dependencies {
             if let Some(q) = json.as_property(b"trustedDependencies") {
+                let count = match &q.expr.data {
+                    ExprData::EArray(arr) => arr.items.len_u32() as usize,
+                    ExprData::EArraySimple(arr) => arr.get().items().len(),
+                    _ => return Err(invalid_trusted_dependencies(log, source, q.loc)),
+                };
+                if lockfile.trusted_dependencies.is_none() {
+                    lockfile.trusted_dependencies = Some(Default::default());
+                }
+                let trusted = lockfile.trusted_dependencies.as_mut().unwrap();
+                trusted.ensure_unused_capacity(count)?;
                 match &q.expr.data {
                     ExprData::EArray(arr) => {
-                        if lockfile.trusted_dependencies.is_none() {
-                            lockfile.trusted_dependencies = Some(Default::default());
-                        }
-                        lockfile
-                            .trusted_dependencies
-                            .as_mut()
-                            .unwrap()
-                            .ensure_unused_capacity(arr.items.len_u32() as usize)?;
                         for item in arr.slice() {
                             let Some(name) = item.as_utf8(&bump) else {
-                                let _ = log.add_error_fmt(
-                                    source,
-                                    q.loc,
-                                    format_args!(
-                                        "trustedDependencies expects an array of strings, e.g.\n  <r><green>\"trustedDependencies\"<r>: [\n    <green>\"package_name\"<r>\n  ]"
-                                    ),
-                                );
-                                return Err(bun_core::err!("InvalidPackageJSON"));
+                                return Err(invalid_trusted_dependencies(log, source, q.loc));
                             };
-                            lockfile
-                                .trusted_dependencies
-                                .as_mut()
-                                .unwrap()
-                                .put_assume_capacity(
-                                    semver::string::Builder::string_hash(name)
-                                        as TruncatedPackageNameHash,
-                                    Box::<[u8]>::from(name),
-                                );
+                            trusted.put_assume_capacity(
+                                semver::string::Builder::string_hash(name)
+                                    as TruncatedPackageNameHash,
+                                Box::<[u8]>::from(name),
+                            );
                         }
                     }
-                    _ => {
-                        let _ = log.add_error_fmt(
-                            source,
-                            q.loc,
-                            format_args!(
-                                "trustedDependencies expects an array of strings, e.g.\n  <r><green>\"trustedDependencies\"<r>: [\n    <green>\"package_name\"<r>\n  ]"
-                            ),
-                        );
-                        return Err(bun_core::err!("InvalidPackageJSON"));
+                    ExprData::EArraySimple(arr) => {
+                        for item in arr.get().items() {
+                            let Some(name) = item.as_str() else {
+                                return Err(invalid_trusted_dependencies(log, source, q.loc));
+                            };
+                            trusted.put_assume_capacity(
+                                semver::string::Builder::string_hash(name)
+                                    as TruncatedPackageNameHash,
+                                Box::<[u8]>::from(name),
+                            );
+                        }
                     }
+                    _ => unreachable!("checked above"),
                 }
             }
         }
@@ -2552,127 +2682,107 @@ impl Package<u64> {
         }
 
         if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
-            if let ExprData::EObject(obj) = &patched_deps.expr.data {
+            if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
                 lockfile
                     .patched_dependencies
-                    .ensure_total_capacity(obj.properties.len_u32() as usize)
+                    .ensure_total_capacity(rows.len())
                     .expect("unreachable");
-                for prop in obj.properties.slice() {
-                    let key = prop.key.expect("infallible: prop has key");
-                    let value = prop.value.expect("infallible: prop has value");
-                    if key.is_string() && value.is_string() {
-                        let keyhash =
-                            semver::string::Builder::string_hash(key.as_utf8(&bump).unwrap());
-                        let patch_path =
-                            string_builder.append::<String>(value.as_utf8(&bump).unwrap());
-                        lockfile
-                            .patched_dependencies
-                            .put(
-                                keyhash,
-                                PatchedDep {
-                                    path: patch_path,
-                                    ..Default::default()
-                                },
-                            )
-                            .expect("unreachable");
-                    }
+                for (key, value, _) in rows {
+                    let Some(value) = value else {
+                        continue;
+                    };
+                    let keyhash = semver::string::Builder::string_hash(key);
+                    let patch_path = string_builder.append::<String>(value);
+                    lockfile
+                        .patched_dependencies
+                        .put(
+                            keyhash,
+                            PatchedDep {
+                                path: patch_path,
+                                ..Default::default()
+                            },
+                        )
+                        .expect("unreachable");
                 }
             }
         }
 
         'bin: {
             if let Some(bin) = json.as_property(b"bin") {
-                match &bin.expr.data {
-                    ExprData::EObject(obj) => {
-                        match obj.properties.len_u32() {
-                            0 => {}
-                            1 => {
-                                let first = &obj.properties.slice()[0];
-                                let Some(bin_name) = first.key.unwrap().as_utf8(&bump) else {
-                                    break 'bin;
-                                };
-                                let Some(value) = first.value.unwrap().as_utf8(&bump) else {
-                                    break 'bin;
-                                };
+                if let Some(mut rows) = JsonObjectStringRows::new(&bin.expr, &bump) {
+                    match rows.len() {
+                        0 => {}
+                        1 => {
+                            let (bin_name, value, _) = rows.next().expect("checked: one property");
+                            let Some(value) = value else {
+                                break 'bin;
+                            };
 
-                                self.bin = Bin {
-                                    tag: bin::Tag::NamedFile,
-                                    value: bin::Value::init_named_file([
-                                        string_builder.append::<String>(bin_name),
-                                        string_builder.append::<String>(value),
-                                    ]),
-                                    ..Default::default()
-                                };
-                            }
-                            _ => {
-                                let current_len = lockfile.buffers.extern_strings.len();
-                                let count = obj.properties.len_u32() as usize * 2;
-                                lockfile.buffers.extern_strings.reserve_exact(count);
-                                // Default-fill the tail; the loop below
-                                // overwrites each slot. Keeps every exposed
-                                // `ExternalString` valid even if `break 'bin`
-                                // fires partway through (replaces raw
-                                // `set_len`).
-                                let extern_strings = bun_core::vec::grow_default(
-                                    &mut lockfile.buffers.extern_strings,
-                                    count,
-                                );
-
-                                let mut i: usize = 0;
-                                for bin_prop in obj.properties.slice() {
-                                    let Some(k) = bin_prop
-                                        .key
-                                        .expect("infallible: prop has key")
-                                        .as_utf8(&bump)
-                                    else {
-                                        break 'bin;
-                                    };
-                                    extern_strings[i] = string_builder.append::<ExternalString>(k);
-                                    i += 1;
-                                    let Some(v) = bin_prop
-                                        .value
-                                        .expect("infallible: prop has value")
-                                        .as_utf8(&bump)
-                                    else {
-                                        break 'bin;
-                                    };
-                                    extern_strings[i] = string_builder.append::<ExternalString>(v);
-                                    i += 1;
-                                }
-                                if cfg!(debug_assertions) {
-                                    debug_assert!(i == extern_strings.len());
-                                }
-                                // `init` only needs the tail's offset, so
-                                // construct directly to avoid an aliasing
-                                // borrow of the full extern_strings buffer.
-                                self.bin = Bin {
-                                    tag: bin::Tag::Map,
-                                    value: bin::Value {
-                                        map: ExternalStringList::new(
-                                            current_len as u32,
-                                            extern_strings.len() as u32,
-                                        ),
-                                    },
-                                    ..Default::default()
-                                };
-                            }
-                        }
-
-                        break 'bin;
-                    }
-                    ExprData::EString(stri) => {
-                        if !stri.data.is_empty() {
                             self.bin = Bin {
-                                tag: bin::Tag::File,
+                                tag: bin::Tag::NamedFile,
+                                value: bin::Value::init_named_file([
+                                    string_builder.append::<String>(bin_name),
+                                    string_builder.append::<String>(value),
+                                ]),
+                                ..Default::default()
+                            };
+                        }
+                        n => {
+                            let current_len = lockfile.buffers.extern_strings.len();
+                            let count = n * 2;
+                            lockfile.buffers.extern_strings.reserve_exact(count);
+                            // Default-fill the tail; the loop below
+                            // overwrites each slot. Keeps every exposed
+                            // `ExternalString` valid even if `break 'bin`
+                            // fires partway through (replaces raw
+                            // `set_len`).
+                            let extern_strings = bun_core::vec::grow_default(
+                                &mut lockfile.buffers.extern_strings,
+                                count,
+                            );
+
+                            let mut i: usize = 0;
+                            for (k, v, _) in rows {
+                                extern_strings[i] = string_builder.append::<ExternalString>(k);
+                                i += 1;
+                                let Some(v) = v else {
+                                    break 'bin;
+                                };
+                                extern_strings[i] = string_builder.append::<ExternalString>(v);
+                                i += 1;
+                            }
+                            if cfg!(debug_assertions) {
+                                debug_assert!(i == extern_strings.len());
+                            }
+                            // `init` only needs the tail's offset, so
+                            // construct directly to avoid an aliasing
+                            // borrow of the full extern_strings buffer.
+                            self.bin = Bin {
+                                tag: bin::Tag::Map,
                                 value: bin::Value {
-                                    file: string_builder.append::<String>(&stri.data),
+                                    map: ExternalStringList::new(
+                                        current_len as u32,
+                                        extern_strings.len() as u32,
+                                    ),
                                 },
                                 ..Default::default()
                             };
-                            break 'bin;
                         }
                     }
-                    _ => {}
+
+                    break 'bin;
+                }
+                if let ExprData::EString(stri) = &bin.expr.data {
+                    if !stri.data.is_empty() {
+                        self.bin = Bin {
+                            tag: bin::Tag::File,
+                            value: bin::Value {
+                                file: string_builder.append::<String>(&stri.data),
+                            },
+                            ..Default::default()
+                        };
+                        break 'bin;
+                    }
                 }
             }
 
@@ -2728,6 +2838,14 @@ impl Package<u64> {
                     ExprData::EArray(arr) => {
                         for item in arr.slice() {
                             let Some(s) = item.as_utf8(&bump) else {
+                                continue;
+                            };
+                            bundled_deps.insert(s)?;
+                        }
+                    }
+                    ExprData::EArraySimple(arr) => {
+                        for item in arr.get().items() {
+                            let Some(s) = item.as_str() else {
                                 continue;
                             };
                             bundled_deps.insert(s)?;
@@ -2889,7 +3007,6 @@ impl Package<u64> {
                         external_name,
                         path_,
                         bun_ast::Loc::EMPTY,
-                        bun_ast::Loc::EMPTY,
                     )? {
                         let mut dep = dep_;
                         if group.behavior.is_peer()
@@ -2914,61 +3031,53 @@ impl Package<u64> {
                 }
             } else {
                 if let Some(dependencies_q) = json.as_property(group.prop) {
-                    match &dependencies_q.expr.data {
-                        ExprData::EObject(obj) => {
-                            for item in obj.properties.slice() {
-                                let key = item.key.expect("infallible: prop has key");
-                                let value = item.value.expect("infallible: prop has value");
-                                let external_name = string_builder
-                                    .append::<ExternalString>(key.as_utf8(&bump).unwrap());
-                                let version = value.as_utf8(&bump).unwrap_or(b"");
+                    let rows = JsonObjectStringRows::new(&dependencies_q.expr, &bump)
+                        .expect("validated above: a dependency group is an object");
+                    for (key, version, key_loc) in rows {
+                        let external_name = string_builder.append::<ExternalString>(key);
+                        let version = version.unwrap_or(b"");
 
-                                if let Some(dep_) = Self::parse_dependency(
-                                    &mut lockfile.workspace_paths,
-                                    &mut lockfile.workspace_versions,
-                                    &mut lockfile.scratch.duplicate_checker_map,
-                                    pm,
-                                    log,
-                                    source,
-                                    group,
-                                    &mut string_builder,
-                                    FEATURES,
-                                    package_dependencies.as_mut_slice(),
-                                    total_dependencies_count,
-                                    None,
-                                    None,
-                                    external_name,
-                                    version,
-                                    key.loc,
-                                    value.loc,
-                                )? {
-                                    let mut dep = dep_;
-                                    // swapRemove (not contains): drain names that
-                                    // have a real `peerDependencies` entry so the
-                                    // meta-only synthesis pass below only sees
-                                    // names that appear *only* in
-                                    // `peerDependenciesMeta`.
-                                    if group.behavior.is_peer()
-                                        && optional_peer_dependencies
-                                            .swap_remove(&external_name.hash)
-                                    {
-                                        dep.behavior.insert(Behavior::OPTIONAL);
-                                    }
-
-                                    if bundle_all_deps
-                                        || bundled_deps.contains(
-                                            dep.name.slice(string_builder.string_bytes.as_slice()),
-                                        )
-                                    {
-                                        dep.behavior.insert(Behavior::BUNDLED);
-                                    }
-
-                                    package_dependencies.push(dep);
-                                    total_dependencies_count += 1;
-                                }
+                        if let Some(dep_) = Self::parse_dependency(
+                            &mut lockfile.workspace_paths,
+                            &mut lockfile.workspace_versions,
+                            &mut lockfile.scratch.duplicate_checker_map,
+                            pm,
+                            log,
+                            source,
+                            group,
+                            &mut string_builder,
+                            FEATURES,
+                            package_dependencies.as_mut_slice(),
+                            total_dependencies_count,
+                            None,
+                            None,
+                            external_name,
+                            version,
+                            key_loc,
+                        )? {
+                            let mut dep = dep_;
+                            // swapRemove (not contains): drain names that
+                            // have a real `peerDependencies` entry so the
+                            // meta-only synthesis pass below only sees
+                            // names that appear *only* in
+                            // `peerDependenciesMeta`.
+                            if group.behavior.is_peer()
+                                && optional_peer_dependencies.swap_remove(&external_name.hash)
+                            {
+                                dep.behavior.insert(Behavior::OPTIONAL);
                             }
+
+                            if bundle_all_deps
+                                || bundled_deps.contains(
+                                    dep.name.slice(string_builder.string_bytes.as_slice()),
+                                )
+                            {
+                                dep.behavior.insert(Behavior::BUNDLED);
+                            }
+
+                            package_dependencies.push(dep);
+                            total_dependencies_count += 1;
                         }
-                        _ => unreachable!(),
                     }
                 }
             }
@@ -2999,7 +3108,6 @@ impl Package<u64> {
                 None,
                 external_name,
                 b"*",
-                bun_ast::Loc::EMPTY,
                 bun_ast::Loc::EMPTY,
             )? {
                 let mut dep = dep_;

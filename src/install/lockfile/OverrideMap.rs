@@ -10,12 +10,16 @@ use bun_output::{declare_scope, scoped_log};
 use bun_semver::String as SemverString;
 use bun_semver::string::Builder as SemverBuilder;
 
+use super::package::value_loc_of;
 use super::{StringBuilder, package::Package};
 // LAYERING NOTE: package.json is parsed by `bun_parsers::json` which
 // produces the T2 value-shaped `bun_ast::Expr` (aliased as
 // `crate::bun_json::Expr`), NOT the full T4 `bun_ast::Expr`. JSON parse
 // is always UTF-8, so `as_utf8_string_literal()` needs no allocator.
-use crate::bun_json::{Expr, ExprData};
+// The root `expr` may be either the classic `EObject` tree (yarn import,
+// cached workspace package.json) or the simple `EObjectSimple` document
+// produced by `parse_package_json_utf8_simple`; both are handled below.
+use crate::bun_json::{E, Expr, ExprData};
 
 declare_scope!(OverrideMap, visible);
 
@@ -103,66 +107,90 @@ impl OverrideMap {
     // only call site.
     pub(crate) fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
         if let Some(overrides) = expr.as_property(b"overrides") {
-            let ExprData::EObject(obj) = &overrides.expr.data else {
-                return;
-            };
-
-            for entry in obj.properties.slice() {
-                builder.count(
-                    entry
-                        .key
-                        .as_ref()
-                        .expect("infallible: prop has key")
-                        .as_utf8_string_literal()
-                        .expect("infallible: is_string checked"),
-                );
-                match &entry
-                    .value
-                    .as_ref()
-                    .expect("infallible: prop has value")
-                    .data
-                {
-                    ExprData::EString(s) => {
-                        builder.count(&s.data);
-                    }
-                    ExprData::EObject(_) => {
-                        if let Some(dot) = entry
+            match &overrides.expr.data {
+                ExprData::EObject(obj) => {
+                    for entry in obj.properties.slice() {
+                        builder.count(
+                            entry
+                                .key
+                                .as_ref()
+                                .expect("infallible: prop has key")
+                                .as_utf8_string_literal()
+                                .expect("infallible: is_string checked"),
+                        );
+                        match &entry
                             .value
                             .as_ref()
                             .expect("infallible: prop has value")
-                            .as_property(b".")
+                            .data
                         {
-                            if let Some(s) = dot.expr.as_utf8_string_literal() {
-                                builder.count(s);
+                            ExprData::EString(s) => {
+                                builder.count(&s.data);
                             }
+                            ExprData::EObject(_) => {
+                                if let Some(dot) = entry
+                                    .value
+                                    .as_ref()
+                                    .expect("infallible: prop has value")
+                                    .as_property(b".")
+                                {
+                                    if let Some(s) = dot.expr.as_utf8_string_literal() {
+                                        builder.count(s);
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
                     }
-                    _ => {}
                 }
+                ExprData::EObjectSimple(obj) => {
+                    for row in obj.get().properties() {
+                        builder.count(row.key.slice());
+                        match &row.value {
+                            E::JsonValue::String(s) => builder.count(s.slice()),
+                            E::JsonValue::Object(nested) => {
+                                if let Some(E::JsonValue::String(s)) = nested.get().get(b".") {
+                                    builder.count(s.slice());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
             }
         } else if let Some(resolutions) = expr.as_property(b"resolutions") {
-            let ExprData::EObject(obj) = &resolutions.expr.data else {
-                return;
-            };
-
-            for entry in obj.properties.slice() {
-                builder.count(
-                    entry
-                        .key
-                        .as_ref()
-                        .expect("infallible: prop has key")
-                        .as_utf8_string_literal()
-                        .expect("infallible: is_string checked"),
-                );
-                let Some(v) = entry
-                    .value
-                    .as_ref()
-                    .expect("infallible: prop has value")
-                    .as_utf8_string_literal()
-                else {
-                    continue;
-                };
-                builder.count(v);
+            match &resolutions.expr.data {
+                ExprData::EObject(obj) => {
+                    for entry in obj.properties.slice() {
+                        builder.count(
+                            entry
+                                .key
+                                .as_ref()
+                                .expect("infallible: prop has key")
+                                .as_utf8_string_literal()
+                                .expect("infallible: is_string checked"),
+                        );
+                        let Some(v) = entry
+                            .value
+                            .as_ref()
+                            .expect("infallible: prop has value")
+                            .as_utf8_string_literal()
+                        else {
+                            continue;
+                        };
+                        builder.count(v);
+                    }
+                }
+                ExprData::EObjectSimple(obj) => {
+                    for row in obj.get().properties() {
+                        builder.count(row.key.slice());
+                        if let Some(v) = row.value.as_str() {
+                            builder.count(v);
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -216,10 +244,23 @@ impl OverrideMap {
         expr: Expr,
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
+        if let ExprData::EObjectSimple(obj) = &expr.data {
+            return self.parse_from_overrides_simple(
+                pm,
+                lockfile_dependencies,
+                root_package,
+                source,
+                log,
+                obj.get(),
+                builder,
+            );
+        }
         let ExprData::EObject(obj) = &expr.data else {
+            // A simple-AST lookup locates the value at its key; point the
+            // diagnostic at the value itself.
             log.add_warning_fmt(
                 Some(source),
-                expr.loc,
+                value_loc_of(source, expr.loc),
                 format_args!("\"overrides\" must be an object"),
             );
             return Err(bun_core::err!("Invalid"));
@@ -321,6 +362,116 @@ impl OverrideMap {
         Ok(())
     }
 
+    /// [`Self::parse_from_overrides`] over the simple JSON representation.
+    /// Per-value locations are recovered from the source on the (cold)
+    /// diagnostic paths; the key's location is used where the classic path
+    /// used it.
+    fn parse_from_overrides_simple(
+        &mut self,
+        pm: &mut PackageManager,
+        lockfile_dependencies: &[Dependency],
+        root_package: &Package,
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+        obj: &E::ObjectSimple,
+        builder: &mut StringBuilder,
+    ) -> Result<(), Error> {
+        let props = obj.properties();
+        self.map.ensure_unused_capacity(props.len())?;
+
+        for row in props {
+            let k = row.key.slice();
+            if k.is_empty() {
+                log.add_warning_fmt(
+                    Some(source),
+                    row.key_loc,
+                    format_args!("Missing overridden package name"),
+                );
+                continue;
+            }
+
+            let name_hash = SemverBuilder::string_hash(k);
+
+            // for one level deep, we will only support a string and  { ".": value }
+            let (version_str, version_key_loc): (&[u8], bun_ast::Loc) = match &row.value {
+                E::JsonValue::String(s) => (s.slice(), row.key_loc),
+                E::JsonValue::Object(nested) => {
+                    let nested = nested.get();
+                    let dot = nested.properties().iter().find(|p| p.key.slice() == b".");
+                    match dot {
+                        Some(dot_row) => match dot_row.value.as_str() {
+                            Some(s) => {
+                                if nested.properties().len() > 1 {
+                                    log.add_warning_fmt(
+                                        Some(source),
+                                        value_loc_of(source, row.key_loc),
+                                        format_args!(
+                                            "Bun currently does not support nested \"overrides\""
+                                        ),
+                                    );
+                                }
+                                (s, dot_row.key_loc)
+                            }
+                            None => {
+                                log.add_warning_fmt(
+                                    Some(source),
+                                    value_loc_of(source, row.key_loc),
+                                    format_args!(
+                                        "Invalid override value for \"{}\"",
+                                        bstr::BStr::new(k)
+                                    ),
+                                );
+                                continue;
+                            }
+                        },
+                        None => {
+                            log.add_warning_fmt(
+                                Some(source),
+                                value_loc_of(source, row.key_loc),
+                                format_args!("Bun currently does not support nested \"overrides\""),
+                            );
+                            continue;
+                        }
+                    }
+                }
+                _ => {
+                    log.add_warning_fmt(
+                        Some(source),
+                        value_loc_of(source, row.key_loc),
+                        format_args!("Invalid override value for \"{}\"", bstr::BStr::new(k)),
+                    );
+                    continue;
+                }
+            };
+
+            if version_str.starts_with(b"patch:") {
+                // TODO(dylan-conway): apply .patch files to packages
+                log.add_warning_fmt(
+                    Some(source),
+                    row.key_loc,
+                    format_args!("Bun currently does not support patched package \"overrides\""),
+                );
+                continue;
+            }
+
+            if let Some(version) = parse_override_value(
+                "override",
+                lockfile_dependencies,
+                pm,
+                root_package,
+                source,
+                value_loc_of(source, version_key_loc),
+                log,
+                k,
+                version_str,
+                builder,
+            )? {
+                self.map.put_assume_capacity(name_hash, version);
+            }
+        }
+        Ok(())
+    }
+
     /// yarn classic: https://classic.yarnpkg.com/lang/en/docs/selective-version-resolutions/
     /// yarn berry: https://yarnpkg.com/configuration/manifest#resolutions
     pub(crate) fn parse_from_resolutions(
@@ -333,10 +484,23 @@ impl OverrideMap {
         expr: Expr,
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
+        if let ExprData::EObjectSimple(obj) = &expr.data {
+            return self.parse_from_resolutions_simple(
+                pm,
+                lockfile_dependencies,
+                root_package,
+                source,
+                log,
+                obj.get(),
+                builder,
+            );
+        }
         let ExprData::EObject(obj) = &expr.data else {
+            // A simple-AST lookup locates the value at its key; point the
+            // diagnostic at the value itself.
             log.add_warning_fmt(
                 Some(source),
-                expr.loc,
+                value_loc_of(source, expr.loc),
                 format_args!("\"resolutions\" must be an object with string values"),
             );
             return Ok(());
@@ -418,6 +582,104 @@ impl OverrideMap {
                 root_package,
                 source,
                 value.loc,
+                log,
+                k,
+                version_str,
+                builder,
+            )? {
+                let name_hash = SemverBuilder::string_hash(k);
+                self.map.put_assume_capacity(name_hash, version);
+            }
+        }
+        Ok(())
+    }
+
+    /// [`Self::parse_from_resolutions`] over the simple JSON representation.
+    /// Per-value locations are recovered from the source on the (cold)
+    /// diagnostic paths; the key's location is used where the classic path
+    /// used it.
+    fn parse_from_resolutions_simple(
+        &mut self,
+        pm: &mut PackageManager,
+        lockfile_dependencies: &[Dependency],
+        root_package: &Package,
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+        obj: &E::ObjectSimple,
+        builder: &mut StringBuilder,
+    ) -> Result<(), Error> {
+        let props = obj.properties();
+        self.map.ensure_unused_capacity(props.len())?;
+        for row in props {
+            let mut k = row.key.slice();
+            if k.starts_with(b"**/") {
+                k = &k[3..];
+            }
+            if k.is_empty() {
+                log.add_warning_fmt(
+                    Some(source),
+                    row.key_loc,
+                    format_args!("Missing resolution package name"),
+                );
+                continue;
+            }
+            let Some(version_str) = row.value.as_str() else {
+                log.add_warning_fmt(
+                    Some(source),
+                    row.key_loc,
+                    format_args!(
+                        "Expected string value for resolution \"{}\"",
+                        bstr::BStr::new(k)
+                    ),
+                );
+                continue;
+            };
+            // currently we only support one level deep, so we should error if there are more than one
+            // - "foo/bar":
+            // - "@namespace/hello/world"
+            if k[0] == b'@' {
+                let Some(first_slash) = strings::index_of_char(k, b'/') else {
+                    log.add_warning_fmt(
+                        Some(source),
+                        row.key_loc,
+                        format_args!("Invalid package name \"{}\"", bstr::BStr::new(k)),
+                    );
+                    continue;
+                };
+                if strings::index_of_char(&k[first_slash as usize + 1..], b'/').is_some() {
+                    log.add_warning_fmt(
+                        Some(source),
+                        row.key_loc,
+                        format_args!("Bun currently does not support nested \"resolutions\""),
+                    );
+                    continue;
+                }
+            } else if strings::index_of_char(k, b'/').is_some() {
+                log.add_warning_fmt(
+                    Some(source),
+                    row.key_loc,
+                    format_args!("Bun currently does not support nested \"resolutions\""),
+                );
+                continue;
+            }
+
+            if version_str.starts_with(b"patch:") {
+                // TODO(dylan-conway): apply .patch files to packages
+                log.add_warning_fmt(
+                    Some(source),
+                    row.key_loc,
+                    format_args!("Bun currently does not support patched package \"resolutions\""),
+                );
+                continue;
+            }
+
+            if let Some(version) = parse_override_value(
+                "resolution",
+                lockfile_dependencies,
+                pm,
+                root_package,
+                source,
+                value_loc_of(source, row.key_loc),
                 log,
                 k,
                 version_str,

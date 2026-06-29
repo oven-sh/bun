@@ -1,5 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::ByteVecExt;
 use std::collections::VecDeque;
 use std::io::Write as _;
 
@@ -1556,7 +1556,10 @@ impl<'a> SecurityScanSubprocess<'a> {
         let mut temp_log = bun_ast::Log::init();
         let bump = bun_alloc::Arena::new();
 
-        let json_expr = match crate::bun_json::parse_utf8(&json_source, &mut temp_log, &bump) {
+        // `parsed` owns the row tape `json_expr` borrows; both (and
+        // `self.ipc_data`) outlive every advisory string, which
+        // `parse_security_advisories_from_expr` copies into `Box<[u8]>`.
+        let parsed = match crate::bun_json::parse_utf8_simple(&json_source, &mut temp_log) {
             Ok(e) => e,
             Err(e) => {
                 Output::err_generic("Security scanner sent invalid JSON: {}", (e.name(),));
@@ -1566,8 +1569,9 @@ impl<'a> SecurityScanSubprocess<'a> {
                 return Err(err!("InvalidIPCMessage"));
             }
         };
+        let json_expr = parsed.root;
 
-        if !matches!(json_expr.data, ExprData::EObject(_)) {
+        if !matches!(json_expr.data, ExprData::EObjectSimple(_)) {
             Output::err_generic("Security scanner IPC message must be a JSON object", ());
             return Err(err!("InvalidIPCFormat"));
         }
@@ -1807,6 +1811,16 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 }
 
+/// The tag name the scanner diagnostics have always printed: the simple JSON
+/// containers report their classic equivalents (`e_object`, `e_array`).
+fn json_type_name(data: &ExprData) -> &'static str {
+    match data {
+        ExprData::EObjectSimple(_) => bun_ast::expr::Tag::EObject.into(),
+        ExprData::EArraySimple(_) => bun_ast::expr::Tag::EArray.into(),
+        other => other.tag().into(),
+    }
+}
+
 fn parse_security_advisories_from_expr(
     manager: &PackageManager,
     advisories_expr: Expr,
@@ -1815,19 +1829,22 @@ fn parse_security_advisories_from_expr(
 ) -> Result<Box<[SecurityAdvisory]>, Error> {
     let mut advisories_list: Vec<SecurityAdvisory> = Vec::new();
 
-    let ExprData::EArray(array) = &advisories_expr.data else {
+    let ExprData::EArraySimple(array) = &advisories_expr.data else {
         Output::err_generic(
             "Security scanner 'advisories' field must be an array, got: {}",
-            (<&str>::from(advisories_expr.data.tag()),),
+            (json_type_name(&advisories_expr.data),),
         );
         return Err(err!("InvalidAdvisoriesFormat"));
     };
 
-    for (i, item) in array.items.slice().iter().enumerate() {
-        if !matches!(item.data, ExprData::EObject(_)) {
+    for (i, item_value) in array.get().items().iter().enumerate() {
+        // Array items carry no source location of their own; the advisory
+        // strings are copied out, so the array's location is good enough.
+        let item = Expr::from_json_value(item_value, advisories_expr.loc);
+        if !matches!(item.data, ExprData::EObjectSimple(_)) {
             Output::err_generic(
                 "Security advisory at index {} must be an object, got: {}",
-                (i, <&str>::from(item.data.tag())),
+                (i, json_type_name(&item.data)),
             );
             return Err(err!("InvalidAdvisoryFormat"));
         }

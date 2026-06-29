@@ -190,7 +190,8 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     let mut log = bun_ast::Log::init();
     let source = bun_ast::Source::init_path_string("???", response_buf.list.as_slice());
     let bump = bun_alloc::Arena::new();
-    let json = match JSON::parse_utf8(&source, &mut log, &bump) {
+    // `parsed` owns the row tape `json` borrows; both must outlive `username`.
+    let parsed = match JSON::parse_utf8_simple(&source, &mut log) {
         Ok(j) => j,
         Err(e) if e == err!("OutOfMemory") => return Err(WhoamiError::OutOfMemory),
         Err(e) => {
@@ -202,6 +203,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
             Global::crash();
         }
     };
+    let json = parsed.root;
 
     let Some(username) = json.get(b"username").and_then(|e| e.as_string(&bump)) else {
         // no username, invalid auth probably
@@ -221,13 +223,15 @@ pub fn response_error<const OTP_RESPONSE: bool>(
         let mut log = bun_ast::Log::init();
         let source = bun_ast::Source::init_path_string("???", response_body.list.as_slice());
         let bump = bun_alloc::Arena::new();
-        let json = match JSON::parse_utf8(&source, &mut log, &bump) {
+        // `parsed` owns the row tape its root borrows; `error` is copied out
+        // below while both are still alive.
+        let parsed = match JSON::parse_utf8_simple(&source, &mut log) {
             Ok(j) => j,
             Err(e) if e == err!("OutOfMemory") => return Err(AllocError),
             Err(_) => break 'message None,
         };
 
-        let Some(error) = json.get(b"error").and_then(|e| e.as_string(&bump)) else {
+        let Some(error) = parsed.root.get(b"error").and_then(|e| e.as_string(&bump)) else {
             break 'message None;
         };
         Some(error.to_vec())

@@ -302,11 +302,11 @@ impl PackageManager {
                     // SAFETY: `self.log` is set once by `PackageManager::init()` and
                     // never null while tasks run.
                     let log = self.log_mut();
-                    let bump = bun_alloc::Arena::new();
-                    let json_root = match json::parse_package_json_utf8(
+                    // `parsed` owns the tape `json_root` borrows; it must stay
+                    // alive until `parse_count`/`parse_alloc` are done.
+                    let parsed = match json::parse_package_json_utf8_simple(
                         package_json_source,
                         log,
-                        &bump,
                     ) {
                         Ok(v) => v,
                         Err(err) => {
@@ -321,6 +321,7 @@ impl PackageManager {
                             Global::crash();
                         }
                     };
+                    let json_root = parsed.root;
                     // Intentional dead store: `scripts` is a local copy of
                     // `lockfile.packages[id].scripts`, and the `parse_alloc` /
                     // `.filled = true` mutations are never stored back, so

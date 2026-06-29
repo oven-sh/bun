@@ -82,40 +82,37 @@ pub(crate) fn get_candidate_package_patterns<'a>(
             // `defer allocator.free(json_source.contents)` — deleted; `json_source` owns its
             // contents and drops at end of scope.
 
-            // `parse_package_json_utf8` takes a `&Bump` arena explicitly. Nodes go
-            // through the global Store, so this only buffers transient parser
-            // scratch — fresh per-iteration is fine.
-            let bump = bun_alloc::Arena::new();
-            let json = json::parse_package_json_utf8(&json_source, log, &bump)?;
+            // `parsed` owns the row tape everything below borrows; it (and
+            // `json_source`) must stay alive until the patterns are copied
+            // into `out_patterns`.
+            let parsed = json::parse_package_json_utf8_simple(&json_source, log)?;
+            let json = parsed.root;
 
             let Some(prop) = json.as_property(b"workspaces") else {
                 break 'body;
             };
 
             let json_array = match prop.expr.data {
-                ExprData::EArray(arr) => arr,
-                ExprData::EObject(obj) => {
-                    // `StoreRef::get` (0-arg) shadows `E::Object::get` under autoderef; force
-                    // `Deref` to reach the keyed lookup.
-                    if let Some(packages) = (*obj).get(b"packages") {
-                        match packages.data {
-                            ExprData::EArray(arr) => arr,
-                            _ => break 'walk,
-                        }
-                    } else {
-                        break 'walk;
+                ExprData::EArraySimple(arr) => arr,
+                ExprData::EObjectSimple(obj) => {
+                    // `StoreRef::get` (0-arg) shadows `E::ObjectSimple::get` under autoderef;
+                    // force `Deref` to reach the keyed lookup.
+                    match (*obj).get(b"packages") {
+                        Some(bun_ast::e::JsonValue::Array(arr)) => *arr,
+                        _ => break 'walk,
                     }
                 }
                 _ => break 'walk,
             };
 
-            for expr in json_array.slice() {
-                match expr.data {
-                    ExprData::EString(pattern_expr) => {
-                        let size = pattern_expr.data.len() + b"/package.json".len();
+            for item in json_array.get().items() {
+                match item {
+                    bun_ast::e::JsonValue::String(pattern_str) => {
+                        let pattern_bytes = pattern_str.slice();
+                        let size = pattern_bytes.len() + b"/package.json".len();
                         let mut pattern = vec![0u8; size].into_boxed_slice();
-                        pattern[0..pattern_expr.data.len()].copy_from_slice(&pattern_expr.data);
-                        pattern[pattern_expr.data.len()..size].copy_from_slice(b"/package.json");
+                        pattern[0..pattern_bytes.len()].copy_from_slice(pattern_bytes);
+                        pattern[pattern_bytes.len()..size].copy_from_slice(b"/package.json");
 
                         out_patterns.push(pattern);
                     }

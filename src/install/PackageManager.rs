@@ -1653,11 +1653,13 @@ pub fn init(
                     // SAFETY: `ctx.log` is a borrow of the CLI's `Log`; valid for the
                     // duration of `init()` (set by `Command::create()` before any install
                     // entry point runs).
-                    let json = crate::bun_json::parse_package_json_utf8(
-                        &json_source,
-                        unsafe { &mut *ctx.log },
-                        &json_arena,
-                    )?;
+                    // `parsed` owns the row tape `json` borrows; it lives to
+                    // the end of this loop body, past `process_names_array`.
+                    let parsed =
+                        crate::bun_json::parse_package_json_utf8_simple(&json_source, unsafe {
+                            &mut *ctx.log
+                        })?;
+                    let json = parsed.root;
                     if subcommand == Subcommand::Pm {
                         if let Some(name) = json.get(b"name").and_then(|e| {
                             if let bun_ast::ExprData::EString(s) = &e.data {
@@ -1672,7 +1674,22 @@ pub fn init(
 
                     use crate::bun_json::ExprData;
                     if let Some(prop) = json.as_property(b"workspaces") {
-                        let json_array = match prop.expr.data {
+                        // `WorkspaceMap::process_names_array` wants the classic
+                        // `E::Array` with exact per-item locations. The lookup
+                        // returns the key's location, so recover the value's
+                        // first byte before materializing just this subtree.
+                        let value_loc =
+                            crate::bun_json::property_value_loc(&json_source.contents, prop.loc)
+                                .unwrap_or(prop.loc);
+                        let workspaces = crate::bun_json::materialize(
+                            &bun_ast::Expr {
+                                loc: value_loc,
+                                data: prop.expr.data,
+                            },
+                            &json_source,
+                            &json_arena,
+                        );
+                        let json_array = match workspaces.data {
                             ExprData::EArray(arr) => arr,
                             ExprData::EObject(obj) => {
                                 if let Some(packages) = obj.get().get(b"packages") {

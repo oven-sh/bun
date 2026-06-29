@@ -12,7 +12,12 @@ use bun_install::{Dependency, Lockfile, PackageManager};
 // `crate::bun_json`). Importing `bun_js_parser` here would force a higher-tier
 // dep and produce distinct-`Expr`-type errors at every call site, so use the
 // T2 type directly.
+// The `expr` handed to `parse_count` / `parse_append` may be either the
+// classic `EObject` tree (yarn/pnpm import, cached workspace package.json)
+// or the simple `EObjectSimple` document produced by
+// `parse_package_json_utf8_simple`; both are handled below.
 use crate::bun_json::{E, Expr, ExprData};
+use crate::lockfile_real::package::value_loc_of;
 use bun_ast::{Log, Source};
 use bun_semver::String;
 use bun_semver::string::{ArrayHashContext, Buf as StringBuf, Builder as StringBuilderNs};
@@ -114,52 +119,81 @@ impl CatalogMap {
     // call sites avoid the `&mut self` vs `&mut Lockfile` self-alias.
     pub fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
         if let Some(default_catalog) = expr.get(b"catalog") {
-            if let ExprData::EObject(obj) = &default_catalog.data {
-                for item in obj.properties.slice() {
-                    let key = item.key.as_ref().expect("infallible: prop has key");
-                    builder.count(
-                        key.as_utf8_string_literal()
-                            .expect("infallible: is_string checked"),
-                    );
-                    if let ExprData::EString(version_str) = &item
-                        .value
-                        .as_ref()
-                        .expect("infallible: prop has value")
-                        .data
-                    {
-                        builder.count(&version_str.data);
+            match &default_catalog.data {
+                ExprData::EObject(obj) => {
+                    for item in obj.properties.slice() {
+                        let key = item.key.as_ref().expect("infallible: prop has key");
+                        builder.count(
+                            key.as_utf8_string_literal()
+                                .expect("infallible: is_string checked"),
+                        );
+                        if let ExprData::EString(version_str) = &item
+                            .value
+                            .as_ref()
+                            .expect("infallible: prop has value")
+                            .data
+                        {
+                            builder.count(&version_str.data);
+                        }
                     }
                 }
+                ExprData::EObjectSimple(obj) => {
+                    Self::count_catalog_group_simple(obj.get(), builder);
+                }
+                _ => {}
             }
         }
 
         if let Some(catalogs) = expr.get(b"catalogs") {
-            if let ExprData::EObject(catalog_names) = &catalogs.data {
-                for catalog in catalog_names.properties.slice() {
-                    let catalog_key = catalog.key.as_ref().unwrap();
-                    builder.count(
-                        catalog_key
-                            .as_utf8_string_literal()
-                            .expect("infallible: is_string checked"),
-                    );
-                    if let ExprData::EObject(obj) = &catalog.value.as_ref().unwrap().data {
-                        for item in obj.properties.slice() {
-                            let key = item.key.as_ref().expect("infallible: prop has key");
-                            builder.count(
-                                key.as_utf8_string_literal()
-                                    .expect("infallible: is_string checked"),
-                            );
-                            if let ExprData::EString(version_str) = &item
-                                .value
-                                .as_ref()
-                                .expect("infallible: prop has value")
-                                .data
-                            {
-                                builder.count(&version_str.data);
+            match &catalogs.data {
+                ExprData::EObject(catalog_names) => {
+                    for catalog in catalog_names.properties.slice() {
+                        let catalog_key = catalog.key.as_ref().unwrap();
+                        builder.count(
+                            catalog_key
+                                .as_utf8_string_literal()
+                                .expect("infallible: is_string checked"),
+                        );
+                        if let ExprData::EObject(obj) = &catalog.value.as_ref().unwrap().data {
+                            for item in obj.properties.slice() {
+                                let key = item.key.as_ref().expect("infallible: prop has key");
+                                builder.count(
+                                    key.as_utf8_string_literal()
+                                        .expect("infallible: is_string checked"),
+                                );
+                                if let ExprData::EString(version_str) = &item
+                                    .value
+                                    .as_ref()
+                                    .expect("infallible: prop has value")
+                                    .data
+                                {
+                                    builder.count(&version_str.data);
+                                }
                             }
                         }
                     }
                 }
+                ExprData::EObjectSimple(catalog_names) => {
+                    for catalog in catalog_names.get().properties() {
+                        builder.count(catalog.key.slice());
+                        if let Some(obj) = catalog.value.as_object() {
+                            Self::count_catalog_group_simple(obj, builder);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Count one simple-representation catalog group's `"name": "version"`
+    /// rows into `builder` (the `"catalog"` object or one entry of
+    /// `"catalogs"`).
+    fn count_catalog_group_simple(obj: &E::ObjectSimple, builder: &mut StringBuilder) {
+        for row in obj.properties() {
+            builder.count(row.key.slice());
+            if let Some(version) = row.value.as_str() {
+                builder.count(version);
             }
         }
     }
@@ -179,6 +213,9 @@ impl CatalogMap {
         if let Some(default_catalog) = expr.get(b"catalog") {
             let group = self.get_or_put_group(builder.string_bytes.as_slice(), String::EMPTY)?;
             found_any = true;
+            if let ExprData::EObjectSimple(obj) = &default_catalog.data {
+                Self::parse_append_group_simple(group, pm, log, source, obj.get(), builder)?;
+            }
             if let ExprData::EObject(obj) = &default_catalog.data {
                 for item in obj.properties.slice() {
                     let key = item.key.as_ref().expect("infallible: prop has key");
@@ -230,6 +267,16 @@ impl CatalogMap {
 
         if let Some(catalogs) = expr.get(b"catalogs") {
             found_any = true;
+            if let ExprData::EObjectSimple(catalog_names) = &catalogs.data {
+                for catalog in catalog_names.get().properties() {
+                    let catalog_name = builder.append::<String>(catalog.key.slice());
+                    let group =
+                        self.get_or_put_group(builder.string_bytes.as_slice(), catalog_name)?;
+                    if let Some(obj) = catalog.value.as_object() {
+                        Self::parse_append_group_simple(group, pm, log, source, obj, builder)?;
+                    }
+                }
+            }
             if let ExprData::EObject(catalog_names) = &catalogs.data {
                 for catalog in catalog_names.properties.slice() {
                     let catalog_key = catalog.key.as_ref().unwrap();
@@ -295,6 +342,65 @@ impl CatalogMap {
         }
 
         Ok(found_any)
+    }
+
+    /// Append one simple-representation catalog group's `"name": "version"`
+    /// rows into `group` (the `"catalog"` object or one entry of
+    /// `"catalogs"`). Per-value locations are recovered from the source on
+    /// the (cold) diagnostic paths.
+    fn parse_append_group_simple(
+        group: &mut Map,
+        pm: &mut PackageManager,
+        log: &mut Log,
+        source: &Source,
+        obj: &E::ObjectSimple,
+        builder: &mut StringBuilder,
+    ) -> Result<(), AllocError> {
+        for row in obj.properties() {
+            let dep_name_str = row.key.slice();
+            let dep_name_hash = StringBuilderNs::string_hash(dep_name_str);
+            let dep_name = builder.append_with_hash::<String>(dep_name_str, dep_name_hash);
+
+            let Some(version_str) = row.value.as_str() else {
+                continue;
+            };
+            let version_literal = builder.append::<String>(version_str);
+            let buf = builder.string_bytes.as_slice();
+            let version_sliced = version_literal.sliced(buf);
+
+            let Some(version) = Dependency::parse(
+                dep_name,
+                dep_name_hash,
+                version_sliced.slice,
+                &version_sliced,
+                &mut *log,
+                Some(&mut *pm),
+            ) else {
+                log.add_error(
+                    Some(source),
+                    value_loc_of(source, row.key_loc),
+                    b"Invalid dependency version",
+                );
+                continue;
+            };
+
+            let buf = builder.string_bytes.as_slice();
+            let entry = group.get_or_put_adapted(&dep_name, &ctx(buf))?;
+
+            if entry.found_existing {
+                log.add_error(Some(source), row.key_loc, b"Duplicate catalog");
+                continue;
+            }
+
+            *entry.key_ptr = dep_name;
+            *entry.value_ptr = Dependency {
+                name: dep_name,
+                name_hash: dep_name_hash,
+                version,
+                ..Dependency::default()
+            };
+        }
+        Ok(())
     }
 
     // The only lockfile field this body touches is `lockfile.catalogs`, and

@@ -1,7 +1,6 @@
 //! `bun x` / `bunx`: resolves a package's executable — installing it into a
 //! shared cache when not already present — and execs it with the given args.
 
-use bun_collections::VecExt;
 use std::io::Write as _;
 
 use bstr::BStr;
@@ -301,24 +300,23 @@ impl BunxCommand {
         bun_ast::initialize_store();
 
         let log = transpiler.log_mut();
-        // The JSON parser takes a bump arena; everything we keep is cloned
-        // into `Box<[u8]>` before returning, so a local arena suffices.
+        // Everything we keep is cloned into `Box<[u8]>` before returning, so
+        // the parsed document (and the `package_json_bytes` it borrows) only
+        // needs to live to the end of this function.
         let bump = bun_alloc::Arena::new();
-        let expr = json::parse_package_json_utf8(&source, log, &bump)?;
+        let parsed = json::parse_package_json_utf8_simple(&source, log)?;
+        let expr = parsed.root;
 
         // choose the first package that fits
         if let Some(bin_expr) = expr.get(b"bin") {
             match &bin_expr.data {
-                ExprData::EObject(object) => {
-                    for prop in object.properties.slice() {
-                        if let Some(key) = &prop.key {
-                            if let Some(bin_name) = key.as_string(&bump) {
-                                if !Self::is_safe_bin_name(bin_name) {
-                                    continue;
-                                }
-                                return Ok(Box::<[u8]>::from(bin_name));
-                            }
+                ExprData::EObjectSimple(object) => {
+                    for prop in object.get().properties() {
+                        let bin_name = prop.key.slice();
+                        if !Self::is_safe_bin_name(bin_name) {
+                            continue;
                         }
+                        return Ok(Box::<[u8]>::from(bin_name));
                     }
                 }
                 ExprData::EString(_) => {

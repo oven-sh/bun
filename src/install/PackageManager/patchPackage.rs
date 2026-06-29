@@ -164,9 +164,10 @@ pub fn do_patch_commit(
 
                 initialize_store();
                 let log = manager.log_mut();
-                let bump = bun_alloc::Arena::new();
-                let json = match JSON::parse_package_json_utf8(&package_json_source, log, &bump) {
-                    Ok(j) => j,
+                // `parsed` owns the tape `json` (and the `version` slice)
+                // borrow; keep it alive across `parse_with_json`.
+                let parsed = match JSON::parse_package_json_utf8_simple(&package_json_source, log) {
+                    Ok(p) => p,
                     Err(err) => {
                         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                         bun_core::pretty_errorln!(
@@ -177,6 +178,7 @@ pub fn do_patch_commit(
                         Global::crash();
                     }
                 };
+                let json = parsed.root;
 
                 let version: &[u8] = 'version: {
                     if let Some(v) = json.get(b"version") {
@@ -775,9 +777,10 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
 
                 initialize_store();
                 let log = manager.log_mut();
-                let bump = bun_alloc::Arena::new();
-                let json = match JSON::parse_package_json_utf8(&package_json_source, log, &bump) {
-                    Ok(j) => j,
+                // `parsed` owns the tape `json` (and the `version` slice)
+                // borrow; keep it alive across `parse_with_json`.
+                let parsed = match JSON::parse_package_json_utf8_simple(&package_json_source, log) {
+                    Ok(p) => p,
                     Err(err) => {
                         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                         bun_core::pretty_errorln!(
@@ -788,6 +791,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
                         Global::crash();
                     }
                 };
+                let json = parsed.root;
 
                 let version: &[u8] = 'version: {
                     if let Some(v) = json.get(b"version") {

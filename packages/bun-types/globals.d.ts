@@ -1857,13 +1857,14 @@ declare var Response: Bun.__internal.UseLibDomIfAvailable<
   {
     new (body?: Bun.BodyInit | null | undefined, init?: ResponseInit | undefined): Response;
     /**
-     * Create a new {@link Response} with a JSON body
+     * Create a new {@link Response} with a JSON body.
      *
-     * @param body - The body of the response
-     * @param options - options to pass to the response
+     * Syntactic sugar for:
+     * ```js
+     * new Response(JSON.stringify(body), {headers: { "Content-Type": "application/json" }})
+     * ```
      *
      * @example
-     *
      * ```ts
      * const response = Response.json({hi: "there"});
      * console.assert(
@@ -1871,34 +1872,31 @@ declare var Response: Bun.__internal.UseLibDomIfAvailable<
      *   `{"hi":"there"}`
      * );
      * ```
-     * -------
      *
-     * This is syntactic sugar for:
-     * ```js
-     *  new Response(JSON.stringify(body), {headers: { "Content-Type": "application/json" }})
-     * ```
+     * @param body Value to serialize with `JSON.stringify`
+     * @param init Options for the response
      * @link https://github.com/whatwg/fetch/issues/1389
      */
     json(body?: any, init?: ResponseInit | number): Response;
 
     /**
-     * Create a new {@link Response} that redirects to url
+     * Create a new {@link Response} that redirects to `url`.
      *
-     * @param url - the URL to redirect to
-     * @param status - the HTTP status code to use for the redirect
+     * @param url The URL to redirect to
+     * @param status The HTTP status code to use for the redirect
      */
     redirect(url: string, status?: number): Response;
 
     /**
-     * Create a new {@link Response} that redirects to url
+     * Create a new {@link Response} that redirects to `url`.
      *
-     * @param url - the URL to redirect to
-     * @param options - options to pass to the response
+     * @param url The URL to redirect to
+     * @param init Options for the response
      */
     redirect(url: string, init?: ResponseInit): Response;
 
     /**
-     * Create a new {@link Response} that has a network error
+     * Create a new {@link Response} that represents a network error.
      */
     error(): Response;
   }
@@ -1918,11 +1916,10 @@ interface BunFetchRequestInitTLS extends Bun.TLSOptions {
 }
 
 /**
- * BunFetchRequestInit represents additional options that Bun supports in `fetch()` only.
+ * Extra options Bun supports in `fetch()`.
  *
- * Bun extends the `fetch` API with some additional options, except
- * this interface is not quite a `RequestInit`, because they won't work
- * if passed to `new Request()`. This is why it's a separate type.
+ * These extensions are not part of `RequestInit` because they don't work
+ * when passed to `new Request()`.
  */
 interface BunFetchRequestInit extends RequestInit {
   /**
@@ -1931,18 +1928,21 @@ interface BunFetchRequestInit extends RequestInit {
   tls?: BunFetchRequestInitTLS;
 
   /**
-   * Log the raw HTTP request & response to stdout. This API may be
-   * removed in a future version of Bun without notice.
-   * This is a custom property that is not part of the Fetch API specification.
-   * It exists mostly as a debugging tool
+   * Log the raw HTTP request and response to stdout, as a debugging aid.
+   * This API may be removed in a future version of Bun without notice.
+   * Not part of the Fetch API specification.
    */
   verbose?: boolean;
 
   /**
-   * Override http_proxy or HTTPS_PROXY
-   * This is a custom property that is not part of the Fetch API specification.
+   * The proxy to send the request through, overriding the `http_proxy` and
+   * `HTTPS_PROXY` environment variables. Accepts a URL string, or an object
+   * with `url` and optional `headers`.
    *
-   * Can be a string URL or an object with `url` and optional `headers`.
+   * If a `Proxy-Authorization` header is provided in `proxy.headers`, it takes
+   * precedence over credentials parsed from the proxy URL.
+   *
+   * Not part of the Fetch API specification.
    *
    * @example
    * ```js
@@ -1962,9 +1962,6 @@ interface BunFetchRequestInit extends RequestInit {
    *  }
    * });
    * ```
-   *
-   * If a `Proxy-Authorization` header is provided in `proxy.headers`, it takes
-   * precedence over credentials parsed from the proxy URL.
    */
   proxy?:
     | string
@@ -2015,18 +2012,17 @@ interface BunFetchRequestInit extends RequestInit {
    * `BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT` if set. Omit to use the
    * default (h2 is offered iff the flag is on).
    *
-   * Requires `https`. This is a custom property that is not part of the
-   * Fetch API specification.
+   * Requires `https`. Not part of the Fetch API specification.
    * @experimental
    */
   protocol?: "http2" | "http1.1" | "h2" | "h1";
 
   /**
-   * Control automatic decompression of the response body.
-   * When set to `false`, the response body will not be automatically decompressed,
-   * and the `Content-Encoding` header will be preserved. This can improve performance
-   * when you need to handle compressed data manually or forward it as-is.
-   * This is a custom property that is not part of the Fetch API specification.
+   * Control automatic decompression of the response body. When `false`, the
+   * body is not decompressed and the `Content-Encoding` header is preserved.
+   * This can improve performance when you handle compressed data yourself or
+   * forward it as-is.
+   * Not part of the Fetch API specification.
    *
    * @default true
    * @example
@@ -2051,7 +2047,7 @@ interface BunFetchRequestInit extends RequestInit {
    * Only buffered bodies (string, `ArrayBuffer`/`TypedArray`, `Blob`) are
    * compressed; `ReadableStream` bodies are sent as-is. If the request
    * already has a `Content-Encoding` header, the body is left unchanged.
-   * This is a custom property that is not part of the Fetch API specification.
+   * Not part of the Fetch API specification.
    *
    * @default false
    * @example
@@ -2075,7 +2071,7 @@ interface BunFetchRequestInit extends RequestInit {
    * The maximum number of redirects to follow when `redirect` is `"follow"`.
    * If the response chain redirects more than this many times, the request
    * rejects with a "too many redirects" error.
-   * This is a custom property that is not part of the Fetch API specification.
+   * Not part of the Fetch API specification.
    *
    * @default 126
    * @example
@@ -2087,12 +2083,12 @@ interface BunFetchRequestInit extends RequestInit {
 }
 
 /**
- * Send a HTTP(s) request
+ * Send an HTTP(S) request.
  *
- * @param input URL string or Request object
- * @param init A structured value that contains settings for the fetch() request.
+ * @param input URL string, {@link URL}, or {@link Request} object
+ * @param init Options for the request
  *
- * @returns A promise that resolves to {@link Response} object.
+ * @returns A promise that resolves to the {@link Response}
  */
 declare function fetch(input: string | URL | Request, init?: BunFetchRequestInit): Promise<Response>;
 
@@ -2103,23 +2099,24 @@ declare function fetch(input: string | URL | Request, init?: BunFetchRequestInit
  */
 declare namespace fetch {
   /**
-   * Preconnect to a URL. This can be used to improve performance by pre-resolving the DNS and establishing a TCP connection before the request is made.
+   * Resolve a URL's DNS and establish a TCP connection before a request is
+   * made, to speed up the eventual `fetch`.
    *
-   * This is a custom property that is not part of the Fetch API specification.
+   * Not part of the Fetch API specification.
    *
-   * @param url - The URL to preconnect to
-   * @param options - Options for the preconnect
+   * @param url The URL to preconnect to
+   * @param options Which stages of the connection to set up
    */
   export function preconnect(
     url: string | URL,
     options?: {
-      /** Preconnect to the DNS of the URL */
+      /** Resolve the URL's DNS */
       dns?: boolean;
-      /** Preconnect to the TCP connection of the URL */
+      /** Open the TCP connection */
       tcp?: boolean;
-      /** Preconnect to the HTTP connection of the URL */
+      /** Establish the HTTP connection */
       http?: boolean;
-      /** Preconnect to the HTTPS connection of the URL */
+      /** Establish the HTTPS connection */
       https?: boolean;
     },
   ): void;

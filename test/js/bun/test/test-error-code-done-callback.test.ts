@@ -140,10 +140,8 @@ test("verify we print error messages passed to done callbacks", () => {
 });
 
 // A `done(error)` in a lifecycle hook must fail the hook's dependent tests,
-// exactly like a synchronous throw in the same hook does. It used to be
-// surfaced as an "Unhandled error between tests" while every dependent test
-// was still counted as a pass. `node:test` routes every hook through the
-// done-callback form, so that module's `before()` was affected too.
+// exactly like a synchronous throw in the same hook does. `node:test` routes
+// every hook through the done-callback form.
 describe.concurrent("done(error) in a lifecycle hook", () => {
   // One describe block containing 2 tests; expected counts match the
   // synchronous-throw variant of each hook.
@@ -184,16 +182,12 @@ describe.concurrent("done(error) in a lifecycle hook", () => {
   );
 });
 
-// A test body that throws after handing `done` away leaves an orphaned done
-// callback: the throw returns from the runner before its ref is attached.
-// When that done(err) fires later, it must stay an "Unhandled error between
-// tests" and never be attributed to whatever entry happens to be active then.
-// A macrotask orphan fires from a later event-loop turn; a microtask orphan
-// is drained inside the NEXT entry's callback (the throw skips the thrower's
-// own microtask drain), so both schedulings must be covered.
+// A done callback orphaned by its body throwing must stay an "Unhandled error
+// between tests" and never be blamed on whatever entry is active when it fires.
+// A macrotask fires on a later turn; a microtask drains inside the next entry.
 describe.concurrent("a late done(err) from a test whose body threw", () => {
   test.each([
-    ["a setTimeout", "setTimeout(fire, 5)"],
+    ["setImmediate", "setImmediate(fire)"],
     ["a microtask", "Promise.resolve().then(fire)"],
   ])("scheduled via %s does not fail an unrelated test", async (_name, schedule) => {
     using dir = tempDir("orphaned-done", {

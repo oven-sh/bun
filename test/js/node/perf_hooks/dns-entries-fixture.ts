@@ -1,8 +1,8 @@
 // Fixture for perf_hooks.test.ts ("node:dns operations are observable ...").
-// A local UDP DNS server answers every A/TXT query so the 'dns' performance
-// entries asserted by the parent test are produced without a real resolver.
-// Runs in its own process because it repoints the default resolver at the
-// local server with dns.setServers().
+// A local UDP DNS server answers every A/TXT/PTR query so the 'dns'
+// performance entries asserted by the parent test are produced without a real
+// resolver. Runs in its own process because it repoints the default resolver
+// at the local server with dns.setServers().
 import dgram from "node:dgram";
 import dns from "node:dns";
 import { once } from "node:events";
@@ -18,9 +18,14 @@ function readName(message: Buffer, offset: number) {
 }
 
 // One resource record per supported QTYPE, each using the 0xc00c compression
-// pointer back to the question name at offset 12.
+// pointer back to the question name at offset 12. The PTR target is
+// "host.test"; lookupService resolves a reverse name through it.
 const A_RECORD = Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 127, 0, 0, 1]);
 const TXT_RECORD = Buffer.from([0xc0, 0x0c, 0, 16, 0, 1, 0, 0, 0, 60, 0, 6, 5, 0x68, 0x65, 0x6c, 0x6c, 0x6f]);
+const PTR_RECORD = Buffer.from([
+  ...[0xc0, 0x0c, 0, 12, 0, 1, 0, 0, 0, 60, 0, 11],
+  ...[4, 0x68, 0x6f, 0x73, 0x74, 4, 0x74, 0x65, 0x73, 0x74, 0],
+]);
 
 // Echo the question and append one record of the requested type. Names under
 // "nx." are answered with RCODE=3 (NXDOMAIN) so the query fails.
@@ -28,7 +33,15 @@ function respond(query: Buffer): Buffer {
   const { name, end } = readName(query, 12);
   const qtype = query.readUInt16BE(end);
   const notFound = name.startsWith("nx.");
-  const answer = notFound ? undefined : qtype === 1 ? A_RECORD : qtype === 16 ? TXT_RECORD : undefined;
+  const answer = notFound
+    ? undefined
+    : qtype === 1
+      ? A_RECORD
+      : qtype === 16
+        ? TXT_RECORD
+        : qtype === 12
+          ? PTR_RECORD
+          : undefined;
   const header = Buffer.alloc(12);
   header[0] = query[0];
   header[1] = query[1];
@@ -58,10 +71,13 @@ observer.observe({ entryTypes: ["dns", "resource"] });
 await new Promise((resolve, reject) => dns.lookup("localhost", error => (error ? reject(error) : resolve(undefined))));
 await dns.promises.lookup("localhost", { order: "ipv6first" });
 await dns.promises.lookup("localhost", { all: true });
+// 192.0.2.1 (TEST-NET-1) is in nobody's hosts file, so getnameinfo reverses
+// it with a PTR query to the local server on every platform. (127.0.0.1 is
+// in Linux's hosts file but not Windows's, so its reverse is host-dependent.)
 await new Promise((resolve, reject) =>
-  dns.lookupService("127.0.0.1", 80, error => (error ? reject(error) : resolve(undefined))),
+  dns.lookupService("192.0.2.1", 80, error => (error ? reject(error) : resolve(undefined))),
 );
-await dns.promises.lookupService("127.0.0.1", 80);
+await dns.promises.lookupService("192.0.2.1", 80);
 await new Promise((resolve, reject) => dns.resolve4("a.test", error => (error ? reject(error) : resolve(undefined))));
 await dns.promises.resolve4("a.test");
 await dns.promises.resolve4("a.test", { ttl: true });

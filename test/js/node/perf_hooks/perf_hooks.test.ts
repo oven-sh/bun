@@ -95,10 +95,12 @@ test("node:dns operations are observable as 'dns' performance entries", async ()
     addresses: expect.any(Array),
   });
   expect(entries[2].detail.addresses[0]).toEqual({ address: expect.any(String), family: expect.any(Number) });
+  // The fixture's DNS server answers the PTR query for the reversed address
+  // with "host.test".
   expect(entries[3].detail).toEqual({
-    host: "127.0.0.1",
+    host: "192.0.2.1",
     port: 80,
-    hostname: expect.any(String),
+    hostname: "host.test",
     service: expect.any(String),
   });
   expect(entries[5].detail).toEqual({ host: "a.test", ttl: false, result: ["127.0.0.1"] });

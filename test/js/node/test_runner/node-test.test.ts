@@ -75,6 +75,15 @@ describe("node:test only", () => {
     expect(stderr).toContain("Ran 1 test across 1 file");
     expect(exitCode).toBe(0);
   });
+
+  test.concurrent("describe honors the { skip } and { todo } options", async () => {
+    const { exitCode, stderr } = await runTests(["09-describe-options.js"]);
+    expect(stderr).toContain(" 1 pass");
+    expect(stderr).toContain(" 1 skip");
+    expect(stderr).toContain(" 1 todo");
+    expect(stderr).toContain(" 0 fail");
+    expect(exitCode).toBe(0);
+  });
 });
 
 async function runTests(filenames: string[], flags: string[] = [], env: Record<string, string | undefined> = bunEnv) {

@@ -549,7 +549,11 @@ function addTest(name: string, fn: (done: (error?: unknown) => void) => void, op
 
 function addDescribe(name: string, fn: () => unknown, options: TestOptions) {
   const { describe } = bunTest();
-  if (options.only && kOnlyEnabled) {
+  if (options.todo) {
+    describe.todo(name, fn);
+  } else if (options.skip) {
+    describe.skip(name, fn);
+  } else if (options.only && kOnlyEnabled) {
     describe.only(name, fn);
   } else {
     describe(name, fn);

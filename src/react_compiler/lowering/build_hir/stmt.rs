@@ -49,14 +49,18 @@ pub(super) fn lower_block_statement_with_scope(
     lower_block_statement_inner(builder, body)
 }
 
-// Upstream's hoisting pass uses Babel `ScopeInfo`'s per-reference Locs to
-// detect a binding referenced textually before its declaration. Bun's parser
-// does not retain per-reference Locs, so the equivalent ordering check is done
-// by statement index: a let/const binding declared at body[j] that is
-// referenced anywhere inside body[i] for some i < j (or inside its own
-// initializer when i == j) gets a `DeclareContext` at block start so EnterSSA
-// sees a definition before the use. The scan is bounded to this block's direct
-// statements; blocks with no let/const fall straight through to lowering.
+// Upstream's BlockStatement hoisting only emits a `DeclareContext` for a
+// let/const binding referenced from inside a nested function (`fnDepth > 0`)
+// or for a function declaration referenced anywhere (`binding.kind ===
+// 'hoisted'`); a plain forward reference to a let/const is left for EnterSSA
+// to reject. The `DeclareContext` goes immediately before the first
+// referencing statement so EnterSSA sees a definition before the use. Bun
+// mirrors upstream's in-order statement walk by index: a binding declared at
+// body[j] is checked against body[i] for i < j, and against only this
+// statement's own initializer expressions when i == j (the binding pattern
+// itself is the definition, not a reference). The scan is bounded to this
+// block's direct statements; blocks with no let/const or function
+// declarations fall straight through to lowering.
 fn lower_block_statement_inner(
     builder: &mut HirBuilder,
     body: &[Stmt],

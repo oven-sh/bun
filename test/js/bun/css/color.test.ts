@@ -222,6 +222,11 @@ describe("number inputs are opaque", () => {
     expect(color(0xffff0000, "{rgba}")).toEqual({ r: 255, g: 0, b: 0, a: 1 });
     expect(color(0xffffffff, "{rgba}")).toEqual({ r: 255, g: 255, b: 255, a: 1 });
   });
+
+  test("out-of-range values use their low 32 bits", () => {
+    expect(color(-1, "{rgba}")).toEqual({ r: 255, g: 255, b: 255, a: 1 });
+    expect(color(0x1_00ff_0000, "{rgba}")).toEqual({ r: 255, g: 0, b: 0, a: 1 });
+  });
 });
 
 test("0 args", () => {

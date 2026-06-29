@@ -150,11 +150,22 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
                 rescheduleCtx = s.ctxId;
                 break;
             }
+            // QueuedOne for this message is released after dispatch, below.
             message = s.inbox.takeFirst();
-            s.state.store(st - QueuedOne, std::memory_order_release);
         }
 
         port->dispatchOneMessage(*context, WTF::move(*message));
+
+        // Decrement only after dispatch: once the peer is closed this count is
+        // all that keeps hasPendingActivity() true, so a GC during the
+        // deserialize would collect the wrapper + listeners and drop the message.
+        {
+            Locker locker { s.lock };
+            uint64_t st = s.state.load(std::memory_order_relaxed);
+            // close() from inside the handler already reset the state word.
+            if (queuedCount(st) > 0)
+                s.state.store(st - QueuedOne, std::memory_order_release);
+        }
 
         // Node's MakeCallback wraps each emit in an InternalCallbackScope,
         // which drains nextTick + microtasks on exit; match that so

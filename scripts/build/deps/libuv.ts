@@ -13,7 +13,7 @@ import type { Dependency } from "../source.ts";
 // Tip of oven-sh/libuv's `bun` branch — upstream f3ce527e + the win-pipe
 // CancelIoEx race fix + ConPTY support in uv_spawn. To bump upstream, rebase
 // the `bun` branch and update this SHA.
-const LIBUV_COMMIT = "c5139a516b15de2ac824c765ab395ccba6995722";
+const LIBUV_COMMIT = "6256494e09c02c9e214efab0b93066ab715938f9";
 
 // prettier-ignore
 const SHARED = [

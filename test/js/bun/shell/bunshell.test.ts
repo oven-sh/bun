@@ -1400,12 +1400,12 @@ describe("deno_task", () => {
         .stdout("0\n")
         .runAsTest("long pipeline");
 
-      // Every `cat` here shares the subshell's stdin *IOReader. When EOF fires, each
+      // Every `cat` here shares the subshell's stdin Arc<IOReader>. When EOF fires, each
       // reader's done-handler starts the next `cat` via the Yield trampoline, which calls
-      // addReader()+start() on the same already-done IOReader. drainReaders() must pop
-      // each entry before dispatching (so the SmolList can mutate safely and addReader's
-      // dedup never matches a freed pointer) and start() must drain late-registered
-      // readers rather than restarting the finished pipe.
+      // add_reader()+start() on the same already-done IOReader. drain_readers() must pop
+      // each entry before dispatching (so the readers Vec can mutate safely and add_reader's
+      // dedup never matches a freed-then-reused NodeId) and start() must drain
+      // late-registered readers rather than restarting the finished pipe.
       TestBuilder.command`echo hi | (cat && cat && cat && cat && cat && cat && cat && cat && cat && cat && cat && cat)`
         .stdout("hi\n")
         .runAsTest("many readers on shared stdin IOReader");

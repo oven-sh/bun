@@ -206,3 +206,74 @@ describe("unref()", () => {
     expect([path.join(import.meta.dir, "dgram-unref-hang-fixture.ts")]).toRun();
   });
 });
+
+describe("after close()", () => {
+  // Node throws ERR_SOCKET_DGRAM_NOT_RUNNING from these methods once the
+  // socket is closed. They must not surface an internal TypeError instead.
+  async function boundThenClosed() {
+    const socket = createSocket("udp4");
+    const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+    socket.bind(0, onListening);
+    await listening;
+    const port = socket.address().port;
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    socket.close(onClose);
+    await closed;
+    return { socket, port };
+  }
+
+  test("address() throws ERR_SOCKET_DGRAM_NOT_RUNNING", async () => {
+    const { socket } = await boundThenClosed();
+    let err: any;
+    try {
+      socket.address();
+    } catch (e) {
+      err = e;
+    }
+    expect({ name: err?.name, code: err?.code }).toEqual({ name: "Error", code: "ERR_SOCKET_DGRAM_NOT_RUNNING" });
+  });
+
+  test("remoteAddress() throws ERR_SOCKET_DGRAM_NOT_RUNNING", async () => {
+    const { socket } = await boundThenClosed();
+    expect(() => socket.remoteAddress()).toThrowWithCode(Error, "ERR_SOCKET_DGRAM_NOT_RUNNING");
+  });
+
+  test("send() throws ERR_SOCKET_DGRAM_NOT_RUNNING", async () => {
+    const { socket, port } = await boundThenClosed();
+    expect(() => socket.send(Buffer.from("hello"), port, "127.0.0.1")).toThrowWithCode(
+      Error,
+      "ERR_SOCKET_DGRAM_NOT_RUNNING",
+    );
+  });
+
+  test("send() with a callback throws ERR_SOCKET_DGRAM_NOT_RUNNING synchronously", async () => {
+    const { socket, port } = await boundThenClosed();
+    expect(() => socket.send(Buffer.from("hello"), port, "127.0.0.1", () => {})).toThrowWithCode(
+      Error,
+      "ERR_SOCKET_DGRAM_NOT_RUNNING",
+    );
+  });
+
+  test("close() throws ERR_SOCKET_DGRAM_NOT_RUNNING", async () => {
+    const { socket } = await boundThenClosed();
+    expect(() => socket.close()).toThrowWithCode(Error, "ERR_SOCKET_DGRAM_NOT_RUNNING");
+  });
+
+  test("bind() throws ERR_SOCKET_DGRAM_NOT_RUNNING", async () => {
+    const { socket } = await boundThenClosed();
+    expect(() => socket.bind(0)).toThrowWithCode(Error, "ERR_SOCKET_DGRAM_NOT_RUNNING");
+  });
+
+  test("close() of a never-bound socket can only be called once", async () => {
+    const socket = createSocket("udp4");
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    socket.close(onClose);
+    await closed;
+    expect(() => socket.close()).toThrowWithCode(Error, "ERR_SOCKET_DGRAM_NOT_RUNNING");
+  });
+
+  test("Symbol.asyncDispose resolves when the socket is already closed", async () => {
+    const { socket } = await boundThenClosed();
+    expect(await socket[Symbol.asyncDispose]()).toBeUndefined();
+  });
+});

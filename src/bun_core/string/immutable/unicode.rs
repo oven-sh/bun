@@ -719,10 +719,23 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
                 break 'output Vec::new();
             }
 
-            let mut out = vec![0u16; out_length];
-
-            let res = simdutf::convert::utf8::to::utf16::with_errors::le(bytes, &mut out);
-            if res.status == simdutf::Status::SUCCESS {
+            let mut out: Vec<u16> = Vec::new();
+            out.try_reserve_exact(out_length)
+                .map_err(|_| ToUTF16Error::OutOfMemory)?;
+            // SAFETY: `out` has >= `out_length` u16 of capacity (just reserved).
+            // simdutf never reads the output buffer and writes at most
+            // `out_length` code units, so passing uninitialised storage is
+            // sound; the length is only ever set to what simdutf has written.
+            let res = unsafe {
+                simdutf::simdutf__convert_utf8_to_utf16le_with_errors(
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    out.as_mut_ptr(),
+                )
+            };
+            if res.is_successful() {
+                // SAFETY: on success simdutf initialised exactly `out_length` units.
+                unsafe { out.set_len(out_length) };
                 crate::scoped_log!(
                     strings,
                     "toUTF16 {} UTF8 -> {} UTF16",
@@ -732,8 +745,11 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
                 return Ok(Some((out, [0; 3], 0)));
             }
 
-            // `out` was `vec![0u16; out_length]`; `first_non_ascii_idx <= out.len()`.
-            out.truncate(first_non_ascii_idx);
+            // SAFETY: simdutf converts sequentially and the first error is at or
+            // after the first non-ASCII byte, so the leading `first_non_ascii_idx`
+            // code units (one per ASCII prefix byte, `<= out_length`) are
+            // initialised; keep exactly those.
+            unsafe { out.set_len(first_non_ascii_idx) };
             break 'output out;
         }
     } else {
@@ -747,12 +763,17 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
         0
     };
     let mut remaining = &bytes[start..];
+    // The replacement decode emits at most one code unit per consumed byte, so
+    // `remaining.len()` bounds the tail's growth (the bound `to_utf16_alloc`'s
+    // slow path reserves too); the appends below stay inside this reservation.
+    output
+        .try_reserve(remaining.len())
+        .map_err(|_| ToUTF16Error::OutOfMemory)?;
 
     let mut non_ascii: Option<u32> = Some(0);
     while let Some(i) = non_ascii {
         let i = i as usize;
         {
-            output.reserve(i + 2); // +2 for UTF16 codepoint
             append_u8_as_u16(&mut output, &remaining[..i]);
             remaining = &remaining[i..];
         }
@@ -805,8 +826,6 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
     }
 
     if !remaining.is_empty() {
-        let need = output.len() + remaining.len();
-        output.reserve_exact(need.saturating_sub(output.len()));
         append_u8_as_u16(&mut output, remaining);
     }
 
@@ -999,15 +1018,13 @@ pub fn copy_utf16_into_utf8_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
                 written: 0,
             };
         }
+        // `trim::utf16` strips a single trailing lone high surrogate so simdutf's
+        // length estimate never sees invalid input. If that empties the input, it
+        // was exactly one unpaired surrogate: 3 bytes of U+FFFD, not nothing.
         let trimmed = simdutf::trim::utf16(utf16);
-        if trimmed.is_empty() {
-            return EncodeIntoResult {
-                read: 0,
-                written: 0,
-            };
-        }
-
-        let out_len = if buf.len() <= (trimmed.len() * 3 + 2) {
+        let out_len = if trimmed.is_empty() {
+            3
+        } else if buf.len() <= (trimmed.len() * 3 + 2) {
             simdutf::length::utf8::from::utf16::le(trimmed)
         } else {
             buf.len()

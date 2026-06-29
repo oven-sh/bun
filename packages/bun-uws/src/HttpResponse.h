@@ -60,6 +60,15 @@ public:
     void setTimeout(uint8_t seconds) {
         auto* data = getHttpResponseData();
         data->idleTimeout = seconds;
+
+        /* node:http receive deadlines (headersTimeout/requestTimeout) own the
+         * per-socket timer while a message is being received — Node enforces
+         * them independently of a user socket timeout. The new idle timeout
+         * takes over once the message has been fully received. */
+        if (data->hasNodeReceiveTimeouts && HttpContext<SSL>::tryArmNodeReceiveTimeout((us_socket_t *) this, data)) {
+            return;
+        }
+
         Super::timeout(data->idleTimeout);
     }
 

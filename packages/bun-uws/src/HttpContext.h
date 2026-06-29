@@ -128,11 +128,20 @@ private:
 public:
     /* See NodeReceivePhase in HttpParser.h. */
     static NodeReceivePhase nodeReceivePhase(HttpResponseData<SSL> *httpResponseData) {
-        if (httpResponseData->isConnectRequest) {
+        /* isConnectRequest is set as soon as the CONNECT request line parses;
+         * until its header section is complete (partial bytes buffered) it is
+         * still subject to headersTimeout. Only an established tunnel has no phase. */
+        if (httpResponseData->isConnectRequest && !httpResponseData->hasPartialRequest()) {
             return NodeReceivePhase::None;
         }
+        /* requestTimeout applies until the message is fully received, even if
+         * the handler already responded (Node keeps enforcing it on the
+         * outstanding body, then dumps it). */
+        if (httpResponseData->isReceivingHttpBody()) {
+            return NodeReceivePhase::Body;
+        }
         if (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) {
-            return httpResponseData->isReceivingHttpBody() ? NodeReceivePhase::Body : NodeReceivePhase::None;
+            return NodeReceivePhase::None;
         }
         return (httpResponseData->hasPartialRequest() || !httpResponseData->hasCompletedResponse)
             ? NodeReceivePhase::Headers : NodeReceivePhase::None;
@@ -596,8 +605,13 @@ private:
         }
         /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */
         if (httpResponseData->onWritable) {
-            /* We are now writable, so hang timeout again, the user does not have to do anything so we should hang until end or tryEnd rearms timeout */
-            us_socket_timeout(s, 0);
+            /* We are now writable, so hang timeout again, the user does not have to do anything so we should hang until end or tryEnd rearms timeout.
+             * node:http receive deadlines own the timer while a message is being
+             * received and tryArmNodeReceiveTimeout assumes it stays armed, so
+             * never suspend it here. */
+            if (!httpResponseData->hasNodeReceiveTimeouts || nodeReceivePhase(httpResponseData) == NodeReceivePhase::None) {
+                us_socket_timeout(s, 0);
+            }
 
             /* We expect the developer to return whether or not write was successful (true).
              * If write was never called, the developer should still return true so that we may drain. */
@@ -649,18 +663,16 @@ private:
         HttpResponseData<SSL> *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(asyncSocket->getAsyncSocketData());
         HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
 
-        /* node:http headersTimeout/requestTimeout expiry: like Node, emit
-         * 'clientError' (ERR_HTTP_REQUEST_TIMEOUT) and answer with a canned
-         * 408 when nothing was written for the current message, then close.
-         * No 'timeout' events are emitted for these deadlines. The write-state
-         * bits are only meaningful for the dispatched (Body phase) message; in
-         * the Headers phase they are leftovers from the previous keep-alive
-         * response. */
+        /* node:http headersTimeout/requestTimeout expiry: like Node, always
+         * emit 'clientError' (ERR_HTTP_REQUEST_TIMEOUT) and close; the canned
+         * 408 is only written when nothing was written for the current message
+         * (Node: socketOnError's bytesWritten check). No 'timeout' events are
+         * emitted for these deadlines. The write-state bits are only meaningful
+         * for the dispatched (Body phase) message; in the Headers phase they
+         * are leftovers from the previous keep-alive response. */
         auto nodePhase = httpResponseData->hasNodeReceiveTimeouts
             ? nodeReceivePhase(httpResponseData) : NodeReceivePhase::None;
-        if (nodePhase != NodeReceivePhase::None
-            && !(nodePhase == NodeReceivePhase::Body
-                && (httpResponseData->state & (HttpResponseData<SSL>::HTTP_STATUS_CALLED | HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_END_CALLED)))) {
+        if (nodePhase != NodeReceivePhase::None) {
             if (httpContextData->onClientError) {
                 httpContextData->onClientError(SSL, s, HTTP_PARSER_ERROR_REQUEST_TIMEOUT, nullptr, 0);
             }
@@ -668,7 +680,9 @@ private:
             if (us_socket_is_closed(s)) {
                 return s;
             }
-            if (!us_socket_is_shut_down(s)) {
+            bool wroteSomething = nodePhase == NodeReceivePhase::Body
+                && (httpResponseData->state & (HttpResponseData<SSL>::HTTP_STATUS_CALLED | HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_END_CALLED));
+            if (!wroteSomething && !us_socket_is_shut_down(s)) {
                 us_socket_write(s, httpErrorResponses[HTTP_ERROR_408_REQUEST_TIMEOUT].data(), (int) httpErrorResponses[HTTP_ERROR_408_REQUEST_TIMEOUT].length());
                 us_socket_shutdown(s);
             }

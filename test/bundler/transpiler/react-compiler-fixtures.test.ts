@@ -489,8 +489,9 @@ describe("react-compiler upstream fixtures", () => {
     // output is one memoized function; that count must match the non-minified
     // pass. A function that is memoized without minify but not with it has
     // silently lost memoization — exactly the failure mode `minify.syntax` is
-    // never allowed to introduce.
-    fn(skip ? `minify.syntax SKIP (${skip})` : todo ? `minify.syntax TODO (${todo})` : "minify.syntax", async () => {
+    // never allowed to introduce. The `skip` / `todo` reason is already in the
+    // sibling `compile` test's name, so only the skip label is repeated here.
+    fn(skip ? `minify.syntax SKIP (${skip})` : "minify.syntax", async () => {
       const plain = compiled.get(name);
       if (plain == null) throw new Error(`no Bun.build result recorded for fixture "${name}"`);
       // The non-minified build already errored: the `compile` test owns that

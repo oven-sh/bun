@@ -1,4 +1,3 @@
-use bun_collections::VecExt;
 use std::sync::LazyLock;
 
 use bun_collections::{ArrayHashMap, ArrayIdentityContextU64};
@@ -50,13 +49,10 @@ impl PostinstallOptimizer {
         value: PostinstallOptimizer,
     ) -> Result<bool, bun_alloc::AllocError> {
         // `expr.as_array()` returns `None` for both non-array AND empty
-        // array, so the `items.len == 0` check below is dead.
+        // arrays, so an explicit empty check is unnecessary.
         let Some(mut array) = expr.as_array() else {
             return Ok(false);
         };
-        if array.array.items.len_u32() == 0 {
-            return Ok(true);
-        }
 
         while let Some(entry) = array.next() {
             let js_ast::ExprData::EString(s) = &entry.data else {

@@ -836,7 +836,7 @@ impl PackageJSON {
 
                         if valid_count > 0 {
                             let mut extensions: Vec<&[u8]> = Vec::with_capacity(valid_count);
-                            array.index = 0;
+                            array.reset();
 
                             // We don't need to allocate the strings because we keep the package.json source string in memory
                             while let Some(expr) = array.next() {

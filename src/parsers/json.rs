@@ -1365,6 +1365,193 @@ mod tests {
         assert_eq!(canon(jsonc, Which::TsConfig), canon(jsonc, Which::Jsonc));
     }
 
+    /// The generic `Expr` accessors (`get`, `as_property`, `as_array`,
+    /// `as_string`, ...) must observe the same document through a
+    /// `Which::Simple` root — where leaf values are materialized out of the
+    /// row tape on demand — as through the full AST.
+    #[test]
+    fn simple_objects_expr_accessor_materialization() {
+        let doc: &[u8] = br#"{
+            "name": "pkg",
+            "version": "1.2.3",
+            "private": true,
+            "count": 42.5,
+            "nothing": null,
+            "deps": {"a": "^1", "b": "~2.0", "empty": ""},
+            "files": ["lib", 3, true, null, {"k": "v"}, ["nested"]],
+            "empty_obj": {},
+            "empty_arr": []
+        }"#;
+
+        fn describe(e: &Expr, bump: &Bump, out: &mut std::string::String) {
+            match &e.data {
+                Data::ENull(_) => out.push_str("null"),
+                Data::EBoolean(b) => out.push_str(if b.value { "true" } else { "false" }),
+                Data::ENumber(n) => {
+                    use std::fmt::Write;
+                    write!(out, "{}", n.value()).unwrap();
+                }
+                Data::EString(_) => {
+                    // Both string accessors must agree on a materialized leaf.
+                    assert_eq!(e.as_utf8_string_literal(), e.as_string(bump));
+                    out.push('"');
+                    out.push_str(&std::string::String::from_utf8_lossy(
+                        e.as_string(bump).unwrap(),
+                    ));
+                    out.push('"');
+                }
+                _ if e.is_object() => out.push_str("{object}"),
+                _ if e.is_array() => out.push_str("[array]"),
+                _ => panic!("unexpected node kind"),
+            }
+        }
+
+        // Walk the document through the generic accessors only and render
+        // everything they returned; both parse modes must agree byte-for-byte.
+        fn probe(doc: &[u8], which: Which) -> std::string::String {
+            use std::fmt::Write;
+            let p = run(doc, which);
+            let bump: &Bump = &p._bump;
+            let root = p.root.unwrap();
+            let mut out = std::string::String::new();
+
+            assert!(root.is_object());
+            assert!(!root.is_array());
+            assert!(root.get(b"missing").is_none());
+            assert!(root.as_array().is_none());
+
+            // as_property: value kind + the key's Loc.
+            for key in [
+                &b"name"[..],
+                b"version",
+                b"private",
+                b"count",
+                b"nothing",
+                b"deps",
+                b"files",
+                b"empty_obj",
+                b"empty_arr",
+            ] {
+                let q = root.as_property(key).unwrap();
+                write!(
+                    out,
+                    "{}@{}=",
+                    std::str::from_utf8(key).unwrap(),
+                    q.loc.start
+                )
+                .unwrap();
+                describe(&q.expr, bump, &mut out);
+                out.push('\n');
+            }
+
+            // Typed property getters.
+            writeln!(out, "bool={:?}", Expr::get_boolean(&root, b"private")).unwrap();
+            writeln!(out, "num={:?}", root.get_number(b"count").map(|(n, _)| n)).unwrap();
+            writeln!(
+                out,
+                "str={:?}",
+                root.get_string(bump, b"name")
+                    .unwrap()
+                    .map(|(s, _)| std::string::String::from_utf8_lossy(s).into_owned())
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "get_object(deps)={}",
+                root.get_object(b"deps").is_some()
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "get_object(name)={}",
+                root.get_object(b"name").is_some()
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "has_any={} {}",
+                root.has_any_property_named(&[b"zzz", b"private"]),
+                root.has_any_property_named(&[b"zzz"])
+            )
+            .unwrap();
+
+            // Nested object access through a materialized container.
+            let deps = root.get(b"deps").unwrap();
+            assert!(deps.is_object());
+            out.push_str("deps.a=");
+            describe(&deps.get(b"a").unwrap(), bump, &mut out);
+            out.push('\n');
+
+            // as_property_string_map over the nested object (empty values are
+            // skipped by the full-AST implementation; simple must match).
+            let map = Expr::as_property_string_map(&root, b"deps", bump).unwrap();
+            let mut pairs: Vec<(std::string::String, std::string::String)> = map
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        std::string::String::from_utf8_lossy(k).into_owned(),
+                        std::string::String::from_utf8_lossy(v).into_owned(),
+                    )
+                })
+                .collect();
+            pairs.as_mut_slice().sort();
+            writeln!(out, "deps_map={pairs:?}").unwrap();
+
+            // Array iteration: every item is materialized in order.
+            let mut iter = root.get_array(b"files").unwrap();
+            out.push_str("files=[");
+            while let Some(item) = iter.next() {
+                describe(&item, bump, &mut out);
+                out.push(',');
+            }
+            out.push_str("]\n");
+            // `as_array` on the property's value behaves the same way.
+            assert!(root.get(b"files").unwrap().as_array().is_some());
+            // Empty containers: same `None` contract as the full AST.
+            assert!(root.get(b"empty_arr").unwrap().as_array().is_none());
+            assert!(root.get_array(b"empty_obj").is_none());
+
+            // Path lookups (object key, array index, nested object key).
+            for path in [
+                &b"deps.a"[..],
+                b"files[0]",
+                b"files[4]",
+                b"files[5][0]",
+                b"files[99]",
+                b"deps.zzz",
+            ] {
+                write!(out, "{}=", std::str::from_utf8(path).unwrap()).unwrap();
+                match root.get_path_may_be_index(bump, path) {
+                    Some(e) => describe(&e, bump, &mut out),
+                    None => out.push_str("none"),
+                }
+                out.push('\n');
+            }
+
+            out
+        }
+
+        let full = probe(doc, Which::Utf8);
+        let simple = probe(doc, Which::Simple);
+        assert_eq!(full, simple);
+        // Sanity-check the probe itself against fixed expectations so a bug
+        // shared by both modes can't cancel out.
+        // The reported `Query::loc` is the key's location in the source.
+        let name_key_offset = doc.windows(6).position(|w| w == b"\"name\"").unwrap();
+        assert!(
+            full.starts_with(&format!("name@{name_key_offset}=\"pkg\"\n")),
+            "{full:?}"
+        );
+        assert!(full.contains("bool=Some(true)\n"));
+        assert!(full.contains("num=Some(42.5)\n"));
+        assert!(full.contains("deps_map=[(\"a\", \"^1\"), (\"b\", \"~2.0\")]\n"));
+        assert!(full.contains("files=[\"lib\",3,true,null,{object},[array],]\n"));
+        assert!(full.contains("files[4]={object}\n"));
+        assert!(full.contains("files[5][0]=\"nested\"\n"));
+        assert!(full.contains("deps.a=\"^1\"\n"));
+        assert!(full.contains("files[99]=none\n"));
+    }
+
     #[test]
     fn duplicate_key_detection_with_nested_large_objects() {
         // A large object (spilled to the hash-map path) containing another

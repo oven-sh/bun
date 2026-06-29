@@ -217,8 +217,6 @@ const ansi = Bun.markdown.render("# Hello\n\nThis is **bold** and *italic*", {
 
 #### Nested list numbering
 
-The `listItem` callback receives everything needed to render markers directly — no post-processing:
-
 ```ts
 const result = Bun.markdown.render("1. first\n   1. sub-a\n   2. sub-b\n2. second", {
   listItem: (children, { index, depth, ordered, start }) => {
@@ -255,7 +253,7 @@ const result = Bun.markdown.render("```js\nconsole.log('hi')\n```", {
 
 ### Parser options
 
-Parser options are passed as a separate third argument:
+Pass parser options as a separate third argument:
 
 ```ts
 const result = Bun.markdown.render(
@@ -371,7 +369,7 @@ function Markdown({ text }: { text: string }) {
 
 ### Parser options
 
-All [parser options](#options) are passed as the third argument:
+Pass any of the [parser options](#options) as the third argument:
 
 ```tsx
 const el = Bun.markdown.react("## Hello World", undefined, {

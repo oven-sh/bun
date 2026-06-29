@@ -62,19 +62,14 @@ for this; the gap is simply unexposed API surface.
      SM_HISTORY_APPEND(stream, SHE_STOP_SENDIG_IN);
      stream->stream_flags |= STREAM_SS_RECVD;
  
-@@ -4313,7 +4315,26 @@
+@@ -4313,7 +4315,21 @@
          stream_reset(stream, error_code, do_close);
      }
      else if (do_close)
 +    {
-+        /* The send half is already closed (or a RESET_STREAM is already
-+         * queued), so the only stream error we can still signal is
-+         * STOP_SENDING on the receive half.  Record the caller's error code
-+         * so that frame carries it instead of NO_ERROR (see
-+         * generate_stop_sending_frame).  First error wins: a later
-+         * cancellation must not overwrite an earlier protocol error whose
-+         * RESET_STREAM has not yet been generated.
-+         */
++        /* Send half already closed or reset: STOP_SENDING is the only stream
++         * error left, so record the code for generate_stop_sending_frame.
++         * First error wins; a later cancel must not clobber a queued one. */
 +        if (!stream->error_code)
 +            stream->error_code = error_code;
          stream_shutdown_read(stream);
@@ -91,15 +86,14 @@ for this; the gap is simply unexposed API surface.
  
 --- a/src/liblsquic/lsquic_full_conn_ietf.c
 +++ b/src/liblsquic/lsquic_full_conn_ietf.c
-@@ -2558,7 +2558,12 @@
+@@ -2558,7 +2558,11 @@
  generate_stop_sending_frame (struct ietf_full_conn *conn,
                                                  struct lsquic_stream *stream)
  {
 -    if (0 == generate_stop_sending_frame_by_id(conn, stream->id, HEC_NO_ERROR))
-+    /* A non-zero error_code means the application explicitly signalled a
-+     * stream error (see lsquic_stream_maybe_reset); carry it on the
-+     * STOP_SENDING instead of NO_ERROR.  Every internal path leaves it zero.
-+     */
++    /* Non-zero error_code is an explicit application stream error (set by
++     * lsquic_stream_maybe_reset); carry it on the STOP_SENDING instead of
++     * NO_ERROR.  Every internal path leaves it zero. */
 +    if (0 == generate_stop_sending_frame_by_id(conn, stream->id,
 +                    stream->error_code ? stream->error_code : HEC_NO_ERROR))
      {

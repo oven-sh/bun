@@ -1007,13 +1007,9 @@ void us_quic_stream_close(us_quic_stream_t *s) {
 void lsquic_stream_maybe_reset(struct lsquic_stream *, uint64_t error_code, int);
 uint64_t lsquic_stream_peer_error_code(const struct lsquic_stream *);
 
-/* Signal an HTTP/3 stream error carrying `code` (RFC 9114 §8.1) instead of a
- * clean FIN. lsquic_stream_close/shutdown queue FIN after the buffered tail,
- * which is a protocol error if a content-length was advertised and the
- * client is abandoning the upload short — the server's lsquic will
- * CONNECTION_CLOSE on the mismatch (RFC 9114 §4.1.2). RESET_STREAM is
- * the wire-level "I'm cancelling this send"; if the send half is already
- * closed the code is carried on STOP_SENDING instead. */
+/* Signal an HTTP/3 stream error carrying `code` (RFC 9114 §8.1), not a clean
+ * FIN (which would violate an advertised content-length). RESET_STREAM on an
+ * open send half; otherwise STOP_SENDING carries the code. */
 void us_quic_stream_reset(us_quic_stream_t *s, uint64_t code) {
     if (s->stream) lsquic_stream_maybe_reset(s->stream, code, 1);
 }

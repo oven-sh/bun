@@ -19,8 +19,9 @@ use bun_collections::MultiArrayList;
 use bun_collections::VecExt;
 use bun_core::perf;
 use bun_core::{
-    MutableString, immutable as strings,
+    MutableString,
     string_joiner::{StringJoiner, Watcher},
+    strings,
 };
 use bun_js_printer::{self as js_printer, PrintResult};
 use bun_sourcemap as SourceMap;

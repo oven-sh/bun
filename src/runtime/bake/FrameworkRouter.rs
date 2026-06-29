@@ -898,7 +898,6 @@ impl Style {
                 }
                 // Potential future proofing
                 if let Some(bad_char_index) = strings::index_of_any(param_name, b"?*{}()=:#,") {
-                    let bad_char_index = bad_char_index as usize;
                     return Err(log
                         .fail(
                             format_args!(

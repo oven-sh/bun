@@ -655,7 +655,7 @@ describe("TOML.stringify", () => {
     expect(stringifyError("str").message).toBe(msg);
     expect(stringifyError(5).message).toBe(msg);
     expect(stringifyError(new Date(0)).message).toBe(msg);
-    expect(TOML.stringify(undefined as any)).toBeUndefined();
+    expect(TOML.stringify(undefined)).toBeUndefined();
   });
 
   test("replacer is rejected; space is accepted and ignored", () => {
@@ -680,7 +680,7 @@ describe("TOML.stringify", () => {
   });
 
   test("boxed primitives unwrap", () => {
-    expect(TOML.stringify({ n: new Number(5), s: new String("x"), b: new Boolean(true) } as any)).toBe(
+    expect(TOML.stringify({ n: new Number(5), s: new String("x"), b: new Boolean(true) })).toBe(
       'n = 5\ns = "x"\nb = true\n',
     );
   });

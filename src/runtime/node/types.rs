@@ -1010,6 +1010,53 @@ pub(crate) trait PathOrFdExt {
         Self: Sized;
 }
 
+/// Join a plain relative Windows path onto the process cwd, writing the
+/// unnormalized `cwd ++ '\' ++ path` into `scratch` and returning it.
+///
+/// Relative paths must become drive-absolute before the `\\?\` prefix (which
+/// every drive-absolute path gets in `slice_z_with_force_copy` /
+/// `to_kernel32_path`, mirroring Node's `path.toNamespacedPath()` on every
+/// `fs` path) can apply. Without the prefix, Win32 normalization strips
+/// trailing dots/spaces from the final component, so a relative name can
+/// refer to a different file than the one the NT-based syscalls (`openat`,
+/// used by `writeFile`) created. https://github.com/oven-sh/bun/issues/8836
+///
+/// Returns `None`, keeping the caller on its existing handling, when the
+/// path is not plain relative (empty, absolute, or drive-relative `C:foo`),
+/// the cwd is unavailable or not drive-letter rooted (e.g. a UNC cwd), or
+/// the join would not fit `scratch`.
+#[cfg(windows)]
+fn join_cwd_windows<'a>(path: &[u8], scratch: &'a mut PathBuffer) -> Option<&'a [u8]> {
+    if path.is_empty() || bun_paths::is_absolute(path) {
+        return None;
+    }
+    // `C:foo` is relative to drive `C`'s own current directory, which only
+    // the Win32 layer tracks; joining it onto the process cwd would be wrong.
+    if path.len() >= 2 && path[1] == b':' && bun_paths::is_drive_letter(path[0]) {
+        return None;
+    }
+    // Reshaped for borrowck: `getcwd` returns a borrow of `scratch`; capture
+    // the length, drop the borrow, then write after it.
+    let cwd_len = match bun_core::getcwd(scratch) {
+        Ok(cwd) => cwd.len(),
+        Err(_) => return None,
+    };
+    if !(cwd_len > 2
+        && bun_paths::is_drive_letter(scratch[0])
+        && scratch[1] == b':'
+        && bun_paths::is_sep_any(scratch[2]))
+    {
+        return None;
+    }
+    let total = cwd_len + 1 + path.len();
+    if total > scratch.len() {
+        return None;
+    }
+    scratch[cwd_len] = b'\\';
+    scratch[cwd_len + 1..total].copy_from_slice(path);
+    Some(&scratch[..total])
+}
+
 impl PathLikeExt for PathLike {
     // Const-generics can't change return mutability, so this always returns
     // `&ZStr`. A future force=true caller that needs `&mut ZStr` will need a
@@ -1022,6 +1069,18 @@ impl PathLikeExt for PathLike {
 
         #[cfg(windows)]
         {
+            // Plain relative paths are rebound to their cwd-joined spelling so
+            // the drive-absolute branch below gives them the same `\\?\`
+            // treatment; `join_cwd_windows` explains why. Declared before the
+            // shadowed `sliced` so the pooled buffer outlives the borrow. The
+            // original `sliced` still backs the fallthrough copy at the bottom.
+            let mut cwd_join_scratch;
+            let sliced = if !bun_paths::is_absolute(sliced) {
+                cwd_join_scratch = bun_paths::path_buffer_pool::get();
+                join_cwd_windows(sliced, &mut cwd_join_scratch).unwrap_or(sliced)
+            } else {
+                sliced
+            };
             // Only take the fast path for paths that can exist on NT at
             // all (≤ ~32757 UTF-16 units). That bounds the `\\?\`-prefixed
             // copy below in bytes too (≤ 3×32757 + 5 < MAX_PATH_BYTES);
@@ -1201,6 +1260,22 @@ impl PathLikeExt for PathLike {
                 // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
                 return Ok(strings::to_kernel32_path(buf_u16, b"."));
+            }
+            // Plain relative paths: join onto the cwd so `to_kernel32_path`
+            // sees a drive-absolute path and adds the `\\?\` prefix, matching
+            // `slice_z_with_force_copy`; see `join_cwd_windows`. As in the
+            // rooted branch above, `buf` is the scratch for the cwd join and
+            // the final wide path lands back in `buf`.
+            if let Some(joined) = join_cwd_windows(s, buf) {
+                if strings::fits_in_wide_path_buffer(joined) {
+                    let normal = bun_paths::resolve_path::normalize_buf::<
+                        bun_paths::platform::Windows,
+                    >(joined, &mut b[..]);
+                    // `joined`'s borrow of `buf` ended at the line above (NLL).
+                    // SAFETY: same alignment note as above.
+                    let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
+                    return Ok(strings::to_kernel32_path(buf_u16, normal));
+                }
             }
             let normal = bun_paths::resolve_path::normalize_string_buf::<
                 true,

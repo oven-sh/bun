@@ -1,13 +1,20 @@
 const { describe, test } = require("node:test");
 
 // `t.signal` must abort when the test times out so in-flight work can be
-// cancelled. Resolving nothing, the body ends only via the timeout.
+// cancelled. The abort is the awaited condition: resolving from it lets the
+// body settle once the runner has timed the test out, so the child exits.
 test("signal aborts at the timeout", { timeout: 50 }, t => {
-  return new Promise(() => {
-    t.signal.addEventListener("abort", () => {
-      console.log("TIMEOUT_SIGNAL_ABORTED name=" + t.signal.reason.name);
-    });
+  const { promise, resolve } = Promise.withResolvers();
+  // Hang guard: a body that never settles pins the child. If the abort
+  // never fires, end the test ourselves so the missing marker is reported
+  // as a plain assertion failure instead of a hung process.
+  const guard = setTimeout(resolve, 5000);
+  t.signal.addEventListener("abort", () => {
+    console.log("TIMEOUT_SIGNAL_ABORTED name=" + t.signal.reason.name);
+    clearTimeout(guard);
+    resolve();
   });
+  return promise;
 });
 
 // Node also aborts `t.signal` once the test completes normally.

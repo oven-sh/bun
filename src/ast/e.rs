@@ -965,12 +965,12 @@ pub struct PropertySimple {
 
 const _: () = assert!(core::mem::size_of::<PropertySimple>() == 32);
 
-pub type PropertySimpleList = Vec<PropertySimple, bun_alloc::AstAlloc>;
-pub type JsonValueList = Vec<JsonValue, bun_alloc::AstAlloc>;
-
-/// `Data::EObjectSimple` — see the JSON "simple" nodes comment above.
+/// `Data::EObjectSimple` — see the JSON "simple" nodes comment above. The
+/// rows live in the parse arena (one pointer bump + copy per object, never
+/// an allocator round trip), exactly like every decoded string the AST
+/// already borrows from it.
 pub struct ObjectSimple {
-    pub properties: PropertySimpleList,
+    pub properties: crate::StoreSlice<PropertySimple>,
     pub close_brace_loc: crate::Loc,
     pub is_single_line: bool,
 }
@@ -978,7 +978,7 @@ pub struct ObjectSimple {
 impl Default for ObjectSimple {
     fn default() -> Self {
         ObjectSimple {
-            properties: bun_alloc::AstAlloc::vec(),
+            properties: crate::StoreSlice::EMPTY,
             close_brace_loc: crate::Loc::EMPTY,
             is_single_line: false,
         }
@@ -986,6 +986,12 @@ impl Default for ObjectSimple {
 }
 
 impl ObjectSimple {
+    /// This object's `"key": value` rows in source order.
+    #[inline]
+    pub fn properties(&self) -> &[PropertySimple] {
+        self.properties.slice()
+    }
+
     /// First value whose key's decoded bytes equal `key` (objects with a
     /// duplicate key behave like `JSON.parse`: documented for callers that
     /// care, the *last* one wins — JSON consumers index by key, so `get`
@@ -994,6 +1000,7 @@ impl ObjectSimple {
     #[inline]
     pub fn get(&self, key: &[u8]) -> Option<&JsonValue> {
         self.properties
+            .slice()
             .iter()
             .find(|p| p.key.slice() == key)
             .map(|p| &p.value)
@@ -1002,15 +1009,22 @@ impl ObjectSimple {
 
 /// `Data::EArraySimple` — see the JSON "simple" nodes comment above.
 pub struct ArraySimple {
-    pub items: JsonValueList,
+    pub items: crate::StoreSlice<JsonValue>,
     pub close_bracket_loc: crate::Loc,
     pub is_single_line: bool,
+}
+
+impl ArraySimple {
+    #[inline]
+    pub fn items(&self) -> &[JsonValue] {
+        self.items.slice()
+    }
 }
 
 impl Default for ArraySimple {
     fn default() -> Self {
         ArraySimple {
-            items: bun_alloc::AstAlloc::vec(),
+            items: crate::StoreSlice::EMPTY,
             close_bracket_loc: crate::Loc::EMPTY,
             is_single_line: false,
         }

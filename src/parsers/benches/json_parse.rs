@@ -65,10 +65,11 @@ fn bench_json(c: &mut Criterion) {
         // Like parse_utf8 but with duplicate-key warnings off (what a registry
         // manifest caller would pass): isolates the duplicate-detection cost.
         group.bench_function(BenchmarkId::new("parse_nowarn", &name), |b| {
+            let mut bump = Bump::new();
             b.iter(|| {
                 let _store_scope = js_ast::StoreResetGuard::new();
                 let mut log = js_ast::Log::init();
-                let bump = Bump::new();
+                bump.reset();
                 let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
                 let opts = json::JSONOptions {
                     is_json: true,
@@ -84,10 +85,11 @@ fn bench_json(c: &mut Criterion) {
         // `E::ObjectSimple`): what JSON-data consumers (registry manifests,
         // `Bun.JSONC.parse`) get. Same options as parse_nowarn otherwise.
         group.bench_function(BenchmarkId::new("parse_simple", &name), |b| {
+            let mut bump = Bump::new();
             b.iter(|| {
                 let _store_scope = js_ast::StoreResetGuard::new();
                 let mut log = js_ast::Log::init();
-                let bump = Bump::new();
+                bump.reset();
                 let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
                 let opts = json::JSONOptions {
                     is_json: true,
@@ -103,10 +105,11 @@ fn bench_json(c: &mut Criterion) {
         // Mirrors the real callers (npm.rs PackageManifest::parse, package_json.rs):
         // thread-local AST stores reset per parse, fresh Log + Bump per parse.
         group.bench_function(BenchmarkId::new("parse_utf8", &name), |b| {
+            let mut bump = Bump::new();
             b.iter(|| {
                 let _store_scope = js_ast::StoreResetGuard::new();
                 let mut log = js_ast::Log::init();
-                let bump = Bump::new();
+                bump.reset();
                 let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
                 let e = json::parse_utf8(&source, &mut log, &bump).expect("parse failed");
                 std::hint::black_box(&e);

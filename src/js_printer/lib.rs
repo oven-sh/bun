@@ -4653,7 +4653,7 @@ pub mod __gated_printer {
         /// `E::ObjectSimple` (JSON-only): always printed in JSON shape.
         pub fn print_object_simple(&mut self, e: &E::ObjectSimple) {
             self.print(b"{");
-            let props = e.properties.as_slice();
+            let props = e.properties.slice();
             if !props.is_empty() {
                 if !e.is_single_line {
                     self.indent();
@@ -4692,7 +4692,7 @@ pub mod __gated_printer {
         /// `E::ArraySimple` (JSON-only).
         pub fn print_array_simple(&mut self, e: &E::ArraySimple) {
             self.print(b"[");
-            let items = e.items.as_slice();
+            let items = e.items.slice();
             if !items.is_empty() {
                 if !e.is_single_line {
                     self.indent();

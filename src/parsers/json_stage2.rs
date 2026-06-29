@@ -686,9 +686,12 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             return Err(e);
         }
         if SIMPLE {
-            let mut items: E::JsonValueList =
-                Vec::with_capacity_in(self.scratch_json_items.len() - mark, bun_alloc::AstAlloc);
-            items.extend(self.scratch_json_items.drain(mark..));
+            // One pointer bump + copy into the parse arena (the rows are
+            // `Copy`; the scratch stack is reused for the whole document).
+            let items = bun_ast::StoreSlice::new(
+                self.bump.alloc_slice_copy(&self.scratch_json_items[mark..]),
+            );
+            self.scratch_json_items.truncate(mark);
             return Ok(Expr::init(
                 E::ArraySimple {
                     items,
@@ -864,9 +867,11 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
 
         if SIMPLE {
-            let mut properties: E::PropertySimpleList =
-                Vec::with_capacity_in(self.scratch_simple_props.len() - mark, bun_alloc::AstAlloc);
-            properties.extend(self.scratch_simple_props.drain(mark..));
+            let properties = bun_ast::StoreSlice::new(
+                self.bump
+                    .alloc_slice_copy(&self.scratch_simple_props[mark..]),
+            );
+            self.scratch_simple_props.truncate(mark);
             return Ok(Expr::init(
                 E::ObjectSimple {
                     properties,

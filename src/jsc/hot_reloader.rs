@@ -484,10 +484,9 @@ pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
 
     pub tombstones: StringHashMap<*mut Fs::EntriesOption>,
 
-    /// Absolute path → watch hash for file watch entries evicted while the
-    /// file was gone from disk. Once recreated, only the parent directory's
-    /// watch can observe such a path, so `reenqueue_recreated_files` enqueues
-    /// its reload from there. Watcher-thread only, like `tombstones`.
+    /// Deleted absolute paths (→ watch hash) whose watch entries were
+    /// evicted. `reenqueue_recreated_files` reloads them from the parent
+    /// directory's watch once recreated. Watcher-thread only, like `tombstones`.
     pub deleted_watched_files: StringHashMap<bun_watcher::HashType>,
 
     _event_loop: PhantomData<*mut EventLoopType>,
@@ -871,10 +870,9 @@ where
             {
                 return true;
             }
-            // Exists and re-watched: an earlier reload re-imported it, so
-            // re-enqueuing would stack a redundant reload. Must stay after
-            // the filters above: evictions are flushed after the event loop,
-            // so the snapshot still holds same-batch evict-marked hashes.
+            // Exists and re-watched: an earlier reload re-imported it. Keep
+            // this after the filters: same-batch evictions remain in the
+            // watchlist snapshot until flush, so first alone is a false match.
             if watchlist_hashes.contains(hash) {
                 return false;
             }
@@ -1277,10 +1275,9 @@ where
                                                                 0,
                                                                 &[],
                                                             );
-                                                            // `rm` of an import reaches inotify
-                                                            // only here: the source fd we hold
-                                                            // pins the unlinked inode, deferring
-                                                            // `IN_DELETE_SELF` past this cycle.
+                                                            // `rm` reaches inotify only here:
+                                                            // our source fd pins the unlinked
+                                                            // inode, deferring `IN_DELETE_SELF`.
                                                             self.remember_deleted_watch(
                                                                 path_string.as_bytes(),
                                                                 hashes[entry_id],

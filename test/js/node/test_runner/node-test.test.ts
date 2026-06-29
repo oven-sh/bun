@@ -60,8 +60,10 @@ describe("node:test", () => {
     // ever invoked before.
     expect(stdout).toContain("TIMEOUT_SIGNAL_ABORTED name=AbortError");
     expect(stdout).toContain("COMPLETION_SIGNAL_ABORTED");
-    // the first test still fails (it timed out); the second passes
-    expect(stderr).toContain(" 1 pass\n 1 fail\n");
+    // A suite's signal must NOT abort: node only aborts test contexts.
+    expect(stdout).not.toContain("SUITE_SIGNAL_ABORTED");
+    // the first test still fails (it timed out); the other two pass
+    expect(stderr).toContain(" 2 pass\n 1 fail\n");
     expect(exitCode).toBe(1);
   });
 });

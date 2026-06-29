@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import { bunEnv, bunExe, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -203,6 +203,44 @@ describe.concurrent("node-module-module", () => {
   test("builtin resolution", () => {
     expect(require.resolve("fs")).toBe("fs");
     expect(require.resolve("node:fs")).toBe("node:fs");
+  });
+  test("require.resolve with non-absolute options.paths entries", async () => {
+    using dir = tempDir("resolve-paths-relative", {
+      "node_modules/resolve-paths-relative-pkg/package.json": JSON.stringify({
+        name: "resolve-paths-relative-pkg",
+        main: "index.js",
+      }),
+      "node_modules/resolve-paths-relative-pkg/index.js": "module.exports = 1;",
+    });
+    const code = `
+      const { join } = require("path");
+      const { realpathSync } = require("fs");
+      const root = realpathSync(process.cwd());
+      const out = [
+        require.resolve("resolve-paths-relative-pkg", { paths: ["."] }) ===
+          join(root, "node_modules", "resolve-paths-relative-pkg", "index.js"),
+      ];
+      for (const entry of ["relative-dir-that-does-not-exist", Uint32Array]) {
+        try {
+          out.push(require.resolve("resolve-paths-missing-pkg", { paths: [entry] }));
+        } catch (e) {
+          out.push(e.code);
+        }
+      }
+      process.stdout.write(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({
+      stdout: JSON.stringify([true, "MODULE_NOT_FOUND", "MODULE_NOT_FOUND"]),
+      exitCode: 0,
+    });
   });
   test("require cache node builtins specifier", () => {
     // as js builtin

@@ -126,7 +126,7 @@ The biggest difference between CommonJS and ES modules is that CommonJS modules 
 - ES modules are always in [strict mode](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Strict_mode), while CommonJS modules are not.
 - Browsers do not have native support for CommonJS modules, but they do have native support for ES modules through `<script type="module">`.
 - CommonJS modules are not statically analyzable, while ES modules only allow static imports and exports.
-- ES modules can also be loaded on the fly with the asynchronous `import()` function, called a "dynamic import".
+- Static `import` statements run synchronously, just like CommonJS `require`. ES modules can also be loaded on the fly with the asynchronous `import()` function, called a "dynamic import".
 
 </Accordion>
 

@@ -217,6 +217,8 @@ const ansi = Bun.markdown.render("# Hello\n\nThis is **bold** and *italic*", {
 
 #### Nested list numbering
 
+The `listItem` callback receives everything needed to render markers directly — no post-processing:
+
 ```ts
 const result = Bun.markdown.render("1. first\n   1. sub-a\n   2. sub-b\n2. second", {
   listItem: (children, { index, depth, ordered, start }) => {

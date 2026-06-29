@@ -8,6 +8,9 @@ pub struct DoneCallback {
     /// Some = not called yet. None = done already called, no-op.
     pub r#ref: Option<RefDataPtr>,
     pub called: bool, // = false
+    /// The owning body threw before `run_test_callback` could attach `ref`,
+    /// so a later done(error) from this callback has no attributable owner.
+    pub orphaned: bool, // = false
 }
 
 impl DoneCallback {
@@ -32,6 +35,7 @@ impl DoneCallback {
         let done_callback = DoneCallback {
             r#ref: None,
             called: false,
+            orphaned: false,
         };
 
         // `JsClass::to_js` boxes `self` and hands the raw pointer to the JS

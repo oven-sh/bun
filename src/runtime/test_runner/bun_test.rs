@@ -839,12 +839,14 @@ impl BunTest {
             // promise-catch path) so a failing hook fails its dependent tests.
             let strong = match ref_in.as_ref() {
                 Some(r) => r.buntest_weak.upgrade(),
-                // No ref means `run_test_callback` has not attached one yet: done()
-                // ran synchronously inside the callback, or the body threw and
-                // orphaned it. Only while synchronously inside the runner's step
-                // (`in_run_loop`) is the active entry the owner; an orphan firing
-                // later must not be blamed on whatever entry is active by then.
-                None => clone_active_strong().filter(|s| s.get().in_run_loop),
+                // The body threw before a ref could be attached; whenever and
+                // however this done() fires, it has no attributable owner.
+                // SAFETY: `this` is the live `*mut DoneCallback`; see above.
+                None if unsafe { (*this).orphaned } => None,
+                // Not orphaned and no ref: `run_test_callback` attaches the ref
+                // only after the callback returns, so done() must be running
+                // synchronously inside it and the active entry is the owner.
+                None => clone_active_strong(),
             };
             match strong {
                 Some(strong) => {
@@ -1224,11 +1226,16 @@ impl BunTest {
         // second `RefDataPtr` here would over-count and the done-callback path
         // would never observe `has_one_ref()`.
         let mut dcb_ref: Option<NonNull<RefData>> = None;
-        if !done_callback.is_empty() && !result.is_empty() {
+        if !done_callback.is_empty() {
             if let Some(dcb_data) = DoneCallback::from_js(done_callback) {
                 // SAFETY: `dcb_data` is the live `*mut DoneCallback` from `from_js`;
                 // single-threaded JS VM, GC roots `done_callback` for this frame.
-                if unsafe { (*dcb_data).called } {
+                if result.is_empty() {
+                    // The body threw, so no ref is attached. A later done(error)
+                    // from this callback (the body may have handed it to a timer
+                    // or microtask before throwing) has no attributable owner.
+                    unsafe { (*dcb_data).orphaned = true };
+                } else if unsafe { (*dcb_data).called } {
                     // done callback already called or the callback errored; add result immediately
                 } else {
                     let r = Self::ref_(this_strong, cfg_data.clone());

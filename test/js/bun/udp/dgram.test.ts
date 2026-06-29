@@ -408,11 +408,14 @@ describe("membership on an unbound socket", () => {
 
   test("a bind() already in flight still throws ERR_SOCKET_DGRAM_NOT_RUNNING", async () => {
     const socket = createSocket("udp4");
-    const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
-    socket.bind(0, onListening);
-    expect(() => socket.addMembership(GROUP4, LO4)).toThrowWithCode(Error, "ERR_SOCKET_DGRAM_NOT_RUNNING");
-    await listening;
-    socket.close();
+    try {
+      const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+      socket.bind(0, onListening);
+      expect(() => socket.addMembership(GROUP4, LO4)).toThrowWithCode(Error, "ERR_SOCKET_DGRAM_NOT_RUNNING");
+      await listening;
+    } finally {
+      socket.close();
+    }
   });
 });
 

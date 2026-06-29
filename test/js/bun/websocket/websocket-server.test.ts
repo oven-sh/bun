@@ -387,6 +387,80 @@ describe("Server", () => {
     expect(subscriptions).toContain("topic3");
   });
 
+  it.concurrent("publish() then unsubscribe() from last topic in same tick delivers queued messages", async () => {
+    const aDone = Promise.withResolvers<string[]>();
+    const bDone = Promise.withResolvers<string[]>();
+    const ready = { a: Promise.withResolvers<void>(), b: Promise.withResolvers<void>() };
+    const publishResults: number[] = [];
+
+    using server = serve({
+      port: 0,
+      fetch(req, server) {
+        const id = new URL(req.url).searchParams.get("id")!;
+        if (server.upgrade(req, { data: { id } })) return;
+        return new Response("no", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          ws.subscribe("room");
+          ws.send("ready");
+        },
+        message(ws, msg) {
+          if (msg !== "go") return;
+          for (let i = 0; i < 5; i++) {
+            publishResults.push(server.publish("room", "msg" + i));
+          }
+          // Unsubscribing from the only topic used to free the uWS Subscriber
+          // without draining its queued publish() messages, dropping them.
+          ws.unsubscribe("room");
+          // Sentinel: once this arrives, anything queued for this socket
+          // has either been delivered ahead of it or dropped.
+          ws.send("done");
+        },
+      },
+    });
+
+    const collect = (id: "a" | "b", done: PromiseWithResolvers<string[]>, isDone: (data: string) => boolean) => {
+      const received: string[] = [];
+      const ws = new WebSocket(`ws://localhost:${server.port}/?id=${id}`);
+      ws.onmessage = e => {
+        const data = e.data as string;
+        if (data === "ready") return ready[id].resolve();
+        received.push(data);
+        if (isDone(data)) done.resolve([...received]);
+      };
+      const fail = (e: unknown) => {
+        ready[id].reject(e);
+        done.reject(e);
+      };
+      ws.onerror = fail;
+      ws.onclose = () => fail(new Error("closed before done"));
+      return ws;
+    };
+
+    // A never unsubscribes and never receives "done"; resolve once the full batch arrives.
+    const a = collect("a", aDone, data => data === "msg4");
+    // B must wait for the sentinel so we capture everything delivered before it.
+    const b = collect("b", bDone, data => data === "done");
+    try {
+      await Promise.all([ready.a.promise, ready.b.promise]);
+      b.send("go");
+
+      const [aReceived, bReceived] = await Promise.all([aDone.promise, bDone.promise]);
+      // publish() reported the message as queued for every call
+      expect(publishResults).toEqual([4, 4, 4, 4, 4]);
+      // A never unsubscribed; it must receive the full batch.
+      expect(aReceived).toEqual(["msg0", "msg1", "msg2", "msg3", "msg4"]);
+      // B unsubscribed in the same tick; it must still receive the batch
+      // that publish() had already accepted before the unsubscribe.
+      expect(bReceived).toEqual(["msg0", "msg1", "msg2", "msg3", "msg4", "done"]);
+    } finally {
+      a.onclose = b.onclose = null;
+      a.close();
+      b.close();
+    }
+  });
+
   describe("websocket", () => {
     test("open", done => ({
       open(ws) {

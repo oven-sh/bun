@@ -327,6 +327,10 @@ public:
 
         /* Free us as subscribers if we unsubscribed from our last topic */
         if (ok && last) {
+            /* Flush queued publish() messages before the Subscriber is freed.
+             * freeSubscriber unlinks without draining, which would otherwise
+             * drop messages that publish() already accepted this tick. */
+            webSocketContextData->topicTree->drain(webSocketData->subscriber);
             webSocketContextData->topicTree->freeSubscriber(webSocketData->subscriber);
             webSocketData->subscriber = nullptr;
         }

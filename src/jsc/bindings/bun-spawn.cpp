@@ -158,6 +158,11 @@ extern "C" ssize_t posix_spawn_bun(
     // Linux's vfork() is more permissive and allows the setup we need
     // (setsid, ioctl, dup2, etc.) before exec.
     volatile int child_errno = 0;
+    // The vfork child shares this mm, and set*id in the child resets the
+    // mm-wide "dumpable" flag to /proc/sys/fs/suid_dumpable (commit_creds).
+    // Save it so the parent can restore it once vfork returns, like Go's
+    // forkAndExecInChild1 and systemd's safe_fork_full do.
+    int saved_dumpable = (request->set_uid || request->set_gid) ? prctl(PR_GET_DUMPABLE, 0, 0, 0, 0) : -1;
     pid_t child = vfork();
 #else
     // On macOS, we must use fork() because vfork() is more strictly enforced.
@@ -318,6 +323,11 @@ extern "C" ssize_t posix_spawn_bun(
         if (request->set_uid && syscall(SYS_setuid, (uid_t)request->uid) != 0) {
             return childFailed();
         }
+        // The kernel clears PR_SET_PDEATHSIG when the effective uid/gid changes
+        // (prctl(2)), so re-arm it after dropping credentials.
+        if (request->linux_pdeathsig != 0 && (request->set_uid || request->set_gid)) {
+            prctl(PR_SET_PDEATHSIG, request->linux_pdeathsig, 0, 0, 0);
+        }
 #else
         if (request->set_gid && setgid((gid_t)request->gid) != 0) {
             return childFailed();
@@ -412,6 +422,12 @@ extern "C" ssize_t posix_spawn_bun(
     } else {
         // vfork() failed
         res = errno;
+    }
+
+    // PR_SET_DUMPABLE only accepts SUID_DUMP_DISABLE (0) / SUID_DUMP_USER (1);
+    // a saved value of 2 (suid_dumpable=2) means it was already the reset value.
+    if (saved_dumpable == 0 || saved_dumpable == 1) {
+        (void)prctl(PR_SET_DUMPABLE, saved_dumpable, 0, 0, 0);
     }
 #endif
 

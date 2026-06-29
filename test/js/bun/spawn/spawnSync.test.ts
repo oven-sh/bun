@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isPosix } from "harness";
+import { bunEnv, bunExe, isLinux, isMusl, isPosix } from "harness";
 import { join } from "path";
 describe("spawnSync", () => {
   it("should throw a RangeError if timeout is less than 0", () => {
@@ -59,6 +59,29 @@ describe("uid/gid", () => {
 
     const groups = Bun.spawnSync({ cmd: ["id", "-G"], uid: 65534, gid: 65534 });
     expect(groups.stdout.toString().trim()).toBe("65534");
+  });
+
+  // The vfork child shares the parent's mm, and set*id resets the mm-wide
+  // "dumpable" flag (prctl(2)); the spawn must restore it in the parent.
+  it.if(isLinux && isRoot)("does not clear the parent's dumpable flag", async () => {
+    const libc = isMusl ? (process.arch === "arm64" ? "libc.musl-aarch64.so.1" : "libc.musl-x86_64.so.1") : "libc.so.6";
+    const fixture = `
+      const { dlopen, FFIType } = require("bun:ffi");
+      const { prctl } = dlopen(${JSON.stringify(libc)}, {
+        prctl: { args: [FFIType.i32, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64], returns: FFIType.i32 },
+      }).symbols;
+      const PR_GET_DUMPABLE = 3;
+      const before = prctl(PR_GET_DUMPABLE, 0, 0, 0, 0);
+      const child = Bun.spawnSync({ cmd: ["id", "-u"], uid: 65534, gid: 65534 });
+      const after = prctl(PR_GET_DUMPABLE, 0, 0, 0, 0);
+      console.log(JSON.stringify({ before, after, childUid: child.stdout.toString().trim() }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: JSON.parse(stdout), exitCode }).toEqual({
+      result: { before: 1, after: 1, childUid: "65534" },
+      exitCode: 0,
+    });
   });
 
   it.if(isPosix && !isRoot)("throws EPERM for a uid the process cannot set", () => {

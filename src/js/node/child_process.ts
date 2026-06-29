@@ -69,10 +69,6 @@ if ($debug) {
 // ------------------------------
 // TODO: Look at Pipe to see if we can support passing Node Pipe objects to stdio param
 
-// TODO: Add these params after support added in Bun.spawn
-// uid <number> Sets the user identity of the process (see setuid(2)).
-// gid <number> Sets the group identity of the process (see setgid(2)).
-
 // stdio <Array> | <string> Child's stdio configuration (see options.stdio).
 // Support wrapped ipc types (e.g. net.Socket, dgram.Socket, TTY, etc.)
 // IPC FD passing support

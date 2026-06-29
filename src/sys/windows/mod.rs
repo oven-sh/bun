@@ -38,6 +38,8 @@ pub mod kernel32 {
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
+        // safe: by-value DWORD write to the TEB; cannot fault.
+        pub safe fn SetLastError(dwErrCode: DWORD);
         // ── IOCP / async directory watching ──
         // safe: all args are by-value opaques (`HANDLE`/`ULONG_PTR`/`DWORD`);
         // a bad handle yields NULL + GetLastError, no UB.
@@ -3768,6 +3770,9 @@ fn lowbox_dos_name_fallback(
                     out_buffer[1] = u16::from(b':');
                     out_buffer[2..2 + rest.len()].copy_from_slice(rest);
                     let total = 2 + rest.len();
+                    // The real API NUL-terminates and raw-shape callers read
+                    // `buf[len]`; the bounds check above reserved that slot.
+                    out_buffer[total] = 0;
                     bun_sys::syslog!(
                         "GetFinalPathNameByHandleW({:p}) = {} (NT device fallback)",
                         hFile,
@@ -3816,7 +3821,12 @@ pub unsafe fn GetFinalPathNameByHandleWLowbox(
     }
     let rest_len = match lowbox_dos_name_fallback(hFile, &mut out[PFX.len()..]) {
         Ok(rest) => rest.len(),
-        Err(_) => return 0,
+        Err(_) => {
+            // The fallback's own (successful) queries clobbered the thread
+            // error; callers of this raw shape read it after a 0 return.
+            kernel32::SetLastError(u32::from(Win32Error::ACCESS_DENIED.0));
+            return 0;
+        }
     };
     out[..PFX.len()].copy_from_slice(&PFX);
     (PFX.len() + rest_len) as u32

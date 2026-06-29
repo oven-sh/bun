@@ -826,6 +826,8 @@ it(
       "package.json": JSON.stringify({ name: "app", imports: { "#impl": "./a.js" } }),
       "a.js": `export default "FROM-A";\n`,
       "b.js": `export default "FROM-B";\n`,
+      // The manifest must not be imported here: that alone puts it in the
+      // watch set, which is exactly what this test proves is no longer needed.
       "entry.js": `import v from "#impl";\nconsole.log("gen1 " + v);\n`,
     });
 
@@ -855,12 +857,18 @@ it(
 it.skipIf(isWindows)(
   'should hot reload when a linked dependency\'s "exports" map changes',
   async () => {
+    // The `./package.json` import is load-bearing on macOS: resolving any
+    // sibling import registers the root manifest in the watch set first, so
+    // the manifest's own fetch reuses the watcher's cached fd, which must
+    // therefore be readable (`O_EVTONLY` descriptors cannot be `read()`).
+    const entry = (gen: number) =>
+      `import v from "dep";\nimport pkg from "./package.json";\nconsole.log("gen${gen} " + v + " " + pkg.name);\n`;
     using dir = tempDir("hot-exports-map", {
       "package.json": JSON.stringify({ name: "app" }),
       "packages/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", exports: { ".": "./a.js" } }),
       "packages/dep/a.js": `export default "FROM-A";\n`,
       "packages/dep/b.js": `export default "FROM-B";\n`,
-      "entry.js": `import v from "dep";\nconsole.log("gen1 " + v);\n`,
+      "entry.js": entry(1),
     });
     // `bun install` links a workspace/`file:` dependency into node_modules as
     // a symlink, which is what aliases the resolver's cache key.
@@ -877,7 +885,7 @@ it.skipIf(isWindows)(
     });
     const next = stdoutLineReader(runner);
 
-    expect(await next("gen1 ")).toBe("gen1 FROM-A");
+    expect(await next("gen1 ")).toBe("gen1 FROM-A app");
 
     writeFileSync(
       join(String(dir), "packages", "dep", "package.json"),
@@ -890,12 +898,12 @@ it.skipIf(isWindows)(
     // final assertion fails with the stale value instead of hanging.
     let gen = 1;
     let line = "";
-    while (gen < 6 && !line.endsWith(" FROM-B")) {
+    while (gen < 6 && !line.endsWith(" FROM-B app")) {
       gen += 1;
-      writeFileSync(join(String(dir), "entry.js"), `import v from "dep";\nconsole.log("gen${gen} " + v);\n`);
+      writeFileSync(join(String(dir), "entry.js"), entry(gen));
       line = await next(`gen${gen} `);
     }
-    expect(line).toBe(`gen${gen} FROM-B`);
+    expect(line).toBe(`gen${gen} FROM-B app`);
   },
   boundedTimeout,
 );

@@ -808,6 +808,15 @@ impl Watcher {
     /// - true if the file is successfully added to the watchlist or already watched
     /// - false if the file cannot be opened or added to the watchlist
     pub fn add_file_by_path_slow(&mut self, file_path: &[u8], loader: Loader) -> bool {
+        self.add_file_by_path(file_path, loader, WATCH_OPEN_FLAGS)
+    }
+
+    /// [`Self::add_file_by_path_slow`] with an explicit macOS/FreeBSD open
+    /// mode. `snapshot_fd_and_package_json` hands the stored fd back to the
+    /// transpiler whenever the same path is later fetched as a module, so a
+    /// caller registering a path before it is loaded must pass a readable
+    /// mode: `read()` on a macOS `O_EVTONLY` descriptor fails with `EBADF`.
+    pub fn add_file_by_path(&mut self, file_path: &[u8], loader: Loader, open_flags: i32) -> bool {
         if file_path.is_empty() {
             return false;
         }
@@ -836,13 +845,16 @@ impl Watcher {
             // `path_z[file_path.len()] == 0` written above; `from_buf` borrows
             // `path_z[..len]` as a `&ZStr` with the NUL debug-asserted in-bounds.
             let z = ZStr::from_buf(&path_z[..], file_path.len());
-            match bun_sys::open(z, WATCH_OPEN_FLAGS, 0) {
+            match bun_sys::open(z, open_flags, 0) {
                 Ok(opened) => opened,
                 Err(_) => return false,
             }
         };
         #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-        let fd: Fd = Fd::INVALID;
+        let fd: Fd = {
+            let _ = open_flags;
+            Fd::INVALID
+        };
 
         let res = self.add_file::<true>(fd, file_path, hash, loader, Fd::INVALID, None);
         match res {
@@ -961,7 +973,10 @@ impl Watcher {
         fn wrap_package_json(ctx: *mut (), path: &[u8]) {
             // SAFETY: same pairing invariant as `wrap` above.
             let this = unsafe { &mut *ctx.cast::<Watcher>() };
-            let _ = this.add_file_by_path_slow(path, Loader::Json);
+            // `O_RDONLY`, not `WATCH_OPEN_FLAGS`: this runs at resolve time,
+            // so a later `import './package.json'` reuses the stored fd, and
+            // the transpiler cannot `read()` a macOS `O_EVTONLY` descriptor.
+            let _ = this.add_file_by_path(path, Loader::Json, bun_sys::O::RDONLY);
         }
         AnyResolveWatcher {
             context: std::ptr::from_mut::<Self>(self).cast::<()>(),

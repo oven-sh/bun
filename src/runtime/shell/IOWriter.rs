@@ -214,6 +214,13 @@ struct State {
     winbuf: Vec<u8>,
     writer_idx: usize,
     total_bytes_written: usize,
+    /// Set (and never cleared) by `fail_pending_writers`. A writer with a
+    /// stored error is dead: `enqueue`/`enqueue_fmt_bltn` must reject new
+    /// chunks with this error instead of queueing them (see
+    /// `handle_dead_writer`). The syscall error is kept (not the derived
+    /// `SystemError`) so each rejected chunk gets its own freshly-derived
+    /// `SystemError`.
+    err: Option<sys::Error>,
     evtloop: EventLoopHandle,
     is_writing: bool,
     started: bool,
@@ -290,6 +297,7 @@ impl IOWriter {
                 winbuf: Vec::new(),
                 writer_idx: 0,
                 total_bytes_written: 0,
+                err: None,
                 evtloop,
                 is_writing: false,
                 started: false,
@@ -841,6 +849,11 @@ impl IOWriter {
         if err.get_errno() == E::EPIPE {
             s.flags.broken_pipe = true;
         }
+        // Mark the writer dead before any completion below runs: a child that
+        // enqueues from its callback (the next statement, the RHS of `&&`, ...)
+        // must be rejected by `handle_dead_writer`, not queued onto a writer
+        // whose handle the error path is tearing down.
+        s.err = Some(err.clone());
         // Writers before writer_idx have already had their callback fired and
         // may have been freed; only notify the still-pending ones, dedup'd.
         let mut pending: Vec<ChildPtr> = Vec::new();
@@ -933,13 +946,31 @@ impl IOWriter {
 
     // ── enqueue ─────────────────────────────────────────────────────────
 
-    fn handle_broken_pipe(&self, ptr: ChildPtr) -> Option<Yield> {
-        if self.state().flags.broken_pipe {
+    /// A writer that already reported a fatal error must not accept new
+    /// chunks: `PosixBufferedWriter::_on_error` closes the handle after
+    /// `on_error` returns, so a chunk queued from inside the completion
+    /// callbacks (or any later one) would wait on a poll that is being torn
+    /// down, and a later `write()` would run with `handle == Closed` (the
+    /// pollable path asserts `handle == Poll`). Broken pipes are the EPIPE
+    /// flavor of the same thing. Report the error to the child instead of
+    /// queueing the chunk.
+    fn handle_dead_writer(&self, ptr: ChildPtr) -> Option<Yield> {
+        let s = self.state();
+        if s.flags.broken_pipe {
             let err = sys::Error::from_code(E::EPIPE, sys::Tag::write).to_system_error();
             return Some(Yield::OnIoWriterChunk {
                 child: ptr,
                 written: 0,
                 err: Some(err),
+            });
+        }
+        if let Some(err) = &s.err {
+            return Some(Yield::OnIoWriterChunk {
+                child: ptr,
+                written: 0,
+                // `SystemError` owns its `bun_core::String`s by value, so
+                // derive a fresh one per rejected chunk (see `on_error`).
+                err: Some(err.to_shell_system_error()),
             });
         }
         None
@@ -962,6 +993,7 @@ impl IOWriter {
     /// `child` is the writer that was just pushed (see `on_sync_error`).
     fn enqueue_internal(&self, child: ChildPtr) -> Yield {
         debug_assert!(!self.state().flags.broken_pipe);
+        debug_assert!(self.state().err.is_none());
         #[cfg(not(windows))]
         if !self.state().flags.pollable {
             return self.enqueue_file(child);
@@ -977,7 +1009,7 @@ impl IOWriter {
     /// Queue `buf` for writing; when the chunk completes (or errors),
     /// `child`'s `on_io_writer_chunk` fires.
     pub fn enqueue(&self, child: ChildPtr, bytelist: Option<*mut Vec<u8>>, buf: &[u8]) -> Yield {
-        if let Some(y) = self.handle_broken_pipe(child) {
+        if let Some(y) = self.handle_dead_writer(child) {
             return y;
         }
         if buf.is_empty() {
@@ -1013,9 +1045,10 @@ impl IOWriter {
             let _ = write!(&mut s.buf, "{}: ", k.as_str());
         }
         let _ = s.buf.write_fmt(args);
-        // `buf` is written *before* checking broken_pipe (the bytes are dead
-        // on the error path but the buffer will be cleared there anyway).
-        // NOTE: inline `handle_broken_pipe` instead of calling the helper —
+        // `buf` is written *before* the dead-writer checks (the bytes are dead
+        // on the error path but no `Writer` references them, and an errored
+        // writer never drains again).
+        // NOTE: inline `handle_dead_writer` instead of calling the helper —
         // the helper re-derives `state()` while `s` is still live, which is two
         // simultaneous `&mut State` (UB under Stacked Borrows).
         if s.flags.broken_pipe {
@@ -1024,6 +1057,13 @@ impl IOWriter {
                 child,
                 written: 0,
                 err: Some(err),
+            };
+        }
+        if let Some(err) = &s.err {
+            return Yield::OnIoWriterChunk {
+                child,
+                written: 0,
+                err: Some(err.to_shell_system_error()),
             };
         }
         let end = s.buf.len();

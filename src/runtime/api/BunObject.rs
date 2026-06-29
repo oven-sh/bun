@@ -2373,6 +2373,38 @@ pub mod JSZlib {
         };
     }
 
+    /// Move `list`'s allocation into a `Uint8Array` backing store without
+    /// copying. After `shrink_to_fit`, an empty `Vec` owns no allocation (its
+    /// pointer is dangling), so no deallocator is registered for it.
+    fn leak_list_into_uint8array(
+        global_this: &JSGlobalObject,
+        mut list: Vec<u8>,
+    ) -> JsResult<JSValue> {
+        list.shrink_to_fit();
+        let is_empty = list.is_empty();
+        let leaked: &'static mut [u8] = list.leak();
+        let ptr = leaked.as_mut_ptr();
+        let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
+        // SAFETY: non-empty: `ptr` is the just-leaked `Vec` allocation, freed
+        // exactly once at GC by `global_deallocator` (`mi_free_ctx`) via the ctx
+        // pointer. Empty: no callback, and the dangling `ptr` is never read.
+        unsafe {
+            array_buffer.to_js_with_context(
+                global_this,
+                if is_empty {
+                    core::ptr::null_mut()
+                } else {
+                    ptr.cast::<c_void>()
+                },
+                if is_empty {
+                    None
+                } else {
+                    Some(global_deallocator)
+                },
+            )
+        }
+    }
+
     #[bun_jsc::host_fn]
     pub(crate) fn gzip_sync(
         global_this: &JSGlobalObject,
@@ -2524,22 +2556,7 @@ pub mod JSZlib {
                 // `list` directly into the ArrayBuffer (freed by
                 // `global_deallocator`).
                 drop(reader);
-                list.shrink_to_fit();
-                // Ownership of the allocation transfers to JSC; freed via
-                // `global_deallocator` once the ArrayBuffer is finalized.
-                let leaked: &'static mut [u8] = list.leak();
-                let ptr = leaked.as_mut_ptr();
-                let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
-                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
-                // GC via the ctx pointer (the data pointer itself).
-                unsafe {
-                    array_buffer.to_js_with_context(
-                        global_this,
-                        ptr.cast::<c_void>(),
-                        Some(global_deallocator),
-                    )
-                }
+                leak_list_into_uint8array(global_this, list)
             }
             Library::Libdeflate => {
                 let Some(mut decompressor) = bun_libdeflate::OwnedDecompressor::new() else {
@@ -2678,22 +2695,7 @@ pub mod JSZlib {
                 // NOTE: see gunzip path — reader borrows `list`, so drop
                 // it before leaking `list` into the ArrayBuffer.
                 drop(reader);
-                list.shrink_to_fit();
-                // Ownership of the allocation transfers to JSC; freed via
-                // `global_deallocator` once the ArrayBuffer is finalized.
-                let leaked: &'static mut [u8] = list.leak();
-                let ptr = leaked.as_mut_ptr();
-                let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
-                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
-                // GC via the ctx pointer (the data pointer itself).
-                unsafe {
-                    array_buffer.to_js_with_context(
-                        global_this,
-                        ptr.cast::<c_void>(),
-                        Some(global_deallocator),
-                    )
-                }
+                leak_list_into_uint8array(global_this, list)
             }
             Library::Libdeflate => {
                 let Some(mut compressor) = bun_libdeflate::OwnedCompressor::new(level.unwrap_or(6))

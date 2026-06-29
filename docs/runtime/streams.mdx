@@ -98,7 +98,7 @@ For default (non-`direct`) `ReadableStream`s and async-generator response bodies
 
 ## Async generator streams
 
-Bun also supports async generator functions as a source for `Response` and `Request`.
+Bun also supports async generator functions as a source for `Response` and `Request`. Use async generators to create a `ReadableStream` that fetches data from an asynchronous source.
 
 ```ts
 const response = new Response(

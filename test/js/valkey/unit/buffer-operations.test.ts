@@ -2,11 +2,9 @@ import { RedisClient } from "bun";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { ConnectionType, createClient, ctx, isEnabled } from "../test-utils";
 
-// PUBLISH and SPUBLISH share one argument path, which accepts the same value
-// types as every other command (set, hset, ...). Argument validation runs
-// synchronously before any connection attempt, so these tests need no server:
-// a value that passes validation yields a Promise (which rejects later with a
-// connection error we swallow), while an invalid value throws right away.
+// PUBLISH and SPUBLISH share one argument path that accepts the same value
+// types as every other command. Argument validation runs synchronously before
+// any connection attempt, so these tests need no server.
 describe.each(["publish", "spublish"] as const)("RedisClient.%s argument types", method => {
   let client: RedisClient;
 
@@ -23,7 +21,10 @@ describe.each(["publish", "spublish"] as const)("RedisClient.%s argument types",
     client.close();
   });
 
-  /** `null` when the value passed argument validation, else the thrown message. */
+  /**
+   * `null` when the call passed argument validation (the returned Promise's
+   * connection-error rejection is swallowed), else the synchronously thrown message.
+   */
   function validationError(call: () => Promise<unknown>): string | null {
     try {
       call().catch(() => {});
@@ -190,6 +191,8 @@ describe.skipIf(!isEnabled)("Valkey: Buffer Operations", () => {
 
     try {
       const received = Promise.withResolvers<string>();
+      // An unexpected disconnect must fail the test, not stall it until timeout.
+      subscriber.onclose = error => received.reject(error);
       await subscriber.subscribe(channel, message => received.resolve(message));
 
       // Publish the raw UTF-8 bytes of a multi-byte string as a Uint8Array.
@@ -199,6 +202,9 @@ describe.skipIf(!isEnabled)("Valkey: Buffer Operations", () => {
       expect(await ctx.redis.publish(channel, new TextEncoder().encode(text))).toBe(1);
       expect(await received.promise).toBe(text);
     } finally {
+      // Closing a client that is still subscribed keeps the event loop alive
+      // (https://github.com/oven-sh/bun/issues/33103), so unsubscribe first.
+      await subscriber.unsubscribe(channel).catch(() => {});
       subscriber.close();
     }
   });

@@ -762,7 +762,7 @@ declare module "bun" {
        * "remix.run" // Only listen on remix.run
        * ````
        *
-       * The hostname must not include a {@link port}
+       * The hostname should not include a {@link port}
        */
       hostname?: "0.0.0.0" | "127.0.0.1" | "localhost" | (string & {});
 

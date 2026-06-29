@@ -127,6 +127,13 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * connection that never produced a complete request (headersTimeout
      * applies) from an idle keep-alive socket between messages (it doesn't). */
     bool hasCompletedResponse = false;
+    /* node:http receive deadlines are absolute per message: the phase the
+     * socket timer is currently armed for, whether nodeMessageStartMs points
+     * at the current message's first received byte (vs. connection open), and
+     * that start time (steady clock, ms). See HttpContext::tryArmNodeReceiveTimeout. */
+    NodeReceivePhase nodeArmedReceivePhase = NodeReceivePhase::None;
+    bool nodeMessageStarted = false;
+    uint64_t nodeMessageStartMs = 0;
     /* When set, the response carries no body framing at all: no Content-Length,
      * no chunked encoding, no terminating chunk. writeStatus() sets it for 1xx
      * and 204 (RFC 9110 8.6); node:http additionally sets it for 304. */

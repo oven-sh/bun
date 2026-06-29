@@ -36,6 +36,7 @@
 #include <span>
 #include <array>
 #include <mutex>
+#include <chrono>
 
 
 namespace uWS {
@@ -125,14 +126,7 @@ private:
     static constexpr int HTTP_RECEIVE_THROUGHPUT_BYTES = 16 * 1024;
 
 public:
-    /* node:http receive phase of a socket (only meaningful when
-     * hasNodeReceiveTimeouts is set): Headers from connection (or completion
-     * of the previous keep-alive exchange) until a message's header section
-     * is fully parsed, Body until its body is fully received, None while a
-     * handler/response is in flight or the keep-alive socket is idle after a
-     * completed exchange. CONNECT tunnels stream forever and have no phase. */
-    enum class NodeReceivePhase : unsigned char { None, Headers, Body };
-
+    /* See NodeReceivePhase in HttpParser.h. */
     static NodeReceivePhase nodeReceivePhase(HttpResponseData<SSL> *httpResponseData) {
         if (httpResponseData->isConnectRequest) {
             return NodeReceivePhase::None;
@@ -144,22 +138,58 @@ public:
             ? NodeReceivePhase::Headers : NodeReceivePhase::None;
     }
 
+    static uint64_t nodeNowMs() {
+        return (uint64_t) std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+
+    /* Seconds left until the current message's deadline, measured from the
+     * message start like Node: the headers deadline is additionally capped by
+     * requestTimeout (which spans the whole message including its header
+     * section), and the body deadline is whatever remains of requestTimeout.
+     * 0 means no deadline. */
+    static unsigned int nodeRemainingReceiveSeconds(us_socket_t *s, HttpResponseData<SSL> *httpResponseData, NodeReceivePhase phase) {
+        HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
+        unsigned int headersSeconds = httpContextData->nodeHeadersTimeoutSeconds;
+        unsigned int requestSeconds = httpContextData->nodeRequestTimeoutSeconds;
+        unsigned int total = requestSeconds;
+        if (phase == NodeReceivePhase::Headers && headersSeconds && (!requestSeconds || headersSeconds < requestSeconds)) {
+            total = headersSeconds;
+        }
+        if (total == 0) {
+            return 0;
+        }
+        uint64_t elapsedSeconds = (nodeNowMs() - httpResponseData->nodeMessageStartMs) / 1000;
+        /* Already past the deadline: fire at the next timer sweep */
+        return elapsedSeconds >= total ? 1 : (unsigned int) (total - elapsedSeconds);
+    }
+
     /* While a receive phase is active its deadline owns the per-socket timer;
      * every legacy resetTimeout()/pause() routes back through here so it
      * cannot be disarmed early. Returns false outside the receive phases, in
      * which case the caller falls back to the legacy idle timeout. */
     static bool tryArmNodeReceiveTimeout(us_socket_t *s, HttpResponseData<SSL> *httpResponseData) {
-        switch (nodeReceivePhase(httpResponseData)) {
-            case NodeReceivePhase::Body:
-                us_socket_timeout(s, getSocketContextDataS(s)->nodeRequestTimeoutSeconds);
-                return true;
-            case NodeReceivePhase::Headers:
-                us_socket_timeout(s, getSocketContextDataS(s)->nodeHeadersTimeoutSeconds);
-                return true;
-            case NodeReceivePhase::None:
-                return false;
+        NodeReceivePhase phase = nodeReceivePhase(httpResponseData);
+        if (phase == NodeReceivePhase::None) {
+            httpResponseData->nodeArmedReceivePhase = NodeReceivePhase::None;
+            return false;
         }
-        return false;
+        /* Like Node (last_message_start_), the clock starts at the message's
+         * first received byte, or at connection open while no bytes have
+         * arrived yet for the first message. */
+        bool messageStarted = httpResponseData->nodeArmedReceivePhase != NodeReceivePhase::None && httpResponseData->nodeMessageStarted;
+        if (messageStarted && phase == httpResponseData->nodeArmedReceivePhase) {
+            /* Both deadlines are absolute from the message start: received
+             * bytes never extend them, so a client trickling data slowly
+             * cannot hold the socket past them. */
+            return true;
+        }
+        if (!messageStarted) {
+            httpResponseData->nodeMessageStartMs = nodeNowMs();
+            httpResponseData->nodeMessageStarted = phase == NodeReceivePhase::Body || httpResponseData->hasPartialRequest();
+        }
+        httpResponseData->nodeArmedReceivePhase = phase;
+        us_socket_timeout(s, nodeRemainingReceiveSeconds(s, httpResponseData, phase));
+        return true;
     }
 
 private:

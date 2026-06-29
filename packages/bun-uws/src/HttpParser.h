@@ -70,6 +70,14 @@ namespace uWS
         HTTP_PARSER_ERROR_REQUEST_TIMEOUT = 11,
     };
 
+    /* node:http receive phase of a socket (only meaningful when
+     * hasNodeReceiveTimeouts is set): Headers from connection (or the first
+     * byte of the next keep-alive message) until a message's header section
+     * is fully parsed, Body until its body is fully received, None while a
+     * handler/response is in flight or the keep-alive socket is idle after a
+     * completed exchange. CONNECT tunnels stream forever and have no phase. */
+    enum class NodeReceivePhase : unsigned char { None, Headers, Body };
+
 
     enum HTTPHeaderParserError: uint8_t {
         HTTP_HEADER_PARSER_ERROR_NONE = 0,

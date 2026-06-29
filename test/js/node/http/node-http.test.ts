@@ -3917,6 +3917,78 @@ describe("server headersTimeout/requestTimeout enforcement", () => {
     }
   }, 20_000);
 
+  it("headersTimeout is an absolute deadline: trickling header bytes does not extend it", async () => {
+    // A slowloris client sending one header byte at a time keeps the socket
+    // active forever under an inactivity timer; Node measures headersTimeout
+    // from the start of the message regardless of activity. The deadline must
+    // exceed uWS's 4s timer-sweep granularity for re-arming to be observable.
+    const server = createServer(
+      { headersTimeout: 5000, requestTimeout: 30000, connectionsCheckingInterval: 100 },
+      () => {},
+    );
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const received: Buffer[] = [];
+      socket.on("data", chunk => received.push(chunk));
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nX-Slow: ");
+      const trickle = setInterval(() => {
+        if (!socket.destroyed && !socket.writableEnded) socket.write("a");
+      }, 500);
+      try {
+        await closed;
+      } finally {
+        clearInterval(trickle);
+      }
+      expect(Buffer.concat(received).toString()).toBe(REQUEST_TIMEOUT_408_RESPONSE);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 30_000);
+
+  it("requestTimeout is an absolute deadline: trickling body bytes does not extend it", async () => {
+    const { promise: handlerCalled, resolve: onHandler } = Promise.withResolvers<void>();
+    const server = createServer(
+      { headersTimeout: 5000, requestTimeout: 6000, connectionsCheckingInterval: 100 },
+      (req, res) => {
+        onHandler();
+        // Keep the request flowing so every trickled chunk reaches the server.
+        req.resume();
+        req.on("error", () => {});
+        res.on("error", () => {});
+      },
+    );
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const received: Buffer[] = [];
+      socket.on("data", chunk => received.push(chunk));
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100000\r\n\r\n");
+      await handlerCalled;
+      const trickle = setInterval(() => {
+        if (!socket.destroyed && !socket.writableEnded) socket.write("b");
+      }, 500);
+      try {
+        await closed;
+      } finally {
+        clearInterval(trickle);
+      }
+      expect(Buffer.concat(received).toString()).toBe(REQUEST_TIMEOUT_408_RESPONSE);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 30_000);
+
   it("disabled timeouts (0) do not close a stalled connection", async () => {
     // Negative contract bounded by an awaited condition: a sibling server with
     // the timeouts enabled answers its own stalled request with a 408 first,

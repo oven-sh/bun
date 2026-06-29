@@ -66,16 +66,36 @@ describe("node:test", () => {
     expect(stderr).toContain(" 2 pass\n 1 fail\n");
     expect(exitCode).toBe(1);
   });
+
+  test("should run under --concurrent", async () => {
+    const { exitCode, stderr } = await runTests(["08-concurrent.js"], ["--concurrent"]);
+    // bun:test's onTestFinished() throws inside a concurrent test; the shim
+    // must not let that fail every node:test test run with --concurrent.
+    expect(stderr).not.toContain("Cannot call onTestFinished");
+    expect(stderr).toContain(" 2 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("should give each retry attempt a fresh t.signal", async () => {
+    const { exitCode, stderr } = await runTests(["09-retry-signal.js"], ["--retry", "2"]);
+    // The TestContext is reused across attempts; a retried test must not
+    // start with the previous attempt's aborted signal. Attempt 1's
+    // "transient" failure still prints the fixture source, so match only
+    // the thrown form, not the source line that constructs the error.
+    expect(stderr).not.toContain("error: SIGNAL_ALREADY_ABORTED_ON_ENTRY");
+    expect(stderr).toContain(" 1 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
-async function runTests(filenames: string[]) {
+async function runTests(filenames: string[], extraArgs: string[] = []) {
   const testPaths = filenames.map(filename => join(import.meta.dirname, "fixtures", filename));
   const {
     exited,
     stdout: stdoutStream,
     stderr: stderrStream,
   } = spawn({
-    cmd: [bunExe(), "test", ...testPaths],
+    cmd: [bunExe(), "test", ...extraArgs, ...testPaths],
     env: bunEnv,
     stderr: "pipe",
   });

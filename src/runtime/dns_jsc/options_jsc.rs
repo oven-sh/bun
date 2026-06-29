@@ -214,15 +214,16 @@ pub(crate) fn result_any_to_js(
             // resolver; valid for the duration of this call.
             Some(addr_info_to_js_array(unsafe { &*addrinfo }, global)?)
         }
-        ResultAny::List(list) => 'brk: {
-            let array = JSValue::create_empty_array(global, list.len())?;
-            let items: &[GaiResult] = list.as_slice();
-            for (i, item) in (0_u32..).zip(items.iter()) {
-                array.put_index(global, i, result_to_js(item, global)?)?;
-            }
-            break 'brk Some(array);
-        }
+        ResultAny::List(list) => Some(result_list_to_js(list, global)?),
     })
+}
+
+pub(crate) fn result_list_to_js(list: &[GaiResult], global: &JSGlobalObject) -> JsResult<JSValue> {
+    let array = JSValue::create_empty_array(global, list.len())?;
+    for (i, item) in (0_u32..).zip(list.iter()) {
+        array.put_index(global, i, result_to_js(item, global)?)?;
+    }
+    Ok(array)
 }
 
 pub(crate) fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResult<JSValue> {

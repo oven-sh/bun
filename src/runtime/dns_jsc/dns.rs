@@ -11,7 +11,6 @@ use bun_collections::{ArrayHashMap, HiveArray};
 use bun_core::Output;
 use bun_core::{self as bun, env_var, fmt as bun_fmt, mach_port};
 use bun_core::{ZStr, strings};
-#[cfg(not(windows))]
 use bun_dns::ResultList as GetAddrInfoResultList;
 use bun_dns::{
     self, Backend as GetAddrInfoBackend, GetAddrInfo, GetAddrInfoResult,
@@ -32,7 +31,7 @@ use bun_threading::thread_pool;
 use bun_uws::{ConnectingSocket, Loop};
 use bun_wyhash::hash as wyhash;
 
-use super::cares_jsc::error_to_deferred;
+use super::cares_jsc::{error_to_deferred, throw_dns_exception};
 use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_cares_sys::c_ares_draft as c_ares;
@@ -520,6 +519,138 @@ pub(super) fn normalize_dns_name<'a>(name: &'a [u8], backend: &mut GetAddrInfoBa
     }
 
     name
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// blocking getaddrinfo — runs on whichever thread calls it. Shared by
+// `LibcBackend::run` (work-pool thread) and `Bun.dns.lookupSync` (JS thread).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Blocking `getaddrinfo(3)`. `Err` carries the raw platform status code,
+/// which `c_ares::Error::init_eai` maps to a DNS error.
+///
+/// Callers must reject names longer than `MAX_PATH_BYTES` (see `do_lookup`);
+/// anything larger is silently truncated into the fixed `PathBuffer` below.
+#[cfg(not(windows))]
+pub(super) fn blocking_getaddrinfo(
+    name: &[u8],
+    port: u16,
+    options: GetAddrInfoOptions,
+) -> Result<GetAddrInfoResultList, i32> {
+    let hints = options.to_libc();
+    let mut port_buf = [0u8; 128];
+    let port_len = bun_fmt::print_int(&mut port_buf, port);
+    port_buf[port_len] = 0;
+    // SAFETY: NUL written at port_buf[port_len]
+    let port_z = ZStr::from_buf(&port_buf[..], port_len);
+
+    let mut hostname = PathBuffer::uninit();
+    // Reserve the last byte for the NUL terminator so the index below can
+    // never exceed the buffer even if a caller's length guard is bypassed.
+    let cap = hostname.len() - 1;
+    let copied_len = strings::copy(&mut hostname[..cap], name).len();
+    hostname[copied_len] = 0;
+    let mut addrinfo: *mut AddrInfo = ptr::null_mut();
+    // SAFETY: hostname[copied_len] == 0
+    let host = ZStr::from_buf(&hostname[..], copied_len);
+    let debug_timer = Output::DebugTimer::start();
+    // SAFETY: FFI; all pointers valid for the call duration
+    let err = unsafe {
+        libc::getaddrinfo(
+            host.as_ptr().cast::<c_char>(),
+            if port_len > 0 {
+                port_z.as_ptr().cast::<c_char>()
+            } else {
+                ptr::null()
+            },
+            hints
+                .as_ref()
+                .map(std::ptr::from_ref)
+                .unwrap_or(ptr::null()),
+            &raw mut addrinfo,
+        )
+    };
+    sys::syslog!(
+        "getaddrinfo({}, {}) = {} ({})",
+        bstr::BStr::new(name),
+        bstr::BStr::new(port_z.as_bytes()),
+        err,
+        debug_timer,
+    );
+    if err != 0 || addrinfo.is_null() {
+        return Err(err);
+    }
+
+    // do not free addrinfo when err != 0: getaddrinfo only allocates the
+    // result list on success, so the out-pointer is unspecified on error.
+    let _free = scopeguard::guard(addrinfo, |a| {
+        // SAFETY: `a` was returned by libc::getaddrinfo (non-null per the check above).
+        unsafe { bun_dns::freeaddrinfo(a) }
+    });
+
+    // SAFETY: addrinfo is non-null (checked above); freed by `_free` guard after copy.
+    Ok(bun_core::handle_oom(GetAddrInfoResult::to_list(unsafe {
+        &*addrinfo
+    })))
+}
+
+/// Windows: `uv_getaddrinfo` with a NULL callback runs synchronously on the
+/// calling thread and returns the status directly. libuv owns the UTF-8 ↔
+/// UTF-16 conversion `GetAddrInfoW` requires, and the result block it hands
+/// back must be released with `uv_freeaddrinfo` (see `on_libuv_complete`).
+#[cfg(windows)]
+pub(super) fn blocking_getaddrinfo(
+    loop_: *mut libuv::Loop,
+    name: &[u8],
+    port: u16,
+    options: GetAddrInfoOptions,
+) -> Result<GetAddrInfoResultList, i32> {
+    let hints = options.to_libc();
+    let mut port_buf = [0u8; 128];
+    let port_len = bun_fmt::print_int(&mut port_buf, port);
+    port_buf[port_len] = 0;
+    // SAFETY: NUL written at port_buf[port_len]
+    let port_z = ZStr::from_buf(&port_buf[..], port_len);
+
+    let mut hostname = PathBuffer::uninit();
+    // Reserve the last byte for the NUL terminator so the index below can
+    // never exceed the buffer even if a caller's length guard is bypassed.
+    let cap = hostname.len() - 1;
+    let copied_len = strings::copy(&mut hostname[..cap], name).len();
+    hostname[copied_len] = 0;
+    // SAFETY: hostname[copied_len] == 0
+    let host = ZStr::from_buf(&hostname[..], copied_len);
+
+    let mut req: libuv::uv_getaddrinfo_t = bun_core::ffi::zeroed();
+    // SAFETY: `req` is a stack struct libuv fully initializes; `loop_` is the
+    // live per-VM uv loop. With a NULL callback nothing is queued, so `req`
+    // is dead once the call returns.
+    let rc = unsafe {
+        libuv::uv_getaddrinfo(
+            loop_,
+            &raw mut req,
+            None,
+            host.as_ptr().cast::<c_char>(),
+            port_z.as_ptr().cast::<c_char>(),
+            hints
+                .as_ref()
+                .map_or(ptr::null(), |h| (h as *const AddrInfo).cast()),
+        )
+    };
+    if rc.int() != 0 {
+        return Err(rc.int());
+    }
+    let addrinfo = req.addrinfo;
+    if addrinfo.is_null() {
+        return Ok(GetAddrInfoResultList::new());
+    }
+    // SAFETY: `addrinfo` is the non-null result uv_getaddrinfo just produced;
+    // freed with libuv's deallocator below, after the copy.
+    let list = bun_core::handle_oom(GetAddrInfoResult::to_list(unsafe { &*addrinfo }));
+    // SAFETY: libuv allocated `req.addrinfo` with uv__malloc; `uv_freeaddrinfo`
+    // is the matching free (ws2's `freeaddrinfo` would corrupt the heap).
+    unsafe { libuv::uv_freeaddrinfo(addrinfo.cast()) };
+    Ok(list)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1230,64 +1361,11 @@ pub mod get_addr_info_request {
                 unreachable!()
             };
             let query_name = core::mem::take(&mut query.name); // freed at end of scope
-            let hints = query.options.to_libc();
-            let mut port_buf = [0u8; 128];
-            let port_len = bun_fmt::print_int(&mut port_buf, query.port);
-            port_buf[port_len] = 0;
-            // SAFETY: NUL written at port_buf[port_len]
-            let port_z = ZStr::from_buf(&port_buf[..], port_len);
-
-            let mut hostname = PathBuffer::uninit();
-            // Reserve the last byte for the NUL terminator so the index below
-            // can never exceed the buffer even if the upstream length guard in
-            // `doLookup` is bypassed.
-            let cap = hostname.len() - 1;
-            let copied_len = strings::copy(&mut hostname[..cap], &query_name).len();
-            hostname[copied_len] = 0;
-            let mut addrinfo: *mut AddrInfo = ptr::null_mut();
-            // SAFETY: hostname[copied_len] == 0
-            let host = ZStr::from_buf(&hostname[..], copied_len);
-            let debug_timer = Output::DebugTimer::start();
-            // SAFETY: FFI; all pointers valid for the call duration
-            let err = unsafe {
-                libc::getaddrinfo(
-                    host.as_ptr().cast::<c_char>(),
-                    if port_len > 0 {
-                        port_z.as_ptr().cast::<c_char>()
-                    } else {
-                        ptr::null()
-                    },
-                    hints
-                        .as_ref()
-                        .map(std::ptr::from_ref)
-                        .unwrap_or(ptr::null()),
-                    &raw mut addrinfo,
-                )
+            let (port, options) = (query.port, query.options);
+            *self = match blocking_getaddrinfo(&query_name, port, options) {
+                Ok(list) => LibcBackend::Success(list),
+                Err(err) => LibcBackend::Err(err),
             };
-            sys::syslog!(
-                "getaddrinfo({}, {}) = {} ({})",
-                bstr::BStr::new(&query_name),
-                bstr::BStr::new(port_z.as_bytes()),
-                err,
-                debug_timer,
-            );
-            if err != 0 || addrinfo.is_null() {
-                *self = LibcBackend::Err(err);
-                return;
-            }
-
-            // do not free addrinfo when err != 0: getaddrinfo only allocates the
-            // result list on success, so the out-pointer is unspecified on error.
-            let _free = scopeguard::guard(addrinfo, |a| {
-                // SAFETY: `a` was returned by libc::getaddrinfo (non-null per the check above).
-                unsafe { bun_dns::freeaddrinfo(a) }
-            });
-
-            // SAFETY: addrinfo is non-null (checked above); freed by `_free` guard after copy.
-            *self =
-                LibcBackend::Success(bun_core::handle_oom(GetAddrInfoResult::to_list(unsafe {
-                    &*addrinfo
-                })));
         }
     }
 
@@ -5126,22 +5204,28 @@ impl Resolver {
         Ok(promise)
     }
 
-    // JSC-ABI shim emitted by `export_host_fn!` at module scope (see `global_resolve`).
-    pub fn global_lookup(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    /// Shared `(hostname, options?)` parsing for `Bun.dns.lookup` and
+    /// `Bun.dns.lookupSync`. Returns the validated hostname (rooted by the
+    /// callframe argument for the global's lifetime) plus the port/options.
+    fn parse_lookup_arguments<'a>(
+        global_this: &'a JSGlobalObject,
+        callframe: &CallFrame,
+        fn_name: &'static str,
+    ) -> JsResult<(&'a jsc::JSString, u16, GetAddrInfoOptions)> {
         let arguments = callframe.arguments_old::<2>();
         if arguments.len < 1 {
-            return Err(global_this.throw_not_enough_arguments("lookup", 2, arguments.len));
+            return Err(global_this.throw_not_enough_arguments(fn_name, 2, arguments.len));
         }
 
         let name_value = arguments.ptr[0];
         if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
-            return Err(global_this.throw_invalid_argument_type("lookup", "hostname", "string"));
+            return Err(global_this.throw_invalid_argument_type(fn_name, "hostname", "string"));
         }
         // SAFETY: `to_js_string` returns a live *mut JSString rooted by `name_value`.
         let name_str = name_value.to_js_string(global_this)?;
         if name_str.length() == 0 {
             return Err(global_this.throw_invalid_argument_type(
-                "lookup",
+                fn_name,
                 "hostname",
                 "non-empty string",
             ));
@@ -5171,7 +5255,8 @@ impl Resolver {
                         E::JSError => Err(jsc::JsError::Thrown),
                         // more information with these errors
                         _ => Err(global_this.throw(format_args!(
-                            "Invalid options passed to lookup(): {}",
+                            "Invalid options passed to {}(): {}",
+                            fn_name,
                             <&'static str>::from(&err)
                         ))),
                     };
@@ -5179,10 +5264,61 @@ impl Resolver {
             };
         }
 
+        Ok((name_str, port, options))
+    }
+
+    // JSC-ABI shim emitted by `export_host_fn!` at module scope (see `global_resolve`).
+    pub fn global_lookup(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let (name_str, port, options) =
+            Self::parse_lookup_arguments(global_this, callframe, "lookup")?;
         let name = name_str.to_slice(global_this);
         let resolver = global_resolver(global_this);
 
         resolver.do_lookup(name.slice(), port, options, global_this)
+    }
+
+    /// `Bun.dns.lookupSync(hostname, options?)` — blocking `getaddrinfo(3)` on
+    /// the JS thread. Returns the same `{ address, family, ttl }[]` the async
+    /// `lookup` resolves with, and throws the same `DNSException` on failure.
+    ///
+    /// Always the OS resolver: there is no async machinery to pick a backend
+    /// for, so `options.backend` is ignored, and nothing is read from or
+    /// written to the in-flight DNS cache.
+    // JSC-ABI shim emitted by `export_host_fn!` at module scope (see `global_resolve`).
+    pub fn global_lookup_sync(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let (name_str, port, options) =
+            Self::parse_lookup_arguments(global_this, callframe, "lookupSync")?;
+        let name_slice = name_str.to_slice(global_this);
+        let name = name_slice.slice();
+
+        // Same bound `do_lookup` enforces: `blocking_getaddrinfo` copies the
+        // hostname into a fixed `PathBuffer` before NUL-terminating it.
+        if name.len() >= MAX_PATH_BYTES || name.contains(&0) {
+            return Err(throw_dns_exception(
+                c_ares::Error::ENOTFOUND,
+                global_this,
+                b"getaddrinfo",
+                name,
+            ));
+        }
+
+        #[cfg(not(windows))]
+        let result = blocking_getaddrinfo(name, port, options);
+        #[cfg(windows)]
+        let result = blocking_getaddrinfo(global_this.bun_vm().uv_loop(), name, port, options);
+
+        match result {
+            Ok(list) => super::options_jsc::result_list_to_js(&list, global_this),
+            Err(status) => {
+                // `init_eai(0)` is `None` (success), but getaddrinfo never
+                // reports 0 alongside a null result list; map it to ENOTFOUND.
+                let err = c_ares::Error::init_eai(status).unwrap_or(c_ares::Error::ENOTFOUND);
+                Err(throw_dns_exception(err, global_this, b"getaddrinfo", name))
+            }
+        }
     }
 
     pub fn do_lookup(
@@ -6061,6 +6197,7 @@ macro_rules! export_host_fn {
 }
 export_host_fn!(Resolver::global_resolve, "Bun__DNS__resolve");
 export_host_fn!(Resolver::global_lookup, "Bun__DNS__lookup");
+export_host_fn!(Resolver::global_lookup_sync, "Bun__DNS__lookupSync");
 export_host_fn!(Resolver::global_resolve_txt, "Bun__DNS__resolveTxt");
 export_host_fn!(Resolver::global_resolve_soa, "Bun__DNS__resolveSoa");
 export_host_fn!(Resolver::global_resolve_mx, "Bun__DNS__resolveMx");

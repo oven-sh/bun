@@ -173,6 +173,113 @@ describe("dns", () => {
     expect(isIP(result[0].address)).toBeGreaterThan(0);
   });
 
+  describe("lookupSync()", () => {
+    // Numeric literals are parsed by getaddrinfo without touching the
+    // network, so the exact result shape is deterministic on every platform.
+    test("IPv4 literal", () => {
+      expect(dns.lookupSync("127.0.0.1")).toEqual([{ address: "127.0.0.1", family: 4, ttl: 0 }]);
+    });
+
+    test("IPv6 literal", () => {
+      expect(dns.lookupSync("::1")).toEqual([{ address: "::1", family: 6, ttl: 0 }]);
+    });
+
+    describe.each(validHostnames)("%s", hostname => {
+      test.each([
+        { options: undefined, address: isIP },
+        { options: { family: 4 }, address: isIPv4, family: 4 },
+        { options: { family: "IPv4" }, address: isIPv4, family: 4 },
+        { options: { family: 6 }, address: isIPv6, family: 6 },
+        { options: { family: "IPv6" }, address: isIPv6, family: 6 },
+        { options: { family: 0 }, address: isIP },
+        { options: { family: "any" }, address: isIP },
+      ])("%j", ({ options, address: expectedAddress, family: expectedFamily }) => {
+        // lookupSync always uses the OS resolver, so the same Windows IPv6
+        // carve-out as the non-c-ares lookup() backends above applies.
+        const expectToFail =
+          isWindows && (options?.family === "IPv6" || options?.family === 6) && hostname !== "localhost";
+        if (expectToFail) {
+          // @ts-expect-error
+          expect(() => dns.lookupSync(hostname, options)).toThrow(
+            expect.objectContaining({ name: "DNSException", code: "DNS_ENOTFOUND" }),
+          );
+          return;
+        }
+        // @ts-expect-error
+        const result = dns.lookupSync(hostname, options);
+        expect(result).toBeArray();
+        expect(result.length).toBeGreaterThan(0);
+        withoutAggressiveGC(() => {
+          for (const { family, address, ttl } of result) {
+            expect(address).toBeString();
+            expect(expectedAddress(address)).toBeTruthy();
+            expect(family).toBeInteger();
+            if (expectedFamily !== undefined) {
+              expect(family).toBe(expectedFamily);
+            }
+            // getaddrinfo(3) has no TTL, so lookupSync always reports 0.
+            expect(ttl).toBe(0);
+          }
+        });
+      });
+    });
+
+    test.each(invalidHostnames)("%s throws", hostname => {
+      expect(() => dns.lookupSync(hostname)).toThrow(
+        expect.objectContaining({
+          name: "DNSException",
+          code: "DNS_ENOTFOUND",
+          syscall: "getaddrinfo",
+          hostname,
+        }),
+      );
+    });
+
+    test.each(malformedHostnames)("'%s' throws", hostname => {
+      expect(() => dns.lookupSync(hostname)).toThrow(
+        expect.objectContaining({
+          name: "DNSException",
+          code: expect.stringMatching(/^DNS_ENOTFOUND|DNS_ESERVFAIL|DNS_ENOTIMP$/),
+        }),
+      );
+    });
+
+    // See the matching lookup() test above: the hostname must be rejected
+    // before it is copied into the fixed stack buffer.
+    test("oversized hostname throws", () => {
+      const long = Buffer.alloc(100_000, "a").toString();
+      expect(() => dns.lookupSync(long)).toThrow(
+        expect.objectContaining({
+          name: "DNSException",
+          code: "DNS_ENOTFOUND",
+          syscall: "getaddrinfo",
+        }),
+      );
+    });
+
+    test("missing hostname throws ERR_MISSING_ARGS", () => {
+      // @ts-expect-error
+      expect(() => dns.lookupSync()).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_MISSING_ARGS" }),
+      );
+    });
+
+    test.each(["", 123, null])("invalid hostname %p throws ERR_INVALID_ARG_TYPE", hostname => {
+      // @ts-expect-error
+      expect(() => dns.lookupSync(hostname)).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    });
+
+    test("non-object second argument is ignored", () => {
+      // @ts-expect-error
+      const result = dns.lookupSync("localhost", "cat");
+      expect(result).toBeArray();
+      expect(result.length).toBeGreaterThan(0);
+      expect(isIP(result[0].address)).toBeGreaterThan(0);
+    });
+  });
+
   describe("setServers", () => {
     test("triple with non-int32 family (double) throws TypeError", () => {
       // @ts-expect-error

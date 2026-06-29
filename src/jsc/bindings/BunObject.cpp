@@ -54,6 +54,7 @@
 extern "C" size_t Bun__Feature__heap_snapshot;
 
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__lookup);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNS__lookupSync);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolve);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveSrv);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveTxt);
@@ -396,6 +397,8 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
     JSGlobalObject* globalObject = bunObject->globalObject();
     JSC::JSObject* dnsObject = JSC::constructEmptyObject(globalObject);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookup"_s), 2, Bun__DNS__lookup, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookupSync"_s), 2, Bun__DNS__lookupSync, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, vm.propertyNames->resolve, 2, Bun__DNS__resolve, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);

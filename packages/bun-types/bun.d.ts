@@ -2034,6 +2034,52 @@ declare module "bun" {
     ): Promise<DNSLookup[]>;
 
     /**
+     * Synchronously look up the IP address for a hostname.
+     *
+     * This blocks the current thread on
+     * [`getaddrinfo`](https://man7.org/linux/man-pages/man3/getaddrinfo.3.html)
+     * until the operating system's resolver answers. Prefer {@link dns.lookup}
+     * in servers and anything latency-sensitive; `lookupSync` exists for
+     * scripts, CLIs, and module-scope code where an `await` is inconvenient.
+     *
+     * Because it always uses the OS resolver, the `backend` option is not
+     * supported and `ttl` is always `0`.
+     *
+     * @param hostname The hostname to lookup
+     * @param options Options for the lookup
+     * @returns The resolved addresses
+     * @throws A `DNSException` (the same error {@link dns.lookup} rejects with)
+     * when the hostname cannot be resolved.
+     *
+     * @example
+     * ```js
+     * const [{ address }] = Bun.dns.lookupSync('example.com');
+     * ```
+     *
+     * ## Filter results to IPv4
+     * ```js
+     * import { dns } from 'bun';
+     * const [{ address }] = dns.lookupSync('example.com', { family: 4 });
+     * console.log(address); // "123.122.22.126"
+     * ```
+     */
+    function lookupSync(
+      hostname: string,
+      options?: {
+        /**
+         * Limit results to either IPv4, IPv6, or both
+         */
+        family?: 4 | 6 | 0 | "IPv4" | "IPv6" | "any";
+        /**
+         * Limit results to either UDP or TCP
+         */
+        socketType?: "udp" | "tcp";
+        flags?: number;
+        port?: number;
+      },
+    ): DNSLookup[];
+
+    /**
      *
      * **Experimental API**
      *

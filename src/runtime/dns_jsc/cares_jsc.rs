@@ -8,7 +8,7 @@ use ::bstr::BStr;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::{self as bstr, strings};
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SystemError, bun_string_jsc,
+    CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc, SystemError, bun_string_jsc,
 };
 
 use crate::dns_jsc::options_jsc::{address_to_js, result_to_js};
@@ -662,29 +662,7 @@ impl ErrorDeferred {
     }
 
     pub(crate) fn reject(mut self, global_this: &JSGlobalObject) -> JsResult<()> {
-        let code = self.errno.code();
-        let message = if let Some(hostname) = &self.hostname {
-            bstr::String::create_format(format_args!(
-                "{} {} {}",
-                BStr::new(self.syscall),
-                BStr::new(&code[4..]),
-                hostname
-            ))
-        } else {
-            bstr::String::create_format(format_args!(
-                "{} {}",
-                BStr::new(self.syscall),
-                BStr::new(&code[4..])
-            ))
-        };
-        let system_error = SystemError {
-            errno: self.errno as i32,
-            code: bstr::String::static_(code),
-            message,
-            syscall: bstr::String::clone_utf8(self.syscall),
-            hostname: self.hostname.take().unwrap_or(bstr::String::empty()),
-            ..Default::default()
-        };
+        let system_error = dns_system_error(self.errno, self.syscall, self.hostname.take());
 
         let instance =
             system_error.to_error_instance_with_async_stack(global_this, self.promise.get());
@@ -737,6 +715,59 @@ impl ErrorDeferred {
 
 // Drop: hostname (bun_core::String) and promise (JSPromiseStrong) drop their own resources;
 // the allocation itself is handled by Box drop at the call site.
+
+/// The `SystemError` shape `Bun.dns.*` reports: `code` is the full `DNS_*`
+/// constant (unlike `fetch()`'s `ENOTFOUND`-style errors below), and the
+/// message is `"<syscall> <CODE-without-DNS_> [<hostname>]"`.
+fn dns_system_error(
+    errno: c_ares::Error,
+    syscall: &'static [u8],
+    hostname: Option<bstr::String>,
+) -> SystemError {
+    let code = errno.code();
+    let message = if let Some(hostname) = &hostname {
+        bstr::String::create_format(format_args!(
+            "{} {} {}",
+            BStr::new(syscall),
+            BStr::new(&code[4..]),
+            hostname
+        ))
+    } else {
+        bstr::String::create_format(format_args!(
+            "{} {}",
+            BStr::new(syscall),
+            BStr::new(&code[4..])
+        ))
+    };
+    SystemError {
+        errno: errno as i32,
+        code: bstr::String::static_(code),
+        message,
+        syscall: bstr::String::clone_utf8(syscall),
+        hostname: hostname.unwrap_or(bstr::String::empty()),
+        ..Default::default()
+    }
+}
+
+/// Throw the `DNSException` the async resolver APIs reject their promises
+/// with. For synchronous entry points (`Bun.dns.lookupSync`).
+pub(crate) fn throw_dns_exception(
+    errno: c_ares::Error,
+    global_this: &JSGlobalObject,
+    syscall: &'static [u8],
+    hostname: &[u8],
+) -> JsError {
+    let instance = dns_system_error(errno, syscall, Some(bstr::String::clone_utf8(hostname)))
+        .to_error_instance(global_this);
+    match bstr::String::static_(b"DNSException").to_js(global_this) {
+        Ok(name) => {
+            instance.put(global_this, b"name", name);
+            global_this.throw_value(instance)
+        }
+        // Allocating the name string already threw (OOM); propagate that.
+        Err(err) => err,
+    }
+}
 
 pub(crate) fn error_to_deferred(
     this: c_ares::Error,

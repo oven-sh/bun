@@ -21,6 +21,45 @@ dns.prefetch("bun.com", 443);
 
 ---
 
+## Looking up a hostname
+
+`Bun.dns.lookup` resolves a hostname to its IP addresses. It returns a promise for an array of `{ address, family, ttl }` objects.
+
+```ts
+import { dns } from "bun";
+
+const records = await dns.lookup("bun.com");
+console.log(records);
+// => [{ address: "104.21.16.1", family: 4, ttl: 0 }, ...]
+
+// Limit results to IPv4
+const [{ address }] = await dns.lookup("bun.com", { family: 4 });
+```
+
+### `dns.lookupSync`
+
+`Bun.dns.lookupSync` is the synchronous form. It blocks the current thread on the operating system's [`getaddrinfo`](https://man7.org/linux/man-pages/man3/getaddrinfo.3.html) until the resolver answers, then returns the same array `dns.lookup` would resolve with.
+
+```ts
+import { dns } from "bun";
+
+const [{ address }] = dns.lookupSync("bun.com");
+```
+
+If the hostname cannot be resolved, it throws the same `DNSException` that `dns.lookup` rejects with.
+
+```ts
+try {
+  dns.lookupSync("this-does-not-exist.invalid");
+} catch (error) {
+  console.log(error.code); // "ENOTFOUND"
+}
+```
+
+Because a blocked thread cannot run the event loop, prefer `dns.lookup` in servers and anything latency-sensitive. `lookupSync` is for scripts, CLIs, and module-scope code where an `await` is inconvenient. It always uses the OS resolver, so the `backend` option is not supported and `ttl` is always `0`.
+
+---
+
 ## DNS caching in Bun
 
 Bun supports DNS caching. This cache makes repeated connections to the same hosts faster.

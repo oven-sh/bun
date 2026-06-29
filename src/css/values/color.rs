@@ -1346,9 +1346,10 @@ where
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
             // f32::max() does not propagate NaN, so use clamp for now until f32::maximum() is stable.
-            let l = (parse_number_or_percentage(i, p, l_basis)? / l_basis).clamp(0.0, f32::MAX);
-            let a = parse_number_or_percentage(i, p, ab_basis)?;
-            let b = parse_number_or_percentage(i, p, ab_basis)?;
+            let l = (parse_number_or_percentage_with_basis(i, p, l_basis)? / l_basis)
+                .clamp(0.0, f32::MAX);
+            let a = parse_number_or_percentage_with_basis(i, p, ab_basis)?;
+            let b = parse_number_or_percentage_with_basis(i, p, ab_basis)?;
             let alpha = parse_alpha(i, p)?;
             let lab = func(l, a, b, alpha);
             Ok(CssColor::Lab(Box::new(lab)))
@@ -1377,8 +1378,9 @@ pub fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<O
                 }
             }
 
-            let l = (parse_number_or_percentage(i, p, l_basis)? / l_basis).clamp(0.0, f32::MAX);
-            let c = parse_number_or_percentage(i, p, c_basis)?.clamp(0.0, f32::MAX);
+            let l = (parse_number_or_percentage_with_basis(i, p, l_basis)? / l_basis)
+                .clamp(0.0, f32::MAX);
+            let c = parse_number_or_percentage_with_basis(i, p, c_basis)?.clamp(0.0, f32::MAX);
             let h = parse_angle_or_number(i, p)?;
             let alpha = parse_alpha(i, p)?;
             let lab = func(l, c, h, alpha);
@@ -1477,14 +1479,14 @@ fn parse_rgb(input: &mut css::Parser, parser: &mut ComponentParser) -> CssResult
 fn parse_legacy_alpha(input: &mut css::Parser, parser: &ComponentParser) -> CssResult<f32> {
     if !input.is_exhausted() {
         input.expect_comma()?;
-        return Ok(parse_number_or_percentage(input, parser, 1.0)?.clamp(0.0, 1.0));
+        return Ok(parse_number_or_percentage(input, parser)?.clamp(0.0, 1.0));
     }
     Ok(1.0)
 }
 
 fn parse_alpha(input: &mut css::Parser, parser: &ComponentParser) -> CssResult<f32> {
     let res = if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
-        parse_number_or_percentage(input, parser, 1.0)?.clamp(0.0, 1.0)
+        parse_number_or_percentage(input, parser)?.clamp(0.0, 1.0)
     } else {
         1.0
     };
@@ -1492,19 +1494,34 @@ fn parse_alpha(input: &mut css::Parser, parser: &ComponentParser) -> CssResult<f
     Ok(res)
 }
 
-/// Parses a `<number> | <percentage>` component, scaling percentages so that
-/// `100%` maps to `percent_basis`.
-/// <https://www.w3.org/TR/css-color-4/#typedef-color-percentage>
 pub fn parse_number_or_percentage(
     input: &mut css::Parser,
     parser: &ComponentParser,
-    percent_basis: f32,
 ) -> CssResult<f32> {
     let result = parser.parse_number_or_percentage(input)?;
     Ok(match result {
         NumberOrPercentage::Number { value } => value,
-        NumberOrPercentage::Percentage { unit_value } => unit_value * percent_basis,
+        NumberOrPercentage::Percentage { unit_value } => unit_value,
     })
+}
+
+/// Parses a `<percentage> | <number>` color component, scaling a percentage so
+/// that `100%` maps to `percent_basis` and using a `<number>` as-is.
+/// <https://www.w3.org/TR/css-color-4/#typedef-color-percentage>
+///
+/// The two forms go through the two typed component parsers so that relative
+/// color syntax resolves channel keywords and `calc()` against the channel's
+/// own type: in `lab(from red l a b)`, `a` and `b` are `<number>` channels and
+/// must not be scaled by `percent_basis`.
+fn parse_number_or_percentage_with_basis(
+    input: &mut css::Parser,
+    parser: &ComponentParser,
+    percent_basis: f32,
+) -> CssResult<f32> {
+    if let Ok(unit_value) = input.try_parse(|i| parser.parse_percentage(i)) {
+        return Ok(unit_value * percent_basis);
+    }
+    parser.parse_number(input)
 }
 
 impl LABColor {
@@ -2394,9 +2411,9 @@ pub fn parse_predefined_relative(
 
     // Out of gamut values should not be clamped, i.e. values < 0 or > 1 should be preserved.
     // The browser will gamut-map the color for the target device that it is rendered on.
-    let a = input.try_parse(|i| parse_number_or_percentage(i, parser, 1.0))?;
-    let b = input.try_parse(|i| parse_number_or_percentage(i, parser, 1.0))?;
-    let c = input.try_parse(|i| parse_number_or_percentage(i, parser, 1.0))?;
+    let a = input.try_parse(|i| parse_number_or_percentage(i, parser))?;
+    let b = input.try_parse(|i| parse_number_or_percentage(i, parser))?;
+    let c = input.try_parse(|i| parse_number_or_percentage(i, parser))?;
     let alpha = parse_alpha(input, parser)?;
 
     let predefined: PredefinedColor = crate::match_ignore_ascii_case! { colorspace, {

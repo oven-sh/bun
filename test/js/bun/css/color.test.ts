@@ -287,6 +287,22 @@ describe("lab-like function component syntax", () => {
     expect(color("oklab(0.5 100% -100%)", "hex")).toBe("#9500c0"); // == oklab(50% 0.4 -0.4)
     expect(color("oklch(0.5 50% 50)", "hex")).toBe("#a34100"); // == oklch(50% 0.2 50)
   });
+
+  // In relative color syntax a channel keyword resolves through its own
+  // channel type: `a`, `b` and chroma are <number> channels, so the
+  // percentage reference range must not scale them.
+  test("relative color syntax round-trips through every channel", () => {
+    expect(color("lab(from red l a b)", "css")).toBe("lab(54.2905% 80.8049 69.891)");
+    expect(color("lab(from red l a b)", "hex")).toBe("#ff0000");
+    expect(color("lch(from red l c h)", "hex")).toBe("#ff0000");
+    expect(color("oklab(from red l a b)", "hex")).toBe("#ff0000");
+    expect(color("oklch(from red l c h)", "hex")).toBe("#ff0000");
+  });
+
+  test("relative color syntax accepts percentages and calc() on number channels", () => {
+    expect(color("lab(from red l 100% -100%)", "css")).toBe("lab(54.2905% 125 -125)");
+    expect(color("lab(from red calc(a * 1) b b)", "css")).toBe("lab(80.8049% 69.891 69.891)");
+  });
 });
 
 describe("hsl and lab output formats emit valid CSS", () => {

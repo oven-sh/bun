@@ -9374,7 +9374,9 @@ it("installs transitive file: dependencies of a local file: package that point o
   }
 
   // Both transitive folder dependencies resolve, relative to the project root.
-  const lock = await file(join(projectDir, "bun.lock")).text();
+  // On Windows the stored folder path uses backslashes (JSON-escaped in the
+  // lockfile); normalize them before asserting.
+  const lock = (await file(join(projectDir, "bun.lock")).text()).replaceAll("\\\\", "/");
   expect(lock).toContain('"plugin/shared-lib"');
   expect(lock).toContain("shared-lib@file:../packages/shared-lib");
   expect(lock).toContain('"plugin/shared-dev-lib"');

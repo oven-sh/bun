@@ -105,13 +105,21 @@ function runInThisContext(code, options) {
 }
 
 // runInNewContext names code generation via `contextCodeGeneration`, while
-// createContext reads `codeGeneration`; alias it so the created context (which
-// runInNewContext then reuses) honors the setting, matching Node.
+// createContext reads `codeGeneration`; validate under the user-facing name
+// then alias so the reused context honors it with Node's error messages.
 function getContextOptions(options) {
   if (options == null || typeof options !== "object" || options.contextCodeGeneration === undefined) {
     return options;
   }
-  return { __proto__: null, ...options, codeGeneration: options.contextCodeGeneration };
+  const codeGeneration = options.contextCodeGeneration;
+  validateObject(codeGeneration, "options.contextCodeGeneration");
+  if (codeGeneration.strings !== undefined) {
+    validateBoolean(codeGeneration.strings, "options.contextCodeGeneration.strings");
+  }
+  if (codeGeneration.wasm !== undefined) {
+    validateBoolean(codeGeneration.wasm, "options.contextCodeGeneration.wasm");
+  }
+  return { __proto__: null, ...options, codeGeneration };
 }
 
 function runInNewContext(code, context, options) {

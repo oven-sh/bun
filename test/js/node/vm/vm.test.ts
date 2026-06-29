@@ -151,6 +151,22 @@ describe("vm", () => {
         expect((caught as Error)?.name).toBe("EvalError");
       },
     );
+
+    // Invalid contextCodeGeneration must report the user-facing option name, not the
+    // internal `codeGeneration` alias runInNewContext maps it to.
+    test.each([
+      [null, "options.contextCodeGeneration"],
+      [{ strings: "x" }, "options.contextCodeGeneration.strings"],
+    ])("runInNewContext reports %p under the user-facing option name", (contextCodeGeneration, expected) => {
+      let caught: any;
+      try {
+        runInNewContext("1", {}, { contextCodeGeneration });
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught?.code).toBe("ERR_INVALID_ARG_TYPE");
+      expect(caught?.message).toContain(expected);
+    });
   });
 
   describe("compileFunction()", () => {

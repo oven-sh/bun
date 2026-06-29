@@ -591,6 +591,65 @@ describe("fs.watch", () => {
       ["rename", "sub"],
     ]);
   });
+
+  // Past fs.inotify.max_queued_events the kernel drops events and queues one
+  // IN_Q_OVERFLOW; Bun reports it as ('change', null) on every watcher sharing
+  // the inotify fd, the same shape node uses for overflow on Windows.
+  const inotifySysctl = (name: string) => {
+    try {
+      return Number(fs.readFileSync(`/proc/sys/fs/inotify/${name}`, "utf8").trim());
+    } catch {
+      return 0;
+    }
+  };
+  const maxQueuedEvents = isLinux ? inotifySysctl("max_queued_events") : 0;
+  // Enough directories that unregistering one watch per directory overflows
+  // the queue even if the reader thread drains a full 64KB read (4096 events).
+  const overflowDirCount = maxQueuedEvents + 6144;
+  // 16384 is the kernel default; a host tuned above that would need an
+  // impractically large directory tree, so skip there.
+  const canOverflowInotify =
+    isLinux &&
+    maxQueuedEvents > 0 &&
+    maxQueuedEvents <= 16384 &&
+    inotifySysctl("max_user_watches") >= overflowDirCount + 1024;
+
+  test.skipIf(!canOverflowInotify)("inotify queue overflow is delivered as ('change', null)", async () => {
+    using dir = tempDir("fs-watch-overflow", { "observed": {} });
+    const root = String(dir);
+    const observedDir = path.join(root, "observed");
+    const treeDir = path.join(root, "tree");
+    fs.mkdirSync(treeDir);
+    for (let i = 0; i < overflowDirCount; i++) fs.mkdirSync(path.join(treeDir, "d" + i));
+
+    const overflow = Promise.withResolvers<[string, string | null]>();
+    const bufferOverflow = Promise.withResolvers<[string, Buffer | null]>();
+    const survived = Promise.withResolvers<[string, string | null]>();
+    const watcher = fs.watch(observedDir, (eventType, filename) => {
+      if (filename === null) overflow.resolve([eventType, filename]);
+      else if (filename === "f.txt") survived.resolve([eventType, filename]);
+    });
+    watcher.on("error", overflow.reject);
+    // The overflow event carries no name to encode, so every encoding gets null.
+    const bufferWatcher = fs.watch(observedDir, { encoding: "buffer" }, (eventType, filename) => {
+      if (filename === null) bufferOverflow.resolve([eventType, filename]);
+    });
+    bufferWatcher.on("error", bufferOverflow.reject);
+    try {
+      // Closing the recursive watcher unregisters one inotify watch per
+      // directory in a single critical section; each unregister queues an
+      // IN_IGNORED the blocked reader can't drain, overflowing the queue.
+      fs.watch(treeDir, { recursive: true }, () => {}).close();
+      expect(await overflow.promise).toEqual(["change", null]);
+      expect(await bufferOverflow.promise).toEqual(["change", null]);
+      // Overflow signals lost events; the watcher itself must keep working.
+      fs.writeFileSync(path.join(observedDir, "f.txt"), "x");
+      expect(await survived.promise).toEqual(["rename", "f.txt"]);
+    } finally {
+      watcher.close();
+      bufferWatcher.close();
+    }
+  });
 });
 
 describe("fs.promises.watch", () => {

@@ -7,8 +7,8 @@ import { bunEnv, bunExe, isWindows, nodeExe, tempDir } from "harness";
 // reconstructed as a live net.Server / net.Socket in the receiving process.
 // https://nodejs.org/api/child_process.html#subprocesssendmessage-sendhandle-options-callback
 //
-// Windows is skipped: Bun's named-pipe IPC has no SOCKET duplication yet, and
-// `send()` throws there instead of silently dropping the handle.
+// Windows is skipped: Bun's named-pipe IPC has no SOCKET duplication yet, so
+// `send()` falls back to delivering the message with no handle there.
 
 const node = nodeExe();
 

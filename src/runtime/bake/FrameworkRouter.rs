@@ -1536,7 +1536,7 @@ impl FrameworkRouter {
         // `addr_of_mut!` only computes a field address without forming a reference.
         let fs_impl = unsafe { core::ptr::addr_of_mut!((*fs).fs) };
 
-        if let Some(entries) = dir_info.get_entries_const() {
+        {
             // Note: `entries.data` is backed by `std::collections::HashMap`,
             // whose iteration order is unspecified. The route-tree child order
             // is this iteration order (see `insert`), and
@@ -1550,14 +1550,23 @@ impl FrameworkRouter {
                 *mut bun_resolver::fs::Entry,
                 ZigStringHashContext,
             > = Default::default();
-            for (k, &v) in entries.data.iter() {
-                let _ = zig_order.put(Box::from(&**k), v);
+            {
+                // Copy under `entries_mutex`: other threads rewrite the cached
+                // `DirEntry` map in place under that lock. Dropped before the
+                // walk so the `read_dir_info_ignore_error` recursion can re-lock.
+                let _entries_lock = fs_ref.fs.entries_mutex.lock_guard();
+                if let Some(entries) = dir_info.get_entries_const() {
+                    for (k, &v) in entries.data.iter() {
+                        let _ = zig_order.put(Box::from(&**k), v);
+                    }
+                }
             }
             let mut it = zig_order.iter();
             'outer: while let Some(entry) = it.next() {
                 let file_ptr: *mut bun_resolver::fs::Entry = *entry.1;
-                // SAFETY: EntryMap stores `*mut Entry` into the EntryStore singleton; entries
-                // outlive this scan and are serialized via `RealFS.entries_mutex`.
+                // SAFETY: EntryMap stores `*mut Entry` into the EntryStore singleton
+                // (process lifetime); the lazy-stat rewrite in `kind()` below is
+                // serialized on the per-entry `Entry.mutex`.
                 let file = unsafe { &*file_ptr };
                 let base = file.base();
                 // Note: reshaped for borrowck — fetch type fields fresh each iteration.

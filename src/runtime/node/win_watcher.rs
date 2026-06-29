@@ -246,8 +246,9 @@ impl PathWatcher {
 
         // Intentional wrap to bun_watcher::HashType. Overflow events bypass
         // dedup in `emit`, so they carry no hash.
-        let hash =
-            path.map_or(0, |p| this.handle.hash(p, events, status) as bun_watcher::HashType);
+        let hash = path.map_or(0, |p| {
+            this.handle.hash(p, events, status) as bun_watcher::HashType
+        });
         let is_file = !this.handle.is_dir();
         this.emit(
             path,

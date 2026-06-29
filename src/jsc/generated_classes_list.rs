@@ -31,6 +31,7 @@ pub mod Classes {
     pub use crate::api::html_rewriter::HTMLRewriter;
     pub use crate::api::html_rewriter::TextChunk;
     pub use crate::crypto::CryptoHasher;
+    pub use crate::file_index as FileIndex;
     pub use crate::image as Image;
     pub use crate::shell::Interpreter as ShellInterpreter;
     pub use crate::test_runner::done_callback::DoneCallback;

@@ -123,6 +123,7 @@
               "/runtime/streams",
               "/runtime/binary-data",
               "/runtime/archive",
+              "/runtime/file-index",
               "/runtime/sql",
               "/runtime/sqlite",
               "/runtime/s3",

@@ -164,6 +164,12 @@ pub mod task_tag {
         WriteFile,
         WriteFileTask,
         Writev,
+        FileIndexCrawlTask,
+        FileIndexGrepTask,
+        FileIndexGrepReadTask,
+        FileIndexGitStatusTask,
+        FileIndexGitDiffTask,
+        FileIndexWatchTask,
     }
 }
 

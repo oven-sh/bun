@@ -1,0 +1,13 @@
+[package]
+name = "bun_fuzzy"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+memchr.workspace = true

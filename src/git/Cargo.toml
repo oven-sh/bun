@@ -1,0 +1,19 @@
+[package]
+name = "bun_git"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bstr.workspace = true
+bitflags.workspace = true
+bun_core.workspace = true
+memchr.workspace = true
+bun_libdeflate_sys.workspace = true
+bun_sha_hmac.workspace = true
+bun_sys.workspace = true

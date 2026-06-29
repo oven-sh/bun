@@ -117,6 +117,11 @@ use crate::api::bun_terminal_body::Poll as TerminalPoll;
 use crate::api::cron::CronJob;
 use crate::api::glob::AsyncGlobWalkTask;
 use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
+use crate::file_index::{
+    CrawlTask as FileIndexCrawlTask, GitDiffTask as FileIndexGitDiffTask,
+    GitStatusTask as FileIndexGitStatusTask, GrepReadTask as FileIndexGrepReadTask,
+    GrepTask as FileIndexGrepTask, WatchDelivery as FileIndexWatchTask,
+};
 use crate::image::AsyncImageTask;
 #[cfg(not(windows))]
 use bun_spawn::static_pipe_writer::Poll as StaticPipeWriterPoll;
@@ -285,6 +290,22 @@ pub fn run_task(
         }
         task_tag::ArchiveFilesTask => {
             ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveFilesTask))?;
+        }
+
+        // ── Bun.FileIndex ────────────────────────────────────────────────
+        // `cast_ptr!` yields the heap-allocated task registered with this
+        // tag; `run_from_js` takes ownership (`heap::take`) of it.
+        task_tag::FileIndexCrawlTask => {
+            FileIndexCrawlTask::run_from_js(cast_ptr!(FileIndexCrawlTask))?;
+        }
+        task_tag::FileIndexGrepTask => run_then_destroy!(FileIndexGrepTask<'_>),
+        task_tag::FileIndexGrepReadTask => run_then_destroy!(FileIndexGrepReadTask<'_>),
+        task_tag::FileIndexGitStatusTask => run_then_destroy!(FileIndexGitStatusTask<'_>),
+        task_tag::FileIndexGitDiffTask => run_then_destroy!(FileIndexGitDiffTask<'_>),
+        // The pointer is an `Arc::into_raw` reference to the watcher's
+        // shared state; `run_from_js` consumes it (`Arc::from_raw`).
+        task_tag::FileIndexWatchTask => {
+            FileIndexWatchTask::run_from_js(cast_ptr!(FileIndexWatchTask))?;
         }
 
         // ── shell interpreter (cold — hoisted to `run_task_cold`) ────────
@@ -583,7 +604,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 97,
+    task_tag::COUNT == 103,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1183,6 +1204,53 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
                 }};
             }
             for_each_fs_async_op!(__fs_destroy);
+            true
+        }
+        // `CrawlTask::start` heap-leaks the box and `run_from_js` reclaims it
+        // with `heap::take`; `release_at_shutdown` does the same reclaim,
+        // unrefs the loop `KeepAlive`, and lets `Drop` release the `Strong`
+        // and the `ready` `JSPromiseStrong` (both still valid here — we're
+        // before `destructOnExit`).
+        task_tag::FileIndexCrawlTask => {
+            FileIndexCrawlTask::release_at_shutdown(task.ptr.cast::<FileIndexCrawlTask>());
+            true
+        }
+        // `ConcurrentPromiseTask`s created by `create_on_js_thread`
+        // (heap-leaked, normally freed by `run_then_destroy!`). `run_from_js`
+        // would have unref'd the loop `KeepAlive` and settled the promise;
+        // here we only unref and drop — `JSPromiseStrong: Drop` releases the
+        // handle.
+        task_tag::FileIndexGrepTask
+        | task_tag::FileIndexGrepReadTask
+        | task_tag::FileIndexGitStatusTask
+        | task_tag::FileIndexGitDiffTask => {
+            macro_rules! __fi_release {
+                ($ty:ty) => {{
+                    let t = task.ptr.cast::<$ty>();
+                    // SAFETY: tag identifies pointee; heap-allocated at
+                    // schedule time; the work-pool callback ran (it posted
+                    // this entry) so this is the sole owner.
+                    unsafe {
+                        (*t).ref_.unref(bun_io::js_vm_ctx());
+                        <$ty>::destroy(t);
+                    }
+                }};
+            }
+            match task.tag {
+                task_tag::FileIndexGrepTask => __fi_release!(FileIndexGrepTask<'_>),
+                task_tag::FileIndexGrepReadTask => __fi_release!(FileIndexGrepReadTask<'_>),
+                task_tag::FileIndexGitStatusTask => __fi_release!(FileIndexGitStatusTask<'_>),
+                task_tag::FileIndexGitDiffTask => __fi_release!(FileIndexGitDiffTask<'_>),
+                // SAFETY: the outer arm guard proves one of the three matched.
+                _ => unsafe { core::hint::unreachable_unchecked() },
+            }
+            true
+        }
+        // The pointer is an `Arc::into_raw` +1 reference taken by
+        // `WatchDelivery::post`; `run_from_js` would have consumed it.
+        task_tag::FileIndexWatchTask => {
+            // SAFETY: balances the `Arc::into_raw` in `WatchDelivery::post`.
+            drop(unsafe { std::sync::Arc::from_raw(task.ptr.cast::<FileIndexWatchTask>()) });
             true
         }
         // Re-queued by the caller; the box stays reachable from the

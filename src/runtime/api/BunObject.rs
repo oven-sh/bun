@@ -383,6 +383,7 @@ pub mod bun_object {
         BunObject_lazyPropCb_CryptoHasher => Crypto::CryptoHasher::getter,
         BunObject_lazyPropCb_CSRF => super::get_csrf_object,
         BunObject_lazyPropCb_FFI => crate::ffi::ffi_object_draft::getter,
+        BunObject_lazyPropCb_FileIndex => super::get_file_index_constructor,
         BunObject_lazyPropCb_FileSystemRouter => super::get_file_system_router,
         BunObject_lazyPropCb_Glob => super::get_glob_constructor,
         BunObject_lazyPropCb_Image => super::get_image_constructor,
@@ -1886,6 +1887,10 @@ pub(crate) fn get_yaml_object(global_this: &JSGlobalObject, _: &JSObject) -> JSV
 
 pub(crate) fn get_archive_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     jsc::codegen::js::get_constructor::<crate::api::archive::Archive>(global_this)
+}
+
+pub(crate) fn get_file_index_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    jsc::codegen::js::get_constructor::<crate::file_index::FileIndex>(global_this)
 }
 
 pub(crate) fn get_glob_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

@@ -9369,6 +9369,706 @@ declare module "bun" {
   }
 
   /**
+   * A single autocomplete result returned by {@link FileIndex.complete}.
+   */
+  interface FileIndexCompletion {
+    /**
+     * The matched path, `/`-separated on all platforms (including Windows)
+     * and relative to the call's `cwd` option (the index root by default).
+     */
+    path: string;
+    /**
+     * Match quality. Higher is better. Scores are only comparable within a
+     * single `complete()` call; the absolute value is not meaningful.
+     */
+    score: number;
+    /**
+     * Indices into the `path` string (UTF-16 code units — the indexing
+     * `path[i]` and `path.codePointAt(i)` use) of the characters that
+     * matched the query, in ascending order. Useful for highlighting
+     * matches in a UI.
+     */
+    positions: number[];
+  }
+
+  /**
+   * One content-search hit yielded by {@link FileIndex.grep}.
+   */
+  interface FileIndexGrepMatch {
+    /**
+     * Matched file's path, `/`-separated and relative to the call's `cwd`
+     * option (the index root by default).
+     */
+    path: string;
+    /** 1-based line number of the match. */
+    line: number;
+    /**
+     * 1-based offset of the match within `lineText`, in UTF-16 code units
+     * (the same unit as `lineText.indexOf()` / `String#charAt`), for
+     * literal and `RegExp` patterns alike.
+     */
+    column: number;
+    /** The full text of the matching line, without the trailing newline. */
+    lineText: string;
+    /**
+     * Lines immediately before the match. Only present when the `context`
+     * option is greater than `0`.
+     */
+    before?: string[];
+    /**
+     * Lines immediately after the match. Only present when the `context`
+     * option is greater than `0`.
+     */
+    after?: string[];
+  }
+
+  /**
+   * A change event delivered to {@link FileIndex.onchange}.
+   */
+  interface FileIndexChangeEvent {
+    /** What happened to the path. */
+    kind: "create" | "modify" | "delete";
+    /** The affected path, relative to the index root and `/`-separated. */
+    path: string;
+  }
+
+  /**
+   * The result of {@link FileIndex.gitStatus}: the current branch plus a
+   * `git status --porcelain=v1`-equivalent list of changed files, computed
+   * entirely in-process (Bun never spawns `git`).
+   */
+  interface FileIndexGitStatus {
+    /** The current branch name, or `null` when `HEAD` is detached. */
+    branch: string | null;
+    /** The commit `HEAD` points at as a 40-character hex SHA, or `null` in an empty repository. */
+    oid: string | null;
+    /** `true` when `HEAD` is detached (not on a branch). */
+    detached: boolean;
+    /**
+     * Changed files. `status` is the two-character porcelain v1 `XY` code,
+     * e.g. `"??"` (untracked), `" M"` (modified), `"M "` (staged), `"MM"`.
+     */
+    files: Array<{ path: string; status: string }>;
+  }
+
+  /**
+   * The result of {@link FileIndex.gitDiff}: a line-level diff of the working
+   * tree file against the version in `HEAD`.
+   */
+  interface FileIndexGitDiff {
+    /** The file's contents in `HEAD`, or `null` if it did not exist there. */
+    oldText: string | null;
+    /** The file's contents in the working tree, or `null` if it was deleted. */
+    newText: string | null;
+    /** Unified-diff hunks. Line numbers are 1-based. */
+    hunks: Array<{
+      oldStart: number;
+      oldLines: number;
+      newStart: number;
+      newLines: number;
+      lines: Array<{ kind: "context" | "add" | "del"; text: string }>;
+    }>;
+  }
+
+  /**
+   * Options for constructing a {@link FileIndex}.
+   *
+   * @example
+   * ```ts
+   * const index = new Bun.FileIndex(process.cwd(), {
+   *   watch: true,
+   *   ignore: ["dist/**", "*.log"],
+   *   maxMemory: 32 * 1024 * 1024,
+   * });
+   * ```
+   */
+  interface FileIndexOptions {
+    /**
+     * Respect every gitignore source git itself consults, with git's
+     * semantics (per-directory `.gitignore` files with `!` negation and
+     * last-match-wins): `.gitignore` in every directory from the work-tree
+     * top down (including the ancestors of a `root` that is a subdirectory
+     * of its work tree), `$GIT_COMMON_DIR/info/exclude` (resolved through a
+     * linked worktree's `.git` file), and git's global excludes file
+     * (`core.excludesFile`, else `$XDG_CONFIG_HOME/git/ignore`, else
+     * `~/.config/git/ignore`). The git-specific sources apply only when
+     * `root` is inside a git work tree.
+     *
+     * When `root` IS inside a git work tree, the indexed file set is exactly
+     * git's: **tracked ∪ (untracked − ignored)**, what
+     * `git ls-files --cached --others --exclude-standard` lists. git's ignore
+     * sources only ever hide *untracked* paths, so a file that matches a
+     * `.gitignore` rule but is tracked in `.git/index` is still indexed (and
+     * watched), as is every directory needed to contain one — an ignored
+     * directory holding tracked files is not pruned, though its untracked
+     * contents stay hidden. (Patterns passed through the explicit `ignore`
+     * option are NOT a git ignore source and still hide tracked files.)
+     * The tracked set is read from `.git/index` once per
+     * (re)crawl, so a `git add` of a previously-ignored file is only
+     * reflected after the next {@link FileIndex.refresh} (or a
+     * watcher-triggered re-crawl); `.git` itself is never watched. Outside a
+     * git work tree (or if `.git/index` is missing or unreadable) this
+     * degrades to pure gitignore filtering with no tracked-file exemption.
+     *
+     * The `.git` directory itself is always skipped regardless of this option.
+     *
+     * @default true
+     */
+    gitignore?: boolean;
+    /**
+     * Extra ignore patterns in gitignore syntax, rooted at `root`. These apply
+     * in addition to (and after) any `.gitignore` files. Unlike git's own
+     * ignore sources, they also exclude git-tracked files — an explicit
+     * request to hide a path always wins.
+     *
+     * @example ["dist/**", "*.log", "!important.log"]
+     */
+    ignore?: string[];
+    /**
+     * Keep the index live with a filesystem watcher. When `true`, the index
+     * stays up to date as files change and {@link FileIndex.onchange} fires
+     * with batched, debounced events. The watcher never registers OS watches
+     * inside ignored directories.
+     *
+     * A watching index keeps the process alive until {@link FileIndex.close}
+     * is called.
+     *
+     * The constructor throws on platforms with no supported watch backend
+     * (anything other than Linux, macOS, and Windows — e.g. FreeBSD).
+     *
+     * @default false
+     */
+    watch?: boolean;
+    /**
+     * Hard cap, in bytes, on memory retained by the native index. When the
+     * cap is hit, further entries are dropped and {@link FileIndex.truncated}
+     * becomes `true` — the index keeps working on what fit. Never throws.
+     *
+     * @default 67108864 // 64 MiB
+     */
+    maxMemory?: number;
+    /**
+     * {@link FileIndex.grep} skips files larger than this many bytes. Can be
+     * overridden per call.
+     *
+     * @default 1048576 // 1 MiB
+     */
+    maxFileSize?: number;
+    /**
+     * Initial value for {@link FileIndex.onchange}. Only invoked when
+     * constructed with `watch: true`.
+     */
+    onchange?: FileIndex["onchange"];
+  }
+
+  /**
+   * An in-memory, gitignore-aware index of a directory tree, built for agent
+   * and editor tooling: fuzzy filename autocomplete, glob queries, content
+   * search, change tracking, and in-process git status/diff.
+   *
+   * Paths returned by and accepted from every method are **relative and
+   * `/`-separated on all platforms**, including Windows: relative to `root`,
+   * or — for {@link FileIndex.complete}, {@link FileIndex.glob}, and
+   * {@link FileIndex.grep} called with a `cwd` option — relative to that
+   * `cwd`, exactly like {@link Glob.scan}. Path arguments
+   * must stay inside the root: a NUL byte, an absolute path, or any `..`
+   * component throws `ERR_INVALID_ARG_VALUE`. Paths must also be valid UTF-8
+   * to round-trip: an indexed entry whose name is not valid UTF-8 is
+   * returned as a lossy string (invalid bytes become `U+FFFD`) that
+   * {@link FileIndex.has} and {@link FileIndex.stat} will **not** accept back.
+   *
+   * The index holds only paths and stat metadata in memory — never file
+   * contents. {@link FileIndex.complete}, {@link FileIndex.glob},
+   * {@link FileIndex.has}, and {@link FileIndex.stat} are synchronous and
+   * answer from memory without touching the filesystem.
+   * {@link FileIndex.grep} reads files from disk on Bun's thread pool.
+   *
+   * @example
+   * **Fuzzy file autocomplete:**
+   * ```ts
+   * using index = new Bun.FileIndex(process.cwd());
+   * await index.ready;
+   *
+   * for (const { path, score } of index.complete("srvidx")) {
+   *   console.log(path, score); // e.g. "src/server/index.ts"
+   * }
+   * ```
+   *
+   * @example
+   * **Content search:**
+   * ```ts
+   * using index = new Bun.FileIndex(process.cwd());
+   * await index.ready;
+   *
+   * for await (const match of index.grep("TODO", { glob: "**" + "/*.ts" })) {
+   *   console.log(`${match.path}:${match.line}: ${match.lineText}`);
+   * }
+   * ```
+   *
+   * @example
+   * **Watch for changes:**
+   * ```ts
+   * const index = new Bun.FileIndex(process.cwd(), { watch: true });
+   * index.onchange = events => {
+   *   for (const { kind, path } of events) console.log(kind, path);
+   * };
+   * await index.ready;
+   * // ... later
+   * index.close();
+   * ```
+   */
+  export class FileIndex implements Disposable {
+    /**
+     * Create a `FileIndex` rooted at `root` and start the initial crawl in the
+     * background.
+     *
+     * Construction never throws for a missing or unreadable `root`; instead
+     * {@link FileIndex.ready} rejects. Queries issued before `ready` resolves
+     * operate on whatever has been indexed so far (initially nothing).
+     *
+     * @param root - The directory to index. Relative paths are resolved
+     *   against `process.cwd()`.
+     * @param options - Indexing options. See {@link FileIndexOptions}.
+     *
+     * @example
+     * ```ts
+     * using index = new Bun.FileIndex("./my-project", {
+     *   gitignore: true,
+     *   ignore: ["dist/**"],
+     * });
+     * await index.ready;
+     * console.log(index.size, "entries");
+     * ```
+     */
+    constructor(root: string, options?: FileIndexOptions);
+
+    /**
+     * Resolves with this `FileIndex` once the initial crawl completes, or
+     * immediately if it already has. Rejects if `root` cannot be opened.
+     *
+     * @example
+     * ```ts
+     * const index = await new Bun.FileIndex("./src").ready;
+     * ```
+     */
+    readonly ready: Promise<FileIndex>;
+
+    /** The absolute path of the indexed root directory. */
+    readonly root: string;
+
+    /**
+     * Number of indexed entries (files + directories + symlinks).
+     *
+     * @example
+     * ```ts
+     * await index.ready;
+     * console.log(`${index.size} entries indexed`);
+     * ```
+     */
+    readonly size: number;
+
+    /**
+     * Bytes currently retained by the native index. Bounded by
+     * {@link FileIndexOptions.maxMemory}.
+     */
+    readonly memoryUsage: number;
+
+    /**
+     * `true` if {@link FileIndexOptions.maxMemory} was hit and the index is
+     * incomplete. The index keeps working on the entries that fit.
+     */
+    readonly truncated: boolean;
+
+    /**
+     * Number of entries or subtrees the last crawl skipped because of an I/O
+     * error (for example, an `EACCES` subdirectory the process cannot read).
+     * `0` for a fully enumerated tree. A non-zero value means the index is
+     * silently missing part of the tree even though `ready` resolved.
+     */
+    readonly errors: number;
+
+    /** `true` while a filesystem watcher is active (`watch: true` and not yet closed). */
+    readonly watching: boolean;
+
+    /**
+     * Fuzzy filename autocomplete (fzf-style subsequence scoring).
+     *
+     * Synchronous: operates entirely on the in-memory index with no I/O, and
+     * is intended to be cheap enough to call on every keystroke (each call
+     * also caches its survivor set, so a query that *extends* the previous
+     * one over an unchanged index only re-ranks those survivors). A query
+     * with a large candidate set is scored in parallel on Bun's thread pool
+     * while the call blocks; even so, a worst-case short query over very
+     * large indexes costs milliseconds, not microseconds (about 10 ms over
+     * 163k entries and about 20 ms over a 250,000-path tree on an example
+     * Linux x64 box — see `bench/file-index/complete.mjs`).
+     * Recently {@link FileIndex.touch | touched} paths receive a recency boost.
+     *
+     * @param query - The fuzzy query, e.g. `"srvidx"` to match
+     *   `src/server/index.ts`. Matching is smart-case: case-insensitive
+     *   unless the query contains an uppercase letter.
+     * @param options - Filtering options.
+     * @param options.limit - Maximum number of results to return. @default 64
+     * @param options.cwd - Match inside this indexed directory (relative to
+     *   `root`, `/`-separated), like {@link Glob.scan}'s `cwd`: the query is
+     *   matched against — and returned paths and `positions` are relative
+     *   to — that directory. @default undefined
+     * @param options.directories - Return only directories. @default false
+     * @returns Matches sorted best-first.
+     *
+     * @example
+     * ```ts
+     * using index = new Bun.FileIndex(process.cwd());
+     * await index.ready;
+     *
+     * const results = index.complete("bdts", { limit: 10 });
+     * // => [{ path: "packages/bun-types/bun.d.ts", score: 412, positions: [9, 13, 27, 29] }, ...]
+     * ```
+     */
+    complete(
+      query: string,
+      options?: {
+        /**
+         * Maximum number of results to return.
+         * @default 64
+         */
+        limit?: number;
+        /**
+         * Match inside this indexed directory (relative to `root`,
+         * `/`-separated), with the same meaning as {@link Glob.scan}'s
+         * `cwd`: only entries under it are candidates, the query is matched
+         * against the path *relative to it*, and the returned `path`s and
+         * `positions` are relative to it. A `cwd` that is not an indexed
+         * directory matches nothing.
+         */
+        cwd?: string;
+        /**
+         * Return only directories (`glob()`'s `onlyFiles: false` is the
+         * superset: files, directories, and symlinks).
+         * @default false
+         */
+        directories?: boolean;
+      },
+    ): Array<FileIndexCompletion>;
+
+    /**
+     * Match indexed paths against a glob pattern. Synchronous, no I/O — this
+     * queries the in-memory index rather than walking the filesystem (unlike
+     * {@link Glob.scan}, whose `cwd` and `onlyFiles` options it mirrors).
+     *
+     * @param pattern - A glob pattern (same syntax as {@link Bun.Glob}),
+     *   matched against `/`-separated paths relative to `cwd` (which
+     *   defaults to the index root).
+     * @param options - Filtering options.
+     * @param options.limit - Maximum number of paths to return. @default Infinity
+     * @param options.cwd - Match inside this indexed directory (relative to
+     *   `root`, `/`-separated); returned paths are relative to it. @default undefined
+     * @param options.onlyFiles - Return only files; `false` also returns
+     *   directories and symlinks. @default true
+     * @returns Matching paths, relative to `cwd` (or to `root` without one).
+     *
+     * @example
+     * ```ts
+     * using index = new Bun.FileIndex(process.cwd());
+     * await index.ready;
+     *
+     * const tests = index.glob("test/**" + "/*.test.ts");
+     * // ["index.ts", "server/index.ts", ...] — relative to `src`, like Bun.Glob.
+     * const srcOnly = index.glob("**" + "/*.ts", { cwd: "src" });
+     * ```
+     */
+    glob(
+      pattern: string,
+      options?: {
+        /**
+         * Maximum number of paths to return.
+         */
+        limit?: number;
+        /**
+         * Match inside this indexed directory (relative to `root`,
+         * `/`-separated), with the same meaning as {@link Glob.scan}'s
+         * `cwd`: the pattern is interpreted relative to it and the returned
+         * paths are relative to it. A `cwd` that is not an indexed
+         * directory matches nothing.
+         */
+        cwd?: string;
+        /**
+         * Return only files. Pass `false` to also return directories and
+         * symlinks (`complete()`'s `directories: true` is the
+         * directories-only subset of that).
+         * @default true
+         */
+        onlyFiles?: boolean;
+      },
+    ): string[];
+
+    /**
+     * Whether `path` (relative to `root`, `/`-separated) is in the index.
+     * Synchronous, no I/O.
+     *
+     * @example
+     * ```ts
+     * if (index.has("package.json")) {
+     *   // ...
+     * }
+     * ```
+     */
+    has(path: string): boolean;
+
+    /**
+     * Get the indexed metadata for `path`, or `null` if it isn't in the index.
+     *
+     * Synchronous. Answers from the index's stat cache: the first ask for an
+     * entry performs one `lstat` and caches it; a watcher (`watch: true`)
+     * keeps the cache true after that. Without a watcher, later calls keep
+     * returning the cached values even if the file has changed since — use
+     * `Bun.file(path).stat()` for a guaranteed-fresh `lstat`. Resolves to
+     * `null` for an indexed path that can no longer be `lstat`ed.
+     *
+     * @param path - The path to look up, relative to `root` and `/`-separated.
+     *
+     * @example
+     * ```ts
+     * const info = index.stat("src/index.ts");
+     * if (info?.kind === "file") {
+     *   console.log(info.size, new Date(info.mtimeMs));
+     * }
+     * ```
+     */
+    stat(path: string): {
+      /** Size in bytes. */
+      size: number;
+      /** Modification time in milliseconds since the Unix epoch. */
+      mtimeMs: number;
+      /** POSIX mode bits (file type + permissions). */
+      mode: number;
+      /** Entry kind. Symlinks are never followed. */
+      kind: "file" | "dir" | "symlink";
+    } | null;
+
+    /**
+     * Content search ("grep") over the indexed files.
+     *
+     * File contents are read from disk in parallel — the candidate set is
+     * split into chunks that fan out as concurrent thread-pool tasks — at
+     * call time; nothing is cached or retained by the index. Files containing
+     * a NUL byte in their first 8 KiB are treated as binary and skipped, as
+     * are files larger than `maxFileSize`.
+     *
+     * `string` patterns are matched as literals using a SIMD substring search
+     * on the thread pool and are the fast path. `RegExp` patterns are
+     * supported but slower: candidate files are read and decoded in
+     * JavaScript and the expression is tested per line on the JavaScript
+     * thread. A fresh global copy of the `RegExp` is used, so the caller's
+     * `lastIndex` neither affects nor is affected by the search;
+     * case-sensitivity comes from the expression's own `i` flag (the
+     * `caseSensitive` option only applies to `string` patterns).
+     *
+     * @param pattern - A literal string (fast path) or a `RegExp`.
+     * @param options - Search options.
+     * @param options.glob - Only search files matching this glob (relative to `cwd`, which defaults to `root`). @default undefined
+     * @param options.cwd - Only search inside this indexed directory
+     *   (relative to `root`); matched paths are reported relative to it. @default undefined
+     * @param options.limit - Stop after this many matches. @default Infinity
+     * @param options.maxFileSize - Skip files larger than this many bytes. @default 1048576
+     * @param options.caseSensitive - Match case-sensitively. @default true
+     * @param options.context - Lines of context to include before and after each match. @default 0
+     * @returns An async iterable of matches, ordered by `path`, then `line`,
+     *   then `column` (the parallel reads are merged and sorted before the
+     *   first match is yielded).
+     *
+     * @example
+     * ```ts
+     * using index = new Bun.FileIndex(process.cwd());
+     * await index.ready;
+     *
+     * for await (const match of index.grep("FIXME", { glob: "src/**", context: 2 })) {
+     *   console.log(`${match.path}:${match.line}:${match.column}`);
+     *   console.log(match.before?.join("\n"));
+     *   console.log("> " + match.lineText);
+     *   console.log(match.after?.join("\n"));
+     * }
+     * ```
+     */
+    grep(
+      pattern: string | RegExp,
+      options?: {
+        /**
+         * Only search files matching this glob, relative to `cwd` (which
+         * defaults to the index root).
+         */
+        glob?: string;
+        /**
+         * Only search inside this indexed directory (relative to `root`,
+         * `/`-separated). The `glob` option and every matched `path` are
+         * relative to it — the same meaning `cwd` has for
+         * {@link FileIndex.glob} and {@link Glob.scan}. A `cwd` that is not
+         * an indexed directory matches nothing.
+         */
+        cwd?: string;
+        /**
+         * Stop after this many matches.
+         */
+        limit?: number;
+        /**
+         * Skip files larger than this many bytes.
+         * @default 1048576 // 1 MiB, or the constructor's `maxFileSize`
+         */
+        maxFileSize?: number;
+        /**
+         * Match case-sensitively. Only applies to `string` patterns; a
+         * `RegExp` pattern's own `i` flag decides.
+         * @default true
+         */
+        caseSensitive?: boolean;
+        /**
+         * Lines of context to include before and after each match, populating
+         * the `before` and `after` arrays on each result.
+         * @default 0
+         */
+        context?: number;
+      },
+    ): AsyncIterable<FileIndexGrepMatch>;
+
+    /**
+     * Compute `git status --porcelain` for the index root, entirely
+     * in-process: Bun reads `.git/index`, refs, loose objects, and packfiles
+     * directly and **never spawns `git`**.
+     *
+     * Runs on the thread pool.
+     *
+     * @returns A promise for the status, or `null` if `root` is not inside a
+     *   git work tree.
+     *
+     * @example
+     * ```ts
+     * const status = await index.gitStatus();
+     * if (status) {
+     *   console.log(`On branch ${status.branch}`);
+     *   for (const { path, status: xy } of status.files) {
+     *     console.log(xy, path);
+     *   }
+     * }
+     * ```
+     */
+    gitStatus(): Promise<FileIndexGitStatus | null>;
+
+    /**
+     * Line-level diff of the working-tree file at `path` against the version
+     * in `HEAD`, computed entirely in-process (never spawns `git`).
+     *
+     * Runs on the thread pool.
+     *
+     * @param path - The file to diff, relative to `root` and `/`-separated.
+     * @returns A promise for the diff, or `null` if `root` is not inside a git
+     *   work tree or `path` exists in neither `HEAD` nor the working tree.
+     *   An untracked file that exists on disk is a full all-additions diff
+     *   (`oldText: null`); a tracked file deleted from the working tree is a
+     *   full all-deletions diff (`newText: null`).
+     *
+     * @example
+     * ```ts
+     * const diff = await index.gitDiff("src/index.ts");
+     * for (const hunk of diff?.hunks ?? []) {
+     *   for (const { kind, text } of hunk.lines) {
+     *     const sign = kind === "add" ? "+" : kind === "del" ? "-" : " ";
+     *     console.log(sign + text);
+     *   }
+     * }
+     * ```
+     */
+    gitDiff(path: string): Promise<FileIndexGitDiff | null>;
+
+    /**
+     * Record an access to `path`. Recently touched paths are boosted in
+     * {@link FileIndex.complete} results, so tooling that calls `touch()`
+     * whenever a user opens a file gets "frecency"-aware autocomplete for free.
+     *
+     * @param path - The accessed path, relative to `root` and `/`-separated.
+     *
+     * @example
+     * ```ts
+     * editor.on("open", file => index.touch(file));
+     * ```
+     */
+    touch(path: string): void;
+
+    /**
+     * The most recently {@link FileIndex.touch | touched} paths, newest first.
+     *
+     * @param limit - Maximum number of paths to return.
+     *
+     * @example
+     * ```ts
+     * index.touch("src/a.ts");
+     * index.touch("src/b.ts");
+     * index.recent(); // ["src/b.ts", "src/a.ts"]
+     * ```
+     */
+    recent(limit?: number): string[];
+
+    /**
+     * Discard the index and re-crawl `root` from scratch.
+     *
+     * @returns A promise that resolves with this `FileIndex` once the re-crawl
+     *   completes.
+     *
+     * @example
+     * ```ts
+     * await index.refresh();
+     * console.log(index.size);
+     * ```
+     */
+    refresh(): Promise<FileIndex>;
+
+    /**
+     * Callback invoked with batched filesystem change events. Only fires when
+     * the index was constructed with `watch: true`.
+     *
+     * Events are coalesced per path and debounced (~20 ms after the last event
+     * in a burst). Unindexed paths (ignored untracked files, anything inside
+     * a pruned directory) never fire. A change
+     * to any `.gitignore` triggers a debounced background re-crawl.
+     *
+     * @example
+     * ```ts
+     * const index = new Bun.FileIndex(process.cwd(), { watch: true });
+     * index.onchange = events => {
+     *   for (const { kind, path } of events) {
+     *     console.log(kind, path);
+     *   }
+     * };
+     * ```
+     */
+    onchange: ((events: Array<FileIndexChangeEvent>) => void) | null;
+
+    /**
+     * Stop the watcher (if any), free the native index, and release all
+     * memory. Idempotent.
+     *
+     * After `close()`, every method other than `close()` and
+     * `Symbol.dispose()` throws an `ERR_INVALID_STATE` error. In-flight
+     * promises still settle, and a {@link FileIndex.grep} iterator obtained
+     * before `close()` ends (`{ done: true }`) instead of yielding further
+     * results.
+     *
+     * @example
+     * ```ts
+     * const index = new Bun.FileIndex(process.cwd(), { watch: true });
+     * await index.ready;
+     * // ...
+     * index.close();
+     * ```
+     */
+    close(): void;
+
+    /**
+     * Alias for {@link close}. Enables `using index = new Bun.FileIndex(...)`.
+     */
+    [Symbol.dispose](): void;
+  }
+
+  /**
    * Generate a UUIDv7, which is a sequential ID based on the current timestamp with a random component.
    *
    * When the same timestamp is used multiple times, a monotonically increasing

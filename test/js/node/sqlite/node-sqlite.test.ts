@@ -890,6 +890,33 @@ describe("db.limits", () => {
     expect(() => db.limits.column).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
   });
 
+  test("Object.getOwnPropertyDescriptor on a closed db's limits throws cleanly", async () => {
+    // getOwnPropertySlot must return false after throwing. Returning true
+    // with a pending exception trips JSC's EXCEPTION_ASSERT inside
+    // JSObject::getOwnPropertyDescriptor, which aborts debug builds, so
+    // this has to run in a subprocess to be observable as a test failure.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { DatabaseSync } = require("node:sqlite");
+         const db = new DatabaseSync(":memory:");
+         const lim = db.limits;
+         db.close();
+         let code = null;
+         try { Object.getOwnPropertyDescriptor(lim, "length"); } catch (e) { code = e.code; }
+         if (code !== "ERR_INVALID_STATE") throw new Error("expected ERR_INVALID_STATE, got " + code);
+         console.log("OK");`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr is matched loosely (debug builds log benignly) but included so
+    // the assertion text is visible in the diff if the child aborts.
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "OK\n", stderr: expect.any(String), exitCode: 0 });
+  });
+
   test("constructor {limits} option seeds sqlite3_limit on open", () => {
     const db = new DatabaseSync(":memory:", { limits: { variableNumber: 3 } });
     expect(db.limits.variableNumber).toBe(3);

@@ -320,10 +320,12 @@ static void jsValueToSqliteResult(JSGlobalObject* globalObject, sqlite3_context*
             return;
         }
         auto utf8 = str.utf8();
-        sqlite3_result_text(ctx, utf8.data(), static_cast<int>(utf8.length()), SQLITE_TRANSIENT);
+        // The *64 variants take the size as sqlite3_uint64 and return
+        // SQLITE_TOOBIG cleanly; narrowing to `int` is UB once negative.
+        sqlite3_result_text64(ctx, utf8.data(), utf8.length(), SQLITE_TRANSIENT, SQLITE_UTF8);
     } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
         auto span = view->span();
-        sqlite3_result_blob(ctx, span.data(), static_cast<int>(span.size()), SQLITE_TRANSIENT);
+        sqlite3_result_blob64(ctx, span.data(), span.size(), SQLITE_TRANSIENT);
     } else if (value.isBigInt()) {
         int64_t as_int = JSBigInt::toBigInt64(value);
         JSValue roundTrip = JSBigInt::makeHeapBigIntOrBigInt32(globalObject, as_int);
@@ -1414,6 +1416,12 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncApplyChangeset, (JSGlobalObject * globalO
     // stack frame regardless of what JS does. Changesets are typically
     // small, so the copy is cheap relative to the safety it buys.
     auto span = buf->span();
+    // sqlite3changeset_apply takes an `int` byte count and has no 64-bit
+    // variant; reject before copying anything that would not round-trip.
+    if (span.size() > static_cast<size_t>(INT_MAX)) {
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+            "The changeset is too large"_s);
+    }
     WTF::Vector<uint8_t> owned;
     if (!owned.tryAppend(span)) {
         return Bun::throwError(globalObject, scope, ErrorCode::ERR_MEMORY_ALLOCATION_FAILED,
@@ -2185,7 +2193,9 @@ bool JSStatementSync::bindValue(JSGlobalObject* globalObject, ThrowScope& scope,
         auto str = value.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
         auto utf8 = str.utf8();
-        r = sqlite3_bind_text(m_stmt, index, utf8.data(), static_cast<int>(utf8.length()), SQLITE_TRANSIENT);
+        // See jsValueToSqliteResult: the *64 variants reject oversized
+        // inputs with SQLITE_TOOBIG instead of narrowing the size to int.
+        r = sqlite3_bind_text64(m_stmt, index, utf8.data(), utf8.length(), SQLITE_TRANSIENT, SQLITE_UTF8);
     } else if (value.isNull()) {
         r = sqlite3_bind_null(m_stmt, index);
     } else if (value.isBigInt()) {
@@ -2201,7 +2211,7 @@ bool JSStatementSync::bindValue(JSGlobalObject* globalObject, ThrowScope& scope,
         r = sqlite3_bind_int64(m_stmt, index, iv);
     } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
         auto span = view->span();
-        r = sqlite3_bind_blob(m_stmt, index, span.data(), static_cast<int>(span.size()), SQLITE_TRANSIENT);
+        r = sqlite3_bind_blob64(m_stmt, index, span.data(), span.size(), SQLITE_TRANSIENT);
     } else {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
             makeString("Provided value cannot be bound to SQLite parameter "_s, index));
@@ -2932,7 +2942,10 @@ bool JSNodeSqliteLimits::getOwnPropertySlot(JSObject* object, JSGlobalObject* gl
             auto* db = self->database();
             if (!db || !db->isOpen()) {
                 throwNodeState(globalObject, scope, "database is not open"_s);
-                return true;
+                // getOwnPropertySlot must return false with an exception
+                // pending (the slot is unset); returning true trips JSC's
+                // EXCEPTION_ASSERT in getOwnPropertyDescriptor.
+                return false;
             }
             int current = sqlite3_limit(db->connection(), id, -1);
             slot.setValue(self, static_cast<unsigned>(PropertyAttribute::DontDelete), jsNumber(current));

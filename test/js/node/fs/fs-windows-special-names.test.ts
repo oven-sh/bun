@@ -181,10 +181,5 @@ test.skipIf(!isWindows)("issue 8836 reproduction", async () => {
     }
     process.stdout.write(JSON.stringify(out));
   `;
-  expect(await runInChild(String(dir), fixture)).toEqual([
-    'data:" spaces.txt "',
-    19,
-    'data:".dots.txt."',
-    17,
-  ]);
+  expect(await runInChild(String(dir), fixture)).toEqual(['data:" spaces.txt "', 19, 'data:".dots.txt."', 17]);
 });

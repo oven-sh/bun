@@ -274,7 +274,7 @@ A `.jsc` file contains a serialized bytecode structure.
 
 **Bytecode instructions**:
 
-- **Instruction stream**: The bytecode opcodes - the compiled representation of your JavaScript.
+- **Instruction stream**: The bytecode opcodes - the compiled representation of your JavaScript, stored as a variable-length sequence of instructions.
 - **Metadata table**: Each opcode has associated metadata such as profiling counters, type hints, and execution counts (even if not yet populated).
 - **Jump targets**: Pre-computed addresses for control flow (if/else, loops, switch statements).
 - **Switch tables**: Optimized lookup tables for switch statements.

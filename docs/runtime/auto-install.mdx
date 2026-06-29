@@ -29,11 +29,11 @@ Bun determines which version to install as follows:
 
 ## Cache behavior
 
-Once it determines a version or version range, Bun:
+Once Bun determines a version or version range, it:
 
-1. Check the module cache for a compatible version. If one exists, use it.
-2. When resolving `latest`, check if `package@latest` was downloaded and cached in the last _24 hours_. If so, use it.
-3. Otherwise, download and install the appropriate version from the `npm` registry.
+1. Checks the module cache for a compatible version. If one exists, uses it.
+2. When resolving `latest`, checks if `package@latest` was downloaded and cached in the last _24 hours_. If so, uses it.
+3. Otherwise, downloads and installs the appropriate version from the `npm` registry.
 
 ---
 
@@ -89,7 +89,7 @@ import { z } from "zod@^3.20.0"; // semver range
 
     <Accordion title="How is this different from what Deno does?">
 
-    Deno requires an `npm:` specifier before each npm `import`, lacks support for import maps through `compilerOptions.paths` in `tsconfig.json`, and has incomplete support for `package.json` settings. Unlike Deno, Bun does not support URL imports.
+    Deno requires an `npm:` specifier before each npm `import`, lacks support for import maps through `compilerOptions.paths` in `tsconfig.json`, and has incomplete support for `package.json` settings. Unlike Deno, Bun does not currently support URL imports.
     </Accordion>
 
 </AccordionGroup>

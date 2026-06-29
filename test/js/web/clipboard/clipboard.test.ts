@@ -1,10 +1,28 @@
 // The async Clipboard API: https://w3c.github.io/clipboard-apis/
-// The round-trip test is environment-adaptive: a machine with no reachable
-// system clipboard must reject with a "NotAllowedError" DOMException instead.
+// The OS round-trip tests are environment-adaptive: a machine with no
+// reachable system clipboard must reject with a "NotAllowedError"
+// DOMException instead, and that shape is asserted.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { chmodSync } from "node:fs";
 import { join } from "node:path";
+
+// A valid 1x1 transparent PNG; used to prove binary representations survive
+// the platform round-trip.
+const PNG_1X1 = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+// Asserts that `promise` rejects with a DOMException of exactly `name`.
+async function expectDOMException(promise: Promise<unknown>, name: string) {
+  const error = await promise.then(
+    () => null,
+    (e: unknown) => e,
+  );
+  expect(error).toBeInstanceOf(DOMException);
+  expect((error as DOMException).name).toBe(name);
+}
 
 describe("interface shape", () => {
   test("navigator.clipboard exists and is the [SameObject] Clipboard singleton", () => {
@@ -33,9 +51,11 @@ describe("interface shape", () => {
 
   test("prototype members are enumerable functions with the right arity", () => {
     // WebIDL: interface members are enumerable, unlike plain JS class methods.
-    expect(Object.keys(Clipboard.prototype)).toEqual(["readText", "writeText"]);
+    expect(Object.keys(Clipboard.prototype)).toEqual(["readText", "writeText", "read", "write"]);
     expect(Clipboard.prototype.readText.length).toBe(0);
     expect(Clipboard.prototype.writeText.length).toBe(1);
+    expect(Clipboard.prototype.read.length).toBe(0);
+    expect(Clipboard.prototype.write.length).toBe(1);
   });
 
   test("Symbol.toStringTag is 'Clipboard'", () => {
@@ -48,14 +68,6 @@ describe("interface shape", () => {
     });
   });
 
-  test("read()/write() are intentionally absent, not present-and-throwing", () => {
-    // They need the unimplemented `ClipboardItem` interface; per WebIDL an
-    // unimplemented operation is absent from the prototype.
-    expect("read" in navigator.clipboard).toBe(false);
-    expect("write" in navigator.clipboard).toBe(false);
-    expect("ClipboardItem" in globalThis).toBe(false);
-  });
-
   test("readText()/writeText() return Promises and reject (not throw) on a bad receiver", async () => {
     // WebIDL: a Promise-returning operation converts a failed brand check
     // into a rejection, never a synchronous throw.
@@ -63,6 +75,8 @@ describe("interface shape", () => {
     expect(detached).toBeInstanceOf(Promise);
     await expect(detached).rejects.toThrow(TypeError);
     await expect(Clipboard.prototype.writeText.call({} as Clipboard, "x")).rejects.toThrow(TypeError);
+    await expect(Clipboard.prototype.read.call({} as Clipboard)).rejects.toThrow(TypeError);
+    await expect(Clipboard.prototype.write.call({} as Clipboard, [])).rejects.toThrow(TypeError);
   });
 
   test("writeText() argument handling follows WebIDL", async () => {
@@ -85,8 +99,8 @@ describe("interface shape", () => {
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "true", exitCode: 0 });
   });
 
-  // WebIDL: the interface object is a writable property of the global, so
-  // polyfills and test mocks can replace it. Last: it swaps the real class out.
+  // WebIDL: the interface objects are writable globals, so polyfills and test
+  // mocks can replace them. Last in the suite: it swaps the real class out.
   test("globalThis.Clipboard is replaceable", () => {
     const original = Clipboard;
     try {
@@ -98,6 +112,188 @@ describe("interface shape", () => {
     }
     expect(globalThis.Clipboard).toBe(original);
     expect(navigator.clipboard).toBeInstanceOf(original);
+  });
+});
+
+describe("ClipboardItem", () => {
+  test("is a constructible global with the right shape", () => {
+    expect(typeof ClipboardItem).toBe("function");
+    expect(globalThis.ClipboardItem).toBe(ClipboardItem);
+    const item = new ClipboardItem({ "text/plain": "hello" });
+    expect(item).toBeInstanceOf(ClipboardItem);
+    expect(Object.prototype.toString.call(item)).toBe("[object ClipboardItem]");
+    expect(typeof ClipboardItem.supports).toBe("function");
+  });
+
+  test("constructor validates its arguments like the spec", () => {
+    // @ts-expect-error — requires an items record.
+    expect(() => new ClipboardItem()).toThrow(TypeError);
+    expect(() => new ClipboardItem({})).toThrow(TypeError);
+    expect(() => new ClipboardItem({ "not a mime": "x" })).toThrow(TypeError);
+    expect(() => new ClipboardItem({ "text/plain": "x" }, { presentationStyle: "nope" as never })).toThrow(TypeError);
+  });
+
+  test("types is frozen and preserves insertion order; presentationStyle defaults", () => {
+    const item = new ClipboardItem({ "text/plain": "a", "text/html": "<b>a</b>" }, { presentationStyle: "inline" });
+    expect(item.types).toEqual(["text/plain", "text/html"]);
+    expect(Object.isFrozen(item.types)).toBe(true);
+    expect(item.presentationStyle).toBe("inline");
+    expect(new ClipboardItem({ "text/plain": "a" }).presentationStyle).toBe("unspecified");
+  });
+
+  test("getType() resolves Blobs of the requested type from strings, Blobs, and promises", async () => {
+    const item = new ClipboardItem({
+      "text/plain": "as a string",
+      "text/html": Promise.resolve("<b>as a promise</b>"),
+      // A Blob whose declared type differs is rewrapped as the requested type.
+      "image/png": new Blob([PNG_1X1], { type: "application/octet-stream" }),
+    });
+    // Bun's Blob normalizes text MIME types with a charset parameter, so the
+    // returned types are asserted exactly as Blob reports them.
+    const plain = await item.getType("text/plain");
+    expect(plain).toBeInstanceOf(Blob);
+    expect(plain.type).toBe("text/plain;charset=utf-8");
+    expect(await plain.text()).toBe("as a string");
+    const html = await item.getType("text/html");
+    expect(await html.text()).toBe("<b>as a promise</b>");
+    expect(html.type).toBe("text/html;charset=utf-8");
+    const png = await item.getType("image/png");
+    expect(png.type).toBe("image/png");
+    expect(Buffer.from(await png.arrayBuffer()).equals(PNG_1X1)).toBe(true);
+  });
+
+  test("getType() of an absent type rejects with a NotFoundError DOMException", async () => {
+    const item = new ClipboardItem({ "text/plain": "x" });
+    await expectDOMException(item.getType("image/png"), "NotFoundError");
+  });
+
+  test("supports() tells the per-platform truth", () => {
+    expect(ClipboardItem.supports("text/plain")).toBe(true);
+    expect(ClipboardItem.supports("image/png")).toBe(true);
+    expect(ClipboardItem.supports("text/html")).toBe(process.platform !== "win32");
+    expect(ClipboardItem.supports("application/x-bun-custom")).toBe(false);
+  });
+
+  test("accessors brand-check their receiver", () => {
+    const proto = ClipboardItem.prototype;
+    expect(() => Object.getOwnPropertyDescriptor(proto, "types")!.get!.call({})).toThrow(TypeError);
+    expect(() => Object.getOwnPropertyDescriptor(proto, "presentationStyle")!.get!.call({})).toThrow(TypeError);
+  });
+});
+
+describe("ClipboardEvent", () => {
+  test("is a constructible Event subclass that can be dispatched synthetically", () => {
+    expect(typeof ClipboardEvent).toBe("function");
+    expect(Object.getPrototypeOf(ClipboardEvent.prototype)).toBe(Event.prototype);
+    const event = new ClipboardEvent("paste", { bubbles: true });
+    expect(event).toBeInstanceOf(ClipboardEvent);
+    expect(event).toBeInstanceOf(Event);
+    expect(event.type).toBe("paste");
+    expect(event.bubbles).toBe(true);
+    // Bun has no DataTransfer, so this is always null.
+    expect(event.clipboardData).toBeNull();
+    expect(Object.prototype.toString.call(event)).toBe("[object ClipboardEvent]");
+
+    const target = new EventTarget();
+    const seen: string[] = [];
+    target.addEventListener("copy", e => {
+      seen.push((e as ClipboardEvent).type);
+    });
+    target.dispatchEvent(new ClipboardEvent("copy"));
+    expect(seen).toEqual(["copy"]);
+  });
+
+  test("constructor and brand checks reject bad use", () => {
+    // @ts-expect-error — a type argument is required.
+    expect(() => new ClipboardEvent()).toThrow(TypeError);
+    const get = Object.getOwnPropertyDescriptor(ClipboardEvent.prototype, "clipboardData")!.get!;
+    expect(() => get.call(new Event("copy"))).toThrow(TypeError);
+  });
+});
+
+describe("read / write", () => {
+  // Everything here rejects during validation, before any OS access, so it is
+  // deterministic on every platform including headless CI.
+  test("write() argument validation follows the spec, before touching the OS", async () => {
+    // @ts-expect-error — write requires 1 argument.
+    await expect(navigator.clipboard.write()).rejects.toThrow(TypeError);
+    await expect(navigator.clipboard.write(123 as never)).rejects.toThrow(TypeError);
+    await expect(navigator.clipboard.write([{} as ClipboardItem])).rejects.toThrow(TypeError);
+
+    const a = new ClipboardItem({ "text/plain": "a" });
+    const b = new ClipboardItem({ "text/plain": "b" });
+    await expectDOMException(navigator.clipboard.write([a, b]), "NotAllowedError");
+
+    // An unsupported representation rejects the write — including when the
+    // item also carries supported ones (nothing is silently dropped).
+    await expectDOMException(
+      navigator.clipboard.write([new ClipboardItem({ "application/x-bun": "x" })]),
+      "NotAllowedError",
+    );
+    await expectDOMException(
+      navigator.clipboard.write([new ClipboardItem({ "text/plain": "x", "application/x-bun": "y" })]),
+      "NotAllowedError",
+    );
+
+    // Writing an empty sequence is a no-op that must not reject.
+    await navigator.clipboard.write([]);
+  });
+
+  test("round-trips representations, or rejects with NotAllowedError where there is no clipboard", async () => {
+    let saved: ClipboardItem[] = [];
+    try {
+      saved = await navigator.clipboard.read();
+    } catch (e) {
+      // No reachable clipboard (e.g. headless Linux): read() and write()
+      // must fail with the same spec'd shape.
+      expect(e).toBeInstanceOf(DOMException);
+      expect((e as DOMException).name).toBe("NotAllowedError");
+      await expectDOMException(navigator.clipboard.read(), "NotAllowedError");
+      await expectDOMException(
+        navigator.clipboard.write([new ClipboardItem({ "text/plain": "x" })]),
+        "NotAllowedError",
+      );
+      return;
+    }
+    try {
+      // A unique token makes an unrelated process racing the clipboard a
+      // visible mismatch instead of a false pass.
+      const token = `bun clipboard read/write ${Date.now()} ${Math.random()}`;
+      const types: Record<string, string | Blob> = { "text/plain": token };
+      const withHtml = ClipboardItem.supports("text/html");
+      if (withHtml) types["text/html"] = `<b>${token}</b>`;
+      await navigator.clipboard.write([new ClipboardItem(types)]);
+
+      const items = await navigator.clipboard.read();
+      expect(items).toHaveLength(1);
+      expect(items[0]).toBeInstanceOf(ClipboardItem);
+      expect(items[0].types).toEqual(withHtml ? ["text/plain", "text/html"] : ["text/plain"]);
+      expect(await (await items[0].getType("text/plain")).text()).toBe(token);
+      if (withHtml) {
+        expect(await (await items[0].getType("text/html")).text()).toBe(`<b>${token}</b>`);
+      }
+      // readText() sees the text/plain representation written by write().
+      expect(await navigator.clipboard.readText()).toBe(token);
+
+      // Binary representations survive the platform round-trip.
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": new Blob([PNG_1X1], { type: "image/png" }) })]);
+      const [imageItem] = await navigator.clipboard.read();
+      expect(imageItem.types).toEqual(["image/png"]);
+      const pngBytes = Buffer.from(await (await imageItem.getType("image/png")).arrayBuffer());
+      if (process.platform === "win32") {
+        // The Win32 clipboard reports `GlobalSize`, which over-reports by
+        // allocation granularity; the real payload is a prefix.
+        expect(pngBytes.length).toBeGreaterThanOrEqual(PNG_1X1.length);
+        expect(pngBytes.subarray(0, PNG_1X1.length).equals(PNG_1X1)).toBe(true);
+      } else {
+        expect(pngBytes.equals(PNG_1X1)).toBe(true);
+      }
+    } finally {
+      // Put back whatever was on the clipboard before the test (all supported
+      // representations, not just text) so running locally is non-destructive.
+      if (saved.length > 0) await navigator.clipboard.write(saved).catch(() => {});
+      else await navigator.clipboard.writeText("").catch(() => {});
+    }
   });
 });
 
@@ -148,12 +344,7 @@ describe("readText / writeText", () => {
       // the spec'd failure is a "NotAllowedError" DOMException for both.
       expect(e).toBeInstanceOf(DOMException);
       expect((e as DOMException).name).toBe("NotAllowedError");
-      const writeError = await navigator.clipboard.writeText("x").then(
-        () => null,
-        (err: unknown) => err,
-      );
-      expect(writeError).toBeInstanceOf(DOMException);
-      expect((writeError as DOMException).name).toBe("NotAllowedError");
+      await expectDOMException(navigator.clipboard.writeText("x"), "NotAllowedError");
       return;
     }
     try {

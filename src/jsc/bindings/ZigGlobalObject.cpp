@@ -1660,9 +1660,10 @@ JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetHardwareConcurrency, (JSC::JSGlobal
     return JSValue::encode(JSC::jsNumber(WTF::numberOfProcessorCores()));
 }
 
-// Calls the `Clipboard.ts` builtin to build the `{ Clipboard, instance }`
-// pair, handing it the real `EventTarget` constructor so reassigning the
-// global can't change what `Clipboard` extends. nullptr ⇔ the builtin threw.
+// Calls the `Clipboard.ts` builtin to build `{ Clipboard, ClipboardItem,
+// ClipboardEvent, instance }`, handing it the real `EventTarget` and `Event`
+// constructors so reassigning those globals can't change what the classes
+// extend. nullptr ⇔ the builtin threw.
 static JSC::JSObject* createClipboardObjects(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1673,6 +1674,8 @@ static JSC::JSObject* createClipboardObjects(Zig::GlobalObject* globalObject)
 
     JSC::MarkedArgumentBuffer args;
     args.append(WebCore::JSEventTarget::getConstructor(vm, globalObject));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    args.append(WebCore::JSEvent::getConstructor(vm, globalObject));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     JSC::CallData callData = JSC::getCallData(factory);
@@ -1699,14 +1702,21 @@ static JSC::JSValue getClipboardObjectsMember(JSC::JSGlobalObject* lexicalGlobal
     return objects->getDirect(vm, JSC::Identifier::fromString(vm, key));
 }
 
-// `navigator.clipboard` — the spec's lazy `[SameObject]` singleton.
-JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetClipboard, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+// Shared body of the lazy clipboard accessors: `navigator.clipboard` and the
+// interface-object globals all read one member of the factory's result.
+static JSC::EncodedJSValue getClipboardGlobal(JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSValue value = getClipboardObjectsMember(globalObject, "instance"_s);
+    JSC::JSValue value = getClipboardObjectsMember(globalObject, name);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(value ? value : JSC::jsUndefined());
+}
+
+// `navigator.clipboard` — the spec's lazy `[SameObject]` singleton.
+JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetClipboard, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    return getClipboardGlobal(globalObject, "instance"_s);
 }
 
 // `globalThis.Clipboard` must be an accessor installed in `addBuiltinGlobals`,
@@ -1714,21 +1724,42 @@ JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetClipboard, (JSC::JSGlobalObject * g
 // at bytecode-link time, where the JS builtin this has to run cannot run.
 JSC_DEFINE_HOST_FUNCTION(functionGetClipboardConstructor, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
 {
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSValue value = getClipboardObjectsMember(globalObject, "Clipboard"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(value ? value : JSC::jsUndefined());
+    return getClipboardGlobal(globalObject, "Clipboard"_s);
 }
 
-// Per WebIDL the interface object is writable: assignment replaces the lazy
+JSC_DEFINE_HOST_FUNCTION(functionGetClipboardItemConstructor, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    return getClipboardGlobal(globalObject, "ClipboardItem"_s);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionGetClipboardEventConstructor, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    return getClipboardGlobal(globalObject, "ClipboardEvent"_s);
+}
+
+// Per WebIDL the interface objects are writable: assignment replaces the lazy
 // accessor with a plain data property, exactly like `functionSetSelf` below.
-JSC_DEFINE_HOST_FUNCTION(functionSetClipboardConstructor, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+static JSC::EncodedJSValue setClipboardGlobal(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, WTF::ASCIILiteral name)
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSValue value = callFrame->argument(0);
-    globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "Clipboard"_s), value, JSC::PropertyAttribute::DontEnum | 0);
+    globalObject->putDirect(vm, JSC::Identifier::fromString(vm, name), value, JSC::PropertyAttribute::DontEnum | 0);
     return JSValue::encode(value);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSetClipboardConstructor, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return setClipboardGlobal(globalObject, callFrame, "Clipboard"_s);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSetClipboardItemConstructor, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return setClipboardGlobal(globalObject, callFrame, "ClipboardItem"_s);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSetClipboardEventConstructor, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return setClipboardGlobal(globalObject, callFrame, "ClipboardEvent"_s);
 }
 
 JSC_DECLARE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins);
@@ -3130,17 +3161,22 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
             JSFunction::create(vm, this, 0, "set"_s, functionSetSelf, ImplementationVisibility::Public)),
         PropertyAttribute::Accessor | 0);
 
-    // The `Clipboard` interface object — see functionGetClipboardConstructor
-    // for why this has to be an accessor here rather than a lookup-table row.
-    putDirectAccessor(
-        this,
-        JSC::Identifier::fromString(vm, "Clipboard"_s),
-        JSC::GetterSetter::create(
-            vm,
+    // The Clipboard API interface objects — see functionGetClipboardConstructor
+    // for why these have to be accessors here rather than lookup-table rows.
+    const auto addClipboardGlobal = [&](ASCIILiteral name, auto getter, auto setter) {
+        putDirectAccessor(
             this,
-            JSFunction::create(vm, this, 0, "get Clipboard"_s, functionGetClipboardConstructor, ImplementationVisibility::Public),
-            JSFunction::create(vm, this, 1, "set Clipboard"_s, functionSetClipboardConstructor, ImplementationVisibility::Public)),
-        PropertyAttribute::Accessor | PropertyAttribute::DontEnum | 0);
+            JSC::Identifier::fromString(vm, name),
+            JSC::GetterSetter::create(
+                vm,
+                this,
+                JSFunction::create(vm, this, 0, makeString("get "_s, name), getter, ImplementationVisibility::Public),
+                JSFunction::create(vm, this, 1, makeString("set "_s, name), setter, ImplementationVisibility::Public)),
+            PropertyAttribute::Accessor | PropertyAttribute::DontEnum | 0);
+    };
+    addClipboardGlobal("Clipboard"_s, functionGetClipboardConstructor, functionSetClipboardConstructor);
+    addClipboardGlobal("ClipboardItem"_s, functionGetClipboardItemConstructor, functionSetClipboardItemConstructor);
+    addClipboardGlobal("ClipboardEvent"_s, functionGetClipboardEventConstructor, functionSetClipboardEventConstructor);
 
     // TODO: this should be usable on the lookup table. it crashed las time i tried it
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onmessage"_s), JSC::CustomGetterSetter::create(vm, globalOnMessage, setGlobalOnMessage), 0);

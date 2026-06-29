@@ -59,6 +59,8 @@ using namespace JSC;
     macro(cancelAlgorithm) \
     macro(checks) \
     macro(checkBufferRead) \
+    macro(clipboardEventBrand) \
+    macro(clipboardItemState) \
     macro(cloneArrayBuffer) \
     macro(close) \
     macro(closeAlgorithm) \

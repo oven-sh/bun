@@ -258,6 +258,7 @@ const ENTRIES: ReadonlyArray<readonly [string, V]> = [
   ["CharacterData", "Other"],
   ["Clipboard", "Other"],
   ["ClipboardEvent", "Other"],
+  ["ClipboardItem", "Other"],
   ["CloseEvent", "Other"],
   ["Comment", "Other"],
   ["CompositionEvent", "Other"],

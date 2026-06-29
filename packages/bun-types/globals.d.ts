@@ -1455,12 +1455,13 @@ interface Navigator {
    * The system clipboard, from the
    * [Clipboard API](https://developer.mozilla.org/en-US/docs/Web/API/Clipboard_API).
    *
-   * Only `readText()` and `writeText()` are implemented. `read()` / `write()`
-   * (which require the `ClipboardItem` interface) are not.
+   * Supported representations: `text/plain` everywhere, `image/png`
+   * everywhere, and `text/html` everywhere except Windows (use
+   * `ClipboardItem.supports()` to feature-detect).
    *
    * On Linux this drives `wl-paste`/`wl-copy` (Wayland), `xclip`, or `xsel`,
    * so one of those must be installed and `$WAYLAND_DISPLAY` or `$DISPLAY`
-   * must be set; otherwise both methods reject with a `"NotAllowedError"`
+   * must be set; otherwise the methods reject with a `"NotAllowedError"`
    * `DOMException`.
    *
    * @example
@@ -1496,6 +1497,33 @@ interface Clipboard extends EventTarget {
    * clipboard cannot be reached at all.
    */
   writeText(data: string): Promise<void>;
+  /**
+   * Read every supported representation of the clipboard's current item as a
+   * single `ClipboardItem` (an atomic snapshot).
+   *
+   * @returns `[item]`, or `[]` when no supported representation is present.
+   * Rejects with a `"NotAllowedError"` `DOMException` when the platform
+   * clipboard cannot be reached at all.
+   *
+   * @example
+   * ```ts
+   * for (const item of await navigator.clipboard.read()) {
+   *   if (item.types.includes("image/png")) {
+   *     await Bun.write("clip.png", await item.getType("image/png"));
+   *   }
+   * }
+   * ```
+   */
+  read(): Promise<ClipboardItem[]>;
+  /**
+   * Replace the system clipboard with the representations of one
+   * `ClipboardItem` (every type `ClipboardItem.supports()` reports).
+   *
+   * Rejects with a `"NotAllowedError"` `DOMException` if the item has no
+   * supported representation, if more than one item is passed, or when the
+   * platform clipboard cannot be reached.
+   */
+  write(data: ClipboardItem[]): Promise<void>;
 }
 declare var Clipboard: Bun.__internal.UseLibDomIfAvailable<
   "Clipboard",
@@ -1507,6 +1535,73 @@ declare var Clipboard: Bun.__internal.UseLibDomIfAvailable<
      * so `new Clipboard()` is a compile error and a runtime `TypeError`.
      */
     [Symbol.hasInstance](value: unknown): value is Clipboard;
+  }
+>;
+
+/**
+ * One clipboard "item" and its representations, keyed by MIME type.
+ * [MDN](https://developer.mozilla.org/en-US/docs/Web/API/ClipboardItem)
+ *
+ * Bun supports `text/plain` and `image/png` on every platform, plus
+ * `text/html` everywhere except Windows; use `ClipboardItem.supports()` to
+ * feature-detect.
+ */
+interface ClipboardItem {
+  /** The MIME types this item holds, in insertion order (frozen). */
+  readonly types: readonly string[];
+  /** How the item should be presented; defaults to `"unspecified"`. */
+  readonly presentationStyle: "unspecified" | "inline" | "attachment";
+  /**
+   * The item's representation for `type` as a `Blob` whose `type` matches.
+   * Rejects with a `"NotFoundError"` `DOMException` for a type the item does
+   * not hold.
+   */
+  getType(type: string): Promise<Blob>;
+}
+declare var ClipboardItem: Bun.__internal.UseLibDomIfAvailable<
+  "ClipboardItem",
+  {
+    prototype: ClipboardItem;
+    /**
+     * @param items one entry per MIME type; each value is a string, a `Blob`,
+     * or a promise of either, resolved lazily by `getType()`/`write()`.
+     * @example
+     * ```ts
+     * await navigator.clipboard.write([
+     *   new ClipboardItem({ "text/plain": "hi", "text/html": "<b>hi</b>" }),
+     * ]);
+     * ```
+     */
+    new (
+      items: Record<string, string | Blob | PromiseLike<string | Blob>>,
+      options?: { presentationStyle?: "unspecified" | "inline" | "attachment" },
+    ): ClipboardItem;
+    /** Whether this Bun build can read/write `type` on this platform. */
+    supports(type: string): boolean;
+  }
+>;
+
+/**
+ * The `copy`/`cut`/`paste` event type.
+ * [MDN](https://developer.mozilla.org/en-US/docs/Web/API/ClipboardEvent)
+ *
+ * Bun never fires these events (they are defined in terms of a focused
+ * document and a user gesture, which do not exist in a server runtime), but
+ * the class is constructible so synthetic events can be created and
+ * dispatched through any `EventTarget`. `clipboardData` is always `null`
+ * because Bun does not implement `DataTransfer`.
+ */
+interface ClipboardEvent extends Event {
+  readonly clipboardData: null;
+}
+declare var ClipboardEvent: Bun.__internal.UseLibDomIfAvailable<
+  "ClipboardEvent",
+  {
+    prototype: ClipboardEvent;
+    new (
+      type: string,
+      eventInitDict?: { bubbles?: boolean; cancelable?: boolean; composed?: boolean; clipboardData?: null },
+    ): ClipboardEvent;
   }
 >;
 

@@ -795,6 +795,9 @@ impl Connection {
             }
         }
         if is_new {
+            // Must advance even for refused streams: §5.1 treats anything at or below the
+            // high-water mark as having existed, so frames a client pipelined behind the
+            // refused HEADERS (RST_STREAM especially) are tolerated instead of GOAWAY'd.
             if hdr.stream_id > self.last_stream_id {
                 self.last_stream_id = hdr.stream_id;
             }

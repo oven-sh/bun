@@ -3060,3 +3060,58 @@ it("http2 allowHTTP1 fallback rejects an out-of-range statusCode", async () => {
     server.close();
   }
 });
+
+it("http2 allowHTTP1 fallback frames a HEAD response like plain HTTP/1 (no Content-Length, no Transfer-Encoding)", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    res.writeHead(200, { "x-method": req.method });
+    res.end();
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const socket = tls.connect(
+      { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+      () => socket.write("HEAD / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
+    );
+    const chunks = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    const raw = await promise;
+    expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(raw).toEndWith("\r\n\r\n");
+    expect(raw.toLowerCase()).toContain("\r\nx-method: head\r\n");
+    expect(raw.toLowerCase()).not.toContain("content-length");
+    expect(raw.toLowerCase()).not.toContain("transfer-encoding");
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 allowHTTP1 fallback writes a close-delimited body raw and ends the connection", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    res.removeHeader("content-length");
+    res.removeHeader("transfer-encoding");
+    res.write("part1");
+    res.end("part2");
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const socket = tls.connect(
+      { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+      () => socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+    );
+    const chunks = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    const raw = await promise;
+    expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(raw.toLowerCase()).not.toContain("content-length");
+    expect(raw.toLowerCase()).not.toContain("transfer-encoding");
+    expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("part1part2");
+  } finally {
+    server.close();
+  }
+});

@@ -5332,6 +5332,8 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
   let head = null;
   let headWritten = false;
   let chunked = false;
+  let noBody = false;
+  let closeDelimited = false;
 
   function writeHeadToSocket(contentLength) {
     if (headWritten) return;
@@ -5351,7 +5353,13 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       for (let i = 0, end = headers.length - 1; i < end; i += 2) {
         const name = headers[i];
         const value = headers[i + 1];
-        if (name.length === 1 && name.charCodeAt(0) === 0) continue;
+        if (name.length === 1 && name.charCodeAt(0) === 0) {
+          // node:http's NUL-named framing sentinel pair (see NodeHTTP.cpp):
+          // value "2" = no body (HEAD), anything else = close-delimited.
+          if (value === "2") noBody = true;
+          else closeDelimited = true;
+          continue;
+        }
         switch (name.toLowerCase()) {
           case "content-length":
             hasContentLength = true;
@@ -5370,7 +5378,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
         out += `${name}: ${value}\r\n`;
       }
     }
-    if (!hasContentLength && !hasTransferEncoding) {
+    if (!hasContentLength && !hasTransferEncoding && !noBody && !closeDelimited) {
       if (contentLength === null) {
         chunked = true;
         out += "Transfer-Encoding: chunked\r\n";
@@ -5455,6 +5463,10 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       if (onfinished) {
         this.onfinished = null;
         onfinished();
+      }
+      // A close-delimited body ends at EOF, so the response ends the connection.
+      if (closeDelimited && !socket.destroyed) {
+        socket.end();
       }
       return length;
     },

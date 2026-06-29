@@ -4,19 +4,25 @@
 //!
 //!   1. a batched SIMD **structural indexer** (Highway, simdjson-style) finds
 //!      every token boundary in one pass over the document
-//!   2. a recursive-descent parser over the index array builds the `Expr` AST,
-//!      taking strings zero-copy out of the source whenever stage 1 proved
-//!      they contain no escape and no control character
+//!   2. a recursive-descent parser over the index array builds the compact
+//!      "simple" row AST (`E::ObjectSimple` / `E::ArraySimple` on an
+//!      [`E::JsonTape`]), taking strings zero-copy out of the source whenever
+//!      stage 1 proved they contain no escape and no control character
+//!
+//! That row AST is the only thing the parser builds. Entry points either
+//! return it as a [`ParsedJson`] (`*_simple`, registry, JSONC) or
+//! deep-convert it into the classic `E::Object` / `E::Array` tree at their
+//! boundary ([`materialize`]) for the callers that mutate, print, or splice
+//! the result into a JavaScript AST.
 //!
 //! This file owns the public entry points (one per option preset / caller
-//! family), the option type, the `.env`/`--define` auto-quote path, and the
-//! `PackageJSONVersionChecker` helper.
+//! family), the option type, the `.env`/`--define` auto-quote path,
+//! materialization, and the `PackageJSONVersionChecker` helper.
 //!
-//! Supported beyond strict JSON, matching the previous lexer: comments and
-//! trailing commas (gated by [`JSONOptions`]), single-quoted strings,
-//! hex/octal/binary/underscore numeric literals, `\x`/`\v` escapes, BOM and
-//! exotic unicode whitespace between tokens, duplicate-key warnings, and
-//! indentation guessing.
+//! Supported beyond strict JSON: comments and trailing commas (gated by
+//! [`JSONOptions`]), single-quoted strings, hex/octal/binary/underscore
+//! numeric literals, `\x`/`\v` escapes, BOM and exotic unicode whitespace
+//! between tokens, duplicate-key warnings, and indentation guessing.
 
 use bun_alloc::Arena as Bump;
 
@@ -48,11 +54,11 @@ pub struct JSONOptions {
     /// Mark as originally for a macro to enable inlining.
     pub was_originally_macro: bool,
     pub guess_indentation: bool,
-    /// Produce the JSON-only compact containers (`E::ObjectSimple` /
-    /// `E::ArraySimple`: 32-byte property rows whose leaves are inline
-    /// `E::JsonValue`s, not `Expr` nodes) instead of `E::Object` /
-    /// `E::Array`. Only for entry points whose consumers understand them
-    /// (see the `E::ObjectSimple` docs); requires `force_utf8` strings.
+    /// Return the JSON-only compact containers the parser natively builds
+    /// (`E::ObjectSimple` / `E::ArraySimple`: 32-byte property rows whose
+    /// leaves are inline `E::JsonValue`s, not `Expr` nodes) together with
+    /// the [`E::JsonTape`] that owns them, instead of [`materialize`]-ing
+    /// the classic `E::Object` / `E::Array` tree at the boundary.
     pub simple_objects: bool,
 }
 
@@ -169,8 +175,7 @@ fn parse_impl(
 
     // Index-layer errors take precedence: the index stream was truncated at
     // the offending byte, so whatever stage 2 logged about the truncated
-    // document is noise. The old parser surfaced these before parsing at
-    // all, with nothing else in the log.
+    // document is noise. Only the index error is reported.
     let drop_stage2_msgs = |log: &mut bun_ast::Log| {
         log.errors = log_mark.0;
         log.warnings = log_mark.1;
@@ -262,8 +267,8 @@ fn report_index_error(
     bun_core::err!("SyntaxError")
 }
 
-/// Port of the old lexer's indentation guesser: the first line (after a run
-/// of newlines) that starts with a space or a tab determines the guess.
+/// Indentation guesser: the first line (after a run of newlines) that
+/// starts with a space or a tab determines the guess.
 fn guess_indentation(s: &[u8]) -> Indentation {
     let mut i = 0;
     while i < s.len() {
@@ -301,12 +306,11 @@ fn guess_indentation(s: &[u8]) -> Indentation {
 // Entry points
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Parse JSON.
+/// Parse JSON into the classic `E::Object` / `E::Array` AST.
 ///
-/// `FORCE_UTF8` is accepted for source compatibility but no longer changes
-/// anything: the parser stores every string as UTF-8 (WTF-8 for the lone
-/// surrogates JSON escapes can produce), which the printer and `to_js`
-/// handle. The old `false` mode stored non-ASCII strings as UTF-16.
+/// `FORCE_UTF8` is accepted for source compatibility and ignored: every
+/// string is stored as UTF-8 (WTF-8 for the lone surrogates JSON escapes
+/// can produce), which the printer and `to_js` both handle.
 #[inline]
 pub fn parse<const FORCE_UTF8: bool>(
     source: &bun_ast::Source,
@@ -319,8 +323,8 @@ pub fn parse<const FORCE_UTF8: bool>(
     Ok(parse_classic(source, log, bump, JSON_OPTS, false)?.root)
 }
 
-/// Parse JSON, eagerly transcoding every string to UTF-8.
-/// Use when the result may be re-printed as JSON (not as JavaScript).
+/// Parse JSON into the classic AST. Identical to [`parse`] — every string
+/// is UTF-8 either way — and kept as the spelling its callers use.
 pub fn parse_utf8(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -587,8 +591,8 @@ pub fn parse_for_bundling(
 /// `.jsonc` module loader pattern-match `Expr` nodes (and the first two
 /// report diagnostics with per-value `Loc`s), so the simple parse is
 /// [`materialize`]d at this boundary with every location intact.
-/// `FORCE_UTF8` is accepted for source compatibility but no longer changes
-/// anything (see [`parse`]).
+/// `FORCE_UTF8` is accepted for source compatibility and ignored (see
+/// [`parse`]).
 #[inline]
 pub fn parse_ts_config<const FORCE_UTF8: bool>(
     source: &bun_ast::Source,
@@ -634,8 +638,8 @@ pub fn parse_env_json(
             Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
         }
         _ => {
-            // Keyword fast paths: the first token decides (matching the old
-            // lexer, which did not require EOF after it).
+            // Keyword fast paths: the first token alone decides (no EOF
+            // required after it).
             let word_len = contents
                 .iter()
                 .position(|c| !c.is_ascii_alphanumeric() && *c != b'_' && *c != b'$')
@@ -674,9 +678,9 @@ pub fn parse_env_json(
 }
 
 /// The `.env`/`--define` "auto quote" path: lex the whole input as a string
-/// literal with no quote character (terminated by a newline or EOF), decoding
-/// escape sequences. Port of `parse_string_literal_inner::<0>` +
-/// `to_e_string`.
+/// literal with no quote character (terminated by a newline or EOF),
+/// decoding escape sequences — the JS lexer's
+/// `parse_string_literal_inner::<0>` contract.
 fn parse_auto_quoted_string(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -970,15 +974,19 @@ fn _g_property_size_assert(p: &G::Property) -> usize {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Cold-path source-location recovery
+// Source-location recovery
 // ──────────────────────────────────────────────────────────────────────────
 //
-// The simple JSON AST (`E::ObjectSimple` / `E::ArraySimple`, see
-// `JSONOptions::simple_objects`) stores no per-value locations: a property
-// row records only its key's location and containers their own. Error
-// reporters that need to point at a *value* recover its location here by
-// re-scanning the source they parsed from. This is strictly cold-path work
-// (a diagnostic is about to be printed), so the linear scans don't matter.
+// The simple JSON AST (`E::ObjectSimple` / `E::ArraySimple`) stores no
+// per-value locations: a property row records only its key's location and
+// containers their own. Two consumers recover a *value*'s location by
+// re-scanning the source it was parsed from:
+//
+//   - error reporters that point at a value or array item (strictly
+//     cold-path work — a diagnostic is about to be printed — so the linear
+//     scans don't matter), via `property_value_loc` / `array_item_loc`;
+//   - [`materialize`], which re-derives the exact `Loc` of every classic
+//     node with one forward sweep per container.
 
 /// Location of the first byte of the value of the property whose key string
 /// token starts at `key_loc` (= [`E::PropertySimple::key_loc`], the opening
@@ -1549,8 +1557,7 @@ mod tests {
     // ── strict JSON ──────────────────────────────────────────────────────
     //
     // (The broad randomized differential against `JSON.parse` lives in
-    // test/js/bun/jsonc/jsonc-differential.test.ts, where it exercises the
-    // real binary.)
+    // test/js/bun/jsonc/jsonc.test.ts, where it exercises the real binary.)
 
     #[test]
     fn parses_basics() {
@@ -1701,7 +1708,8 @@ mod tests {
 
     #[test]
     fn escaped_keyword_identifiers() {
-        // Yes, the old lexer accepted `true`.
+        // Keywords, including the `\uXXXX`-escaped spelling that
+        // `parse_escaped_identifier` accepts.
         let p = run(br#"[true, false, null]"#, Which::Utf8);
         assert_eq!(p.errors, 0, "{}", p.first_msg);
         let mut got = String::new();
@@ -1728,11 +1736,13 @@ mod tests {
         assert_eq!(p.warnings, 1);
     }
 
-    /// The compact containers must be semantically identical to the full
-    /// AST: same canonical JSON, same warnings, same errors, on every shape
-    /// the parser supports.
+    /// One parse, two output shapes: the compact row containers
+    /// (`simple_objects`) and the classic tree the classic-output entry
+    /// points materialize from them must be semantically identical — same
+    /// canonical JSON, same warnings, same errors — on every shape the
+    /// parser supports.
     #[test]
-    fn simple_objects_match_the_full_ast() {
+    fn simple_rows_match_the_materialized_classic_tree() {
         let mut generated = std::string::String::from("{");
         for i in 0..120 {
             if i > 0 {
@@ -1797,15 +1807,15 @@ mod tests {
         assert_eq!(canon(jsonc, Which::TsConfig), canon(jsonc, Which::Jsonc));
     }
 
-    /// `json::materialize` over a simple-mode tree must produce a classic
-    /// tree *indistinguishable* from a full-mode parse of the same document:
-    /// no simple nodes left, identical canonical JSON, and — because the
-    /// classic entry points materialize at their boundary — the exact same
-    /// `loc` and `is_single_line` on **every** node (keys, values, array
-    /// items, nested containers), across comments, escapes, trailing commas,
-    /// and exotic whitespace.
+    /// A standalone `json::materialize` over a row tree must produce a
+    /// classic tree *indistinguishable* from what the classic-output entry
+    /// points return for the same document (they materialize at their own
+    /// boundary): no simple nodes left, identical canonical JSON, and the
+    /// exact same `loc` and `is_single_line` on **every** node (keys,
+    /// values, array items, nested containers), across comments, escapes,
+    /// trailing commas, and exotic whitespace.
     #[test]
-    fn materialize_matches_a_full_parse() {
+    fn materialize_matches_the_classic_entry_points() {
         // Canonical JSON + every node of a classic tree in pre-order as
         // (loc, leaf text or container shape).
         type Nodes = Vec<(i32, std::string::String)>;
@@ -1916,9 +1926,9 @@ mod tests {
 
     /// Cold-path value-location recovery: for every property and array item
     /// of a document, re-scanning the source from the locations the simple
-    /// AST keeps must land exactly on the location the full AST recorded for
-    /// the value, across whitespace, comments, escapes, and exotic unicode
-    /// whitespace.
+    /// AST keeps must land exactly on the location the classic tree records
+    /// for the value, across whitespace, comments, escapes, and exotic
+    /// unicode whitespace.
     #[test]
     fn value_location_recovery() {
         fn walk(src: &[u8], e: &Expr) {
@@ -1984,8 +1994,8 @@ mod tests {
 
     /// The generic `Expr` accessors (`get`, `as_property`, `as_array`,
     /// `as_string`, ...) must observe the same document through a
-    /// `Which::Simple` root — where leaf values are materialized out of the
-    /// row tape on demand — as through the full AST.
+    /// `Which::Simple` root — where leaf values are wrapped into `Expr`s
+    /// out of the row tape on demand — as through the classic tree.
     #[test]
     fn simple_objects_expr_accessor_materialization() {
         let doc: &[u8] = br#"{
@@ -2124,7 +2134,7 @@ mod tests {
             out.push_str("]\n");
             // `as_array` on the property's value behaves the same way.
             assert!(root.get(b"files").unwrap().as_array().is_some());
-            // Empty containers: same `None` contract as the full AST.
+            // Empty containers: same `None` contract as the classic AST.
             assert!(root.get(b"empty_arr").unwrap().as_array().is_none());
             assert!(root.get_array(b"empty_obj").is_none());
 

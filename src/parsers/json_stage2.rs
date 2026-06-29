@@ -8,9 +8,10 @@
 //!   - in whitespace gaps, only on error paths and for `is_single_line`
 //!     newline checks (gaps are empty in minified JSON)
 //!
-//! Behavior (accepted inputs, error messages, duplicate-key warnings,
-//! `is_single_line`) matches the previous lexer+parser; see `json.rs` for
-//! the entry points.
+//! Accepted inputs (strict JSON plus the lenient extensions `JSONOptions`
+//! gates), error messages, duplicate-key warnings, and `is_single_line` are
+//! part of the parser's contract — differentially tested against
+//! `JSON.parse`; see `json.rs` for the entry points.
 //!
 //! The only thing built here is the compact "simple" AST (`E::ObjectSimple`
 //! / `E::ArraySimple` rows on the document's [`E::JsonTape`], one `Expr` per
@@ -65,8 +66,9 @@ pub(crate) struct Parser<'a, 's, 'i> {
     /// their object closes, so each stays the size of one object.
     dup_maps: Vec<DupMap>,
     spill_depth: usize,
-    /// True once any string was stored as UTF-16 or escape-decoded
-    /// (mirrors the old lexer's `is_ascii_only`, used by `parse_for_bundling`).
+    /// Cleared when any string needed escape decoding. Combined with the
+    /// structural index's non-ASCII/backslash flags by `run_stage2` to drive
+    /// `parse_for_bundling`'s all-ASCII fast path.
     pub is_ascii_only: bool,
 }
 
@@ -105,8 +107,8 @@ impl Drop for Parser<'_, '_, '_> {
     }
 }
 
-// Mirrors the old lexer's identifier classification (JSON only ever needs
-// ASCII identifiers; everything else errors in the parser).
+// JSON only ever needs the ASCII subset of identifier classification
+// (keywords, `\uXXXX`-escaped keywords); everything else errors.
 #[inline]
 fn is_identifier_start(c: u8) -> bool {
     matches!(c, b'$' | b'_' | b'a'..=b'z' | b'A'..=b'Z')
@@ -116,8 +118,9 @@ fn is_identifier_continue(c: u8) -> bool {
     is_identifier_start(c) || c.is_ascii_digit()
 }
 
-/// Unicode whitespace the old lexer skipped between tokens beyond ASCII
-/// space/tab/newline: VT, FF, LS, PS, BOM, and the Zs space separators.
+/// Unicode whitespace accepted between any two tokens beyond ASCII
+/// space/tab/newline: VT, FF, LS, PS, BOM, and the Zs space separators
+/// (the JavaScript `WhiteSpace` / `LineTerminator` set).
 #[inline]
 pub(crate) fn is_exotic_whitespace(cp: CodePoint) -> bool {
     matches!(cp, 0x000B | 0x000C | 0x2028 | 0x2029 | 0xFEFF)
@@ -154,8 +157,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     /// Hand the document's [`E::JsonTape`] — and ownership of it — to the
-    /// caller. Simple mode only; the AST just produced borrows it, so it
-    /// must outlive every use of the root `Expr`.
+    /// caller. The AST just produced borrows it, so it must outlive every
+    /// use of the root `Expr`.
     pub(crate) fn take_tape(&mut self) -> Option<Box<E::JsonTape>> {
         // SAFETY: `tape` came from `Box::leak` in `new` and is given out
         // exactly once (`take`); nothing else frees it.
@@ -222,8 +225,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    /// "Unexpected X" + `ParserError`, like the old `lexer.unexpected()` +
-    /// `Err(ParserError)` pair.
+    /// "Unexpected X" + `ParserError` (the JS lexer's `unexpected()`
+    /// message shape, which callers' error matchers depend on).
     #[cold]
     fn unexpected(&mut self, cursor: usize) -> bun_core::Error {
         let r = self.token_range(cursor);
@@ -237,8 +240,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         bun_core::err!("ParserError")
     }
 
-    /// "Expected X but found Y", non-fatal (logs and continues), like
-    /// `lexer.expected_string`.
+    /// "Expected X but found Y", non-fatal (logs and continues).
     #[cold]
     fn expected(&mut self, cursor: usize, what: &str) {
         let r = self.token_range(cursor);
@@ -254,9 +256,9 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    /// The old lexer's per-character "Unsupported syntax: ..." hard errors for
-    /// JS-only punctuation reached outside of strings (anything else is not a
-    /// lexer-level error there: it flows to `expected`/`unexpected`).
+    /// The per-character "Unsupported syntax: ..." hard errors for JS-only
+    /// punctuation reached outside of strings (any other junk byte flows to
+    /// `expected`/`unexpected` instead).
     fn js_punct_message(c: u8) -> Option<&'static str> {
         Some(match c {
             b'#' => "Private identifiers are not allowed in JSON",
@@ -270,21 +272,21 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         })
     }
 
-    /// Error for a junk byte at a token position: either the old lexer's
+    /// Error for a junk byte at a token position: either
     /// "Unsupported syntax: ..." (for JS punctuation) or "Unexpected x".
     #[cold]
     fn junk_byte_error(&mut self, cursor: usize, pos: usize, c: u8) -> bun_core::Error {
         if let Some(msg) = Self::js_punct_message(c) {
-            // `add_error` at the position just past the char, like
-            // `add_unsupported_syntax_error` (which uses `self.end`).
+            // "Unsupported syntax" diagnostics point at the position just
+            // past the offending character.
             self.add_error(pos + 1, format_args!("Unsupported syntax: {msg}"));
             return bun_core::err!("SyntaxError");
         }
         self.unexpected(cursor)
     }
 
-    /// The old lexer skipped exotic unicode whitespace (BOM, NBSP, U+2028,
-    /// VT, FF, ...) between any two tokens. Those bytes are not whitespace to
+    /// Exotic unicode whitespace (BOM, NBSP, U+2028, VT, FF, ...) is
+    /// accepted between any two tokens. Those bytes are not whitespace to
     /// stage 1, and a multi-byte whitespace codepoint can even be split
     /// across several (false-positive) indices, so this works on byte
     /// positions: decode codepoints forward from the current token position
@@ -349,14 +351,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     /// Is there a newline in the whitespace gap immediately before byte `p`?
-    /// (= the old lexer's `has_newline_before` for the token starting at `p`.)
-    /// In minified documents the gap is empty (the byte before `p` already
-    /// decides), so only that byte is examined inline.
+    /// (`has_newline_before` of the token starting at `p`; drives
+    /// `is_single_line`.) In minified documents the gap is empty (the byte
+    /// before `p` already decides), so only that byte is examined inline.
     #[inline(always)]
     fn newline_before(&self, p: usize) -> bool {
         if p == 0 {
-            // Start of file counts as a newline before (matches
-            // `has_newline_before = end == 0` in the old lexer).
+            // Start of file counts as a newline before it.
             return true;
         }
         match self.contents[p - 1] {
@@ -427,7 +428,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    /// The document's [`E::JsonTape`] (simple mode only).
+    /// The document's [`E::JsonTape`].
     #[inline]
     fn tape_ref(&self) -> &'a E::JsonTape {
         // SAFETY: heap-allocated in `Parser::new`; the lifetime-erased
@@ -586,22 +587,21 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             // Raw control character inside a string.
             return Err(self.string_control_char_error(body[k]));
         }
-        // Escape decode (the old `decode_escape_sequences`), with the main
-        // loop's raw-control-character check folded in. The decoded UTF-16
-        // is stored as UTF-8 — WTF-8 for the lone surrogates `\uXXXX` can
-        // produce, which the printer and `to_js` both understand.
+        // Escape decode, with the main loop's raw-control-character check
+        // folded in. The decoded bytes are WTF-8: lone surrogates from
+        // `\uXXXX` keep their 3-byte encoding, which the printer and
+        // `to_js` both understand.
         self.is_ascii_only = false;
-        let mut buf: Vec<u16> = Vec::with_capacity(body.len());
+        let mut buf: Vec<u8> = Vec::with_capacity(body.len());
         self.decode_escapes(body, &mut buf)?;
-        let utf8 = strings::to_utf8_alloc(&buf);
-        let owned = self.alloc_owned_str(&utf8);
+        let owned = self.alloc_owned_str(&buf);
         Ok(E::EString::init(owned.slice()))
     }
 
     #[cold]
     fn string_control_char_error(&mut self, c: u8) -> bun_core::Error {
-        // The old lexer: \r and \n end the line => "Unterminated string
-        // literal"; any other control char is a plain syntax error.
+        // \r and \n end the line => "Unterminated string literal"; any other
+        // raw control character is a plain syntax error.
         if c == b'\r' || c == b'\n' {
             match self.add_default_error(b"Unterminated string literal") {
                 Err(e) => e,
@@ -617,7 +617,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     /// See [`decode_string_escapes`].
     #[inline]
-    fn decode_escapes(&mut self, body: &[u8], buf: &mut Vec<u16>) -> PResult {
+    fn decode_escapes(&mut self, body: &[u8], buf: &mut Vec<u8>) -> PResult {
         decode_string_escapes(self, body, buf)
     }
 
@@ -688,7 +688,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             let (b, p) = self.peek();
             let cursor = self.cursor;
             if p >= self.contents.len() {
-                // Unterminated array: hard error, like the old parser.
+                // Unterminated array: hard error.
                 self.token_start = self.contents.len();
                 self.expected(cursor, "\"]\"");
                 break Err(bun_core::err!("ParserError"));
@@ -708,7 +708,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                         break Err(bun_core::err!("SyntaxError"));
                     }
                     self.expected(cursor, "\",\"");
-                    // Old-lexer-style recovery: skip the unexpected token.
+                    // Recovery: skip the unexpected token and keep going.
                     self.cursor += 1;
                     continue;
                 }
@@ -767,7 +767,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             let (mut b, mut p) = self.peek();
             let cursor = self.cursor;
             if p >= self.contents.len() {
-                // Unterminated object: hard error, like the old parser.
+                // Unterminated object: hard error.
                 self.token_start = self.contents.len();
                 self.expected(cursor, "\"}\"");
                 break Err(bun_core::err!("ParserError"));
@@ -827,8 +827,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     Err(e) => break Err(e),
                 }
             } else {
-                // Not a string key: report like the old parser
-                // ("Expected string but found X") and bail out of the object.
+                // Not a string key: "Expected string but found X", then bail
+                // out of the object.
                 self.expected(key_cursor, "string");
                 break Err(self.unexpected(key_cursor));
             };
@@ -950,7 +950,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     // ── numbers ──────────────────────────────────────────────────────────
 
-    /// Numeric literal at the cursor's run, ported from the old
+    /// Numeric literal at the cursor's run, ported from the JS lexer's
     /// `parse_numeric_literal_or_dot`: decimal/hex/octal/binary, legacy
     /// octal, `_` separators, exponent, and the "identifier cannot follow a
     /// number" check.
@@ -959,8 +959,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let full_run = self.run(cursor);
         let start = self.pos_at(cursor);
 
-        // `-` is its own token in the old lexer; `- 5` (whitespace between)
-        // is accepted. A `-` run with nothing else defers to the next run.
+        // `-` is its own token, so `- 5` (whitespace between) is accepted.
+        // A `-` run with nothing else defers to the next run.
         let (neg, num_off, num_run): (bool, usize, &[u8]) = if full_run[0] == b'-' {
             if full_run.len() > 1 && !self.rest_is_ws_cold(&full_run[1..]) {
                 (true, 1, &full_run[1..])
@@ -1099,8 +1099,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         if last_underscore_end != usize::MAX && i == last_underscore_end + 1 {
             return Err(self.syntax_err_at(pos));
         }
-        // BigInt suffix: JSON treats the trailing `n` as the identifier-start
-        // error below, exactly like the old token enum (no bigint token).
+        // BigInt suffix: JSON has no bigint literal, so the trailing `n`
+        // falls into the identifier-start error below.
         let text = &t[..i];
         let value: f64 = if !has_dot_or_exp && !underscores && text.len() < 10 {
             // Fast path: short integers.
@@ -1259,7 +1259,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             }
         }
 
-        // `\uXXXX`-escaped identifiers: `true` is `true` (yes, really).
+        // `\uXXXX`-escaped identifiers: an escaped keyword is still that
+        // keyword (yes, really).
         if run[0] == b'\\' {
             return self.parse_escaped_identifier(loc);
         }
@@ -1320,8 +1321,9 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    /// `true` → `true`: port of `scan_identifier_with_escapes` (the
-    /// JSON-relevant subset: the result must be a keyword).
+    /// A `\uXXXX`-escaped spelling of `true` / `false` / `null`: port of
+    /// the JS lexer's `scan_identifier_with_escapes` (the JSON-relevant
+    /// subset: the decoded identifier must be one of those keywords).
     #[cold]
     fn parse_escaped_identifier(&mut self, loc: Loc) -> PResult<Expr> {
         let cursor = self.cursor;
@@ -1367,11 +1369,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             return Err(self.junk_byte_error(self.cursor, pos, self.contents[pos]));
         }
         // Second pass: decode and match keywords.
-        let mut buf: Vec<u16> = Vec::with_capacity(text.len());
+        let mut buf: Vec<u8> = Vec::with_capacity(text.len());
         self.decode_escapes(text, &mut buf)?;
-        let utf8 = strings::to_utf8_alloc(&buf);
         self.cursor += 1;
-        match utf8.as_slice() {
+        match buf.as_slice() {
             b"true" => Ok(Expr::init(E::Boolean { value: true }, loc)),
             b"false" => Ok(Expr::init(E::Boolean { value: false }, loc)),
             b"null" => Ok(Expr::init(E::Null {}, loc)),
@@ -1391,23 +1392,59 @@ fn ident_len(t: &[u8]) -> usize {
         .max(1)
 }
 
+/// Append `cp` to `buf` as WTF-8 (1–4 bytes; surrogate code points get the
+/// 3-byte encoding the rest of the pipeline understands).
 #[inline]
-fn push_codepoint(buf: &mut Vec<u16>, cp: CodePoint) {
+fn push_codepoint(buf: &mut Vec<u8>, cp: CodePoint) {
     if cp < 0 {
         return;
     }
-    strings::push_codepoint_utf16(buf, cp as u32);
+    let mut tmp = [0u8; 4];
+    let n = strings::encode_wtf8_rune(&mut tmp, cp as u32);
+    buf.extend_from_slice(&tmp[..n]);
 }
 
-/// Port of the old `decode_escape_sequences` (JSON arm) over a byte body,
-/// plus the enclosing scan loop's check that ran before it: raw control
-/// characters are errors ("Unterminated string literal" for `\r`/`\n`,
-/// a plain syntax error otherwise). Generic over the error reporter so the
-/// `.env` auto-quote path can reuse it without a full parser.
+/// After a high-surrogate `\uXXXX`, consume an *immediately following*
+/// low-surrogate `\uXXXX` and return its value. The cursor is advanced only
+/// on a match; on `None` it is untouched and the caller re-reads the next
+/// codepoint normally.
+fn read_trail_surrogate_escape(
+    iterator: &strings::CodepointIterator<'_>,
+    iter: &mut strings::Cursor,
+) -> Option<u16> {
+    let mut probe = *iter;
+    if !iterator.next(&mut probe) || probe.c != '\\' as CodePoint {
+        return None;
+    }
+    if !iterator.next(&mut probe) || probe.c != 'u' as CodePoint {
+        return None;
+    }
+    let mut value: u32 = 0;
+    for _ in 0..4 {
+        if !iterator.next(&mut probe) {
+            return None;
+        }
+        value = value * 16 + bun_core::fmt::hex_digit_value_u32(probe.c as u32)? as u32;
+    }
+    if !strings::u16_is_trail(value as u16) {
+        return None;
+    }
+    *iter = probe;
+    Some(value as u16)
+}
+
+/// Decode the escapes of a string body into WTF-8 bytes, plus the enclosing
+/// scan loop's check that runs before it: raw control characters are errors
+/// ("Unterminated string literal" for `\r`/`\n`, a plain syntax error
+/// otherwise). A `\uXXXX` high surrogate immediately followed by a `\uXXXX`
+/// low surrogate is one code point; an unpaired surrogate keeps its own
+/// 3-byte WTF-8 encoding (`JSON.parse` round-trips it as a lone code unit).
+/// Generic over the error reporter so the `.env` auto-quote path can reuse
+/// it without a full parser.
 fn decode_string_escapes<'s, L: LexerLog<'s, Err = bun_core::Error>>(
     l: &mut L,
     body: &[u8],
-    buf: &mut Vec<u16>,
+    buf: &mut Vec<u8>,
 ) -> PResult {
     let iterator = strings::CodepointIterator::init(body);
     let mut iter = strings::Cursor::default();
@@ -1425,8 +1462,7 @@ fn decode_string_escapes<'s, L: LexerLog<'s, Err = bun_core::Error>>(
             push_codepoint(buf, c);
             continue;
         }
-        // Escape sequence. A trailing backslash is silently accepted
-        // (matches the old decoder).
+        // Escape sequence. A trailing backslash is silently accepted.
         if !iterator.next(&mut iter) {
             return Ok(());
         }
@@ -1453,7 +1489,7 @@ fn decode_string_escapes<'s, L: LexerLog<'s, Err = bun_core::Error>>(
                 }
                 push_codepoint(buf, value);
             }
-            0x22 | 0x5C | 0x2F => buf.push(c2 as u16), // " \ /
+            0x22 | 0x5C | 0x2F => buf.push(c2 as u8), // " \ /
             0x75 => {
                 // \uXXXX
                 let mut value: u32 = 0;
@@ -1466,7 +1502,12 @@ fn decode_string_escapes<'s, L: LexerLog<'s, Err = bun_core::Error>>(
                         None => return l.syntax_error(),
                     }
                 }
-                buf.push(value as u16);
+                if strings::u16_is_lead(value as u16)
+                    && let Some(lo) = read_trail_surrogate_escape(&iterator, &mut iter)
+                {
+                    value = strings::u16_get_supplementary(value as u16, lo);
+                }
+                push_codepoint(buf, value as CodePoint);
             }
             _ => return l.syntax_error(),
         }
@@ -1503,7 +1544,8 @@ impl<'s> LexerLog<'s> for MiniLog<'_, 's> {
 
 /// Decode the body of an implicitly-quoted `.env`/`--define` value (the
 /// "auto quote" path): escape sequences are processed and the result is
-/// stored exactly like a regular (non-`force_utf8`) string.
+/// stored as a UTF-8 `E::String` in `bump`, exactly like a string literal
+/// the JSON entry points decode.
 pub(crate) fn decode_auto_quoted(
     source: &Source,
     log: &mut Log,
@@ -1520,12 +1562,7 @@ pub(crate) fn decode_auto_quoted(
     if opts.ignore_leading_escape_sequences && body.first() == Some(&b'\\') {
         body = &body[1..];
     }
-    let mut buf: Vec<u16> = Vec::with_capacity(body.len());
+    let mut buf: Vec<u8> = Vec::with_capacity(body.len());
     decode_string_escapes(&mut l, body, &mut buf)?;
-    if strings::first_non_ascii16(&buf).is_some() {
-        Ok(E::String::init_utf16(bump.alloc_slice_copy(&buf)))
-    } else {
-        let out = bump.alloc_slice_fill_with(buf.len(), |i| buf[i] as u8);
-        Ok(E::String::init(out))
-    }
+    Ok(E::String::init(bump.alloc_slice_copy(&buf)))
 }

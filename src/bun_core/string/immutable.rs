@@ -3117,6 +3117,72 @@ pub fn to_utf16_alloc(
     Ok(Some(out))
 }
 
+/// WTF-8 → UTF-16LE **iff** `bytes` contains any non-ASCII byte; pure-ASCII
+/// inputs return `None` (caller keeps the 8-bit form), mirroring
+/// [`to_utf16_alloc`].
+///
+/// Exists because [`to_utf16_alloc`]'s slow path is a strict UTF-8 decoder
+/// that replaces a WTF-8-encoded lone surrogate (`ED A0 80` = U+D800) with
+/// U+FFFD — the spec-mandated behavior for `TextDecoder`/`Blob`, but lossy
+/// for producers like the JSON parser whose escape decoder stores
+/// `"\uD800"` as WTF-8. Here a surrogate sequence round-trips to its UTF-16
+/// code unit; only genuinely malformed bytes become U+FFFD.
+pub fn wtf8_to_utf16_alloc(bytes: &[u8]) -> Option<Vec<u16>> {
+    first_non_ascii(bytes)?;
+
+    let out_length = simdutf::length::utf16::from::utf8(bytes);
+    // Hot path: allocate uninitialised and let simdutf write directly into the
+    // spare capacity (see `to_utf16_alloc`). `.max(1)` keeps the buffer
+    // pointer non-dangling for simdutf.
+    let mut out: Vec<u16> = Vec::with_capacity(out_length.max(1));
+    // SAFETY: `out` has ≥ `out_length` u16 of capacity (just reserved). simdutf
+    // never reads from the output buffer and writes at most `out_length` code
+    // units, so passing uninitialised storage is sound. The length is only
+    // committed after success.
+    let res = unsafe {
+        simdutf::simdutf__convert_utf8_to_utf16le_with_errors(
+            bytes.as_ptr(),
+            bytes.len(),
+            out.as_mut_ptr(),
+        )
+    };
+    if res.is_successful() && out_length > 0 {
+        // SAFETY: on success simdutf has initialised exactly `out_length` u16s
+        // at the start of `out`'s allocation, and `out_length <= capacity`.
+        unsafe { out.set_len(out_length) };
+        return Some(out);
+    }
+
+    // Slow path: scalar WTF-8 decode. `out` is still len 0 (the failed
+    // fast-path write was never committed); reuse its capacity.
+    out.reserve(bytes.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b < 0x80 {
+            out.push(u16::from(b));
+            i += 1;
+            continue;
+        }
+        let width = wtf8_byte_sequence_length_with_invalid(b);
+        if width == 1 {
+            // 0x80..=0xBF / 0xF8..=0xFF cannot start a WTF-8 sequence.
+            out.push(UNICODE_REPLACEMENT as u16);
+            i += 1;
+            continue;
+        }
+        let take = (width as usize).min(bytes.len() - i);
+        let mut buf = [0u8; 4];
+        buf[..take].copy_from_slice(&bytes[i..i + take]);
+        push_codepoint_utf16(
+            &mut out,
+            decode_wtf8_rune_t::<u32>(buf, width, UNICODE_REPLACEMENT),
+        );
+        i += take;
+    }
+    Some(out)
+}
+
 /// `PATTERN_KEY_COMPARE` from the Node.js ESM resolution spec — the comparator
 /// behind `NewGlobLengthSorter`. Returns an [`Ordering`] suitable for
 /// `slice.sort_by(|a, b| glob_length_compare(a, b))` to sort in **descending

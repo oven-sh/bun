@@ -304,6 +304,33 @@ test("Bun.JSONC.parse matches JSON.parse on escape-heavy strings", () => {
   }
 });
 
+test("Bun.JSONC.parse matches JSON.parse on lone and paired surrogate escapes", () => {
+  // `\uD800`-style escapes that don't form a valid pair still decode to the
+  // lone surrogate code unit (WTF-16), exactly like JSON.parse — not U+FFFD.
+  for (const doc of [
+    '"\\ud800"',
+    '"a\\udfffz"',
+    '"\\u00e9\\ud800x"',
+    '"\\udfff\\ud800"',
+    '"\\ud83d\\ude00"',
+    '"\\ud800\\udc00"',
+    '{"k\\ud800": "\\udc00v"}',
+    '["\\ud800", "🚀\\udfff"]',
+  ]) {
+    const expected = JSON.parse(doc);
+    const actual = Bun.JSONC.parse(doc);
+    expect(actual).toEqual(expected);
+    const flatten = (v: unknown): string[] =>
+      typeof v === "string"
+        ? [v]
+        : Array.isArray(v)
+          ? v.flatMap(flatten)
+          : Object.entries(v as Record<string, unknown>).flatMap(([k, x]) => [k, ...flatten(x)]);
+    const codeUnits = (v: unknown) => flatten(v).map(s => Array.from(s, c => c.codePointAt(0)));
+    expect(codeUnits(actual)).toEqual(codeUnits(expected));
+  }
+});
+
 test("Bun.JSONC.parse accepts a BOM and exotic whitespace between tokens", () => {
   expect(Bun.JSONC.parse('﻿{"a": 1}')).toEqual({ a: 1 });
   expect(Bun.JSONC.parse('{ "a" : 1 }')).toEqual({ a: 1 });

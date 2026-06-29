@@ -864,21 +864,24 @@ impl BigInt {
 
 // ── JSON "simple" nodes ───────────────────────────────────────────────────
 //
-// Compact, read-only object/array nodes produced only by the JSON parser for
-// entry points that opt in (`JSONOptions::simple_objects`: npm registry
-// manifests, package.json readers, `Bun.JSONC.parse`, tsconfig). The
-// *containers* are ordinary `Expr` nodes in the Store, so everything keeps
-// passing `Expr` around; their *children* are not: a property is a 32-byte
-// `PropertySimple` row and a leaf value is an inline 16-byte [`JsonValue`]
-// (a tagged value "like JSValue": number/bool/null inline, strings as a
-// `Str` — borrowing the source when they contain no escapes — and nested
-// containers as `StoreRef`s). Compared to `E::Object` this removes the three
-// per-node costs that dominate JSON parsing: a 112-byte `G::Property` per
-// key, an `EString` Store node per key and per string value, and the
-// `Option`/kind/initializer baggage JSON never uses.
+// Compact, read-only object/array nodes: the JSON parser's native output.
+// Entry points that return them (`JSONOptions::simple_objects`: npm registry
+// manifests, package.json readers, `Bun.JSONC.parse`, tsconfig) hand the
+// caller the rows plus the [`JsonTape`] that owns them; the classic-output
+// entry points deep-convert them into `E::Object` / `E::Array` at their
+// boundary (`json::materialize`). The *containers* are ordinary `Expr` nodes
+// in the Store, so everything keeps passing `Expr` around; their *children*
+// are not: a property is a 32-byte `PropertySimple` row and a leaf value is
+// an inline 16-byte [`JsonValue`] (a tagged value "like JSValue":
+// number/bool/null inline, strings as a `Str` — borrowing the source when
+// they contain no escapes — and nested containers as `StoreRef`s). Compared
+// to `E::Object` this removes the three per-node costs that dominate JSON
+// parsing: a 112-byte `G::Property` per key, an `EString` Store node per key
+// and per string value, and the `Option`/kind/initializer baggage JSON never
+// uses.
 //
-// They are produced only with `force_utf8` string handling (every JSON data
-// consumer), so string leaves are always UTF-8 and never UTF-16.
+// String leaves are always UTF-8 (WTF-8 for the lone surrogates JSON
+// escapes can produce), never UTF-16.
 
 /// A JSON value inside an `ObjectSimple` / `ArraySimple`.
 #[derive(Clone, Copy)]
@@ -965,8 +968,8 @@ pub struct PropertySimple {
 
 const _: () = assert!(core::mem::size_of::<PropertySimple>() == 32);
 
-/// Everything one simple-mode JSON document allocates that does not borrow
-/// the source, owned in one place so that dropping the document is dropping
+/// Everything one parsed JSON document allocates that does not borrow the
+/// source, owned in one place so that dropping the document is dropping
 /// this:
 ///
 /// - `props` / `items`: every simple object's property rows and every simple

@@ -200,17 +200,20 @@ fn json_value_to_js(
     })
 }
 
-/// Serialize UTF-8 bytes to a JS string, transcoding to UTF-16 only when the
-/// bytes are not pure ASCII (`to_utf16_alloc` returns `Ok(None)` for
-/// pure-ASCII, in which case the 8-bit Latin-1 form is kept).
+/// Serialize parser string bytes to a JS string, transcoding to UTF-16 only
+/// when the bytes are not pure ASCII (`wtf8_to_utf16_alloc` returns `None`
+/// for pure-ASCII, in which case the 8-bit Latin-1 form is kept).
+///
+/// The bytes are WTF-8, not UTF-8: the lexer's escape decoder stores a lone
+/// `\uD800` as the 3-byte surrogate sequence, which must round-trip to the
+/// surrogate code unit (`JSON.parse` semantics) rather than U+FFFD.
 fn utf8_bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
     if bytes.is_empty() {
         // `create_uninitialized_latin1` requires a non-zero length.
         let empty = BunString::EMPTY;
         return bun_string_jsc::to_js(&empty, global).map_err(js_err);
     }
-    let utf16 = strings::to_utf16_alloc(bytes, false, false).map_err(|_| ToJSError::OutOfMemory)?;
-    if let Some(utf16) = utf16 {
+    if let Some(utf16) = strings::wtf8_to_utf16_alloc(bytes) {
         let (mut out, chars) = BunString::create_uninitialized_utf16(utf16.len());
         chars.copy_from_slice(&utf16);
         bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)

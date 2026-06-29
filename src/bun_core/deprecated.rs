@@ -4,74 +4,15 @@ use core::ptr;
 // BufferedReader
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): Zig's `ReaderType` only needs `.read(&mut [u8]) -> Result<usize, Self::Error>`
-// and an associated `Error` type. There is no `bun_io::Read` trait yet; introduce one
-// (or reuse whatever the `std.Io.GenericReader` port lands as) and bound `R` on it.
+// Plain storage for a buffered reader. The only
+// in-tree consumer (`pack_command::BufferedFileReader`) supplies its own read shim
+// over `bun_sys::read`, so this stays a bare struct: no reader trait, no methods.
+// (The dedicated stdin instance lives at `output::BufferedStdin`.)
 pub struct BufferedReader<const BUFFER_SIZE: usize, R> {
     pub unbuffered_reader: R,
     pub buf: [u8; BUFFER_SIZE],
     pub start: usize,
     pub end: usize,
-}
-
-impl<const BUFFER_SIZE: usize, R> BufferedReader<BUFFER_SIZE, R>
-where
-    // TODO(port): replace with the real reader trait once it exists.
-    R: DeprecatedRead,
-{
-    // Zig: `pub const Error = R.Error;` — inherent assoc types are nightly-only
-    // (E0658). Callers name `R::Error` directly; this alias was sugar.
-    // TODO(port): `pub const Reader = std.Io.GenericReader(*Self, Error, read);` —
-    // depends on the Rust port of `std.Io.GenericReader`. Left unported; `reader()`
-    // below is stubbed accordingly.
-
-    pub fn read(&mut self, dest: &mut [u8]) -> Result<usize, R::Error> {
-        // First try reading from the already buffered data onto the destination.
-        let current = &self.buf[self.start..self.end];
-        if !current.is_empty() {
-            let to_transfer = current.len().min(dest.len());
-            dest[0..to_transfer].copy_from_slice(&current[0..to_transfer]);
-            self.start += to_transfer;
-            return Ok(to_transfer);
-        }
-
-        // If dest is large, read from the unbuffered reader directly into the destination.
-        if dest.len() >= BUFFER_SIZE {
-            return self.unbuffered_reader.read(dest);
-        }
-
-        // If dest is small, read from the unbuffered reader into our own internal buffer,
-        // and then transfer to destination.
-        self.end = self.unbuffered_reader.read(&mut self.buf)?;
-        let to_transfer = self.end.min(dest.len());
-        dest[0..to_transfer].copy_from_slice(&self.buf[0..to_transfer]);
-        self.start = to_transfer;
-        Ok(to_transfer)
-    }
-
-    pub fn reader(&mut self) -> &mut Self {
-        // TODO(port): Zig returned a `std.Io.GenericReader` adapter wrapping `self`.
-        // Until the generic-reader port exists, hand back `&mut Self` (which already
-        // exposes `read`). Wire to the real adapter type once it exists.
-        self
-    }
-}
-
-// TODO(port): placeholder trait standing in for `ReaderType` duck-typing. Remove once
-// the shared reader trait exists and bound `R` on that instead.
-pub trait DeprecatedRead {
-    type Error;
-    fn read(&mut self, dest: &mut [u8]) -> Result<usize, Self::Error>;
-}
-
-pub fn buffered_reader<R: DeprecatedRead>(reader: R) -> BufferedReader<4096, R> {
-    BufferedReader {
-        unbuffered_reader: reader,
-        // PERF(port): Zig left `buf` undefined; zero-init here is an extra 4 KiB memset.
-        buf: [0u8; 4096],
-        start: 0,
-        end: 0,
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -106,7 +47,6 @@ pub struct DoublyLinkedList<T> {
 }
 
 /// Node inside the linked list wrapping the actual data.
-// In Zig this is `DoublyLinkedList(T).Node`.
 pub struct DoublyLinkedNode<T> {
     pub prev: *mut DoublyLinkedNode<T>,
     pub next: *mut DoublyLinkedNode<T>,
@@ -463,5 +403,3 @@ mod tests {
 
     // RapidHash test vectors live alongside the canonical impl in `bun_hash::rapidhash`.
 }
-
-// ported from: src/bun_core/deprecated.zig

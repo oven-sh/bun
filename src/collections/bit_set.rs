@@ -1,8 +1,3 @@
-//! This is a fork of Zig standard library bit_set.zig
-//! - https://github.com/ziglang/zig/pull/14129
-//! - AutoBitset which optimally chooses between a dynamic or static bitset.
-//! Prefer our fork over std.bit_set.
-//!
 //! This file defines several variants of bit sets.  A bit set
 //! is a densely stored set of integers with a known maximum,
 //! in which each integer gets a single bit.  Bit sets have very
@@ -43,22 +38,21 @@ use bun_alloc::AllocError;
 
 // ───────────────────────────── helpers ─────────────────────────────
 
-/// Equivalent to `std.math.boolMask(MaskInt, value)`: returns `~0` if `value`
-/// else `0`, in the requested integer width.
+/// Returns `usize::MAX` if `value`, else `0`.
 #[inline(always)]
 const fn bool_mask_usize(value: bool) -> usize {
     if value { usize::MAX } else { 0 }
 }
 
 /// `1 << (index % usize::BITS)` — selects the bit within a `usize` word.
-/// Shared by `ArrayBitSet` and `DynamicBitSetUnmanaged` (Zig: `maskBit`).
+/// Shared by `ArrayBitSet` and `DynamicBitSetUnmanaged`.
 #[inline(always)]
 const fn word_mask_bit(index: usize) -> usize {
     1usize << ((index as u32) & (usize::BITS - 1)) // @truncate
 }
 
 /// `index / usize::BITS` — selects which `usize` word holds the bit.
-/// Shared by `ArrayBitSet` and `DynamicBitSetUnmanaged` (Zig: `maskIndex`).
+/// Shared by `ArrayBitSet` and `DynamicBitSetUnmanaged`.
 #[inline(always)]
 const fn word_mask_index(index: usize) -> usize {
     index >> usize::BITS.trailing_zeros()
@@ -66,7 +60,7 @@ const fn word_mask_index(index: usize) -> usize {
 
 /// Shared multi-mask implementation of `set_range_value` over `&mut [usize]`
 /// storage. Used by both `ArrayBitSet` and `DynamicBitSetUnmanaged` so the
-/// per-word range masking logic lives in one place (Zig: `setRangeValue`).
+/// per-word range masking logic lives in one place.
 #[inline]
 fn set_range_value_masks(masks: &mut [usize], range: Range, value: bool) {
     const MASK_LEN: u32 = usize::BITS;
@@ -117,13 +111,11 @@ fn set_range_value_masks(masks: &mut [usize], range: Range, value: bool) {
 /// can be copied by value, and does not require deinitialization.
 /// Both possible implementations fulfill the same interface.
 ///
-// TODO(port): Zig's `StaticBitSet(size)` returns `IntegerBitSet(size)` when
-// `size <= @bitSizeOf(usize)` and `ArrayBitSet(usize, size)` otherwise. Stable
-// Rust cannot select a struct definition from a const generic. Callers should
-// pick `IntegerBitSet<N>` or `ArrayBitSet<N>` directly; this alias resolves to
-// the array form (always correct, possibly one word larger than needed for
-// N <= 64).
-pub type StaticBitSet<const SIZE: usize> = IntegerBitSet<SIZE>; // TODO(b2): callers needing >64 bits use ArrayBitSet<SIZE, {num_masks_for(SIZE)}> directly
+// Stable Rust cannot select a struct definition from a const generic, so this
+// alias is the integer form and is only valid for `SIZE <= usize::BITS`
+// (enforced by `IntegerBitSet`'s debug asserts). Callers needing more bits
+// must use `ArrayBitSet<SIZE, { num_masks_for(SIZE) }>` directly.
+pub type StaticBitSet<const SIZE: usize> = IntegerBitSet<SIZE>;
 
 // ───────────────────────────── IntegerBitSet ─────────────────────────────
 
@@ -131,10 +123,8 @@ pub type StaticBitSet<const SIZE: usize> = IntegerBitSet<SIZE>; // TODO(b2): cal
 /// This set is good for sets with a small size, but may generate
 /// inefficient code for larger sets, especially in debug mode.
 ///
-// TODO(port): Zig uses `std.meta.Int(.unsigned, size)` for an exact-width
-// backing integer (u0..u65535). Rust has no arbitrary-width ints; we back with
-// `usize` and rely on `SIZE <= usize::BITS`. Phase B may swap to a trait that
-// picks u8/u16/u32/u64/u128.
+// Backed by `usize`; requires `SIZE <= usize::BITS` (misuse surfaces via
+// `FULL_MASK` saturation + debug asserts).
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct IntegerBitSet<const SIZE: usize> {
@@ -145,14 +135,6 @@ pub struct IntegerBitSet<const SIZE: usize> {
 impl<const SIZE: usize> IntegerBitSet<SIZE> {
     /// The number of items in this bit set
     pub const BIT_LENGTH: usize = SIZE;
-
-    /// The integer type used to represent a mask in this bit set
-    // TODO(port): Zig: `pub const MaskInt = std.meta.Int(.unsigned, size);`
-    // type MaskInt = usize (inherent assoc → inline usize)
-
-    /// The integer type used to shift a mask in this bit set
-    // TODO(port): Zig: `pub const ShiftInt = std.math.Log2Int(MaskInt);`
-    // type ShiftInt = u32 (inherent assoc → inline u32)
 
     const FULL_MASK: usize = if SIZE as u32 >= usize::BITS {
         // SIZE > usize::BITS is a caller error (use ArrayBitSet); saturating
@@ -228,12 +210,10 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
         let mut mask = bool_mask_usize(true) << start_bit;
         if range.end != Self::BIT_LENGTH {
             let end_bit = u32::try_from(range.end).expect("int cast");
-            // Zig shifts a SIZE-bit MaskInt so `~0 >> (SIZE - end_bit)` yields the
-            // low `end_bit` bits. With a usize backing the shift must be relative
-            // to usize::BITS to get the same low-`end_bit`-bits mask.
+            // `~0 >> (usize::BITS - end_bit)` yields the low `end_bit` bits.
             mask &= bool_mask_usize(true) >> (usize::BITS - end_bit);
         }
-        // also clear bits above SIZE since our backing int is wider than Zig's
+        // also clear bits above SIZE since the backing `usize` may be wider than SIZE bits
         mask &= Self::FULL_MASK;
         self.mask &= !mask;
 
@@ -398,7 +378,7 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
     }
 
     /// Iterate indices of set bits in ascending order.
-    /// Convenience wrapper for `iterator::<true, true>()` (Zig's `.iterator(.{ .kind = .set })`).
+    /// Convenience wrapper for `iterator::<true, true>()`.
     #[inline]
     pub fn iter_set(self) -> SingleWordIterator<SIZE, true> {
         self.iterator::<true, true>()
@@ -451,12 +431,6 @@ pub const fn num_masks_for(bit_length: usize) -> usize {
 /// A bit set with static size, which is backed by an array of usize.
 /// This set is good for sets with a larger size, but may use
 /// more bytes than necessary if your set is small.
-///
-// TODO(port): Zig is generic over `MaskIntType`; every in-tree caller uses
-// `usize`. Dropped the type parameter. Phase B can re-generify if needed.
-// TODO(port): `[usize; NUM_MASKS]` requires
-// `#![feature(generic_const_exprs)]`. Phase B may instead take NUM_MASKS as a
-// second const generic and assert `NUM_MASKS == num_masks_for(SIZE)`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ArrayBitSet<const SIZE: usize, const NUM_MASKS: usize> {
@@ -771,12 +745,11 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
 /// A bit set with runtime-known size, backed by an allocated slice
 /// of usize.  The allocator must be tracked externally by the user.
 ///
-// TODO(port): the Zig type stores `masks: [*]MaskInt` where `masks[-1]` holds
-// the true allocation length (needed because Zig's allocator API requires the
-// original length on free). The Rust port keeps the same layout because
-// `List` constructs borrowed views into a shared buffer that must look like
-// freestanding `DynamicBitSetUnmanaged`s. Phase B may refactor to `Vec<usize>`
-// once `List` is reworked.
+// Layout invariant: `masks` is a raw pointer where `masks[-1]` holds the true
+// allocation length (needed on free). This layout is load-bearing because
+// `DynamicBitSetList` constructs borrowed views into a shared buffer that must
+// look like freestanding `DynamicBitSetUnmanaged`s — do not swap the storage
+// for `Vec<usize>` without reworking `DynamicBitSetList`.
 pub struct DynamicBitSetUnmanaged {
     /// The number of valid items in this bit set
     pub bit_length: usize,
@@ -786,14 +759,12 @@ pub struct DynamicBitSetUnmanaged {
     pub masks: *mut usize,
     // This pointer is one usize after the actual allocation.
     // That slot holds the size of the true allocation, which
-    // is needed by Zig's allocator interface in case a shrink
-    // fails.
+    // is needed when freeing.
 }
 
 const DYN_MASK_BITS: u32 = usize::BITS;
 
-// Never modified — the Zig comment about needing `static mut` was a Zig
-// limitation (no const-ptr → mut-ptr cast at comptime). All writes through
+// Never modified. All writes through
 // `self.masks` are guarded by `num_masks() > 0`, which is false for the empty
 // sentinel (bit_length == 0). Kept in a `RacyCell` (not `.rodata`) so that
 // forming a `*mut usize` to it remains a legally-mutable pointer target —
@@ -825,10 +796,8 @@ impl Drop for DynamicBitSetUnmanaged {
 }
 
 impl DynamicBitSetUnmanaged {
-    pub const EMPTY: fn() -> Self = Self::default;
-    // TODO(port): Zig has `pub const empty: Self = .{ ... }` as a const value.
-    // Rust can't const-init a static-mut-derived pointer; callers should use
-    // `DynamicBitSetUnmanaged::default()`.
+    // There is no `const` empty value (the empty sentinel pointer is computed at
+    // runtime); use `Self::default()`.
 
     /// Borrow the mask words as a shared slice of length `num_masks(bit_length)`.
     #[inline(always)]
@@ -1392,9 +1361,8 @@ impl Drop for DynamicBitSetList {
 // the owning struct between threads is as safe as moving a `Box<[usize]>`.
 unsafe impl Send for DynamicBitSetList {}
 
-// Raw allocation helpers for DynamicBitSetUnmanaged. These mirror Zig's
-// allocator.alloc/realloc/free with the size-at-[-1] header convention.
-// TODO(port): move to bun_alloc if useful elsewhere.
+// Raw allocation helpers for DynamicBitSetUnmanaged, using the size-at-[-1]
+// header convention.
 
 unsafe fn dyn_free(base: *mut usize, len: usize) {
     if len == 0 {
@@ -1432,7 +1400,7 @@ unsafe fn dyn_realloc(
 
 // ───────────────────────────── AutoBitSet ─────────────────────────────
 
-/// Static arm size: `@bitSizeOf(DynamicBitSetUnmanaged) - 1`.
+/// Static arm size: one less than the bit-size of `DynamicBitSetUnmanaged`.
 pub(crate) const AUTO_STATIC_BITS: usize = mem::size_of::<DynamicBitSetUnmanaged>() * 8 - 1;
 
 pub(crate) type AutoBitSetStatic =
@@ -1444,11 +1412,9 @@ pub enum AutoBitSet {
 }
 
 // ─── two-arm forward helper ────────────────────────────────────────────
-// Zig had `switch (this.*) { inline else => |*b| b.method() }` for the
-// symmetric arms (setAll/count/findFirstSet/Iterator.next). The Rust port
-// regressed those to open-coded matches; this macro restores the collapse
-// and is applied to every method whose Static/Dynamic arms are textually
-// identical. Asymmetric arms (clone, raw_bytes, has_intersection, Drop)
+// This macro forwards a call to whichever arm is active and is applied to
+// every method whose Static/Dynamic arms are textually identical.
+// Asymmetric arms (clone, raw_bytes, has_intersection, Drop)
 // stay open-coded — they genuinely differ.
 macro_rules! auto_forward {
     ($self:expr, |$b:ident| $body:expr) => {
@@ -1515,7 +1481,6 @@ impl AutoBitSet {
     }
 
     pub fn eql(&self, b: &AutoBitSet) -> bool {
-        // TODO(b0): `strings` arrives in bun_core via move-in (was bun_core::strings).
         self.raw_bytes() == b.raw_bytes()
     }
 
@@ -1570,10 +1535,6 @@ impl Drop for AutoBitSet {
 /// A bit set with runtime-known size, backed by an allocated slice
 /// of usize.  Thin wrapper around DynamicBitSetUnmanaged which keeps
 /// track of the allocator instance.
-///
-// TODO(port): in Rust the managed/unmanaged split disappears (global
-// allocator). This wrapper is kept for diff parity; Phase B may collapse it
-// into `DynamicBitSetUnmanaged` and re-export under both names.
 #[derive(Default)]
 pub struct DynamicBitSet {
     /// The number of valid items in this bit set
@@ -1620,7 +1581,7 @@ impl DynamicBitSet {
         self.unmanaged.capacity()
     }
 
-    /// Zig spelling of `capacity()` (`.bit_length`).
+    /// Alias for `capacity()`.
     #[inline(always)]
     pub fn bit_length(&self) -> usize {
         self.unmanaged.capacity()
@@ -1637,6 +1598,12 @@ impl DynamicBitSet {
     /// is present in the set, false otherwise.
     pub fn is_set(&self, index: usize) -> bool {
         self.unmanaged.is_set(index)
+    }
+
+    /// Like `is_set`, but returns `out_of_bounds` for indices past the end.
+    pub fn is_set_allow_out_of_bound(&self, index: usize, out_of_bounds: bool) -> bool {
+        self.unmanaged
+            .is_set_allow_out_of_bound(index, out_of_bounds)
     }
 
     /// Returns the total number of set bits in this bit set.
@@ -1737,9 +1704,6 @@ impl DynamicBitSet {
 // ───────────────────────────── IteratorOptions ─────────────────────────────
 
 /// Options for configuring an iterator over a bit set
-// TODO(port): Zig passes a `comptime options: IteratorOptions` struct. Stable
-// Rust adt_const_params is unstable; split into two const-generic enum params
-// (`KIND`, `DIRECTION`) at every callsite.
 #[derive(Clone, Copy, Default)]
 pub struct IteratorOptions {
     /// determines which bits should be visited
@@ -1769,9 +1733,7 @@ pub enum IteratorDirection {
 
 // ───────────────────────────── BitSetIterator ─────────────────────────────
 
-// The iterator is reusable between several bit set types
-// TODO(port): Zig is generic over `MaskInt`; fixed to `usize` here since every
-// in-tree caller uses `usize`.
+// The iterator is reusable between several bit set types.
 pub struct BitSetIterator<'a, const KIND_SET: bool, const DIR_FWD: bool> {
     // all bits which have not yet been iterated over
     bits_remain: usize,
@@ -1871,11 +1833,3 @@ pub struct Range {
     /// The index immediately after the last bit of interest.
     pub end: usize,
 }
-
-// ───────────────────────────── Tests ─────────────────────────────
-
-// TODO(port): the Zig source's test helpers (`testEql`, `testBitSet`, …) are
-// dead code carried from the std fork — no `test` block invokes them. They
-// rely on `anytype` duck-typing; re-author against a trait when adding tests.
-
-// ported from: src/collections/bit_set.zig

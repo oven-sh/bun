@@ -73,7 +73,6 @@ impl PmVersionCommand {
         positionals: &[&[u8]],
         original_cwd: &[u8],
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let package_json_dir = Self::find_package_dir(original_cwd)?;
 
         if positionals.len() <= 1 {
@@ -105,8 +104,7 @@ impl PmVersionCommand {
             package_json_path.as_bytes(),
             &*package_json_contents,
         );
-        // PORT NOTE: Zig passed `ctx.allocator`; Rust ctx dropped allocator (global mimalloc),
-        // so we hand the parser a local bump arena for its scratch allocations.
+        // Hand the parser a local bump arena for its scratch allocations.
         let json_bump = Arena::new();
         let json_result = match JSON::parse_package_json_utf8_with_opts::<
             true,  // IS_JSON
@@ -227,7 +225,6 @@ impl PmVersionCommand {
                 Global::exit(1);
             }
 
-            // Zig used `std.fs.cwd().writeFile`; ported to bun_sys (no std::fs).
             if let Err(err) = bun_sys::File::write_file(
                 Fd::cwd(),
                 package_json_path,
@@ -346,8 +343,7 @@ impl PmVersionCommand {
     }
 
     fn get_current_version(ctx: &command::ContextData, cwd: &[u8]) -> Option<Vec<u8>> {
-        // PORT NOTE: reshaped — Zig returned a slice borrowing from ctx.allocator-owned
-        // package.json bytes (leaked for process lifetime). Return owned Vec<u8> instead.
+        // Returns an owned Vec<u8> (no borrow of the package.json bytes).
         let mut path_buf = PathBuffer::uninit();
         let package_json_path = path::join_abs_string_buf_z::<path_platform::Auto>(
             cwd,
@@ -842,7 +838,6 @@ impl PmVersionCommand {
         }
 
         let commit_message: Vec<u8> = if let Some(msg) = custom_message {
-            // std.mem.replaceOwned(u8, allocator, msg, "%s", version)
             msg.replace(b"%s", version)
         } else {
             fmt_bytes(format_args!("v{}", BStr::new(version)))
@@ -924,7 +919,7 @@ impl PmVersionCommand {
     }
 }
 
-// PORT NOTE: helper for `std.fmt.allocPrint` — builds into Vec<u8> (never `format!`).
+// Builds formatted output into a `Vec<u8>` (never `format!`).
 #[inline]
 fn fmt_bytes(args: core::fmt::Arguments<'_>) -> Vec<u8> {
     let mut v = Vec::new();
@@ -932,8 +927,8 @@ fn fmt_bytes(args: core::fmt::Arguments<'_>) -> Vec<u8> {
     v
 }
 
-// PORT NOTE: build `sync::Options.argv: Vec<Box<[u8]>>` from a slice of byte
-// slices (Zig was `&.{...}` of `[]const u8`).
+// Note: build `sync::Options.argv: Vec<Box<[u8]>>` from a slice of byte
+// slices.
 #[inline]
 fn build_argv(parts: &[&[u8]]) -> Vec<Box<[u8]>> {
     parts.iter().map(|p| Box::<[u8]>::from(*p)).collect()
@@ -949,5 +944,3 @@ fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
         ..Default::default()
     }
 }
-
-// ported from: src/cli/pm_version_command.zig

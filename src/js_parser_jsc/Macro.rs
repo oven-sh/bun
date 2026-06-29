@@ -17,9 +17,8 @@ use bun_resolver::package_json::{
     MacroImportReplacementMap as MacroRemapEntry, MacroMap as MacroRemap,
 };
 
-// PORT NOTE: Zig spec aliases `const js = bun.jsc.C;` (Macro.zig:642) — the
-// C-API surface is intentionally `#[deprecated]` upstream but is the spec'd
-// call path for `JSObjectCallAsFunctionReturnValueHoldingAPILock`.
+// The C-API surface is intentionally `#[deprecated]` upstream but is the
+// call path used for `JSObjectCallAsFunctionReturnValueHoldingAPILock`.
 use crate::expr_jsc::ExprJsc;
 use bun_jsc::js_property_iterator::JSPropertyIteratorOptions;
 use bun_jsc::virtual_machine::{
@@ -44,9 +43,7 @@ pub(crate) fn is_macro_path(str: &[u8]) -> bool {
 // MacroContext
 // ══════════════════════════════════════════════════════════════════════════
 
-// PORT NOTE: Zig stores `*Resolver` / `*DotEnv.Loader` and copies the
-// `MacroRemap` hash-map header by value (which aliases the same backing
-// storage). Rust models all three as raw pointers because the referents live
+// All three are modelled as raw pointers because the referents live
 // inside the owning `Transpiler` and are also reachable through other aliases
 // (`Transpiler.resolver`, `Transpiler.env`, `Transpiler.options`); a `&'a mut`
 // here would forbid that aliasing under stacked-borrows. The `'static`
@@ -58,11 +55,8 @@ pub struct MacroContext {
     pub macros: MacroMap,
     pub remap: bun_ptr::BackRef<MacroRemap>,
     pub javascript_object: JSValue,
-    /// PORT NOTE: Zig threads `default_allocator` (mimalloc, process-lifetime)
-    /// through `Runner::run` → `Run.allocator`; the slices it backs (property
-    /// keys / UTF-16 string data / `from_blob` JSON sub-parse) are never
-    /// individually freed and outlive the call frame. The Rust AST takes
-    /// lifetime-erased `&[u8]` arena slices, so we own the backing arena here
+    /// The AST takes lifetime-erased `&[u8]` arena slices (property keys /
+    /// UTF-16 string data / `from_blob` JSON sub-parse), so we own the backing arena here
     /// — `MacroContext` is stored in the long-lived `Transpiler` and outlives
     /// every `Expr` it produces (the parser splices the result into the AST and
     /// prints it before the `Transpiler` drops).
@@ -83,7 +77,7 @@ pub(crate) type MacroMap = ArrayHashMap<i32, Macro>;
 impl MacroContext {
     pub fn get_remap(&self, path: &[u8]) -> Option<&MacroRemapEntry> {
         // `remap` is a `BackRef` into `Transpiler.options`, which outlives
-        // every `MacroContext` (see struct PORT NOTE).
+        // every `MacroContext` (see struct comment).
         let remap = self.remap.get();
         if remap.is_empty() {
             return None;
@@ -125,7 +119,7 @@ impl MacroContext {
 
         debug_assert!(!is_macro_path(import_record_path_without_macro_prefix));
 
-        // SAFETY: `resolver` outlives `self` (see struct PORT NOTE); uniquely
+        // SAFETY: `resolver` outlives `self` (see struct comment); uniquely
         // accessed for the duration of this resolve call.
         let resolver = unsafe { &mut *self.resolver };
 
@@ -171,10 +165,7 @@ impl MacroContext {
                     return Err(e);
                 }
             };
-            // PORT NOTE: Zig captures the resolved primary path's `.text` and
-            // hands the slice to `Macro.init`/`loadMacroEntryPoint`, which
-            // copies into a buffer before the borrow ends. The Rust resolver's
-            // `Result` owns its path strings via the global `DirnameStore`
+            // The resolver's `Result` owns its path strings via the global `DirnameStore`
             // (lifetime-erased `&'static [u8]`), so dropping `resolve_result`
             // does not invalidate `text`.
             break 'brk resolve_result.path_pair.primary.text;
@@ -202,7 +193,6 @@ impl MacroContext {
             ) {
                 Ok(m) => m,
                 Err(e) => {
-                    // Zig: `Macro{ .resolver = undefined, .disabled = true }`
                     *macro_entry.value_ptr = Macro::disabled_sentinel();
                     return Err(e);
                 }
@@ -211,8 +201,7 @@ impl MacroContext {
         }
         let _flush_guard = Output::flush_guard();
 
-        // PORT NOTE: reshaped for borrowck — Zig copies the Macro by value out
-        // of the map. We snapshot the small POD fields we need (`disabled`,
+        // Borrowck: snapshot the small POD fields we need (`disabled`,
         // `vm`) so the macro_entry borrow can be released.
         let macro_disabled = macro_entry.value_ptr.disabled;
         let macro_vm = macro_entry.value_ptr.vm;
@@ -220,7 +209,7 @@ impl MacroContext {
         if macro_disabled {
             return Ok(caller);
         }
-        // SAFETY: `Some` for every non-disabled Macro; see `Macro` PORT NOTE.
+        // SAFETY: `Some` for every non-disabled Macro; see `Macro` struct comment.
         let vm = macro_vm
             .expect("Macro.vm accessed on disabled sentinel")
             .as_ptr();
@@ -230,12 +219,8 @@ impl MacroContext {
         // SAFETY: `event_loop()` returns a self-pointer into `*vm`.
         unsafe { (*(*vm).event_loop()).ensure_waker() };
 
-        // PORT NOTE: Zig builds `Wrapper { args: ArgsTuple, ret }` and calls
-        // `vm.runWithAPILock(Wrapper, &wrapper, Wrapper.call)` which is just
-        // `holdAPILock(ctx, fn(ctx))`. The Rust `run_with_api_lock` already
-        // takes a closure, so the wrapper struct collapses into captures.
         let javascript_object = self.javascript_object;
-        // PORT NOTE: reshaped for borrowck — `self.bump` is shared-borrowed for
+        // reshaped for borrowck — `self.bump` is shared-borrowed for
         // the closure while `self.macros` was already released above; capture
         // as a raw pointer so the closure does not extend `&mut self`.
         // Lazy-init the backing arena now that a macro is actually being
@@ -279,8 +264,7 @@ pub(crate) fn __bun_macro_context_init(
     // SAFETY: every caller of `js_parser::Macro::MacroContext::init<T>` passes a
     // `&mut bun_bundler::Transpiler<'_>`; the lifetime parameter is erased at
     // runtime so reading it as `'static` is layout-identical. The boxed state
-    // is leaked for the long-lived `vm.transpiler` instance (Zig backed it
-    // with `default_allocator`, process-lifetime) — but callers that run on a
+    // is leaked for the long-lived `vm.transpiler` instance — but callers that run on a
     // short-lived bytewise-cloned `Transpiler` (e.g.
     // `RuntimeTranspilerStore::TranspilerJob::run`) MUST pair this with
     // `__bun_macro_context_deinit` or the `Box<MacroContext>` (and, if a macro
@@ -356,7 +340,7 @@ pub(crate) fn __bun_macro_context_get_remap(
     // SAFETY: `data` is the `Box<MacroContext>` allocated in `init` above; the
     // remap table lives in `Transpiler.options` which outlives every parse, so
     // the `'static` borrow is sound for callers that drop it before the
-    // `Transpiler` does (matches the Zig by-value copy of the map header).
+    // `Transpiler` does.
     let inner = unsafe { &*data.cast::<MacroContext>() };
     inner.get_remap(path).map(|e| {
         // SAFETY: `e` borrows an entry in the remap table owned by
@@ -374,16 +358,14 @@ pub(crate) fn __bun_macro_context_get_remap(
 // Macro
 // ══════════════════════════════════════════════════════════════════════════
 
-// PORT NOTE: Zig stores `*Resolver` / `*VirtualMachine` and leaves them `undefined`
-// for the disabled sentinel (`Macro{ .resolver = undefined, .disabled = true }`).
-// Rust references cannot be uninitialised, so both are carried as `Option<NonNull<_>>`;
+// Both are carried as `Option<NonNull<_>>`;
 // they are `Some` for every live macro and `None` only when `disabled == true`, which
 // is checked before any access (see `MacroContext::call`).
 pub struct Macro {
-    // PORT NOTE: `Resolver<'a>` carries a borrow lifetime, but `Macro` is stored
+    // `Resolver<'a>` carries a borrow lifetime, but `Macro` is stored
     // by value in a `MacroMap` keyed by hash and outlives any single call frame.
-    // The Zig original stores a raw `*Resolver`; `NonNull` already erases borrow
-    // tracking, so `'static` here is the lifetime-erased moral equivalent.
+    // `NonNull` erases borrow tracking, so `'static` here is the lifetime-erased
+    // moral equivalent of a raw pointer.
     pub resolver: Option<NonNull<Resolver<'static>>>,
     pub vm: Option<NonNull<VirtualMachine>>,
 
@@ -400,7 +382,6 @@ impl Default for Macro {
 impl Macro {
     /// Sentinel stored in the `MacroMap` when `Macro::init` fails, so subsequent
     /// calls with the same hash short-circuit instead of retrying the load.
-    /// Mirrors Zig's `Macro{ .resolver = undefined, .disabled = true }`.
     fn disabled_sentinel() -> Self {
         Macro {
             resolver: None,
@@ -411,12 +392,11 @@ impl Macro {
     }
 
     /// Unwrap the VM handle. Only valid when `!self.disabled` — `MacroContext::call`
-    /// returns early on `disabled` before any `vm()` access, mirroring Zig where the
-    /// raw pointer is left `undefined` and never dereferenced on that path.
+    /// returns early on `disabled` before any `vm()` access.
     #[inline]
     pub fn vm(&self) -> *mut VirtualMachine {
         debug_assert!(!self.disabled);
-        // SAFETY-adjacent: `Some` for every non-disabled Macro; see struct PORT NOTE.
+        // SAFETY-adjacent: `Some` for every non-disabled Macro; see struct comment.
         self.vm
             .expect("Macro.vm accessed on disabled sentinel")
             .as_ptr()
@@ -432,16 +412,12 @@ impl Macro {
         specifier: &[u8],
         hash: i32,
     ) -> Result<Macro, Error> {
-        // TODO(port): narrow error set
         let (vm, is_new_vm): (*mut VirtualMachine, bool) = if VirtualMachine::is_loaded() {
             (VirtualMachine::get_mut_ptr(), false)
         } else {
-            // PORT NOTE: Zig saved/restored `resolver.opts.transform_options`
-            // across this block because `VirtualMachine.init` (via
-            // `Config.configureTransformOptionsForBunVM`) mutates the *passed*
-            // `args`. In the Rust port the resolver's forward-decl
-            // `BundleOptions` does not carry `transform_options` (the canonical
-            // owner is the bundler's `BundleOptions<'a>`), and
+            // The resolver's forward-decl `BundleOptions` does not carry
+            // `transform_options` (the canonical owner is the bundler's
+            // `BundleOptions<'a>`), and
             // `RuntimeHooks::init_runtime_state` builds the macro VM's
             // transpiler from a fresh `TransformOptions` value rather than
             // borrowing the caller's, so there is nothing to mutate-and-restore
@@ -522,7 +498,7 @@ pub enum MacroError {
     OutOfMemory,
     #[error(transparent)]
     ToJs(#[from] ToJSError),
-    // PORT NOTE: `JsError` does not impl `std::error::Error` in the stub surface,
+    // `JsError` does not impl `std::error::Error` in the stub surface,
     // so `#[error(transparent)]` / `#[from]` (which generates a `source()` requiring
     // `Error`) are unavailable; format via Debug + manual `From` instead.
     #[error("{0:?}")]
@@ -555,10 +531,7 @@ pub struct Run<'a> {
     pub function_name: &'a [u8],
     pub macro_: &'a Macro,
     pub global: &'a JSGlobalObject,
-    // PORT NOTE: Zig carried `std.mem.Allocator param` (always
-    // `default_allocator`, mimalloc, process-lifetime — slices backing
-    // `E.String` data / property keys are never freed). The Rust AST uses
-    // arena-owned slices (`EString::init` lifetime-erases its borrow), so
+    // The AST uses arena-owned slices (`EString::init` lifetime-erases its borrow), so
     // `coerce` needs a bump arena to back property keys / UTF-16 string data /
     // `from_blob` JSON sub-parsing. The arena is *borrowed* from
     // `MacroContext` (stored long-term in the `Transpiler`) so the slices
@@ -623,7 +596,7 @@ impl<'a> Run<'a> {
 
     pub fn run(&mut self, value: JSValue) -> Result<Expr, MacroError> {
         use ConsoleObject::formatter::Tag as T;
-        // PORT NOTE: `Tag::get` returns `TagResult { tag: TagPayload, .. }`;
+        // `Tag::get` returns `TagResult { tag: TagPayload, .. }`;
         // collapse the payload to its discriminant via `.tag()`.
         match T::get(value, self.global)?.tag.tag() {
             T::Error => self.coerce(T::Error, value),
@@ -644,8 +617,7 @@ impl<'a> Run<'a> {
                 self.log.add_error_fmt(
                     Some(self.source),
                     self.caller.loc,
-                    // PORT NOTE: `JSType` derives `Debug` (not `IntoStaticStr`);
-                    // Zig's `@tagName` ≈ `{:?}` here.
+                    // `JSType` derives `Debug` (not `IntoStaticStr`).
                     format_args!(
                         "cannot coerce {} ({:?}) to Bun's AST. Please return a simpler type",
                         bstr::BStr::new(name),
@@ -657,11 +629,7 @@ impl<'a> Run<'a> {
         }
     }
 
-    // PORT NOTE: Zig dispatched on `comptime tag`; that requires
-    // `Tag: core::marker::ConstParamTy`, which the upstream enum does not
-    // derive. Reshaped to a runtime `tag` param — every call site in `run`
-    // already matches once, so the comptime monomorphization was redundant.
-    // PERF(port): was comptime monomorphization — profile if it shows up on a hot path.
+    // Runtime `tag` param — every call site in `run` already matches once.
     pub fn coerce(
         &mut self,
         tag: ConsoleObject::formatter::Tag,
@@ -745,7 +713,6 @@ impl<'a> Run<'a> {
                 let mut iter = JSArrayIterator::init(value, self.global)?;
 
                 // Process all array items
-                // PERF(port): was allocator.alloc(Expr, iter.len) — profile if it shows up on a hot path
                 let mut array = ExprNodeList::init_capacity(iter.len as usize);
                 // (errdefer free deleted — drops on `?`)
                 let expr = Expr::init(
@@ -767,7 +734,7 @@ impl<'a> Run<'a> {
                     i += 1;
                 }
 
-                // PORT NOTE: reshaped for borrowck — `Expr.data.e_array` is a
+                // reshaped for borrowck — `Expr.data.e_array` is a
                 // `StoreRef` (raw arena ptr) so re-borrow it after the `run`
                 // recursion releases `self`.
                 if let ExprData::EArray(mut e_array) = expr.data {
@@ -814,7 +781,7 @@ impl<'a> Run<'a> {
                 while let Some(prop) = object_iter.next()? {
                     let object_value = self.run(object_iter.value)?;
 
-                    // PORT NOTE: `EString::init` lifetime-erases its borrow
+                    // `EString::init` lifetime-erases its borrow
                     // (arena-owned per the parser's `Str` convention). Copy the
                     // key into the `MacroContext` bump arena so it outlives the
                     // temporary `to_owned_slice()` Vec and the returned `Expr`.
@@ -838,33 +805,17 @@ impl<'a> Run<'a> {
 
             T::JSON => {
                 self.is_top_level = false;
-                // if (console_tag.cell == .JSDate) {
-                //     // in the code for printing dates, it never exceeds this amount
-                //     var iso_string_buf = this.allocator.alloc(u8, 36) catch unreachable;
-                //     var str = jsc.ZigString.init("");
-                //     value.jsonStringify(this.global, 0, &str);
-                //     var out_buf: []const u8 = std.fmt.bufPrint(iso_string_buf, "{}", .{str}) catch "";
-                //     if (out_buf.len > 2) {
-                //         // trim the quotes
-                //         out_buf = out_buf[1 .. out_buf.len - 1];
-                //     }
-                //     return Expr.init(E.New, E.New{.target = Expr.init(E.Dot{.target = E}) })
-                // }
             }
 
             T::Integer => {
                 return Ok(Expr::init(
-                    E::Number {
-                        value: value.to_int32() as f64,
-                    },
+                    E::Number::new(value.to_int32() as f64),
                     self.caller.loc,
                 ));
             }
             T::Double => {
                 return Ok(Expr::init(
-                    E::Number {
-                        value: value.as_number(),
-                    },
+                    E::Number::new(value.as_number()),
                     self.caller.loc,
                 ));
             }
@@ -872,24 +823,16 @@ impl<'a> Run<'a> {
                 let bun_str = bun_core::OwnedString::new(value.to_bun_string(self.global)?);
 
                 // encode into utf16 so the printer escapes the string correctly
-                // PERF(port): was allocator.alloc(u16, len) — profile if it shows up on a hot path
-                //
-                // Zig went through `bun.String.encodeInto(out, .utf16le)`
-                // (string.zig:630), which lives in `bun_runtime::webcore::
-                // encoding` (forward dep from here). For the fixed
-                // `.utf16le` target the body is just: UTF-16 → memcpy,
-                // Latin-1 → byte-widen. JS-sourced WTF strings are never
-                // UTF-8-tagged (the Zig path `@panic`ed on that anyway),
-                // so inline the two arms.
+                // UTF-16 → memcpy, Latin-1 → byte-widen. JS-sourced WTF
+                // strings are never UTF-8-tagged, so two arms suffice.
                 let utf16_bytes: Vec<u16> = if bun_str.is_utf16() {
                     bun_str.utf16().to_vec()
                 } else {
                     bun_str.latin1().iter().map(|&b| b as u16).collect()
                 };
-                // PORT NOTE: `E::EString::init_utf16` lifetime-erases the slice
+                // `E::EString::init_utf16` lifetime-erases the slice
                 // (arena-owned per the parser's `Str` convention). Copy into
-                // the `MacroContext` bump arena — Zig used `this.allocator`
-                // (`default_allocator`, process-lifetime).
+                // the `MacroContext` bump arena.
                 let arena_slice: &[u16] = self.bump.alloc_slice_copy(&utf16_bytes);
                 return Ok(Expr::init(
                     E::EString::init_utf16(arena_slice),
@@ -918,7 +861,7 @@ impl<'a> Run<'a> {
                 if rejected
                     || promise_result.is_error()
                     || promise_result.is_aggregate_error(self.global)
-                    // PORT NOTE: `JSGlobalObject::vm()` returns `&VM`;
+                    // `JSGlobalObject::vm()` returns `&VM`;
                     // `is_exception` takes `*mut VM` (FFI passthrough). The
                     // C++ side never writes through it.
                     || promise_result
@@ -943,7 +886,7 @@ impl<'a> Run<'a> {
         self.log.add_error_fmt(
             Some(self.source),
             self.caller.loc,
-            // PORT NOTE: `JSType` derives `Debug` (not `IntoStaticStr`).
+            // `JSType` derives `Debug` (not `IntoStaticStr`).
             format_args!(
                 "cannot coerce {:?} to Bun's AST. Please return a simpler type",
                 value.js_type(),
@@ -964,20 +907,18 @@ impl Runner {
         id: i32,
         javascript_object: JSValue,
     ) -> Result<Expr, MacroError> {
-        if cfg!(debug_assertions) {
+        if bun_core::env::IS_DEBUG {
             bun_core::prettyln!(
                 "<r><d>[macro]<r> call <d><b>{}<r>",
                 bstr::BStr::new(function_name)
             );
         }
 
-        // PORT NOTE: Zig `exception_holder = jsc.ZigException.Holder.init();` —
-        // the holder is never read in this body (legacy from an earlier
+        // The exception holder is never read in this body (legacy from an earlier
         // exception-reporting path); a thread-local sentinel suffices.
         EXCEPTION_HOLDER.with(|h| h.set(true));
 
-        // PORT NOTE: Zig's `defer { for js_args[..n] |a| a.unprotect();
-        // allocator.free(js_args); }` becomes an RAII guard that *owns* the
+        // An RAII guard *owns* the
         // `Vec<JSValue>` + processed count. All mutation goes through the
         // guard's fields so there is no aliasing of a raw pointer with later
         // direct writes (the previous `*mut Vec` capture popped its
@@ -1053,11 +994,9 @@ impl Runner {
             js_args.args[last] = javascript_object;
         }
 
-        // PORT NOTE: Zig stashes the call args + result in threadlocals so the
-        // `extern "C" fn()` trampoline (no userdata) can reach them, then calls
-        // `Bun__startMacro(&call, global)`. Rust round-trips through a
-        // threadlocal `*mut c_void` to a stack `CallData` instead — `CallArgs`
-        // is a tuple of borrowed refs that cannot live in a `thread_local!`.
+        // The `extern "C" fn()` trampoline (no userdata) reaches the call args +
+        // result through a threadlocal `*mut c_void` pointing at a stack `CallData`
+        // — `CallArgs` is a tuple of borrowed refs that cannot live in a `thread_local!`.
         thread_local! {
             static CALL_STATE: Cell<*mut c_void> = const { Cell::new(core::ptr::null_mut()) };
         }
@@ -1105,11 +1044,10 @@ impl Runner {
 
         jsc::mark_binding();
         CALL_STATE.with(|s| s.set((&raw mut data).cast::<c_void>()));
-        // SAFETY: `call` only reads CALL_STATE which we just set. Spec
-        // Macro.zig:581 passes the raw `vm.global: *JSGlobalObject` field
-        // directly — read it via raw-ptr field access (NOT the `&`-returning
-        // `.global()` accessor) so the `*mut` provenance is preserved across
-        // FFI.
+        // SAFETY: `call` only reads CALL_STATE which we just set. The raw
+        // `vm.global: *JSGlobalObject` field is read via raw-ptr field access
+        // (NOT the `&`-returning `.global()` accessor) so the `*mut` provenance
+        // is preserved across FFI.
         unsafe {
             Bun__startMacro(
                 call as *const c_void,
@@ -1125,8 +1063,8 @@ unsafe extern "C" {
     fn Bun__startMacro(function: *const c_void, global: *mut c_void);
 }
 
-/// Zig: `Expr.fromBlob` (`src/js_parser/ast/Expr.zig`). Lives here, not on
-/// `bun_ast::Expr`, because it parses JSON via `bun_parsers` — `bun_ast` is a
+/// Lives here, not on `bun_ast::Expr`, because it parses JSON via `bun_parsers`
+/// — `bun_ast` is a
 /// leaf below both. Only call site is the macro `Response`/`Blob` arm above.
 fn expr_from_blob(
     bytes: &[u8],
@@ -1208,5 +1146,3 @@ fn expr_from_blob(
         loc,
     ))
 }
-
-// ported from: src/js_parser_jsc/Macro.zig

@@ -1,5 +1,4 @@
-//! Hand-ported surface of `src/codegen/bindgen.ts` output
-//! (source: src/jsc/bindings/GeneratedBindings.zig — bindgen dispatch shims).
+//! Hand-written surface of `src/codegen/bindgen.ts` output (bindgen dispatch shims).
 //!
 //! Until the generator grows a `.rs` backend, the modules required by
 //! downstream Rust callers are ported here by hand. Each `create_*_callback`
@@ -11,7 +10,7 @@
 
 use crate::{JSGlobalObject, JSHostFn, JSValue, host_fn, zig_string};
 
-/// Generated for "src/jsc/bindgen_test.zig"
+/// Generated for "src/jsc/bindgen_test.rs"
 pub mod bindgen_test {
     use super::*;
 
@@ -47,5 +46,3 @@ pub mod bindgen_test {
         )
     }
 }
-
-// ported from: src/jsc/bindings/GeneratedBindings.zig

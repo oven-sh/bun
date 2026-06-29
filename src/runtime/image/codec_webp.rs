@@ -7,7 +7,6 @@ use core::ptr::NonNull;
 use super::codecs;
 use crate::encoded_wrap_free;
 
-// TODO(port): move to libwebp_sys (or runtime_sys); extern fns declared inline here for now.
 unsafe extern "C" {
     pub(crate) fn WebPGetInfo(data: *const u8, len: usize, w: *mut c_int, h: *mut c_int) -> c_int;
     fn WebPDecodeRGBA(data: *const u8, len: usize, w: *mut c_int, h: *mut c_int) -> *mut u8;
@@ -90,7 +89,6 @@ bun_opaque::opaque_ffi! {
 
 // `WebPDemux()` and `WebPMuxNew()` are `static inline` in the headers and
 // just forward to these version-checked entry points with the ABI constant.
-// TODO(port): move to libwebp_sys
 unsafe extern "C" {
     fn WebPDemuxInternal(
         data: *const WebPData,
@@ -338,5 +336,3 @@ pub(crate) fn encode(
         free: encoded_wrap_free!(WebPFree),
     })
 }
-
-// ported from: src/runtime/image/codec_webp.zig

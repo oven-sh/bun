@@ -14,15 +14,13 @@ use bun_js_printer as js_printer;
 use bun_paths::{self, PathBuffer};
 use bun_sys::{self, Fd, File};
 
+use super::command_line_arguments::CommandLineArguments;
+use super::package_json_editor as PackageJSONEditor;
+use super::update_request::Array as UpdateRequestArray;
 use super::{
     Command, PackageManager, PatchCommitResult, Subcommand, UpdateRequest,
     attempt_to_create_package_json, install_with_manager, patch_package,
 };
-// Zig's `PackageJSONEditor` is a file-namespace struct; the Rust port exposes
-// its functions directly on the `package_json_editor` module.
-use super::command_line_arguments::CommandLineArguments;
-use super::package_json_editor as PackageJSONEditor;
-use super::update_request::Array as UpdateRequestArray;
 
 pub fn update_package_json_and_install_with_manager(
     manager: &mut PackageManager,
@@ -53,7 +51,7 @@ pub fn update_package_json_and_install_with_manager(
         }
     }
 
-    // PORT NOTE: `manager.options.positionals` is `&'static [&'static [u8]]` so the
+    // `manager.options.positionals` is `&'static [&'static [u8]]` so the
     // sub-slice does not borrow `*manager` and can flow alongside `&mut manager`.
     let positionals: &'static [&'static [u8]] = &manager.options.positionals[1..];
     update_package_json_and_install_with_manager_with_updates_and_update_requests(
@@ -72,12 +70,11 @@ fn update_package_json_and_install_with_manager_with_updates_and_update_requests
     positionals: &[&[u8]],
     update_requests: &mut UpdateRequestArray,
 ) -> Result<(), Error> {
-    // TODO(port): narrow error set
     let subcommand = manager.subcommand;
     if subcommand != Subcommand::PatchCommit && subcommand != Subcommand::Patch {
-        // PORT NOTE: reshaped for borrowck — `parse` returns a `&mut [UpdateRequest]`
+        // reshaped for borrowck — `parse` returns a `&mut [UpdateRequest]`
         // sub-slice of `update_requests`; we take its length and truncate the Vec so
-        // the next call can take the Vec by value (Zig threaded `*[]UpdateRequest`).
+        // the next call can take the Vec by value.
         let len = UpdateRequest::parse(
             // `dependency::parse_with_tag` is the only consumer of `pm`; it inserts
             // into `pm.known_npm_aliases` for `npm:`-aliased positionals.
@@ -106,9 +103,9 @@ fn update_package_json_and_install_with_manager_with_updates_and_update_requests
 fn update_package_json_and_install_with_manager_with_updates(
     manager: &mut PackageManager,
     ctx: Command::Context,
-    // PORT NOTE: reshaped for borrowck — Zig was `*[]UpdateRequest`. Taking by
-    // value lets us hand ownership to `manager.update_requests` (which the Rust
-    // port types as `Box<[UpdateRequest]>`) and re-borrow afterwards without
+    // reshaped for borrowck — taking by
+    // value lets us hand ownership to `manager.update_requests` (typed
+    // `Box<[UpdateRequest]>`) and re-borrow afterwards without
     // aliasing `&mut manager`.
     mut updates: Vec<UpdateRequest>,
     subcommand: Subcommand,
@@ -124,12 +121,11 @@ fn update_package_json_and_install_with_manager_with_updates(
         Global::crash();
     }
 
-    // PORT NOTE: reshaped for borrowck — `get_with_path` returns `&mut MapEntry`
+    // reshaped for borrowck — `get_with_path` returns `&mut MapEntry`
     // borrowed from `manager.workspace_package_json_cache`, but we then need
     // `&mut *manager` for `PackageJSONEditor::edit` / `do_patch_commit` while still
-    // holding the entry. Zig held `*MapEntry` and `*PackageManager` simultaneously
-    // (no aliasing rules); mirror that by demoting to `*mut MapEntry` and re-
-    // borrowing at point of use. The cache map is not mutated again until the
+    // holding the entry. Demote to `*mut MapEntry` and re-
+    // borrow at point of use. The cache map is not mutated again until the
     // next `get_with_path` call below, so the pointer remains valid.
     let current_package_json_ptr: *mut MapEntry =
         match manager.workspace_package_json_cache.get_with_path(
@@ -165,7 +161,7 @@ fn update_package_json_and_install_with_manager_with_updates(
             }
             GetResult::Entry(entry) => core::ptr::from_mut(entry),
         };
-    // SAFETY: see PORT NOTE above — pointer into `manager.workspace_package_json_cache`,
+    // SAFETY: see note above — pointer into `manager.workspace_package_json_cache`,
     // valid until the next `get_with_path`. No `&mut manager.workspace_package_json_cache`
     // is taken across this borrow; `PackageJSONEditor` and `do_patch_commit` touch only
     // disjoint manager fields.
@@ -236,7 +232,6 @@ fn update_package_json_and_install_with_manager_with_updates(
             // if we're removing, they don't have to specify where it is installed in the dependencies list
             // they can even put it multiple times and we will just remove all of them
             for request in updates.iter() {
-                // PERF(port): was `inline for` — profile if hot
                 const LISTS: [&[u8]; 4] = [
                     b"dependencies",
                     b"devDependencies",
@@ -246,20 +241,20 @@ fn update_package_json_and_install_with_manager_with_updates(
                 for list in LISTS {
                     if let Some(query) = current_package_json_root.as_property(list) {
                         if query.expr.data.is_e_object() {
-                            // PORT NOTE: reshaped for borrowck — Zig held `data.e_object` (a
-                            // `*E.Object`) across writes to both the inner list and the parent
-                            // object. `StoreRef<E::Object>` is `Copy` and derefs to a raw arena
-                            // pointer, so taking it once mirrors that exactly.
+                            // reshaped for borrowck —
+                            // `StoreRef<E::Object>` is `Copy` and derefs to a raw arena
+                            // pointer, so taking it once works across writes to both the
+                            // inner list and the parent object.
                             let mut e_object = query.expr.data.as_e_object();
                             let dependencies = e_object.properties.slice_mut();
                             let mut i: usize = 0;
                             let mut new_len = dependencies.len();
-                            // PORT NOTE: Zig copies `dependencies[i] = dependencies[new_len - 1]`
-                            // and iterates to the original length. `G::Property` is not `Copy` in
-                            // Rust, so we `swap` instead — but the swapped-out matched element
+                            // `G::Property` is not `Copy`,
+                            // so we `swap` instead of copy-from-tail — but the swapped-out
+                            // matched element
                             // lands in the truncated tail and MUST NOT be revisited (it would
                             // match again and over-truncate). Bounding by `new_len` yields the
-                            // same result as Zig for the unique-key case package.json guarantees.
+                            // correct result for the unique-key case package.json guarantees.
                             while i < new_len {
                                 let key = dependencies[i].key.unwrap();
                                 if key.data.is_e_string() {
@@ -323,7 +318,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                         ..Default::default()
                     },
                 )?;
-                // `edit` may shrink the slice (Zig `updates.* = updates.*[0..n]`).
+                // `edit` may shrink the slice.
                 let new_len = updates_slice.len();
                 updates.truncate(new_len);
             } else if subcommand == Subcommand::Update {
@@ -363,8 +358,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     manager.to_update = subcommand == Subcommand::Update;
 
-    // PORT NOTE: reshaped for borrowck — Zig stored a slice header (`manager.update_requests
-    // = updates.*`) so both names alias the same backing array; the Rust field is owning
+    // reshaped for borrowck — the field is owning
     // (`Box<[UpdateRequest]>`), so we transfer ownership here and re-borrow from
     // `manager.update_requests` after `install_with_manager` (which is the only writer).
     manager.update_requests = updates.into_boxed_slice();
@@ -408,14 +402,12 @@ fn update_package_json_and_install_with_manager_with_updates(
         .ctx
         .written_without_trailing_zero()
         .to_vec();
-    // Zig: `manager.allocator.dupe(u8, …)` — heap-owned, never freed (process-lifetime).
     // The cache entry (`Cow<'static, [u8]>`) outlives this stack frame, and
     // `new_package_json_source` is reassigned below on the add/update/link path, so we
-    // must store an *owning* copy to avoid a dangling borrow. PERF(port): one extra
-    // alloc+copy vs Zig's single dupe — profile if hot.
+    // must store an *owning* copy to avoid a dangling borrow.
     current_package_json.source.contents = Cow::Owned(new_package_json_source.clone());
-    // PORT NOTE: Zig edited `current_package_json.root` in place above; the Rust
-    // port edited a promoted copy (`current_package_json_root`), so re-parse the
+    // The edits above went into a promoted copy
+    // (`current_package_json_root`), so re-parse the
     // printed source so the cached AST (consumed by `FolderResolver` for workspace
     // members during `install_with_manager`) reflects the new dependency list.
     if let Err(err) = current_package_json.reparse_root(manager.log_mut()) {
@@ -441,7 +433,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
         // The lifetime of this pointer is only valid until the next call to `getWithPath`, which can happen after this scope.
         // https://github.com/oven-sh/bun/issues/12288
-        // PORT NOTE: reshaped for borrowck — see `current_package_json_ptr` above.
+        // reshaped for borrowck — see `current_package_json_ptr` above.
         let root_package_json_ptr: *mut MapEntry =
             match manager.workspace_package_json_cache.get_with_path(
                 manager.log_mut(),
@@ -530,9 +522,9 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     install_with_manager::install_with_manager(manager, ctx, root_package_json_path, original_cwd)?;
 
-    // PORT NOTE: reshaped for borrowck — see assignment above. `install_with_manager`
+    // reshaped for borrowck — see assignment above. `install_with_manager`
     // is the only writer to `manager.update_requests` between the assignment and
-    // here, so taking it back yields exactly the slice Zig observed via `updates.*`.
+    // here, so taking it back yields exactly the slice assigned above.
     let mut updates: Box<[UpdateRequest]> = core::mem::take(&mut manager.update_requests);
 
     if subcommand == Subcommand::Update
@@ -666,7 +658,7 @@ fn update_package_json_and_install_with_manager_with_updates(
             .pwrite_all(source, 0)
             .map_err(Error::from)?;
         let _ = bun_sys::ftruncate(workspace_package_json_file.handle, source.len() as i64);
-        let _ = workspace_package_json_file.close(); // close error is non-actionable (Zig parity: discarded)
+        let _ = workspace_package_json_file.close(); // close error is non-actionable
 
         if subcommand == Subcommand::Remove {
             if !any_changes {
@@ -755,7 +747,6 @@ pub fn update_package_json_and_install_and_cli(
     subcommand: Subcommand,
     cli: CommandLineArguments,
 ) -> Result<(), Error> {
-    // TODO(port): narrow error set
     let (manager_ptr, original_cwd) = 'brk: {
         match super::init(ctx, cli.clone(), subcommand) {
             Ok(v) => v,
@@ -789,12 +780,11 @@ pub fn update_package_json_and_install_and_cli(
     let _original_cwd_owner: Box<[u8]> = original_cwd;
     let original_cwd: &[u8] = &_original_cwd_owner;
     // SAFETY: `super::init` returns a `*mut PackageManager` to the process-static
-    // singleton (Zig `*PackageManager`). We are on the single CLI thread; no worker
+    // singleton. We are on the single CLI thread; no worker
     // threads deref `get()` until `install_with_manager` spawns the HTTP thread.
     let manager: &mut PackageManager = &mut *manager_ptr;
 
     if manager.options.should_print_command_name() {
-        // Zig: `"..." ++ Global.package_json_version_with_sha ++ "..."` (comptime concat).
         // `concatcp!` yields `&'static str`, but `format_args!` requires a string *literal*
         // for its template. Splice the version as a runtime arg instead — this matches the
         // approach taken by every other CLI subcommand banner (see e.g. `outdated_command.rs`,
@@ -987,5 +977,3 @@ use super::TrackInstalledBin;
 use super::options::{Do, LogLevel, PatchFeatures};
 use super::package_json_editor::EditOptions;
 use super::workspace_package_json_cache::{GetJSONOptions, GetResult, MapEntry};
-
-// ported from: src/install/PackageManager/updatePackageJSONAndInstall.zig

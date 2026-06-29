@@ -1,5 +1,5 @@
 /// https://developer.mozilla.org/en-US/docs/Web/API/Request/mode
-#[repr(u8)] // Zig: enum(u2) — Rust has no u2; u8 is the smallest repr
+#[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum FetchRequestMode {
     SameOrigin,
@@ -8,16 +8,20 @@ pub enum FetchRequestMode {
     Navigate,
 }
 
-impl FetchRequestMode {
-    pub const MAP: phf::Map<&'static [u8], FetchRequestMode> = phf::phf_map! {
+bun_core::comptime_string_map! {
+    pub static MAP: FetchRequestMode = {
         b"same-origin" => FetchRequestMode::SameOrigin,
         b"no-cors" => FetchRequestMode::NoCors,
         b"cors" => FetchRequestMode::Cors,
         b"navigate" => FetchRequestMode::Navigate,
     };
-    // `pub const toJS = @import("../http_jsc/fetch_enums_jsc.zig").fetchRequestModeToJS;`
-    // → deleted: `to_js` is provided as an extension-trait method in `bun_http_jsc`
-    //   (see PORTING.md §Idiom map, *_jsc alias rule).
 }
 
-// ported from: src/http_types/FetchRequestMode.zig
+impl FetchRequestMode {
+    /// Same map as the module-level `MAP` static (the type is a zero-sized
+    /// handle over static data); external callers reach it as
+    /// `FetchRequestMode::MAP`.
+    pub const MAP: __ComptimeStringMap_MAP = __ComptimeStringMap_MAP(());
+    // `to_js` is provided as an extension-trait method in `bun_http_jsc`
+    // (see PORTING.md §Idiom map, *_jsc alias rule).
+}

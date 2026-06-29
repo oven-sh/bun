@@ -1,9 +1,5 @@
 use crate::css_parser as css;
 
-// blocked_on: rules/media + media_query::{MediaCondition,MediaFeature,...} +
-// properties/custom — only the gated `get_*_rules` / `add_unparsed_fallbacks`
-// bodies below reference these.
-
 use css::css_rules::media::MediaRule;
 
 use css::css_properties::custom::UnparsedProperty;
@@ -18,8 +14,7 @@ pub struct SupportsEntry {
     pub important_declarations: Vec<css::Property>,
 }
 
-// PORT NOTE: `deinit(this, arena)` deleted — all fields own their storage and drop
-// automatically. `css.deepDeinit` over the Vecs is handled by `Vec<Property>`'s Drop.
+// No explicit deinit — all fields own their storage and drop automatically.
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum DeclarationContext {
@@ -30,7 +25,7 @@ pub enum DeclarationContext {
 }
 
 pub struct PropertyHandlerContext<'a> {
-    // PORT NOTE: `arena` is the parser arena that owns the AST being
+    // `arena` is the parser arena that owns the AST being
     // minified; bound to `'a` alongside the other borrowed inputs.
     pub arena: &'a Bump,
     pub targets: css::targets::Targets,
@@ -96,12 +91,7 @@ impl<'a> PropertyHandlerContext<'a> {
     }
 }
 
-// ─── heavy rule-building helpers (gated) ──────────────────────────────────
-// blocked_on: css_rules::{CssRule,CssRuleList,StyleRule,SupportsRule,media},
-// selectors::parser::{Direction,Component,PseudoClass}, DeclarationBlock
-// construction with bump-allocated lists, properties/custom::UnparsedProperty.
-// These build whole rule subtrees and are only called from the (still-gated)
-// minify path; un-gate alongside `rules/style.rs`.
+// ─── heavy rule-building helpers ──────────────────────────────────────────
 
 impl<'a> PropertyHandlerContext<'a> {
     /// `'static`-erased arena handle for building `DeclarationBlock<'static>` /
@@ -135,7 +125,6 @@ impl<'a> PropertyHandlerContext<'a> {
         let mut dest: Vec<css::CssRule<T>> = Vec::with_capacity(self.supports.len());
 
         for entry in &self.supports {
-            // PERF(port): was appendAssumeCapacity
             dest.push(css::CssRule::Supports(css::SupportsRule {
                 condition: entry.condition.deep_clone(self.arena),
                 rules: css::CssRuleList {
@@ -192,8 +181,6 @@ impl<'a> PropertyHandlerContext<'a> {
                             media_type: css::media_query::MediaType::All,
                             condition: Some(MediaCondition::Feature(Box::new_in(
                                 MediaFeature::Plain {
-                                    // TODO(port): verify exact MediaFeatureName / MediaFeatureValue
-                                    // variant shapes from css::media_query once ported.
                                     name: css::media_query::MediaFeatureName::Standard(
                                         MediaFeatureId::PrefersColorScheme,
                                     ),
@@ -233,9 +220,7 @@ impl<'a> PropertyHandlerContext<'a> {
         dest
     }
 
-    // PORT NOTE: reshaped — Zig passed `comptime dir: []const u8` and `comptime decls: []const u8`
-    // and used `@field` to select the Direction variant and the self.ltr/self.rtl Vec by name.
-    // Rust has no @field; pass the Direction value and a borrow of the decls Vec directly.
+    // Takes the Direction value and a borrow of the decls Vec directly.
     pub fn get_additional_rules_helper<T>(
         &self,
         dir: css::selector::parser::Direction,
@@ -267,7 +252,7 @@ impl<'a> PropertyHandlerContext<'a> {
 
 impl<'a> PropertyHandlerContext<'a> {
     pub fn reset(&mut self) {
-        // PORT NOTE: per-element `deinit()` calls dropped — Vec::clear drops each element,
+        // Per-element `deinit()` calls dropped — Vec::clear drops each element,
         // and SupportsEntry / Property own their resources via Drop.
         self.supports.clear();
         self.ltr.clear();
@@ -329,13 +314,13 @@ impl<'a> PropertyHandlerContext<'a> {
         }
 
         let fallbacks = unparsed.value.get_fallbacks(bump, &self.targets);
-        // PORT NOTE: Zig `for (fallbacks.slice()) |c|` copies by value; `SmallList`
+        // `SmallList`
         // has no `IntoIterator`, so spill to a Vec to preserve P3-before-LAB order.
         for condition_and_fallback in fallbacks.to_owned_slice().into_vec() {
             self.add_conditional_property(
                 condition_and_fallback.0,
                 css::Property::Unparsed(UnparsedProperty {
-                    // `PropertyId` is `Copy`; Zig `deepClone` was identity.
+                    // `PropertyId` is `Copy`.
                     property_id: unparsed.property_id,
                     value: condition_and_fallback.1,
                 }),
@@ -343,5 +328,3 @@ impl<'a> PropertyHandlerContext<'a> {
         }
     }
 }
-
-// ported from: src/css/context.zig

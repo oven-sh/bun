@@ -26,7 +26,7 @@ use crate::cli::pm_why_command::PmWhyCommand;
 pub use crate::cli::pack_command::PackCommand;
 pub use crate::cli::scan_command::ScanCommand;
 
-// PORT NOTE: Owned snapshot of `Lockfile.Tree.Iterator(.node_modules).Next`.
+// Owned snapshot of `Lockfile.Tree.Iterator(.node_modules).Next`.
 // `tree::IteratorNext` borrows the iterator's internal `path_buf`; we copy
 // into owned storage so the `directories` Vec can outlive each `next()` call.
 pub struct NodeModulesFolder {
@@ -34,15 +34,13 @@ pub struct NodeModulesFolder {
     dependencies: Box<[DependencyID]>,
 }
 
-// PORT NOTE: transient sort-comparator context; lifetime is fn-local (BORROW_PARAM).
+// Transient sort-comparator context; lifetime is fn-local.
 struct ByName<'a> {
     dependencies: &'a [Dependency],
     buf: &'a [u8],
 }
 
 impl<'a> ByName<'a> {
-    // PORT NOTE: Zig pdq takes a strict-less-than predicate; Rust
-    // `sort_unstable_by` requires a total `Ordering`.
     pub(crate) fn cmp(&self, lhs: DependencyID, rhs: DependencyID) -> Ordering {
         self.dependencies[lhs as usize]
             .name
@@ -54,7 +52,7 @@ impl<'a> ByName<'a> {
 pub struct PackageManagerCommand;
 
 impl PackageManagerCommand {
-    // PORT NOTE: takes `LogLevel` instead of `&mut PackageManager` so callers
+    // Takes `LogLevel` instead of `&mut PackageManager` so callers
     // can keep `pm` mutably borrowed by `LoadResult` (which holds
     // `&mut Lockfile` into `pm.lockfile`) across this call.
     pub fn handle_load_lockfile_errors(load_lockfile: &LoadResult<'_>, log_level: LogLevel) {
@@ -79,7 +77,6 @@ impl PackageManagerCommand {
     pub fn print_hash(ctx: Command::Context, file: &File) -> Result<(), bun_core::Error> {
         let cli = CommandLineArguments::parse(Subcommand::Pm)?;
         let (pm, _cwd) = PackageManager::init(ctx, cli, Subcommand::Pm)?;
-        // PORT NOTE: `defer ctx.allocator.free(cwd)` dropped — `_cwd: Box<[u8]>` drops at scope exit.
 
         let bytes = match file.read_to_end() {
             Ok(bytes) => bytes,
@@ -90,7 +87,7 @@ impl PackageManagerCommand {
         };
 
         let log_level = pm.options.log_level;
-        // PORT NOTE: reshaped for borrowck — Zig `pm.lockfile.loadFromBytes(pm, …)`
+        // Reshaped for borrowck — `pm.lockfile.load_from_bytes(pm, …)`
         // is a self-referential split borrow. Derive both halves through `pm`
         // (not the raw `pm_ptr`) so the outer borrow stays on the stack.
         let pm_raw: *mut PackageManager = pm;
@@ -114,8 +111,7 @@ impl PackageManagerCommand {
     }
 
     fn get_subcommand(args_ptr: &mut &'static [&'static [u8]]) -> &'static [u8] {
-        // PORT NOTE: reshaped for borrowck — Zig copied `*args_ptr` to a local,
-        // mutated it, and `defer`-wrote it back. We mutate through `args_ptr`
+        // Mutates through `args_ptr`
         // directly so the reslice persists into `pm.options.positionals`.
         let mut subcommand: &[u8] = if !args_ptr.is_empty() {
             args_ptr[0]
@@ -160,7 +156,8 @@ impl PackageManagerCommand {
   <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder\n\
   <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder\n\
   <b><green>bun<r> <blue>list<r>                  list the dependency tree according to the current lockfile\n\
-  <d>└<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile\n\
+  <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile\n\
+  <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies\n\
   <b><green>bun pm<r> <blue>why<r> <d>\\<pkg\\><r>            show dependency tree explaining why a package is installed\n\
   <b><green>bun pm<r> <blue>whoami<r>               print the current npm username\n\
   <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>\n\
@@ -193,10 +190,9 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
     }
 
     pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
-        // PORT NOTE: Zig `std.process.argsAlloc(ctx.allocator)[1..]` → collect
-        // process-static argv (already skips argv[0] internally? no — `Argv`
-        // includes argv[0]) into a borrowed-slice Vec so `&[&[u8]]` callers
-        // (TrustCommand/UntrustedCommand, `left_has_any_in_right`) keep their shape.
+        // `bun_core::argv()` includes argv[0]; skip it and collect into a
+        // borrowed-slice Vec so `&[&[u8]]` callers (TrustCommand/UntrustedCommand,
+        // `left_has_any_in_right`) keep their shape.
         let args_vec: Vec<&'static [u8]> = bun_core::argv().into_iter().skip(1).collect();
         let args: &[&[u8]] = &args_vec;
 
@@ -228,17 +224,16 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 return Err(err);
             }
         };
-        // PORT NOTE: `defer ctx.allocator.free(cwd)` — `cwd: Box<[u8]>` drops at scope exit.
 
-        // PORT NOTE: reshaped for borrowck — `pm: &mut PackageManager`;
-        // many Zig call sites alias `pm` and `pm.lockfile` simultaneously. Hold a
-        // raw pointer for those re-entry points (Zig's `*PackageManager` is raw).
+        // Reshaped for borrowck — `pm: &mut PackageManager`;
+        // several call sites need `pm` and `pm.lockfile` simultaneously. Hold a
+        // raw pointer for those re-entry points.
         let pm_ptr: *mut PackageManager = pm;
 
         let mut subcommand: &[u8] = if is_direct_whoami {
             b"whoami"
         } else {
-            // PORT NOTE: Zig `getSubcommand(&pm.options.positionals)` defer-writes the
+            // `get_subcommand` writes the
             // advanced slice back into the field; downstream branches (cache rm, view,
             // version/why/pkg) index `positionals[1]/[2]` *after* that advance. Pass the
             // field itself by `&mut` so the reslice persists.
@@ -316,8 +311,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 'warner: {
                     if Output::enable_ansi_colors_stderr() {
                         if let Some(path) = env_var::PATH.get() {
-                            // PORT NOTE: `std.mem.tokenizeScalar` skips empty
-                            // segments; mirror with `split` + `filter`.
+                            // skip empty segments
                             let mut path_iter = path
                                 .split(|b| *b == bun_paths::DELIMITER)
                                 .filter(|s| !s.is_empty());
@@ -538,15 +532,25 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 more_packages[0] = true;
             }
 
+            let trusted_only = strings::left_has_any_in_right(args, &[b"--trusted"]);
+
             if strings::left_has_any_in_right(args, &[b"-A", b"-a", b"--all"]) {
-                print_node_modules_folder_structure(
-                    &first_directory,
-                    None,
-                    0,
-                    &mut directories,
-                    lockfile,
-                    &mut more_packages,
-                )?;
+                if trusted_only {
+                    // Trust is by package name, not tree position, so a trusted
+                    // package nested under an untrusted parent must still be
+                    // shown. Walk every node_modules folder and print a flat
+                    // list instead of pruning the tree.
+                    print_trusted_dependencies_flat(&first_directory, &directories, lockfile);
+                } else {
+                    print_node_modules_folder_structure(
+                        &first_directory,
+                        None,
+                        0,
+                        &mut directories,
+                        lockfile,
+                        &mut more_packages,
+                    )?;
+                }
             } else {
                 let mut cwd_buf = PathBuffer::uninit();
                 let path = match bun_sys::getcwd(&mut cwd_buf[..]) {
@@ -561,6 +565,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 let dependencies = lockfile.buffers.dependencies.as_slice();
                 let slice = lockfile.packages.slice();
                 let resolutions = slice.items_resolution();
+                let pkg_names = slice.items_name();
                 let root_deps = slice.items_dependencies()[0];
 
                 Output::println(format_args!(
@@ -578,10 +583,25 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     dependencies,
                     buf: string_bytes,
                 };
-                // PERF(port): Zig `std.sort.pdq` (unstable pdqsort) — Rust
-                // `sort_unstable_by` is the matching pdqsort; names are
+                // `sort_unstable_by` is pdqsort; names are
                 // unique so stability is irrelevant.
                 sorted_dependencies.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
+
+                if trusted_only {
+                    sorted_dependencies.retain(|&dep_id| {
+                        let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
+                        if package_id as usize >= lockfile.packages.len() {
+                            return false;
+                        }
+                        let alias = dependencies[dep_id as usize].name.slice(string_bytes);
+                        let pkg_name = pkg_names[package_id as usize].slice(string_bytes);
+                        lockfile.has_trusted_dependency(
+                            alias,
+                            pkg_name,
+                            &resolutions[package_id as usize],
+                        )
+                    });
+                }
 
                 for (index, &dependency_id) in sorted_dependencies.iter().enumerate() {
                     let package_id =
@@ -629,8 +649,8 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 }
             }
             let log_level = pm.options.log_level;
-            // PORT NOTE: reshaped for borrowck — Zig
-            // `migration.detectAndLoadOtherLockfile(&pm.lockfile, .cwd(), pm, ctx.log)`
+            // Reshaped for borrowck —
+            // `detect_and_load_other_lockfile(&pm.lockfile, .cwd(), pm, ctx.log)`
             // is a self-referential split borrow. Derive both halves through
             // `pm` (not the raw `pm_ptr`) so the outer borrow stays on the
             // Stacked-Borrows stack.
@@ -655,7 +675,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 Global::exit(1);
             }
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
-            // PORT NOTE: reshaped for borrowck — `save_to_disk` needs
+            // Reshaped for borrowck — `save_to_disk` needs
             // `&mut Lockfile` (self) and `&LoadResult` simultaneously, but
             // `LoadResultOk.lockfile` already holds the only `&mut` into the
             // boxed lockfile. Project that field to a raw pointer (no second
@@ -672,8 +692,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             }
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"version") {
-            // PORT NOTE: `pm.options.positionals: &'static [&'static [u8]]`
-            // coerces to `&[&[u8]]` (covariant in both lifetimes).
             let positionals: &[&[u8]] = pm.options.positionals;
             PmVersionCommand::exec(ctx, pm, positionals, &cwd)?;
             Global::exit(0);
@@ -711,7 +729,6 @@ fn print_node_modules_folder_structure(
     lockfile: &Lockfile,
     more_packages: &mut [bool],
 ) -> Result<(), bun_core::Error> {
-    // PORT NOTE: `lockfile.allocator` dropped — global mimalloc.
     let resolutions = lockfile.packages.items_resolution();
     let string_bytes = lockfile.buffers.string_bytes.as_slice();
 
@@ -783,8 +800,7 @@ fn print_node_modules_folder_structure(
         dependencies,
         buf: string_bytes,
     };
-    // PERF(port): Zig `std.sort.pdq` (unstable pdqsort) — Rust
-    // `sort_unstable_by` is the matching pdqsort; names are unique so
+    // `sort_unstable_by` is pdqsort; names are unique so
     // stability is irrelevant.
     sorted_dependencies.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
 
@@ -886,6 +902,80 @@ fn print_node_modules_folder_structure(
     Ok(())
 }
 
-use bun_core::fmt::buf_print_infallible as buf_print;
+fn print_trusted_dependencies_flat(
+    first_directory: &NodeModulesFolder,
+    directories: &[NodeModulesFolder],
+    lockfile: &Lockfile,
+) {
+    let mut cwd_buf = PathBuffer::uninit();
+    let path = match bun_sys::getcwd(&mut cwd_buf[..]) {
+        Ok(len) => &cwd_buf[..len],
+        Err(_) => {
+            bun_core::pretty_errorln!("<r><red>error<r>: Could not get current working directory",);
+            Global::exit(1);
+        }
+    };
+    Output::println(format_args!("{} node_modules", bstr::BStr::new(path)));
 
-// ported from: src/cli/package_manager_command.zig
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions_buf = lockfile.buffers.resolutions.as_slice();
+    let string_bytes = lockfile.buffers.string_bytes.as_slice();
+    let slice = lockfile.packages.slice();
+    let resolutions = slice.items_resolution();
+    let pkg_names = slice.items_name();
+    let pkg_count = lockfile.packages.len();
+
+    let mut seen: Vec<bool> = vec![false; pkg_count];
+    let mut trusted: Vec<DependencyID> = Vec::new();
+
+    let mut visit = |dep_id: DependencyID| {
+        let package_id = resolutions_buf[dep_id as usize];
+        if package_id as usize >= pkg_count {
+            return;
+        }
+        if seen[package_id as usize] {
+            return;
+        }
+        let alias = dependencies[dep_id as usize].name.slice(string_bytes);
+        let pkg_name = pkg_names[package_id as usize].slice(string_bytes);
+        if lockfile.has_trusted_dependency(alias, pkg_name, &resolutions[package_id as usize]) {
+            seen[package_id as usize] = true;
+            trusted.push(dep_id);
+        }
+    };
+    for &dep_id in first_directory.dependencies.iter() {
+        visit(dep_id);
+    }
+    for folder in directories {
+        for &dep_id in folder.dependencies.iter() {
+            visit(dep_id);
+        }
+    }
+
+    let by_name = ByName {
+        dependencies,
+        buf: string_bytes,
+    };
+    trusted.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
+
+    for (index, &dep_id) in trusted.iter().enumerate() {
+        let package_id = resolutions_buf[dep_id as usize];
+        let name = dependencies[dep_id as usize].name.slice(string_bytes);
+        let resolution = resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto);
+        if index + 1 < trusted.len() {
+            bun_core::prettyln!(
+                "<d>├──<r> {}<r><d>@{}<r>\n",
+                bstr::BStr::new(name),
+                resolution,
+            );
+        } else {
+            bun_core::prettyln!(
+                "<d>└──<r> {}<r><d>@{}<r>\n",
+                bstr::BStr::new(name),
+                resolution,
+            );
+        }
+    }
+}
+
+use bun_core::fmt::buf_print_infallible as buf_print;

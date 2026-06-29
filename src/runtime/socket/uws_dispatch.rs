@@ -19,24 +19,19 @@ use bun_uws_sys::{ConnectingSocket, SocketKind, us_bun_verify_error_t, us_socket
 
 use super::uws_handlers as handlers;
 
-// (Zig had a `comptime { _ = us_dispatch_*; }` force-reference block here to
-// keep the exports in the link even if nothing in Zig calls them. Rust links
-// every `#[no_mangle] pub extern "C"` symbol unconditionally, so it is dropped.)
-
-/// kind → vtable. Rust kinds get a comptime-generated `Trampolines<H>` vtable
+/// kind → vtable. Rust kinds get a monomorphized `Trampolines<H>` vtable
 /// (so the call is *still* indirect by one pointer, but the table itself is
 /// `.rodata` and there's exactly one per kind — not one per connection). C++
 /// kinds use the per-group vtable since the handler closure differs per App.
 ///
 /// `Invalid` is intentionally null so a missed `kind` stamp crashes here
 /// instead of dispatching into the wrong handler.
-// PERF(port): Zig built this at comptime into .rodata. `LazyLock` adds a
+// PERF: `LazyLock` adds a
 // once-init branch; once `vtable::make` is `const fn`, switch to a plain
 // `static`/`const`.
 //
-// PORT NOTE: Zig used `std.EnumArray(SocketKind, ?*const VTable)`. `SocketKind`
-// is `#[repr(u8)]` with dense 0..N discriminants (see uws/lib.rs), so a plain
-// array indexed by `kind as usize` is the exact equivalent — no `enum_map`
+// `SocketKind` is `#[repr(u8)]` with dense 0..N discriminants (see uws/lib.rs),
+// so a plain array indexed by `kind as usize` works — no `enum_map`
 // derive needed on the upstream type.
 const SOCKET_KIND_COUNT: usize = SocketKind::UwsWsTls as usize + 1;
 
@@ -86,7 +81,6 @@ fn vt(s: *mut us_socket_t) -> &'static VTable {
     let kind = s.kind();
     match kind {
         SocketKind::Invalid => {
-            // TODO(port): bun.Output.panic formatting (group={*})
             panic!("us_socket_t with kind=invalid (group={:p})", s.raw_group())
         }
         // Per-group vtable: uWS C++ installs a different `HttpContext<SSL>*`
@@ -111,7 +105,6 @@ fn vtc(c: *mut ConnectingSocket) -> &'static VTable {
     let kind = c.kind();
     match kind {
         SocketKind::Invalid => {
-            // TODO(port): bun.Output.panic formatting
             panic!("us_connecting_socket_t with kind=invalid")
         }
         SocketKind::Dynamic
@@ -207,12 +200,15 @@ pub(crate) unsafe extern "C" fn us_dispatch_ssl_raw_tap(
         // `twin` is `IntrusiveRc<Self>` (intrusive ref-counted heap pointer);
         // grab the raw `*mut` without consuming the ref so the +1 stays put.
         let raw: *mut TLSSocket = raw.as_ptr();
+        // A negative length from the C side means there is nothing to deliver;
+        // never panic across the `extern "C"` boundary.
+        let Ok(len) = usize::try_from(len) else {
+            return s;
+        };
         // SAFETY: `data` points to `len` readable bytes from the TLS BIO; loop.c
         // guarantees the buffer outlives this call.
-        let slice =
-            unsafe { core::slice::from_raw_parts(data, usize::try_from(len).expect("len >= 0")) };
-        // Zig: `raw.onData(TLSSocket.Socket.from(s), data[..])` where
-        // `Socket = uws.NewSocketHandler(ssl)`. SAFETY: `twin` holds a live +1
+        let slice = unsafe { core::slice::from_raw_parts(data, len) };
+        // SAFETY: `twin` holds a live +1
         // ref to the `[raw, _]` half; dispatch is single-threaded so no aliasing
         // `&mut` exists. `on_data` takes `*mut Self` (noalias re-entrancy fix).
         unsafe { TLSSocket::on_data(raw, NewSocketHandler::<true>::from(s), slice) };
@@ -220,4 +216,65 @@ pub(crate) unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     s
 }
 
-// ported from: src/runtime/socket/uws_dispatch.zig
+/// A new (resumable) TLS session is ready. BoringSSL's new-session callback
+/// parks the serialized session while `SSL_read`/`SSL_do_handshake` runs;
+/// `ssl_flush_pending_session()` dispatches it here once that stack has
+/// unwound. Mirrors Node's `NewSessionCallback` → `onnewsession` flow. Only
+/// `bun_socket_tls` sockets reach this.
+///
+/// # Safety
+/// `openssl.c` must pass a live, non-null `s` whose ext slot holds a valid
+/// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn us_dispatch_session(s: *mut us_socket_t, data: *const u8, len: c_int) {
+    let s_ref = us_socket_t::opaque_mut(s);
+    if s_ref.kind() != SocketKind::BunSocketTls {
+        return;
+    }
+    type TLSSocket = super::NewSocket<true>;
+    let tls_ptr: *mut TLSSocket = *s_ref.ext::<*mut TLSSocket>();
+    if tls_ptr.is_null() {
+        return;
+    }
+    // A negative length from the C side means there is nothing to deliver;
+    // never panic across the `extern "C"` boundary.
+    let Ok(len) = usize::try_from(len) else {
+        return;
+    };
+    // SAFETY: `data` points to `len` readable bytes owned by the caller for the
+    // duration of this call.
+    let slice = unsafe { core::slice::from_raw_parts(data, len) };
+    // SAFETY: ext slot for BunSocketTls holds a live *mut TLSSocket; dispatch is
+    // single-threaded. `on_session` takes `*mut Self` (noalias re-entrancy).
+    let _ = unsafe { TLSSocket::on_session(tls_ptr, slice) };
+}
+
+/// Hands an NSS key-log line parked by the keylog callback to the JS
+/// `keylog` handler.
+///
+/// # Safety
+/// `openssl.c` must pass a live, non-null `s` whose ext slot holds a valid
+/// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn us_dispatch_keylog(s: *mut us_socket_t, data: *const u8, len: c_int) {
+    let s_ref = us_socket_t::opaque_mut(s);
+    if s_ref.kind() != SocketKind::BunSocketTls {
+        return;
+    }
+    type TLSSocket = super::NewSocket<true>;
+    let tls_ptr: *mut TLSSocket = *s_ref.ext::<*mut TLSSocket>();
+    if tls_ptr.is_null() {
+        return;
+    }
+    // A negative length from the C side means there is nothing to deliver;
+    // never panic across the `extern "C"` boundary.
+    let Ok(len) = usize::try_from(len) else {
+        return;
+    };
+    // SAFETY: `data` points to `len` readable bytes owned by the caller for the
+    // duration of this call.
+    let slice = unsafe { core::slice::from_raw_parts(data, len) };
+    // SAFETY: ext slot for BunSocketTls holds a live *mut TLSSocket; dispatch is
+    // single-threaded. `on_keylog` takes `*mut Self` (noalias re-entrancy).
+    let _ = unsafe { TLSSocket::on_keylog(tls_ptr, slice) };
+}

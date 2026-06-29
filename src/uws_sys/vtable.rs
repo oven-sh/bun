@@ -32,15 +32,13 @@ use crate::socket_group::VTable;
 use crate::thunk;
 use crate::{ConnectingSocket, us_bun_verify_error_t, us_socket_t};
 
-// TODO(port): Zig uses `@hasDecl(H, "onX")` structural reflection to decide
-// which vtable slots are populated. Rust has no equivalent, so handlers
-// implement this trait and set the `HAS_ON_*` associated consts for each
-// method they actually provide. Default impls are `unreachable!()` and the
-// corresponding vtable slot is left `None` when the const is `false`.
+// Handlers implement this trait and set the `HAS_ON_*` associated consts for
+// each method they actually provide. Default impls are `unreachable!()` and
+// the corresponding vtable slot is left `None` when the const is `false`.
 pub trait Handler: 'static {
     /// What `us_socket_ext` holds. Ignored when `HAS_EXT == false`.
     type Ext;
-    /// Zig: `@hasDecl(H, "Ext")`. When false, handlers take `(s, …)` instead
+    /// When false, handlers take `(s, …)` instead
     /// of `(ext, s, …)` and recover their owner from `s.group().owner::<T>()`.
     const HAS_EXT: bool = true;
 
@@ -100,10 +98,9 @@ pub trait Handler: 'static {
         unreachable!()
     }
 
-    // TODO(port): Zig's `HAS_EXT == false` path drops the `ext` arg entirely
-    // (handlers take `(s, …)`). Rust can't change a trait method's arity by a
-    // const, so the no-ext variants are separate methods. Only called when
-    // `HAS_EXT == false`.
+    // When `HAS_EXT == false`, handlers take `(s, …)`. Rust can't change a
+    // trait method's arity by a const, so the no-ext variants are separate
+    // methods. Only called when `HAS_EXT == false`.
     fn on_open_no_ext(_s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
         unreachable!()
     }
@@ -209,14 +206,8 @@ impl<H: Handler> Make<H> {
 pub(crate) struct Trampolines<H>(core::marker::PhantomData<H>);
 
 impl<H: Handler> Trampolines<H> {
-    // Zig: `inline fn call(s, comptime f, extra)` — conditionally prepends
-    // `s.ext(@typeInfo(E).pointer.child)` to the arg tuple. Rust can't splat
-    // tuples into a call, so each trampoline inlines the HAS_EXT branch.
-    //
-    // TODO(port): Zig's `s.ext(@typeInfo(E).pointer.child)` unwraps the
-    // pointer-child of `H.Ext` (e.g. `*MySocket` → `MySocket`) before calling
-    // `us_socket_ext`. Here `H::Ext` is the *pointee* type directly and
-    // `us_socket_t::ext::<T>()` returns `&mut T`.
+    // Rust can't splat tuples into a call, so each trampoline inlines the
+    // HAS_EXT branch.
     #[inline(always)]
     fn ext(s: *mut us_socket_t) -> &'static mut H::Ext {
         // S008: `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the
@@ -351,5 +342,3 @@ impl<H: Handler> Trampolines<H> {
         }
     }
 }
-
-// ported from: src/uws_sys/vtable.zig

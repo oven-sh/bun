@@ -1,4 +1,4 @@
-//! `to_js`/`to_blob` bridges for `bundler/OutputFile.zig`. Exposed as an
+//! `to_js`/`to_blob` bridges for the bundler's `OutputFile`. Exposed as an
 //! extension trait so call sites stay `output.to_js(global)`.
 //!
 //! LAYERING: this file lives in `bun_runtime` (not `bun_bundler_jsc`) because
@@ -22,7 +22,7 @@ use crate::webcore::blob::store::StoreExt as _;
 use crate::webcore::blob::{SizeType as BlobSizeType, Store as BlobStore};
 
 /// Heap-dupe `path` into an owning `PathLike` so the resulting `Blob.Store`
-/// outlives the borrowed source. Mirrors Zig's `allocator.dupe(u8, path)`.
+/// outlives the borrowed source.
 #[inline]
 fn dupe_path_like(path: &[u8]) -> PathLike {
     PathLike::EncodedSlice(
@@ -80,9 +80,8 @@ impl SavedFile {
         .expect("unreachable");
 
         let blob = Blob::init_with_store(store, global_this);
-        // PORT NOTE: Zig overwrites `blob.content_type = mime.value` here;
-        // `init_with_store` already populated it from the store's `File`
-        // mime (which is the same value), so the overwrite is a no-op.
+        // `init_with_store` already populated `blob.content_type` from the
+        // store's `File` mime, so no separate assignment is needed.
         blob.size.set(byte_size as BlobSizeType);
         let ptr = Blob::new(blob);
         // SAFETY: `ptr` is a freshly heap-allocated `*mut Blob` from
@@ -109,10 +108,9 @@ impl OutputFileJsc for OutputFile {
             _ => {}
         }
 
-        // PORT NOTE: each Zig arm reassigns `this.value = .buffer{.{}}` after
-        // consuming the payload. Taking the value out up-front avoids the
-        // borrowck conflict between `&mut self.value` (match scrutinee) and
-        // `self.{hash,loader,...}` reads inside the arms.
+        // Taking the value out up-front avoids the borrowck conflict between
+        // `&mut self.value` (match scrutinee) and `self.{hash,loader,...}`
+        // reads inside the arms.
         let value = core::mem::replace(
             &mut self.value,
             OutputFileValue::Buffer {
@@ -273,5 +271,3 @@ impl OutputFileJsc for OutputFile {
         }
     }
 }
-
-// ported from: src/bundler_jsc/output_file_jsc.zig

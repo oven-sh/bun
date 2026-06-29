@@ -97,6 +97,7 @@ members = [
   "src/simdutf_sys",
   "src/which",
   "src/transpiler",
+  "src/react_compiler",
   "src/spawn",
   "src/spawn_sys",
   "src/bunfig",
@@ -124,13 +125,7 @@ edition = "2024"
 #
 # `panic = "abort"` — the `std::panic` hook in `bun_crash_handler` aborts,
 # so `catch_unwind` is unreachable for Rust panics regardless, and no landing
-# pads means smaller `.pdata`/`.xdata`. Re-enabled to root-cause a latent
-# Windows-only `Strong<Impl>* corrupted (0x1)` in the fs/promises writeFile
-# async-iterable path (#53265+) that this codegen exposes: the corruption is
-# not an over-deref (the `raw_ref_count` underflow assert does not fire). The
-# Windows release link is temporarily `/OPT:NOICF` (flags.ts:778) so the PDB
-# symbolicates to the real owning struct instead of an ICF-folded body; once
-# root-caused, restore `/OPT:SAFEICF` there.
+# pads means smaller `.pdata`/`.xdata`.
 #
 # Cross-language LTO (`-C linker-plugin-lto`, so Rust bitcode joins the C++
 # `-flto=full` link) is wired in `scripts/build/rust.ts` behind `cfg.lto`; it
@@ -179,16 +174,23 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = "symbols"
+# Pin these so the shim PE is byte-identical across bun's own profiles.
+# rust.ts sets CARGO_PROFILE_RELEASE_{LTO,DEBUG_ASSERTIONS} for the main
+# bun_bin build and the shim build shares that env; without explicit values
+# here the env overrides on `release` would be inherited.
+debug-assertions = false
+overflow-checks = false
 
 [workspace.lints.rust]
 # Every rustc warning is an error. Individual lints below can override this
 # back to "warn" (their priority 0 beats the group's -1) where a warning level
 # is intentional.
 warnings = { level = "deny", priority = -1 }
-# `bun_asan` is set via RUSTFLAGS (`--cfg=bun_asan` + `--check-cfg=cfg(bun_asan)`)
-# by scripts/build/rust.ts for asan builds; register it here so a plain
-# `cargo build` / `cargo check` (without those flags) doesn't warn.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)'] }
+# `bun_asan` / `bun_debug` / `socket_fault_injection` are set via RUSTFLAGS
+# (`--cfg=...` + `--check-cfg=cfg(...)`) by scripts/build/rust.ts; register
+# them here so a plain `cargo build` / `cargo check` (without those flags)
+# doesn't warn.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(socket_fault_injection)'] }
 # link.exe unconditionally prints "Creating library X.dll.lib and object
 # X.dll.exp" to stdout when linking each proc-macro DLL on Windows hosts;
 # there is no linker flag to suppress it. The lint already exempts itself
@@ -326,7 +328,6 @@ rust-argon2 = "3.0"
 bcrypt = "0.19"
 getrandom = "0.4"
 strum = { version = "0.26", features = ["derive"] }
-phf = { version = "0.11", features = ["macros"] }
 # `allocator-api2` feature gives `hashbrown::HashMap<K, V, S, A>` an externally-
 # implementable `A` bound. We can't use hashbrown's own `nightly` feature (which
 # would bind `A` to `core::alloc::Allocator` directly) because it also enables
@@ -449,3 +450,6 @@ bun_runtime = { path = "src/runtime", default-features = false }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }
+
+[profile.release.package.bun_react_compiler]
+opt-level = "s"

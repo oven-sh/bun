@@ -27,18 +27,20 @@ impl Expect {
         expected.ensure_still_alive();
         let mut pass = false;
 
-        // FFI/BACKREF: erased to *mut c_void for for_each userdata; raw ptrs match the Zig
-        // `*JSGlobalObject` / `*bool` fields and avoid a struct lifetime param.
+        // FFI/BACKREF: erased to *mut c_void for for_each userdata; raw ptrs
+        // avoid a struct lifetime param.
         struct ExpectedEntry {
             global: *const JSGlobalObject,
             expected: JSValue,
             pass: *mut bool,
         }
 
+        // Jest's toContain uses `===` (Array.prototype.indexOf), not Object.is:
+        // `[-0]` contains `0`, `[NaN]` does not contain `NaN`.
         if value.js_type_loose().is_array_like() {
             let mut itr = value.array_iterator(global)?;
             while let Some(item) = itr.next()? {
-                if item.is_same_value(expected, global)? {
+                if item.is_strict_equal(expected, global)? {
                     pass = true;
                     break;
                 }
@@ -63,7 +65,7 @@ impl Expect {
                 pass: &raw mut pass,
             };
 
-            extern "C" fn same_value_iterator(
+            extern "C" fn strict_equal_iterator(
                 _: *mut VM,
                 _: &JSGlobalObject,
                 entry_: *mut c_void,
@@ -71,12 +73,12 @@ impl Expect {
             ) {
                 debug_assert!(!entry_.is_null());
                 // SAFETY: entry_ is &mut ExpectedEntry on the caller's stack, threaded through
-                // for_each as opaque userdata; non-null asserted above (Zig `entry_.?`).
+                // for_each as opaque userdata; non-null asserted above.
                 let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry>(entry_) };
                 // SAFETY: entry.global was set from `std::ptr::from_ref(global)` on the caller's
                 // stack frame, which outlives the synchronous for_each this callback runs inside.
                 let global = unsafe { &*entry.global };
-                let Ok(same) = item.is_same_value(entry.expected, global) else {
+                let Ok(same) = item.is_strict_equal(entry.expected, global) else {
                     return;
                 };
                 if same {
@@ -90,7 +92,7 @@ impl Expect {
             value.for_each(
                 global,
                 (&raw mut expected_entry).cast::<c_void>(),
-                same_value_iterator,
+                strict_equal_iterator,
             )?;
         } else {
             return Err(global.throw(format_args!(
@@ -106,13 +108,11 @@ impl Expect {
         }
 
         // handle failure
-        // PORT NOTE: Zig shares one Formatter across both `to_fmt` calls; in Rust each
-        // `to_fmt` borrows `&mut Formatter` for the lifetime of the returned wrapper, so
-        // create a second Formatter (cheap struct init, no shared state) to satisfy borrowck.
+        // Each `to_fmt` borrows `&mut Formatter` for the lifetime of the returned wrapper,
+        // so a second Formatter (cheap struct init, no shared state) satisfies borrowck.
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         if not {
-            // PERF(port): was comptime getSignature — would require `get_signature` to be `const fn` / use `const_format`.
             let signature = get_signature("toContain", "<green>expected<r>", true);
             return this.throw(
                 global,
@@ -128,7 +128,6 @@ impl Expect {
             );
         }
 
-        // PERF(port): was comptime getSignature — would require `get_signature` to be `const fn` / use `const_format`.
         let signature = get_signature("toContain", "<green>expected<r>", false);
         this.throw(
             global,
@@ -145,5 +144,3 @@ impl Expect {
         )
     }
 }
-
-// ported from: src/test_runner/expect/toContain.zig

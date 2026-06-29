@@ -67,5 +67,3 @@ const _: () = assert!(
     cfg!(target_endian = "little"),
     "EncodedValueDescriptor.as_bits assumes a little-endian system",
 );
-
-// ported from: src/jsc/DecodedJSValue.zig

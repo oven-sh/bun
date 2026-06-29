@@ -1,5 +1,6 @@
 use crate::mysql::mysql_param::Param;
 use crate::mysql::mysql_types::FieldType;
+use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use crate::mysql::protocol::column_definition41::ColumnFlags;
 use crate::mysql::protocol::command_type::CommandType;
 use crate::mysql::protocol::new_writer::{NewWriter, WriterContext};
@@ -7,7 +8,7 @@ use crate::shared::data::Data;
 
 bun_core::declare_scope!(MySQLQuery, visible);
 
-// PORT NOTE: Execute is a transient builder that borrows query/params/param_types
+// Execute is a transient builder that borrows query/params/param_types
 // from the caller for the duration of a single write() call. Most protocol
 // message structs avoid lifetime params; this one carries an explicit `'a`
 // because none of Box / &'static / raw fit a borrow-only message builder.
@@ -19,17 +20,15 @@ pub struct Execute<'a> {
     pub param_types: &'a [Param],
 }
 
-// PORT NOTE: Zig `deinit` iterated `params` and called `param.deinit()` on each.
-// In Rust, `Data` owns its resources via `Drop`, and `Execute` only borrows the
-// slice, so the slice owner is responsible for cleanup. No `Drop` impl here.
-// TODO(port): verify caller of Execute handles Data cleanup after write.
+// `Data` owns its resources via `Drop`, and `Execute` only borrows the
+// slice, so the slice owner is responsible for cleanup (each `Data`'s `Drop`
+// runs when the owning slice is dropped after `write`).
 
 impl<'a> Execute<'a> {
-    // TODO(port): narrow error set
     pub fn write_internal<C: WriterContext>(
         &self,
         writer: NewWriter<C>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyMySQLError> {
         let mut packet = writer.start(0)?;
         writer.int1(CommandType::COM_QUERY as u8)?;
         writer.write(self.query)?;
@@ -55,8 +54,7 @@ impl<'a> Execute<'a> {
                 let param_name = {
                     use std::io::Write;
                     let mut cursor = std::io::Cursor::new(&mut param_name_buf[..]);
-                    write!(&mut cursor, ":p{}", i)
-                        .map_err(|_| bun_core::err!("TooManyParameters"))?;
+                    write!(&mut cursor, ":p{}", i).map_err(|_| AnyMySQLError::TooManyParameters)?;
                     let len = usize::try_from(cursor.position()).expect("int cast");
                     &param_name_buf[..len]
                 };
@@ -76,7 +74,6 @@ impl<'a> Execute<'a> {
                     "Write param type {} len {} hex {:02x?}",
                     <&'static str>::from(param_type.r#type),
                     value.len(),
-                    // TODO(port): Zig `{x}` hex-dumps the slice; verify formatting matches
                     value,
                 );
                 if param_type.r#type.is_binary_format_supported() {
@@ -90,27 +87,16 @@ impl<'a> Execute<'a> {
         Ok(())
     }
 
-    // Zig: `pub const write = writeWrap(Execute, writeInternal).write;`
-    // PORT NOTE: Zig's `writeWrap` constructs a `NewWriter` around a raw context
-    // and calls `write_internal`. Here `writer` is already wrapped, so forward
-    // directly — `write_wrap`'s only job (the wrapping) is done by the caller.
-    pub fn write<C: WriterContext>(&self, writer: NewWriter<C>) -> Result<(), bun_core::Error> {
+    // `writer` is already wrapped, so forward directly.
+    pub fn write<C: WriterContext>(&self, writer: NewWriter<C>) -> Result<(), AnyMySQLError> {
         self.write_internal(writer)
     }
 }
 
-// Zig: `writer: anytype` — body calls .start/.int1/.write. Bound on the
-// concrete `NewWriter<C>` shape (the only `anytype` instantiation in-tree).
-pub fn execute<C: WriterContext>(
-    query: &[u8],
-    writer: NewWriter<C>,
-) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set
+pub fn execute<C: WriterContext>(query: &[u8], writer: NewWriter<C>) -> Result<(), AnyMySQLError> {
     let mut packet = writer.start(0)?;
     writer.int1(CommandType::COM_QUERY as u8)?;
     writer.write(query)?;
     packet.end()?;
     Ok(())
 }
-
-// ported from: src/sql/mysql/protocol/Query.zig

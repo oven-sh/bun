@@ -34,7 +34,8 @@ function resolveEmulator(name: string): string {
     const fallback = Bun.which(name.slice(0, -"-static".length));
     if (fallback) return fallback;
   }
-  // Last resort: resolve as a relative path (e.g. sde-external/sde.exe)
+  // Last resort: resolve as a path (absolute paths like C:\intel-sde\sde.exe
+  // pass through unchanged, relative paths resolve against cwd)
   return resolve(name);
 }
 

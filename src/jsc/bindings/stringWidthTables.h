@@ -30,9 +30,7 @@
 //   ```
 //
 // - The 3-stage codepoint classification table fuses the uucode-derived
-//   grapheme break classes (previously generated into
-//   src/string/immutable/grapheme_tables.zig, `zig build generate-grapheme-tables`)
-//   with the width and emoji data above. Each stage3 byte packs
+//   grapheme break classes with the width and emoji data above. Each stage3 byte packs
 //   GraphemeBreakClass (bits 0-4), width class (bits 5-6) and the Emoji
 //   property (bit 7) — see the banner above kGraphemeBreakStage1 and
 //   stringWidth.cpp. Regenerate with `bun scripts/generate-stringwidth-tables.mjs`.

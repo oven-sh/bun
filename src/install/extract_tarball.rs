@@ -21,8 +21,6 @@ use bun_libarchive::{ArchiveAppender, ExtractOptions};
 use bun_resolver::fs::FileSystem;
 #[cfg(windows)]
 use bun_sys::FdDirExt;
-
-// TODO(port): narrow error set
 type Error = bun_core::Error;
 
 const MAX_DECOMPRESSED_TARBALL_SIZE: usize = 2 * 1024 * 1024 * 1024;
@@ -96,15 +94,12 @@ pub(crate) fn build_url(
         full_name_,
         version,
         string_buf,
-        // Zig: `FileSystem.DirnameStore.print(fmt, args)` — format directly into
-        // the store's tail; no intermediate `String`.
+        // Format directly into the store's tail; no intermediate `String`.
         |args| FileSystem::instance().dirname_store().print(args),
     )
 }
 
-/// Generic URL builder. The Zig version threads `comptime PrinterContext`,
-/// `comptime ReturnType`, `comptime ErrorType` and a comptime `print` fn; in
-/// Rust the closure carries its own context and the generics collapse to `R, E`.
+/// Generic URL builder; the closure carries its own context.
 pub(crate) fn build_url_with_printer<R, E>(
     registry_: &[u8],
     full_name_: &StringOrTinyString,
@@ -125,7 +120,7 @@ pub(crate) fn build_url_with_printer<R, E>(
     // default_format = "{s}/{s}/-/"
     // `bun_fmt::s` writes bytes straight through — registry hosts, package names
     // and semver tags are pre-validated ASCII, so we don't need `bstr::BStr`'s
-    // Utf8Chunks scan (Zig `{s}` parity).
+    // Utf8Chunks scan.
     let registry = s(registry);
     let full_name = s(full_name);
     let name = s(name);
@@ -165,9 +160,6 @@ pub(crate) fn build_url_with_printer<R, E>(
     }
 }
 
-// TODO(port): `bun.ThreadlocalBuffers(struct{...})` returns a type with `.get()`
-// yielding a `*Bufs` into TLS. Model as a thread_local RefCell; callers borrow
-// for the duration of the function.
 struct TlBufs {
     final_path_buf: PathBuffer,
     folder_name_buf: PathBuffer,
@@ -238,9 +230,8 @@ impl ExtractTarball {
         let _tracer = bun_core::perf::trace("ExtractTarball.extract");
 
         let tmpdir = Dir::borrow(&self.temp_dir);
-        // Zig: `var tmpname_buf: [bun.MAX_PATH_BYTES]u8` — UTF-8 on every
-        // platform; the Windows tmpdir path is converted to wide at the
-        // `open_dir_at_windows_a` boundary, not here.
+        // UTF-8 on every platform; the Windows tmpdir path is converted to
+        // wide at the `open_dir_at_windows_a` boundary, not here.
         let mut tmpname_buf = PathBuffer::uninit();
         let (name, basename) = self.name_and_basename();
         let truncated_basename = &basename[0..basename.len().min(32)];
@@ -329,21 +320,8 @@ impl ExtractTarball {
                 && zlib_pool.list.capacity() > 16
                 && esimated_output_size > 0
             {
-                'use_libdeflate: {
-                    use bun_libdeflate_sys::libdeflate;
-                    let decompressor_ptr = libdeflate::Decompressor::alloc();
-                    if decompressor_ptr.is_null() {
-                        break 'use_libdeflate;
-                    }
-                    // `defer decompressor.deinit()` — RAII guard frees on scope exit.
-                    let _guard = scopeguard::guard(decompressor_ptr, |p| {
-                        // SAFETY: `p` was returned by libdeflate_alloc_decompressor and is
-                        // not used after this guard fires.
-                        unsafe { libdeflate::Decompressor::destroy(p) }
-                    });
-                    // SAFETY: alloc returned non-null; valid until destroy.
-                    let decompressor = unsafe { &mut *decompressor_ptr };
-
+                use bun_libdeflate_sys::libdeflate;
+                if let Some(mut decompressor) = libdeflate::OwnedDecompressor::new() {
                     zlib_pool.list.clear();
                     let result = decompressor.decompress_to_vec(
                         tgz_bytes,
@@ -353,7 +331,6 @@ impl ExtractTarball {
                     if result.status == libdeflate::Status::Success {
                         needs_to_decompress = false;
                     }
-
                     // If libdeflate fails for any reason, fallback to zlib.
                 }
             }
@@ -416,8 +393,6 @@ impl ExtractTarball {
                         outdirname: &mut resolved,
                     };
 
-                    // PERF(port): was comptime bool dispatch on verbose_install — folded into
-                    // `ExtractOptions::log` (runtime) — profile if hot.
                     let _ = Archiver::extract_to_dir(
                         &zlib_pool.list,
                         extract_destination.fd(),
@@ -435,7 +410,7 @@ impl ExtractTarball {
                     // installed from GitHub. package.json version becomes sort of
                     // meaningless in cases like this.
                     if !resolved.is_empty() {
-                        // `std.fs.Dir.createFileZ(".bun-tag", .{ .truncate = true })` + write
+                        // Create/truncate `.bun-tag`, then write the resolved tag.
                         if sys::File::openat(
                             extract_destination.fd(),
                             ZStr::from_static(b".bun-tag\0"),
@@ -456,8 +431,6 @@ impl ExtractTarball {
                     }
                 }
                 _ => {
-                    // PERF(port): was comptime bool dispatch on verbose_install — folded into
-                    // `ExtractOptions::log` (runtime) — profile if hot.
                     let _ = Archiver::extract_to_dir(
                         &zlib_pool.list,
                         extract_destination.fd(),
@@ -512,8 +485,7 @@ impl ExtractTarball {
 
         let tmpdir = Dir::borrow(&self.temp_dir);
         TL_BUFS.with_borrow_mut(|bufs| {
-            // PORT NOTE: reshaped for borrowck — Zig grabbed a raw `*TlBufs` from TLS;
-            // here the entire body lives inside the thread_local borrow closure.
+            // The entire body lives inside the thread_local borrow closure.
             let folder_name: &[u8] = match self.resolution.tag {
                 ResolutionTag::Npm => {
                     if !bun_install::dependency::is_safe_install_folder_name(name) {
@@ -923,5 +895,3 @@ impl ExtractTarball {
         })
     }
 }
-
-// ported from: src/install/extract_tarball.zig

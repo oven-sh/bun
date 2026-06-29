@@ -116,7 +116,11 @@ extern "C" int32_t add(int32_t a, int32_t b) {
 To compile:
 
 ```bash
-zig build-lib add.cpp -dynamic -lc -lc++
+# Linux
+clang++ -shared -fPIC add.cpp -o libadd.so
+
+# macOS
+clang++ -dynamiclib add.cpp -o libadd.dylib
 ```
 
 ---

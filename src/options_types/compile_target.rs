@@ -7,7 +7,7 @@
 use core::fmt;
 use std::io::Write as _;
 
-use bun_core::env::{Architecture, OperatingSystem};
+use bun_core::env::{ARCHITECTURE_NAMES, Architecture, OPERATING_SYSTEM_NAMES, OperatingSystem};
 use bun_core::{Environment, Global, env_var, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
 use bun_paths::{self as path, PathBuffer};
@@ -90,8 +90,6 @@ impl fmt::Display for BaselineFormatter {
     }
 }
 
-// TODO(port): impl From<DownloadError> for bun_core::Error
-
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum ParseError {
     #[error("UnsupportedTarget")]
@@ -99,7 +97,6 @@ pub enum ParseError {
     #[error("InvalidTarget")]
     InvalidTarget,
 }
-// TODO(port): impl From<ParseError> for bun_core::Error
 
 impl CompileTarget {
     pub fn eql(&self, other: &CompileTarget) -> bool {
@@ -115,17 +112,11 @@ impl CompileTarget {
     }
 
     pub fn to_npm_registry_url<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
-        // TODO(port): narrow error set
         if let Some(url) = env_var::BUN_COMPILE_TARGET_TARBALL_URL.get() {
             if strings::has_prefix(url, b"http://") || strings::has_prefix(url, b"https://") {
-                // TODO(port): lifetime — Zig returns the env var slice directly (`return url;`),
-                // which is not tied to `buf`. Could change the return type to allow returning a
-                // non-buf slice (e.g. Cow<'_, [u8]>). For now copy into buf without truncation.
-                if url.len() > buf.len() {
-                    return Err(bun_core::err!("BufferTooSmall"));
-                }
-                buf[..url.len()].copy_from_slice(url);
-                return Ok(&buf[..url.len()]);
+                // The env var slice is `&'static [u8]`,
+                // which outlives `'a`, so return it directly instead of copying into `buf`.
+                return Ok(url);
             }
         }
 
@@ -137,15 +128,12 @@ impl CompileTarget {
         buf: &'a mut [u8],
         registry_url: &[u8],
     ) -> Result<&'a [u8], bun_core::Error> {
-        // TODO(port): narrow error set
         // Validate the target is supported before building URL
         if !self.is_supported() {
             return Err(bun_core::err!("UnsupportedTarget"));
         }
 
-        // PERF(port): was comptime monomorphization (inline else over os/arch/libc/baseline
-        // building a comptime format string) — profile. Runtime concat is fine
-        // for a one-shot URL build.
+        // Runtime concat is fine for a one-shot URL build.
         let os = self.os.npm_name().as_bytes();
         let arch = self.arch.npm_name();
         let libc = self.libc.npm_name();
@@ -273,11 +261,11 @@ impl CompileTarget {
                 continue;
             }
 
-            if let Some(arch) = Architecture::NAMES.get(token) {
+            if let Some(arch) = ARCHITECTURE_NAMES.get(token) {
                 this.arch = *arch;
                 found_arch = true;
                 continue;
-            } else if let Some(os) = OperatingSystem::NAMES.get(token) {
+            } else if let Some(os) = OPERATING_SYSTEM_NAMES.get(token) {
                 this.os = *os;
                 found_os = true;
                 continue;
@@ -362,8 +350,8 @@ impl CompileTarget {
                     if token.is_empty() {
                         continue;
                     }
-                    if Architecture::NAMES.get(token).is_none()
-                        && OperatingSystem::NAMES.get(token).is_none()
+                    if ARCHITECTURE_NAMES.get(token).is_none()
+                        && OPERATING_SYSTEM_NAMES.get(token).is_none()
                         && token != b"modern"
                         && token != b"baseline"
                         && token != b"musl"
@@ -402,8 +390,6 @@ impl CompileTarget {
                 } else if strings::contains(input, b"wasm") {
                     bun_core::err_generic!("invalid target, WebAssembly is not supported. Sorry!");
                 } else if strings::contains(input, b"v") {
-                    // PORT NOTE: Zig used a comptime-concat format string with VERSION_STRING.
-                    // `format_args!` requires a literal; pass the version as a runtime arg.
                     bun_core::err_generic!(
                         "Please pass a complete version number to --target. For example, --target=bun-v{}",
                         Environment::VERSION_STRING,
@@ -426,12 +412,8 @@ impl CompileTarget {
     }
 
     pub fn define_values(&self) -> &'static [&'static [u8]] {
-        // PERF(port): was comptime monomorphization (inline else over os/arch/libc returning
-        // anonymous struct const). Could generate static tables via macro_rules! or
+        // Could generate static tables via macro_rules! or
         // const_format::concatcp! over OperatingSystem::name_string().
-        // TODO(port): this needs a static [&[u8]; 3] per (os, arch, libc) combo — the os
-        // string is `"\"" ++ os.nameString() ++ "\""` and the version is
-        // `"\"" ++ Global.package_json_version ++ "\""`, both comptime in Zig.
         macro_rules! table {
             ($platform:literal, $arch:literal) => {{
                 const VALUES: &[&[u8]] = &[
@@ -455,7 +437,6 @@ impl CompileTarget {
                     OperatingSystem::Windows => table!(b"\"win32\"", b"\"x64\""),
                     OperatingSystem::Freebsd => table!(b"\"freebsd\"", b"\"x64\""),
                     OperatingSystem::Wasm => table!(b"\"wasm\"", b"\"x64\""),
-                    // TODO(port): verify os.nameString() values match these literals
                 },
             },
             Architecture::Arm64 => match self.libc {
@@ -495,5 +476,3 @@ impl fmt::Display for CompileTarget {
 
 // `fromJS` / `fromSlice` re-exports from bundler_jsc deleted — see PORTING.md §Idiom map.
 // In Rust these are extension-trait methods living in bun_bundler_jsc.
-
-// ported from: src/options_types/CompileTarget.zig

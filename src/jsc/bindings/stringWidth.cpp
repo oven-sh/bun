@@ -9,7 +9,7 @@
 // autovectorizer. Escape-sequence scanning reuses the WTF::SIMD helpers in
 // ANSIHelpers.h shared with stripANSI/wrapAnsi/sliceAnsi.
 //
-// Rust/Zig callers (console.table column sizing, the markdown ANSI renderer)
+// Rust callers (console.table column sizing, the markdown ANSI renderer)
 // and sliceAnsi.cpp/wrapAnsi.cpp consume the `Bun__*` C exports at the bottom
 // of this file.
 

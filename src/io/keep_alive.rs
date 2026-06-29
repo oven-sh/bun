@@ -1,11 +1,9 @@
 //! Single cross-platform `KeepAlive`.
 //!
-//! Zig keeps two copies (`posix_event_loop.zig:5-114` /
-//! `windows_event_loop.zig:3-113`); the Rust ports were faithful duplicates.
-//! 9 of 14 methods were byte-identical; the 5 that diverge keep their
-//! per-platform behaviour via `#[cfg]` arms inline below — no caller-visible
-//! contract changes (all external users go through `bun_io::KeepAlive` and
-//! only touch the identical-signature methods).
+//! The few methods that diverge per platform keep their behaviour via
+//! `#[cfg]` arms inline below — no caller-visible contract changes (all
+//! external users go through `bun_io::KeepAlive` and only touch the
+//! identical-signature methods).
 
 use crate::EventLoopCtx;
 use crate::posix_event_loop::js_vm_ctx;
@@ -68,8 +66,8 @@ impl KeepAlive {
     /// Only intended to be used from EventLoop.Pollable
     #[cfg(windows)]
     pub fn activate(&mut self, loop_: &mut crate::Loop) {
-        // Zig `windows_event_loop.zig` guards on `!= .active` (vs posix
-        // `!= .inactive`); preserved verbatim.
+        // The Windows arm guards on `!= Active` (vs posix `!= Inactive`);
+        // preserved verbatim.
         if self.status != Status::Active {
             return;
         }
@@ -121,7 +119,9 @@ impl KeepAlive {
             return;
         }
         self.status = Status::Inactive;
-        // TODO(port): vm.pending_unref_counter must be Atomic; Zig uses @atomicRmw .Add .monotonic
+        // Cross-thread increment: the counter is an `AtomicI32` RMW'd with
+        // `Ordering::Relaxed` (see
+        // `jsc::VirtualMachine::pending_unref_counter`).
         #[cfg(not(windows))]
         vm.increment_pending_unref_counter();
         // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194
@@ -140,9 +140,8 @@ impl KeepAlive {
 
     /// Allow a poll to keep the process alive.
     ///
-    /// Raw-identifier alias of [`KeepAlive::ref_`] matching the Zig method name
-    /// `ref` exactly (per PORTING.md "same fn names" rule). Downstream ports
-    /// call both spellings; this keeps them source-compatible.
+    /// Raw-identifier alias of [`KeepAlive::ref_`]. Callers use both
+    /// spellings; this keeps them source-compatible.
     #[inline]
     pub fn r#ref(&mut self, event_loop_ctx: EventLoopCtx) {
         self.ref_(event_loop_ctx)

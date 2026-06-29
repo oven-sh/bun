@@ -6,5 +6,3 @@
 pub use bun_install_types::resolver_hooks::{
     ExternalPackageNameHashList, ExternalSlice, ExternalStringList, ExternalStringMap, VersionSlice,
 };
-
-// ported from: src/install/ExternalSlice.zig

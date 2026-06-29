@@ -271,7 +271,7 @@ static inline void InitCustomSecret(u8* customSecret, u64 seed64)
 // in the reference — each processes a fixed stripe of 16/32 bytes per iteration
 // with scalar integer ops — so they live outside the Highway per-ISA namespace
 // (no runtime dispatch, no baseline-allowlist entries). Straight C++ beats the
-// generic twox-hash Rust codegen and matches Zig's std.hash.XxHash{32,64}.
+// generic twox-hash Rust codegen.
 //
 // Output is bit-identical to the reference (and the retired twox-hash crate);
 // verified against the reference vectors and SMHasher constants in
@@ -667,13 +667,13 @@ uint64_t highway_xxhash3_64(const uint8_t* input, size_t len, uint64_t seed)
     return bun::xxh3::Hash64(input, len, seed);
 }
 
-// XXH32 one-shot. Scalar; bit-identical to the reference / Zig std.hash.XxHash32.
+// XXH32 one-shot. Scalar; bit-identical to the reference.
 uint32_t highway_xxhash32(const uint8_t* input, size_t len, uint32_t seed)
 {
     return bun::xxh3::XXH32(input, len, seed);
 }
 
-// XXH64 one-shot. Scalar; bit-identical to the reference / Zig std.hash.XxHash64.
+// XXH64 one-shot. Scalar; bit-identical to the reference.
 uint64_t highway_xxhash64(const uint8_t* input, size_t len, uint64_t seed)
 {
     return bun::xxh3::XXH64(input, len, seed);

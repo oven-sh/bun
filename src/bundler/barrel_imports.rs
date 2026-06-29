@@ -52,7 +52,7 @@ impl RequestedExports {
     }
 }
 
-// PORT NOTE: `original_alias` is stored as the raw arena `*const [u8]` (the
+// `original_alias` is stored as the raw arena `*const [u8]` (the
 // `NamedImport.alias` representation) instead of a tied `&'a [u8]` so the BFS
 // loop can hold a `BarrelExportResolution` across a `&mut graph.ast` reborrow
 // without the borrow checker seeing an overlap. The pointee outlives the
@@ -155,7 +155,6 @@ fn apply_barrel_optimization_impl(
 
     // Build the set of needed import_record_indices from already-requested
     // export names. Export * records are always needed.
-    // PERF(port): was stack-fallback (8192) — profile if hot.
     let mut needed_records: ArrayHashMap<u32, ()> = ArrayHashMap::default();
 
     for record_idx in ast.export_star_import_records.iter() {
@@ -181,7 +180,7 @@ fn apply_barrel_optimization_impl(
     // handles the case where file A imports Alpha from the barrel (previous
     // build) and file B adds Beta (current build). Without this, Alpha would
     // be re-deferred because only B's requests are in requested_exports.
-    // PORT NOTE: `DevServerHandle` is `Copy`; copied out so the `&self` borrow
+    // `DevServerHandle` is `Copy`; copied out so the `&self` borrow
     // doesn't conflict with later `&mut this.requested_exports`.
     let dev_handle = this.dev_server_handle().copied();
     if let Some(dev) = dev_handle {
@@ -208,7 +207,6 @@ fn apply_barrel_optimization_impl(
     // import records that share a path with any needed record.
     if dev_handle.is_some() {
         // Collect paths of needed records.
-        // PERF(port): was stack-fallback (4096) — profile if hot.
         let mut needed_paths: StringArrayHashMap<()> = StringArrayHashMap::default();
 
         for rec_idx in needed_records.keys() {
@@ -238,7 +236,7 @@ fn apply_barrel_optimization_impl(
 
     // Mark unneeded named re-export records as is_unused.
     let mut has_deferrals = false;
-    // PORT NOTE: reshaped for borrowck — collect (ref_, import_record_index)
+    // Borrowck: collect (ref_, import_record_index)
     // pairs first so we can mutate `ast.import_records` without aliasing
     // `ast.named_exports`/`ast.named_imports`.
     for i in 0..ast.named_exports.count() {
@@ -303,7 +301,7 @@ fn un_defer_record(import_records: &mut import_record::List, record_idx: u32) ->
 }
 
 /// BFS work queue item: un-defer an export from a barrel.
-// PORT NOTE: 'a borrows arena-backed AST alias strings.
+// `'a` borrows arena-backed AST alias strings.
 struct BarrelWorkItem<'a> {
     barrel_source_index: u32,
     alias: &'a [u8],
@@ -370,10 +368,9 @@ pub(crate) fn schedule_barrel_deferred_imports(
     result_source_index: u32,
     result_ast_target: bun_ast::Target,
 ) -> Result<i32, AllocError> {
-    // PORT NOTE: Zig passed `*ParseTask.Result.Success` and read `result.ast`
-    // after `graph.ast.set(idx, result.ast)` value-copied it. Rust *moves*
-    // `result.ast` into `graph.ast`, so this fn reads the just-written
-    // `graph.ast[result_source_index]` instead. Phase 1/2 only read
+    // `result.ast` is *moved*
+    // into `graph.ast` before this fn runs, so this fn reads the just-written
+    // `graph.ast[result_source_index]`. Phase 1/2 only read
     // `import_records` / `named_imports` for THIS index; the BFS (Phase 3)
     // takes fresh `&mut graph.ast` borrows after these raw reads are dead.
     //
@@ -388,7 +385,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
     let file_named_imports: bun_ptr::BackRef<JSAst::NamedImports> =
         bun_ptr::BackRef::new(&this.graph.ast.items_named_imports()[result_source_index as usize]);
 
-    // PORT NOTE: `DevServerHandle` copied out so `&mut this.*` field borrows
+    // `DevServerHandle` copied out so `&mut this.*` field borrows
     // don't conflict with the `&self` accessor.
     let dev_handle = this.dev_server_handle().copied();
 
@@ -402,7 +399,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // barrel optimization requires source_indices to seed requested_exports and to
     // BFS un-defer records. Resolve paths → source_indices here as a fallback.
     //
-    // PORT NOTE: reshaped for borrowck — `path_to_source_index_map` borrows
+    // Borrowck: `path_to_source_index_map` borrows
     // `&mut this.graph`; wrap in `BackRef` so the long-lived read borrow
     // doesn't conflict with `&mut this.requested_exports` /
     // `&mut this.graph.ast` below. The map is not mutated for the duration of
@@ -417,7 +414,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         None
     };
 
-    // See PORT NOTE above — read-only deref valid through Phase 2.
+    // Read-only deref — valid through Phase 2 (see the raw-read note above).
     let file_import_records = file_import_records.get();
 
     // Build a set of import_record_indices that have named_imports entries,
@@ -451,7 +448,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         }
     }
 
-    // See PORT NOTE above — read-only deref valid through Phase 2.
+    // Read-only deref — valid through Phase 2 (see the raw-read note above).
     for ni in file_named_imports.values() {
         if ni.import_record_index as usize >= file_import_records.len() {
             continue;
@@ -543,10 +540,9 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // Build work queue from this file's named_imports, then propagate
     // through chains of barrels. Only runs real work when barrels exist
     // (targets with deferred records).
-    // PERF(port): was stack-fallback (8192) — profile if hot.
     let mut queue: Vec<BarrelWorkItem> = Vec::new();
 
-    // See PORT NOTE above — read-only deref valid through Phase 2.
+    // Read-only deref — valid through Phase 2 (see the raw-read note above).
     for ni in file_named_imports.values() {
         if ni.import_record_index as usize >= file_import_records.len() {
             continue;
@@ -661,13 +657,12 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // dedup via requested_exports to prevent cycles.
     let initial_queue_len = queue.len();
 
-    // PERF(port): was stack-fallback (1024) — profile if hot.
     let mut barrels_to_resolve: ArrayHashMap<u32, ()> = ArrayHashMap::default();
 
     let mut newly_scheduled: i32 = 0;
     let mut qi: usize = 0;
     while qi < queue.len() {
-        // PORT NOTE: reshaped for borrowck — copy item fields out before pushing to queue later
+        // Copy item fields out before pushing to `queue` later (borrowck).
         let item_barrel_idx = queue[qi].barrel_source_index;
         let item_alias = queue[qi].alias;
         let item_is_star = queue[qi].is_star;
@@ -705,11 +700,11 @@ pub(crate) fn schedule_barrel_deferred_imports(
 
         // Use a helper to get barrel_ir freshly each time, since
         // resolveBarrelRecords can reallocate graph.ast and invalidate pointers.
-        // PORT NOTE: reshaped for borrowck — re-borrow graph.ast column after each mutation
+        // Re-borrow the `graph.ast` column after each mutation (borrowck).
         let barrel_ir = &mut this.graph.ast.items_import_records_mut()[barrel_idx as usize];
 
         if item_is_star {
-            // PORT NOTE: reshaped for borrowck — read flags by index, then mutate
+            // Read flags by index, then mutate (borrowck).
             let len = barrel_ir.len();
             for idx in 0..len {
                 let flags = barrel_ir.as_slice()[idx].flags;
@@ -733,7 +728,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         );
         let Some(resolution) = resolution else {
             // Name not in named re-exports — might come from export *.
-            // PORT NOTE: clone the small u32 slice so iterating it doesn't
+            // Clone the small u32 slice so iterating it doesn't
             // alias the mutable `barrel_ir` borrow taken inside the loop.
             let star_records: Vec<u32> =
                 this.graph.ast.items_export_star_import_records()[barrel_idx as usize].to_vec();
@@ -773,7 +768,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         }
 
         // `original_alias` is an arena-backed `StoreStr` valid for the
-        // bundler-arena lifetime (see `BarrelExportResolution` PORT NOTE).
+        // bundler-arena lifetime (see the comment on `BarrelExportResolution`).
         let propagate_alias: &[u8] = match resolution.original_alias {
             Some(p) => p.slice(),
             None => alias,
@@ -820,5 +815,3 @@ pub(crate) fn schedule_barrel_deferred_imports(
 fn persist_barrel_export(dev: &crate::dispatch::DevServerHandle, barrel_path: &[u8], alias: &[u8]) {
     dev.register_barrel_export(barrel_path, alias)
 }
-
-// ported from: src/bundler/barrel_imports.zig

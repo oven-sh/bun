@@ -25,21 +25,20 @@ use js_parser::defines::Define;
 use bun_ast::RuntimeTranspilerCache;
 
 /// Bump when the cache wire format or parser output changes. Mirrors
-/// `expected_version` in src/jsc/RuntimeTranspilerCache.zig.
+/// `EXPECTED_VERSION` in src/jsc/RuntimeTranspilerCache.rs.
 pub const RUNTIME_TRANSPILER_CACHE_VERSION: u32 = 20;
 
-/// Mirrors the Zig `pub var is_disabled` mutable global — written by T6
-/// (src/runtime/cli/Arguments.zig:1603, src/jsc/VirtualMachine.zig:1383) and
-/// flipped lazily on cache-dir resolution failure. Module-level so those
-/// writers can reach it; `disabled()` reads it.
+/// Written by CLI argument parsing and `VirtualMachine` init, and flipped
+/// lazily on cache-dir resolution failure. Module-level so those writers can
+/// reach it; `disabled()` reads it.
 pub static DISABLED: AtomicBool = AtomicBool::new(false);
 
 /// Extension surface for the canonical `RuntimeTranspilerCache` (defined in
 /// `bun_js_parser`). Separate trait so the env-var-dependent bodies stay in
 /// this crate without an orphan-rule violation.
 pub trait RuntimeTranspilerCacheExt {
-    /// Mirrors the Zig `pub var is_disabled` namespaced const — kept as an
-    /// associated fn so call-sites read `RuntimeTranspilerCache::disabled()`.
+    /// Kept as an associated fn so call-sites read
+    /// `RuntimeTranspilerCache::disabled()`.
     fn disabled() -> bool;
     fn set_disabled(v: bool);
 }
@@ -60,12 +59,10 @@ impl RuntimeTranspilerCacheExt for RuntimeTranspilerCache {
     }
 }
 
-/// Mirrors `RuntimeTranspilerCache.Encoding` (RuntimeTranspilerCache.zig:405).
-///
-/// PORT NOTE: this is the on-disk wire enum for `Metadata.output_encoding` —
+/// This is the on-disk wire enum for `Metadata.output_encoding` —
 /// NOT `js_parser::ExportsKind` (an unrelated `#[repr(u8)]` enum that happens
 /// to start at 0). The bundler-side cache loader maps `Latin1`/`Utf16` blobs
-/// into a `bun.String` (RuntimeTranspilerCache.zig:310-318) and only feeds
+/// into a `bun.String` and only feeds
 /// `Utf8` through `cloneUTF8`; callers must dispatch on these discriminants.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -77,9 +74,7 @@ pub enum CacheEncoding {
     Latin1 = 3,
 }
 
-/// Mirrors `RuntimeTranspilerCache.ModuleType` (RuntimeTranspilerCache.zig:399).
-///
-/// PORT NOTE: NOT `options::ModuleType` — the on-disk wire enum has `Esm`/`Cjs`
+/// On-disk wire enum — NOT `options::ModuleType`: it has `Esm`/`Cjs`
 /// **swapped** relative to the in-memory parser/options enum (`Unknown=0,
 /// Cjs=1, Esm=2`). Comparing `metadata.module_type` against
 /// `options::ModuleType::Cjs as u8` would test for `.esm`.
@@ -124,8 +119,8 @@ pub struct RuntimeTranspilerCacheMetadata {
 }
 
 impl Default for RuntimeTranspilerCacheMetadata {
-    /// Spec (src/jsc/RuntimeTranspilerCache.zig:42) defaults
-    /// `cache_version: u32 = expected_version` — derived `Default` would zero it,
+    /// The wire format defaults `cache_version` to the expected version —
+    /// derived `Default` would zero it,
     /// causing every freshly-written entry to be rejected as `error.StaleCache`
     /// on first read.
     fn default() -> Self {
@@ -156,9 +151,8 @@ pub struct Set {
 }
 
 impl Set {
-    /// Port of `Set.init` (cache.zig:6). PORT NOTE: `arena` is unused —
-    /// `MutableString::init`/`JavaScript::init` source from the global heap in
-    /// the Rust port; param kept so callers match the Zig signature
+    /// `arena` is unused — `MutableString::init`/`JavaScript::init` source
+    /// from the global heap; param kept for caller compatibility
     /// (`crate::cache::Set::init(alloc)`).
     pub fn init(_arena: &Bump) -> Set {
         Set {
@@ -206,8 +200,7 @@ impl Default for Fs {
 // ══════════════════════════════════════════════════════════════════════════
 pub use bun_resolver::cache::{Contents, Entry, ExternalFreeFunction};
 
-/// Legacy alias — several call sites import `crate::cache::CacheEntry`
-/// (mirrors Zig's `bun.transpiler.cache.Fs.Entry` qualified name).
+/// Legacy alias — several call sites import `crate::cache::CacheEntry`.
 pub type CacheEntry = Entry;
 
 impl Fs {
@@ -225,9 +218,9 @@ impl Fs {
     /// When we need to suspend/resume something that has pointers into the shared buffer, we need to
     /// switch out the shared buffer so that it is not in use.
     ///
-    /// Ownership transfer: in Zig (cache.zig:77/79) the field is overwritten WITHOUT freeing
-    /// the old buffer, because the suspended parse keeps pointers into it (see ModuleLoader.zig:488,
-    /// "this shared buffer is about to become owned by the AsyncModule struct"). In Rust, plain
+    /// Ownership transfer: the old buffer must NOT be freed here, because the
+    /// suspended parse keeps pointers into it (the shared buffer becomes owned
+    /// by the AsyncModule struct in the module loader). Plain
     /// field assignment would drop+free the old buffer → use-after-free on resume. So we return
     /// the detached buffer; the caller MUST take ownership of it and keep it alive for as long as
     /// `parse_result.source.contents` may be read.
@@ -241,9 +234,8 @@ impl Fs {
         }
     }
 
-    // TODO(port): Zig `Fs.deinit` references `c.entries` which is not a field on `Fs` —
-    // dead code (Zig lazy compilation never instantiated it). No Drop impl needed beyond
-    // the auto-drop of `shared_buffer` / `macro_shared_buffer`.
+    // No Drop impl needed beyond the auto-drop of `shared_buffer` /
+    // `macro_shared_buffer`.
 }
 
 // File reads route through the canonical `bun_resolver::fs::read_file_contents`
@@ -323,24 +315,20 @@ impl Fs {
         self.read_file_with_allocator(_fs, path, dirname_fd, use_shared_buffer, _file_handle, None)
     }
 
-    /// Port of `Fs.readFileWithAllocator` (cache.zig:146).
-    ///
-    /// PORT NOTE: `comptime use_shared_buffer` is taken at runtime — the live
+    /// `use_shared_buffer` is taken at runtime — the live
     /// callers (`ParseTask::get_code_for_parse_task_without_plugins`,
     /// `Transpiler::parse`) pass a value computed from runtime state, and the
     /// resolver's `FsCache` forward-decl already pinned this shape.
-    /// PERF(port): re-monomorphize once both callers stabilize.
+    /// PERF: re-monomorphize once both callers stabilize.
     ///
-    /// `arena` restores the Zig `allocator` param: when
+    /// `arena`: when
     /// `!use_shared_buffer && arena.is_some()` the file body is read straight
     /// into `arena` (`Contents::Arena`), so the bytes are bulk-freed by
     /// `mi_heap_destroy` when the per-call `MimallocArena` (the per-job arena
     /// from `RuntimeTranspilerStore` / `ParseTask`) drops — instead of round-
     /// tripping through the worker thread's *default* mimalloc heap, which is
     /// never destroyed and retains the fresh page for the process lifetime.
-    /// `None` keeps the global-heap `Contents::Owned(Vec<u8>)` path. Zig:
-    /// `transpiler.zig:838-839` passed `if (use_shared_buffer)
-    /// bun.default_allocator else this_parse.allocator`.
+    /// `None` keeps the global-heap `Contents::Owned(Vec<u8>)` path.
     pub fn read_file_with_allocator(
         &mut self,
         _fs: &mut fs_mod::FileSystem,
@@ -352,9 +340,8 @@ impl Fs {
     ) -> Result<Entry, bun_core::Error> {
         let rfs = &_fs.fs;
 
-        // PORT NOTE: reshaped — Zig declared `file_handle = undefined` then assigned on each
-        // branch; restructured into a single let-expression to avoid `mem::zeroed()` on a
-        // type that may have niche (NonZero) fields.
+        // Single let-expression assigning `file_handle` on each branch, avoiding
+        // `mem::zeroed()` on a type that may have niche (NonZero) fields.
         let mut _owned: Option<bun_sys::File> = None;
         let will_close: bool;
         let fd: Fd = if let Some(f) = _file_handle {
@@ -405,13 +392,12 @@ impl Fs {
             fd
         );
 
-        // PORT NOTE: reshaped for borrowck — capture `stream` scalar before borrowing
+        // Borrowck: capture `stream` scalar before borrowing
         // the shared buffer.
         let stream = self.stream;
 
         let contents = match (use_shared_buffer, arena) {
-            // Zig: `readFileWithHandleAndAllocator(this_parse.allocator, …)` —
-            // read straight into the per-call arena so the source bytes are
+            // Read straight into the per-call arena so the source bytes are
             // reclaimed by `mi_heap_destroy` instead of pinning a fresh page in
             // the worker thread's default heap (one `mi_malloc` + `munmap` pair
             // per transpiled module → one bump allocation in a wholesale-reset
@@ -525,14 +511,13 @@ impl JavaScript {
         let result = match parser.parse() {
             Ok(r) => r,
             Err(err) => {
-                // PORT NOTE: `Parser::parse` consumes `self` (Zig took `*Parser`
-                // — by-ref — but the Rust port owns the inner `P` by value), so
-                // `parser` is gone in this arm. The `&'a mut temp_log` it held
-                // is released, so read `temp_log.errors` directly. The lexer
-                // range is lost; fall back to `Range::None` (Zig used
-                // `parser.lexer.range()`).
-                // TODO(port): thread the failing token range through the
-                // `Err` payload once `_parse` returns a `(Error, Range)` pair.
+                // `Parser::parse` consumes `self`, so `parser` is gone in this
+                // arm. The `&'a mut temp_log` it held is released, so read
+                // `temp_log.errors` directly. The lexer range is lost; fall
+                // back to `Range::None`.
+                // TODO: thread the failing token range through the `Err`
+                // payload (make `_parse` return a `(Error, Range)` pair) so the
+                // diagnostic points at the failing token.
                 if temp_log.errors == 0 {
                     log.add_range_error(Some(source), bun_ast::Range::None, err.name().as_bytes());
                 }
@@ -559,8 +544,8 @@ impl JavaScript {
         }
 
         let mut temp_log = bun_ast::Log::init();
-        // PORT NOTE: reshaped for borrowck — Zig `defer temp_log.appendToMaybeRecycled(log, source)`;
-        // scopeguard cannot capture &mut temp_log while it's used below. Explicit calls at each exit.
+        // scopeguard cannot capture &mut temp_log while it's used below;
+        // explicit `append_to_maybe_recycled` calls at each exit.
 
         let mut parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
             Ok(p) => p,
@@ -581,5 +566,3 @@ impl JavaScript {
 // the resolver already depends on `bun_parsers::json_parser`, so the
 // vtable seam was redundant.
 pub use bun_resolver::tsconfig_json::{JsonCache as Json, JsonMode};
-
-// ported from: src/bundler/cache.zig

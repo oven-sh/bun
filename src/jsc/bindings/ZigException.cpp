@@ -1,7 +1,7 @@
 /**
  * ZigException handling and error processing utilities.
  *
- * This file contains functions for converting JavaScript exceptions to Zig exceptions,
+ * This file contains functions for converting JavaScript exceptions to ZigException,
  * processing stack traces, and collecting source lines.
  */
 #include "root.h"

@@ -1,7 +1,6 @@
 //! `ABIType` — the FFI C-type tag enum, its label table, and the C/JS
 //! source-code formatters. Single source of truth: must be kept in sync with
-//! `JSFFIFunction.h`. Ported once from `src/runtime/ffi/ffi.zig:2006`
-//! (`pub const ABIType = enum(i32) { ... }`).
+//! `JSFFIFunction.h`.
 
 use core::fmt;
 
@@ -69,11 +68,12 @@ pub enum ABIType {
     Buffer = 20,
 }
 
-/// Zig `ABIType.label` — string-to-tag lookup table for `args:`/`returns:`
-/// option parsing. Associated `static` items aren't allowed in Rust, so the
-/// table lives at module scope and is re-exposed as `ABIType::LABEL` so callers
-/// can keep using `ABIType::LABEL.get(...)` (auto-deref handles the `&phf::Map`).
-pub static ABI_TYPE_LABEL: phf::Map<&'static [u8], ABIType> = phf::phf_map! {
+bun_core::comptime_string_map! {
+    /// String-to-tag lookup table for `args:`/`returns:`
+    /// option parsing. Associated `static` items aren't allowed in Rust, so the
+    /// table lives at module scope and is re-exposed as `ABIType::LABEL` so callers
+    /// can keep using `ABIType::LABEL.get(...)` (auto-deref handles the reference).
+    pub static ABI_TYPE_LABEL: ABIType = {
     b"bool" => ABIType::Bool,
     b"c_int" => ABIType::Int32T,
     b"c_uint" => ABIType::Uint32T,
@@ -116,14 +116,14 @@ pub static ABI_TYPE_LABEL: phf::Map<&'static [u8], ABIType> = phf::phf_map! {
     b"fn" => ABIType::Function,
     b"napi_env" => ABIType::NapiEnv,
     b"napi_value" => ABIType::NapiValue,
-};
+    };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-variant string table — single source of truth for the four exhaustive
 // matches that previously lived in typename_label / param_typename_label /
 // ToCFormatter / ToJSFormatter. Indexed by `self as usize` (discriminants are
-// contiguous 0..=20). Zig has no equivalent table; this is a Rust-side
-// deduplication of ffi.zig:2145-2324.
+// contiguous 0..=20).
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct AbiRow {
@@ -190,14 +190,9 @@ impl ABIType {
     pub const MAX: i32 = ABIType::NapiValue as i32;
 
     /// See [`ABI_TYPE_LABEL`].
-    pub const LABEL: &'static phf::Map<&'static [u8], ABIType> = &ABI_TYPE_LABEL;
+    pub const LABEL: &'static __ComptimeStringMap_ABI_TYPE_LABEL = &ABI_TYPE_LABEL;
 
-    // TODO(port): map_to_js_object — Zig builds a comptime "{...}" string from
-    // `map` via EnumMapFormatter. Rust cannot iterate phf at const time;
-    // generate via build.rs or const_format!.
-    pub const MAP_TO_JS_OBJECT: &'static str = "";
-
-    /// Zig `std.enums.fromInt(ABIType, int) orelse ...` — returns `None` for
+    /// Returns `None` for
     /// out-of-range discriminants. The enum is `#[repr(i32)]` with contiguous
     /// values `0..=MAX` plus `Buffer = 20`, so range-check then match.
     #[inline]

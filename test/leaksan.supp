@@ -78,7 +78,6 @@ leak:JSC::intlSegmenterAvailableLocales
 leak:URL__getHref
 leak:runtime.dns_jsc.dns.Resolver.globalLookupService
 leak:jsHTTPParser_execute
-leak:Resolver__nodeModulePathsJSValue
 leak:URL__host
 leak:runtime.node.node_os.version
 leak:runtime.node.node_os.release
@@ -121,3 +120,10 @@ leak:WebCore::jsSQLStatementOpenStatementFunction
 # is called before firing (WaiterListManager::clearTimer on notify/unregister),
 # the DispatchTimer and its Bun-side WTFTimer Box leak. JSC-owned ref-cycle.
 leak:WTF::RunLoop::dispatchAfter
+# test/cli/run/workspaces.test.ts, test/regression/issue/26207.test.ts —
+# run_scripts_with_filter ends with Global::exit() so pre_script_name /
+# post_script_name / script_name_owned locals never Drop (intentional per the
+# inline comment). With debug-assertions on the codegen differs enough that
+# LSAN's conservative stack scan no longer finds the pointers.
+leak:bun_runtime::cli::filter_run::run_scripts_with_filter
+leak:bun_runtime::cli::multi_run::run

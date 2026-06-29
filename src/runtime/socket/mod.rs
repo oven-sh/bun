@@ -1,8 +1,6 @@
-//! Port of `src/runtime/socket/socket.zig`.
-//!
 //! TCP/TLS socket JS bindings (`Bun.connect` / `Bun.listen` socket wrappers).
 //!
-//! The full method-body port lives in `socket_body.rs`; this module wires the
+//! The full method bodies live in `socket_body.rs`; this module wires the
 //! submodules together and re-exports the canonical type surface so
 //! `crate::api` and the dispatch / handler layers see one set of types.
 
@@ -37,7 +35,6 @@ pub mod windows_named_pipe_context;
 pub mod ssl_wrapper {
     pub use bun_uws::ssl_wrapper::*;
 
-    /// Zig `init(ssl_options: jsc.API.ServerConfig.SSLConfig, ...)`.
     /// Thin wrapper over `SSLWrapper::init_from_options` so callers in this
     /// tier can keep passing `&SSLConfig` directly.
     pub fn init<T: Copy>(
@@ -92,7 +89,7 @@ pub use windows_named_pipe_context::WindowsNamedPipeContext;
 /// `generated_js2native.rs` (`crate::socket::udp_socket::udp_socket::js_connect`)
 /// resolve against the real struct, not an opaque placeholder.
 pub mod udp_socket {
-    /// `generated_js2native.rs` lowers `$zig(udp_socket.zig, UDPSocket.jsConnect)`
+    /// `generated_js2native.rs` lowers `$rust(udp_socket.rs, UDPSocket.jsConnect)`
     /// to `crate::socket::udp_socket::udp_socket::js_connect`. The inner
     /// `udp_socket` segment is the snake-cased struct name; aliasing the type
     /// lets the associated-fn path resolve directly.
@@ -103,7 +100,7 @@ pub use udp_socket::UDPSocket;
 
 /// Codegen path alias.
 ///
-/// `generated_js2native.rs` lowers `$zig(socket.zig, fnName)` to
+/// `generated_js2native.rs` lowers `$rust(socket.rs, fnName)` to
 /// `crate::socket::socket::fn_name(...)` (one path segment per directory plus
 /// the file stem). The Rust port placed the bodies in `socket_body.rs` to keep
 /// `mod.rs` as the wiring layer, so re-export the js2native entry points under
@@ -111,14 +108,14 @@ pub use udp_socket::UDPSocket;
 pub mod socket {
     pub use super::socket_body::{
         js_create_socket_pair, js_get_buffered_amount, js_is_named_pipe_socket,
-        js_set_socket_options, js_upgrade_duplex_to_tls,
+        js_set_socket_options, js_upgrade_duplex_to_tls, testing_ap_is,
     };
 }
 
 // ─── RawSocketEvents glue ────────────────────────────────────────────────────
 // `uws_handlers::RawSocketEvents<SSL>` is the raw-pointer dispatch trait the
 // vtable layer requires of `api::NewSocket<SSL>` (routed via `RawPtrHandler`,
-// not `PtrHandler`). PORT NOTE (noalias re-entrancy): the inherent `on_*`
+// not `PtrHandler`). Noalias re-entrancy: the inherent `on_*`
 // methods take `this: *mut Self` precisely so no `&mut NewSocket` is held
 // across `callback.call` (JS can re-derive `&mut Self` via the wrapper's
 // `m_ptr` and mutate `flags`/`handlers`/`ref_count`); a `&mut self` argument
@@ -186,5 +183,3 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
         let _ = unsafe { NewSocket::on_handshake(this, s, ok, err) };
     }
 }
-
-// ported from: src/runtime/socket/socket.zig

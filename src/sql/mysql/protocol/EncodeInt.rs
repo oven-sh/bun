@@ -88,5 +88,3 @@ pub fn decode_length_int(bytes: &[u8]) -> Option<DecodedLengthInt> {
         }),
     }
 }
-
-// ported from: src/sql/mysql/protocol/EncodeInt.zig

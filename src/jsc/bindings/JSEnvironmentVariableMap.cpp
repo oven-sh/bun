@@ -68,10 +68,10 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalOb
 }
 
 // Proxy-related env vars (HTTP_PROXY, HTTPS_PROXY, NO_PROXY and lowercase
-// variants) are read by fetch()'s Zig-side proxy resolution via
-// env_loader.getHttpProxyFor(). Writes from JS must sync back to the Zig env
+// variants) are read by fetch()'s native proxy resolution via
+// env_loader.getHttpProxyFor(). Writes from JS must sync back to the native env
 // map so runtime changes take effect. Unlike the generic getter, this does
-// NOT cache on the JS object — the Zig env map is the single source of truth
+// NOT cache on the JS object — the native env map is the single source of truth
 // so set-then-get stays consistent and the CustomAccessor isn't clobbered.
 JSC_DEFINE_CUSTOM_GETTER(jsGetterProxyEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
@@ -370,7 +370,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     bool hasNodeTLSRejectUnauthorized = false;
     bool hasBunConfigVerboseFetch = false;
 
-    // Proxy-related env vars need write-back to the Zig env map so that
+    // Proxy-related env vars need write-back to the native env map so that
     // fetch()'s getHttpProxyFor() observes runtime changes.
     static constexpr ASCIILiteral proxyVarNames[] = {
         "HTTP_PROXY"_s,
@@ -485,7 +485,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     for (size_t j = 0; j < proxyVarCount; j++) {
         // Known limitation: `delete process.env.NO_PROXY` removes the accessor
-        // without calling the setter, leaving Zig's env map stale (same as TZ).
+        // without calling the setter, leaving the native env map stale (same as TZ).
         // Use `process.env.NO_PROXY = ""` to unset. DontDelete would throw in
         // strict mode, so we leave it deletable and document the gap.
         unsigned attrs = JSC::PropertyAttribute::CustomAccessor | 0;

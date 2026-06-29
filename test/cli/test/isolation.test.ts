@@ -1,7 +1,12 @@
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir } from "harness";
 import fs from "node:fs";
 import net from "node:net";
+
+// Every case spawns at least one full `bun test --isolate` child; the heavy
+// ones (8-file leak fixtures, 500-2000-export module_info modules) exceed the
+// 5s default on debug/ASAN runners.
+setDefaultTimeout(isASAN ? 120_000 : 30_000);
 
 // Two test files where the first leaks state and the second observes it.
 // Under --isolate the second file must see a clean world.
@@ -656,4 +661,210 @@ test.concurrent("--isolate: leaked AbortSignal.timeout does not fire in next fil
   expect(stderr).toContain("2 pass");
   expect(stderr).toContain("0 fail");
   expect(exitCode).toBe(0);
+});
+
+// Each of these leaked handles used to pin its test file's ENTIRE global
+// object (and therefore the file's module graph) for the rest of a
+// `bun test --isolate` run, growing memory by one full global per file:
+//
+// - fs.watch: isolation teardown called FSWatcher.detach(), which never drops
+//   the initial pending_activity_count ref, so hasPendingActivity() stayed
+//   true forever and the GC could never collect the wrapper or its cached
+//   listener closure.
+// - Bun.serve: the swap blind-closed the listen socket at the uws layer; the
+//   Server object never learned, kept hasListener() true, and its strong
+//   js_value (fetch handler closure) pinned the global.
+// - setTimeout/setInterval: generation-stale timers only self-cancelled when
+//   they FIRED, so a module-scope long timer held a Strong on its wrapper
+//   until the deadline (effectively forever for hour-scale timers).
+//
+// Each fixture runs 8 isolated files that leak one handle apiece, forces a
+// full GC, and counts live GlobalObject cells. Pinned globals accumulate
+// (the last file sees 8); collectable ones plateau (current + a lagging one
+// or two).
+describe.concurrent("--isolate: collects globals pinned by leaked handles", () => {
+  const LEAK_FILE_COUNT = 8;
+
+  function makeLeakFixture(dirt: string): Record<string, string> {
+    const files: Record<string, string> = {};
+    for (let i = 1; i <= LEAK_FILE_COUNT; i++) {
+      files[`file_${i}.test.js`] = `
+        import { test, expect } from "bun:test";
+        import { heapStats } from "bun:jsc";
+        ${dirt}
+        test("leak-${i}", () => {
+          Bun.gc(true);
+          Bun.gc(true);
+          const globals = heapStats().objectTypeCounts.GlobalObject ?? 0;
+          console.log("GLOBALS=" + globals);
+          expect(globals).toBeGreaterThan(0);
+        });
+      `;
+    }
+    return files;
+  }
+
+  async function maxLiveGlobals(dir: string): Promise<number> {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`${LEAK_FILE_COUNT} pass`);
+    expect(exitCode).toBe(0);
+    const counts = [...stdout.matchAll(/GLOBALS=(\d+)/g)].map(m => Number(m[1]));
+    expect(counts).toHaveLength(LEAK_FILE_COUNT);
+    return Math.max(...counts);
+  }
+
+  test("fs.watch left open", async () => {
+    using dir = tempDir(
+      "isolate-leak-watch",
+      makeLeakFixture(`
+        import fs from "node:fs";
+        const watcher = fs.watch(import.meta.dir, () => {});
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  test("Bun.serve left running", async () => {
+    using dir = tempDir(
+      "isolate-leak-serve",
+      makeLeakFixture(`
+        const server = Bun.serve({ port: 0, fetch: () => new Response("x") });
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  test("long setTimeout/setInterval left pending", async () => {
+    using dir = tempDir(
+      "isolate-leak-timers",
+      makeLeakFixture(`
+        setTimeout(() => {}, 3_600_000);
+        setInterval(() => {}, 3_600_000);
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+});
+
+// fs.watchFile's StatWatcher is thread-safe-refcounted: the scheduler queue
+// holds a ref that is dropped on the work-pool thread. After unwatchFile +
+// GC of the JS wrapper, that queue ref is the LAST ref, so the watcher is
+// freed off the JS thread — where the thread-local isolation registry is
+// unreachable. The registry entry must therefore be removed in close() (JS
+// thread), not in the refcount destructor; otherwise the file-boundary drain
+// pops a dangling pointer and calls close() on freed memory (UAF, caught by
+// ASAN).
+test.concurrent(
+  "--isolate: unwatchFile'd watcher freed on the work pool leaves no dangling registry entry",
+  async () => {
+    // The dance, per file:
+    //   1. watchFile, then touch the file until the listener fires — proof the
+    //      initial stat completed and the watcher sits in the scheduler queue
+    //      (queue ref taken).
+    //   2. unwatchFile (close: Strong self-ref downgraded) + Bun.gc (wrapper
+    //      finalized: wrapper ref dropped).
+    //   3. sleep past a few 10ms scheduler ticks so the work-pool callback pops
+    //      the closed watcher and drops the queue ref — the last one — freeing
+    //      the watcher on the work-pool thread. No JS-observable signal exists
+    //      for that free, hence the bounded sleep.
+    // The file boundary after each file then drains the isolation registry,
+    // which must no longer reference the freed watcher.
+    const raceFixture = `
+    import { test } from "bun:test";
+    import fs from "node:fs";
+    import path from "node:path";
+
+    test("unwatchFile then free on work pool", async () => {
+      const target = path.join(import.meta.dir, "watched-" + path.basename(import.meta.path) + ".txt");
+      for (let round = 0; round < 3; round++) {
+        fs.writeFileSync(target, "0");
+        await (async function arm() {
+          const fired = Promise.withResolvers();
+          fs.watchFile(target, { interval: 10 }, () => fired.resolve());
+          const poker = setInterval(() => fs.writeFileSync(target, String(Math.random())), 10);
+          await fired.promise;
+          clearInterval(poker);
+          fs.unwatchFile(target);
+        })();
+        Bun.gc(true);
+        Bun.gc(true);
+        await Bun.sleep(250);
+      }
+    });
+  `;
+    // Two identical files: the drain runs at the boundary BETWEEN files, so the
+    // first file's registry is drained while the second exists to force it.
+    using dir = tempDir("isolate-statwatcher-race", {
+      "a.test.js": raceFixture,
+      "b.test.js": raceFixture,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  },
+);
+
+// The synchronous module-load path (require(esm), importSync) must attach the
+// transpiler's ESM-record analysis (module_info) to the ResolvedSource under
+// --isolate, exactly like the async path does. module_info is what turns the
+// cached SourceProvider into a BunTranspiledModule, letting every later file
+// rebuild the module record from the cache instead of re-running JSC's parser
+// over the transpiled source in its fresh global (CPU + transient allocations
+// per file; ~1.2s/file for a 3000-export module in a debug build). Run 1
+// exercises the fresh-transpile branch; run 2 hits the on-disk
+// RuntimeTranspilerCache entry (esm_record branch).
+test.concurrent("--isolate: require(esm) caches a BunTranspiledModule SourceProvider", async () => {
+  // Wide enough to clear the RuntimeTranspilerCache minimum size (4KB).
+  let big = "";
+  for (let i = 0; i < 500; i++) big += `export function f${i}(x){return x+${i};}\n`;
+  big += `export const COUNT = 500;\n`;
+
+  using dir = tempDir("isolate-sync-provider", {
+    "big.mjs": big,
+    "a.test.ts": `
+      import { test, expect } from "bun:test";
+      import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
+
+      test("require(esm) provider carries module_info", () => {
+        const path = require.resolve("./big.mjs");
+        const m = require("./big.mjs");
+        expect(m.COUNT).toBe(500);
+        expect(m.f42(1)).toBe(43);
+        expect(isolatedModuleCacheSourceType(path)).toBe("BunTranspiledModule");
+      });
+    `,
+  });
+
+  const cacheDir = `${String(dir)}/transpiler-cache`;
+  for (const run of [1, 2]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a.test.ts"],
+      env: {
+        ...bunEnv,
+        BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: cacheDir,
+      },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr, `run ${run}`).toContain("1 pass");
+    expect(stderr, `run ${run}`).toContain("0 fail");
+    expect(exitCode, `run ${run}`).toBe(0);
+  }
 });

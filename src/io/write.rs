@@ -1,14 +1,14 @@
 //! Byte-oriented `Write` trait + helpers.
 //!
-//! Port of Zig's `std.Io.Writer` surface that the rest of the codebase actually
+//! The byte-writer surface the rest of the codebase actually
 //! touches (`writeAll`, `writeByte`, `print`, `splatByteAll`, `writeInt`,
-//! `flush`). The Zig writer is a fat-pointer vtable; here it is a normal trait
+//! `flush`). It is a normal trait
 //! whose only required method is [`Write::write_all`]. Everything else is
 //! provided in terms of that, so a sink only needs to spell out how to push a
 //! byte slice.
 //!
 //! This module also provides:
-//!   * [`BufWriter`] — `std.fs.File.writerStreaming`-style buffered wrapper
+//!   * [`BufWriter`] — buffered wrapper
 //!     over a borrowed `&mut [u8]` scratch buffer (no heap allocation).
 //!   * [`FmtAdapter`] — bridge a `core::fmt::Write` sink (e.g. a
 //!     `core::fmt::Formatter`) into a byte-level [`Write`], so byte-producing
@@ -36,7 +36,6 @@ pub use bun_core::write::{IntBe, IntLe, Write};
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Discards all bytes written to it but tracks how many were written.
-/// Port of Zig `std.Io.Writer.Discarding` / `std.io.countingWriter(null_writer)`.
 #[derive(Default)]
 pub struct DiscardingWriter {
     /// Total bytes "written" (discarded) so far.
@@ -71,10 +70,9 @@ impl Write for DiscardingWriter {
 // FixedBufferStream — cursor over an in-memory buffer
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Port of Zig `std.io.FixedBufferStream(B)` — a seekable cursor over a byte
+/// A seekable cursor over a byte
 /// buffer that can act as both a reader (when `B: AsRef<[u8]>`) and a writer
-/// (when `B: AsMut<[u8]>`). `pos` and `buffer` are public to mirror the Zig
-/// struct fields.
+/// (when `B: AsMut<[u8]>`). `pos` and `buffer` are public.
 pub struct FixedBufferStream<B> {
     pub buffer: B,
     pub pos: usize,
@@ -87,13 +85,13 @@ impl<B> FixedBufferStream<B> {
         Self { buffer, pos: 0 }
     }
 
-    /// Seek to absolute position `p`. Zig: `seekTo`.
+    /// Seek to absolute position `p`.
     #[inline]
     pub fn seek_to(&mut self, p: usize) {
         self.pos = p;
     }
 
-    /// Rewind to position 0. Zig: `reset`.
+    /// Rewind to position 0.
     #[inline]
     pub fn reset(&mut self) {
         self.pos = 0;
@@ -109,21 +107,21 @@ impl<'a> FixedBufferStream<&'a mut [u8]> {
 }
 
 impl<B: AsRef<[u8]>> FixedBufferStream<B> {
-    /// Bytes written so far (the slice `[0..pos]`). Zig: `getWritten()`.
+    /// Bytes written so far (the slice `[0..pos]`).
     #[inline]
     pub fn get_written(&self) -> &[u8] {
         &self.buffer.as_ref()[..self.pos]
     }
 
-    /// Current cursor position. Zig: `getPos()`.
+    /// Current cursor position.
     #[inline]
     pub fn get_pos(&self) -> Result<usize> {
         Ok(self.pos)
     }
 
-    /// Zig `reader()` returns a `Reader` view over the same buffer; the read
-    /// methods here live directly on `FixedBufferStream`, so this just returns
-    /// `self` to keep call-site shape (`stream.reader().read_int_le::<T>()`).
+    /// The read methods live directly on `FixedBufferStream`, so this just
+    /// returns `self` to keep call-site shape
+    /// (`stream.reader().read_int_le::<T>()`).
     #[inline]
     pub fn reader(&mut self) -> &mut Self {
         self
@@ -131,7 +129,6 @@ impl<B: AsRef<[u8]>> FixedBufferStream<B> {
 
     /// Read up to `out.len()` bytes from the current position, advancing it.
     /// Returns the number of bytes read (may be `< out.len()` at EOF).
-    /// Zig: `reader().readAll(buf)`.
     pub fn read_all(&mut self, out: &mut [u8]) -> Result<usize> {
         let buf = self.buffer.as_ref();
         let avail = buf.len().saturating_sub(self.pos);
@@ -157,7 +154,7 @@ impl<B: AsRef<[u8]>> FixedBufferStream<B> {
         Ok(())
     }
 
-    /// Read a little-endian integer. Zig: `reader().readInt(T, .little)`.
+    /// Read a little-endian integer.
     #[inline]
     pub fn read_int_le<I: IntLe>(&mut self) -> Result<I> {
         let mut bytes = I::Bytes::default();
@@ -165,7 +162,7 @@ impl<B: AsRef<[u8]>> FixedBufferStream<B> {
         Ok(I::from_le_bytes(bytes))
     }
 
-    /// Read a big-endian (network-order) integer. Zig: `reader().readInt(T, .big)`.
+    /// Read a big-endian (network-order) integer.
     #[inline]
     pub fn read_int_be<I: IntBe>(&mut self) -> Result<I> {
         let mut bytes = I::Bytes::default();
@@ -173,10 +170,10 @@ impl<B: AsRef<[u8]>> FixedBufferStream<B> {
         Ok(I::from_be_bytes(bytes))
     }
 
-    /// Read a POD struct. Zig: `reader().readStruct(T)`.
+    /// Read a POD struct.
     ///
     /// SAFETY: caller is responsible for `T` being `#[repr(C)]` POD with no
-    /// padding-sensitive invariants — same contract as Zig's `readStruct`.
+    /// padding-sensitive invariants.
     pub fn read_struct<T: Copy>(&mut self) -> Result<T> {
         let buf = self.buffer.as_ref();
         let n = core::mem::size_of::<T>();
@@ -189,8 +186,8 @@ impl<B: AsRef<[u8]>> FixedBufferStream<B> {
         }
         // SAFETY: `buf[pos..end]` is exactly `size_of::<T>()` initialized
         // bytes from the safe slice borrow; caller contract guarantees `T` is
-        // `#[repr(C)]` POD where every byte pattern is valid (same as Zig
-        // `readStruct`). `read_unaligned` tolerates any source alignment.
+        // `#[repr(C)]` POD where every byte pattern is valid.
+        // `read_unaligned` tolerates any source alignment.
         let out = unsafe { core::ptr::read_unaligned(buf[self.pos..end].as_ptr().cast::<T>()) };
         self.pos = end;
         Ok(out)
@@ -223,12 +220,11 @@ impl<B: AsMut<[u8]>> Write for FixedBufferStream<B> {
 
 /// Buffered writer over a caller-provided scratch slice.
 ///
-/// Port of Zig `std.fs.File.writerStreaming(&buf)` / `std.io.BufferedWriter`:
-/// the caller owns the byte buffer (typically a stack `[0u8; 4096]`), so this
+/// The caller owns the byte buffer (typically a stack `[0u8; 4096]`), so this
 /// type performs **no heap allocation**. Writes accumulate into `buf` and are
 /// flushed to `inner` when full or on explicit [`flush`](Write::flush).
 ///
-/// `Drop` does **not** flush — matching Zig semantics, where forgetting to
+/// `Drop` does **not** flush — forgetting to
 /// `flush()` is a bug the caller owns (and flushing in `Drop` would swallow the
 /// error). Callers must `writer.flush()?` before the buffer goes out of scope.
 pub struct BufWriter<'a, W: Write> {
@@ -312,8 +308,7 @@ impl<'a, W: Write> Write for BufWriter<'a, W> {
 /// can be passed where a byte-level [`Write`] is expected.
 ///
 /// Bytes are routed through `write_str` after a UTF-8 check; non-UTF-8 input is
-/// lossily decoded (same behaviour as Zig's `{s}` formatter on arbitrary
-/// bytes — it never fails on encoding, only on the underlying writer).
+/// lossily decoded — it never fails on encoding, only on the underlying writer.
 pub struct FmtAdapter<'a, W: ?Sized = fmt::Formatter<'a>> {
     inner: &'a mut W,
 }

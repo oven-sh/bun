@@ -1,5 +1,15 @@
 import { pathToFileURL } from "bun";
-import { bunEnv, bunExe, bunRun, bunRunAsScript, isMacOS, isWindows, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  bunRunAsScript,
+  isLinux,
+  isMacOS,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { EventEmitter } from "node:events";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
@@ -530,6 +540,57 @@ describe("fs.watch", () => {
       expect(err.syscall).toBe("watch");
     }
   });
+
+  // Self-events (the watched path itself is deleted or renamed) carry no name,
+  // and node (libuv) reports basename(watched path) for them. Deleting the
+  // watched path also retires its inotify watch: the kernel queues
+  // IN_DELETE_SELF followed by IN_IGNORED and node reports both as "rename".
+  // The exact sequences are inotify-specific, so Linux only.
+  // https://github.com/oven-sh/bun/issues/23306
+  async function collectWatchEvents(target: string, renames: number, act: () => void) {
+    const events: [string, string | null][] = [];
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const watcher = fs.watch(target, (eventType, filename) => {
+      events.push([eventType, filename]);
+      if (events.filter(([type]) => type === "rename").length === renames) resolve();
+    });
+    watcher.once("error", reject);
+    try {
+      act();
+      await promise;
+    } finally {
+      watcher.close();
+    }
+    return events;
+  }
+
+  test.skipIf(!isLinux)("unlinking the watched file delivers both rename self-events", async () => {
+    using dir = tempDir("fs-watch-unlink-self", { "f.txt": "x" });
+    const target = path.join(String(dir), "f.txt");
+    // unlink(2) emits IN_ATTRIB (link count drop), IN_DELETE_SELF, IN_IGNORED.
+    expect(await collectWatchEvents(target, 2, () => fs.unlinkSync(target))).toEqual([
+      ["change", "f.txt"],
+      ["rename", "f.txt"],
+      ["rename", "f.txt"],
+    ]);
+  });
+
+  test.skipIf(!isLinux)("removing the watched directory delivers both rename self-events named after it", async () => {
+    using dir = tempDir("fs-watch-rmdir-self", { "sub": {} });
+    const target = path.join(String(dir), "sub");
+    expect(await collectWatchEvents(target, 2, () => fs.rmdirSync(target))).toEqual([
+      ["rename", "sub"],
+      ["rename", "sub"],
+    ]);
+  });
+
+  test.skipIf(!isLinux)("renaming the watched directory away reports its basename", async () => {
+    using dir = tempDir("fs-watch-mv-self", { "sub": {} });
+    const target = path.join(String(dir), "sub");
+    expect(await collectWatchEvents(target, 1, () => fs.renameSync(target, path.join(String(dir), "moved")))).toEqual([
+      ["rename", "sub"],
+    ]);
+  });
 });
 
 describe("fs.promises.watch", () => {
@@ -652,6 +713,33 @@ describe("fs.promises.watch", () => {
         expect(e.message).toBe("The operation was aborted.");
       }
     })();
+  });
+
+  test("Signal aborted before creating the watcher does not keep the process alive", async () => {
+    const filepath = path.join(testDir, "abort.txt");
+    // If a native watcher were created for a pre-aborted signal, nothing
+    // would ever close it and the process would never exit.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("node:fs");
+        const signal = AbortSignal.abort();
+        (async () => {
+          try {
+            for await (const _ of fs.promises.watch(${JSON.stringify(filepath)}, { signal }));
+            throw new Error("expected AbortError");
+          } catch (e) {
+            if (e.name !== "AbortError") throw e;
+          }
+        })();`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 
   test("should work with symlink -> symlink -> dir", async () => {
@@ -892,18 +980,26 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
         const fs = require("fs");
         const dir = process.argv[1];
 
-        // Warm up: let the FSEvents loop thread, mimalloc pools, and the
-        // PathWatcherManager fd cache reach steady state.
-        for (let i = 0; i < 1000; i++) fs.watch(dir, () => {}).close();
-        Bun.gc(true);
+        async function cycle(count) {
+          for (let i = 0; i < count; i++) fs.watch(dir, () => {}).close();
+          // close() delivers the 'close' event via queueMicrotask; without a
+          // drain, every iteration's pending microtask graph (~6 objects)
+          // survives the GC below and reads as growth.
+          await 1;
+          Bun.gc(true);
+        }
+
+        // Warm up: let the FSEvents loop thread, mimalloc pools, JSC heap
+        // sizing, and the PathWatcherManager caches reach steady state
+        // (one-time growth tapers off only after ~10k cycles).
+        for (let i = 0; i < 3; i++) await cycle(5000);
         const before = process.memoryUsage.rss();
 
         // With a ~700-byte resolved path, 5000 leaked dupeZ buffers is
         // ~3.5 MB of growth on unpatched builds. Keep the iteration count
         // low enough that rapid FSEventStream recreate doesn't exhaust the
         // kernel queue (FSEventStreamCreate -> NULL).
-        for (let i = 0; i < 5000; i++) fs.watch(dir, () => {}).close();
-        Bun.gc(true);
+        await cycle(5000);
         const after = process.memoryUsage.rss();
 
         const growthMB = (after - before) / 1024 / 1024;
@@ -1072,3 +1168,106 @@ test("fs.watch reports an error for relative paths that no longer fit in the pat
   // the subprocess instead of throwing a catchable error.
   expect(exitCode).toBe(0);
 });
+
+// The native FSWatcher holds a weak reference to its JS wrapper (rooted by
+// hasPendingActivity while open). Exercise every emit path (change, error,
+// abort, close) with forced GC between steps; a rooting/clearing mistake
+// crashes the subprocess or drops the awaited events.
+test("fs.watch wrapper reference survives GC across event, abort and close paths", async () => {
+  using dir = tempDir("fswatch-jsref-gc", { "target.txt": "x" });
+  const watchDir = String(dir);
+
+  const fixture = /* js */ `
+    const fs = require("fs");
+    const path = require("path");
+    const dir = ${JSON.stringify(watchDir)};
+    const file = path.join(dir, "target.txt");
+
+    // Write-and-poll until \`done()\` reports true; bounded so a missed event
+    // becomes a crisp error instead of a hang with no diagnostics.
+    async function pokeUntil(done, label) {
+      for (let attempt = 0; attempt < 500; attempt++) {
+        if (done()) return;
+        fs.writeFileSync(file, label + " " + attempt + " " + Math.random());
+        Bun.gc(true);
+        await Bun.sleep(10);
+      }
+      throw new Error("event never delivered: " + label);
+    }
+
+    async function main() {
+      // Phase 1: event delivery + close event, with GC forced between steps.
+      for (let round = 0; round < 3; round++) {
+        let sawEvent;
+        const gotEvent = new Promise(resolve => (sawEvent = resolve));
+        const watcher = fs.watch(dir, () => sawEvent());
+        Bun.gc(true);
+
+        // Keep touching the file until the event lands (watch registration
+        // can race the first write on some platforms).
+        let delivered = false;
+        gotEvent.then(() => (delivered = true));
+        await pokeUntil(() => delivered, "round " + round);
+        await gotEvent;
+
+        const gotClose = new Promise(resolve => watcher.once("close", resolve));
+        Bun.gc(true);
+        watcher.close();
+        Bun.gc(true);
+        await gotClose;
+      }
+
+      // Phase 2: abort path under GC pressure.
+      for (let i = 0; i < 3; i++) {
+        const ac = new AbortController();
+        const watcher = fs.watch(dir, { signal: ac.signal }, () => {});
+        const gotAbort = new Promise((resolve, reject) => {
+          watcher.once("error", err =>
+            err.message === "The operation was aborted." ? resolve() : reject(err),
+          );
+        });
+        Bun.gc(true);
+        ac.abort();
+        Bun.gc(true);
+        await gotAbort;
+      }
+
+      // Phase 3: double-close and close-from-inside-listener under GC.
+      {
+        let closeFromListener;
+        const closedFromListener = new Promise(resolve => (closeFromListener = resolve));
+        const watcher = fs.watch(dir, () => {
+          Bun.gc(true);
+          watcher.close(); // re-entrant close from inside the native emit
+          watcher.close(); // second close must be a no-op
+          closeFromListener();
+        });
+        let done = false;
+        closedFromListener.then(() => (done = true));
+        await pokeUntil(() => done, "phase3");
+        await closedFromListener;
+        Bun.gc(true);
+      }
+
+      Bun.gc(true);
+      console.log("OK");
+    }
+
+    main().catch(err => {
+      console.error(err);
+      process.exit(1);
+    });
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+}, 30_000);

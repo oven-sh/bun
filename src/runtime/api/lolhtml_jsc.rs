@@ -4,7 +4,7 @@ use bun_core::{String as BunString, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_lolhtml_sys::HTMLString;
 
-/// `HTMLString.toString` — port of `lol_html.zig:HTMLString.toString`.
+/// `HTMLString.toString`.
 ///
 /// Lives here (not in `bun_lolhtml_sys`) because the `*_sys` crate is a leaf
 /// FFI crate with no `bun_string` dependency; pulling one in would invert the
@@ -35,11 +35,9 @@ pub(crate) fn html_string_to_string(this: HTMLString) -> BunString {
 }
 
 pub(crate) fn html_string_to_js(this: HTMLString, global: &JSGlobalObject) -> JsResult<JSValue> {
-    // Zig: `var str = this.toString(); defer str.deref();` — `bun_core::String`
-    // is `Copy` with NO `Drop`; `OwnedString` is the RAII wrapper that releases
+    // `bun_core::String` is `Copy` with NO `Drop`; `OwnedString` is the RAII
+    // wrapper that releases
     // the +1 ref returned by `html_string_to_string` on scope exit.
     let str = bun_core::OwnedString::new(html_string_to_string(this));
     str.to_js(global)
 }
-
-// ported from: src/runtime/api/lolhtml_jsc.zig

@@ -8,7 +8,6 @@ pub enum ColumnIdentifier {
 
 impl ColumnIdentifier {
     pub fn init(name: Data) -> Result<Self, bun_alloc::AllocError> {
-        // TODO(port): narrow error set — only `try` site is name.to_owned()
         const U32_MAX_DIGITS: usize = "4294967295".len();
         let might_be_int = match name.slice().len() {
             1..=U32_MAX_DIGITS => true,
@@ -42,5 +41,3 @@ impl ColumnIdentifier {
 
 // `deinit` dropped: the only work was `name.deinit()`, which Rust handles via
 // `Data: Drop` when the `Name` variant is dropped.
-
-// ported from: src/sql/shared/ColumnIdentifier.zig

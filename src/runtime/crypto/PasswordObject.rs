@@ -21,9 +21,8 @@ use bun_threading::work_pool::WorkPool;
 
 use crate::node::StringOrBuffer;
 
-// std.crypto.pwhash — Zig stdlib argon2/bcrypt. API-surface shim lives at
-// `crypto::pwhash` (this dir); vendor impl (Rust `argon2`/`bcrypt` crates or
-// Zig-stdlib staticlib) is wired there, not here.
+// The argon2/bcrypt API-surface shim lives at `crypto::pwhash` (this dir);
+// the implementation is wired there, not here.
 use super::pwhash;
 use bun_sha_hmac::SHA512;
 
@@ -33,9 +32,7 @@ use bun_sha_hmac::SHA512;
 
 pub struct PasswordObject;
 
-impl PasswordObject {
-    // pub const pwhash = std.crypto.pwhash;  — re-export dropped; see `use` above.
-}
+impl PasswordObject {}
 
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 #[repr(u8)]
@@ -50,18 +47,17 @@ pub enum Algorithm {
     Bcrypt,
 }
 
-/// Zig: `Algorithm.Value = union(Algorithm)`
 #[derive(Copy, Clone)]
 pub enum AlgorithmValue {
     Argon2i(Argon2Params),
     Argon2d(Argon2Params),
     Argon2id(Argon2Params),
     /// bcrypt only accepts "cost"
-    Bcrypt(u8), // Zig: u6
+    Bcrypt(u8),
 }
 
 impl AlgorithmValue {
-    pub const BCRYPT_DEFAULT: u8 = 10; // Zig name has typo `bcrpyt_default`; preserved as const
+    pub const BCRYPT_DEFAULT: u8 = 10;
 
     pub const DEFAULT: AlgorithmValue = AlgorithmValue::Argon2id(Argon2Params::DEFAULT);
 
@@ -78,7 +74,6 @@ impl AlgorithmValue {
 
                 let algorithm_string = algorithm_value.get_zig_string(global_object)?;
 
-                // Zig: ComptimeStringMap.getWithEql(ZigString, ZigString.eqlComptime) —
                 // ZigString may be UTF-16; compare each label via `eql_comptime`.
                 let Some(algo) = algorithm_from_zig_string(&algorithm_string) else {
                     return Err(global_object.throw_invalid_argument_type(
@@ -109,7 +104,6 @@ impl AlgorithmValue {
                             algorithm = AlgorithmValue::Bcrypt(
                                 u8::try_from(rounds).expect("int cast") & 0x3F,
                             );
-                            // Zig: @as(u6, @intCast(rounds))
                         }
 
                         return Ok(algorithm);
@@ -157,7 +151,6 @@ impl AlgorithmValue {
                             argon.memory_cost = u32::try_from(memory_cost).expect("int cast");
                         }
 
-                        // Zig: @unionInit(Algorithm.Value, @tagName(tag), argon)
                         return Ok(match algo {
                             Algorithm::Argon2id => AlgorithmValue::Argon2id(argon),
                             Algorithm::Argon2d => AlgorithmValue::Argon2d(argon),
@@ -204,8 +197,7 @@ impl AlgorithmValue {
     }
 }
 
-/// Zig: `Algorithm.label.getWithEql(input, ZigString.eqlComptime)`.
-/// `bun_core::ZigString` may be UTF-16 so a direct `phf` byte lookup is
+/// `bun_core::ZigString` may be UTF-16 so a direct byte-map lookup is
 /// unsound; compare each (4-entry) label via the encoding-aware `eql_comptime`.
 fn algorithm_from_zig_string(s: &ZigString) -> Option<Algorithm> {
     if s.eql_comptime(b"argon2i") {
@@ -229,8 +221,6 @@ pub struct Argon2Params {
 }
 
 impl Argon2Params {
-    // TODO(port): pwhash.argon2.Params.interactive_2id.{m,t} — hard-code Zig stdlib's
-    // values here once the pwhash shim is settled.
     pub(crate) const DEFAULT: Argon2Params = Argon2Params {
         memory_cost: pwhash::argon2::Params::INTERACTIVE_2ID_M,
         time_cost: pwhash::argon2::Params::INTERACTIVE_2ID_T,
@@ -251,15 +241,19 @@ impl Default for Argon2Params {
     }
 }
 
-impl Algorithm {
-    pub const ARGON2: Algorithm = Algorithm::Argon2id;
-
-    pub const LABEL: phf::Map<&'static [u8], Algorithm> = phf::phf_map! {
+bun_core::comptime_string_map! {
+    pub static ALGORITHM_LABEL: Algorithm = {
         b"argon2i" => Algorithm::Argon2i,
         b"argon2d" => Algorithm::Argon2d,
         b"argon2id" => Algorithm::Argon2id,
         b"bcrypt" => Algorithm::Bcrypt,
     };
+}
+
+impl Algorithm {
+    pub const ARGON2: Algorithm = Algorithm::Argon2id;
+
+    pub const LABEL: &'static __ComptimeStringMap_ALGORITHM_LABEL = &ALGORITHM_LABEL;
 
     pub const DEFAULT: Algorithm = Algorithm::ARGON2;
 
@@ -292,8 +286,7 @@ impl Algorithm {
     }
 }
 
-/// Zig: `pub const HashError = pwhash.Error || error{UnsupportedAlgorithm};`
-/// Collapsed into bun_core::Error (NonZeroU16 tag). The pwhash shim
+/// `bun_core::Error` (NonZeroU16 tag). The pwhash shim
 /// must `impl From<pwhash::Error> for bun_core::Error`.
 pub(crate) type HashError = bun_core::Error;
 
@@ -327,9 +320,8 @@ impl PasswordObject {
                 let mut outbuf = [0u8; 4096];
                 // bcrypt silently truncates passwords longer than 72 bytes
                 // we use SHA512 to hash the password if it's longer than 72 bytes
-                // PORT NOTE: reshaped for borrowck — Zig aliased `outbuf` for both the
-                // SHA digest and the remaining output slice; here the digest gets its own
-                // 64-byte buffer (SHA512::final wants `&mut [u8; DIGEST]`).
+                // The digest gets its own 64-byte buffer
+                // (SHA512::final wants `&mut [u8; DIGEST]`).
                 let mut digest = [0u8; SHA512::DIGEST];
                 let mut password_to_use = password;
                 let outbuf_slice: &mut [u8];
@@ -337,7 +329,6 @@ impl PasswordObject {
                     let mut sha_512 = SHA512::init();
                     sha_512.update(password);
                     sha_512.r#final(&mut digest);
-                    // sha_512 dropped here (Zig: defer sha_512.deinit())
                     password_to_use = &digest;
                     outbuf_slice = &mut outbuf[SHA512::DIGEST..];
                 } else {
@@ -505,8 +496,7 @@ pub(crate) extern "C" fn JSPasswordObject__create(global_object: &JSGlobalObject
 
 // ─── PasswordOp: generic hash/verify off-thread job ───────────────────────
 //
-// HashJob/HashResult and VerifyJob/VerifyResult in the Zig source are
-// byte-for-byte twins differing only in (a) extra input fields, (b) success
+// Hash and verify jobs differ only in (a) extra input fields, (b) success
 // payload type + JS conversion, (c) the verb in the error message. Collapse
 // both into one `PasswordJob<Op>` / `PasswordResult<Op>` parameterised on a
 // `PasswordOp` carrying exactly those three axes.
@@ -534,7 +524,7 @@ impl PasswordOp for HashOp {
     }
     fn to_js(value: Box<[u8]>, g: &JSGlobalObject) -> JSValue {
         JscZigString::init(&value).to_js(g)
-        // `value` drops here — Zig: defer bun.default_allocator.free(value)
+        // `value` drops here.
     }
 }
 
@@ -561,7 +551,7 @@ impl PasswordOp for VerifyOp {
 }
 
 /// Build the JS `Error` instance for a failed hash/verify, with `code` set
-/// to `PASSWORD_<SCREAMING_SNAKE_ERROR_NAME>` (Zig: `toErrorInstance`).
+/// to `PASSWORD_<SCREAMING_SNAKE_ERROR_NAME>`.
 fn password_error_instance(err: HashError, verb: &str, g: &JSGlobalObject) -> JSValue {
     let mut error_code: Vec<u8> = Vec::new();
     write!(
@@ -818,9 +808,8 @@ pub(crate) fn js_password_object_hash_sync(
         );
     }
 
-    // PORT NOTE: sync path borrows the slice; pass as Box for unified signature.
-    // TODO(port): hash<true> only needs &[u8]; consider splitting sync/async to
-    // avoid the copy. Zig passed the borrowed slice directly.
+    // The sync path only needs `&[u8]`; copy into a Box to share the async
+    // signature.
     JSPasswordObject::hash::<true>(
         global_object,
         Box::<[u8]>::from(string_or_buffer.slice()),
@@ -975,8 +964,8 @@ pub(crate) fn js_password_object_verify_sync(
         return Ok(JSValue::FALSE);
     }
 
-    // TODO(port): sync path only needs &[u8]; copying into Box here to share
-    // signature with async. Zig passed borrowed slices.
+    // The sync path only needs `&[u8]`; copy into Boxes to share the async
+    // signature.
     JSPasswordObject::verify::<true>(
         global_object,
         Box::<[u8]>::from(password.slice()),
@@ -986,5 +975,3 @@ pub(crate) fn js_password_object_verify_sync(
 }
 
 const UNKNOWN_PASSWORD_ALGORITHM_MESSAGE: &str = "unknown algorithm, expected one of: \"bcrypt\", \"argon2id\", \"argon2d\", \"argon2i\" (default is \"argon2id\")";
-
-// ported from: src/runtime/crypto/PasswordObject.zig

@@ -4,7 +4,8 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorO
 
 use super::Expect;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
+// Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
+// `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
 pub(crate) fn to_be_empty(
     this: &Expect,
     global: &JSGlobalObject,
@@ -44,8 +45,7 @@ pub(crate) fn to_be_empty(
                         "Expected value to be a string, object, or iterable"
                     )));
                 };
-                // Zig: `cell.toObject(globalThis)` — `value` is the same cell, so use the
-                // JSValue ToObject path directly.
+                // `value` is the same cell, so use the JSValue ToObject path directly.
                 let object = value.to_object(global)?;
                 let props_iter = JSPropertyIterator::init(
                     global,
@@ -107,4 +107,3 @@ pub(crate) fn to_be_empty(
     )))
 }
 
-// ported from: src/test_runner/expect/toBeEmpty.zig

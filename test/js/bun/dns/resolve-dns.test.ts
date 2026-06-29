@@ -194,4 +194,41 @@ describe("dns", () => {
       expect(() => dns.setServers([[4, "8.8.8.8", 53]])).not.toThrow();
     });
   });
+
+  describe("UTF-16 string arguments", () => {
+    // Builds a JSString backed by a 16-bit (UTF-16) buffer even though the
+    // contents are plain ASCII. Passing such strings used to hit a debug
+    // assertion (ZigString::slice() on UTF-16 string) instead of being
+    // transcoded.
+    const utf16 = (s: string) =>
+      new TextDecoder("utf-16le").decode(new Uint8Array([...s].flatMap(c => [c.charCodeAt(0), 0])));
+
+    test("lookupService() with a UTF-16 invalid address throws TypeError", () => {
+      // @ts-expect-error
+      expect(() => Bun.dns.lookupService(utf16("1,2,3"), 443)).toThrow(
+        `The "address" argument is invalid. Received type string ('1,2,3')`,
+      );
+    });
+
+    test("lookupService() with a UTF-16 valid address does not crash", async () => {
+      // The reverse lookup result is environment-dependent; the assertion is
+      // that the address parses (no synchronous throw) and nothing panics.
+      // @ts-expect-error
+      await Bun.dns.lookupService(utf16("127.0.0.1"), 443).catch(() => {});
+    });
+
+    test("resolve() with a UTF-16 record type does not crash", async () => {
+      // A valid record type must be accepted (no synchronous throw); the
+      // query result itself is environment-dependent.
+      // @ts-expect-error
+      await Bun.dns.resolve(utf16("localhost"), utf16("AAAA")).catch(() => {});
+    });
+
+    test("resolve() with a UTF-16 invalid record type throws TypeError", () => {
+      // @ts-expect-error
+      expect(() => Bun.dns.resolve("localhost", utf16("BOGUS"))).toThrow(
+        `The property "record" is invalid. Expected one of: A, AAAA, ANY, CAA, CNAME, MX, NS, PTR, SOA, SRV, TXT, received type string ('BOGUS')`,
+      );
+    });
+  });
 });

@@ -17,7 +17,6 @@ pub const DEFAULT_EXPIRATION_MS: u64 = 24 * 60 * 60 * 1000;
 pub const DEFAULT_ALGORITHM: Algorithm = Algorithm::Sha256;
 
 /// Error types for CSRF operations
-// TODO(port): thiserror not in deps — manual Display/Error impl for now
 #[derive(strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     InvalidToken,
@@ -29,8 +28,8 @@ bun_core::impl_tag_error!(Error);
 
 bun_core::named_error_set!(Error);
 
-/// Options for generating CSRF tokens
-// TODO(port): Zig has per-field defaults; Rust callers must specify all fields
+/// Options for generating CSRF tokens. Defaults are noted on
+/// each field; callers must specify all fields.
 pub struct GenerateOptions<'a> {
     /// Secret key to use for signing
     pub secret: &'a [u8],
@@ -45,8 +44,8 @@ pub struct GenerateOptions<'a> {
     pub algorithm: Algorithm, // = DEFAULT_ALGORITHM
 }
 
-/// Options for validating CSRF tokens
-// TODO(port): Zig has per-field defaults; Rust callers must specify all fields
+/// Options for validating CSRF tokens. Defaults are noted on
+/// each field; callers must specify all fields.
 pub struct VerifyOptions<'a> {
     /// The token to verify
     pub token: &'a [u8],
@@ -162,9 +161,9 @@ pub fn verify(options: &VerifyOptions<'_>) -> bool {
         token = &token[0..token.len() - 1];
     }
 
-    // PORT NOTE: reshaped for borrowck — compute decoded_len, then borrow buf immutably afterward
+    // Reshaped for borrowck — compute decoded_len, then borrow buf immutably afterward
     let decoded_len: usize = match encoding {
-        // shares same decoder but encoder is different see encoding.zig
+        // base64 and base64url share the same decoder, but the encoders differ
         TokenFormat::Base64Url | TokenFormat::Base64 => {
             // do the same as Buffer.from(token, "base64url" | "base64")
             // "\r\n\t " ++ VT (0x0b)
@@ -276,8 +275,4 @@ pub fn verify(options: &VerifyOptions<'_>) -> bool {
     boring::constant_time_eq(received_signature, signature)
 }
 
-// NOTE: the Zig file re-exports csrf__generate / csrf__verify from
-// ../runtime/api/csrf_jsc.zig — per PORTING.md these *_jsc aliases are
-// deleted; JS bindings live in the *_jsc crate as extension methods.
-
-// ported from: src/csrf/csrf.zig
+// NOTE: JS bindings live in the *_jsc crate as extension methods.

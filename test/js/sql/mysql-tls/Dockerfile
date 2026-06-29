@@ -16,7 +16,7 @@ COPY conf.d /etc/mysql/conf.d
 RUN chown -R mysql:mysql /etc/mysql/ssl /etc/mysql/conf.d \
  && chmod 600 /etc/mysql/ssl/server-key.pem \
  && find /etc/mysql/ssl -type f -name "*.pem" -exec chmod 640 {} \; \
- && echo "require_secure_transport=ON" >> /etc/mysql/conf.d/force_tls.cnf
+ && printf "[mysqld]\nrequire_secure_transport=ON\n" > /etc/mysql/conf.d/force_tls.cnf
 
 # Expose MySQL
 EXPOSE 3306

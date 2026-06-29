@@ -6,6 +6,7 @@ use crate::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue, JsRef, JsResult,
     VirtualMachine, VirtualMachineSqlExt as _,
 };
+use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_jsc::JsCell;
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
 use bun_sql::mysql::MySQLQueryResult;
@@ -16,7 +17,7 @@ use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 use super::js_mysql_connection::MySQLConnection;
 use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
 use crate::postgres::command_tag_jsc::CommandTagJsc as _;
-// PORT NOTE: `my_sql_query` exports both the `MySQLQuery` *struct* and a
+// `my_sql_query` exports both the `MySQLQuery` *struct* and a
 // `declare_scope!`-generated `MySQLQuery` *static* (ScopedLogger). Importing
 // the name once pulls in both namespaces, so the `debug!` macro below resolves
 // against the imported static — no second `declare_scope!` here.
@@ -25,10 +26,11 @@ use super::my_sql_statement::MySQLStatement;
 
 bun_core::define_scoped_log!(debug, MySQLQuery);
 
-// TODO(port): #[bun_jsc::JsClass] — proc-macro emits shims typed against
-// `bun_jsc::{JSGlobalObject, CallFrame, JSValue, JsError}`, which are distinct
-// from this crate's local `crate::jsc::*` mirror types until `crate::jsc`
-// becomes `pub use bun_jsc as jsc;` (see lib.rs TODO). Re-enable then.
+// The `#[bun_jsc::JsClass]` derive is intentionally not applied: this type's
+// JS wiring (`to_js`/`from_js`, the exported `MySQLQueryPrototype__*` /
+// `MySQLQueryClass__*` wrappers) is owned by the `.classes.ts` codegen
+// (`generated_classes.rs` calls the inherent methods below directly), so the
+// derive's placeholder shims would be redundant dead code.
 //
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
@@ -66,9 +68,7 @@ impl JSMySQLQuery {
         core::mem::size_of::<Self>()
     }
 
-    // TODO(port): #[bun_jsc::host_fn] — free-fn shim emitted inside an
-    // `impl` block tries to call `constructor()` unqualified; re-enable once the
-    // proc-macro emits `Self::constructor` for receiverless impl items.
+    // Exported via the `.classes.ts` codegen (`MySQLQueryClass__construct`).
     pub fn constructor(
         global_this: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -91,48 +91,19 @@ impl JSMySQLQuery {
         bun_ptr::finalize_js_box(self, |this| this.this_value.with_mut(|v| v.finalize()));
     }
 
-    // — same proc-macro limitation as `constructor` above.
+    // Reached from JS via `put_host_functions!` in `mysql.rs`.
     pub fn create_instance(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
-        let mut args = jsc::call_frame::ArgumentsSlice::init(global_this.sql_vm(), arguments);
-        // defer args.deinit() — handled by Drop
-        let Some(query) = args.next_eat() else {
-            return Err(global_this.throw(format_args!("query must be a string")));
-        };
-        let Some(values) = args.next_eat() else {
-            return Err(global_this.throw(format_args!("values must be an array")));
-        };
-
-        if !query.is_string() {
-            return Err(global_this.throw(format_args!("query must be a string")));
-        }
-
-        if values.js_type() != jsc::JSType::Array {
-            return Err(global_this.throw(format_args!("values must be an array")));
-        }
-
-        let pending_value: JSValue = args.next_eat().unwrap_or(JSValue::UNDEFINED);
-        let columns: JSValue = args.next_eat().unwrap_or(JSValue::UNDEFINED);
-        let js_bigint: JSValue = args.next_eat().unwrap_or(JSValue::FALSE);
-        let js_simple: JSValue = args.next_eat().unwrap_or(JSValue::FALSE);
-
-        let bigint = js_bigint.is_boolean() && js_bigint.as_boolean();
-        let simple = js_simple.is_boolean() && js_simple.as_boolean();
-        if simple {
-            if values.get_length(global_this)? > 0 {
-                return Err(global_this
-                    .throw_invalid_arguments(format_args!("simple query cannot have parameters")));
-            }
-            if query.get_length(global_this)? >= i32::MAX as u64 {
-                return Err(global_this.throw_invalid_arguments(format_args!("query is too long")));
-            }
-        }
-        if !pending_value.js_type().is_array_like() {
-            return Err(global_this.throw_invalid_argument_type("query", "pendingValue", "Array"));
-        }
+        let QueryCtorArgs {
+            query,
+            values,
+            pending_value,
+            columns,
+            bigint,
+            simple,
+        } = QueryCtorArgs::parse(global_this, callframe.arguments())?;
 
         let this_ptr = bun_core::heap::into_raw(Box::new(Self {
             this_value: JsCell::new(JsRef::empty()),
@@ -166,7 +137,6 @@ impl JSMySQLQuery {
         Ok(this_value)
     }
 
-    // TODO(port): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_run(
         this: &Self,
         global_object: &JSGlobalObject,
@@ -208,7 +178,6 @@ impl JSMySQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(port): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_cancel(
         _this: &Self,
         _global_object: &JSGlobalObject,
@@ -219,7 +188,6 @@ impl JSMySQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(port): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_done(
         _this: &Self,
         _global_object: &JSGlobalObject,
@@ -229,7 +197,6 @@ impl JSMySQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(port): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn set_mode_from_js(
         this: &Self,
         global_object: &JSGlobalObject,
@@ -241,7 +208,7 @@ impl JSMySQLQuery {
         }
 
         let mode_value = js_mode.coerce::<i32>(global_object)?;
-        // PORT NOTE: `std.meta.intToEnum` → manual range match (no `TryFrom<i32>`
+        // Manual range match (no `TryFrom<i32>`
         // on `SQLQueryResultMode`; it's a plain `#[repr(u8)]` enum).
         let mode = match mode_value {
             0 => SQLQueryResultMode::Objects,
@@ -257,7 +224,6 @@ impl JSMySQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(port): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn set_pending_value_from_js(
         this: &Self,
         _global_object: &JSGlobalObject,
@@ -466,9 +432,7 @@ impl JSMySQLQuery {
         {
             debug!("run failed to execute query");
             if !global_object.has_exception() {
-                // PORT NOTE: Zig `return globalObject.throwValue(...)` returns
-                // `error.JSError` into the `AnyMySQLError.Error!void` set; in
-                // Rust we throw for side-effect and map to the enum variant.
+                // Throw for side-effect and map to the enum variant.
                 let _ = global_object.throw_value(mysql_error_to_js(
                     global_object,
                     "failed to execute query",
@@ -625,10 +589,7 @@ impl JSMySQLQuery {
     }
 }
 
-// TODO(port): @export(&jsc.toJSHostFn(createInstance), .{ .name = "MySQLQuery__createInstance" })
-// — the #[bun_jsc::host_fn] macro on `create_instance` should emit this with
-// #[unsafe(no_mangle)] under the name "MySQLQuery__createInstance"; verify codegen wiring.
+// JS reaches `create_instance` through `put_host_functions!` in `mysql.rs`;
+// nothing on the C++ side references it, so no extern export exists.
 
 pub use js::{from_js, from_js_direct, to_js};
-
-// ported from: src/sql_jsc/mysql/JSMySQLQuery.zig

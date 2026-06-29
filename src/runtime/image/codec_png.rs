@@ -8,7 +8,6 @@ use super::codecs;
 use super::quantize;
 use crate::encoded_wrap_free;
 
-// TODO(port): move to runtime_sys (or a dedicated spng_sys crate)
 bun_opaque::opaque_ffi! { pub struct spng_ctx; }
 
 unsafe extern "C" {
@@ -378,5 +377,3 @@ pub(crate) fn encode_indexed(
         free: encoded_wrap_free!(libc::free),
     })
 }
-
-// ported from: src/runtime/image/codec_png.zig

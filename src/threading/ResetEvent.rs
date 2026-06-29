@@ -1,5 +1,3 @@
-//! Port of `std.Thread.ResetEvent` (Zig 0.14.1) on top of Bun's `Futex`.
-//!
 //! A `ResetEvent` is a thread-safe bool that threads can block on until it
 //! becomes "set". Statically initializable, at most `size_of::<u32>()` of
 //! state. Replaces the hand-rolled `Mutex<bool> + Condvar` shim in
@@ -28,7 +26,7 @@ const WAITING: u32 = 1;
 const IS_SET: u32 = 2;
 
 impl ResetEvent {
-    /// Const-init in the unset state (Zig: `.{}`).
+    /// Const-init in the unset state.
     pub const fn new() -> Self {
         Self {
             state: AtomicU32::new(UNSET),
@@ -130,5 +128,3 @@ impl ResetEvent {
         self.state.store(UNSET, Ordering::Relaxed);
     }
 }
-
-// ported from: vendor/zig/lib/std/Thread/ResetEvent.zig (FutexImpl)

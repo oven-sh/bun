@@ -15,13 +15,13 @@ use bun_jsc::HTTPHeaderName;
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
-use crate::server::{AnyServer, write_status};
+use crate::server::{AnyServer, HTTPStatusText, write_status};
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::headers_ref::any_blob_content_type;
 use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 
 // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — single-thread refcount.
-// PORT NOTE (§Pointers): `*StaticRoute` is also passed as uws onAborted/
+// `*StaticRoute` is also passed as uws onAborted/
 // onWritable userdata; the intrusive `ref_count` Cell + `*mut Self` receivers
 // preserve write provenance through the FFI userdata round-trip so the eventual
 // `heap::take` in `deref_` is sound.
@@ -29,8 +29,7 @@ use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 pub struct StaticRoute {
     // TODO: Remove optional. StaticRoute requires a server object or else it will
     // not ensure it is alive while sending a large blob.
-    // `pub(super)` so sibling route modules (HTMLBundle) can construct directly
-    // (Zig `bun.new(StaticRoute, .{ .ref_count = .init(), ... })`).
+    // `pub(super)` so sibling route modules (HTMLBundle) can construct directly.
     pub(super) ref_count: Cell<u32>,
     pub server: Cell<Option<AnyServer>>,
     pub status_code: u16,
@@ -62,7 +61,7 @@ impl<'a> Default for InitFromBytesOptions<'a> {
 impl StaticRoute {
     // pub const ref / deref — intrusive refcount accessors.
     // `ref_()`/`deref()` are provided by `#[derive(CellRefCounted)]`; `deref_`
-    // is kept as a thin alias so existing call sites (and Zig parity) keep
+    // is kept as a thin alias so existing call sites keep
     // working without renaming.
     /// # Safety
     /// `this` must have been produced by `heap::alloc` in one of the
@@ -76,8 +75,7 @@ impl StaticRoute {
     }
 
     /// Ownership of `blob` is transferred to this function.
-    // PORT NOTE: Zig takes `*const AnyBlob` and bit-copies (`blob.*`) into the
-    // route, relying on no-auto-drop. Rust `AnyBlob` has drop glue (e.g.
+    // `AnyBlob` has drop glue (e.g.
     // `InternalBlob.bytes: Vec<u8>`), so a `&AnyBlob` + `ptr::read` would alias
     // and double-free when the caller's value drops. Take by value instead.
     pub fn init_from_any_blob(
@@ -251,7 +249,7 @@ impl StaticRoute {
     // HEAD requests have no body.
     /// # Safety
     /// `this` must point to a live heap-allocated `StaticRoute` produced by one of
-    /// the constructors (write provenance intact). Mirrors Zig `*StaticRoute` receiver.
+    /// the constructors (write provenance intact).
     pub unsafe fn on_head_request(this: *mut Self, mut req: AnyRequest, resp: AnyResponse) {
         // SAFETY: caller contract.
         unsafe {
@@ -286,7 +284,15 @@ impl StaticRoute {
 
     fn render_metadata_and_end(&self, resp: AnyResponse) {
         self.render_metadata(resp);
-        resp.write_header_int(b"Content-Length", self.cached_blob_size);
+        // `do_render_blob_corked` drops the body for a null-body status, so
+        // HEAD reports the zero bytes GET actually sends (RFC 9110 §9.3.2).
+        // (For 1xx/204 uWS suppresses the Content-Length header entirely.)
+        let size = if HTTPStatusText::is_null_body(self.status_code) {
+            0
+        } else {
+            self.cached_blob_size
+        };
+        resp.write_header_int(b"Content-Length", size);
         resp.end_without_body(resp.should_close_connection());
     }
 
@@ -410,6 +416,13 @@ impl StaticRoute {
 
     fn do_render_blob_corked(&self, resp: AnyResponse, did_finish: &mut bool) {
         self.render_metadata(resp);
+        // A null-body status never puts body bytes on the wire, the same drop
+        // `render` and `FileRoute` already do. Writing them here with no
+        // Content-Length (uWS suppresses it for 1xx/204) desyncs keep-alive.
+        if HTTPStatusText::is_null_body(self.status_code) {
+            *did_finish = resp.try_end(b"", 0, resp.should_close_connection());
+            return;
+        }
         self.render_bytes(resp, did_finish);
     }
 
@@ -468,7 +481,6 @@ impl StaticRoute {
                 &buf[value.offset as usize..][..value.length as usize],
             );
         }
-        // Zig: `if (comptime tag != .H3) ... s.writeHeader("alt-svc", alt)`.
         if !matches!(resp, AnyResponse::H3(_)) {
             if let Some(srv) = self.server.get() {
                 if let Some(alt) = srv.h3_alt_svc() {
@@ -483,16 +495,7 @@ impl StaticRoute {
     }
 
     fn render_metadata(&self, resp: AnyResponse) {
-        let mut status = self.status_code;
-        let size = self.cached_blob_size;
-
-        status = if status == 200 && size == 0 && !self.blob.is_detached() {
-            204
-        } else {
-            status
-        };
-
-        self.do_write_status(status, resp);
+        self.do_write_status(self.status_code, resp);
         self.do_write_headers(resp);
     }
 
@@ -554,7 +557,6 @@ impl StaticRoute {
 
 impl Drop for StaticRoute {
     fn drop(&mut self) {
-        // Zig deinit: blob.detach() + headers.deinit() + bun.destroy(this).
         // Box drop handles the dealloc; Headers has its own Drop.
         self.blob.detach();
     }

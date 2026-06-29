@@ -2,10 +2,7 @@
 //!
 //! `src/codegen/cppbind.ts` parses every `.cpp` under `src/` for the
 //! `[[ZIG_EXPORT(nothrow|zero_is_throw|false_is_throw|null_is_throw|check_slow)]]`
-//! attribute and emits two siblings into `${BUN_CODEGEN_DIR}`:
-//!
-//!   - `cpp.zig`  — the Zig `bun.cpp.*` namespace (typed wrappers + raw externs)
-//!   - `cpp.rs`   — this module's body
+//! attribute and emits `cpp.rs` (this module's body) into `${BUN_CODEGEN_DIR}`.
 //!
 //! Each throwing function gets a `pub fn` that opens a
 //! [`TopExceptionScope`](crate::TopExceptionScope) /

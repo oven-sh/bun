@@ -13,7 +13,7 @@ namespace Inspector {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorHTTPServerAgent);
 
-// Zig bindings implementation
+// Rust bindings implementation
 extern "C" {
 void Bun__HTTPServerAgent__setEnabled(Inspector::InspectorHTTPServerAgent* agent);
 
@@ -177,10 +177,10 @@ void InspectorHTTPServerAgent::requestHandlerException(Ref<Protocol::HTTPServer:
 
 }
 
-// Zig API implementation
+// Rust-facing C API implementation
 extern "C" {
 
-// Functions for Zig to call to notify about HTTP server events
+// Functions for the Rust side to call to notify about HTTP server events
 
 typedef int ServerId;
 typedef int HotReloadId;
@@ -199,7 +199,7 @@ typedef int RequestId;
     agent->serverStopped(serverId, timestamp);
 }
 
-// This matches the Route extern struct in Zig
+// This matches the Route extern struct on the Rust side
 struct Route {
     enum class Type : uint8_t {
         Default = 1,

@@ -162,9 +162,8 @@ impl Seq {
 
     fn do_(interp: &Interpreter, cmd: NodeId) -> Yield {
         let needs_io = Builtin::of(interp, cmd).stdout.needs_io().is_some();
-        // PORT NOTE: reshaped for borrowck — render entirely into a local
-        // Vec, then either enqueue it or write_no_io it. Zig wrote each
-        // number directly when !needs_io; we buffer once for simplicity.
+        // Render entirely into a local Vec, then either enqueue it or
+        // write_no_io it; we buffer once for simplicity.
         let (start, end, incr, sep, term) = {
             let me = Self::state_mut(interp, cmd);
             (me.start, me.end, me.increment, me.separator, me.terminator)
@@ -176,7 +175,8 @@ impl Seq {
         } else {
             current >= end
         } {
-            // TODO(port): verify Rust `{}` f32 formatting matches Zig `{d}`.
+            // Rust `{}` for f32 prints the shortest decimal that round-trips
+            // (no exponent, no trailing ".0").
             let _ = write!(&mut out, "{}", current);
             out.extend_from_slice(sep.slice());
             let next = current + incr;
@@ -196,7 +196,7 @@ impl Seq {
             Self::state_mut(interp, cmd).buf = out;
             let safeguard = Builtin::of(interp, cmd).stdout.needs_io().unwrap();
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            // PORT NOTE: reshaped for borrowck — clone the slice so the &mut
+            // NOTE: reshaped for borrowck — clone the slice so the &mut
             // on stdout doesn't alias `buf`.
             let buf = Self::state_mut(interp, cmd).buf.clone();
             return Builtin::of_mut(interp, cmd)
@@ -232,5 +232,3 @@ impl Seq {
 fn parse_f32(bytes: &[u8]) -> Option<f32> {
     bun_core::fmt::parse_f32(bytes)
 }
-
-// ported from: src/shell/builtin/seq.zig

@@ -4,13 +4,12 @@ use bun_core::ZigString;
 use super::Expect;
 use super::get_signature;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub(crate) fn to_match_snapshot(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // PORT NOTE: reshaped for borrowck — `defer this.postMatch(globalThis)` is expressed by
+    // reshaped for borrowck — post-match cleanup is expressed by
     // wrapping `this` in a scopeguard so `post_match` runs on every exit path while we still
     // deref through the guard for the body.
     let this = scopeguard::guard(this, |this| this.post_match(global));
@@ -23,7 +22,6 @@ pub(crate) fn to_match_snapshot(
 
     let not = this.flags.get().not();
     if not {
-        // PERF(port): was `comptime getSignature(...)` — would require `get_signature` to be `const fn`.
         let signature = get_signature("toMatchSnapshot", "", true);
         return this.throw_fmt(
             global,
@@ -34,7 +32,6 @@ pub(crate) fn to_match_snapshot(
     }
 
     let Some(buntest_strong) = this.bun_test() else {
-        // PERF(port): was `comptime getSignature(...)` — would require `get_signature` to be `const fn`.
         let signature = get_signature("toMatchSnapshot", "", true);
         return this.throw_fmt(
             global,
@@ -43,7 +40,7 @@ pub(crate) fn to_match_snapshot(
             format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n"),
         );
     };
-    let _ = buntest_strong; // Drop at scope exit replaces `defer buntest_strong.deinit()`.
+    let _ = buntest_strong; // released by Drop at scope exit.
 
     let mut hint_string: ZigString = ZigString::EMPTY;
     let mut property_matchers: Option<JSValue> = None;
@@ -65,7 +62,6 @@ pub(crate) fn to_match_snapshot(
         }
         _ => {
             if !arguments[0].is_object() {
-                // PERF(port): was `comptime getSignature(...)` — would require `get_signature` to be `const fn`.
                 let signature =
                     get_signature("toMatchSnapshot", "<green>properties<r><d>, <r>hint", false);
                 return this.throw_fmt(
@@ -92,7 +88,7 @@ pub(crate) fn to_match_snapshot(
     }
 
     let hint = hint_string.to_slice();
-    // `defer hint.deinit()` — Drop handles it.
+    // `hint` cleanup handled by Drop.
 
     let value: JSValue = this.get_value(
         global,
@@ -103,5 +99,3 @@ pub(crate) fn to_match_snapshot(
 
     Expect::snapshot(&**this, global, value, property_matchers, hint.slice(), "toMatchSnapshot")
 }
-
-// ported from: src/test_runner/expect/toMatchSnapshot.zig

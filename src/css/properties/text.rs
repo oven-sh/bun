@@ -126,13 +126,11 @@ impl TextShadow {
             && self.spread.is_compatible(browsers)
     }
 
-    // Zig: `pub fn eql` via `css.implementEql(@This(), ...)` — field-wise equality.
-    // Ported as `#[derive(PartialEq)]` above; callers use `==`.
-
     pub(crate) fn deep_clone(&self, alloc: &bun_alloc::Arena) -> Self {
-        // TODO(port): Zig used reflection-based `css.implementDeepClone`. Fields here
-        // are value types, so a plain Clone is equivalent; arena param retained for
-        // signature compatibility with the CSS deep_clone protocol.
+        // Fields deep-clone via `#[derive(Clone)]` (`CssColor`/`Length`
+        // `Box`-carrying variants clone deeply onto the global heap), so a
+        // plain Clone is equivalent; arena param retained for signature
+        // compatibility with the CSS deep_clone protocol.
         let _ = alloc;
         self.clone()
     }
@@ -149,7 +147,6 @@ impl css::generics::IsCompatible for TextShadow {
 }
 
 /// A value for the [direction](https://drafts.csswg.org/css-writing-modes-3/#direction) property.
-// Zig wires eql/hash/parse/toCss/deepClone via `css.DefineEnumProperty(@This())`.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty, crate::generics::CssHash,
 )]
@@ -159,5 +156,3 @@ pub enum Direction {
     /// This value sets inline base direction (bidi directionality) to line-right-to-line-left.
     Rtl,
 }
-
-// ported from: src/css/properties/text.zig

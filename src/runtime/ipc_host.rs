@@ -1,6 +1,5 @@
 //! JS host entry points for the IPC module that need to name `bun_runtime`
-//! types (`Subprocess`, `Listener`). Spec: `src/jsc/ipc.zig:980-1088` +
-//! `VirtualMachine.zig` `Bun__Process__send_`.
+//! types (`Subprocess`, `Listener`).
 //!
 //! LAYERING: `bun_jsc::ipc` defines the protocol/queue (mode-agnostic) and the
 //! `SendQueueOwner` trait. The host fns here close over the concrete
@@ -213,8 +212,8 @@ pub fn emit_handle_ipc_message(
     Ok(JSValue::UNDEFINED)
 }
 
-// Zig: comptime { const Bun__Process__send = jsc.toJSHostFn(Bun__Process__send_); @export(...) }
-// The #[bun_jsc::host_fn] attribute emits the callconv(jsc.conv) shim and export.
+// The #[bun_jsc::host_fn] attribute emits the jsc-callconv shim and the
+// `Bun__Process__send` export.
 //
 // LAYERING: lives here (not in `bun_jsc::virtual_machine_exports`) because the
 // body — via `do_send` — names `Listener` (`bun_runtime`). The export is a

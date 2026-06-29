@@ -13,5 +13,3 @@ pub(crate) fn z_field_count(prefix: &[u8], slice: &[u8]) -> usize {
 
     z_count(prefix)
 }
-
-// ported from: src/sql/postgres/protocol/zHelpers.zig

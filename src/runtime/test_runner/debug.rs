@@ -23,9 +23,9 @@ pub(crate) fn dump_describe(describe: &DescribeScope) -> JsResult<()> {
     if !group::get_log_enabled() {
         return Ok(());
     }
-    // TODO(port): std.zig.fmtString escaping — using BStr Debug-ish display for now
+    // `BStr`'s `Debug` impl quotes and escapes the name.
     let _guard = group::begin_msg(format_args!(
-        "describe \"{}\" (concurrent={}, mode={}, only={}, has_callback={})",
+        "describe {:?} (concurrent={}, mode={}, only={}, has_callback={})",
         bstr::BStr::new(describe.base.name.as_deref().unwrap_or(b"(unnamed)")),
         describe.base.concurrent,
         describe.base.mode.tag_name(),
@@ -56,7 +56,7 @@ pub(crate) fn dump_test(current: &ExecutionEntry, label: &[u8]) -> JsResult<()> 
         return Ok(());
     }
     let _guard = group::begin_msg(format_args!(
-        "{} \"{}\" (concurrent={}, only={})",
+        "{} {:?} (concurrent={}, only={})",
         bstr::BStr::new(label),
         bstr::BStr::new(current.base.name.as_deref().unwrap_or(b"(unnamed)")),
         current.base.concurrent,
@@ -86,7 +86,7 @@ pub(crate) fn dump_order(this: &Execution) -> JsResult<()> {
             let mut current_entry: Option<NonNull<ExecutionEntry>> = sequence.first_entry;
             while let Some(entry_ptr) = current_entry {
                 // SAFETY: linked-list nodes are owned by the Execution and remain valid for the
-                // duration of this read-only dump (Zig: ?*ExecutionEntry walked via .next).
+                // duration of this read-only dump.
                 let entry = unsafe { entry_ptr.as_ref() };
                 group::log(format_args!(
                     "ExecutionEntry \"{}\" (concurrent={}, mode={}, only={}, has_callback={})",
@@ -114,7 +114,7 @@ pub mod group {
         let _ = write!(writer, "\x1b[m");
     }
 
-    // PORT NOTE: Zig used plain mutable globals; using atomics for Rust safety (debug-only path).
+    // Atomics for safety (debug-only path).
     static INDENT: AtomicUsize = AtomicUsize::new(0);
     static LAST_WAS_START: AtomicBool = AtomicBool::new(false);
 
@@ -138,7 +138,6 @@ pub mod group {
     }
 
     /// RAII guard returned by [`begin`] / [`begin_msg`]; calls [`end`] on drop.
-    /// Mirrors Zig's `group.beginMsg(...); defer group.end();` pattern.
     #[must_use = "binding this guard keeps the log group open until end of scope"]
     pub(crate) struct GroupGuard(());
 
@@ -148,9 +147,8 @@ pub mod group {
         }
     }
 
-    /// Port of Zig's `begin(@src())`. Uses `#[track_caller]` so the source
-    /// location is taken from the *call site* (file/line/column), matching
-    /// `std.builtin.SourceLocation` minus `fn_name` (Rust has no stable equivalent).
+    /// Uses `#[track_caller]` so the source
+    /// location is taken from the *call site* (file/line/column).
     #[track_caller]
     pub(crate) fn begin() -> GroupGuard {
         let loc = core::panic::Location::caller();
@@ -176,8 +174,7 @@ pub mod group {
             LAST_WAS_START.store(true, Ordering::Relaxed);
         }
         // Guard returned unconditionally; `end()` is itself gated on
-        // `get_log_enabled()` so the disabled path stays a symmetric no-op
-        // (matches Zig's unconditional `defer group.end()`).
+        // `get_log_enabled()` so the disabled path stays a symmetric no-op.
         GroupGuard(())
     }
 
@@ -186,10 +183,10 @@ pub mod group {
             return;
         }
         INDENT.fetch_sub(1, Ordering::Relaxed);
-        // Zig: `defer last_was_start = false;` — read-then-clear, so a single swap suffices.
+        // Read-then-clear, so a single swap suffices.
         let last_was_start = LAST_WAS_START.swap(false, Ordering::Relaxed);
         if last_was_start {
-            return; // std.fs.File.stdout().writer().print("\x1b[A", .{}) catch {};
+            return;
         }
 
         let mut buf: Vec<u8> = Vec::new();
@@ -204,7 +201,7 @@ pub mod group {
     }
 
     /// Accepts anything `Display` so callers can pass either `&str` literals or
-    /// `format_args!(...)` (Zig's `log(fmt, args)` is variadic; Rust callers use both forms).
+    /// `format_args!(...)`.
     pub(crate) fn log(args: impl fmt::Display) {
         if !get_log_enabled() {
             return;
@@ -217,5 +214,3 @@ pub mod group {
         LAST_WAS_START.store(false, Ordering::Relaxed);
     }
 }
-
-// ported from: src/test_runner/debug.zig

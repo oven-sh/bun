@@ -23,8 +23,7 @@ pub(crate) const ENABLE_PROCESSED_OUTPUT: DWORD = 0x0001;
 pub(crate) const ENABLE_WRAP_AT_EOL_OUTPUT: DWORD = 0x0002;
 pub(crate) const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
 
-/// Wrapper that returns `None` on `INVALID_HANDLE_VALUE` (matches
-/// `std.os.windows.GetStdHandle` error-union semantics).
+/// Wrapper that returns `None` on `INVALID_HANDLE_VALUE` or a null handle.
 #[inline]
 pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
     let h = kernel32::GetStdHandle(std_handle);
@@ -36,7 +35,7 @@ pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// PEB access (`std.os.windows.peb()`). `bun_core::output::windows_stdio`
+// PEB access. `bun_core::output::windows_stdio`
 // reads `ProcessParameters.hStd{Input,Output,Error}` to snapshot the console
 // handles before libuv touches them. Canonical structs/asm live in the tier-0
 // `bun_windows_sys` leaf and are re-exported here for the
@@ -56,7 +55,7 @@ unsafe impl crate::ffi::Zeroable for CONSOLE_SCREEN_BUFFER_INFO {}
 // kernel32 externs are owned by the tier-0 leaf `bun_windows_sys`; re-export
 // so existing `crate::windows_sys::kernel32::*` / `c::*` callers resolve.
 pub use bun_windows_sys::kernel32;
-// `c::` alias used by `output.rs` (Zig's `bun.c` namespace).
+// `c::` alias used by `output.rs`.
 pub use kernel32 as c;
 
 /// `bun.windows.libuv` — only `uv_disable_stdio_inheritance` is called from

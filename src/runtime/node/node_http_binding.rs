@@ -21,7 +21,7 @@ pub(crate) fn get_bun_server_all_closed_promise(
 
     let value = arguments[0];
 
-    // Zig: `inline for` over heterogeneous server types — unrolled manually.
+    // Try each heterogeneous server type in turn.
     macro_rules! try_server {
         ($ty:ty) => {
             if let Some(server) = value.as_::<$ty>() {
@@ -68,5 +68,3 @@ pub(crate) fn set_max_http_header_size(
     bun_http::set_max_http_header_size(num as usize);
     Ok(JSValue::from(bun_http::max_http_header_size()))
 }
-
-// ported from: src/runtime/node/node_http_binding.zig

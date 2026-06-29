@@ -547,7 +547,10 @@ declare module "bun" {
      * const result = await sql`SELECT * FROM users WHERE id IN ${sql([1, 2, 3])}`;
      * ```
      */
-    <T>(value: T): SQL.Helper<T>;
+    // `T & {}` rejects a bare `null`/`undefined` value, which the runtime
+    // throws on. An array such as `[null]` stays allowed: it is a valid
+    // `WHERE IN` binding and is an object, so it still satisfies `{}`.
+    <T>(value: T & {}): SQL.Helper<T>;
   }
 
   /**

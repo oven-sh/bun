@@ -3,8 +3,6 @@ use crate::{AnyTaskJob, AnyTaskJobCtx, JSGlobalObject, JSValue, JsResult, Strong
 // Opaque pointer to C++ SecretsJobOptions struct
 bun_opaque::opaque_ffi! { pub struct SecretsJobOptions; }
 
-// TODO(port): move to <area>_sys
-//
 // safe fn: `SecretsJobOptions` and `JSGlobalObject` are `opaque_ffi!` ZST
 // handles (`!Freeze` via `UnsafeCell`); `&mut`/`&` are ABI-identical to
 // non-null `*mut`/`*const` and C++ mutating job state through them is interior
@@ -79,8 +77,3 @@ pub(crate) extern "C" fn Bun__Secrets__scheduleJob(
     )
     .expect("SecretsCtx::init is infallible");
 }
-
-// Zig `fixDeadCodeElimination` + `comptime { _ = ... }` dropped:
-// #[unsafe(no_mangle)] already prevents DCE of Bun__Secrets__scheduleJob in Rust.
-
-// ported from: src/jsc/JSSecrets.zig

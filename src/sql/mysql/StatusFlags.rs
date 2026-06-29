@@ -41,10 +41,8 @@ pub struct StatusFlags {
 
 impl fmt::Display for StatusFlags {
     fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // PORT NOTE: the Zig `format` iterates `std.meta.fieldNames(StatusFlags)` and
-        // prints each field whose type is `bool`. `StatusFlags` has only one field
-        // (`_value: u16`), so the Zig loop is a no-op at comptime. Preserved as a
-        // no-op here; likely dead code left over from when this was a packed struct.
+        // Intentionally a no-op; likely dead code left over from when this
+        // was a packed struct of bools.
         let _first = true;
         Ok(())
     }
@@ -63,5 +61,3 @@ impl StatusFlags {
         Self { _value: flags }
     }
 }
-
-// ported from: src/sql/mysql/StatusFlags.zig

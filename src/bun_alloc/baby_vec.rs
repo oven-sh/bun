@@ -1,10 +1,8 @@
 //! `BabyVec<'a, T>` — arena-backed growable array with `u32` length/capacity.
 //!
-//! Port target: `BabyList(T)` (collections/baby_list.zig) =
-//! `(ptr: [*]T, len: u32, cap: u32)` = 16 B. The Rust port stores the owning
-//! `&'a MimallocArena` inline (lifetime-checked allocator vs Zig passing the
-//! allocator at every `append(allocator, ..)` call site), so 24 B instead of
-//! 16. Still 8 B smaller than `Vec<T, &'a MimallocArena>` (32 B), which
+//! `(ptr: [*]T, len: u32, cap: u32)` plus the owning
+//! `&'a MimallocArena` stored inline (lifetime-checked allocator), so 24 B.
+//! Still 8 B smaller than `Vec<T, &'a MimallocArena>` (32 B), which
 //! matters for AST node lists embedded in `Part` / `BundledAst` columns.
 //!
 //! `len`/`cap` are stored as `u32` (`usize` on the public API for ergonomics).
@@ -304,7 +302,7 @@ impl<'a, T> BabyVec<'a, T> {
 
     /// Drain all elements. Only the full range is supported — the `RangeBounds`
     /// parameter exists for drop-in `ArenaVec` alias parity with `Vec::drain(..)`.
-    /// Zig `BabyList` has no partial drain and no caller needs one.
+    /// No caller needs a partial drain.
     pub fn drain<R: RangeBounds<usize>>(&mut self, range: R) -> IntoIter<'a, T> {
         use core::ops::Bound::*;
         // Const-folded for `..`; guards release builds against partial ranges.

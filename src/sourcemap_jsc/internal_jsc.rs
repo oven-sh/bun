@@ -8,7 +8,6 @@ use bun_sourcemap::internal_source_map::{self, InternalSourceMap};
 pub(crate) struct TestingAPIs;
 
 impl TestingAPIs {
-    // TODO(port): bun_jsc::host_fn — proc-macro attribute not yet implemented.
     pub(crate) fn from_vlq(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let vlq_str = bun_core::OwnedString::new(frame.argument(0).to_bun_string(global)?);
         let vlq = vlq_str.to_utf8();
@@ -59,7 +58,6 @@ impl TestingAPIs {
         };
 
         let obj = JSValue::create_empty_object(global, 5);
-        // PORT NOTE: stub `JSValue::put` takes `&[u8]` directly (Zig used `ZigString.static_`).
         obj.put(
             global,
             b"generatedLine",
@@ -104,5 +102,3 @@ pub fn testing_to_vlq(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 pub fn testing_find(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     TestingAPIs::find(global, frame)
 }
-
-// ported from: src/sourcemap_jsc/internal_jsc.zig

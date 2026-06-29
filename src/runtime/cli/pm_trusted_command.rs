@@ -56,7 +56,7 @@ impl UntrustedCommand {
         );
         Output::flush();
 
-        // PORT NOTE: reshaped for borrowck — `LoadResult` returned by
+        // Reshaped for borrowck — `LoadResult` returned by
         // `load_lockfile_from_cwd` mutably borrows `pm.lockfile`, so all
         // subsequent `pm` access goes through `pm_raw`. Same singleton pattern
         // as `package_manager_command.rs::print_hash`.
@@ -116,8 +116,8 @@ impl UntrustedCommand {
         let mut node_modules_path = AutoAbsPath::init_top_level_dir();
 
         while let Some(node_modules) = tree_iterator.next(None) {
-            // PORT NOTE: Zig `node_modules_path.save()/.restore()` — `ResetScope`
-            // exclusively borrows the path in Rust, so save/restore the length
+            // `ResetScope`
+            // exclusively borrows the path, so save/restore the length
             // explicitly. Restored at end of each iteration; the inner-loop
             // `continue`/`return` paths only need the inner `folder_saved`
             // restore (done immediately after `get_list`).
@@ -207,7 +207,7 @@ impl UntrustedCommand {
 
 pub(crate) struct TrustCommand;
 
-/// Anonymous struct from Zig: value type stored in `scripts_at_depth`.
+/// Value type stored in `scripts_at_depth`.
 struct ScriptInfo {
     package_id: PackageID,
     scripts_list: ScriptsList,
@@ -256,14 +256,14 @@ impl TrustCommand {
             Self::error_expected_args();
         }
 
-        // PORT NOTE: reshaped for borrowck — see `UntrustedCommand::exec`.
+        // Reshaped for borrowck — see `UntrustedCommand::exec`.
         // `load_lockfile` lives until `save_to_disk` near the end, so every
         // `pm`/`pm.lockfile` access in between goes through `pm_raw`.
         let pm_raw: *mut PackageManager = pm;
         let log_level = pm.options.log_level;
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
         PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, log_level);
-        // PORT NOTE: `update_lockfile_if_needed` consumes `LoadResult` but we
+        // `update_lockfile_if_needed` consumes `LoadResult` but we
         // need it again for `save_to_disk`; inline the body (it only flips
         // `meta.has_install_script` when `packages_need_update`).
         if matches!(&load_lockfile, LoadResult::Ok(ok) if ok.serializer_result.packages_need_update)
@@ -280,7 +280,6 @@ impl TrustCommand {
         for arg in &args[2..] {
             if !arg.is_empty() && arg[0] != b'-' {
                 packages_to_trust.push(arg);
-                // PERF(port): was appendAssumeCapacity.
             }
         }
         let trust_all =
@@ -461,10 +460,10 @@ impl TrustCommand {
             }
         }
 
-        // PORT NOTE: `scripts_at_depth.values()` is taken twice (run, then
-        // print). Rust can't move `scripts_list: List` out for
+        // `scripts_at_depth.values()` is taken twice (run, then
+        // print). We can't move `scripts_list: List` out for
         // `spawn_package_lifecycle_scripts` and still print it later, so clone
-        // the `List` per spawn (matches the by-value Zig pass).
+        // the `List` per spawn.
         for entry in scripts_at_depth.values().iter().rev() {
             for info in entry.iter() {
                 if info.skip {
@@ -539,7 +538,7 @@ impl TrustCommand {
 
         // SAFETY: `pm_raw` singleton; this scope takes over the descriptor
         // (the original `pm.root_package_json_file` is replaced with INVALID so
-        // its eventual drop is a no-op). Matches Zig's by-value `File` move.
+        // its eventual drop is a no-op).
         let root_file = unsafe {
             let fd = (*pm_raw).root_package_json_file.handle;
             (*pm_raw).root_package_json_file.handle = bun_core::Fd::INVALID;
@@ -556,7 +555,7 @@ impl TrustCommand {
 
         let bump = Bump::new();
         // SAFETY: `ctx.log` set by `Command::init`, non-null for the command.
-        // PORT NOTE (layering): `parse_utf8` returns the T2
+        // Layering: `parse_utf8` returns the T2
         // `bun_ast::Expr`; `PackageJSONEditor` and
         // `js_printer::print_json` consume the T4 `bun_ast::Expr`. Lift
         // once via `From<T2> for T4` (same as `updatePackageJSONAndInstall` /
@@ -636,7 +635,7 @@ impl TrustCommand {
             }
         }
 
-        // PORT NOTE: reshaped for borrowck — `save_to_disk` needs `&mut Lockfile`
+        // Reshaped for borrowck — `save_to_disk` needs `&mut Lockfile`
         // and `&LoadResult` simultaneously, but `LoadResultOk.lockfile` already
         // holds the only `&mut`. Same projection pattern as `migrate` in
         // `package_manager_command.rs`.
@@ -710,5 +709,3 @@ impl TrustCommand {
         Ok(())
     }
 }
-
-// ported from: src/cli/pm_trusted_command.zig

@@ -50,7 +50,7 @@
 #include "JavaScriptCore/JSFunction.h"
 #include "JavaScriptCore/ErrorInstanceInlines.h"
 #include "JavaScriptCore/BigIntObject.h"
-#include "JavaScriptCore/OrderedHashTableHelper.h"
+#include "JavaScriptCore/JSOrderedHashTableHelper.h"
 
 #include "JavaScriptCore/JSCallbackObject.h"
 #include "JavaScriptCore/JSClassRef.h"
@@ -178,7 +178,7 @@ using namespace WebCore;
 
 typedef uint8_t ExpectFlags;
 
-// Note: keep this in sync with Expect.Flags implementation in zig (at expect.zig)
+// Note: keep this in sync with Flags in src/runtime/test_runner/expect.rs
 // clang disable unused warning
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-variable"
@@ -394,10 +394,11 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         }
 
         case AsymmetricMatcherConstructorType::Object: {
-            if (otherProp.isObject()) {
+            // Jest: `typeof other === 'object'` (null matches, functions do not; no instanceof fallback)
+            if (otherProp.isNull() || (otherProp.isObject() && !otherProp.isCallable())) {
                 return AsymmetricMatcherResult::PASS;
             }
-            break;
+            return AsymmetricMatcherResult::FAIL;
         }
 
         case AsymmetricMatcherConstructorType::InstanceOf: {
@@ -2244,7 +2245,7 @@ JSC::EncodedJSValue JSGlobalObject__createOutOfMemoryError(JSC::JSGlobalObject* 
 
 // Walk a promise's reaction chain to find the async generators awaiting it,
 // and collect them as async StackFrames. Used when an error is created from
-// native code at the top of the event loop (e.g. runFromJSThread in node_fs.zig)
+// native code at the top of the event loop (e.g. run_from_js_thread in node_fs.rs)
 // where there's no JS call stack, but the promise being rejected has an await
 // chain that tells us where the user's code is.
 //
@@ -2611,7 +2612,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
 
         if (auto* object = dynamicDowncast<JSObject>(cell)) {
             auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-            scope.release(); // zig binding handles exceptions
+            scope.release(); // the extern-C caller checks for the pending exception
             JSValue lengthValue = object->getIfPropertyExists(globalObject, globalObject->vm().propertyNames->length);
             RETURN_IF_EXCEPTION(scope, 0);
             if (lengthValue) {
@@ -2954,7 +2955,7 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     JSValue restoreAsyncContext;
     InternalFieldTuple* asyncContextData = nullptr;
     if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(jsObject)) {
-        jsObject = uncheckedDowncast<JSC::JSFunction>(wrapper->callback.get());
+        jsObject = wrapper->callback.get();
         asyncContextData = globalObject->m_asyncContextData.get();
         restoreAsyncContext = asyncContextData->getInternalField(0);
         asyncContextData->putInternalField(vm, 0, wrapper->context.get());
@@ -2977,15 +2978,18 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     }
 
 #if ASSERT_ENABLED
-    JSC::Integrity::auditCellFully(vm, jsObject.asCell());
+    if (jsObject.isCell())
+        JSC::Integrity::auditCellFully(vm, jsObject.asCell());
 #endif
 
     auto callData = getCallData(jsObject);
 
-    ASSERT_WITH_MESSAGE(jsObject.isCallable(), "Function passed to .call must be callable.");
-    ASSERT(callData.type != JSC::CallData::Type::None);
-    if (callData.type == JSC::CallData::Type::None)
+    if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
+        if (asyncContextData)
+            asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+        throwException(globalObject, scope, createNotAFunctionError(globalObject, jsObject));
         return {};
+    }
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, jsObject, callData, jsThisObject, argList);
 
@@ -3148,7 +3152,7 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (scope.exception()) [[unlikely]] {
-        promise->rejectWithCaughtException(globalObject, scope);
+        promise->rejectWithCaughtException(vm, scope);
     }
 
     auto status = promise->status();
@@ -3183,6 +3187,20 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
     JSValue usedStream = JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(usedStream);
+}
+
+[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue ReadableStream__errored(Zig::GlobalObject* globalObject, JSC::EncodedJSValue encodedReason)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto clientData = WebCore::clientData(vm);
+    auto* function = globalObject->getDirect(vm, clientData->builtinNames().createErroredReadableStreamPrivateName()).getObject();
+    JSC::MarkedArgumentBuffer arguments;
+    arguments.append(JSC::JSValue::decode(encodedReason));
+    ASSERT(!arguments.hasOverflowed());
+    JSValue erroredStream = JSC::call(globalObject, function, arguments, "ReadableStream.create"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(erroredStream);
 }
 
 JSC::EncodedJSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigString* arg1,
@@ -3664,7 +3682,7 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
         (void)scope.tryClearException();
 
         if (auto* promise = dynamicDowncast<JSC::JSPromise>(promiseValue)) {
-            promise->reject(vm, globalObject, exception->value());
+            promise->reject(vm, exception->value());
             RETURN_IF_EXCEPTION(scope, );
             return;
         }
@@ -3674,7 +3692,7 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
 
     if (auto* errorInstance = dynamicDowncast<JSC::ErrorInstance>(result)) {
         if (auto* promise = dynamicDowncast<JSC::JSPromise>(promiseValue)) {
-            promise->reject(vm, globalObject, errorInstance);
+            promise->reject(vm, errorInstance);
             RETURN_IF_EXCEPTION(scope, );
             return;
         }
@@ -3736,7 +3754,7 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
         exception = uncheckedDowncast<JSC::Exception>(value);
     }
 
-    arg0->reject(vm, globalObject, exception);
+    arg0->reject(vm, exception);
 }
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSPromise__rejectAsHandled(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
@@ -3745,7 +3763,7 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
     ASSERT_WITH_MESSAGE(arg0->status() == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
 
     auto& vm = JSC::getVM(arg1);
-    arg0->rejectAsHandled(vm, arg1, JSC::JSValue::decode(JSValue2));
+    arg0->rejectAsHandled(vm, JSC::JSValue::decode(JSValue2));
 }
 
 JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1)
@@ -3897,20 +3915,20 @@ void JSC__JSInternalPromise__reject(JSC::JSPromise* arg0, JSC::JSGlobalObject* g
         exception = uncheckedDowncast<JSC::Exception>(value);
     }
 
-    arg0->reject(vm, globalObject, exception);
+    arg0->reject(vm, exception);
 }
 void JSC__JSInternalPromise__rejectAsHandled(JSC::JSPromise* arg0,
     JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
 {
     auto& vm = JSC::getVM(arg1);
-    arg0->rejectAsHandled(vm, arg1, JSC::JSValue::decode(JSValue2));
+    arg0->rejectAsHandled(vm, JSC::JSValue::decode(JSValue2));
 }
 void JSC__JSInternalPromise__rejectAsHandledException(JSC::JSPromise* arg0,
     JSC::JSGlobalObject* arg1,
     JSC::Exception* arg2)
 {
     auto& vm = JSC::getVM(arg1);
-    arg0->rejectAsHandled(vm, arg1, arg2);
+    arg0->rejectAsHandled(vm, arg2);
 }
 
 JSC::JSPromise* JSC__JSInternalPromise__rejectedPromise(JSC::JSGlobalObject* arg0,
@@ -4044,6 +4062,7 @@ void JSC__JSValue__putToPropertyKey(JSC::EncodedJSValue JSValue0, JSC::JSGlobalO
     auto pkey = key.toPropertyKey(arg1);
     RETURN_IF_EXCEPTION(scope, );
     object->putDirectMayBeIndex(arg1, pkey, value);
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__putMayBeIndex(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const BunString* key, JSC::EncodedJSValue value)
@@ -4946,7 +4965,7 @@ void JSC__VM__holdAPILock(JSC::VM* arg0, void* ctx, void (*callback)(void* arg0)
 }
 
 // The following two functions are copied 1:1 from JSLockHolder to provide a
-// new, more ergonomic binding for interacting with the lock from Zig
+// new, more ergonomic binding for interacting with the lock from native code
 // https://github.com/WebKit/WebKit/blob/main/Source/JavaScriptCore/runtime/JSLock.cpp
 
 extern "C" void JSC__VM__getAPILock(JSC::VM* vm)
@@ -5108,7 +5127,7 @@ JSC::EncodedJSValue JSC__JSValue__createUninitializedUint8Array(JSC::JSGlobalObj
     return JSC::JSValue::encode(value);
 }
 
-// This enum must match the zig enum in src/jsc/bindings/JSValue.zig JSValue.BuiltinName
+// This enum must match BuiltinName in src/jsc/lib.rs
 enum class BuiltinNamesMap : uint8_t {
     method,
     headers,
@@ -5797,6 +5816,14 @@ extern "C" JSC::EncodedJSValue WebCore__AbortSignal__abortReason(WebCore::AbortS
     return JSC::JSValue::encode(abortSignal->reason().getValue(jsNull()));
 }
 
+// Same value the JS `signal.reason` getter returns: lazily materializes the
+// `DOMException` for a common abort reason and caches it, so repeated reads
+// (native or JS) observe the identical object.
+extern "C" JSC::EncodedJSValue WebCore__AbortSignal__jsReason(WebCore::AbortSignal* signal, JSC::JSGlobalObject* globalObject)
+{
+    return JSC::JSValue::encode(signal->jsReason(*globalObject));
+}
+
 extern "C" WebCore::AbortSignalTimeout WebCore__AbortSignal__getTimeout(WebCore::AbortSignal* arg0)
 {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
@@ -6463,8 +6490,8 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    // Note: _ is now set in Zig code (repl.zig) after extracting the value from
-    // the REPL transform wrapper. We don't set it here anymore.
+    // Note: _ is now set in src/runtime/cli/repl.rs after extracting the value
+    // from the REPL transform wrapper. We don't set it here anymore.
 
     return JSC::JSValue::encode(result);
 }

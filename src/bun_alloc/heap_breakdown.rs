@@ -2,27 +2,21 @@ use core::ffi::{c_char, c_void};
 #[cfg(target_os = "macos")]
 use core::ffi::{c_int, c_uint};
 
-// Only referenced from the Darwin `extern "C"` block below; rustc's
-// reachability analysis doesn't see uses inside dead `extern fn` signatures.
-#[allow(non_camel_case_types, dead_code)]
+#[cfg(target_os = "macos")]
+#[allow(non_camel_case_types)]
 type vm_size_t = usize;
 
 // Environment.allow_assert and Environment.isMac and !Environment.enable_asan
-// TODO(port): `enable_asan` mapped to a cargo feature; verify the build wires this the same way.
+// (`bun_asan` is set via RUSTFLAGS `--cfg=bun_asan` in scripts/build/rust.ts.)
 pub const ENABLED: bool = cfg!(debug_assertions) && cfg!(target_os = "macos") && !cfg!(bun_asan);
 
-/// Zig: `pub fn getZone(comptime name: [:0]const u8) *Zone`
-///
-/// Each comptime instantiation in Zig gets its own `static var zone` + `std.once`.
-/// The faithful Rust translation is the crate-root `get_zone!` macro in lib.rs
-/// that expands a fresh `OnceLock` per call site (per literal name). Not
+/// The crate-root `get_zone!` macro in lib.rs
+/// expands a fresh `OnceLock` per call site (per literal name). Not
 /// duplicated here to avoid path-export collisions on macOS.
 
 /// Runtime `getZone(name)` — looks up (or creates) the per-name zone. The
 /// `get_zone!` macro is the zero-cost form. This runtime path keys a
 /// process-global map for callers that pass a non-literal name.
-// TODO(port): could be replaced with a `#[heap_label]` derive that expands
-// `get_zone!` directly.
 #[allow(clippy::assertions_on_constants)]
 pub fn get_zone(name: &[u8]) -> &'static Zone {
     debug_assert!(
@@ -47,7 +41,7 @@ pub fn get_zone(name: &[u8]) -> &'static Zone {
     if let Some((_, _, z)) = zones.iter().find(|(k, _, _)| k.as_slice() == name) {
         return *z;
     }
-    // `name` verbatim (no prefix — matches Zig `getZone`), NUL-terminated.
+    // `name` verbatim (no prefix), NUL-terminated.
     let mut owned = Vec::with_capacity(name.len() + 1);
     owned.extend_from_slice(name);
     owned.push(0);
@@ -63,29 +57,25 @@ pub fn get_zone(name: &[u8]) -> &'static Zone {
 }
 
 bun_opaque::opaque_ffi! {
-    /// Zig: `pub const Zone = opaque { ... };`
-    ///
     /// Opaque FFI handle for a macOS `malloc_zone_t`.
     ///
     /// The `UnsafeCell` field makes `Zone: !Freeze`, so a `&Zone` does not assert
     /// immutability of the pointee. This is required because every malloc-zone FFI
     /// call (`malloc_zone_memalign`, `malloc_zone_free`, …) mutates the zone's
-    /// internal state, and Zig models the handle as a freely-aliasing `*Zone`.
+    /// internal state.
     /// Without `UnsafeCell`, casting `&Zone as *const _ as *mut _` and writing
     /// through it (via FFI) is UB under Stacked Borrows.
     pub struct Zone;
 }
 
 // SAFETY: `malloc_zone_t` is internally synchronized by libmalloc; sharing
-// `&Zone` across threads is the documented usage (matches Zig `*Zone` via `std.once`).
+// `&Zone` across threads is the documented usage.
 unsafe impl Sync for Zone {}
 // SAFETY: `Zone` is an opaque libmalloc handle with no thread-affine state; the
 // zone API is callable from any thread, so transferring the handle is sound.
 unsafe impl Send for Zone {}
 
 impl Zone {
-    /// Zig: `pub fn init(comptime name: [:0]const u8) *Zone`
-    ///
     /// # Safety
     /// `name` must point to a NUL-terminated C string that remains valid for
     /// the entire process lifetime — `malloc_set_zone_name` stores the pointer
@@ -150,16 +140,6 @@ impl Zone {
         Zone::aligned_alloc(unsafe { &*(zone.cast::<Zone>()) }, len, alignment)
     }
 
-    // Zig exposed a `pub const vtable: std.mem.Allocator.VTable` with
-    // { alloc, resize, remap = noRemap, free }. In Rust the equivalent is an
-    // `impl crate::Allocator for Zone` (see below); the raw vtable struct is a
-    // Zig-ism and is not materialized here, so the `resize`/`free` vtable thunks
-    // (and the `malloc_size` helper they used) are not ported.
-    // TODO(port): if `bun_alloc::Allocator` ever becomes a literal vtable struct
-    // (to match `std.mem.Allocator` ABI), reintroduce a `pub static VTABLE`
-    // along with the `resize`/`raw_free` thunks.
-
-    /// Zig: `pub fn allocator(zone: *Zone) std.mem.Allocator`
     pub fn allocator(&'static self) -> &'static dyn crate::Allocator {
         self
     }
@@ -175,12 +155,11 @@ impl Zone {
     #[inline]
     pub fn try_create<T>(&self, data: T) -> Result<*mut T, crate::AllocError> {
         let alignment = core::mem::align_of::<T>();
-        // TODO(port): Zig passed `@returnAddress()` as the ret_addr hint; Rust has no
-        // stable equivalent. Passing 0 — the macOS zone API ignores it anyway.
+        // Pass 0 as the ret_addr hint — the macOS zone API ignores it anyway.
         let raw = Zone::raw_alloc(
             // SAFETY: vtable context pointer — `as_mut_ptr()` yields the
             // interior-mutable `*mut Zone`, erased to `*mut c_void` to match
-            // the Zig `*anyopaque` allocator-vtable signature.
+            // the allocator-vtable signature.
             self.as_mut_ptr().cast::<c_void>(),
             core::mem::size_of::<T>(),
             alignment,
@@ -202,23 +181,21 @@ impl Zone {
         unsafe { malloc_zone_free(self.as_mut_ptr(), ptr.cast()) };
     }
 
-    /// Zig: `pub fn isInstance(allocator_: std.mem.Allocator) bool`
-    ///
-    /// Zig: `return allocator_.vtable == &vtable;` — implemented as a `TypeId`
+    /// Implemented as a `TypeId`
     /// identity check via the `Allocator::type_id()` hook.
     pub fn is_instance(allocator_: &dyn crate::Allocator) -> bool {
         allocator_.is::<Self>()
     }
 }
 
-// `crate::Allocator` is a marker trait carrying `type_id()`; the Zig vtable
+// `crate::Allocator` is a marker trait carrying `type_id()`; the allocation
 // methods (`alloc`/`resize`/`free`) are inherent on `Zone` above (`raw_alloc`,
 // `resize`, `raw_free`). This impl makes `Zone` usable as `&dyn Allocator`
 // for `is_instance` identity checks.
 impl crate::Allocator for Zone {}
 
-// TODO(port): move to bun_alloc_sys (or keep here gated `#[cfg(target_os = "macos")]`
-// since these are macOS-only libc symbols).
+// macOS-only libmalloc symbols, kept here (gated on `target_os = "macos"`)
+// since heap_breakdown is their only consumer.
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     /// No preconditions; returns the process default malloc zone.
@@ -287,5 +264,3 @@ mod stubs {
 use stubs::malloc_zone_memalign;
 #[cfg(not(target_os = "macos"))]
 pub use stubs::{malloc_zone_calloc, malloc_zone_free, malloc_zone_malloc};
-
-// ported from: src/bun_alloc/heap_breakdown.zig

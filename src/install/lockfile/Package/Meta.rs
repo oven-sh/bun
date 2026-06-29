@@ -85,10 +85,9 @@ impl Meta {
         self.has_install_script == HasInstallScript::Old
     }
 
-    // PORT NOTE: Zig used `comptime StringBuilderType: type` duck-typing for the
-    // builder param. The only concrete instantiation in install is
-    // `*Lockfile.StringBuilder`, so we take it directly here instead of a
-    // placeholder trait that nothing implements.
+    // The only concrete builder type used in install is the lockfile
+    // `StringBuilder`, so take it directly instead of a placeholder trait that
+    // nothing implements.
     pub fn count(&self, buf: &[u8], builder: &mut LockfileStringBuilder<'_>) {
         builder.count(self.man_dir.slice(buf));
     }
@@ -98,7 +97,7 @@ impl Meta {
     }
 
     /// Named `clone_into` (not `clone`) to avoid shadowing `Clone::clone` now
-    /// that `Meta: Clone + Copy`. Mirrors Zig `Meta.clone(id, buf, Builder, builder)`.
+    /// that `Meta: Clone + Copy`.
     pub fn clone_into(
         &self,
         id: PackageID,
@@ -117,5 +116,3 @@ impl Meta {
         }
     }
 }
-
-// ported from: src/install/lockfile/Package/Meta.zig

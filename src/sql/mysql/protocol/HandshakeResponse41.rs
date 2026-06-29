@@ -1,5 +1,6 @@
 // Client authentication response
 
+use super::any_mysql_error::Error as AnyMySQLError;
 use super::character_set::CharacterSet;
 use super::encode_int::encode_length_int;
 use super::new_writer::NewWriter;
@@ -21,16 +22,11 @@ pub struct HandshakeResponse41 {
     pub sequence_id: u8,
 }
 
-// Zig `deinit` only freed owned fields (Data values + connect_attrs keys/values).
-// In Rust, `Data: Drop` and `StringHashMap<Box<[u8]>>: Drop` handle this automatically,
-// so no explicit `impl Drop` is needed.
-
 impl HandshakeResponse41 {
     pub fn write_internal<Context: super::new_writer::WriterContext>(
         &mut self,
         writer: NewWriter<Context>,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<(), AnyMySQLError> {
         let mut packet = writer.start(self.sequence_id)?;
 
         self.capability_flags.CLIENT_CONNECT_ATTRS = self.connect_attrs.len() > 0;
@@ -50,7 +46,7 @@ impl HandshakeResponse41 {
         writer.int4(self.max_packet_size)?;
 
         // Write character set (1 byte)
-        writer.int1(self.character_set as u8)?;
+        writer.int1(self.character_set.to_int())?;
 
         // Write 23 bytes of padding
         writer.write(&[0u8; 23])?;
@@ -106,13 +102,10 @@ impl HandshakeResponse41 {
         Ok(())
     }
 
-    // Zig `writeWrap(@This(), ...)` — see src/sql/mysql/protocol/NewWriter.rs
     pub fn write<Context: super::new_writer::WriterContext>(
         &mut self,
         writer: NewWriter<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyMySQLError> {
         self.write_internal(writer)
     }
 }
-
-// ported from: src/sql/mysql/protocol/HandshakeResponse41.zig

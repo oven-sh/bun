@@ -1,9 +1,8 @@
-//! Port of the `std.debug` subset Zig used: `SourceLocation`/`SymbolInfo` and
-//! the frame-pointer stack unwinder (`@frameAddress`, `MemoryAccessor`,
-//! `StackIterator`). Lives in `bun_core` (libc/std/bun_alloc only) so the crash
+//! `SourceLocation`/`SymbolInfo` and the frame-pointer stack unwinder
+//! (`MemoryAccessor`, `StackIterator`).
+//! Lives in `bun_core` (libc/std/bun_alloc only) so the crash
 //! handler, `StoredTrace`, and `btjs` can all share one implementation.
 
-/// Zig: `std.debug.SourceLocation`.
 #[derive(Clone)]
 pub struct SourceLocation {
     pub file_name: Box<[u8]>,
@@ -11,7 +10,6 @@ pub struct SourceLocation {
     pub column: u32,
 }
 
-/// Zig: `std.debug.SymbolInfo`.
 pub struct SymbolInfo {
     pub name: Box<[u8]>,
     pub compile_unit_name: Box<[u8]>,
@@ -19,9 +17,8 @@ pub struct SymbolInfo {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Frame-pointer stack unwinder (port of the `std.debug` subset Zig used:
-// `@frameAddress`, `MemoryAccessor`, `StackIterator`). The Rust port had
-// briefly routed capture through libc `backtrace()` / `RtlCaptureStackBackTrace`,
+// Frame-pointer stack unwinder. Capture had
+// briefly been routed through libc `backtrace()` / `RtlCaptureStackBackTrace`,
 // which are CFI/unwind-table based — but release builds strip the unwind tables
 // (`-fno-asynchronous-unwind-tables` + `--no-eh-frame-hdr`) and the POSIX
 // signal handler runs on an `SA_ONSTACK` altstack, so those APIs captured only
@@ -30,7 +27,7 @@ pub struct SymbolInfo {
 // the correct mechanism. Lives in `bun_core` (libc/std/bun_alloc only) so the
 // crash handler, `StoredTrace`, and `btjs` can all share one implementation.
 // ──────────────────────────────────────────────────────────────────────
-/// Port of Zig `@frameAddress()`. Reads the frame-pointer register directly.
+/// Reads the frame-pointer register directly.
 #[inline(always)]
 pub fn frame_address() -> usize {
     #[cfg(target_arch = "x86_64")]
@@ -53,7 +50,7 @@ pub fn frame_address() -> usize {
     }
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
-        // @frameAddress() — approximate with a stack local's addr on arches
+        // Approximate with a stack local's addr on arches
         // without an asm! mapping yet. fp-walk will fail its alignment sanity
         // check and terminate cleanly.
         let probe = 0u8;
@@ -62,8 +59,7 @@ pub fn frame_address() -> usize {
 }
 
 /// Reads memory from any address of the current process, tolerating unmapped
-/// or corrupt pages so a damaged stack can't fault the walker itself. Port of
-/// `std.debug.MemoryAccessor`.
+/// or corrupt pages so a damaged stack can't fault the walker itself.
 struct MemoryAccessor {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     mem: core::ffi::c_int, // -1 = uninit, -2 = unavailable, else /proc/<pid>/mem fd
@@ -211,7 +207,7 @@ fn is_valid_memory(address: usize) -> bool {
     }
 }
 
-/// Port of `std.debug.StackIterator`. Walks the frame-pointer chain.
+/// Walks the frame-pointer chain.
 pub struct StackIterator {
     pub fp: usize,
     ma: MemoryAccessor,

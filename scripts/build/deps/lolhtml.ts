@@ -31,7 +31,7 @@ export const lolhtml: Dependency = {
 
   // Drop staticlib/cdylib outputs — we only need the rlib (saves a wasted
   // link step and avoids `-Clinker-plugin-lto` tripping over BFD ld).
-  patches: ["patches/lolhtml/0001-rlib-only.patch"],
+  patches: ["patches/lolhtml/0001-rlib-only.patch", "patches/lolhtml/0002-quiet-build-script-linker-warning.patch"],
 
   // No separate build — compiled as part of the workspace cargo build via
   // `bun_lolhtml_sys`'s path dep on `vendor/lolhtml/c-api`.

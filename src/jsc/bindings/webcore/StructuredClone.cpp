@@ -32,6 +32,7 @@
 #include <JavaScriptCore/JSTypedArrays.h>
 #include "SerializedScriptValue.h"
 #include "MessagePort.h"
+#include "JSStructuredSerializeOptions.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -129,29 +130,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globa
     JSC::JSValue value = callFrame->argument(0);
     JSC::JSValue options = callFrame->argument(1);
 
-    Vector<JSC::Strong<JSC::JSObject>> transferList;
-
-    if (options.isObject()) {
-        JSC::JSObject* optionsObject = options.getObject();
-        JSC::JSValue transferListValue = optionsObject->get(globalObject, vm.propertyNames->transfer);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        if (transferListValue.isObject()) {
-            JSC::JSObject* transferListObject = transferListValue.getObject();
-            if (auto* transferListArray = dynamicDowncast<JSC::JSArray>(transferListObject)) {
-                for (unsigned i = 0; i < transferListArray->length(); i++) {
-                    JSC::JSValue transferListValue = transferListArray->get(globalObject, i);
-                    RETURN_IF_EXCEPTION(throwScope, {});
-                    if (transferListValue.isObject()) {
-                        JSC::JSObject* transferListObject = transferListValue.getObject();
-                        transferList.append(JSC::Strong<JSC::JSObject>(vm, transferListObject));
-                    }
-                }
-            }
-        }
-    }
+    // https://html.spec.whatwg.org/multipage/structured-data.html#dom-structuredclone
+    // Convert the options dictionary (including its `transfer` sequence) per WebIDL
+    // before serializing, so an invalid transfer list throws without detaching anything.
+    auto serializeOptions = convertDictionary<StructuredSerializeOptions>(*globalObject, options);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     Vector<RefPtr<MessagePort>> ports;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(transferList), ports);
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(serializeOptions.transfer), ports);
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
         RELEASE_AND_RETURN(throwScope, {});

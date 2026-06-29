@@ -72,5 +72,3 @@ impl Dirname {
         Builtin::done(interp, cmd, exit)
     }
 }
-
-// ported from: src/shell/builtin/dirname.zig

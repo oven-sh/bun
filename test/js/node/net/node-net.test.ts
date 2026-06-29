@@ -3,7 +3,19 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
 import { randomUUID } from "node:crypto";
-import { connect, createConnection, createServer, isIP, isIPv4, isIPv6, Server, Socket, Stream } from "node:net";
+import fs from "node:fs";
+import {
+  BlockList,
+  connect,
+  createConnection,
+  createServer,
+  isIP,
+  isIPv4,
+  isIPv6,
+  Server,
+  Socket,
+  Stream,
+} from "node:net";
 import { join } from "node:path";
 
 const socket_domain = tmpdirSync();
@@ -35,6 +47,66 @@ it("should support net.isIPv6()", () => {
   expect(isIPv6("127.0.0.1")).toBe(false);
   expect(isIPv6("127.0.0.1/24")).toBe(false);
   expect(isIPv6("127.000.000.001")).toBe(false);
+});
+
+describe("net.BlockList subnet rules", () => {
+  // Expected values verified against Node.js v24.
+  it("matches IPv4-mapped IPv6 subnet rules against IPv4 and mapped addresses", () => {
+    const blockList = new BlockList();
+    blockList.addSubnet("::ffff:1.1.1.0", 120, "ipv6");
+    expect(blockList.check("1.1.1.1", "ipv4")).toBe(true);
+    expect(blockList.check("1.1.2.1", "ipv4")).toBe(false);
+    expect(blockList.check("::ffff:1.1.1.1", "ipv6")).toBe(true);
+    expect(blockList.check("::ffff:1.1.2.1", "ipv6")).toBe(false);
+  });
+
+  it("matches IPv4 subnet rules against IPv4-mapped IPv6 addresses", () => {
+    const blockList = new BlockList();
+    blockList.addSubnet("1.1.1.0", 24, "ipv4");
+    expect(blockList.check("::ffff:1.1.1.1", "ipv6")).toBe(true);
+    expect(blockList.check("::ffff:1.1.2.1", "ipv6")).toBe(false);
+    expect(blockList.check("::1", "ipv6")).toBe(false);
+    expect(blockList.check("1.1.1.255", "ipv4")).toBe(true);
+    expect(blockList.check("1.1.2.0", "ipv4")).toBe(false);
+  });
+
+  it("does not match IPv4 addresses against non-mapped IPv6 subnet rules", () => {
+    const blockList = new BlockList();
+    blockList.addSubnet("8592:757c:efae:4e45::", 64, "ipv6");
+    expect(blockList.check("1.1.1.1", "ipv4")).toBe(false);
+    expect(blockList.check("8592:757c:efae:4e45::f", "ipv6")).toBe(true);
+    expect(blockList.check("8592:757c:efaf:4e45::f", "ipv6")).toBe(false);
+  });
+
+  it("matches exact-prefix subnet rules", () => {
+    const v4 = new BlockList();
+    v4.addSubnet("10.0.0.1", 32, "ipv4");
+    expect(v4.check("10.0.0.1", "ipv4")).toBe(true);
+    expect(v4.check("10.0.0.2", "ipv4")).toBe(false);
+    expect(v4.check("::ffff:10.0.0.1", "ipv6")).toBe(true);
+
+    const v6 = new BlockList();
+    v6.addSubnet("::1", 128, "ipv6");
+    expect(v6.check("::1", "ipv6")).toBe(true);
+    expect(v6.check("::2", "ipv6")).toBe(false);
+
+    const mapped = new BlockList();
+    mapped.addSubnet("::ffff:10.0.0.1", 128, "ipv6");
+    expect(mapped.check("10.0.0.1", "ipv4")).toBe(true);
+    expect(mapped.check("10.0.0.2", "ipv4")).toBe(false);
+  });
+
+  it("matches zero-prefix subnet rules", () => {
+    const v4 = new BlockList();
+    v4.addSubnet("0.0.0.0", 0, "ipv4");
+    expect(v4.check("255.255.255.255", "ipv4")).toBe(true);
+    expect(v4.check("::1", "ipv6")).toBe(false);
+
+    const v6 = new BlockList();
+    v6.addSubnet("::", 0, "ipv6");
+    expect(v6.check("8592:757c:efae:4e45::f", "ipv6")).toBe(true);
+    expect(v6.check("1.2.3.4", "ipv4")).toBe(true);
+  });
 });
 
 describe("net.Socket read", () => {
@@ -671,6 +743,9 @@ it("should not hang after destroy", async () => {
   const net = require("node:net");
   const { promise: listening, resolve: resolveListening, reject } = Promise.withResolvers();
   const server = net.createServer(c => {
+    // The client destroys without reading; the resulting RST surfaces as
+    // ECONNRESET here (Node behaves identically) — handle it.
+    c.on("error", () => {});
     c.write("Hello client");
   });
   try {
@@ -858,3 +933,69 @@ it.skipIf(isWindows)(
   },
   60_000,
 );
+
+describe("Socket fd adoption", () => {
+  it("writes synchronously to an adopted fd and closes it (> 2) on destroy", async () => {
+    const path = join(tmpdirSync(), "adopted-fd.txt");
+    const fd = fs.openSync(path, "w");
+    const socket = new Socket({ fd, readable: false, writable: true });
+    await new Promise<void>((resolve, reject) => {
+      socket.on("close", () => resolve());
+      socket.on("error", reject);
+      socket.end("hello");
+    });
+    expect(fs.readFileSync(path, "utf8")).toBe("hello");
+    // Sync fd writes must feed the byte counters (no native handle to do it).
+    expect(socket._bytesDispatched).toBe(5);
+    // The adopted fd must be released on destroy (node closes the wrapping
+    // libuv handle in the equivalent path).
+    expect(() => fs.fstatSync(fd)).toThrow();
+  });
+
+  it("throws ERR_INVALID_FD_TYPE for a writable fd that cannot be fstat'ed", () => {
+    let error: any;
+    try {
+      new Socket({ fd: 0x7ffff, writable: true });
+    } catch (e) {
+      error = e;
+    }
+    expect(error?.code).toBe("ERR_INVALID_FD_TYPE");
+    expect(error?.message).toBe("Unsupported fd type: UNKNOWN");
+  });
+
+  it("a bare { fd } does not throw so connect({ fd }) can attach a native handle", () => {
+    // No explicit writable: true -> no adoption, no fstat. child_process
+    // extra stdio relies on this path (connect({ fd }) attaches natively).
+    expect(() => new Socket({ fd: 0x7ffff })).not.toThrow();
+  });
+});
+
+describe("paused socket whose peer sends RST", () => {
+  // Regression: on Linux, epoll forwarded the raw EPOLLERR bit (8) as a libus
+  // close code, which the JS error path read as errno 8 and surfaced as a
+  // bogus `Error: read ENOEXEC` when the socket was not actively reading.
+  // kqueue already normalized the flag to 0/1.
+  it("does not surface a bogus errno error", async () => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const errors: NodeJS.ErrnoException[] = [];
+    const server = createServer(c => {
+      c.on("error", () => {});
+      // RST only once the client says it has paused.
+      c.on("data", () => c.resetAndDestroy());
+    });
+    try {
+      await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const c = connect(port, "127.0.0.1", () => {
+        c.pause();
+        c.write("x");
+      });
+      c.on("error", e => errors.push(e));
+      c.on("close", () => resolve());
+      await promise;
+    } finally {
+      server.close();
+    }
+    expect(errors.map(e => e.code)).not.toContain("ENOEXEC");
+  });
+});

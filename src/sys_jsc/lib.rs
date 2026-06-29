@@ -24,18 +24,16 @@ pub use bun_jsc::{
 // ──────────────────────────────────────────────────────────────────────────
 // SystemErrorJsc — JSC bridge for the T1 `bun_sys::SystemError` data struct.
 //
-// In Zig there is one `jsc.SystemError` with `.toErrorInstance()`. The Rust
-// port split the *data* (`bun_sys::SystemError`, NOT `#[repr(C)]`) from the
-// FFI struct (`bun_jsc::SystemError`, `#[repr(C)]` field-order = C++). This
-// trait marshals the former into the latter and forwards to
+// The *data* struct (`bun_sys::SystemError`, NOT `#[repr(C)]`) is split from
+// the FFI struct (`bun_jsc::SystemError`, `#[repr(C)]` field-order = C++).
+// This trait marshals the former into the latter and forwards to
 // `bun_jsc::SystemError::to_error_instance{,_with_async_stack}`.
 //
-// Ref-count contract: `bun_jsc::SystemError::to_error_instance` does
-// `defer this.deref()` (matching SystemError.zig), so the marshalled struct
-// must hold exactly the refs `self` held — i.e. a bitwise field copy with NO
-// extra `ref_()`. The caller's `bun_sys::SystemError` is consumed (its strings
-// reach refcount-0) just as in Zig where `Error.toSystemError()` builds a
-// temporary that `.toErrorInstance()` consumes.
+// Ref-count contract: `bun_jsc::SystemError::to_error_instance` derefs each
+// field exactly once, so the marshalled struct must hold exactly the refs
+// `self` held — i.e. a bitwise field copy with NO extra `ref_()`. The
+// caller's `bun_sys::SystemError` is consumed (its strings reach
+// refcount-0).
 // ──────────────────────────────────────────────────────────────────────────
 pub trait SystemErrorJsc {
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
@@ -64,12 +62,12 @@ fn marshal(e: &bun_sys::SystemError) -> bun_jsc::SystemError {
 }
 
 impl SystemErrorJsc for bun_sys::SystemError {
-    /// `SystemError.toErrorInstance(global)` (SystemError.zig).
+    /// `SystemError.toErrorInstance(global)`.
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
         marshal(self).to_error_instance(global)
     }
-    /// `SystemError.toErrorInstanceWithAsyncStack(global, promise)`
-    /// (SystemError.zig) — `toErrorInstance` then attach the promise's await
+    /// `SystemError.toErrorInstanceWithAsyncStack(global, promise)` —
+    /// `toErrorInstance` then attach the promise's await
     /// chain as async stack frames so threadpool-rejected promises get a
     /// useful trace.
     fn to_error_instance_with_async_stack(
@@ -80,5 +78,3 @@ impl SystemErrorJsc for bun_sys::SystemError {
         marshal(self).to_error_instance_with_async_stack(global, promise)
     }
 }
-
-// ported from: src/sys_jsc/{signal_code,error,fd}_jsc.zig

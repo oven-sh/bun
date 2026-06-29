@@ -1,4 +1,4 @@
-//! Canonical byte-oriented `Write` trait — single port of Zig `std.Io.Writer`.
+//! Canonical byte-oriented `Write` trait.
 //!
 //! HOSTED IN `bun_string` so the trait sits *below* every consumer in the dep
 //! DAG: `bun_io → bun_string` already exists, and `bun_string` already depends

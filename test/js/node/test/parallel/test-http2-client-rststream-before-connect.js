@@ -8,7 +8,7 @@ const h2 = require('http2');
 let client;
 
 const server = h2.createServer();
-server.on('stream', (stream) => {
+server.on('stream', common.mustCall((stream) => {
   stream.on('close', common.mustCall(() => {
     client.close();
     server.close();
@@ -18,7 +18,7 @@ server.on('stream', (stream) => {
     name: 'Error',
     message: 'Stream closed with error code NGHTTP2_PROTOCOL_ERROR'
   }));
-});
+}));
 
 server.listen(0, common.mustCall(() => {
   client = h2.connect(`http://localhost:${server.address().port}`);
@@ -30,7 +30,8 @@ server.listen(0, common.mustCall(() => {
     {
       name: 'RangeError',
       code: 'ERR_OUT_OF_RANGE',
-      message: 'The value of "code" is out of range. It must be >= 0 and <= 4294967295. Received 4294967296'
+      message: 'The value of "code" is out of range. It must be ' +
+               '>= 0 && <= 4294967295. Received 4294967296'
     }
   );
   assert.strictEqual(req.closed, false);

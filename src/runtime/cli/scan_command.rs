@@ -48,15 +48,13 @@ impl ScanCommand {
             Global::exit(1);
         }
 
-        // Zig: `Output.prettyError(comptime Output.prettyFmt(..., true), .{})` — the
-        // comptime ANSI expansion is folded into `pretty_error`'s runtime tag rewrite.
         bun_core::pretty_error!(
             "<r><b>bun pm scan <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
         );
         Output::flush();
 
-        // PORT NOTE: reshaped for borrowck — `manager.lockfile.load_from_cwd(&mut self,
+        // Reshaped for borrowck — `manager.lockfile.load_from_cwd(&mut self,
         // Some(manager), log)` would alias `&mut *manager.lockfile` with `&mut *manager`.
         // Project disjoint raw pointers from the singleton first; `load_from_cwd` only
         // reads `manager.options`/migration helpers and never re-borrows `manager.lockfile`.
@@ -68,8 +66,8 @@ impl ScanCommand {
             // no other live `&mut Lockfile` exists at this point.
             let lockfile: &mut Lockfile = unsafe { &mut *(*pm_ptr).lockfile };
             match lockfile.load_from_cwd::<true>(
-                // SAFETY: see PORT NOTE above — `load_from_cwd` accesses `manager`
-                // fields disjoint from `lockfile` (Zig invariant).
+                // SAFETY: see comment above — `load_from_cwd` accesses `manager`
+                // fields disjoint from `lockfile`.
                 Some(unsafe { &mut *pm_ptr }),
                 log,
             ) {
@@ -113,5 +111,3 @@ impl ScanCommand {
         Global::exit(0);
     }
 }
-
-// ported from: src/cli/scan_command.zig

@@ -4,11 +4,6 @@
 //!   • `bun_runtime` (node:http2 bindings)   — `pub use`d into its
 //!     `h2_frame_parser` module, which layers `WireWriter`-based `write()`
 //!     and `to_js()` on top as local extension traits.
-//!
-//! The Zig tree carries TWO copies of these types (`src/http/H2FrameParser.zig`
-//! and a private duplicate inside `src/runtime/api/bun/h2_frame_parser.zig`);
-//! the http copy's own doc-comment already promised this dedup. This module is
-//! that promise kept on the Rust side.
 #![allow(non_camel_case_types, non_upper_case_globals)]
 
 // ─── connection / sizing constants ──────────────
@@ -17,18 +12,17 @@ pub const CLIENT_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
 pub const MAX_WINDOW_SIZE: u32 = i32::MAX as u32;
 pub const MAX_STREAM_ID: u32 = i32::MAX as u32;
-/// `std.math.maxInt(u24)`
+/// Maximum 24-bit value.
 pub const MAX_FRAME_SIZE: u32 = 0x00FF_FFFF;
 pub const DEFAULT_WINDOW_SIZE: u32 = u16::MAX as u32;
-/// PORT NOTE: Zig type was `u24`; Rust has no `u24`, so widened to `u32`.
 pub const DEFAULT_MAX_FRAME_SIZE: u32 = 16384;
 
 // ─── frame type / flags ─────────────────────────
 //
-// PORT NOTE: Zig `enum(u8) { …, _ }` is non-exhaustive (any u8 is a valid
-// value). A `#[repr(u8)]` Rust enum is UB for unknown discriminants received
-// off the wire, so callers dispatch on the raw `u8` (`FrameHeader.type_`) and
-// only ever use this enum for *outbound* frame construction (`X as u8`).
+// Frame types are non-exhaustive on the wire (any u8 is a valid value). A
+// `#[repr(u8)]` Rust enum is UB for unknown discriminants received off the
+// wire, so callers dispatch on the raw `u8` (`FrameHeader.type_`) and only
+// ever use this enum for *outbound* frame construction (`X as u8`).
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -80,7 +74,7 @@ pub enum SettingsFlags {
 
 // ─── error / setting codes ──────────────────────
 //
-// Non-exhaustive in Zig (`_` catch-all). Newtype-over-int instead of
+// Newtype-over-int instead of
 // `#[repr]` enums so any value off the wire is well-defined; consumers match
 // on `.0` or the associated consts.
 
@@ -128,14 +122,9 @@ pub fn u32_from_bytes(src: &[u8]) -> u32 {
     u32::from_be_bytes([src[0], src[1], src[2], src[3]])
 }
 
-/// Zig: `packed struct(u32) { reserved: bool = false, uint31: u31 = 0 }`.
-///
-/// PORT NOTE (intentional divergence): Zig's `toUInt32()` is `@bitCast` of
-/// `packed struct(u32){ reserved: bool, uint31: u31 }`, which on little-endian
-/// places `reserved` in bit 0 and yields `(uint31 << 1) | reserved`. That is a
-/// latent RFC 7540 §6.3 bug in Zig's deprecated PRIORITY path — the wire
-/// format wants the reserved/E bit at bit 31. We keep the RFC-compliant
-/// `(reserved << 31) | uint31` layout here, which already matches
+/// A 31-bit value with a reserved high bit. The RFC 7540 §6.3 wire format
+/// wants the reserved/E bit at bit 31, so the layout is the RFC-compliant
+/// `(reserved << 31) | uint31`, which matches
 /// `from_bytes`/`encode_into` and the on-wire `StreamPriority.stream_identifier`.
 #[repr(transparent)]
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
@@ -177,10 +166,9 @@ impl UInt31WithReserved {
 // `StreamPriority`, `SettingsPayloadUnit` and `FullSettingsPayload` are
 // `#[repr(C, packed)]` with integer-only fields and therefore have no padding
 // bytes and no niches. They implement `bytemuck::Pod`, so the per-`from()`
-// byte-view that the Zig parser did via `@ptrCast` is the safe
-// `bytemuck::bytes_of_mut`.
+// byte-view is the safe `bytemuck::bytes_of_mut`.
 
-/// Zig: `packed struct(u40) { streamIdentifier: u32 = 0, weight: u8 = 0 }`.
+/// 5-byte PRIORITY payload: BE stream identifier + weight.
 #[repr(C, packed)]
 #[derive(Copy, Clone, Default)]
 pub struct StreamPriority {
@@ -200,8 +188,8 @@ impl StreamPriority {
     #[inline]
     pub fn from(dst: &mut StreamPriority, src: &[u8]) {
         bytemuck::bytes_of_mut(dst).copy_from_slice(src);
-        // std.mem.byteSwapAllFields(StreamPriority, dst) — `weight: u8` is a no-op.
-        // PORT NOTE: brace-expr `{packed.field}` performs an unaligned copy;
+        // Byte-swap each field; `weight: u8` is a no-op.
+        // Brace-expr `{packed.field}` performs an unaligned copy;
         // assignment to a packed field is an unaligned store. No `unsafe`.
         dst.stream_identifier = u32::swap_bytes(dst.stream_identifier);
     }
@@ -214,8 +202,6 @@ impl StreamPriority {
     }
 }
 
-/// Zig: `packed struct(u72) { length: u24, type: u8, flags: u8, streamIdentifier: u32 }`.
-///
 /// NOT `#[repr(packed)]` — the `u24` length is widened to a native `u32`
 /// in-memory; wire encoding is handled in `decode()`/`encode_into()` instead
 /// of by punning the struct bytes. Callers assemble the 9 raw wire bytes on
@@ -254,7 +240,7 @@ impl FrameHeader {
 
     #[inline]
     pub fn encode_into(&self, dst: &mut [u8; Self::BYTE_SIZE]) {
-        // std.mem.byteSwapAllFields on `packed struct(u72)` — emit BE manually.
+        // Emit the packed 9-byte frame header big-endian manually.
         dst[0] = ((self.length >> 16) & 0xFF) as u8;
         dst[1] = ((self.length >> 8) & 0xFF) as u8;
         dst[2] = (self.length & 0xFF) as u8;
@@ -264,7 +250,7 @@ impl FrameHeader {
     }
 }
 
-/// Zig: `packed struct(u48) { type: u16, value: u32 }`.
+/// 6-byte SETTINGS entry: BE u16 type + BE u32 value.
 #[repr(C, packed)]
 #[derive(Copy, Clone, Default)]
 pub struct SettingsPayloadUnit {
@@ -287,7 +273,7 @@ impl SettingsPayloadUnit {
         let bytes = bytemuck::bytes_of_mut(dst);
         bytes[offset..src.len() + offset].copy_from_slice(src);
         if END {
-            // std.mem.byteSwapAllFields(SettingsPayloadUnit, dst)
+            // Byte-swap each field.
             dst.type_ = u16::swap_bytes(dst.type_);
             dst.value = u32::swap_bytes(dst.value);
         }
@@ -300,7 +286,7 @@ impl SettingsPayloadUnit {
     }
 }
 
-/// Zig: `packed struct(u336)` — 7 × (`u16` type + `u32` value) = 42 bytes.
+/// 7 × (`u16` type + `u32` value) = 42 bytes.
 #[repr(C, packed)]
 #[derive(Copy, Clone)]
 pub(crate) struct FullSettingsPayload {
@@ -350,5 +336,3 @@ impl Default for FullSettingsPayload {
 impl FullSettingsPayload {
     pub(crate) const BYTE_SIZE: usize = 42;
 }
-
-// ported from: src/http/H2FrameParser.zig + src/runtime/api/bun/h2_frame_parser.zig (wire types)

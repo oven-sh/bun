@@ -28,6 +28,11 @@ pub(crate) mod framework_router_body;
 #[path = "production.rs"]
 mod production_body;
 
+// `Bun__add{Bake,DevServer}SourceProvider*` host exports — the Rust side of
+// `BakeSourceProvider.h` / `DevServerSourceProvider.h`. Reached only via the
+// codegen-emitted `extern "C"` thunks in `generated_host_exports.rs`.
+pub mod source_provider_exports;
+
 // Re-exports from the submodule bodies so `production.rs` can name them
 // without going through the keystone stubs below.
 pub use bake_body::{PatternBuffer, UserOptions, print_warning};
@@ -47,7 +52,7 @@ pub mod jsc {
 pub const API_NAME: &str = "app";
 
 // ══════════════════════════════════════════════════════════════════════════
-// bake.zig top-level types
+// Top-level types
 // ══════════════════════════════════════════════════════════════════════════
 
 pub use bun_bundler::bake_types::BuiltInModule;
@@ -68,25 +73,22 @@ pub enum Mode {
 
 /// `bake.Framework.ServerComponents`.
 ///
-/// PORT NOTE: string fields are arena-backed at runtime (freed via
-/// `UserOptions.arena.deinit()`, bake.zig:23) but default to static literals
-/// (bake.zig:360-367). `Cow<'static, [u8]>` covers both without leaking.
+/// String fields are arena-backed at runtime but default to static literals.
+/// `Cow<'static, [u8]>` covers both without leaking.
 #[derive(Clone)]
 pub struct ServerComponents {
     pub separate_ssr_graph: bool,
-    /// REQUIRED — spec (bake.zig:360) gives no default; `fromJS` throws if
-    /// `serverRuntimeImportSource` is absent (bake.zig:511-513).
+    /// REQUIRED — `fromJS` throws if `serverRuntimeImportSource` is absent.
     pub server_runtime_import: Cow<'static, [u8]>,
     pub server_register_client_reference: Cow<'static, [u8]>,
     pub server_register_server_reference: Cow<'static, [u8]>,
     pub client_register_server_reference: Cow<'static, [u8]>,
 }
-// PORT NOTE: no `Default` impl — `server_runtime_import` is a required field
-// in the spec (bake.zig:360 has no `= "..."` initializer). Callers must
+// No `Default` impl — `server_runtime_import` is a required field. Callers must
 // supply it explicitly (`Framework::react()` sets `"react-server-dom-bun/server"`).
 impl ServerComponents {
-    /// Construct with the spec defaults for the three `register*` exports
-    /// (bake.zig:362-367); `server_runtime_import` must be supplied.
+    /// Construct with the defaults for the three `register*` exports;
+    /// `server_runtime_import` must be supplied.
     pub fn new(server_runtime_import: Cow<'static, [u8]>) -> Self {
         Self {
             separate_ssr_graph: false,
@@ -113,16 +115,13 @@ impl Default for ReactFastRefresh {
 /// `bake.Framework.FileSystemRouterType`. Full body (with `Style` enum and
 /// `from_js`) lives in the gated `bake_body.rs` draft; only the field set
 /// DevServer touches is named here.
-// PORT NOTE: dropped `#[derive(Clone)]` — `framework_router::Style` is now the
-// body enum (carries `JavascriptDefined(jsc::Strong)`, not `Clone`). Spec
-// `Style` has a `deinit()` (FrameworkRouter.zig), so it was never trivially
-// copyable.
+// Deliberately not `Clone` — `framework_router::Style` is the
+// body enum (carries `JavascriptDefined(jsc::Strong)`, not `Clone`).
 pub struct FileSystemRouterType {
     pub root: Cow<'static, [u8]>,
     pub prefix: Cow<'static, [u8]>,
     pub entry_client: Option<Cow<'static, [u8]>>,
-    /// REQUIRED — spec bake.zig:346 is `[]const u8` (non-optional). `fromJS`
-    /// throws if missing (bake.zig:573-575); `Framework.resolve` (bake.zig:404)
+    /// REQUIRED — `fromJS` throws if missing; `Framework.resolve`
     /// dereferences unconditionally.
     pub entry_server: Cow<'static, [u8]>,
     pub ignore_underscores: bool,
@@ -138,10 +137,8 @@ pub struct FileSystemRouterType {
 /// always arena-allocated, usually owned by the arena in `UserOptions`.
 pub struct Framework {
     pub is_built_in_react: bool,
-    /// Spec (bake.zig:248) is `[]FileSystemRouterType` — a *mutable*
-    /// arena-owned slice that `Framework.resolve` (bake.zig:401-404) rewrites
-    /// in place. Owned `Vec` so `resolve()` can take `&mut` and so the arena
-    /// free in `UserOptions::drop` is mirrored by `Vec::drop`.
+    /// Owned `Vec` so `resolve()` can take `&mut` and rewrite entries in
+    /// place; freed by `Vec::drop`.
     pub file_system_router_types: Vec<FileSystemRouterType>,
     pub server_components: Option<ServerComponents>,
     pub react_fast_refresh: Option<ReactFastRefresh>,
@@ -164,8 +161,7 @@ impl Framework {
     /// TYPE_ONLY view (`bun_bundler::bake_types::Framework`). The bundler is a
     /// lower-tier crate and cannot name `bun_runtime::bake::Framework`; this is
     /// the value `init_transpiler` arena-allocates and hands to
-    /// `out.options.framework` (spec bake.zig:778 `out.options.framework =
-    /// framework`).
+    /// `out.options.framework`.
     pub(crate) fn as_bundler_view(&self) -> bun_bundler::bake_types::Framework {
         use bun_bundler::bake_types as bt;
         let mut built_in_modules = bun_collections::StringArrayHashMap::new();
@@ -209,7 +205,7 @@ impl Framework {
         )
     }
 
-    /// `bake.Framework.initTranspiler` (bake.zig:663). Sets up a per-graph
+    /// Sets up a per-graph
     /// `Transpiler` in place. The full body lives in
     /// `bake_body::Framework::init_transpiler_with_options`; this keystone
     /// version operates on the keystone `BuildConfigSubset` (which omits
@@ -278,17 +274,14 @@ impl Framework {
 
         out.options.production = mode != Mode::Development;
         out.options.tree_shaking = mode != Mode::Development;
-        // Spec `initTranspiler` (bake.zig:681-692) forwards `null,null,null` for
-        // the three minify overrides into `initTranspilerWithOptions`, so the
-        // wrapper always defaults them to `mode != .development` regardless of
-        // `BuildConfigSubset`. User-supplied minify flags are only honored by
-        // `init_transpiler_with_options` (bake_body).
+        // The three minify overrides always default to `mode != Development`
+        // here regardless of `BuildConfigSubset`. User-supplied minify flags
+        // are only honored by `init_transpiler_with_options` (bake_body).
         out.options.minify_syntax = mode != Mode::Development;
         out.options.minify_identifiers = mode != Mode::Development;
         out.options.minify_whitespace = mode != Mode::Development;
         out.options.css_chunking = true;
-        // Spec bake.zig:778 `out.options.framework = framework` stores a borrowed
-        // `*bake.Framework`. The bundler crate (lower tier) carries a TYPE_ONLY
+        // The bundler crate (lower tier) carries a TYPE_ONLY
         // projection (`bake_types::Framework`); construct it here and give it
         // arena lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
         let framework_view: *mut bun_bundler::bake_types::Framework =
@@ -314,8 +307,7 @@ impl Framework {
             out.options.env.behavior = bundler_options.env;
             out.options.env.prefix = bundler_options.env_prefix.unwrap_or(b"").into();
         }
-        // Spec bake.zig:788 `out.resolver.opts = out.options` (struct copy). The
-        // resolver crate carries a FORWARD_DECL subset of `BundleOptions`, so
+        // The resolver crate carries a FORWARD_DECL subset of `BundleOptions`, so
         // re-project via the dedicated helper rather than `Clone`.
         out.sync_resolver_opts();
 
@@ -366,13 +358,13 @@ impl Framework {
             out.options.asset_naming = b"_bun/[hash].[ext]".as_slice().into();
         }
 
-        // Spec bake.zig:821 — re-sync after define/naming mutations so the
+        // Re-sync after define/naming mutations so the
         // resolver sees the final option set.
         out.sync_resolver_opts();
         Ok(framework_view)
     }
 
-    /// `bake.Framework.resolve` (bake.zig:401). Resolves built-in module
+    /// Resolves built-in module
     /// specifiers and entry points against the resolvers; returns a clone
     /// with resolved paths. Errors written into `r.log`.
     pub fn resolve(
@@ -455,7 +447,7 @@ impl Framework {
                 *path = Cow::Owned(p.text.to_vec());
             }
             Err(err) => {
-                // Spec bake.zig:422 routes through `bun.Output.err` (stderr), not
+                // This routes through `Output::err` (stderr), not
                 // `r.log`. The "Errors written into r.log" doc on `Framework.resolve`
                 // refers to entries the resolver itself pushed; this top-level
                 // "Failed to resolve" line goes to the terminal.
@@ -469,10 +461,8 @@ impl Framework {
         }
     }
 
-    /// `bake.Framework.react_install_command` (bake.zig:373).
     pub const REACT_INSTALL_COMMAND: &str = "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental";
 
-    /// `bake.Framework.addReactInstallCommandNote` (bake.zig:375).
     pub fn add_react_install_command_note(log: &mut bun_ast::Log) {
         log.add_msg(bun_ast::Msg {
             kind: bun_ast::Kind::Note,
@@ -504,8 +494,7 @@ pub struct SplitBundlerOptions {
 // ─── bake_body → keystone bridges ────────────────────────────────────────────
 // LAYERING: `UserOptions` (bake_body.rs) carries `&'static [u8]`-backed
 // duplicates of `Framework`/`SplitBundlerOptions`; `DevServer::Options`
-// (DevServer.rs) wants the keystone Cow-backed types defined above. Both
-// mirror the single Zig `bake.Framework`/`bake.SplitBundlerOptions`. Until the
+// (DevServer.rs) wants the keystone Cow-backed types defined above. Until the
 // two struct families unify (tracked by the `convert_file_system_router_type`
 // note in ServerConfig.rs), bridge by-value here so `server/mod.rs` can hand
 // `config.bake` straight into `DevServer::init`. All `&'static [u8]` →
@@ -573,7 +562,7 @@ impl From<bake_body::Framework> for Framework {
 }
 impl From<bake_body::BuildConfigSubset> for BuildConfigSubset {
     fn from(src: bake_body::BuildConfigSubset) -> Self {
-        // PORT NOTE: keystone `BuildConfigSubset` mirrors the field-set
+        // `BuildConfigSubset` mirrors the field-set
         // `Framework::init_transpiler` reads (everything except `loader` /
         // `source_map`, which only `init_transpiler_with_options` honours).
         Self {
@@ -604,7 +593,7 @@ impl From<bake_body::SplitBundlerOptions> for SplitBundlerOptions {
 
 /// `bake.SplitBundlerOptions.BuildConfigSubset`. Full body (with `from_js`)
 /// lives in `bake_body.rs`; this keystone mirror carries every field that
-/// `Framework::init_transpiler` (bake.zig:663→696) reads so DevServer's
+/// `Framework::init_transpiler` reads so DevServer's
 /// per-graph transpilers see bunfig `[serve.static]` define/env/conditions.
 #[derive(Default)]
 pub struct BuildConfigSubset {
@@ -627,7 +616,7 @@ pub struct BuildConfigSubset {
 /// (`pub use super::HmrRuntime;`) so `bake_body::get_hmr_runtime` returns the
 /// same nominal type IncrementalGraph names via `crate::bake::HmrRuntime`.
 pub struct HmrRuntime {
-    /// Spec bake.zig:841 is `[:0]const u8` — NUL-terminated; the sentinel is
+    /// NUL-terminated; the sentinel is
     /// load-bearing where this buffer is handed to JSC/C++ as a C string.
     pub code: &'static bun_core::ZStr,
     pub line_count: u32,
@@ -640,23 +629,15 @@ pub use bake_body::get_hmr_runtime;
 // NUL-terminated `&ZStr` form for JSC handoff; the bundler-side one is plain
 // `&[u8]`.)
 
-// `bake.UserOptions` — top-level JS-facing options struct. Full body (with
-// `from_js`) lives in the un-gated `bake_body.rs` draft and is re-exported
-// above; the keystone `(())` stub is gone now that `bake_body` compiles.
 pub use bake_body::StringRefList;
 
 // ══════════════════════════════════════════════════════════════════════════
 // FrameworkRouter
 // ══════════════════════════════════════════════════════════════════════════
 pub mod framework_router {
-    // PORT NOTE: this module used to carry duplicate "keystone" stub structs
-    // (`Route`, `Type`, `FrameworkRouter`, `MatchedParams`, `EncodedPattern`)
-    // alongside the real defs in `framework_router_body` (FrameworkRouter.rs).
-    // The two nominal type sets diverged and forced placeholder shims. The body
-    // module is now fully ported and un-gated, so re-export everything so
-    // `framework_router::X` ≡ `framework_router_body::X` and the real method
-    // bodies (`init_empty`, `match_slow`, `memory_cost`, `to_js`, …) resolve
-    // directly.
+    // Everything is re-exported from `framework_router_body`
+    // (FrameworkRouter.rs) so `framework_router::X` ≡
+    // `framework_router_body::X` and the real method bodies resolve directly.
     /// `generated_js2native.rs` lowers `JSFrameworkRouter.getBindings` to
     /// `framework_router::js_framework_router::get_bindings`; alias the type so
     /// the associated-fn path resolves.
@@ -667,15 +648,11 @@ pub mod framework_router {
         RouteIndex, StaticRouteMap, Style, TinyLog, Type, TypeIndex,
     };
 
-    /// `FrameworkRouter.InsertionContext` — Zig used an `*anyopaque` +
-    /// comptime fn-ptr `VTable` pair with a `wrap(T, ptr)` helper that
-    /// generated trampolines. The Rust port maps that to a trait object
-    /// (`&mut dyn InsertionHandler`); this is the `wrap` shim only, kept so
-    /// callsites read `InsertionContext::wrap(&mut ctx)` like the spec.
+    /// `wrap` shim over the trait-object form (`&mut dyn InsertionHandler`),
+    /// kept so callsites read `InsertionContext::wrap(&mut ctx)`.
     pub(crate) enum InsertionContext {}
     impl InsertionContext {
-        /// Zig: `InsertionContext.wrap(T, ptr)` — comptime vtable generation.
-        /// Port: thin shim over the trait-object form (`&mut dyn InsertionHandler`).
+        /// Thin shim over the trait-object form (`&mut dyn InsertionHandler`).
         #[inline]
         pub(crate) fn wrap<T: InsertionHandler>(ctx: &mut T) -> &mut dyn InsertionHandler {
             ctx
@@ -698,5 +675,3 @@ pub mod production {
 // ══════════════════════════════════════════════════════════════════════════
 pub mod dev_server;
 pub use dev_server as DevServer;
-
-// ported from: src/bake/bake.zig

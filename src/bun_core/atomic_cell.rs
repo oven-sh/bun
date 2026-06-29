@@ -2,8 +2,7 @@
 //! [`RacyCell`](crate::RacyCell) when state crosses (or is asserted *not* to
 //! cross) a thread boundary.
 //!
-//! `RacyCell` was the mechanical port of Zig's "trust me" globals; it is now
-//! overloaded for three unrelated invariants. This module splits two of them
+//! `RacyCell` is overloaded for three unrelated invariants. This module splits two of them
 //! into types the compiler / debug build can check:
 //!
 //! | Invariant                                      | Type                  |

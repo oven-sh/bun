@@ -70,11 +70,12 @@ describe("node:test", () => {
         "LOG:passing-todo-modifier",
         "LOG:failing-todo-modifier",
         "LOG:todo-reason-string",
+        "LOG:todo-timeout",
         "LOG:regular",
         "LOG:todo-suite-modifier",
         "LOG:todo-suite-option",
       ],
-      summary: { pass: 1, fail: 0, todo: 8 },
+      summary: { pass: 1, fail: 0, todo: 9 },
     });
   });
 
@@ -82,7 +83,7 @@ describe("node:test", () => {
     const { exitCode, stderr } = await runTests(["10-describe-concurrency.js"]);
     expect({ exitCode, summary: summarize(stderr) }).toEqual({
       exitCode: 0,
-      summary: { pass: 9, fail: 0, todo: 0 },
+      summary: { pass: 13, fail: 0, todo: 0 },
     });
   });
 

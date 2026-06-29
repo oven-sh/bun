@@ -519,7 +519,7 @@ class TestContext {
     if (options.only) {
       test.only(name, fn);
     } else if (options.todo) {
-      kTodoTest(name, fn);
+      kTodoTest(name, fn, options);
     } else if (options.skip) {
       test.skip(name, fn);
     } else {

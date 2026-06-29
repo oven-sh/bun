@@ -664,10 +664,13 @@ impl Execution {
             sequence.result = match sequence.entry_mode() {
                 ScopeMode::Failing => Result::FailBecauseFailingTestPassed,
                 ScopeMode::Todo => Result::FailBecauseTodoPassed,
-                // Node never fails a todo test that passes.
-                ScopeMode::TodoRun => Result::Todo,
                 _ => Result::Pass,
             };
+        }
+        // Node reports a todo test as todo no matter how it finished: a passing
+        // body, a throwing body, a timeout, and a failing hook all count as todo.
+        if sequence.entry_mode() == ScopeMode::TodoRun {
+            sequence.result = Result::Todo;
         }
         if let Some(first_entry) = sequence.first_entry {
             if sequence.test_entry.is_some() || sequence.result != Result::Pass {

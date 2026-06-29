@@ -29,6 +29,11 @@ test("todo with a reason string", { todo: "not implemented yet" }, () => {
 
 test.todo("todo without a body");
 
+test("todo that times out", { todo: true, timeout: 100 }, async () => {
+  console.log("LOG:todo-timeout");
+  await new Promise(() => {});
+});
+
 test("regular test still runs", () => {
   console.log("LOG:regular");
 });

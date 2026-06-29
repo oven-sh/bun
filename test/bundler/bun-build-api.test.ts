@@ -451,12 +451,14 @@ describe("Bun.build", () => {
   // descriptor in the resolver. A second in-process Bun.build() used to reuse a
   // descriptor the first build had already closed, failing with EBADF. The test
   // host must also import the package so its fd is cached before the builds run.
-  test.concurrent.skipIf(isWindows)("repeated in-process builds of a symlinked package do not reuse a closed fd", async () => {
-    const dir = tempDirWithFiles("build-symlink-fd-cache", {
-      "vendor/pkg/package.json": `{"name":"pkg","version":"1.0.0","type":"module","exports":"./index.js"}`,
-      "vendor/pkg/index.js": `export const value = 1;\n`,
-      "entry.ts": `import { value } from "pkg";\nconsole.log(value);\n`,
-      "repro.test.ts": `
+  test.concurrent.skipIf(isWindows)(
+    "repeated in-process builds of a symlinked package do not reuse a closed fd",
+    async () => {
+      const dir = tempDirWithFiles("build-symlink-fd-cache", {
+        "vendor/pkg/package.json": `{"name":"pkg","version":"1.0.0","type":"module","exports":"./index.js"}`,
+        "vendor/pkg/index.js": `export const value = 1;\n`,
+        "entry.ts": `import { value } from "pkg";\nconsole.log(value);\n`,
+        "repro.test.ts": `
         import { it } from "bun:test";
         import { value } from "pkg";
         void value;
@@ -470,21 +472,22 @@ describe("Bun.build", () => {
           console.log("ALL_BUILDS_OK");
         });
       `,
-    });
-    mkdirSync(join(dir, "node_modules"), { recursive: true });
-    symlinkSync("../vendor/pkg", join(dir, "node_modules", "pkg"));
+      });
+      mkdirSync(join(dir, "node_modules"), { recursive: true });
+      symlinkSync("../vendor/pkg", join(dir, "node_modules", "pkg"));
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "repro.test.ts"],
-      env: bunEnv,
-      cwd: dir,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout + stderr).toContain("ALL_BUILDS_OK");
-    expect(exitCode).toBe(0);
-  });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "repro.test.ts"],
+        env: bunEnv,
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout + stderr).toContain("ALL_BUILDS_OK");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test.concurrent("errors are returned as an array", async () => {
     const x = await buildNoThrow({

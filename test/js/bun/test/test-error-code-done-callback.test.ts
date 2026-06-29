@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 test("verify we print error messages passed to done callbacks", () => {
@@ -80,7 +80,6 @@ test("verify we print error messages passed to done callbacks", () => {
     ^
     error: you should see this(async)
     at <anonymous> (<dir>/test-error-done-callback-fixture.ts:42:14)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:37:3)
     (fail) error done callback (async)
     43 |   });
     44 | });
@@ -111,7 +110,6 @@ test("verify we print error messages passed to done callbacks", () => {
     ^
     error: you should see this(async, nextTick)
     at <anonymous> (<dir>/test-error-done-callback-fixture.ts:60:14)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:54:5)
     (fail) error done callback (async, nextTick)
     62 | });
     63 |
@@ -140,3 +138,57 @@ test("verify we print error messages passed to done callbacks", () => {
     "
   `);
 });
+
+// A `done(error)` in a lifecycle hook must fail the hook's dependent tests,
+// exactly like a synchronous throw in the same hook does. It used to be
+// surfaced as an "Unhandled error between tests" while every dependent test
+// was still counted as a pass. `node:test` routes every hook through the
+// done-callback form, so that module's `before()` was affected too.
+describe.concurrent("done(error) in a lifecycle hook", () => {
+  // One describe block containing 2 tests; expected counts match the
+  // synchronous-throw variant of each hook.
+  const expected = {
+    beforeAll: { pass: 0, fail: 1 },
+    beforeEach: { pass: 0, fail: 2 },
+    afterEach: { pass: 0, fail: 2 },
+    afterAll: { pass: 2, fail: 1 },
+  } as const;
+
+  test.each(Object.keys(expected) as (keyof typeof expected)[])(
+    "%s(done => done(err)) matches the synchronous-throw counts",
+    async hook => {
+      using dir = tempDir(`done-error-${hook}`, {
+        "hook.test.ts": `
+          import { describe, ${hook}, test } from "bun:test";
+          describe("suite", () => {
+            ${hook}(done => { done(new Error("hook failed")); });
+            test("t1", () => {});
+            test("t2", () => {});
+          });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./hook.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const out = stdout + stderr;
+      // The hook's error is still reported, attributed to the failing entry.
+      expect(out).toContain("error: hook failed");
+      expect(summaryCounts(out)).toEqual(expected[hook]);
+      expect(exitCode).toBe(1);
+    },
+  );
+});
+
+/** `" 2 pass\n 0 fail\n 1 error\n"` -> `{ pass: 2, fail: 0, error: 1 }` */
+function summaryCounts(out: string): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const [, n, label] of out.matchAll(/^ (\d+) (pass|fail|skip|todo|error)s?$/gm)) {
+    counts[label] = Number(n);
+  }
+  return counts;
+}

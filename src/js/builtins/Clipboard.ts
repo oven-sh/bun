@@ -40,7 +40,8 @@ export function createClipboard(EventTargetConstructor) {
         `${write ? "Writing" : "Reading"} the clipboard requires a Wayland or X11 display, but neither $WAYLAND_DISPLAY nor $DISPLAY is set.`,
       );
     }
-    let ran = false;
+    let spawned = 0;
+    let cleanExits = 0;
     for (const cmd of cmds) {
       let proc: ReturnType<typeof Bun.spawn>;
       try {
@@ -55,18 +56,22 @@ export function createClipboard(EventTargetConstructor) {
       } catch {
         continue; // not installed
       }
+      spawned++;
       const [out, code] = await Promise.all([write ? "" : proc.stdout!.text(), proc.exited]);
-      ran = true;
       if (code === 0) return out;
+      // A timed-out (signal-killed) helper proves nothing about the clipboard.
+      if (proc.signalCode === null) cleanExits++;
     }
-    // A helper that ran but exited non-zero means "no text is copied", which
-    // the spec resolves with "" for a read.
-    if (ran && !write) return "";
-    throw notAllowed(
-      ran
-        ? "The clipboard helper failed to write to the clipboard."
-        : "No clipboard helper was found. Install `wl-clipboard` (Wayland), `xclip`, or `xsel` to use navigator.clipboard.",
-    );
+    if (spawned === 0) {
+      throw notAllowed(
+        "No clipboard helper was found. Install `wl-clipboard` (Wayland), `xclip`, or `xsel` to use navigator.clipboard.",
+      );
+    }
+    // The helpers use one exit code for "nothing is copied" and for any other
+    // failure, so a clean non-zero read exit is treated as "no text", which
+    // the spec resolves with "".
+    if (!write && cleanExits > 0) return "";
+    throw notAllowed(`The clipboard helper failed to ${write ? "write to" : "read"} the clipboard.`);
   }
 
   // WebIDL: `Clipboard` has no constructor. The flag is true only for the one

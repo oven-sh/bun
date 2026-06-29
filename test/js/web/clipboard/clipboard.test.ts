@@ -2,7 +2,9 @@
 // The round-trip test is environment-adaptive: a machine with no reachable
 // system clipboard must reject with a "NotAllowedError" DOMException instead.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { chmodSync } from "node:fs";
+import { join } from "node:path";
 
 describe("interface shape", () => {
   test("navigator.clipboard exists and is the [SameObject] Clipboard singleton", () => {
@@ -100,6 +102,43 @@ describe("interface shape", () => {
 });
 
 describe("readText / writeText", () => {
+  // Hermetic end-to-end coverage of the POSIX helper path (candidate
+  // selection, Bun.spawn, the stdin/stdout plumbing): `xclip` is shadowed on
+  // PATH by a stand-in that persists to a file, whose existence proves the
+  // helper — not a native backend — served the round-trip. Linux-only because
+  // `process.platform` is inlined at build time, so the helper branch does
+  // not exist in macOS/Windows builds (they use the in-process pasteboard).
+  test.skipIf(!isLinux)("the helper path round-trips through a PATH-shimmed xclip", async () => {
+    using dir = tempDir("clipboard-helper", {
+      "xclip": `#!/bin/sh\nif [ -z "$CLIP_STATE_FILE" ]; then exit 2; fi\ncase "$*" in\n  *-out*) if [ -f "$CLIP_STATE_FILE" ]; then cat "$CLIP_STATE_FILE"; fi ;;\n  *) cat > "$CLIP_STATE_FILE" ;;\nesac\n`,
+      "main.js": `
+        const { existsSync } = require("node:fs");
+        const token = "helper-path \\u2702 " + Date.now();
+        await navigator.clipboard.writeText(token);
+        const back = await navigator.clipboard.readText();
+        console.log(JSON.stringify({ ok: back === token, helperRan: existsSync(process.env.CLIP_STATE_FILE) }));
+      `,
+    });
+    chmodSync(join(String(dir), "xclip"), 0o755);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        PATH: `${dir}:${bunEnv.PATH ?? process.env.PATH}`,
+        DISPLAY: ":0",
+        WAYLAND_DISPLAY: undefined,
+        CLIP_STATE_FILE: join(String(dir), "clipboard-state.txt"),
+      },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({
+      stdout: JSON.stringify({ ok: true, helperRan: true }),
+      exitCode: 0,
+    });
+  });
+
   test("round-trips text, or rejects with NotAllowedError where there is no system clipboard", async () => {
     let saved: string | null = null;
     try {
@@ -109,7 +148,12 @@ describe("readText / writeText", () => {
       // the spec'd failure is a "NotAllowedError" DOMException for both.
       expect(e).toBeInstanceOf(DOMException);
       expect((e as DOMException).name).toBe("NotAllowedError");
-      await expect(navigator.clipboard.writeText("x")).rejects.toThrow(DOMException);
+      const writeError = await navigator.clipboard.writeText("x").then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect(writeError).toBeInstanceOf(DOMException);
+      expect((writeError as DOMException).name).toBe("NotAllowedError");
       return;
     }
     try {

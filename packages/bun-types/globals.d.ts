@@ -1501,8 +1501,12 @@ declare var Clipboard: Bun.__internal.UseLibDomIfAvailable<
   "Clipboard",
   {
     prototype: Clipboard;
-    // Deliberately no `new ()`: per the spec, `Clipboard` has no constructor,
-    // and `new Clipboard()` throws a TypeError at runtime.
+    /**
+     * Lets `x instanceof Clipboard` type-check (it narrows to `Clipboard`).
+     * Deliberately no `new ()`: per the spec `Clipboard` has no constructor,
+     * so `new Clipboard()` is a compile error and a runtime `TypeError`.
+     */
+    [Symbol.hasInstance](value: unknown): value is Clipboard;
   }
 >;
 

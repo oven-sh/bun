@@ -181,14 +181,29 @@ mod platform {
         fn GlobalLock(mem: *mut c_void) -> *mut c_void;
         fn GlobalUnlock(mem: *mut c_void) -> c_int;
         fn GlobalSize(mem: *mut c_void) -> usize;
+        fn Sleep(milliseconds: c_uint);
     }
 
     const CF_UNICODETEXT: c_uint = 13;
     const GMEM_MOVEABLE: c_uint = 0x0002;
 
+    /// `OpenClipboard` is system-wide exclusive, so a single attempt fails
+    /// spuriously whenever any other process (a clipboard manager, RDP) holds
+    /// it; retry briefly like arboard / Chromium / .NET do.
+    fn open_clipboard_retrying() -> bool {
+        for attempt in 0..5u32 {
+            // SAFETY: a null hwnd is documented as valid.
+            if unsafe { OpenClipboard(ptr::null_mut()) } != 0 {
+                return true;
+            }
+            // SAFETY: no preconditions.
+            unsafe { Sleep(5 * (attempt + 1)) };
+        }
+        false
+    }
+
     pub(super) fn read_text() -> Result<Option<Vec<u8>>, Unavailable> {
-        // SAFETY: a null hwnd is documented as valid for a read-only open.
-        if unsafe { OpenClipboard(ptr::null_mut()) } == 0 {
+        if !open_clipboard_retrying() {
             return Err(Unavailable);
         }
         scopeguard::defer! {
@@ -206,6 +221,10 @@ mod platform {
         if p.is_null() {
             return Err(Unavailable);
         }
+        scopeguard::defer! {
+            // SAFETY: balances the successful `GlobalLock` above.
+            let _ = unsafe { GlobalUnlock(h) };
+        }
         // `GlobalSize` over-reports (allocation granularity), and the payload
         // is written by other processes — so never trust it past the first
         // NUL, and never trust a NUL to exist at all.
@@ -217,10 +236,7 @@ mod platform {
         }
         // SAFETY: `n <= cap`, and the allocation stays locked for this slice.
         let wide = unsafe { core::slice::from_raw_parts(p, n) };
-        let text = String::from_utf16_lossy(wide).into_bytes();
-        // SAFETY: balances the `GlobalLock` above.
-        unsafe { GlobalUnlock(h) };
-        Ok(Some(text))
+        Ok(Some(String::from_utf16_lossy(wide).into_bytes()))
     }
 
     pub(super) fn write_text(bytes: &[u8]) -> bool {
@@ -231,21 +247,9 @@ mod platform {
         };
         let nbytes = wide.len() * 2;
 
-        // MSDN's note that `EmptyClipboard` after a null-hwnd open breaks
-        // `SetClipboardData` is Win16-era; every modern clipboard library
-        // opens with null, and a real failure falls through to `false` below.
-        // SAFETY: a null hwnd is documented as valid.
-        if unsafe { OpenClipboard(ptr::null_mut()) } == 0 {
-            return false;
-        }
-        scopeguard::defer! {
-            // SAFETY: the clipboard is open on this thread.
-            let _ = unsafe { CloseClipboard() };
-        }
-        // SAFETY: the clipboard is open.
-        if unsafe { EmptyClipboard() } == 0 {
-            return false;
-        }
+        // Fully prepare the replacement HGLOBAL before touching the clipboard:
+        // `EmptyClipboard` destroys the previous contents, so nothing fallible
+        // may sit between it and `SetClipboardData`.
         // SAFETY: `SetClipboardData` requires a `GMEM_MOVEABLE` HGLOBAL.
         let h = unsafe { GlobalAlloc(GMEM_MOVEABLE, nbytes) };
         if h.is_null() {
@@ -254,7 +258,7 @@ mod platform {
         // SAFETY: `h` is a live, unlocked HGLOBAL of exactly `nbytes` bytes.
         let dst = unsafe { GlobalLock(h) } as *mut u16;
         if dst.is_null() {
-            // SAFETY: the clipboard never took `h`, so it is still ours.
+            // SAFETY: the clipboard never saw `h`, so it is still ours.
             unsafe { GlobalFree(h) };
             return false;
         }
@@ -263,6 +267,25 @@ mod platform {
         unsafe {
             ptr::copy_nonoverlapping(wide.as_ptr(), dst, wide.len());
             GlobalUnlock(h);
+        }
+
+        // MSDN's note that `EmptyClipboard` after a null-hwnd open breaks
+        // `SetClipboardData` is Win16-era; every modern clipboard library
+        // opens with null, and a real failure just falls through to `false`.
+        if !open_clipboard_retrying() {
+            // SAFETY: the clipboard never saw `h`.
+            unsafe { GlobalFree(h) };
+            return false;
+        }
+        scopeguard::defer! {
+            // SAFETY: the clipboard is open on this thread.
+            let _ = unsafe { CloseClipboard() };
+        }
+        // SAFETY: the clipboard is open.
+        if unsafe { EmptyClipboard() } == 0 {
+            // SAFETY: the clipboard never took `h`.
+            unsafe { GlobalFree(h) };
+            return false;
         }
         // On success the system owns `h`; freeing it would be a double-free.
         // SAFETY: the clipboard is open and emptied, and `h` is unlocked.

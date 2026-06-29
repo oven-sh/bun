@@ -433,6 +433,7 @@ Server.prototype.listen = function () {
   const server = this;
   let port, host, onListen;
   let socketPath;
+  let exclusive = false;
   let tls = this[tlsSymbol];
 
   // This logic must align with:
@@ -445,6 +446,7 @@ Server.prototype.listen = function () {
       port = arg0.port;
       host = arg0.host;
       socketPath = arg0.path;
+      exclusive = !!arg0.exclusive;
 
       const otherTLS = arg0.tls;
       if (otherTLS && $isObject(otherTLS)) {
@@ -481,9 +483,9 @@ Server.prototype.listen = function () {
   }
 
   try {
-    // listenInCluster
-
-    if (isPrimary) {
+    // listenInCluster: `exclusive` opts a cluster worker out of the shared
+    // port, matching net.ts's `cluster.isPrimary || exclusive` gate.
+    if (isPrimary || exclusive) {
       server[kRealListen](tls, port, host, socketPath, false, onListen);
       return this;
     }

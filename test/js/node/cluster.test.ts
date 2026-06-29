@@ -235,7 +235,17 @@ if (cluster.isPrimary) {
   late.on("exit", (code, signal) => {
     lateFail(new Error("late worker exited before listening (" + (signal ?? code) + ")"));
   });
-  const lateReport = await lateReady;
+
+  // A worker that opts out with exclusive: true must bypass the primary and
+  // bind its own ephemeral port, never the cluster's shared one.
+  const { promise: exclusiveReady, resolve: exclusiveDone, reject: exclusiveFail } = Promise.withResolvers();
+  const loner = cluster.fork({ CLUSTER_EXCLUSIVE: "1" });
+  loner.on("message", exclusiveDone);
+  loner.on("exit", (code, signal) => {
+    exclusiveFail(new Error("exclusive worker exited before listening (" + (signal ?? code) + ")"));
+  });
+
+  const { 0: lateReport, 1: exclusiveReport } = await Promise.all([lateReady, exclusiveReady]);
 
   // Every request to the one reported port must be answered by a worker: the
   // primary never owns a competing socket that would swallow connections.
@@ -263,11 +273,24 @@ if (cluster.isPrimary) {
       distinctListeningPorts: new Set(listening).size,
       listeningMatchesReported: new Set([...reported, ...listening]).size === 1,
       lateWorkerSharesPort: lateReport.port === port,
+      exclusiveWorkerGotOwnPort: exclusiveReport.port > 0 && exclusiveReport.port !== port,
       served,
     }),
   );
   for (const id in cluster.workers) cluster.workers[id].process.kill();
   process.exit(0);
+} else if (process.env.CLUSTER_EXCLUSIVE) {
+  const server =
+    kind === "http"
+      ? mod.createServer((req, res) => res.end("exclusive"))
+      : mod.createServer(socket => socket.end("exclusive"));
+  server.on("error", error => {
+    console.error("exclusive worker listen error:", error.code);
+    process.exit(1);
+  });
+  server.listen({ port: 0, host: "127.0.0.1", exclusive: true }, () => {
+    process.send({ port: server.address().port });
+  });
 } else {
   const body = "served by worker " + cluster.worker.id;
   const server =
@@ -308,6 +331,7 @@ test.concurrent.each(["net", "http"])(
       distinctListeningPorts: 1,
       listeningMatchesReported: true,
       lateWorkerSharesPort: true,
+      exclusiveWorkerGotOwnPort: true,
       served: 8,
     });
     expect(exitCode).toBe(0);

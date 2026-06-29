@@ -294,6 +294,59 @@ describe("WebSocket AsyncLocalStorage context", () => {
     });
   });
 
+  it("keeps the captured context alive across garbage collection", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("Upgrade failed", { status: 500 });
+      },
+      websocket: {
+        open() {},
+        message(ws) {
+          ws.send("pong");
+          ws.close(1000, "done");
+        },
+      },
+    });
+
+    const als = new AsyncLocalStorage<{ id: string }>();
+    const contexts: Record<string, unknown> = {};
+    const opened = Promise.withResolvers<WebSocket>();
+    const closed = Promise.withResolvers<void>();
+
+    // Once this IIFE returns, the captured async context is only reachable
+    // through the WebSocket, so it must be visited from the JS wrapper.
+    (function create() {
+      als.run({ id: "creation-context" }, () => {
+        const ws = new WebSocket(`ws://${server.hostname}:${server.port}`);
+        ws.onopen = () => {
+          contexts.open = als.getStore();
+          opened.resolve(ws);
+        };
+        ws.onmessage = () => {
+          contexts.message = als.getStore();
+        };
+        ws.onclose = () => {
+          contexts.close = als.getStore();
+          closed.resolve();
+        };
+        ws.onerror = () => closed.reject(new Error("unexpected error event"));
+      });
+    })();
+
+    const ws = await opened.promise;
+    Bun.gc(true);
+    Bun.gc(true);
+    ws.send("ping");
+    await closed.promise;
+    expect(contexts).toEqual({
+      open: { id: "creation-context" },
+      message: { id: "creation-context" },
+      close: { id: "creation-context" },
+    });
+  });
+
   it("dispatches error and close events in the context active at construction", async () => {
     // The upgrade never completes: the server destroys the socket, so the
     // client goes down the connection-error path (error + close events).

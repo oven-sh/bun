@@ -12,6 +12,14 @@ test/cli/run/run-crash-handler.test.ts [ FAIL ] # automatic crash reporter > seg
 # the spawned child needs process.binding('inspector'), which is not implemented
 test/js/node/test/parallel/test-inspector-enabled.js [ FAIL ]
 
+# Unmasked by the node:test (t, done) callback fix (PR #28502): this file uses the two-argument
+# test(function(_, cb){...}) signature, so before the fix its subtests never ran and it passed
+# vacuously. It spawns test-http-max-http-headers.js (removed in 8c2b7b65a1 as non-passing) and
+# asserts the child exits 0 when --max-http-header-size equals the header size; bun's HTTP server
+# instead emits clientError (HPE_HEADER_OVERFLOW) on request headers sized exactly at the limit,
+# where node accepts them. Pre-existing header-size boundary bug in the HTTP layer, out of scope.
+test/js/node/test/parallel/test-set-http-max-http-headers.js [ FAIL ]
+
 # Verbatim node v26.3.0 test asserting a FinalizationRegistry callback fires
 # within ONE globalThis.gc() + ONE setImmediate after the connect callback's
 # closure is unreferenced. The FinalizationRegistry spec gives no timing

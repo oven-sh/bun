@@ -60,6 +60,8 @@ pub(crate) struct Parser<'a, 's, 'i> {
     /// keys: one map for the whole document, keyed by
     /// `key hash ^ mix(object serial)` so it never needs per-object clearing.
     dup_map: DupMap,
+    /// `obj_serial` of the object whose keys `dup_map` currently holds.
+    dup_map_owner: u64,
     obj_serial: u64,
     /// True once any string was stored as UTF-16 or escape-decoded
     /// (mirrors the old lexer's `is_ascii_only`, used by `parse_for_bundling`).
@@ -143,6 +145,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             scratch_items: Vec::new(),
             dup_hashes: Vec::new(),
             dup_map: DupMap::default(),
+            dup_map_owner: 0,
             obj_serial: 0,
             is_ascii_only: flags
                 & (jidx::FLAG_HAS_BACKSLASH_IN_STRING | jidx::FLAG_HAS_NON_ASCII)
@@ -729,26 +732,34 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     /// Number of keys an object can have before duplicate detection switches
-    /// from a linear scan of the object's key hashes to the document-wide map.
+    /// from a linear scan of the object's key hashes to the spill map.
     const DUP_LINEAR_MAX: usize = 32;
 
     /// Is `key` a duplicate of an earlier key of the object whose properties
     /// start at `scratch_props[mark]` / `dup_hashes[hmark]`? Records the key.
     ///
     /// Hash-first: small objects scan their contiguous hash stack and confirm
-    /// a hit by comparing the actual keys; objects past `DUP_LINEAR_MAX` move
-    /// to the document-wide identity map (the old parser's strategy, minus
-    /// the per-object map + clear).
+    /// a hit by comparing the actual keys. Objects past `DUP_LINEAR_MAX` keys
+    /// spill to one reused hash map. The map only ever holds a single
+    /// object's keys (`dup_map_owner`): per-object it stays small and cache
+    /// resident, where a shared document-wide map on a registry manifest
+    /// with thousands of large objects spends a quarter of the whole parse
+    /// growing and probing it.
     fn check_duplicate_key(&mut self, mark: usize, hmark: usize, serial: u64, key: &E::String) -> bool {
         let h = key.hash();
         let n_prior = self.dup_hashes.len() - hmark;
         let dup = if n_prior <= Self::DUP_LINEAR_MAX {
             if n_prior == Self::DUP_LINEAR_MAX {
-                // The object is getting big: move to the map from here on
-                // (seeded with everything so far, including this key).
+                // The object is getting big: move to the spill map from here
+                // on (cleared of any previous object's keys, then seeded
+                // with everything so far, including this key).
+                if self.dup_map_owner != serial {
+                    self.dup_map.clear();
+                    self.dup_map_owner = serial;
+                }
                 let (hashes, map) = (&self.dup_hashes, &mut self.dup_map);
                 for &ph in &hashes[hmark..] {
-                    map.insert(mix_key_hash(ph, serial), ());
+                    map.insert(ph, ());
                 }
             }
             match self.dup_hashes[hmark..].iter().position(|&ph| ph == h) {
@@ -766,7 +777,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 }
             }
         } else {
-            self.dup_map.insert(mix_key_hash(h, serial), ()).is_some()
+            debug_assert!(self.dup_map_owner == serial);
+            self.dup_map.insert(h, ()).is_some()
         };
         self.dup_hashes.push(h);
         dup
@@ -1236,12 +1248,6 @@ fn estring_eq(a: &E::String, b: &E::String) -> bool {
     if a.is_utf16 { a.slice16() == b.slice16() } else { a.slice8() == b.slice8() }
 }
 
-/// Mix an object serial into a key hash so one document-wide identity-hashed
-/// map distinguishes per-object membership.
-#[inline]
-fn mix_key_hash(h: u64, serial: u64) -> u64 {
-    (h ^ serial.wrapping_mul(0x9E37_79B9_7F4A_7C15)).max(1)
-}
 
 /// Port of the old `decode_escape_sequences` (JSON arm) over a byte body,
 /// plus the enclosing scan loop's check that ran before it: raw control

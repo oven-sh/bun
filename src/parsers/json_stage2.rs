@@ -117,7 +117,7 @@ fn is_identifier_continue(c: u8) -> bool {
 /// Unicode whitespace the old lexer skipped between tokens beyond ASCII
 /// space/tab/newline: VT, FF, LS, PS, BOM, and the Zs space separators.
 #[inline]
-fn is_exotic_whitespace(cp: CodePoint) -> bool {
+pub(crate) fn is_exotic_whitespace(cp: CodePoint) -> bool {
     matches!(cp, 0x000B | 0x000C | 0x2028 | 0x2029 | 0xFEFF)
         || strings::is_unicode_space_separator(cp as u32)
 }

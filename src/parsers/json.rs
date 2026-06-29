@@ -885,6 +885,173 @@ fn _g_property_size_assert(p: &G::Property) -> usize {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Cold-path source-location recovery
+// ──────────────────────────────────────────────────────────────────────────
+//
+// The simple JSON AST (`E::ObjectSimple` / `E::ArraySimple`, see
+// `JSONOptions::simple_objects`) stores no per-value locations: a property
+// row records only its key's location and containers their own. Error
+// reporters that need to point at a *value* recover its location here by
+// re-scanning the source they parsed from. This is strictly cold-path work
+// (a diagnostic is about to be printed), so the linear scans don't matter.
+
+/// Location of the first byte of the value of the property whose key string
+/// token starts at `key_loc` (= [`E::PropertySimple::key_loc`], the opening
+/// quote): the key token, then any whitespace/comments, the `:`, and any
+/// whitespace/comments after it are skipped.
+///
+/// `contents` must be the bytes the property was parsed from. Returns `None`
+/// when they aren't (the bytes at `key_loc` don't look like `"key" : value`)
+/// or `key_loc` is empty, so callers can fall back to the key's location.
+pub fn property_value_loc(contents: &[u8], key_loc: bun_ast::Loc) -> Option<bun_ast::Loc> {
+    let key_start = usize::try_from(key_loc.start).ok()?;
+    let after_key = skip_string_token(contents, key_start)?;
+    let colon = skip_ws_and_comments(contents, after_key)?;
+    if contents[colon] != b':' {
+        return None;
+    }
+    let value = skip_ws_and_comments(contents, colon + 1)?;
+    Some(bun_ast::usize2loc(value))
+}
+
+/// Sibling of [`property_value_loc`] for array items: the location of the
+/// first byte of item `index` of the array whose `[` is at `array_loc`
+/// (= the `E::ArraySimple` expression's `loc`). `None` if the array's source
+/// has fewer than `index + 1` items (or `contents`/`array_loc` don't match).
+pub fn array_item_loc(
+    contents: &[u8],
+    array_loc: bun_ast::Loc,
+    index: usize,
+) -> Option<bun_ast::Loc> {
+    let start = usize::try_from(array_loc.start).ok()?;
+    if *contents.get(start)? != b'[' {
+        return None;
+    }
+    let mut p = skip_ws_and_comments(contents, start + 1)?;
+    for _ in 0..index {
+        p = skip_json_value(contents, p)?;
+        p = skip_ws_and_comments(contents, p)?;
+        if contents[p] != b',' {
+            return None;
+        }
+        p = skip_ws_and_comments(contents, p + 1)?;
+    }
+    if matches!(contents[p], b']' | b',') {
+        return None;
+    }
+    Some(bun_ast::usize2loc(p))
+}
+
+/// Byte offset just past the string token whose opening `"` / `'` is at
+/// `start`. `None` if `start` isn't a quote or the string is unterminated.
+fn skip_string_token(contents: &[u8], start: usize) -> Option<usize> {
+    let quote = *contents.get(start)?;
+    if quote != b'"' && quote != b'\'' {
+        return None;
+    }
+    let mut p = start + 1;
+    while p < contents.len() {
+        match contents[p] {
+            b'\\' => p += 2,
+            b if b == quote => return Some(p + 1),
+            _ => p += 1,
+        }
+    }
+    None
+}
+
+/// First byte offset at/after `from` that isn't whitespace (including the
+/// exotic unicode whitespace the parser skips between tokens) or part of a
+/// `//` / `/* */` comment. `None` at end of input or in an unterminated
+/// block comment.
+fn skip_ws_and_comments(contents: &[u8], mut p: usize) -> Option<usize> {
+    use bun_core::strings;
+    while p < contents.len() {
+        let b = contents[p];
+        match b {
+            b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C => p += 1,
+            b'/' => match contents.get(p + 1) {
+                Some(b'/') => {
+                    p += 2;
+                    while p < contents.len() && contents[p] != b'\n' {
+                        p += 1;
+                    }
+                }
+                Some(b'*') => {
+                    let end = strings::index_of(&contents[p + 2..], b"*/")?;
+                    p += 2 + end + 2;
+                }
+                _ => return Some(p),
+            },
+            _ if b >= 0x80 => {
+                // A multi-byte codepoint: only exotic whitespace is skipped.
+                let iterator = strings::CodepointIterator::init(&contents[p..]);
+                let mut cursor = strings::Cursor::default();
+                if !iterator.next(&mut cursor)
+                    || !crate::json_stage2::is_exotic_whitespace(cursor.c)
+                {
+                    return Some(p);
+                }
+                p += (cursor.width as usize).max(1);
+            }
+            _ => return Some(p),
+        }
+    }
+    None
+}
+
+/// Byte offset just past the JSON/JSONC value starting at `p` (a string,
+/// container, or primitive token).
+fn skip_json_value(contents: &[u8], p: usize) -> Option<usize> {
+    match *contents.get(p)? {
+        b'"' | b'\'' => skip_string_token(contents, p),
+        open @ (b'{' | b'[') => {
+            let close = if open == b'{' { b'}' } else { b']' };
+            let mut depth = 0usize;
+            let mut q = p;
+            while q < contents.len() {
+                match contents[q] {
+                    b'"' | b'\'' => q = skip_string_token(contents, q)?,
+                    b'/' if matches!(contents.get(q + 1), Some(b'/' | b'*')) => {
+                        q = skip_ws_and_comments(contents, q)?;
+                    }
+                    b'{' | b'[' => {
+                        depth += 1;
+                        q += 1;
+                    }
+                    b'}' | b']' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            // Containers of mixed kinds nest, so only the
+                            // matching closer can bring `depth` back to 0.
+                            debug_assert_eq!(contents[q], close);
+                            return Some(q + 1);
+                        }
+                        q += 1;
+                    }
+                    _ => q += 1,
+                }
+            }
+            None
+        }
+        // A primitive token (number, `true`/`false`/`null`): everything up
+        // to the next delimiter, whitespace, or comment.
+        _ => {
+            let mut q = p;
+            while q < contents.len() {
+                match contents[q] {
+                    b',' | b']' | b'}' | b':' => break,
+                    b'/' if matches!(contents.get(q + 1), Some(b'/' | b'*')) => break,
+                    b if b.is_ascii_whitespace() || b >= 0x80 => break,
+                    _ => q += 1,
+                }
+            }
+            (q > p).then_some(q)
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -1372,6 +1539,150 @@ mod tests {
         // The JSONC entry (comments + trailing commas + single quotes) too.
         let jsonc = "// c\n{\"a\": [1, 2,], /* x */ \"b\": 'sq', } ";
         assert_eq!(canon(jsonc, Which::TsConfig), canon(jsonc, Which::Jsonc));
+    }
+
+    /// `Expr::materialize_json` over a simple-mode tree must produce a
+    /// classic tree with no simple nodes left, identical canonical JSON, and
+    /// the same key locations as a full-mode parse of the same document.
+    #[test]
+    fn materialize_json_matches_a_full_parse() {
+        // (json string, [(key loc, key)] in tree order) of a classic tree.
+        fn canon_full(root: &Expr) -> (std::string::String, Vec<(i32, std::string::String)>) {
+            fn keys(e: &Expr, out: &mut Vec<(i32, std::string::String)>) {
+                match &e.data {
+                    Data::EObject(o) => {
+                        for prop in o.properties.iter() {
+                            let key = prop.key.unwrap();
+                            let k = key.data.as_e_string().unwrap();
+                            out.push((key.loc.start, estring_to_string(&k)));
+                            keys(prop.value.as_ref().unwrap(), out);
+                        }
+                    }
+                    Data::EArray(a) => {
+                        for item in a.items.iter() {
+                            keys(item, out);
+                        }
+                    }
+                    Data::EObjectSimple(_) | Data::EArraySimple(_) => {
+                        panic!("simple node in a materialized/full tree")
+                    }
+                    _ => {}
+                }
+            }
+            let mut s = std::string::String::new();
+            to_json_string(root, &mut s);
+            let mut k = Vec::new();
+            keys(root, &mut k);
+            (s, k)
+        }
+        let mut deep = std::string::String::from("1");
+        for _ in 0..40 {
+            deep = format!("{{\"k\": [{deep}]}}");
+        }
+        let docs: Vec<(&str, Which, Which)> = vec![
+            ("{}", Which::Utf8, Which::Simple),
+            ("[]", Which::Utf8, Which::Simple),
+            ("\"leaf\"", Which::Utf8, Which::Simple),
+            ("-3.25e2", Which::Utf8, Which::Simple),
+            (
+                r#"{"a": 1, "b": [true, null, "x", [], {}], "c": {"d": "é🚀", "e": ""}, "es\ncé": -0}"#,
+                Which::Utf8,
+                Which::Simple,
+            ),
+            (
+                "[0, -1.5e3, \"s\", {\"n\": {\"deep\": [\"x\"]}}]",
+                Which::Utf8,
+                Which::Simple,
+            ),
+            (&deep, Which::Utf8, Which::Simple),
+            // JSONC: comments, trailing commas, single quotes.
+            (
+                "// c\n{\"a\": [1, 2,], /* x */ \"b\": 'sq', }",
+                Which::TsConfig,
+                Which::Jsonc,
+            ),
+        ];
+        for (doc, full_which, simple_which) in docs {
+            let full = {
+                let p = run(doc.as_bytes(), full_which);
+                let root = p.root.unwrap();
+                (root.loc, canon_full(&root))
+            };
+            let materialized = {
+                let p = run(doc.as_bytes(), simple_which);
+                let root = p.root.unwrap().materialize_json();
+                (root.loc, canon_full(&root))
+            };
+            assert_eq!(full, materialized, "materialized tree differs for {doc:?}");
+        }
+    }
+
+    /// Cold-path value-location recovery: for every property and array item
+    /// of a document, re-scanning the source from the locations the simple
+    /// AST keeps must land exactly on the location the full AST recorded for
+    /// the value, across whitespace, comments, escapes, and exotic unicode
+    /// whitespace.
+    #[test]
+    fn value_location_recovery() {
+        fn walk(src: &[u8], e: &Expr) {
+            match &e.data {
+                Data::EObject(o) => {
+                    for prop in o.properties.iter() {
+                        let key = prop.key.unwrap();
+                        let value = prop.value.unwrap();
+                        assert_eq!(
+                            property_value_loc(src, key.loc),
+                            Some(value.loc),
+                            "value loc of the key at byte {} of {:?}",
+                            key.loc.start,
+                            std::string::String::from_utf8_lossy(src),
+                        );
+                        walk(src, &value);
+                    }
+                }
+                Data::EArray(a) => {
+                    for (i, item) in a.items.iter().enumerate() {
+                        assert_eq!(
+                            array_item_loc(src, e.loc, i),
+                            Some(item.loc),
+                            "loc of item {i} of the array at byte {} of {:?}",
+                            e.loc.start,
+                            std::string::String::from_utf8_lossy(src),
+                        );
+                        walk(src, item);
+                    }
+                    // One past the end is "no such item", not a bogus loc.
+                    assert_eq!(array_item_loc(src, e.loc, a.items.len()), None);
+                }
+                _ => {}
+            }
+        }
+        let docs: [&str; 5] = [
+            r#"{"a":1,"b" : "two", "es\"cé\\" :  [1, "x", {"y":null}, true, ["", -2]], "c":{"d":3}}"#,
+            // Multiline JSONC: line + block comments on both sides of `:`
+            // and between array items, trailing commas.
+            "{\n  // line\n  \"a\" /* k */ : // v\n   42,\n  \"arr\": [ /* a */ 1,\n     [2], // b\n   {'z': 'q'},\n  ],\n}",
+            // Exotic unicode whitespace (NBSP, BOM) in the gaps.
+            "{\"\u{e9}k\":\u{a0}\u{feff} 1,\"l\":\u{a0}[\u{a0}1\u{a0},\u{a0}2]}",
+            "[]",
+            "[ [ ] , { } , \"]\" ]",
+        ];
+        for doc in docs {
+            let p = run(doc.as_bytes(), Which::TsConfig);
+            assert_eq!(p.errors, 0, "fixture must parse: {doc:?}");
+            walk(doc.as_bytes(), p.root.as_ref().unwrap());
+        }
+        // Hand-positioned: the recovered loc is the value's first byte.
+        let doc = b"{\"k\" /* : 9 */ : /* x */ 42}";
+        let key_loc = bun_ast::usize2loc(1);
+        let value_loc = property_value_loc(doc, key_loc).unwrap();
+        assert_eq!(value_loc.start as usize, 25);
+        assert_eq!(&doc[value_loc.start as usize..][..2], b"42");
+        // Mismatched source (no `:` after the key token): None, never a
+        // bogus location.
+        assert_eq!(property_value_loc(b"{\"k\", 1}", key_loc), None);
+        assert_eq!(property_value_loc(b"{\"k\"", key_loc), None);
+        assert_eq!(array_item_loc(b"{}", bun_ast::usize2loc(0), 0), None);
     }
 
     /// The generic `Expr` accessors (`get`, `as_property`, `as_array`,

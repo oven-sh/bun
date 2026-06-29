@@ -356,10 +356,12 @@ describe("membership on an unbound socket", () => {
   test("the implicitly bound socket can send", async () => {
     const receiver = createSocket("udp4");
     const sender = createSocket("udp4");
+    let done = false;
     try {
       const received = Promise.withResolvers<Buffer>();
       receiver.on("message", received.resolve);
       receiver.on("error", received.reject);
+      sender.on("error", received.reject);
 
       const listening = Promise.withResolvers<void>();
       receiver.on("listening", listening.resolve);
@@ -367,13 +369,19 @@ describe("membership on an unbound socket", () => {
       await listening.promise;
 
       sender.addMembership(GROUP4, LO4);
-      const sent = Promise.withResolvers<void>();
-      sender.on("error", sent.reject);
-      sender.send("via implicit bind", receiver.address().port, LO4, err => (err ? sent.reject(err) : sent.resolve()));
 
-      await sent.promise;
+      // Handle unreliable transmission in UDP: keep re-sending until the
+      // receiver sees a datagram, like the other send tests in this file.
+      const port = receiver.address().port;
+      function sendRec() {
+        if (done) return;
+        sender.send("via implicit bind", port, LO4, () => setTimeout(sendRec, 10));
+      }
+      sendRec();
+
       expect((await received.promise).toString()).toBe("via implicit bind");
     } finally {
+      done = true;
       sender.close();
       receiver.close();
     }

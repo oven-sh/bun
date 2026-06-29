@@ -195,7 +195,7 @@ impl Expr {
         matches!(self.data, Data::EString(_))
     }
 
-    /// Materialize a immutable JSON leaf/container value as an `Expr`.
+    /// Materialize an immutable JSON leaf/container value as an `Expr`.
     ///
     /// Leaves become real nodes (`EString`/`ENumber`/`EBoolean`/`ENull`);
     /// nested containers are already arena rows and are just re-wrapped as
@@ -228,6 +228,52 @@ impl Expr {
                 loc,
                 data: Data::EArrayJSON(*a),
             },
+        }
+    }
+
+    /// Visit every `"key": value` property of an object expression in
+    /// source order, in either representation (the mutable `E::Object`
+    /// tree or `E::ObjectJSON`'s rows), as the decoded key bytes, the
+    /// key's location, and the value as an `Expr`. A row's value is
+    /// materialized per call (its `loc` is the key's — see
+    /// `bun_parsers::json::value_loc_of_property` for diagnostics);
+    /// non-string keys of a mutable tree are skipped. Does nothing for a
+    /// non-object expression.
+    pub fn for_each_property(&self, mut f: impl FnMut(&[u8], Loc, Expr)) {
+        match &self.data {
+            Data::EObject(obj) => {
+                for property in obj.properties.slice() {
+                    let (Some(key_expr), Some(value)) =
+                        (property.key.as_ref(), property.value.as_ref())
+                    else {
+                        continue;
+                    };
+                    let Some(key) = key_expr.as_utf8_string_literal() else {
+                        continue;
+                    };
+                    f(key, key_expr.loc, *value);
+                }
+            }
+            Data::EObjectJSON(obj) => {
+                for property in obj.get().properties() {
+                    f(
+                        property.key.slice(),
+                        property.key_loc,
+                        Expr::from_json_value(&property.value, property.key_loc),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Number of `"key": value` properties of an object expression in
+    /// either representation; 0 when it isn't an object.
+    pub fn property_count(&self) -> usize {
+        match &self.data {
+            Data::EObject(obj) => obj.properties.len_u32() as usize,
+            Data::EObjectJSON(obj) => obj.get().properties().len(),
+            _ => 0,
         }
     }
 

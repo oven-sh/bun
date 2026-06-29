@@ -1089,6 +1089,44 @@ pub fn array_item_loc(
     Some(bun_ast::usize2loc(p))
 }
 
+/// Exact source location of a property's value for a diagnostic, given the
+/// value `Expr` a property lookup or [`Expr::for_each_property`] returned:
+/// a node from the mutable tree carries its own location; a value
+/// materialized from an immutable row carries its *key's*, so the value's
+/// first byte is recovered from the source (cold path).
+pub fn value_loc_of_property(contents: &[u8], key_loc: bun_ast::Loc, value: &Expr) -> bun_ast::Loc {
+    if value.loc != key_loc {
+        return value.loc;
+    }
+    property_value_loc_or_key(contents, key_loc)
+}
+
+/// Where an immutable-AST JSON value sits in its document, so its exact
+/// source location can be recovered on a (cold) diagnostic path — the rows
+/// store no per-value `Loc`. Parents chain by reference; nothing is
+/// re-scanned unless a diagnostic actually fires.
+#[derive(Clone, Copy)]
+pub enum ValueLocation<'p> {
+    /// The value of the property whose key token starts at this `Loc`.
+    Property(bun_ast::Loc),
+    /// Item `index` of the array whose own position is the parent.
+    ArrayItem(&'p ValueLocation<'p>, usize),
+}
+
+impl ValueLocation<'_> {
+    /// First byte of the value, falling back to the nearest key/container
+    /// location when the source cannot be re-scanned.
+    pub fn resolve(&self, contents: &[u8]) -> bun_ast::Loc {
+        match self {
+            ValueLocation::Property(key_loc) => property_value_loc_or_key(contents, *key_loc),
+            ValueLocation::ArrayItem(array, index) => {
+                let array_loc = array.resolve(contents);
+                array_item_loc(contents, array_loc, *index).unwrap_or(array_loc)
+            }
+        }
+    }
+}
+
 /// Sibling of [`array_item_loc`] for visiting every item: the location of
 /// the item after the one starting at `item_loc`, in one forward step.
 /// `None` past the last item (or when the bytes don't match).
@@ -1233,7 +1271,7 @@ fn skip_json_value(contents: &[u8], p: usize) -> Option<usize> {
 // Materialization: immutable AST → classic AST
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Deep-convert a immutable-AST document (`E::ObjectJSON` / `E::ArrayJSON`)
+/// Deep-convert an immutable-AST document (`E::ObjectJSON` / `E::ArrayJSON`)
 /// into the classic `E::Object` / `E::Array` tree, indistinguishable from a
 /// classic parse of the same `source`:
 ///

@@ -1,5 +1,3 @@
-use bun_collections::VecExt;
-
 use bun_ast as js_ast;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::Output;
@@ -362,68 +360,6 @@ impl FileSystemPackageJsonExt for crate::fs::FileSystem {
 }
 
 impl PackageJSON {
-    /// Visit every `"key": value` row of a JSON object expression in source
-    /// order, in either container representation (`E::Object` from the
-    /// classic AST, `E::ObjectJSON` from the immutable row AST). The callback
-    /// gets the decoded key bytes, the key's location, and the value as an
-    /// `Expr` (an immutable row's value is materialized, so its `loc` is the
-    /// key's — see [`Self::json_property_value_loc`]).
-    fn for_each_json_property(
-        object: &js_ast::Expr,
-        mut f: impl FnMut(&[u8], bun_ast::Loc, js_ast::Expr),
-    ) {
-        match &object.data {
-            js_ast::ExprData::EObject(obj) => {
-                for property in obj.properties.slice() {
-                    let (Some(key_expr), Some(value)) =
-                        (property.key.as_ref(), property.value.as_ref())
-                    else {
-                        continue;
-                    };
-                    let Some(key) = key_expr.as_utf8_string_literal() else {
-                        continue;
-                    };
-                    f(key, key_expr.loc, *value);
-                }
-            }
-            js_ast::ExprData::EObjectJSON(obj) => {
-                for property in obj.get().properties() {
-                    f(
-                        property.key.slice(),
-                        property.key_loc,
-                        js_ast::Expr::from_json_value(&property.value, property.key_loc),
-                    );
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// Number of `"key": value` rows of a JSON object expression, in either
-    /// container representation; 0 when it isn't an object.
-    fn json_object_property_count(object: &js_ast::Expr) -> usize {
-        match &object.data {
-            js_ast::ExprData::EObject(obj) => obj.properties.len_u32() as usize,
-            js_ast::ExprData::EObjectJSON(obj) => obj.get().properties().len(),
-            _ => 0,
-        }
-    }
-
-    /// Exact source location of a property's `value`, for a diagnostic
-    /// (cold path). A value materialized from an immutable row carries its
-    /// *key's* location, so the value's first byte is recovered by
-    /// re-scanning the source; a classic node already carries its own.
-    fn json_property_value_loc(
-        source: &bun_ast::Source,
-        key_loc: bun_ast::Loc,
-        value: &js_ast::Expr,
-    ) -> bun_ast::Loc {
-        if value.loc != key_loc {
-            return value.loc;
-        }
-        json_parser::property_value_loc(&source.contents, key_loc).unwrap_or(key_loc)
-    }
-
     pub fn parse_macros_json(
         macros: js_ast::Expr,
         log: &mut bun_ast::Log,
@@ -434,7 +370,7 @@ impl PackageJSON {
             return macro_map;
         }
 
-        Self::for_each_json_property(&macros, |key, key_loc, value| {
+        macros.for_each_property(|key, key_loc, value| {
             if !resolver::is_package_path(key) {
                 log.add_range_warning_fmt(
                     Some(json_source),
@@ -450,7 +386,7 @@ impl PackageJSON {
             if !value.is_object() {
                 log.add_warning_fmt(
                     Some(json_source),
-                    Self::json_property_value_loc(json_source, key_loc, &value),
+                    json_parser::value_loc_of_property(&json_source.contents, key_loc, &value),
                     format_args!(
                         "Invalid macro remapping in \"{}\": expected object where the keys are import names and the value is a string path to replace",
                         bstr::BStr::new(key)
@@ -459,20 +395,24 @@ impl PackageJSON {
                 return;
             }
 
-            let remap_count = Self::json_object_property_count(&value);
+            let remap_count = value.property_count();
             if remap_count == 0 {
                 return;
             }
 
             let mut map = MacroImportReplacementMap::default();
             map.reserve(remap_count);
-            Self::for_each_json_property(&value, |import_name, remap_key_loc, remap_value| {
+            value.for_each_property(|import_name, remap_key_loc, remap_value| {
                 let valid =
                     matches!(&remap_value.data, js_ast::ExprData::EString(s) if !s.data.is_empty());
                 if !valid {
                     log.add_warning_fmt(
                         Some(json_source),
-                        Self::json_property_value_loc(json_source, remap_key_loc, &remap_value),
+                        json_parser::value_loc_of_property(
+                            &json_source.contents,
+                            remap_key_loc,
+                            &remap_value,
+                        ),
                         format_args!(
                             "Invalid macro remapping for import \"{}\": expected string to remap to. e.g. \"graphql\": \"bun-macro-relay\" ",
                             bstr::BStr::new(import_name)
@@ -1197,35 +1137,6 @@ impl ExportsMap {
     }
 }
 
-/// Where a immutable-AST JSON value sits in the document, so its exact source
-/// location can be recovered on the (cold) diagnostic path — the rows
-/// store no per-value `Loc`. Parents are chained by reference so nothing is
-/// re-scanned unless a diagnostic actually fires.
-#[derive(Clone, Copy)]
-enum ValueLoc<'p> {
-    /// The value of the property whose key token starts at this `Loc`.
-    Prop(bun_ast::Loc),
-    /// Item `index` of the array whose own position is the parent.
-    Item(&'p ValueLoc<'p>, usize),
-}
-
-impl ValueLoc<'_> {
-    /// First byte of the value, falling back to the nearest key/container
-    /// location when the source cannot be re-scanned.
-    fn resolve(&self, source: &bun_ast::Source) -> bun_ast::Loc {
-        match self {
-            ValueLoc::Prop(key_loc) => {
-                json_parser::property_value_loc(&source.contents, *key_loc).unwrap_or(*key_loc)
-            }
-            ValueLoc::Item(array, index) => {
-                let array_loc = array.resolve(source);
-                json_parser::array_item_loc(&source.contents, array_loc, *index)
-                    .unwrap_or(array_loc)
-            }
-        }
-    }
-}
-
 pub struct Visitor<'a> {
     pub source: &'a bun_ast::Source,
     pub log: &'a mut bun_ast::Log,
@@ -1235,7 +1146,7 @@ impl<'a> Visitor<'a> {
     /// Visit the root of an exports/imports map. `expr.loc` must be the
     /// owning property's KEY location (see [`ExportsMap::parse`]).
     pub fn visit(&mut self, expr: js_ast::Expr) -> Entry {
-        let vloc = ValueLoc::Prop(expr.loc);
+        let vloc = json_parser::ValueLocation::Property(expr.loc);
         match &expr.data {
             js_ast::ExprData::ENull(_) => Entry {
                 data: EntryData::Null,
@@ -1255,7 +1166,11 @@ impl<'a> Visitor<'a> {
     }
 
     /// One value row: an object property's value or an array item.
-    fn visit_value(&mut self, value: &js_ast::E::JsonValue, vloc: ValueLoc<'_>) -> Entry {
+    fn visit_value(
+        &mut self,
+        value: &js_ast::E::JsonValue,
+        vloc: json_parser::ValueLocation<'_>,
+    ) -> Entry {
         match value {
             js_ast::E::JsonValue::Null => Entry {
                 data: EntryData::Null,
@@ -1266,12 +1181,12 @@ impl<'a> Visitor<'a> {
             js_ast::E::JsonValue::Object(e_obj) => self.visit_object(e_obj.get()),
             js_ast::E::JsonValue::Array(e_array) => self.visit_array(e_array.get(), &vloc),
             js_ast::E::JsonValue::Boolean(_) => {
-                let loc = vloc.resolve(self.source);
+                let loc = vloc.resolve(&self.source.contents);
                 self.invalid(js_lexer::range_of_identifier(self.source, loc))
             }
             js_ast::E::JsonValue::Number(_) => {
                 // TODO: range of number
-                let loc = vloc.resolve(self.source);
+                let loc = vloc.resolve(&self.source.contents);
                 self.invalid(bun_ast::Range { loc, len: 1 })
             }
         }
@@ -1314,7 +1229,10 @@ impl<'a> Visitor<'a> {
                 };
             }
 
-            let value = self.visit_value(&prop.value, ValueLoc::Prop(prop.key_loc));
+            let value = self.visit_value(
+                &prop.value,
+                json_parser::ValueLocation::Property(prop.key_loc),
+            );
 
             // safe to use "/" on windows. exports in package.json does not use "\\"
             if strings::ends_with(&key, b"/") || strings::contains_char(&key, b'*') {
@@ -1348,11 +1266,15 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    fn visit_array(&mut self, e_array: &js_ast::E::ArrayJSON, vloc: &ValueLoc<'_>) -> Entry {
+    fn visit_array(
+        &mut self,
+        e_array: &js_ast::E::ArrayJSON,
+        vloc: &json_parser::ValueLocation<'_>,
+    ) -> Entry {
         let items = e_array.items();
         let mut array: Vec<Entry> = Vec::with_capacity(items.len());
         for (index, item) in items.iter().enumerate() {
-            array.push(self.visit_value(item, ValueLoc::Item(vloc, index)));
+            array.push(self.visit_value(item, json_parser::ValueLocation::ArrayItem(vloc, index)));
         }
         Entry {
             data: EntryData::Array(array.into_boxed_slice()),
@@ -1362,18 +1284,22 @@ impl<'a> Visitor<'a> {
     /// The materialized root can be a Boolean/Number leaf `Expr`; report it
     /// at the value's recovered location like [`Self::visit_value`] does.
     #[cold]
-    fn invalid_root(&mut self, data: &js_ast::ExprData, vloc: ValueLoc<'_>) -> Entry {
+    fn invalid_root(
+        &mut self,
+        data: &js_ast::ExprData,
+        vloc: json_parser::ValueLocation<'_>,
+    ) -> Entry {
         let first_token = match data {
             js_ast::ExprData::EBoolean(_) => {
-                js_lexer::range_of_identifier(self.source, vloc.resolve(self.source))
+                js_lexer::range_of_identifier(self.source, vloc.resolve(&self.source.contents))
             }
             // TODO: range of number
             js_ast::ExprData::ENumber(_) => bun_ast::Range {
-                loc: vloc.resolve(self.source),
+                loc: vloc.resolve(&self.source.contents),
                 len: 1,
             },
             _ => bun_ast::Range {
-                loc: vloc.resolve(self.source),
+                loc: vloc.resolve(&self.source.contents),
                 ..bun_ast::Range::NONE
             },
         };

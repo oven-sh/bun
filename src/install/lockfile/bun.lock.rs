@@ -1585,7 +1585,7 @@ impl<T> PkgMap<T> {
 
 // const PkgMap = struct {};
 
-/// Property rows of a immutable-AST object `Expr` (callers have already
+/// Property rows of an immutable-AST object `Expr` (callers have already
 /// established `is_object()`, and the lockfile parse only ever sees the
 /// immutable containers).
 fn object_rows(expr: &Expr) -> &[JSON::E::PropertyJSON] {
@@ -1600,7 +1600,7 @@ fn object_rows(expr: &Expr) -> &[JSON::E::PropertyJSON] {
     }
 }
 
-/// Items of a immutable-AST array `Expr`. See [`object_rows`].
+/// Items of an immutable-AST array `Expr`. See [`object_rows`].
 fn array_items(expr: &Expr) -> &[JSON::E::JsonValue] {
     match &expr.data {
         ExprData::EArrayJSON(a) => a.get().items(),

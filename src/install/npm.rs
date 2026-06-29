@@ -189,7 +189,9 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
     let mut log = bun_ast::Log::init();
     let source = bun_ast::Source::init_path_string("???", response_buf.list.as_slice());
-    let bump = bun_alloc::Arena::new();
+    // Only `as_string(&bump)` reads this, and immutable-AST strings are
+    // always UTF-8, so it is never allocated from.
+    let bump = bun_alloc::Arena::borrowing_default();
     // `parsed` owns the row tape `json` borrows; both must outlive `username`.
     let parsed = match JSON::parse_utf8_immutable(&source, &mut log) {
         Ok(j) => j,
@@ -222,7 +224,8 @@ pub fn response_error<const OTP_RESPONSE: bool>(
     let message: Option<Vec<u8>> = 'message: {
         let mut log = bun_ast::Log::init();
         let source = bun_ast::Source::init_path_string("???", response_body.list.as_slice());
-        let bump = bun_alloc::Arena::new();
+        // See `whoami`: never allocated from.
+        let bump = bun_alloc::Arena::borrowing_default();
         // `parsed` owns the row tape its root borrows; `error` is copied out
         // below while both are still alive.
         let parsed = match JSON::parse_utf8_immutable(&source, &mut log) {
@@ -1986,7 +1989,7 @@ impl PackageManifest {
         // across calls (the AstAlloc state stays installed for the re-arm) and
         // bulk-frees via `reset_retain_with_limit` on the next call — see
         // `initialize_mini_store` in lib.rs for why.
-        // Never allocated from: the manifest is parsed into a immutable AST
+        // Never allocated from: the manifest is parsed into an immutable AST
         // whose strings are always UTF-8, so the `as_string(&bump)` accessor
         // calls below never reach for it. It only exists to satisfy their
         // signature; borrowing the process heap costs nothing.

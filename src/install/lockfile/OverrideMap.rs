@@ -256,7 +256,7 @@ impl OverrideMap {
             );
         }
         let ExprData::EObject(obj) = &expr.data else {
-            // A immutable-AST lookup locates the value at its key; point the
+            // An immutable-AST lookup locates the value at its key; point the
             // diagnostic at the value itself.
             log.add_warning_fmt(
                 Some(source),
@@ -496,7 +496,7 @@ impl OverrideMap {
             );
         }
         let ExprData::EObject(obj) = &expr.data else {
-            // A immutable-AST lookup locates the value at its key; point the
+            // An immutable-AST lookup locates the value at its key; point the
             // diagnostic at the value itself.
             log.add_warning_fmt(
                 Some(source),

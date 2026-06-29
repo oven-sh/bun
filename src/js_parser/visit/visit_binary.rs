@@ -23,7 +23,7 @@ use bun_ast::{
 /// `*`, `/`, `%`; 2 for `**`). When `minify_whitespace` is off the printer
 /// emits a space on either side of a binary operator, so we add 2 to the
 /// source-length model to match the actual output. Unary `-` on a negative
-/// operand is already folded into its `len_of_number`.
+/// operand is already folded into its `len_of_js_number`.
 fn should_fold_arithmetic<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
     p: &P<'a, TYPESCRIPT, SCAN_ONLY>,
     folded_value: f64,

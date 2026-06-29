@@ -9,9 +9,8 @@
  * });
  * ```
  *
- * Bun just-in-time compiles C wrappers, using
- * [tinycc](https://github.com/TinyCC/tinycc), that convert JavaScript types to
- * C types and back.
+ * Bun uses [tinycc](https://github.com/TinyCC/tinycc) to just-in-time compile
+ * C wrappers that convert JavaScript types to C types and back.
  *
  * @category FFI
  */
@@ -272,7 +271,7 @@ declare module "bun:ffi" {
     /**
      * Pointer value
      *
-     * See {@link ptr} for getting a pointer from a `TypedArray`
+     * See the `ptr()` function for getting a pointer from a `TypedArray`
      *
      * In C:
      * ```c
@@ -571,9 +570,8 @@ declare module "bun:ffi" {
    * // "1.0.0"
    * ```
    *
-   * Bun just-in-time compiles C wrappers, using
-   * [tinycc](https://github.com/TinyCC/tinycc), that convert JavaScript types
-   * to C types and back.
+   * Bun uses [tinycc](https://github.com/TinyCC/tinycc) to just-in-time
+   * compile C wrappers that convert JavaScript types to C types and back.
    *
    * @category FFI
    */
@@ -713,9 +711,8 @@ declare module "bun:ffi" {
    * getVersion.close();
    * ```
    *
-   * Bun just-in-time compiles a C wrapper, using
-   * [tinycc](https://github.com/TinyCC/tinycc), that converts JavaScript types
-   * to C types and back.
+   * Bun uses [tinycc](https://github.com/TinyCC/tinycc) to just-in-time
+   * compile a C wrapper that converts JavaScript types to C types and back.
    */
   function CFunction(fn: FFIFunction & { ptr: Pointer }): CallableFunction & {
     /**
@@ -770,9 +767,8 @@ declare module "bun:ffi" {
    * ];
    * ```
    *
-   * Bun just-in-time compiles C wrappers, using
-   * [tinycc](https://github.com/TinyCC/tinycc), that convert JavaScript types
-   * to C types and back.
+   * Bun uses [tinycc](https://github.com/TinyCC/tinycc) to just-in-time
+   * compile C wrappers that convert JavaScript types to C types and back.
    */
   function linkSymbols<Fns extends Record<string, FFIFunction>>(symbols: Fns): Library<Fns>;
 

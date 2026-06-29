@@ -144,8 +144,8 @@ pub enum ParserError {
     /// The input is longer than [`MAX_INPUT_LEN`], so the parser's `u32`
     /// offset arithmetic cannot address it.
     InputTooLarge,
-    /// The document needs more than [`MAX_BLOCK_BYTES`] of block headers, so
-    /// the parser's `u32` block offsets cannot address them.
+    /// The document needs more than [`MAX_BLOCK_BYTES`] of block metadata,
+    /// so the parser's `u32` block offsets cannot address it.
     TooManyBlocks,
 }
 
@@ -168,7 +168,7 @@ const MAX_LOOKAHEAD: OFF = 9;
 /// never to wrap.
 pub const MAX_INPUT_LEN: usize = (OFF::MAX - MAX_LOOKAHEAD) as usize;
 
-/// The most block-header bytes a document may allocate: block offsets are
+/// The most bytes `block_bytes` may hold: block offsets are
 /// stored as `u32`s (`BlockHeader.data` links, `Container.block_byte_off`),
 /// and each new header is written at the end of `block_bytes` rounded up to
 /// its alignment, so the buffer must stop one aligned header short of

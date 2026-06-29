@@ -490,12 +490,14 @@ fn open_dir_component(
     }
 }
 
-/// `O_NOFOLLOW | O_DIRECTORY` on a symlink reports ENOTDIR on Linux but
-/// ELOOP on Darwin; report the symlink case as ELOOP everywhere. (Only the
-/// errno depends on this lstat, never whether the open was refused.)
+/// `O_NOFOLLOW` on a symlink reports ENOTDIR or ELOOP on Linux, ELOOP on
+/// Darwin, and EMLINK on FreeBSD; report the symlink case as ELOOP everywhere.
+/// (Only the errno depends on this lstat, never whether the open was refused.)
 fn symlink_component_err(dir: Fd, component: &ZStr, e: sys::Error) -> sys::Error {
-    if matches!(e.get_errno(), sys::E::ENOTDIR | sys::E::ELOOP)
-        && let Ok(st) = sys::lstatat(dir, component)
+    if matches!(
+        e.get_errno(),
+        sys::E::ENOTDIR | sys::E::ELOOP | sys::E::EMLINK
+    ) && let Ok(st) = sys::lstatat(dir, component)
         && sys::S::ISLNK(st.st_mode as u32)
     {
         return sys::Error::from_code(sys::E::ELOOP, sys::Tag::open)
@@ -528,7 +530,10 @@ fn open_target_file(
     } else {
         sys::O::NOFOLLOW | sys::O::NONBLOCK
     };
-    let fd = sys::openat(parent, base, flags | posix_flags, mode)?;
+    // Route the error through the symlink normalizer: a final-component
+    // symlink is ELOOP on Linux and Darwin but EMLINK on FreeBSD.
+    let fd = sys::openat(parent, base, flags | posix_flags, mode)
+        .map_err(|e| symlink_component_err(parent, base, e))?;
     let stat = match sys::fstat(fd) {
         Ok(st) => st,
         Err(e) => {

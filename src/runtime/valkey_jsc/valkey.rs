@@ -919,6 +919,27 @@ impl ValkeyClient {
                             Ok(SubscribeHandled::Handled)
                         }
                         protocol::SubscriptionPushMessage::Unsubscribe => {
+                            // An `unsubscribe` push is only valid while in subscriber mode
+                            // (e.g. a server must not answer SUBSCRIBE with one). Never let the
+                            // server-controlled push kind drive an invalid state transition.
+                            if !p.is_subscriber() {
+                                bun_core::hint::cold();
+                                const MESSAGE: &[u8] =
+                                    b"Received an unsubscribe push while not in subscriber mode";
+                                if let Some(req_pair) = pair {
+                                    req_pair.reject_command(
+                                        &global_this,
+                                        valkey_error_to_js(
+                                            &global_this,
+                                            MESSAGE,
+                                            RedisError::InvalidResponse,
+                                        ),
+                                    )?;
+                                }
+                                self.fail(MESSAGE, RedisError::InvalidResponse)?;
+                                return Ok(SubscribeHandled::Handled);
+                            }
+
                             self.on_valkey_unsubscribe()?;
                             self.parent().remove_subscription();
 

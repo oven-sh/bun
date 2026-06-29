@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { ConnectionType, createClient, ctx, isEnabled, testKey } from "../test-utils";
 
 /**
@@ -396,6 +397,65 @@ describe.skipIf(!isEnabled)("Valkey: Protocol Handling", () => {
         // Clean up clients
         await Promise.all(clients.map(client => client.close()));
       }
+    });
+  });
+});
+
+// These tests script the server side by hand, so they don't need a real Redis
+// and always run (no docker gate).
+describe("Valkey: Subscription Push Validation", () => {
+  // A server (or proxy) that answers SUBSCRIBE with an `unsubscribe` push frame
+  // contradicts the client's state: the client never became a subscriber, so the
+  // push must surface as a protocol error instead of running the unsubscribe
+  // state transition (which previously hit `assert(self.is_subscriber())`).
+  test("unsubscribe push answering SUBSCRIBE is treated as a protocol error", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const srv = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            data(s, b) {
+              const t = b.toString();
+              if (t.includes("HELLO")) {
+                // Minimal RESP3 HELLO response map
+                s.write("%3\\r\\n$6\\r\\nserver\\r\\n$5\\r\\nredis\\r\\n$5\\r\\nproto\\r\\n:3\\r\\n$7\\r\\nversion\\r\\n$5\\r\\n7.4.0\\r\\n");
+              } else if (t.includes("SUBSCRIBE")) {
+                // Answer SUBSCRIBE with an unsubscribe push: >3 ["unsubscribe", "ch", 0]
+                s.write(">3\\r\\n$11\\r\\nunsubscribe\\r\\n$2\\r\\nch\\r\\n:0\\r\\n");
+              }
+            },
+          },
+        });
+
+        const client = new Bun.RedisClient("redis://127.0.0.1:" + srv.port, {
+          autoReconnect: false,
+        });
+        await client.connect();
+        try {
+          await client.subscribe("ch", () => {});
+          console.log("subscribe resolved");
+          process.exit(2);
+        } catch (err) {
+          console.log("subscribe rejected: " + err.code + ": " + err.message);
+          process.exit(0);
+        }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, exitCode }).toEqual({
+      stdout:
+        "subscribe rejected: ERR_REDIS_INVALID_RESPONSE: Received an unsubscribe push while not in subscriber mode\n",
+      exitCode: 0,
     });
   });
 });

@@ -337,7 +337,8 @@ pub fn parse_utf8_impl<const CHECK_LEN: bool>(
 /// manifests): strict JSON, strings forced to UTF-8, and **no duplicate-key
 /// warnings** — these documents are machine-generated, the warnings are never
 /// surfaced to anyone, and computing them costs a measurable fraction of
-/// every manifest parse.
+/// every manifest parse. Containers are the compact read-only simple AST
+/// (`E::ObjectSimple` / `E::ArraySimple` — see `JSONOptions::simple_objects`).
 pub fn parse_utf8_registry(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -349,6 +350,7 @@ pub fn parse_utf8_registry(
     const REGISTRY_OPTS: JSONOptions = JSONOptions {
         is_json: true,
         json_warn_duplicate_keys: false,
+        simple_objects: true,
         ..JSONOptions::DEFAULT
     };
     Ok(parse_impl(source, log, bump, REGISTRY_OPTS, true, false)?.root)

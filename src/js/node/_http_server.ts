@@ -274,8 +274,9 @@ function Server(options, callback): void {
       // (shared via internal/tls): reject bad ciphers/minVersion/maxVersion/
       // secureProtocol synchronously, then fold pfx into key/cert/ca.
       validateSecureContextOptions(options);
-      if (options.ciphers != null) {
-        validateCiphers(options.ciphers);
+      const { ciphers } = options;
+      if (ciphers != null) {
+        validateCiphers(ciphers);
       }
       options = processPfxOptions(options);
     }

@@ -943,7 +943,7 @@ declare module "bun" {
      * @category Utilities
      *
      * @param input The JavaScript value to stringify.
-     * @param replacer Currently not supported.
+     * @param replacer Not supported.
      * @param space A number for how many spaces each level of indentation gets, or a string used as indentation.
      *              Without this parameter, outputs flow-style (single-line) YAML.
      *              With this parameter, outputs block-style (multi-line) YAML.
@@ -973,6 +973,7 @@ declare module "bun" {
      * console.log(YAML.stringify(cycle, null, 2));
      * // &1
      * // obj: *1
+     * ```
      */
     export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string;
   }
@@ -980,8 +981,9 @@ declare module "bun" {
   /**
    * Markdown related APIs.
    *
-   * Provides fast markdown parsing and rendering with three output modes:
+   * Parses and renders markdown with four output modes:
    * - `html()` — render to an HTML string
+   * - `ansi()` — render to an ANSI-colored string for terminals
    * - `render()` — render with custom callbacks for each element
    * - `react()` — parse to React-compatible JSX elements
    *
@@ -1161,13 +1163,6 @@ declare module "bun" {
       br?: Component<{}>;
     }
 
-    /**
-     * Callbacks for `render()`. Each callback receives the accumulated children
-     * as a string and optional metadata, and returns a string.
-     *
-     * Return `null` or `undefined` to omit the element from the output.
-     * If no callback is registered for an element, its children pass through unchanged.
-     */
     /** Meta passed to the `heading` callback. */
     interface HeadingMeta {
       /** Heading level (1–6). */
@@ -1228,6 +1223,13 @@ declare module "bun" {
       title?: string;
     }
 
+    /**
+     * Callbacks for `render()`. Each callback receives the accumulated children
+     * as a string and optional metadata, and returns a string.
+     *
+     * Return `null` or `undefined` to omit the element from the output.
+     * If no callback is registered for an element, its children pass through unchanged.
+     */
     interface RenderCallbacks {
       /** Heading (level 1–6). `id` is set when `headings: { ids: true }` is enabled. */
       heading?: (children: string, meta: HeadingMeta) => string | null | undefined;
@@ -1483,7 +1485,7 @@ declare module "bun" {
      *
      * JSON5 is a superset of JSON based on ECMAScript 5.1 that supports
      * comments, trailing commas, unquoted keys, single-quoted strings,
-     * hex numbers, Infinity, NaN, and more.
+     * hex numbers, `Infinity`, and `NaN`.
      *
      * @category Utilities
      *
@@ -1515,7 +1517,7 @@ declare module "bun" {
      * @category Utilities
      *
      * @param input The JavaScript value to stringify.
-     * @param replacer Currently not supported.
+     * @param replacer Not supported.
      * @param space A number for how many spaces each level of indentation gets, or a string used as indentation.
      *              The number is clamped between 0 and 10, and the first 10 characters of the string are used.
      * @returns A JSON5 string, or `undefined` if the input is `undefined`, a function, or a symbol.
@@ -1549,19 +1551,19 @@ declare module "bun" {
    *
    * On failure, throws a `ResolveMessage`
    *
-   * For now, use the sync version. There is zero performance benefit to using this async version. It exists for future-proofing.
+   * Use {@link resolveSync} instead. This async version has no performance benefit; it exists for future-proofing.
    */
   function resolve(moduleId: string, parent: string): Promise<string>;
 
   /**
    * Use the fastest syscalls available to copy from `input` into `destination`.
    *
-   * If `destination` exists, it must be a regular file or symlink to a file. If `destination`'s directory does not exist, it will be created by default.
+   * If `destination` exists, it must be a regular file or symlink to a file. If `destination`'s directory does not exist, it is created by default.
    *
    * @category File System
    *
    * @param destination The file or file path to write to
-   * @param input The data to copy into `destination`.
+   * @param input The data to copy into `destination`
    * @param options Options for the write
    *
    * @returns A promise that resolves with the number of bytes written.
@@ -1575,9 +1577,9 @@ declare module "bun" {
        */
       mode?: number;
       /**
-       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       * If `true`, create the parent directory if it doesn't exist.
        *
-       * If `false`, this will throw an error if the directory doesn't exist.
+       * If `false`, the write throws an error when the directory doesn't exist.
        *
        * @default true
        */
@@ -1588,11 +1590,10 @@ declare module "bun" {
   /**
    * Persist a {@link Response} body to disk.
    *
-   * @param destination The file to write to. If the file doesn't exist,
-   * it will be created and if the file does exist, it will be
-   * overwritten. If `input`'s size is less than `destination`'s size,
-   * `destination` will be truncated.
-   * @param input - `Response` object
+   * @param destination The file to write to. If the file doesn't exist, it is
+   * created; if it does, it is overwritten. If `input` is smaller than
+   * `destination`, `destination` is truncated.
+   * @param input The `Response` whose body is written
    * @param options Options for the write
    *
    * @returns A promise that resolves with the number of bytes written.
@@ -1602,9 +1603,9 @@ declare module "bun" {
     input: Response,
     options?: {
       /**
-       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       * If `true`, create the parent directory if it doesn't exist.
        *
-       * If `false`, this will throw an error if the directory doesn't exist.
+       * If `false`, the write throws an error when the directory doesn't exist.
        *
        * @default true
        */
@@ -1616,10 +1617,9 @@ declare module "bun" {
    * Persist a {@link Response} body to disk.
    *
    * @param destinationPath The file path to write to. If the file doesn't
-   * exist, it will be created and if the file does exist, it will be
-   * overwritten. If `input`'s size is less than `destination`'s size,
-   * `destination` will be truncated.
-   * @param input - `Response` object
+   * exist, it is created; if it does, it is overwritten. If `input` is
+   * smaller than the existing file, the file is truncated.
+   * @param input The `Response` whose body is written
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
@@ -1627,9 +1627,9 @@ declare module "bun" {
     input: Response,
     options?: {
       /**
-       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       * If `true`, create the parent directory if it doesn't exist.
        *
-       * If `false`, this will throw an error if the directory doesn't exist.
+       * If `false`, the write throws an error when the directory doesn't exist.
        *
        * @default true
        */
@@ -1646,13 +1646,12 @@ declare module "bun" {
    *
    * On macOS, when the destination doesn't already exist, this uses
    * [`clonefile()`](https://www.manpagez.com/man/2/clonefile/) and falls
-   * back to [`fcopyfile()`](https://www.manpagez.com/man/2/fcopyfile/)
+   * back to [`fcopyfile()`](https://www.manpagez.com/man/2/fcopyfile/).
    *
-   * @param destination The file to write to. If the file doesn't exist,
-   * it will be created and if the file does exist, it will be
-   * overwritten. If `input`'s size is less than `destination`'s size,
-   * `destination` will be truncated.
-   * @param input The file to copy from.
+   * @param destination The file to write to. If the file doesn't exist, it is
+   * created; if it does, it is overwritten. If `input` is smaller than
+   * `destination`, `destination` is truncated.
+   * @param input The file to copy from
    * @returns A promise that resolves with the number of bytes written.
    */
 
@@ -1675,9 +1674,9 @@ declare module "bun" {
        */
       mode?: number;
       /**
-       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       * If `true`, create the parent directory if it doesn't exist.
        *
-       * If `false`, this will throw an error if the directory doesn't exist.
+       * If `false`, the write throws an error when the directory doesn't exist.
        *
        * @default true
        */
@@ -1694,13 +1693,12 @@ declare module "bun" {
    *
    * On macOS, when the destination doesn't already exist, this uses
    * [`clonefile()`](https://www.manpagez.com/man/2/clonefile/) and falls
-   * back to [`fcopyfile()`](https://www.manpagez.com/man/2/fcopyfile/)
+   * back to [`fcopyfile()`](https://www.manpagez.com/man/2/fcopyfile/).
    *
    * @param destinationPath The file path to write to. If the file doesn't
-   * exist, it will be created and if the file does exist, it will be
-   * overwritten. If `input`'s size is less than `destination`'s size,
-   * `destination` will be truncated.
-   * @param input The file to copy from.
+   * exist, it is created; if it does, it is overwritten. If `input` is
+   * smaller than the existing file, the file is truncated.
+   * @param input The file to copy from
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
@@ -1722,9 +1720,9 @@ declare module "bun" {
        */
       mode?: number;
       /**
-       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       * If `true`, create the parent directory if it doesn't exist.
        *
-       * If `false`, this will throw an error if the directory doesn't exist.
+       * If `false`, the write throws an error when the directory doesn't exist.
        *
        * @default true
        */
@@ -1732,6 +1730,10 @@ declare module "bun" {
     },
   ): Promise<number>;
 
+  /**
+   * An `Error` from a failed system call, with optional `errno`, `code`,
+   * `path`, and `syscall` properties.
+   */
   interface SystemError extends Error {
     errno?: number | undefined;
     code?: string | undefined;
@@ -1740,35 +1742,16 @@ declare module "bun" {
   }
 
   /**
-   * Concatenate an array of typed arrays into a single `ArrayBuffer`. This is a fast path.
+   * Concatenate an array of typed arrays into a single `ArrayBuffer`.
    *
-   * You can do this manually if you'd like, but this function will generally
-   * be a little faster.
+   * About 30% faster than allocating an `ArrayBuffer` and copying each chunk
+   * into it yourself: the total length is known up front, so Bun can copy into
+   * uninitialized memory.
    *
    * If you want a `Uint8Array` instead, consider `Buffer.concat`.
    *
    * @param buffers An array of typed arrays to concatenate.
    * @returns An `ArrayBuffer` with the data from all the buffers.
-   *
-   * Here is similar code to do it manually, except about 30% slower:
-   * ```js
-   *   var chunks = [...];
-   *   var size = 0;
-   *   for (const chunk of chunks) {
-   *     size += chunk.byteLength;
-   *   }
-   *   var buffer = new ArrayBuffer(size);
-   *   var view = new Uint8Array(buffer);
-   *   var offset = 0;
-   *   for (const chunk of chunks) {
-   *     view.set(chunk, offset);
-   *     offset += chunk.byteLength;
-   *   }
-   *   return buffer;
-   * ```
-   *
-   * This function is faster because it uses uninitialized memory when copying. Since the entire
-   * length of the buffer is known, it is safe to use uninitialized memory.
    */
   function concatArrayBuffers(buffers: Array<ArrayBufferView | ArrayBufferLike>, maxLength?: number): ArrayBuffer;
   function concatArrayBuffers(
@@ -1783,15 +1766,14 @@ declare module "bun" {
   ): Uint8Array<ArrayBuffer>;
 
   /**
-   * Consume all data from a {@link ReadableStream} until it closes or errors.
-   *
-   * Concatenate the chunks into a single {@link ArrayBuffer}.
+   * Consume all data from a {@link ReadableStream} until it closes or errors,
+   * concatenating the chunks into a single {@link ArrayBuffer}.
    *
    * Each chunk must be a TypedArray or an ArrayBuffer. If you need to support
-   * chunks of different types, consider {@link readableStreamToBlob}
+   * chunks of different types, consider {@link readableStreamToBlob}.
    *
    * @param stream The stream to consume.
-   * @returns A promise that resolves with the concatenated chunks or the concatenated chunks as an `ArrayBuffer`.
+   * @returns The concatenated chunks as an `ArrayBuffer`, or a promise that resolves with one.
    */
   function readableStreamToArrayBuffer(
     stream: ReadableStream<ArrayBufferView | ArrayBufferLike>,

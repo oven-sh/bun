@@ -351,7 +351,7 @@ impl Scripts {
             let json_src = bun_ast::Source::init_path_string(save.slice(), json_buf.as_slice());
 
             initialize_store();
-            parsed = bun_json::parse_package_json_utf8_simple(&json_src, log)?;
+            parsed = bun_json::parse_package_json_utf8_immutable(&json_src, log)?;
             parsed.root
         };
 

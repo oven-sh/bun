@@ -862,16 +862,16 @@ impl BigInt {
     // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
 }
 
-// ── JSON "simple" nodes ───────────────────────────────────────────────────
+// ── immutable JSON nodes ───────────────────────────────────────────────────
 //
 // Compact, read-only object/array nodes: the JSON parser's native output.
-// Entry points that return them (`JSONOptions::simple_objects`: npm registry
+// Entry points that return them (`JSONOptions::immutable`: npm registry
 // manifests, package.json readers, `Bun.JSONC.parse`, tsconfig) hand the
 // caller the rows plus the [`JsonTape`] that owns them; the classic-output
 // entry points deep-convert them into `E::Object` / `E::Array` at their
 // boundary (`json::materialize`). The *containers* are ordinary `Expr` nodes
 // in the Store, so everything keeps passing `Expr` around; their *children*
-// are not: a property is a 32-byte `PropertySimple` row and a leaf value is
+// are not: a property is a 32-byte `PropertyJSON` row and a leaf value is
 // an inline 16-byte [`JsonValue`] (a tagged value "like JSValue":
 // number/bool/null inline, strings as a `Str` — borrowing the source when
 // they contain no escapes — and nested containers as `StoreRef`s). Compared
@@ -883,7 +883,7 @@ impl BigInt {
 // String leaves are always UTF-8 (WTF-8 for the lone surrogates JSON
 // escapes can produce), never UTF-16.
 
-/// A JSON value inside an `ObjectSimple` / `ArraySimple`.
+/// A JSON value inside an `ObjectJSON` / `ArrayJSON`.
 #[derive(Clone, Copy)]
 pub enum JsonValue {
     Null,
@@ -894,8 +894,8 @@ pub enum JsonValue {
     /// when the literal has no escapes (the common case), otherwise decoded
     /// into the document's [`JsonTape`].
     String(Str),
-    Object(StoreRef<ObjectSimple>),
-    Array(StoreRef<ArraySimple>),
+    Object(StoreRef<ObjectJSON>),
+    Array(StoreRef<ArrayJSON>),
 }
 
 const _: () = assert!(core::mem::size_of::<JsonValue>() == 16);
@@ -941,7 +941,7 @@ impl JsonValue {
     }
 
     #[inline]
-    pub fn as_object(&self) -> Option<&ObjectSimple> {
+    pub fn as_object(&self) -> Option<&ObjectJSON> {
         match self {
             JsonValue::Object(o) => Some(o.get()),
             _ => None,
@@ -949,7 +949,7 @@ impl JsonValue {
     }
 
     #[inline]
-    pub fn as_array(&self) -> Option<&ArraySimple> {
+    pub fn as_array(&self) -> Option<&ArrayJSON> {
         match self {
             JsonValue::Array(a) => Some(a.get()),
             _ => None,
@@ -957,27 +957,91 @@ impl JsonValue {
     }
 }
 
-/// One `"key": value` row of an [`ObjectSimple`].
+/// One `"key": value` row of an [`ObjectJSON`].
 #[derive(Clone, Copy)]
-pub struct PropertySimple {
+pub struct PropertyJSON {
     /// Decoded UTF-8 key (zero-copy unless the literal had escapes).
     pub key: Str,
     pub key_loc: crate::Loc,
     pub value: JsonValue,
 }
 
-const _: () = assert!(core::mem::size_of::<PropertySimple>() == 32);
+const _: () = assert!(core::mem::size_of::<PropertyJSON>() == 32);
+
+/// Where a [`JsonTape`]'s buffers (and, in arena mode, the tape itself)
+/// live.
+///
+/// - `Global` (the default): the parser hands the tape to the caller as a
+///   `Box<JsonTape>` whose `Drop` frees the whole document. For callers
+///   with a clear owner.
+/// - `Arena`: every buffer *and* the `JsonTape` struct are allocated in the
+///   caller's arena, for callers whose AST lifetime *is* an arena and where
+///   nothing runs `Drop` (the bundler / module loader): the arena's bulk
+///   free is the free, and no `Box` that would need dropping ever exists.
+///   The pointer is lifetime-erased like `StoreRef`; the arena must outlive
+///   the document.
+#[derive(Clone, Copy)]
+pub enum TapeAlloc {
+    Global,
+    Arena(core::ptr::NonNull<Bump>),
+}
+
+// SAFETY: `Global` is `std`'s; an arena tape is built and read on the
+// thread that owns the arena, like every other arena-backed AST allocation.
+unsafe impl Send for TapeAlloc {}
+// SAFETY: see the `Send` impl.
+unsafe impl Sync for TapeAlloc {}
+
+// Dispatch is per buffer growth (a closing container appends its children
+// as one block), never per row.
+//
+// SAFETY: both arms forward to allocators that uphold the `Allocator`
+// contract (`std`'s `Global`; `&MimallocArena`'s impl). Blocks live until
+// deallocated here or, for the arena, until the arena is reset/destroyed —
+// which the lifetime-erasure contract of `TapeAlloc::Arena` (the arena
+// outlives the tape) makes strictly later than any use.
+unsafe impl core::alloc::Allocator for TapeAlloc {
+    fn allocate(
+        &self,
+        layout: core::alloc::Layout,
+    ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
+        match self {
+            TapeAlloc::Global => core::alloc::Allocator::allocate(&std::alloc::Global, layout),
+            TapeAlloc::Arena(a) => {
+                // SAFETY: the arena outlives the tape (the type's contract).
+                let arena: &Bump = unsafe { a.as_ref() };
+                core::alloc::Allocator::allocate(&arena, layout)
+            }
+        }
+    }
+
+    unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: core::alloc::Layout) {
+        match self {
+            // SAFETY: forwarding the caller's contract.
+            TapeAlloc::Global => unsafe {
+                core::alloc::Allocator::deallocate(&std::alloc::Global, ptr, layout)
+            },
+            TapeAlloc::Arena(a) => {
+                // SAFETY: see `allocate`; freeing an individual block back
+                // into a live arena (a buffer's doubling) is sound, and
+                // whatever is never freed here goes with the arena.
+                let arena: &Bump = unsafe { a.as_ref() };
+                // SAFETY: forwarding the caller's contract to the arena.
+                unsafe { core::alloc::Allocator::deallocate(&arena, ptr, layout) }
+            }
+        }
+    }
+}
 
 /// Everything one parsed JSON document allocates that does not borrow the
-/// source, owned in one place so that dropping the document is dropping
-/// this:
+/// source, owned in one place — dropping the document is dropping this (or,
+/// in [`TapeAlloc::Arena`] mode, resetting the arena that owns it):
 ///
-/// - `props` / `items`: every simple object's property rows and every simple
-///   array's items. Containers hold `(first, count)` *index* spans of their
+/// - `props` / `items`: every object's property rows and every array's items. Containers hold `(first, count)` *index* spans of their
 ///   direct children (contiguous because a container's rows are appended as
 ///   one block when it closes), so growth may relocate these freely — they
-///   are plain `Vec`s on the global heap, and the abandoned half of a
-///   doubling is freed by `Vec`'s realloc instead of leaking into an arena.
+///   are plain `Vec`s, and the abandoned half of a doubling is freed by
+///   `Vec`'s realloc.
 /// - `str_chunks`: escape-decoded string bytes. `Str`s point *into* these,
 ///   so they are append-only chunks whose addresses never move. Empty for
 ///   almost every real document (clean strings borrow the source).
@@ -988,9 +1052,9 @@ const _: () = assert!(core::mem::size_of::<PropertySimple>() == 32);
 /// `StoreRef`: the tape (and the source, for borrowed strings) must outlive
 /// every `Expr` reached through the document's root.
 pub struct JsonTape {
-    props: Vec<PropertySimple>,
-    items: Vec<JsonValue>,
-    str_chunks: Vec<Box<[u8]>>,
+    props: Vec<PropertyJSON, TapeAlloc>,
+    items: Vec<JsonValue, TapeAlloc>,
+    str_chunks: Vec<Vec<u8, TapeAlloc>, TapeAlloc>,
     /// Bytes of the last chunk already handed out.
     str_used: usize,
 }
@@ -1006,19 +1070,32 @@ unsafe impl Sync for JsonTape {}
 impl JsonTape {
     const STR_CHUNK: usize = 4096;
 
-    pub const fn empty() -> JsonTape {
+    pub fn empty() -> JsonTape {
+        Self::empty_in(TapeAlloc::Global)
+    }
+
+    /// An empty tape whose buffers will allocate from `alloc`. In
+    /// [`TapeAlloc::Arena`] mode the tape value itself belongs in the same
+    /// arena (nothing must depend on its `Drop` running).
+    pub fn empty_in(alloc: TapeAlloc) -> JsonTape {
         JsonTape {
-            props: Vec::new(),
-            items: Vec::new(),
-            str_chunks: Vec::new(),
+            props: Vec::new_in(alloc),
+            items: Vec::new_in(alloc),
+            str_chunks: Vec::new_in(alloc),
             str_used: 0,
         }
+    }
+
+    /// The allocator every buffer of this tape uses.
+    #[inline]
+    fn alloc(&self) -> TapeAlloc {
+        *self.props.allocator()
     }
 
     /// Append one closing object's direct children as a contiguous block and
     /// return its `(first, count)` span in the property tape.
     #[inline]
-    pub fn append_props(&mut self, rows: &[PropertySimple]) -> (u32, u32) {
+    pub fn append_props(&mut self, rows: &[PropertyJSON]) -> (u32, u32) {
         let first = self.props.len() as u32;
         self.props.extend_from_slice(rows);
         (first, rows.len() as u32)
@@ -1042,7 +1119,9 @@ impl JsonTape {
             .is_some_and(|c| c.len() - self.str_used >= bytes.len());
         if !fits {
             let cap = bytes.len().max(Self::STR_CHUNK);
-            self.str_chunks.push(vec![0u8; cap].into_boxed_slice());
+            let mut chunk: Vec<u8, TapeAlloc> = Vec::with_capacity_in(cap, self.alloc());
+            chunk.resize(cap, 0);
+            self.str_chunks.push(chunk);
             self.str_used = 0;
         }
         let chunk = self.str_chunks.last_mut().expect("chunk pushed above");
@@ -1054,7 +1133,7 @@ impl JsonTape {
 
     /// `[first, first + count)` of the property tape.
     #[inline]
-    fn props_span(&self, first: u32, count: u32) -> &[PropertySimple] {
+    fn props_span(&self, first: u32, count: u32) -> &[PropertyJSON] {
         &self.props[first as usize..first as usize + count as usize]
     }
 
@@ -1065,9 +1144,9 @@ impl JsonTape {
     }
 }
 
-/// `Data::EObjectSimple` — see the JSON "simple" nodes comment above. Holds
+/// `Data::EObjectJSON` — see the immutable JSON nodes comment above. Holds
 /// a `(first, count)` span of the document's property-row tape.
-pub struct ObjectSimple {
+pub struct ObjectJSON {
     tape: core::ptr::NonNull<JsonTape>,
     first: u32,
     count: u32,
@@ -1079,11 +1158,11 @@ pub struct ObjectSimple {
 // contract as `StoreRef`/`StoreStr`: the owner must outlive the AST); the
 // tape is only written by the parsing thread before the AST is visible to
 // anyone else, and shared use afterwards is read-only.
-unsafe impl Send for ObjectSimple {}
+unsafe impl Send for ObjectJSON {}
 // SAFETY: see the `Send` impl.
-unsafe impl Sync for ObjectSimple {}
+unsafe impl Sync for ObjectJSON {}
 
-impl ObjectSimple {
+impl ObjectJSON {
     /// `tape` must be the document's [`JsonTape`] and `[first, first +
     /// count)` this object's rows in its `props` tape.
     #[inline]
@@ -1094,7 +1173,7 @@ impl ObjectSimple {
         is_single_line: bool,
         close_brace_loc: crate::Loc,
     ) -> Self {
-        ObjectSimple {
+        ObjectJSON {
             tape: core::ptr::NonNull::from(tape),
             first,
             count,
@@ -1105,7 +1184,7 @@ impl ObjectSimple {
 
     /// This object's `"key": value` rows in source order.
     #[inline]
-    pub fn properties(&self) -> &[PropertySimple] {
+    pub fn properties(&self) -> &[PropertyJSON] {
         if self.count == 0 {
             return &[];
         }
@@ -1125,9 +1204,9 @@ impl ObjectSimple {
     }
 }
 
-/// `Data::EArraySimple` — see the JSON "simple" nodes comment above. Holds
+/// `Data::EArrayJSON` — see the immutable JSON nodes comment above. Holds
 /// a `(first, count)` span of the document's item tape.
-pub struct ArraySimple {
+pub struct ArrayJSON {
     tape: core::ptr::NonNull<JsonTape>,
     first: u32,
     count: u32,
@@ -1135,13 +1214,13 @@ pub struct ArraySimple {
     pub is_single_line: bool,
 }
 
-// SAFETY: see `ObjectSimple`.
-unsafe impl Send for ArraySimple {}
-// SAFETY: see `ObjectSimple`.
-unsafe impl Sync for ArraySimple {}
+// SAFETY: see `ObjectJSON`.
+unsafe impl Send for ArrayJSON {}
+// SAFETY: see `ObjectJSON`.
+unsafe impl Sync for ArrayJSON {}
 
-impl ArraySimple {
-    /// See [`ObjectSimple::new`]; `[first, first + count)` indexes the
+impl ArrayJSON {
+    /// See [`ObjectJSON::new`]; `[first, first + count)` indexes the
     /// `items` tape.
     #[inline]
     pub fn new(
@@ -1151,7 +1230,7 @@ impl ArraySimple {
         is_single_line: bool,
         close_bracket_loc: crate::Loc,
     ) -> Self {
-        ArraySimple {
+        ArrayJSON {
             tape: core::ptr::NonNull::from(tape),
             first,
             count,
@@ -1165,7 +1244,7 @@ impl ArraySimple {
         if self.count == 0 {
             return &[];
         }
-        // SAFETY: see `ObjectSimple::properties`.
+        // SAFETY: see `ObjectJSON::properties`.
         unsafe { self.tape.as_ref() }.items_span(self.first, self.count)
     }
 }

@@ -2224,7 +2224,7 @@ pub(crate) fn serialize_json_source_map_for_standalone(
 
     // Everything reached through `json` borrows `parsed` (the document's row
     // tape) and `json_src`, both of which live to the end of this function.
-    let parsed = bun_parsers::json::parse_utf8_simple(&json_src, &mut log)
+    let parsed = bun_parsers::json::parse_utf8_immutable(&json_src, &mut log)
         .map_err(|_| err!("InvalidSourceMap"))?;
     let json = parsed.root;
 
@@ -2239,7 +2239,7 @@ pub(crate) fn serialize_json_source_map_for_standalone(
         .ok_or_else(|| err!("InvalidSourceMap"))?
         .data
     {
-        AstData::EArraySimple(arr) => arr,
+        AstData::EArrayJSON(arr) => arr,
         _ => return Err(err!("InvalidSourceMap")),
     };
     let sources_content = sources_content.get();
@@ -2248,7 +2248,7 @@ pub(crate) fn serialize_json_source_map_for_standalone(
         .ok_or_else(|| err!("InvalidSourceMap"))?
         .data
     {
-        AstData::EArraySimple(arr) => arr,
+        AstData::EArrayJSON(arr) => arr,
         _ => return Err(err!("InvalidSourceMap")),
     };
     let sources_paths = sources_paths.get();

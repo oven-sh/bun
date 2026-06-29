@@ -85,7 +85,7 @@ pub(crate) fn get_candidate_package_patterns<'a>(
             // `parsed` owns the row tape everything below borrows; it (and
             // `json_source`) must stay alive until the patterns are copied
             // into `out_patterns`.
-            let parsed = json::parse_package_json_utf8_simple(&json_source, log)?;
+            let parsed = json::parse_package_json_utf8_immutable(&json_source, log)?;
             let json = parsed.root;
 
             let Some(prop) = json.as_property(b"workspaces") else {
@@ -93,9 +93,9 @@ pub(crate) fn get_candidate_package_patterns<'a>(
             };
 
             let json_array = match prop.expr.data {
-                ExprData::EArraySimple(arr) => arr,
-                ExprData::EObjectSimple(obj) => {
-                    // `StoreRef::get` (0-arg) shadows `E::ObjectSimple::get` under autoderef;
+                ExprData::EArrayJSON(arr) => arr,
+                ExprData::EObjectJSON(obj) => {
+                    // `StoreRef::get` (0-arg) shadows `E::ObjectJSON::get` under autoderef;
                     // force `Deref` to reach the keyed lookup.
                     match (*obj).get(b"packages") {
                         Some(bun_ast::e::JsonValue::Array(arr)) => *arr,

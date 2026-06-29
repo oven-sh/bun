@@ -17,8 +17,8 @@ use super::{StringBuilder, package::Package};
 // `crate::bun_json::Expr`), NOT the full T4 `bun_ast::Expr`. JSON parse
 // is always UTF-8, so `as_utf8_string_literal()` needs no allocator.
 // The root `expr` may be either the classic `EObject` tree (yarn import,
-// cached workspace package.json) or the simple `EObjectSimple` document
-// produced by `parse_package_json_utf8_simple`; both are handled below.
+// cached workspace package.json) or the immutable `EObjectJSON` document
+// produced by `parse_package_json_utf8_immutable`; both are handled below.
 use crate::bun_json::{E, Expr, ExprData};
 
 declare_scope!(OverrideMap, visible);
@@ -143,7 +143,7 @@ impl OverrideMap {
                         }
                     }
                 }
-                ExprData::EObjectSimple(obj) => {
+                ExprData::EObjectJSON(obj) => {
                     for row in obj.get().properties() {
                         builder.count(row.key.slice());
                         match &row.value {
@@ -182,7 +182,7 @@ impl OverrideMap {
                         builder.count(v);
                     }
                 }
-                ExprData::EObjectSimple(obj) => {
+                ExprData::EObjectJSON(obj) => {
                     for row in obj.get().properties() {
                         builder.count(row.key.slice());
                         if let Some(v) = row.value.as_str() {
@@ -244,8 +244,8 @@ impl OverrideMap {
         expr: Expr,
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
-        if let ExprData::EObjectSimple(obj) = &expr.data {
-            return self.parse_from_overrides_simple(
+        if let ExprData::EObjectJSON(obj) = &expr.data {
+            return self.parse_from_overrides_immutable(
                 pm,
                 lockfile_dependencies,
                 root_package,
@@ -256,7 +256,7 @@ impl OverrideMap {
             );
         }
         let ExprData::EObject(obj) = &expr.data else {
-            // A simple-AST lookup locates the value at its key; point the
+            // A immutable-AST lookup locates the value at its key; point the
             // diagnostic at the value itself.
             log.add_warning_fmt(
                 Some(source),
@@ -362,18 +362,18 @@ impl OverrideMap {
         Ok(())
     }
 
-    /// [`Self::parse_from_overrides`] over the simple JSON representation.
+    /// [`Self::parse_from_overrides`] over the immutable JSON representation.
     /// Per-value locations are recovered from the source on the (cold)
     /// diagnostic paths; the key's location is used where the classic path
     /// used it.
-    fn parse_from_overrides_simple(
+    fn parse_from_overrides_immutable(
         &mut self,
         pm: &mut PackageManager,
         lockfile_dependencies: &[Dependency],
         root_package: &Package,
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
-        obj: &E::ObjectSimple,
+        obj: &E::ObjectJSON,
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
         let props = obj.properties();
@@ -484,8 +484,8 @@ impl OverrideMap {
         expr: Expr,
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
-        if let ExprData::EObjectSimple(obj) = &expr.data {
-            return self.parse_from_resolutions_simple(
+        if let ExprData::EObjectJSON(obj) = &expr.data {
+            return self.parse_from_resolutions_immutable(
                 pm,
                 lockfile_dependencies,
                 root_package,
@@ -496,7 +496,7 @@ impl OverrideMap {
             );
         }
         let ExprData::EObject(obj) = &expr.data else {
-            // A simple-AST lookup locates the value at its key; point the
+            // A immutable-AST lookup locates the value at its key; point the
             // diagnostic at the value itself.
             log.add_warning_fmt(
                 Some(source),
@@ -594,18 +594,18 @@ impl OverrideMap {
         Ok(())
     }
 
-    /// [`Self::parse_from_resolutions`] over the simple JSON representation.
+    /// [`Self::parse_from_resolutions`] over the immutable JSON representation.
     /// Per-value locations are recovered from the source on the (cold)
     /// diagnostic paths; the key's location is used where the classic path
     /// used it.
-    fn parse_from_resolutions_simple(
+    fn parse_from_resolutions_immutable(
         &mut self,
         pm: &mut PackageManager,
         lockfile_dependencies: &[Dependency],
         root_package: &Package,
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
-        obj: &E::ObjectSimple,
+        obj: &E::ObjectJSON,
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
         let props = obj.properties();

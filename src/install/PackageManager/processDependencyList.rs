@@ -304,7 +304,7 @@ impl PackageManager {
                     let log = self.log_mut();
                     // `parsed` owns the tape `json_root` borrows; it must stay
                     // alive until `parse_count`/`parse_alloc` are done.
-                    let parsed = match json::parse_package_json_utf8_simple(
+                    let parsed = match json::parse_package_json_utf8_immutable(
                         package_json_source,
                         log,
                     ) {

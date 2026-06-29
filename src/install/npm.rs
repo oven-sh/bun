@@ -191,7 +191,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     let source = bun_ast::Source::init_path_string("???", response_buf.list.as_slice());
     let bump = bun_alloc::Arena::new();
     // `parsed` owns the row tape `json` borrows; both must outlive `username`.
-    let parsed = match JSON::parse_utf8_simple(&source, &mut log) {
+    let parsed = match JSON::parse_utf8_immutable(&source, &mut log) {
         Ok(j) => j,
         Err(e) if e == err!("OutOfMemory") => return Err(WhoamiError::OutOfMemory),
         Err(e) => {
@@ -225,7 +225,7 @@ pub fn response_error<const OTP_RESPONSE: bool>(
         let bump = bun_alloc::Arena::new();
         // `parsed` owns the row tape its root borrows; `error` is copied out
         // below while both are still alive.
-        let parsed = match JSON::parse_utf8_simple(&source, &mut log) {
+        let parsed = match JSON::parse_utf8_immutable(&source, &mut log) {
             Ok(j) => j,
             Err(e) if e == err!("OutOfMemory") => return Err(AllocError),
             Err(_) => break 'message None,
@@ -647,7 +647,7 @@ pub(crate) fn negatable_from_json<T: NegatableEnum>(expr: &JSON::Expr) -> Result
     Ok(this.combine())
 }
 
-/// `negatable_from_json` for the simple JSON AST (`E::JsonValue`), used by the
+/// `negatable_from_json` for the immutable JSON AST (`E::JsonValue`), used by the
 /// registry-manifest walker.
 pub(crate) fn negatable_from_json_value<T: NegatableEnum>(value: &JSON::E::JsonValue) -> T {
     let mut this = T::NONE.negatable();
@@ -1986,7 +1986,7 @@ impl PackageManifest {
         // across calls (the AstAlloc state stays installed for the re-arm) and
         // bulk-frees via `reset_retain_with_limit` on the next call — see
         // `initialize_mini_store` in lib.rs for why.
-        // Never allocated from: the manifest is parsed into a simple AST
+        // Never allocated from: the manifest is parsed into a immutable AST
         // whose strings are always UTF-8, so the `as_string(&bump)` accessor
         // calls below never reach for it. It only exists to satisfy their
         // signature; borrowing the process heap costs nothing.
@@ -2076,7 +2076,7 @@ impl PackageManifest {
             let Some(versions_expr) = json.get(b"versions") else {
                 break 'get_versions;
             };
-            let JSON::ExprData::EObjectSimple(versions_obj) = &versions_expr.data else {
+            let JSON::ExprData::EObjectJSON(versions_obj) = &versions_expr.data else {
                 break 'get_versions;
             };
 
@@ -2237,7 +2237,7 @@ impl PackageManifest {
 
         let mut dist_tags_count: usize = 0;
         if let Some(dist) = json.get(b"dist-tags") {
-            if let JSON::ExprData::EObjectSimple(obj) = &dist.data {
+            if let JSON::ExprData::EObjectJSON(obj) = &dist.data {
                 for tag in obj.get().properties() {
                     string_builder.count(tag.key.slice());
                     extern_string_count += 2;
@@ -2328,7 +2328,7 @@ impl PackageManifest {
             let Some(versions_expr) = json.get(b"versions") else {
                 break 'get_versions2;
             };
-            let JSON::ExprData::EObjectSimple(versions_obj) = &versions_expr.data else {
+            let JSON::ExprData::EObjectJSON(versions_obj) = &versions_expr.data else {
                 break 'get_versions2;
             };
 
@@ -2623,12 +2623,12 @@ impl PackageManifest {
                     // iteration's slice of `bundled_deps_buf`, so an
                     // unconditional empty pass would clobber the value the
                     // `dependencies` iteration just produced.
-                    let items: &[JSON::E::PropertySimple] = version_obj
+                    let items: &[JSON::E::PropertyJSON] = version_obj
                         .and_then(|o| o.get(pair.prop))
                         .and_then(|deps| deps.as_object())
-                        .map(JSON::E::ObjectSimple::properties)
+                        .map(JSON::E::ObjectJSON::properties)
                         .unwrap_or(&[]);
-                    let peer_deps_meta: Option<&JSON::E::ObjectSimple> = if is_peer {
+                    let peer_deps_meta: Option<&JSON::E::ObjectJSON> = if is_peer {
                         version_obj
                             .and_then(|o| o.get(b"peerDependenciesMeta"))
                             .and_then(|meta| meta.as_object())
@@ -2948,7 +2948,7 @@ impl PackageManifest {
                 }
 
                 if let Some(time_expr) = json.get(b"time") {
-                    if let JSON::ExprData::EObjectSimple(time_obj) = &time_expr.data {
+                    if let JSON::ExprData::EObjectJSON(time_obj) = &time_expr.data {
                         if let Some(publish_time_str) =
                             time_obj.get().get(version_name).and_then(|v| v.as_str())
                         {
@@ -2982,7 +2982,7 @@ impl PackageManifest {
         let _ = all_dependency_names_and_values_len;
 
         if let Some(dist) = json.get(b"dist-tags") {
-            if let JSON::ExprData::EObjectSimple(obj) = &dist.data {
+            if let JSON::ExprData::EObjectJSON(obj) = &dist.data {
                 let tags = obj.get().properties();
                 let extern_strings_slice_start = extern_strings_cursor;
                 let mut dist_tag_i: usize = 0;

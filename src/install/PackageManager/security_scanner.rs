@@ -1559,7 +1559,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `parsed` owns the row tape `json_expr` borrows; both (and
         // `self.ipc_data`) outlive every advisory string, which
         // `parse_security_advisories_from_expr` copies into `Box<[u8]>`.
-        let parsed = match crate::bun_json::parse_utf8_simple(&json_source, &mut temp_log) {
+        let parsed = match crate::bun_json::parse_utf8_immutable(&json_source, &mut temp_log) {
             Ok(e) => e,
             Err(e) => {
                 Output::err_generic("Security scanner sent invalid JSON: {}", (e.name(),));
@@ -1571,7 +1571,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         };
         let json_expr = parsed.root;
 
-        if !matches!(json_expr.data, ExprData::EObjectSimple(_)) {
+        if !matches!(json_expr.data, ExprData::EObjectJSON(_)) {
             Output::err_generic("Security scanner IPC message must be a JSON object", ());
             return Err(err!("InvalidIPCFormat"));
         }
@@ -1811,12 +1811,12 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 }
 
-/// The tag name the scanner diagnostics have always printed: the simple JSON
+/// The tag name the scanner diagnostics have always printed: the immutable JSON
 /// containers report their classic equivalents (`e_object`, `e_array`).
 fn json_type_name(data: &ExprData) -> &'static str {
     match data {
-        ExprData::EObjectSimple(_) => bun_ast::expr::Tag::EObject.into(),
-        ExprData::EArraySimple(_) => bun_ast::expr::Tag::EArray.into(),
+        ExprData::EObjectJSON(_) => bun_ast::expr::Tag::EObject.into(),
+        ExprData::EArrayJSON(_) => bun_ast::expr::Tag::EArray.into(),
         other => other.tag().into(),
     }
 }
@@ -1829,7 +1829,7 @@ fn parse_security_advisories_from_expr(
 ) -> Result<Box<[SecurityAdvisory]>, Error> {
     let mut advisories_list: Vec<SecurityAdvisory> = Vec::new();
 
-    let ExprData::EArraySimple(array) = &advisories_expr.data else {
+    let ExprData::EArrayJSON(array) = &advisories_expr.data else {
         Output::err_generic(
             "Security scanner 'advisories' field must be an array, got: {}",
             (json_type_name(&advisories_expr.data),),
@@ -1841,7 +1841,7 @@ fn parse_security_advisories_from_expr(
         // Array items carry no source location of their own; the advisory
         // strings are copied out, so the array's location is good enough.
         let item = Expr::from_json_value(item_value, advisories_expr.loc);
-        if !matches!(item.data, ExprData::EObjectSimple(_)) {
+        if !matches!(item.data, ExprData::EObjectJSON(_)) {
             Output::err_generic(
                 "Security advisory at index {} must be an object, got: {}",
                 (i, json_type_name(&item.data)),

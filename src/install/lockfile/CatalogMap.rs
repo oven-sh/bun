@@ -14,8 +14,8 @@ use bun_install::{Dependency, Lockfile, PackageManager};
 // T2 type directly.
 // The `expr` handed to `parse_count` / `parse_append` may be either the
 // classic `EObject` tree (yarn/pnpm import, cached workspace package.json)
-// or the simple `EObjectSimple` document produced by
-// `parse_package_json_utf8_simple`; both are handled below.
+// or the immutable `EObjectJSON` document produced by
+// `parse_package_json_utf8_immutable`; both are handled below.
 use crate::bun_json::{E, Expr, ExprData};
 use crate::lockfile_real::package::value_loc_of;
 use bun_ast::{Log, Source};
@@ -137,8 +137,8 @@ impl CatalogMap {
                         }
                     }
                 }
-                ExprData::EObjectSimple(obj) => {
-                    Self::count_catalog_group_simple(obj.get(), builder);
+                ExprData::EObjectJSON(obj) => {
+                    Self::count_catalog_group_immutable(obj.get(), builder);
                 }
                 _ => {}
             }
@@ -173,11 +173,11 @@ impl CatalogMap {
                         }
                     }
                 }
-                ExprData::EObjectSimple(catalog_names) => {
+                ExprData::EObjectJSON(catalog_names) => {
                     for catalog in catalog_names.get().properties() {
                         builder.count(catalog.key.slice());
                         if let Some(obj) = catalog.value.as_object() {
-                            Self::count_catalog_group_simple(obj, builder);
+                            Self::count_catalog_group_immutable(obj, builder);
                         }
                     }
                 }
@@ -186,10 +186,10 @@ impl CatalogMap {
         }
     }
 
-    /// Count one simple-representation catalog group's `"name": "version"`
+    /// Count one immutable-representation catalog group's `"name": "version"`
     /// rows into `builder` (the `"catalog"` object or one entry of
     /// `"catalogs"`).
-    fn count_catalog_group_simple(obj: &E::ObjectSimple, builder: &mut StringBuilder) {
+    fn count_catalog_group_immutable(obj: &E::ObjectJSON, builder: &mut StringBuilder) {
         for row in obj.properties() {
             builder.count(row.key.slice());
             if let Some(version) = row.value.as_str() {
@@ -213,8 +213,8 @@ impl CatalogMap {
         if let Some(default_catalog) = expr.get(b"catalog") {
             let group = self.get_or_put_group(builder.string_bytes.as_slice(), String::EMPTY)?;
             found_any = true;
-            if let ExprData::EObjectSimple(obj) = &default_catalog.data {
-                Self::parse_append_group_simple(group, pm, log, source, obj.get(), builder)?;
+            if let ExprData::EObjectJSON(obj) = &default_catalog.data {
+                Self::parse_append_group_immutable(group, pm, log, source, obj.get(), builder)?;
             }
             if let ExprData::EObject(obj) = &default_catalog.data {
                 for item in obj.properties.slice() {
@@ -267,13 +267,13 @@ impl CatalogMap {
 
         if let Some(catalogs) = expr.get(b"catalogs") {
             found_any = true;
-            if let ExprData::EObjectSimple(catalog_names) = &catalogs.data {
+            if let ExprData::EObjectJSON(catalog_names) = &catalogs.data {
                 for catalog in catalog_names.get().properties() {
                     let catalog_name = builder.append::<String>(catalog.key.slice());
                     let group =
                         self.get_or_put_group(builder.string_bytes.as_slice(), catalog_name)?;
                     if let Some(obj) = catalog.value.as_object() {
-                        Self::parse_append_group_simple(group, pm, log, source, obj, builder)?;
+                        Self::parse_append_group_immutable(group, pm, log, source, obj, builder)?;
                     }
                 }
             }
@@ -344,16 +344,16 @@ impl CatalogMap {
         Ok(found_any)
     }
 
-    /// Append one simple-representation catalog group's `"name": "version"`
+    /// Append one immutable-representation catalog group's `"name": "version"`
     /// rows into `group` (the `"catalog"` object or one entry of
     /// `"catalogs"`). Per-value locations are recovered from the source on
     /// the (cold) diagnostic paths.
-    fn parse_append_group_simple(
+    fn parse_append_group_immutable(
         group: &mut Map,
         pm: &mut PackageManager,
         log: &mut Log,
         source: &Source,
-        obj: &E::ObjectSimple,
+        obj: &E::ObjectJSON,
         builder: &mut StringBuilder,
     ) -> Result<(), AllocError> {
         for row in obj.properties() {

@@ -5,12 +5,12 @@
 //!   1. a batched SIMD **structural indexer** (Highway, simdjson-style) finds
 //!      every token boundary in one pass over the document
 //!   2. a recursive-descent parser over the index array builds the compact
-//!      "simple" row AST (`E::ObjectSimple` / `E::ArraySimple` on an
+//!      immutable row AST (`E::ObjectJSON` / `E::ArrayJSON` on an
 //!      [`E::JsonTape`]), taking strings zero-copy out of the source whenever
 //!      stage 1 proved they contain no escape and no control character
 //!
 //! That row AST is the only thing the parser builds. Entry points either
-//! return it as a [`ParsedJson`] (`*_simple`, registry, JSONC) or
+//! return it as a [`ParsedJson`] (`*_immutable`, registry, JSONC) or
 //! deep-convert it into the classic `E::Object` / `E::Array` tree at their
 //! boundary ([`materialize`]) for the callers that mutate, print, or splice
 //! the result into a JavaScript AST.
@@ -55,11 +55,11 @@ pub struct JSONOptions {
     pub was_originally_macro: bool,
     pub guess_indentation: bool,
     /// Return the JSON-only compact containers the parser natively builds
-    /// (`E::ObjectSimple` / `E::ArraySimple`: 32-byte property rows whose
+    /// (`E::ObjectJSON` / `E::ArrayJSON`: 32-byte property rows whose
     /// leaves are inline `E::JsonValue`s, not `Expr` nodes) together with
     /// the [`E::JsonTape`] that owns them, instead of [`materialize`]-ing
     /// the classic `E::Object` / `E::Array` tree at the boundary.
-    pub simple_objects: bool,
+    pub immutable: bool,
 }
 
 impl JSONOptions {
@@ -72,7 +72,7 @@ impl JSONOptions {
         json_warn_duplicate_keys: true,
         was_originally_macro: false,
         guess_indentation: false,
-        simple_objects: false,
+        immutable: false,
     };
 }
 
@@ -140,7 +140,7 @@ fn empty_object_expr() -> Expr {
     }
 }
 
-/// A parsed simple-AST JSON document (`E::ObjectSimple` / `E::ArraySimple`
+/// A parsed immutable-AST JSON document (`E::ObjectJSON` / `E::ArrayJSON`
 /// containers): the root expression plus the [`E::JsonTape`] that owns every
 /// row and decoded string of the document. Everything reachable from `root`
 /// borrows the tape and the source it was parsed from, so keep all three
@@ -154,7 +154,8 @@ pub struct ParsedJson {
 /// Everything a full parse produces beyond the root expression.
 struct ParseOutput {
     root: Expr,
-    /// Simple mode only: see [`ParsedJson::tape`].
+    /// `Some` only for a [`E::TapeAlloc::Global`] parse: see
+    /// [`ParsedJson::tape`]. An arena-mode tape belongs to the arena.
     tape: Option<Box<E::JsonTape>>,
     is_ascii_only: bool,
     indentation: Indentation,
@@ -167,11 +168,24 @@ fn parse_impl(
     opts: JSONOptions,
     check_len: bool,
 ) -> Result<ParseOutput, bun_core::Error> {
+    parse_impl_in(source, log, opts, check_len, E::TapeAlloc::Global)
+}
+
+/// [`parse_impl`] with the allocator the document's [`E::JsonTape`] lives
+/// in: the global heap (returned in [`ParseOutput::tape`], dropped by its
+/// owner) or a caller's arena (nothing to return, nothing ever runs `Drop`).
+fn parse_impl_in(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    opts: JSONOptions,
+    check_len: bool,
+    tape_alloc: E::TapeAlloc,
+) -> Result<ParseOutput, bun_core::Error> {
     let contents: &[u8] = &source.contents;
 
     let mut sidx = StructuralIndex::new(contents);
     let log_mark = (log.errors, log.warnings, log.msgs.len());
-    let result = run_stage2(source, log, &mut sidx, opts, check_len);
+    let result = run_stage2(source, log, &mut sidx, opts, check_len, tape_alloc);
 
     // Index-layer errors take precedence: the index stream was truncated at
     // the offending byte, so whatever stage 2 logged about the truncated
@@ -211,8 +225,9 @@ fn run_stage2<'s>(
     sidx: &mut StructuralIndex<'s>,
     opts: JSONOptions,
     check_len: bool,
+    tape_alloc: E::TapeAlloc,
 ) -> Result<ParseOutput, bun_core::Error> {
-    let mut parser = Parser::new(source, log, sidx, opts);
+    let mut parser = Parser::new(source, log, sidx, opts, tape_alloc);
     let root = parser.parse_value()?;
     if check_len && !parser.at_trailing_end() {
         return Err(parser.unexpected_here());
@@ -346,7 +361,7 @@ pub fn parse_utf8_impl<const CHECK_LEN: bool>(
 }
 
 /// Shared driver for the classic-output (`E::Object` / `E::Array`) entry
-/// points: parse into the simple AST — the only form stage 2 builds — and
+/// points: parse into the immutable AST — the only form stage 2 builds — and
 /// [`materialize`] the classic tree the caller expects at the boundary, with
 /// every node's exact source location. The document's row tape dies here;
 /// everything was copied out of it (into the AST store, and `bump` for
@@ -369,8 +384,8 @@ fn parse_classic(
 /// manifests): strict JSON, strings forced to UTF-8, and **no duplicate-key
 /// warnings** — these documents are machine-generated, the warnings are never
 /// surfaced to anyone, and computing them costs a measurable fraction of
-/// every manifest parse. Containers are the compact read-only simple AST
-/// (`E::ObjectSimple` / `E::ArraySimple` — see `JSONOptions::simple_objects`).
+/// every manifest parse. Containers are the compact read-only immutable AST
+/// (`E::ObjectJSON` / `E::ArrayJSON` — see `JSONOptions::immutable`).
 pub fn parse_utf8_registry(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -378,66 +393,97 @@ pub fn parse_utf8_registry(
     const REGISTRY_OPTS: JSONOptions = JSONOptions {
         is_json: true,
         json_warn_duplicate_keys: false,
-        simple_objects: true,
+        immutable: true,
         ..JSONOptions::DEFAULT
     };
-    parse_simple(source, log, REGISTRY_OPTS)
+    parse_immutable(source, log, REGISTRY_OPTS)
 }
 
 /// package.json (comments & trailing commas allowed), as the document's
 /// rows. See [`ParsedJson`].
-pub fn parse_package_json_utf8_simple(
+pub fn parse_package_json_utf8_immutable(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
 ) -> Result<ParsedJson, bun_core::Error> {
     const OPTS: JSONOptions = JSONOptions {
-        simple_objects: true,
+        immutable: true,
         ..PACKAGE_JSON_OPTS
     };
-    parse_simple(source, log, OPTS)
+    parse_immutable(source, log, OPTS)
 }
 
 /// Strict JSON, as the document's rows. See [`ParsedJson`].
-pub fn parse_utf8_simple(
+pub fn parse_utf8_immutable(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
 ) -> Result<ParsedJson, bun_core::Error> {
     const OPTS: JSONOptions = JSONOptions {
-        simple_objects: true,
+        immutable: true,
         ..JSON_OPTS
     };
-    parse_simple(source, log, OPTS)
+    parse_immutable(source, log, OPTS)
 }
 
 /// The tsconfig/`.jsonc` dialect (comments, trailing commas), as the
 /// document's rows. See [`ParsedJson`].
-pub fn parse_ts_config_simple(
+pub fn parse_ts_config_immutable(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
 ) -> Result<ParsedJson, bun_core::Error> {
     const OPTS: JSONOptions = JSONOptions {
-        simple_objects: true,
+        immutable: true,
         ..TSCONFIG_OPTS
     };
-    parse_simple(source, log, OPTS)
+    parse_immutable(source, log, OPTS)
 }
 
-/// Shared driver for the simple-AST entry points. No arena: the document's
+/// Strict JSON, as the document's rows, with the whole document — its
+/// [`E::JsonTape`] included — allocated in `arena`. For callers whose AST
+/// lifetime *is* an arena and that never run `Drop` (the bundler / module
+/// loader): nothing is returned to free, the arena's bulk free is the free,
+/// and everything reachable from the root is valid until the arena resets.
+pub fn parse_utf8_immutable_in(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    arena: &Bump,
+) -> Result<Expr, bun_core::Error> {
+    const OPTS: JSONOptions = JSONOptions {
+        immutable: true,
+        ..JSON_OPTS
+    };
+    parse_immutable_in(source, log, OPTS, arena)
+}
+
+/// [`parse_utf8_immutable_in`] for the tsconfig/`.jsonc` dialect (comments,
+/// trailing commas).
+pub fn parse_ts_config_immutable_in(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    arena: &Bump,
+) -> Result<Expr, bun_core::Error> {
+    const OPTS: JSONOptions = JSONOptions {
+        immutable: true,
+        ..TSCONFIG_OPTS
+    };
+    parse_immutable_in(source, log, OPTS, arena)
+}
+
+/// Shared driver for the immutable-AST entry points. No arena: the document's
 /// [`E::JsonTape`] owns everything the parse allocates and is returned to
 /// the caller.
-fn parse_simple(
+fn parse_immutable(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     opts: JSONOptions,
 ) -> Result<ParsedJson, bun_core::Error> {
-    debug_assert!(opts.simple_objects);
+    debug_assert!(opts.immutable);
     if source.contents.is_empty() {
         // Empty input parses as `{}`, like the classic entry points: a
         // rowless object backed by an empty tape, so consumers checking for
-        // an `EObjectSimple` root see one.
+        // an `EObjectJSON` root see one.
         let tape = Box::new(E::JsonTape::empty());
         let root = Expr::init(
-            E::ObjectSimple::new(&tape, 0, 0, true, bun_ast::Loc::EMPTY),
+            E::ObjectJSON::new(&tape, 0, 0, true, bun_ast::Loc::EMPTY),
             bun_ast::Loc { start: 0 },
         );
         return Ok(ParsedJson {
@@ -452,10 +498,30 @@ fn parse_simple(
     })
 }
 
+/// [`parse_immutable`], with the tape (and every buffer in it) inside `arena`.
+fn parse_immutable_in(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    opts: JSONOptions,
+    arena: &Bump,
+) -> Result<Expr, bun_core::Error> {
+    debug_assert!(opts.immutable);
+    let tape_alloc = E::TapeAlloc::Arena(core::ptr::NonNull::from(arena));
+    if source.contents.is_empty() {
+        // See `parse_immutable`: an empty document is an empty object.
+        let tape = arena.alloc(E::JsonTape::empty_in(tape_alloc));
+        return Ok(Expr::init(
+            E::ObjectJSON::new(tape, 0, 0, true, bun_ast::Loc::EMPTY),
+            bun_ast::Loc { start: 0 },
+        ));
+    }
+    Ok(parse_impl_in(source, log, opts, false, tape_alloc)?.root)
+}
+
 /// Parse package.json (comments & trailing commas allowed, strings UTF-8).
 /// Classic `E::Object` AST: these callers (install, `bun pm pkg`, lockfile,
-/// init) mutate and re-print the tree, which the read-only simple containers
-/// cannot represent. Parsed simple and [`materialize`]d.
+/// init) mutate and re-print the tree, which the read-only immutable containers
+/// cannot represent. Parsed immutable and [`materialize`]d.
 pub fn parse_package_json_utf8(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -471,7 +537,7 @@ pub fn parse_package_json_utf8(
 pub struct JsonResult {
     pub root: Expr,
     pub indentation: Indentation,
-    /// `Some` only for `simple_objects` parses (see [`ParsedJson::tape`]):
+    /// `Some` only for `immutable` parses (see [`ParsedJson::tape`]):
     /// the row tape `root` borrows. Keep it alive as long as the `Expr`.
     pub tape: Option<Box<E::JsonTape>>,
 }
@@ -501,7 +567,7 @@ pub fn parse_package_json_utf8_with_opts<
             ignore_leading_escape_sequences: IGNORE_LEADING_ESCAPE_SEQUENCES,
             ignore_trailing_escape_sequences: IGNORE_TRAILING_ESCAPE_SEQUENCES,
             json_warn_duplicate_keys: JSON_WARN_DUPLICATE_KEYS,
-            simple_objects: false,
+            immutable: false,
             was_originally_macro: WAS_ORIGINALLY_MACRO,
             guess_indentation: GUESS_INDENTATION,
         },
@@ -525,9 +591,9 @@ pub fn parse_package_json_utf8_with_opts_rt(
             ..Default::default()
         });
     }
-    // Callers that ask for the simple AST own its tape; everyone else gets
+    // Callers that ask for the immutable AST own its tape; everyone else gets
     // the classic tree materialized out of it.
-    let out = if opts.simple_objects {
+    let out = if opts.immutable {
         parse_impl(source, log, opts, false)?
     } else {
         parse_classic(source, log, bump, opts, false)?
@@ -589,7 +655,7 @@ pub fn parse_for_bundling(
 ///
 /// Classic `E::Object` AST — the tsconfig walker, bunfig, and the bundler's
 /// `.jsonc` module loader pattern-match `Expr` nodes (and the first two
-/// report diagnostics with per-value `Loc`s), so the simple parse is
+/// report diagnostics with per-value `Loc`s), so the immutable parse is
 /// [`materialize`]d at this boundary with every location intact.
 /// `FORCE_UTF8` is accepted for source compatibility and ignored (see
 /// [`parse`]).
@@ -607,17 +673,17 @@ pub fn parse_ts_config<const FORCE_UTF8: bool>(
 
 /// `Bun.JSONC.parse`: the same dialect as tsconfig (comments, trailing
 /// commas), but producing the compact JSON-only containers
-/// (`E::ObjectSimple` — see `JSONOptions::simple_objects`). The only
+/// (`E::ObjectJSON` — see `JSONOptions::immutable`). The only
 /// consumer is `Expr::to_js`, which understands them.
 pub fn parse_jsonc(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
 ) -> Result<ParsedJson, bun_core::Error> {
     const JSONC_OPTS: JSONOptions = JSONOptions {
-        simple_objects: true,
+        immutable: true,
         ..TSCONFIG_OPTS
     };
-    parse_simple(source, log, JSONC_OPTS)
+    parse_immutable(source, log, JSONC_OPTS)
 }
 
 /// `.env` / `--define` values: JSON if it looks like JSON, `true/false/null/
@@ -752,7 +818,7 @@ fn log_string_error(
 //
 // Extracts the top-level `name` and `version` strings from a package.json.
 // This runs once per installed package (`verify_package_json_name_and_
-// version`), so it does the least work a parse can: the simple AST, read
+// version`), so it does the least work a parse can: the immutable AST, read
 // straight off the document's row tape — no classic nodes, no arena, and
 // nothing outliving the call but the two copied strings.
 
@@ -803,11 +869,11 @@ impl<'a> PackageJSONVersionChecker<'a> {
     /// `version` properties whose values are strings.
     pub fn parse(&mut self) -> Result<(), bun_core::Error> {
         const OPTS: JSONOptions = JSONOptions {
-            simple_objects: true,
+            immutable: true,
             ..PKG_JSON_CHECKER_OPTS
         };
-        let parsed = parse_simple(self.source, self.log, OPTS)?;
-        let js_ast::expr::Data::EObjectSimple(obj) = &parsed.root.data else {
+        let parsed = parse_immutable(self.source, self.log, OPTS)?;
+        let js_ast::expr::Data::EObjectJSON(obj) = &parsed.root.data else {
             return Ok(());
         };
         for row in obj.get().properties() {
@@ -977,7 +1043,7 @@ fn _g_property_size_assert(p: &G::Property) -> usize {
 // Source-location recovery
 // ──────────────────────────────────────────────────────────────────────────
 //
-// The simple JSON AST (`E::ObjectSimple` / `E::ArraySimple`) stores no
+// The immutable JSON AST (`E::ObjectJSON` / `E::ArrayJSON`) stores no
 // per-value locations: a property row records only its key's location and
 // containers their own. Two consumers recover a *value*'s location by
 // re-scanning the source it was parsed from:
@@ -989,7 +1055,7 @@ fn _g_property_size_assert(p: &G::Property) -> usize {
 //     node with one forward sweep per container.
 
 /// Location of the first byte of the value of the property whose key string
-/// token starts at `key_loc` (= [`E::PropertySimple::key_loc`], the opening
+/// token starts at `key_loc` (= [`E::PropertyJSON::key_loc`], the opening
 /// quote): the key token, then any whitespace/comments, the `:`, and any
 /// whitespace/comments after it are skipped.
 ///
@@ -1009,7 +1075,7 @@ pub fn property_value_loc(contents: &[u8], key_loc: bun_ast::Loc) -> Option<bun_
 
 /// Sibling of [`property_value_loc`] for array items: the location of the
 /// first byte of item `index` of the array whose `[` is at `array_loc`
-/// (= the `E::ArraySimple` expression's `loc`). `None` if the array's source
+/// (= the `E::ArrayJSON` expression's `loc`). `None` if the array's source
 /// has fewer than `index + 1` items (or `contents`/`array_loc` don't match).
 ///
 /// Linear in the array's source extent: a caller visiting every item should
@@ -1159,16 +1225,16 @@ fn skip_json_value(contents: &[u8], p: usize) -> Option<usize> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Materialization: simple AST → classic AST
+// Materialization: immutable AST → classic AST
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Deep-convert a simple-AST document (`E::ObjectSimple` / `E::ArraySimple`)
+/// Deep-convert a immutable-AST document (`E::ObjectJSON` / `E::ArrayJSON`)
 /// into the classic `E::Object` / `E::Array` tree, indistinguishable from a
 /// classic parse of the same `source`:
 ///
 /// - every property value, array item, and nested container carries its
 ///   exact source [`Loc`](bun_ast::Loc) again, recovered by re-scanning
-///   `source` from the locations the simple AST does keep (a property's key,
+///   `source` from the locations the immutable AST does keep (a property's key,
 ///   a container's opening bracket). One forward pass per container — see
 ///   the "Cold-path source-location recovery" section above. If the bytes
 ///   don't match (a caller passed the wrong source) the key's / container's
@@ -1183,13 +1249,13 @@ fn skip_json_value(contents: &[u8], p: usize) -> Option<usize> {
 ///
 /// This is the boundary for consumers that genuinely need the classic tree —
 /// to mutate it and print it back, or to splice it into a JavaScript AST.
-/// Everything that just *reads* JSON should stay on the simple containers.
+/// Everything that just *reads* JSON should stay on the immutable containers.
 pub fn materialize(root: &Expr, source: &bun_ast::Source, bump: &Bump) -> Expr {
     materialize_impl(root, source, bump, false)
 }
 
 /// [`materialize`] with the one parse option a classic container records
-/// that the simple containers don't.
+/// that the immutable containers don't.
 fn materialize_impl(
     root: &Expr,
     source: &bun_ast::Source,
@@ -1208,18 +1274,18 @@ struct Materializer<'a> {
     contents: &'a [u8],
     bump: &'a Bump,
     /// `E::Object::was_originally_macro` of every materialized container
-    /// (the simple containers don't store it; it is an option of the parse).
+    /// (the immutable containers don't store it; it is an option of the parse).
     was_originally_macro: bool,
 }
 
 impl Materializer<'_> {
     fn expr(&self, e: &Expr, loc: bun_ast::Loc) -> Expr {
         match &e.data {
-            js_ast::expr::Data::EObjectSimple(o) => Expr::init(self.object(o.get()), loc),
-            js_ast::expr::Data::EArraySimple(a) => Expr::init(self.array(a.get(), loc), loc),
+            js_ast::expr::Data::EObjectJSON(o) => Expr::init(self.object(o.get()), loc),
+            js_ast::expr::Data::EArrayJSON(a) => Expr::init(self.array(a.get(), loc), loc),
             // The root of a scalar document can be a string that borrows the
             // tape (an escaped literal); everything else is inline or in the
-            // Store and survives the tape. Simple-mode strings are always
+            // Store and survives the tape. Immutable-AST strings are always
             // UTF-8, so `init` rebuilds the node losslessly.
             js_ast::expr::Data::EString(s) => {
                 Expr::init(E::EString::init(self.rehome(s.get().data).slice()), loc)
@@ -1228,7 +1294,7 @@ impl Materializer<'_> {
         }
     }
 
-    fn object(&self, o: &E::ObjectSimple) -> E::Object {
+    fn object(&self, o: &E::ObjectJSON) -> E::Object {
         let rows = o.properties();
         let mut properties: G::PropertyList =
             Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
@@ -1259,7 +1325,7 @@ impl Materializer<'_> {
         }
     }
 
-    fn array(&self, a: &E::ArraySimple, loc: bun_ast::Loc) -> E::Array {
+    fn array(&self, a: &E::ArrayJSON, loc: bun_ast::Loc) -> E::Array {
         let rows = a.items();
         let mut items: js_ast::ExprNodeList =
             Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
@@ -1320,7 +1386,7 @@ mod tests {
         errors: usize,
         warnings: usize,
         first_msg: String,
-        // Keep the arena and the simple row tape alive for the AST's lifetime.
+        // Keep the arena and the row tape alive for the AST's lifetime.
         _bump: Box<Bump>,
         _tape: Option<Box<E::JsonTape>>,
         _scope: js_ast::StoreResetGuard,
@@ -1343,10 +1409,10 @@ mod tests {
                 tape = p.tape;
                 p.root
             }),
-            Which::Simple => parse_package_json_utf8_with_opts_rt(
+            Which::Immutable => parse_package_json_utf8_with_opts_rt(
                 JSONOptions {
                     is_json: true,
-                    simple_objects: true,
+                    immutable: true,
                     ..JSONOptions::DEFAULT
                 },
                 &source,
@@ -1381,11 +1447,11 @@ mod tests {
         TsConfig,
         Env,
         PackageJson,
-        /// `Bun.JSONC.parse`'s entry: tsconfig dialect + `simple_objects`.
+        /// `Bun.JSONC.parse`'s entry: tsconfig dialect + `immutable`.
         Jsonc,
-        /// Strict JSON + `simple_objects` (what a registry-manifest caller
+        /// Strict JSON + `immutable` (what a registry-manifest caller
         /// would use).
-        Simple,
+        Immutable,
     }
 
     /// Render the parsed AST as compact JSON (object keys in source order,
@@ -1430,7 +1496,7 @@ mod tests {
     fn to_json_string(e: &Expr, out: &mut String) {
         use std::fmt::Write;
         match &e.data {
-            Data::EObjectSimple(o) => {
+            Data::EObjectJSON(o) => {
                 out.push('{');
                 for (i, p) in o.get().properties().iter().enumerate() {
                     if i > 0 {
@@ -1442,7 +1508,7 @@ mod tests {
                 }
                 out.push('}');
             }
-            Data::EArraySimple(a) => {
+            Data::EArrayJSON(a) => {
                 out.push('[');
                 for (i, item) in a.get().items().iter().enumerate() {
                     if i > 0 {
@@ -1737,12 +1803,12 @@ mod tests {
     }
 
     /// One parse, two output shapes: the compact row containers
-    /// (`simple_objects`) and the classic tree the classic-output entry
+    /// (`immutable`) and the classic tree the classic-output entry
     /// points materialize from them must be semantically identical — same
     /// canonical JSON, same warnings, same errors — on every shape the
     /// parser supports.
     #[test]
-    fn simple_rows_match_the_materialized_classic_tree() {
+    fn immutable_rows_match_the_materialized_tree() {
         let mut generated = std::string::String::from("{");
         for i in 0..120 {
             if i > 0 {
@@ -1786,7 +1852,7 @@ mod tests {
         }
         for doc in docs {
             let (fr, fe, fw, fm) = canon(doc, Which::Utf8);
-            let (sr, se, sw, sm) = canon(doc, Which::Simple);
+            let (sr, se, sw, sm) = canon(doc, Which::Immutable);
             assert_eq!((fe, fw, &fm), (se, sw, &sm), "log differs for {doc:?}");
             if fr != sr {
                 let (a, b) = (fr.unwrap_or_default(), sr.unwrap_or_default());
@@ -1796,7 +1862,7 @@ mod tests {
                     .position(|(x, y)| x != y)
                     .unwrap_or(a.len().min(b.len()));
                 panic!(
-                    "values differ at byte {i}:\n full: ...{}\n simple: ...{}",
+                    "values differ at byte {i}:\n full: ...{}\n immutable: ...{}",
                     &a[i.saturating_sub(40)..(i + 40).min(a.len())],
                     &b[i.saturating_sub(40)..(i + 40).min(b.len())],
                 );
@@ -1810,7 +1876,7 @@ mod tests {
     /// A standalone `json::materialize` over a row tree must produce a
     /// classic tree *indistinguishable* from what the classic-output entry
     /// points return for the same document (they materialize at their own
-    /// boundary): no simple nodes left, identical canonical JSON, and the
+    /// boundary): no immutable nodes left, identical canonical JSON, and the
     /// exact same `loc` and `is_single_line` on **every** node (keys,
     /// values, array items, nested containers), across comments, escapes,
     /// trailing commas, and exotic whitespace.
@@ -1824,8 +1890,8 @@ mod tests {
                 let label = match &e.data {
                     Data::EObject(o) => format!("{{:{}", o.is_single_line),
                     Data::EArray(a) => format!("[:{}", a.is_single_line),
-                    Data::EObjectSimple(_) | Data::EArraySimple(_) => {
-                        panic!("simple node in a materialized/full tree")
+                    Data::EObjectJSON(_) | Data::EArrayJSON(_) => {
+                        panic!("immutable node in a materialized/full tree")
                     }
                     _ => {
                         let mut s = std::string::String::new();
@@ -1870,23 +1936,23 @@ mod tests {
         }
         generated.push('}');
         let docs: Vec<(&str, Which, Which)> = vec![
-            ("{}", Which::Utf8, Which::Simple),
-            ("[]", Which::Utf8, Which::Simple),
-            ("\"leaf\"", Which::Utf8, Which::Simple),
-            ("\"l\\u00e9af\\n\"", Which::Utf8, Which::Simple),
-            ("-3.25e2", Which::Utf8, Which::Simple),
+            ("{}", Which::Utf8, Which::Immutable),
+            ("[]", Which::Utf8, Which::Immutable),
+            ("\"leaf\"", Which::Utf8, Which::Immutable),
+            ("\"l\\u00e9af\\n\"", Which::Utf8, Which::Immutable),
+            ("-3.25e2", Which::Utf8, Which::Immutable),
             (
                 r#"{"a": 1, "b": [true, null, "x", [], {}], "c": {"d": "é🚀", "e": ""}, "es\ncé": -0}"#,
                 Which::Utf8,
-                Which::Simple,
+                Which::Immutable,
             ),
             (
                 "[0, -1.5e3, \"s\", {\"n\": {\"deep\": [\"x\"]}},\n[\n1\n]\n]",
                 Which::Utf8,
-                Which::Simple,
+                Which::Immutable,
             ),
-            (&deep, Which::Utf8, Which::Simple),
-            (&generated, Which::Utf8, Which::Simple),
+            (&deep, Which::Utf8, Which::Immutable),
+            (&generated, Which::Utf8, Which::Immutable),
             // JSONC: comments, trailing commas, single quotes.
             (
                 "// c\n{\"a\": [1, 2,], /* x */ \"b\": 'sq', }",
@@ -1906,14 +1972,14 @@ mod tests {
                 Which::Jsonc,
             ),
         ];
-        for (doc, full_which, simple_which) in docs {
+        for (doc, full_which, immutable_which) in docs {
             let full = {
                 let p = run(doc.as_bytes(), full_which);
                 let root = p.root.unwrap();
                 (root.loc, canon_full(&root))
             };
             let materialized = {
-                let p = run(doc.as_bytes(), simple_which);
+                let p = run(doc.as_bytes(), immutable_which);
                 // The same bytes `run` parsed, for the location re-scan.
                 let source = bun_ast::Source::init_path_string("fixture.json", doc.as_bytes());
                 let bump = Bump::new();
@@ -1925,7 +1991,7 @@ mod tests {
     }
 
     /// Cold-path value-location recovery: for every property and array item
-    /// of a document, re-scanning the source from the locations the simple
+    /// of a document, re-scanning the source from the locations the immutable
     /// AST keeps must land exactly on the location the classic tree records
     /// for the value, across whitespace, comments, escapes, and exotic
     /// unicode whitespace.
@@ -1994,10 +2060,10 @@ mod tests {
 
     /// The generic `Expr` accessors (`get`, `as_property`, `as_array`,
     /// `as_string`, ...) must observe the same document through a
-    /// `Which::Simple` root — where leaf values are wrapped into `Expr`s
+    /// `Which::Immutable` root — where leaf values are wrapped into `Expr`s
     /// out of the row tape on demand — as through the classic tree.
     #[test]
-    fn simple_objects_expr_accessor_materialization() {
+    fn immutable_expr_accessor_materialization() {
         let doc: &[u8] = br#"{
             "name": "pkg",
             "version": "1.2.3",
@@ -2110,7 +2176,7 @@ mod tests {
             out.push('\n');
 
             // as_property_string_map over the nested object (empty values are
-            // skipped by the full-AST implementation; simple must match).
+            // skipped by the full-AST implementation; immutable must match).
             let map = Expr::as_property_string_map(&root, b"deps", bump).unwrap();
             let mut pairs: Vec<(std::string::String, std::string::String)> = map
                 .iter()
@@ -2159,8 +2225,8 @@ mod tests {
         }
 
         let full = probe(doc, Which::Utf8);
-        let simple = probe(doc, Which::Simple);
-        assert_eq!(full, simple);
+        let immutable = probe(doc, Which::Immutable);
+        assert_eq!(full, immutable);
         // Sanity-check the probe itself against fixed expectations so a bug
         // shared by both modes can't cancel out.
         // The reported `Query::loc` is the key's location in the source.

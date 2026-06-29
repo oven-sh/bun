@@ -385,7 +385,7 @@ impl<'a> ContextIdentifierVisitor<'a> {
         match &e.data {
             // JSON-only nodes: their children are not `Expr`s and cannot
             // reference identifiers.
-            Data::EObjectSimple(_) | Data::EArraySimple(_) => {}
+            Data::EObjectJSON(_) | Data::EArrayJSON(_) => {}
             Data::EIdentifier(id) => self.check_captured_reference(id.ref_),
             Data::EImportIdentifier(id) => self.check_captured_reference(id.ref_),
 

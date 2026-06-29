@@ -364,9 +364,9 @@ impl FileSystemPackageJsonExt for crate::fs::FileSystem {
 impl PackageJSON {
     /// Visit every `"key": value` row of a JSON object expression in source
     /// order, in either container representation (`E::Object` from the
-    /// classic AST, `E::ObjectSimple` from the simple row AST). The callback
+    /// classic AST, `E::ObjectJSON` from the immutable row AST). The callback
     /// gets the decoded key bytes, the key's location, and the value as an
-    /// `Expr` (a simple row's value is materialized, so its `loc` is the
+    /// `Expr` (an immutable row's value is materialized, so its `loc` is the
     /// key's — see [`Self::json_property_value_loc`]).
     fn for_each_json_property(
         object: &js_ast::Expr,
@@ -386,7 +386,7 @@ impl PackageJSON {
                     f(key, key_expr.loc, *value);
                 }
             }
-            js_ast::ExprData::EObjectSimple(obj) => {
+            js_ast::ExprData::EObjectJSON(obj) => {
                 for property in obj.get().properties() {
                     f(
                         property.key.slice(),
@@ -404,13 +404,13 @@ impl PackageJSON {
     fn json_object_property_count(object: &js_ast::Expr) -> usize {
         match &object.data {
             js_ast::ExprData::EObject(obj) => obj.properties.len_u32() as usize,
-            js_ast::ExprData::EObjectSimple(obj) => obj.get().properties().len(),
+            js_ast::ExprData::EObjectJSON(obj) => obj.get().properties().len(),
             _ => 0,
         }
     }
 
     /// Exact source location of a property's `value`, for a diagnostic
-    /// (cold path). A value materialized from a simple row carries its
+    /// (cold path). A value materialized from an immutable row carries its
     /// *key's* location, so the value's first byte is recovered by
     /// re-scanning the source; a classic node already carries its own.
     fn json_property_value_loc(
@@ -732,7 +732,7 @@ impl PackageJSON {
             //   },
             //
             if let Some(browser_prop) = json.as_property(b"browser") {
-                if let js_ast::ExprData::EObjectSimple(obj) = &browser_prop.expr.data {
+                if let js_ast::ExprData::EObjectJSON(obj) = &browser_prop.expr.data {
                     // The value is an object
 
                     // Remap all files in the browser field
@@ -776,7 +776,7 @@ impl PackageJSON {
                                     json_source.path.text,
                                     NODE_MODULES_PATH.as_bytes(),
                                 ) {
-                                    // The simple AST stores no per-value `Loc`;
+                                    // The immutable AST stores no per-value `Loc`;
                                     // recover the value's first byte (cold path).
                                     let value_loc = json_parser::property_value_loc(
                                         &json_source.contents,
@@ -813,7 +813,7 @@ impl PackageJSON {
                 if !boolean {
                     package_json.side_effects = SideEffects::False;
                 }
-            } else if let js_ast::ExprData::EArraySimple(e_array) = &side_effects_field.data {
+            } else if let js_ast::ExprData::EArrayJSON(e_array) = &side_effects_field.data {
                 // Handle arrays, including empty arrays
                 // Reshaped — `ArrayIterator` is not `Clone`; iterate the
                 // underlying item rows directly for both passes.
@@ -1000,7 +1000,7 @@ impl PackageJSON {
                 let mut total_dependency_count: usize = 0;
                 for group in dependency_groups {
                     if let Some(group_json) = json.get(group.field) {
-                        if let js_ast::ExprData::EObjectSimple(obj) = &group_json.data {
+                        if let js_ast::ExprData::EObjectJSON(obj) = &group_json.data {
                             total_dependency_count += obj.get().properties().len();
                         }
                     }
@@ -1022,7 +1022,7 @@ impl PackageJSON {
 
                     for group in dependency_groups {
                         if let Some(group_json) = json.get(group.field) {
-                            if let js_ast::ExprData::EObjectSimple(group_obj) = &group_json.data {
+                            if let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data {
                                 for prop in group_obj.get().properties() {
                                     let name_str = prop.key.slice();
                                     let name_hash =
@@ -1095,7 +1095,7 @@ impl PackageJSON {
             let property_string_map =
                 |name: &[u8]| -> Option<Box<StringArrayHashMap<&'static [u8]>>> {
                     let prop = json.as_property(name)?;
-                    let js_ast::ExprData::EObjectSimple(obj) = &prop.expr.data else {
+                    let js_ast::ExprData::EObjectJSON(obj) = &prop.expr.data else {
                         return None;
                     };
                     let obj = obj.get();
@@ -1164,8 +1164,8 @@ pub struct ExportsMap {
 
 impl ExportsMap {
     /// `json` is the "exports"/"imports" property's value as returned by
-    /// `Expr::as_property` on the simple row AST: its `.loc` is the
-    /// property's KEY location (the simple containers store no per-value
+    /// `Expr::as_property` on the immutable row AST: its `.loc` is the
+    /// property's KEY location (the immutable containers store no per-value
     /// `Loc`), which the visitor uses to recover exact value locations on
     /// its diagnostic paths.
     pub fn parse(
@@ -1185,8 +1185,8 @@ impl ExportsMap {
     }
 }
 
-/// Where a simple-AST JSON value sits in the document, so its exact source
-/// location can be recovered on the (cold) diagnostic path — the simple rows
+/// Where a immutable-AST JSON value sits in the document, so its exact source
+/// location can be recovered on the (cold) diagnostic path — the rows
 /// store no per-value `Loc`. Parents are chained by reference so nothing is
 /// re-scanned unless a diagnostic actually fires.
 #[derive(Clone, Copy)]
@@ -1236,8 +1236,8 @@ impl<'a> Visitor<'a> {
                     data: EntryData::String(Box::from(str.data.slice())),
                 }
             }
-            js_ast::ExprData::EObjectSimple(e_obj) => self.visit_object(e_obj.get()),
-            js_ast::ExprData::EArraySimple(e_array) => self.visit_array(e_array.get(), &vloc),
+            js_ast::ExprData::EObjectJSON(e_obj) => self.visit_object(e_obj.get()),
+            js_ast::ExprData::EArrayJSON(e_array) => self.visit_array(e_array.get(), &vloc),
             data => self.invalid_root(data, vloc),
         }
     }
@@ -1265,7 +1265,7 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    fn visit_object(&mut self, e_obj: &js_ast::E::ObjectSimple) -> Entry {
+    fn visit_object(&mut self, e_obj: &js_ast::E::ObjectJSON) -> Entry {
         let rows = e_obj.properties();
         // `EntryDataMapList` is a `Vec<MapEntry>`, so push whole entries.
         let mut map_data: EntryDataMapList = Vec::with_capacity(rows.len());
@@ -1336,7 +1336,7 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    fn visit_array(&mut self, e_array: &js_ast::E::ArraySimple, vloc: &ValueLoc<'_>) -> Entry {
+    fn visit_array(&mut self, e_array: &js_ast::E::ArrayJSON, vloc: &ValueLoc<'_>) -> Entry {
         let items = e_array.items();
         let mut array: Vec<Entry> = Vec::with_capacity(items.len());
         for (index, item) in items.iter().enumerate() {

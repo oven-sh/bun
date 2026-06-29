@@ -143,7 +143,7 @@ impl AuditCommand {
                     bun_ast::Source::init_path_string(b"audit-response.json", &response_text[..]);
                 let mut log = bun_ast::Log::init();
 
-                let parsed = match bun_json::parse_utf8_simple(&source, &mut log) {
+                let parsed = match bun_json::parse_utf8_immutable(&source, &mut log) {
                     Ok(e) => e,
                     Err(_) => {
                         bun_core::pretty_errorln!(
@@ -154,7 +154,7 @@ impl AuditCommand {
                 };
 
                 // If the response is an empty object, no vulnerabilities
-                if let ExprData::EObjectSimple(obj) = &parsed.root.data {
+                if let ExprData::EObjectJSON(obj) = &parsed.root.data {
                     if obj.get().properties().is_empty() {
                         return Ok(0);
                     }
@@ -508,7 +508,7 @@ fn send_audit_request(
 
 fn parse_vulnerability(
     package_name: &[u8],
-    vuln: &E::ObjectSimple,
+    vuln: &E::ObjectJSON,
 ) -> Result<VulnerabilityInfo, bun_alloc::AllocError> {
     let mut vulnerability = VulnerabilityInfo {
         severity: Box::<[u8]>::from(b"moderate" as &[u8]),
@@ -731,7 +731,7 @@ fn print_enhanced_audit_report(
 
     // `parsed` owns the row tape every slice below borrows; everything kept
     // past this function is copied into `Box<[u8]>` by `parse_vulnerability`.
-    let parsed = match bun_json::parse_utf8_simple(&source, &mut log) {
+    let parsed = match bun_json::parse_utf8_immutable(&source, &mut log) {
         Ok(e) => e,
         Err(_) => {
             let _ = Output::writer().write_all(response_text);
@@ -741,7 +741,7 @@ fn print_enhanced_audit_report(
     };
     let expr = parsed.root;
 
-    if let ExprData::EObjectSimple(obj) = &expr.data {
+    if let ExprData::EObjectJSON(obj) = &expr.data {
         if obj.get().properties().is_empty() {
             prettyln!("<green>No vulnerabilities found<r>");
             return Ok(0);
@@ -752,7 +752,7 @@ fn print_enhanced_audit_report(
 
     let mut vuln_counts = VulnCounts::default();
 
-    if let ExprData::EObjectSimple(obj) = &expr.data {
+    if let ExprData::EObjectJSON(obj) = &expr.data {
         for prop in obj.get().properties() {
             let package_name: &[u8] = prop.key.slice();
 

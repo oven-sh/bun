@@ -13,8 +13,8 @@
 //! part of the parser's contract — differentially tested against
 //! `JSON.parse`; see `json.rs` for the entry points.
 //!
-//! The only thing built here is the compact "simple" AST (`E::ObjectSimple`
-//! / `E::ArraySimple` rows on the document's [`E::JsonTape`], one `Expr` per
+//! The only thing built here is the immutable JSON AST (`E::ObjectJSON`
+//! / `E::ArrayJSON` rows on the document's [`E::JsonTape`], one `Expr` per
 //! container); the classic `E::Object` tree some entry points return is
 //! materialized from it at their boundary (`json::materialize`). Strings are
 //! always UTF-8 (WTF-8 for lone surrogates), zero-copy from the source
@@ -49,14 +49,18 @@ pub(crate) struct Parser<'a, 's, 'i> {
     stack_check: StackCheck,
     /// Reusable build stacks for container contents: a closing container's
     /// direct children are appended to the tape as one contiguous block.
-    scratch_simple_props: Vec<E::PropertySimple>,
+    scratch_props: Vec<E::PropertyJSON>,
     scratch_json_items: Vec<E::JsonValue>,
-    /// The document's [`E::JsonTape`], heap-allocated and owned by the
-    /// parser (raw, from `Box::leak`) until [`Self::take_tape`] hands it to
-    /// the caller; [`Drop`] reclaims it on the error paths that never get
-    /// there. `None` only after `take_tape`.
+    /// The document's [`E::JsonTape`]. With [`E::TapeAlloc::Global`] it is
+    /// heap-allocated and owned by the parser (raw, from `Box::leak`) until
+    /// [`Self::take_tape`] hands it to the caller, and [`Drop`] reclaims it
+    /// on the error paths that never get there. With [`E::TapeAlloc::Arena`]
+    /// it lives in — and is bulk-freed with — the caller's arena, and the
+    /// parser never frees it. `None` only after `take_tape`.
     tape: Option<core::ptr::NonNull<E::JsonTape>>,
-    /// Parallel to `scratch_simple_props` (only when duplicate-key warnings
+    /// Whether `tape` is the parser's to free (`TapeAlloc::Global`).
+    tape_owned: bool,
+    /// Parallel to `scratch_props` (only when duplicate-key warnings
     /// are on): the wyhash of every key of the in-progress objects, so
     /// duplicate detection is a contiguous `u64` scan, not pointer-chasing.
     dup_hashes: Vec<u64>,
@@ -133,7 +137,27 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         log: &'a mut Log,
         idx: &'i mut StructuralIndex<'s>,
         opts: JSONOptions,
+        tape_alloc: E::TapeAlloc,
     ) -> Self {
+        // The document's tape: a leaked `Box` the parser owns until it hands
+        // it to the caller (`Global`), or a value in the caller's arena that
+        // the arena owns from the start (`Arena` — nothing here, including
+        // an early-error `Drop`, may free it).
+        let (tape, tape_owned) = match tape_alloc {
+            E::TapeAlloc::Global => (
+                core::ptr::NonNull::from(Box::leak(Box::new(E::JsonTape::empty()))),
+                true,
+            ),
+            E::TapeAlloc::Arena(arena) => {
+                // SAFETY: the caller's arena (lifetime-erased) outlives the
+                // parse and the AST.
+                let arena: &Bump = unsafe { arena.as_ref() };
+                (
+                    core::ptr::NonNull::from(&*arena.alloc(E::JsonTape::empty_in(tape_alloc))),
+                    false,
+                )
+            }
+        };
         Parser {
             contents: &source.contents,
             source,
@@ -144,11 +168,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             token_start: 0,
             prev_error_loc: Loc::EMPTY,
             stack_check: StackCheck::init(),
-            scratch_simple_props: Vec::new(),
+            scratch_props: Vec::new(),
             scratch_json_items: Vec::new(),
-            tape: Some(core::ptr::NonNull::from(Box::leak(Box::new(
-                E::JsonTape::empty(),
-            )))),
+            tape: Some(tape),
+            tape_owned,
             dup_hashes: Vec::new(),
             dup_maps: Vec::new(),
             spill_depth: 0,
@@ -156,15 +179,18 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    /// Hand the document's [`E::JsonTape`] — and ownership of it — to the
-    /// caller. The AST just produced borrows it, so it must outlive every
-    /// use of the root `Expr`.
+    /// Hand the document's [`E::JsonTape`] — and ownership of it, when the
+    /// parser owns it — to the caller. The AST just produced borrows the
+    /// tape, so it must outlive every use of the root `Expr`; an
+    /// arena-allocated tape (`None` here) is already owned by the arena.
     pub(crate) fn take_tape(&mut self) -> Option<Box<E::JsonTape>> {
-        // SAFETY: `tape` came from `Box::leak` in `new` and is given out
-        // exactly once (`take`); nothing else frees it.
-        self.tape
-            .take()
-            .map(|p| unsafe { Box::from_raw(p.as_ptr()) })
+        let tape = self.tape.take()?;
+        if !self.tape_owned {
+            return None;
+        }
+        // SAFETY: `tape` came from `Box::leak` in `new` (`tape_owned`) and
+        // is given out exactly once (`take`); nothing else frees it.
+        Some(unsafe { Box::from_raw(tape.as_ptr()) })
     }
 
     /// Does some string indexed so far contain a `\` or a control character?
@@ -433,7 +459,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     fn tape_ref(&self) -> &'a E::JsonTape {
         // SAFETY: heap-allocated in `Parser::new`; the lifetime-erased
         // contract is that the caller keeps it alive for the AST's lifetime.
-        unsafe { self.tape.expect("simple mode").as_ref() }
+        unsafe { self.tape.expect("the tape was already taken").as_ref() }
     }
 
     /// The document's [`E::JsonTape`], mutably. The parser is its only
@@ -441,26 +467,26 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     #[inline]
     fn tape_mut(&mut self) -> &mut E::JsonTape {
         // SAFETY: see `tape_ref`; exclusively owned until `take_tape`.
-        unsafe { self.tape.expect("simple mode").as_mut() }
+        unsafe { self.tape.expect("the tape was already taken").as_mut() }
     }
 
-    /// Append `scratch_simple_props[mark..]` (one closing object's direct
+    /// Append `scratch_props[mark..]` (one closing object's direct
     /// children, contiguous on top of the scratch stack) as a block to the
     /// property tape and return its `(first, count)` span.
     fn push_props_block(&mut self, mark: usize) -> (u32, u32) {
         // SAFETY: see `tape_mut`. The raw-derived `&mut` is not a borrow of
         // `self`, so the (disjoint, parser-owned) scratch stack can be read
         // alongside it.
-        let tape = unsafe { self.tape.expect("simple mode").as_mut() };
-        let span = tape.append_props(&self.scratch_simple_props[mark..]);
-        self.scratch_simple_props.truncate(mark);
+        let tape = unsafe { self.tape.expect("the tape was already taken").as_mut() };
+        let span = tape.append_props(&self.scratch_props[mark..]);
+        self.scratch_props.truncate(mark);
         span
     }
 
     /// See [`Self::push_props_block`]; the array-item tape.
     fn push_items_block(&mut self, mark: usize) -> (u32, u32) {
         // SAFETY: see `push_props_block`.
-        let tape = unsafe { self.tape.expect("simple mode").as_mut() };
+        let tape = unsafe { self.tape.expect("the tape was already taken").as_mut() };
         let span = tape.append_items(&self.scratch_json_items[mark..]);
         self.scratch_json_items.truncate(mark);
         span
@@ -484,14 +510,14 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         match self.contents[start] {
             b'{' => {
                 let e = self.parse_object(loc)?;
-                let Data::EObjectSimple(r) = e.data else {
+                let Data::EObjectJSON(r) = e.data else {
                     unreachable!()
                 };
                 Ok(E::JsonValue::Object(r))
             }
             b'[' => {
                 let e = self.parse_array(loc)?;
-                let Data::EArraySimple(r) = e.data else {
+                let Data::EArrayJSON(r) = e.data else {
                     unreachable!()
                 };
                 Ok(E::JsonValue::Array(r))
@@ -509,8 +535,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     // Exotic whitespace before the value re-dispatches
                     // through `parse_value::<true>`, which can return a
                     // container.
-                    Data::EObjectSimple(r) => E::JsonValue::Object(r),
-                    Data::EArraySimple(r) => E::JsonValue::Array(r),
+                    Data::EObjectJSON(r) => E::JsonValue::Object(r),
+                    Data::EArrayJSON(r) => E::JsonValue::Array(r),
                     _ => unreachable!("not a JSON leaf"),
                 })
             }
@@ -747,7 +773,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
         let (first, count) = self.push_items_block(mark);
         Ok(Expr::init(
-            E::ArraySimple::new(self.tape_ref(), first, count, is_single_line, Loc::EMPTY),
+            E::ArrayJSON::new(self.tape_ref(), first, count, is_single_line, Loc::EMPTY),
             loc,
         ))
     }
@@ -757,7 +783,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             return Err(bun_core::err!("StackOverflow"));
         }
         self.cursor += 1; // {
-        let mark = self.scratch_simple_props.len();
+        let mark = self.scratch_props.len();
         let hmark = self.dup_hashes.len();
         let here = self.pos_at(self.cursor);
         let mut is_single_line = !self.newline_before(here);
@@ -779,7 +805,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 self.cursor += 1;
                 break Ok(());
             }
-            if self.scratch_simple_props.len() != mark {
+            if self.scratch_props.len() != mark {
                 if b != b',' {
                     if let Some(msg) = Self::js_punct_message(b) {
                         self.add_error(p + 1, format_args!("Unsupported syntax: {msg}"));
@@ -856,7 +882,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 Ok(v) => v,
                 Err(e) => break Err(e),
             };
-            self.scratch_simple_props.push(E::PropertySimple {
+            self.scratch_props.push(E::PropertyJSON {
                 key,
                 key_loc,
                 value,
@@ -869,13 +895,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
         self.dup_hashes.truncate(hmark);
         if let Err(e) = result {
-            self.scratch_simple_props.truncate(mark);
+            self.scratch_props.truncate(mark);
             return Err(e);
         }
 
         let (first, count) = self.push_props_block(mark);
         Ok(Expr::init(
-            E::ObjectSimple::new(self.tape_ref(), first, count, is_single_line, Loc::EMPTY),
+            E::ObjectJSON::new(self.tape_ref(), first, count, is_single_line, Loc::EMPTY),
             loc,
         ))
     }
@@ -885,7 +911,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     const DUP_LINEAR_MAX: usize = 32;
 
     /// Is `key` (decoded UTF-8) a duplicate of an earlier key of the object
-    /// whose properties start at `scratch_simple_props[mark]` /
+    /// whose properties start at `scratch_props[mark]` /
     /// `dup_hashes[hmark]`? Records the key.
     ///
     /// Hash-first: small objects scan their contiguous hash stack and confirm
@@ -922,7 +948,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     // Hash hit: confirm against the real key (the property at
                     // `mark + i` — hashes and completed properties stay in
                     // step because the hash is pushed before the value).
-                    self.scratch_simple_props[mark + i].key.slice() == key
+                    self.scratch_props[mark + i].key.slice() == key
                 }
             }
         } else {

@@ -1649,14 +1649,13 @@ pub fn init(
                     let json_source =
                         bun_ast::Source::init_path_string(&*json_path, &json_buf[..json_len]);
                     initialize_store();
-                    let json_arena = bun_alloc::Arena::new();
                     // SAFETY: `ctx.log` is a borrow of the CLI's `Log`; valid for the
                     // duration of `init()` (set by `Command::create()` before any install
                     // entry point runs).
                     // `parsed` owns the row tape `json` borrows; it lives to
                     // the end of this loop body, past `process_names_array`.
                     let parsed =
-                        crate::bun_json::parse_package_json_utf8_simple(&json_source, unsafe {
+                        crate::bun_json::parse_package_json_utf8_immutable(&json_source, unsafe {
                             &mut *ctx.log
                         })?;
                     let json = parsed.root;
@@ -1672,42 +1671,50 @@ pub fn init(
                         }
                     }
 
-                    use crate::bun_json::ExprData;
                     if let Some(prop) = json.as_property(b"workspaces") {
-                        // `WorkspaceMap::process_names_array` wants the classic
-                        // `E::Array` with exact per-item locations. The lookup
-                        // returns the key's location, so recover the value's
-                        // first byte before materializing just this subtree.
+                        // The lookup locates a value at its key; recover the
+                        // value's own location (the array's `[`), which the
+                        // rows need to locate items in diagnostics.
                         let value_loc =
                             crate::bun_json::property_value_loc(&json_source.contents, prop.loc)
                                 .unwrap_or(prop.loc);
-                        let workspaces = crate::bun_json::materialize(
-                            &bun_ast::Expr {
-                                loc: value_loc,
-                                data: prop.expr.data,
-                            },
-                            &json_source,
-                            &json_arena,
-                        );
-                        let json_array = match workspaces.data {
-                            ExprData::EArray(arr) => arr,
-                            ExprData::EObject(obj) => {
-                                if let Some(packages) = obj.get().get(b"packages") {
-                                    match packages.data {
-                                        ExprData::EArray(arr) => arr,
-                                        _ => break,
+                        // `"workspaces"` is either the names array or
+                        // `{ "packages": [...] }`.
+                        let names = match &prop.expr.data {
+                            bun_ast::ExprData::EArrayJSON(arr) => Some(
+                                Package::WorkspaceMap::NamesArray::Immutable(arr.get(), value_loc),
+                            ),
+                            bun_ast::ExprData::EObjectJSON(obj) => obj
+                                .get()
+                                .properties()
+                                .iter()
+                                .find(|row| row.key.slice() == b"packages")
+                                .and_then(|row| match &row.value {
+                                    bun_ast::E::JsonValue::Array(arr) => {
+                                        // The row stores its key's location;
+                                        // the array's `[` locates its items.
+                                        let packages_loc = crate::bun_json::property_value_loc(
+                                            &json_source.contents,
+                                            row.key_loc,
+                                        )
+                                        .unwrap_or(row.key_loc);
+                                        Some(Package::WorkspaceMap::NamesArray::Immutable(
+                                            arr.get(),
+                                            packages_loc,
+                                        ))
                                     }
-                                } else {
-                                    break;
-                                }
-                            }
-                            _ => break,
+                                    _ => None,
+                                }),
+                            _ => None,
+                        };
+                        let Some(names) = names else {
+                            break;
                         };
                         let mut log = bun_ast::Log::init();
                         let _ = match workspace_names.process_names_array(
                             &mut workspace_package_json_cache,
                             &mut log,
-                            &*json_array,
+                            names,
                             &json_source,
                             prop.loc,
                             None,

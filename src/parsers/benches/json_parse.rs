@@ -81,13 +81,13 @@ fn bench_json(c: &mut Criterion) {
                 std::hint::black_box(&e);
             })
         });
-        // The compact-AST form (`JSONOptions::simple_objects` →
-        // `E::ObjectSimple`): what JSON-data consumers (registry manifests,
+        // The compact-AST form (`JSONOptions::immutable` →
+        // `E::ObjectJSON`): what JSON-data consumers (registry manifests,
         // `Bun.JSONC.parse`) get. Same options as parse_nowarn otherwise.
         // No arena: the document's `JsonTape` (returned in the result and
         // dropped at the end of every iteration) owns everything the simple
         // AST allocates, so this measures parse + free of the whole document.
-        group.bench_function(BenchmarkId::new("parse_simple", &name), |b| {
+        group.bench_function(BenchmarkId::new("parse_immutable", &name), |b| {
             let bump = Bump::borrowing_default();
             b.iter(|| {
                 let _store_scope = js_ast::StoreResetGuard::new();
@@ -96,7 +96,7 @@ fn bench_json(c: &mut Criterion) {
                 let opts = json::JSONOptions {
                     is_json: true,
                     json_warn_duplicate_keys: false,
-                    simple_objects: true,
+                    immutable: true,
                     ..json::JSONOptions::DEFAULT
                 };
                 let e = json::parse_package_json_utf8_with_opts_rt(opts, &source, &mut log, &bump)

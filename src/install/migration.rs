@@ -1,4 +1,4 @@
-use bun_ast::{E, Expr, ExprData};
+use bun_ast::{E, ExprData};
 use bun_collections::{StringArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_core::{Error, Global, Output, err, zstr};
@@ -20,7 +20,7 @@ use crate::lockfile::{
     Migrated, PackageListEntry,
 };
 use crate::lockfile_real::package::PackageColumns as _;
-use crate::lockfile_real::package::workspace_map::WorkspaceMap;
+use crate::lockfile_real::package::workspace_map::{NamesArray, WorkspaceMap};
 use crate::npm::{self as Npm};
 use crate::pnpm;
 use crate::pnpm::MigratePnpmLockfileError;
@@ -239,19 +239,17 @@ pub(crate) fn migrate_npm_lockfile<'a>(
     this.init_empty();
     Install::initialize_store();
 
-    // The arena only backs the materialized workspaces array (if any).
-    let arena = bun_alloc::Arena::new();
     let json_src = bun_ast::Source::init_path_string(abs_path, data);
     // `parsed_json` owns the tape every row/slice below borrows; it must
     // outlive every use of `packages_properties` and the strings within.
-    let parsed_json = bun_parsers::json::parse_utf8_simple(&json_src, log)
+    let parsed_json = bun_parsers::json::parse_utf8_immutable(&json_src, log)
         .map_err(|_| err!("InvalidNPMLockfile"))?;
     let json = &parsed_json.root;
 
-    let ExprData::EObjectSimple(root_obj) = &json.data else {
+    let ExprData::EObjectJSON(root_obj) = &json.data else {
         return Err(err!("InvalidNPMLockfile"));
     };
-    let root_obj: &E::ObjectSimple = root_obj.get();
+    let root_obj: &E::ObjectJSON = root_obj.get();
     match root_obj.get(b"lockfileVersion") {
         Some(E::JsonValue::Number(n)) if n.value() >= 2.0 && n.value() <= 3.0 => {}
         Some(_) => return Err(err!("NPMLockfileVersionMismatch")),
@@ -262,8 +260,8 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
     // Count pass
 
-    let root_package: &E::ObjectSimple;
-    let packages_obj: &E::ObjectSimple = 'brk: {
+    let root_package: &E::ObjectJSON;
+    let packages_obj: &E::ObjectJSON = 'brk: {
         let Some(obj) = root_obj.get(b"packages") else {
             return Err(err!("InvalidNPMLockfile"));
         };
@@ -285,7 +283,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
         root_package = rp;
         break 'brk eobj;
     };
-    let packages_properties: &[E::PropertySimple] = packages_obj.properties();
+    let packages_properties: &[E::PropertyJSON] = packages_obj.properties();
 
     let mut num_deps: u32 = 0;
 
@@ -303,7 +301,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
             let (json_array_value, json_array_loc) = match &wksp_row.value {
                 E::JsonValue::Array(_) => (wksp_row.value, wksp_loc),
                 E::JsonValue::Object(obj) => {
-                    let obj: &E::ObjectSimple = obj.get();
+                    let obj: &E::ObjectJSON = obj.get();
                     let packages_row = obj
                         .properties()
                         .iter()
@@ -325,14 +323,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                 _ => return Err(err!("InvalidNPMLockfile")),
             };
 
-            // `process_names_array` reads a classic `E::Array` (per-item
-            // locations for diagnostics), so deep-copy just this array.
-            let json_array_expr = bun_parsers::json::materialize(
-                &Expr::from_json_value(&json_array_value, json_array_loc),
-                &json_src,
-                &arena,
-            );
-            let ExprData::EArray(json_array) = &json_array_expr.data else {
+            let E::JsonValue::Array(json_array) = json_array_value else {
                 return Err(err!("InvalidNPMLockfile"));
             };
 
@@ -342,8 +333,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
             let workspace_packages_count = workspaces.process_names_array(
                 &mut manager.workspace_package_json_cache,
                 log,
-                // `StoreRef<E::Array>` is Copy + safe-Deref (arena-backed).
-                &**json_array,
+                NamesArray::Immutable(json_array.get(), json_array_loc),
                 &json_src,
                 wksp_loc,
                 None,
@@ -955,8 +945,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
             if let Some(deps) = pkg.get(dep_key.prop) {
                 // fetch the peerDependenciesMeta if it exists
                 // this is only done for peerDependencies, obviously
-                let peer_dep_meta: Option<&E::ObjectSimple> = if dep_key.behavior == Behavior::PEER
-                {
+                let peer_dep_meta: Option<&E::ObjectJSON> = if dep_key.behavior == Behavior::PEER {
                     if let Some(expr) = pkg.get(b"peerDependenciesMeta") {
                         let Some(meta_obj) = expr.as_object() else {
                             return Err(err!("InvalidNPMLockfile"));
@@ -1482,14 +1471,14 @@ pub(crate) fn migrate_npm_lockfile<'a>(
     }))
 }
 
-fn pkg_flag_is_true(pkg: &E::ObjectSimple, key: &[u8]) -> bool {
+fn pkg_flag_is_true(pkg: &E::ObjectJSON, key: &[u8]) -> bool {
     matches!(pkg.get(key), Some(E::JsonValue::Boolean(true)))
 }
 
 /// Skip predicate shared by the package counting, building, and linking
 /// passes — all three must agree, otherwise the later passes append more
 /// packages than the counting pass reserved.
-fn is_skipped_pkg(pkg: &E::ObjectSimple) -> bool {
+fn is_skipped_pkg(pkg: &E::ObjectJSON) -> bool {
     pkg_flag_is_true(pkg, b"inBundle") || pkg_flag_is_true(pkg, b"extraneous")
 }
 

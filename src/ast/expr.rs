@@ -181,31 +181,31 @@ impl Default for Query {
 impl Expr {
     #[inline]
     pub fn is_array(&self) -> bool {
-        matches!(self.data, Data::EArray(_) | Data::EArraySimple(_))
+        matches!(self.data, Data::EArray(_) | Data::EArrayJSON(_))
     }
     #[inline]
     pub fn is_object(&self) -> bool {
-        matches!(self.data, Data::EObject(_) | Data::EObjectSimple(_))
+        matches!(self.data, Data::EObject(_) | Data::EObjectJSON(_))
     }
     #[inline]
     pub fn is_string(&self) -> bool {
-        // JSON "simple" leaves are never `Expr`s: a string inside an
-        // `EObjectSimple`/`EArraySimple` only becomes an `Expr` (an
+        // immutable JSON leaves are never `Expr`s: a string inside an
+        // `EObjectJSON`/`EArrayJSON` only becomes an `Expr` (an
         // `EString`) once materialized by `Expr::from_json_value`.
         matches!(self.data, Data::EString(_))
     }
 
-    /// Materialize a JSON "simple" leaf/container value as an `Expr`.
+    /// Materialize a immutable JSON leaf/container value as an `Expr`.
     ///
     /// Leaves become real nodes (`EString`/`ENumber`/`EBoolean`/`ENull`);
     /// nested containers are already arena rows and are just re-wrapped as
-    /// `EObjectSimple`/`EArraySimple`. A string allocates one `Store` node,
+    /// `EObjectJSON`/`EArrayJSON`. A string allocates one `Store` node,
     /// so this is meant for occasional field reads through the generic
     /// `Expr` accessors (`get`, `as_array`, ...), not for hot iteration —
-    /// iterate `E::ObjectSimple::properties()` / `E::ArraySimple::items()`
+    /// iterate `E::ObjectJSON::properties()` / `E::ArrayJSON::items()`
     /// directly for that.
     ///
-    /// `loc` is the best location the caller has: the simple tape stores no
+    /// `loc` is the best location the caller has: the JSON tape stores no
     /// per-value `Loc`, only the property's key location and the container's
     /// closing-token location.
     pub fn from_json_value(value: &E::JsonValue, loc: Loc) -> Expr {
@@ -222,18 +222,18 @@ impl Expr {
             ),
             E::JsonValue::Object(o) => Expr {
                 loc,
-                data: Data::EObjectSimple(*o),
+                data: Data::EObjectJSON(*o),
             },
             E::JsonValue::Array(a) => Expr {
                 loc,
-                data: Data::EArraySimple(*a),
+                data: Data::EArrayJSON(*a),
             },
         }
     }
 
     /// Look up `name` among the properties of an object-literal expression.
     ///
-    /// For `EObjectSimple` the found value is materialized as an `Expr`
+    /// For `EObjectJSON` the found value is materialized as an `Expr`
     /// (see [`Expr::from_json_value`]); the returned `loc` is the key's
     /// location, which is also used as the materialized value's `loc`.
     pub fn as_property(&self, name: &[u8]) -> Option<Query> {
@@ -244,7 +244,7 @@ impl Expr {
                 }
                 obj.as_property(name)
             }
-            Data::EObjectSimple(obj) => {
+            Data::EObjectJSON(obj) => {
                 let (i, prop) = obj
                     .get()
                     .properties()
@@ -281,11 +281,11 @@ impl Expr {
                     index: 0,
                 })
             }
-            Data::EArraySimple(array) => {
+            Data::EArrayJSON(array) => {
                 if array.get().items().is_empty() {
                     return None;
                 }
-                Some(ArrayIterator::Simple {
+                Some(ArrayIterator::Json {
                     array: *array,
                     index: 0,
                     loc: self.loc,
@@ -347,7 +347,7 @@ impl Expr {
 
 impl Expr {
     pub fn has_any_property_named(&self, names: &'static [&'static [u8]]) -> bool {
-        if let Data::EObjectSimple(obj) = &self.data {
+        if let Data::EObjectJSON(obj) = &self.data {
             return obj
                 .get()
                 .properties()
@@ -390,15 +390,15 @@ impl Expr {
                 }
                 Some(array.items.slice()[index as usize])
             }
-            // Simple JSON containers: materialize the addressed value (see
+            // Immutable JSON containers: materialize the addressed value (see
             // `Expr::from_json_value`). Items carry no `Loc`, so the
             // container's `loc` / the key's `loc` is used.
-            Data::EArraySimple(array) => {
+            Data::EArrayJSON(array) => {
                 let items = array.get().items();
                 let item = items.get(index as usize)?;
                 Some(Expr::from_json_value(item, self.loc))
             }
-            Data::EObjectSimple(object) => object
+            Data::EObjectJSON(object) => object
                 .get()
                 .properties()
                 .iter()
@@ -509,7 +509,7 @@ impl Expr {
     /// Don't use this if you care about performance.
     ///
     /// Sets the value of a property, creating it if it doesn't exist.
-    /// `self` must be a (full) `EObject`: the JSON "simple" containers are
+    /// `self` must be a (full) `EObject`: the immutable JSON containers are
     /// read-only and cannot be mutated through this helper.
     pub fn set(&mut self, _bump: &Bump, name: &[u8], value: Expr) -> Result<(), AllocError> {
         debug_assert!(matches!(self.data, Data::EObject(_)));
@@ -548,7 +548,7 @@ impl Expr {
     /// Don't use this if you care about performance.
     ///
     /// Sets the value of a property to a string, creating it if it doesn't exist.
-    /// `expr` must be a (full) `EObject`: the JSON "simple" containers are
+    /// `expr` must be a (full) `EObject`: the immutable JSON containers are
     /// read-only and cannot be mutated through this helper.
     pub fn set_string(
         expr: &mut Expr,
@@ -664,9 +664,9 @@ impl Expr {
         q.expr.as_array()
     }
 
-    // No `EObjectSimple`/`EArraySimple` arms: rope queries exist only for the
+    // No `EObjectJSON`/`EArrayJSON` arms: rope queries exist only for the
     // TOML/ini object *builders*, which construct mutable full `EObject`
-    // trees. The read-only JSON simple containers can never appear here.
+    // trees. The read-only JSON immutable containers can never appear here.
     pub fn get_rope<'a>(&self, rope: &'a E::Rope) -> Option<E::RopeQuery<'a>> {
         if let Some(existing) = self.get(&rope.head.data.as_e_string().unwrap().data) {
             match &existing.data {
@@ -709,10 +709,10 @@ impl Expr {
         name: &[u8],
         bump: &'b Bump,
     ) -> Option<Box<ArrayHashMap<&'b [u8], &'b [u8]>>> {
-        // Simple JSON containers: keys/values are already decoded UTF-8
+        // Immutable JSON containers: keys/values are already decoded UTF-8
         // arena slices (`Str`, same lifetime-erasure contract as
         // `StoreStr`), so they go into the map without materializing.
-        if let Data::EObjectSimple(obj_) = &expr.data {
+        if let Data::EObjectJSON(obj_) = &expr.data {
             let E::JsonValue::Object(inner) = obj_.get().get(name)? else {
                 return None;
             };
@@ -805,11 +805,11 @@ pub enum ArrayIterator {
         array: StoreRef<E::Array>,
         index: u32,
     },
-    /// JSON "simple" array: each `next()` materializes one item as an `Expr`
+    /// immutable JSON array: each `next()` materializes one item as an `Expr`
     /// (see [`Expr::from_json_value`]), so leaf items each allocate a node.
     /// `loc` is the array expression's `loc` (items carry none of their own).
-    Simple {
-        array: StoreRef<E::ArraySimple>,
+    Json {
+        array: StoreRef<E::ArrayJSON>,
         index: u32,
         loc: Loc,
     },
@@ -819,7 +819,7 @@ impl ArrayIterator {
     /// Rewind to the first item.
     pub fn reset(&mut self) {
         match self {
-            ArrayIterator::Full { index, .. } | ArrayIterator::Simple { index, .. } => *index = 0,
+            ArrayIterator::Full { index, .. } | ArrayIterator::Json { index, .. } => *index = 0,
         }
     }
 
@@ -833,7 +833,7 @@ impl ArrayIterator {
                 *index += 1;
                 Some(result)
             }
-            ArrayIterator::Simple { array, index, loc } => {
+            ArrayIterator::Json { array, index, loc } => {
                 let item = array.get().items().get(*index as usize)?;
                 *index += 1;
                 Some(Expr::from_json_value(item, *loc))
@@ -1176,8 +1176,8 @@ impl_into_expr_data_boxed! {
     JSXElement => EJsxElement,
     BigInt => EBigInt,
     Object => EObject,
-    ObjectSimple => EObjectSimple,
-    ArraySimple => EArraySimple,
+    ObjectJSON => EObjectJSON,
+    ArrayJSON => EArrayJSON,
     Spread => ESpread,
     Template => ETemplate,
     RegExp => ERegExp,
@@ -1362,8 +1362,8 @@ pub enum Tag {
     EArrow,
     EJsxElement,
     EObject,
-    EObjectSimple,
-    EArraySimple,
+    EObjectJSON,
+    EArrayJSON,
     ESpread,
     ETemplate,
     ERegExp,
@@ -1845,10 +1845,10 @@ pub enum Data {
 
     EJsxElement(StoreRef<E::JSXElement>),
     EObject(StoreRef<E::Object>),
-    // JSON-only compact containers (see `E::ObjectSimple`): produced solely
+    // JSON-only compact containers (see `E::ObjectJSON`): produced solely
     // by the JSON parser for opted-in entry points, never by the JS parser.
-    EObjectSimple(StoreRef<E::ObjectSimple>),
-    EArraySimple(StoreRef<E::ArraySimple>),
+    EObjectJSON(StoreRef<E::ObjectJSON>),
+    EArrayJSON(StoreRef<E::ArrayJSON>),
     ESpread(StoreRef<E::Spread>),
     ETemplate(StoreRef<E::Template>),
     ERegExp(StoreRef<E::RegExp>),
@@ -2793,7 +2793,7 @@ impl Data {
             Data::EClass(_) => {}
             Data::ENew(_) | Data::ECall(_) => {}
             Data::EFunction(_) => {}
-            Data::EObjectSimple(e) => {
+            Data::EObjectJSON(e) => {
                 let e = e.get();
                 raw(hasher, e.is_single_line);
                 raw(hasher, e.properties().len() as u32);
@@ -2802,7 +2802,7 @@ impl Data {
                     p.value.write_to_hasher(hasher);
                 }
             }
-            Data::EArraySimple(e) => {
+            Data::EArrayJSON(e) => {
                 let e = e.get();
                 raw(hasher, e.is_single_line);
                 raw(hasher, e.items().len() as u32);
@@ -3512,8 +3512,8 @@ crate::new_store!(
         E::JSXElement,
         E::Number,
         E::Object,
-        E::ObjectSimple,
-        E::ArraySimple,
+        E::ObjectJSON,
+        E::ArrayJSON,
         E::Spread,
         E::TemplatePart,
         E::Template,

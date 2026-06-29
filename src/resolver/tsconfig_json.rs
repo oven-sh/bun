@@ -23,7 +23,7 @@ pub enum JsonMode {
 /// directly — `bun_parsers::json_parser` is lower-tier than the resolver, so no
 /// cycle exists.
 ///
-/// tsconfig.json and package.json parse into the compact simple row AST
+/// tsconfig.json and package.json parse into the compact immutable row AST
 /// ([`json_parser::ParsedJson`]); the caller owns the returned document and
 /// its row tape. `parse_json` still produces the classic `E::Object` tree
 /// (its callers pattern-match and splice `Expr` nodes), which `json_parser`
@@ -62,11 +62,11 @@ impl JsonCache {
         Ok(result)
     }
 
-    /// Simple-AST twin of [`Self::parse`]: no arena — the returned
+    /// Immutable-AST twin of [`Self::parse`]: no arena — the returned
     /// [`json_parser::ParsedJson`] owns the document's row tape, and
     /// everything reachable from its `root` borrows that tape and `source`.
     #[inline]
-    fn parse_simple(
+    fn parse_immutable(
         &mut self,
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
@@ -81,7 +81,7 @@ impl JsonCache {
         Ok(result)
     }
 
-    /// Parses tsconfig.json/jsconfig.json source as JSONC into the simple row
+    /// Parses tsconfig.json/jsconfig.json source as JSONC into the immutable row
     /// AST. The caller owns the returned document (root + tape).
     #[inline]
     pub fn parse_tsconfig(
@@ -89,11 +89,11 @@ impl JsonCache {
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
     ) -> Result<Option<json_parser::ParsedJson>, bun_core::Error> {
-        self.parse_simple(log, source, json_parser::parse_ts_config_simple)
+        self.parse_immutable(log, source, json_parser::parse_ts_config_immutable)
     }
 
     /// Parses package.json source (comments and trailing commas allowed,
-    /// strings always UTF-8) into the simple row AST. The caller owns the
+    /// strings always UTF-8) into the immutable row AST. The caller owns the
     /// returned document (root + tape).
     #[inline]
     pub fn parse_package_json(
@@ -101,7 +101,7 @@ impl JsonCache {
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
     ) -> Result<Option<json_parser::ParsedJson>, bun_core::Error> {
-        self.parse_simple(log, source, json_parser::parse_package_json_utf8_simple)
+        self.parse_immutable(log, source, json_parser::parse_package_json_utf8_immutable)
     }
 
     /// Parses JSON source into the cache arena using `mode` to pick strict
@@ -368,7 +368,7 @@ impl TSConfigJSON {
         // `jsxImportSource`) is preserved.
         let mut extends_value: Option<&bun_ast::E::JsonValue> = None;
         let mut compiler_opts: Option<&bun_ast::E::JsonValue> = None;
-        if let bun_ast::ExprData::EObjectSimple(obj) = &json.data {
+        if let bun_ast::ExprData::EObjectJSON(obj) = &json.data {
             for property in obj.get().properties() {
                 match property.key.slice() {
                     b"extends" if extends_value.is_none() => extends_value = Some(&property.value),
@@ -408,7 +408,7 @@ impl TSConfigJSON {
             if let Some(obj) = compiler_opts.as_object() {
                 for property in obj.properties() {
                     let value = &property.value;
-                    // The simple AST stores only the key's location.
+                    // The immutable AST stores only the key's location.
                     let loc = property.key_loc;
                     match property.key.slice() {
                         b"baseUrl" if base_url_v.is_none() => base_url_v = Some(value),

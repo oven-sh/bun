@@ -304,13 +304,13 @@ impl BunxCommand {
         // the parsed document (and the `package_json_bytes` it borrows) only
         // needs to live to the end of this function.
         let bump = bun_alloc::Arena::new();
-        let parsed = json::parse_package_json_utf8_simple(&source, log)?;
+        let parsed = json::parse_package_json_utf8_immutable(&source, log)?;
         let expr = parsed.root;
 
         // choose the first package that fits
         if let Some(bin_expr) = expr.get(b"bin") {
             match &bin_expr.data {
-                ExprData::EObjectSimple(object) => {
+                ExprData::EObjectJSON(object) => {
                     for prop in object.get().properties() {
                         let bin_name = prop.key.slice();
                         if !Self::is_safe_bin_name(bin_name) {

@@ -65,19 +65,19 @@ impl ExprStr for Expr {
 
 /// `"key": value` rows of a JSON object expression, yielded as
 /// `(key, value string, key location)` so the property loops below accept
-/// both shapes `parse_with_json` receives: the simple `EObjectSimple`
-/// produced by `parse_package_json_utf8_simple`, and the classic `EObject`
+/// both shapes `parse_with_json` receives: the immutable `EObjectJSON`
+/// produced by `parse_package_json_utf8_immutable`, and the classic `EObject`
 /// of cached/edited documents (`WorkspacePackageJSONCache`).
 ///
 /// A non-string value yields `None`. Classic UTF-16 strings are transcoded
-/// into `bump`; simple rows are already decoded UTF-8 borrowing the
+/// into `bump`; rows are already decoded UTF-8 borrowing the
 /// document's source or tape.
 enum JsonObjectStringRows<'a> {
     Classic(
         core::slice::Iter<'a, bun_ast::G::Property>,
         &'a bun_alloc::Arena,
     ),
-    Simple(core::slice::Iter<'a, E::PropertySimple>),
+    Json(core::slice::Iter<'a, E::PropertyJSON>),
 }
 
 impl<'a> JsonObjectStringRows<'a> {
@@ -85,7 +85,7 @@ impl<'a> JsonObjectStringRows<'a> {
     fn new(expr: &'a Expr, bump: &'a bun_alloc::Arena) -> Option<Self> {
         match &expr.data {
             ExprData::EObject(obj) => Some(Self::Classic(obj.properties.slice().iter(), bump)),
-            ExprData::EObjectSimple(obj) => Some(Self::Simple(obj.get().properties().iter())),
+            ExprData::EObjectJSON(obj) => Some(Self::Json(obj.get().properties().iter())),
             _ => None,
         }
     }
@@ -93,7 +93,7 @@ impl<'a> JsonObjectStringRows<'a> {
     fn len(&self) -> usize {
         match self {
             Self::Classic(iter, _) => iter.len(),
-            Self::Simple(iter) => iter.len(),
+            Self::Json(iter) => iter.len(),
         }
     }
 }
@@ -114,7 +114,7 @@ impl<'a> Iterator for JsonObjectStringRows<'a> {
                     key.loc,
                 ))
             }
-            Self::Simple(iter) => {
+            Self::Json(iter) => {
                 let row = iter.next()?;
                 Some((row.key.slice(), row.value.as_str(), row.key_loc))
             }
@@ -123,35 +123,11 @@ impl<'a> Iterator for JsonObjectStringRows<'a> {
 }
 
 /// The classic `E::Array` behind `expr` (a JSON array of either
-/// representation): a classic array is returned as-is; the simple
+/// representation): a classic array is returned as-is; the immutable
 /// representation is materialized from `source` at `loc` (the array's own
 /// `[`) so item diagnostics keep their exact source positions.
-fn classic_names_array(
-    expr: &Expr,
-    loc: bun_ast::Loc,
-    source: &bun_ast::Source,
-    bump: &bun_alloc::Arena,
-) -> bun_ast::StoreRef<E::Array> {
-    if let ExprData::EArray(arr) = &expr.data {
-        return *arr;
-    }
-    debug_assert!(expr.is_array());
-    let materialized = crate::bun_json::materialize(
-        &Expr {
-            data: expr.data,
-            loc,
-        },
-        source,
-        bump,
-    );
-    match materialized.data {
-        ExprData::EArray(arr) => arr,
-        _ => unreachable!("materializing a JSON array yields a classic array"),
-    }
-}
-
 /// Cold path: the location of the value of the property whose key string
-/// starts at `key_loc`. The simple JSON AST stores only key locations, so a
+/// starts at `key_loc`. The immutable JSON AST stores only key locations, so a
 /// diagnostic that points at a value re-scans the source it was parsed from;
 /// the key's location is the fallback when the bytes don't match.
 pub(crate) fn value_loc_of(source: &bun_ast::Source, key_loc: bun_ast::Loc) -> bun_ast::Loc {
@@ -1733,7 +1709,7 @@ impl Package<u64> {
         initialize_store();
         // `parsed` owns the tape every `Expr` reached from `parsed.root`
         // borrows, so it must stay alive until `parse_with_json` returns.
-        let parsed = match crate::bun_json::parse_package_json_utf8_simple(source, log) {
+        let parsed = match crate::bun_json::parse_package_json_utf8_immutable(source, log) {
             Ok(p) => p,
             Err(err) => {
                 let _ = log.print(std::ptr::from_mut(Output::error_writer()));
@@ -2391,7 +2367,7 @@ impl Package<u64> {
                             }
                         }
                     }
-                    ExprData::EObjectSimple(obj) => {
+                    ExprData::EObjectJSON(obj) => {
                         let props = obj.get().properties();
                         optional_peer_dependencies.ensure_unused_capacity(props.len())?;
                         for row in props {
@@ -2437,16 +2413,15 @@ impl Package<u64> {
                             );
                             return Err(bun_core::err!("InvalidPackageJSON"));
                         }
-                        let arr = classic_names_array(
+                        let arr = workspace_map::NamesArray::from_expr(
                             &dependencies_q.expr,
                             value_loc_of(source, dependencies_q.loc),
-                            source,
-                            &bump,
-                        );
+                        )
+                        .expect("is_array was checked above");
                         total_dependencies_count += workspace_names.process_names_array(
                             &mut pm.workspace_package_json_cache,
                             log,
-                            &*arr,
+                            arr,
                             source,
                             dependencies_q.loc,
                             Some(&mut string_builder),
@@ -2468,7 +2443,7 @@ impl Package<u64> {
                                 dependencies_q.expr.as_property(b"packages")
                             {
                                 let packages_expr = packages_query.expr;
-                                // The simple representation locates a looked-up
+                                // The immutable representation locates a looked-up
                                 // value at its key; recover the value's own
                                 // location for the diagnostics below.
                                 let packages_loc =
@@ -2487,16 +2462,15 @@ impl Package<u64> {
                                     );
                                     return Err(bun_core::err!("InvalidPackageJSON"));
                                 }
-                                let packages_arr = classic_names_array(
+                                let packages_arr = workspace_map::NamesArray::from_expr(
                                     &packages_expr,
                                     packages_loc,
-                                    source,
-                                    &bump,
-                                );
+                                )
+                                .expect("is_array was checked above");
                                 total_dependencies_count += workspace_names.process_names_array(
                                     &mut pm.workspace_package_json_cache,
                                     log,
-                                    &*packages_arr,
+                                    packages_arr,
                                     source,
                                     packages_loc,
                                     Some(&mut string_builder),
@@ -2559,7 +2533,7 @@ impl Package<u64> {
             if let Some(q) = json.as_property(b"trustedDependencies") {
                 let count = match &q.expr.data {
                     ExprData::EArray(arr) => arr.items.len_u32() as usize,
-                    ExprData::EArraySimple(arr) => arr.get().items().len(),
+                    ExprData::EArrayJSON(arr) => arr.get().items().len(),
                     _ => return Err(invalid_trusted_dependencies(log, source, q.loc)),
                 };
                 if lockfile.trusted_dependencies.is_none() {
@@ -2580,7 +2554,7 @@ impl Package<u64> {
                             );
                         }
                     }
-                    ExprData::EArraySimple(arr) => {
+                    ExprData::EArrayJSON(arr) => {
                         for item in arr.get().items() {
                             let Some(name) = item.as_str() else {
                                 return Err(invalid_trusted_dependencies(log, source, q.loc));
@@ -2843,7 +2817,7 @@ impl Package<u64> {
                             bundled_deps.insert(s)?;
                         }
                     }
-                    ExprData::EArraySimple(arr) => {
+                    ExprData::EArrayJSON(arr) => {
                         for item in arr.get().items() {
                             let Some(s) = item.as_str() else {
                                 continue;

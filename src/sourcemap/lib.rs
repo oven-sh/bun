@@ -950,7 +950,7 @@ pub fn parse_json(
     // Everything reached through `json` borrows `parsed` (the document's row
     // tape) and `json_src`; both stay alive to the end of this function, and
     // every string the map keeps is copied into owned storage below.
-    let parsed = match bun_parsers::json::parse_utf8_simple(&json_src, &mut log) {
+    let parsed = match bun_parsers::json::parse_utf8_immutable(&json_src, &mut log) {
         Ok(p) => p,
         Err(_) => return Err(bun_core::err!("InvalidJSON")),
     };
@@ -976,7 +976,7 @@ pub fn parse_json(
         .ok_or_else(|| bun_core::err!("InvalidSourceMap"))?
         .data
     {
-        bun_ast::ExprData::EArraySimple(arr) => arr,
+        bun_ast::ExprData::EArrayJSON(arr) => arr,
         _ => return Err(bun_core::err!("InvalidSourceMap")),
     };
     let sources_content = sources_content.get();
@@ -986,7 +986,7 @@ pub fn parse_json(
         .ok_or_else(|| bun_core::err!("InvalidSourceMap"))?
         .data
     {
-        bun_ast::ExprData::EArraySimple(arr) => arr,
+        bun_ast::ExprData::EArrayJSON(arr) => arr,
         _ => return Err(bun_core::err!("InvalidSourceMap")),
     };
     let sources_paths = sources_paths.get();
@@ -1039,7 +1039,7 @@ pub fn parse_json(
         {
             if matches!(map_data.mappings.r#impl, mapping::ListValue::WithNames(_)) {
                 if let Some(names) = json.get(b"names") {
-                    if let bun_ast::ExprData::EArraySimple(arr) = names.data {
+                    if let bun_ast::ExprData::EArrayJSON(arr) = names.data {
                         let arr = arr.get();
                         let mut names_list: Vec<bun_semver::String> =
                             Vec::with_capacity(arr.items().len());

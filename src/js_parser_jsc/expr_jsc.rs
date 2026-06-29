@@ -59,8 +59,8 @@ fn data_to_js_with_check(
     match this {
         ExprData::EArray(e) => array_to_js(e, global, stack_check),
         ExprData::EObject(e) => object_to_js(e, global, stack_check),
-        ExprData::EObjectSimple(e) => object_simple_to_js(e, global, stack_check),
-        ExprData::EArraySimple(e) => array_simple_to_js(e, global, stack_check),
+        ExprData::EObjectJSON(e) => object_json_to_js(e, global, stack_check),
+        ExprData::EArrayJSON(e) => array_json_to_js(e, global, stack_check),
         ExprData::EString(e) => string_to_js(e, global),
         ExprData::ENull(_) => Ok(JSValue::NULL),
         ExprData::EUndefined(_) => Ok(JSValue::UNDEFINED),
@@ -145,12 +145,12 @@ pub(crate) fn object_to_js(
     Ok(obj)
 }
 
-/// JSON "simple" containers (`E::ObjectSimple` / `E::ArraySimple`,
+/// immutable JSON containers (`E::ObjectJSON` / `E::ArrayJSON`,
 /// produced by the JSON parser for opted-in entry points like
 /// `Bun.JSONC.parse`): children are inline `E::JsonValue`s, with string
 /// leaves already-decoded UTF-8.
-pub(crate) fn object_simple_to_js(
-    this: &E::ObjectSimple,
+pub(crate) fn object_json_to_js(
+    this: &E::ObjectJSON,
     global: &JSGlobalObject,
     stack_check: StackCheck,
 ) -> Result<JSValue, ToJSError> {
@@ -167,8 +167,8 @@ pub(crate) fn object_simple_to_js(
     Ok(obj)
 }
 
-pub(crate) fn array_simple_to_js(
-    this: &E::ArraySimple,
+pub(crate) fn array_json_to_js(
+    this: &E::ArrayJSON,
     global: &JSGlobalObject,
     stack_check: StackCheck,
 ) -> Result<JSValue, ToJSError> {
@@ -195,8 +195,8 @@ fn json_value_to_js(
         E::JsonValue::Boolean(false) => JSValue::FALSE,
         E::JsonValue::Number(n) => number_to_js(*n),
         E::JsonValue::String(s) => utf8_bytes_to_js(s.slice(), global)?,
-        E::JsonValue::Object(o) => object_simple_to_js(o.get(), global, stack_check)?,
-        E::JsonValue::Array(a) => array_simple_to_js(a.get(), global, stack_check)?,
+        E::JsonValue::Object(o) => object_json_to_js(o.get(), global, stack_check)?,
+        E::JsonValue::Array(a) => array_json_to_js(a.get(), global, stack_check)?,
     })
 }
 

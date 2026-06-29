@@ -1883,15 +1883,19 @@ fn parse_data_loader<'a>(
         options::Loader::Jsonc => {
             // We allow importing tsconfig.*.json or jsconfig.*.json with comments
             // These files implicitly become JSONC files, which aligns with the behavior of text editors.
-            match bun_parsers::json::parse_ts_config::<false>(source, log, arena) {
+            // The whole document (its row tape included) lives in `arena`,
+            // which owns the returned AST; nothing depends on `Drop`.
+            match bun_parsers::json::parse_ts_config_immutable_in(source, log, arena) {
                 Ok(e) => e,
                 Err(_) => return None,
             }
         }
-        options::Loader::Json => match bun_parsers::json::parse::<false>(source, log, arena) {
-            Ok(e) => e,
-            Err(_) => return None,
-        },
+        options::Loader::Json => {
+            match bun_parsers::json::parse_utf8_immutable_in(source, log, arena) {
+                Ok(e) => e,
+                Err(_) => return None,
+            }
+        }
         options::Loader::Toml => match bun_parsers::toml::TOML::parse(source, log, arena, false) {
             Ok(e) => e,
             Err(_) => return None,
@@ -1910,6 +1914,18 @@ fn parse_data_loader<'a>(
         _ => unsafe { core::hint::unreachable_unchecked() },
     };
     let mut expr = value_expr;
+
+    // The named-exports rewrite below splices every top-level property's
+    // value `Expr` into the module's statements and rewrites the property in
+    // place, so an object root headed there (the bundler) needs the classic
+    // tree. Everything else — the runtime's lazy single-statement export
+    // (`to_js` understands the rows) and non-object roots (the printer
+    // does too) — stays on the rows the JSON parser produced.
+    if !keep_json_and_toml_as_one_statement
+        && matches!(expr.data, bun_ast::ExprData::EObjectJSON(_))
+    {
+        expr = bun_parsers::json::materialize(&expr, source, arena);
+    }
 
     let mut symbols: Vec<bun_ast::Symbol> = Vec::new();
 

@@ -3979,10 +3979,10 @@ pub mod __gated_printer {
                         self.print(b")");
                     }
                 }
-                // JSON-only compact containers (`E::ObjectSimple`): children
+                // JSON-only compact containers (`E::ObjectJSON`): children
                 // are inline `JsonValue`s, not `Expr`s, so they are printed
                 // here rather than through `print_property`/`print_expr`.
-                ExprData::EObjectSimple(e) => {
+                ExprData::EObjectJSON(e) => {
                     let e = e.get();
                     let n = self.writer.written();
                     let wrap = !IS_JSON && (self.stmt_start == n || self.arrow_expr_start == n);
@@ -3990,14 +3990,14 @@ pub mod __gated_printer {
                         self.print(b"(");
                     }
                     self.add_source_mapping(expr.loc);
-                    self.print_object_simple(e);
+                    self.print_object_json(e);
                     if wrap {
                         self.print(b")");
                     }
                 }
-                ExprData::EArraySimple(e) => {
+                ExprData::EArrayJSON(e) => {
                     self.add_source_mapping(expr.loc);
-                    self.print_array_simple(e.get());
+                    self.print_array_json(e.get());
                 }
                 ExprData::EBoolean(e) | ExprData::EBranchBoolean(e) => {
                     self.add_source_mapping(expr.loc);
@@ -4650,8 +4650,8 @@ pub mod __gated_printer {
                     && (self.options.minify_syntax || !self.options.has_run_symbol_renamer))
         }
 
-        /// `E::ObjectSimple` (JSON-only): always printed in JSON shape.
-        pub fn print_object_simple(&mut self, e: &E::ObjectSimple) {
+        /// `E::ObjectJSON` (JSON-only): always printed in JSON shape.
+        pub fn print_object_json(&mut self, e: &E::ObjectJSON) {
             self.print(b"{");
             let props = e.properties();
             if !props.is_empty() {
@@ -4689,8 +4689,8 @@ pub mod __gated_printer {
             self.print(b"}");
         }
 
-        /// `E::ArraySimple` (JSON-only).
-        pub fn print_array_simple(&mut self, e: &E::ArraySimple) {
+        /// `E::ArrayJSON` (JSON-only).
+        pub fn print_array_json(&mut self, e: &E::ArrayJSON) {
             self.print(b"[");
             let items = e.items();
             if !items.is_empty() {
@@ -4730,8 +4730,8 @@ pub mod __gated_printer {
                     let s = E::String::init(s.slice());
                     self.print_string_literal_e_string(&s, false);
                 }
-                E::JsonValue::Object(o) => self.print_object_simple(o.get()),
-                E::JsonValue::Array(a) => self.print_array_simple(a.get()),
+                E::JsonValue::Object(o) => self.print_object_json(o.get()),
+                E::JsonValue::Array(a) => self.print_array_json(a.get()),
             }
         }
 

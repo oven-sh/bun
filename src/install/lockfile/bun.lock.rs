@@ -1585,26 +1585,26 @@ impl<T> PkgMap<T> {
 
 // const PkgMap = struct {};
 
-/// Property rows of a simple-AST object `Expr` (callers have already
+/// Property rows of a immutable-AST object `Expr` (callers have already
 /// established `is_object()`, and the lockfile parse only ever sees the
-/// simple containers).
-fn object_rows(expr: &Expr) -> &[JSON::E::PropertySimple] {
+/// immutable containers).
+fn object_rows(expr: &Expr) -> &[JSON::E::PropertyJSON] {
     match &expr.data {
-        ExprData::EObjectSimple(o) => o.get().properties(),
+        ExprData::EObjectJSON(o) => o.get().properties(),
         _ => &[],
     }
 }
 
-/// Items of a simple-AST array `Expr`. See [`object_rows`].
+/// Items of a immutable-AST array `Expr`. See [`object_rows`].
 fn array_items(expr: &Expr) -> &[JSON::E::JsonValue] {
     match &expr.data {
-        ExprData::EArraySimple(a) => a.get().items(),
+        ExprData::EArrayJSON(a) => a.get().items(),
         _ => &[],
     }
 }
 
 /// Location of the value of the property whose key starts at `key_loc`.
-/// The simple AST records only key locations (and `Expr::get` returns the
+/// The immutable AST records only key locations (and `Expr::get` returns the
 /// key's location), so diagnostics that point at a property *value* recover
 /// it from the source. Cold path: an error/warning is about to be reported.
 fn value_loc(source: &bun_ast::Source, key_loc: bun_ast::Loc) -> bun_ast::Loc {
@@ -1626,10 +1626,6 @@ pub fn parse_into_binary_lockfile(
     mut manager: Option<&mut PackageManager>,
 ) -> Result<(), ParseError> {
     lockfile.init_empty();
-
-    // Scratch arena for the few subtrees handed to helpers that consume the
-    // classic AST (`Bin::parse_append`); see `bun_parsers::json::materialize`.
-    let bump = bun_alloc::Arena::new();
 
     let Some(lockfile_version_expr) = root.get(b"lockfileVersion") else {
         log.add_error(Some(source), root.loc, b"Missing lockfile version");
@@ -2205,7 +2201,7 @@ pub fn parse_into_binary_lockfile(
 
                 if let Some(bin_expr) = value.get(b"bin") {
                     pkg.bin = Bin::parse_append(
-                        &JSON::materialize(&bin_expr, source, &bump),
+                        &bin_expr,
                         &mut sbuf!(lockfile),
                         &mut lockfile.buffers.extern_strings,
                     )?;
@@ -2567,7 +2563,7 @@ pub fn parse_into_binary_lockfile(
 
                         if let Some(bin) = deps_expr.get(b"bin") {
                             pkg.bin = Bin::parse_append(
-                                &JSON::materialize(&bin, source, &bump),
+                                &bin,
                                 &mut sbuf!(lockfile),
                                 &mut lockfile.buffers.extern_strings,
                             )?;
@@ -2614,7 +2610,7 @@ pub fn parse_into_binary_lockfile(
 
                         if let Some(bin) = bin_obj.get(b"bin") {
                             pkg.bin = Bin::parse_append(
-                                &JSON::materialize(&bin, source, &bump),
+                                &bin,
                                 &mut sbuf!(lockfile),
                                 &mut lockfile.buffers.extern_strings,
                             )?;

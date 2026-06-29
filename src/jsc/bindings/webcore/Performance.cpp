@@ -466,25 +466,24 @@ void Performance::scheduleTaskIfNeeded()
 
     // Observer callbacks run in the async context of the entry that scheduled
     // the delivery task (the first one queued in this batch), matching Node.
-    if (auto* globalObject = context->jsGlobalObject()) {
-        JSC::JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
-        if (!asyncContext.isUndefined())
-            m_timingBufferDeliveryAsyncContext.set(globalObject->vm(), asyncContext);
-    }
+    auto* schedulingGlobalObject = context->jsGlobalObject();
+    JSC::JSValue asyncContext = schedulingGlobalObject->m_asyncContextData.get()->getInternalField(0);
+    if (!asyncContext.isUndefined())
+        m_timingBufferDeliveryAsyncContext.set(schedulingGlobalObject->vm(), asyncContext);
 
     m_hasScheduledTimingBufferDeliveryTask = true;
     context->postTask([protectedThis = Ref { *this }, this](ScriptExecutionContext& context) {
         m_hasScheduledTimingBufferDeliveryTask = false;
 
+        auto* globalObject = context.jsGlobalObject();
         JSC::JSValue restoreAsyncContext {};
         JSC::InternalFieldTuple* asyncContextData = nullptr;
-        auto* globalObject = context.jsGlobalObject();
-        if (m_timingBufferDeliveryAsyncContext && globalObject) {
+        if (m_timingBufferDeliveryAsyncContext) {
             asyncContextData = globalObject->m_asyncContextData.get();
             restoreAsyncContext = asyncContextData->getInternalField(0);
             asyncContextData->putInternalField(globalObject->vm(), 0, m_timingBufferDeliveryAsyncContext.get());
+            m_timingBufferDeliveryAsyncContext.clear();
         }
-        m_timingBufferDeliveryAsyncContext.clear();
 
         for (auto& observer : copyToVector(m_observers))
             observer->deliver();

@@ -567,12 +567,17 @@ describe("async context passes through", () => {
     expect(a).toBe("value");
   });
   // The observer callback runs in the async context of the entry that
-  // scheduled the delivery batch (the first one queued), matching Node.
+  // scheduled the delivery batch (the first one queued), matching Node. The
+  // registration context is never what the callback sees.
   test("PerformanceObserver", async () => {
     const s = new AsyncLocalStorage<string>();
-    const { promise, resolve } = Promise.withResolvers<{ store: string | undefined; names: string[] }>();
+    const batches: PromiseWithResolvers<{ store: string | undefined; names: string[] }>[] = [
+      Promise.withResolvers(),
+      Promise.withResolvers(),
+    ];
+    let batch = 0;
     const observer = new PerformanceObserver(list => {
-      resolve({
+      batches[batch++].resolve({
         store: s.getStore(),
         names: list
           .getEntries()
@@ -582,6 +587,8 @@ describe("async context passes through", () => {
     });
     try {
       s.run("registration", () => observer.observe({ entryTypes: ["measure"] }));
+
+      // Batch 1: two producers in different contexts. The first one wins.
       s.run("p1", () => {
         performance.mark("a");
         performance.measure("m1", "a");
@@ -590,23 +597,12 @@ describe("async context passes through", () => {
         performance.mark("b");
         performance.measure("m2", "b");
       });
-      expect(await promise).toEqual({ store: "p1", names: ["m1", "m2"] });
-    } finally {
-      observer.disconnect();
-      performance.clearMarks();
-      performance.clearMeasures();
-    }
-  });
-  test("PerformanceObserver with no producing context", async () => {
-    const s = new AsyncLocalStorage<string>();
-    const { promise, resolve } = Promise.withResolvers<string | undefined>();
-    const observer = new PerformanceObserver(() => resolve(s.getStore()));
-    try {
-      // The registration context is not what the callback sees.
-      s.run("registration", () => observer.observe({ entryTypes: ["measure"] }));
+      expect(await batches[0].promise).toStrictEqual({ store: "p1", names: ["m1", "m2"] });
+
+      // Batch 2: no producing context. Batch 1's captured context must not leak.
       performance.mark("c");
       performance.measure("m3", "c");
-      expect(await promise).toBeUndefined();
+      expect(await batches[1].promise).toStrictEqual({ store: undefined, names: ["m3"] });
     } finally {
       observer.disconnect();
       performance.clearMarks();

@@ -65,11 +65,11 @@ declare module "bun" {
    */
   interface SQLArrayParameter {
     /**
-     * The serialized values of the array parameter
+     * The array values, serialized into a single string
      */
     serializedValues: string;
     /**
-     * The type of the array parameter
+     * The element type of the array, for example `"INT"`
      */
     arrayType: ArrayType;
   }
@@ -342,14 +342,14 @@ declare module "bun" {
       path?: string | undefined;
 
       /**
-       * Callback executed when a connection attempt completes
-       * Receives an Error on failure, or null on success.
+       * Called when a connection attempt completes.
+       * Receives an `Error` on failure, or `null` on success.
        */
       onconnect?: ((err: Error | null) => void) | undefined;
 
       /**
-       * Callback executed when a connection is closed
-       * Receives the closing Error or null.
+       * Called when a connection is closed.
+       * Receives the closing `Error`, or `null`.
        */
       onclose?: ((err: Error | null) => void) | undefined;
 

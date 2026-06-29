@@ -92,11 +92,10 @@ fn native_handle_fd(handle: JSValue) -> Option<Fd> {
         // SAFETY: `as_` returned a non-null `*mut TCPSocket`; the JS wrapper
         // holds it alive for the call.
         unsafe { (*tcp).socket.get() }.fd()
-    } else if let Some(tls) = handle.as_::<TLSSocket>() {
+    } else {
+        let tls = handle.as_::<TLSSocket>()?;
         // SAFETY: see above.
         unsafe { (*tls).socket.get() }.fd()
-    } else {
-        return None;
     };
     fd.is_valid().then_some(fd)
 }

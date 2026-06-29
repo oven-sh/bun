@@ -666,6 +666,19 @@ function encodeRealpathResult(result, encoding) {
 }
 
 let assertEncodingForWindows: any = undefined;
+// Path components that exist but cannot be inspected (EPERM/EACCES -- e.g.
+// drive roots and profile directories when running sandboxed, such as inside
+// a Windows AppContainer) are treated as plain, hard directories: not a
+// link, not a pipe or socket.
+const inaccessibleComponentStat: any = {
+  isFIFO: () => false,
+  isSocket: () => false,
+  isSymbolicLink: () => false,
+};
+function isPermissionDenied(err: any) {
+  const code = err?.code;
+  return code === "EPERM" || code === "EACCES";
+}
 const realpathSync: typeof import("node:fs").realpathSync =
   process.platform !== "win32"
     ? (fs.realpathSync.bind(fs) as any)
@@ -712,7 +725,13 @@ const realpathSync: typeof import("node:fs").realpathSync =
         pos = current.length;
 
         // On windows, check that the root exists. On unix there is no need.
-        let lastStat: StatsType = lstatSync(base, { throwIfNoEntry: true });
+        let lastStat: StatsType;
+        try {
+          lastStat = lstatSync(base, { throwIfNoEntry: true });
+        } catch (err) {
+          if (!isPermissionDenied(err)) throw err;
+          lastStat = inaccessibleComponentStat;
+        }
         if (lastStat === undefined) return;
         knownHard.$add(base);
 
@@ -745,7 +764,12 @@ const realpathSync: typeof import("node:fs").realpathSync =
           }
 
           let resolvedLink;
-          lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
+          try {
+            lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
+          } catch (err) {
+            if (!isPermissionDenied(err)) throw err;
+            lastStat = inaccessibleComponentStat;
+          }
           if (lastStat === undefined) return;
 
           if (!lastStat.isSymbolicLink()) {
@@ -766,7 +790,12 @@ const realpathSync: typeof import("node:fs").realpathSync =
 
           // On windows, check that the root exists. On unix there is no need.
           if (!knownHard.$has(base)) {
-            lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
+            try {
+              lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
+            } catch (err) {
+              if (!isPermissionDenied(err)) throw err;
+              lastStat = inaccessibleComponentStat;
+            }
             if (lastStat === undefined) return;
             knownHard.$add(base);
           }
@@ -837,8 +866,11 @@ const realpath: typeof import("node:fs").realpath =
         // On windows, check that the root exists. On unix there is no need.
         if (!knownHard.has(base)) {
           lstat(base, (err, s) => {
+            if (err) {
+              if (!isPermissionDenied(err)) return callback(err);
+              s = inaccessibleComponentStat;
+            }
             lastStat = s;
-            if (err) return callback(err);
             knownHard.add(base);
             LOOP();
           });
@@ -882,7 +914,12 @@ const realpath: typeof import("node:fs").realpath =
         }
 
         function gotStat(err, stats) {
-          if (err) return callback(err);
+          if (err) {
+            if (!isPermissionDenied(err)) return callback(err);
+            // Treat an uninspectable component as a plain directory.
+            knownHard.add(base);
+            return process.nextTick(LOOP);
+          }
 
           // If not a symlink, skip to the next path part
           if (!stats.isSymbolicLink()) {
@@ -917,7 +954,7 @@ const realpath: typeof import("node:fs").realpath =
           // On windows, check that the root exists. On unix there is no need.
           if (!knownHard.has(base)) {
             lstat(base, err => {
-              if (err) return callback(err);
+              if (err && !isPermissionDenied(err)) return callback(err);
               knownHard.add(base);
               LOOP();
             });

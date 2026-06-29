@@ -7599,28 +7599,53 @@ impl NodeFS {
                     None,
                 )
             };
-            if let Some(errno) = rc.errno() {
-                return Err(sys::Error {
-                    errno,
-                    syscall: sys::Tag::realpath,
-                    path: args.path.slice().into(),
-                    ..Default::default()
-                });
-            }
-            // `fs_t.ptr` *is* the nullable C
-            // string pointer (libuv stores the realpath result directly), so
-            // `ptr_as::<c_char>()` yields the value, not a pointer-to-Option.
-            // SAFETY: `rc.errno()` was None ⇒ libuv populated `req.ptr`.
-            let ptr: *const c_char = unsafe { req.ptr_as::<c_char>() };
-            if ptr.is_null() {
-                return Err(sys::Error {
-                    errno: E::ENOENT as _,
-                    syscall: sys::Tag::realpath,
-                    path: args.path.slice().into(),
-                    ..Default::default()
-                });
-            }
-            let mut buf = unsafe { bun_core::ffi::cstr(ptr) }.to_bytes();
+            // Declared before `buf` so the fallback's borrow outlives it.
+            let mut fallback_buf;
+            let mut buf: &[u8] = if let Some(errno) = rc.errno() {
+                // A sandboxed process (e.g. a Windows AppContainer) is denied
+                // the DOS volume-name translation uv_fs_realpath relies on.
+                // Resolve off an opened handle instead; that route carries the
+                // lowbox-aware GetFinalPathNameByHandle fallback.
+                if !(errno == E::EPERM as _ || errno == E::EACCES as _) {
+                    return Err(sys::Error {
+                        errno,
+                        syscall: sys::Tag::realpath,
+                        path: args.path.slice().into(),
+                        ..Default::default()
+                    });
+                }
+                fallback_buf = PathBuffer::uninit();
+                match sys::realpath_handle(
+                    args.path.slice_z(&mut self.sync_error_buf),
+                    &mut fallback_buf,
+                ) {
+                    Ok(resolved) => resolved,
+                    // Report the original realpath errno, not the fallback's.
+                    Err(_) => {
+                        return Err(sys::Error {
+                            errno,
+                            syscall: sys::Tag::realpath,
+                            path: args.path.slice().into(),
+                            ..Default::default()
+                        });
+                    }
+                }
+            } else {
+                // `fs_t.ptr` *is* the nullable C
+                // string pointer (libuv stores the realpath result directly), so
+                // `ptr_as::<c_char>()` yields the value, not a pointer-to-Option.
+                // SAFETY: `rc.errno()` was None ⇒ libuv populated `req.ptr`.
+                let ptr: *const c_char = unsafe { req.ptr_as::<c_char>() };
+                if ptr.is_null() {
+                    return Err(sys::Error {
+                        errno: E::ENOENT as _,
+                        syscall: sys::Tag::realpath,
+                        path: args.path.slice().into(),
+                        ..Default::default()
+                    });
+                }
+                unsafe { bun_core::ffi::cstr(ptr) }.to_bytes()
+            };
             if variant == RealpathVariant::Emulated {
                 // remove the trailing slash
                 //

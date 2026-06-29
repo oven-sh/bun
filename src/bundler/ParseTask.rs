@@ -2135,9 +2135,11 @@ pub mod parse_worker {
                                 len: wrapper.result.source_len,
                             }
                         };
+                    // The plugin buffer has exactly one owner:
+                    // `self.task.external_free_function` (set above),
+                    // released via `BundleV2.finalizers`.
                     return Ok(CacheEntry {
                         contents,
-                        external_free_function: ExternalFreeFunction::NONE,
                         fd: wrapper.original_source_fd,
                     });
                 }

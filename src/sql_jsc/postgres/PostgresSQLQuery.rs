@@ -611,34 +611,14 @@ impl PostgresSQLQuery {
                 .get()
                 .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS)
             {
-                // `JsCell::with_mut` scopes the `&mut PreparedStatementsMap` to
-                // the `get_or_put` call (single-JS-thread; no re-entry into JS
-                // until after the raw value-slot ptr is captured). Extract the
-                // raw slot ptr + existing value while the borrow is live so the
-                // remainder of this block needs no further `&mut` to the map.
-                let (entry_value_ptr, existing_stmt) = match connection.statements.with_mut(|s| {
-                    s.get_or_put(&signature.name).map(|e| {
-                        let existing = if e.found_existing {
-                            Some(*e.value_ptr)
-                        } else {
-                            None
-                        };
-                        (
-                            std::ptr::from_mut::<*mut PostgresSQLStatement>(e.value_ptr),
-                            existing,
-                        )
-                    })
-                }) {
-                    Ok(v) => v,
-                    Err(err) => {
-                        drop(signature);
-                        release_query_ref();
-                        return Err(
-                            global_object.throw_error(err.into(), "failed to allocate statement")
-                        );
-                    }
-                };
-                connection_entry_value = Some(entry_value_ptr);
+                // Zero-allocation hit probe: `get_or_put` below boxes the key
+                // bytes even when the entry already exists, and a hit (an
+                // already-prepared named statement) is the steady state.
+                let existing_stmt = connection
+                    .statements
+                    .get()
+                    .get(&signature.name[..])
+                    .copied();
                 if let Some(stmt_ptr) = existing_stmt {
                     this.statement.set(Some(stmt_ptr));
                     // Route the `&mut` through the audited `statement_mut()`
@@ -698,6 +678,25 @@ impl PostgresSQLQuery {
 
                     break 'enqueue;
                 }
+                // `JsCell::with_mut` scopes the `&mut PreparedStatementsMap` to
+                // the `get_or_put` call (single-JS-thread; no re-entry into JS
+                // until after the raw value-slot ptr is captured). Extract the
+                // raw slot ptr while the borrow is live so the remainder of
+                // this block needs no further `&mut` to the map.
+                let entry_value_ptr = match connection.statements.with_mut(|s| {
+                    s.get_or_put(&signature.name)
+                        .map(|e| std::ptr::from_mut::<*mut PostgresSQLStatement>(e.value_ptr))
+                }) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        drop(signature);
+                        release_query_ref();
+                        return Err(
+                            global_object.throw_error(err.into(), "failed to allocate statement")
+                        );
+                    }
+                };
+                connection_entry_value = Some(entry_value_ptr);
             }
             let can_execute = !connection.has_query_running();
 
@@ -798,9 +797,9 @@ impl PostgresSQLQuery {
                     this.statement.set(Some(stmt));
 
                     // SAFETY: `entry_value` points into `connection.statements` and the map has
-                    // not been mutated since `get_or_put`. This arm is reached only when
-                    // `!entry.found_existing`; the slot was default-initialised to null by
-                    // `get_or_put`, so a plain store is fine.
+                    // not been mutated since `get_or_put`. `get_or_put` runs only after the
+                    // existing-entry probe missed, so the slot it hands back was
+                    // default-initialised to null and a plain store is fine.
                     unsafe { *entry_value = stmt };
                 } else {
                     let stmt = {

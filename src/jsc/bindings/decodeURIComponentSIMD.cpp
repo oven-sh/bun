@@ -1,6 +1,7 @@
 
 #include "root.h"
 
+#include "BunString.h"
 #include <wtf/text/WTFString.h>
 #include <wtf/SIMDHelpers.h>
 #include <wtf/SIMDUTF.h>
@@ -293,27 +294,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDecodeURIComponentSIMD, (JSC::JSGlobalObject 
         auto string = input.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        if (!string.is8Bit()) {
-            const auto span = string.span16();
-            size_t expected_length = simdutf::latin1_length_from_utf16(span.size());
-            std::span<Latin1Character> ptr;
-            WTF::String convertedString = WTF::String::tryCreateUninitialized(expected_length, ptr);
-            if (convertedString.isNull()) [[unlikely]] {
-                throwVMError(globalObject, scope, createOutOfMemoryError(globalObject));
-                return {};
-            }
-
-            auto result = simdutf::convert_utf16le_to_latin1_with_errors(span.data(), span.size(), reinterpret_cast<char*>(ptr.data()));
-
-            if (result.error) {
-                scope.throwException(globalObject, createRangeError(globalObject, "Invalid character in input"_s));
-                return {};
-            }
-            string = convertedString;
-        }
-
-        auto span = string.span8();
-        auto&& output = decodeURIComponentSIMD(span);
+        // decodeURIComponentSIMD consumes UTF-8 bytes, like the ServerRouteList and CookieMap callers.
+        UTF8View utf8View(string);
+        auto&& output = decodeURIComponentSIMD(utf8View.bytes());
         return JSC::JSValue::encode(JSC::jsString(vm, output));
     }
 

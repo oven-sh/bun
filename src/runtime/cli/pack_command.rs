@@ -565,7 +565,21 @@ fn iterate_included_project_tree(
                 }
             }
 
-            if is_excluded(&entry, &entry_subpath, dir_depth, &[]).is_some() {
+            if let Some((pattern, kind)) = is_excluded(&entry, &entry_subpath, dir_depth, &[]) {
+                if log_level.is_verbose() {
+                    bun_core::prettyln!(
+                        "<r><blue>ignore<r> <d>[{}:{}]<r> {}{}",
+                        <&str>::from(kind),
+                        bstr::BStr::new(pattern),
+                        bstr::BStr::new(entry_subpath.as_bytes()),
+                        if entry.kind == bun_sys::FileKind::Directory {
+                            "/"
+                        } else {
+                            ""
+                        },
+                    );
+                    Output::flush();
+                }
                 continue;
             }
 

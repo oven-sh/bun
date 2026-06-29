@@ -49,7 +49,7 @@ _read_scripts_in_package_json() {
         readarray -td, scripts <<<"${scripts}";
         for completion in "${scripts[@]}"; do
             completion="${completion%:*}";
-            [[ "${completion}" =~ ^[[:space:]]*[[:alnum:]@/:._-]+[[:space:]]*$ ]] && package_json_compreply+=( "${completion}" );
+            [[ "${completion}" =~ ^[[:space:]]*([[:alnum:]@/:._-]+)[[:space:]]*$ ]] && package_json_compreply+=( "${BASH_REMATCH[1]}" );
         done
         COMPREPLY+=( $(compgen -W "${package_json_compreply[*]}" -- "${cur_word}") );
     }

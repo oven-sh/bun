@@ -418,6 +418,12 @@ fn err_from_static(name: &'static str) -> bun_core::Error {
 const PREALLOCATE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "android"));
 const PREALLOCATE_LENGTH: usize = 2048 * 1024;
 
+/// `CLONE_NOFOLLOW` from `<sys/clonefile.h>` — not re-exported by `bun_sys::c`
+/// (or the `libc` crate), so define it locally. `clonefile(2)` then clones a
+/// symbolic-link `src` itself rather than the file it points to.
+#[cfg(target_os = "macos")]
+const CLONE_NOFOLLOW: u32 = 0x0001;
+
 /// Path-length field width.
 type PathInt = u32;
 
@@ -2004,8 +2010,10 @@ mod _async_tasks {
 
             #[cfg(target_os = "macos")]
             {
+                // CLONE_NOFOLLOW: `src` was classified as a directory via lstat, so
+                // mirror the O_NOFOLLOW directory open below instead of dereferencing.
                 if let Some(err) = Maybe::<ret::Cp>::errno_sys_p(
-                    bun_sys::c::clonefile_rc(src, dest, 0),
+                    bun_sys::c::clonefile_rc(src, dest, CLONE_NOFOLLOW),
                     sys::Tag::clonefile,
                     src.as_bytes(),
                 ) {
@@ -8353,8 +8361,10 @@ impl NodeFS {
 
         #[cfg(target_os = "macos")]
         'try_with_clonefile: {
+            // CLONE_NOFOLLOW: `src` was classified as a directory via lstat, so
+            // mirror the O_NOFOLLOW directory open below instead of dereferencing.
             if let Some(err) = Maybe::<ret::Cp>::errno_sys_p(
-                bun_sys::c::clonefile_rc(src, dest, 0),
+                bun_sys::c::clonefile_rc(src, dest, CLONE_NOFOLLOW),
                 sys::Tag::clonefile,
                 src.as_bytes(),
             ) {

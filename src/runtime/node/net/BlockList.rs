@@ -452,31 +452,31 @@ impl BlockList {
         // SAFETY: `r.pos <= total_length` (`read_exact` bounds-checks via `checked_add`).
         *ptr = unsafe { (*ptr).add(r.pos) };
 
-        let Some(addr) = SERIALIZED_REFS
-            .lock()
-            .iter()
-            .find_map(|&(n, a)| (n == nonce).then_some(a))
-        else {
-            return Err(global.throw(format_args!(
-                "BlockList.onStructuredCloneDeserialize failed"
-            )));
-        };
-
-        let this: *mut Self = addr as *mut Self;
         // A single SerializedScriptValue can be deserialized multiple times
         // (e.g. BroadcastChannel fan-out), so each wrapper must own its own ref
         // instead of adopting the one taken in serialize. The serialize ref is
         // what keeps the backing alive while its entry sits in `SERIALIZED_REFS`
         // and is released by `~SerializedScriptValue` via the destroy hook below.
-        // SAFETY: `addr` comes from a `SERIALIZED_REFS` entry pushed by
-        // `on_structured_clone_serialize` from a live `*mut Self` whose ref was
-        // bumped at serialize time (paired `ref_()`/`deref()`). Ownership of
-        // one ref transfers to the C++ wrapper (released via `finalize` → `deref`).
-        // `to_js_ptr` is the `#[bun_jsc::JsClass]`-generated `${T}__create` shim.
-        unsafe {
-            (*this).ref_();
-            Ok(Self::to_js_ptr(this, global))
-        }
+        let this: *mut Self = {
+            let refs = SERIALIZED_REFS.lock();
+            let Some(addr) = refs.iter().find_map(|&(n, a)| (n == nonce).then_some(a)) else {
+                return Err(global.throw(format_args!(
+                    "BlockList.onStructuredCloneDeserialize failed"
+                )));
+            };
+            let this = addr as *mut Self;
+            // SAFETY: the entry was pushed by `on_structured_clone_serialize`
+            // from a live `*mut Self` whose ref was bumped at serialize time
+            // (paired `ref_()`/`deref()`); that ref is only released by the
+            // destroy hook after it takes this lock and removes the entry, so
+            // `this` is live while the guard is held and we ref it first.
+            unsafe { (*this).ref_() };
+            this
+        };
+        // SAFETY: ownership of the ref taken above transfers to the C++ wrapper
+        // (released via `finalize` → `deref`). `to_js_ptr` is the
+        // `#[bun_jsc::JsClass]`-generated `${T}__create` shim.
+        Ok(unsafe { Self::to_js_ptr(this, global) })
     }
 }
 

@@ -3324,7 +3324,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // ClientHello sitting in the readable buffer of the socket being
         // wrapped); fed into the TLS engine once the upgrade is wired up.
         let initial_data: Vec<u8> = match opts.get_truthy(global, "initialData")? {
-            Some(v) => StringOrBuffer::from_js_to_owned_slice(global, v)?,
+            Some(v) => StringOrBuffer::from_js(global, v)?
+                .map(|data| data.slice().to_vec())
+                .unwrap_or_default(),
             None => Vec::new(),
         };
         // Handlers lifecycle is always client-mode (heap-per-connection) here: a

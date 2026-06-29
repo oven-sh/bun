@@ -2657,6 +2657,9 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
+    /// Armed across every JS dispatch wrapper AND every section that holds a `&mut Stream`
+    /// while user JS can run (property getters, iteration, string coercion), so
+    /// rewrite_read's deferred stream free (pending_engine_stream_closes) only runs at depth 0.
     fn enter_dispatch(&self) -> DispatchGuard<'_> {
         self.dispatch_depth.set(self.dispatch_depth.get() + 1);
         DispatchGuard(&self.dispatch_depth)
@@ -5412,7 +5415,8 @@ impl H2FrameParser {
                             // SAFETY: stream is the heap::alloc'd *mut Stream owned by the
                             // map entry just removed; free_resources ran when it was queued,
                             // dispatch_depth == 0 means no caller below us on the stack holds
-                            // a `&mut Stream` across a JS dispatch, ids never repeat within a
+                            // a `&mut Stream` across anything that can run user JS (every
+                            // such site arms enter_dispatch), ids never repeat within a
                             // session, so this frees exactly once.
                             unsafe {
                                 drop(bun_core::heap::take(stream));
@@ -6650,6 +6654,9 @@ impl H2FrameParser {
         let Some(stream_ptr) = this.streams.get().get(&stream_id).copied() else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
+        // The `options` getters below can run user JS while `stream` is borrowed; keep the
+        // dispatch guard armed so rewrite_read defers stream frees until we return.
+        let _dispatch = this.enter_dispatch();
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let stream = unsafe { &mut *stream_ptr };
 
@@ -7235,6 +7242,10 @@ impl H2FrameParser {
         let Some(stream_ptr) = this.streams.get().get(&stream_id).copied() else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
+        // The header/sensitive-object getters and coercions below can run user JS while
+        // `stream` is borrowed; keep the dispatch guard armed so rewrite_read defers
+        // stream frees until we return.
+        let _dispatch = this.enter_dispatch();
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let stream = unsafe { &mut *stream_ptr };
 
@@ -7585,6 +7596,9 @@ impl H2FrameParser {
         let Some(stream_ptr) = this.streams.get().get(&stream_id).copied() else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
+        // Coercing `data_arg` (a String subclass's toString) can run user JS while `stream`
+        // is borrowed; keep the dispatch guard armed so rewrite_read defers stream frees.
+        let _dispatch = this.enter_dispatch();
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let stream = unsafe { &mut *stream_ptr };
         if !stream.can_send_data() {
@@ -8573,6 +8587,9 @@ impl H2FrameParser {
         let Some(stream_ptr) = this.handle_received_stream_id(stream_id) else {
             return Ok(JSValue::js_number(-1.0));
         };
+        // The `options` getters below can run user JS while `stream` is borrowed; keep the
+        // dispatch guard armed so rewrite_read defers stream frees until we return.
+        let _dispatch = this.enter_dispatch();
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let stream = unsafe { &mut *stream_ptr };
         if !stream_ctx_arg.is_empty_or_undefined_or_null() && stream_ctx_arg.is_object() {

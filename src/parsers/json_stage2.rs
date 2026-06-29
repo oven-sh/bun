@@ -25,9 +25,8 @@ use crate::json_index::{self as jidx, StructuralIndex};
 
 type PResult<T = ()> = Result<T, bun_core::Error>;
 
-/// One duplicate-key map for the whole document: keys are
-/// `wyhash(key bytes, seed = object serial)`, so per-object membership needs
-/// no per-object map (and no per-object clear).
+/// Duplicate-key spill map (see [`Parser::check_duplicate_key`]). Keys are
+/// already wyhash values, so the identity context hashes nothing.
 type DupMap = bun_collections::HashMap<u64, (), bun_collections::IdentityContext<u64>>;
 
 pub(crate) struct Parser<'a, 's, 'i> {
@@ -56,13 +55,12 @@ pub(crate) struct Parser<'a, 's, 'i> {
     /// the wyhash of every key of the in-progress objects, so duplicate
     /// detection is a contiguous `u64` scan instead of pointer-chasing.
     dup_hashes: Vec<u64>,
-    /// Duplicate-key detection for objects with more than `DUP_LINEAR_MAX`
-    /// keys: one map for the whole document, keyed by
-    /// `key hash ^ mix(object serial)` so it never needs per-object clearing.
-    dup_map: DupMap,
-    /// `obj_serial` of the object whose keys `dup_map` currently holds.
-    dup_map_owner: u64,
-    obj_serial: u64,
+    /// Duplicate-key spill maps for objects with more than `DUP_LINEAR_MAX`
+    /// keys, one per nesting level of such objects (`spill_depth` is the
+    /// number currently active). Pooled across the document and cleared when
+    /// their object closes, so each stays the size of one object.
+    dup_maps: Vec<DupMap>,
+    spill_depth: usize,
     /// True once any string was stored as UTF-16 or escape-decoded
     /// (mirrors the old lexer's `is_ascii_only`, used by `parse_for_bundling`).
     pub is_ascii_only: bool,
@@ -144,9 +142,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             scratch_props: Vec::new(),
             scratch_items: Vec::new(),
             dup_hashes: Vec::new(),
-            dup_map: DupMap::default(),
-            dup_map_owner: 0,
-            obj_serial: 0,
+            dup_maps: Vec::new(),
+            spill_depth: 0,
             is_ascii_only: flags
                 & (jidx::FLAG_HAS_BACKSLASH_IN_STRING | jidx::FLAG_HAS_NON_ASCII)
                 == 0,
@@ -609,8 +606,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let hmark = self.dup_hashes.len();
         let mut is_single_line = !self.newline_before(self.pos_at(self.cursor));
         let warn_dup = self.opts.json_warn_duplicate_keys;
-        self.obj_serial = self.obj_serial.wrapping_add(1);
-        let serial = self.obj_serial;
 
         let result: PResult = loop {
             let mut b = self.peek_byte();
@@ -683,7 +678,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 break Err(self.unexpected(key_cursor));
             };
 
-            if warn_dup && self.check_duplicate_key(mark, hmark, serial, &key_str) {
+            if warn_dup && self.check_duplicate_key(mark, hmark, &key_str) {
                 self.warn_duplicate_key(&key_str, key_range);
             }
             let key = Expr::init(key_str, key_range.loc);
@@ -711,6 +706,11 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 ..Default::default()
             });
         };
+        // If this object spilled past the linear window, release its map.
+        if self.dup_hashes.len() - hmark > Self::DUP_LINEAR_MAX {
+            self.spill_depth -= 1;
+            self.dup_maps[self.spill_depth].clear();
+        }
         self.dup_hashes.truncate(hmark);
         if let Err(e) = result {
             self.scratch_props.truncate(mark);
@@ -739,26 +739,30 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     /// start at `scratch_props[mark]` / `dup_hashes[hmark]`? Records the key.
     ///
     /// Hash-first: small objects scan their contiguous hash stack and confirm
-    /// a hit by comparing the actual keys. Objects past `DUP_LINEAR_MAX` keys
-    /// spill to one reused hash map. The map only ever holds a single
-    /// object's keys (`dup_map_owner`): per-object it stays small and cache
-    /// resident, where a shared document-wide map on a registry manifest
-    /// with thousands of large objects spends a quarter of the whole parse
-    /// growing and probing it.
-    fn check_duplicate_key(&mut self, mark: usize, hmark: usize, serial: u64, key: &E::String) -> bool {
+    /// a hit by comparing the actual keys. An object past `DUP_LINEAR_MAX`
+    /// keys spills to a hash map of its own: `dup_maps[spill_depth - 1]`,
+    /// taken when the object crosses the threshold and released (cleared)
+    /// when it closes, so nested large objects each have their own map and
+    /// every map stays the size of a single object. (A first version shared
+    /// one map across the document, which both let a nested large object
+    /// poison its parent's membership test and made the map monotonically
+    /// grow: on a large registry manifest a quarter of the parse went to
+    /// growing and probing it.)
+    fn check_duplicate_key(&mut self, mark: usize, hmark: usize, key: &E::String) -> bool {
         let h = key.hash();
         let n_prior = self.dup_hashes.len() - hmark;
         let dup = if n_prior <= Self::DUP_LINEAR_MAX {
             if n_prior == Self::DUP_LINEAR_MAX {
-                // The object is getting big: move to the spill map from here
-                // on (cleared of any previous object's keys, then seeded
-                // with everything so far, including this key).
-                if self.dup_map_owner != serial {
-                    self.dup_map.clear();
-                    self.dup_map_owner = serial;
+                // The object is getting big: take this nesting level's map
+                // and seed it with everything so far (the map was left
+                // cleared by whichever object used it last).
+                if self.dup_maps.len() == self.spill_depth {
+                    self.dup_maps.push(DupMap::default());
                 }
-                let (hashes, map) = (&self.dup_hashes, &mut self.dup_map);
-                for &ph in &hashes[hmark..] {
+                let map = &mut self.dup_maps[self.spill_depth];
+                self.spill_depth += 1;
+                debug_assert!(map.is_empty());
+                for &ph in &self.dup_hashes[hmark..] {
                     map.insert(ph, ());
                 }
             }
@@ -777,8 +781,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 }
             }
         } else {
-            debug_assert!(self.dup_map_owner == serial);
-            self.dup_map.insert(h, ()).is_some()
+            // This object's map: it is the innermost spilled object, since
+            // any large object opened after it has already been closed (and
+            // released its map) by the time we are back parsing its keys.
+            self.dup_maps[self.spill_depth - 1].insert(h, ()).is_some()
         };
         self.dup_hashes.push(h);
         dup

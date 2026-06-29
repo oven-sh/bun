@@ -1103,6 +1103,38 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_key_detection_with_nested_large_objects() {
+        // A large object (spilled to the hash-map path) containing another
+        // large object as one of its later values. The inner object must not
+        // disturb the outer object's membership state: a duplicate of an
+        // early outer key appearing *after* the nested object must still be
+        // reported, and inner keys that match outer keys must not be.
+        let many: String = (0..60).map(|i| format!("\"k{i}\":{i},")).collect();
+        let inner = format!("{{{}\"inner\":0}}", many.clone());
+        // Outer: 60 unique keys, then a big nested value, then "k3" again.
+        let doc = format!("{{{many}\"nest\":{inner},\"k3\":true}}");
+        let p = run(doc.as_bytes(), Which::Utf8);
+        assert_eq!(p.errors, 0);
+        assert_eq!(p.warnings, 1, "outer duplicate after a nested large object");
+        assert!(p.first_msg.contains("Duplicate key \"k3\""), "{}", p.first_msg);
+
+        // Sibling large objects with identical key sets: no warnings.
+        let p = run(format!("{{\"a\":{inner},\"b\":{inner}}}").as_bytes(), Which::Utf8);
+        assert_eq!(p.errors, 0);
+        assert_eq!(p.warnings, 0);
+
+        // Duplicates in the inner and the outer large object are each
+        // reported, independently.
+        let dup_inner = format!("{{{}\"y\":1,\"y\":2}}", many.clone());
+        let p = run(
+            format!("{{{many}\"nest\":{dup_inner},\"x\":1,\"x\":2}}").as_bytes(),
+            Which::Utf8,
+        );
+        assert_eq!(p.errors, 0);
+        assert_eq!(p.warnings, 2, "one for the inner \"y\", one for the outer \"x\"");
+    }
+
+    #[test]
     fn is_single_line_matches_source_layout() {
         let p = run(b"{\"a\":1}", Which::Utf8);
         let Data::EObject(o) = &p.root.as_ref().unwrap().data else { panic!() };

@@ -658,14 +658,14 @@ declare module "bun" {
     hexists(key: RedisClient.KeyLike, field: RedisClient.KeyLike): Promise<boolean>;
 
     /**
-     * Get one or multiple random fields from a hash
+     * Get a random field from a hash
      * @param key The hash key
      * @returns Promise that resolves with a random field name, or null if the hash doesn't exist
      */
     hrandfield(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
-     * Get one or multiple random fields from a hash
+     * Get count random fields from a hash
      * @param key The hash key
      * @param count The number of fields to return (positive for unique fields, negative for potentially duplicate fields)
      * @returns Promise that resolves with an array of random field names
@@ -673,7 +673,7 @@ declare module "bun" {
     hrandfield(key: RedisClient.KeyLike, count: number): Promise<string[]>;
 
     /**
-     * Get one or multiple random fields with values from a hash
+     * Get count random fields with their values from a hash
      * @param key The hash key
      * @param count The number of fields to return
      * @param withValues Literal "WITHVALUES" to include values
@@ -1581,7 +1581,7 @@ declare module "bun" {
     bzpopmax(...args: (RedisClient.KeyLike | number)[]): Promise<[string, string, number] | null>;
 
     /**
-     * Get one or multiple random members from a sorted set
+     * Get a random member from a sorted set
      * @param key The sorted set key
      * @returns Promise that resolves with a random member, or null if the set
      * is empty
@@ -3144,8 +3144,7 @@ declare module "bun" {
     /**
      * Compute the union of multiple sorted sets
      *
-     * Returns the union of the sorted sets given by the specified keys.
-     * For every element that appears in at least one of the input sorted sets, the output will contain that element.
+     * For every element that appears in at least one of the input sorted sets, the output contains that element.
      *
      * Options:
      * - WEIGHTS: Multiply the score of each member in the corresponding sorted set by the given weight before aggregation
@@ -3187,8 +3186,7 @@ declare module "bun" {
     /**
      * Compute the union of multiple sorted sets
      *
-     * Returns the union of the sorted sets given by the specified keys.
-     * For every element that appears in at least one of the input sorted sets, the output will contain that element.
+     * For every element that appears in at least one of the input sorted sets, the output contains that element.
      *
      * Options:
      * - WEIGHTS: Multiply the score of each member in the corresponding sorted set by the given weight before aggregation

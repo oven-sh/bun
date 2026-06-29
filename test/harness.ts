@@ -1111,8 +1111,6 @@ export async function describeWithContainer(
     "mysql_plain": 3306,
     "mysql_native_password": 3306,
     "mysql_tls": 3306,
-    "mysql:8": 3306, // Map mysql:8 to mysql_plain
-    "mysql:9": 3306, // Map mysql:9 to mysql_native_password
     "redis_plain": 6379,
     "redis_unified": 6379,
     "minio": 9000,
@@ -1130,22 +1128,10 @@ export async function describeWithContainer(
     return;
   }
 
-  // Map mysql:8 and mysql:9 based on environment variables
-  let actualService = image;
-  if (image === "mysql:8" || image === "mysql:9") {
-    if (env.MYSQL_ROOT_PASSWORD === "bun") {
-      actualService = "mysql_native_password"; // Has password "bun"
-    } else if (env.MYSQL_ALLOW_EMPTY_PASSWORD === "yes") {
-      actualService = "mysql_plain"; // No password
-    } else {
-      actualService = "mysql_plain"; // Default to no password
-    }
-  }
-
   // Skip only when no env override, no coordinator, and docker is unavailable.
   // isDockerEnabled() may throw when docker is required but absent, so the
   // env-override and coordinator checks must short-circuit before it.
-  if (!process.env["BUN_TEST_SERVICE_" + actualService] && !process.env.BUN_DOCKER_COORDINATOR && !isDockerEnabled()) {
+  if (!process.env["BUN_TEST_SERVICE_" + image] && !process.env.BUN_DOCKER_COORDINATOR && !isDockerEnabled()) {
     describe.todo(label);
     return;
   }
@@ -1179,7 +1165,7 @@ export async function describeWithContainer(
     // up() de-duplicates in-flight calls per service, so two describes for
     // the same service share one `compose up`. beforeAll just awaits the
     // result so test failures still surface there.
-    const startPromise = import("./docker/index.ts").then(h => h.ensure(actualService as any));
+    const startPromise = import("./docker/index.ts").then(h => h.ensure(image as any));
     // Surface any rejection through `ready`; without a handler the runner
     // would see an unhandled rejection before beforeAll re-throws it.
     startPromise.catch(readyRejecter!);

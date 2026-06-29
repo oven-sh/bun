@@ -57,33 +57,28 @@ async function assertComputedDecimalsAreStrings(sql: SQL) {
 }
 if (isDockerEnabled()) {
   // Ordered so the suites whose containers become healthy quickly (mysql_plain,
-  // mysql:9) run first; the slow-to-start mysql_tls container warms up in the
-  // background instead of stalling the whole file up front.
+  // mysql_native_password) run first; the slow-to-start mysql_tls container
+  // warms up in the background instead of stalling the whole file up front.
   const images = [
     {
       name: "MySQL",
       image: "mysql_plain",
     },
-    // This image only works on x64.
-    process.arch === "x64" && {
-      name: "MySQL 9",
-      image: "mysql:9",
-      env: {
-        MYSQL_ROOT_PASSWORD: "bun",
-      },
+    {
+      name: "MySQL with mysql_native_password",
+      image: "mysql_native_password",
     },
     {
       name: "MySQL with TLS",
       image: "mysql_tls",
     },
-  ].filter(Boolean);
+  ];
 
   for (const image of images) {
     describeWithContainer(
       image.name,
       {
         image: image.image,
-        env: image.env,
         concurrent: true,
       },
       container => {

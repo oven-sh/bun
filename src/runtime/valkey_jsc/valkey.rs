@@ -638,6 +638,11 @@ impl ValkeyClient {
     pub fn on_close(&mut self) -> JsTerminated<()> {
         self.unregister_auto_flusher();
         self.write_buffer.clear_and_free();
+        // The socket is gone, so any half-read reply in the read buffer can
+        // never be completed. Drop it (and reset the scanner) so a partial
+        // frame does not keep `has_any_pending_commands` true forever.
+        self.read_buffer.clear_and_free();
+        self.reply_scanner.reset();
 
         // If manually closing, don't attempt to reconnect
         if self.flags.is_manually_closed {

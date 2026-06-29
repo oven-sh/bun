@@ -338,3 +338,286 @@ test.concurrent("getBuffer replies survive GC with adopted backing stores intact
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/33103
+// close() on a client still in subscriber mode must release every event-loop
+// reference it holds, just like unsubscribe()-then-close() does. The poll ref
+// is driven by the subscription callback map, which close() left populated, so
+// update_poll_ref kept the ref (and the strong this_value) alive forever and
+// the process never exited. The mock server stays in this (parent) process so
+// the spawned subscriber's exit depends solely on the client releasing its
+// refs; nothing else keeps that subprocess alive after close().
+test.concurrent("close() while subscribed lets the process exit", async () => {
+  // Minimal RESP3 mock: +OK to the HELLO handshake, a subscribe push to
+  // SUBSCRIBE. Enough to drive the client to connected + subscribed. TCP is a
+  // stream, so accumulate bytes and reply once per command (a token could
+  // straddle two reads).
+  const server = net.createServer(socket => {
+    let buffered = "";
+    let repliedHello = false;
+    let repliedSubscribe = false;
+    socket.on("data", (data: Buffer) => {
+      buffered += data.toString("latin1");
+      if (!repliedHello && buffered.includes("HELLO")) {
+        repliedHello = true;
+        socket.write("+OK\r\n");
+      }
+      if (!repliedSubscribe && buffered.includes("SUBSCRIBE")) {
+        repliedSubscribe = true;
+        socket.write(">3\r\n$9\r\nsubscribe\r\n$4\r\nchan\r\n:1\r\n");
+      }
+    });
+    socket.on("error", () => {});
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.listen(0, "127.0.0.1", resolve);
+    server.on("error", reject);
+  });
+  const port = (server.address() as net.AddressInfo).port;
+
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const subscriber = new Bun.RedisClient(process.env.REDIS_URL);
+          await subscriber.connect();
+          await subscriber.subscribe("chan", () => {});
+          subscriber.close();
+          console.log("closed");
+        `,
+      ],
+      env: { ...bunEnv, REDIS_URL: `redis://127.0.0.1:${port}` },
+      stdout: "pipe",
+      stderr: "pipe",
+      // Fixed, the subscriber exits on its own right after close(). The timeout
+      // only bounds the pre-fix hang so a stuck child is killed (non-null
+      // signalCode below) instead of lingering.
+      timeout: 10_000,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("closed");
+    if (exitCode !== 0) expect(stderr).toBe("");
+    // null => exited on its own; non-null => killed by the spawn timeout (hung).
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  } finally {
+    server.close();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/33103
+// Same leak on a sibling terminal path: a subscribed client with
+// autoReconnect:false that the server drops is just as dead (no reconnect, no
+// message ever again), but on_close takes the no-reconnect branch that never
+// sets is_manually_closed, so only gating on that flag still pinned the loop.
+// update_poll_ref also has to treat the terminal `failed` flag as deletable.
+test.concurrent("server dropping a subscribed no-reconnect client lets the process exit", async () => {
+  // Mock drops the connection right after confirming the SUBSCRIBE. TCP is a
+  // stream, so accumulate bytes and reply once per command.
+  const server = net.createServer(socket => {
+    let buffered = "";
+    let repliedHello = false;
+    let dropped = false;
+    socket.on("data", (data: Buffer) => {
+      buffered += data.toString("latin1");
+      if (!repliedHello && buffered.includes("HELLO")) {
+        repliedHello = true;
+        socket.write("+OK\r\n");
+      }
+      if (!dropped && buffered.includes("SUBSCRIBE")) {
+        dropped = true;
+        socket.write(">3\r\n$9\r\nsubscribe\r\n$4\r\nchan\r\n:1\r\n", () => socket.end());
+      }
+    });
+    socket.on("error", () => {});
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.listen(0, "127.0.0.1", resolve);
+    server.on("error", reject);
+  });
+  const port = (server.address() as net.AddressInfo).port;
+
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const sub = new Bun.RedisClient(process.env.REDIS_URL, { autoReconnect: false });
+          await sub.connect();
+          // Let a subscribe() failure surface so "subscribed" prints only once
+          // subscriber mode is actually established; the test then fails for the
+          // right reason if it never got there.
+          await sub.subscribe("chan", () => {});
+          console.log("subscribed");
+          // No close(): the server drop is terminal, so the loop must release.
+        `,
+      ],
+      env: { ...bunEnv, REDIS_URL: `redis://127.0.0.1:${port}` },
+      stdout: "pipe",
+      stderr: "pipe",
+      // Bounds the pre-fix hang so a stuck child shows up as a non-null
+      // signalCode instead of lingering; the fixed client exits on its own.
+      timeout: 10_000,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("subscribed");
+    if (exitCode !== 0) expect(stderr).toBe("");
+    // null => exited on its own; non-null => killed by the spawn timeout (hung).
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  } finally {
+    server.close();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/33103
+// Third terminal path: a subscribed client that exhausts its reconnect retries.
+// on_close sets is_reconnecting on the first retry and never clears it on the
+// give-up branch, and has_activity ORs that flag in independently of
+// subs_deletable, so the client stayed pinned forever once retries ran out.
+// update_poll_ref must ignore is_reconnecting once the client has failed.
+// (The subscription is what keeps the client alive long enough to reconnect;
+// an idle client releases the loop right after connect and never gets here.)
+test.concurrent("a subscribed client that exhausts reconnect retries lets the process exit", async () => {
+  // Full handshake + subscribe on the first connection, then drop it. The
+  // server keeps listening and drops every later connection before replying to
+  // HELLO, so each reconnect resets instead of re-establishing and the retries
+  // are exhausted. Connecting to a listening port that then resets is prompt
+  // cross-platform; refusing a closed port is not (e.g. Windows SYN timeouts).
+  let connections = 0;
+  const server = net.createServer(socket => {
+    socket.on("error", () => {});
+    if (++connections > 1) {
+      socket.destroy();
+      return;
+    }
+    let buffered = "";
+    let repliedHello = false;
+    let dropped = false;
+    socket.on("data", (data: Buffer) => {
+      buffered += data.toString("latin1");
+      if (!repliedHello && buffered.includes("HELLO")) {
+        repliedHello = true;
+        socket.write("+OK\r\n");
+      }
+      if (!dropped && buffered.includes("SUBSCRIBE")) {
+        dropped = true;
+        socket.write(">3\r\n$9\r\nsubscribe\r\n$4\r\nchan\r\n:1\r\n", () => socket.end());
+      }
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.listen(0, "127.0.0.1", resolve);
+    server.on("error", reject);
+  });
+  const port = (server.address() as net.AddressInfo).port;
+
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const c = new Bun.RedisClient(process.env.REDIS_URL, { maxRetries: 1 });
+          await c.connect();
+          await c.subscribe("chan", () => {});
+          console.log("subscribed");
+          // No close(): the reconnect attempt is dropped before it can
+          // re-establish, so once retries are exhausted the loop must release.
+        `,
+      ],
+      env: { ...bunEnv, REDIS_URL: `redis://127.0.0.1:${port}` },
+      stdout: "pipe",
+      stderr: "pipe",
+      // Bounds the pre-fix hang so a stuck child shows up as a non-null
+      // signalCode instead of lingering; the fixed client exits on its own.
+      timeout: 10_000,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("subscribed");
+    if (exitCode !== 0) expect(stderr).toBe("");
+    // null => exited on its own; non-null => killed by the spawn timeout (hung).
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  } finally {
+    server.close();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/33103
+// Fourth terminal path: a reply that is only half-read when the connection
+// dies. has_pending_commands also counts read_buffer.len(), and on_close only
+// cleared write_buffer, so a partial frame left in the read buffer kept the
+// loop pinned forever. on_close must drop the read buffer (and reset the
+// scanner) too, since a detached socket can never complete that frame.
+test.concurrent("a half-read reply on a dropped connection lets the process exit", async () => {
+  // Announce a large bulk string but send only a few bytes, then drop: the
+  // client buffers the partial frame while waiting for the rest that never comes.
+  // Hoisted so the test can assert the truncated-reply path actually ran.
+  let sentPartial = false;
+  const server = net.createServer(socket => {
+    let buffered = "";
+    let repliedHello = false;
+    socket.on("data", (data: Buffer) => {
+      buffered += data.toString("latin1");
+      if (!repliedHello && buffered.includes("HELLO")) {
+        repliedHello = true;
+        socket.write("+OK\r\n");
+      }
+      if (!sentPartial && buffered.includes("GET")) {
+        sentPartial = true;
+        socket.write("$1000000\r\nPARTIAL", () => socket.end());
+      }
+    });
+    socket.on("error", () => {});
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.listen(0, "127.0.0.1", resolve);
+    server.on("error", reject);
+  });
+  const port = (server.address() as net.AddressInfo).port;
+
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const c = new Bun.RedisClient(process.env.REDIS_URL, { autoReconnect: false });
+          await c.connect();
+          // The GET reply is a truncated bulk string and the server drops; the
+          // half-read frame must be discarded on close so the loop releases.
+          await c.get("k").catch(() => {});
+          console.log("done");
+        `,
+      ],
+      env: { ...bunEnv, REDIS_URL: `redis://127.0.0.1:${port}` },
+      stdout: "pipe",
+      stderr: "pipe",
+      // Bounds the pre-fix hang so a stuck child shows up as a non-null
+      // signalCode instead of lingering; the fixed client exits on its own.
+      timeout: 10_000,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Prove the client actually exercised the truncated-reply path.
+    expect(sentPartial).toBe(true);
+    expect(stdout.trim()).toBe("done");
+    if (exitCode !== 0) expect(stderr).toBe("");
+    // null => exited on its own; non-null => killed by the spawn timeout (hung).
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  } finally {
+    server.close();
+  }
+});

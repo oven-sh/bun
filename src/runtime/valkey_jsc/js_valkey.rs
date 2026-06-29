@@ -1770,15 +1770,26 @@ impl JSValkeyClient {
         // in `subscriptionCallbackMap()` because `this_value.tryGet()` returns
         // null for a finalized ref. Short-circuit here: a finalized client has
         // no subscriptions by definition.
+        //
+        // A client that can never deliver another message must likewise stop
+        // pinning the loop: a manual close() (is_manually_closed) or a terminal
+        // failure (failed). Both are reset by do_connect(), so a reconnect
+        // re-arms the keep-alive.
         let subs_deletable: bool = self.client.get().flags.finalized
+            || self.client.get().flags.is_manually_closed
+            || self.client.get().flags.failed
             || !self
                 ._subscription_ctx
                 .get()
                 .has_subscriptions(&self.global_object)
                 .unwrap_or(false);
 
-        let has_activity =
-            has_pending_commands || !subs_deletable || self.client.get().flags.is_reconnecting;
+        // `is_reconnecting` is set on the first reconnect attempt and only
+        // cleared on a successful HELLO, so the retries-exhausted give-up leaves
+        // it set; gate it on `!failed` so that terminal state releases the loop.
+        let has_activity = has_pending_commands
+            || !subs_deletable
+            || (self.client.get().flags.is_reconnecting && !self.client.get().flags.failed);
 
         // There's a couple cases to handle here:
         if has_activity || self.client.get().status == valkey::Status::Connecting {

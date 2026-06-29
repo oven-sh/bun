@@ -704,27 +704,24 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
   const context = new TestContext(true, name, Bun.main, ctx);
 
   const runTest = (done: (error?: unknown) => void) => {
+    // `ctx` only tracks the synchronous part of the body. Restore it before any
+    // `done` call: `done` can synchronously start the next test, and concurrent
+    // siblings settle in arbitrary order, so a LIFO restore leaks a stale context.
     const originalContext = ctx;
     ctx = context;
-    const endTest = (error?: unknown) => {
-      try {
-        done(error);
-      } finally {
-        ctx = originalContext;
-      }
-    };
-
     let result: unknown;
     try {
       result = fn(context);
     } catch (error) {
-      endTest(error);
+      ctx = originalContext;
+      done(error);
       return;
     }
+    ctx = originalContext;
     if (result instanceof Promise) {
-      (result as Promise<unknown>).then(() => endTest()).catch(error => endTest(error));
+      (result as Promise<unknown>).then(() => done()).catch(error => done(error));
     } else {
-      endTest();
+      done();
     }
   };
 

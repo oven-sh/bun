@@ -29,9 +29,12 @@ test("todo with a reason string", { todo: "not implemented yet" }, () => {
 
 test.todo("todo without a body");
 
-test("todo that times out", { todo: true, timeout: 100 }, async () => {
+// The 10ms test timeout always wins the race against a 500ms timer. The timer
+// (rather than a never-settling promise) is a bound on how long the body stays
+// pending, so the process always reaches the next test and exits on its own.
+test("todo that times out", { todo: true, timeout: 10 }, async () => {
   console.log("LOG:todo-timeout");
-  await new Promise(() => {});
+  await new Promise(resolve => setTimeout(resolve, 500));
 });
 
 // `skip` wins over `todo` in Node: the body must never execute.

@@ -96,6 +96,22 @@ describe("node:test", () => {
     });
   });
 
+  // Sibling bodies in a concurrent suite settle in arbitrary order; if the
+  // module-level "inside a test" context were restored LIFO it would leak, and
+  // the next file's top-level test() would throw at registration.
+  test("a concurrent suite does not corrupt the next file's registration", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["10-describe-concurrency.js", "12-after-concurrent.js"]);
+    expect({
+      exitCode,
+      logs: stdout.split("\n").filter(line => line.startsWith("LOG:")),
+      summary: summarize(stderr),
+    }).toEqual({
+      exitCode: 0,
+      logs: ["LOG:after-concurrent"],
+      summary: { pass: 14, fail: 0, todo: 0, skip: 0 },
+    });
+  });
+
   // The bound function behind node:test's `test.todo` has an internal mode
   // name; the error for using it outside `bun test` must still say `test.todo`.
   test("todo outside the test runner names test.todo in its error", async () => {

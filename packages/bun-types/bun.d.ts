@@ -814,7 +814,7 @@ declare module "bun" {
      * @param replacer Not supported; pass `undefined` or `null`.
      * @param space Accepted for signature parity with `YAML.stringify` and
      * `JSON5.stringify`, but ignored: TOML output is line-oriented.
-     * @returns A TOML document string
+     * @returns A TOML document string, or `undefined` if the input is `undefined`, a function, or a symbol.
      *
      * @example
      * ```js
@@ -823,7 +823,7 @@ declare module "bun" {
      * // 'name = "app"\n\n[server]\nport = 8080\n'
      * ```
      */
-    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string;
+    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string | undefined;
   }
 
   /**

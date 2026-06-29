@@ -432,9 +432,9 @@ public:
     }
 
     bool asyncHooksNeedsCleanup = false;
-    // Set by moduleLoaderEvaluate after a module graph's top-level code runs, consumed by
-    // checkIfNextTickWasCalledDuringMicrotask: the enclosing microtask's end is the equivalent
-    // of Node's main-script process.nextTick checkpoint, so pending nextTicks run first there.
+    // Set after a script's synchronous top-level code runs (moduleLoaderEvaluate for ES modules,
+    // evaluateCommonJSModuleOnce for CommonJS), consumed by checkIfNextTickWasCalledDuringMicrotask:
+    // the enclosing microtask's end is Node's main-script process.nextTick checkpoint.
     bool nextTickQueueCheckpointAtEndOfMicrotask = false;
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;

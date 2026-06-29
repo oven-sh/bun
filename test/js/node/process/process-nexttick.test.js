@@ -1041,11 +1041,21 @@ it("process.nextTick and AsyncLocalStorage.enterWith don't conflict", async () =
 // The onEachMicrotaskTick hook that hands control from the microtask queue to the nextTick
 // queue is one-shot: it uninstalls itself after the process's first process.nextTick call.
 // Every case below therefore needs a subprocess that has never called process.nextTick.
+//
+// The matrix covers (-e vs file) x (ES module vs CommonJS): a leading require() makes Bun
+// classify the source as CommonJS, whose body evaluates through evaluateCommonJSModuleOnce
+// instead of moduleLoaderEvaluate. Both have to mark the nextTick checkpoint boundary.
+const entryKinds = ["-e", "-e-cjs", "file", "file-cjs"];
+
 describe.concurrent("process.nextTick interleaving with the microtask queue", () => {
   async function runFresh(kind, script) {
-    using dir = tempDir("nexttick-order", { "index.js": script });
+    const source = kind.endsWith("-cjs") ? `require("./dep.js");\n${script}` : script;
+    using dir = tempDir("nexttick-order", {
+      "index.js": source,
+      "dep.js": "module.exports = {};\n",
+    });
     await using proc = Bun.spawn({
-      cmd: kind === "-e" ? [bunExe(), "-e", script] : [bunExe(), "index.js"],
+      cmd: kind.startsWith("-e") ? [bunExe(), "-e", source] : [bunExe(), "index.js"],
       env: bunEnv,
       cwd: String(dir),
       stderr: "pipe",
@@ -1057,7 +1067,7 @@ describe.concurrent("process.nextTick interleaving with the microtask queue", ()
   // Node drains the entire microtask queue, including microtasks those microtasks queue,
   // before running nextTick callbacks queued from inside one of them. Node prints the same
   // order for .js, .cjs, and .mjs entry points.
-  it.each(["-e", "file"])("queued from inside a microtask waits for the microtask queue (%s)", async kind => {
+  it.each(entryKinds)("queued from inside a microtask waits for the microtask queue (%s)", async kind => {
     const result = await runFresh(
       kind,
       `const L = [];
@@ -1079,7 +1089,7 @@ describe.concurrent("process.nextTick interleaving with the microtask queue", ()
 
   // The script's own top-level code is a nextTick checkpoint boundary: nextTicks it queues run
   // before the promise jobs it queues. Matches a Node CommonJS entry point.
-  it.each(["-e", "file"])("queued from the script's top-level code runs before its promise jobs (%s)", async kind => {
+  it.each(entryKinds)("queued from the script's top-level code runs before its promise jobs (%s)", async kind => {
     const result = await runFresh(
       kind,
       `const L = [];
@@ -1089,5 +1099,20 @@ describe.concurrent("process.nextTick interleaving with the microtask queue", ()
        setImmediate(() => console.log(JSON.stringify(L)));`,
     );
     expect(result).toEqual({ order: ["tick0", "p1", "p2", "tick1"], stderr: "", exitCode: 0 });
+  });
+
+  // AsyncLocalStorage.enterWith swaps the onEachMicrotaskTick hook for an async-context cleanup
+  // step; that must not drop a nextTick handoff still pending from an earlier sibling microtask.
+  it("is preserved across AsyncLocalStorage.enterWith in a sibling microtask", async () => {
+    const result = await runFresh(
+      "file",
+      `const { AsyncLocalStorage } = require("async_hooks");
+       const L = [];
+       Promise.resolve().then(() => { L.push("p1"); process.nextTick(() => L.push("tick1")); });
+       Promise.resolve().then(() => { L.push("p2"); new AsyncLocalStorage().enterWith({}); });
+       Promise.resolve().then(() => L.push("p3"));
+       setImmediate(() => console.log(JSON.stringify(L)));`,
+    );
+    expect(result).toEqual({ order: ["p1", "p2", "p3", "tick1"], stderr: "", exitCode: 0 });
   });
 });

@@ -381,12 +381,11 @@ static void cleanupAsyncHooksData(JSC::VM& vm)
     auto* globalObject = defaultGlobalObject();
     globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
     globalObject->asyncHooksNeedsCleanup = false;
-    if (!globalObject->m_nextTickQueue) {
-        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
-        checkIfNextTickWasCalledDuringMicrotask(vm);
-    } else {
-        vm.setOnEachMicrotaskTick(nullptr);
-    }
+    // Hand the slot back to the bootstrap hook unconditionally: the nextTick queue can now exist
+    // with its handoff still deferred to the end of the microtask queue. The hook nulls itself
+    // out via resetOnEachMicrotaskTick once that handoff happens, so this stays one-shot.
+    vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
+    checkIfNextTickWasCalledDuringMicrotask(vm);
 }
 
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure)

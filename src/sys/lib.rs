@@ -7031,7 +7031,10 @@ fn get_file_information_by_name() -> Option<bun_windows_sys::externs::GetFileInf
     crate::dlsym_with_handle!(
         bun_windows_sys::externs::GetFileInformationByNameFn,
         "GetFileInformationByName",
-        dlopen(bun_core::zstr!("api-ms-win-core-file-l2-1-4.dll"), RTLD::LAZY)
+        dlopen(
+            bun_core::zstr!("api-ms-win-core-file-l2-1-4.dll"),
+            RTLD::LAZY
+        )
     )
 }
 

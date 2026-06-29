@@ -144,8 +144,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             dup_hashes: Vec::new(),
             dup_maps: Vec::new(),
             spill_depth: 0,
-            is_ascii_only: flags
-                & (jidx::FLAG_HAS_BACKSLASH_IN_STRING | jidx::FLAG_HAS_NON_ASCII)
+            is_ascii_only: flags & (jidx::FLAG_HAS_BACKSLASH_IN_STRING | jidx::FLAG_HAS_NON_ASCII)
                 == 0,
         }
     }
@@ -170,7 +169,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     fn token_range(&self, cursor: usize) -> Range {
         let p = self.pos_at(cursor);
         if p >= self.contents.len() {
-            return Range { loc: usize2loc(self.contents.len()), len: 0 };
+            return Range {
+                loc: usize2loc(self.contents.len()),
+                len: 0,
+            };
         }
         let len = match self.contents[p] {
             b'{' | b'}' | b'[' | b']' | b':' | b',' => 1,
@@ -191,7 +193,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 e.max(1)
             }
         };
-        Range { loc: usize2loc(p), len: len as i32 }
+        Range {
+            loc: usize2loc(p),
+            len: len as i32,
+        }
     }
 
     /// "Unexpected X" + `ParserError`, like the old `lexer.unexpected()` +
@@ -216,8 +221,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let r = self.token_range(cursor);
         let p = self.pos_at(cursor);
         if p >= self.contents.len() {
-            let _ = self
-                .add_range_error(r, format_args!("Expected {what} but found end of file"));
+            let _ = self.add_range_error(r, format_args!("Expected {what} but found end of file"));
         } else {
             let raw = &self.contents[p..p + (r.len as usize).max(1)];
             let _ = self.add_range_error(
@@ -421,7 +425,9 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 break;
             }
         }
-        let Some(k) = first_special else { return self.make_clean_string(body) };
+        let Some(k) = first_special else {
+            return self.make_clean_string(body);
+        };
         if body[k] != b'\\' {
             // Raw control character inside a string.
             return Err(self.string_control_char_error(body[k]));
@@ -503,7 +509,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     /// ASCII whitespace fast check + exotic-unicode-whitespace fallback.
     #[cold]
     fn rest_is_ws_cold(&self, rest: &[u8]) -> bool {
-        if rest.iter().all(|b| matches!(b, b' ' | b'\t' | b'\n' | b'\r')) {
+        if rest
+            .iter()
+            .all(|b| matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
+        {
             return true;
         }
         let iterator = strings::CodepointIterator::init(rest);
@@ -563,9 +572,14 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 if after_b == b']' {
                     // Trailing comma.
                     if !self.opts.allow_trailing_commas {
-                        let r = Range { loc: usize2loc(p), len: 1 };
-                        let _ = self
-                            .add_range_error(r, format_args!("JSON does not support trailing commas"));
+                        let r = Range {
+                            loc: usize2loc(p),
+                            len: 1,
+                        };
+                        let _ = self.add_range_error(
+                            r,
+                            format_args!("JSON does not support trailing commas"),
+                        );
                     }
                     self.cursor += 1; // ]
                     break Ok(());
@@ -642,9 +656,14 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 let after = self.pos_at(self.cursor);
                 if after_b == b'}' {
                     if !self.opts.allow_trailing_commas {
-                        let r = Range { loc: usize2loc(p), len: 1 };
-                        let _ = self
-                            .add_range_error(r, format_args!("JSON does not support trailing commas"));
+                        let r = Range {
+                            loc: usize2loc(p),
+                            len: 1,
+                        };
+                        let _ = self.add_range_error(
+                            r,
+                            format_args!("JSON does not support trailing commas"),
+                        );
                     }
                     self.cursor += 1; // }
                     break Ok(());
@@ -797,7 +816,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         self.log.add_range_warning_fmt(
             Some(source),
             key_range,
-            format_args!("Duplicate key \"{}\" in object literal", bstr::BStr::new(key_text)),
+            format_args!(
+                "Duplicate key \"{}\" in object literal",
+                bstr::BStr::new(key_text)
+            ),
         );
     }
 
@@ -822,9 +844,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 self.cursor += 1;
                 let next = self.cursor;
                 let p = self.pos_at(next);
-                if p >= self.contents.len()
-                    || !matches!(self.contents[p], b'0'..=b'9' | b'.')
-                {
+                if p >= self.contents.len() || !matches!(self.contents[p], b'0'..=b'9' | b'.') {
                     self.expected(next, "number");
                     return Err(self.unexpected(next));
                 }
@@ -973,7 +993,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 text
             };
             // All bytes are ASCII digits/./e/+/-.
-            match core::str::from_utf8(digits).ok().and_then(|s| s.parse::<f64>().ok()) {
+            match core::str::from_utf8(digits)
+                .ok()
+                .and_then(|s| s.parse::<f64>().ok())
+            {
                 Some(v) => v,
                 None => {
                     self.add_error(pos, format_args!("Invalid number"));
@@ -1156,7 +1179,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 Ok(Expr::init(E::Number::new(value), loc_tail))
             }
             c if is_identifier_start(c) => {
-                let r = Range { loc: usize2loc(pos), len: ident_len(tail) as i32 };
+                let r = Range {
+                    loc: usize2loc(pos),
+                    len: ident_len(tail) as i32,
+                };
                 let raw = &tail[..ident_len(tail)];
                 let _ =
                     self.add_range_error(r, format_args!("Unexpected {}", bstr::BStr::new(raw)));
@@ -1232,7 +1258,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
 #[inline]
 fn ident_len(t: &[u8]) -> usize {
-    t.iter().take_while(|&&c| is_identifier_continue(c)).count().max(1)
+    t.iter()
+        .take_while(|&&c| is_identifier_continue(c))
+        .count()
+        .max(1)
 }
 
 #[inline]
@@ -1251,9 +1280,12 @@ fn estring_eq(a: &E::String, b: &E::String) -> bool {
     if a.is_utf16 != b.is_utf16 {
         return false;
     }
-    if a.is_utf16 { a.slice16() == b.slice16() } else { a.slice8() == b.slice8() }
+    if a.is_utf16 {
+        a.slice16() == b.slice16()
+    } else {
+        a.slice8() == b.slice8()
+    }
 }
-
 
 /// Port of the old `decode_escape_sequences` (JSON arm) over a byte body,
 /// plus the enclosing scan loop's check that ran before it: raw control
@@ -1367,7 +1399,11 @@ pub(crate) fn decode_auto_quoted(
     body: &[u8],
     opts: JSONOptions,
 ) -> Result<E::String, bun_core::Error> {
-    let mut l = MiniLog { log, source, prev_error_loc: Loc::EMPTY };
+    let mut l = MiniLog {
+        log,
+        source,
+        prev_error_loc: Loc::EMPTY,
+    };
     let mut body = body;
     if opts.ignore_leading_escape_sequences && body.first() == Some(&b'\\') {
         body = &body[1..];

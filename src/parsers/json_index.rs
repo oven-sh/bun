@@ -149,11 +149,13 @@ thread_local! {
 }
 
 fn scratch_get() -> ScratchBufs {
-    SCRATCH.with_borrow_mut(Option::take).unwrap_or(ScratchBufs {
-        indices: Vec::new(),
-        dirty: Vec::new(),
-        chunk_out: Vec::new(),
-    })
+    SCRATCH
+        .with_borrow_mut(Option::take)
+        .unwrap_or(ScratchBufs {
+            indices: Vec::new(),
+            dirty: Vec::new(),
+            chunk_out: Vec::new(),
+        })
 }
 
 fn scratch_put(mut bufs: ScratchBufs) {
@@ -197,7 +199,12 @@ pub fn build(contents: &[u8]) -> Result<StructuralIndex, IndexError> {
             build_simd_chunked(contents, &mut bufs)
         };
         if flags & FLAG_ODDITY == 0 {
-            return Ok(StructuralIndex { bufs, n, flags, first_comment: None });
+            return Ok(StructuralIndex {
+                bufs,
+                n,
+                flags,
+                first_comment: None,
+            });
         }
         // fall through to the scalar indexer
     }
@@ -441,7 +448,12 @@ fn scalar_index(contents: &[u8], mut bufs: ScratchBufs) -> Result<StructuralInde
     let count = bufs.indices.len();
     bufs.indices.push(n as u32);
     bufs.indices.push(n as u32);
-    Ok(StructuralIndex { bufs, n: count, flags, first_comment })
+    Ok(StructuralIndex {
+        bufs,
+        n: count,
+        flags,
+        first_comment,
+    })
 }
 
 /// U+2028 / U+2029 (3-byte UTF-8: E2 80 A8/A9) terminate `//` comments, like
@@ -512,7 +524,9 @@ mod tests {
             }
             // Skip docs the SIMD path rejects (none: the alphabet has no '/'
             // or '\'' so the SIMD path is always taken).
-            let Some((si, sf, ci, cf)) = build_both(&buf) else { continue };
+            let Some((si, sf, ci, cf)) = build_both(&buf) else {
+                continue;
+            };
             assert_eq!(si, ci, "index mismatch for {:?}", bstr::BStr::new(&buf));
             assert_eq!(sf, cf, "flag mismatch for {:?}", bstr::BStr::new(&buf));
         }
@@ -552,7 +566,9 @@ mod tests {
 
     #[test]
     fn strings_with_escapes_are_dirty() {
-        let r = build(br#"{"a": "b\nc", "d": "e"}"#).map_err(|_| ()).unwrap();
+        let r = build(br#"{"a": "b\nc", "d": "e"}"#)
+            .map_err(|_| ())
+            .unwrap();
         assert!(r.flags & FLAG_HAS_BACKSLASH_IN_STRING != 0);
         assert!(r.is_dirty(7, 12));
         r.release();

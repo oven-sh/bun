@@ -70,6 +70,7 @@ const LOOKBEHIND: usize = 16;
 /// the indexer truncates the index stream at the error (stage 2 then sees a
 /// premature end of document) and the driver reports the index error instead
 /// of whatever stage 2 produced.
+#[derive(Clone, Copy)]
 pub enum IndexError {
     /// `/*` with no closing `*/` — reported at end of file like the old lexer.
     UnterminatedBlockComment,

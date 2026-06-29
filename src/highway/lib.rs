@@ -627,7 +627,7 @@ pub fn json_structural_index_chunk(
 ) -> (usize, u32) {
     assert!(out.len() >= chunk.len() + 66);
     assert!(dirty.len() >= (chunk.len().div_ceil(64)).div_ceil(64));
-    assert!(base_offset % 4096 == 0);
+    assert!(base_offset.is_multiple_of(4096));
     let mut flags: u32 = 0;
     // SAFETY: pointers/lengths come from live slices whose sizes satisfy the
     // kernel's documented requirements (asserted above); the kernel writes
@@ -641,7 +641,7 @@ pub fn json_structural_index_chunk(
             out.as_mut_ptr().cast::<u32>(),
             dirty.as_mut_ptr(),
             state.as_mut_ptr(),
-            &mut flags,
+            &raw mut flags,
         )
     };
     (n, flags)

@@ -340,7 +340,6 @@ pub enum ZlibError {
     InvalidArgument,
     ZlibError,
     ShortRead,
-    DecompressedBodyTooLarge,
 }
 
 bun_core::impl_tag_error!(ZlibError);
@@ -1182,10 +1181,8 @@ impl Drop for DeflateEncoder {
 pub struct InflateDecoder {
     strm: Box<zStream_struct>,
     pub state: State,
-    /// Decompression-bomb guard for [`decompress`](Self::decompress),
-    /// compared against the cumulative output across all calls.
+    /// Decompression-bomb guard for [`decompress`](Self::decompress).
     pub max_output_size: usize,
-    total_out: usize,
 }
 
 impl InflateDecoder {
@@ -1194,7 +1191,6 @@ impl InflateDecoder {
             strm: Box::new(new_zstream()),
             state: State::Uninitialized,
             max_output_size: usize::MAX,
-            total_out: 0,
         };
         // SAFETY: strm is fully initialized; version/size match the linked zlib.
         let rc = unsafe {
@@ -1227,7 +1223,6 @@ impl InflateDecoder {
         let rc = unsafe { inflateReset(&raw mut *self.strm) };
         if rc == ReturnCode::Ok {
             self.state = State::Uninitialized;
-            self.total_out = 0;
         }
         rc
     }
@@ -1260,20 +1255,18 @@ impl InflateDecoder {
             return Ok(());
         }
         loop {
-            let remaining = self.max_output_size.saturating_sub(self.total_out);
+            let remaining = self.max_output_size.saturating_sub(out.len());
             if remaining == 0 {
                 self.state = State::Error;
-                return Err(ZlibError::DecompressedBodyTooLarge);
+                return Err(ZlibError::ZlibError);
             }
             let reserve = remaining.min(4096);
-            let len_before = out.len();
             let (consumed, rc) = self.step(input, out, reserve, FlushValue::NoFlush);
-            self.total_out = self.total_out.saturating_add(out.len() - len_before);
             input = &input[consumed..];
             self.state = State::Inflating;
-            if self.total_out > self.max_output_size {
+            if out.len() > self.max_output_size {
                 self.state = State::Error;
-                return Err(ZlibError::DecompressedBodyTooLarge);
+                return Err(ZlibError::ZlibError);
             }
             match rc {
                 ReturnCode::StreamEnd => {

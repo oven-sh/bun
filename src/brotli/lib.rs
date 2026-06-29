@@ -268,10 +268,9 @@ impl<'a> Drop for BrotliReaderArrayList<'a> {
 pub struct StreamingDecoder {
     brotli: ptr::NonNull<c::BrotliDecoder>,
     pub state: ReaderState,
-    /// Decompression-bomb guard: `decompress` errors once the cumulative
-    /// output across all calls exceeds this many bytes. Defaults to unbounded.
+    /// Decompression-bomb guard: `decompress` errors instead of growing the
+    /// output past this many bytes. Defaults to unbounded.
     pub max_output_size: usize,
-    total_out: usize,
 }
 
 impl StreamingDecoder {
@@ -306,7 +305,6 @@ impl StreamingDecoder {
             brotli: ptr::NonNull::from(brotli),
             state: ReaderState::Uninitialized,
             max_output_size: usize::MAX,
-            total_out: 0,
         })
     }
 
@@ -362,11 +360,10 @@ impl StreamingDecoder {
             // spare-capacity region starting at the previous `len()`.
             unsafe { bun_core::vec::commit_spare(out, bytes_written) };
             total_in += bytes_read;
-            self.total_out = self.total_out.saturating_add(bytes_written);
 
-            if self.total_out > self.max_output_size {
+            if out.len() > self.max_output_size {
                 self.state = ReaderState::Error;
-                return Err(err!("DecompressedBodyTooLarge"));
+                return Err(err!("BrotliDecompressionError"));
             }
 
             match result {
@@ -387,9 +384,9 @@ impl StreamingDecoder {
                     return Err(err!("ShortRead"));
                 }
                 c::BrotliDecoderResult::needs_more_output => {
-                    if self.total_out >= self.max_output_size {
+                    if out.len() >= self.max_output_size {
                         self.state = ReaderState::Error;
-                        return Err(err!("DecompressedBodyTooLarge"));
+                        return Err(err!("BrotliDecompressionError"));
                     }
                     self.state = ReaderState::Inflating;
                 }

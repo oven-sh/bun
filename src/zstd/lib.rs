@@ -180,7 +180,6 @@ pub enum ZstdError {
     ZstdFailedToCreateInstance,
     ZstdDecompressionError,
     ShortRead,
-    DecompressedBodyTooLarge,
 }
 
 bun_core::impl_tag_error!(ZstdError);
@@ -511,10 +510,9 @@ impl Drop for ZstdReaderArrayList<'_> {
 pub struct StreamingDecoder {
     stream: core::ptr::NonNull<c::ZSTD_DStream>,
     pub state: State,
-    /// Decompression-bomb guard: `decompress` errors once the cumulative
-    /// output across all calls exceeds this many bytes. Defaults to unbounded.
+    /// Decompression-bomb guard: `decompress` errors instead of growing the
+    /// output past this many bytes. Defaults to unbounded.
     pub max_output_size: usize,
-    total_out: usize,
 }
 
 impl StreamingDecoder {
@@ -527,7 +525,6 @@ impl StreamingDecoder {
             stream,
             state: State::Uninitialized,
             max_output_size: usize::MAX,
-            total_out: 0,
         })
     }
 
@@ -559,10 +556,10 @@ impl StreamingDecoder {
                 return Ok(());
             }
 
-            let remaining_output = self.max_output_size.saturating_sub(self.total_out);
+            let remaining_output = self.max_output_size.saturating_sub(out.len());
             if remaining_output == 0 {
                 self.state = State::Error;
-                return Err(ZstdError::DecompressedBodyTooLarge);
+                return Err(ZstdError::ZstdDecompressionError);
             }
 
             out.reserve(4096);
@@ -594,7 +591,6 @@ impl StreamingDecoder {
             // the spare capacity starting at the previous len.
             unsafe { bun_core::vec::commit_spare(out, bytes_written) };
             total_in += bytes_read;
-            self.total_out = self.total_out.saturating_add(bytes_written);
 
             if rc == 0 {
                 // Frame complete.

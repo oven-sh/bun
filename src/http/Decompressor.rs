@@ -1,8 +1,6 @@
 use bun_core::MutableString;
 use bun_http_types::Encoding::Encoding;
 
-const MAX_DECOMPRESSED_BODY_SIZE: usize = 4 * 1024 * 1024 * 1024;
-
 // The streaming decoders below own only their C-side state and take
 // `(input, output)` per call to [`Decompressor::decompress_chunk`], so no
 // borrow of the request's `compressed_body` / `body_out_str` escapes the
@@ -35,19 +33,15 @@ impl Decompressor {
                 } else {
                     -bun_zlib::MAX_WBITS
                 };
-                let mut decoder = bun_zlib::InflateDecoder::new(window_bits)?;
-                decoder.max_output_size = MAX_DECOMPRESSED_BODY_SIZE;
-                *self = Decompressor::Zlib(decoder);
+                *self = Decompressor::Zlib(bun_zlib::InflateDecoder::new(window_bits)?);
             }
             Encoding::Brotli => {
-                let mut decoder = Box::new(bun_brotli::StreamingDecoder::new(&Default::default())?);
-                decoder.max_output_size = MAX_DECOMPRESSED_BODY_SIZE;
-                *self = Decompressor::Brotli(decoder);
+                *self = Decompressor::Brotli(Box::new(bun_brotli::StreamingDecoder::new(
+                    &Default::default(),
+                )?));
             }
             Encoding::Zstd => {
-                let mut decoder = Box::new(bun_zstd::StreamingDecoder::new()?);
-                decoder.max_output_size = MAX_DECOMPRESSED_BODY_SIZE;
-                *self = Decompressor::Zstd(decoder);
+                *self = Decompressor::Zstd(Box::new(bun_zstd::StreamingDecoder::new()?));
             }
             _ => unreachable!("Invalid encoding. This code should not be reachable"),
         }

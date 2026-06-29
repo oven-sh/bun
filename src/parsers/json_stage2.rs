@@ -324,23 +324,49 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     /// whitespace first.
     #[inline(always)]
     fn peek_byte(&mut self) -> u8 {
+        self.peek().0
+    }
+
+    /// [`Self::peek_byte`] plus the byte position of the cursor's index after
+    /// the skip (== `pos_at(self.cursor)`, the sentinel `len` at end of
+    /// input), so container loops resolve both in one window access.
+    #[inline(always)]
+    fn peek(&mut self) -> (u8, usize) {
         let p = self.pos_at(self.cursor);
         if p >= self.contents.len() {
-            return 0xFF;
+            return (0xFF, p);
         }
         let b = self.contents[p];
         if b >= 0x80 || b == 0x0B || b == 0x0C {
-            return match self.skip_unicode_ws() {
+            let b = match self.skip_unicode_ws() {
                 None => 0xFF,
                 Some(np) => self.contents[np],
             };
+            return (b, self.pos_at(self.cursor));
         }
-        b
+        (b, p)
     }
 
     /// Is there a newline in the whitespace gap immediately before byte `p`?
     /// (= the old lexer's `has_newline_before` for the token starting at `p`.)
+    /// In minified documents the gap is empty (the byte before `p` already
+    /// decides), so only that byte is examined inline.
+    #[inline(always)]
     fn newline_before(&self, p: usize) -> bool {
+        if p == 0 {
+            // Start of file counts as a newline before (matches
+            // `has_newline_before = end == 0` in the old lexer).
+            return true;
+        }
+        match self.contents[p - 1] {
+            b'\n' | b'\r' => true,
+            b' ' | b'\t' => self.newline_in_gap_before(p - 1),
+            _ => false,
+        }
+    }
+
+    /// See [`Self::newline_before`]: the rest of a non-empty whitespace gap.
+    fn newline_in_gap_before(&self, p: usize) -> bool {
         for &b in self.contents[..p].iter().rev() {
             match b {
                 b' ' | b'\t' => {}
@@ -348,8 +374,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 _ => return false,
             }
         }
-        // Start of file counts as a newline before (matches
-        // `has_newline_before = end == 0` in the old lexer).
         true
     }
 
@@ -499,6 +523,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     /// token goes through the ordinary scalar path, whose `Expr` payload is
     /// inline in `Data` (numbers, booleans, null) — so the only Store
     /// traffic left in a simple-mode document is one node per container.
+    #[inline(always)]
     fn parse_json_value(&mut self) -> PResult<E::JsonValue> {
         let cursor = self.cursor;
         let start = self.pos_at(cursor);
@@ -524,10 +549,9 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 Ok(E::JsonValue::Array(r))
             }
             b'"' | b'\'' => {
-                let s = self.parse_string()?;
                 // Simple mode implies `force_utf8` (asserted by the driver),
                 // so the string body is plain UTF-8 bytes.
-                Ok(E::JsonValue::String(s.data))
+                Ok(E::JsonValue::String(self.parse_string_utf8_at(start)?))
             }
             _ => {
                 let e = self.parse_scalar::<true>(loc)?;
@@ -551,11 +575,21 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     // ── strings ──────────────────────────────────────────────────────────
 
-    /// Parse the string whose opening quote is at the cursor's index.
-    /// Advances the cursor past both quote indices.
-    fn parse_string(&mut self) -> PResult<E::EString> {
+    /// Locate the body of the string whose opening quote is at the cursor's
+    /// index and whether it needs a body scan (a `\` or a control character
+    /// may be inside). Advances the cursor past both quote indices.
+    #[inline(always)]
+    fn string_body(&mut self) -> PResult<(&'s [u8], bool)> {
+        let open = self.pos_at(self.cursor);
+        self.string_body_at(open)
+    }
+
+    /// [`Self::string_body`] when the caller already resolved the opening
+    /// quote's byte position (`open == pos_at(self.cursor)`).
+    #[inline(always)]
+    fn string_body_at(&mut self, open: usize) -> PResult<(&'s [u8], bool)> {
         let i = self.cursor;
-        let open = self.pos_at(i);
+        debug_assert_eq!(open, self.pos_at(i));
         let close = self.pos_at(i + 1);
         let quote = self.contents[open];
         self.token_start = open;
@@ -566,10 +600,34 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
         self.cursor = i + 2;
         let body = &self.contents[open + 1..close];
-        if self.any_string_needs_scan() && self.idx.is_dirty(open + 1, close.max(open + 1)) {
+        let dirty =
+            self.any_string_needs_scan() && self.idx.is_dirty(open + 1, close.max(open + 1));
+        Ok((body, dirty))
+    }
+
+    /// Parse the string whose opening quote is at the cursor's index.
+    fn parse_string(&mut self) -> PResult<E::EString> {
+        let (body, dirty) = self.string_body()?;
+        if dirty {
             return self.parse_string_slow(body);
         }
         self.make_clean_string(body)
+    }
+
+    /// [`Self::parse_string`] for callers that only keep the string's bytes
+    /// and never store UTF-16 (`force_utf8`, implied by simple mode): the
+    /// clean-string fast path is just the body slice, no `E::EString`.
+    /// `open` is the opening quote's byte position (`pos_at(self.cursor)`),
+    /// which every caller has already resolved.
+    #[inline(always)]
+    fn parse_string_utf8_at(&mut self, open: usize) -> PResult<E::Str> {
+        debug_assert!(self.force_utf8);
+        let (body, dirty) = self.string_body_at(open)?;
+        if dirty {
+            // `force_utf8` makes the decoded result UTF-8.
+            return Ok(self.parse_string_slow(body)?.data);
+        }
+        Ok(E::Str::new(body))
     }
 
     /// A string with no escapes and no control characters.
@@ -715,9 +773,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let here = self.pos_at(self.cursor);
         let mut is_single_line = !self.newline_before(here);
         let result: PResult = loop {
-            let b = self.peek_byte();
+            let (b, p) = self.peek();
             let cursor = self.cursor;
-            let p = self.pos_at(cursor);
             if p >= self.contents.len() {
                 // Unterminated array: hard error, like the old parser.
                 self.token_start = self.contents.len();
@@ -725,7 +782,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 break Err(bun_core::err!("ParserError"));
             }
             if b == b']' {
-                if self.newline_before(p) {
+                if is_single_line && self.newline_before(p) {
                     is_single_line = false;
                 }
                 self.cursor += 1;
@@ -748,12 +805,11 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     self.cursor += 1;
                     continue;
                 }
-                if self.newline_before(p) {
+                if is_single_line && self.newline_before(p) {
                     is_single_line = false;
                 }
                 self.cursor += 1; // ,
-                let after_b = self.peek_byte();
-                let after = self.pos_at(self.cursor);
+                let (after_b, after) = self.peek();
                 if after_b == b']' {
                     // Trailing comma.
                     if !self.opts.allow_trailing_commas {
@@ -769,7 +825,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     self.cursor += 1; // ]
                     break Ok(());
                 }
-                if self.newline_before(after) {
+                if is_single_line && self.newline_before(after) {
                     is_single_line = false;
                 }
             }
@@ -830,9 +886,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let warn_dup = self.opts.json_warn_duplicate_keys;
 
         let result: PResult = loop {
-            let mut b = self.peek_byte();
+            let (mut b, mut p) = self.peek();
             let cursor = self.cursor;
-            let p = self.pos_at(cursor);
             if p >= self.contents.len() {
                 // Unterminated object: hard error, like the old parser.
                 self.token_start = self.contents.len();
@@ -840,7 +895,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 break Err(bun_core::err!("ParserError"));
             }
             if b == b'}' {
-                if self.newline_before(p) {
+                if is_single_line && self.newline_before(p) {
                     is_single_line = false;
                 }
                 self.cursor += 1;
@@ -861,12 +916,11 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     self.cursor += 1;
                     continue;
                 }
-                if self.newline_before(p) {
+                if is_single_line && self.newline_before(p) {
                     is_single_line = false;
                 }
                 self.cursor += 1; // ,
-                let after_b = self.peek_byte();
-                let after = self.pos_at(self.cursor);
+                let (after_b, after) = self.peek();
                 if after_b == b'}' {
                     if !self.opts.allow_trailing_commas {
                         let r = Range {
@@ -881,36 +935,50 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     self.cursor += 1; // }
                     break Ok(());
                 }
-                if self.newline_before(after) {
+                if is_single_line && self.newline_before(after) {
                     is_single_line = false;
                 }
                 b = after_b;
+                p = after;
             }
 
             // ── key ──
             let key_cursor = self.cursor;
-            let key_start = self.pos_at(key_cursor);
+            // `peek` already resolved the cursor's byte position.
+            let key_start = p;
+            debug_assert_eq!(key_start, self.pos_at(key_cursor));
             self.token_start = key_start;
-            let (key_str, key_range) = if b == b'"' || b == b'\'' {
-                let key_range = self.token_range(key_cursor);
-                let s = match self.parse_string() {
-                    Ok(mut s) => {
-                        if self.force_utf8 {
-                            s.to_utf8(self.bump).expect("to_utf8 cannot fail");
-                        }
-                        s
+            let key_str = if b == b'"' || b == b'\'' {
+                if SIMPLE {
+                    // Simple mode implies `force_utf8`; only `.data` (and, for
+                    // the duplicate-key warning, the hash) of the key is used.
+                    match self.parse_string_utf8_at(key_start) {
+                        Ok(d) => E::EString::init(d.slice()),
+                        Err(e) => break Err(e),
                     }
-                    Err(e) => break Err(e),
-                };
-                (s, key_range)
+                } else {
+                    match self.parse_string() {
+                        Ok(mut s) => {
+                            if self.force_utf8 {
+                                s.to_utf8(self.bump).expect("to_utf8 cannot fail");
+                            }
+                            s
+                        }
+                        Err(e) => break Err(e),
+                    }
+                }
             } else {
                 // Not a string key: report like the old parser
                 // ("Expected string but found X") and bail out of the object.
                 self.expected(key_cursor, "string");
                 break Err(self.unexpected(key_cursor));
             };
+            let key_loc = usize2loc(key_start);
 
             if warn_dup && self.check_duplicate_key::<SIMPLE>(mark, hmark, &key_str) {
+                // Cold: the warning is the only consumer of the key's full
+                // range (`token_range` re-derives it from the index window).
+                let key_range = self.token_range(key_cursor);
                 self.warn_duplicate_key(&key_str, key_range);
             }
 
@@ -932,11 +1000,11 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 };
                 self.scratch_simple_props.push(E::PropertySimple {
                     key: key_str.data,
-                    key_loc: key_range.loc,
+                    key_loc,
                     value,
                 });
             } else {
-                let key = Expr::init(key_str, key_range.loc);
+                let key = Expr::init(key_str, key_loc);
                 let value = match self.parse_value::<false>() {
                     Ok(v) => v,
                     Err(e) => break Err(e),

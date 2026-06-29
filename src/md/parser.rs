@@ -130,7 +130,7 @@ impl Default for BlockHeader {
 }
 
 /// `Parser`'s error type: the union of `{ OutOfMemory, JSError, JSTerminated }`
-/// with the parser-specific `{ StackOverflow, InputTooLarge }`.
+/// with the parser-specific `{ StackOverflow, InputTooLarge, TooManyBlocks }`.
 // (`bun_jsc::JsError` covers the first three, but the md crate sits below
 // `bun_jsc` in the layering, so the variants stay flat here.)
 pub type Error = ParserError;
@@ -141,9 +141,12 @@ pub enum ParserError {
     JSError,
     JSTerminated,
     StackOverflow,
-    /// The input is longer than `OFF::MAX` bytes, so its offsets cannot be
-    /// represented by the parser's `u32` offset type.
+    /// The input is longer than [`MAX_INPUT_LEN`], so the parser's `u32`
+    /// offset arithmetic cannot address it.
     InputTooLarge,
+    /// The document needs more than [`MAX_BLOCK_BYTES`] of block headers, so
+    /// the parser's `u32` block offsets cannot address them.
+    TooManyBlocks,
 }
 
 bun_core::oom_from_alloc!(ParserError);
@@ -154,12 +157,33 @@ impl From<ParserError> for bun_core::Error {
     }
 }
 
-/// Every offset, mark and span boundary in the parser is an `OFF` (u32), so an
-/// input of 2^32 bytes or more cannot be indexed. Callers that size anything
-/// from the input length must reject it with this before allocating.
+/// The longest fixed lookahead the parser performs from an in-bounds offset:
+/// the 9-byte `<![CDATA[` probe in `html_block_start_kind`.
+const MAX_LOOKAHEAD: OFF = 9;
+
+/// The largest input `input_size` accepts. Every offset, mark and span
+/// boundary in the parser is an `OFF` (u32), and bounds checks are written as
+/// `off + k <= size` for fixed lookaheads `k`, so the input must leave
+/// [`MAX_LOOKAHEAD`] bytes of headroom below `OFF::MAX` for that arithmetic
+/// never to wrap.
+pub const MAX_INPUT_LEN: usize = (OFF::MAX - MAX_LOOKAHEAD) as usize;
+
+/// The most block-header bytes a document may allocate: block offsets are
+/// stored as `u32`s (`BlockHeader.data` links, `Container.block_byte_off`),
+/// and each new header is written at the end of `block_bytes` rounded up to
+/// its alignment, so the buffer must stop one aligned header short of
+/// `OFF::MAX`.
+pub(crate) const MAX_BLOCK_BYTES: usize =
+    OFF::MAX as usize - (size_of::<BlockHeader>() + align_of::<BlockHeader>());
+
+/// Callers that size anything from the input length must reject oversized
+/// inputs with this before allocating.
 #[inline]
 pub(crate) fn input_size(text: &[u8]) -> Result<OFF, ParserError> {
-    OFF::try_from(text.len()).map_err(|_| ParserError::InputTooLarge)
+    if text.len() > MAX_INPUT_LEN {
+        return Err(ParserError::InputTooLarge);
+    }
+    Ok(text.len() as OFF)
 }
 
 impl<'a> Parser<'a> {

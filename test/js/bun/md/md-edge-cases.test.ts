@@ -1190,21 +1190,24 @@ describe("pathological autolink opener inputs", () => {
   }, 90_000);
 });
 
-describe("inputs of 2^32 bytes or more", () => {
-  // The parser addresses its input with u32 offsets, so a 2^32-byte input
-  // cannot be represented and must be rejected with a catchable RangeError by
-  // every entry point. One subprocess covers all four: a crash must not take
-  // down the test runner, and one 4 GiB reservation (virtual only, never
-  // written) keeps this cheap. The SKIP branch covers runners that cannot
-  // reserve 4 GiB; under ASAN the allocator must be allowed to return null
-  // for that to surface as a catchable error rather than an abort. The
-  // explicit timeout is for the debug+ASAN lanes, where a spawned child is
-  // slow under load (same as the linear-time test above).
-  test("html, ansi, render and react reject a 2^32-byte input", async () => {
+describe("inputs the parser cannot address", () => {
+  // The parser addresses its input with u32 offsets and probes up to 9 bytes
+  // past an offset (the `<![CDATA[` check), so everything longer than
+  // 4294967286 bytes (u32::MAX - 9) must be rejected with a catchable
+  // RangeError by every entry point: at u32::MAX exactly, the probe's
+  // `off + 9` would wrap. One subprocess covers the four entry points at
+  // 2^32 bytes and the first rejected length; both buffers are virtual only
+  // (never written), so this is cheap. The SKIP branch covers runners that
+  // cannot reserve the address space; under ASAN the allocator must be
+  // allowed to return null for that to surface as a catchable error rather
+  // than an abort. The explicit timeout is for the debug+ASAN lanes, where a
+  // spawned child is slow under load (same as the linear-time test above).
+  test("html, ansi, render and react reject inputs past the addressable limit", async () => {
     const script = `
-      let big;
+      let big, boundary;
       try {
         big = new Uint8Array(2 ** 32);
+        boundary = new Uint8Array(2 ** 32 - 1);
       } catch {
         console.log(JSON.stringify("SKIP"));
         process.exit(0);
@@ -1214,6 +1217,9 @@ describe("inputs of 2^32 bytes or more", () => {
         () => Bun.markdown.ansi(big),
         () => Bun.markdown.render(big, {}),
         () => Bun.markdown.react(big, undefined, { reactVersion: 18 }),
+        // One past the accepted maximum of 4294967286 from the other side:
+        // the largest allocatable length that must still be rejected.
+        () => Bun.markdown.html(boundary),
       ];
       const results = [];
       for (const run of runs) {
@@ -1234,13 +1240,18 @@ describe("inputs of 2^32 bytes or more", () => {
       },
       stdout: "pipe",
       stderr: "inherit",
+      // An accepted 4 GiB input would take minutes to scan; if a regression
+      // accepts one of these lengths again, kill the child instead.
+      timeout: 20_000,
+      killSignal: "SIGKILL",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    const rangeError =
-      'RangeError | ERR_OUT_OF_RANGE | The value of "input.byteLength" is out of range. It must be <= 4294967295. Received 4294967296';
-    expect(["SKIP", [rangeError, rangeError, rangeError, rangeError]]).toContainEqual(
-      JSON.parse(stdout.trim() || '"NO_OUTPUT"'),
-    );
+    const message = (received: number) =>
+      `RangeError | ERR_OUT_OF_RANGE | The value of "input.byteLength" is out of range. It must be <= 4294967286. Received ${received}`;
+    expect([
+      "SKIP",
+      [message(2 ** 32), message(2 ** 32), message(2 ** 32), message(2 ** 32), message(2 ** 32 - 1)],
+    ]).toContainEqual(JSON.parse(stdout.trim() || '"NO_OUTPUT"'));
     expect(exitCode).toBe(0);
   }, 30_000);
 });

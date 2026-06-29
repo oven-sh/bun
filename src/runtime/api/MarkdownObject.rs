@@ -9,7 +9,7 @@ use bun_jsc::{
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
 // SpanType, TextType, SpanDetail, Renderer, helpers, types, ansi, …) as `md`.
 use crate::node::StringOrBuffer;
-use bun_md::parser::ParserError;
+use bun_md::parser::{MAX_INPUT_LEN, ParserError};
 use bun_md::root as md;
 
 // `bun_core::String::create_utf8_for_js` lives in `bun_jsc::bun_string_jsc`
@@ -54,11 +54,21 @@ fn parser_err_to_js(
         ParserError::InputTooLarge => global_this.throw_range_error(
             input_len as i64,
             RangeErrorOptions {
-                max: md::types::OFF::MAX as i64,
+                max: MAX_INPUT_LEN as i64,
                 field_name: b"input.byteLength",
                 ..Default::default()
             },
         ),
+        // The document, not the input length, overflowed the parser's u32
+        // block offsets, so an `input.byteLength` bound would be misleading.
+        ParserError::TooManyBlocks => global_this
+            .err(
+                bun_jsc::ErrCode::OUT_OF_RANGE,
+                format_args!(
+                    "markdown input requires more block metadata than the parser can address (4 GiB)"
+                ),
+            )
+            .throw(),
     }
 }
 

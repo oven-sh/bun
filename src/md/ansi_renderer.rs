@@ -269,12 +269,19 @@ impl OutputBuffer {
         if self.oom {
             return;
         }
-        // Vec::extend aborts on OOM under the global mimalloc allocator.
+        if self.list.try_reserve(data.len()).is_err() {
+            self.oom = true;
+            return;
+        }
         self.list.extend_from_slice(data);
     }
 
     fn write_byte(&mut self, b: u8) {
         if self.oom {
+            return;
+        }
+        if self.list.try_reserve(1).is_err() {
+            self.oom = true;
             return;
         }
         self.list.push(b);
@@ -316,7 +323,10 @@ impl<'a> AnsiRenderer<'a> {
             last_was_newline: true,
             blank_emitted: false,
         };
-        r.out.list.reserve(src_text.len() + src_text.len() / 2);
+        // The output is usually ~1.5x the input; this is only a throughput
+        // hint, so on failure fall back to the incremental `try_reserve`s in
+        // `write` instead of aborting.
+        let _ = r.out.list.try_reserve(src_text.len() + src_text.len() / 2);
         r
     }
 

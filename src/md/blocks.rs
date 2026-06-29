@@ -48,7 +48,7 @@ impl Parser<'_> {
         p_end: &mut OFF,
         pivot_line: &Line,
         line: &mut Line,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), parser::Error> {
         let mut off = off_start;
         let mut total_indent: u32 = 0;
         let mut n_parents: u32 = 0;
@@ -692,7 +692,7 @@ impl Parser<'_> {
         cur_line_idx: usize,
         line_buf: &mut [Line; 2],
         line_idx: &mut usize,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), parser::Error> {
         // Index into line_buf via cur_line_idx instead of taking a `&mut Line`
         // parameter, which would alias line_buf.
         let line = &mut line_buf[cur_line_idx];
@@ -832,7 +832,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn start_new_block(&mut self, line: &Line) -> Result<(), bun_alloc::AllocError> {
+    pub fn start_new_block(&mut self, line: &Line) -> Result<(), parser::Error> {
         let block_type: BlockType = match line.r#type {
             LineType::Hr => BlockType::Hr,
             LineType::Atxheader => BlockType::H,
@@ -847,6 +847,11 @@ impl Parser<'_> {
         let cur_len = self.block_bytes.len();
         let aligned = (cur_len + align_mask) & !align_mask;
         let needed = aligned + size_of::<BlockHeader>();
+        // See `push_container_bytes`: block offsets are u32, so reject a
+        // document whose headers outgrow them at the site that grows them.
+        if needed > parser::MAX_BLOCK_BYTES {
+            return Err(parser::Error::TooManyBlocks);
+        }
         self.block_bytes.ensure_total_capacity(needed);
         // Zero-fill to `needed`; bytes in [aligned, needed) are immediately
         // overwritten by the BlockHeader write below.

@@ -27,11 +27,18 @@ impl Parser<'_> {
         block_type: BlockType,
         data: u32,
         flags: u32,
-    ) -> Result<(), AllocError> {
+    ) -> Result<(), parser::Error> {
         let align_mask: usize = align_of::<BlockHeader>() - 1;
         let cur_len = self.block_bytes.len();
         let aligned = (cur_len + align_mask) & !align_mask;
         let needed = aligned + size_of::<BlockHeader>();
+        // Block offsets are u32 (`block_byte_off`, the casts in
+        // `push_container` and `enter_child_containers`); a document needing
+        // more header bytes than they can address must be rejected here, at
+        // the only places `block_bytes` grows, not cast.
+        if needed > parser::MAX_BLOCK_BYTES {
+            return Err(parser::Error::TooManyBlocks);
+        }
         self.block_bytes
             .reserve(needed.saturating_sub(self.block_bytes.len()));
         // Zero-fill to `needed`; bytes in [aligned, needed) are immediately
@@ -49,7 +56,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn enter_child_containers(&mut self, count: u32) -> Result<(), AllocError> {
+    pub fn enter_child_containers(&mut self, count: u32) -> Result<(), parser::Error> {
         let mut i: u32 = self.n_containers - count;
         while i < self.n_containers {
             // Capture the container fields before calling &mut self methods.
@@ -100,7 +107,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn leave_child_containers(&mut self, keep: u32) -> Result<(), AllocError> {
+    pub fn leave_child_containers(&mut self, keep: u32) -> Result<(), parser::Error> {
         while self.n_containers > keep {
             self.n_containers -= 1;
             // Capture the container fields before calling &mut self methods.

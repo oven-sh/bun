@@ -97,7 +97,7 @@ Bun spawns a lightweight host subprocess (the `bun` binary itself, re-executed i
 
 Bun either **connects** to an already-running Chrome over a WebSocket, or **spawns** a headless Chrome subprocess and talks to it over a pipe (`--remote-debugging-pipe`). Either way, communication uses the [Chrome DevTools Protocol](https://chromedevtools.github.io/devtools-protocol/).
 
-Chrome is spawned (or connected) once per Bun process. Each `new Bun.WebView({ backend: "chrome" })` creates a new tab via `Target.createTarget` in that single Chrome instance.
+Chrome is spawned (or connected) once per Bun process. Each `new Bun.WebView({ backend: "chrome" })` creates a new tab with `Target.createTarget` in that single Chrome instance.
 
 #### Finding the Chrome executable
 
@@ -106,7 +106,7 @@ When Bun needs to spawn Chrome, it searches in this order:
 1. The `path` you passed in `backend: { type: "chrome", path: "..." }`
 2. The `BUN_CHROME_PATH` environment variable
 3. `$PATH` (`google-chrome-stable`, `google-chrome`, `chromium-browser`, `chromium`, `brave-browser`, `microsoft-edge`, `chrome`)
-4. Standard install locations (`/Applications/Google Chrome.app`, `~/Applications/...`, `/usr/bin/...`, `/snap/bin/...`, etc.)
+4. Standard install locations (`/Applications/Google Chrome.app`, `~/Applications/...`, `/usr/bin/...`, `/snap/bin/...`)
 5. Playwright's cache (`~/Library/Caches/ms-playwright` or `~/.cache/ms-playwright`) for `chrome-headless-shell`
 
 If none is found, the constructor throws.
@@ -363,9 +363,9 @@ await view.press("a", { modifiers: ["Meta"] }); // Cmd+A / Ctrl+A
 
 Named virtual keys: `Enter`, `Tab`, `Space`, `Backspace`, `Delete`, `Escape`, `ArrowLeft`, `ArrowRight`, `ArrowUp`, `ArrowDown`, `Home`, `End`, `PageUp`, `PageDown`.
 
-Any single character (e.g. `"a"`) combined with `modifiers` sends a keyboard chord.
+Any single character (for example, `"a"`) combined with `modifiers` sends a keyboard chord.
 
-On the WebKit backend, most named keys (without modifiers) map to editing commands (`DeleteBackward`, `MoveLeft`, `InsertNewline`, etc.) and resolve after the page has applied them. `Escape`, `Space`, and any key with modifiers fall back to raw `keydown`/`keyup` events — these fire a `keydown` the page can observe, but there's no completion barrier, so follow with an `evaluate()` if you need to observe the effect.
+On the WebKit backend, most named keys (without modifiers) map to editing commands such as `DeleteBackward`, `MoveLeft`, and `InsertNewline`, and resolve after the page has applied them. `Escape`, `Space`, and any key with modifiers fall back to raw `keydown`/`keyup` events — these fire a `keydown` the page can observe, but there's no completion barrier, so follow with an `evaluate()` if you need to observe the effect.
 
 Modifier names: `"Shift"`, `"Control"` (or `"Ctrl"`), `"Alt"` (or `"Option"`), `"Meta"` (or `"Cmd"` / `"Command"`).
 
@@ -514,11 +514,11 @@ Bun calls this automatically at process exit, so browser subprocesses never outl
 
 ### Event-loop behavior
 
-The browser subprocess does **not** keep Bun's event loop alive on its own. An open `WebView` keeps the process alive only while it has a pending operation (an unsettled `navigate()`, `evaluate()`, etc.). Once you `close()` the last view — or the last pending operation settles — Bun exits naturally.
+The browser subprocess does **not** keep Bun's event loop alive on its own. An open `WebView` keeps the process alive only while it has a pending operation (such as an unsettled `navigate()` or `evaluate()`). Once you `close()` the last view — or the last pending operation settles — Bun exits naturally.
 
 ### Subprocess death
 
-If the browser subprocess dies unexpectedly (crash, OOM-kill, `SIGKILL`), every pending promise on every view rejects with an error describing how it died (`"Chrome killed by signal 9"`, `"WebView host process died"`, etc.), and further operations on those views throw.
+If the browser subprocess dies unexpectedly (crash, OOM-kill, `SIGKILL`), every pending promise on every view rejects with an error describing how it died (`"Chrome killed by signal 9"`, `"WebView host process died"`), and further operations on those views throw.
 
 ---
 
@@ -582,7 +582,7 @@ Operations on **different views** are fully independent and run in parallel — 
 | `screenshot(options?)`         | `Promise<Blob \| Buffer \| string \| {name, size}>` | Capture the viewport. See [Screenshots](#screenshots).                                                          |
 | `click(x, y, options?)`        | `Promise<void>`                                     | Native click at viewport coordinates.                                                                           |
 | `click(selector, options?)`    | `Promise<void>`                                     | Wait for the element to be actionable, then click its center.                                                   |
-| `type(text)`                   | `Promise<void>`                                     | Insert text into the focused element via the `InsertText` editing command.                                      |
+| `type(text)`                   | `Promise<void>`                                     | Insert text into the focused element with the `InsertText` editing command.                                     |
 | `press(key, options?)`         | `Promise<void>`                                     | Press a named virtual key or single-character chord.                                                            |
 | `scroll(dx, dy)`               | `Promise<void>`                                     | Fire a native `wheel` event at the viewport center. `dx`/`dy` must be finite.                                   |
 | `scrollTo(selector, options?)` | `Promise<void>`                                     | Wait for the element to exist, then `scrollIntoView`.                                                           |

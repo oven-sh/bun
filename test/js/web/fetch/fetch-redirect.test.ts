@@ -32,6 +32,31 @@ it("fetch() preserves body on redirect", async () => {
   expect(await res.text()).toBe("hello");
 });
 
+it.each(["file:/etc/hosts", "file:hosts"])(
+  "fetch() rejects following a redirect to a Location with a non-HTTP scheme (%s)",
+  async location => {
+    let requestsAfterRedirect = 0;
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/start") {
+          return new Response(null, { status: 302, headers: { Location: location } });
+        }
+        requestsAfterRedirect++;
+        return new Response("unexpected", { status: 200 });
+      },
+    });
+
+    const outcome = await fetch(new URL("/start", server.url)).then(
+      () => ({ rejected: false as const }),
+      e => ({ rejected: true as const, code: e.code }),
+    );
+    expect(outcome).toEqual({ rejected: true, code: "UnsupportedRedirectProtocol" });
+    expect(requestsAfterRedirect).toBe(0);
+  },
+);
+
 // The HTTP client allocates a new URL buffer for every Location hop and stores
 // it in HTTPClient.redirect so HTTPClient.url can borrow slices from it. Prior
 // to the fix, assigning the new buffer did not free the previous one, so only

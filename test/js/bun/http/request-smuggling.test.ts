@@ -1390,3 +1390,104 @@ test("rejects Transfer-Encoding header with empty value", async () => {
   // The trailing bytes must never be interpreted as a second request.
   expect(seen).not.toContain("GET /admin");
 });
+
+describe("Host header field value validation", () => {
+  async function sendRawRequest(server: { port: number }, payload: string): Promise<string> {
+    const client = net.connect(server.port, "127.0.0.1");
+    return await new Promise<string>((resolve, reject) => {
+      client.on("error", reject);
+      client.on("data", data => {
+        const response = data.toString();
+        client.end();
+        resolve(response);
+      });
+      client.write(payload);
+    });
+  }
+
+  test("rejects a Host header containing a slash", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("OK");
+      },
+    });
+
+    const response = await sendRawRequest(server, "GET /index HTTP/1.1\r\nHost: example.com/other\r\n\r\n");
+    expect(response).toContain("HTTP/1.1 400");
+    expect(response).not.toContain("HTTP/1.1 200");
+  });
+
+  test("rejects a Host header containing a space", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("OK");
+      },
+    });
+
+    const response = await sendRawRequest(server, "GET / HTTP/1.1\r\nHost: example com\r\n\r\n");
+    expect(response).toContain("HTTP/1.1 400");
+    expect(response).not.toContain("HTTP/1.1 200");
+  });
+
+  test("rejects a Host header containing an at sign", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("OK");
+      },
+    });
+
+    const response = await sendRawRequest(server, "GET / HTTP/1.1\r\nHost: user@example.com\r\n\r\n");
+    expect(response).toContain("HTTP/1.1 400");
+    expect(response).not.toContain("HTTP/1.1 200");
+  });
+
+  test("rejects a Host header containing a number sign", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("OK");
+      },
+    });
+
+    const response = await sendRawRequest(server, "GET / HTTP/1.1\r\nHost: example.com#frag\r\n\r\n");
+    expect(response).toContain("HTTP/1.1 400");
+    expect(response).not.toContain("HTTP/1.1 200");
+  });
+
+  test("accepts a Host header with a hostname and port and rejects one containing a backslash", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response(req.headers.get("host") ?? "");
+      },
+    });
+
+    const accepted = await sendRawRequest(server, "GET / HTTP/1.1\r\nHost: example.com:8080\r\n\r\n");
+    expect(accepted).toContain("HTTP/1.1 200");
+    expect(accepted).toContain("example.com:8080");
+
+    const rejected = await sendRawRequest(server, "GET / HTTP/1.1\r\nHost: example.com\\other:8080\r\n\r\n");
+    expect(rejected).toContain("HTTP/1.1 400");
+    expect(rejected).not.toContain("HTTP/1.1 200");
+  });
+
+  test("accepts a bracketed IPv6 literal Host header and rejects one containing a question mark", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response(req.headers.get("host") ?? "");
+      },
+    });
+
+    const accepted = await sendRawRequest(server, "GET / HTTP/1.1\r\nHost: [::1]:3000\r\n\r\n");
+    expect(accepted).toContain("HTTP/1.1 200");
+    expect(accepted).toContain("[::1]:3000");
+
+    const rejected = await sendRawRequest(server, "GET / HTTP/1.1\r\nHost: [::1]:3000?q\r\n\r\n");
+    expect(rejected).toContain("HTTP/1.1 400");
+    expect(rejected).not.toContain("HTTP/1.1 200");
+  });
+});

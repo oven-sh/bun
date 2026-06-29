@@ -1053,6 +1053,29 @@ describe("url.parse then url.format", () => {
     }
   });
 
+  test("url.parse matches hostless protocols case-insensitively", () => {
+    const expected = Object.assign(new url.Url(), {
+      protocol: "javascript:",
+      slashes: null,
+      auth: null,
+      host: null,
+      port: null,
+      hostname: null,
+      hash: null,
+      search: null,
+      query: null,
+      pathname: "alert(1);a='@white-listed.com'",
+      path: "alert(1);a='@white-listed.com'",
+      href: "javascript:alert(1);a='@white-listed.com'",
+    });
+
+    assert.deepStrictEqual(url.parse("javAscript:alert(1);a=\x27@white-listed.com\x27"), expected);
+    assert.deepStrictEqual(
+      url.parse("javAscript:alert(1);a=\x27@white-listed.com\x27"),
+      url.parse("javascript:alert(1);a=\x27@white-listed.com\x27"),
+    );
+  });
+
   // TODO: Support parsing this.
   test.todo("xss", () => {
     const parsed = url.parse("http://nodejs.org/").resolveObject("jAvascript:alert(1);a=\x27@white-listed.com\x27");

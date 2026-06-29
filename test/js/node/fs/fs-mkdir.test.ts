@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { isWindows, tmpdirSync } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -110,6 +110,13 @@ describe("fs.mkdirSync", () => {
 
     fs.mkdirSync(pathname, { mode: 0o777 });
     expect(fs.existsSync(pathname)).toBe(true);
+  });
+
+  it.skipIf(isWindows)("creates a directory honoring mode bits above 0o777", () => {
+    const pathname = path.join(tmpdir, nextdir());
+
+    fs.mkdirSync(pathname, { mode: 0o1777 });
+    expect(fs.statSync(pathname).mode & 0o7777).toBe(0o1777 & ~process.umask());
   });
 
   it("throws for invalid path types", () => {

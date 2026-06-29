@@ -1110,6 +1110,25 @@ describe("pathological reference definition inputs", () => {
     expect(resolved).toContain('<a href="/url">text</a>');
     expect(resolved).toContain("[missing]");
   }, 90_000);
+
+  test("caps the total destination and title bytes emitted by expanding reference links", () => {
+    const dest = "/" + Buffer.alloc(2000, "x").toString();
+    const title = Buffer.alloc(500, "t").toString();
+    const lines = [`[a]: ${dest} "${title}"`, ""];
+    for (let i = 0; i < 1000; i++) {
+      lines.push("[a]", "", "[a][]", "", "[text][a]", "");
+    }
+    expect(() => Markdown.html(lines.join("\n"))).toThrow(
+      "Markdown link reference definitions expand to more output than the parser supports",
+    );
+
+    const small = Markdown.html('[a]: /url "title"\n\n[a]\n\n[a][]\n\n[text][a]\n');
+    expect(small).toBe(
+      '<p><a href="/url" title="title">a</a></p>\n' +
+        '<p><a href="/url" title="title">a</a></p>\n' +
+        '<p><a href="/url" title="title">text</a></p>\n',
+    );
+  });
 });
 
 // ============================================================================

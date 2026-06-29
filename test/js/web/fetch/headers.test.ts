@@ -39,6 +39,23 @@ describe("Headers", () => {
       expect(headers.get("content-type")).toBeNull();
       expect(headers.get("user-agent")).toBe("bun");
     });
+    test("constructing headers from an object captures its entries before converting values", () => {
+      const record: any = {
+        "x-first": {
+          toString() {
+            record["x-second"] = "replaced";
+            delete record["x-third"];
+            return "first";
+          },
+        },
+        "x-second": "second",
+        "x-third": "third",
+      };
+      const headers = new Headers(record);
+      expect(headers.get("x-first")).toBe("first");
+      expect(headers.get("x-second")).toBe("second");
+      expect(headers.get("x-third")).toBe("third");
+    });
     test("can create headers from object with duplicates", () => {
       const headers = new Headers({
         "accept": "*/*",

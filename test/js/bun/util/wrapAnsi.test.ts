@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("Bun.wrapAnsi", () => {
   describe("basic wrapping", () => {
@@ -231,6 +232,54 @@ describe("Bun.wrapAnsi", () => {
       expect(result).toBe(
         "\x1b[1m\x1b[31mBold\x1b[39m\n\x1b[31mRed\x1b[39m\n\x1b[31mtext\x1b[39m\n\x1b[31mhere\x1b[0m",
       );
+    });
+  });
+
+  describe("long inputs", () => {
+    test("wraps a long run of color escape sequences on one line", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          [
+            `const count = 100000;`,
+            `const input = Buffer.alloc(count * 6, "\\x1b[31m ").toString();`,
+            `const expected = Buffer.alloc(count * 5, "\\x1b[31m").toString();`,
+            `const result = Bun.wrapAnsi(input, 80);`,
+            `console.log(result === expected ? "match" : "mismatch:" + result.length);`,
+          ].join("\n"),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("match\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("keeps a long line of words on one row when columns is very large", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          [
+            `const count = 400000;`,
+            `const input = Buffer.alloc(count * 5, "word ").toString();`,
+            `const expected = input.slice(0, -1);`,
+            `const result = Bun.wrapAnsi(input, 2 ** 30);`,
+            `console.log(result === expected ? "match" : "mismatch:" + result.length);`,
+          ].join("\n"),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("match\n");
+      expect(exitCode).toBe(0);
     });
   });
 });

@@ -236,4 +236,22 @@ describe("url", () => {
       expect(URL.canParse.length).toBe(1);
     });
   });
+
+  it("URLSearchParams constructed from an object captures its entries before converting values", () => {
+    const record: any = {
+      first: {
+        toString() {
+          record.second = "replaced";
+          delete record.third;
+          return "1";
+        },
+      },
+      second: "2",
+      third: "3",
+    };
+    const params = new URLSearchParams(record);
+    expect(params.get("first")).toBe("1");
+    expect(params.get("second")).toBe("2");
+    expect(params.get("third")).toBe("3");
+  });
 });

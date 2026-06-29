@@ -275,6 +275,60 @@ describe("HTTP server CONNECT", () => {
     expect(resumeCount).toBeGreaterThan(0);
   });
 
+  test("should deliver bytes following a CONNECT request with Content-Length: 0 to the connect socket, not as a new request", async () => {
+    const requestUrls: string[] = [];
+    await using proxyServer = http.createServer((req, res) => {
+      requestUrls.push(req.url ?? "");
+      res.end();
+    });
+
+    const pipelined = "GET /pipelined HTTP/1.1\r\nHost: example.com\r\n\r\n";
+    const afterEstablished = "GET /after-established HTTP/1.1\r\nHost: example.com\r\n\r\n";
+    const expectedTunneled = pipelined + afterEstablished;
+
+    const { promise: tunneled, resolve: resolveTunneled, reject: rejectTunneled } = Promise.withResolvers<string>();
+    proxyServer.on("connect", (req, socket, head) => {
+      const chunks: Buffer[] = [head];
+      let receivedLength = head.length;
+      socket.on("data", chunk => {
+        chunks.push(chunk);
+        receivedLength += chunk.length;
+        if (receivedLength >= Buffer.byteLength(expectedTunneled)) {
+          socket.end();
+        }
+      });
+      socket.on("end", () => {
+        resolveTunneled(Buffer.concat(chunks).toString());
+      });
+      socket.on("error", rejectTunneled);
+      socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+    });
+
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const proxyAddress = proxyServer.address() as AddressInfo;
+
+    const { promise: clientReceived, resolve: resolveClient, reject: rejectClient } = Promise.withResolvers<string>();
+    const received: string[] = [];
+    const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
+      client.write(`CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\nContent-Length: 0\r\n\r\n${pipelined}`);
+    });
+    client.on("data", data => {
+      received.push(data.toString());
+      if (received.join("") === "HTTP/1.1 200 Connection established\r\n\r\n") {
+        client.write(afterEstablished);
+      }
+    });
+    client.on("error", rejectClient);
+    client.on("end", () => {
+      client.end();
+      resolveClient(received.join(""));
+    });
+
+    expect(await tunneled).toBe(expectedTunneled);
+    expect(await clientReceived).toBe("HTTP/1.1 200 Connection established\r\n\r\n");
+    expect(requestUrls).toEqual([]);
+  });
+
   test("should handle malformed CONNECT requests", async () => {
     await using proxyServer = http.createServer();
 

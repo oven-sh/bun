@@ -2,6 +2,7 @@ import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import fs from "node:fs";
 import http2 from "node:http2";
+import https from "node:https";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -2946,6 +2947,115 @@ it("http2 client.request() on a destroyed or closed session uses the right error
     const destroyedError = await captureRequestError(client2);
     expect(destroyedError.code).toBe("ERR_HTTP2_INVALID_SESSION");
     expect(destroyedError.message).toBe("The session has been destroyed");
+  } finally {
+    server.close();
+  }
+});
+
+function requestOverHttp1(port, headers) {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const request = https.request(
+    {
+      host: "localhost",
+      port,
+      path: "/",
+      agent: false,
+      ca: TLS_CERT.cert,
+      headers: { connection: "close", ...headers },
+    },
+    async response => {
+      try {
+        let body = "";
+        response.setEncoding("utf8");
+        response.on("data", chunk => (body += chunk));
+        await new Promise(done => response.on("end", done));
+        resolve({
+          statusCode: response.statusCode,
+          statusMessage: response.statusMessage,
+          headers: response.headers,
+          body,
+        });
+      } catch (err) {
+        reject(err);
+      }
+    },
+  );
+  request.on("error", reject);
+  request.end();
+  return promise;
+}
+
+it("http2 allowHTTP1 fallback serializes every application response header as its own name/value line", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    res.writeHead(202, "Accepted", {
+      "content-type": "application/json; charset=utf-8",
+      "x-custom-token": "abcdef123456",
+    });
+    res.end('{"ok":true}');
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const response = await requestOverHttp1(server.address().port);
+    expect({
+      statusCode: response.statusCode,
+      statusMessage: response.statusMessage,
+      contentType: response.headers["content-type"],
+      token: response.headers["x-custom-token"],
+      body: response.body,
+    }).toEqual({
+      statusCode: 202,
+      statusMessage: "Accepted",
+      contentType: "application/json; charset=utf-8",
+      token: "abcdef123456",
+      body: '{"ok":true}',
+    });
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 allowHTTP1 fallback rejects a statusMessage containing CR or LF", async () => {
+  const thrownCodes = [];
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    res.statusMessage = "Split\r\nx-extra: injected";
+    try {
+      res.end("nope");
+    } catch (err) {
+      thrownCodes.push(err.code);
+      res.statusMessage = "All Good";
+      res.end("body");
+    }
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const response = await requestOverHttp1(server.address().port);
+    expect(response.headers["x-extra"]).toBeUndefined();
+    expect(response.statusMessage).toBe("All Good");
+    expect(response.body).toBe("body");
+    expect(thrownCodes).toEqual(["ERR_INVALID_CHAR"]);
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 allowHTTP1 fallback rejects an out-of-range statusCode", async () => {
+  const thrownCodes = [];
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    res.statusCode = 99;
+    try {
+      res.end("nope");
+    } catch (err) {
+      thrownCodes.push(err.code);
+      res.statusCode = 200;
+      res.end("body");
+    }
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const response = await requestOverHttp1(server.address().port);
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe("body");
+    expect(thrownCodes).toEqual(["ERR_HTTP_INVALID_STATUS_CODE"]);
   } finally {
     server.close();
   }

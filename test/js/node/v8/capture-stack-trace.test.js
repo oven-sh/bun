@@ -1,6 +1,8 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import { createHash } from "node:crypto";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -905,4 +907,97 @@ test("captureStackTrace does not crash when stackTraceLimit is non-numeric", () 
   } finally {
     Error.stackTraceLimit = origLimit;
   }
+});
+
+test("call sites inside a WebSocket message listener only contain script frames when the message arrives with the upgrade response", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const buffers = new Map();
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data(socket, chunk) {
+        const previous = buffers.get(socket) ?? Buffer.alloc(0);
+        const request = Buffer.concat([previous, chunk]);
+        buffers.set(socket, request);
+        const text = request.toString("latin1");
+        if (!text.includes("\r\n\r\n")) {
+          return;
+        }
+        const key = /^Sec-WebSocket-Key:\s*(.+?)\r\n/im.exec(text)?.[1];
+        if (!key) {
+          reject(new Error("missing Sec-WebSocket-Key header"));
+          return;
+        }
+        const accept = createHash("sha1")
+          .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+          .digest("base64");
+        const response = Buffer.from(
+          "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${accept}\r\n` +
+            "\r\n",
+          "latin1",
+        );
+        socket.write(Buffer.concat([response, Buffer.from([0x81, 0x02, 0x68, 0x69])]));
+      },
+      error(socket, error) {
+        reject(error);
+      },
+    },
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
+  try {
+    ws.addEventListener("error", () => reject(new Error("websocket errored")));
+    ws.addEventListener("close", event => reject(new Error(`websocket closed: ${event.code}`)));
+    ws.addEventListener("message", event => {
+      const previousPrepareStackTrace = Error.prepareStackTrace;
+      let callSites;
+      try {
+        Error.prepareStackTrace = (_error, stack) => stack;
+        const error = new Error();
+        Error.captureStackTrace(error);
+        callSites = error.stack;
+      } finally {
+        Error.prepareStackTrace = previousPrepareStackTrace;
+      }
+      resolve({
+        data: event.data,
+        nativeCallSites: callSites.filter(callSite => callSite.isNative()).length,
+      });
+    });
+
+    expect(await promise).toEqual({ data: "hi", nativeCallSites: 0 });
+  } finally {
+    ws.close();
+  }
+});
+
+test("printing an error whose message getter calls Error.captureStackTrace on itself prints normally", async () => {
+  const fixture = [
+    `const vm = require("node:vm");`,
+    `let src = "function f0() {\\n";`,
+    `src += "  const e = new Error('first');\\n";`,
+    `src += "  Object.defineProperty(e, 'message', { get() { Error.captureStackTrace(e); return 'second'; } });\\n";`,
+    `src += "  return e;\\n";`,
+    `src += "}\\n";`,
+    `for (let i = 1; i < 12; i++) src += "function f" + i + "() { return f" + (i - 1) + "(); }\\n";`,
+    `src += "f11();\\n";`,
+    `const err = vm.runInThisContext(src, { filename: "frame-index-fixture.js" });`,
+    `console.log(err);`,
+    `console.log("after");`,
+  ].join("\n");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ lastLine: stdout.trimEnd().split("\n").pop(), exitCode }).toEqual({ lastLine: "after", exitCode: 0 });
 });

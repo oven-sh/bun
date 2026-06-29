@@ -49,6 +49,41 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
     child.exited.then(code => reject(new Error(`exited ${code} before message`)));
     expect(await promise).toBe("hello");
   });
+
+  it("delivers the outer message when a getter run during send enqueues more sends", async () => {
+    const childSource = [
+      `const fill = Buffer.alloc(8192, "x").toString();`,
+      `const obj = {`,
+      `  get inner() {`,
+      `    for (let i = 0; i < 32; i++) process.send({ nested: i, fill });`,
+      `    return "outer";`,
+      `  },`,
+      `};`,
+      `process.send(obj);`,
+    ].join("\n");
+    const { promise, resolve, reject } = Promise.withResolvers<any[]>();
+    const messages: any[] = [];
+    await using child = spawn([bunExe(), "-e", childSource], {
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: mode,
+      ipc(message) {
+        messages.push(message);
+        if (messages.length === 33) resolve(messages);
+      },
+      onExit(_subprocess, exitCode, signalCode) {
+        reject(new Error(`child exited (${exitCode}, ${signalCode}) after ${messages.length} messages`));
+      },
+    });
+    const received = await promise;
+    expect(received.filter(message => "inner" in message)).toEqual([{ inner: "outer" }]);
+    expect(
+      received
+        .filter(message => "nested" in message)
+        .map(message => message.nested)
+        .sort((a, b) => a - b),
+    ).toEqual(Array.from({ length: 32 }, (_, i) => i));
+  });
 });
 
 describe("ipc mode advanced", () => {
@@ -87,6 +122,34 @@ describe("ipc mode advanced", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout.trim()).toBe("PARENT_OK");
+    expect(stderr).not.toContain("UNEXPECTED_IPC_MESSAGE");
+    expect(exitCode).toBe(0);
+  });
+
+  it("closes the channel when a frame declares a length that cannot be framed with its header", async () => {
+    const parent = `
+      const child = Bun.spawn({
+        cmd: [
+          process.execPath, "-e",
+          'process.on("disconnect", () => process.exit(42)); require("fs").writeSync(3, Buffer.from([0x02, 0xff, 0xff, 0xff, 0xff]));',
+        ],
+        stdio: ["ignore", "inherit", "inherit"],
+        serialization: "advanced",
+        ipc(msg) { console.error("UNEXPECTED_IPC_MESSAGE", msg); },
+      });
+      console.log("CHILD_EXIT", await child.exited);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", parent],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("CHILD_EXIT 42");
     expect(stderr).not.toContain("UNEXPECTED_IPC_MESSAGE");
     expect(exitCode).toBe(0);
   });

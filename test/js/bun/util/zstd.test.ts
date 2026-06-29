@@ -1,4 +1,13 @@
-import { zstdCompress, zstdCompressSync, zstdDecompress, zstdDecompressSync } from "bun";
+import {
+  deflateSync,
+  gunzipSync,
+  gzipSync,
+  inflateSync,
+  zstdCompress,
+  zstdCompressSync,
+  zstdDecompress,
+  zstdDecompressSync,
+} from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import path from "path";
 
@@ -240,6 +249,71 @@ describe("Zstandard compression", async () => {
       }
     });
   }
+});
+
+describe("sync compression argument handling", () => {
+  it("zstdCompressSync evaluates the options object before capturing the input", () => {
+    const input = new Uint8Array(64).fill(97);
+    const compressed = zstdCompressSync(input, {
+      get level() {
+        input.buffer.transfer();
+        return 3;
+      },
+    });
+    expect(zstdDecompressSync(compressed).byteLength).toBe(0);
+  });
+
+  it("zstdCompressSync evaluates the options object before validating the input", () => {
+    expect(() =>
+      zstdCompressSync(42 as any, {
+        get level() {
+          throw new Error("level option was read");
+        },
+      }),
+    ).toThrow("level option was read");
+  });
+
+  it("gzipSync evaluates the options object before capturing the input", () => {
+    const input = new Uint8Array(64).fill(97);
+    const compressed = gzipSync(input, {
+      get level() {
+        input.buffer.transfer();
+        return 6;
+      },
+    });
+    expect(gunzipSync(compressed).byteLength).toBe(0);
+  });
+
+  it("deflateSync evaluates the options object before capturing the input", () => {
+    const input = new Uint8Array(64).fill(97);
+    const compressed = deflateSync(input, {
+      get level() {
+        input.buffer.transfer();
+        return 6;
+      },
+    });
+    expect(inflateSync(compressed).byteLength).toBe(0);
+  });
+
+  it("gunzipSync evaluates the options object before validating the input", () => {
+    expect(() =>
+      gunzipSync(42 as any, {
+        get windowBits() {
+          throw new Error("windowBits option was read");
+        },
+      }),
+    ).toThrow("windowBits option was read");
+  });
+
+  it("inflateSync evaluates the options object before validating the input", () => {
+    expect(() =>
+      inflateSync(42 as any, {
+        get windowBits() {
+          throw new Error("windowBits option was read");
+        },
+      }),
+    ).toThrow("windowBits option was read");
+  });
 });
 
 describe.concurrent("Zstandard HTTP compression", () => {

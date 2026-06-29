@@ -589,6 +589,57 @@ describe("wildcard exports with @ in matched subpath", () => {
   });
 });
 
+describe("package.json exports targets longer than the maximum path length", () => {
+  it.concurrent("reports a resolution error for an oversized string exports target", async () => {
+    using dir = tempDir("resolver-exports-long-target", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/test-pkg/package.json": JSON.stringify({
+        name: "test-pkg",
+        version: "1.0.0",
+        exports: "./" + Buffer.alloc(8192, "a").toString(),
+      }),
+      "index.js": `try {\n  require.resolve("test-pkg");\n  console.log("resolved");\n} catch {\n  console.log("caught");\n}\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, exitCode }).toEqual({ stdout: "caught\n", exitCode: 0 });
+  });
+
+  it.concurrent(
+    "reports a resolution error when a wildcard exports target expands past the maximum path length",
+    async () => {
+      using dir = tempDir("resolver-exports-long-wildcard-target", {
+        "package.json": JSON.stringify({ name: "host" }),
+        "node_modules/test-pkg/package.json": JSON.stringify({
+          name: "test-pkg",
+          version: "1.0.0",
+          exports: { "./*": "./" + Buffer.alloc(8192, "a").toString() + "/*" },
+        }),
+        "index.js": `try {\n  require.resolve("test-pkg/sub");\n  console.log("resolved");\n} catch {\n  console.log("caught");\n}\n`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, exitCode }).toEqual({ stdout: "caught\n", exitCode: 0 });
+    },
+  );
+});
+
 // A package.json `imports` entry whose value is a bare package specifier
 // (e.g. `"#res": "@myproject/resolver"`) is handed back to package-resolve
 // for a second pass. Per the Node.js packages spec these are URL-like

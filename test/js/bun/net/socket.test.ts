@@ -755,6 +755,84 @@ describe.concurrent("socket", () => {
       expect(rawData.byteLength).toBeGreaterThanOrEqual(1980);
     }
   });
+  it("upgradeTLS feeds the initialData bytes captured at call time", async () => {
+    const handshake = Promise.withResolvers<void>();
+    const echoed = Promise.withResolvers<string>();
+    const serverTls = { key: tls.key, cert: tls.cert };
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open() {},
+        data(raw, chunk) {
+          raw.upgradeTLS({
+            isServer: true,
+            initialData: chunk,
+            get tls() {
+              chunk.fill(0);
+              return serverTls;
+            },
+            socket: {
+              open() {},
+              data(secure: Socket, payload: Buffer) {
+                secure.write(payload);
+              },
+              error(_secure: Socket, err: Error) {
+                handshake.reject(err);
+                echoed.reject(err);
+              },
+              close() {
+                handshake.reject(new Error("server socket closed before the echo completed"));
+                echoed.reject(new Error("server socket closed before the echo completed"));
+              },
+            },
+          } as any);
+        },
+        error(_raw, err) {
+          handshake.reject(err);
+          echoed.reject(err);
+        },
+        close() {},
+      },
+    });
+    const client = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      tls: { rejectUnauthorized: false },
+      socket: {
+        open() {},
+        handshake(socket, success, authorizationError) {
+          if (!success) {
+            handshake.reject(authorizationError);
+            return;
+          }
+          handshake.resolve();
+          socket.write("ping");
+        },
+        data(_socket, payload) {
+          echoed.resolve(payload.toString());
+        },
+        error(_socket, err) {
+          handshake.reject(err);
+          echoed.reject(err);
+        },
+        connectError(_socket, err) {
+          handshake.reject(err);
+          echoed.reject(err);
+        },
+        close() {
+          handshake.reject(new Error("client socket closed before the echo completed"));
+          echoed.reject(new Error("client socket closed before the echo completed"));
+        },
+      },
+    });
+    try {
+      await handshake.promise;
+      expect(await echoed.promise).toBe("ping");
+    } finally {
+      client.end();
+    }
+  });
 });
 
 it.skipIf(isWindows)("should not crash when a socket from a file descriptor is closed after opening", async () => {

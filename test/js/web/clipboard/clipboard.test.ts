@@ -297,6 +297,71 @@ describe("read / write", () => {
   });
 });
 
+describe("clipboard events", () => {
+  // Bun's projection of the spec's clipboard actions onto a runtime: writes
+  // that place data fire "copy", successful reads fire "paste" (both at
+  // `navigator.clipboard`), failures fire nothing, and "cut" never auto-fires.
+  test("copy/paste fire at navigator.clipboard on success, and only on success", async () => {
+    // Save before attaching listeners so the save itself is not recorded.
+    let saved: string | null = null;
+    let unavailable = false;
+    try {
+      saved = await navigator.clipboard.readText();
+    } catch {
+      unavailable = true;
+    }
+    const events: string[] = [];
+    let lastEvent: ClipboardEvent | null = null;
+    const record = (e: Event) => {
+      events.push(e.type);
+      lastEvent = e as ClipboardEvent;
+    };
+    navigator.clipboard.addEventListener("copy", record);
+    navigator.clipboard.addEventListener("paste", record);
+    navigator.clipboard.addEventListener("cut", record);
+    try {
+      const token = `clipboard-events ${Date.now()} ${Math.random()}`;
+      if (unavailable) {
+        // With no reachable clipboard every operation rejects — and a failed
+        // operation must not fire any event.
+        await expectDOMException(navigator.clipboard.writeText(token), "NotAllowedError");
+        await expectDOMException(navigator.clipboard.readText(), "NotAllowedError");
+        expect(events).toEqual([]);
+        return;
+      }
+      await navigator.clipboard.writeText(token);
+      expect(events).toEqual(["copy"]);
+      // The fired event has the spec'd shape and targets navigator.clipboard.
+      expect(lastEvent).toBeInstanceOf(ClipboardEvent);
+      expect(lastEvent!.type).toBe("copy");
+      expect(lastEvent!.target).toBe(navigator.clipboard);
+      expect(lastEvent!.bubbles).toBe(false);
+      expect(lastEvent!.cancelable).toBe(false);
+      expect(lastEvent!.clipboardData).toBeNull();
+
+      expect(await navigator.clipboard.readText()).toBe(token);
+      expect(events).toEqual(["copy", "paste"]);
+      await navigator.clipboard.write([new ClipboardItem({ "text/plain": token })]);
+      expect(events).toEqual(["copy", "paste", "copy"]);
+      await navigator.clipboard.read();
+      expect(events).toEqual(["copy", "paste", "copy", "paste"]);
+
+      // Neither a rejected validation nor the empty no-op write fires.
+      await expectDOMException(
+        navigator.clipboard.write([new ClipboardItem({ "application/x-bun": "x" })]),
+        "NotAllowedError",
+      );
+      await navigator.clipboard.write([]);
+      expect(events).toEqual(["copy", "paste", "copy", "paste"]);
+    } finally {
+      navigator.clipboard.removeEventListener("copy", record);
+      navigator.clipboard.removeEventListener("paste", record);
+      navigator.clipboard.removeEventListener("cut", record);
+      if (saved !== null) await navigator.clipboard.writeText(saved).catch(() => {});
+    }
+  });
+});
+
 describe("readText / writeText", () => {
   // Hermetic end-to-end coverage of the POSIX helper path (candidate
   // selection, Bun.spawn, the stdin/stdout plumbing): `xclip` is shadowed on
@@ -309,10 +374,13 @@ describe("readText / writeText", () => {
       "xclip": `#!/bin/sh\nif [ -z "$CLIP_STATE_FILE" ]; then exit 2; fi\ncase "$*" in\n  *-out*) if [ -f "$CLIP_STATE_FILE" ]; then cat "$CLIP_STATE_FILE"; fi ;;\n  *) cat > "$CLIP_STATE_FILE" ;;\nesac\n`,
       "main.js": `
         const { existsSync } = require("node:fs");
+        const events = [];
+        navigator.clipboard.addEventListener("copy", e => events.push(e.type));
+        navigator.clipboard.addEventListener("paste", e => events.push(e.type));
         const token = "helper-path \\u2702 " + Date.now();
         await navigator.clipboard.writeText(token);
         const back = await navigator.clipboard.readText();
-        console.log(JSON.stringify({ ok: back === token, helperRan: existsSync(process.env.CLIP_STATE_FILE) }));
+        console.log(JSON.stringify({ ok: back === token, helperRan: existsSync(process.env.CLIP_STATE_FILE), events }));
       `,
     });
     chmodSync(join(String(dir), "xclip"), 0o755);
@@ -330,7 +398,7 @@ describe("readText / writeText", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), exitCode }).toEqual({
-      stdout: JSON.stringify({ ok: true, helperRan: true }),
+      stdout: JSON.stringify({ ok: true, helperRan: true, events: ["copy", "paste"] }),
       exitCode: 0,
     });
   });

@@ -1480,6 +1480,19 @@ declare var navigator: Navigator;
  *
  * Reachable as the `navigator.clipboard` singleton. It has no public
  * constructor: `new Clipboard()` throws a `TypeError`.
+ *
+ * Bun fires a `"copy"` `ClipboardEvent` at `navigator.clipboard` after every
+ * successful `writeText()` or `write()` that places data on the clipboard
+ * (an empty `write([])` is a no-op), and a `"paste"` after every successful
+ * `read()`/`readText()`: there is no document or focused element in a
+ * runtime, so this `EventTarget` stands in for the spec's event target.
+ * `"cut"` is never fired automatically (there is no selection to remove).
+ *
+ * @example
+ * ```ts
+ * navigator.clipboard.addEventListener("copy", () => console.log("copied"));
+ * await navigator.clipboard.writeText("hi"); // logs "copied"
+ * ```
  */
 interface Clipboard extends EventTarget {
   /**
@@ -1585,11 +1598,12 @@ declare var ClipboardItem: Bun.__internal.UseLibDomIfAvailable<
  * The `copy`/`cut`/`paste` event type.
  * [MDN](https://developer.mozilla.org/en-US/docs/Web/API/ClipboardEvent)
  *
- * Bun never fires these events (they are defined in terms of a focused
- * document and a user gesture, which do not exist in a server runtime), but
- * the class is constructible so synthetic events can be created and
- * dispatched through any `EventTarget`. `clipboardData` is always `null`
- * because Bun does not implement `DataTransfer`.
+ * Bun fires `"copy"` and `"paste"` at `navigator.clipboard` after its own
+ * successful write/read operations (there is no document, focused element,
+ * or user gesture in a runtime), and never fires `"cut"`. The class is also
+ * constructible, so synthetic events can be dispatched through any
+ * `EventTarget`. `clipboardData` is always `null` because Bun does not
+ * implement `DataTransfer`.
  */
 interface ClipboardEvent extends Event {
   readonly clipboardData: null;

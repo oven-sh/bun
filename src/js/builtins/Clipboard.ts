@@ -180,9 +180,9 @@ export function createClipboard(EventTargetConstructor, EventConstructor) {
   }
 
   // ─── ClipboardEvent ──────────────────────────────────────────────────────
-  // The class only: a server runtime has no document, focus, or user gesture,
-  // so nothing ever fires `copy`/`cut`/`paste` — synthetic events can still be
-  // constructed and dispatched. Without `DataTransfer`, `clipboardData` is null.
+  // Constructible; Bun fires "copy"/"paste" itself (see `fireClipboardEvent`),
+  // and `cut` is synthetic-only (there is no selection to remove). Without
+  // `DataTransfer`, `clipboardData` is always null.
   class ClipboardEvent extends EventConstructor {
     constructor(type, eventInitDict) {
       if (arguments.length < 1) throw new TypeError("ClipboardEvent requires a type argument");
@@ -200,6 +200,15 @@ export function createClipboard(EventTargetConstructor, EventConstructor) {
 
   // ─── Clipboard ───────────────────────────────────────────────────────────
 
+  // The spec fires clipboard events at the focused element; with no document
+  // that is "none", so Bun targets `navigator.clipboard` after each success —
+  // through a captured `dispatchEvent`, so a patched prototype cannot reject
+  // an operation whose clipboard effect already happened.
+  const dispatchClipboardEvent = EventTargetConstructor.prototype.dispatchEvent;
+  function fireClipboardEvent(type: "copy" | "paste") {
+    dispatchClipboardEvent.$call(clipboard, new ClipboardEvent(type));
+  }
+
   // WebIDL: `Clipboard` has no constructor. The flag is true only for the one
   // construction below, which also makes `this !== clipboard` a complete brand
   // check for the methods: no other instance (or subclass) can ever exist.
@@ -216,14 +225,17 @@ export function createClipboard(EventTargetConstructor, EventConstructor) {
     // Promise-returning operation.
     async readText(): Promise<string> {
       if (this !== clipboard) throw new TypeError("Clipboard.prototype.readText called on an incompatible receiver");
+      let text;
       if (useNative) {
         // The native promise resolves from the work pool, so a slow
         // pasteboard owner never blocks the event loop.
-        const text = await readTextNative();
+        text = await readTextNative();
         if (text === null) throw notAllowed("The system clipboard is not available.");
-        return text;
+      } else {
+        text = (await helperRun(false, undefined, "text/plain", false)) as string;
       }
-      return (await helperRun(false, undefined, "text/plain", false)) as string;
+      fireClipboardEvent("paste");
+      return text;
     }
 
     async writeText(data): Promise<void> {
@@ -235,9 +247,10 @@ export function createClipboard(EventTargetConstructor, EventConstructor) {
       const text = `${data}`;
       if (useNative) {
         if (!(await writeTextNative(text))) throw notAllowed("The system clipboard is not available.");
-        return;
+      } else {
+        await helperRun(true, new TextEncoder().encode(text), "text/plain", false);
       }
-      await helperRun(true, new TextEncoder().encode(text), "text/plain", false);
+      fireClipboardEvent("copy");
     }
 
     async read(): Promise<ClipboardItem[]> {
@@ -272,6 +285,7 @@ export function createClipboard(EventTargetConstructor, EventConstructor) {
           found++;
         }
       }
+      fireClipboardEvent("paste");
       return found > 0 ? [new ClipboardItem(present)] : [];
     }
 
@@ -304,11 +318,12 @@ export function createClipboard(EventTargetConstructor, EventConstructor) {
         if (!(await writeTypesNative(types, buffers))) {
           throw notAllowed("The system clipboard is not available.");
         }
-        return;
+      } else {
+        // The helpers can only own one representation at a time, so only the
+        // first one is written (a documented platform limitation).
+        await helperRun(true, new Uint8Array(await blobs[0].arrayBuffer()), types[0], false);
       }
-      // The helpers can only own one representation at a time, so only the
-      // first one is written (a documented platform limitation).
-      await helperRun(true, new Uint8Array(await blobs[0].arrayBuffer()), types[0], false);
+      fireClipboardEvent("copy");
     }
   }
 

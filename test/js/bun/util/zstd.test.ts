@@ -314,6 +314,19 @@ describe("sync compression argument handling", () => {
       }),
     ).toThrow("windowBits option was read");
   });
+
+  // An empty result must not register a GC-time deallocator: the backing Vec is
+  // empty, so its pointer is dangling and freeing it at collection is an invalid
+  // free (aborts under ASAN/debug allocators).
+  it("collecting empty decompression results does not free a dangling pointer", () => {
+    const empty = new Uint8Array(0);
+    for (let i = 0; i < 10; i++) {
+      expect(gunzipSync(gzipSync(empty)).byteLength).toBe(0);
+      expect(inflateSync(deflateSync(empty)).byteLength).toBe(0);
+      expect(zstdDecompressSync(zstdCompressSync(empty)).byteLength).toBe(0);
+      Bun.gc(true);
+    }
+  });
 });
 
 describe.concurrent("Zstandard HTTP compression", () => {

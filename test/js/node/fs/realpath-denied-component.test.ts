@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { isWindows, tempDirWithFiles } from "harness";
-import { realpathSync, realpath, lstatSync, mkdirSync, symlinkSync, writeFileSync } from "fs";
-import { join } from "path";
 import { execSync } from "child_process";
+import { lstatSync, mkdirSync, realpath, realpathSync, symlinkSync } from "fs";
+import { isWindows, tempDirWithFiles } from "harness";
+import { join } from "path";
 
 // fs.realpath's JS walk must never report a permission-denied component as a
 // plain directory: a denied component can hide a junction, and the unresolved

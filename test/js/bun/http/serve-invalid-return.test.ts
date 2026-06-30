@@ -28,7 +28,10 @@ describe("returning a non-Response value from fetch", () => {
       const handlers = {
         "sync": () => make(),
         "fulfilled": () => Promise.resolve(make()),
-        "pending": async () => make(),
+        // The server drains microtasks before unwrapping the returned promise,
+        // so a microtask-resolved promise collapses into "fulfilled". Only a
+        // macrotask keeps it pending long enough to reach the deferred path.
+        "deferred": () => new Promise(resolve => setImmediate(() => resolve(make()))),
       };
 
       const results: unknown[] = [];
@@ -51,7 +54,7 @@ describe("returning a non-Response value from fetch", () => {
       expect(results).toEqual([
         { path: "sync", ...handled },
         { path: "fulfilled", ...handled },
-        { path: "pending", ...handled },
+        { path: "deferred", ...handled },
       ]);
     },
   );

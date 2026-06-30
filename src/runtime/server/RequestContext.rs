@@ -719,15 +719,16 @@ where
                 Output::flush();
             }
             // The formatter and `write_trace` above re-enter JS (getters, proxy
-            // traps, Error.prepareStackTrace), which can synchronously abort or
-            // end this request (e.g. AbortController.abort() inside a getter).
+            // traps, Error.prepareStackTrace), which can synchronously abort,
+            // end, or upgrade this request (e.g. AbortController.abort()
+            // inside a getter).
             // We hold `&mut self` for the whole call, matching the rest of this
             // promise-resolve path (`on_resolve` → `handle_resolve` also re-enter
             // JS through `&mut`).
             // The `RequestContextRef` guard taken in `on_resolve` keeps the
             // allocation alive across the re-entry; re-check the request state so
             // we never render onto a response that was ended underneath us.
-            if self.is_aborted_or_ended() {
+            if self.is_aborted_or_ended() || self.did_upgrade_web_socket() {
                 return;
             }
             return self.render_missing();
@@ -737,12 +738,9 @@ where
         // it through `error()` as a 500, the same as a thrown error or a
         // returned Response whose body was already used.
         let Some(server) = self.server else {
-            // The server was stopped while the handler ran; there is no
-            // `error()` handler left to invoke.
-            if self.is_aborted_or_ended() {
-                return;
-            }
-            return self.render_missing();
+            // The server was stopped while the handler ran; `is_aborted_or_ended()`
+            // is always true when `server` is None, so there is nothing to render.
+            return;
         };
         // server is a BACKREF — valid while this RequestContext is alive
         let global_this: &JSGlobalObject = server.global_this();
@@ -777,9 +775,9 @@ where
                 .to_js()
         };
         // Formatting `value` re-enters JS (getters, proxy traps, toString) and
-        // can synchronously abort or end this request; re-check before
-        // rendering anything onto it.
-        if self.is_aborted_or_ended() {
+        // can synchronously abort, end, or upgrade this request; re-check
+        // before rendering anything onto it.
+        if self.is_aborted_or_ended() || self.did_upgrade_web_socket() {
             return;
         }
         self.run_error_handler(js_err);

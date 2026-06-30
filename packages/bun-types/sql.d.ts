@@ -970,12 +970,18 @@ declare module "bun" {
      * Uses a regular pool connection — does not require an active listener.
      *
      * @param channel - The channel name to notify
-     * @param payload - The payload string to send
+     * @param payload - The payload string to send. Omitting it sends an empty
+     * payload, matching PostgreSQL's bare `NOTIFY channel` for signal-only
+     * channels where the channel name is the message.
      *
      * @example
      * await sql.notify('news', JSON.stringify({ headline: 'hello' }));
+     *
+     * @example
+     * // signal-only: the channel name is the whole message
+     * await sql.notify('cache_invalidated');
      */
-    notify(channel: string, payload: string): Promise<void>;
+    notify(channel: string, payload?: string): Promise<void>;
 
     /**
      * Reads a file and runs its contents as a query.

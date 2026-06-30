@@ -1297,7 +1297,7 @@ PostgreSQL's `LISTEN`/`NOTIFY` provides lightweight pub/sub between database cli
 
 - `sql.listen(channel, onnotify, onlisten?)` subscribes to a channel.
 - `sql.unlisten(channel, onnotify?)` unsubscribes.
-- `sql.notify(channel, payload)` publishes a payload to a channel.
+- `sql.notify(channel, payload?)` publishes a payload to a channel (an omitted payload sends `""`).
 
 ```ts
 import { SQL } from "bun";
@@ -1359,6 +1359,8 @@ The same `state` object is handed back from every `listen()` call on this SQL in
 ##### `notify()` semantics
 
 `sql.notify(channel, payload)` runs `SELECT pg_notify($1, $2)` through the regular query pool — it does not require an active subscription. It returns a Promise that resolves once the server has accepted the NOTIFY (committed at the next transaction boundary, which for autocommit queries is immediate).
+
+The payload is optional: `sql.notify(channel)` sends an empty payload, matching PostgreSQL's bare `NOTIFY channel` for signal-only channels where the channel name is the whole message. A non-string payload (including `null`) is rejected rather than coerced.
 
 The handles returned by `sql.reserve()` and `sql.begin()` carry the same three methods. Their `notify()` runs on that handle's own connection, so inside `sql.begin()` the notification participates in the transaction: PostgreSQL queues it and delivers it only on COMMIT, and drops it on ROLLBACK. `listen()`/`unlisten()` always operate on the adapter-wide dedicated listen connection, regardless of which handle they are called on.
 

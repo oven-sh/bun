@@ -245,11 +245,17 @@ const SQL: typeof Bun.SQL = function SQL(
       throw $ERR_INVALID_ARG_VALUE("channel", channel, "must not contain null bytes");
     }
   };
-  const validateNotifyArgs = (channel: string, payload: string) => {
+  // Validates and returns the normalized payload. Bare `NOTIFY channel` (no
+  // payload) is valid PostgreSQL and a common signal-only pattern, so an
+  // omitted payload becomes the empty string; a present non-string (including
+  // null) is still rejected rather than coerced.
+  const validateNotifyArgs = (channel: string, payload?: string): string => {
     validateChannel(channel);
+    if (payload === undefined) return "";
     if (typeof payload !== "string") {
       throw $ERR_INVALID_ARG_TYPE("payload", "string", payload);
     }
+    return payload;
   };
 
   function onReserveConnected(this: Query<any, any>, err: Error | null, pooledConnection) {
@@ -339,8 +345,8 @@ const SQL: typeof Bun.SQL = function SQL(
     reserved_sql.listen = sql.listen;
     reserved_sql.unlisten = sql.unlisten;
     reserved_sql.notify = pool.listen
-      ? (channel: string, payload: string) => {
-          validateNotifyArgs(channel, payload);
+      ? (channel: string, payload?: string) => {
+          payload = validateNotifyArgs(channel, payload);
           // .execute() starts the query eagerly: notify() must send even when
           // the caller fires and forgets instead of awaiting the lazy Query.
           return reserved_sql.unsafe("SELECT pg_notify($1, $2)", [channel, payload]).execute();
@@ -628,8 +634,8 @@ const SQL: typeof Bun.SQL = function SQL(
     transaction_sql.listen = sql.listen;
     transaction_sql.unlisten = sql.unlisten;
     transaction_sql.notify = pool.listen
-      ? (channel: string, payload: string) => {
-          validateNotifyArgs(channel, payload);
+      ? (channel: string, payload?: string) => {
+          payload = validateNotifyArgs(channel, payload);
           // .execute() starts the query eagerly: notify() must send even when
           // the caller fires and forgets instead of awaiting the lazy Query.
           return transaction_sql.unsafe("SELECT pg_notify($1, $2)", [channel, payload]).execute();
@@ -986,8 +992,8 @@ const SQL: typeof Bun.SQL = function SQL(
     sql.listen = (channel, onnotify, onlisten?) => pool.listen(channel, onnotify, onlisten);
     sql.unlisten = (channel, onnotify?) => pool.unlisten(channel, onnotify);
     // notify uses a regular pool connection via parameterized query — no dedicated listen connection
-    sql.notify = (channel, payload) => {
-      validateNotifyArgs(channel, payload);
+    sql.notify = (channel, payload?) => {
+      payload = validateNotifyArgs(channel, payload);
       // .execute() starts the query eagerly: notify() must send even when the
       // caller fires and forgets instead of awaiting the lazy Query.
       return sql.unsafe("SELECT pg_notify($1, $2)", [channel, payload]).execute();
@@ -1015,7 +1021,7 @@ const SQL: typeof Bun.SQL = function SQL(
       }
       return unsupported();
     };
-    sql.notify = (channel, payload) => {
+    sql.notify = (channel, payload?) => {
       validateNotifyArgs(channel, payload);
       return unsupported();
     };

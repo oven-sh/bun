@@ -12792,6 +12792,19 @@ console.log("FIXTURE_DONE");
         await db.unlisten("test_listen_empty");
       });
 
+      // Bare `NOTIFY channel` (no payload) is valid PostgreSQL and a common
+      // signal-only pattern; an omitted payload must send "" rather than throw.
+      test("sql.notify with an omitted payload delivers an empty string", async () => {
+        await using db = postgres(options);
+        const { promise, resolve } = Promise.withResolvers<string>();
+
+        await db.listen("test_notify_no_payload", payload => resolve(payload));
+        await db.notify("test_notify_no_payload");
+
+        expect(await promise).toBe("");
+        await db.unlisten("test_notify_no_payload");
+      });
+
       test("sql.listen rejects invalid channel names", async () => {
         await using db = postgres(options);
         // empty string
@@ -13867,6 +13880,25 @@ test("sql.notify executes without being awaited", async () => {
   // The mock never acks extended-protocol queries. Swallow the rejection the
   // teardown produces, then drop the connection so close() does not wait on
   // the stuck query.
+  (pending as Promise<unknown>).catch(() => {});
+  mock.destroyConnections();
+});
+
+// Bare `NOTIFY channel` (no payload) is valid PostgreSQL and a common
+// signal-only pattern. An omitted payload must send an empty string, not
+// throw ERR_INVALID_ARG_TYPE before the query is created.
+test("sql.notify with an omitted payload sends pg_notify instead of throwing", async () => {
+  await using mock = await createMockListenServer({});
+  await using db = postgres({
+    url: `postgres://u@127.0.0.1:${mock.port}/db`,
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+
+  const gotNotify = mock.waitForQuery(qs => qs.some(q => q.includes("pg_notify")));
+  const pending = db.notify("signal_only_chan");
+  await gotNotify;
   (pending as Promise<unknown>).catch(() => {});
   mock.destroyConnections();
 });

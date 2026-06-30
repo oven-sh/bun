@@ -269,11 +269,13 @@ await client.subscribe(channel, (message, channel) => {});
 
 To receive a message's raw bytes instead, use `.subscribeBuffer()`. The
 listener is called with a `Uint8Array`, so binary payloads round-trip
-unchanged:
+unchanged. As with `.subscribe()`, publish from a separate connection, since a
+subscribed client can only use the Pub/Sub methods:
 
 ```typescript redis.ts icon="/icons/typescript.svg"
-await client.subscribeBuffer("updates", (message, channel) => {
-  console.log(message); // Uint8Array [0, 1, 2]
+const subscriber = await client.duplicate();
+await subscriber.subscribeBuffer("updates", (message, channel) => {
+  console.log(message); // Uint8Array(3) [ 0, 1, 2 ]
 });
 await client.publish("updates", new Uint8Array([0, 1, 2]));
 ```

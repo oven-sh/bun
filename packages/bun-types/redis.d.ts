@@ -2759,7 +2759,10 @@ declare module "bun" {
      *
      * @example
      * ```ts
-     * await client.subscribeBuffer("events", (message, channel) => {
+     * // A subscribed client can only use the Pub/Sub methods, so publish
+     * // from a separate connection.
+     * const subscriber = await client.duplicate();
+     * await subscriber.subscribeBuffer("events", (message, channel) => {
      *   console.log(channel, message); // Uint8Array
      * });
      * await client.publish("events", new Uint8Array([0x00, 0x01, 0x02]));

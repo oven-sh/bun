@@ -296,33 +296,37 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
   });
 }
 
+// Spawn the debug bun in `package_dir`, asserting it succeeded with no errors.
+async function runInPackageDir(cmd: string[]) {
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), ...cmd, "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(exitCode).toBe(0);
+  return { out, err };
+}
+
 // https://github.com/oven-sh/bun/issues/13388
-// `bun update` with no package names must write the same resolved version into
-// bun.lock's workspace entries that it writes into package.json. Previously the
-// lockfile kept the pre-resolution literal ("latest" under --latest, the stale
-// range otherwise) and the very next `bun install` rewrote it.
+// `bun update` must write the same resolved version into bun.lock's workspace
+// entries that it writes into package.json. Previously the lockfile kept the
+// pre-resolution literal with no package names ("latest" under --latest, the
+// stale range otherwise), and with package names it wrote `^<resolved>`
+// regardless of the original pin level, dropping the `npm:<name>@` prefix of
+// aliases; either way the very next `bun install` rewrote the lockfile.
 for (const args of [
   ["update", "--latest"],
   ["update"],
+  ["update", "baz", "baz-alias"],
 ]) {
   it(`${args.join(" ")} saves the resolved version range into the lockfile, issue#13388`, async () => {
-    const run = async (cmd: string[]) => {
-      const { stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), ...cmd, "--linker=hoisted"],
-        cwd: package_dir,
-        stdout: "pipe",
-        stdin: "ignore",
-        stderr: "pipe",
-        env,
-      });
-      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
-      expect(err).not.toContain("error:");
-      expect(exitCode).toBe(0);
-      return { out, err };
-    };
-
     const urls: string[] = [];
-    // `~0.0.3` so the plain `bun update` variant can move within the range once 0.0.5 appears.
+    // `~0.0.3` so the plain `bun update` variants can move within the range once 0.0.5 appears.
     const registry: Record<string, any> = { "0.0.3": {}, latest: "0.0.3" };
     setHandler(dummyRegistry(urls, registry));
     await writeFile(
@@ -337,13 +341,13 @@ for (const args of [
     );
 
     // Text lockfile so the workspace entries can be asserted directly.
-    await run(["install", "--save-text-lockfile"]);
+    await runInPackageDir(["install", "--save-text-lockfile"]);
 
-    // A newer version within the range appears; both variants resolve to 0.0.5.
+    // A newer version within the range appears; every variant resolves to 0.0.5.
     registry["0.0.5"] = {};
     registry.latest = "0.0.5";
     setHandler(dummyRegistry(urls, registry));
-    await run(args);
+    await runInPackageDir(args);
 
     expect(await file(join(package_dir, "package.json")).json()).toEqual({
       name: "foo",
@@ -358,7 +362,51 @@ for (const args of [
     expect(lockfile).not.toContain("latest");
 
     // package.json and bun.lock agree, so the next install has nothing to rewrite.
-    const { err } = await run(["install"]);
+    const { err } = await runInPackageDir(["install"]);
+    expect(err).not.toContain("Saved lockfile");
+  });
+}
+
+// https://github.com/oven-sh/bun/issues/13388
+// When the same name appears in two dependency groups, `bun update` with no
+// package names only moves the first group in PackageJSONEditor's
+// DEPENDENCY_GROUPS order (devDependencies before dependencies). bun.lock must
+// leave the other group's entry alone too, or the two files disagree again.
+for (const args of [
+  ["update", "--latest"],
+  ["update"],
+]) {
+  it(`${args.join(" ")} leaves the other group untouched in the lockfile, issue#13388`, async () => {
+    const urls: string[] = [];
+    const registry: Record<string, any> = { "0.0.3": {}, latest: "0.0.3" };
+    setHandler(dummyRegistry(urls, registry));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "baz": "~0.0.3" },
+        devDependencies: { "baz": "~0.0.3" },
+      }),
+    );
+
+    await runInPackageDir(["install", "--save-text-lockfile"]);
+
+    registry["0.0.5"] = {};
+    registry.latest = "0.0.5";
+    setHandler(dummyRegistry(urls, registry));
+    await runInPackageDir(args);
+
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: { "baz": "~0.0.3" },
+      devDependencies: { "baz": "~0.0.5" },
+    });
+    const lockfile = await file(join(package_dir, "bun.lock")).text();
+    const workspaces = lockfile.slice(0, lockfile.indexOf(`"packages"`));
+    expect(workspaces).toContain(`"baz": "~0.0.3"`);
+    expect(workspaces).toContain(`"baz": "~0.0.5"`);
+
+    const { err } = await runInPackageDir(["install"]);
     expect(err).not.toContain("Saved lockfile");
   });
 }

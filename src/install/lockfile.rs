@@ -7,7 +7,8 @@ use std::io::Write as _;
 use bun_alloc::AllocError;
 use bun_collections::{
     ArrayHashMap, ArrayIdentityContext, ArrayIdentityContextU64, DynamicBitSet,
-    HashMap as BunHashMap, IdentityContext, LinearFifo, linear_fifo::DynamicBuffer,
+    HashMap as BunHashMap, IdentityContext, LinearFifo, StringArrayHashMap,
+    linear_fifo::DynamicBuffer,
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Error as BunError, Global, Output, err};
@@ -824,17 +825,17 @@ impl Lockfile {
                                     continue;
                                 }
 
-                                // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
+                                let npm_version = res.npm().version;
+                                let new_literal = positional_update_literal(
+                                    &manager.updating_packages,
+                                    dep,
+                                    &npm_version,
+                                    string_builder.string_bytes.as_slice(),
+                                    exact_versions,
+                                );
 
-                                let npm_ver = res.npm().version;
-                                let len = bun_core::fmt::count(format_args!(
-                                    "{}{}",
-                                    if exact_versions { "" } else { "^" },
-                                    npm_ver.fmt(string_builder.string_bytes.as_slice()),
-                                ));
-
-                                if len >= SemverString::MAX_INLINE_LEN {
-                                    string_builder.cap += len;
+                                if new_literal.len() >= SemverString::MAX_INLINE_LEN {
+                                    string_builder.cap += new_literal.len();
                                 }
                             }
                         }
@@ -850,8 +851,6 @@ impl Lockfile {
             // the only fallible call above is `allocate()`, which precedes this point).
 
             {
-                let mut temp_buf = [0u8; 513];
-
                 let root_deps: &mut [Dependency] =
                     root_deps_list.mut_(old.buffers.dependencies.as_mut_slice());
                 let old_resolutions_list_lists = old.packages.items_resolutions();
@@ -879,27 +878,17 @@ impl Lockfile {
                                     continue;
                                 }
 
-                                // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
+                                let npm_version = res.npm().version;
+                                let new_literal = positional_update_literal(
+                                    &manager.updating_packages,
+                                    dep,
+                                    &npm_version,
+                                    string_builder.string_bytes.as_slice(),
+                                    exact_versions,
+                                );
 
-                                let npm_ver = res.npm().version;
-                                let buf = {
-                                    let mut cursor: &mut [u8] = &mut temp_buf[..];
-                                    let start_len = cursor.len();
-                                    if write!(
-                                        cursor,
-                                        "{}{}",
-                                        if exact_versions { "" } else { "^" },
-                                        npm_ver.fmt(string_builder.string_bytes.as_slice()),
-                                    )
-                                    .is_err()
-                                    {
-                                        break;
-                                    }
-                                    let written = start_len - cursor.len();
-                                    &temp_buf[..written]
-                                };
-
-                                let external_version = string_builder.append::<ExternalString>(buf);
+                                let external_version =
+                                    string_builder.append::<ExternalString>(&new_literal);
                                 let sliced = external_version
                                     .value
                                     .sliced(string_builder.string_bytes.as_slice());
@@ -1198,9 +1187,9 @@ impl Lockfile {
             clean_preprocess_update_requests_cold(old, manager, updates, exact_versions)?;
         } else if !manager.updating_packages.is_empty() {
             // `bun update` with no package names has no `UpdateRequest`s; it
-            // tracks its targets through `updating_packages` instead. (The
-            // positional path above also records `updating_packages` entries,
-            // but only for the install summary, so this must stay `else if`.)
+            // tracks its targets through `updating_packages` instead. The
+            // positional path above reads those same entries inside
+            // `preprocess_update_requests`, so this must stay `else if`.
             clean_preprocess_updating_packages_cold(old, manager, exact_versions)?;
         }
 
@@ -1448,11 +1437,47 @@ fn clean_preprocess_updating_packages_cold(
     Lockfile::preprocess_updating_packages(old, manager, exact_versions)
 }
 
-/// Formats the version literal `bun update` (with no package names) writes for
-/// a root dependency that resolved to `resolved_version`: the resolved version
-/// at the same pin level (`^`, `~`, exact) the user's package.json literal
-/// had, preserving the `npm:<name>@` prefix for aliased dependencies.
-fn format_updated_version_literal(
+/// Literal to write into the lockfile's root dependency for a positional
+/// `bun update <name>` / `bun add <name>` request that resolved to
+/// `resolved_version`. `bun update <name>` recorded the original package.json
+/// literal on `updating_packages`; preserve its pin level and `npm:<name>@`
+/// alias prefix so the lockfile matches what `PackageJSONEditor::edit` writes.
+/// `bun add` never records an entry and keeps saving `^<resolved>`.
+fn positional_update_literal(
+    updating_packages: &StringArrayHashMap<PackageUpdateInfo>,
+    dep: &Dependency,
+    resolved_version: &Semver::Version,
+    string_buf: &[u8],
+    exact_versions: bool,
+) -> Vec<u8> {
+    if let Some(entry) = updating_packages.get(dep.name.slice(string_buf)) {
+        if dep.behavior.intersects(entry.group_behavior) {
+            return format_updated_version_literal(
+                resolved_version,
+                string_buf,
+                entry,
+                dep.version.literal.slice(string_buf),
+                exact_versions,
+            );
+        }
+    }
+
+    let mut out: Vec<u8> = Vec::new();
+    write!(
+        &mut out,
+        "{}{}",
+        if exact_versions { "" } else { "^" },
+        resolved_version.fmt(string_buf),
+    )
+    .expect("infallible: in-memory write");
+    out
+}
+
+/// Formats the version literal `bun update` writes for a root dependency that
+/// resolved to `resolved_version`: the resolved version at the same pin level
+/// (`^`, `~`, exact) the user's package.json literal had, preserving the
+/// `npm:<name>@` prefix (taken from `dep_literal`) for aliased dependencies.
+pub(crate) fn format_updated_version_literal(
     resolved_version: &Semver::Version,
     string_buf: &[u8],
     entry: &PackageUpdateInfo,

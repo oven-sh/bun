@@ -1546,8 +1546,9 @@ mod tests {
             p.first_msg
         );
         expect_error("{\"a\": /* x */ 1}", "JSON does not support comments");
-        // A comment inside a scalar's index run (no whitespace before it)
-        // must also be reported as a comment, not as junk after the value.
+        // A comment in the value's own index run (comment bytes are never
+        // indexed) must be reported as a comment, not as junk after the
+        // value.
         for doc in ["[1 // x\n]", "[1// x\n]", "{\"a\": 1 /* c */}"] {
             expect_error(doc, "JSON does not support comments");
         }

@@ -690,99 +690,62 @@ where
     }
 
     fn render_missing_invalid_response(&mut self, value: JSValue) {
-        // `undefined`/`null` mean the handler produced no response: keep the
-        // diagnostic plus the 204 (production) / welcome page (development).
-        if value.is_empty_or_undefined_or_null() {
-            if let Some(server) = self.server {
-                // server is a BACKREF — valid while this RequestContext is alive
-                let global_this: &JSGlobalObject = server.global_this();
-
-                Output::enable_buffering();
-                let writer = Output::error_writer();
-
-                if !value.is_empty() && !global_this.has_exception() {
-                    let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
-                    formatter.quote_strings = true;
-                    bun_core::err_generic!(
-                        "Expected a Response object, but received '{}'",
-                        jsc::console_object::formatter::ZigFormatter::new(&mut formatter, value),
-                    );
-                    // `formatter` drops here.
-                } else {
-                    bun_core::err_generic!("Expected a Response object");
-                }
-
-                Output::flush();
-                if !global_this.has_exception() {
-                    jsc::ConsoleObject::write_trace(writer, global_this);
-                }
-                Output::flush();
-            }
-            // The formatter and `write_trace` above re-enter JS (getters, proxy
-            // traps, Error.prepareStackTrace), which can synchronously abort,
-            // end, or upgrade this request (e.g. AbortController.abort()
-            // inside a getter).
-            // We hold `&mut self` for the whole call, matching the rest of this
-            // promise-resolve path (`on_resolve` → `handle_resolve` also re-enter
-            // JS through `&mut`).
-            // The `RequestContextRef` guard taken in `on_resolve` keeps the
-            // allocation alive across the re-entry; re-check the request state so
-            // we never render onto a response that was ended underneath us.
-            if self.is_aborted_or_ended() || self.did_upgrade_web_socket() {
-                return;
-            }
-            return self.render_missing();
-        }
-
-        // Anything else is an invalid return value, not a missing one: surface
-        // it through `error()` as a 500, the same as a thrown error or a
-        // returned Response whose body was already used.
         let Some(server) = self.server else {
             // The server was stopped while the handler ran; `is_aborted_or_ended()`
-            // is always true when `server` is None, so there is nothing to render.
+            // is already true, so there is nothing left to render onto.
             return;
         };
-        // Mirror `on_response`: a returned `Error` instance reaches `error()`
-        // as itself, not wrapped, so the synchronous and asynchronous paths
-        // hand the handler the same object.
+        // A returned `Error` instance reaches `error()` as itself, not wrapped,
+        // mirroring the synchronous path in `on_response`.
         if let Some(err) = value.to_error() {
             return self.run_error_handler(err);
         }
         // server is a BACKREF — valid while this RequestContext is alive
         let global_this: &JSGlobalObject = server.global_this();
 
-        let js_err = if value.get_class_info_name().unwrap_or(b"") == b"Response" {
-            global_this
-                .err(
-                    jsc::ErrorCode::INVALID_RETURN_VALUE,
-                    format_args!(
-                        "Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects."
-                    ),
-                )
-                .to_js()
-        } else if !global_this.has_exception() {
+        // Formatting `value` re-enters JS (getters, proxy traps); the
+        // `RequestContextRef` taken in `on_resolve` keeps `self` alive, and
+        // the request state is re-validated below before rendering onto it.
+        let message: String = if value.get_class_info_name().unwrap_or(b"") == b"Response" {
+            "Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.".into()
+        } else if !value.is_empty() && !global_this.has_exception() {
             let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
             formatter.quote_strings = true;
-            global_this
-                .err(
-                    jsc::ErrorCode::INVALID_RETURN_VALUE,
-                    format_args!(
-                        "Expected a Response object, but received '{}'",
-                        jsc::console_object::formatter::ZigFormatter::new(&mut formatter, value)
-                    ),
-                )
-                .to_js()
+            format!(
+                "Expected a Response object, but received '{}'",
+                jsc::console_object::formatter::ZigFormatter::new(&mut formatter, value)
+            )
         } else {
-            global_this
-                .err(
-                    jsc::ErrorCode::INVALID_RETURN_VALUE,
-                    format_args!("Expected a Response object"),
-                )
-                .to_js()
+            "Expected a Response object".into()
         };
-        // Formatting `value` re-enters JS (getters, proxy traps, toString) and
-        // can synchronously abort, end, or upgrade this request; re-check
-        // before rendering anything onto it.
+
+        // `undefined`/`null` mean the handler produced no response: log the
+        // diagnostic and render the 204 (production) / welcome page (development).
+        if value.is_empty_or_undefined_or_null() {
+            Output::enable_buffering();
+            let writer = Output::error_writer();
+            bun_core::err_generic!("{}", message);
+            Output::flush();
+            if !global_this.has_exception() {
+                // write_trace re-enters JS through `Error.prepareStackTrace`.
+                jsc::ConsoleObject::write_trace(writer, global_this);
+            }
+            Output::flush();
+            if self.is_aborted_or_ended() || self.did_upgrade_web_socket() {
+                return;
+            }
+            return self.render_missing();
+        }
+
+        // Anything else is an invalid return value: report it through `error()`
+        // as a 500, the same as a thrown error or a returned Response whose
+        // body was already used.
+        let js_err = global_this
+            .err(
+                jsc::ErrorCode::INVALID_RETURN_VALUE,
+                format_args!("{}", message),
+            )
+            .to_js();
         if self.is_aborted_or_ended() || self.did_upgrade_web_socket() {
             return;
         }

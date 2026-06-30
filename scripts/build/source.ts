@@ -679,8 +679,9 @@ export function depSourceDir(cfg: Config, name: string): string {
 }
 
 /**
- * Path to a dep's fetch stamp. Used by rust-only mode to depend on lolhtml's
- * source being on disk without resolving the full dep graph.
+ * Path to a dep's fetch stamp. Used by rust-only mode to depend on a vendored
+ * Rust crate's source (lolhtml, rust-argon2) being on disk without resolving
+ * the full dep graph.
  */
 export function depSourceStamp(cfg: Config, name: string): string {
   return resolve(depSourceDir(cfg, name), ".ref");

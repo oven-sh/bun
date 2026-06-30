@@ -339,8 +339,9 @@ export interface RustBuildInputs {
   rustSources: string[];
   /**
    * Fetch stamps for vendored Rust crates the workspace consumes as path
-   * dependencies (currently lol-html). Implicit inputs so cargo never runs
-   * before the source tree exists, and so a commit bump re-invokes cargo.
+   * dependencies (lol-html, and rust-argon2 via the root `[patch.crates-io]`).
+   * Implicit inputs so cargo never runs before the source trees exist, and
+   * so a commit or patch bump re-invokes cargo.
    */
   vendorStamps: string[];
 }
@@ -527,8 +528,8 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // Path remapping (CI reproducibility) — rustc equivalent of the C/C++
   // `-ffile-prefix-map` entries in flags.ts. Without this, `file!()` /
   // panic locations and the DWARF compilation-dir from every workspace
-  // crate and vendored Rust dep (lol-html) embed the absolute checkout
-  // path into the release binary (`strings bun | grep $PWD` shows them).
+  // crate and vendored Rust dep (lol-html, rust-argon2) embed the absolute
+  // checkout path into the release binary (`strings bun | grep $PWD` shows them).
   // Gated on `cfg.ci` to match the flags.ts entry.
   if (cfg.ci) {
     rustflags.push(`--remap-path-prefix=${cfg.cwd}=.`);
@@ -557,8 +558,8 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     rustflags.push(`-Cprofile-use=${cfg.pgoUse}`);
   }
   // Force lld for any target link rustc itself performs. None exists today
-  // (`bun_bin` is a staticlib with no link step; `lol_html` is a plain rlib
-  // path dep), so this is defensive — see the Windows note below. The
+  // (`bun_bin` is a staticlib with no link step; `lol_html` / `rust-argon2`
+  // are plain rlib path deps), so this is defensive — see the Windows note below. The
   // default `cc` driver picks BFD `/usr/bin/ld`, which doesn't match the
   // semantics the C/C++ object set assumes (and, under `-Clinker-plugin-lto`,
   // doesn't understand `-plugin-opt`). This used to live only behind
@@ -856,9 +857,10 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       inputs: [],
       // Same staleness signal as the main build (any .rs / Cargo.toml change
       // re-invokes; cargo's own fingerprinting decides what actually
-      // recompiles). vendorStamps order the lol-html fetch first — the shim
-      // crate doesn't depend on lol-html, but cargo refuses to load the
-      // workspace manifest if any path-dep's `Cargo.toml` is missing.
+      // recompiles). vendorStamps order the lol-html / rust-argon2 fetches
+      // first — the shim crate depends on neither, but cargo refuses to load
+      // the workspace manifest if any path dependency's (or `[patch.crates-io]`
+      // override's) `Cargo.toml` is missing.
       // shimDest: rebuilt when a sibling build dir (other arch/profile)
       // overwrote the shared exe.
       implicitInputs: [cfg.cargo, ...inputs.rustSources, ...inputs.vendorStamps, shimDest],
@@ -897,7 +899,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // Codegen `.rs` outputs are side effects of edges in `codegenInputs`,
     // so depending on those orders the codegen step before cargo without
     // ninja needing to know the `.rs` paths. vendorStamps orders the
-    // lol-html source fetch before cargo resolves the path dep.
+    // lol-html / rust-argon2 source fetches before cargo resolves the path deps.
     implicitInputs: [cfg.cargo, ...inputs.rustSources, ...inputs.codegenInputs, ...inputs.vendorStamps, ...shimInputs],
     orderOnlyInputs: inputs.codegenOrderOnly,
     vars: {

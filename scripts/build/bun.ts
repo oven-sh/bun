@@ -127,7 +127,7 @@ function systemLibs(cfg: Config): string[] {
  * Optional fields are present only when the mode produces them:
  *   full:      exe, strippedExe?, dsym?, rustObjects, objects, deps, codegen
  *   cpp-only:  archive, objects, deps, codegen
- *   rust-only: rustObjects, deps (lolhtml), codegen
+ *   rust-only: rustObjects, deps (lolhtml, rust-argon2), codegen
  *   link-only: exe, strippedExe?, dsym?
  */
 export interface BunOutput {
@@ -193,7 +193,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // Outputs of deps that provide headers — used as implicit inputs on PCH/cc/
   // no-PCH cxx so a dep rebuild invalidates compiles that #include its headers
   // (the .a is the signal — see comment at the PCH step). Deps with no provided
-  // includes (tinycc, lolhtml) are skipped: nothing to invalidate, and a tinycc
+  // includes (tinycc, lolhtml, rust-argon2) are skipped: nothing to invalidate, and a tinycc
   // no-op rebuild (ar has no restat) would otherwise cascade to a full PCH+cxx
   // rebuild. Link still gets every dep via depLibs/depObjects.
   const depHeaderSignal: string[] = [];
@@ -443,7 +443,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     }
 
     // depLibs explicit in the phony: deps with no provided includes (tinycc,
-    // lolhtml) aren't in depHeaderSignal, so the archive doesn't pull them
+    // lolhtml, rust-argon2) aren't in depHeaderSignal, so the archive doesn't pull them
     // transitively — but link-only still needs them uploaded.
     n.phony("bun", [archive, ...depLibs, ...(depUploadStamp ? [depUploadStamp] : [])]);
     n.default(["bun"]);
@@ -533,8 +533,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
  *   - cargo build → libbun_rust.a
  *
  * Does NOT need: any C dep built, any cxx, PCH, link. ninja only pulls
- * what's depended on — lolhtml's configure/build rules are emitted but
- * unused (only its `.ref` fetch stamp is depended on by emitRust).
+ * what's depended on — the lolhtml / rust-argon2 configure/build rules are
+ * emitted but unused (only their `.ref` fetch stamps are depended on by
+ * emitRust).
  *
  * Cross-compilation: see `rustCanCrossFromLinux()` in rust.ts for which
  * targets share a linux runner vs need a native agent.

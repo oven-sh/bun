@@ -1,6 +1,6 @@
 import { color } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isDebug, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isDebug, withoutAggressiveGC } from "harness";
 
 const namedColors = ["red", "green", "blue", "yellow", "purple", "orange", "pink", "brown", "gray"];
 
@@ -235,6 +235,48 @@ test("0 args", () => {
       code: "ERR_INVALID_ARG_TYPE",
     }),
   );
+});
+
+describe('color(input, "ansi") picks the escape for the detected color depth', () => {
+  // The "ansi" format resolves against the terminal color depth derived from
+  // the environment, so it has to be observed from a child process.
+  async function autoAnsi(env: Record<string, string | undefined>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `process.stdout.write(JSON.stringify(Bun.color("#ff0000", "ansi")))`],
+      env: {
+        ...bunEnv,
+        NO_COLOR: undefined,
+        FORCE_COLOR: undefined,
+        CI: undefined,
+        TMUX: undefined,
+        COLORTERM: undefined,
+        TERM: "xterm-256color",
+        ...env,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  test("TMUX is 24-bit color", async () => {
+    // https://github.com/oven-sh/bun/issues/28463
+    expect(await autoAnsi({ TMUX: "1", TERM: "screen-256color" })).toBe(color("#ff0000", "ansi-24bit"));
+  });
+
+  test("COLORTERM=truecolor is 24-bit color", async () => {
+    expect(await autoAnsi({ COLORTERM: "truecolor" })).toBe(color("#ff0000", "ansi-24bit"));
+  });
+
+  test("FORCE_COLOR=2 is 256 colors", async () => {
+    expect(await autoAnsi({ FORCE_COLOR: "2" })).toBe(color("#ff0000", "ansi-256"));
+  });
+
+  test("TERM=dumb is no color", async () => {
+    expect(await autoAnsi({ TERM: "dumb" })).toBe("");
+  });
 });
 
 // 2^24 color() calls take minutes on debug builds, past the per-test timeout.

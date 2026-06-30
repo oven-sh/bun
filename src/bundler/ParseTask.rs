@@ -748,7 +748,7 @@ pub mod parse_worker {
                 // SAFETY: `resolver` is a live `*mut Resolver`;
                 // `caches` is disjoint from `(*transpiler).options` reborrowed above.
                 let root: Expr = unsafe { &mut (*resolver).caches.json }
-                    .parse_json(log, source, mode, true)?
+                    .parse_json(log, source, mode)?
                     .unwrap_or_else(|| Expr::init(E::Object::default(), Loc::EMPTY));
                 return Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(

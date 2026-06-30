@@ -25,14 +25,14 @@
 //! between tokens, duplicate-key warnings, and indentation guessing.
 
 use bun_alloc::Arena as Bump;
+use bun_ast::G;
 
 use bun_ast as js_ast;
 use bun_ast::Indentation;
 use bun_ast::{E, Expr};
-use bun_collections::VecExt;
 use bun_core::{self};
 
-use crate::json_index::{self, IndexError, StructuralIndex};
+use crate::json_index::{IndexError, StructuralIndex};
 use crate::json_stage2::Parser;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -41,15 +41,12 @@ use crate::json_stage2::Parser;
 
 #[derive(Clone, Copy)]
 pub struct JSONOptions {
-    /// Enable JSON-specific warnings/errors.
-    pub is_json: bool,
     /// tsconfig.json supports comments & trailing commas.
     pub allow_comments: bool,
     pub allow_trailing_commas: bool,
     /// Loading JSON-in-JSON may start like `\"\"` — technically invalid; we
     /// parse from the first value of the string.
     pub ignore_leading_escape_sequences: bool,
-    pub ignore_trailing_escape_sequences: bool,
     pub json_warn_duplicate_keys: bool,
     /// Mark as originally for a macro to enable inlining.
     pub was_originally_macro: bool,
@@ -64,11 +61,9 @@ pub struct JSONOptions {
 
 impl JSONOptions {
     pub const DEFAULT: JSONOptions = JSONOptions {
-        is_json: false,
         allow_comments: false,
         allow_trailing_commas: false,
         ignore_leading_escape_sequences: false,
-        ignore_trailing_escape_sequences: false,
         json_warn_duplicate_keys: true,
         was_originally_macro: false,
         guess_indentation: false,
@@ -86,28 +81,21 @@ impl Default for JSONOptions {
 // Option presets (one per entry point family)
 // ──────────────────────────────────────────────────────────────────────────
 
-const JSON_OPTS: JSONOptions = JSONOptions {
-    is_json: true,
-    ..JSONOptions::DEFAULT
-};
+const JSON_OPTS: JSONOptions = JSONOptions::DEFAULT;
 
 const DOTENV_JSON_OPTS: JSONOptions = JSONOptions {
-    is_json: true,
     allow_trailing_commas: true,
     ignore_leading_escape_sequences: true,
-    ignore_trailing_escape_sequences: true,
     ..JSONOptions::DEFAULT
 };
 
 const TSCONFIG_OPTS: JSONOptions = JSONOptions {
-    is_json: true,
     allow_comments: true,
     allow_trailing_commas: true,
     ..JSONOptions::DEFAULT
 };
 
 const MACRO_JSON_OPTS: JSONOptions = JSONOptions {
-    is_json: true,
     allow_comments: true,
     allow_trailing_commas: true,
     json_warn_duplicate_keys: false,
@@ -115,8 +103,7 @@ const MACRO_JSON_OPTS: JSONOptions = JSONOptions {
     ..JSONOptions::DEFAULT
 };
 
-const PACKAGE_JSON_OPTS: JSONOptions = JSONOptions {
-    is_json: true,
+pub const PACKAGE_JSON_OPTS: JSONOptions = JSONOptions {
     allow_comments: true,
     allow_trailing_commas: true,
     ..JSONOptions::DEFAULT
@@ -156,7 +143,6 @@ struct ParseOutput {
     /// `Some` only for a [`E::TapeAlloc::Global`] parse: see
     /// [`ParsedJson::tape`]. An arena-mode tape belongs to the arena.
     tape: Option<Box<E::JsonTape>>,
-    is_ascii_only: bool,
     indentation: Indentation,
 }
 
@@ -252,17 +238,12 @@ fn run_stage2<'s>(
     if check_len && !parser.at_trailing_end() {
         return Err(parser.unexpected_here());
     }
-    let is_ascii_only = parser.is_ascii_only;
     // The root borrows the tape: take ownership before the parser drops it.
     let tape = parser.take_tape();
     drop(parser);
-    let is_ascii_only = is_ascii_only
-        && sidx.flags & (json_index::FLAG_HAS_BACKSLASH_IN_STRING | json_index::FLAG_HAS_NON_ASCII)
-            == 0;
     Ok(ParseOutput {
         root,
         tape,
-        is_ascii_only,
         indentation: if opts.guess_indentation {
             guess_indentation(&source.contents)
         } else {
@@ -351,25 +332,9 @@ fn guess_indentation(s: &[u8]) -> Indentation {
 // Entry points
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Parse JSON into the classic `E::Object` / `E::Array` AST.
-///
-/// `FORCE_UTF8` is accepted for source compatibility and ignored: every
-/// string is stored as UTF-8 (WTF-8 for the lone surrogates JSON escapes
-/// can produce), which the printer and `to_js` both handle.
-#[inline]
-pub fn parse<const FORCE_UTF8: bool>(
-    source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
-    bump: &Bump,
-) -> Result<Expr, bun_core::Error> {
-    if source.contents.is_empty() {
-        return Ok(empty_object_expr());
-    }
-    Ok(parse_classic(source, log, bump, JSON_OPTS, false)?.root)
-}
-
-/// Parse JSON into the classic AST. Identical to [`parse`] — every string
-/// is UTF-8 either way — and kept as the spelling its callers use.
+/// Parse JSON into the classic `E::Object` / `E::Array` AST. Every string
+/// is stored as UTF-8 (WTF-8 for the lone surrogates JSON escapes can
+/// produce), which the printer and `to_js` both handle.
 pub fn parse_utf8(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -454,7 +419,6 @@ impl ParsedJson {
         log: &mut bun_ast::Log,
     ) -> Result<ParsedJson, bun_core::Error> {
         const MANIFEST_OPTS: JSONOptions = JSONOptions {
-            is_json: true,
             json_warn_duplicate_keys: false,
             ..JSONOptions::DEFAULT
         };
@@ -554,44 +518,9 @@ pub struct JsonResult {
     pub indentation: Indentation,
 }
 
-/// Compile-time-options spelling kept for existing call sites; reifies the
-/// flags into a runtime [`JSONOptions`] and forwards.
-#[inline]
-pub fn parse_package_json_utf8_with_opts<
-    const IS_JSON: bool,
-    const ALLOW_COMMENTS: bool,
-    const ALLOW_TRAILING_COMMAS: bool,
-    const IGNORE_LEADING_ESCAPE_SEQUENCES: bool,
-    const IGNORE_TRAILING_ESCAPE_SEQUENCES: bool,
-    const JSON_WARN_DUPLICATE_KEYS: bool,
-    const WAS_ORIGINALLY_MACRO: bool,
-    const GUESS_INDENTATION: bool,
->(
-    source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
-    bump: &Bump,
-) -> Result<JsonResult, bun_core::Error> {
-    parse_package_json_utf8_with_opts_rt(
-        JSONOptions {
-            is_json: IS_JSON,
-            allow_comments: ALLOW_COMMENTS,
-            allow_trailing_commas: ALLOW_TRAILING_COMMAS,
-            ignore_leading_escape_sequences: IGNORE_LEADING_ESCAPE_SEQUENCES,
-            ignore_trailing_escape_sequences: IGNORE_TRAILING_ESCAPE_SEQUENCES,
-            json_warn_duplicate_keys: JSON_WARN_DUPLICATE_KEYS,
-            was_originally_macro: WAS_ORIGINALLY_MACRO,
-            guess_indentation: GUESS_INDENTATION,
-            record_value_locs: false,
-        },
-        source,
-        log,
-        bump,
-    )
-}
-
-/// Runtime-options entry point. Prefer this over the const-generic shim above
-/// for new code.
-pub fn parse_package_json_utf8_with_opts_rt(
+/// package.json with runtime options, into the classic AST plus the
+/// document's guessed indentation (for the `bun pm pkg` editors).
+pub fn parse_package_json_utf8_with_opts(
     opts: JSONOptions,
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -621,51 +550,14 @@ pub fn parse_for_macro(
     Ok(parse_classic(source, log, bump, MACRO_JSON_OPTS, false)?.root)
 }
 
-pub struct JSONParseResult {
-    pub expr: Expr,
-    pub tag: JSONParseResultTag,
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum JSONParseResultTag {
-    Expr,
-    Ascii,
-    Empty,
-}
-
-pub fn parse_for_bundling(
-    source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
-    bump: &Bump,
-) -> Result<JSONParseResult, bun_core::Error> {
-    if source.contents.is_empty() {
-        return Ok(JSONParseResult {
-            expr: empty_object_expr(),
-            tag: JSONParseResultTag::Empty,
-        });
-    }
-    let out = parse_classic(source, log, bump, JSON_OPTS, false)?;
-    Ok(JSONParseResult {
-        tag: if out.is_ascii_only {
-            JSONParseResultTag::Ascii
-        } else {
-            JSONParseResultTag::Expr
-        },
-        expr: out.root,
-    })
-}
-
 /// `tsconfig.json` / `.jsonc` (the dialect: comments, trailing commas).
 ///
 /// Classic `E::Object` AST — the tsconfig walker, bunfig, and the bundler's
 /// `.jsonc` module loader pattern-match `Expr` nodes (and the first two
 /// report diagnostics with per-value `Loc`s), so the immutable parse is
 /// [`materialize`]d at this boundary with every location intact.
-/// `FORCE_UTF8` is accepted for source compatibility and ignored (see
-/// [`parse`]).
 #[inline]
-pub fn parse_ts_config<const FORCE_UTF8: bool>(
+pub fn parse_ts_config(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     bump: &Bump,
@@ -691,8 +583,8 @@ pub fn parse_env_json(
 
     // JSON-in-JSON (`--define X='\\"str\\"'`): a leading escaped quote means
     // the value is a JSON string whose quotes the outer document escaped
-    // (`ignore_leading_escape_sequences` / `ignore_trailing_escape_sequences`).
-    // Unescape the two quotes and parse the result as JSON.
+    // (`ignore_leading_escape_sequences`). Unescape the two quotes and parse
+    // the result as JSON.
     if contents.len() >= 2 && contents[0] == b'\\' && matches!(contents[1], b'"' | b'\'') {
         let quote = contents[1];
         let mut unescaped: Vec<u8> = Vec::with_capacity(contents.len());
@@ -900,137 +792,11 @@ impl<'a> PackageJSONVersionChecker<'a> {
 }
 
 const PKG_JSON_CHECKER_OPTS: JSONOptions = JSONOptions {
-    is_json: true,
     json_warn_duplicate_keys: false,
     allow_trailing_commas: true,
     allow_comments: true,
     ..JSONOptions::DEFAULT
 };
-
-// ──────────────────────────────────────────────────────────────────────────
-// toAST
-// ──────────────────────────────────────────────────────────────────────────
-//
-// Recursively converts a value into a `js_ast.Expr` via a trait with
-// per-type impls. Struct/enum/union support would require a derive macro.
-
-use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
-use bun_ast::{ExprNodeList, G};
-
-pub trait ToAst {
-    fn to_ast(&self, bump: &Bump) -> Result<Expr, bun_core::Error>;
-}
-
-impl ToAst for bool {
-    fn to_ast(&self, _bump: &Bump) -> Result<Expr, bun_core::Error> {
-        Ok(Expr {
-            data: js_ast::expr::Data::EBoolean(E::Boolean { value: *self }),
-            loc: bun_ast::Loc::default(),
-        })
-    }
-}
-
-macro_rules! impl_to_ast_int {
-    ($($t:ty),*) => {$(
-        impl ToAst for $t {
-            fn to_ast(&self, _bump: &Bump) -> Result<Expr, bun_core::Error> {
-                Ok(Expr {
-                    data: js_ast::expr::Data::ENumber(E::Number::new(*self as f64)),
-                    loc: bun_ast::Loc::default(),
-                })
-            }
-        }
-    )*};
-}
-// `u8` is intentionally omitted so the generic `impl<T: ToAst> for [T]`
-// / `[T; N]` does NOT match byte arrays — byte slices/arrays emit
-// `E::String`, not `E::Array`. See dedicated `[u8]` / `[u8; N]` impls below.
-impl_to_ast_int!(i8, i16, i32, i64, isize, u16, u32, u64, usize);
-
-macro_rules! impl_to_ast_float {
-    ($($t:ty),*) => {$(
-        impl ToAst for $t {
-            fn to_ast(&self, _bump: &Bump) -> Result<Expr, bun_core::Error> {
-                Ok(Expr {
-                    data: js_ast::expr::Data::ENumber(E::Number::new(*self as f64)),
-                    loc: bun_ast::Loc::default(),
-                })
-            }
-        }
-    )*};
-}
-impl_to_ast_float!(f32, f64);
-
-impl ToAst for [u8] {
-    fn to_ast(&self, _bump: &Bump) -> Result<Expr, bun_core::Error> {
-        Ok(Expr::init(E::String::init(self), bun_ast::Loc::EMPTY))
-    }
-}
-
-impl<T: ToAst> ToAst for &T {
-    fn to_ast(&self, bump: &Bump) -> Result<Expr, bun_core::Error> {
-        (**self).to_ast(bump)
-    }
-}
-
-impl<T: ToAst> ToAst for [T] {
-    fn to_ast(&self, bump: &Bump) -> Result<Expr, bun_core::Error> {
-        let mut exprs = BumpVec::with_capacity_in(self.len(), bump);
-        for ex in self.iter() {
-            exprs.push(ex.to_ast(bump)?);
-        }
-        Ok(Expr::init(
-            E::Array {
-                items: ExprNodeList::from_slice(exprs.into_bump_slice()),
-                ..Default::default()
-            },
-            bun_ast::Loc::EMPTY,
-        ))
-    }
-}
-
-impl<T: ToAst, const N: usize> ToAst for [T; N] {
-    fn to_ast(&self, bump: &Bump) -> Result<Expr, bun_core::Error> {
-        self.as_slice().to_ast(bump)
-    }
-}
-
-// Byte arrays emit `E::String` (not `E::Array`).
-impl<const N: usize> ToAst for [u8; N] {
-    fn to_ast(&self, _bump: &Bump) -> Result<Expr, bun_core::Error> {
-        Ok(Expr::init(
-            E::String::init(self.as_slice()),
-            bun_ast::Loc::EMPTY,
-        ))
-    }
-}
-
-impl<T: ToAst> ToAst for Option<T> {
-    fn to_ast(&self, bump: &Bump) -> Result<Expr, bun_core::Error> {
-        match self {
-            Some(v) => v.to_ast(bump),
-            None => Ok(Expr {
-                data: js_ast::expr::Data::ENull(E::Null {}),
-                loc: bun_ast::Loc::default(),
-            }),
-        }
-    }
-}
-
-impl ToAst for () {
-    fn to_ast(&self, _bump: &Bump) -> Result<Expr, bun_core::Error> {
-        Ok(Expr {
-            data: js_ast::expr::Data::ENull(E::Null {}),
-            loc: bun_ast::Loc::default(),
-        })
-    }
-}
-
-impl ToAst for bun_core::Error {
-    fn to_ast(&self, bump: &Bump) -> Result<Expr, bun_core::Error> {
-        self.name().as_bytes().to_ast(bump)
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Source-location recovery
@@ -1465,22 +1231,14 @@ mod tests {
         let mut tape = None;
         let r = match which {
             Which::Utf8 => parse_utf8(&source, &mut log, &bump),
-            Which::Plain => parse::<false>(&source, &mut log, &bump),
-            Which::TsConfig => parse_ts_config::<true>(&source, &mut log, &bump),
+            Which::TsConfig => parse_ts_config(&source, &mut log, &bump),
             Which::Env => parse_env_json(&source, &mut log, &bump),
             Which::PackageJson => parse_package_json_utf8(&source, &mut log, &bump),
             Which::Jsonc => ParsedJson::parse_jsonc(&source, &mut log).map(|p| {
                 tape = p.tape;
                 p.root
             }),
-            Which::Immutable => parse_to_rows(
-                &source,
-                &mut log,
-                JSONOptions {
-                    is_json: true,
-                    ..JSONOptions::DEFAULT
-                },
-            )
+            Which::Immutable => parse_to_rows(&source, &mut log, JSONOptions::DEFAULT)
             .map(|mut p| {
                 tape = p.tape.take();
                 p.root
@@ -1505,7 +1263,6 @@ mod tests {
     #[derive(Clone, Copy)]
     enum Which {
         Utf8,
-        Plain,
         TsConfig,
         Env,
         PackageJson,
@@ -1659,7 +1416,7 @@ mod tests {
 
     #[track_caller]
     fn assert_parses_to(input: &str, expected_compact_json: &str) {
-        for which in [Which::Utf8, Which::Plain, Which::TsConfig] {
+        for which in [Which::Utf8, Which::TsConfig] {
             let p = run(input.as_bytes(), which);
             let Some(root) = &p.root else {
                 panic!("failed to parse (first error: {:?}): {input}", p.first_msg)
@@ -2263,19 +2020,17 @@ mod tests {
             describe(&deps.get(b"a").unwrap(), bump, &mut out);
             out.push('\n');
 
-            // as_property_string_map over the nested object (empty values are
-            // skipped by the full-AST implementation; immutable must match).
-            let map = Expr::as_property_string_map(&root, b"deps", bump).unwrap();
-            let mut pairs: Vec<(std::string::String, std::string::String)> = map
-                .iter()
-                .map(|(k, v)| {
-                    (
-                        std::string::String::from_utf8_lossy(k).into_owned(),
+            // Property iteration over the nested object: both shapes must
+            // visit the same (key, value) pairs in source order.
+            let mut pairs: Vec<(std::string::String, std::string::String)> = Vec::new();
+            deps.for_each_property(|key, _loc, value| {
+                if let Some(v) = value.as_utf8_string_literal() {
+                    pairs.push((
+                        std::string::String::from_utf8_lossy(key).into_owned(),
                         std::string::String::from_utf8_lossy(v).into_owned(),
-                    )
-                })
-                .collect();
-            pairs.as_mut_slice().sort();
+                    ));
+                }
+            });
             writeln!(out, "deps_map={pairs:?}").unwrap();
 
             // Array iteration: every item is materialized in order.
@@ -2325,7 +2080,7 @@ mod tests {
         );
         assert!(full.contains("bool=Some(true)\n"));
         assert!(full.contains("num=Some(42.5)\n"));
-        assert!(full.contains("deps_map=[(\"a\", \"^1\"), (\"b\", \"~2.0\")]\n"));
+        assert!(full.contains("deps_map=[(\"a\", \"^1\"), (\"b\", \"~2.0\"), (\"empty\", \"\")]\n"));
         assert!(full.contains("files=[\"lib\",3,true,null,{object},[array],]\n"));
         assert!(full.contains("files[4]={object}\n"));
         assert!(full.contains("files[5][0]=\"nested\"\n"));

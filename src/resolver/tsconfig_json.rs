@@ -112,22 +112,18 @@ impl JsonCache {
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         mode: JsonMode,
-        force_utf8: bool,
     ) -> Result<Option<bun_ast::Expr>, bun_core::Error> {
         // tsconfig.* and jsconfig.* files are JSON files, but they are not valid JSON files.
         // They are JSON files with comments and trailing commas.
         // Sometimes tooling expects this to work.
-        let f: fn(
-            &bun_ast::Source,
-            &mut bun_ast::Log,
-            &bun_alloc::Arena,
-        ) -> Result<bun_ast::Expr, bun_core::Error> = match (mode, force_utf8) {
-            (JsonMode::Jsonc, true) => json_parser::parse_ts_config::<true>,
-            (JsonMode::Jsonc, false) => json_parser::parse_ts_config::<false>,
-            (JsonMode::Json, true) => json_parser::parse::<true>,
-            (JsonMode::Json, false) => json_parser::parse::<false>,
-        };
-        self.parse(log, source, f)
+        self.parse(
+            log,
+            source,
+            match mode {
+                JsonMode::Jsonc => json_parser::parse_ts_config,
+                JsonMode::Json => json_parser::parse_utf8,
+            },
+        )
     }
 }
 

@@ -73,40 +73,24 @@ impl MapEntry {
 
 pub type Map = StringHashMap<MapEntry>;
 
-// `bun_parsers::json` spells the JSON options
-// out as 8 const-generic bools. The only field this module varies at runtime
-// is `guess_indentation`, so dispatch on that one bool here and keep the rest
-// fixed (is_json/allow_comments/allow_trailing_commas
-// = true, others default false).
+// package.json, parsed for editing/printing (no duplicate-key warnings); the
+// only option this module varies is `guess_indentation`.
 fn parse_package_json(
     source: &Source,
     log: &mut Log,
     bump: &bun_alloc::Arena,
     guess_indentation: bool,
 ) -> Result<json::JsonResult, bun_core::Error> {
-    if guess_indentation {
-        json::parse_package_json_utf8_with_opts::<
-            true,  // IS_JSON
-            true,  // ALLOW_COMMENTS
-            true,  // ALLOW_TRAILING_COMMAS
-            false, // IGNORE_LEADING_ESCAPE_SEQUENCES
-            false, // IGNORE_TRAILING_ESCAPE_SEQUENCES
-            false, // JSON_WARN_DUPLICATE_KEYS
-            false, // WAS_ORIGINALLY_MACRO
-            true,  // GUESS_INDENTATION
-        >(source, log, bump)
-    } else {
-        json::parse_package_json_utf8_with_opts::<
-            true,  // IS_JSON
-            true,  // ALLOW_COMMENTS
-            true,  // ALLOW_TRAILING_COMMAS
-            false, // IGNORE_LEADING_ESCAPE_SEQUENCES
-            false, // IGNORE_TRAILING_ESCAPE_SEQUENCES
-            false, // JSON_WARN_DUPLICATE_KEYS
-            false, // WAS_ORIGINALLY_MACRO
-            false, // GUESS_INDENTATION
-        >(source, log, bump)
-    }
+    json::parse_package_json_utf8_with_opts(
+        json::JSONOptions {
+            json_warn_duplicate_keys: false,
+            guess_indentation,
+            ..json::PACKAGE_JSON_OPTS
+        },
+        source,
+        log,
+        bump,
+    )
 }
 
 #[derive(Clone, Copy)]

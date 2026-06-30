@@ -300,10 +300,7 @@ impl BunxCommand {
         bun_ast::initialize_store();
 
         let log = transpiler.log_mut();
-        // Everything we keep is cloned into `Box<[u8]>` before returning. Only
-        // `as_string(&bump)` reads the arena, and row-AST strings are
-        // always UTF-8, so it is never allocated from.
-        let bump = bun_alloc::Arena::borrowing_default();
+        // Everything we keep is cloned into `Box<[u8]>` before returning.
         let parsed = json::ParsedJson::parse_package_json(&source, log)?;
         let expr = parsed.root;
 
@@ -321,7 +318,7 @@ impl BunxCommand {
                 }
                 ExprData::EString(_) => {
                     if let Some(name_expr) = expr.get(b"name") {
-                        if let Some(name) = name_expr.as_string(&bump) {
+                        if let Some(name) = name_expr.as_utf8_string_literal() {
                             // A scoped `name` (`@scope/pkg`) is legitimate here;
                             // the command name is its unscoped portion.
                             let bin_name = if name.is_empty() {
@@ -341,7 +338,7 @@ impl BunxCommand {
 
         if let Some(dirs) = expr.as_property(b"directories") {
             if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
-                if let Some(dir_name) = bin_prop.expr.as_string(&bump) {
+                if let Some(dir_name) = bin_prop.expr.as_utf8_string_literal() {
                     let bin_dir = bun_sys::openat_a(dir_fd, dir_name, O::RDONLY | O::DIRECTORY, 0)?;
                     // Fd is non-owning Copy; guard it.
                     let _close_bin_dir = bun_sys::CloseOnDrop::new(bin_dir);

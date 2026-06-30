@@ -77,10 +77,6 @@ pub(crate) struct Parser<'a, 's, 'i> {
     /// their object closes, so each stays the size of one object.
     dup_maps: Vec<DupMap>,
     spill_depth: usize,
-    /// Cleared when any string needed escape decoding. Combined with the
-    /// structural index's non-ASCII/backslash flags by `run_stage2` to drive
-    /// `parse_for_bundling`'s all-ASCII fast path.
-    pub is_ascii_only: bool,
 }
 
 impl<'s> LexerLog<'s> for Parser<'_, 's, '_> {
@@ -185,7 +181,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             dup_hashes: Vec::new(),
             dup_maps: Vec::new(),
             spill_depth: 0,
-            is_ascii_only: true,
         }
     }
 
@@ -670,7 +665,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         // folded in. The decoded bytes are WTF-8: lone surrogates from
         // `\uXXXX` keep their 3-byte encoding, which the printer and
         // `to_js` both understand.
-        self.is_ascii_only = false;
         // One reusable decode buffer per parser: this path runs once per
         // escaped string, which large registry manifests hit thousands of
         // times.

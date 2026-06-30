@@ -2326,70 +2326,33 @@ impl Package<u64> {
 
         if FEATURES.peer_dependencies {
             if let Some(peer_dependencies_meta) = json.as_property(b"peerDependenciesMeta") {
-                match &peer_dependencies_meta.expr.data {
-                    ExprData::EObject(obj) => {
-                        let props = obj.properties.slice();
-                        optional_peer_dependencies.ensure_unused_capacity(props.len())?;
-                        for prop in props {
-                            if let Some(optional) = prop
-                                .value
-                                .expect("infallible: prop has value")
-                                .as_property(b"optional")
-                            {
-                                if !matches!(
-                                    &optional.expr.data,
-                                    ExprData::EBoolean(b) if b.value
-                                ) {
-                                    continue;
-                                }
-
-                                let key = prop
-                                    .key
-                                    .expect("infallible: prop has key")
-                                    .as_utf8(&bump)
-                                    .expect("unreachable");
-                                optional_peer_dependencies.put_assume_capacity(
-                                    semver::string::Builder::string_hash(key),
-                                    key,
-                                );
-                                // Reserve space for a synthesised entry. If the
-                                // matching name later appears in `peerDependencies`
-                                // the slot just goes unused.
-                                string_builder.count(key);
-                                string_builder.count(b"*");
-                                total_dependencies_count += 1;
-                            }
+                optional_peer_dependencies
+                    .ensure_unused_capacity(peer_dependencies_meta.expr.property_count())?;
+                peer_dependencies_meta
+                    .expr
+                    .for_each_property(|key, _key_loc, meta| {
+                        let Some(optional) = meta.as_property(b"optional") else {
+                            return;
+                        };
+                        if !matches!(
+                            &optional.expr.data,
+                            ExprData::EBoolean(b) if b.value
+                        ) {
+                            return;
                         }
-                    }
-                    ExprData::EObjectJSON(obj) => {
-                        let props = obj.get().properties();
-                        optional_peer_dependencies.ensure_unused_capacity(props.len())?;
-                        for row in props {
-                            let Some(meta) = row.value.as_object() else {
-                                continue;
-                            };
-                            let Some(optional) = meta.get(b"optional") else {
-                                continue;
-                            };
-                            if !matches!(optional, E::JsonValue::Boolean(true)) {
-                                continue;
-                            }
 
-                            let key: &[u8] = row.key.slice();
-                            optional_peer_dependencies.put_assume_capacity(
-                                semver::string::Builder::string_hash(key),
-                                key,
-                            );
-                            // Reserve space for a synthesised entry. If the
-                            // matching name later appears in `peerDependencies`
-                            // the slot just goes unused.
-                            string_builder.count(key);
-                            string_builder.count(b"*");
-                            total_dependencies_count += 1;
-                        }
-                    }
-                    _ => {}
-                }
+                        // The callback's key borrow is call-scoped; copy it
+                        // into the arena so the map entry can outlive the loop.
+                        let key: &[u8] = bump.alloc_slice_copy(key);
+                        optional_peer_dependencies
+                            .put_assume_capacity(semver::string::Builder::string_hash(key), key);
+                        // Reserve space for a synthesised entry. If the
+                        // matching name later appears in `peerDependencies`
+                        // the slot just goes unused.
+                        string_builder.count(key);
+                        string_builder.count(b"*");
+                        total_dependencies_count += 1;
+                    });
             }
         }
 
@@ -2535,32 +2498,16 @@ impl Package<u64> {
                 }
                 let trusted = lockfile.trusted_dependencies.as_mut().unwrap();
                 trusted.ensure_unused_capacity(count)?;
-                match &q.expr.data {
-                    ExprData::EArray(arr) => {
-                        for item in arr.slice() {
-                            let Some(name) = item.as_utf8(&bump) else {
-                                return Err(invalid_trusted_dependencies(log, source, q.loc));
-                            };
-                            trusted.put_assume_capacity(
-                                semver::string::Builder::string_hash(name)
-                                    as TruncatedPackageNameHash,
-                                Box::<[u8]>::from(name),
-                            );
-                        }
+                if let Some(mut items) = q.expr.as_array() {
+                    while let Some(item) = items.next() {
+                        let Some(name) = item.as_string(&bump) else {
+                            return Err(invalid_trusted_dependencies(log, source, q.loc));
+                        };
+                        trusted.put_assume_capacity(
+                            semver::string::Builder::string_hash(name) as TruncatedPackageNameHash,
+                            Box::<[u8]>::from(name),
+                        );
                     }
-                    ExprData::EArrayJSON(arr) => {
-                        for item in arr.get().items() {
-                            let Some(name) = item.as_str() else {
-                                return Err(invalid_trusted_dependencies(log, source, q.loc));
-                            };
-                            trusted.put_assume_capacity(
-                                semver::string::Builder::string_hash(name)
-                                    as TruncatedPackageNameHash,
-                                Box::<[u8]>::from(name),
-                            );
-                        }
-                    }
-                    _ => unreachable!("checked above"),
                 }
             }
         }
@@ -2803,23 +2750,16 @@ impl Package<u64> {
                     ExprData::EBoolean(boolean) => {
                         bundle_all_deps = boolean.value;
                     }
-                    ExprData::EArray(arr) => {
-                        for item in arr.slice() {
-                            let Some(s) = item.as_utf8(&bump) else {
-                                continue;
-                            };
-                            bundled_deps.insert(s)?;
+                    _ => {
+                        if let Some(mut items) = bundled_deps_expr.as_array() {
+                            while let Some(item) = items.next() {
+                                let Some(s) = item.as_string(&bump) else {
+                                    continue;
+                                };
+                                bundled_deps.insert(s)?;
+                            }
                         }
                     }
-                    ExprData::EArrayJSON(arr) => {
-                        for item in arr.get().items() {
-                            let Some(s) = item.as_str() else {
-                                continue;
-                            };
-                            bundled_deps.insert(s)?;
-                        }
-                    }
-                    _ => {}
                 }
             }
         }

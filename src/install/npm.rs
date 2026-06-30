@@ -189,9 +189,6 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
     let mut log = bun_ast::Log::init();
     let source = bun_ast::Source::init_path_string("???", response_buf.list.as_slice());
-    // Only `as_string(&bump)` reads this, and immutable-AST strings are
-    // always UTF-8, so it is never allocated from.
-    let bump = bun_alloc::Arena::borrowing_default();
     // `parsed` owns the row tape `json` borrows; both must outlive `username`.
     let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
         Ok(j) => j,
@@ -207,7 +204,11 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     };
     let json = parsed.root;
 
-    let Some(username) = json.get(b"username").and_then(|e| e.as_string(&bump)) else {
+    let username_expr = json.get(b"username");
+    let Some(username) = username_expr
+        .as_ref()
+        .and_then(|e| e.as_utf8_string_literal())
+    else {
         // no username, invalid auth probably
         return Err(WhoamiError::ProbablyInvalidAuth);
     };
@@ -224,8 +225,6 @@ pub fn response_error<const OTP_RESPONSE: bool>(
     let message: Option<Vec<u8>> = 'message: {
         let mut log = bun_ast::Log::init();
         let source = bun_ast::Source::init_path_string("???", response_body.list.as_slice());
-        // See `whoami`: never allocated from.
-        let bump = bun_alloc::Arena::borrowing_default();
         // `parsed` owns the row tape its root borrows; `error` is copied out
         // below while both are still alive.
         let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
@@ -234,7 +233,8 @@ pub fn response_error<const OTP_RESPONSE: bool>(
             Err(_) => break 'message None,
         };
 
-        let Some(error) = parsed.root.get(b"error").and_then(|e| e.as_string(&bump)) else {
+        let error_expr = parsed.root.get(b"error");
+        let Some(error) = error_expr.as_ref().and_then(|e| e.as_utf8_string_literal()) else {
             break 'message None;
         };
         Some(error.to_vec())
@@ -1989,11 +1989,6 @@ impl PackageManifest {
         // across calls (the AstAlloc state stays installed for the re-arm) and
         // bulk-frees via `reset_retain_with_limit` on the next call — see
         // `initialize_mini_store` in lib.rs for why.
-        // Never allocated from: the manifest is parsed into an immutable AST
-        // whose strings are always UTF-8, so the `as_string(&bump)` accessor
-        // calls below never reach for it. It only exists to satisfy their
-        // signature; borrowing the process heap costs nothing.
-        let bump = bun_alloc::Arena::borrowing_default();
         // Registry manifests get no duplicate-key warnings: nothing ever
         // reads them for this log, and they cost a measurable fraction of
         // every manifest parse.
@@ -2011,7 +2006,7 @@ impl PackageManifest {
         let json = parsed.root;
 
         if let Some(error_q) = json.as_property(b"error") {
-            if let Some(err) = error_q.expr.as_string(&bump) {
+            if let Some(err) = error_q.expr.as_utf8_string_literal() {
                 log.add_error_fmt(
                     Some(&source),
                     bun_ast::Loc::EMPTY,
@@ -2042,7 +2037,7 @@ impl PackageManifest {
 
         if PackageManager::verbose_install() {
             if let Some(name_q) = json.as_property(b"name") {
-                let Some(received_name) = name_q.expr.as_string(&bump) else {
+                let Some(received_name) = name_q.expr.as_utf8_string_literal() else {
                     return Ok(None);
                 };
                 // If this manifest is coming from the default registry, make sure it's the expected one. If it's not
@@ -2063,7 +2058,7 @@ impl PackageManifest {
         string_builder.count(expected_name);
 
         if let Some(name_q) = json.as_property(b"modified") {
-            let Some(field) = name_q.expr.as_string(&bump) else {
+            let Some(field) = name_q.expr.as_utf8_string_literal() else {
                 return Ok(None);
             };
             string_builder.count(field);
@@ -3055,7 +3050,7 @@ impl PackageManifest {
         }
 
         if let Some(name_q) = json.as_property(b"modified") {
-            let Some(field) = name_q.expr.as_string(&bump) else {
+            let Some(field) = name_q.expr.as_utf8_string_literal() else {
                 return Ok(None);
             };
             result.pkg.modified = string_builder.append::<SemverString>(field);

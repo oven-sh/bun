@@ -72,11 +72,10 @@ fn bench_json(c: &mut Criterion) {
                 bump.reset();
                 let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
                 let opts = json::JSONOptions {
-                    is_json: true,
                     json_warn_duplicate_keys: false,
                     ..json::JSONOptions::DEFAULT
                 };
-                let e = json::parse_package_json_utf8_with_opts_rt(opts, &source, &mut log, &bump)
+                let e = json::parse_package_json_utf8_with_opts(opts, &source, &mut log, &bump)
                     .expect("parse failed");
                 std::hint::black_box(&e);
             })
@@ -112,11 +111,10 @@ fn bench_json(c: &mut Criterion) {
                 bump.reset_retain_with_limit(64 << 20);
                 let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
                 let opts = json::JSONOptions {
-                    is_json: true,
                     json_warn_duplicate_keys: false,
                     ..json::JSONOptions::DEFAULT
                 };
-                let e = json::parse_package_json_utf8_with_opts_rt(opts, &source, &mut log, &bump)
+                let e = json::parse_package_json_utf8_with_opts(opts, &source, &mut log, &bump)
                     .expect("parse failed");
                 std::hint::black_box(&e);
             })

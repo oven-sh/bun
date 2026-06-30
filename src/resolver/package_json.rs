@@ -221,25 +221,6 @@ impl ::bun_install_types::resolver_hooks::PackageJsonView for PackageJSON {
 }
 
 impl PackageJSON {
-    pub fn name_for_import(&self) -> Result<Box<[u8]>, bun_core::Error> {
-        if strings::index_of(self.source.path.text, NODE_MODULES_PATH.as_bytes()).is_some() {
-            Ok(Box::from(&*self.name))
-        } else {
-            let parent = self.source.path.name().dir_with_trailing_slash();
-            let top_level_dir = fs::FileSystem::instance().top_level_dir;
-            if let Some(i) = strings::index_of(parent, top_level_dir) {
-                let relative_dir = &parent[i + top_level_dir.len()..];
-                let mut out_dir = vec![0u8; relative_dir.len() + 2];
-                out_dir[2..].copy_from_slice(relative_dir);
-                out_dir[0] = b'.';
-                out_dir[1] = bun_paths::SEP;
-                return Ok(out_dir.into_boxed_slice());
-            }
-
-            Ok(Box::from(&*self.name))
-        }
-    }
-
     /// Normalize path separators to forward slashes for glob matching
     /// This is needed because glob patterns use forward slashes but Windows uses backslashes
     fn normalize_path_for_glob(path: &[u8]) -> Result<Vec<u8>, bun_alloc::AllocError> {
@@ -940,9 +921,7 @@ impl PackageJSON {
                 let mut total_dependency_count: usize = 0;
                 for group in dependency_groups {
                     if let Some(group_json) = json.get(group.field) {
-                        if let js_ast::ExprData::EObjectJSON(obj) = &group_json.data {
-                            total_dependency_count += obj.get().properties().len();
-                        }
+                        total_dependency_count += group_json.property_count();
                     }
                 }
 
@@ -1032,11 +1011,9 @@ impl PackageJSON {
         }
 
         // used by `bun run`
-        // `Expr::as_property_string_map` returns
-        // `ArrayHashMap<&'bump [u8], &'bump [u8]>` (bump-tied lifetimes), but
-        // `ScriptsMap` stores `&'static [u8]` borrowing the package.json source
-        // bytes (`contents_static`, see SAFETY note above). Inline the
-        // string-map walk so values borrow the source buffer.
+        // `ScriptsMap` stores `&'static [u8]` slices of the package.json source
+        // bytes (`contents_static`, see SAFETY note above), so walk the object's
+        // rows inline here instead of using a bump-lifetime `Expr` accessor.
         if include_scripts {
             // Local: build a `StringArrayHashMap<&'static [u8]>` for the named
             // top-level object property. Values are JSON string literals:

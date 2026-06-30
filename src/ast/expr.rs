@@ -6,7 +6,7 @@ use core::fmt;
 
 use crate::Loc;
 use bun_alloc::{AllocError, Arena as Bump};
-use bun_collections::{ArrayHashMap, VecExt};
+use bun_collections::VecExt;
 use bun_core::ZStr;
 use bun_core::{self};
 
@@ -240,6 +240,19 @@ impl Expr {
     /// non-string keys of a mutable tree are skipped. Does nothing for a
     /// non-object expression.
     pub fn for_each_property(&self, mut f: impl FnMut(&[u8], Loc, Expr)) {
+        let _: Result<(), core::convert::Infallible> =
+            self.try_for_each_property(|key, loc, value| {
+                f(key, loc, value);
+                Ok(())
+            });
+    }
+
+    /// [`Expr::for_each_property`] with a fallible callback: iteration stops
+    /// at the first `Err`, which is returned.
+    pub fn try_for_each_property<Error>(
+        &self,
+        mut f: impl FnMut(&[u8], Loc, Expr) -> Result<(), Error>,
+    ) -> Result<(), Error> {
         match &self.data {
             Data::EObject(obj) => {
                 for property in obj.properties.slice() {
@@ -251,7 +264,7 @@ impl Expr {
                     let Some(key) = key_expr.as_utf8_string_literal() else {
                         continue;
                     };
-                    f(key, key_expr.loc, *value);
+                    f(key, key_expr.loc, *value)?;
                 }
             }
             Data::EObjectJSON(obj) => {
@@ -260,11 +273,12 @@ impl Expr {
                         property.key.slice(),
                         property.key_loc,
                         Expr::from_json_value(&property.value, property.key_loc),
-                    );
+                    )?;
                 }
             }
             _ => {}
         }
+        Ok(())
     }
 
     /// Number of `"key": value` properties of an object expression in
@@ -750,94 +764,6 @@ impl Expr {
         None
     }
 
-    pub fn as_property_string_map<'b>(
-        expr: &Expr,
-        name: &[u8],
-        bump: &'b Bump,
-    ) -> Option<Box<ArrayHashMap<&'b [u8], &'b [u8]>>> {
-        // Immutable JSON containers: keys/values are already decoded UTF-8
-        // arena slices (`Str`, same lifetime-erasure contract as
-        // `StoreStr`), so they go into the map without materializing.
-        if let Data::EObjectJSON(obj_) = &expr.data {
-            let E::JsonValue::Object(inner) = obj_.get().get(name)? else {
-                return None;
-            };
-            let inner = *inner;
-            let props = inner.get().properties();
-            let count = props
-                .iter()
-                .filter(|p| {
-                    !p.key.slice().is_empty()
-                        && p.value.as_str().is_some_and(|value| !value.is_empty())
-                })
-                .count();
-            if count == 0 {
-                return None;
-            }
-            let mut map = ArrayHashMap::<&'b [u8], &'b [u8]>::default();
-            if map.ensure_total_capacity(count).is_err() {
-                return None;
-            }
-            for prop in props {
-                let E::JsonValue::String(value) = prop.value else {
-                    continue;
-                };
-                let (key, value) = (prop.key.slice(), value.slice());
-                if key.is_empty() || value.is_empty() {
-                    continue;
-                }
-                map.insert(key, value);
-            }
-            return Some(Box::new(map));
-        }
-
-        let Data::EObject(obj_) = &expr.data else {
-            return None;
-        };
-        if obj_.properties.len_u32() == 0 {
-            return None;
-        }
-        let query = obj_.as_property(name)?;
-        let Data::EObject(obj) = &query.expr.data else {
-            return None;
-        };
-
-        let mut count: usize = 0;
-        for prop in obj.properties.slice() {
-            let Some(key) = prop.key.as_ref().and_then(|k| k.as_string(bump)) else {
-                continue;
-            };
-            let Some(value) = prop.value.as_ref().and_then(|v| v.as_string(bump)) else {
-                continue;
-            };
-            count += (key.len() > 0 && value.len() > 0) as usize;
-        }
-
-        if count == 0 {
-            return None;
-        }
-        let mut map = ArrayHashMap::<&'b [u8], &'b [u8]>::default();
-        if map.ensure_total_capacity(count).is_err() {
-            return None;
-        }
-
-        for prop in obj.properties.slice() {
-            let Some(key) = prop.key.as_ref().and_then(|k| k.as_string(bump)) else {
-                continue;
-            };
-            let Some(value) = prop.value.as_ref().and_then(|v| v.as_string(bump)) else {
-                continue;
-            };
-
-            if !(key.len() > 0 && value.len() > 0) {
-                continue;
-            }
-
-            map.insert(key, value);
-        }
-
-        Some(Box::new(map))
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

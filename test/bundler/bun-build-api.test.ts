@@ -370,6 +370,7 @@ describe("Bun.build", () => {
     expect(response.headers.get("etag")).toMatchSnapshot("content-etag");
   });
 
+  // https://github.com/oven-sh/bun/issues/10004
   // `.stream()` must use BuildArtifact's own cached-stream slot, not JSBlob's
   // (the JSBlob slot offset aliases the cached `.kind` getter on a BuildArtifact).
   describe("BuildArtifact.stream()", () => {

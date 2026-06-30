@@ -64,7 +64,6 @@
 // Output flag bits (mirrored in Rust: `bun_parsers::json_index::FLAG_*`).
 #define BUN_JSON_IDX_HAS_BACKSLASH_IN_STRING (1u << 0)
 #define BUN_JSON_IDX_HAS_CTRL_IN_STRING (1u << 1)
-#define BUN_JSON_IDX_HAS_NON_ASCII (1u << 2)
 #define BUN_JSON_IDX_ODDITY (1u << 3)
 
 HWY_BEFORE_NAMESPACE();
@@ -127,7 +126,6 @@ size_t JsonIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, size_t base_
     uint64_t acc_bs_in_str = 0;
     uint64_t acc_ctrl_in_str = 0;
     uint64_t dirty_acc = 0;
-    auto acc_or = hn::Zero(d);
     uint32_t flags = 0;
     size_t n_out = 0;
 
@@ -147,7 +145,6 @@ size_t JsonIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, size_t base_
         uint64_t m_bs = 0, m_quote = 0, m_op = 0, m_opws = 0, m_odd = 0, m_ctrl = 0;
         for (size_t v = 0; v < 64 / N; ++v) {
             const auto chunk = hn::LoadU(d, p + v * N);
-            acc_or = hn::Or(acc_or, chunk);
             const unsigned sh = (unsigned)(v * N);
             m_bs |= hn::BitsFromMask(d, hn::Eq(chunk, v_bs)) << sh;
             m_quote |= hn::BitsFromMask(d, hn::Eq(chunk, v_quote)) << sh;
@@ -227,9 +224,6 @@ size_t JsonIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, size_t base_
         out_dirty[(nblocks - 1) >> 6] = dirty_acc;
     }
 
-    if (!hn::AllTrue(d, hn::Lt(acc_or, hn::Set(d, (uint8_t)0x80)))) {
-        flags |= BUN_JSON_IDX_HAS_NON_ASCII;
-    }
     if (acc_bs_in_str) flags |= BUN_JSON_IDX_HAS_BACKSLASH_IN_STRING;
     if (acc_ctrl_in_str) flags |= BUN_JSON_IDX_HAS_CTRL_IN_STRING;
     *out_flags = flags;

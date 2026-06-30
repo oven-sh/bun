@@ -105,12 +105,14 @@ export function generateJsonByteClass(cfg: Config): { h: string; rs: string } {
     for (let b = row; b < row + 16; b++) cells.push(hex(classOf(b)));
     table.push(`    ${cells.join(", ")},`);
   }
+  // The scalar indexer needs only these two classes (quotes, `/` comments and
+  // control characters are handled by explicit byte matches before the table
+  // dispatch), so only these are emitted for Rust: every generated item must
+  // be live (`test/internal/dead-code-escapes.test.ts`).
   const rs = [
     ...banner("//"),
     `pub const CLASS_STRUCTURAL: u8 = ${hex(STRUCTURAL)};`,
     `pub const CLASS_WHITESPACE: u8 = ${hex(WHITESPACE)};`,
-    `pub const CLASS_ODDITY: u8 = ${hex(ODDITY)};`,
-    `pub const CLASS_CONTROL: u8 = ${hex(CONTROL)};`,
     "",
     "/// `LUT_LO[b & 0xF] & LUT_HI[b >> 4]` for every byte `b`.",
     "#[rustfmt::skip]",

@@ -40,22 +40,19 @@ use bun_ast::Range;
 // cannot disagree on a byte's class (the nibble-LUT scheme deliberately
 // false-positives a few bytes >= 0x80 — 0xBB, the middle byte of a UTF-8
 // BOM, among them — as structural; the scalar indexer must mirror that).
-#[allow(dead_code)]
 pub mod byte_class {
     include!(concat!(env!("BUN_CODEGEN_DIR"), "/json_byte_class.rs"));
 }
 use byte_class::{CLASS_STRUCTURAL, CLASS_WHITESPACE, JSON_BYTE_CLASS};
 
-// Document-global facts collected during indexing. The first four match the
-// C++ kernel's flag bits. Flags accumulate as the document is indexed, so by
+// Document-global facts collected during indexing. They match the C++
+// kernel's flag bits. Flags accumulate as the document is indexed, so by
 // the time stage 2 looks at a token, the flags cover at least every byte of
 // that token.
 /// Some string contains a `\`.
 pub const FLAG_HAS_BACKSLASH_IN_STRING: u32 = 1 << 0;
 /// Some string contains a control character (< 0x20).
 pub const FLAG_HAS_CTRL_IN_STRING: u32 = 1 << 1;
-/// Some byte anywhere is >= 0x80.
-pub const FLAG_HAS_NON_ASCII: u32 = 1 << 2;
 /// SIMD kernel only: a `/` or `'` outside a string was seen; the chunk's
 /// output is unusable and indexing restarts with the scalar indexer. Never
 /// visible in [`StructuralIndex::flags`].
@@ -357,8 +354,6 @@ impl<'c> StructuralIndex<'c> {
                                 if e < 0x20 {
                                     self.flags |= FLAG_HAS_CTRL_IN_STRING;
                                     mark_dirty!(i + 1);
-                                } else if e >= 0x80 {
-                                    self.flags |= FLAG_HAS_NON_ASCII;
                                 }
                             }
                             i += 2;
@@ -367,8 +362,6 @@ impl<'c> StructuralIndex<'c> {
                         if b < 0x20 {
                             self.flags |= FLAG_HAS_CTRL_IN_STRING;
                             mark_dirty!(i);
-                        } else if b >= 0x80 {
-                            self.flags |= FLAG_HAS_NON_ASCII;
                         }
                         i += 1;
                     }
@@ -418,9 +411,6 @@ impl<'c> StructuralIndex<'c> {
                     // restart swallows a *count* of already-delivered
                     // indices, and this is the reference implementation the
                     // kernel is differentially tested against.
-                    if c >= 0x80 {
-                        self.flags |= FLAG_HAS_NON_ASCII;
-                    }
                     let cls = JSON_BYTE_CLASS[c as usize];
                     if cls & CLASS_STRUCTURAL != 0 {
                         emit!(i);
@@ -674,7 +664,6 @@ mod tests {
             x.flags & FLAG_HAS_BACKSLASH_IN_STRING,
             FLAG_HAS_BACKSLASH_IN_STRING
         );
-        assert_eq!(x.flags & FLAG_HAS_NON_ASCII, 0);
     }
 
     #[test]

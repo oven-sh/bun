@@ -408,14 +408,16 @@ const ROOT_DEFAULT_IGNORE_PATTERNS: &[&[u8]] = &[
     b"bun.lock",
 ];
 
-// (pattern, can_override)
+// (pattern, can_override). `can_override == false` mirrors npm-packlist's
+// strict rules (only `.git` and `.npmrc` here; lockfiles live in
+// ROOT_DEFAULT_IGNORE_PATTERNS); everything else `"files"` can re-include.
 const DEFAULT_IGNORE_PATTERNS: &[(&[u8], bool)] = &[
     (b".*.swp", true),
     (b"._*", true),
     (b".DS_Store", true),
     (b".git", false),
     (b".gitignore", true),
-    (b".hg", false),
+    (b".hg", true),
     (b".npmignore", true),
     (b".npmrc", false),
     (b".lock-wscript", true),

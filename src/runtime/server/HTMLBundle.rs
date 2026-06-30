@@ -428,6 +428,23 @@ impl Route {
         // `Config` owns its fields and
         // drops on early-return.
         config.entry_points.insert(&self.bundle.path)?;
+        // Single-entry outbase default, same as `bun build` / `Bun.build()`:
+        // the entry's own directory. Leaving it empty makes a nested HTML's
+        // source path its output `[dir]`, so its asset URLs escape the root.
+        let html_dir = bun_core::dirname(&self.bundle.path).unwrap_or(b".");
+        let mut rootdir_buf = bun_paths::PathBuffer::uninit();
+        let rootdir: &[u8] = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), html_dir) {
+            Ok(fd) => {
+                // `Dir` is the owning RAII handle; its Drop closes the fd.
+                let dir = bun_sys::Dir { fd };
+                match bun_sys::get_fd_path(dir.fd, &mut rootdir_buf) {
+                    Ok(p) => &*p,
+                    Err(_) => html_dir,
+                }
+            }
+            Err(_) => html_dir,
+        };
+        config.rootdir.append_slice_exact(rootdir)?;
         let xform = &vm.transpiler.options.transform_options;
         if let Some(public_path) = xform.serve_public_path.as_deref() {
             if !public_path.is_empty() {

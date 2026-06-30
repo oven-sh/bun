@@ -1093,3 +1093,68 @@ describe("production headers and import.meta.env", () => {
     expect(a).not.toBe(b);
   });
 });
+
+// An HTML route whose source file lives in a subdirectory must emit asset URLs
+// relative to the served root, not to the HTML file's directory on disk.
+test("production HTML route in a subdirectory emits root-relative asset URLs", async () => {
+  const dir = tempDirWithFiles("html-nested-outbase", {
+    "pages/app/index.html": /*html*/ `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <link rel="stylesheet" href="./styles.css">
+          <script type="module" src="./app.ts"></script>
+        </head>
+        <body><img src="./logo.svg"></body>
+      </html>
+    `,
+    "pages/app/styles.css": `body { color: rgb(12, 34, 56); }`,
+    "pages/app/app.ts": `console.log("nested app ran");`,
+    "pages/app/logo.svg": `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>`,
+    "serve.ts": /*js*/ `
+      import net from "node:net";
+      import page from "./pages/app/index.html";
+      await using server = Bun.serve({ port: 0, development: false, routes: { "/": page } });
+      const html = await (await fetch(server.url)).text();
+      const refs = [...html.matchAll(/(?:src|href)="([^"]+)"/g)].map(m => m[1]);
+
+      // Request each emitted URL by its literal bytes over a raw socket, so no
+      // client normalizes a "/../" away before it reaches Bun's router.
+      function rawStatus(path) {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        const sock = net.connect(server.port, "127.0.0.1", () => {
+          sock.write("GET " + path + " HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n");
+        });
+        let data = "";
+        sock.on("data", chunk => (data += chunk));
+        sock.on("end", () => resolve(Number(data.split(" ")[1])));
+        sock.on("error", reject);
+        return promise;
+      }
+      const statuses = [];
+      for (const ref of refs) statuses.push(await rawStatus(ref));
+      console.log(JSON.stringify({ refs, statuses }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "serve.ts"],
+    env: { ...bunEnv, NODE_ENV: undefined },
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) throw new Error(stdout + "\n" + stderr);
+
+  const out = JSON.parse(stdout.trim());
+  const byExt = Object.fromEntries(out.refs.map((ref: string) => [ref.split(".").pop(), ref]));
+  expect({ byExt, statuses: out.statuses }).toEqual({
+    byExt: {
+      css: expect.stringMatching(/^\/chunk-[a-z0-9]+\.css$/),
+      js: expect.stringMatching(/^\/chunk-[a-z0-9]+\.js$/),
+      svg: expect.stringMatching(/^\/logo-[a-z0-9]+\.svg$/),
+    },
+    statuses: [200, 200, 200],
+  });
+});

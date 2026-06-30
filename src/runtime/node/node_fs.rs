@@ -9112,11 +9112,22 @@ impl NodeFS {
                         .unwrap_or(dst_enoent_maybe);
                 }
                 wbuf[len] = 0;
-                let target = bun_core::WStr::from_buf(&wbuf[..], len);
+                // `GetFinalPathNameByHandleW(VOLUME_NAME_DOS)` spells network
+                // targets as `\\?\UNC\server\share\…`; rewrite in place to the
+                // absolute `\\server\share\…` form (libuv `fs__realpath_handle`).
+                let is_unc = strings::has_prefix_comptime_utf16(&wbuf[..len], b"\\\\?\\UNC\\");
+                let target = if is_unc {
+                    let skip = b"\\\\?\\UN".len();
+                    wbuf[skip] = u16::from(b'\\');
+                    bun_core::WStr::from_buf(&wbuf[skip..], len - skip)
+                } else {
+                    bun_core::WStr::from_buf(&wbuf[..], len)
+                };
+                let is_dir = stat_ & windows::FILE_ATTRIBUTE_DIRECTORY != 0;
                 // `symlink_w`/`symlink_or_junction` (not raw `CreateSymbolicLinkW`)
-                // so unprivileged creation is requested and, for directories, the
-                // junction fallback applies — same path the package installer uses.
-                let link_result = if stat_ & windows::FILE_ATTRIBUTE_DIRECTORY != 0 {
+                // so unprivileged creation is requested. UNC targets skip the junction
+                // fallback: libuv's `fs__create_junction` only accepts drive-letter targets.
+                let link_result = if is_dir && !is_unc {
                     let mut dest8 = paths::path_buffer_pool::get();
                     let mut target8 = paths::path_buffer_pool::get();
                     sys::symlink_or_junction(
@@ -9125,7 +9136,11 @@ impl NodeFS {
                         None,
                     )
                 } else {
-                    sys::symlink_w(dest, target, sys::WindowsSymlinkOptions::default())
+                    sys::symlink_w(
+                        dest,
+                        target,
+                        sys::WindowsSymlinkOptions { directory: is_dir },
+                    )
                 };
                 if let Err(err) = link_result {
                     let p = self.os_path_into_sync_error_buf(dest.as_slice());

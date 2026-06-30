@@ -2,7 +2,7 @@ import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, isArm64, isLinux, isPosix, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
-import { join } from "path";
+import { isAbsolute, join } from "path";
 
 const impls = [
   ["cpSync", fs.cpSync],
@@ -485,7 +485,37 @@ test.skipIf(!isWindows)("cpSync recursive copies a junction as a link to the ori
 
   const copied = join(basename, "result", "junction");
   expect(fs.lstatSync(copied).isSymbolicLink()).toBe(true);
+  // Pin the stored link target, not just that creation succeeded: a relative or
+  // otherwise wrong target still produces a link that lstat reports as a symlink.
+  const copiedTarget = fs.readlinkSync(copied);
+  expect(isAbsolute(copiedTarget)).toBe(true);
+  expect(fs.realpathSync(copiedTarget)).toBe(fs.realpathSync(join(basename, "from", "real")));
   expect(fs.realpathSync(copied)).toBe(fs.realpathSync(join(basename, "from", "real")));
+  expect(fs.readFileSync(join(copied, "inner.txt"), "utf8")).toBe("inner");
+});
+
+// `GetFinalPathNameByHandleW(VOLUME_NAME_DOS)` spells targets on a network share as
+// `\\?\UNC\server\share\...`. The copied link's target must come out as the absolute
+// `\\server\share\...` form (libuv `fs__realpath_handle`), not a dangling relative path.
+test.skipIf(!isWindows)("cpSync recursive copies a directory symlink to a UNC target as a working link", () => {
+  const basename = tempDirWithFiles("cp-unc-link", {
+    "from/keep.txt": "keep",
+    "real/inner.txt": "inner",
+  });
+  // Administrative-share spelling of `real`, like the "windows path handling"
+  // suite in fs.test.ts relies on.
+  const real = fs.realpathSync(join(basename, "real"));
+  const uncReal = `\\\\localhost\\${real[0]}$\\${real.slice(3)}`;
+  expect(fs.readFileSync(join(uncReal, "inner.txt"), "utf8")).toBe("inner");
+  fs.symlinkSync(uncReal, join(basename, "from", "link"), "dir");
+
+  fs.cpSync(join(basename, "from"), join(basename, "result"), { recursive: true });
+
+  const copied = join(basename, "result", "link");
+  expect(fs.lstatSync(copied).isSymbolicLink()).toBe(true);
+  const copiedTarget = fs.readlinkSync(copied);
+  expect(isAbsolute(copiedTarget)).toBe(true);
+  expect(copiedTarget).toStartWith("\\\\");
   expect(fs.readFileSync(join(copied, "inner.txt"), "utf8")).toBe("inner");
 });
 

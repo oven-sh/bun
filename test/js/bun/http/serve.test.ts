@@ -355,13 +355,14 @@ describe.todoIf(isBroken && isIntelMacOS)(
   });
 });
 
-it("should display a welcome message when the response value type is incorrect", async () => {
+// A truthy non-Response return now goes through `error()` as a 500 (covered
+// in serve-invalid-return.test.ts). The welcome page is only for handlers
+// that produce no response at all.
+it("should display a welcome message when the fetch handler returns no Response", async () => {
   await runTest(
     {
       // @ts-ignore
-      fetch(req) {
-        return Symbol("invalid response type");
-      },
+      fetch(req) {},
     },
     async server => {
       const response = await fetch(server.url.origin);
@@ -371,9 +372,10 @@ it("should display a welcome message when the response value type is incorrect",
   );
 });
 
-// The async handler path already reported non-Response returns to stderr; the
-// synchronous path must emit the same diagnostic instead of staying silent.
-it("logs the invalid-response diagnostic when a synchronous fetch handler returns a non-Response value", async () => {
+// Without an `error` handler, a non-Response return is reported to stderr and
+// the client receives a 500, the same as a thrown error, on both the
+// synchronous and asynchronous paths.
+it("logs the invalid-response diagnostic and responds 500 when a fetch handler returns a non-Response value", async () => {
   const script = `
     const statuses = [];
     async function hit(fetchImpl) {
@@ -399,15 +401,15 @@ it("logs the invalid-response diagnostic when a synchronous fetch handler return
 
   const diagnostics = stderr.match(/Expected a Response object, but received/g) ?? [];
   expect({
-    // Returning a non-Response still renders 204 in production mode; only the
-    // missing stderr diagnostic on the synchronous path changes.
     statuses: JSON.parse(stdout.trim()),
     diagnosticCount: diagnostics.length,
     exitCode,
   }).toEqual({
-    statuses: [204, 204, 204, 204],
+    statuses: [500, 500, 500, 500],
     diagnosticCount: 4,
-    exitCode: 0,
+    // The invalid return is reported like any other unhandled error thrown
+    // from the fetch handler.
+    exitCode: 1,
   });
   expect(stderr).toContain(`received '"plain string"'`);
   expect(stderr).toContain("received '42'");

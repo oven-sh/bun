@@ -47,10 +47,10 @@
 // re-indexes with its scalar indexer. Valid JSON documents contain `/` and
 // `'` only inside strings, so the bail-out never costs the hot path anything.
 //
-// The two-nibble classification is exact for ASCII; bytes >= 0x80 can false-
-// positive as structural/whitespace. Outside strings such bytes only occur in
-// exotic unicode whitespace (BOM, NBSP, U+2028...) or invalid documents, both
-// handled by stage 2's cold path, and inside strings they are masked.
+// The two-nibble classification is exact for ASCII and classifies every byte
+// >= 0x80 as an ordinary scalar-run byte (the generated high-nibble LUT is
+// zero for nibbles 8..15), so multi-byte UTF-8 between tokens (exotic
+// whitespace, a BOM) stays inside one index run for stage 2 to decode.
 
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "highway_json.cpp"

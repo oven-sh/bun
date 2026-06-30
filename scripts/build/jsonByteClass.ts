@@ -9,15 +9,15 @@
  *     derived 256-entry table (`JSON_BYTE_CLASS[b]`, the same expression
  *     evaluated per byte).
  *
- * The nibble compression is exact for ASCII but deliberately false-positives
- * a handful of bytes >= 0x80 as structural (0xBB — the middle byte of a
- * UTF-8 BOM — 0xBC, 0xBD, 0xCC, 0xDB, 0xDD). That is fine for parsing
- * (stage 2 treats them as unexpected tokens / exotic whitespace), but the
- * two producers MUST agree byte for byte: when the kernel bails out on a
- * comment or a single quote, the scalar restart swallows a *count* of
- * already-delivered indices, and the differential tests compare the two
- * streams. Generating both sides from this one definition makes a
- * disagreement structurally impossible.
+ * The high-nibble rows 8..15 belong only to bytes >= 0x80 (no ASCII byte has
+ * a high nibble above 7) and are all zero, so every non-ASCII byte is an
+ * ordinary scalar-run byte. That matters for correctness: a multi-byte
+ * UTF-8 whitespace codepoint between tokens (a BOM) must stay inside ONE
+ * index run so stage 2 can decode it. And the two producers MUST agree byte
+ * for byte: when the kernel bails out on a comment or a single quote, the
+ * scalar restart swallows a *count* of already-delivered indices, and the
+ * differential tests compare the two streams. Generating both sides from
+ * this one definition makes a disagreement structurally impossible.
  *
  * Written at configure time like `buildOptionsRs.ts` — it is a constant
  * manifest, not a build edge.
@@ -36,8 +36,10 @@ const CONTROL = 0x40; // < 0x20
 
 // The nibble LUTs, derived from simdjson's structural/whitespace tables with
 // the oddity and control classes folded in. THE single source of truth.
+// Rows 8..15 of the high-nibble LUT (non-ASCII bytes) are zero on purpose;
+// see the module comment.
 const LUT_LO = [0x50, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x60, 0x40, 0x48, 0x4c, 0x41, 0x42, 0x49, 0x40, 0x60];
-const LUT_HI = [0x48, 0x40, 0x32, 0x04, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x03, 0x02, 0x01, 0x00, 0x00];
+const LUT_HI = [0x48, 0x40, 0x32, 0x04, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
 const classOf = (b: number): number => LUT_LO[b & 0xf] & LUT_HI[b >> 4];
 
@@ -64,6 +66,13 @@ function check() {
       throw new Error(
         `json_byte_class: byte 0x${b.toString(16)} classifies as 0x${got.toString(16)}, expected classes 0x${allowed.toString(16)}`,
       );
+    }
+  }
+  // No byte of a multi-byte UTF-8 sequence may classify: a BOM between two
+  // tokens must remain a single scalar run for stage 2 to decode it.
+  for (let b = 0x80; b < 0x100; b++) {
+    if (classOf(b) !== 0) {
+      throw new Error(`json_byte_class: non-ASCII byte 0x${b.toString(16)} must not classify`);
     }
   }
 }

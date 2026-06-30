@@ -37,9 +37,8 @@ use bun_ast::Range;
 
 // The byte classification shared with the Highway JSON kernel: both sides are
 // generated from `scripts/build/jsonByteClass.ts`, so the two index producers
-// cannot disagree on a byte's class (the nibble-LUT scheme deliberately
-// false-positives a few bytes >= 0x80 — 0xBB, the middle byte of a UTF-8
-// BOM, among them — as structural; the scalar indexer must mirror that).
+// cannot disagree on a byte's class. No byte >= 0x80 classifies: multi-byte
+// UTF-8 between tokens (exotic whitespace, a BOM) must stay in one run.
 pub mod byte_class {
     include!(concat!(env!("BUN_CODEGEN_DIR"), "/json_byte_class.rs"));
 }
@@ -537,9 +536,8 @@ mod tests {
             state ^= state << 17;
             state
         };
-        // `\xbb \xbc \xbd \xcc \xdb \xdd` are the high bytes the kernel's
-        // nibble LUT classifies as structural (and `\xef\xbb\xbf`, the BOM,
-        // contains one); the scalar indexer must agree on them.
+        // Non-ASCII bytes (including every byte of a UTF-8 BOM) must never
+        // classify as structural; both producers must agree on that.
         let alphabet: &[u8] =
             b"{}[]:,\"\\ \t\n\r0123456789aetfn.-+\x01\x1f\x80\xc3\xa9\xbb\xbc\xbd\xcc\xdb\xdd\xef\xbf";
         for _ in 0..20_000 {
@@ -574,10 +572,10 @@ mod tests {
         // indices from the SIMD producer have been consumed; the scalar
         // restart must hand out the continuation seamlessly.
         for oddity in ["// trailing comment\n", "'single'"] {
-            // With and without a UTF-8 BOM: the kernel indexes the BOM as
-            // three entries (its nibble LUT classifies 0xBB as structural)
-            // and the scalar indexer must match, or the restart's
-            // swallow-count misaligns and stage 2 sees a corrupt stream.
+            // With and without a UTF-8 BOM: the two producers must index a
+            // multi-byte codepoint identically (one scalar run), or the
+            // restart's swallow-count misaligns and stage 2 sees a corrupt
+            // stream.
             for prefix in ["", "\u{FEFF}"] {
                 let mut doc = String::from(prefix);
                 doc.push('[');

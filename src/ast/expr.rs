@@ -787,13 +787,6 @@ pub enum ArrayIterator {
 }
 
 impl ArrayIterator {
-    /// Rewind to the first item.
-    pub fn reset(&mut self) {
-        match self {
-            ArrayIterator::Full { index, .. } | ArrayIterator::Json { index, .. } => *index = 0,
-        }
-    }
-
     pub fn next(&mut self) -> Option<Expr> {
         match self {
             ArrayIterator::Full { array, index } => {

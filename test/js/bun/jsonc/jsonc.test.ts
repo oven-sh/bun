@@ -342,6 +342,19 @@ test("Bun.JSONC.parse matches JSON.parse on lone and paired surrogate escapes", 
   }
 });
 
+test("Bun.JSONC.parse accepts a BOM adjacent to any token", () => {
+  // U+FEFF (3 UTF-8 bytes) is whitespace for this dialect even with no other
+  // whitespace around it: the multi-byte codepoint must stay inside one index
+  // run for stage 2 to decode it.
+  expect(Bun.JSONC.parse("[1\uFEFF,2]")).toEqual([1, 2]);
+  expect(Bun.JSONC.parse("[\uFEFF1]")).toEqual([1]);
+  expect(Bun.JSONC.parse("[\uFEFFnull\uFEFF]")).toEqual([null]);
+  expect(Bun.JSONC.parse('\uFEFF{\uFEFF"a"\uFEFF:\uFEFF1\uFEFF,"b":\uFEFFtrue\uFEFF}\uFEFF')).toEqual({
+    a: 1,
+    b: true,
+  });
+});
+
 test("Bun.JSONC.parse accepts a BOM and exotic whitespace between tokens", () => {
   expect(Bun.JSONC.parse('﻿{"a": 1}')).toEqual({ a: 1 });
   expect(Bun.JSONC.parse('{ "a" : 1 }')).toEqual({ a: 1 });
@@ -634,9 +647,8 @@ describe("structural index window seams", () => {
   // A BOM-prefixed document whose first comment (or single quote) is past the
   // first SIMD window: the kernel indexes the document until the comment
   // makes it bail, then the scalar indexer restarts from byte 0 and must
-  // re-derive the exact same index stream — including for the BOM, whose
-  // middle byte is one of the few non-ASCII bytes the shared classification
-  // table calls structural.
+  // re-derive the exact same index stream, including for the BOM's three
+  // bytes.
   test("BOM-prefixed document with a comment past the first window", () => {
     let body = "";
     let i = 0;

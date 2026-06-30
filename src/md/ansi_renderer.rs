@@ -10,6 +10,7 @@ use bun_core::output::ansi_b;
 use bun_core::strings;
 
 use crate::helpers;
+use crate::output::{OutputBuffer, try_extend, try_push};
 use crate::root;
 use crate::types::{
     self, Align, BlockType, JsResult, Renderer, RendererImpl, SpanDetail, SpanType, TextType,
@@ -259,28 +260,6 @@ impl InlineStyle {
     }
 }
 
-pub struct OutputBuffer {
-    pub list: Vec<u8>,
-    pub oom: bool,
-}
-
-impl OutputBuffer {
-    fn write(&mut self, data: &[u8]) {
-        if self.oom {
-            return;
-        }
-        // Vec::extend aborts on OOM under the global mimalloc allocator.
-        self.list.extend_from_slice(data);
-    }
-
-    fn write_byte(&mut self, b: u8) {
-        if self.oom {
-            return;
-        }
-        self.list.push(b);
-    }
-}
-
 impl<'a> AnsiRenderer<'a> {
     pub fn init(src_text: &'a [u8], theme: Theme<'a>) -> AnsiRenderer<'a> {
         let mut r = AnsiRenderer {
@@ -316,7 +295,10 @@ impl<'a> AnsiRenderer<'a> {
             last_was_newline: true,
             blank_emitted: false,
         };
-        r.out.list.reserve(src_text.len() + src_text.len() / 2);
+        // The output is usually ~1.5x the input; this is only a throughput
+        // hint, so on failure fall back to the incremental `try_reserve`s in
+        // `write` instead of aborting.
+        let _ = r.out.list.try_reserve(src_text.len() + src_text.len() / 2);
         r
     }
 
@@ -547,19 +529,27 @@ impl<'a> AnsiRenderer<'a> {
                 // normalized once the table finishes.
                 let cells: Box<[TableCell]> =
                     core::mem::take(&mut self.table_cells).into_boxed_slice();
-                self.table_rows.push(TableRow {
-                    cells,
-                    is_header: self.in_thead,
-                });
+                try_push(
+                    &mut self.out.oom,
+                    &mut self.table_rows,
+                    TableRow {
+                        cells,
+                        is_header: self.in_thead,
+                    },
+                );
                 self.table_cells.clear();
             }
             BlockType::Th | BlockType::Td => {
                 self.in_cell = false;
                 let owned = Box::<[u8]>::from(self.table_cell_buf.as_slice());
-                self.table_cells.push(TableCell {
-                    content: owned,
-                    alignment: self.cell_align,
-                });
+                try_push(
+                    &mut self.out.oom,
+                    &mut self.table_cells,
+                    TableCell {
+                        content: owned,
+                        alignment: self.cell_align,
+                    },
+                );
             }
         }
     }
@@ -583,10 +573,8 @@ impl<'a> AnsiRenderer<'a> {
             SpanType::A => {
                 self.link_depth += 1;
                 if self.link_depth == 1 {
-                    // Resolve final href (prefixes for autolinks). On OOM
-                    // we leave link_href null so leaveSpan doesn't try to
-                    // free a literal.
-                    self.link_href = resolve_href(&detail).ok();
+                    // Resolve final href (prefixes for autolinks).
+                    self.link_href = Some(resolve_href(&detail));
                     if self.theme.colors && self.theme.hyperlinks {
                         if let Some(href) = &self.link_href {
                             // OSC 8 hyperlink start
@@ -748,19 +736,19 @@ impl<'a> AnsiRenderer<'a> {
     /// heading buffer, table cell, image alt, or directly to output).
     fn write_content(&mut self, data: &[u8]) {
         if self.image_depth > 0 {
-            self.image_alt.extend_from_slice(data);
+            try_extend(&mut self.out.oom, &mut self.image_alt, data);
             return;
         }
         if self.in_code_block {
-            self.code_buf.extend_from_slice(data);
+            try_extend(&mut self.out.oom, &mut self.code_buf, data);
             return;
         }
         if self.heading_level > 0 {
-            self.heading_buf.extend_from_slice(data);
+            try_extend(&mut self.out.oom, &mut self.heading_buf, data);
             return;
         }
         if self.in_cell {
-            self.table_cell_buf.extend_from_slice(data);
+            try_extend(&mut self.out.oom, &mut self.table_cell_buf, data);
             return;
         }
         // Normal paragraph flow: respect wrapping + indent.
@@ -942,16 +930,16 @@ impl<'a> AnsiRenderer<'a> {
                 while i < bytes.len() && bytes[i] != 0x1b {
                     i += 1;
                 }
-                self.image_alt.extend_from_slice(&bytes[start..i]);
+                try_extend(&mut self.out.oom, &mut self.image_alt, &bytes[start..i]);
             }
             return;
         }
         if self.in_cell {
-            self.table_cell_buf.extend_from_slice(bytes);
+            try_extend(&mut self.out.oom, &mut self.table_cell_buf, bytes);
             return;
         }
         if self.heading_level > 0 {
-            self.heading_buf.extend_from_slice(bytes);
+            try_extend(&mut self.out.oom, &mut self.heading_buf, bytes);
             return;
         }
         self.out.write(bytes);
@@ -1116,11 +1104,11 @@ impl<'a> AnsiRenderer<'a> {
             return;
         }
         if self.in_cell {
-            self.table_cell_buf.extend_from_slice(data);
+            try_extend(&mut self.out.oom, &mut self.table_cell_buf, data);
             return;
         }
         if self.heading_level > 0 {
-            self.heading_buf.extend_from_slice(data);
+            try_extend(&mut self.out.oom, &mut self.heading_buf, data);
             return;
         }
         self.out.write(data);
@@ -2438,7 +2426,7 @@ fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
 
 /// Build the final href string with autolink prefixes (mailto:, http://).
 /// Caller owns the returned memory.
-fn resolve_href(detail: &SpanDetail) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+fn resolve_href(detail: &SpanDetail) -> Box<[u8]> {
     let mut buf: Vec<u8> = Vec::new();
     if detail.autolink_email {
         buf.extend_from_slice(b"mailto:");
@@ -2448,7 +2436,7 @@ fn resolve_href(detail: &SpanDetail) -> Result<Box<[u8]>, bun_alloc::AllocError>
     }
     let mut scratch: Vec<u8> = Vec::new();
     buf.extend_from_slice(sanitize_source_text(detail.href, &mut scratch));
-    Ok(buf.into_boxed_slice())
+    buf.into_boxed_slice()
 }
 
 // ========================================

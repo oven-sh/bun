@@ -1843,26 +1843,53 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         self.get_body_value().to_readable_stream(global_this)
     }
 
-    fn get_body_used(&self, global_object: &JSGlobalObject) -> JSValue {
+    /// `Used` / in-flight-read bodies are unconditionally `true`; otherwise
+    /// `check` decides from the body's ReadableStream (JS `stream` cache
+    /// first, then `Locked.readable`). Bodies with no stream yet are `false`.
+    fn body_stream_check(
+        &self,
+        global_object: &JSGlobalObject,
+        check: fn(&ReadableStream, &JSGlobalObject) -> bool,
+    ) -> bool {
         // reshaped for borrowck — `get_body_readable_stream` needs `&self`,
         // so we can't hold a `match` borrow on `get_body_value()` across it.
-        let used = match self.get_body_value() {
+        match self.get_body_value() {
             Value::Used => true,
             Value::Locked(pending) if !pending.action.is_none() => true,
             Value::Locked(_) => 'brk: {
                 if let Some(readable) = self.get_body_readable_stream(global_object) {
-                    break 'brk readable.is_disturbed(global_object);
+                    break 'brk check(&readable, global_object);
                 }
                 if let Value::Locked(pending) = self.get_body_value() {
                     if let Some(stream) = pending.readable.get(global_object) {
-                        break 'brk stream.is_disturbed(global_object);
+                        break 'brk check(&stream, global_object);
                     }
                 }
                 false
             }
             _ => false,
-        };
-        JSValue::from(used)
+        }
+    }
+
+    fn get_body_used(&self, global_object: &JSGlobalObject) -> JSValue {
+        JSValue::from(self.body_stream_check(global_object, ReadableStream::is_disturbed))
+    }
+
+    /// Fetch spec step 1 of both `clone()` algorithms: throw a `TypeError`
+    /// when "this is unusable", i.e. the body is non-null and its stream is
+    /// disturbed or locked. <https://fetch.spec.whatwg.org/#body-unusable>
+    fn throw_if_body_unusable(&self, global_object: &JSGlobalObject) -> JsResult<()> {
+        let unusable =
+            self.body_stream_check(global_object, |s, g| s.is_disturbed(g) || s.is_locked(g));
+        if unusable {
+            return Err(global_object
+                .err(
+                    jsc::ErrorCode::BODY_ALREADY_USED,
+                    format_args!("Body is disturbed or locked"),
+                )
+                .throw());
+        }
+        Ok(())
     }
 
     fn get_json(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {

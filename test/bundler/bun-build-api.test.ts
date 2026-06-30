@@ -1,7 +1,7 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
 import path, { join } from "path";
 import { SourceMapConsumer } from "source-map";
 import { buildNoThrow } from "./buildNoThrow";
@@ -445,6 +445,49 @@ describe("Bun.build", () => {
     expect(exitCode).toBe(0);
     Bun.gc(true);
   });
+
+  // https://github.com/oven-sh/bun/issues/33099
+  // A package reached through a symlinked node_modules entry caches its file
+  // descriptor in the resolver. A second in-process Bun.build() used to reuse a
+  // descriptor the first build had already closed, failing with EBADF. The test
+  // host must also import the package so its fd is cached before the builds run.
+  test.concurrent.skipIf(isWindows)(
+    "repeated in-process builds of a symlinked package do not reuse a closed fd",
+    async () => {
+      using dir = tempDir("build-symlink-fd-cache", {
+        "vendor/pkg/package.json": `{"name":"pkg","version":"1.0.0","type":"module","exports":"./index.js"}`,
+        "vendor/pkg/index.js": `export const value = 1;\n`,
+        "entry.ts": `import { value } from "pkg";\nconsole.log(value);\n`,
+        "repro.test.ts": `
+        import { it } from "bun:test";
+        import { value } from "pkg";
+        void value;
+        it("builds", async () => {
+          for (let i = 1; i <= 3; i++) {
+            const result = await Bun.build({ entrypoints: ["./entry.ts"] });
+            if (!result.success) {
+              throw new AggregateError(result.logs, "build " + i + " failed");
+            }
+          }
+          console.log("ALL_BUILDS_OK");
+        });
+      `,
+      });
+      mkdirSync(join(String(dir), "node_modules"), { recursive: true });
+      symlinkSync("../vendor/pkg", join(String(dir), "node_modules", "pkg"));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "repro.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout + stderr).toContain("ALL_BUILDS_OK");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test.concurrent("errors are returned as an array", async () => {
     const x = await buildNoThrow({

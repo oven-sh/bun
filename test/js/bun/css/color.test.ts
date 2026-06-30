@@ -374,6 +374,15 @@ describe("relative colors with an out-of-gamut origin", () => {
     expect(color("hsl(from rgb(255 0 0 / 0.5) h s l / alpha)", "css")).toBe("#ff000080");
     expect(color("rgb(from lab(50% 50 50) r g b)", "hex")).toBe("#ca4b22");
   });
+
+  test("a boundary color written in another space still resolves", () => {
+    // Bun's own lab/oklch serializations of #ff0000: converting them back to
+    // sRGB lands within float error of the gamut boundary, which must count
+    // as in gamut.
+    expect(color("rgb(from lab(54.2905% 80.8049 69.891) r g b)", "hex")).toBe("#ff0000");
+    expect(color("hsl(from lab(54.2905% 80.8049 69.891) h s l)", "hex")).toBe("#ff0000");
+    expect(color("rgb(from oklch(0.627955 0.257683 29.2339) r g b)", "hex")).toBe("#ff0000");
+  });
 });
 
 describe("hsl and lab output formats emit valid CSS", () => {

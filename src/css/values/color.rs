@@ -1524,6 +1524,17 @@ fn parse_number_or_percentage_with_basis(
     parser.parse_number(input)
 }
 
+/// Converting a color on the sRGB gamut boundary from another space leaves
+/// ~1e-6 of f32 error on the channels (`lab(54.2905% 80.8049 69.891)`, which
+/// is `#ff0000`, lands at `g = -8e-7`). The tolerance is far below a visible
+/// difference (255 * 1e-4 is 0.03 of a channel step).
+const SRGB_GAMUT_EPSILON: f32 = 1e-4;
+
+fn is_approximately_in_srgb_gamut(srgb: &SRGB) -> bool {
+    let in_range = |v: f32| (-SRGB_GAMUT_EPSILON..=1.0 + SRGB_GAMUT_EPSILON).contains(&v);
+    in_range(srgb.r) && in_range(srgb.g) && in_range(srgb.b)
+}
+
 impl LABColor {
     pub fn new_lab(l: f32, a: f32, b: f32, alpha: f32) -> LABColor {
         LABColor::Lab(LAB { l, a, b, alpha })
@@ -2003,7 +2014,7 @@ impl ComponentParser {
         // https://github.com/w3c/csswg-drafts/issues/8444
         if srgb_bounded
             && !SRGB::try_from_css_color(&from)
-                .is_some_and(|srgb| srgb.resolve_missing().in_gamut())
+                .is_some_and(|srgb| is_approximately_in_srgb_gamut(&srgb.resolve_missing()))
         {
             return Err(input.new_custom_error(css::ParserError::invalid_value));
         }

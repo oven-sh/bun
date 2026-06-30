@@ -262,6 +262,34 @@ test("bcrypt pre-hashing does not break compatibility across Bun versions", asyn
   expect(await password.verify(secret, hash)).toBeTrue();
 });
 
+describe("argon2 verification accepts memoryCost < 8 from earlier Bun releases", () => {
+  // Earlier (Zig-backed) Bun accepted any `memoryCost >= 1`; the argon2
+  // crate's RFC 9106 floor (`m >= 8*p`) would lock such users out on upgrade.
+  // Hash from `hashSync("mypw", { algorithm: "argon2id", memoryCost: 5, timeCost: 1 })`.
+  const legacyHash =
+    "$argon2id$v=19$m=5,t=1,p=1$JJA3TrXOzpimHbQVvHUgXa412Kmo29q8zBHEWptN2h4$GvYy9WOUF64dYFsCjuUcqY90bCKxlV0j4BH/GCzpWa4";
+
+  test("verifySync", () => {
+    expect(password.verifySync("mypw", legacyHash)).toBeTrue();
+    expect(password.verifySync("mypw", legacyHash, "argon2id")).toBeTrue();
+    expect(password.verifySync("wrong", legacyHash)).toBeFalse();
+  });
+
+  test("verify", async () => {
+    expect(await password.verify("mypw", legacyHash)).toBeTrue();
+    expect(await password.verify("mypw", legacyHash, "argon2id")).toBeTrue();
+    expect(await password.verify("wrong", legacyHash)).toBeFalse();
+  });
+
+  test("hashing still rejects memoryCost < 8", () => {
+    // Only verification of legacy hashes is relaxed; creating new ones with a
+    // sub-minimum memory cost remains an error.
+    expect(() => password.hashSync("mypw", { algorithm: "argon2id", memoryCost: 5, timeCost: 1 })).toThrow(
+      "Memory cost must be at least 8",
+    );
+  });
+});
+
 test("argon2 memoryCost at the 8 minimum is encoded faithfully (regression for #30960)", async () => {
   const hashed = await password.hash("test", {
     algorithm: "argon2id",

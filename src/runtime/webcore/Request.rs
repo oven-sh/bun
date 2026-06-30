@@ -411,8 +411,12 @@ impl Request {
         self.set_timeout(seconds.to_u32() as c_uint);
     }
 
+    /// `BunRequest.prototype.clone` (the `Bun.serve` `routes:` subclass) goes
+    /// through `JSBunRequest::clone` -> here, not through [`Self::do_clone`],
+    /// so it needs the same fetch-spec step-1 usability check.
     #[bun_uws::uws_callback(export = "Request__clone")]
     pub fn ffi_clone(&self, global_this: &JSGlobalObject) -> Option<Box<Request>> {
+        self.throw_if_body_unusable(global_this).ok()?;
         self.clone(global_this).ok()
     }
 }
@@ -1516,6 +1520,7 @@ impl Request {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        self.throw_if_body_unusable(global_this)?;
         let this_value = callframe.this();
         let cloned = self.clone(global_this)?;
 

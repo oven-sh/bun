@@ -837,11 +837,9 @@ it("loads routes from a directory already cached by Bun.build()", async () => {
 });
 
 it("match() does not let a percent-encoded '/' cross a route segment boundary", () => {
-  // Route matching splits the path into segments on '/'. Decoding %2F before
-  // that split let `/admin%2Fpanel` select the nested `/admin/panel` route
-  // (or any other sibling of the intended `[file]` parameter) — a route the
-  // caller never exposed to that traffic. The encoded slash must stay inside
-  // its segment; only the captured param value is decoded.
+  // Routing splits the path on '/'. Decoding %2F before that split let
+  // `/admin%2Fpanel` select the nested `/admin/panel` route instead of the
+  // `[file]` parameter; only the captured param value may be decoded.
   const { dir } = make(["[file].tsx", "admin/panel.tsx", "posts/[id].tsx", "index.tsx"]);
   const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
 
@@ -890,10 +888,9 @@ it("match() returns null for a malformed percent escape instead of throwing", ()
 });
 
 it("match() splits path and query before percent-decoding", () => {
-  // The query string was being percent-decoded before it was split into
-  // name/value pairs, so an encoded '&' or '=' became a real delimiter and
-  // '%25' in a value was decoded twice. An encoded '?' in the path likewise
-  // started a spurious query string.
+  // Decoding the query before splitting it into name/value pairs turned an
+  // encoded '&'/'=' into a real delimiter and double-decoded '%25'; an
+  // encoded '?' in the path likewise started a spurious query string.
   const { dir } = make(["p.tsx", "posts/[id].tsx"]);
   const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
 

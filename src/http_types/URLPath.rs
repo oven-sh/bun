@@ -47,13 +47,9 @@ impl URLPath {
 // percent-encoded path, which is the rare case.
 
 pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::DecodeError> {
-    // The query string begins at the first *literal* '?' of the raw input and
-    // is never percent-decoded here. Decoding the whole URL up front was the
-    // source of a whole class of bugs:
-    //   - an encoded '%3F' in the path would start a fake query string;
-    //   - the query was decoded twice (once here, once per name/value in
-    //     `QueryStringMap`), so `?a=b%26c%3Dd` split into two parameters;
-    //   - a malformed escape anywhere, including the query, aborted the parse.
+    // Split path from query on the first *literal* '?' before any decoding:
+    // an encoded '%3F' must not start the query, and `QueryStringMap` already
+    // percent-decodes each query name/value exactly once.
     let question_mark_i = strings::index_of_char(possibly_encoded_pathname_, b'?')
         .map_or(possibly_encoded_pathname_.len(), |i| i as usize);
     let raw_path: &[u8] = &possibly_encoded_pathname_[..question_mark_i];
@@ -70,12 +66,9 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
         let capped = &raw_path[..raw_path.len().min(16384)];
 
         let mut buf: Vec<u8> = Vec::with_capacity(capped.len() + raw_query.len());
-        // `PRESERVE_STRUCTURE`: keep `%2F` and `%25` encoded. The router
-        // splits the decoded path on '/' to find segment boundaries, so a
-        // decoded `%2F` would cross into another route segment; a decoded
-        // `%25` would be read as the start of a fresh escape by the per-value
-        // decode in `QueryStringMap`. With both preserved, that per-value
-        // decode of a captured param is the single decode applied.
+        // `PRESERVE_STRUCTURE` keeps `%2F`/`%25` encoded so an escaped slash
+        // can't cross a route segment boundary and the per-value decode of a
+        // captured param in `QueryStringMap` is the single decode applied.
         let n = PercentEncoding::decode_fault_tolerant::<_, true, true>(
             &mut buf,
             capped,
@@ -91,13 +84,9 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
         }
         let path_end = buf.len();
         buf.extend_from_slice(raw_query);
-        // Freeze into a heap-stable Box and park it in `decoded_storage` before
-        // borrowing: the slice fields in the returned URLPath borrow from this
-        // allocation, and the Box is later moved into that same URLPath, so the
-        // borrow is valid for the struct's whole lifetime (Box heap address is
-        // stable across moves). NLL releases the local borrow after the last
-        // use of `pathname` in the struct-literal field initialisers, before
-        // `_decoded_storage` is moved.
+        // Freeze into a heap-stable Box before borrowing: the URLPath slice
+        // fields borrow this allocation and the Box is moved into that same
+        // URLPath, so the borrow stays valid (Box addresses survive moves).
         decoded_storage = Some(buf.into_boxed_slice());
         (decoded_storage.as_deref().unwrap(), path_end)
     } else {

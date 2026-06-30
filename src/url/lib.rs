@@ -1411,13 +1411,9 @@ impl PercentEncoding {
         Self::decode(&mut w, input)
     }
 
-    /// `PRESERVE_STRUCTURE` copies `%2F` and `%25` through verbatim instead
-    /// of decoding them. Route matchers split the output on `/`, so decoding
-    /// an escaped slash here would let it create or merge path segments; and
-    /// decoding `%25` to `%` would make a later per-value decode read the
-    /// following two bytes as a fresh escape (a double decode). Keeping both
-    /// encoded lets a single downstream decode of the captured value produce
-    /// the right result.
+    /// `PRESERVE_STRUCTURE` copies `%2F` and `%25` through verbatim so route
+    /// matchers that split the output on `/` never see a decoded slash, and
+    /// so a later per-value decode of a captured segment is the only decode.
     pub fn decode_fault_tolerant<
         W: bun_core::io::Write,
         const FAULT_TOLERANT: bool,

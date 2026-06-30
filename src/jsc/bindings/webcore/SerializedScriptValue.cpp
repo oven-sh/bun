@@ -1411,10 +1411,9 @@ private:
         return dumpIfTerminal(toJSArrayBuffer(*arrayBuffer), code);
     }
 
-    // Writes a byte copy of the buffer: ResizableArrayBufferTag when it is resizable or
-    // growable so an auto-length view over it still deserializes, ArrayBufferTag otherwise.
-    // The caller must have registered the buffer's wrapper via startObjectInternal so the
-    // deserializer's object pool stays in sync (it appends one entry per buffer it reads).
+    // Writes a byte copy: ResizableArrayBufferTag if resizable/growable (so an auto-length
+    // view still deserializes), ArrayBufferTag otherwise. The caller must have registered
+    // the wrapper via startObjectInternal; the deserializer adds one pool entry per buffer.
     bool writeArrayBufferAsCopy(ArrayBuffer& arrayBuffer, SerializationReturnCode& code)
     {
         uint64_t byteLength = arrayBuffer.byteLength();

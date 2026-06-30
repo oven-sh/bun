@@ -874,8 +874,7 @@ console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, thr
 });
 
 // Memory cannot be shared across processes, so IPC in "advanced" serialization mode
-// must reject a SharedArrayBuffer at send() time like Node.js does, instead of
-// silently delivering a plain ArrayBuffer copy to the other process. A TypedArray
+// must reject a SharedArrayBuffer at send() time like Node.js does. A TypedArray
 // view over a SharedArrayBuffer is the one allowed form: Node copies the view's bytes.
 it("fork with advanced serialization rejects a SharedArrayBuffer at send()", async () => {
   using dir = tempDir("ipc-sab", {
@@ -904,8 +903,8 @@ it("fork with advanced serialization rejects a SharedArrayBuffer at send()", asy
             });
             return;
           }
-          // Before the fix the SharedArrayBuffer/object/array sends were delivered;
-          // report what arrived so the assertion diff shows it instead of timing out.
+          // Report unexpected message types so the assertion diff shows what was
+          // delivered instead of the test timing out waiting for replies.
           process.send("unexpected: " + Object.prototype.toString.call(m));
         });
         return;

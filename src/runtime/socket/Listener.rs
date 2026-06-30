@@ -268,7 +268,7 @@ impl Listener {
                                 .expect("listen returns a non-null heap pointer"),
                         ));
                     }
-                    Err(_) => {
+                    Err(e) => {
                         // On error, clean up everything `this` owns *except* `this.handlers`:
                         // those JSValues must only be unprotected once, so calling
                         // `this.deinit()` here would unprotect the same callbacks a second
@@ -279,6 +279,33 @@ impl Listener {
                         // SAFETY: reclaim the Box we leaked via into_raw; drops connection,
                         // protos, and (the moved) handlers exactly once.
                         drop(unsafe { bun_core::heap::take(this) });
+                        // Surface coded syscall failures the way node:net does
+                        // - EADDRINUSE (name taken) and EACCES (pipe namespace
+                        // denied, e.g. a sandboxed process binding outside
+                        // \\.\pipe\LOCAL\) need different handling by callers
+                        // - rather than an invalid-arguments TypeError.
+                        let name = e.name();
+                        if let Ok(se) = <bun_sys::SystemErrno as core::str::FromStr>::from_str(name)
+                        {
+                            let err = jsc::SystemError {
+                                errno: se as c_int,
+                                code: bun_core::String::static_(name),
+                                message: bun_core::String::clone_utf8(
+                                    format!(
+                                        "listen {}: {}",
+                                        name,
+                                        bstr::BStr::new(&pipe_buf[..pipe_len])
+                                    )
+                                    .as_bytes(),
+                                ),
+                                syscall: bun_core::String::static_("listen"),
+                                fd: -1,
+                                path: bun_core::String::clone_utf8(&pipe_buf[..pipe_len]),
+                                hostname: bun_core::String::empty(),
+                                dest: bun_core::String::empty(),
+                            };
+                            return Err(global.throw_value(err.to_error_instance(global)));
+                        }
                         return Err(global.throw_invalid_arguments(format_args!(
                             "Failed to listen at {}",
                             bstr::BStr::new(&pipe_buf[..pipe_len])
@@ -1831,6 +1858,14 @@ impl WindowsNamedPipeListeningContext {
             )
         };
         if listen_rc.is_err() {
+            // Surface the real error code: EADDRINUSE (name taken) and
+            // EACCES (pipe namespace denied, e.g. a sandboxed process
+            // binding outside \\.\pipe\LOCAL\) need different handling by
+            // callers, and a generic bind failure hides that.
+            use bun_sys::ReturnCodeExt as _;
+            if let Some(err) = listen_rc.to_error(bun_sys::Tag::listen) {
+                return Err(err.into());
+            }
             return Err(bun_core::err!("FailedToBindPipe"));
         }
         //TODO: add readableAll and writableAll support if someone needs it

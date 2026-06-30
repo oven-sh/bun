@@ -14,13 +14,13 @@ Bun.serve({
 });
 ```
 
-In development mode, Bun will surface errors in-browser with a built-in error page.
+In development mode, Bun surfaces errors in-browser with a built-in error page.
 
 <Frame>![Bun's built-in 500 page](/images/exception_page.png)</Frame>
 
 ### `error` callback
 
-To handle server-side errors, implement an `error` handler. This function should return a `Response` to serve to the client when an error occurs. This response will supersede Bun's default error page in `development` mode.
+To handle server-side errors, implement an `error` handler. Return a `Response` to serve to the client when an error occurs. In `development` mode, this response replaces Bun's default error page.
 
 ```ts
 Bun.serve({

@@ -271,7 +271,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         bun_core::err!("ParserError")
     }
 
-    /// "Expected X but found Y", non-fatal (logs and continues).
+    /// Log "Expected X but found Y"; the caller decides whether to bail.
     #[cold]
     fn expected(&mut self, cursor: usize, what: &str) {
         let r = self.token_range(cursor);
@@ -816,9 +816,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                         break Err(bun_core::err!("SyntaxError"));
                     }
                     self.expected(cursor, "\",\"");
-                    // Recovery: skip the unexpected token and keep going.
-                    self.cursor += 1;
-                    continue;
+                    break Err(bun_core::err!("ParserError"));
                 }
                 if is_single_line && self.newline_before(p) {
                     is_single_line = false;
@@ -909,8 +907,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                         break Err(bun_core::err!("SyntaxError"));
                     }
                     self.expected(cursor, "\",\"");
-                    self.cursor += 1;
-                    continue;
+                    break Err(bun_core::err!("ParserError"));
                 }
                 if is_single_line && self.newline_before(p) {
                     is_single_line = false;
@@ -975,7 +972,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 self.cursor += 1;
             } else {
                 self.expected(colon_cursor, "\":\"");
-                // Recovery: do not advance; try to parse a value here.
+                break Err(bun_core::err!("ParserError"));
             }
 
             // ── value ──

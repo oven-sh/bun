@@ -1771,12 +1771,6 @@ impl<'a> PackageInstall<'a> {
         self.file_count = match result {
             Ok(n) => n,
             Err(err) => {
-                #[cfg(windows)]
-                {
-                    if err == bun_core::err!("FailedToCopyFile") {
-                        return Ok(InstallResult::fail(err, Step::CopyingFiles, None));
-                    }
-                }
                 #[cfg(not(windows))]
                 {
                     if err == bun_core::err!("NotSameFileSystem") || err == bun_core::err!("ENXIO")

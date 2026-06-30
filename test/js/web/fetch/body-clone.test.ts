@@ -521,10 +521,8 @@ test("ReadableStream with mixed content (starting with ArrayBuffer) can be conve
 });
 
 // The tee behind Request/Response.clone() structured-clones every chunk for the
-// second branch. For a typed array view that must copy only the bytes the view
-// covers: cloning the whole backing ArrayBuffer retains (per chunk!) the entire
-// shared receive buffer that fetch()'s body stream slices its chunks out of,
-// which roughly doubles the memory held by an unread clone.
+// second branch. That clone must copy only the bytes the view covers: cloning the
+// whole backing ArrayBuffer retains the larger shared buffer fetch() slices from.
 test.each(["Request", "Response"])(
   "%s.clone() chunk clones do not retain the chunk's whole backing buffer",
   async kind => {

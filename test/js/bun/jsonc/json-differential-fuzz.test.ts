@@ -265,7 +265,6 @@ function toSingleQuoted(token: string): string {
   return "'" + token.slice(1, -1) + "'";
 }
 
-
 /**
  * Re-serializes `tokens` (a valid JSON document) using JSONC-only syntax:
  * comments at random token boundaries (including immediately after scalars and

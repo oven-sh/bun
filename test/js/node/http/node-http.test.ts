@@ -4165,6 +4165,113 @@ describe("server headersTimeout/requestTimeout enforcement", () => {
     }
   }, 30_000);
 
+  it("a second keep-alive request coalesced with the first request's body tail gets its own headersTimeout", async () => {
+    // The first message's last body bytes and the second message's partial
+    // headers arrive in one packet, so the receive phase moves straight from
+    // Body to Headers without passing through None. The second message's
+    // headersTimeout must restart at its own first byte: a deadline inherited
+    // from the first message (whose body held the socket for ~5s of its 9s
+    // headersTimeout) expires within one 4s uWS timer sweep and 408-closes the
+    // socket long before the second headers complete at +6s.
+    const { promise: firstResponse, resolve: onFirstResponse } = Promise.withResolvers<void>();
+    const { promise: secondResponse, resolve: onSecondResponse } = Promise.withResolvers<void>();
+    const server = createServer(
+      { headersTimeout: 9000, requestTimeout: 30000, connectionsCheckingInterval: 100, keepAliveTimeout: 0 },
+      (req, res) => {
+        req.on("error", () => {});
+        res.on("error", () => {});
+        // Respond before the request body completes so the connection is still
+        // in the Body receive phase when the coalesced packet arrives.
+        res.end(`resp:${req.url};`);
+      },
+    );
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      let received = "";
+      socket.on("data", chunk => {
+        received += chunk.toString();
+        if (received.includes("resp:/first;")) onFirstResponse();
+        if (received.includes("resp:/second;")) onSecondResponse();
+      });
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      // Message 1: a POST whose 4-byte body is withheld.
+      socket.write("POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\n\r\n");
+      await firstResponse;
+      await Bun.sleep(5200);
+      received = "";
+      // One packet: message 1's body tail + message 2's partial headers.
+      socket.write("abcdGET /second HTTP/1.1\r\nHost: localhost\r\nX-Partial: ");
+      // Complete the headers after an inherited deadline would have fired, but
+      // well within this message's own headersTimeout.
+      await Bun.sleep(6000);
+      socket.write("1\r\n\r\n");
+      await Promise.race([secondResponse, closed]);
+      expect(received).toStartWith("HTTP/1.1 200 OK\r\n");
+      expect(received).toEndWith("resp:/second;");
+      socket.end();
+      await closed;
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 30_000);
+
+  it("a second keep-alive request coalesced with the first request's body tail gets its own requestTimeout", async () => {
+    // Same coalesced boundary, but the second message's complete headers and a
+    // partial body arrive in the packet, so the receive phase stays Body across
+    // the message boundary. The deadline must be re-armed for the new message;
+    // the stale same-phase state otherwise leaves the second message's stalled
+    // body with no requestTimeout at all.
+    const { promise: firstResponse, resolve: onFirstResponse } = Promise.withResolvers<void>();
+    const { promise: clientError, resolve: onClientError } = Promise.withResolvers<Error>();
+    const server = createServer(
+      { headersTimeout: 5000, requestTimeout: 5000, connectionsCheckingInterval: 100, keepAliveTimeout: 0 },
+      (req, res) => {
+        req.on("error", () => {});
+        res.on("error", () => {});
+        if (req.url === "/second") {
+          // Only respond once the (stalled) body completes.
+          req.on("data", () => {});
+          req.on("end", () => res.end("resp:/second;"));
+          return;
+        }
+        // Respond before the first request's body completes.
+        res.end("resp:/first;");
+      },
+    );
+    server.on("clientError", (err, socket) => {
+      onClientError(err);
+      socket.destroy();
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      let received = "";
+      socket.on("data", chunk => {
+        received += chunk.toString();
+        if (received.includes("resp:/first;")) onFirstResponse();
+      });
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\n\r\n");
+      await firstResponse;
+      // One packet: message 1's body tail + message 2's complete headers and partial body.
+      socket.write("abcdPOST /second HTTP/1.1\r\nHost: localhost\r\nContent-Length: 8\r\n\r\nxy");
+      const err: any = await clientError;
+      expect(err.code).toBe("ERR_HTTP_REQUEST_TIMEOUT");
+      await closed;
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
   it("disabled timeouts (0) do not close a stalled connection", async () => {
     // Negative contract bounded by an awaited condition: a sibling server with
     // the timeouts enabled answers its own stalled request with a 408 first,

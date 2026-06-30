@@ -450,6 +450,13 @@ private:
 
         }, [httpResponseData, httpContextData](void *user, std::string_view data, bool fin) -> void * {
 
+            /* The message is now fully received: the next receive phase belongs to the next
+             * keep-alive message, so its deadlines restart at its own first byte (a coalesced
+             * packet can reach it without ever passing through NodeReceivePhase::None). */
+            if (fin && httpResponseData->hasNodeReceiveTimeouts) {
+                httpResponseData->nodeArmedReceivePhase = NodeReceivePhase::None;
+                httpResponseData->nodeMessageStarted = false;
+            }
 
             if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketData) {
                 httpContextData->onSocketData(httpResponseData->socketData, SSL, (struct us_socket_t *) user, data.data(), data.length(), fin);

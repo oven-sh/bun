@@ -20,7 +20,7 @@ use core::marker::PhantomData;
 use core::mem::offset_of;
 
 use bun_collections::VecExt;
-use bun_core::Output;
+use bun_core::{self, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::{Fd, FdExt as _};
 use bun_uws as uws;
@@ -93,7 +93,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         // SAFETY: `self` is embedded at `Owner::OFFSET` inside a live
         // `Owner` that outlives all callbacks. Mirrors Zig
         // `@alignCast(@fieldParentPtr(owner_field, self))`.
-        Owner::from_field_ptr(std::ptr::from_mut(self))
+        unsafe { Owner::from_field_ptr(std::ptr::from_mut(self)) }
     }
 }
 

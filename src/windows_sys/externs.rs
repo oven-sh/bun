@@ -578,6 +578,8 @@ pub mod advapi32 {
             DesiredAccess: DWORD,
             TokenHandle: *mut HANDLE,
         ) -> BOOL;
+        /// No preconditions beyond a valid token handle.
+        pub fn IsTokenRestricted(TokenHandle: HANDLE) -> BOOL;
         /// `TokenInformationClass` 29 = `TokenIsAppContainer` (a DWORD).
         pub fn GetTokenInformation(
             TokenHandle: HANDLE,

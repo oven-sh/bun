@@ -6668,6 +6668,36 @@ pub fn open_dir_at_windows_nt_path(
     path: &bun_core::WStr,
     options: WindowsOpenDirOptions,
 ) -> Maybe<Fd> {
+    let first = open_dir_at_windows_nt_path_impl(dir_fd, path, options);
+    // Plain opens request FILE_ADD_FILE|FILE_ADD_SUBDIRECTORY for later use,
+    // which a read-only ACL grant (the normal sandboxed project-tree shape)
+    // cannot satisfy; retry read-only, so creates fail at create time instead.
+    if let Err(ref e) = first {
+        if !options.read_only
+            && !options.can_rename_or_delete
+            && options.op == WindowsOpenDirOp::OnlyOpen
+            && (e.get_errno() == E::PERM || e.get_errno() == E::ACCES)
+        {
+            return open_dir_at_windows_nt_path_impl(
+                dir_fd,
+                path,
+                WindowsOpenDirOptions {
+                    read_only: true,
+                    ..options
+                },
+            )
+            .or(first);
+        }
+    }
+    first
+}
+
+#[cfg(windows)]
+fn open_dir_at_windows_nt_path_impl(
+    dir_fd: Fd,
+    path: &bun_core::WStr,
+    options: WindowsOpenDirOptions,
+) -> Maybe<Fd> {
     use bun_windows_sys::externs as w;
     let base_flags = w::STANDARD_RIGHTS_READ
         | w::FILE_READ_ATTRIBUTES
@@ -8824,9 +8854,15 @@ mod win_symlink_impl {
         }
     }
 
-    /// Memoized `TokenIsAppContainer` query for the current process; the
-    /// lowbox state of a token cannot change after process creation.
-    fn in_app_container() -> bool {
+    /// 0 = unknown, 1 = this process's junctions are traversable (skip the
+    /// probe), 2 = quarantine seen (probe every junction).
+    static JUNCTION_PROBE_STATE: core::sync::atomic::AtomicU8 =
+        core::sync::atomic::AtomicU8::new(0);
+
+    /// Memoized: AppContainer (lowbox) and restricted tokens get their
+    /// junctions quarantined; other sandboxed token classes exist (e.g.
+    /// SAFER), so this fast path is backstopped by JUNCTION_PROBE_STATE.
+    fn sandboxed_token() -> bool {
         use core::sync::atomic::{AtomicU8, Ordering};
         // 0 = unknown, 1 = no, 2 = yes.
         static STATE: AtomicU8 = AtomicU8::new(0);
@@ -8859,6 +8895,8 @@ mod win_symlink_impl {
                 {
                     result = value != 0;
                 }
+                result = result
+                    || bun_windows_sys::externs::advapi32::IsTokenRestricted(token) != 0;
                 let _ = bun_windows_sys::externs::CloseHandle(token);
             }
         }
@@ -8909,14 +8947,12 @@ mod win_symlink_impl {
             Ok(()) => {}
             Err(e) => return Err(e),
         }
-        // A junction created by an AppContainer process is silently rewritten
-        // by the kernel into an untrusted mount point that traversal is
-        // denied on (ERROR_UNTRUSTED_MOUNT_POINT) on client Windows builds,
-        // while creation still reports success. Probe traversability and
-        // report ELOOP rather than leaving a dead link behind for the
-        // consumer to trip over. Outside an AppContainer the rewrite cannot
-        // happen, so normal installs skip the probe entirely.
-        if in_app_container() {
+        // The kernel marks junctions created by sandboxed tokens (AppContainer,
+        // SAFER-restricted, ...) as untrusted mount points while creation
+        // reports success; probe and report ELOOP instead of leaving a dead
+        // link. Self-calibrating: one traversable junction proves this
+        // process's junctions are trusted, so later creates skip the probe.
+        if sandboxed_token() || JUNCTION_PROBE_STATE.load(core::sync::atomic::Ordering::Relaxed) != 1 {
             use bun_windows_sys::externs as k32;
             let mut w16 = bun_paths::w_path_buffer_pool::get();
             let wdest = bun_paths::string_paths::to_w_path_normalize_auto_extend(
@@ -8939,12 +8975,19 @@ mod win_symlink_impl {
                 if bun_windows_sys::kernel32::GetLastError()
                     == u32::from(bun_windows_sys::externs::Win32Error::UNTRUSTED_MOUNT_POINT.0)
                 {
+                    JUNCTION_PROBE_STATE.store(2, core::sync::atomic::Ordering::Relaxed);
                     let _ = sys_uv::rmdir(dest);
                     return Err(Error::new(E::ELOOP, Tag::symlink).with_path(dest.as_bytes()));
                 }
                 // Any other probe failure: keep the junction; the create
                 // itself succeeded.
             } else {
+                let _ = JUNCTION_PROBE_STATE.compare_exchange(
+                    0,
+                    1,
+                    core::sync::atomic::Ordering::Relaxed,
+                    core::sync::atomic::Ordering::Relaxed,
+                );
                 // SAFETY: handle is a valid handle from CreateFileW.
                 unsafe {
                     let _ = k32::CloseHandle(handle);

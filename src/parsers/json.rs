@@ -1238,11 +1238,12 @@ mod tests {
                 tape = p.tape;
                 p.root
             }),
-            Which::Immutable => parse_to_rows(&source, &mut log, JSONOptions::DEFAULT)
-            .map(|mut p| {
-                tape = p.tape.take();
-                p.root
-            }),
+            Which::Immutable => {
+                parse_to_rows(&source, &mut log, JSONOptions::DEFAULT).map(|mut p| {
+                    tape = p.tape.take();
+                    p.root
+                })
+            }
         };
         let first_msg = log
             .msgs
@@ -2080,7 +2081,9 @@ mod tests {
         );
         assert!(full.contains("bool=Some(true)\n"));
         assert!(full.contains("num=Some(42.5)\n"));
-        assert!(full.contains("deps_map=[(\"a\", \"^1\"), (\"b\", \"~2.0\"), (\"empty\", \"\")]\n"));
+        assert!(
+            full.contains("deps_map=[(\"a\", \"^1\"), (\"b\", \"~2.0\"), (\"empty\", \"\")]\n")
+        );
         assert!(full.contains("files=[\"lib\",3,true,null,{object},[array],]\n"));
         assert!(full.contains("files[4]={object}\n"));
         assert!(full.contains("files[5][0]=\"nested\"\n"));

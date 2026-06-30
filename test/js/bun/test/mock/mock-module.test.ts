@@ -168,10 +168,6 @@ test("mocking a builtin", async () => {
 });
 
 // https://github.com/oven-sh/bun/issues/30242
-// The factory receives the module's current exports as its first argument,
-// so partial stubbing can delegate to the real implementation without
-// recursing through the live namespace (which has been replaced by the
-// mock's own exports by the time the stub runs).
 test("factory receives current exports as first argument (partial-stub delegation)", async () => {
   mock.module("mock-partial-stub-pkg", () => ({
     greet: () => "real",
@@ -191,7 +187,7 @@ test("factory receives current exports as first argument (partial-stub delegatio
   expect(stubbed.leave()).toBe("goodbye");
 });
 
-test("factory argument is a snapshot — later mutations to the live namespace do not affect it", async () => {
+test("factory argument is a snapshot, later mutations to the live namespace do not affect it", async () => {
   mock.module("mock-snapshot-pkg", () => ({
     value: 1,
     read: () => 1,
@@ -212,7 +208,7 @@ test("factory argument is a snapshot — later mutations to the live namespace d
   expect(stubbed.value).toBe(2);
   // @ts-expect-error dynamic package, no types
   expect(stubbed.read()).toBe(1);
-  // The snapshot is detached from the live namespace — it kept the original values.
+  // The snapshot is detached from the live namespace; it kept the original values.
   expect(capturedOriginal.value).toBe(1);
   expect(capturedOriginal.read()).toBe(1);
 });
@@ -249,10 +245,8 @@ test("factory argument works for CJS modules loaded via require()", () => {
 });
 
 test("factory argument preserves callable CJS exports (`module.exports = function`)", () => {
-  // The fixture does `module.exports = function callable() { ... }` — the CJS
-  // exports slot is a bare function, not a property bag. When `mock.module`
-  // installs the first override, the factory's `original` must still be
-  // callable so partial stubs can wrap or delegate to the real function.
+  // The fixture does `module.exports = function callable(){...}`; the factory's
+  // `original` must be the bare function (not a property bag) so `original()` works.
   const realFn: any = require("./mock-module-callable-cjs-fixture.cjs");
   expect(typeof realFn).toBe("function");
   expect(realFn()).toBe("callable-real");
@@ -273,10 +267,9 @@ test("factory argument preserves callable CJS exports (`module.exports = functio
 });
 
 test("factory argument prefers CJS exports when a module was both imported and required", async () => {
-  // When a .cjs module is loaded via BOTH `import()` and `require()`, the ESM
-  // namespace is a wrapper `{ default, length, name, prototype }` around the
-  // callable `module.exports`. The factory should still see the bare callable
-  // as `original`, not the ESM wrapper — otherwise `original()` fails.
+  // Loaded via BOTH import() and require(): the ESM namespace is a
+  // `{ default, length, name, prototype }` wrapper, so `original` should be the
+  // bare CJS callable, not the wrapper.
   await import("./mock-module-callable-cjs-mixed-fixture.cjs");
   const realFn: any = require("./mock-module-callable-cjs-mixed-fixture.cjs");
   expect(typeof realFn).toBe("function");
@@ -318,7 +311,7 @@ test("factory argument snapshots CJS exports with integer-index keys (`module.ex
 });
 
 test("factory argument preserves symbol-keyed CJS exports (matches `{...original}` spread)", () => {
-  // JS spread copies own enumerable symbol keys, so the snapshot must too —
+  // JS spread copies own enumerable symbol keys, so the snapshot must too;
   // a CJS `module.exports` can carry e.g. `[Symbol.iterator]`.
   const real: any = require("./mock-module-symbol-cjs-fixture.cjs");
   expect(real.foo).toBe(1);

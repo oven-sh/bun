@@ -17,7 +17,7 @@ import type { Dependency } from "../source.ts";
 // cancellation without input injection, sandbox-rewritten junction readback,
 // uv_pipe/realpath/stat error-reporting fixes, and uv_os_is_app_container().
 // To bump upstream, rebase the `bun` branch and update this SHA.
-const LIBUV_COMMIT = "a237caddc48dea3e93d414b899af4bfb90f1d59a";
+const LIBUV_COMMIT = "2d640bb3c12fe3f1dc6c60a9124fd869b683be6d";
 
 // prettier-ignore
 const SHARED = [

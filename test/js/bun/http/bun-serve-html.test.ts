@@ -1096,6 +1096,7 @@ describe("production headers and import.meta.env", () => {
 
 // An HTML route whose source file lives in a subdirectory must emit asset URLs
 // relative to the served root, not to the HTML file's directory on disk.
+// pages/shared/* sits outside the HTML's directory (the outbase) on purpose.
 test("production HTML route in a subdirectory emits root-relative asset URLs", async () => {
   const dir = tempDirWithFiles("html-nested-outbase", {
     "pages/app/index.html": /*html*/ `
@@ -1105,12 +1106,13 @@ test("production HTML route in a subdirectory emits root-relative asset URLs", a
           <link rel="stylesheet" href="./styles.css">
           <script type="module" src="./app.ts"></script>
         </head>
-        <body><img src="./logo.svg"></body>
+        <body><img src="../shared/logo.svg"></body>
       </html>
     `,
     "pages/app/styles.css": `body { color: rgb(12, 34, 56); }`,
-    "pages/app/app.ts": `console.log("nested app ran");`,
-    "pages/app/logo.svg": `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>`,
+    "pages/app/app.ts": `import { util } from "../shared/util";\nconsole.log("nested app ran", util());`,
+    "pages/shared/util.ts": `export function util() { return "from a sibling of the outbase"; }`,
+    "pages/shared/logo.svg": `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>`,
     "serve.ts": /*js*/ `
       import net from "node:net";
       import page from "./pages/app/index.html";

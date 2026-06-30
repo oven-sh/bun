@@ -7009,7 +7009,7 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
         attributes |= w::FILE_ATTRIBUTE_READONLY;
     }
 
-    open_file_at_windows_nt_path(
+    let first = open_file_at_windows_nt_path(
         dir,
         norm,
         NtCreateFileOptions {
@@ -7019,7 +7019,32 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
             attributes,
             ..Default::default()
         },
-    )
+    );
+
+    // FILE_WRITE_ATTRIBUTES is requested even for read-only opens (callers
+    // may touch timestamps through the fd), but a read-only ACL grant - the
+    // normal shape for sandboxed processes such as a Windows AppContainer,
+    // where the project tree is often granted RX only - cannot satisfy it
+    // and the open fails ACCESS_DENIED even though the read itself is
+    // permitted. Retry a pure read-only open without it.
+    if let Err(ref e) = first {
+        let read_only = (flags & (O::RDWR | O::WRONLY | O::APPEND | O::CREAT)) == 0;
+        if read_only && (e.get_errno() == E::PERM || e.get_errno() == E::ACCES) {
+            return open_file_at_windows_nt_path(
+                dir,
+                norm,
+                NtCreateFileOptions {
+                    access_mask: access_mask & !w::FILE_WRITE_ATTRIBUTES,
+                    disposition,
+                    options: opts,
+                    attributes,
+                    ..Default::default()
+                },
+            )
+            .or(first);
+        }
+    }
+    first
 }
 
 /// `openatWindows` — UTF-16 input.
@@ -8803,6 +8828,48 @@ mod win_symlink_impl {
     /// (directory flavour) first; on failure other than ENOENT/EEXIST falls
     /// back to a libuv junction. `abs_fallback_junction_target = None` says
     /// `target` is already absolute and reusable for the junction.
+    /// Memoized `TokenIsAppContainer` query for the current process; the
+    /// lowbox state of a token cannot change after process creation.
+    fn in_app_container() -> bool {
+        use core::sync::atomic::{AtomicU8, Ordering};
+        // 0 = unknown, 1 = no, 2 = yes.
+        static STATE: AtomicU8 = AtomicU8::new(0);
+        match STATE.load(Ordering::Relaxed) {
+            1 => return false,
+            2 => return true,
+            _ => {}
+        }
+        let mut result = false;
+        // SAFETY: FFI; the token handle is closed on every path.
+        unsafe {
+            let mut token: bun_windows_sys::HANDLE = core::ptr::null_mut();
+            const TOKEN_QUERY: u32 = 0x0008;
+            const TOKEN_IS_APP_CONTAINER: u32 = 29;
+            if bun_windows_sys::externs::advapi32::OpenProcessToken(
+                bun_windows_sys::externs::GetCurrentProcess(),
+                TOKEN_QUERY,
+                &mut token,
+            ) != 0
+            {
+                let mut value: u32 = 0;
+                let mut retlen: u32 = 0;
+                if bun_windows_sys::externs::advapi32::GetTokenInformation(
+                    token,
+                    TOKEN_IS_APP_CONTAINER,
+                    (&mut value as *mut u32).cast(),
+                    4,
+                    &mut retlen,
+                ) != 0
+                {
+                    result = value != 0;
+                }
+                let _ = bun_windows_sys::externs::CloseHandle(token);
+            }
+        }
+        STATE.store(if result { 2 } else { 1 }, Ordering::Relaxed);
+        result
+    }
+
     pub fn symlink_or_junction(
         dest: &ZStr,
         target: &ZStr,
@@ -8842,13 +8909,14 @@ mod win_symlink_impl {
             Ok(()) => {}
             Err(e) => return Err(e),
         }
-        // A junction created by a sandboxed process (e.g. a Windows
-        // AppContainer) is silently rewritten by the kernel into an untrusted
-        // mount point that NOTHING can traverse, ever
-        // (ERROR_UNTRUSTED_MOUNT_POINT). Creation still reports success, so
-        // probe traversability and report EACCES rather than leaving a dead
-        // link behind for the consumer to trip over.
-        {
+        // A junction created by an AppContainer process is silently rewritten
+        // by the kernel into an untrusted mount point that traversal is
+        // denied on (ERROR_UNTRUSTED_MOUNT_POINT) on client Windows builds,
+        // while creation still reports success. Probe traversability and
+        // report EACCES rather than leaving a dead link behind for the
+        // consumer to trip over. Outside an AppContainer the rewrite cannot
+        // happen, so normal installs skip the probe entirely.
+        if in_app_container() {
             use bun_windows_sys::externs as k32;
             let mut w16 = bun_paths::w_path_buffer_pool::get();
             let wdest = bun_paths::string_paths::to_w_path_normalize_auto_extend(

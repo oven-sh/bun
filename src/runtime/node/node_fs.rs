@@ -7599,8 +7599,10 @@ impl NodeFS {
                     None,
                 )
             };
-            // Declared before `buf` so the fallback's borrow outlives it.
-            let mut fallback_buf;
+            // Heap-allocated lazily: the buffer is large and only needed on
+            // the denied-fallback path. Declared before `buf` so the borrow
+            // outlives it.
+            let mut fallback_buf: Option<Box<PathBuffer>> = None;
             let mut buf: &[u8] = if let Some(errno) = rc.errno() {
                 // A sandboxed process (e.g. a Windows AppContainer) is denied
                 // the DOS volume-name translation uv_fs_realpath relies on.
@@ -7614,10 +7616,10 @@ impl NodeFS {
                         ..Default::default()
                     });
                 }
-                fallback_buf = PathBuffer::uninit();
+                let fb = fallback_buf.insert(Box::new(PathBuffer::uninit()));
                 match sys::realpath_handle(
                     args.path.slice_z(&mut self.sync_error_buf),
-                    &mut fallback_buf,
+                    &mut **fb,
                 ) {
                     Ok(resolved) => resolved,
                     // Report the original realpath errno, not the fallback's.

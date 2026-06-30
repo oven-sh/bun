@@ -254,6 +254,13 @@ private:
              * surfaced separately (rejectUnauthorized above / tls.authorized). */
             httpResponseData->isAuthorized = success;
 
+            if (httpResponseData->hasNodeReceiveTimeouts) {
+                /* Like Node ('secureConnection' → parser.initialize →
+                 * last_message_start_), the first message's receive deadlines
+                 * start after the TLS handshake, not at TCP accept. */
+                httpResponseData->nodeMessageStartMs = nodeNowMs();
+            }
+
             /* Any connected socket should timeout until it has a request */
             ((HttpResponse<SSL> *) s)->resetTimeout();
 

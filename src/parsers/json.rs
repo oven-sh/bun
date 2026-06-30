@@ -1641,10 +1641,21 @@ mod tests {
             };
             assert_eq!(n.value(), want, "{doc}");
         }
-        // Still an error when no number follows the `-`.
-        for doc in ["[- ]", "[-\u{a0}true]", "[- , 1]", "[-]"] {
+        // Still an error when no number follows the `-`, reported at the
+        // token that was found rather than at the `-`.
+        for (doc, found) in [
+            ("[- ]", "\"]\""),
+            ("[-\u{a0}true]", "true"),
+            ("[- , 1]", "\",\""),
+            ("[-]", "\"]\""),
+        ] {
             let p = run(doc.as_bytes(), Which::TsConfig);
             assert!(p.errors > 0, "{doc}");
+            assert!(
+                p.first_msg.contains("Expected number") && p.first_msg.contains(found),
+                "{doc}: {}",
+                p.first_msg
+            );
         }
     }
 

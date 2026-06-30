@@ -18,8 +18,8 @@
 //! Indices are *streamed*, not materialized: [`StructuralIndex`] owns a small
 //! sliding window (a few thousand entries — callers only ever look one index
 //! ahead of and a few behind their cursor) that is refilled from the source as
-//! stage 2 advances, so nothing the indexer allocates is proportional to the
-//! document. The producer is one of:
+//! stage 2 advances. The only allocation proportional to the document is the
+//! per-64-byte-block dirty bitmap (`len / 512` bytes). The producer is one of:
 //!
 //!   - the Highway SIMD kernel (`highway_json_index_chunk` in
 //!     `src/jsc/bindings/highway_json.cpp`, simdjson-style: nibble-LUT

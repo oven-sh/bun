@@ -1165,16 +1165,20 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     fn parse_negative_number_at(&mut self, minus_pos: usize, loc: Loc) -> PResult<Expr> {
         self.token_start = minus_pos;
         let contents = self.contents;
-        let q = match crate::json::skip_ws_and_comments(contents, minus_pos + 1) {
-            Some(q) if matches!(contents[q], b'0'..=b'9' | b'.') => q,
-            _ => {
-                self.expected(self.cursor, "number");
-                return Err(self.unexpected(self.cursor));
-            }
+        let Some(q) = crate::json::skip_ws_and_comments(contents, minus_pos + 1) else {
+            // Nothing but whitespace and comments to the end of input.
+            self.cursor += 1;
+            self.expected(self.cursor, "number");
+            return Err(self.unexpected(self.cursor));
         };
-        // Advance onto the index whose run contains the digits.
+        // Advance onto the index whose run contains `q` first, so "Expected
+        // number" names the token that was found, not the `-`.
         while self.pos_at(self.cursor) < q && self.pos_at(self.cursor + 1) <= q {
             self.cursor += 1;
+        }
+        if !matches!(contents[q], b'0'..=b'9' | b'.') {
+            self.expected(self.cursor, "number");
+            return Err(self.unexpected(self.cursor));
         }
         self.token_start = q;
         let run = &contents[q..self.pos_at(self.cursor + 1)];

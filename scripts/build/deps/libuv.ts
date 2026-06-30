@@ -15,11 +15,11 @@ import type { Dependency } from "../source.ts";
 // ConPTY support in uv_spawn) plus AppContainer (lowbox) support: LOCAL\
 // internal pipe names, bounded+randomized access-denied retries, console read
 // cancellation without input injection (and exact-fill line-read fixes),
-// sandbox-rewritten junction readback, bind EACCES/EADDRINUSE
-// disambiguation, the NUL-device pipe fallback for ignored stdio, and
-// uv_pipe/realpath/stat error-reporting fixes, plus uv_os_is_app_container().
+// bind EACCES/EADDRINUSE disambiguation, the NUL-device pipe fallback for
+// ignored stdio, and uv_pipe/realpath/stat error-reporting fixes, plus
+// uv_os_is_app_container().
 // To bump upstream, rebase the `bun` branch and update this SHA.
-const LIBUV_COMMIT = "6d1dc151c3be77738438b8d9deee9d172aa1df41";
+const LIBUV_COMMIT = "a8a4150a3f7b1f557c5fb129ce499a2609f8ee7b";
 
 // prettier-ignore
 const SHARED = [

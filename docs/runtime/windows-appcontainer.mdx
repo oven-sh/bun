@@ -61,13 +61,12 @@ shipped apps cannot rely on.
 - **True symlinks are impossible** — a lowbox token cannot hold
   `SeCreateSymbolicLinkPrivilege`, so `fs.symlink` with `"file"`/`"dir"` fails
   with `EPERM`. Hardlinks work. **Junctions are created but quarantined** on
-  client Windows builds: the kernel rewrites them into _untrusted mount
-  points_ whose traversal is denied (reads through them report `ELOOP`), so
-  treat junction-based layouts as unavailable. (Some Windows Server builds
-  leave such junctions traversable.) `bun install` works with the default
-  (hoisted) linker; the isolated linker depends on junctions and fails
-  (`ELOOP`/`ENOENT` lines, varying with cache state) instead of producing
-  dead links.
+  client Windows builds: the kernel marks them as _untrusted mount points_
+  whose traversal is denied, so junction-based layouts are unsupported inside
+  the container — creation appears to succeed but the junction is unusable.
+  (Some Windows Server builds leave such junctions traversable.) Use
+  `bun install` with the default (hoisted) linker; the isolated linker
+  depends on junctions and is unsupported in sandboxes.
 - **`os.homedir()` points at an inaccessible directory.** `USERPROFILE` is
   inherited unchanged, but the profile directory carries no ACE for the
   container. Drive roots (`C:\`) are not listable either; Bun's resolver

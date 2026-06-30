@@ -569,27 +569,7 @@ pub use ntdll::NtClose;
 /// `user32` namespace (subset placeholder; fill in as needed).
 pub mod user32 {}
 /// `advapi32` namespace (subset placeholder; fill in as needed).
-pub mod advapi32 {
-    use super::*;
-    #[link(name = "advapi32")]
-    unsafe extern "system" {
-        pub fn OpenProcessToken(
-            ProcessHandle: HANDLE,
-            DesiredAccess: DWORD,
-            TokenHandle: *mut HANDLE,
-        ) -> BOOL;
-        /// No preconditions beyond a valid token handle.
-        pub fn IsTokenRestricted(TokenHandle: HANDLE) -> BOOL;
-        /// `TokenInformationClass` 29 = `TokenIsAppContainer` (a DWORD).
-        pub fn GetTokenInformation(
-            TokenHandle: HANDLE,
-            TokenInformationClass: u32,
-            TokenInformation: *mut core::ffi::c_void,
-            TokenInformationLength: DWORD,
-            ReturnLength: *mut DWORD,
-        ) -> BOOL;
-    }
-}
+pub mod advapi32 {}
 
 // `bun.windows.libuv` is exposed from the higher-tier `bun_sys::windows`
 // module, NOT here — `bun_windows_sys` is the leaf Win32 externs crate and
@@ -792,7 +772,6 @@ impl NTSTATUS {
     pub const FILE_TOO_LARGE: NTSTATUS = NTSTATUS(0xC000_0904);
     pub const NOT_SAME_DEVICE: NTSTATUS = NTSTATUS(0xC000_00D4);
     pub const DELETE_PENDING: NTSTATUS = NTSTATUS(0xC000_0056);
-    pub const UNTRUSTED_MOUNT_POINT: NTSTATUS = NTSTATUS(0xC000_04BC);
     /// `STATUS_FILE_DELETED` — an I/O request other than close was performed on
     /// a file after it was deleted (typically `NtCreateFile` against a name
     /// that has already been POSIX-delete-pended).
@@ -1140,7 +1119,6 @@ impl Win32Error {
     pub const DIRECTORY: Win32Error = Win32Error(267);
     pub const EA_TABLE_FULL: Win32Error = Win32Error(277);
     pub const DELETE_PENDING: Win32Error = Win32Error(303);
-    pub const UNTRUSTED_MOUNT_POINT: Win32Error = Win32Error(448);
     pub const ELEVATION_REQUIRED: Win32Error = Win32Error(740);
     pub const OPERATION_ABORTED: Win32Error = Win32Error(995);
     pub const NOACCESS: Win32Error = Win32Error(998);

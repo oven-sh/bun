@@ -692,13 +692,6 @@ impl SystemErrno {
             W::WSAEACCES => SystemErrno::EACCES,
             W::ELEVATION_REQUIRED => SystemErrno::EACCES,
             W::CANT_ACCESS_FILE => SystemErrno::EACCES,
-            // The path cannot be traversed because it contains an untrusted
-            // mount point: junctions created by a sandboxed process are
-            // rewritten to this state by the kernel, and client Windows
-            // builds deny traversal on them. ELOOP (an
-            // unresolvable link) rather than EACCES, which the installer
-            // treats as a benign rename collision on Windows.
-            W::UNTRUSTED_MOUNT_POINT => SystemErrno::ELOOP,
             W::ADDRESS_ALREADY_ASSOCIATED => SystemErrno::EADDRINUSE,
             W::WSAEADDRINUSE => SystemErrno::EADDRINUSE,
             W::WSAEADDRNOTAVAIL => SystemErrno::EADDRNOTAVAIL,
@@ -909,11 +902,6 @@ pub mod windows {
             NTSTATUS::FILE_TOO_LARGE => E::_2BIG,
             NTSTATUS::NOT_SAME_DEVICE => E::XDEV,
             NTSTATUS::DELETE_PENDING => E::BUSY,
-            // Junctions created by a sandboxed process are quarantined by the
-            // kernel; traversal is denied on client Windows builds. ELOOP (an
-            // unresolvable link), not EACCES: permission-style errors are
-            // treated as benign rename collisions by the installer.
-            NTSTATUS::UNTRUSTED_MOUNT_POINT => E::LOOP,
             NTSTATUS::SHARING_VIOLATION => E::BUSY,
             NTSTATUS::OBJECT_NAME_INVALID => E::INVAL,
             NTSTATUS::CANNOT_DELETE => E::PERM,

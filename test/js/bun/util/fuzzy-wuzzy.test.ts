@@ -100,6 +100,10 @@ const banned = [
   "close",
   "connect",
   "listen",
+  // Readable#pipe() with no destination throws, but first registers an 'end'
+  // listener that later throws an uncatchable TypeError (dest.end() with dest
+  // undefined) once process.stdin ends. Node leaves the same listener behind.
+  "pipe",
   "_start",
   "wait",
   "wait",

@@ -264,9 +264,9 @@ impl Default for EntryCache {
 // `cache` / `need_stat` are lazily populated by `Entry::kind` /
 // `Entry::symlink` while callers hold a shared
 // `&Entry`. `EntryCache` is `Copy`, so `Cell` gives us safe
-// `.get()/.set()` through `&self` — `RealFS.entries_mutex` serializes access
-// across threads (the `unsafe impl Sync for Entry` below opts back in under
-// that external-locking discipline).
+// `.get()/.set()` through `&self` — the per-entry `mutex` serializes every
+// rewrite of these `Cell`s across threads (the `unsafe impl Sync for Entry`
+// below opts back in under that external-locking discipline).
 pub struct Entry {
     pub cache: core::cell::Cell<EntryCache>,
     pub dir: &'static [u8],
@@ -298,7 +298,7 @@ impl Entry {
     }
 
     /// Update a single cache field. Read-modify-write is fine: callers hold
-    /// `RealFS.entries_mutex` so no torn writes; `EntryCache` is `Copy`.
+    /// the per-entry `mutex` so no torn writes; `EntryCache` is `Copy`.
     #[inline(always)]
     pub fn set_cache_fd(&self, fd: Fd) {
         let mut c = self.cache.get();
@@ -351,26 +351,32 @@ impl Entry {
     ///
     /// # Safety
     /// `fs` must point to a live `EntryKindResolver` (the process-global
-    /// `RealFS` singleton in practice) and the caller must hold
-    /// `RealFS.entries_mutex` so the `&mut *fs` reborrow is exclusive for the
-    /// duration of the call.
-    // `Entry` lives in the EntryStore BSSMap singleton; all access is
-    // serialized through `RealFS.entries_mutex`. `fs` is `*mut` so the
-    // call site does not require a second exclusive `&mut RealFS` borrow while a
-    // `&mut Entry` (borrowed out of `RealFS.entries`) is live. Mutation of the
-    // lazily-populated `need_stat` / `cache` goes through `Cell`. Generic over
-    // `R: EntryKindResolver` so this block is independent of which `RealFS`
-    // copy `fs` points at (see file-top comment).
+    /// `RealFS` singleton in practice). `resolve_kind` must not re-enter
+    /// this entry's `mutex` (it only performs syscalls and string interning).
+    // `Entry` lives in the EntryStore BSSMap singleton. The lazy-stat rewrite
+    // of `need_stat` / `cache` is serialized on the per-entry `mutex` here
+    // (double-checked: the cached fast path stays lock-free). `fs` is `*mut`
+    // so the call site does not require a second exclusive `&mut RealFS`
+    // borrow while a `&mut Entry` (borrowed out of `RealFS.entries`) is live.
+    // Generic over `R: EntryKindResolver` so this block is independent of
+    // which `RealFS` copy `fs` points at (see file-top comment).
     pub unsafe fn kind<R: EntryKindResolver>(&self, fs: *mut R, store_fd: bool) -> EntryKind {
         if self.need_stat.get() {
-            self.need_stat.set(false);
-            // This is technically incorrect, but we are choosing not to handle errors here
-            // SAFETY: `fs` points at the process-global RealFS singleton; caller holds
-            // `entries_mutex` so the `&mut` is exclusive for the duration of this call.
-            match unsafe { &mut *fs }.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd)
-            {
-                Ok(c) => self.cache.set(c),
-                Err(_) => return self.cache().kind,
+            let _guard = self.mutex.lock_guard();
+            if self.need_stat.get() {
+                self.need_stat.set(false);
+                // This is technically incorrect, but we are choosing not to handle errors here
+                // SAFETY: `fs` points at the process-global RealFS singleton; `resolve_kind`
+                // only does syscalls + string interning, so the short `&mut` cannot alias.
+                match unsafe { &mut *fs }.resolve_kind(
+                    self.dir,
+                    self.base(),
+                    self.cache().fd,
+                    store_fd,
+                ) {
+                    Ok(c) => self.cache.set(c),
+                    Err(_) => return self.cache().kind,
+                }
             }
         }
         self.cache().kind
@@ -379,23 +385,28 @@ impl Entry {
     ///
     /// # Safety
     /// `fs` must point to a live `EntryKindResolver` (the process-global
-    /// `RealFS` singleton in practice) and the caller must hold
-    /// `RealFS.entries_mutex` so the `&mut *fs` reborrow is exclusive for the
-    /// duration of the call.
+    /// `RealFS` singleton in practice). See [`Entry::kind`].
     pub unsafe fn symlink<R: EntryKindResolver>(
         &self,
         fs: *mut R,
         store_fd: bool,
     ) -> &'static [u8] {
         if self.need_stat.get() {
-            self.need_stat.set(false);
-            // This error can happen if the file was deleted between the time the directory
-            // was scanned and the time it was read
-            // SAFETY: see the note on `Entry::kind`.
-            match unsafe { &mut *fs }.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd)
-            {
-                Ok(c) => self.cache.set(c),
-                Err(_) => return b"",
+            let _guard = self.mutex.lock_guard();
+            if self.need_stat.get() {
+                self.need_stat.set(false);
+                // This error can happen if the file was deleted between the time the directory
+                // was scanned and the time it was read
+                // SAFETY: see the note on `Entry::kind`.
+                match unsafe { &mut *fs }.resolve_kind(
+                    self.dir,
+                    self.base(),
+                    self.cache().fd,
+                    store_fd,
+                ) {
+                    Ok(c) => self.cache.set(c),
+                    Err(_) => return b"",
+                }
             }
         }
         self.cache().symlink.as_bytes()
@@ -447,7 +458,7 @@ pub struct DifferentCase<'a> {
 // `entry` is a RAW `*mut Entry`. A safe
 // `&self → &mut Entry` accessor would let two `get()` calls produce coexisting
 // aliased `&mut Entry` (PORTING.md §Forbidden). Callers `unsafe { &mut *entry }`
-// at each write site under `entries_mutex`.
+// at each write site under the per-entry `Entry.mutex`.
 pub struct EntryLookup<'a> {
     pub entry: *mut Entry,
     pub diff_case: Option<DifferentCase<'static>>,
@@ -475,8 +486,8 @@ impl<'a> EntryLookup<'a> {
     // (zero callers). `Entry`'s only mutable state (`cache`) is `Cell`-backed,
     // so all mutation goes through `entry().set_cache*()` on a shared borrow;
     // no `&mut Entry` escape hatch is needed. Write sites that bypass the
-    // accessor go through the raw `self.entry` field directly under
-    // `entries_mutex` (see struct doc above).
+    // accessor go through the raw `self.entry` field directly under the
+    // per-entry `Entry.mutex` (see struct doc above).
 }
 
 /// `DirEntry` companion items: the entry map, the global entry store, and the
@@ -1657,13 +1668,14 @@ impl RealFS {
         };
 
         // if we get this far, it's a real directory, so we can just store the dir name.
-        let dir: &'static [u8] = if !had_handle {
-            if let Some(existing) = in_place {
-                // SAFETY: in_place points to BSSMap-owned DirEntry
-                unsafe { (*existing).dir }
-            } else {
-                DirnameStore::instance().append(dir_maybe_trail_slash)?
-            }
+        // An in-place refresh always keeps the slot's existing interned name: callers
+        // spell the same directory with and without a trailing slash, and rewriting
+        // `dir` to the other spelling races every unlocked `Entry::dir()` reader.
+        let dir: &'static [u8] = if let Some(existing) = in_place {
+            // SAFETY: in_place points to BSSMap-owned DirEntry
+            unsafe { (*existing).dir }
+        } else if !had_handle {
+            DirnameStore::instance().append(dir_maybe_trail_slash)?
         } else {
             // Intern into DirnameStore so the cache entry never dangles — `append` is a
             // bump-pointer copy and dedups against the singleton, so cost is bounded.

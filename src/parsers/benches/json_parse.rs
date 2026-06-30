@@ -87,12 +87,12 @@ fn bench_json(c: &mut Criterion) {
         // document's `JsonTape` (returned in the result and dropped at the
         // end of every iteration) owns everything the parse allocates, so
         // this measures parse + free of the whole document.
-        group.bench_function(BenchmarkId::new("parse_immutable", &name), |b| {
+        group.bench_function(BenchmarkId::new("parse_rows", &name), |b| {
             b.iter(|| {
                 let _store_scope = js_ast::StoreResetGuard::new();
                 let mut log = js_ast::Log::init();
                 let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
-                let e = json::parse_utf8_registry(&source, &mut log).expect("parse failed");
+                let e = json::ParsedJson::parse_npm_manifest(&source, &mut log).expect("parse failed");
                 std::hint::black_box(&e);
             })
         });

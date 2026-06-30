@@ -1885,13 +1885,13 @@ fn parse_data_loader<'a>(
             // These files implicitly become JSONC files, which aligns with the behavior of text editors.
             // The whole document (its row tape included) lives in `arena`,
             // which owns the returned AST; nothing depends on `Drop`.
-            match bun_parsers::json::parse_ts_config_immutable_in(source, log, arena) {
+            match bun_parsers::json::parse_jsonc_into_arena(source, log, arena) {
                 Ok(e) => e,
                 Err(_) => return None,
             }
         }
         options::Loader::Json => {
-            match bun_parsers::json::parse_utf8_immutable_in(source, log, arena) {
+            match bun_parsers::json::parse_json_into_arena(source, log, arena) {
                 Ok(e) => e,
                 Err(_) => return None,
             }

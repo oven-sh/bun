@@ -62,7 +62,7 @@ impl ExprStr for Expr {
 /// `"key": value` rows of a JSON object expression, yielded as
 /// `(key, value string, key location)` so the property loops below accept
 /// both shapes `parse_with_json` receives: the immutable `EObjectJSON`
-/// produced by `parse_package_json_utf8_immutable`, and the classic `EObject`
+/// produced by `ParsedJson::parse_package_json`, and the classic `EObject`
 /// of cached/edited documents (`WorkspacePackageJSONCache`).
 ///
 /// A non-string value yields `None`. Classic UTF-16 strings are transcoded
@@ -1703,7 +1703,7 @@ impl Package<u64> {
         initialize_store();
         // `parsed` owns the tape every `Expr` reached from `parsed.root`
         // borrows, so it must stay alive until `parse_with_json` returns.
-        let parsed = match crate::bun_json::parse_package_json_utf8_immutable(source, log) {
+        let parsed = match crate::bun_json::ParsedJson::parse_package_json(source, log) {
             Ok(p) => p,
             Err(err) => {
                 let _ = log.print(std::ptr::from_mut(Output::error_writer()));

@@ -15,7 +15,7 @@ use bun_install::{Dependency, Lockfile, PackageManager};
 // The `expr` handed to `parse_count` / `parse_append` may be either the
 // classic `EObject` tree (yarn/pnpm import, cached workspace package.json)
 // or the immutable `EObjectJSON` document produced by
-// `parse_package_json_utf8_immutable`; both are handled below.
+// `ParsedJson::parse_package_json`; both are handled below.
 use crate::bun_json::{E, Expr, ExprData};
 use crate::lockfile_real::package::value_loc_of;
 use bun_ast::{Log, Source};

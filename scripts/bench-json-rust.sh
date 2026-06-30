@@ -30,31 +30,32 @@ CXX=${CXX:-c++}
 # The download and its .o are keyed on the version so bumping it rebuilds.
 SIMDUTF_VERSION=v7.3.6
 SIMDUTF_STAMP="$SUP/.simdutf-$SIMDUTF_VERSION"
-if [ ! -f "$SIMDUTF_STAMP" ]; then
+if [ ! -f "$SIMDUTF_STAMP" ] || [ ! -f "$SUP/simdutf.cpp" ]; then
   curl -fsSL -o "$SUP/simdutf.cpp" "https://github.com/simdutf/simdutf/releases/download/$SIMDUTF_VERSION/simdutf.cpp"
   curl -fsSL -o "$SUP/simdutf.h" "https://github.com/simdutf/simdutf/releases/download/$SIMDUTF_VERSION/simdutf.h"
-  rm -f "$SUP"/simdutf.o "$SUP"/.simdutf-*
+  # New header: everything compiled against the old one must rebuild.
+  rm -f "$SUP"/simdutf*.o "$SUP"/.simdutf-*
   touch "$SIMDUTF_STAMP"
 fi
 printf '#pragma once\n#include "simdutf.h"\n' > "$SUP/wtf/SIMDUTF.h"
 
-build() { # build <out.o> <cmd...>
+# build <out.o> <cmd... source>: compile if the object is missing or older
+# than its source (the last argument).
+build() {
   local out=$1
   shift
-  if [ ! -f "$out" ] || [ "$1" = "-f" ]; then "$@" -o "$out"; fi
+  if [ ! -f "$out" ] || [ "${*: -1}" -nt "$out" ]; then "$@" -o "$out"; fi
 }
 MI_FLAGS=(-O2 -fPIC -ftls-model=initial-exec -DNDEBUG -D_GNU_SOURCE -DMI_STATIC_LIB
   -DMI_SKIP_COLLECT_ON_EXIT=1 -DMI_DEFAULT_ALLOW_THP=0 -DMI_NO_SET_VMA_NAME=1)
 build "$SUP/mimalloc.o" $CC "${MI_FLAGS[@]}" -Ivendor/mimalloc/include -c vendor/mimalloc/src/static.c
 build "$SUP/simdutf.o" $CXX -O3 -fPIC -std=c++20 -I"$SUP" -c "$SUP/simdutf.cpp"
-# Always rebuild the tiny shim TU; the build() cache would miss edits to it.
-$CXX -O3 -fPIC -std=c++20 -I"$SUP" -c src/parsers/benches/support/simdutf_shim.cpp -o "$SUP/simdutf_shim.o"
+build "$SUP/simdutf_shim.o" $CXX -O3 -fPIC -std=c++20 -I"$SUP" -c src/parsers/benches/support/simdutf_shim.cpp
 for f in abort targets per_target print timer nanobenchmark aligned_allocator; do
   build "$SUP/hwy_$f.o" $CXX -O3 -fPIC -std=c++17 -Ivendor/highway -c "vendor/highway/hwy/$f.cc"
 done
 if [ -f src/jsc/bindings/highway_json.cpp ]; then
-  # Always rebuild the kernel under iteration; it's one small TU.
-  $CXX -O3 -fPIC -std=c++17 -Ivendor/highway -Isrc/jsc/bindings -c src/jsc/bindings/highway_json.cpp -o "$SUP/highway_json.o"
+  build "$SUP/highway_json.o" $CXX -O3 -fPIC -std=c++17 -Ivendor/highway -Isrc/jsc/bindings -c src/jsc/bindings/highway_json.cpp
 fi
 rm -f "$SUP/libbun_bench_cdeps.a"
 ar rcs "$SUP/libbun_bench_cdeps.a" "$SUP"/*.o
@@ -67,13 +68,10 @@ ranlib "$SUP/libbun_bench_cdeps.a"
 export MIMALLOC_PURGE_DELAY=${MIMALLOC_PURGE_DELAY:-2000}
 export BUN_CODEGEN_DIR=${BUN_CODEGEN_DIR:-$PWD/build/debug/codegen}
 export BUN_JSON_BENCH_FIXTURES=${BUN_JSON_BENCH_FIXTURES:-$PWD/bench/json-corpus}
-# The C++ runtime is -lc++ on Darwin and -lstdc++ everywhere else.
-if [ "$(uname -s)" = "Darwin" ]; then
-  CXX_RUNTIME_LINK="-Clink-arg=-lc++"
-else
-  CXX_RUNTIME_LINK="-Clink-arg=-lstdc++ -Clink-arg=-lm -Clink-arg=-ldl -Clink-arg=-lpthread -Clink-arg=-lc"
-fi
-export RUSTFLAGS="${RUSTFLAGS:-} -Clink-arg=$PWD/$SUP/libbun_bench_cdeps.a $CXX_RUNTIME_LINK"
+# Same link line everywhere; only the C++ runtime library name differs.
+CXXLIB=stdc++
+[ "$(uname -s)" = Darwin ] && CXXLIB=c++
+export RUSTFLAGS="${RUSTFLAGS:-} -Clink-arg=$PWD/$SUP/libbun_bench_cdeps.a -Clink-arg=-l$CXXLIB -Clink-arg=-lm -Clink-arg=-ldl -Clink-arg=-lpthread -Clink-arg=-lc"
 
 # `--test`: run the crate's unit tests (they need the same native archive).
 if [ "${1:-}" = "--test" ]; then

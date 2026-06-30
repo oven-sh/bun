@@ -85,7 +85,7 @@ pub(crate) fn get_candidate_package_patterns<'a>(
             // `parsed` owns the row tape everything below borrows; it (and
             // `json_source`) must stay alive until the patterns are copied
             // into `out_patterns`.
-            let parsed = json::parse_package_json_utf8_immutable(&json_source, log)?;
+            let parsed = json::ParsedJson::parse_package_json(&json_source, log)?;
             let json = parsed.root;
 
             let Some(prop) = json.as_property(b"workspaces") else {

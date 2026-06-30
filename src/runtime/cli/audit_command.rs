@@ -143,7 +143,7 @@ impl AuditCommand {
                     bun_ast::Source::init_path_string(b"audit-response.json", &response_text[..]);
                 let mut log = bun_ast::Log::init();
 
-                let parsed = match bun_json::parse_utf8_immutable(&source, &mut log) {
+                let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
                     Ok(e) => e,
                     Err(_) => {
                         bun_core::pretty_errorln!(
@@ -731,7 +731,7 @@ fn print_enhanced_audit_report(
 
     // `parsed` owns the row tape every slice below borrows; everything kept
     // past this function is copied into `Box<[u8]>` by `parse_vulnerability`.
-    let parsed = match bun_json::parse_utf8_immutable(&source, &mut log) {
+    let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
         Ok(e) => e,
         Err(_) => {
             let _ = Output::writer().write_all(response_text);

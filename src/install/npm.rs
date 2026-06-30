@@ -193,7 +193,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     // always UTF-8, so it is never allocated from.
     let bump = bun_alloc::Arena::borrowing_default();
     // `parsed` owns the row tape `json` borrows; both must outlive `username`.
-    let parsed = match JSON::parse_utf8_immutable(&source, &mut log) {
+    let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
         Ok(j) => j,
         Err(e) if e == err!("OutOfMemory") => return Err(WhoamiError::OutOfMemory),
         Err(e) => {
@@ -228,7 +228,7 @@ pub fn response_error<const OTP_RESPONSE: bool>(
         let bump = bun_alloc::Arena::borrowing_default();
         // `parsed` owns the row tape its root borrows; `error` is copied out
         // below while both are still alive.
-        let parsed = match JSON::parse_utf8_immutable(&source, &mut log) {
+        let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
             Ok(j) => j,
             Err(e) if e == err!("OutOfMemory") => return Err(AllocError),
             Err(_) => break 'message None,
@@ -1999,7 +1999,7 @@ impl PackageManifest {
         // every manifest parse.
         // `parsed` owns the document's row tape; `json` (and every `Expr`
         // reached through it) borrows the tape and `source`.
-        let parsed = match JSON::parse_utf8_registry(&source, log) {
+        let parsed = match JSON::ParsedJson::parse_npm_manifest(&source, log) {
             Ok(j) => j,
             Err(_) => {
                 let mut cloned_log = bun_ast::Log::init();

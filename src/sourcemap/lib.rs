@@ -946,7 +946,7 @@ pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> Result<ParseUrl, b
     // Everything reached through `json` borrows `parsed` (the document's row
     // tape) and `json_src`; both stay alive to the end of this function, and
     // every string the map keeps is copied into owned storage below.
-    let parsed = match bun_parsers::json::parse_utf8_immutable(&json_src, &mut log) {
+    let parsed = match bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log) {
         Ok(p) => p,
         Err(_) => return Err(bun_core::err!("InvalidJSON")),
     };

@@ -1554,12 +1554,14 @@ impl<'a> SecurityScanSubprocess<'a> {
             bun_ast::Source::init_path_string("ipc-message.json", self.ipc_data.as_slice());
 
         let mut temp_log = bun_ast::Log::init();
+        // Only `as_string(&bump)` reads this, and row-AST strings are
+        // always UTF-8, so it is never allocated from.
         let bump = bun_alloc::Arena::borrowing_default();
 
         // `parsed` owns the row tape `json_expr` borrows; both (and
         // `self.ipc_data`) outlive every advisory string, which
         // `parse_security_advisories_from_expr` copies into `Box<[u8]>`.
-        let parsed = match crate::bun_json::parse_utf8_immutable(&json_source, &mut temp_log) {
+        let parsed = match crate::bun_json::ParsedJson::parse_json(&json_source, &mut temp_log) {
             Ok(e) => e,
             Err(e) => {
                 Output::err_generic("Security scanner sent invalid JSON: {}", (e.name(),));

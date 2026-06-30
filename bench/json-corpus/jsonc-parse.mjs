@@ -37,7 +37,7 @@ console.log(
   "bytes".padStart(10),
   "JSONC med".padStart(12),
   "JSON.parse".padStart(12),
-  "JSONC MB/s".padStart(11),
+  "JSONC MiB/s".padStart(11),
 );
 for (const f of files) {
   const text = readFileSync(join(dir, f), "utf8");

@@ -1655,7 +1655,7 @@ pub fn init(
                     // `parsed` owns the row tape `json` borrows; it lives to
                     // the end of this loop body, past `process_names_array`.
                     let parsed =
-                        crate::bun_json::parse_package_json_utf8_immutable(&json_source, unsafe {
+                        crate::bun_json::ParsedJson::parse_package_json(&json_source, unsafe {
                             &mut *ctx.log
                         })?;
                     let json = parsed.root;

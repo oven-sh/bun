@@ -10,7 +10,7 @@
 //!      stage 1 proved they contain no escape and no control character
 //!
 //! That row AST is the only thing the parser builds. Entry points either
-//! return it as a [`ParsedJson`] (`*_immutable`, registry, JSONC) or
+//! return it as a [`ParsedJson`] (the `ParsedJson::parse_*` constructors) or
 //! deep-convert it into the classic `E::Object` / `E::Array` tree at their
 //! boundary ([`materialize`]) for the callers that mutate, print, or splice
 //! the result into a JavaScript AST.
@@ -181,6 +181,14 @@ fn parse_impl_in(
     tape_alloc: E::TapeAlloc,
 ) -> Result<ParseOutput, bun_core::Error> {
     let contents: &[u8] = &source.contents;
+
+    // Duplicate keys in a dependency's own files (any JSON/JSONC whose path
+    // is under node_modules: package.json, tsconfig, imported .json) are not
+    // actionable: skip the warnings, and with them the per-key tracking.
+    let mut opts = opts;
+    if opts.json_warn_duplicate_keys && source.path.is_node_module() {
+        opts.json_warn_duplicate_keys = false;
+    }
 
     let mut sidx = StructuralIndex::new(contents);
     // A construction-time index error (the document is too large to
@@ -408,77 +416,79 @@ fn parse_classic(
     Ok(out)
 }
 
-/// Parse a JSON document fetched from a registry/HTTP API (npm package
-/// manifests): strict JSON, strings forced to UTF-8, and **no duplicate-key
-/// warnings** — these documents are machine-generated, the warnings are never
-/// surfaced to anyone, and computing them costs a measurable fraction of
-/// every manifest parse. Containers are the compact read-only immutable AST
-/// (`E::ObjectJSON` / `E::ArrayJSON` — see [`ParsedJson`]).
-pub fn parse_utf8_registry(
-    source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
-) -> Result<ParsedJson, bun_core::Error> {
-    const REGISTRY_OPTS: JSONOptions = JSONOptions {
-        is_json: true,
-        json_warn_duplicate_keys: false,
-        ..JSONOptions::DEFAULT
-    };
-    parse_immutable(source, log, REGISTRY_OPTS)
+/// The document-as-rows entry points: parse a dialect, get the document
+/// back as a [`ParsedJson`] (the root rows plus the tape that owns them).
+impl ParsedJson {
+    /// Strict JSON.
+    pub fn parse_json(
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+    ) -> Result<ParsedJson, bun_core::Error> {
+        parse_to_rows(source, log, JSON_OPTS)
+    }
+
+    /// JSONC (comments and trailing commas): tsconfig, `.jsonc` files,
+    /// `Bun.JSONC.parse`.
+    pub fn parse_jsonc(
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+    ) -> Result<ParsedJson, bun_core::Error> {
+        parse_to_rows(source, log, TSCONFIG_OPTS)
+    }
+
+    /// package.json (comments & trailing commas allowed).
+    pub fn parse_package_json(
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+    ) -> Result<ParsedJson, bun_core::Error> {
+        parse_to_rows(source, log, PACKAGE_JSON_OPTS)
+    }
+
+    /// A document fetched from an npm registry (package manifests,
+    /// packuments): strict JSON with **no duplicate-key warnings** — these
+    /// documents are machine-generated, the warnings are never surfaced to
+    /// anyone, and computing them costs a measurable fraction of every
+    /// manifest parse.
+    pub fn parse_npm_manifest(
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+    ) -> Result<ParsedJson, bun_core::Error> {
+        const MANIFEST_OPTS: JSONOptions = JSONOptions {
+            is_json: true,
+            json_warn_duplicate_keys: false,
+            ..JSONOptions::DEFAULT
+        };
+        parse_to_rows(source, log, MANIFEST_OPTS)
+    }
 }
 
-/// package.json (comments & trailing commas allowed), as the document's
-/// rows. See [`ParsedJson`].
-pub fn parse_package_json_utf8_immutable(
-    source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
-) -> Result<ParsedJson, bun_core::Error> {
-    parse_immutable(source, log, PACKAGE_JSON_OPTS)
-}
-
-/// Strict JSON, as the document's rows. See [`ParsedJson`].
-pub fn parse_utf8_immutable(
-    source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
-) -> Result<ParsedJson, bun_core::Error> {
-    parse_immutable(source, log, JSON_OPTS)
-}
-
-/// The tsconfig/`.jsonc` dialect (comments, trailing commas), as the
-/// document's rows. See [`ParsedJson`].
-pub fn parse_ts_config_immutable(
-    source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
-) -> Result<ParsedJson, bun_core::Error> {
-    parse_immutable(source, log, TSCONFIG_OPTS)
-}
-
-/// Strict JSON, as the document's rows, with the whole document — its
-/// [`E::JsonTape`] included — allocated in `arena`. For callers whose AST
-/// lifetime *is* an arena and that never run `Drop` (the bundler / module
-/// loader): nothing is returned to free, the arena's bulk free is the free,
-/// and everything reachable from the root is valid until the arena resets.
-pub fn parse_utf8_immutable_in(
-    source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
-    arena: &Bump,
-) -> Result<Expr, bun_core::Error> {
-    parse_immutable_in(source, log, JSON_OPTS, arena)
-}
-
-/// [`parse_utf8_immutable_in`] for the tsconfig/`.jsonc` dialect (comments,
-/// trailing commas).
-pub fn parse_ts_config_immutable_in(
+/// [`ParsedJson::parse_json`], with the whole document — its [`E::JsonTape`]
+/// included — allocated in `arena`. For callers whose AST lifetime *is* an
+/// arena and that never run `Drop` (the bundler / module loader): nothing is
+/// returned to free, the arena's bulk free is the free, and everything
+/// reachable from the root is valid until the arena resets.
+pub fn parse_json_into_arena(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     arena: &Bump,
 ) -> Result<Expr, bun_core::Error> {
-    parse_immutable_in(source, log, TSCONFIG_OPTS, arena)
+    parse_to_rows_in(source, log, JSON_OPTS, arena)
 }
 
-/// Shared driver for the immutable-AST entry points. No arena: the document's
+/// [`parse_json_into_arena`] for the JSONC dialect (comments, trailing
+/// commas).
+pub fn parse_jsonc_into_arena(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    arena: &Bump,
+) -> Result<Expr, bun_core::Error> {
+    parse_to_rows_in(source, log, TSCONFIG_OPTS, arena)
+}
+
+/// Shared driver for the [`ParsedJson::parse_*`] entry points. No arena: the document's
 /// [`E::JsonTape`] owns everything the parse allocates and is returned to
 /// the caller.
-fn parse_immutable(
+fn parse_to_rows(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     opts: JSONOptions,
@@ -504,8 +514,8 @@ fn parse_immutable(
     })
 }
 
-/// [`parse_immutable`], with the tape (and every buffer in it) inside `arena`.
-fn parse_immutable_in(
+/// [`parse_to_rows`], with the tape (and every buffer in it) inside `arena`.
+fn parse_to_rows_in(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     opts: JSONOptions,
@@ -513,7 +523,7 @@ fn parse_immutable_in(
 ) -> Result<Expr, bun_core::Error> {
     let tape_alloc = E::TapeAlloc::Arena(core::ptr::NonNull::from(arena));
     if source.contents.is_empty() {
-        // See `parse_immutable`: an empty document is an empty object.
+        // See `parse_to_rows`: an empty document is an empty object.
         let tape = arena.alloc(E::JsonTape::empty_in(tape_alloc));
         return Ok(Expr::init(
             E::ObjectJSON::new(tape, 0, 0, true, bun_ast::Loc::EMPTY),
@@ -664,17 +674,6 @@ pub fn parse_ts_config<const FORCE_UTF8: bool>(
         return Ok(empty_object_expr());
     }
     Ok(parse_classic(source, log, bump, TSCONFIG_OPTS, false)?.root)
-}
-
-/// `Bun.JSONC.parse`: the same dialect as tsconfig (comments, trailing
-/// commas), but producing the compact JSON-only containers
-/// (`E::ObjectJSON` — see [`ParsedJson`]). The only
-/// consumer is `Expr::to_js`, which understands them.
-pub fn parse_jsonc(
-    source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
-) -> Result<ParsedJson, bun_core::Error> {
-    parse_immutable(source, log, TSCONFIG_OPTS)
 }
 
 /// `.env` / `--define` values: JSON if it looks like JSON, `true/false/null/
@@ -873,7 +872,7 @@ impl<'a> PackageJSONVersionChecker<'a> {
     /// Parse the document and record its first top-level `name` and
     /// `version` properties whose values are strings.
     pub fn parse(&mut self) -> Result<(), bun_core::Error> {
-        let parsed = parse_immutable(self.source, self.log, PKG_JSON_CHECKER_OPTS)?;
+        let parsed = parse_to_rows(self.source, self.log, PKG_JSON_CHECKER_OPTS)?;
         let js_ast::expr::Data::EObjectJSON(obj) = &parsed.root.data else {
             return Ok(());
         };
@@ -1470,11 +1469,11 @@ mod tests {
             Which::TsConfig => parse_ts_config::<true>(&source, &mut log, &bump),
             Which::Env => parse_env_json(&source, &mut log, &bump),
             Which::PackageJson => parse_package_json_utf8(&source, &mut log, &bump),
-            Which::Jsonc => parse_jsonc(&source, &mut log).map(|p| {
+            Which::Jsonc => ParsedJson::parse_jsonc(&source, &mut log).map(|p| {
                 tape = p.tape;
                 p.root
             }),
-            Which::Immutable => parse_immutable(
+            Which::Immutable => parse_to_rows(
                 &source,
                 &mut log,
                 JSONOptions {
@@ -1863,6 +1862,26 @@ mod tests {
         let many: String = (0..200).map(|i| format!("\"k{i}\":{i},")).collect();
         let p = run(format!("{{{many}\"k7\":1}}").as_bytes(), Which::Utf8);
         assert_eq!(p.warnings, 1);
+    }
+
+    #[test]
+    fn duplicate_key_warnings_skipped_under_node_modules() {
+        // A dependency's own package.json / tsconfig: the warning is not
+        // actionable, so it is suppressed (and the key tracking skipped).
+        bun_ast::initialize_store_or_reset();
+        let doc = br#"{"a":1,"b":2,"a":3}"#;
+        let sep = std::path::MAIN_SEPARATOR;
+        for (path, warnings) in [
+            (format!("{sep}app{sep}node_modules{sep}dep{sep}package.json"), 0usize),
+            (format!("{sep}app{sep}package.json"), 1),
+        ] {
+            let _scope = js_ast::StoreResetGuard::new();
+            let mut log = bun_ast::Log::init();
+            let source = bun_ast::Source::init_path_string(path.as_str(), &doc[..]);
+            let parsed = ParsedJson::parse_package_json(&source, &mut log).unwrap();
+            assert!(matches!(parsed.root.data, js_ast::expr::Data::EObjectJSON(_)));
+            assert_eq!(log.warnings as usize, warnings, "{path}");
+        }
     }
 
     /// One parse, two output shapes: the compact row containers

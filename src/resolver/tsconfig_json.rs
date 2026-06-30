@@ -62,11 +62,11 @@ impl JsonCache {
         Ok(result)
     }
 
-    /// Immutable-AST twin of [`Self::parse`]: no arena — the returned
+    /// Row-AST twin of [`Self::parse`]: no arena — the returned
     /// [`json_parser::ParsedJson`] owns the document's row tape, and
     /// everything reachable from its `root` borrows that tape and `source`.
     #[inline]
-    fn parse_immutable(
+    fn parse_rows(
         &mut self,
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
@@ -89,7 +89,7 @@ impl JsonCache {
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
     ) -> Result<Option<json_parser::ParsedJson>, bun_core::Error> {
-        self.parse_immutable(log, source, json_parser::parse_ts_config_immutable)
+        self.parse_rows(log, source, json_parser::ParsedJson::parse_jsonc)
     }
 
     /// Parses package.json source (comments and trailing commas allowed,
@@ -101,7 +101,7 @@ impl JsonCache {
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
     ) -> Result<Option<json_parser::ParsedJson>, bun_core::Error> {
-        self.parse_immutable(log, source, json_parser::parse_package_json_utf8_immutable)
+        self.parse_rows(log, source, json_parser::ParsedJson::parse_package_json)
     }
 
     /// Parses JSON source into the cache arena using `mode` to pick strict

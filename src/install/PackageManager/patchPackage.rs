@@ -167,7 +167,7 @@ pub fn do_patch_commit(
                 // `parsed` owns the tape `json` (and the `version` slice)
                 // borrow; keep it alive across `parse_with_json`.
                 let parsed =
-                    match JSON::parse_package_json_utf8_immutable(&package_json_source, log) {
+                    match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
                         Ok(p) => p,
                         Err(err) => {
                             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
@@ -781,7 +781,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
                 // `parsed` owns the tape `json` (and the `version` slice)
                 // borrow; keep it alive across `parse_with_json`.
                 let parsed =
-                    match JSON::parse_package_json_utf8_immutable(&package_json_source, log) {
+                    match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
                         Ok(p) => p,
                         Err(err) => {
                             let _ = log.print(std::ptr::from_mut(Output::error_writer()));

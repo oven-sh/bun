@@ -18,7 +18,7 @@ use super::{StringBuilder, package::Package};
 // is always UTF-8, so `as_utf8_string_literal()` needs no allocator.
 // The root `expr` may be either the classic `EObject` tree (yarn import,
 // cached workspace package.json) or the immutable `EObjectJSON` document
-// produced by `parse_package_json_utf8_immutable`; both are handled below.
+// produced by `ParsedJson::parse_package_json`; both are handled below.
 use crate::bun_json::{E, Expr, ExprData};
 
 declare_scope!(OverrideMap, visible);

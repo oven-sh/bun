@@ -300,11 +300,11 @@ impl BunxCommand {
         bun_ast::initialize_store();
 
         let log = transpiler.log_mut();
-        // Everything we keep is cloned into `Box<[u8]>` before returning, so
-        // the parsed document (and the `package_json_bytes` it borrows) only
-        // needs to live to the end of this function.
+        // Everything we keep is cloned into `Box<[u8]>` before returning. Only
+        // `as_string(&bump)` reads the arena, and row-AST strings are
+        // always UTF-8, so it is never allocated from.
         let bump = bun_alloc::Arena::borrowing_default();
-        let parsed = json::parse_package_json_utf8_immutable(&source, log)?;
+        let parsed = json::ParsedJson::parse_package_json(&source, log)?;
         let expr = parsed.root;
 
         // choose the first package that fits

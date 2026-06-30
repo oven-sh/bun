@@ -2,19 +2,12 @@
  * rust-argon2 — the Argon2 implementation behind `Bun.password`.
  *
  * Like lolhtml, this is NOT built into its own archive: the root Cargo.toml
- * redirects the published `rust-argon2` crate to `vendor/rust-argon2/` via
- * `[patch.crates-io]`, so it compiles as an rlib inside the one workspace
- * cargo build. This dep entry exists only to FETCH the source (plus apply
- * the patch below) into `vendor/rust-argon2/` — `emitRust` in `rust.ts`
- * waits on its `.ref` stamp so cargo never sees a missing path dependency.
- *
- * Why it is patched at all: upstream's `Context::new` rejects any memory
- * cost below the RFC 9106 floor of `8 * lanes` before computing. Bun
- * releases backed by the Zig stdlib argon2 accepted any `memoryCost >= 1`
- * when hashing, so PHC strings with `m` in 1..7 exist in users' databases
- * and must stay verifiable. The patch is purely additive: it adds a
- * `verify_encoded_legacy_memory` entry point and changes no upstream
- * behavior. See `patches/rust-argon2/verify-encoded-legacy-memory.patch`.
+ * redirects the published crate to `vendor/rust-argon2/` via
+ * `[patch.crates-io]`, so it compiles inside the one workspace cargo build.
+ * This dep entry exists only to FETCH the source and apply
+ * `patches/rust-argon2/verify-encoded-legacy-memory.patch` (an additive
+ * `verify_encoded_legacy_memory` entry point; see the patch for why) —
+ * `emitRust` waits on the `.ref` stamp so cargo never sees a missing path.
  */
 
 import type { Dependency } from "../source.ts";

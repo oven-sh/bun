@@ -4,7 +4,7 @@ sidebarTitle: "SvelteKit with Bun"
 mode: center
 ---
 
-Use `sv create my-app` to create a SvelteKit project with SvelteKit CLI. Answer the prompts to select a template and set up your development environment.
+Use `sv create my-app` to create a SvelteKit project with the SvelteKit CLI. Answer the prompts to select a template and set up your development environment.
 
 ```sh terminal icon="terminal"
 bunx sv create my-app
@@ -46,11 +46,11 @@ bunx sv create my-app
 
 ---
 
-Once the project is initialized, `cd` into the new project. You don't need to run 'bun install' since the dependencies are already installed.
+Once the project is initialized, `cd` into the new project. The dependencies are already installed, so you don't need to run `bun install`.
 
 Then start the development server with `bun --bun run dev`.
 
-To run the dev server with Node.js instead of Bun, you can omit the `--bun` flag.
+To run the dev server with Node.js instead of Bun, omit the `--bun` flag.
 
 ```sh terminal icon="terminal"
 cd my-app
@@ -78,15 +78,13 @@ Visit [http://localhost:5173](http://localhost:5173/) in a browser to see the te
 
 ---
 
-If you edit and save `src/routes/+page.svelte`, you should see your changes hot-reloaded in the browser.
+Edit and save `src/routes/+page.svelte` and your changes are hot-reloaded in the browser.
 
 ---
 
-To build for production, you'll need to add the right SvelteKit adapter. Currently we recommend the
+To build for production, you need a SvelteKit adapter. We recommend `svelte-adapter-bun`; install it with `bun add -D svelte-adapter-bun`.
 
-`bun add -D svelte-adapter-bun`.
-
-Now, make the following changes to your `svelte.config.js`.
+Then make the following changes to your `svelte.config.js`.
 
 ```js svelte.config.js icon="file-code"
 import adapter from "@sveltejs/adapter-auto"; // [!code --]

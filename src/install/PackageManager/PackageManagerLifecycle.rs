@@ -478,6 +478,10 @@ impl PackageManager {
             }
         };
 
+        // Save cwd before spawning (list is moved into spawn_package_scripts).
+        #[cfg(target_env = "ohos")]
+        let cwd_copy: Vec<u8> = list.cwd.as_bytes().to_vec();
+
         RealLifecycleScriptSubprocess::spawn_package_scripts(
             self,
             list,
@@ -490,12 +494,8 @@ impl PackageManager {
         )?;
 
         #[cfg(target_env = "ohos")]
-        {
-            let cwd_path: &[u8] = list.cwd.as_bytes();
-            // Sign any .node files produced by lifecycle scripts (e.g. node-gyp rebuild).
-            if !cwd_path.is_empty() {
-                crate::package_installer::ohos_sign_native_binaries(cwd_path);
-            }
+        if !cwd_copy.is_empty() {
+            crate::package_installer::ohos_sign_native_binaries(&cwd_copy);
         }
 
         Ok(())

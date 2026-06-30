@@ -65,7 +65,9 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
         // The in-place decode buffer is capped at 16384 bytes of input.
         let capped = &raw_path[..raw_path.len().min(16384)];
 
-        let mut buf: Vec<u8> = Vec::with_capacity(capped.len() + raw_query.len());
+        // Validate the path before allocating for the query: a malformed
+        // escape must not allocate query-sized storage first.
+        let mut buf: Vec<u8> = Vec::with_capacity(capped.len());
         // `PRESERVE_STRUCTURE` keeps `%2F`/`%25` encoded so an escaped slash
         // can't cross a route segment boundary and the per-value decode of a
         // captured param in `QueryStringMap` is the single decode applied.

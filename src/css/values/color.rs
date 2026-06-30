@@ -1344,7 +1344,7 @@ where
 {
     // https://www.w3.org/TR/css-color-4/#funcdef-lab
     input.parse_nested_block(|i| {
-        parser.parse_relative::<T, CssColor, _>(i, |i, p| {
+        parser.parse_relative::<T, CssColor, _>(i, false, |i, p| {
             // f32::max() does not propagate NaN, so use clamp for now until f32::maximum() is stable.
             let l = (parse_number_or_percentage_with_basis(i, p, l_basis)? / l_basis)
                 .clamp(0.0, f32::MAX);
@@ -1368,7 +1368,7 @@ pub fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<O
 ) -> CssResult<CssColor> {
     // https://www.w3.org/TR/css-color-4/#funcdef-lch
     input.parse_nested_block(|i| {
-        parser.parse_relative::<T, CssColor, _>(i, |i, p| {
+        parser.parse_relative::<T, CssColor, _>(i, false, |i, p| {
             if let Some(from) = &mut p.from {
                 // Relative angles should be normalized.
                 // https://www.w3.org/TR/css-color-5/#relative-LCH
@@ -1399,7 +1399,7 @@ pub fn parse_hsl_hwb<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + In
     func: fn(f32, f32, f32, f32) -> CssColor,
 ) -> CssResult<CssColor> {
     input.parse_nested_block(|i| {
-        parser.parse_relative::<T, CssColor, _>(i, |i, p| {
+        parser.parse_relative::<T, CssColor, _>(i, true, |i, p| {
             let (h, a, b, is_legacy) = parse_hsl_hwb_components::<T>(i, p, allows_legacy)?;
             let alpha = if is_legacy {
                 parse_legacy_alpha(i, p)?
@@ -1450,7 +1450,7 @@ pub fn parse_angle_or_number(input: &mut css::Parser, parser: &ComponentParser) 
 fn parse_rgb(input: &mut css::Parser, parser: &mut ComponentParser) -> CssResult<CssColor> {
     // https://drafts.csswg.org/css-color-4/#rgb-functions
     input.parse_nested_block(|i| {
-        parser.parse_relative::<SRGB, CssColor, _>(i, |i, p| {
+        parser.parse_relative::<SRGB, CssColor, _>(i, true, |i, p| {
             let (r, g, b, is_legacy) = parse_rgb_components(i, p)?;
             let alpha = if is_legacy {
                 parse_legacy_alpha(i, p)?
@@ -1951,9 +1951,12 @@ impl ComponentParser {
     }
 
     /// `func` is called as `func(input, parser)`.
+    /// `srgb_bounded` marks the legacy sRGB functions (`rgb()`, `hsl()`,
+    /// `hwb()`), which cannot represent a channel outside the sRGB gamut.
     pub(crate) fn parse_relative<T, C, F>(
         &mut self,
         input: &mut css::Parser,
+        srgb_bounded: bool,
         func: F,
     ) -> CssResult<C>
     where
@@ -1966,7 +1969,7 @@ impl ComponentParser {
             .is_ok()
         {
             let from = CssColor::parse(input)?;
-            return self.parse_from::<T, C, F>(from, input, func);
+            return self.parse_from::<T, C, F>(from, input, srgb_bounded, func);
         }
 
         func(input, self)
@@ -1976,6 +1979,7 @@ impl ComponentParser {
         &mut self,
         from: CssColor,
         input: &mut css::Parser,
+        srgb_bounded: bool,
         func: F,
     ) -> CssResult<C>
     where
@@ -1985,10 +1989,23 @@ impl ComponentParser {
     {
         if let CssColor::LightDark { light, dark } = from {
             let state = input.state();
-            let light = self.parse_from::<T, C, F>(*light, input, func)?;
+            let light = self.parse_from::<T, C, F>(*light, input, srgb_bounded, func)?;
             input.reset(&state);
-            let dark = self.parse_from::<T, C, F>(*dark, input, func)?;
+            let dark = self.parse_from::<T, C, F>(*dark, input, srgb_bounded, func)?;
             return Ok(C::light_dark_owned(light, dark));
+        }
+
+        // A legacy sRGB function cannot represent an out-of-gamut origin
+        // color, and gamut mapping it here would bake a visibly different
+        // color into the declaration than a browser resolving the relative
+        // color itself would render. Refuse to resolve so that the
+        // declaration is preserved as written.
+        // https://github.com/w3c/csswg-drafts/issues/8444
+        if srgb_bounded
+            && !SRGB::try_from_css_color(&from)
+                .is_some_and(|srgb| srgb.resolve_missing().in_gamut())
+        {
+            return Err(input.new_custom_error(css::ParserError::invalid_value));
         }
 
         let new_from = match T::try_from_css_color(&from) {

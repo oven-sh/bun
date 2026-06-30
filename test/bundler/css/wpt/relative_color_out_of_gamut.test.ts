@@ -18,7 +18,13 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #00f942;
+  color: rgb(from #00f942 r g b / alpha);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: rgb(from color(display-p3 0 1 0) r g b / alpha);
+  }
 }
 `);
     },
@@ -38,7 +44,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #fff;
+  color: rgb(from #fff r g b);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: rgb(from color(display-p3 1.47874 .658561 1.37055) r g b);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: rgb(from lab(100% 104.3 -50.9) r g b);
+  }
 }
 `);
     },
@@ -58,7 +76,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #2a0022;
+  color: rgb(from #2a0022 r g b);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: rgb(from color(display-p3 .306769 -.199656 .283743) r g b);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: rgb(from lab(0% 104.3 -50.9) r g b);
+  }
 }
 `);
     },
@@ -78,7 +108,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #fff;
+  color: rgb(from #fff r g b);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: rgb(from color(display-p3 1.47862 .658765 1.3702) r g b);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: rgb(from lab(100% 104.26 -50.851) r g b);
+  }
 }
 `);
     },
@@ -98,7 +140,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #2a0022;
+  color: rgb(from #2a0022 r g b);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: rgb(from color(display-p3 .306711 -.199586 .283484) r g b);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: rgb(from lab(0% 104.26 -50.851) r g b);
+  }
 }
 `);
     },
@@ -118,7 +172,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #fff;
+  color: rgb(from #fff r g b);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: rgb(from color(display-p3 1.46907 .484456 1.34749) r g b);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: rgb(from lab(94.0295% 119.52 -57.5484) r g b);
+  }
 }
 `);
     },
@@ -138,7 +204,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #000;
+  color: rgb(from #000 r g b);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: rgb(from color(display-p3 .0601419 -.041443 .0865066) r g b);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: rgb(from lab(-.452515% 13.4914 -12.4407) r g b);
+  }
 }
 `);
     },
@@ -158,7 +236,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #fff;
+  color: rgb(from #fff r g b);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: rgb(from color(display-p3 1.46933 .483415 1.34835) r g b);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: rgb(from lab(94.0205% 119.644 -57.6823) r g b);
+  }
 }
 `);
     },
@@ -178,7 +268,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #000;
+  color: rgb(from #000 r g b);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: rgb(from color(display-p3 .0602585 -.0416396 .0869713) r g b);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: rgb(from lab(-.455916% 13.5528 -12.5395) r g b);
+  }
 }
 `);
     },
@@ -198,7 +300,13 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #00f942;
+  color: hsl(from #00f942 h s l / alpha);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: hsl(from color(display-p3 0 1 0) h s l / alpha);
+  }
 }
 `);
     },
@@ -218,7 +326,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #fff;
+  color: hsl(from #fff h s l);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: hsl(from color(display-p3 1.47874 .658561 1.37055) h s l);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: hsl(from lab(100% 104.3 -50.9) h s l);
+  }
 }
 `);
     },
@@ -238,7 +358,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #2a0022;
+  color: hsl(from #2a0022 h s l);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: hsl(from color(display-p3 .306769 -.199656 .283743) h s l);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: hsl(from lab(0% 104.3 -50.9) h s l);
+  }
 }
 `);
     },
@@ -258,7 +390,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #fff;
+  color: hsl(from #fff h s l);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: hsl(from color(display-p3 1.47862 .658765 1.3702) h s l);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: hsl(from lab(100% 104.26 -50.851) h s l);
+  }
 }
 `);
     },
@@ -278,7 +422,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #2a0022;
+  color: hsl(from #2a0022 h s l);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: hsl(from color(display-p3 .306711 -.199586 .283484) h s l);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: hsl(from lab(0% 104.26 -50.851) h s l);
+  }
 }
 `);
     },
@@ -298,7 +454,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #fff;
+  color: hsl(from #fff h s l);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: hsl(from color(display-p3 1.46907 .484456 1.34749) h s l);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: hsl(from lab(94.0295% 119.52 -57.5484) h s l);
+  }
 }
 `);
     },
@@ -318,7 +486,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #000;
+  color: hsl(from #000 h s l);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: hsl(from color(display-p3 .0601419 -.041443 .0865066) h s l);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: hsl(from lab(-.452515% 13.4914 -12.4407) h s l);
+  }
 }
 `);
     },
@@ -338,7 +518,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #fff;
+  color: hsl(from #fff h s l);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: hsl(from color(display-p3 1.46933 .483415 1.34835) h s l);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: hsl(from lab(94.0205% 119.644 -57.6823) h s l);
+  }
 }
 `);
     },
@@ -358,7 +550,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #000;
+  color: hsl(from #000 h s l);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: hsl(from color(display-p3 .0602585 -.0416396 .0869713) h s l);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: hsl(from lab(-.455916% 13.5528 -12.5395) h s l);
+  }
 }
 `);
     },
@@ -378,7 +582,13 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #00f942;
+  color: hwb(from #00f942 h w b / alpha);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: hwb(from color(display-p3 0 1 0) h w b / alpha);
+  }
 }
 `);
     },
@@ -398,7 +608,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #fff;
+  color: hwb(from #fff h w b);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: hwb(from color(display-p3 1.47874 .658561 1.37055) h w b);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: hwb(from lab(100% 104.3 -50.9) h w b);
+  }
 }
 `);
     },
@@ -418,7 +640,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #2a0022;
+  color: hwb(from #2a0022 h w b);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: hwb(from color(display-p3 .306769 -.199656 .283743) h w b);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: hwb(from lab(0% 104.3 -50.9) h w b);
+  }
 }
 `);
     },
@@ -438,7 +672,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #fff;
+  color: hwb(from #fff h w b);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: hwb(from color(display-p3 1.47862 .658765 1.3702) h w b);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: hwb(from lab(100% 104.26 -50.851) h w b);
+  }
 }
 `);
     },
@@ -458,7 +704,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #2a0022;
+  color: hwb(from #2a0022 h w b);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: hwb(from color(display-p3 .306711 -.199586 .283484) h w b);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: hwb(from lab(0% 104.26 -50.851) h w b);
+  }
 }
 `);
     },
@@ -478,7 +736,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #fff;
+  color: hwb(from #fff h w b);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: hwb(from color(display-p3 1.46907 .484456 1.34749) h w b);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: hwb(from lab(94.0295% 119.52 -57.5484) h w b);
+  }
 }
 `);
     },
@@ -498,7 +768,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #000;
+  color: hwb(from #000 h w b);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: hwb(from color(display-p3 .0601419 -.041443 .0865066) h w b);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: hwb(from lab(-.452515% 13.4914 -12.4407) h w b);
+  }
 }
 `);
     },
@@ -518,7 +800,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #fff;
+  color: hwb(from #fff h w b);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: hwb(from color(display-p3 1.46933 .483415 1.34835) h w b);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: hwb(from lab(94.0205% 119.644 -57.6823) h w b);
+  }
 }
 `);
     },
@@ -538,7 +832,19 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: #000;
+  color: hwb(from #000 h w b);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: hwb(from color(display-p3 .0602585 -.0416396 .0869713) h w b);
+  }
+}
+
+@supports (color: lab(0% 0 0)) {
+  h1 {
+    color: hwb(from lab(-.455916% 13.5528 -12.5395) h w b);
+  }
 }
 `);
     },

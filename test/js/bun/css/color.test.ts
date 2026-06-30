@@ -305,6 +305,42 @@ describe("lab-like function component syntax", () => {
   });
 });
 
+// rgb()/hsl()/hwb() cannot represent an origin color outside the sRGB gamut.
+// Resolving the relative color would have to gamut map or clip it, visibly
+// changing what a browser resolving the same declaration renders, so it is
+// not resolved at all. https://github.com/w3c/csswg-drafts/issues/8444
+describe("relative colors with an out-of-gamut origin", () => {
+  const outOfGamut = ["color(display-p3 0 1 0)", "lab(100 104.3 -50.9)", "oklch(1 .399 336.3)"];
+
+  describe.each(outOfGamut)("from %s", origin => {
+    test("legacy sRGB functions do not resolve", () => {
+      expect(color(`rgb(from ${origin} r g b)`, "css")).toBeNull();
+      expect(color(`rgb(from ${origin} r g b)`, "hex")).toBeNull();
+      expect(color(`hsl(from ${origin} h s l)`, "css")).toBeNull();
+      expect(color(`hwb(from ${origin} h w b)`, "css")).toBeNull();
+    });
+
+    test("unbounded targets resolve losslessly", () => {
+      expect(color(`lab(from ${origin} l a b)`, "css")).toStartWith("lab(");
+      expect(color(`color(from ${origin} srgb r g b)`, "css")).toStartWith("color(srgb ");
+    });
+  });
+
+  test("the exact origin channels are preserved for unbounded targets", () => {
+    expect(color("lab(from color(display-p3 0 1 0) l a b)", "css")).toBe("lab(86.614% -106.539 102.871)");
+    // The out-of-gamut sRGB components survive untouched.
+    expect(color("color(from lab(100 104.3 -50.9) srgb r g b)", "css")).toBe("color(srgb 1.5935 .587758 1.40555)");
+  });
+
+  test("in-gamut origins still resolve", () => {
+    expect(color("rgb(from red r g b)", "css")).toBe("red");
+    expect(color("hsl(from #ff0000 h s l)", "css")).toBe("red");
+    expect(color("hwb(from rgb(255 0 0) h w b)", "css")).toBe("red");
+    expect(color("hsl(from rgb(255 0 0 / 0.5) h s l / alpha)", "css")).toBe("#ff000080");
+    expect(color("rgb(from lab(50% 50 50) r g b)", "hex")).toBe("#ca4b22");
+  });
+});
+
 describe("hsl and lab output formats emit valid CSS", () => {
   test('"hsl" uses percentages', () => {
     expect(color("red", "hsl")).toBe("hsl(0, 100%, 50%)");

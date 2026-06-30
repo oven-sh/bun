@@ -4035,6 +4035,93 @@ describe("server headersTimeout/requestTimeout enforcement", () => {
     }
   }, 20_000);
 
+  it("requestTimeout: 0 (disabled) does not swallow a req.setTimeout() armed during a stalled body", async () => {
+    // With the body deadline disabled there is nothing for the receive phase
+    // to enforce, so the user idle timeout must keep owning the socket timer;
+    // a disabled deadline claiming (and disarming) it leaves no timer at all.
+    const { promise: userTimedOut, resolve: onUserTimeout } = Promise.withResolvers<void>();
+    const clientError = mock(() => {});
+    const server = createServer({ headersTimeout: 0, requestTimeout: 0, connectionsCheckingInterval: 100 }, req => {
+      req.on("error", () => {});
+      req.resume();
+      req.setTimeout(1000, () => onUserTimeout());
+    });
+    server.on("clientError", clientError);
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const received: Buffer[] = [];
+      socket.on("data", chunk => received.push(chunk));
+      socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\nab");
+      await userTimedOut;
+      // The expiry is the user idle timeout, not a receive deadline: no
+      // canned 408 and no 'clientError' (ERR_HTTP_REQUEST_TIMEOUT).
+      expect(Buffer.concat(received).toString()).toBe("");
+      expect(clientError).not.toHaveBeenCalled();
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
+  it("an enabled headersTimeout with requestTimeout: 0 hands the timer to req.setTimeout() for the body", async () => {
+    // The Headers phase deadline (headersTimeout) is enforced, but once the
+    // message moves into its (deadline-less) body the user idle timeout owns
+    // the socket timer again.
+    const { promise: userTimedOut, resolve: onUserTimeout } = Promise.withResolvers<void>();
+    const clientError = mock(() => {});
+    const server = createServer({ headersTimeout: 8000, requestTimeout: 0, connectionsCheckingInterval: 100 }, req => {
+      req.on("error", () => {});
+      req.resume();
+      req.setTimeout(1000, () => onUserTimeout());
+    });
+    server.on("clientError", clientError);
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const received: Buffer[] = [];
+      socket.on("data", chunk => received.push(chunk));
+      socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\nab");
+      await userTimedOut;
+      expect(Buffer.concat(received).toString()).toBe("");
+      expect(clientError).not.toHaveBeenCalled();
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
+  it("headersTimeout: 0 with an enabled requestTimeout still bounds a stalled header section", async () => {
+    // requestTimeout spans the whole message including its header section, so
+    // disabling only headersTimeout must not leave the Headers phase unbounded.
+    const server = createServer(
+      { headersTimeout: 0, requestTimeout: 1000, connectionsCheckingInterval: 100 },
+      () => {},
+    );
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const received: Buffer[] = [];
+      socket.on("data", chunk => received.push(chunk));
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nX-Partial: ");
+      await closed;
+      expect(Buffer.concat(received).toString()).toBe(REQUEST_TIMEOUT_408_RESPONSE);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
   it("the requestTimeout deadline survives a drain event during the body", async () => {
     // A response large enough to hit backpressure registers the native
     // writable (drain) handler; the deadline on the still-incomplete request

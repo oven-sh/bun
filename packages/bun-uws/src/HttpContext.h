@@ -126,8 +126,24 @@ private:
     static constexpr int HTTP_RECEIVE_THROUGHPUT_BYTES = 16 * 1024;
 
 public:
-    /* See NodeReceivePhase in HttpParser.h. */
-    static NodeReceivePhase nodeReceivePhase(HttpResponseData<SSL> *httpResponseData) {
+    /* The configured node:http deadline (whole seconds) governing a receive
+     * phase, 0 = disabled. requestTimeout spans the whole message including
+     * its header section, so the headers phase uses the tighter of the two. */
+    static unsigned int nodeConfiguredReceiveSeconds(us_socket_t *s, NodeReceivePhase phase) {
+        HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
+        unsigned int headersSeconds = httpContextData->nodeHeadersTimeoutSeconds;
+        unsigned int requestSeconds = httpContextData->nodeRequestTimeoutSeconds;
+        if (phase == NodeReceivePhase::Headers && headersSeconds && (!requestSeconds || headersSeconds < requestSeconds)) {
+            return headersSeconds;
+        }
+        return requestSeconds;
+    }
+
+    /* See NodeReceivePhase in HttpParser.h. Returns None — meaning the legacy
+     * idle timeout owns the per-socket timer — both outside the receive phases
+     * and when the current phase's configured deadline is 0 (disabled). */
+    static NodeReceivePhase nodeReceivePhase(us_socket_t *s, HttpResponseData<SSL> *httpResponseData) {
+        NodeReceivePhase phase;
         /* isConnectRequest is set as soon as the CONNECT request line parses;
          * until its header section is complete (partial bytes buffered) it is
          * still subject to headersTimeout. Only an established tunnel has no phase. */
@@ -138,13 +154,17 @@ public:
          * the handler already responded (Node keeps enforcing it on the
          * outstanding body, then dumps it). */
         if (httpResponseData->isReceivingHttpBody()) {
-            return NodeReceivePhase::Body;
-        }
-        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) {
+            phase = NodeReceivePhase::Body;
+        } else if (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) {
+            return NodeReceivePhase::None;
+        } else if (httpResponseData->hasPartialRequest() || !httpResponseData->hasCompletedResponse) {
+            phase = NodeReceivePhase::Headers;
+        } else {
             return NodeReceivePhase::None;
         }
-        return (httpResponseData->hasPartialRequest() || !httpResponseData->hasCompletedResponse)
-            ? NodeReceivePhase::Headers : NodeReceivePhase::None;
+        /* A phase whose deadline is disabled never claims the timer: a user
+         * req.setTimeout()/server idle timeout must keep working through it. */
+        return nodeConfiguredReceiveSeconds(s, phase) ? phase : NodeReceivePhase::None;
     }
 
     static uint64_t nodeNowMs() {
@@ -155,18 +175,10 @@ public:
      * message start like Node: the headers deadline is additionally capped by
      * requestTimeout (which spans the whole message including its header
      * section), and the body deadline is whatever remains of requestTimeout.
-     * 0 means no deadline. */
+     * Only called for the phase nodeReceivePhase() returned, whose configured
+     * deadline is therefore non-zero. */
     static unsigned int nodeRemainingReceiveSeconds(us_socket_t *s, HttpResponseData<SSL> *httpResponseData, NodeReceivePhase phase) {
-        HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
-        unsigned int headersSeconds = httpContextData->nodeHeadersTimeoutSeconds;
-        unsigned int requestSeconds = httpContextData->nodeRequestTimeoutSeconds;
-        unsigned int total = requestSeconds;
-        if (phase == NodeReceivePhase::Headers && headersSeconds && (!requestSeconds || headersSeconds < requestSeconds)) {
-            total = headersSeconds;
-        }
-        if (total == 0) {
-            return 0;
-        }
+        unsigned int total = nodeConfiguredReceiveSeconds(s, phase);
         uint64_t elapsedSeconds = (nodeNowMs() - httpResponseData->nodeMessageStartMs) / 1000;
         /* Already past the deadline: fire at the next timer sweep */
         return elapsedSeconds >= total ? 1 : (unsigned int) (total - elapsedSeconds);
@@ -177,7 +189,7 @@ public:
      * cannot be disarmed early. Returns false outside the receive phases, in
      * which case the caller falls back to the legacy idle timeout. */
     static bool tryArmNodeReceiveTimeout(us_socket_t *s, HttpResponseData<SSL> *httpResponseData) {
-        NodeReceivePhase phase = nodeReceivePhase(httpResponseData);
+        NodeReceivePhase phase = nodeReceivePhase(s, httpResponseData);
         if (phase == NodeReceivePhase::None) {
             return false;
         }
@@ -609,7 +621,7 @@ private:
              * node:http receive deadlines own the timer while a message is being
              * received and tryArmNodeReceiveTimeout assumes it stays armed, so
              * never suspend it here. */
-            if (!httpResponseData->hasNodeReceiveTimeouts || nodeReceivePhase(httpResponseData) == NodeReceivePhase::None) {
+            if (!httpResponseData->hasNodeReceiveTimeouts || nodeReceivePhase(s, httpResponseData) == NodeReceivePhase::None) {
                 us_socket_timeout(s, 0);
             }
 
@@ -671,7 +683,7 @@ private:
          * for the dispatched (Body phase) message; in the Headers phase they
          * are leftovers from the previous keep-alive response. */
         auto nodePhase = httpResponseData->hasNodeReceiveTimeouts
-            ? nodeReceivePhase(httpResponseData) : NodeReceivePhase::None;
+            ? nodeReceivePhase(s, httpResponseData) : NodeReceivePhase::None;
         if (nodePhase != NodeReceivePhase::None) {
             if (httpContextData->onClientError) {
                 httpContextData->onClientError(SSL, s, HTTP_PARSER_ERROR_REQUEST_TIMEOUT, nullptr, 0);

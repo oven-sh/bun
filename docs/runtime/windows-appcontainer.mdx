@@ -19,12 +19,12 @@ configure, and the platform behaviors that no amount of configuration changes.
 The container only touches what its SID (or `ALL APPLICATION PACKAGES`) is
 ACL'd for, plus OS directories. Before launching Bun sandboxed:
 
-| Grant | Why |
-| --- | --- |
-| `RX` on `bun.exe` and its directory | the loader must read the image |
-| `(OI)(CI)` read (or modify) on the project tree | sources, `node_modules`, lockfile |
-| a writable working directory | Bun reads its cwd at startup |
-| nothing for TEMP | `CreateProcess` rewrites `TMP`/`TEMP` for an AppContainer child to the package's `AC\Temp`, which exists and is writable |
+| Grant                                           | Why                                                                                                                      |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `RX` on `bun.exe` and its directory             | the loader must read the image                                                                                           |
+| `(OI)(CI)` read (or modify) on the project tree | sources, `node_modules`, lockfile                                                                                        |
+| a writable working directory                    | Bun reads its cwd at startup                                                                                             |
+| nothing for TEMP                                | `CreateProcess` rewrites `TMP`/`TEMP` for an AppContainer child to the package's `AC\Temp`, which exists and is writable |
 
 ```sh
 icacls C:\path\to\bun-dir /grant "*<container-sid>:(OI)(CI)(RX)" /T
@@ -60,7 +60,7 @@ shipped apps cannot rely on.
 - **True symlinks are impossible** — a lowbox token cannot hold
   `SeCreateSymbolicLinkPrivilege`, so `fs.symlink` with `"file"`/`"dir"` fails
   with `EPERM`. Hardlinks work. **Junctions are created but quarantined**: the
-  kernel rewrites them into *untrusted mount points* that nothing can traverse
+  kernel rewrites them into _untrusted mount points_ that nothing can traverse
   (reads through them report `EACCES`), so treat junction-based layouts as
   unavailable. `bun install` works with the default (hoisted) linker; the
   isolated linker depends on junctions and will report `EACCES` per package
@@ -87,10 +87,12 @@ const { spawnSync } = require("child_process");
 const r = spawnSync(process.execPath, ["-e", "0"], { stdio: ["pipe", "pipe", "pipe"] });
 console.log("spawn+pipes:", r.status === 0 ? "ok" : r.error);
 console.log("realpath:", require("fs").realpathSync("."));
-require("net").createServer(() => {}).listen("\\\\.\\pipe\\LOCAL\\smoke-" + process.pid, function () {
-  console.log("pipe server: ok");
-  this.close();
-});
+require("net")
+  .createServer(() => {})
+  .listen("\\\\.\\pipe\\LOCAL\\smoke-" + process.pid, function () {
+    console.log("pipe server: ok");
+    this.close();
+  });
 ```
 
 If `spawn+pipes` hangs or the pipe server reports `EADDRINUSE` on a fresh

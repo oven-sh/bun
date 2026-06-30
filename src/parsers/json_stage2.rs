@@ -428,7 +428,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             let b = self.contents[q];
             let run = self.run(j);
             if (b >= 0x80 || b == 0x0B || b == 0x0C) && self.rest_is_ws_cold(run) {
-                if self.contents[q..hi].iter().any(|&b| matches!(b, b'\n' | b'\r')) {
+                if self.contents[q..hi]
+                    .iter()
+                    .any(|&b| matches!(b, b'\n' | b'\r'))
+                {
                     return true;
                 }
                 hi = q;
@@ -1609,7 +1612,11 @@ fn read_trail_surrogate_escape(
 /// in its body; an implicitly-quoted `.env`/`--define` value (the whole
 /// input is the "string") passes them through — it can legitimately contain
 /// newlines and tabs.
-fn decode_string_escapes<'s, const ALLOW_RAW_CONTROL: bool, L: LexerLog<'s, Err = bun_core::Error>>(
+fn decode_string_escapes<
+    's,
+    const ALLOW_RAW_CONTROL: bool,
+    L: LexerLog<'s, Err = bun_core::Error>,
+>(
     l: &mut L,
     body: &[u8],
     buf: &mut Vec<u8>,

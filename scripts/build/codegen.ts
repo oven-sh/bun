@@ -38,10 +38,10 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { generateBuildOptionsRs } from "./buildOptionsRs.ts";
-import { generateJsonByteClass } from "./jsonByteClass.ts";
 import type { Config } from "./config.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
+import { generateJsonByteClass } from "./jsonByteClass.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
 

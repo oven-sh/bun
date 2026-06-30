@@ -591,9 +591,9 @@ mod tests {
             for prefix in ["", "\u{FEFF}"] {
                 let mut doc = String::from(prefix);
                 doc.push('[');
-            while doc.len() < 5 * REFILL_INPUT {
-                doc.push_str("\"padding padding padding\", 12345, true, ");
-            }
+                while doc.len() < 5 * REFILL_INPUT {
+                    doc.push_str("\"padding padding padding\", 12345, true, ");
+                }
                 let tail = format!("{oddity} \"end\"]");
                 let strict = format!("{}\"x\"]", &doc);
                 doc.push_str(&tail);

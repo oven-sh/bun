@@ -380,16 +380,6 @@ test("Bun.JSONC.parse handles huge documents with every value type", () => {
   expect(Bun.JSONC.parse(pretty)).toEqual(big as any);
 });
 
-// ── Structural index window seams ──────────────────────────────────────────
-//
-// The structural indexer (src/parsers/json_index.rs) streams the source
-// through an 8 KiB refill window (`REFILL_INPUT = 8 * 1024`) and the SIMD
-// kernel processes 64-byte blocks within it. Every document here is pure
-// ASCII, so JS string indices equal UTF-8 byte offsets, and the interesting
-// construct is placed (using inter-token whitespace padding) so that it
-// starts at, ends at, or straddles a window/block boundary. The padding math
-// is asserted in `docAt`, so a drift in the layout fails loudly instead of
-// silently testing nothing.
 // The parser logs a recoverable diagnostic for a missing comma or colon and
 // returns the partial document; `Bun.JSONC.parse` must report that as an error
 // instead of silently dropping the rest of the container.
@@ -400,6 +390,16 @@ test("Bun.JSONC.parse throws on documents that only parse with error recovery", 
   }
 });
 
+// ── Structural index window seams ──────────────────────────────────────────
+//
+// The structural indexer (src/parsers/json_index.rs) streams the source
+// through an 8 KiB refill window (`REFILL_INPUT = 8 * 1024`) and the SIMD
+// kernel processes 64-byte blocks within it. Every document here is pure
+// ASCII, so JS string indices equal UTF-8 byte offsets, and the interesting
+// construct is placed (using inter-token whitespace padding) so that it
+// starts at, ends at, or straddles a window/block boundary. The padding math
+// is asserted in `docAt`, so a drift in the layout fails loudly instead of
+// silently testing nothing.
 describe("structural index window seams", () => {
   const WINDOW = 8192; // REFILL_INPUT in src/parsers/json_index.rs
   const BLOCK = 64; // SIMD block size

@@ -271,7 +271,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         bun_core::err!("ParserError")
     }
 
-    /// Log "Expected X but found Y"; the caller decides whether to bail.
+    /// Log "Expected X but found Y". Every caller fails the parse after
+    /// logging (some via [`Self::unexpected`], which adds its own message).
     #[cold]
     fn expected(&mut self, cursor: usize, what: &str) {
         let r = self.token_range(cursor);

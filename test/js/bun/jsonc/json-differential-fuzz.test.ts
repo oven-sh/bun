@@ -28,18 +28,6 @@ function envIters(name: string, fallback: number): number {
 const DOC_ITERS = envIters("BUN_JSON_FUZZ_ITERS", 400);
 const MUTATION_ITERS = envIters("BUN_JSON_FUZZ_ITERS", 1500);
 
-// Whether this build's JSONC accepts single-quoted strings. Probed once so the
-// single-quote decoration in oracle 3 only runs where it is meaningful; the PRNG
-// stream is consumed identically either way so seeds stay reproducible.
-const SUPPORTS_SINGLE_QUOTES: boolean = (() => {
-  try {
-    const v = Bun.JSONC.parse(`{'a':['b']}`) as any;
-    return !!v && Array.isArray(v.a) && v.a[0] === "b";
-  } catch {
-    return false;
-  }
-})();
-
 // ---------------------------------------------------------------------------
 // Deterministic PRNG (mulberry32)
 // ---------------------------------------------------------------------------
@@ -309,7 +297,7 @@ function decorate(tokens: string[], rng: Rng): string {
       s += "," + gap(false);
     }
     const wantSingle = rng.chance(0.2);
-    if (wantSingle && SUPPORTS_SINGLE_QUOTES && tok.length >= 2 && tok[0] === '"' && !tok.includes("'")) {
+    if (wantSingle && tok.length >= 2 && tok[0] === '"' && !tok.includes("'")) {
       tok = toSingleQuoted(tok);
     }
     s += tok;
@@ -483,7 +471,7 @@ test(`differential fuzz: generated JSON and JSONC decorations agree with JSON.pa
   }
   console.log(
     `json-differential-fuzz: ${DOC_ITERS} generated docs OK (seed=${SEED}, largest doc=${maxTokens} tokens, ` +
-      `single-quote decoration ${SUPPORTS_SINGLE_QUOTES ? "enabled" : "disabled"})`,
+      "single-quote decoration enabled)",
   );
   // The generator must actually be producing documents.
   expect(maxTokens).toBeGreaterThan(1);

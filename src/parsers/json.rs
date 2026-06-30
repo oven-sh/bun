@@ -222,9 +222,9 @@ fn parse_impl_in(
         );
         return Err(bun_core::err!("SyntaxError"));
     }
-    // A few stage-2 paths log an error without failing the parse (a trailing
-    // comma in strict mode, malformed number forms). A document that produced
-    // *errors* is not a parse: returning the partial tree as `Ok` would let
+    // One stage-2 path logs an error without failing the parse (a trailing
+    // comma in strict mode). A document that produced *errors* is not a
+    // parse: returning the partial tree as `Ok` would let
     // callers that only check the `Result` (`Bun.JSONC.parse`, the resolver)
     // silently use truncated data. The messages stay in `log`.
     if result.is_ok() && log.errors > log_mark.0 {

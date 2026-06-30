@@ -316,3 +316,24 @@ test("factory argument snapshots CJS exports with integer-index keys (`module.ex
   expect(stubbed.first).toBe("a");
   expect(stubbed.all).toEqual(["a", "b", "c"]);
 });
+
+test("factory argument preserves symbol-keyed CJS exports (matches `{...original}` spread)", () => {
+  // JS spread copies own enumerable symbol keys, so the snapshot must too —
+  // a CJS `module.exports` can carry e.g. `[Symbol.iterator]`.
+  const real: any = require("./mock-module-symbol-cjs-fixture.cjs");
+  expect(real.foo).toBe(1);
+  expect(typeof real[Symbol.iterator]).toBe("function");
+
+  let receivedOriginal: any;
+  mock.module("./mock-module-symbol-cjs-fixture.cjs", original => {
+    receivedOriginal = original;
+    return { ...original, foo: 2 };
+  });
+
+  expect(typeof receivedOriginal[Symbol.iterator]).toBe("function");
+  const stubbed: any = require("./mock-module-symbol-cjs-fixture.cjs");
+  expect(stubbed.foo).toBe(2);
+  // The symbol-keyed prop rides through the `{...original}` spread into the new exports.
+  expect(typeof stubbed[Symbol.iterator]).toBe("function");
+  expect([...stubbed]).toEqual([42]);
+});

@@ -659,7 +659,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         auto innerScope = DECLARE_THROW_SCOPE(vm);
         JSC::JSObject* sourceObject = sourceExports.getObject();
         JSC::JSObject* snapshot = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
-        JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        // StringsAndSymbols mirrors JS spread (`{ ...original }`), which copies
+        // own enumerable symbol keys too — a CJS `module.exports` can carry them.
+        JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
         sourceObject->methodTable()->getOwnPropertyNames(sourceObject, globalObject, names, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(innerScope, {});
         for (auto& name : names) {

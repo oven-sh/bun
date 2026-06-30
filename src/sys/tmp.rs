@@ -1,6 +1,6 @@
 use bun_core::ZStr;
 
-use crate::{E, ErrorCase, Fd, FdExt, O, Tag};
+use crate::{E, Fd, O};
 
 // O_TMPFILE doesn't seem to work very well.
 const ALLOW_TMPFILE: bool = false;
@@ -38,8 +38,7 @@ impl<'a> Tmpfile<'a> {
                     perm,
                 ) {
                     Ok(fd) => {
-                        tmpfile.fd =
-                            fd.make_lib_uv_owned_for_syscall(Tag::open, ErrorCase::CloseOnFail)?;
+                        tmpfile.fd = fd;
                         break 'open;
                     }
                     Err(err) => match err.get_errno() {
@@ -56,8 +55,7 @@ impl<'a> Tmpfile<'a> {
                 tmpfilename,
                 O::CREAT | O::EXCL | O::CLOEXEC | O::WRONLY,
                 perm,
-            )?
-            .make_lib_uv_owned_for_syscall(Tag::open, ErrorCase::CloseOnFail)?;
+            )?;
         }
 
         Ok(tmpfile)

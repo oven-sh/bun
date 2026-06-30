@@ -85,8 +85,8 @@ pub fn stat_atime(s: &Stat) -> Timespec {
     #[cfg(windows)]
     {
         Timespec {
-            sec: s.atim.sec as i64,
-            nsec: s.atim.nsec as i64,
+            sec: s.st_atim.sec as i64,
+            nsec: s.st_atim.nsec as i64,
         }
     }
 }
@@ -102,8 +102,8 @@ pub fn stat_mtime(s: &Stat) -> Timespec {
     #[cfg(windows)]
     {
         Timespec {
-            sec: s.mtim.sec as i64,
-            nsec: s.mtim.nsec as i64,
+            sec: s.st_mtim.sec as i64,
+            nsec: s.st_mtim.nsec as i64,
         }
     }
 }
@@ -119,8 +119,8 @@ pub fn stat_ctime(s: &Stat) -> Timespec {
     #[cfg(windows)]
     {
         Timespec {
-            sec: s.ctim.sec as i64,
-            nsec: s.ctim.nsec as i64,
+            sec: s.st_ctim.sec as i64,
+            nsec: s.st_ctim.nsec as i64,
         }
     }
 }
@@ -132,8 +132,8 @@ pub fn stat_birthtime(s: &Stat) -> Timespec {
     #[cfg(windows)]
     {
         Timespec {
-            sec: s.birthtim.sec as i64,
-            nsec: s.birthtim.nsec as i64,
+            sec: s.st_birthtim.sec as i64,
+            nsec: s.st_birthtim.nsec as i64,
         }
     }
     #[cfg(any(

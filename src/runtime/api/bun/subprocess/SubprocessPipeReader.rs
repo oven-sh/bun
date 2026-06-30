@@ -122,10 +122,13 @@ impl PipeReader {
         #[cfg(windows)]
         {
             // On Windows `StdioResult` is the `WindowsStdioResult` enum and the
-            // `.buffer` payload is a heap-allocated `uv::Pipe`. Ownership
-            // transfers to `reader.source`; `stdio_result` is left `Unavailable`.
+            // `.buffer` payload is the engine pipe end already adopted onto the
+            // loop. Ownership transfers to `reader.source`; `stdio_result` is
+            // left `Unavailable`.
             if let StdioResult::Buffer(pipe) = this.stdio_result.take() {
-                this.reader.source = Some(bun_io::Source::Pipe(pipe));
+                this.reader.source = Some(bun_io::Source::Pipe(
+                    bun_io::source::PipeSource::from_engine(pipe),
+                ));
             }
         }
 
@@ -347,21 +350,13 @@ impl PipeReader {
         // `event_loop.virtual_machine` is set by the time a PipeReader is
         // created. The VM is the per-thread singleton owning `event_loop`, so
         // the `BackRef` invariant (pointee outlives holder) trivially holds.
+        // The uws wrapper IS the platform loop on every target now.
         let vm = self
             .event_loop
             .virtual_machine
             .map(bun_ptr::BackRef::from)
             .expect("event_loop.virtual_machine");
-        let uws = vm.uws_loop();
-        #[cfg(windows)]
-        {
-            // SAFETY: uws loop pointer is live for the VM lifetime.
-            unsafe { (*uws).uv_loop }
-        }
-        #[cfg(not(windows))]
-        {
-            uws.cast()
-        }
+        vm.uws_loop().cast()
     }
 
     /// Called when ref_count hits zero. Consumes the Box allocation.
@@ -382,7 +377,7 @@ impl PipeReader {
             // WindowsBufferedReader.onError() never closes the source, and
             // WindowsBufferedReader.deinit() nulls this.source before calling
             // closeImpl so it never actually closes either. Close it here on
-            // the error path so the uv.Pipe handle doesn't leak.
+            // the error path so the engine pipe handle doesn't leak.
             if matches!(this_ref.state, State::Err(_))
                 && this_ref.reader.source.is_some()
                 && !this_ref.reader.source.as_ref().unwrap().is_closed()

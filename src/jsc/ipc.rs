@@ -15,11 +15,7 @@ use bun_io::StreamBuffer;
 use bun_sys::Fd;
 use bun_sys::FdExt;
 #[cfg(windows)]
-use bun_sys::ReturnCodeExt as _;
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
-#[cfg(windows)]
-use bun_sys::windows::libuv::{UvHandle as _, UvStream as _};
+use bun_sys::windows::{Win32Error, win_error};
 use bun_uws;
 
 // `bun.cpp.*` — generated C++ dispatch shims for IPC handle (de)serialization
@@ -764,21 +760,53 @@ impl SendHandle {
 
 // SendHandle.deinit: all fields Drop; no explicit impl needed.
 
+// ── Windows wire layer: libuv IPC frame protocol over the engine pipe ──────
+//
+// Node children frame every NODE_CHANNEL_FD byte with libuv's
+// `uv__ipc_frame_header_t`; the codec (and its known-answer tests) lives in
+// `crate::ipc_frame`. This layer wires it to the engine pipe.
+
+#[cfg(windows)]
+use crate::ipc_frame::{
+    IPC_FRAME_HEADER_LEN, IpcFrameDecoder, IpcFrameError, encode_ipc_frame_header,
+};
+
+/// Engine read target size (libuv suggested 65536 for pipes).
+#[cfg(windows)]
+const IPC_READ_CHUNK: usize = 64 * 1024;
+
+/// The engine transport for one IPC connection. Heap-pinned for the engine's
+/// lifetime rules: the read buffer must outlive the pipe until its close
+/// callback, which is also the single point that frees this block — so it
+/// can outlive the `SendQueue` (`owner` is cleared on detach).
+#[cfg(windows)]
+pub struct WindowsPipe {
+    pipe: Box<bun_iocp::pipe::PipeHandle>,
+    read_buf: [u8; IPC_READ_CHUNK],
+    frame: IpcFrameDecoder,
+    /// BACKREF to the embedding SendQueue; cleared by `_windows_close` so a
+    /// late completion never touches a freed queue.
+    owner: Option<*mut SendQueue>,
+}
+
 #[cfg(windows)]
 pub struct WindowsWrite {
-    pub write_req: uv::uv_write_t,
-    pub write_buffer: uv::uv_buf_t,
-    pub write_slice: Box<[u8]>,
+    /// One wire submission: 16-byte frame header + payload, owned here
+    /// because the engine reads single-buffer writes zero-copy until the
+    /// callback (the queue's StreamBuffer can move/grow meanwhile).
+    pub bytes: Box<[u8]>,
+    /// Payload (cursor-advance) byte count — excludes the frame header.
+    pub payload_len: usize,
     pub owner: Option<*mut SendQueue>,
 }
 
 #[cfg(windows)]
 impl WindowsWrite {
     pub fn destroy(this: *mut WindowsWrite) {
-        // SAFETY: `this` was produced by heap::alloc in SendQueue::_write;
-        // libuv guarantees the write callback fires exactly once.
+        // SAFETY: `this` was produced by heap::into_raw in SendQueue::_write;
+        // the engine write callback fires exactly once.
         let _ = unsafe { bun_core::heap::take(this) };
-        // write_slice freed by Box<[u8]> Drop.
+        // bytes freed by Box<[u8]> Drop.
     }
 }
 
@@ -787,7 +815,7 @@ impl WindowsWrite {
 pub struct WindowsState {
     pub is_server: bool,
     /// Non-owning raw pointer. The allocation
-    /// is `heap::alloc`'d in `_write` and freed exactly once by
+    /// is `heap::into_raw`'d in `_write` and freed exactly once by
     /// `_windows_on_write_complete` via `WindowsWrite::destroy`. Nulling this
     /// field never frees.
     pub windows_write: Option<*mut WindowsWrite>,
@@ -875,7 +903,7 @@ pub enum SendQueueOwnerKind {
 }
 
 #[cfg(windows)]
-pub type SocketType = *mut uv::Pipe;
+pub type SocketType = *mut WindowsPipe;
 #[cfg(not(windows))]
 pub type SocketType = Socket;
 
@@ -944,10 +972,10 @@ impl SendQueue {
             SocketUnion::Open(s) => {
                 #[cfg(windows)]
                 {
-                    let pipe: *mut uv::Pipe = *s;
-                    // SAFETY: pipe is a live uv_pipe_t owned until _windowsOnClosed fires.
-                    let stream: *mut uv::uv_stream_t = unsafe { (*pipe).as_stream() };
-                    unsafe { (*stream).read_stop() };
+                    let wp: *mut WindowsPipe = *s;
+                    // SAFETY: `wp` is the live heap transport owned until the
+                    // engine close callback fires.
+                    unsafe { (*wp).pipe.read_stop() };
 
                     if self.windows.windows_write.is_some() && from != CloseFrom::Deinit {
                         log!("SendQueue#closeSocket -> mark ready for close");
@@ -979,8 +1007,8 @@ impl SendQueue {
         #[cfg(windows)]
         {
             if let Some(windows_write) = self.windows.windows_write {
-                // SAFETY: `windows_write` was leaked via `heap::alloc` in
-                // `_write`; libuv still holds it and will free it in
+                // SAFETY: `windows_write` was leaked via `heap::into_raw` in
+                // `_write`; the engine still holds it and will free it in
                 // `_windows_on_write_complete`. We only clear the backref so
                 // the callback doesn't touch a dead `SendQueue`.
                 unsafe { (*windows_write).owner = None };
@@ -1019,24 +1047,27 @@ impl SendQueue {
     #[cfg(windows)]
     fn _windows_close(&mut self) {
         log!("SendQueue#_windowsClose");
-        let SocketUnion::Open(pipe) = self.socket else {
+        let SocketUnion::Open(wp) = self.socket else {
             return;
         };
-        // SAFETY: pipe is live until the close cb fires.
+        // SAFETY: `wp` is live until the engine close cb frees it; detach the
+        // backref first so no late read completion touches this SendQueue.
         unsafe {
-            (*pipe).data = pipe.cast();
-            (*pipe).close(Self::_windows_on_closed);
+            (*wp).owner = None;
+            (*wp).pipe.close(Some(Self::_windows_on_closed), wp.cast());
         }
         self._socket_closed();
     }
     #[cfg(not(windows))]
     fn _windows_close(&mut self) {}
 
+    /// Engine close callback: every in-flight request drained — the single
+    /// point that frees the transport block (pipe box + pinned read buffer).
     #[cfg(windows)]
-    extern "C" fn _windows_on_closed(windows: *mut uv::Pipe) {
+    unsafe fn _windows_on_closed(_lp: &mut bun_iocp::Loop, data: *mut c_void) {
         log!("SendQueue#_windowsOnClosed");
-        // SAFETY: pipe was heap-allocated in windowsConfigureClient / created by caller.
-        let _ = unsafe { bun_core::heap::take(windows) };
+        // SAFETY: `data` is the WindowsPipe leaked by windows_configure_*.
+        let _ = unsafe { bun_core::heap::take(data.cast::<WindowsPipe>()) };
     }
 
     pub fn close_socket_next_tick(&mut self, next_tick: bool) {
@@ -1426,70 +1457,57 @@ impl SendQueue {
         }
         #[cfg(windows)]
         {
-            let socket = *self.get_socket().unwrap();
+            let wp: *mut WindowsPipe = *self.get_socket().unwrap();
             if let Some(_) = fd {
                 // TODO: send fd on windows
             }
-            let pipe: *mut uv::Pipe = socket;
 
-            // Copy the outbound bytes into an owned buffer while only holding a
-            // shared borrow of `self.queue`; all `&mut self` mutation happens
-            // after this block ends.
-            let write_req_slice: Box<[u8]> = {
+            // One wire submission = one libuv data frame: header + payload in
+            // a single owned buffer (the engine reads it zero-copy until the
+            // callback; the queue's StreamBuffer can move/grow meanwhile).
+            // Oversized items continue via the cursor in later frames —
+            // payload bytes concatenate across frames on the peer.
+            let bytes: Box<[u8]> = {
                 let first = &self.queue[0];
                 let data = &first.data.list[first.data.cursor..];
                 log!("SendQueue#_write len {}", data.len());
-                let write_len = data.len().min(i32::MAX as usize);
-                Box::from(&data[0..write_len])
+                // Engine single-call clamp is 0x7fff_f000 total (PIPE-39);
+                // stay under it including the header.
+                const MAX_PAYLOAD_PER_FRAME: usize = 0x7fff_f000 - IPC_FRAME_HEADER_LEN;
+                let write_len = data.len().min(MAX_PAYLOAD_PER_FRAME);
+                let mut v = Vec::with_capacity(IPC_FRAME_HEADER_LEN + write_len);
+                v.extend_from_slice(&encode_ipc_frame_header(write_len as u32));
+                v.extend_from_slice(&data[..write_len]);
+                v.into_boxed_slice()
             };
+            let payload_len = bytes.len() - IPC_FRAME_HEADER_LEN;
 
-            // create write request
-            let mut write_req = Box::new(WindowsWrite {
+            let write_req: *mut WindowsWrite = bun_core::heap::into_raw(Box::new(WindowsWrite {
                 owner: Some(self as *mut SendQueue),
-                write_slice: write_req_slice,
-                write_req: bun_core::ffi::zeroed(),
-                write_buffer: uv::uv_buf_t::init(b""), // re-init below after slice address is stable
-            });
-            write_req.write_buffer = uv::uv_buf_t::init(&write_req.write_slice);
-            // Hand ownership to libuv; reclaimed exactly once by
-            // `_windows_on_write_complete` via `WindowsWrite::destroy`.
-            let write_req: *mut WindowsWrite = bun_core::heap::into_raw(write_req);
+                bytes,
+                payload_len,
+            }));
             debug_assert!(self.windows.windows_write.is_none());
             self.windows.windows_write = Some(write_req);
 
-            // SAFETY: pipe is live (socket == .open).
-            unsafe { (*pipe).ref_() }; // ref on write
-            // SAFETY: `write_req` is a freshly-leaked Box; libuv owns it until
-            // the write callback fires.
+            // SAFETY: `wp` is live (socket == .open); `bytes` is heap-pinned in
+            // the leaked WindowsWrite until the exactly-once callback (incl.
+            // OPERATION_ABORTED on close). The pending write holds the loop.
             let result = unsafe {
-                (*write_req).write_req.write(
-                    (*pipe).as_stream(),
-                    &(*write_req).write_buffer,
-                    write_req,
-                    // `write()` stores a *Rust* fn pointer (`fn(*mut T, ReturnCode)`)
-                    // and thunks it through libuv. The callback receives the
-                    // raw `*mut WindowsWrite` (NOT `&mut`) because
-                    // `_windows_on_write_complete` deallocates the request via
-                    // `WindowsWrite::destroy`; holding a live `&mut WindowsWrite`
-                    // across that free would dangle the reference (UB) and the
-                    // `Box::from_raw` would carry the `&mut`-reborrow tag instead
-                    // of the original allocation root.
-                    |req: *mut WindowsWrite, rc| SendQueue::_windows_on_write_complete(req, rc),
+                (*wp).pipe.write(
+                    &[&(*write_req).bytes],
+                    Some(Self::_windows_on_write_complete),
+                    write_req.cast(),
                 )
             };
-            if result.to_error(bun_sys::Tag::write).is_some() {
+            if result.is_err() {
                 // Synchronous-error path: do NOT call `_windows_on_write_complete`
                 // here — that helper rebuilds `&mut SendQueue` from the raw
                 // `write_req.owner` backref, which would alias the `&mut self`
                 // already live in this frame (and in `continue_send` above it).
-                // Inline the same cleanup through `self` instead. The async
-                // libuv-callback path still uses `_windows_on_write_complete`
-                // (sound there: no `&mut self` is live when libuv fires it).
+                // Inline the same cleanup through `self` instead.
                 WindowsWrite::destroy(write_req);
                 self.windows.windows_write = None;
-                // SAFETY: pipe is live (socket == .open); pairs with the
-                // `(*pipe).ref_()` above.
-                unsafe { (*pipe).unref() };
                 self._on_write_complete(-1);
                 if self.windows.try_close_after_write {
                     self.close_socket(CloseReason::Normal, CloseFrom::User);
@@ -1518,13 +1536,20 @@ impl SendQueue {
         }
     }
 
+    /// Engine write callback: fires exactly once per `_write` submission,
+    /// including with `OPERATION_ABORTED` when the pipe closes first.
     #[cfg(windows)]
-    fn _windows_on_write_complete(write_req: *mut WindowsWrite, status: uv::ReturnCode) {
+    unsafe fn _windows_on_write_complete(
+        _lp: &mut bun_iocp::Loop,
+        data: *mut c_void,
+        _written: usize,
+        err: Win32Error,
+    ) {
         log!("SendQueue#_windowsOnWriteComplete");
-        // SAFETY: write_req was passed to uv_write as the data ptr; libuv hands it back here.
-        // Explicit `&` so the slice `.len()` autoref doesn't trigger
-        // `dangerous_implicit_autorefs` on the raw-ptr place.
-        let write_len = unsafe { (&(*write_req).write_slice).len() };
+        let write_req = data.cast::<WindowsWrite>();
+        // SAFETY: `write_req` is the block leaked in `_write`; the engine
+        // hands it back exactly once.
+        let payload_len = unsafe { (*write_req).payload_len };
         let this: *mut SendQueue = 'blk: {
             let owner = unsafe { (*write_req).owner };
             WindowsWrite::destroy(write_req);
@@ -1542,15 +1567,12 @@ impl SendQueue {
         let _scope = vm.enter_event_loop_scope();
 
         this.windows.windows_write = None;
-        if let Some(socket) = this.get_socket() {
-            // SAFETY: `get_socket()` -> `&*mut uv::Pipe`; double-deref reaches the
-            // live `uv_pipe_t` place (matches the `(*pipe).ref_()` site in `_write`).
-            unsafe { (**socket).unref() }; // write complete; unref
-        }
-        if status.to_error(bun_sys::Tag::write).is_some() {
+        if err != Win32Error::SUCCESS {
             this._on_write_complete(-1);
         } else {
-            this._on_write_complete(i32::try_from(write_len).expect("int cast"));
+            // Success means the whole frame hit the wire; report payload
+            // bytes only (the header is transport overhead, not cursor).
+            this._on_write_complete(i32::try_from(payload_len).expect("int cast"));
         }
 
         if this.windows.try_close_after_write {
@@ -1567,139 +1589,231 @@ impl SendQueue {
         crate::GlobalRef::from(JSGlobalObject::opaque_ref(self.owner_ref().global_this()))
     }
 
+    /// Wrap an engine pipe into the heap transport block, store it as the
+    /// open socket, and start the framed read loop. On read-start failure the
+    /// socket is closed and the raw error returned.
+    ///
     /// # Safety
     /// `this` must point at a live `SendQueue` and must derive from the
     /// allocation's root raw pointer (SharedReadWrite provenance), NOT from a
-    /// `&mut` reborrow: the pointer is stashed in `uv_handle_t.data` for the
-    /// pipe's lifetime and later writes through the root would otherwise pop
-    /// its tag under Stacked Borrows. Mirrors [`windows_configure_client`].
+    /// `&mut` reborrow: the pointer is stashed as the transport's `owner`
+    /// backref for the pipe's lifetime and later writes through the root
+    /// would otherwise pop its tag under Stacked Borrows.
     #[cfg(windows)]
-    pub unsafe fn windows_configure_server(
+    unsafe fn windows_attach_pipe(
         this: *mut Self,
-        ipc_pipe: *mut uv::Pipe,
-    ) -> bun_sys::Result<()> {
-        log!("configureServer");
-        // SAFETY: ipc_pipe is a live uv_pipe_t handed in by the caller; `this`
-        // is the root-raw SendQueue pointer per the fn safety contract.
+        mut pipe: Box<bun_iocp::pipe::PipeHandle>,
+        is_server: bool,
+    ) -> Result<(), Win32Error> {
+        // An idle/reading IPC pipe must not hold the loop open (pending
+        // writes still do, via the engine's request accounting).
+        pipe.unref();
+        let wp: *mut WindowsPipe = bun_core::heap::into_raw(Box::new(WindowsPipe {
+            pipe,
+            read_buf: [0u8; IPC_READ_CHUNK],
+            frame: IpcFrameDecoder::default(),
+            owner: Some(this),
+        }));
+        // SAFETY: caller contract — `this` is a live SendQueue; `wp` is the
+        // freshly leaked transport.
         unsafe {
-            (*ipc_pipe).data = this.cast();
-            (*ipc_pipe).unref();
+            (*this).socket = SocketUnion::Open(wp);
+            (*this).windows.is_server = is_server;
         }
-        // SAFETY: caller contract — `this` is a live SendQueue.
-        unsafe {
-            (*this).socket = SocketUnion::Open(ipc_pipe);
-            (*this).windows.is_server = true;
-        }
-        // SAFETY: caller contract — `this` is a live SendQueue.
-        let pipe: *mut uv::Pipe = match unsafe { &(*this).socket } {
-            SocketUnion::Open(p) => *p,
-            _ => unreachable!(),
+        // SAFETY: `read_buf` is pinned inside the leaked transport block,
+        // which lives until the engine close callback; `wp` is the cb data.
+        let rc = unsafe {
+            let buf = core::ptr::addr_of_mut!((*wp).read_buf).cast::<u8>();
+            (*wp)
+                .pipe
+                .read_start(buf, IPC_READ_CHUNK, Self::_on_engine_read, wp.cast())
         };
-        // SAFETY: pipe is the live uv handle just stored in (*this).socket.
-        unsafe { (*pipe).data = this.cast() };
-
-        // SAFETY: pipe is the live uv handle just stored in (*this).socket.
-        let stream: *mut uv::uv_stream_t = unsafe { (*pipe).as_stream() };
-
-        // SAFETY: stream points to the live uv handle; `this` is the root-raw
-        // context pointer (see fn safety contract) so storing it in
-        // `handle.data` is sound for the handle's lifetime. Routes through the
-        // `StreamReader for SendQueue` impl below (wraps the
-        // `IPCHandlers::WindowsNamedPipe` callbacks).
-        let read_start_result =
-            unsafe { (*stream).read_start_ctx::<SendQueue>(this) }.to_error(bun_sys::Tag::listen);
-        if let Some(err) = read_start_result {
+        if let Err(err) = rc {
             // SAFETY: caller contract — `this` is a live SendQueue.
             unsafe { (*this).close_socket(CloseReason::Failure, CloseFrom::User) };
             return Err(err);
         }
-        bun_sys::Result::Ok(())
+        Ok(())
+    }
+
+    /// Engine read callback. Splits the chunk into libuv IPC frames and
+    /// hands payload runs to the shared message decoder; EOF, read errors
+    /// and malformed frames close the channel (frame corruption is libuv's
+    /// WSAECONNABORTED `invalid:` path).
+    #[cfg(windows)]
+    unsafe fn _on_engine_read(
+        _lp: &mut bun_iocp::Loop,
+        data: *mut c_void,
+        _buf: *mut u8,
+        n: usize,
+        err: Win32Error,
+    ) {
+        log!("SendQueue#_onEngineRead {}", n);
+        let wp = data.cast::<WindowsPipe>();
+        // SAFETY: `wp` is the live transport (freed only by the close cb,
+        // which cannot run while this callback is on the stack); plain field
+        // read through the raw place, no reference formed.
+        let Some(this) = (unsafe { (*wp).owner }) else {
+            return;
+        };
+        if err != Win32Error::SUCCESS {
+            // EOF and errors take the same path the libuv read-error hook
+            // did: close on the next tick.
+            // SAFETY: `owner` backref is live (cleared before close).
+            unsafe { (*this).close_socket_next_tick(true) };
+            return;
+        }
+        // SAFETY: the engine delivered `n` initialized bytes into the pinned
+        // `read_buf`; raw place projection so no `&mut WindowsPipe` is formed
+        // while the chunk slice is live (the decode below only mutates the
+        // disjoint SendQueue allocation and `(*wp).frame`).
+        let chunk = unsafe {
+            core::slice::from_raw_parts(core::ptr::addr_of!((*wp).read_buf).cast::<u8>(), n)
+        };
+
+        // SAFETY: `this` is the live SendQueue (owner backref); single JS
+        // thread, no other borrow live.
+        let global_this = unsafe { (*this).get_global_this() };
+        // RAII: `enter()` now, `exit()` on drop — microtasks drain once per
+        // engine callback, as the libuv read hook did.
+        let _scope = global_this.bun_vm().enter_event_loop_scope();
+
+        let mut rest = chunk;
+        while !rest.is_empty() {
+            // A decoded message can run JS that closes the channel
+            // (`process.disconnect()`, decode failure): stop delivering.
+            // SAFETY: `this` stays live for the callback (owner of the
+            // transport; freed only after close, which clears `owner`).
+            if !matches!(unsafe { &(*this).socket }, SocketUnion::Open(_)) {
+                return;
+            }
+            // SAFETY: `frame` is a plain-data field of the transport; the
+            // `&mut` is field-granular and disjoint from `chunk`'s bytes.
+            let step = unsafe { (*wp).frame.step(rest) };
+            match step {
+                Ok((payload, used)) => {
+                    if !payload.is_empty() {
+                        // SAFETY: `this` is live; payload borrows the pinned
+                        // read buffer, disjoint from the SendQueue.
+                        on_data2(unsafe { &mut *this }, payload);
+                    }
+                    rest = &rest[used..];
+                }
+                Err(IpcFrameError) => {
+                    // SAFETY: `this` is live (see above).
+                    unsafe { (*this).close_socket(CloseReason::Failure, CloseFrom::User) };
+                    return;
+                }
+            }
+        }
     }
 
     /// # Safety
-    /// `this` must point at a live `SendQueue` and must derive from the
-    /// allocation's root raw pointer (SharedReadWrite provenance), NOT from a
-    /// `&mut` reborrow: the pointer is stashed in `uv_handle_t.data` for the
-    /// pipe's lifetime and later writes through the root would otherwise pop
-    /// its tag under Stacked Borrows.
+    /// See [`windows_attach_pipe`]; `ipc_pipe` must already be adopted onto
+    /// this VM's loop (the spawn machinery's parent pair end is).
+    #[cfg(windows)]
+    pub unsafe fn windows_configure_server(
+        this: *mut Self,
+        ipc_pipe: Box<bun_iocp::pipe::PipeHandle>,
+    ) -> bun_sys::Result<()> {
+        log!("configureServer");
+        // SAFETY: forwarded fn contract.
+        match unsafe { Self::windows_attach_pipe(this, ipc_pipe, true) } {
+            Ok(()) => bun_sys::Result::Ok(()),
+            Err(err) => bun_sys::Result::Err(bun_sys::Error::from_code(
+                win_error::translate(err),
+                bun_sys::Tag::listen,
+            )),
+        }
+    }
+
+    /// # Safety
+    /// See [`windows_attach_pipe`].
     #[cfg(windows)]
     pub unsafe fn windows_configure_client(
         this: *mut Self,
         pipe_fd: Fd,
     ) -> Result<(), bun_core::Error> {
         log!("configureClient");
-        let ipc_pipe: *mut uv::Pipe =
-            bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));
-        // SAFETY: ipc_pipe just allocated above.
-        if let Some(err) =
-            unsafe { (*ipc_pipe).init(uv::Loop::get(), true) }.to_error(bun_sys::Tag::pipe)
-        {
-            // SAFETY: ipc_pipe was heap-allocated above and init failed before libuv took ownership.
-            let _ = unsafe { bun_core::heap::take(ipc_pipe) };
-            return Err(err.into());
+        use bun_sys::windows as w;
+        let raw = pipe_fd.native();
+        if raw == w::INVALID_HANDLE_VALUE {
+            return Err(bun_sys::Error::from_code(bun_sys::E::BADF, bun_sys::Tag::open).into());
         }
-        // SAFETY: ipc_pipe is a live initialized uv_pipe_t.
-        if let Some(err) = unsafe { (*ipc_pipe).open(pipe_fd.uv()) }.to_error(bun_sys::Tag::open) {
-            // SAFETY: ipc_pipe is a live initialized uv_pipe_t; close_and_destroy frees the Box.
-            unsafe { uv::Pipe::close_and_destroy(ipc_pipe) };
-            return Err(err.into());
+        // Duplicate-then-adopt (PIPE-19 shape): the engine owns the
+        // duplicate, so closing the channel can never cancel I/O on — or
+        // close — a handle the fd table still owns.
+        let mut dup: w::HANDLE = core::ptr::null_mut();
+        // SAFETY: `raw` is live for the call (fd contract); out-param local.
+        let ok = unsafe {
+            w::kernel32::DuplicateHandle(
+                w::kernel32::GetCurrentProcess(),
+                raw,
+                w::kernel32::GetCurrentProcess(),
+                &raw mut dup,
+                0,
+                w::FALSE,
+                w::DUPLICATE_SAME_ACCESS,
+            )
+        };
+        if ok == 0 {
+            return Err(bun_sys::Error::from_code(
+                win_error::translate(Win32Error::get()),
+                bun_sys::Tag::dup,
+            )
+            .into());
         }
-        // SAFETY: ipc_pipe is a live initialized uv_pipe_t.
-        unsafe { (*ipc_pipe).unref() };
-        // SAFETY: caller contract — `this` is a live SendQueue.
-        unsafe {
-            (*this).socket = SocketUnion::Open(ipc_pipe);
-            (*this).windows.is_server = false;
+        let vm = VirtualMachine::get();
+        // SAFETY: the VM loop is live for the channel's lifetime; `dup`
+        // ownership transfers to the engine on success.
+        let pipe = match unsafe {
+            bun_iocp::pipe::PipeHandle::open(
+                bun_iocp::usockets::native_loop(vm.as_mut().platform_loop().cast()),
+                dup,
+            )
+        } {
+            Ok(p) => p,
+            Err(err) => {
+                // SAFETY: on error the engine left ownership of `dup` with us.
+                unsafe { w::CloseHandle(dup) };
+                return Err(bun_sys::Error::from_code(
+                    win_error::translate(err),
+                    bun_sys::Tag::open,
+                )
+                .into());
+            }
+        };
+        // libuv's uv_pipe_open(ipc=1) rejected non-duplex fds with EINVAL;
+        // keep that contract (NODE_CHANNEL_FD must be a duplex pipe end).
+        if !pipe.is_readable() || !pipe.is_writable() {
+            Self::windows_close_unattached_pipe(pipe);
+            return Err(bun_sys::Error::from_code(bun_sys::E::INVAL, bun_sys::Tag::open).into());
         }
-
-        // SAFETY: ipc_pipe is the live uv handle just stored in (*this).socket.
-        let stream = unsafe { (*ipc_pipe).as_stream() };
-
-        // SAFETY: stream points to the live uv handle; `this` is the root-raw
-        // context pointer (see fn safety contract) so storing it in
-        // `handle.data` is sound for the handle's lifetime.
-        if let Some(err) =
-            unsafe { (*stream).read_start_ctx::<SendQueue>(this) }.to_error(bun_sys::Tag::listen)
-        {
-            // SAFETY: caller contract — `this` is a live SendQueue.
-            unsafe { (*this).close_socket(CloseReason::Failure, CloseFrom::User) };
-            return Err(err.into());
+        // The engine owns a private duplicate; release the inherited fd now
+        // (the old uv path released both at channel close).
+        FdExt::close(pipe_fd);
+        // SAFETY: forwarded fn contract.
+        if let Err(err) = unsafe { Self::windows_attach_pipe(this, pipe, false) } {
+            return Err(
+                bun_sys::Error::from_code(win_error::translate(err), bun_sys::Tag::listen).into(),
+            );
         }
         Ok(())
     }
-}
 
-/// Adapter from `UvStream::read_start_ctx` to the `IPCHandlers::WindowsNamedPipe`
-/// callbacks. The three fns are baked
-/// into the trait impl so the `extern "C"` trampoline is monomorphised over
-/// `SendQueue` with zero per-handle storage.
-#[cfg(windows)]
-impl uv::StreamReader for SendQueue {
-    #[inline]
-    fn on_read_alloc(this: &mut Self, suggested_size: usize) -> &mut [u8] {
-        IPCHandlers::WindowsNamedPipe::on_read_alloc(this, suggested_size)
-    }
-    #[inline]
-    fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
-        // Map the raw libuv errno
-        // to `bun_sys::E`, defaulting to CANCELED for unmapped codes.
-        let e = bun_sys::windows::translate_uv_error_to_e(err);
-        IPCHandlers::WindowsNamedPipe::on_read_error(this, e);
-    }
-    #[inline]
-    unsafe fn on_read(this: *mut Self, data: &[u8]) {
-        // `data` points into `(*this).incoming` (it was returned from
-        // `on_read_alloc`). Forming `&mut *this` would retag every byte of
-        // `*this` Unique and pop the SharedRW tag `data`'s provenance descends
-        // from — any later read through `data` is UB under Stacked Borrows
-        // *regardless* of write order. Capture the only thing we need (length)
-        // while `data` is still valid, drop it, then reborrow `*this`; the
-        // callee re-derives the just-written tail from `incoming` itself.
-        let nread = data.len();
-        let _ = data;
-        // SAFETY: `this` is the live `SendQueue` stashed in `handle.data` by
-        // `read_start_ctx`; `data` is no longer live so the Unique retag is sound.
-        IPCHandlers::WindowsNamedPipe::on_read(unsafe { &mut *this }, nread);
+    /// Release an engine pipe that was never attached to a SendQueue: close
+    /// on its loop and free the box in the close callback (the only legal
+    /// free point).
+    #[cfg(windows)]
+    fn windows_close_unattached_pipe(pipe: Box<bun_iocp::pipe::PipeHandle>) {
+        unsafe fn free_cb(_lp: &mut bun_iocp::Loop, data: *mut c_void) {
+            // SAFETY: `data` is the box leaked below; the engine fires this
+            // exactly once after all in-flight work drains.
+            let _ = unsafe { bun_core::heap::take(data.cast::<bun_iocp::pipe::PipeHandle>()) };
+        }
+        let raw = bun_core::heap::into_raw(pipe);
+        // SAFETY: `raw` is live; the close cb is its sole deallocation path.
+        unsafe { (*raw).close(Some(free_cb), raw.cast()) };
     }
 }
 
@@ -1847,9 +1961,9 @@ fn handle_ipc_message(
                 // RAII: `enter()` now, `exit()` on drop — covers both the
                 // early-error return and the fall-through.
                 let _scope = global_this.bun_vm().enter_event_loop_scope();
-                // FD.toJS — `uv()` is the user-visible numeric fd on both
-                // platforms (posix == native, windows == uv_file).
-                let fd_js = JSValue::js_number_from_int32(fd.uv());
+                // FD.toJS — `js_fd()` is the user-visible numeric fd on both
+                // platforms (posix == native, windows == table index).
+                let fd_js = JSValue::js_number_from_int32(fd.js_fd());
                 let res = ipc_parse(global_this, target, msg_data, fd_js);
                 if let Err(e) = res {
                     // ack written already, that's okay.
@@ -2117,164 +2231,9 @@ pub mod IPCHandlers {
         }
     }
 
-    pub mod WindowsNamedPipe {
-        use super::*;
-
-        pub fn on_read_alloc(send_queue: &mut SendQueue, suggested_size: usize) -> &mut [u8] {
-            log!("NewNamedPipeIPCHandler#onReadAlloc {}", suggested_size);
-            match &mut send_queue.incoming {
-                IncomingBuffer::Json(json_buf) => {
-                    // SAFETY: libuv writes into this region before notify_written reads.
-                    let spare = unsafe { json_buf.data.uv_alloc_spare_u8(suggested_size) };
-                    &mut spare[..suggested_size]
-                }
-                IncomingBuffer::Advanced(adv_buf) => {
-                    // SAFETY: libuv writes into this region before on_read commits.
-                    let spare = unsafe { adv_buf.uv_alloc_spare_u8(suggested_size) };
-                    &mut spare[..suggested_size]
-                }
-            }
-        }
-
-        pub fn on_read_error(send_queue: &mut SendQueue, err: bun_sys::E) {
-            log!("NewNamedPipeIPCHandler#onReadError {:?}", err);
-            send_queue.close_socket_next_tick(true);
-        }
-
-        /// `nread` is the byte count libuv reported into the slice handed out
-        /// by `on_read_alloc` (i.e. the tail of `send_queue.incoming` past its
-        /// current `len`). The slice itself is *not* passed through because it
-        /// aliases `send_queue.incoming`; see the `StreamReader::on_read`
-        /// trampoline for the Stacked-Borrows rationale.
-        pub fn on_read(send_queue: &mut SendQueue, nread: usize) {
-            log!("NewNamedPipeIPCHandler#onRead {}", nread);
-            let global_this = send_queue.get_global_this();
-            // RAII: `enter()` now, `exit()` on drop. The guard holds the raw
-            // `*mut EventLoop` so `&mut EventLoop` isn't held across the decode
-            // loop or send_queue borrows below.
-            let _scope = global_this.bun_vm().enter_event_loop_scope();
-
-            match &mut send_queue.incoming {
-                IncomingBuffer::Json(_) => {
-                    // For JSON mode on Windows, use notifyWritten to update length and scan for newlines
-                    let IncomingBuffer::Json(json_buf) = &mut send_queue.incoming else {
-                        unreachable!()
-                    };
-                    debug_assert!(json_buf.data.len() + nread <= json_buf.data.capacity());
-                    // libuv wrote `nread` bytes at `data[old_len..]` via the
-                    // slice returned from `on_read_alloc`. Only the *count*
-                    // is forwarded — re-deriving a `&[u8]` over that region
-                    // and handing it to a `&mut self` method would alias
-                    // `json_buf.data`, undoing the Stacked-Borrows fix above.
-                    json_buf.notify_written(nread);
-
-                    // Process complete messages using next() - avoids O(n²) re-scanning
-                    loop {
-                        let IncomingBuffer::Json(json_buf) = &mut send_queue.incoming else {
-                            unreachable!()
-                        };
-                        let Some(msg) = json_buf.next() else { break };
-                        let result = match decode_ipc_message(
-                            Mode::Json,
-                            msg.data,
-                            &global_this,
-                            Some(msg.newline_pos),
-                        ) {
-                            Ok(r) => r,
-                            Err(IPCDecodeError::NotEnoughBytes) => {
-                                log!("hit NotEnoughBytes3");
-                                return;
-                            }
-                            Err(
-                                IPCDecodeError::InvalidFormat
-                                | IPCDecodeError::JSError
-                                | IPCDecodeError::JSTerminated,
-                            ) => {
-                                send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                                return;
-                            }
-                            Err(IPCDecodeError::OutOfMemory) => {
-                                Output::print_errorln("IPC message is too long.");
-                                send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                                return;
-                            }
-                        };
-
-                        let bytes_consumed = result.bytes_consumed;
-                        handle_ipc_message(send_queue, result.message, &global_this);
-                        let IncomingBuffer::Json(json_buf) = &mut send_queue.incoming else {
-                            unreachable!()
-                        };
-                        json_buf.consume(bytes_consumed);
-                    }
-                }
-                IncomingBuffer::Advanced(_) => {
-                    let IncomingBuffer::Advanced(adv_buf) = &mut send_queue.incoming else {
-                        unreachable!()
-                    };
-                    // SAFETY: `on_read_alloc` reserved ≥ nread bytes; libuv initialised them.
-                    unsafe { adv_buf.uv_commit(nread) };
-                    let total_len = adv_buf.len();
-                    let mut slice_start: usize = 0;
-
-                    loop {
-                        let IncomingBuffer::Advanced(adv_buf) = &mut send_queue.incoming else {
-                            unreachable!()
-                        };
-                        let slice = &adv_buf.slice()[slice_start..total_len];
-                        let result =
-                            match decode_ipc_message(Mode::Advanced, slice, &global_this, None) {
-                                Ok(r) => r,
-                                Err(IPCDecodeError::NotEnoughBytes) => {
-                                    // copy the remaining bytes to the start of the buffer
-                                    // `total_len == adv_buf.len()` (captured post-uv_commit, never
-                                    // grown in this loop) ⇒ exact `len - slice_start` truncate.
-                                    adv_buf.drain_front(slice_start);
-                                    log!("hit NotEnoughBytes3");
-                                    return;
-                                }
-                                Err(
-                                    IPCDecodeError::InvalidFormat
-                                    | IPCDecodeError::JSError
-                                    | IPCDecodeError::JSTerminated,
-                                ) => {
-                                    send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                                    return;
-                                }
-                                Err(IPCDecodeError::OutOfMemory) => {
-                                    Output::print_errorln("IPC message is too long.");
-                                    send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                                    return;
-                                }
-                            };
-
-                        let slice_len = slice.len();
-                        handle_ipc_message(send_queue, result.message, &global_this);
-
-                        if (result.bytes_consumed as usize) < slice_len {
-                            slice_start += result.bytes_consumed as usize;
-                        } else {
-                            // clear the buffer
-                            let IncomingBuffer::Advanced(adv_buf) = &mut send_queue.incoming else {
-                                unreachable!()
-                            };
-                            adv_buf.clear();
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-
-        pub fn on_close(send_queue: &mut SendQueue) {
-            log!("NewNamedPipeIPCHandler#onClose\n");
-            // Currently unreferenced (only onReadAlloc/onReadError/onRead are
-            // wired into readStart), but route through `_socketClosed` so any
-            // future wiring tracks the `_onAfterIPCClosed` task for `deinit`
-            // to cancel, matching every other close path.
-            send_queue._socket_closed();
-        }
-    }
+    // Windows: the engine read callback (`SendQueue::_on_engine_read`)
+    // splits libuv IPC frames and feeds payload runs to `on_data2`, the same
+    // entry the POSIX socket path uses — no separate handler module.
 }
 
 #[track_caller]

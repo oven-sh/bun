@@ -28,7 +28,6 @@ pub struct InternalLoopData {
     pub head: *mut SocketGroup,
     pub quic_head: *mut c_void,
     pub quic_next_tick_us: i64,
-    pub quic_timer: *mut Timer,
     pub iterator: *mut SocketGroup,
     pub recv_buf: *mut u8,
     pub send_buf: *mut u8,

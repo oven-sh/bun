@@ -848,10 +848,10 @@ impl ExtractTarball {
                                 &[name, dest_name],
                             );
 
-                            if sys::sys_uv::symlink_uv(
+                            if sys::windows::fs::symlink(
                                 final_path,
                                 dest_path,
-                                bun_sys::windows::libuv::UV_FS_SYMLINK_JUNCTION,
+                                bun_sys::windows::fs::SYMLINK_JUNCTION,
                             )
                             .is_err()
                             {

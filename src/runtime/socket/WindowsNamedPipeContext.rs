@@ -13,8 +13,6 @@ use bun_event_loop::Task;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, SysErrorJsc};
 use bun_paths::PathBuffer;
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
 use bun_sys::{self, Error as SysError, Fd, SystemErrno};
 use bun_uws::{self as uws, us_bun_verify_error_t};
 
@@ -348,10 +346,7 @@ impl WindowsNamedPipeContext {
         }
         #[cfg(windows)]
         {
-            let named_pipe = {
-                let pipe = Box::new(bun_core::ffi::zeroed::<uv::Pipe>());
-                WindowsNamedPipe::from(pipe, handlers, vm)
-            };
+            let named_pipe = WindowsNamedPipe::from(handlers, vm);
             // Build the erased AnyTask directly.
             let task = AnyTask {
                 ctx: ptr::NonNull::new(this.cast::<c_void>()),

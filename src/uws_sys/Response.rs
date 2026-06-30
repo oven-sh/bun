@@ -301,7 +301,7 @@ impl<const SSL: bool> Response<SSL> {
             // `INVALID_SOCKET` (~0) doesn't decode as kind=uv.
             return Fd::from_system(
                 c::uws_res_get_native_handle(Self::ssl_flag(), self.as_raw())
-                    as *mut core::ffi::c_void,
+                    .cast::<core::ffi::c_void>(),
             );
         }
         #[cfg(not(windows))]

@@ -100,6 +100,7 @@ function systemLibs(cfg: Config): string[] {
     // explicit is portable.
     libs.push(
       "winmm.lib",
+      "powrprof.lib", // PowerRegisterSuspendResumeNotification (suspend/resume timer rescue)
       "bcrypt.lib",
       "ntdll.lib",
       "userenv.lib",

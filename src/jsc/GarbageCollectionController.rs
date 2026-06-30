@@ -25,6 +25,13 @@ use bun_uws as uws;
 use crate::VM;
 use crate::virtual_machine::VirtualMachine;
 
+// The GC-safepoint hook (BunJSCEventLoop.cpp) the engine invokes with
+// `internal_loop_data.jsc_vm` right before an idle blocking wait.
+#[cfg(windows)]
+unsafe extern "C" {
+    fn Bun__JSC_onBeforeWait(jsc_vm: *mut core::ffi::c_void);
+}
+
 pub struct GarbageCollectionController {
     // Raw FFI handle created by `uws::Timer::create_fallthrough` in `init`,
     // freed in Drop. Stored as `Option<NonNull<Timer>>` (None = uninit).
@@ -119,6 +126,11 @@ impl GarbageCollectionController {
             std::ptr::from_mut::<Self>(self),
         ));
         actual.internal_loop_data.jsc_vm = vm.jsc_vm.cast();
+        // POSIX ticks call `Bun__JSC_onBeforeWait` directly (epoll_kqueue.c);
+        // the Windows engine exposes a slot instead — wire it once per VM
+        // loop, right after `jsc_vm`, as bun_iocp.h prescribes.
+        #[cfg(windows)]
+        actual.set_on_before_wait(Some(Bun__JSC_onBeforeWait));
 
         // `Transpiler::init` is deferred to the high-tier
         // `init_runtime_state` hook (which runs *after* `ensure_waker` →

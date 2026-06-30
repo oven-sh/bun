@@ -545,7 +545,7 @@ impl SocketConfig {
             break 'blk SocketConfig {
                 hostname_or_unix: ZigStringSlice::empty(),
                 port: None,
-                fd: generated.fd.map(Fd::from_uv),
+                fd: generated.fd.map(Fd::from_js_fd),
                 ssl,
                 handlers: Handlers::from_generated(global, &generated.handlers, is_server)?,
                 default_data: if generated.data.is_undefined() {

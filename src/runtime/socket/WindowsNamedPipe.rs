@@ -14,34 +14,33 @@
 //! - Maintains the same connection lifecycle and state management as network sockets
 //! - Enables transparent use of Named Pipes in contexts expecting standard socket APIs
 //!
-//! Uses libuv for the underlying Named Pipe operations while maintaining compatibility
-//! with µWebSockets, bridging the gap between libuv's pipe handling and uSockets'
-//! unified socket interface.
+//! Uses the engine pipe handle (`bun_iocp::pipe::PipeHandle`, via the io
+//! layer's `PipeSource`/`StreamingWriter`) for the underlying Named Pipe
+//! operations while maintaining compatibility with µWebSockets.
 
 use core::ffi::{c_uint, c_void};
 #[cfg(windows)]
 use core::ptr::NonNull;
 
 use bun_boringssl_sys as boringssl;
-#[cfg(windows)]
-use bun_collections::ByteVecExt;
 use bun_core::timespec;
-use bun_io::Loop as AsyncLoop;
+#[cfg(windows)]
+use bun_io::Source;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
+#[cfg(windows)]
+use bun_io::source::PipeSource;
 use bun_io::{StreamingWriter, WriteStatus};
 use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(windows)]
-use bun_libuv_sys::{UvHandle as _, UvStream as _};
-#[cfg(windows)]
-use bun_sys::ReturnCodeExt as _;
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
+use bun_sys::windows::{Win32Error, win_error};
 use bun_sys::{self, Fd};
 use bun_uws::us_bun_verify_error_t;
 
 use crate::socket::SSLConfig;
-use crate::socket::ssl_wrapper::{self, SSLWrapper};
+#[cfg(windows)]
+use crate::socket::ssl_wrapper;
+use crate::socket::ssl_wrapper::SSLWrapper;
 #[cfg(windows)]
 use crate::timer::EventLoopTimerTag;
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState};
@@ -56,12 +55,12 @@ use crate::jsc_hooks::timer_all_mut as timer_all;
 
 pub struct WindowsNamedPipe {
     pub wrapper: Option<WrapperType>,
-    /// Non-owning alias of the heap `uv::Pipe`. The owning
-    /// `Box<uv::Pipe>` is leaked in [`from`] and adopted by
-    /// `self.writer.source` (`Source::Pipe`) inside [`start`]; this field only
-    /// ever observes/null-checks the handle, never frees it.
+    /// Owned engine pipe between creation (`connect`/`open`/`adopt_accepted`)
+    /// and adoption by `self.writer.source` in [`start`] — `None` afterwards.
+    /// Engine handles must be closed (freed in the close callback), never
+    /// plain-dropped; `discard_unadopted_pipe`/`Drop` honor that.
     #[cfg(windows)]
-    pub pipe: Option<NonNull<uv::Pipe>>, // any duplex
+    pub pipe: Option<Box<PipeSource>>, // any duplex
     #[cfg(not(windows))]
     pub pipe: (),
     /// The per-thread VM singleton outlives this struct (it is torn down only
@@ -77,10 +76,6 @@ pub struct WindowsNamedPipe {
     pub incoming: Vec<u8>, // Maybe we should use IPCBuffer here as well
     pub ssl_error: CertError,
     pub handlers: Handlers,
-    #[cfg(windows)]
-    pub connect_req: uv::uv_connect_t,
-    #[cfg(not(windows))]
-    pub connect_req: (),
 
     pub event_loop_timer: EventLoopTimer,
     pub current_timeout: u32,
@@ -97,11 +92,6 @@ bitflags::bitflags! {
         const IS_CLOSED    = 1 << 1;
         const IS_CLIENT    = 1 << 2;
         const IS_SSL       = 1 << 3;
-        /// Rust-only bookkeeping: set once `start_with_pipe` adopts the
-        /// `Box<uv::Pipe>` leaked in [`from`]. Lets `Drop` reclaim the orphan
-        /// allocation on early-error paths (before adoption) without risking a
-        /// double-free once the writer owns it.
-        const PIPE_ADOPTED = 1 << 4;
         /// Rust-only re-entrancy guard: set while `SSLWrapper::receive_data`
         /// is executing through a raw `*mut WrapperType` into `self.wrapper`.
         /// `release_resources()` checks this to DEFER `self.wrapper = None`
@@ -182,48 +172,21 @@ impl WindowsNamedPipe {
         self.wrapper.as_mut().map(core::ptr::from_mut)
     }
 
-    /// Dereference the non-owning [`pipe`](Self::pipe) alias.
+    /// Release the owned engine pipe on an early-error path **before**
+    /// [`start`] hands it to `self.writer.source` — the engine close
+    /// callback frees the box; an `open()`-recorded fd is released through
+    /// the table protocol.
     ///
-    /// The heap `uv::Pipe` is owned by `self.writer.source` once [`start`]
-    /// adopts it (before adoption it is the leaked `Box` from [`from`]).
-    /// Single JS thread; the writer never holds a competing `&mut uv::Pipe`
-    /// across a call into this struct, so the borrow is exclusive for its
-    /// duration. FFI-adjacent: this is a libuv-handle raw-pointer deref.
-    #[cfg(windows)]
-    #[inline]
-    fn pipe_mut(&mut self) -> Option<&mut uv::Pipe> {
-        // SAFETY: see doc comment — non-owning libuv-handle alias, single JS
-        // thread, no overlapping `&mut uv::Pipe` from the writer for the
-        // returned borrow's duration.
-        self.pipe.map(|p| unsafe { &mut *p.as_ptr() })
-    }
-
-    /// Reclaim the leaked `Box<uv::Pipe>` on an early-error path **before**
-    /// [`start`] hands it to `self.writer.source` via `start_with_pipe`.
-    ///
-    /// [`from`] `Box::leak`s the allocation and records only a non-owning
-    /// `NonNull` in `self.pipe`; until adoption the writer's `Drop`
-    /// (`close_without_reporting`) is a no-op (`source == None`), so any
-    /// `connect`/`open`/`get_accepted_by` early return would leak the box and —
-    /// if `uv_pipe_init` had already run — leave the handle in the libuv
-    /// `handle_queue` with no `uv_close` ever scheduled (loop never drains).
-    /// `close_and_destroy` covers both states via its `loop_.is_null()` branch.
-    ///
-    /// MUST NOT be called once `start_with_pipe` has adopted the allocation
-    /// (would double-free against `writer.source`'s `Box`).
+    /// MUST NOT be called once `start` has adopted the source (the writer is
+    /// then the sole owner; `self.pipe` is already `None`).
     #[cfg(windows)]
     fn discard_unadopted_pipe(&mut self) {
         debug_assert!(
             self.writer.source.is_none(),
             "pipe already adopted by writer.source; discard would double-free"
         );
-        if let Some(pipe) = self.pipe.take() {
-            // SAFETY: `pipe` is the `NonNull` recorded from `Box::leak` in
-            // `from()` and not yet re-materialised (asserted above);
-            // `close_and_destroy` reclaims via `Box::from_raw` either
-            // immediately (never-init'd, `loop_ == null`) or in the `uv_close`
-            // callback (init'd). Ownership transfers here exactly once.
-            unsafe { uv::Pipe::close_and_destroy(pipe.as_ptr()) };
+        if let Some(ps) = self.pipe.take() {
+            Source::Pipe(ps).close(true);
         }
     }
 
@@ -235,24 +198,42 @@ impl WindowsNamedPipe {
         (self.handlers.on_writable)(self.handlers.ctx);
     }
 
+    /// Engine read callback. `err == SUCCESS` delivers `n >= 1` bytes in the
+    /// source's pinned buffer (a separate allocation from `self`, so copying
+    /// into `incoming` needs no aliasing dance); terminal codes deliver
+    /// exactly once and the engine has already stopped reading.
     #[cfg(windows)]
-    fn on_read_alloc(&mut self, suggested_size: usize) -> &mut [u8] {
-        // SAFETY: libuv writes into this region before on_read commits.
-        let spare = unsafe { self.incoming.uv_alloc_spare_u8(suggested_size) };
-        &mut spare[..suggested_size]
+    unsafe fn on_engine_read(
+        _lp: &mut bun_iocp::Loop,
+        data: *mut c_void,
+        buf: *mut u8,
+        n: usize,
+        err: Win32Error,
+    ) {
+        // SAFETY: `data` is the live WindowsNamedPipe (a field of the heap
+        // context) registered at read_start; engine callbacks run on the
+        // loop thread with no other borrow live.
+        let this = unsafe { &mut *data.cast::<Self>() };
+        if err != Win32Error::SUCCESS {
+            if let Some(Source::Pipe(ps)) = this.writer.source.as_mut() {
+                ps.mark_read_stopped();
+            }
+            let e = match win_error::classify_read(err) {
+                win_error::ReadClass::Eof => bun_sys::E::EOF,
+                win_error::ReadClass::Err(e) => e,
+            };
+            this.on_read_error(e);
+            return;
+        }
+        // SAFETY: the engine lends `n` initialized bytes for this callback.
+        this.incoming
+            .extend_from_slice(unsafe { core::slice::from_raw_parts(buf, n) });
+        this.on_read(n);
     }
 
-    // takes `nread` (not the libuv `buffer` slice) because that
-    // slice points *into* `self.incoming` — see `StreamReader::on_read` below
-    // for the Stacked-Borrows split. No "is slice in buffer" debug assert:
-    // libuv guarantees the read buffer is the one returned from
-    // `on_read_alloc`, and we no longer hold the original pointer here.
     #[cfg(windows)]
     fn on_read(&mut self, nread: usize) {
         bun_output::scoped_log!(WindowsNamedPipe, "onRead ({})", nread);
-        // SAFETY: `nread` bytes written by libuv into on_read_alloc's slice.
-        unsafe { self.incoming.uv_commit(nread) };
-
         self.reset_timeout();
 
         // Stacked-Borrows: `receive_data` may synchronously re-enter this
@@ -439,26 +420,12 @@ impl WindowsNamedPipe {
 
     fn on_close(&mut self) {
         bun_output::scoped_log!(WindowsNamedPipe, "onClose");
+        // The writer only fires this hook for an adopted source, so the
+        // pre-adoption owner slot is already empty (Drop reclaims otherwise).
         #[cfg(windows)]
-        {
-            // `self.pipe` is a non-owning `NonNull` alias of the
-            // `Box<uv::Pipe>` owned by `writer.source`. By the time the writer
-            // invokes this `on_close` hook it has already `take()`n that Box and
-            // scheduled `uv_close` → `Box::from_raw` on it (PipeWriter::close),
-            // so the alias is about to dangle. Clear it here so later
-            // `pipe_mut()` callers (e.g. `pause_stream` exported to JS) observe
-            // `None` instead of a freed pointer.
-            self.pipe = None;
-        }
+        debug_assert!(self.pipe.is_none());
         if !self.flags.is_closed() {
             self.flags.set_is_closed(true); // only call onClose once
-            // Drop the non-owning alias now: the writer's `close()` has
-            // already handed the Box off to libuv's async close callback (or
-            // will), so any later `pause_stream()` would deref freed memory.
-            #[cfg(windows)]
-            {
-                self.pipe = None;
-            }
             (self.handlers.on_close)(self.handlers.ctx);
             self.release_resources();
         }
@@ -524,18 +491,15 @@ impl WindowsNamedPipe {
     pub fn resume_stream(&mut self) -> bool {
         #[cfg(windows)]
         {
-            let Some(stream) = self.writer.get_stream() else {
+            let this: *mut Self = core::ptr::from_mut(self);
+            let Some(Source::Pipe(ps)) = self.writer.source.as_mut() else {
                 return false;
             };
-            // SAFETY: `stream` is the live `*mut uv_stream_t` for our pipe
-            // (returned by `writer.get_stream()`); the `StreamReader` impl
-            // below routes the trampolines back to `self`.
-            let read_start_result =
-                unsafe { (*stream).read_start_ctx::<Self>(self) }.to_result(bun_sys::Tag::listen);
-            if read_start_result.is_err() {
-                return false;
-            }
-            true
+            // SAFETY: `this` (the cb ctx) outlives reading — the source is
+            // stopped or closed before this struct can be freed; a parked
+            // completion is re-delivered by the engine.
+            let rc = unsafe { ps.read_start(Self::on_engine_read, this.cast()) };
+            rc == Win32Error::SUCCESS
         }
         #[cfg(not(windows))]
         {
@@ -547,10 +511,10 @@ impl WindowsNamedPipe {
     pub fn pause_stream(&mut self) -> bool {
         #[cfg(windows)]
         {
-            let Some(pipe) = self.pipe_mut() else {
+            let Some(Source::Pipe(ps)) = self.writer.source.as_mut() else {
                 return false;
             };
-            pipe.read_stop();
+            ps.read_stop();
             true
         }
         #[cfg(not(windows))]
@@ -609,28 +573,19 @@ impl WindowsNamedPipe {
     }
 
     #[cfg(windows)]
-    pub fn from(
-        pipe: Box<uv::Pipe>,
-        handlers: Handlers,
-        vm: &'static VirtualMachine,
-    ) -> WindowsNamedPipe {
-        // The whole fn is `#[cfg(windows)]`-gated so POSIX builds never see
-        // `uv::Pipe`.
+    pub fn from(handlers: Handlers, vm: &'static VirtualMachine) -> WindowsNamedPipe {
         WindowsNamedPipe {
             vm,
             event_loop_handle: bun_jsc::EventLoopHandle::init(vm.event_loop().cast::<()>()),
-            // Leak the `Box` and keep only a non-owning `NonNull` alias.
-            // Ownership of the allocation is later transferred to
-            // `self.writer.source` via `start_with_pipe` in `start()`, which
-            // re-materialises the `Box` and is responsible for freeing it.
-            pipe: Some(NonNull::from(Box::leak(pipe))),
+            // The engine pipe is created by `connect`/`open`/`adopt_accepted`
+            // and handed to `self.writer.source` in `start()`.
+            pipe: None,
             wrapper: None,
             handlers,
             // defaults:
             writer: StreamingWriter::default(),
             incoming: Vec::new(),
             ssl_error: CertError::default(),
-            connect_req: bun_core::ffi::zeroed::<uv::uv_connect_t>(),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::WindowsNamedPipe),
             current_timeout: 0,
             flags: Flags::DISCONNECTED, // disconnected: bool = true is the only non-false default
@@ -645,40 +600,31 @@ impl WindowsNamedPipe {
         (self.handlers.deref_ctx)(self.handlers.ctx);
     }
 
-    /// `extern "C"` trampoline matching `uv_connect_cb` (`Pipe::connect`'s
-    /// `on_connect` parameter). Recovers `*mut Self` from `req->data` (set in
-    /// `connect()`) and forwards to the safe `&mut self` body. Only ever
-    /// invoked by libuv (coerces to the `uv_connect_cb` fn-pointer type at the
-    /// `Pipe::connect` call site); body wraps its derefs explicitly.
+    /// Engine connect callback (`PipeConnectCb`): always invoked
+    /// asynchronously, exactly once, including for validation failures.
     #[cfg(windows)]
-    extern "C" fn uv_on_connect(req: *mut uv::uv_connect_t, status: uv::ReturnCode) {
-        // SAFETY: `req` is the `&mut self.connect_req` we passed to
-        // `Pipe::connect`; `req->data` was set to `self as *mut Self` and the
-        // owning struct is kept alive by the `r#ref()` taken before the call.
-        let this = unsafe { (*req).data.cast::<Self>() };
-        unsafe { (*this).on_connect(status) };
+    unsafe fn on_engine_connect(_lp: &mut bun_iocp::Loop, data: *mut c_void, err: Win32Error) {
+        // SAFETY: `data` was set to `self as *mut Self` in `connect()`; the
+        // owning struct is kept alive by the `r#ref()` taken there.
+        unsafe { (*data.cast::<Self>()).on_connect(err) };
     }
 
     #[cfg(windows)]
-    fn on_connect(&mut self, status: uv::ReturnCode) {
+    fn on_connect(&mut self, err: Win32Error) {
         // A deref-on-exit scopeguard would need to capture &mut self alongside
         // body uses; call deref() explicitly at each return.
 
-        #[cfg(windows)]
-        if let Some(pipe) = self.pipe_mut() {
-            pipe.unref();
-        }
-
-        if let Some(err) = status.to_error(bun_sys::Tag::connect) {
-            // On async connect failure the
-            // leaked `Box<uv::Pipe>` was never adopted by `writer.source`
-            // (`start_with_pipe` only runs on the success branch below), so
-            // `on_error → close → writer.end()` is a no-op for it. Reclaim it
-            // here via `discard_unadopted_pipe` (which schedules `uv_close` and
-            // `Box::from_raw`s in the callback), mirroring the synchronous
-            // early-error paths in `connect`/`open`/`get_accepted_by`.
+        if err != Win32Error::SUCCESS {
+            // On async connect failure the engine pipe was never adopted by
+            // `writer.source` (`start()` only runs on the success branch
+            // below), so `on_error → close → writer.end()` is a no-op for it.
+            // Reclaim it here, mirroring the synchronous early-error paths in
+            // `connect`/`open`/`adopt_accepted`.
             self.discard_unadopted_pipe();
-            self.on_error(err);
+            self.on_error(bun_sys::Error::from_code(
+                win_error::translate(err),
+                bun_sys::Tag::connect,
+            ));
             self.deref();
             return;
         }
@@ -714,15 +660,17 @@ impl WindowsNamedPipe {
         self.deref();
     }
 
+    /// Adopt a connection just taken from an engine server's `accept()`.
+    /// Owns `conn` on every path — closes it itself on failure.
     #[cfg(windows)]
-    pub fn get_accepted_by(
+    pub fn adopt_accepted(
         &mut self,
-        server: &mut uv::Pipe,
+        conn: Box<bun_iocp::pipe::PipeHandle>,
         ssl_ctx: Option<*mut boringssl::SSL_CTX>,
     ) -> bun_sys::Result<()> {
-        #[cfg(windows)]
-        debug_assert!(self.pipe.is_some());
+        debug_assert!(self.pipe.is_none());
         self.flags.set_disconnected(true);
+        self.pipe = Some(PipeSource::from_engine(conn));
 
         if let Some(tls) = ssl_ctx {
             self.flags.set_is_ssl(true);
@@ -756,27 +704,6 @@ impl WindowsNamedPipe {
             // (`NonNull::new(tls).expect(..)`); `SSL_CTX_up_ref` only bumps the
             // atomic refcount on a live `SSL_CTX*`.
             let _ = unsafe { boringssl::SSL_CTX_up_ref(tls_nn.as_ptr()) };
-        }
-        #[cfg(windows)]
-        {
-            let uv_loop = self.vm.uv_loop();
-            if let Err(e) = self
-                .pipe_mut()
-                .unwrap()
-                .init(uv_loop, false)
-                .to_result(bun_sys::Tag::pipe)
-            {
-                self.discard_unadopted_pipe();
-                return Err(e);
-            }
-
-            if let Err(e) = server
-                .accept(self.pipe_mut().unwrap())
-                .to_result(bun_sys::Tag::accept)
-            {
-                self.discard_unadopted_pipe();
-                return Err(e);
-            }
         }
 
         self.flags.set_disconnected(false);
@@ -816,38 +743,25 @@ impl WindowsNamedPipe {
         ssl_options: Option<SSLConfig>,
         owned_ctx: Option<*mut boringssl::SSL_CTX>,
     ) -> bun_sys::Result<()> {
-        debug_assert!(self.pipe.is_some());
+        debug_assert!(self.pipe.is_none());
         self.flags.set_disconnected(true);
 
         if let Some(result) = self.init_tls_wrapper(ssl_options, owned_ctx) {
             if result.is_err() {
-                self.discard_unadopted_pipe();
                 return result;
             }
         }
-        let uv_loop = self.vm.uv_loop();
-        if let Err(e) = self
-            .pipe_mut()
-            .unwrap()
-            .init(uv_loop, false)
-            .to_result(bun_sys::Tag::pipe)
-        {
-            self.discard_unadopted_pipe();
-            return Err(e);
-        }
-
-        if let Err(e) = self
-            .pipe_mut()
-            .unwrap()
-            .open(fd.uv())
-            .to_result(bun_sys::Tag::open)
-        {
-            self.discard_unadopted_pipe();
-            return Err(e);
-        }
+        // Adopt the fd: the engine takes a private duplicate (PIPE-19) and
+        // the fd is recorded for release on close — the same teardown the
+        // old uv table-fd ownership produced.
+        let ps = match Source::open_pipe(self.vm.platform_loop(), fd) {
+            bun_sys::Result::Ok(ps) => ps,
+            bun_sys::Result::Err(e) => return bun_sys::Result::Err(e),
+        };
+        self.pipe = Some(ps);
 
         self.r#ref();
-        Self::on_connect(self, uv::ReturnCode::ZERO);
+        Self::on_connect(self, Win32Error::SUCCESS);
         bun_sys::Result::Ok(())
     }
 
@@ -858,57 +772,42 @@ impl WindowsNamedPipe {
         ssl_options: Option<SSLConfig>,
         owned_ctx: Option<*mut boringssl::SSL_CTX>,
     ) -> bun_sys::Result<()> {
-        debug_assert!(self.pipe.is_some());
+        debug_assert!(self.pipe.is_none());
         self.flags.set_disconnected(true);
-        // ref because we are connecting
-        self.pipe_mut().unwrap().ref_();
 
         if let Some(result) = self.init_tls_wrapper(ssl_options, owned_ctx) {
             if result.is_err() {
-                self.discard_unadopted_pipe();
                 return result;
             }
         }
-        let uv_loop = self.vm.uv_loop();
-        if let Err(e) = self
-            .pipe_mut()
-            .unwrap()
-            .init(uv_loop, false)
-            .to_result(bun_sys::Tag::pipe)
-        {
+        let Some(name) = pipe_name_utf16(path) else {
+            return bun_sys::Result::Err(bun_sys::Error::from_code(
+                bun_sys::E::INVAL,
+                bun_sys::Tag::connect2,
+            ));
+        };
+        // SAFETY: the VM's loop wrapper is live for the process lifetime.
+        let lp = unsafe { bun_iocp::usockets::native_loop(self.vm.platform_loop().cast()) };
+        // SAFETY: the loop outlives the handle (engine contract); the box is
+        // freed only via the engine close callback (Source::close).
+        let mut ps = PipeSource::from_engine(unsafe { bun_iocp::pipe::PipeHandle::new(lp) });
+        let this: *mut Self = core::ptr::addr_of_mut!(*self);
+        // SAFETY: `this` is the heap-context field address, stable until the
+        // close paths run; the engine delivers exactly one connect callback
+        // (asynchronously, including validation failures).
+        let rc = unsafe {
+            ps.handle
+                .connect(&name, Some(Self::on_engine_connect), this.cast::<c_void>())
+        };
+        self.pipe = Some(ps);
+        if rc.is_err() {
+            // Only reachable on a closing handle — defensive; this one is
+            // freshly created.
             self.discard_unadopted_pipe();
-            return Err(e);
-        }
-
-        // BORROW_PARAM: `connect()` takes `&mut self.connect_req`, a `*mut c_void`
-        // context, and `&mut self.pipe` simultaneously.
-        // Derive `ctx` first via `addr_of_mut!` (no intermediate `&mut Self` retag),
-        // then project `req`/`pipe` *from `ctx`* so all three share one provenance
-        // root — taking `&mut self.connect_req` followed by `self as *mut Self`
-        // would pop `req`'s tag under Stacked Borrows. libuv only *stores* `ctx`
-        // here (no deref), so the brief field-level Unique borrows below don't
-        // invalidate the bytes the callback later reads.
-        let ctx: *mut Self = core::ptr::addr_of_mut!(*self);
-        // SAFETY: `ctx` is `self`; field projections are in-bounds and disjoint.
-        let req: *mut uv::uv_connect_t = unsafe { core::ptr::addr_of_mut!((*ctx).connect_req) };
-        unsafe { (*req).data = ctx.cast::<c_void>() };
-        // `pipe` lives in a separate heap allocation (the `uv::Pipe` aliased by
-        // `self.pipe: NonNull`), so its bytes are outside `*self` and unaffected
-        // by the `req` projection.
-        let pipe: *mut uv::Pipe = unsafe { (*ctx).pipe }.unwrap().as_ptr();
-        // SAFETY: `req`/`pipe` are live disjoint fields of `*self`; libuv stashes
-        // `req`/`ctx` until the connect callback fires (this struct outlives that).
-        if let Some(err) = unsafe { &mut *pipe }
-            .connect(
-                unsafe { &mut *req },
-                path,
-                ctx.cast::<c_void>(),
-                Self::uv_on_connect,
-            )
-            .to_error(bun_sys::Tag::connect2)
-        {
-            self.discard_unadopted_pipe();
-            return Err(err);
+            return bun_sys::Result::Err(bun_sys::Error::from_code(
+                bun_sys::E::PIPE,
+                bun_sys::Tag::connect2,
+            ));
         }
         self.r#ref();
         Ok(())
@@ -994,91 +893,45 @@ impl WindowsNamedPipe {
         None
     }
 
-    pub fn start_tls(
-        &mut self,
-        ssl_options: &SSLConfig,
-        is_client: bool,
-    ) -> Result<(), bun_core::Error> {
-        self.flags.set_is_ssl(true);
-        if self.start(is_client) {
-            self.wrapper = Some(ssl_wrapper::init(
-                ssl_options,
-                is_client,
-                ssl_wrapper::Handlers {
-                    ctx: std::ptr::from_mut(self),
-                    on_open: Self::ssl_on_open,
-                    on_handshake: Self::ssl_on_handshake,
-                    on_data: Self::ssl_on_data,
-                    on_close: Self::ssl_on_close,
-                    write: Self::ssl_write,
-                    on_session: Some(Self::ssl_on_session),
-                    on_keylog: Some(Self::ssl_on_keylog),
-                },
-            )?);
-
-            // Re-entrancy guard: `SSLWrapper::start → handle_traffic` can fire
-            // `trigger_close_callback` synchronously; see `on_read` for the
-            // WRAPPER_BUSY pattern. (`wrapper` was just assigned `Some` above.)
-            let w: *mut WrapperType = self.wrapper_ptr().unwrap();
-            // Re-entrancy: see `on_read` — only the OUTERMOST scope may clear
-            // the flag / run the deferred-drop epilogue.
-            let was_busy = self.flags.contains(Flags::WRAPPER_BUSY);
-            self.flags.insert(Flags::WRAPPER_BUSY);
-            // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some` payload
-            // bytes at `*w` valid for the call's duration.
-            unsafe { (*w).start() };
-            if !was_busy {
-                self.flags.remove(Flags::WRAPPER_BUSY);
-                if self.flags.is_closed() {
-                    self.wrapper = None;
-                }
-            }
-        }
-        Ok(())
-    }
-
     pub fn start(&mut self, is_client: bool) -> bool {
         self.flags.set_is_client(is_client);
         #[cfg(windows)]
         {
-            let Some(pipe_nn) = self.pipe else {
+            let Some(ps) = self.pipe.take() else {
                 return false;
             };
-            self.pipe_mut().unwrap().unref();
             // raw self-ptr first to dodge the &mut self.writer / &mut *self overlap
             let this: *mut Self = core::ptr::from_mut(self);
+            // Hand ownership to the writer (the `start_with_pipe` shape, with
+            // the source pre-built): after this the writer's close hand-off is
+            // the sole teardown path for the engine handle.
+            debug_assert!(self.writer.source.is_none());
+            self.writer.source = Some(Source::Pipe(ps));
+            if let Some(src) = self.writer.source.as_mut() {
+                // An idle pipe must not hold the loop; the write paths
+                // re-`ref_()` while data is pending (see `call_write_or_end`).
+                src.unref();
+            }
             self.writer.set_parent(this);
-            // SAFETY: `start_with_pipe`'s contract is "Box-allocated pointer;
-            // ownership transfers to `self.source`". `pipe_nn` is the `NonNull`
-            // recorded from the `Box<uv::Pipe>` leaked in `from()` and not yet
-            // adopted (asserted by `start_with_pipe`'s
-            // `debug_assert!(source.is_none())`). After this call
-            // `self.writer.source` holds the SOLE `Box` for the allocation;
-            // `self.pipe` remains a non-owning alias for `pause_stream`. NOTE:
-            // nothing clears that alias when the writer frees the Box — so
-            // `on_close` nulls it defensively and `Drop` only reclaims when
-            // `PIPE_ADOPTED` was never set.
-            self.flags.insert(Flags::PIPE_ADOPTED);
-            let start_pipe_result = unsafe { self.writer.start_with_pipe(pipe_nn.as_ptr()) };
-            if let bun_sys::Result::Err(err) = start_pipe_result {
+            if let bun_sys::Result::Err(err) = self.writer.start_with_current_pipe() {
                 self.on_error(err);
                 return false;
             }
-            let Some(stream) = self.writer.get_stream() else {
-                self.on_error(bun_sys::Error::from_code(
-                    bun_sys::E::PIPE,
-                    bun_sys::Tag::read,
-                ));
-                return false;
-            };
 
-            // SAFETY: `stream` is the live `*mut uv_stream_t` for our pipe
-            // (returned by `writer.get_stream()`); the `StreamReader` impl
-            // below routes the trampolines back to `self`.
-            let read_start_result =
-                unsafe { (*stream).read_start_ctx::<Self>(self) }.to_result(bun_sys::Tag::listen);
-            if let bun_sys::Result::Err(err) = read_start_result {
-                self.on_error(err);
+            // Begin reading through the writer-owned source.
+            let rc = match self.writer.source.as_mut() {
+                // SAFETY: `this` (the cb ctx) outlives reading — the source
+                // is stopped or closed before this struct can be freed.
+                Some(Source::Pipe(ps)) => unsafe {
+                    ps.read_start(Self::on_engine_read, this.cast())
+                },
+                _ => Win32Error::INVALID_HANDLE,
+            };
+            if rc != Win32Error::SUCCESS {
+                self.on_error(bun_sys::Error::from_code(
+                    win_error::translate(rc),
+                    bun_sys::Tag::listen,
+                ));
                 return false;
             }
             true
@@ -1092,16 +945,6 @@ impl WindowsNamedPipe {
 
     pub fn is_tls(&self) -> bool {
         self.flags.is_ssl()
-    }
-
-    /// SAFETY: `vm.uv_loop()` hands back the process-wide libuv loop; two calls
-    /// alias the same `&mut AsyncLoop`. Caller must not hold another live
-    /// `&mut` to it.
-    #[allow(clippy::mut_from_ref)]
-    pub unsafe fn loop_(&self) -> &mut AsyncLoop {
-        // SAFETY: see fn-level safety comment — process-wide libuv loop, caller
-        // promises no aliasing `&mut`.
-        unsafe { &mut *self.vm.uv_loop() }
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__encode_and_write")]
@@ -1244,10 +1087,9 @@ impl WindowsNamedPipe {
             let _ = wrapper.shutdown_read();
         } else {
             #[cfg(windows)]
-            if let Some(stream) = self.writer.get_stream() {
-                // SAFETY: `stream` is the live pipe stream; `uv_read_stop`
-                // always succeeds and is a no-op if not reading.
-                unsafe { (*stream).read_stop() };
+            if let Some(Source::Pipe(ps)) = self.writer.source.as_mut() {
+                // No-op if not reading; safe on a closing handle.
+                ps.read_stop();
             }
         }
     }
@@ -1340,26 +1182,26 @@ impl WindowsNamedPipe {
         // clear the timer
         self.set_timeout(0);
         #[cfg(windows)]
-        if let Some(stream) = self.writer.get_stream() {
-            // SAFETY: `stream` is the live pipe stream; `uv_read_stop` always
-            // succeeds and is a no-op if not reading.
-            unsafe { (*stream).read_stop() };
+        if let Some(Source::Pipe(ps)) = self.writer.source.as_mut() {
+            // No-op if not reading; safe on a closing handle.
+            ps.read_stop();
         }
         // "The source is already
         // closed by the time on_close reaches here (that close is what fired the
         // callback)" is true ONLY for the writer-initiated close path
         // (`WindowsStreamingWriterParent::on_close`). It is FALSE when we arrive
-        // via `ssl_on_close` (TLS close_notify): the underlying `uv_pipe_t` is
-        // still open and in libuv's handle_queue, so without an explicit close
-        // here the HANDLE survives ≥ one extra event-loop tick (until the
-        // embedding context's refcount hits 0 and `WindowsStreamingWriter::Drop`
-        // finally runs). Inline `close_without_reporting()` (private on the
-        // writer) so the source pipe is `uv_close`d NOW; the `get_fd() != INVALID`
-        // guard makes this a no-op on the writer-initiated path where the source
-        // was already taken, and `closed_without_reporting = true` keeps
-        // `on_close_source()` from re-entering `Parent::on_close` (we're already
-        // inside it). `current_payload` may still back an in-flight `uv_write`
-        // (cancelled async by `uv_close`) so it is left to the writer's own Drop.
+        // via `ssl_on_close` (TLS close_notify): the engine pipe is still open,
+        // so without an explicit close here the HANDLE survives ≥ one extra
+        // event-loop tick (until the embedding context's refcount hits 0 and
+        // `WindowsStreamingWriter::Drop` finally runs). Inline
+        // `close_without_reporting()` (private on the writer) so the source
+        // pipe is closed NOW; the `get_fd() != INVALID` guard makes this a
+        // no-op on the writer-initiated path where the source was already
+        // taken, and `closed_without_reporting = true` keeps
+        // `on_close_source()` from re-entering `Parent::on_close` (we're
+        // already inside it). `current_payload` may still back an in-flight
+        // engine write (failed with the abort shape by close) so it is left
+        // to the writer's own Drop.
         #[cfg(windows)]
         {
             if self.writer.get_fd() != Fd::INVALID {
@@ -1385,25 +1227,14 @@ impl WindowsNamedPipe {
 impl Drop for WindowsNamedPipe {
     fn drop(&mut self) {
         self.release_resources();
-        // Reclaim the `Box<uv::Pipe>` leaked in `from()` if it was never
-        // adopted by `self.writer.source` (early-error returns from
-        // `connect`/`open`/`get_accepted_by` before `start()` runs). Once
-        // `PIPE_ADOPTED` is set the writer is the sole owner and frees via
-        // its libuv close callback — touching it here would double-free.
-        // `close_and_destroy` handles both un-adopted states: if `pipe.init()`
-        // never ran (`loop_` still null) it just `Box::from_raw`-drops the
-        // allocation; if init() DID run before the later open/accept/connect
-        // failure it `uv_close`s first so the handle is unlinked from libuv's
-        // `handle_queue` before the heap block is freed.
+        // Reclaim an engine pipe that was never adopted by
+        // `self.writer.source` (early-error returns from
+        // `connect`/`open`/`adopt_accepted` before `start()` runs). Once
+        // adopted, the writer is the sole owner and frees via the engine
+        // close callback.
         #[cfg(windows)]
-        if !self.flags.contains(Flags::PIPE_ADOPTED) {
-            if let Some(pipe) = self.pipe.take() {
-                // SAFETY: `pipe` is the `NonNull` from `Box::leak` in `from()`,
-                // never adopted (gated on `!PIPE_ADOPTED`); `close_and_destroy`
-                // is the unique reclaim and accepts both never-init'd and
-                // init'd-but-unowned handles.
-                unsafe { uv::Pipe::close_and_destroy(pipe.as_ptr()) };
-            }
+        if let Some(ps) = self.pipe.take() {
+            Source::Pipe(ps).close(true);
         }
     }
 }
@@ -1435,40 +1266,21 @@ bun_io::impl_streaming_writer_parent! {
     on_close   = on_close,
     event_loop = |this| (*this).event_loop_handle.as_event_loop_ctx(),
     uws_loop   = |this| (*this).vm.uws_loop(),
-    uv_loop    = |this| (*this).vm.uv_loop(),
+    windows_loop = |this| (*this).vm.platform_loop(),
     ref_       = |this| (&mut *this).r#ref(),
     deref      = |this| (&mut *this).deref(),
 }
 
-/// The three `stream.readStart` callbacks (alloc/error/read) baked into a
-/// trait so the
-/// `extern "C"` libuv trampoline is monomorphised over `WindowsNamedPipe`.
+/// UTF-16 pipe name for the engine connect/bind APIs (no terminator; the
+/// engine appends its own). Tolerates one trailing NUL from ZStr-shaped
+/// callers; returns `None` only on allocation failure.
 #[cfg(windows)]
-impl uv::StreamReader for WindowsNamedPipe {
-    #[inline]
-    fn on_read_alloc(this: &mut Self, suggested_size: usize) -> &mut [u8] {
-        WindowsNamedPipe::on_read_alloc(this, suggested_size)
-    }
-    #[inline]
-    fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
-        // The trampoline only reaches this arm when `nreads < 0`, and for any
-        // negative code `translate_uv_error_to_e` already
-        // yields a concrete `E` (falling back to `UNKNOWN` for unmapped
-        // codes). Pass it straight through; do NOT remap UNKNOWN→CANCELED.
-        let e = bun_sys::windows::translate_uv_error_to_e(err);
-        WindowsNamedPipe::on_read_error(this, e);
-    }
-    #[inline]
-    unsafe fn on_read(this: *mut Self, data: &[u8]) {
-        // `data` points into `(*this).incoming` (it was returned from
-        // `on_read_alloc`). Forming `&mut *this` would retag every byte of
-        // `*this` Unique and pop the SharedRW tag `data` descends from — UB
-        // under Stacked Borrows. Capture the only thing the body needs (length),
-        // drop the slice, *then* reborrow `*this`.
-        let nread = data.len();
-        let _ = data;
-        // SAFETY: `this` is the live context stashed in `handle.data` by
-        // `read_start_ctx`; `data` is no longer live so the Unique retag is sound.
-        WindowsNamedPipe::on_read(unsafe { &mut *this }, nread);
+pub(crate) fn pipe_name_utf16(path: &[u8]) -> Option<Vec<u16>> {
+    let path = path.strip_suffix(&[0]).unwrap_or(path);
+    match bun_core::strings::to_utf16_alloc(path, false, false) {
+        Ok(Some(v)) => Some(v),
+        // Pure-ASCII fast path: widen in place.
+        Ok(None) => Some(path.iter().map(|&b| u16::from(b)).collect()),
+        Err(_) => None,
     }
 }

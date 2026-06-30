@@ -1931,7 +1931,16 @@ export function readableStreamReaderGenericRelease(reader) {
 
   var stream = $getByIdDirectPrivate(reader, "ownerReadableStream");
   if (stream.$bunNativePtr) {
-    $getByIdDirectPrivate($getByIdDirectPrivate(stream, "readableStreamController"), "underlyingSource").$resume(false);
+    // The underlyingSource is only resumable on the native-handle path;
+    // $lazyLoadStream returns a plain drained source when the handle
+    // completed at start, and that source has nothing to unref.
+    const underlyingSource = $getByIdDirectPrivate(
+      $getByIdDirectPrivate(stream, "readableStreamController"),
+      "underlyingSource",
+    );
+    if (underlyingSource && $isCallable(underlyingSource.$resume)) {
+      underlyingSource.$resume(false);
+    }
   }
   $putByIdDirectPrivate(stream, "reader", undefined);
   $putByIdDirectPrivate(reader, "ownerReadableStream", undefined);

@@ -420,9 +420,9 @@ impl IOWriter {
             {
                 // This might happen if the file descriptor points to NUL.
                 // On Windows GetFileType(NUL) returns FILE_TYPE_CHAR, so
-                // `this.writer.start()` will try to open it as a tty with
-                // uv_tty_init, but this returns EBADF. As a workaround,
-                // we'll try opening the file descriptor as a file.
+                // `this.writer.start()` tries to open it as a tty, and the
+                // engine's console probe rejects NUL with EBADF. As a
+                // workaround, we'll try opening the fd as a file.
                 if e.get_errno() == E::EBADF {
                     s.flags.pollable = false;
                     s.flags.nonblock = false;
@@ -432,25 +432,12 @@ impl IOWriter {
             }
             return Err(e);
         }
-        #[cfg(windows)]
-        {
-            // When `Source::open` produced a uv pipe/tty, libuv has TAKEN
-            // OWNERSHIP of the underlying HANDLE
-            // (`uv_pipe_open`/`uv_tty_init`) and `uv_close` (issued by
-            // `s.writer.close()` in Drop) will close it.
-            // `BaseWindowsPipeWriter::start` does not invalidate the stored
-            // fd (TODO at PipeWriter.rs:1277), so disarm the Drop close here
-            // instead. The `Source::File`/`SyncFile` case (incl. the
-            // EBADF→`start_with_file` fallback above, which `return`s early)
-            // keeps `s.fd` valid: with `owns_fd=false` PipeWriter does NOT
-            // close it there, so Drop must.
-            if matches!(
-                s.writer.source,
-                Some(bun_io::Source::Pipe(_) | bun_io::Source::Tty(_))
-            ) {
-                s.fd = Fd::INVALID;
-            }
-        }
+        // NOTE: `Source::open` adopts a PRIVATE DUPLICATE of pipe/tty handles
+        // into the engine (`s.writer.close()` in Drop closes only that
+        // duplicate, `owns_fd=false` stops `source.close` from touching the
+        // original). `s.fd` therefore stays valid on every source shape so
+        // Drop's `sys::close(s.fd)` releases the original — for a pipeline
+        // write end this close is what delivers EOF to the read side.
         #[cfg(not(windows))]
         {
             use bun_io::FilePollFlag;
@@ -1111,14 +1098,14 @@ bun_io::impl_buffered_writer_parent! {
     on_close   = on_close,
     get_buffer = |this| (*this).get_buffer(),
     event_loop = |this| (*this).io_evtloop(),
-    uv_loop    = |this| (*(*this).evtloop().loop_()).uv_loop,
+    windows_loop = |this| (*this).evtloop().loop_(),
     // INVARIANT: `this` is `Arc::as_ptr` stashed via `writer.set_parent` in
     // `IOWriter::init` (sole constructor); passing a non-Arc ptr is UB.
     ref_       = |this| std::sync::Arc::increment_strong_count(this as *const Self),
     deref      = |this| std::sync::Arc::decrement_strong_count(this as *const Self),
     // Hold a keepalive across Windows on_write re-entry: `on_write_pollable` →
     // `run_yield` → `bump` may fire `on_io_writer_chunk`, which can drop the
-    // last external `Arc<IOWriter>` (and the inline `uv_write_t`) mid-callback.
+    // last external `Arc<IOWriter>` mid-callback.
     win_on_write_guard = |this| (&*this).keepalive(),
 }
 

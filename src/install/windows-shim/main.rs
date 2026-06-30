@@ -283,7 +283,6 @@ pub mod compat {
 
     // ── aliases / consts not yet in bun_windows_sys ──
     pub(crate) type PVOID = *mut c_void;
-    pub(crate) const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
 
     // ── kernel32 surface (bun_sys::windows::kernel32 layers extras on top
     //    of bun_windows_sys::kernel32; mirror just what the shim calls) ──

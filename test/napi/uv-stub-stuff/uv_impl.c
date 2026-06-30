@@ -3,8 +3,15 @@
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 #include <uv.h>
+
+#ifdef _WIN32
+/* uv/win.h already brought in the Win32 headers (winsock2-first). */
+#define usleep(us) Sleep(((us) / 1000) ? (us) / 1000 : 1)
+#endif
 
 // Test mutex initialization and destruction
 static napi_value test_mutex_init_destroy(napi_env env,

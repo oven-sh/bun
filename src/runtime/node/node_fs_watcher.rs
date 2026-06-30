@@ -435,11 +435,18 @@ impl FSWatchTaskWindows {
     #[cfg(windows)]
     fn run_path<const EVENT_TYPE: EventType>(ctx: &FSWatcher, path: &mut StringOrBytesToDecode) {
         use bun_jsc::StringJsc;
+        // The rescan payload (event-buffer overflow) is an empty BytesToFree
+        // for every encoding: it must deliver `filename === null` (Node's
+        // "changes were lost, rescan" contract), so it skips the encoders.
+        if matches!(path, StringOrBytesToDecode::BytesToFree(b) if b.is_empty()) {
+            ctx.emit::<EVENT_TYPE>(b"");
+            return;
+        }
         if ctx.encoding == Encoding::Utf8 {
             let StringOrBytesToDecode::String(s) = path else {
-                // Producer invariant (win_watcher::on_path_update_windows): when
-                // `ctx.encoding == Utf8` the payload is always the `String`
-                // variant, and `encoding` is immutable after init.
+                // Producer invariant (win_watcher::on_path_update_windows):
+                // non-empty Utf8 payloads are always the `String` variant,
+                // and `encoding` is immutable after init.
                 unreachable!()
             };
             // Returning from this helper on `transferToJS` failure lets
@@ -851,7 +858,14 @@ impl FSWatcher {
             return;
         };
         let global_object = self.global_this;
-        let mut filename: JSValue = JSValue::UNDEFINED;
+        // Node passes null — not undefined — when an event carries no
+        // filename (e.g. the overflow→rescan signal); 'close' carries no
+        // filename argument at all and keeps undefined.
+        let mut filename: JSValue = if EVENT_TYPE == EventType::Close {
+            JSValue::UNDEFINED
+        } else {
+            JSValue::NULL
+        };
         if !file_name.is_empty() {
             if self.encoding == Encoding::Buffer {
                 filename = match jsc::ArrayBuffer::create_buffer(&global_object, file_name) {

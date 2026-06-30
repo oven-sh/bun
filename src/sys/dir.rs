@@ -348,8 +348,8 @@ impl Dir {
 
     /// `symlinkat(target, self.fd, link)`. The
     /// `is_directory` flag is a no-op on POSIX;
-    /// on Windows it selects junction vs. file-symlink and
-    /// callers route through `sys_uv::symlink_uv` instead.
+    /// on Windows it selects junction vs. file-symlink and callers route
+    /// through `windows::fs::symlink` instead.
     pub fn sym_link(
         &self,
         target: &[u8],

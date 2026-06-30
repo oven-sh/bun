@@ -3003,7 +3003,7 @@ mod stdio_stores {
     }
 
     fn build_store(uv_fd: i32, is_atty: bool) -> StoreRef {
-        let fd = bun_sys::Fd::from_uv(uv_fd);
+        let fd = bun_sys::Fd::from_js_fd(uv_fd);
         let mode: bun_sys::Mode = match bun_sys::fstat(fd) {
             Ok(stat) => stat.st_mode as bun_sys::Mode,
             Err(_) => 0,
@@ -3046,7 +3046,7 @@ mod stdio_stores {
     }
 
     pub(super) fn stdin(global_this: &JSGlobalObject) -> JSValue {
-        let is_atty = bun_sys::isatty(bun_sys::Fd::from_uv(0));
+        let is_atty = bun_sys::isatty(bun_sys::Fd::from_js_fd(0));
         make_blob(
             global_this,
             &STDIN,

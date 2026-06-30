@@ -24,7 +24,7 @@ use bun_paths::WPathBuffer;
 use bun_paths::strings;
 use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_resolver::package_json::PackageJSON;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd};
 use bun_which::which;
 
 use crate::cli;
@@ -467,7 +467,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                         Output::flush();
                     }
 
-                    Global::exit(exit_code.code as u32);
+                    Global::exit(exit_code.code);
                 }
             }
 
@@ -2337,7 +2337,7 @@ impl RunCommand {
                             }
                         }
 
-                        Global::exit(code as u32);
+                        Global::exit(code);
                     }
                     SpawnStatus::Running => panic!("Unexpected state: process is running"),
                 }
@@ -2856,12 +2856,6 @@ impl RunCommand {
 
         // Open read-only.
         let Ok(fd) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0) else {
-            return false;
-        };
-        // `.makeLibUVOwnedForSyscall(.open, .close_on_fail)` — hands the
-        // HANDLE off to libuv ownership on Windows; pass-through on POSIX.
-        let Ok(fd) = fd.make_lib_uv_owned_for_syscall(sys::Tag::open, sys::ErrorCase::CloseOnFail)
-        else {
             return false;
         };
 

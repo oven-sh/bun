@@ -6,11 +6,11 @@
 
 use core::ffi::c_int;
 
-// `uv::UV_E*` constants come from `bun_libuv_sys` (leaf);
+// `uv::UV_E*` protocol numbers live in `crate::uv_numbers` (node ABI);
 // `Win32Error` / `NTSTATUS` / the NTSTATUS→errno mapper live locally in this
 // module (their only external use is via `SystemErrno::init`, defined here).
 pub use self::windows::{NTSTATUS, Win32Error, Win32ErrorExt};
-use bun_libuv_sys as uv;
+use crate::uv_numbers as uv;
 
 // ──────────────────────────────────────────────────────────────────────────
 // UV_* errno X-macro
@@ -18,7 +18,7 @@ use bun_libuv_sys as uv;
 // Single source of truth for the 86 UV_* variants that form the tail of BOTH
 // `enum E` and `enum SystemErrno`. Both enum tails are
 // driven from this one list so they cannot drift. (The UV_*→E* fold-down
-// lives in `bun_libuv_sys::uv_err_to_e_discriminant`.)
+// lives in `crate::uv_numbers::uv_err_to_e_discriminant`.)
 //
 // Entry shape:
 //   [UV_X => EX]   — UV_X has a non-UV_ counterpart `SystemErrno::EX`
@@ -685,10 +685,20 @@ impl SystemErrno {
     }
 
     /// Maps a `Win32Error` code to the corresponding `SystemErrno`.
+    ///
+    /// This is the GENERAL table, kept row-for-row at parity with libuv's
+    /// `uv_translate_sys_error` (src/win/error.c) — the ecosystem contract
+    /// Node and npm packages hard-depend on, including its deliberately
+    /// "wrong" rows (ACCESS_DENIED→EPERM). Direction-dependent codes
+    /// (BROKEN_PIPE, NO_DATA) carry their READ-side meaning here; write
+    /// paths must translate through `bun_sys::windows::win_error` instead.
+    // quirk: HIST-33, HIST-34
     pub fn init_win32_error(code: Win32Error) -> Option<SystemErrno> {
         use Win32Error as W;
         Some(match code {
-            W::NOACCESS => SystemErrno::EACCES,
+            // ERROR_NOACCESS is an access *violation* (bad pointer in a
+            // syscall), not a permission failure. // quirk: HIST-37
+            W::NOACCESS => SystemErrno::EFAULT,
             W::WSAEACCES => SystemErrno::EACCES,
             W::ELEVATION_REQUIRED => SystemErrno::EACCES,
             W::CANT_ACCESS_FILE => SystemErrno::EACCES,
@@ -714,7 +724,9 @@ impl SystemErrno {
             W::WSAECONNRESET => SystemErrno::ECONNRESET,
             W::ALREADY_EXISTS => SystemErrno::EEXIST,
             W::FILE_EXISTS => SystemErrno::EEXIST,
-            W::BUFFER_OVERFLOW => SystemErrno::EFAULT,
+            // ERROR_BUFFER_OVERFLOW (111) literally means "the file name is
+            // too long". // quirk: HIST-37
+            W::BUFFER_OVERFLOW => SystemErrno::ENAMETOOLONG,
             W::WSAEFAULT => SystemErrno::EFAULT,
             W::HOST_UNREACHABLE => SystemErrno::EHOSTUNREACH,
             W::WSAEHOSTUNREACH => SystemErrno::EHOSTUNREACH,
@@ -750,7 +762,9 @@ impl SystemErrno {
             W::WSAENETUNREACH => SystemErrno::ENETUNREACH,
             W::WSAENOBUFS => SystemErrno::ENOBUFS,
             W::BAD_PATHNAME => SystemErrno::ENOENT,
-            W::DIRECTORY => SystemErrno::ENOTDIR,
+            // ERROR_DIRECTORY ("the directory name is invalid") is ENOENT in
+            // the contract table (libuv 162e57ba), not ENOTDIR.
+            W::DIRECTORY => SystemErrno::ENOENT,
             W::ENVVAR_NOT_FOUND => SystemErrno::ENOENT,
             W::FILE_NOT_FOUND => SystemErrno::ENOENT,
             W::INVALID_NAME => SystemErrno::ENOENT,
@@ -773,11 +787,18 @@ impl SystemErrno {
             W::WSAENOTSOCK => SystemErrno::ENOTSOCK,
             W::NOT_SUPPORTED => SystemErrno::ENOTSUP,
             W::WSAEOPNOTSUPP => SystemErrno::ENOTSUP,
-            W::BROKEN_PIPE => SystemErrno::EPIPE,
+            // Reading a pipe whose writer exited is a clean EOF; writes must
+            // go through `win_error::translate_write` (→ EPIPE). // quirk: HIST-35
+            W::BROKEN_PIPE => SystemErrno::EOF,
+            // Deliberately NOT EACCES: the POSIX-correct remap was reverted
+            // upstream (a6ba1d70) because the ecosystem depends on EPERM.
+            // quirk: HIST-34
             W::ACCESS_DENIED => SystemErrno::EPERM,
             W::PRIVILEGE_NOT_HELD => SystemErrno::EPERM,
             W::BAD_PIPE => SystemErrno::EPIPE,
-            W::NO_DATA => SystemErrno::EPIPE,
+            // PIPE_NOWAIT would-block; EPIPE only on writes (write table).
+            // quirk: HIST-35
+            W::NO_DATA => SystemErrno::EAGAIN,
             W::PIPE_NOT_CONNECTED => SystemErrno::EPIPE,
             W::WSAESHUTDOWN => SystemErrno::EPIPE,
             W::WSAEPROTONOSUPPORT => SystemErrno::EPROTONOSUPPORT,
@@ -786,6 +807,12 @@ impl SystemErrno {
             W::WSAETIMEDOUT => SystemErrno::ETIMEDOUT,
             W::NOT_SAME_DEVICE => SystemErrno::EXDEV,
             W::INVALID_FUNCTION => SystemErrno::EISDIR,
+            // Non-PE / wrong-architecture file in CreateProcess/LoadLibrary;
+            // lets spawn callers distinguish "not an executable" from EINVAL.
+            // Current Win11 reports 216 where older kernels reported 193 —
+            // both are the EFTYPE contract. // quirk: HIST-37, PROC-58
+            W::BAD_EXE_FORMAT => SystemErrno::EFTYPE,
+            W::EXE_MACHINE_TYPE_MISMATCH => SystemErrno::EFTYPE,
             W::META_EXPANSION_TOO_LONG => SystemErrno::E2BIG,
             W::WSAESOCKTNOSUPPORT => SystemErrno::ESOCKTNOSUPPORT,
             W::DELETE_PENDING => SystemErrno::EBUSY,
@@ -826,7 +853,7 @@ pub mod uv_e {
     // libuv-synthetic `-UV_E*` constant.
     macro_rules! __v {
         ($i:tt, $e:tt, $uv:tt) => {
-            -::bun_libuv_sys::$uv
+            -$crate::uv_numbers::$uv
         };
     }
     crate::__uv_e_rows!(__v);

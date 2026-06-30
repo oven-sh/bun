@@ -28,8 +28,10 @@ use crate::{Argv, Envp};
 
 #[cfg(unix)]
 pub type PidT = libc::pid_t;
+/// Windows pids are DWORDs but every consumer (JS, waitpid shapes) treats
+/// them as signed 32-bit, matching POSIX `pid_t`.
 #[cfg(windows)]
-pub type PidT = bun_libuv_sys::uv_pid_t;
+pub type PidT = i32;
 
 #[cfg(unix)]
 pub type FdT = libc::c_int;
@@ -47,10 +49,8 @@ pub type PidFdType = ();
 // One Bun-level type per target. On every Unix this is `libc::rusage` —
 // the libc crate defines `rusage` on FreeBSD with
 // the standard `ru_*` field names, so no hand-rolled FreeBSD struct is
-// needed. On Windows it is the value-typed `WinRusage` below (NOT
-// `uv_rusage_t` — that is vendor FFI ABI in `bun_libuv_sys` and stays
-// untouched; our Windows path fills `WinRusage` directly from Win32, not
-// via libuv).
+// needed. On Windows it is the value-typed `WinRusage` below, filled
+// directly from Win32 (`process_rusage`).
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Default, Clone, Copy)]
@@ -81,11 +81,14 @@ unsafe extern "system" {
     ) -> core::ffi::c_int;
 }
 
+/// Resource usage of a child via its raw process HANDLE. The handle must
+/// still be open — query while the child runs or from inside the exit
+/// callback (the engine closes it eagerly right after). All failures
+/// degrade to zeroed fields.
 #[cfg(windows)]
-pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
-    use core::ffi::c_void;
+pub fn process_rusage(process: bun_sys::windows::HANDLE) -> WinRusage {
     let mut usage_info = Rusage::default();
-    let process_pid: *mut c_void = process.process_handle;
+    let process_pid: bun_sys::windows::HANDLE = process;
     type WinTime = bun_sys::windows::FILETIME;
     // SAFETY: all-zero is a valid FILETIME (POD C struct)
     let mut starttime: WinTime = unsafe { bun_core::ffi::zeroed_unchecked() };
@@ -366,13 +369,6 @@ impl Default for PosixSpawnOptions {
     }
 }
 
-impl PosixSpawnOptions {
-    /// No-op.
-    /// Exists for cfg-parity with `WindowsSpawnOptions::deinit`, which closes
-    /// heap-allocated `uv::Pipe` handles on the spawn error path.
-    #[inline]
-    pub fn deinit(&mut self) {}
-}
 
 /// `bun.jsc.Subprocess.StdioKind` — defined here (not in `subprocess`) to keep
 /// the spawn-sys layer leaf. Re-exported up through `bun_spawn::process` →

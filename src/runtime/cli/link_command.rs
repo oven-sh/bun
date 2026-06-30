@@ -180,10 +180,10 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                 let global_path = pm::global_link_dir_path(manager);
                 let dest_path =
                     resolve_path::join_abs_string_z::<platform::Windows>(global_path, &[name]);
-                match bun_sys::sys_uv::symlink_uv(
+                match bun_sys::windows::fs::symlink(
                     link_path,
                     dest_path,
-                    bun_sys::windows::libuv::UV_FS_SYMLINK_JUNCTION,
+                    bun_sys::windows::fs::SYMLINK_JUNCTION,
                 ) {
                     Err(e) => {
                         bun_core::pretty_errorln!(

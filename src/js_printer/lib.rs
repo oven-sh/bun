@@ -3023,33 +3023,7 @@ pub mod __gated_printer {
             // WTF-8 = UTF-8 plus surrogate code points (U+D800..U+DFFF as
             // `ED A0 80`..`ED BF BF`), so validate UTF-8 shape minus the
             // surrogate exclusion.
-            fn is_valid_wtf8(mut s: &[u8]) -> bool {
-                while let Some(&b0) = s.first() {
-                    let len = match b0 {
-                        0x00..=0x7F => 1,
-                        0xC2..=0xDF => 2,
-                        0xE0..=0xEF => 3,
-                        0xF0..=0xF4 => 4,
-                        _ => return false,
-                    };
-                    if s.len() < len {
-                        return false;
-                    }
-                    let cont_ok = s[1..len].iter().all(|&b| b & 0xC0 == 0x80);
-                    if !cont_ok {
-                        return false;
-                    }
-                    match (len, b0) {
-                        (3, 0xE0) if s[1] < 0xA0 => return false, // overlong
-                        (4, 0xF0) if s[1] < 0x90 => return false, // overlong
-                        (4, 0xF4) if s[1] > 0x8F => return false, // > U+10FFFF
-                        _ => {}
-                    }
-                    s = &s[len..];
-                }
-                true
-            }
-            debug_assert!(is_valid_wtf8(str));
+            debug_assert!(strings::is_valid_wtf8(str));
 
             let quote = if !IS_JSON {
                 best_quote_char_for_string(str, allow_backtick)

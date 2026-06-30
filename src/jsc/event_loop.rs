@@ -86,6 +86,11 @@ pub struct EventLoop {
 
     pub entered_event_loop_count: isize,
     pub concurrent_ref: AtomicI32,
+    /// Net concurrent refs already APPLIED to the loop's active count via
+    /// `update_counts`. A worker terminated with queued-but-undelivered
+    /// concurrent tasks never runs their balancing deref; the thread-exit
+    /// path reconciles this residual before the loop is freed.
+    pub applied_concurrent_refs: core::cell::Cell<i64>,
     /// Atomic nullable pointer to the next-due `WTFTimer`.
     ///
     /// Note (§Dispatch): payload is `*mut ()` — the real
@@ -123,6 +128,7 @@ impl Default for EventLoop {
             uws_loop: (),
             entered_event_loop_count: 0,
             concurrent_ref: AtomicI32::new(0),
+            applied_concurrent_refs: core::cell::Cell::new(0),
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
             #[cfg(unix)]
             signal_handler: None,
@@ -525,6 +531,8 @@ impl EventLoop {
         // Do NOT silently drop the swapped delta when the handle is
         // missing — refs queued via `ref_concurrently()` would be lost forever.
         let delta = self.concurrent_ref.swap(0, Ordering::SeqCst);
+        self.applied_concurrent_refs
+            .set(self.applied_concurrent_refs.get() + i64::from(delta));
         let loop_ = self
             .vm_ref()
             .platform_loop_opt()
@@ -558,7 +566,7 @@ impl EventLoop {
     /// mutably borrowed elsewhere on the JS thread when libuv completion
     /// callbacks reach for the loop).
     #[inline]
-    pub fn uv_loop(&self) -> *mut crate::PlatformEventLoop {
+    pub fn platform_loop(&self) -> *mut crate::PlatformEventLoop {
         let vm = self.virtual_machine.expect("virtual_machine").as_ptr();
         // SAFETY: `virtual_machine` is set in `VirtualMachine::init()` to the
         // owning per-thread singleton; non-null and live for the VM lifetime.
@@ -607,10 +615,45 @@ impl EventLoop {
         let global = self.vm_ref().global();
         let global_vm = self.vm_ref().jsc_vm();
 
+        // Windows: pool threads refill `tasks` through the concurrent queue, so
+        // sustained churn keeps this drain loop live indefinitely and the
+        // caller's autoTick — the only place the engine is polled — starves
+        // socket and timer dispatch. libuv delivered pool completions through
+        // the poll itself, so every drain was structurally bounded: pending
+        // work, its immediate follow-ons, then back to the poller. Mirror that
+        // with a fixed pass count — never a clock (a timing bound masks the
+        // starvation instead of removing it). `wakeup()` below keeps the
+        // caller's next poll prompt when passes run out with work remaining.
+        // TODO(posix): the same self-feeding loops exist on POSIX; epoll
+        // delivery makes the starvation milder there, but the bound likely
+        // belongs on every platform.
+        /// Entry pass + one refill pass per tick — `uv_run(UV_RUN_ONCE)`'s
+        /// drain shape, which is what every consumer was written against.
+        #[cfg(windows)]
+        const DRAIN_PASSES_PER_TICK: u32 = 2;
+        #[cfg(windows)]
+        let mut passes_left: u32 = DRAIN_PASSES_PER_TICK;
+        #[cfg(windows)]
+        let mut sliced = false;
+        #[cfg(not(windows))]
+        let sliced = false;
+
         loop {
-            while self.tick_with_count(ctx) > 0 {
+            loop {
+                #[cfg(windows)]
+                if passes_left == 0 {
+                    sliced = true;
+                    break;
+                }
+                if self.tick_with_count(ctx) == 0 {
+                    break;
+                }
                 self.tick_concurrent();
                 self.global_ref().handle_rejected_promises();
+                #[cfg(windows)]
+                {
+                    passes_left -= 1;
+                }
             }
             if self
                 .drain_microtasks_with_global(global, global_vm)
@@ -622,13 +665,23 @@ impl EventLoop {
             }
             self.tick_concurrent();
             if self.tasks.readable_length() > 0 {
+                if sliced {
+                    break;
+                }
                 continue;
             }
             break;
         }
 
-        while self.tick_with_count(ctx) > 0 {
+        while !sliced && self.tick_with_count(ctx) > 0 {
             self.tick_concurrent();
+        }
+
+        // A sliced return can leave runnable tasks with no engine wakeup
+        // packet pending (same-thread enqueues post none); make sure the
+        // caller's next engine poll returns immediately instead of blocking.
+        if sliced && self.tasks.readable_length() > 0 {
+            self.wakeup();
         }
 
         self.global_ref().handle_rejected_promises();
@@ -1056,7 +1109,6 @@ impl EventLoop {
         // SAFETY: usockets_loop() returns a live uws loop for the VM lifetime.
         let loop_ = unsafe { &mut *loop_ptr };
 
-        #[cfg(unix)]
         {
             let pending_unref = self.vm_ref().take_pending_unref();
             if pending_unref > 0 {
@@ -1162,10 +1214,9 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
         JSValue::js_number(event_loop.concurrent_ref.load(Ordering::SeqCst) as f64),
     );
     #[cfg(windows)]
-    // SAFETY: `Loop::get()` returns the live process-global `uv_loop_t`.
+    // SAFETY: uws::Loop::get() returns a live process-global loop.
     let num_polls: i32 =
-        i32::try_from(unsafe { (*bun_sys::windows::libuv::Loop::get()).active_handles })
-            .expect("int cast");
+        i32::try_from(unsafe { (*uws::Loop::get()).active_count() }).expect("int cast");
     #[cfg(not(windows))]
     // SAFETY: uws::Loop::get() returns a live process-global loop.
     let num_polls: i32 = unsafe { (*uws::Loop::get()).num_polls };

@@ -6,8 +6,8 @@ import source from "./uv-stub-stuff/uv_impl.c";
 
 const symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
 
-// We use libuv on Windows
-describe.if(!isWindows)("uv stubs", () => {
+// Windows uses the same crash stubs + polyfills as POSIX (libuv removed).
+describe("uv stubs", () => {
   const cwd = process.cwd();
   let tempdir: string = "";
   let outdir: string = "";
@@ -57,7 +57,7 @@ describe.if(!isWindows)("uv stubs", () => {
     await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
 
     nativeModule = require(path.join(tempdir, "./build/Release/uv_test.node"));
-  });
+  }, 5 * 60 * 1000);
 
   afterEach(() => {
     process.chdir(cwd);

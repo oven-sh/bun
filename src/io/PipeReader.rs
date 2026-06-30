@@ -5,17 +5,13 @@ use core::ptr::NonNull;
 use bun_sys::{self as sys, Fd};
 
 use crate::{EventLoopHandle, FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
-// `bun.Async.Loop` — on POSIX the uws `us_loop_t`, on Windows the embedded
-// `uv_loop_t` (`bun_io::Loop` is the cfg-aliased nominal that picks the
-// right one). `BufferedReaderParent::loop_` returns this so callers in T3+
-// can hand it to libuv/uws without a cross-crate cast.
+// `bun.Async.Loop` — the uws `us_loop_t` wrapper on every platform.
+// `BufferedReaderParent::loop_` returns this; Windows engine-handle creation
+// bridges to the native loop inside `source.rs`.
 //
 // Public so trait implementors in `bun_runtime` can name the same type in
-// their `loop_` signature without duplicating the cfg-split.
-#[cfg(not(windows))]
+// their `loop_` signature.
 pub type Loop = bun_uws_sys::Loop;
-#[cfg(windows)]
-pub type Loop = bun_sys::windows::libuv::Loop;
 
 /// `bun_io::poll_tag::BUFFERED_READER` — every `FilePoll` allocated by this
 /// module stores a `*mut BufferedReader` (erased) as its owner; the per-tag
@@ -27,16 +23,11 @@ use crate::pipes::{FileType, PollOrFd, ReadState};
 use crate::source::Source;
 
 #[cfg(windows)]
-use bun_sys::ReturnCodeExt as _;
+use bun_sys::windows::win_error;
 #[cfg(windows)]
-use bun_sys::windows::libuv as uv;
-#[cfg(windows)]
-// `close`/`set_data`/`is_closed` are default trait methods; bring traits into
-// scope so method resolution finds them on `Pipe`/`uv_tty_t`/`fs_t`.
-use bun_sys::windows::libuv::UvHandle as _;
+use bun_windows_sys::Win32Error;
 
-// All logging in this module goes through `bun.sys.syslog` (the `SYS` scope)
-// or `libuv::log!`.
+// All logging in this module goes through `bun.sys.syslog` (the `SYS` scope).
 
 // ──────────────────────────────────────────────────────────────────────────
 // BufferedReaderVTable
@@ -1084,8 +1075,8 @@ impl Drop for PosixBufferedReader {
 
 #[cfg(windows)]
 pub struct WindowsBufferedReader {
-    /// The pointer to this pipe must be stable.
-    /// It cannot change because we don't know what libuv will do with it.
+    /// The pointer to this source must be stable: the engine targets its
+    /// pinned read buffer and the close callback frees the wrapper.
     pub source: Option<Source>,
     pub _offset: usize,
     pub _buffer: Vec<u8>,
@@ -1109,9 +1100,6 @@ bitflags::bitflags! {
         const IS_PAUSED                = 1 << 6; // default true
         const HAS_INFLIGHT_READ        = 1 << 7;
         const USE_PREAD                = 1 << 8;
-        /// When true, wait for the file operation callback before calling done().
-        /// Used to ensure proper cleanup ordering when closing during cancellation.
-        const DEFER_DONE_CALLBACK      = 1 << 9;
     }
 }
 
@@ -1165,6 +1153,32 @@ impl WindowsBufferedReader {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
         MaxBuf::transfer_to_pipereader(&mut other.maxbuf, &mut self.maxbuf);
         self.set_parent(parent);
+
+        // The engine snapshots (cb, data) at read_start, so an actively
+        // reading stream still dispatches into `other` — re-register at this
+        // address before a completion can land in the dead reader. The engine
+        // re-snapshots without double-submitting; stopped/parked sources are
+        // re-targeted by their next start_reading instead.
+        if !self
+            .flags
+            .intersects(WindowsFlags::IS_PAUSED | WindowsFlags::IS_DONE)
+        {
+            let self_ptr = core::ptr::from_mut(self).cast::<c_void>();
+            // SAFETY: same contract as `start_reading` — `self` outlives the
+            // registration (the source is stopped or closed before free).
+            let rc = unsafe {
+                match self.source.as_mut().expect("transferred source") {
+                    Source::Pipe(pipe) => pipe.read_start(Self::on_pipe_read, self_ptr),
+                    Source::Tty(tty) => Source::tty_mut(tty).read_start(Self::on_tty_read, self_ptr),
+                    Source::File(_) | Source::SyncFile(_) => Win32Error::SUCCESS,
+                }
+            };
+            if rc != Win32Error::SUCCESS {
+                // Surface through the normal restart path: the next
+                // start_reading retries and reports the error.
+                self.flags.insert(WindowsFlags::IS_PAUSED);
+            }
+        }
     }
 
     pub fn get_fd(&self) -> Fd {
@@ -1182,7 +1196,7 @@ impl WindowsBufferedReader {
         self.parent = parent;
         self.vtable.parent = parent;
         if !self.flags.contains(WindowsFlags::IS_DONE) {
-            // `Source::set_data` only writes the libuv `.data` field (raw ptr
+            // `Source::set_data` only stores the consumer backref (raw ptr
             // store); take a raw self-pointer first to dodge the
             // immutable-then-mutable-borrow conflict.
             let self_ptr = core::ptr::from_mut(self).cast::<c_void>();
@@ -1226,18 +1240,9 @@ impl WindowsBufferedReader {
     }
 
     pub fn has_pending_read(&self) -> bool {
-        if self.flags.contains(WindowsFlags::HAS_INFLIGHT_READ) {
-            return true;
-        }
-        let Some(source) = &self.source else {
-            return false;
-        };
-        match source {
-            Source::File(file) | Source::SyncFile(file) => {
-                file.state != crate::source::FileState::Deinitialized
-            }
-            _ => false,
-        }
+        // File reads are synchronous now, so an in-flight read can only be
+        // the engine-armed stream read flagged below.
+        self.flags.contains(WindowsFlags::HAS_INFLIGHT_READ)
     }
 
     fn _on_read_chunk(&mut self, buf: &[u8], has_more: ReadState) -> bool {
@@ -1273,8 +1278,8 @@ impl WindowsBufferedReader {
         // Re-escape so the trailing RMW cannot reuse a spilled `self.flags`
         // from before `on_read_chunk`.
         core::hint::black_box(this);
-        // Clear has_inflight_read after the callback completes to prevent
-        // libuv from starting a new read while we're still processing data
+        // Clear has_inflight_read after the callback completes so a new
+        // read is not considered armed while we process this chunk
         // SAFETY: `this` is still live (see above).
         unsafe { (*this).flags.remove(WindowsFlags::HAS_INFLIGHT_READ) };
         result
@@ -1307,7 +1312,7 @@ impl WindowsBufferedReader {
     ) -> &mut [u8] {
         self.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
         self._buffer.reserve(suggested_size);
-        // SAFETY: returning spare capacity for libuv to write into; len updated in on_read.
+        // SAFETY: returning spare capacity for the read path to fill; len updated in on_read.
         unsafe { bun_core::vec::spare_bytes_mut(&mut self._buffer) }
     }
 
@@ -1320,12 +1325,11 @@ impl WindowsBufferedReader {
         self.start_reading()
     }
 
-    /// SAFETY: `pipe` must be a `Box<uv::Pipe>`-allocated pointer; ownership
-    /// transfers to `self.source` (later freed via `close_and_destroy`).
+    /// Adopt a handle already attached to the engine (pair end, accepted or
+    /// connected client) and start reading from it.
     #[cfg(windows)]
-    pub unsafe fn start_with_pipe(&mut self, pipe: *mut uv::Pipe) -> sys::Result<()> {
-        // SAFETY: caller contract — Box-allocated, ownership transfers.
-        self.source = Some(Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
+    pub fn start_with_pipe(&mut self, pipe: Box<bun_iocp::PipeHandle>) -> sys::Result<()> {
+        self.source = Some(Source::Pipe(crate::source::PipeSource::from_engine(pipe)));
         self.start_with_current_pipe()
     }
 
@@ -1334,10 +1338,7 @@ impl WindowsBufferedReader {
         // Use the event loop from the parent, not the global one
         // This is critical for spawnSync to use its isolated loop
         let loop_ = self.vtable.loop_();
-        let mut source = match Source::open(loop_.cast(), fd) {
-            sys::Result::Err(err) => return sys::Result::Err(err),
-            sys::Result::Ok(source) => source,
-        };
+        let mut source = Source::open(loop_, fd)?;
         source.set_data(core::ptr::from_mut(self).cast::<c_void>());
         self.source = Some(source);
         self.start_with_current_pipe()
@@ -1360,228 +1361,121 @@ impl WindowsBufferedReader {
         source.set_raw_mode(value)
     }
 
+    /// Engine read callback for pipe sources. `err == SUCCESS` delivers
+    /// `n >= 1` bytes in the source's pinned buffer (copied out here before
+    /// the engine re-arms); a terminal code delivers exactly once and the
+    /// engine has already stopped reading. `BROKEN_PIPE` is the raw EOF shape
+    /// on pipes. // quirk: PIPE-37
     #[cfg(windows)]
-    extern "C" fn on_stream_alloc(
-        handle: *mut uv::Handle,
-        suggested_size: usize,
-        buf: *mut uv::uv_buf_t,
+    unsafe fn on_pipe_read(
+        _lp: &mut bun_iocp::Loop,
+        data: *mut c_void,
+        buf: *mut u8,
+        n: usize,
+        err: Win32Error,
     ) {
-        // SAFETY: libuv alloc_cb — `handle.data` was set to `*mut Self` in
-        // `set_data`/`start_with_current_pipe`. libuv invokes this from the
-        // event loop with no other Rust borrow of the reader live, so this is
-        // the sole `&mut` to the allocation (single-owner).
-        let this = unsafe { bun_ptr::callback_ctx::<WindowsBufferedReader>((*handle).data) };
-        let result = this.get_read_buffer_with_stable_memory_address(suggested_size);
-        // SAFETY: buf is a valid out-pointer from libuv.
-        unsafe {
-            *buf = uv::uv_buf_t::init(result);
-        }
-    }
-
-    #[cfg(windows)]
-    extern "C" fn on_stream_read(
-        stream: *mut uv::uv_stream_t,
-        nread: uv::ReturnCodeI64,
-        buf: *const uv::uv_buf_t,
-    ) {
-        // SAFETY: libuv read_cb — `stream.data` was set to `*mut Self` in
-        // `set_data`. Invoked from the event loop with no other Rust borrow of
-        // the reader live (single-owner).
-        let this = unsafe { bun_ptr::callback_ctx::<WindowsBufferedReader>((*stream).data) };
-
-        let nread_int = nread.int();
-
+        // SAFETY: `data` was set to `*mut Self` via `read_start`; the engine
+        // invokes this on the event loop with no other Rust borrow of the
+        // reader live (single-owner).
+        let this = unsafe { bun_ptr::callback_ctx::<WindowsBufferedReader>(data) };
         bun_sys::syslog!(
-            "onStreamRead(0x{}) = {}",
+            "onPipeRead(0x{:x}) = {}",
             core::ptr::from_mut(this) as usize,
-            nread_int
+            if err == Win32Error::SUCCESS {
+                n as i64
+            } else {
+                -1
+            }
         );
+        if err == Win32Error::SUCCESS {
+            debug_assert!(n > 0);
+            this.deliver_copied_chunk(buf, n);
+            return;
+        }
+        this.on_stream_terminal(err);
+    }
 
-        // NOTE: pipes/tty need to call stopReading on errors (yeah)
-        match nread_int {
-            0 => {
-                // EAGAIN or EWOULDBLOCK or canceled  (buf is not safe to access here)
-                // With libuv 1.51.0+, calling onRead(.drained) here causes a race condition
-                // where subsequent reads return truncated data (see logs showing 6024 instead
-                // of 74468 bytes). Just ignore 0-byte reads and let libuv continue.
-                return;
+    /// Engine read callback for tty sources. Raw mode delivers translated
+    /// VT/WTF-8 bytes in the source's pinned buffer; cooked mode lends UTF-16
+    /// units valid only for this call — both are copied/transcoded into
+    /// `_buffer` before delivery (the WTF-8 conversion lives here, in the
+    /// consumer layer). // quirk: TTY-27, TTY-31, TTY-35
+    #[cfg(windows)]
+    unsafe fn on_tty_read(
+        _lp: &mut bun_iocp::Loop,
+        data: *mut c_void,
+        payload: bun_iocp::TtyReadData,
+        err: Win32Error,
+    ) {
+        // SAFETY: see `on_pipe_read` — same single-owner contract.
+        let this = unsafe { bun_ptr::callback_ctx::<WindowsBufferedReader>(data) };
+        if err != Win32Error::SUCCESS {
+            this.on_stream_terminal(err);
+            return;
+        }
+        match payload {
+            bun_iocp::TtyReadData::Bytes { ptr, len } => {
+                debug_assert!(len > 0);
+                this.deliver_copied_chunk(ptr, len);
             }
-            v if v == uv::UV_EOF as i64 => {
-                let _ = this.stop_reading();
-                // EOF (buf is not safe to access here)
-                return this.on_read(sys::Result::Ok(0), &mut [], ReadState::Eof);
-            }
-            _ => {
-                if let Some(err) = nread.to_error(sys::Tag::recv) {
-                    let _ = this.stop_reading();
-                    // ERROR (buf is not safe to access here)
-                    this.on_read(sys::Result::Err(err), &mut [], ReadState::Progress);
-                    return;
-                }
-                // we got some data we can slice the buffer!
-                let len: usize = usize::try_from(nread_int).expect("int cast");
-                // SAFETY: buf is valid when nread > 0. `uv_buf_t` is `Copy` —
-                // take a local copy so `slice_mut` can borrow `&mut self`
-                // (libuv's `read_cb` hands us `*const`).
-                let mut b = unsafe { *buf };
-                let slice = unsafe { b.slice_mut() };
-                this.on_read(sys::Result::Ok(len), &mut slice[..len], ReadState::Progress);
+            bun_iocp::TtyReadData::Utf16 { ptr, len } => {
+                debug_assert!(len > 0);
+                // SAFETY: the engine lends `len` units for the duration of
+                // this callback.
+                let units = unsafe { core::slice::from_raw_parts(ptr, len) };
+                // Worst case 3 WTF-8 bytes per unit (pairs cost 4 per 2).
+                let dst = this.get_read_buffer_with_stable_memory_address(len * 3);
+                let r = bun_core::strings::copy_wtf16_into_wtf8(dst, units);
+                debug_assert_eq!(r.read as usize, len);
+                let written = r.written as usize;
+                let dst_ptr = dst.as_mut_ptr();
+                // SAFETY: `written` bytes of `_buffer` spare capacity were
+                // just initialized; re-slicing through the raw pointer ends
+                // the `dst` borrow before `on_read` takes `&mut self`.
+                let slice = unsafe { core::slice::from_raw_parts_mut(dst_ptr, written) };
+                let _ = this.on_read(sys::Result::Ok(written), slice, ReadState::Progress);
             }
         }
     }
 
-    /// Callback fired when a file read operation completes or is canceled.
-    /// Handles cleanup, cancellation, and normal read processing.
+    /// Copy a chunk the engine delivered (from the source's pinned buffer)
+    /// into `_buffer` spare capacity and run the shared delivery path.
     #[cfg(windows)]
-    extern "C" fn on_file_read(fs: *mut uv::fs_t) {
-        // SAFETY: libuv fs_cb — `fs` is the `uv_fs_t` field of a heap-boxed
-        // `source::File` (separate allocation from `Self`). Invoked from the
-        // event loop with no other Rust borrow of it live (single-owner).
-        // `from_fs_callback` snapshots `result`/`data` then container_of's the
-        // owning `&mut File`; that borrow does not overlap the later
-        // `&mut WindowsBufferedReader` (distinct heap allocations).
-        let (file, result, parent_ptr) = unsafe { crate::source::File::from_fs_callback(fs) };
-        let nread_int = result.int();
-        let was_canceled = nread_int == uv::UV_ECANCELED as i64;
-
-        bun_sys::syslog!(
-            "onFileRead({}) = {}",
-            // SAFETY: `uv_fs_read` populated the `fd` arm of the `file` union.
-            Fd::from_uv(unsafe { file.fs.file_fd() }),
-            nread_int
-        );
-
-        // ALWAYS complete the read first (cleans up fs_t, updates state)
-        file.complete(was_canceled);
-
-        // If detached, file should be closing itself now
-        if parent_ptr.is_null() {
-            debug_assert!(file.state == crate::source::FileState::Closing); // complete should have started close
-            return;
+    fn deliver_copied_chunk(&mut self, src: *const u8, n: usize) {
+        let dst = self.get_read_buffer_with_stable_memory_address(n);
+        debug_assert!(dst.len() >= n);
+        let dst_ptr = dst.as_mut_ptr();
+        // SAFETY: `src..src+n` is the engine-delivered region (valid for this
+        // call); `dst` is freshly reserved spare capacity, so the regions are
+        // disjoint. The raw re-slice ends the `dst` borrow before `on_read`.
+        unsafe {
+            core::ptr::copy_nonoverlapping(src, dst_ptr, n);
+            let _ = self.on_read(
+                sys::Result::Ok(n),
+                core::slice::from_raw_parts_mut(dst_ptr, n),
+                ReadState::Progress,
+            );
         }
+    }
 
-        // SAFETY: `parent_ptr` (= `fs.data`) is `*mut Self` set via `set_data`.
-        // `file` above points into the boxed `source::File` — a separate heap
-        // allocation — and its borrow ends (NLL) before this point in the
-        // non-null path, so this is the sole live `&mut` to the reader
-        // (single-owner).
-        let this: &mut WindowsBufferedReader =
-            unsafe { bun_ptr::callback_ctx::<WindowsBufferedReader>(parent_ptr) };
-
-        // Mark no longer in flight
-        this.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
-
-        // If canceled, check if we need to call deferred done
-        if was_canceled {
-            if this.flags.contains(WindowsFlags::DEFER_DONE_CALLBACK) {
-                this.flags.remove(WindowsFlags::DEFER_DONE_CALLBACK);
-                // Now safe to call done - buffer will be freed by deinit
-                this.close_impl::<true>();
-            } else {
-                this.buffer().clear();
+    /// Shared terminal-delivery path for stream sources: the engine already
+    /// stopped reading; mirror that, then deliver EOF or the error exactly
+    /// once.
+    #[cfg(windows)]
+    fn on_stream_terminal(&mut self, err: Win32Error) {
+        let _ = self.stop_reading();
+        match win_error::classify_read(err) {
+            win_error::ReadClass::Eof => {
+                let _ = self.on_read(sys::Result::Ok(0), &mut [], ReadState::Eof);
             }
-            return;
-        }
-
-        if this.flags.contains(WindowsFlags::IS_DONE) {
-            return;
-        }
-
-        match nread_int {
-            // 0 actually means EOF too
-            v if v == 0 || v == uv::UV_EOF as i64 => {
-                this.flags.insert(WindowsFlags::IS_PAUSED);
-                this.on_read(sys::Result::Ok(0), &mut [], ReadState::Eof);
-            }
-            // UV_ECANCELED needs to be on the top so we avoid UAF
-            v if v == uv::UV_ECANCELED as i64 => unreachable!(),
-            _ => {
-                if let Some(err) = result.to_error(sys::Tag::read) {
-                    this.flags.insert(WindowsFlags::IS_PAUSED);
-                    this.on_read(sys::Result::Err(err), &mut [], ReadState::Progress);
-                    return;
-                }
-
-                let len: usize = usize::try_from(nread_int).expect("int cast");
-                this._offset += len;
-                // we got some data lets get the current iov
-                //
-                // BORROW_PARAM (raw-ptr break): `on_read` takes `&mut self`
-                // *and* a slice borrowed from `self.source.File.iov`; under
-                // Stacked Borrows that's a self-mut + field-shared conflict.
-                // The boxed `File` lives in its own heap allocation, so a
-                // `*mut File` snapshot is provenance-disjoint from `&mut self`.
-                let file_raw: *mut crate::source::File = match this.source.as_mut() {
-                    Some(Source::File(f)) => f.as_mut() as *mut _,
-                    _ => core::ptr::null_mut(),
-                };
-                if !file_raw.is_null() {
-                    // SAFETY: `file_raw` points into the boxed File owned by
-                    // `this.source`; live for the duration of this callback.
-                    let buf = unsafe { (*file_raw).iov.slice_mut() };
-                    this.on_read(sys::Result::Ok(len), &mut buf[..len], ReadState::Progress);
-                } else {
-                    // ops we should not hit this lets fail with EPIPE
-                    debug_assert!(false);
-                    this.on_read(
-                        sys::Result::Err(sys::Error::from_code(sys::E::PIPE, sys::Tag::read)),
-                        &mut [],
-                        ReadState::Progress,
-                    );
-                }
-
-                // Shared epilogue: both body paths above fall through here.
-                // if we are not paused we keep reading until EOF or err
-                if !this.flags.contains(WindowsFlags::IS_PAUSED) {
-                    // Re-snapshot — `on_read` may have mutated `this.source`.
-                    let this_ptr = core::ptr::from_mut(this).cast::<c_void>();
-                    let file_raw: *mut crate::source::File = match this.source.as_mut() {
-                        Some(Source::File(f)) => f.as_mut() as *mut _,
-                        _ => core::ptr::null_mut(),
-                    };
-                    if !file_raw.is_null() {
-                        // SAFETY: see above; raw-ptr break for self-aliasing.
-                        let file = unsafe { &mut *file_raw };
-                        // Can only start if file is in deinitialized state
-                        if file.can_start() {
-                            file.fs.data = this_ptr;
-                            file.prepare();
-                            let buf = this.get_read_buffer_with_stable_memory_address(64 * 1024);
-                            file.iov = uv::uv_buf_t::init(buf);
-                            this.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
-
-                            let offset = if this.flags.contains(WindowsFlags::USE_PREAD) {
-                                i64::try_from(this._offset).expect("int cast")
-                            } else {
-                                -1
-                            };
-                            // SAFETY: `file` is fully initialized; libuv stores
-                            // the cb and fires it on the event loop.
-                            if let Some(err) = unsafe {
-                                uv::uv_fs_read(
-                                    this.vtable.loop_().cast(),
-                                    &mut file.fs,
-                                    file.file,
-                                    &file.iov,
-                                    1,
-                                    offset,
-                                    Some(Self::on_file_read),
-                                )
-                            }
-                            // Tagged `.write` even though the syscall is
-                            // `uv_fs_read`, so user-visible `error.syscall`
-                            // stays bit-identical with previous releases.
-                            .to_error(sys::Tag::write)
-                            {
-                                file.complete(false);
-                                this.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
-                                this.flags.insert(WindowsFlags::IS_PAUSED);
-                                // we should inform the error if we are unable to keep reading
-                                this.on_read(sys::Result::Err(err), &mut [], ReadState::Progress);
-                            }
-                        }
-                    }
-                }
+            win_error::ReadClass::Err(e) => {
+                // `recv` tag: user-visible `error.syscall` for stream read
+                // failures stays bit-identical with previous releases.
+                let _ = self.on_read(
+                    sys::Result::Err(sys::Error::from_code(e, sys::Tag::recv)),
+                    &mut [],
+                    ReadState::Progress,
+                );
             }
         }
     }
@@ -1594,90 +1488,115 @@ impl WindowsBufferedReader {
             return sys::Result::Ok(());
         }
         self.flags.remove(WindowsFlags::IS_PAUSED);
-        // BORROW_PARAM (raw-ptr break): the body needs `&mut self` (for
-        // `get_read_buffer_…`/`flags`) while also holding `&mut File` borrowed
-        // out of `self.source`. The boxed `File` is its own heap allocation, so
-        // a `*mut File` snapshot is provenance-disjoint from `&mut self`.
-        let self_ptr = self as *mut Self as *mut c_void;
-        let Some(source) = self.source.as_mut() else {
+        let self_ptr = core::ptr::from_mut(self).cast::<c_void>();
+        if self.source.is_none() {
             return sys::Result::Err(sys::Error::from_code(sys::E::BADF, sys::Tag::read));
-        };
+        }
+        if matches!(
+            self.source,
+            Some(Source::File(_)) | Some(Source::SyncFile(_))
+        ) {
+            // Files have no readiness: drain synchronously on the loop
+            // thread, exactly like the POSIX `FileType::File` path.
+            return self.read_file_loop();
+        }
+        let source = self.source.as_mut().expect("checked above");
         debug_assert!(!source.is_closed());
 
-        match source {
-            Source::File(file) => {
-                let file_raw: *mut crate::source::File = file.as_mut();
-                // SAFETY: `file_raw` points into the boxed File owned by
-                // `self.source`; live until `self.source` is replaced.
-                let file = unsafe { &mut *file_raw };
-                // If already reading, just set data and unpause
-                file.fs.data = self_ptr;
-                if !file.can_start() {
-                    return sys::Result::Ok(());
-                }
-
-                // Start new read - set data before prepare
-                file.prepare();
-                let buf = self.get_read_buffer_with_stable_memory_address(64 * 1024);
-                file.iov = uv::uv_buf_t::init(buf);
-                self.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
-
-                let offset = if self.flags.contains(WindowsFlags::USE_PREAD) {
-                    i64::try_from(self._offset).expect("int cast")
-                } else {
-                    -1
-                };
-                // SAFETY: file is fully initialized; libuv stores cb and fires
-                // it on the event loop.
-                if let Some(err) = unsafe {
-                    uv::uv_fs_read(
-                        self.vtable.loop_().cast(),
-                        &mut file.fs,
-                        file.file,
-                        &file.iov,
-                        1,
-                        offset,
-                        Some(Self::on_file_read),
-                    )
-                }
-                // Tagged `.write` even though the syscall is `uv_fs_read`, so
-                // user-visible `error.syscall` stays bit-identical with
-                // previous releases.
-                .to_error(sys::Tag::write)
-                {
-                    file.complete(false);
-                    self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
-                    return sys::Result::Err(err);
-                }
+        // SAFETY: `self` (the callback ctx) outlives reading — the source is
+        // stopped or closed before the reader can be freed.
+        let rc = unsafe {
+            match source {
+                Source::Pipe(pipe) => pipe.read_start(Self::on_pipe_read, self_ptr),
+                Source::Tty(tty) => Source::tty_mut(tty).read_start(Self::on_tty_read, self_ptr),
+                Source::File(_) | Source::SyncFile(_) => unreachable!(),
             }
-            _ => {
-                // SAFETY: source is a live Pipe/Tty stream handle.
-                if let Some(err) = unsafe {
-                    uv::uv_read_start(
-                        source.to_stream(),
-                        Some(Self::on_stream_alloc),
-                        Some(Self::on_stream_read),
-                    )
-                }
-                .to_error(sys::Tag::open)
-                {
-                    // Routed through `bun.windows.libuv.log` (the `uv` debug
-                    // scope, toggled by `BUN_DEBUG_uv=1`), not `SYS`.
-                    bun_sys::windows::libuv::log!(
-                        "uv_read_start() = {}",
-                        bstr::BStr::new(err.name()),
-                    );
-                    return sys::Result::Err(err);
-                }
-            }
+        };
+        if rc != Win32Error::SUCCESS {
+            self.flags.insert(WindowsFlags::IS_PAUSED);
+            return sys::Result::Err(sys::Error::from_code(
+                win_error::translate(rc),
+                sys::Tag::open,
+            ));
         }
 
         sys::Result::Ok(())
     }
 
-    #[cfg(not(windows))]
-    pub fn start_reading(&mut self) -> sys::Result<()> {
-        sys::Result::Ok(())
+    /// Synchronous file drain (the POSIX file shape): read chunks until EOF,
+    /// error, pause or done. Chunk delivery re-enters JS, so all state is
+    /// re-derived through a laundered pointer each iteration.
+    #[cfg(windows)]
+    fn read_file_loop(&mut self) -> sys::Result<()> {
+        // R-2: `&mut self` carries LLVM `noalias`, but `on_read` re-enters JS
+        // and user code can reach this reader through the parent's intrusive
+        // field, writing `flags`/`_buffer`/`source`. Launder so every
+        // iteration reloads through an opaque pointer.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        loop {
+            // SAFETY: `this` aliases the live `&mut self`; single JS thread.
+            // The reader is an inline field of its parent and is not freed by
+            // chunk delivery (`BufferedReaderParent` contract).
+            let r = unsafe { &mut *this };
+            if r.flags
+                .intersects(WindowsFlags::IS_DONE | WindowsFlags::IS_PAUSED)
+            {
+                return sys::Result::Ok(());
+            }
+            let Some(source) = r.source.as_ref() else {
+                return sys::Result::Ok(());
+            };
+            let fd = match source {
+                Source::File(f) | Source::SyncFile(f) => f.fd,
+                _ => unreachable!("read_file_loop on a stream source"),
+            };
+            let use_pread = r.flags.contains(WindowsFlags::USE_PREAD);
+            let offset = r._offset;
+
+            let dst = r.get_read_buffer_with_stable_memory_address(64 * 1024);
+            let dst_ptr = dst.as_mut_ptr();
+            let dst_len = dst.len();
+            // SAFETY: re-slice through the raw pointer so the spare-capacity
+            // borrow does not overlap the `&mut self` taken by `on_read`
+            // below. No reallocation happens between here and the commit
+            // (`on_read` only commits + delivers).
+            let buf = unsafe { core::slice::from_raw_parts_mut(dst_ptr, dst_len) };
+            let result = if use_pread {
+                sys::pread(fd, buf, i64::try_from(offset).expect("int cast"))
+            } else {
+                sys::read(fd, buf)
+            };
+            // SAFETY: fresh reborrow of the laundered pointer (see loop head).
+            let r = unsafe { &mut *this };
+            match result {
+                sys::Result::Ok(0) => {
+                    r.flags.insert(WindowsFlags::IS_PAUSED);
+                    r.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
+                    let _ = r.on_read(sys::Result::Ok(0), &mut [], ReadState::Eof);
+                    return sys::Result::Ok(());
+                }
+                sys::Result::Ok(n) => {
+                    r._offset += n;
+                    // SAFETY: the syscall initialized `n` bytes at `dst_ptr`.
+                    let slice = unsafe { core::slice::from_raw_parts_mut(dst_ptr, n) };
+                    if !r.on_read(sys::Result::Ok(n), slice, ReadState::Progress) {
+                        // Consumer asked to stop (POSIX `read_with_fn` honors
+                        // this for files too): pause so the next
+                        // `read()`/`unpause` resumes the drain.
+                        // SAFETY: fresh reborrow — `on_read` re-entered JS.
+                        let r = unsafe { &mut *this };
+                        r.flags.insert(WindowsFlags::IS_PAUSED);
+                        return sys::Result::Ok(());
+                    }
+                }
+                sys::Result::Err(err) => {
+                    r.flags.insert(WindowsFlags::IS_PAUSED);
+                    r.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
+                    let _ = r.on_read(sys::Result::Err(err), &mut [], ReadState::Progress);
+                    return sys::Result::Ok(());
+                }
+            }
+        }
     }
 
     pub fn stop_reading(&mut self) -> sys::Result<()> {
@@ -1691,61 +1610,24 @@ impl WindowsBufferedReader {
             return sys::Result::Ok(());
         };
         match source {
-            Source::File(file) => {
-                file.stop();
-            }
-            _ => {
-                // SAFETY: stream handle is live (just matched non-File).
-                unsafe { uv::uv_read_stop(source.to_stream()) };
-            }
+            // File reads are synchronous; the IS_PAUSED flag set above stops
+            // the drain loop between chunks.
+            Source::File(_) | Source::SyncFile(_) => {}
+            Source::Pipe(pipe) => pipe.read_stop(),
+            Source::Tty(tty) => Source::tty_mut(tty).read_stop(),
         }
         sys::Result::Ok(())
     }
 
     pub fn close_impl<const CALL_DONE: bool>(&mut self) {
         if let Some(source) = self.source.take() {
-            match source {
-                Source::SyncFile(file) | Source::File(file) => {
-                    // Detach - file will close itself after operation completes.
-                    // Hand the Box off to libuv: detach() leaves either an
-                    // in-flight uv_fs_read (on_file_read) or a scheduled
-                    // uv_fs_close (on_close_complete) pending; the callback
-                    // reclaims the allocation via heap::take. Dropping the
-                    // Box here would free the uv_fs_t out from under libuv.
-                    let raw = bun_core::heap::into_raw(file);
-                    // SAFETY: raw is a live heap File*; the pending fs callback
-                    // is the sole reclaimer (heap::take in on_close_complete).
-                    unsafe { (*raw).detach() };
-                }
-                #[cfg(windows)]
-                Source::Pipe(pipe) => {
-                    // Hand the Box off to libuv; the close cb reclaims it.
-                    let raw = bun_core::heap::into_raw(pipe);
-                    // SAFETY: raw is a live uv::Pipe*; on_pipe_close frees it.
-                    unsafe {
-                        (*raw).data = raw.cast::<c_void>();
-                        self.flags.insert(WindowsFlags::IS_PAUSED);
-                        (*raw).close(Self::on_pipe_close);
-                    }
-                }
-                #[cfg(windows)]
-                Source::Tty(tty) => {
-                    let p = tty.as_ptr();
-                    if crate::source::stdin_tty::is_stdin_tty(p) {
-                        // Node only ever closes stdin on process exit.
-                    } else {
-                        // SAFETY: tty is a live heap-allocated uv_tty_t*.
-                        unsafe {
-                            (*p).data = p.cast::<c_void>();
-                            (*p).close(Self::on_tty_close);
-                        }
-                    }
-
-                    self.flags.insert(WindowsFlags::IS_PAUSED);
-                }
-                #[cfg(not(windows))]
-                _ => {}
+            if matches!(source, Source::Pipe(_) | Source::Tty(_)) {
+                self.flags.insert(WindowsFlags::IS_PAUSED);
             }
+            // The engine handle (a private duplicate) always closes; the
+            // originating fd is released through the table protocol when this
+            // reader owns it (stdio fds are protected there).
+            source.close(self.flags.contains(WindowsFlags::CLOSE_HANDLE));
             // self.source already None via take().
             if CALL_DONE {
                 self.done();
@@ -1754,25 +1636,8 @@ impl WindowsBufferedReader {
     }
 
     /// Close the reader and call the done callback.
-    /// If a file operation is in progress, defers the done callback until
-    /// the operation completes to ensure proper cleanup ordering.
     pub fn close(&mut self) {
         let _ = self.stop_reading();
-
-        // Check if we have a pending file operation
-        if let Some(source) = &self.source {
-            if matches!(source, Source::File(_) | Source::SyncFile(_)) {
-                let file = source.file();
-                // Defer done if operation is in progress (whether cancel succeeded or failed)
-                if file.state == crate::source::FileState::Canceling
-                    || file.state == crate::source::FileState::Operating
-                {
-                    self.flags.insert(WindowsFlags::DEFER_DONE_CALLBACK);
-                    return; // Don't call closeImpl yet - wait for operation callback
-                }
-            }
-        }
-
         self.close_impl::<true>();
     }
 
@@ -1785,51 +1650,28 @@ impl WindowsBufferedReader {
         let Some(source) = self.source.take() else {
             return;
         };
+        // `close_impl` performs the take + hand-off to the engine (the close
+        // callback frees the wrapper allocation). A still-present source is
+        // never mid-close (close paths always take it), so no leak gate is
+        // needed; dead File sources just drop.
         if !source.is_closed() {
-            // closeImpl will take care of freeing the source.
-            // Dropping the `Box<Pipe>` here would free a uv_pipe_t still
-            // linked into the loop's handle queue → UAF. Restore the source so
-            // close_impl can do the proper take + hand-off to libuv
-            // (into_raw + uv_close).
             self.source = Some(source);
             self.close_impl::<false>();
-        } else {
-            // Already closing/closed: a uv close callback may still be pending
-            // on this allocation; dropping the Box would free memory libuv
-            // still owns, so leak it instead.
-            core::mem::forget(source);
         }
     }
 
-    #[cfg(windows)]
-    extern "C" fn on_pipe_close(handle: *mut uv::Pipe) {
-        // `close_impl` set `handle.data = handle` and called `uv_close(handle)`;
-        // libuv passes the same pointer back, so `handle` *is* the boxed Pipe
-        // ptr — no need to round-trip through `.data`.
-        // SAFETY: pipe was Box-allocated (into_raw in close_impl); reclaim.
-        drop(unsafe { bun_core::heap::take(handle) });
-    }
-
-    #[cfg(windows)]
-    extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
-        // `close_impl` set `handle.data = handle` and called `uv_close(handle)`;
-        // libuv passes the same pointer back, so `handle` *is* the tty ptr.
-        // Caller already gates on `!is_stdin_tty` before scheduling close, so
-        // `handle` is heap-allocated (open_tty heap::alloc). Reclaim and drop.
-        debug_assert!(!crate::source::stdin_tty::is_stdin_tty(handle));
-        // SAFETY: non-stdin tty is heap-allocated; sole owner after uv_close.
-        drop(unsafe { bun_core::heap::take(handle) });
-    }
-
+    /// Returns the consumer's `on_read_chunk` verdict: `false` = stop
+    /// delivering (only the file drain loop acts on it; stream sources are
+    /// paused explicitly by their consumers, as under libuv).
     pub(crate) fn on_read(
         &mut self,
         amount: sys::Result<usize>,
         slice: &mut [u8],
         has_more: ReadState,
-    ) {
+    ) -> bool {
         if let sys::Result::Err(err) = amount {
             self.on_error(err);
-            return;
+            return false;
         }
         let amount_result = match amount {
             sys::Result::Ok(n) => n,
@@ -1844,12 +1686,12 @@ impl WindowsBufferedReader {
             let end = base + self._buffer.capacity();
             let s = slice.as_ptr() as usize;
             if !slice.is_empty() && !(s >= base && s + slice.len() <= end) {
-                panic!("uv_read_cb: buf is not in buffer! This is a bug in bun. Please report it.");
+                panic!("read chunk is not in buffer! This is a bug in bun. Please report it.");
             }
         }
 
         // move cursor foward
-        // SAFETY: slice is inside _buffer's spare capacity; libuv wrote `amount_result` bytes.
+        // SAFETY: slice is inside _buffer's spare capacity with `amount_result` bytes initialized.
         unsafe { bun_core::vec::commit_spare(&mut self._buffer, amount_result) };
 
         let should_continue = self._on_read_chunk(slice, has_more);
@@ -1857,18 +1699,24 @@ impl WindowsBufferedReader {
         // Streaming parents (shell IOReader, subprocess) cannot re-derive
         // `&mut Self` from inside the vtable callback to restart the pipe
         // (Stacked-Borrows; see the comment in shell/IOReader.rs). The re-arm
-        // is already handled by `on_file_read`'s epilogue / `uv_read_start`,
+        // is already handled by the file drain loop / the engine's re-arm,
         // but clearing the buffer here is load-bearing: without it `_buffer.len`
         // grows by `amount_result` every chunk and never resets, so a 1 GB
-        // `cat` holds 1 GB resident instead of ~64 KB. Clear it here, after
-        // the streaming consumer has finished with `slice`.
-        if should_continue && has_more != ReadState::Eof && self.vtable.is_streaming_enabled() {
+        // `cat` holds 1 GB resident instead of ~64 KB — and the leftover
+        // bytes get re-delivered by `final_buffer`/`consume_reader_buffer`
+        // at EOF. Clear even when the consumer returned false: the borrowed
+        // `slice` contract ends when `on_read_chunk` returns (a deferred
+        // `Temporary` view still reads valid capacity bytes — `clear()`
+        // keeps the allocation and the paused drain commits nothing new
+        // before it is consumed).
+        if has_more != ReadState::Eof && self.vtable.is_streaming_enabled() {
             self._buffer.clear();
         }
 
         if has_more == ReadState::Eof {
             self.close();
         }
+        should_continue
     }
 
     pub fn pause(&mut self) {
@@ -1892,19 +1740,14 @@ impl WindowsBufferedReader {
 impl Drop for WindowsBufferedReader {
     fn drop(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
-        // Do NOT take() source here and let it drop: Box<Pipe>/Box<File> own
-        // live uv handles registered with the loop. Let close_impl perform the
-        // take + into_raw hand-off so the uv close callback reclaims them.
-        // Skip close_impl when the source is already closed — a uv_close is
-        // already pending on that allocation, so closing again would
-        // double-close and freeing the Box would UAF the handle libuv still
-        // references. Same as deinit(): leak the already-closing handle.
+        // Do NOT let a live stream source drop in place: the engine handle
+        // must go through close so its in-flight requests drain before the
+        // wrapper (and its pinned read buffer) is freed in the close
+        // callback. `close_impl` performs that hand-off.
         if let Some(source) = self.source.take() {
             if !source.is_closed() {
                 self.source = Some(source);
                 self.close_impl::<false>();
-            } else {
-                core::mem::forget(source);
             }
         }
     }

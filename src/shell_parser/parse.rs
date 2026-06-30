@@ -653,7 +653,7 @@ pub mod ast {
             // `bun_sys::O`; mirror those constants here. On POSIX `bun.O.*` is
             // `libc::O_*`. On Windows `bun.O.*` is the *Linux-shaped octal*
             // values — NOT MSVCRT `_O_*` — because
-            // `bun_sys::open` → `sys_uv::open` → `uv::O::from_bun_o` bit-tests
+            // `bun_sys::open`'s Windows arm bit-tests
             // against those exact values. Using `libc::O_CREAT` (0x100) /
             // `libc::O_APPEND` (0x8) on Windows silently dropped CREAT/APPEND
             // through `from_bun_o`, so `> file` failed to create the target.

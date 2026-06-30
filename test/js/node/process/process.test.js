@@ -678,6 +678,26 @@ describe.concurrent(() => {
       }
     });
 
+    it("process.kill(0, 0) probes the current process", () => {
+      // pid 0 = current process (group on POSIX); signal 0 only probes existence.
+      expect(process.kill(0, 0)).toBe(true);
+    });
+
+    // Windows-only: on POSIX process.kill(0) signals the whole process group,
+    // which would take the test runner down with it.
+    it.if(isWindows)("process.kill(0) terminates the current process on Windows", async () => {
+      await using child = Bun.spawn({
+        cmd: [bunExe(), "-e", "process.kill(0); console.log('not reached');"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+      expect(stdout).toBe("");
+      expect(stderr).not.toContain("ESRCH");
+      expect(exitCode).toBe(1);
+    });
+
     it("process.kill(2) throws on invalid input", async () => {
       expect(() => process.kill(2147483640, "SIGPOOP")).toThrow();
       expect(() => process.kill(2147483640, 456)).toThrow();

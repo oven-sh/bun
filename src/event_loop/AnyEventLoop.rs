@@ -622,7 +622,7 @@ impl EventLoopHandle {
     /// (kept for existing `cfg(windows)` callers that spell `uv_loop`).
     #[cfg(windows)]
     #[inline]
-    pub fn uv_loop(self) -> *mut bun_io::Loop {
+    pub fn platform_loop(self) -> *mut bun_io::Loop {
         self.native_loop()
     }
 

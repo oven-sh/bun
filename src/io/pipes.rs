@@ -97,10 +97,9 @@ impl PollOrFd {
         if fd != Fd::INVALID {
             *self = PollOrFd::Closed;
 
-            // TODO: We should make this call compatible using bun.FD
             #[cfg(windows)]
             {
-                crate::closer::Closer::close(fd, bun_sys::windows::libuv::Loop::get());
+                crate::closer::Closer::close(fd, ());
             }
             #[cfg(not(windows))]
             {

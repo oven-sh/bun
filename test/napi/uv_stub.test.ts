@@ -15,8 +15,8 @@ const all_symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
 // full set.
 const symbols_to_test = isASAN ? all_symbols_to_test.filter((_, i) => i % 6 === 0) : all_symbols_to_test;
 
-// We use libuv on Windows
-describe.if(!isWindows)("uv stubs", () => {
+// Windows uses the same crash stubs + polyfills as POSIX (libuv removed).
+describe("uv stubs", () => {
   const cwd = process.cwd();
   let tempdir: string = "";
   let outdir: string = "";
@@ -76,7 +76,7 @@ describe.if(!isWindows)("uv stubs", () => {
     await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`;
     await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
     console.log("tempdir:", tempdir);
-  });
+  }, 5 * 60 * 1000);
 
   afterAll(() => {
     process.chdir(cwd);

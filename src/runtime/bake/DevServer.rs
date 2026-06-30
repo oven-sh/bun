@@ -872,7 +872,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             #[cfg(not(windows))]
             bun_core::write_any_to_hasher(&mut h, stat.st_mtime as i64);
             #[cfg(windows)]
-            bun_core::write_any_to_hasher(&mut h, &(stat.mtim.sec as i64));
+            bun_core::write_any_to_hasher(&mut h, &(stat.st_mtim.sec as i64));
             h.update(crate::bake::bake_body::get_hmr_runtime(bake::Side::Client).code);
             h.update(crate::bake::bake_body::get_hmr_runtime(bake::Side::Server).code);
         } else {

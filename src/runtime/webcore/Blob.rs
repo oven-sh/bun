@@ -1055,7 +1055,7 @@ impl BlobExt for Blob {
                         PathOrFileDescriptor::Fd(fd) => {
                             #[cfg(windows)]
                             match fd.decode_windows() {
-                                bun_sys::fd::DecodeWindows::Uv(uv_file) => {
+                                bun_sys::fd::DecodeWindows::Table(uv_file) => {
                                     bun_core::write_pretty!(
                                         writer,
                                         ENABLE_ANSI_COLORS,
@@ -6280,7 +6280,7 @@ fn stat_to_js_mtime(stat: &bun_sys::Stat) -> jsc::JSTimeType {
     }
     #[cfg(windows)]
     {
-        jsc::to_js_time(stat.mtim.sec as isize, stat.mtim.nsec as isize)
+        jsc::to_js_time(stat.st_mtim.sec as isize, stat.st_mtim.nsec as isize)
     }
 }
 
@@ -7146,17 +7146,6 @@ pub trait FileOpener: Sized {
     ) -> Retry {
         Retry::No
     }
-    #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t;
-    #[cfg(windows)]
-    fn req(&mut self) -> &mut bun_libuv_sys::uv_fs_t;
-    /// Stash/retrieve the open completion callback across the libuv async hop.
-    /// Rust can't const-generic over fn
-    /// pointers, so the implementor stores it on `self` (e.g. next to `req`).
-    #[cfg(windows)]
-    fn set_open_callback(&mut self, cb: fn(&mut Self, Fd));
-    #[cfg(windows)]
-    fn open_callback(&self) -> fn(&mut Self, Fd);
 
     fn get_fd_by_opening(&mut self, callback: fn(&mut Self, Fd)) {
         let mut buf = bun_paths::PathBuffer::uninit();
@@ -7166,88 +7155,6 @@ pub trait FileOpener: Sized {
         };
         let path = path_string.slice_z(&mut buf);
 
-        #[cfg(windows)]
-        {
-            use bun_sys::ReturnCodeExt as _;
-            // Monomorphic libuv completion thunk — recovers `*mut Self` from
-            // `req.data`.
-            extern "C" fn wrapped_callback<S: FileOpener>(req: *mut bun_libuv_sys::uv_fs_t) {
-                use bun_sys::ReturnCodeExt as _;
-                // SAFETY: `req.data` was set to `self as *mut Self` below before
-                // `uv_fs_open` was queued; libuv guarantees `req` is valid here.
-                let self_: &mut S = unsafe { bun_ptr::callback_ctx::<S>((*req).data) };
-                {
-                    // SAFETY: req points into self_.req(); cleanup before reuse.
-                    scopeguard::defer! { unsafe { bun_libuv_sys::uv_fs_req_cleanup(req); } }
-                    // SAFETY: req is the live uv_fs_t from the open request.
-                    let result = unsafe { (*req).result };
-                    if let Some(err_enum) = result.err_enum_e() {
-                        let path_string_2 = match self_.pathlike() {
-                            PathOrFileDescriptor::Path(p) => p.clone(),
-                            PathOrFileDescriptor::Fd(_) => unreachable!(),
-                        };
-                        self_.set_errno(bun_core::errno_to_zig_err(err_enum as i32));
-                        self_.set_system_error(
-                            bun_sys::Error::from_code(err_enum, bun_sys::Tag::open)
-                                .with_path(path_string_2.slice())
-                                .to_system_error()
-                                .into(),
-                        );
-                        self_.set_opened_fd(bun_sys::Fd::INVALID);
-                    } else {
-                        self_.set_opened_fd(Fd::from_uv(result.to_fd()));
-                    }
-                }
-                let cb = self_.open_callback();
-                cb(self_, self_.opened_fd());
-            }
-
-            self.set_open_callback(callback);
-            let loop_ = self.loop_();
-            let self_ptr: *mut Self = core::ptr::from_mut(self);
-            // Derive `req` THROUGH `self_ptr` rather than via a fresh `self.req()`
-            // reborrow. Under Stacked Borrows, a direct `self.req()` here would
-            // create a sibling `&mut` that pops `self_ptr`'s tag, making the
-            // later deref in `wrapped_callback` (via `req.data`) UB. Going
-            // through the raw pointer keeps the reborrow as a child of
-            // `self_ptr`, so its provenance survives until the callback fires.
-            // SAFETY: `self_ptr` was just derived from a live `&mut self`.
-            let req = unsafe { (*self_ptr).req() };
-            // Stash `self` on the request BEFORE dispatch. libuv never touches
-            // `req.data`, so pre-setting is safe; doing it after `uv_fs_open`
-            // is a UAF when the call fails synchronously and `callback` frees
-            // `self` (ReadFileUV::on_finish → finalize → heap::take).
-            req.data = self_ptr.cast();
-            // SAFETY: loop_/req are live for the duration of the async open;
-            // req.data is consumed by `wrapped_callback::<Self>` above.
-            let rc = unsafe {
-                bun_libuv_sys::uv_fs_open(
-                    loop_,
-                    req,
-                    path.as_ptr(),
-                    Self::OPEN_FLAGS | Self::OPENER_FLAGS,
-                    node::fs::DEFAULT_PERMISSION as i32,
-                    Some(wrapped_callback::<Self>),
-                )
-            };
-            if let Some(errno) = rc.err_enum_e() {
-                self.set_errno(bun_core::errno_to_zig_err(errno as i32));
-                self.set_system_error(
-                    bun_sys::Error::from_code(errno, bun_sys::Tag::open)
-                        .with_path(path_string.slice())
-                        .to_system_error()
-                        .into(),
-                );
-                self.set_opened_fd(bun_sys::Fd::INVALID);
-                // `callback` may free `self` (see comment above) — must be the
-                // last thing we touch on this path.
-                callback(self, bun_sys::Fd::INVALID);
-                return;
-            }
-            return;
-        }
-
-        #[cfg(not(windows))]
         {
             loop {
                 match bun_sys::open(
@@ -7316,8 +7223,6 @@ pub trait FileCloser: Sized {
     fn io_poll(&mut self) -> &mut bun_io::Poll;
     fn task(&mut self) -> &mut bun_jsc::WorkPoolTask;
     fn update(&mut self);
-    #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t;
 
     /// Intrusive backref: Rust `offset_of!` cannot name
     /// fields on a trait `Self`, so each concrete impl supplies its own
@@ -7370,7 +7275,7 @@ pub trait FileCloser: Sized {
             && self.opened_fd().stdio_tag().is_none()
         {
             #[cfg(windows)]
-            bun_io::Closer::close(self.opened_fd(), self.loop_());
+            bun_io::Closer::close(self.opened_fd(), ());
             #[cfg(not(windows))]
             {
                 use bun_sys::FdExt as _;

@@ -22,6 +22,8 @@ pub use bun_windows_sys::kernel32::GetLastError;
 pub use bun_windows_sys::ntdll;
 pub use bun_windows_sys::ws2_32;
 
+pub use bun_errno::win_error;
+
 /// Re-exports the tier-0 `bun_windows_sys::kernel32`
 /// surface and layers the additional externs higher-tier crates reach for
 /// (`ReadDirectoryChangesW`, IOCP, SRW locks, `CreateProcessW`, …). Declared
@@ -217,8 +219,6 @@ pub const NT_UNC_OBJECT_PREFIX: [u16; 8] = [
     b'C' as u16,
     b'\\' as u16,
 ];
-pub const LONG_PATH_PREFIX: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
-
 pub const NT_OBJECT_PREFIX_U8: [u8; 4] = *b"\\??\\";
 pub const NT_UNC_OBJECT_PREFIX_U8: [u8; 8] = *b"\\??\\UNC\\";
 pub const LONG_PATH_PREFIX_U8: [u8; 4] = *b"\\\\?\\";
@@ -367,15 +367,9 @@ pub use bun_windows_sys::externs::OPEN_EXISTING;
 
 pub use bun_windows_sys::externs::CommandLineToArgvW;
 
-unsafe extern "system" {
-    // safe: `HANDLE` is a by-value opaque; bad handle → FILE_TYPE_UNKNOWN +
-    // GetLastError, no UB.
-    #[link_name = "GetFileType"]
-    safe fn GetFileType_raw(hFile: HANDLE) -> DWORD;
-}
-
 pub fn GetFileType(hFile: HANDLE) -> DWORD {
-    let rc = GetFileType_raw(hFile);
+    // Raw extern lives in tier-0 `bun_windows_sys`; this wrapper only logs.
+    let rc = win32::kernel32::GetFileType(hFile);
     // `syslog!` self-gates on `env::IS_DEBUG` (see lib.rs); no extra feature
     // flag needed (there is no `debug_logs` feature in bun_sys).
     bun_sys::syslog!("GetFileType({}) = {}", Fd::from_system(hFile), rc);
@@ -383,11 +377,9 @@ pub fn GetFileType(hFile: HANDLE) -> DWORD {
 }
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfiletype#return-value
-pub const FILE_TYPE_UNKNOWN: DWORD = 0x0000;
-pub const FILE_TYPE_DISK: DWORD = 0x0001;
-pub const FILE_TYPE_CHAR: DWORD = 0x0002;
-pub const FILE_TYPE_PIPE: DWORD = 0x0003;
-pub const FILE_TYPE_REMOTE: DWORD = 0x8000;
+pub use bun_windows_sys::{
+    FILE_TYPE_CHAR, FILE_TYPE_DISK, FILE_TYPE_PIPE, FILE_TYPE_REMOTE, FILE_TYPE_UNKNOWN,
+};
 
 pub use SetCurrentDirectoryW as SetCurrentDirectory;
 /// Each process has a single current directory made up of two parts:
@@ -431,6 +423,18 @@ impl Win32ErrorUnwrap for Win32Error {
             .to_system_errno()
             .unwrap_or(SystemErrno::EUNKNOWN)
             .to_error())
+    }
+}
+
+/// Errno policy for Rust-side wide-path conversion failures: `Invalid` maps
+/// to `ENOENT` exactly like kernel `ERROR_INVALID_NAME` does, so malformed
+/// paths are indistinguishable from kernel-invalid names; `TooLong` →
+/// `ENAMETOOLONG`. Lives here because `bun_errno::win_error` cannot name
+/// `bun_paths` types. // quirk: FSIO-42
+pub fn widepath_error_to_e(err: bun_paths::string_paths::WidePathError) -> E {
+    match err {
+        bun_paths::string_paths::WidePathError::TooLong => E::ENAMETOOLONG,
+        bun_paths::string_paths::WidePathError::Invalid => E::ENOENT,
     }
 }
 
@@ -3244,7 +3248,6 @@ mod _win32error_full_table {
     }
 } // mod _win32error_full_table
 
-pub use bun_libuv_sys as libuv;
 
 pub use bun_errno::translate_uv_error_to_e;
 
@@ -3458,7 +3461,7 @@ pub use bun_windows_sys::{
     MENU_EVENT_RECORD, MOUSE_EVENT_RECORD, WINDOW_BUFFER_SIZE_EVENT,
 };
 
-// Bun__UVSignalHandle__{init,close}: see src/runtime/node/uv_signal_handle_windows.rs
+// Bun__UVSignalHandle__{init,close}: see src/runtime/node/signal_handle_windows.rs
 
 /// Is not the actual UID of the user, but just a hash of username.
 pub fn user_unique_id() -> u32 {
@@ -3654,7 +3657,7 @@ pub fn GetFinalPathNameByHandle(
         return Err(GetFinalPathNameByHandleError::NameTooLong);
     }
 
-    let mut ret = &mut out_buffer[0..(return_length as usize)];
+    let ret = &mut out_buffer[0..(return_length as usize)];
 
     bun_sys::syslog!(
         "GetFinalPathNameByHandleW({:p}) = {}",
@@ -3662,15 +3665,8 @@ pub fn GetFinalPathNameByHandle(
         bun_core::fmt::utf16(ret)
     );
 
-    if bun_core::strings::has_prefix_comptime_type::<u16>(ret, &LONG_PATH_PREFIX) {
-        // '\\?\C:\absolute\path' -> 'C:\absolute\path'
-        ret = &mut ret[4..];
-        if bun_core::has_prefix_comptime_utf16(ret, b"UNC\\") {
-            // '\\?\UNC\absolute\path' -> '\\absolute\path'
-            ret[2] = b'\\' as u16;
-            ret = &mut ret[2..];
-        }
-    }
+    // '\\?\C:\x' -> 'C:\x'; '\\?\UNC\srv' -> '\\srv' (case-insensitive UNC).
+    let (_, ret) = bun_paths::string_paths::rewrite_final_path_prefix(ret);
 
     Ok(ret)
 }
@@ -4842,6 +4838,8 @@ mod kernel32_2 {
             lpBuffer: *mut WCHAR,
             nSize: DWORD,
         ) -> DWORD;
+        /// No preconditions; writes the thread-local Win32 error slot.
+        pub(super) safe fn SetLastError(dwErrCode: DWORD);
         // safe: by-value `HANDLE`/`DWORD` only; bad handle → BOOL 0 +
         // GetLastError, never UB. Out-param is `&mut DWORD` (non-null, valid
         // for write). Local `safe fn` re-decls so in-crate callers drop the
@@ -4919,6 +4917,7 @@ pub fn GetEnvironmentVariableW(
 }
 
 pub mod env;
+pub mod fs;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Additional surface unblocked for dependents.
@@ -4940,31 +4939,66 @@ pub fn translate_ntstatus_to_errno(status: NTSTATUS) -> E {
     translate_nt_status_to_errno(status)
 }
 
+/// Three-state result of [`getenv_w_distinguishing`]: Win32 reports both
+/// "unset" and "set to the empty string" as `rc == 0`; only the primed
+/// last-error value distinguishes them.
+pub enum GetEnvW {
+    NotFound,
+    Empty,
+    Value(Vec<u16>),
+}
+
+/// [`getenv_w`] distinguishing "unset" from "set to the empty string": prime
+/// the thread-error slot (`SetLastError(0)`) before each call and read it
+/// back immediately on `rc == 0`, before anything can clobber it.
+/// 512-u16 stack fast path; the grow probe re-calls because another thread
+/// can resize the variable between size query and fill. // quirk: OS-20, OS-19
+///
+/// SAFETY CONTRACT: `name` MUST be NUL-terminated — see [`getenv_w`].
+pub fn getenv_w_distinguishing(name: &[u16]) -> GetEnvW {
+    debug_assert!(
+        name.last() == Some(&0),
+        "getenv_w_distinguishing: `name` must be NUL-terminated (Zig: `[:0]const u16`)"
+    );
+    let mut stack = [0u16; 512];
+    let mut heap = Vec::new();
+    let mut rc0_err: Option<Win32Error> = None;
+    let probe = bun_core::util::win32_grow_probe(&mut stack, &mut heap, |buf| {
+        kernel32_2::SetLastError(0);
+        // SAFETY: `name` is NUL-terminated (caller contract, debug-asserted
+        // above); `buf` is valid for `buf.len()` u16 writes.
+        let n = unsafe {
+            kernel32_2::GetEnvironmentVariableW(name.as_ptr(), buf.as_mut_ptr(), buf.len() as DWORD)
+        };
+        if n == 0 {
+            // Capture immediately — any later Win32 call may clobber it.
+            rc0_err = Some(Win32Error::get());
+        }
+        n
+    });
+    match probe {
+        bun_core::util::ProbeResult::Done(value) => GetEnvW::Value(value.to_vec()),
+        bun_core::util::ProbeResult::Failed => match rc0_err {
+            // Primed error slot untouched by a 0 return → empty value.
+            Some(Win32Error::SUCCESS) => GetEnvW::Empty,
+            // ENVVAR_NOT_FOUND, any other error, or probe-bound exhaustion.
+            _ => GetEnvW::NotFound,
+        },
+    }
+}
+
 /// `bun.windows.getenvW` — read a UTF-16 env var into an owned `Vec<u16>`.
+/// Empty and unset both read as `None` (pre-existing contract); use
+/// [`getenv_w_distinguishing`] to tell them apart.
 ///
 /// SAFETY CONTRACT: `name` MUST be NUL-terminated (last element == `0`).
 /// `GetEnvironmentVariableW` takes `LPCWSTR` and reads until it hits a NUL
 /// WCHAR — Rust's `&[u16]` does not encode that in the type. Passing a
 /// non-terminated slice causes Win32 to read past the buffer.
 pub fn getenv_w(name: &[u16]) -> Option<Vec<u16>> {
-    debug_assert!(
-        name.last() == Some(&0),
-        "getenv_w: `name` must be NUL-terminated (Zig: `[:0]const u16`)"
-    );
-    let mut buf = vec![0u16; 256];
-    loop {
-        // SAFETY: name and buf are valid for the call's duration.
-        let n = unsafe {
-            kernel32_2::GetEnvironmentVariableW(name.as_ptr(), buf.as_mut_ptr(), buf.len() as DWORD)
-        };
-        if n == 0 {
-            return None;
-        }
-        if (n as usize) < buf.len() {
-            buf.truncate(n as usize);
-            return Some(buf);
-        }
-        buf.resize(n as usize + 1, 0);
+    match getenv_w_distinguishing(name) {
+        GetEnvW::Value(v) => Some(v),
+        GetEnvW::NotFound | GetEnvW::Empty => None,
     }
 }
 

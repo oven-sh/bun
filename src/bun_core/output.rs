@@ -603,6 +603,12 @@ pub mod windows_stdio {
     }
 
     pub fn restore() {
+        // Restore the console *input* mode first iff a raw-mode switch armed
+        // it — idempotent and lock-free, so it is safe from the exit, crash
+        // and Ctrl-C paths that all funnel through here. The snapshot loop
+        // below then re-applies the full startup modes. // quirk: TTY-44
+        bun_iocp::tty::reset_mode();
+
         // SAFETY: PEB access is sound on Windows; handles are valid for process
         // lifetime. `peb()` returns a raw pointer because the OS/CRT mutate the
         // PEB out-of-band (`SetStdHandle`, …), so we must not materialize a
@@ -631,33 +637,11 @@ pub mod windows_stdio {
     }
 
     pub fn init() {
-        w::libuv::uv_disable_stdio_inheritance();
+        bun_iocp::process::disable_stdio_inheritance();
 
         let stdin = w::GetStdHandle(w::STD_INPUT_HANDLE).unwrap_or(w::INVALID_HANDLE_VALUE);
         let stdout = w::GetStdHandle(w::STD_OUTPUT_HANDLE).unwrap_or(w::INVALID_HANDLE_VALUE);
         let stderr = w::GetStdHandle(w::STD_ERROR_HANDLE).unwrap_or(w::INVALID_HANDLE_VALUE);
-
-        // MOVE_DOWN: bun_sys::fd → bun_core (move-in pass).
-        use crate::fd as fd_internals;
-        let invalid = w::INVALID_HANDLE_VALUE;
-        // Single-threaded startup; these statics are write-once caches.
-        let _ = fd_internals::WINDOWS_CACHED_STDERR.set(if stderr != invalid {
-            Fd::from_system(stderr)
-        } else {
-            Fd::INVALID
-        });
-        let _ = fd_internals::WINDOWS_CACHED_STDOUT.set(if stdout != invalid {
-            Fd::from_system(stdout)
-        } else {
-            Fd::INVALID
-        });
-        let _ = fd_internals::WINDOWS_CACHED_STDIN.set(if stdin != invalid {
-            Fd::from_system(stdin)
-        } else {
-            Fd::INVALID
-        });
-        #[cfg(debug_assertions)]
-        fd_internals::WINDOWS_CACHED_FD_SET.store(true, Ordering::Relaxed);
 
         // SAFETY: BUFFERED_STDIN is a static initialized at startup before use.
         unsafe {

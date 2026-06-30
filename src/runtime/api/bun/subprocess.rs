@@ -31,8 +31,6 @@ use crate::jsc::ipc as IPC;
 use crate::node::node_cluster_binding;
 use crate::timer::{EventLoopTimer, EventLoopTimerState};
 use crate::webcore::{self, AbortSignal, FileSink};
-#[cfg(windows)]
-use bun_libuv_sys::UvHandle as _;
 
 #[path = "subprocess/ResourceUsage.rs"]
 pub mod resource_usage;
@@ -384,12 +382,14 @@ impl Subprocess<'_> {
 
             #[cfg(windows)]
             {
-                let rusage =
-                    if let spawn_process::Poller::Uv(uv_proc) = &mut self.process_mut().poller {
-                        Some(spawn_process::uv_getrusage(uv_proc))
-                    } else {
-                        None
-                    };
+                // Live process only: the engine closes the HANDLE eagerly at
+                // exit (the exit-time snapshot is cached via on_process_exit).
+                let rusage = match &self.process_mut().poller {
+                    spawn_process::Poller::Engine(handle) if !handle.has_exited() => {
+                        Some(spawn_process::process_rusage(handle.raw_handle()))
+                    }
+                    _ => None,
+                };
                 if let Some(r) = rusage {
                     self.pid_rusage.set(Some(r));
                     break 'brk r;
@@ -839,10 +839,9 @@ impl Subprocess<'_> {
         for item in this.stdio_pipes.get().iter() {
             #[cfg(windows)]
             {
-                if let StdioResult::Buffer(buffer) = item {
-                    // `UvHandle::fd()` returns a `HANDLE` (`*mut c_void`);
-                    // expose the numeric handle value.
-                    let fdno: usize = buffer.fd() as usize;
+                if let StdioResult::Buffer(pipe) = item {
+                    // Expose the numeric handle value (HANDLE is *mut c_void).
+                    let fdno: usize = pipe.raw_handle() as usize;
                     array.push(global, JSValue::js_number(fdno as f64))?;
                 } else {
                     array.push(global, JSValue::NULL)?;
@@ -1187,11 +1186,9 @@ impl Subprocess<'_> {
 
         #[cfg(windows)]
         for item in self.stdio_pipes.replace(Vec::new()) {
-            if let StdioResult::Buffer(buffer) = item {
-                // `uv_close` is async — the pipe must outlive this scope until
-                // `on_pipe_close` runs and reclaims the allocation. Hand the
-                // `Box` back to libuv as a raw pointer.
-                Box::leak(buffer).close(on_pipe_close);
+            if let StdioResult::Buffer(pipe) = item {
+                // Engine close; the box is freed in the close callback.
+                spawn_process::close_engine_pipe(pipe);
             }
         }
         #[cfg(not(windows))]
@@ -1475,18 +1472,11 @@ pub fn source_from_array_buffer(ab: jsc::array_buffer::ArrayBufferStrong) -> Sou
     Source::Any(Box::new(ArrayBufferSource(ab)))
 }
 
-#[cfg(windows)]
-pub extern "C" fn on_pipe_close(this: *mut bun_sys::windows::libuv::Pipe) {
-    // safely free the pipes
-    // SAFETY: pipe was heap-allocated when created; we are the close callback owner.
-    drop(unsafe { bun_core::heap::take(this) });
-}
-
 pub mod testing_apis {
     use super::*;
 
     /// Inject a synthetic read error into a subprocess's stdout/stderr
-    /// PipeReader, as if the underlying read() syscall (Posix) or libuv read
+    /// PipeReader, as if the underlying read() syscall (Posix) or engine read
     /// callback (Windows) had failed with EBADF. Used by tests to exercise
     /// the onReaderError cleanup path, which is otherwise very hard to
     /// trigger deterministically — on Windows in particular, peer death on

@@ -28,8 +28,8 @@ fn stat_mtime(s: &Stat) -> Timespec {
     #[cfg(windows)]
     {
         Timespec {
-            sec: s.mtim.sec as i64,
-            nsec: s.mtim.nsec as i64,
+            sec: s.st_mtim.sec as i64,
+            nsec: s.st_mtim.nsec as i64,
         }
     }
 }

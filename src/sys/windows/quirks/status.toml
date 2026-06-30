@@ -1,0 +1,2583 @@
+# Windows quirks ledger status — one table per ledger entry.
+# status: pending | implemented | skipped
+# implemented requires: test = "file::test name" (or covered_by = "OTHER-ID")
+#                       plus a `// quirk: <ID>` annotation in the implementing source.
+# skipped requires:     reason = "..." ("anti-lesson — do not copy" is valid).
+# Maintained by hand; `--init` appends missing entries. Keep entries sorted by area file order.
+
+[ADD-01]
+status = "pending"
+
+[ADD-02]
+status = "implemented"
+test = "src/iocp/lib.rs::tick_orchestration_and_hook_order"
+
+[ADD-03]
+status = "implemented"
+test = "src/iocp/lib.rs::port_wakeup_null_filter_and_pending_dispatch"
+
+[ADD-04]
+status = "pending"
+
+[ADD-05]
+status = "implemented"
+test = "src/iocp/lib.rs::process_init_effects"
+
+[ADD-06]
+status = "pending"
+
+[ADD-07]
+status = "pending"
+
+[ADD-08]
+status = "pending"
+
+[FSLNK-01]
+status = "implemented"
+test = "src/winfs/fslnk.rs::readlink_error_shapes_and_locked_link"
+
+[FSLNK-02]
+status = "implemented"
+test = "src/winfs/fslnk.rs::symlink_file_roundtrip_and_stat_agreement"
+
+[FSLNK-03]
+status = "implemented"
+test = "src/winfs/fslnk.rs::symlink_unc_target_rewrite"
+
+[FSLNK-04]
+status = "implemented"
+test = "src/winfs/fslnk.rs::symlink_file_roundtrip_and_stat_agreement"
+
+[FSLNK-05]
+status = "implemented"
+test = "src/winfs/fslnk.rs::readlink_appexeclink_and_lx_payloads"
+
+[FSLNK-06]
+status = "implemented"
+test = "src/winfs/fslnk.rs::volume_guid_junction_readlink_and_unlink_refused"
+
+[FSLNK-07]
+status = "implemented"
+test = "src/winfs/fslnk.rs::readlink_appexeclink_and_lx_payloads"
+
+[FSLNK-08]
+status = "implemented"
+test = "src/winfs/fslnk.rs::readlink_error_shapes_and_locked_link"
+
+[FSLNK-09]
+status = "implemented"
+test = "src/winfs/fslnk.rs::readlink_error_shapes_and_locked_link"
+
+[FSLNK-10]
+status = "implemented"
+test = "src/winfs/fslnk.rs::readlink_error_shapes_and_locked_link"
+
+[FSLNK-11]
+status = "implemented"
+test = "src/winfs/fslnk.rs::readlink_appexeclink_and_lx_payloads"
+
+[FSLNK-12]
+status = "implemented"
+test = "src/winfs/fslnk.rs::symlink_privilege_contract_and_junction_fallback"
+
+[FSLNK-13]
+status = "implemented"
+test = "src/winfs/fslnk.rs::symlink_privilege_contract_and_junction_fallback"
+
+[FSLNK-14]
+status = "implemented"
+test = "src/winfs/fslnk.rs::symlink_dir_flag_traverses_and_unlinks_as_link"
+
+[FSLNK-15]
+status = "implemented"
+test = "src/winfs/fslnk.rs::junction_roundtrip_and_trailing_slash_rules"
+
+[FSLNK-16]
+status = "implemented"
+test = "src/winfs/fslnk.rs::junction_roundtrip_and_trailing_slash_rules"
+
+[FSLNK-17]
+status = "implemented"
+test = "src/winfs/fslnk.rs::mount_point_blob_kats"
+
+[FSLNK-18]
+status = "implemented"
+test = "src/winfs/fslnk.rs::hard_link_two_names_one_inode"
+
+[FSLNK-19]
+status = "implemented"
+test = "src/winfs/fslnk.rs::unlink_file_readonly_and_open_holder"
+
+[FSLNK-20]
+status = "implemented"
+test = "src/winfs/fslnk.rs::unlink_directory_shapes"
+
+[FSLNK-21]
+status = "implemented"
+test = "src/winfs/fslnk.rs::volume_guid_junction_readlink_and_unlink_refused"
+
+[FSLNK-22]
+status = "implemented"
+test = "src/winfs/fslnk.rs::rmdir_shapes_and_junctions"
+
+[FSLNK-23]
+status = "implemented"
+test = "src/winfs/fslnk.rs::rename_matrix"
+
+[FSLNK-24]
+status = "implemented"
+test = "src/winfs/fslnk.rs::rename_matrix"
+
+[FSLNK-25]
+status = "implemented"
+test = "src/winfs/fslnk.rs::unlink_file_readonly_and_open_holder"
+
+[FSLNK-26]
+status = "implemented"
+test = "src/winfs/fslnk.rs::mkdir_shapes"
+
+[FSLNK-27]
+status = "implemented"
+test = "src/winfs/fsmisc.rs::mktemp_core_validation_and_retry_polarity"
+
+[FSLNK-28]
+status = "implemented"
+test = "src/winfs/fsmisc.rs::mkdtemp_creates_unique_directories"
+
+[FSLNK-29]
+status = "implemented"
+covered_by = "FSLNK-30"
+
+[FSLNK-30]
+status = "implemented"
+test = "src/winfs/fsmisc.rs::mktemp_core_validation_and_retry_polarity"
+
+[FSLNK-31]
+status = "implemented"
+test = "src/winfs/fsmisc.rs::mkstemp_creates_and_opens_unique_files"
+
+[FSLNK-32]
+status = "implemented"
+test = "src/winfs/readdir.rs::large_directory_multi_batch_exact_set"
+
+[FSLNK-33]
+status = "implemented"
+test = "src/winfs/readdir.rs::trailing_nul_strip_and_dot_skip_kats"
+
+[FSLNK-34]
+status = "implemented"
+covered_by = "FSLNK-32"
+
+[FSLNK-35]
+status = "implemented"
+test = "src/winfs/readdir.rs::open_error_shapes_and_link_following"
+
+[FSLNK-36]
+status = "implemented"
+test = "src/winfs/readdir.rs::classification_matrix_with_junction_and_unknown_tag"
+
+[FSLNK-37]
+status = "implemented"
+test = "src/winfs/readdir.rs::large_directory_multi_batch_exact_set"
+
+[FSLNK-38]
+status = "implemented"
+test = "src/winfs/readdir.rs::open_error_shapes_and_link_following"
+
+[FSLNK-39]
+status = "skipped"
+reason = "if Bun's opendir uses NtQueryDirectoryFile on a real handle (recommended — avoids the entire pattern-escaping class, matches FSLNK-32); must-port only if FindFirstFile is retained anywhere. Target: Phase 2 fs — opendir."
+
+[FSLNK-40]
+status = "implemented"
+test = "src/winfs/readdir.rs::empty_directory_yields_no_entries_and_is_fused"
+
+[FSLNK-41]
+status = "implemented"
+test = "src/winfs/readdir.rs::empty_directory_yields_no_entries_and_is_fused"
+
+[FSLNK-42]
+status = "skipped"
+reason = "if NtQueryDirectoryFile path chosen (no prefetch asymmetry there); otherwise must-port the latch — off-by-one entry loss/duplication is the classic FindFirstFile porting bug. Target: Phase 2 fs — opendir."
+
+[FSLNK-43]
+status = "pending"
+
+[FSLNK-44]
+status = "pending"
+
+[FSLNK-45]
+status = "skipped"
+reason = "the CRT loop (Bun has native copy paths and doesn't expose uv sendfile); must-port the two lessons wherever Bun loops read/write: cap per-op sizes below i32 wraparound (0x7ffff000 mirrors Linux MAX_RW_COUNT) and never abort on allocation failure in a syscall shim. Target: Phase 2 fs — copy plumbing."
+
+[FSLNK-46]
+status = "implemented"
+test = "src/winfs/fslnk.rs::ntstatus_dos_mapping_kats"
+
+[FSLNK-47]
+status = "pending"
+
+[FSLNK-48]
+status = "pending"
+
+[FSLNK-49]
+status = "implemented"
+test = "src/winfs/fslnk.rs::rename_symlink_moves_link_not_target"
+
+[FSLNK-50]
+status = "implemented"
+test = "src/winfs/fslnk.rs::symlink_file_roundtrip_and_stat_agreement"
+
+[FSMETA-01]
+status = "implemented"
+test = "src/winfs/stat.rs::regular_file_stat_matches_fstat"
+
+[FSMETA-02]
+status = "implemented"
+test = "src/winfs/stat.rs::fast_path_agrees_with_handle_path"
+
+[FSMETA-03]
+status = "implemented"
+test = "src/winfs/stat.rs::nonexistent_path_is_final_error"
+
+[FSMETA-04]
+status = "implemented"
+test = "src/winfs/stat.rs::lstat_junction_drive_pattern_is_symlink"
+
+[FSMETA-05]
+status = "implemented"
+test = "src/winfs/stat.rs::nul_device_synthesized_char_stat"
+
+[FSMETA-06]
+status = "implemented"
+test = "src/winfs/stat.rs::locked_share0_file_stats_with_correct_size"
+
+[FSMETA-07]
+status = "implemented"
+covered_by = "FSMETA-06"
+
+[FSMETA-08]
+status = "implemented"
+test = "src/winfs/stat.rs::fast_path_agrees_with_handle_path"
+
+[FSMETA-09]
+status = "implemented"
+test = "src/winfs/stat.rs::directory_stat_mode_and_size"
+
+[FSMETA-10]
+status = "implemented"
+test = "src/winfs/stat.rs::locked_share0_file_stats_with_correct_size"
+
+[FSMETA-11]
+status = "implemented"
+test = "src/winfs/stat.rs::directory_fallback_rejects_wildcards"
+
+[FSMETA-12]
+status = "implemented"
+test = "src/winfs/stat.rs::locked_share0_file_stats_with_correct_size"
+
+[FSMETA-13]
+status = "implemented"
+test = "src/winfs/stat.rs::locked_share0_file_stats_with_correct_size"
+
+[FSMETA-14]
+status = "implemented"
+test = "src/winfs/stat.rs::directory_fallback_root_and_dots_fail_cleanly"
+
+[FSMETA-15]
+status = "implemented"
+test = "src/winfs/stat.rs::lstat_volume_guid_junction_retries_as_stat"
+
+[FSMETA-16]
+status = "implemented"
+test = "src/winfs/stat.rs::lstat_symlink_reports_link_and_target_length"
+
+[FSMETA-17]
+status = "implemented"
+test = "src/winfs/stat.rs::lstat_appexeclink_uses_third_string"
+
+[FSMETA-18]
+status = "implemented"
+test = "src/winfs/stat.rs::mode_synthesis_table"
+
+[FSMETA-19]
+status = "implemented"
+test = "src/winfs/stat.rs::mode_synthesis_table"
+
+[FSMETA-20]
+status = "implemented"
+test = "src/winfs/stat.rs::filetime_to_timespec_kats"
+
+[FSMETA-21]
+status = "implemented"
+test = "src/winfs/stat.rs::filetime_to_timespec_kats"
+
+[FSMETA-22]
+status = "implemented"
+test = "src/winfs/stat.rs::mode_synthesis_table"
+
+[FSMETA-23]
+status = "implemented"
+test = "src/winfs/stat.rs::mode_synthesis_table"
+
+[FSMETA-24]
+status = "implemented"
+test = "src/winfs/stat.rs::mode_synthesis_table"
+
+[FSMETA-25]
+status = "implemented"
+test = "src/winfs/stat.rs::mode_synthesis_table"
+
+[FSMETA-26]
+status = "implemented"
+test = "src/winfs/stat.rs::prepare_path_strips_one_trailing_slash_only"
+
+[FSMETA-27]
+status = "implemented"
+test = "src/winfs/stat.rs::fstat_named_pipe_synthesizes_fifo"
+
+[FSMETA-28]
+status = "implemented"
+test = "src/winfs/stat.rs::nul_device_synthesized_char_stat"
+
+[FSMETA-29]
+status = "implemented"
+test = "src/fdtable/table.rs::stale_sequential_io_cannot_corrupt_reminted_slot"
+
+[FSMETA-30]
+status = "implemented"
+test = "src/winfs/fsmisc.rs::utimes_set_and_read_back_via_stat"
+
+[FSMETA-31]
+status = "implemented"
+test = "src/winfs/fsmisc.rs::utimes_now_and_omit_sentinels"
+
+[FSMETA-32]
+status = "implemented"
+test = "src/winfs/fsmisc.rs::millis_to_filetime_kats"
+
+[FSMETA-33]
+status = "implemented"
+test = "src/winfs/fsmisc.rs::lutimes_junction_sets_link_not_target"
+
+[FSMETA-34]
+status = "implemented"
+test = "src/winfs/fsmisc.rs::futimes_handle_and_readonly_fd_deviation"
+
+[FSMETA-35]
+status = "implemented"
+test = "src/winfs/stat.rs::locked_share0_file_stats_with_correct_size"
+
+[FSMETA-36]
+status = "implemented"
+test = "src/winfs/fsmisc.rs::chmod_toggles_readonly_and_does_not_follow_links"
+
+[FSMETA-37]
+status = "implemented"
+test = "src/winfs/fsmisc.rs::fchmod_archive_dance_on_plus_r_minus_a_file"
+
+[FSMETA-38]
+status = "implemented"
+test = "src/winfs/fsmisc.rs::fchmod_archive_dance_on_plus_r_minus_a_file"
+
+[FSMETA-39]
+status = "implemented"
+test = "src/winfs/fsmisc.rs::access_matrix"
+
+[FSMETA-40]
+status = "implemented"
+test = "src/winfs/fsmisc.rs::access_matrix"
+
+[FSMETA-41]
+status = "implemented"
+test = "src/winfs/fsmisc.rs::realpath_raw_prefix_and_relative_resolution"
+
+[FSMETA-42]
+status = "implemented"
+test = "src/paths/string_paths.rs::rewrite_final_path_prefix_shapes"
+
+[FSMETA-43]
+status = "implemented"
+test = "src/winfs/fsmisc.rs::realpath_resolves_links_case_and_locked_files"
+
+[FSMETA-44]
+status = "implemented"
+test = "src/winfs/fsmisc.rs::statfs_fields_and_disk_free_space_oracle"
+
+[FSMETA-45]
+status = "implemented"
+test = "src/winfs/fsmisc.rs::statfs_fields_and_disk_free_space_oracle"
+
+[FSMETA-46]
+status = "implemented"
+test = "src/winfs/fsmisc.rs::chown_family_unconditional_noop_success"
+
+[FSMETA-47]
+status = "pending"
+
+[FSMETA-48]
+status = "pending"
+
+[FSMETA-49]
+status = "pending"
+
+[FSMETA-50]
+status = "implemented"
+test = "src/winfs/fsmisc.rs::copyfile_same_file_converts_via_dev_ino"
+
+[FSIO-01]
+status = "implemented"
+test = "src/winfs/fsio.rs::share_delete_unlink_while_open"
+
+[FSIO-02]
+status = "implemented"
+test = "src/winfs/fsio.rs::exlock_denies_all_sharing"
+
+[FSIO-03]
+status = "implemented"
+test = "src/winfs/fsio.rs::append_handle_appends_despite_offsets"
+
+[FSIO-04]
+status = "implemented"
+test = "src/winfs/fsio.rs::flag_and_rights_transcription_kats"
+
+[FSIO-05]
+status = "implemented"
+test = "src/winfs/fsio.rs::open_flags_matrix"
+
+[FSIO-06]
+status = "implemented"
+test = "src/winfs/fsio.rs::open_flags_matrix"
+
+[FSIO-07]
+status = "implemented"
+test = "src/winfs/fsio.rs::directory_open_and_io_error_shapes"
+
+[FSIO-08]
+status = "implemented"
+test = "src/winfs/fsio.rs::readonly_mode_sets_attribute_only_on_create"
+
+[FSIO-09]
+status = "implemented"
+test = "src/winfs/fsio.rs::o_temporary_deletes_on_close"
+
+[FSIO-10]
+status = "implemented"
+test = "src/winfs/fsio.rs::write_through_observable_and_flag_conflicts"
+
+[FSIO-11]
+status = "implemented"
+covered_by = "FSIO-03"
+
+[FSIO-12]
+status = "implemented"
+covered_by = "FSIO-05"
+
+[FSIO-13]
+status = "implemented"
+covered_by = "FSIO-05"
+
+[FSIO-14]
+status = "implemented"
+covered_by = "FSIO-05"
+
+[FSIO-15]
+status = "implemented"
+test = "src/fdtable/table.rs::capacity_emfile_shape_and_reuse"
+
+[FSIO-16]
+status = "implemented"
+test = "src/fdtable/table.rs::stdio_reserved_close_noop_and_dead_slots"
+
+[FSIO-17]
+status = "implemented"
+test = "src/fdtable/table.rs::mint_get_close_roundtrip_and_recycling"
+
+[FSIO-18]
+status = "pending"
+
+[FSIO-19]
+status = "implemented"
+test = "src/fdtable/table.rs::stale_sequential_io_cannot_corrupt_reminted_slot"
+
+[FSIO-20]
+status = "implemented"
+covered_by = "FSIO-17"
+
+[FSIO-21]
+status = "implemented"
+test = "src/winfs/fsio.rs::concurrent_positioned_reads_share_one_handle"
+
+[FSIO-22]
+status = "implemented"
+test = "src/winfs/fsio.rs::vectored_io_offsets_and_partial_success"
+
+[FSIO-23]
+status = "implemented"
+test = "src/winfs/fsio.rs::positioned_io_moves_kernel_pointer_by_contract"
+
+[FSIO-24]
+status = "implemented"
+test = "src/winfs/fsio.rs::wrong_direction_io_keeps_raw_access_denied"
+
+[FSIO-25]
+status = "implemented"
+covered_by = "FSIO-24"
+
+[FSIO-26]
+status = "implemented"
+test = "src/winfs/fsio.rs::vectored_io_offsets_and_partial_success"
+
+[FSIO-27]
+status = "implemented"
+test = "src/winfs/fsio.rs::flag_and_rights_transcription_kats"
+
+[FSIO-28]
+status = "implemented"
+test = "src/winfs/fsio.rs::append_handle_appends_despite_offsets"
+
+[FSIO-29]
+status = "implemented"
+covered_by = "FSIO-21"
+
+[FSIO-30]
+status = "implemented"
+covered_by = "FSIO-21"
+
+[FSIO-31]
+status = "implemented"
+test = "src/winfs/fsio.rs::flag_and_rights_transcription_kats"
+
+[FSIO-32]
+status = "skipped"
+reason = "the mechanism (no filemap port per FSIO-31), but must-carry the lesson into Bun's own mmap-backed reads (`Bun.mmap`, mmap fast paths): zero-size map fails, growth requires remap, reads past cached size need explicit EOF handling. Target: Bun.mmap / file-blob fast paths."
+
+[FSIO-33]
+status = "skipped"
+reason = "no filemap), and treat as an anti-lesson: never put a global mutex probe on the per-I/O hot path for a feature almost nobody enables; if Bun ever needs per-fd sidecar state, key it off a flag bit in the fd representation first. Target: Phase 2 fs-open-io design note."
+
+[FSIO-34]
+status = "pending"
+
+[FSIO-35]
+status = "pending"
+
+[FSIO-36]
+status = "skipped"
+reason = "the mechanism; record as anti-lesson: never close a handle you don't own on an error path — poisoning a user's fd converts one failed write into mysterious EBADFs later. Target: design note."
+
+[FSIO-37]
+status = "pending"
+
+[FSIO-38]
+status = "skipped"
+reason = "no filemap). Lesson for any user-space position emulation: a cached EOF is not an append guarantee. Target: design note."
+
+[FSIO-39]
+status = "implemented"
+test = "src/winfs/fsio.rs::ftruncate_grow_shrink_fsync"
+
+[FSIO-40]
+status = "implemented"
+test = "src/paths/string_paths.rs::lone_surrogate_round_trips_through_wide_and_back"
+
+[FSIO-41]
+status = "implemented"
+test = "src/paths/string_paths.rs::try_to_paths_reject_over_budget_input"
+
+[FSIO-42]
+status = "implemented"
+test = "src/paths/string_paths.rs::try_to_paths_reject_malformed_wtf8"
+
+[FSIO-43]
+status = "pending"
+
+[FSIO-44]
+status = "pending"
+
+[FSIO-45]
+status = "pending"
+
+[FSIO-46]
+status = "pending"
+
+[FSIO-47]
+status = "pending"
+
+[FSIO-48]
+status = "pending"
+
+[FSIO-49]
+status = "pending"
+
+[FSIO-50]
+status = "implemented"
+test = "src/winfs/fsio.rs::close_rejects_sentinels_without_kernel_calls"
+
+[FSIO-51]
+status = "pending"
+
+[FSIO-52]
+status = "skipped"
+reason = "the implementation (Bun copies via its own CopyFile/clone-aware paths and node:fs has no sendfile-to-file); keep the lesson that fd-position-mutating helpers must be audited against any per-fd sidecar state. cross-ref: fs-copy area. Target: n/a."
+
+[FSIO-53]
+status = "pending"
+
+[FSIO-54]
+status = "pending"
+
+[FSIO-55]
+status = "pending"
+
+[FSIO-56]
+status = "implemented"
+covered_by = "FSIO-01"
+
+[LOOP-01]
+status = "implemented"
+test = "src/iocp/lib.rs::port_wakeup_null_filter_and_pending_dispatch"
+
+[LOOP-02]
+status = "implemented"
+test = "src/iocp/lib.rs::poll_never_returns_early"
+
+[LOOP-03]
+status = "implemented"
+test = "src/iocp/lib.rs::port_wakeup_null_filter_and_pending_dispatch"
+
+[LOOP-04]
+status = "implemented"
+test = "src/iocp/lib.rs::port_wakeup_null_filter_and_pending_dispatch"
+
+[LOOP-05]
+status = "implemented"
+test = "src/iocp/req.rs::local_error_reads_back_like_a_kernel_completion"
+
+[LOOP-06]
+status = "implemented"
+test = "src/iocp/lib.rs::port_wakeup_null_filter_and_pending_dispatch"
+
+[LOOP-07]
+status = "implemented"
+covered_by = "LOOP-02"
+
+[LOOP-08]
+status = "implemented"
+covered_by = "LOOP-48"
+
+[LOOP-09]
+status = "skipped"
+reason = "Option<u64> timeout type eliminates the -1/INFINITE sentinel conversion entirely"
+
+[LOOP-10]
+status = "skipped"
+reason = ". Reason: Bun's baseline is Windows 10 1809+, and current Wine implements GQCSEx (libuv itself dropped the fallback in 2022 with no complaints since). Record so nobody re-adds a GQCS path \"for compatibility\". Target: n/a."
+
+[LOOP-11]
+status = "skipped"
+reason = "uv metrics API (UV_METRICS_IDLE_TIME) is not exposed by Bun and dies with the uv ABI"
+
+[LOOP-12]
+status = "implemented"
+test = "src/iocp/lib.rs::pending_fifo_drain"
+
+[LOOP-13]
+status = "implemented"
+test = "src/iocp/lib.rs::tick_orchestration_and_hook_order"
+
+[LOOP-14]
+status = "implemented"
+covered_by = "LOOP-12"
+
+[LOOP-15]
+status = "implemented"
+covered_by = "LOOP-05"
+
+[LOOP-16]
+status = "skipped"
+reason = "uv_run phase order replaced by the contract tick order (hazard 12 POSIX convergence), pinned by tick_orchestration_and_hook_order"
+
+[LOOP-17]
+status = "skipped"
+reason = "uv_run DEFAULT-mode pre-loop timer pass dies with uv_run; surface loops drive ticks directly"
+
+[LOOP-18]
+status = "implemented"
+covered_by = "LOOP-13"
+
+[LOOP-19]
+status = "skipped"
+reason = "uv_backend_timeout dies; timeout folding lives in Loop::tick + us_loop_run_bun_tick"
+
+[LOOP-20]
+status = "implemented"
+test = "src/iocp/lib.rs::endgame_protocol"
+
+[LOOP-21]
+status = "implemented"
+test = "src/iocp/lib.rs::stop_breaks_the_tick"
+
+[LOOP-22]
+status = "skipped"
+reason = "single tick shape always runs the full tail; uv run modes die"
+
+[LOOP-23]
+status = "skipped"
+reason = "no idle-handle concept; the uv_idle hack this served is deleted at the rewire"
+
+[LOOP-24]
+status = "skipped"
+reason = "no cached loop time to refresh; now_ms reads QPC at every use"
+
+[LOOP-25]
+status = "implemented"
+test = "src/iocp/lib.rs::endgame_protocol"
+
+[LOOP-26]
+status = "implemented"
+test = "src/iocp/lib.rs::endgame_protocol"
+
+[LOOP-27]
+status = "implemented"
+test = "src/iocp/lib.rs::endgame_protocol"
+
+[LOOP-28]
+status = "implemented"
+test = "src/iocp/lib.rs::tick_orchestration_and_hook_order"
+
+[LOOP-29]
+status = "implemented"
+test = "src/iocp/usockets.rs::async_cb_receives_loop_and_coalesces"
+
+[LOOP-30]
+status = "implemented"
+test = "src/iocp/usockets.rs::async_cb_receives_loop_and_coalesces"
+
+[LOOP-31]
+status = "implemented"
+test = "src/iocp/usockets.rs::async_cb_receives_loop_and_coalesces"
+
+[LOOP-32]
+status = "implemented"
+covered_by = "LOOP-04"
+
+[LOOP-33]
+status = "skipped"
+reason = "uv_async_send ABI shape dies; surface wakeup is infallible void (atomic+PQCS)"
+
+[LOOP-34]
+status = "pending"
+
+[LOOP-35]
+status = "skipped"
+reason = "multi-watcher lists replaced by single pre/post/before-wait hook slots; bun registers exactly one of each (uSockets contract)"
+
+[LOOP-36]
+status = "skipped"
+reason = "watcher ordering moot with single-slot hooks"
+
+[LOOP-37]
+status = "implemented"
+test = "src/iocp/lib.rs::wake_all_loops_wakes_blocking_ticks"
+
+[LOOP-38]
+status = "implemented"
+test = "src/iocp/lib.rs::wake_all_loops_wakes_blocking_ticks"
+
+[LOOP-39]
+status = "implemented"
+test = "src/iocp/lib.rs::wake_all_loops_wakes_blocking_ticks"
+
+[LOOP-40]
+status = "implemented"
+test = "src/iocp/lib.rs::process_init_effects"
+
+[LOOP-41]
+status = "implemented"
+test = "src/iocp/lib.rs::process_init_effects"
+
+[LOOP-42]
+status = "skipped"
+reason = ", with reason: Bun's native layer should never call CRT fd functions (`bun.sys` wraps Win32 handles directly), and Bun debug builds are clang, not MSVC _DEBUG CRT. Revisit only if a debug-CRT code path calling `_get_osfhandle` appears (e.g. vendored libuv compat shim already handles itself). Target: n/a."
+
+[LOOP-43]
+status = "implemented"
+test = "src/iocp/lib.rs::timer_semantics"
+
+[LOOP-44]
+status = "implemented"
+test = "src/iocp/lib.rs::zero_timeout_restart_does_not_busy_loop"
+
+[LOOP-45]
+status = "pending"
+
+[LOOP-46]
+status = "implemented"
+covered_by = "LOOP-43"
+
+[LOOP-47]
+status = "skipped"
+reason = "the indirection (embed the heap in Bun's loop struct — no public C ABI constraint); must keep the heap-not-tree choice. Target: Phase 1 loop (timers)."
+
+[LOOP-48]
+status = "implemented"
+test = "src/iocp/lib.rs::tick_orchestration_and_hook_order"
+
+[LOOP-49]
+status = "skipped"
+reason = "uv_loop_close ABI dies; Drop asserts !alive (debug) and us_loop_free owns teardown per contract"
+
+[LOOP-50]
+status = "skipped"
+reason = "uv_backend_fd/uv_loop_fork are N-API crash-stub-layer concerns"
+
+[LOOP-51]
+status = "pending"
+
+[LOOP-52]
+status = "implemented"
+covered_by = "POLL-05"
+
+[HIST-01]
+status = "pending"
+
+[HIST-02]
+status = "pending"
+
+[HIST-03]
+status = "pending"
+
+[HIST-04]
+status = "pending"
+
+[HIST-05]
+status = "pending"
+
+[HIST-06]
+status = "pending"
+
+[HIST-07]
+status = "pending"
+
+[HIST-08]
+status = "pending"
+
+[HIST-09]
+status = "pending"
+
+[HIST-10]
+status = "pending"
+
+[HIST-11]
+status = "pending"
+
+[HIST-12]
+status = "pending"
+
+[HIST-13]
+status = "pending"
+
+[HIST-14]
+status = "pending"
+
+[HIST-15]
+status = "pending"
+
+[HIST-16]
+status = "pending"
+
+[HIST-17]
+status = "pending"
+
+[HIST-18]
+status = "pending"
+
+[HIST-19]
+status = "pending"
+
+[HIST-20]
+status = "pending"
+
+[HIST-21]
+status = "skipped"
+reason = "use Rust `std::sync::Once`/`OnceLock`, which wraps the same OS facility) — recorded because any C-side Bun glue must not resurrect the event dance, and the ABI-padding trick matters if Bun ever mirrors libuv structs. Target: Phase 1 loop."
+
+[HIST-22]
+status = "skipped"
+reason = "for plain spawning (Rust std handles CRT + handles correctly), must-port the *pseudo-handle trap* knowledge anywhere Bun passes thread HANDLEs across threads (e.g. `uv_thread_setaffinity`-style APIs, SetThreadDescription on another thread): always `DuplicateHandle` a pseudo-handle first. Target: Phase: threading."
+
+[HIST-23]
+status = "pending"
+
+[HIST-24]
+status = "skipped"
+reason = "implementation (Rust `std::sync::RwLock`/`Mutex` already use SRWLock/futex-equivalents on modern Windows); record two lessons: (1) never GetProcAddress synchronization primitives — pick the baseline and link directly; (2) if Bun exports any C-ABI struct containing a lock, freeze its size with a static assert on day one. Target: Phase: threading."
+
+[HIST-25]
+status = "skipped"
+reason = "Rust Condvar). Record: any Bun code converting ns→Windows-ms must use integer math, clamp 0→1 when a zero-wait would busy-poll, and never pass 0xFFFFFFFF accidentally (it means INFINITE). Cross-ref: TIMERS area has the same ms-rounding contract on the loop. Target: Phase 1 loop / timers."
+
+[HIST-26]
+status = "skipped"
+reason = "Rust `thread_local!` / `#[thread_local]`), but the NULL-ambiguity is must-know for any C/FFI glue using raw TlsGetValue (e.g. JSC integration). Target: Phase: threading."
+
+[HIST-27]
+status = "pending"
+
+[HIST-28]
+status = "pending"
+
+[HIST-29]
+status = "skipped"
+reason = "Rust join provides happens-before). Keep the *posture*: undocumented Windows memory-ordering guarantees deserve an explicit fence or an std primitive, never an assumption. Target: Phase: threading."
+
+[HIST-30]
+status = "pending"
+
+[HIST-31]
+status = "pending"
+
+[HIST-32]
+status = "pending"
+
+[HIST-33]
+status = "implemented"
+test = "src/errno/win_error.rs::general_table_canonical"
+
+[HIST-34]
+status = "implemented"
+test = "src/errno/win_error.rs::general_table_canonical"
+
+[HIST-35]
+status = "pending"
+
+[HIST-36]
+status = "pending"
+
+[HIST-37]
+status = "implemented"
+test = "src/errno/win_error.rs::general_table_canonical"
+
+[HIST-38]
+status = "implemented"
+test = "src/errno/win_error.rs::general_table_canonical"
+
+[HIST-39]
+status = "pending"
+
+[HIST-40]
+status = "pending"
+
+[HIST-41]
+status = "skipped"
+reason = "— Bun is Rust (no C printf) and its C++ toolchain baseline is far past MSVC 1900; the residual lesson is only that any vendored C code targeting old MSVC may harbor unterminated-buffer assumptions. Target: none."
+
+[HIST-42]
+status = "pending"
+
+[HIST-43]
+status = "pending"
+
+[HIST-44]
+status = "pending"
+
+[HIST-45]
+status = "pending"
+
+[HIST-46]
+status = "pending"
+
+[HIST-47]
+status = "pending"
+
+[HIST-48]
+status = "pending"
+
+[HIST-49]
+status = "pending"
+
+[HIST-50]
+status = "pending"
+
+[HIST-51]
+status = "pending"
+
+[HIST-52]
+status = "pending"
+
+[HIST-53]
+status = "pending"
+
+[HIST-54]
+status = "pending"
+
+[HIST-55]
+status = "pending"
+
+[HIST-56]
+status = "pending"
+
+[HIST-57]
+status = "pending"
+
+[HIST-58]
+status = "skipped"
+reason = "implementation (Rust std / `getrandom` crate already use ProcessPrng on modern toolchains) but pin the decision: do not introduce BCryptGenRandom anywhere in Bun's Windows code. Cross-ref: crypto. Target: none."
+
+[HIST-59]
+status = "skipped"
+reason = "no code to port) — recorded as the counterweight to HIST-51: optimizations gated off for unreproducible-environment reasons rot; either gate them on a probe (IFS check) and keep them tested, or delete. Target: none."
+
+[HIST-60]
+status = "pending"
+
+[HIST-61]
+status = "pending"
+
+[HIST-62]
+status = "pending"
+
+[HIST-63]
+status = "pending"
+
+[HIST-64]
+status = "pending"
+
+[HIST-65]
+status = "pending"
+
+[HIST-66]
+status = "pending"
+
+[HIST-67]
+status = "skipped"
+reason = "Bun's fd model differs; Rust collections size dynamically) — recorded as a reminder to audit static per-process tables in ported designs. Target: none."
+
+[HIST-68]
+status = "pending"
+
+[HIST-69]
+status = "pending"
+
+[HIST-70]
+status = "implemented"
+test = "src/errno/win_error.rs::hresult_facility_guard"
+
+[PIPE-01]
+status = "implemented"
+test = "src/iocp/pipe.rs::pair_echo_round_trip"
+
+[PIPE-02]
+status = "implemented"
+covered_by = "PIPE-01"
+
+[PIPE-03]
+status = "implemented"
+test = "src/iocp/pipe.rs::pair_echo_round_trip"
+
+[PIPE-04]
+status = "implemented"
+test = "src/iocp/pipe.rs::pair_echo_round_trip"
+
+[PIPE-05]
+status = "implemented"
+test = "src/iocp/pipe.rs::pair_echo_round_trip"
+
+[PIPE-06]
+status = "implemented"
+test = "src/iocp/pipe.rs::shutdown_flushes_then_signals"
+
+[PIPE-07]
+status = "implemented"
+test = "src/iocp/pipe.rs::pair_echo_round_trip"
+
+[PIPE-08]
+status = "skipped"
+reason = "no CRT fds in the final state; adoption is HANDLE-based (PipeHandle::open); CRT choreography dies with sys_uv"
+
+[PIPE-09]
+status = "implemented"
+test = "src/iocp/pipe.rs::pair_echo_round_trip"
+
+[PIPE-10]
+status = "implemented"
+test = "src/iocp/pipe.rs::open_non_overlapped_inherited_fallback"
+
+[PIPE-11]
+status = "implemented"
+covered_by = "PIPE-10"
+
+[PIPE-12]
+status = "implemented"
+test = "src/iocp/pipe.rs::pair_echo_round_trip"
+
+[PIPE-13]
+status = "implemented"
+test = "src/iocp/pipe.rs::pair_echo_round_trip"
+
+[PIPE-14]
+status = "implemented"
+test = "src/iocp/pipe.rs::open_non_overlapped_inherited_fallback"
+
+[PIPE-15]
+status = "implemented"
+test = "src/iocp/pipe.rs::pair_echo_round_trip"
+
+[PIPE-16]
+status = "skipped"
+reason = "EMULATE_IOCP shim omitted by decision: attach failure errors loudly (adoption_and_validation_guards); add on demand if a real embedder case appears"
+
+[PIPE-17]
+status = "skipped"
+reason = "hEvent|1 suppression obsolete: direct model never consumes an op inline on a port-attached handle; SFCNM mode owns sync-success suppression"
+
+[PIPE-18]
+status = "implemented"
+test = "src/iocp/pipe.rs::adoption_and_validation_guards"
+
+[PIPE-19]
+status = "pending"
+
+[PIPE-20]
+status = "pending"
+
+[PIPE-21]
+status = "implemented"
+covered_by = "PIPE-22"
+
+[PIPE-22]
+status = "implemented"
+test = "src/iocp/pipe.rs::listen_accept_and_busy_retry"
+
+[PIPE-23]
+status = "implemented"
+test = "src/iocp/pipe.rs::listen_accept_and_busy_retry"
+
+[PIPE-24]
+status = "implemented"
+test = "src/iocp/pipe.rs::listen_accept_and_busy_retry"
+
+[PIPE-25]
+status = "implemented"
+test = "src/iocp/pipe.rs::listen_accept_and_busy_retry"
+
+[PIPE-26]
+status = "implemented"
+test = "src/iocp/pipe.rs::listen_accept_and_busy_retry"
+
+[PIPE-27]
+status = "implemented"
+test = "src/iocp/pipe.rs::listen_accept_and_busy_retry"
+
+[PIPE-28]
+status = "implemented"
+test = "src/iocp/pipe.rs::listen_accept_and_busy_retry"
+
+[PIPE-29]
+status = "implemented"
+test = "src/iocp/pipe.rs::eof_error_classification_and_read_stop"
+
+[PIPE-30]
+status = "skipped"
+reason = "zero-read readiness probe deleted by design - named tier-1 project outcome (direct overlapped reads)"
+
+[PIPE-31]
+status = "skipped"
+reason = "inline-read CancelIoEx dance obsolete with no inline reads; abort-is-silent knowledge ported to the abort arm"
+
+[PIPE-32]
+status = "implemented"
+test = "src/iocp/pipe.rs::eof_error_classification_and_read_stop"
+
+[PIPE-33]
+status = "implemented"
+test = "src/iocp/pipe.rs::pair_echo_round_trip"
+
+[PIPE-34]
+status = "implemented"
+test = "src/iocp/pipe.rs::eof_error_classification_and_read_stop"
+
+[PIPE-35]
+status = "implemented"
+test = "src/iocp/pipe.rs::open_non_overlapped_inherited_fallback"
+
+[PIPE-36]
+status = "implemented"
+test = "src/iocp/pipe.rs::eof_error_classification_and_read_stop"
+
+[PIPE-37]
+status = "implemented"
+test = "src/iocp/pipe.rs::eof_error_classification_and_read_stop"
+
+[PIPE-38]
+status = "implemented"
+test = "src/iocp/pipe.rs::eof_error_classification_and_read_stop"
+
+[PIPE-39]
+status = "implemented"
+test = "src/iocp/pipe.rs::eof_error_classification_and_read_stop"
+
+[PIPE-40]
+status = "implemented"
+covered_by = "PIPE-41"
+
+[PIPE-41]
+status = "implemented"
+test = "src/iocp/pipe.rs::write_queue_fifo_broken_peer_and_close_aborts"
+
+[PIPE-42]
+status = "implemented"
+test = "src/iocp/pipe.rs::write_queue_fifo_broken_peer_and_close_aborts"
+
+[PIPE-43]
+status = "skipped"
+reason = "try_write deliberately omitted: upstream impl broke node IPC and was reverted twice; consumers use async write"
+
+[PIPE-44]
+status = "implemented"
+test = "src/iocp/pipe.rs::write_queue_fifo_broken_peer_and_close_aborts"
+
+[PIPE-45]
+status = "pending"
+
+[PIPE-46]
+status = "pending"
+
+[PIPE-47]
+status = "pending"
+
+[PIPE-48]
+status = "pending"
+
+[PIPE-49]
+status = "pending"
+
+[PIPE-50]
+status = "implemented"
+test = "src/iocp/pipe.rs::shutdown_flushes_then_signals"
+
+[PIPE-51]
+status = "implemented"
+test = "src/iocp/pipe.rs::shutdown_flushes_then_signals"
+
+[PIPE-52]
+status = "implemented"
+test = "src/iocp/pipe.rs::shutdown_flushes_then_signals"
+
+[PIPE-53]
+status = "skipped"
+reason = "getname not in surface; WARNING recorded in code: any query API on a non-overlapped pipe must sync_io_interrupt the read worker first or NtQueryInformationFile deadlocks"
+
+[PIPE-54]
+status = "implemented"
+test = "src/iocp/pipe.rs::close_protocol_drains_everything"
+
+[PIPE-55]
+status = "implemented"
+covered_by = "POLL-28"
+
+[PIPE-56]
+status = "pending"
+
+[PIPE-57]
+status = "implemented"
+test = "src/fdtable/table.rs::kind_gating_and_classification_matrix"
+
+[PIPE-58]
+status = "implemented"
+test = "src/iocp/pipe.rs::write_queue_fifo_broken_peer_and_close_aborts"
+
+[PIPE-59]
+status = "implemented"
+covered_by = "PIPE-04"
+
+[PIPE-60]
+status = "skipped"
+reason = "the mechanism (Bun's Rust layer can link ntdll imports statically — NtQueryInformationFile is a stable documented-enough export on 1809+; no GetProcAddress needed). Record: the *information classes* used (FileModeInformation=16, FileAccessInformation=8, FilePipeLocalInformation=24, FileNameInformation=9) are the load-bearing part. Target: Phase 2 sys."
+
+[PIPE-61]
+status = "implemented"
+covered_by = "LOOP-27"
+
+[PIPE-62]
+status = "pending"
+
+[POLL-01]
+status = "implemented"
+test = "src/iocp/afd.rs::irp_pending_during_callback"
+
+[POLL-02]
+status = "implemented"
+test = "src/iocp/afd.rs::irp_pending_during_callback"
+
+[POLL-03]
+status = "implemented"
+test = "src/iocp/afd.rs::irp_pending_during_callback"
+
+[POLL-04]
+status = "implemented"
+test = "src/iocp/afd.rs::restart_inside_callback_no_double_fire"
+
+[POLL-05]
+status = "implemented"
+test = "src/iocp/afd.rs::irp_pending_during_callback"
+
+[POLL-06]
+status = "implemented"
+covered_by = "POLL-05"
+
+[POLL-07]
+status = "implemented"
+test = "src/iocp/afd.rs::irp_pending_during_callback"
+
+[POLL-08]
+status = "implemented"
+covered_by = "POLL-05"
+
+[POLL-09]
+status = "implemented"
+covered_by = "POLL-05"
+
+[POLL-10]
+status = "implemented"
+covered_by = "POLL-05"
+
+[POLL-11]
+status = "implemented"
+test = "src/iocp/afd.rs::irp_pending_during_callback"
+
+[POLL-12]
+status = "implemented"
+covered_by = "POLL-05"
+
+[POLL-13]
+status = "implemented"
+test = "src/iocp/afd.rs::irp_pending_during_callback"
+
+[POLL-14]
+status = "implemented"
+test = "src/iocp/afd.rs::submit_failure_reports_async_error_once"
+
+[POLL-15]
+status = "implemented"
+test = "src/iocp/afd.rs::restart_inside_callback_no_double_fire"
+
+[POLL-16]
+status = "implemented"
+test = "src/iocp/afd.rs::restart_inside_callback_no_double_fire"
+
+[POLL-17]
+status = "implemented"
+test = "src/iocp/afd.rs::mask_change_kick_is_silent"
+
+[POLL-18]
+status = "implemented"
+covered_by = "POLL-26"
+
+[POLL-19]
+status = "implemented"
+test = "src/iocp/afd.rs::delivery_masked_to_subscription"
+
+[POLL-20]
+status = "skipped"
+reason = "reason: no Bun consumer uses POLLPRI; c-ares never requests it; TCP OOB is a dead feature). If ever needed, the wepoll mapping is one line. Target: n/a (document in module comment)."
+
+[POLL-21]
+status = "implemented"
+test = "src/iocp/afd.rs::rst_and_fin_classification"
+
+[POLL-22]
+status = "implemented"
+test = "src/iocp/afd.rs::local_close_stops_watcher"
+
+[POLL-23]
+status = "implemented"
+test = "src/iocp/afd.rs::external_cancel_is_swallowed_and_rearmed"
+
+[POLL-24]
+status = "implemented"
+test = "src/iocp/afd.rs::error_dispatches_even_when_stopped"
+
+[POLL-25]
+status = "implemented"
+covered_by = "POLL-26"
+
+[POLL-26]
+status = "implemented"
+test = "src/iocp/afd.rs::irp_pending_during_callback"
+
+[POLL-27]
+status = "implemented"
+test = "src/iocp/afd.rs::submit_failure_reports_async_error_once"
+
+[POLL-28]
+status = "implemented"
+test = "src/iocp/lib.rs::port_wakeup_null_filter_and_pending_dispatch"
+
+[POLL-29]
+status = "implemented"
+covered_by = "POLL-26"
+
+[POLL-30]
+status = "implemented"
+covered_by = "POLL-26"
+
+[POLL-31]
+status = "implemented"
+covered_by = "POLL-26"
+
+[POLL-32]
+status = "implemented"
+test = "src/iocp/afd.rs::local_close_stops_watcher"
+
+[POLL-33]
+status = "implemented"
+test = "src/iocp/afd.rs::close_with_in_flight_irps_gates_endgame"
+
+[POLL-34]
+status = "implemented"
+test = "src/iocp/afd.rs::close_with_in_flight_irps_gates_endgame"
+
+[POLL-35]
+status = "implemented"
+test = "src/iocp/afd.rs::close_with_in_flight_irps_gates_endgame"
+
+[POLL-36]
+status = "implemented"
+test = "src/iocp/afd.rs::close_with_in_flight_irps_gates_endgame"
+
+[POLL-37]
+status = "implemented"
+test = "src/iocp/afd.rs::duplicate_watcher_rejected"
+
+[POLL-38]
+status = "implemented"
+test = "src/iocp/afd.rs::slow_path_select_fallback"
+
+[POLL-39]
+status = "implemented"
+covered_by = "POLL-38"
+
+[POLL-40]
+status = "implemented"
+test = "src/iocp/afd.rs::slow_path_select_fallback"
+
+[POLL-41]
+status = "implemented"
+covered_by = "POLL-28"
+
+[POLL-42]
+status = "implemented"
+covered_by = "POLL-38"
+
+[POLL-43]
+status = "implemented"
+covered_by = "POLL-26"
+
+[POLL-44]
+status = "implemented"
+test = "src/errno/win_error.rs::winsock_table_canonical"
+
+[POLL-45]
+status = "pending"
+
+[POLL-46]
+status = "pending"
+
+[POLL-47]
+status = "implemented"
+covered_by = "POLL-26"
+
+[POLL-48]
+status = "implemented"
+test = "src/iocp/afd.rs::irp_pending_during_callback"
+
+[POLL-49]
+status = "implemented"
+test = "src/iocp/afd.rs::unref_active_poll_does_not_hold_loop"
+
+[PROC-01]
+status = "implemented"
+test = "src/iocp/process/tests.rs::quote_cmd_arg_documented_kats"
+
+[PROC-02]
+status = "implemented"
+test = "src/iocp/process/tests.rs::command_line_round_trips_through_commandlinetoargvw"
+
+[PROC-03]
+status = "implemented"
+test = "src/iocp/process/tests.rs::command_line_round_trips_through_commandlinetoargvw"
+
+[PROC-04]
+status = "implemented"
+test = "src/iocp/process/tests.rs::verbatim_join_is_byte_exact"
+
+[PROC-05]
+status = "implemented"
+test = "src/iocp/process/tests.rs::spawn_stdio_pipe_round_trip_and_exit"
+
+[PROC-06]
+status = "implemented"
+test = "src/iocp/process/tests.rs::wtf8_to_utf16_kats"
+
+[PROC-07]
+status = "implemented"
+test = "src/iocp/process/tests.rs::env_block_sort_dedup_hidden_and_required"
+
+[PROC-08]
+status = "implemented"
+test = "src/iocp/process/tests.rs::env_block_sort_dedup_hidden_and_required"
+
+[PROC-09]
+status = "implemented"
+test = "src/iocp/process/tests.rs::spawn_env_block_reaches_child"
+
+[PROC-10]
+status = "implemented"
+test = "src/iocp/process/tests.rs::env_block_pairwise_ordinal_order"
+
+[PROC-11]
+status = "implemented"
+test = "src/iocp/process/tests.rs::env_block_sort_dedup_hidden_and_required"
+
+[PROC-12]
+status = "implemented"
+test = "src/iocp/process/tests.rs::env_block_sort_dedup_hidden_and_required"
+
+[PROC-13]
+status = "implemented"
+test = "src/iocp/process/tests.rs::env_block_sort_dedup_hidden_and_required"
+
+[PROC-14]
+status = "implemented"
+test = "src/iocp/process/tests.rs::env_block_sort_dedup_hidden_and_required"
+
+[PROC-15]
+status = "implemented"
+test = "src/iocp/process/tests.rs::path_search_resolution_matrix"
+
+[PROC-16]
+status = "implemented"
+test = "src/iocp/process/tests.rs::path_search_resolution_matrix"
+
+[PROC-17]
+status = "implemented"
+test = "src/iocp/process/tests.rs::path_search_resolution_matrix"
+
+[PROC-18]
+status = "implemented"
+test = "src/iocp/process/tests.rs::path_search_resolution_matrix"
+
+[PROC-19]
+status = "implemented"
+test = "src/iocp/process/tests.rs::path_search_resolution_matrix"
+
+[PROC-20]
+status = "implemented"
+test = "src/iocp/process/tests.rs::path_search_resolution_matrix"
+
+[PROC-21]
+status = "implemented"
+test = "src/iocp/process/tests.rs::join_candidate_classifies_all_path_shapes"
+
+[PROC-22]
+status = "implemented"
+test = "src/iocp/process/tests.rs::path_search_resolution_matrix"
+
+[PROC-23]
+status = "implemented"
+test = "src/iocp/process/tests.rs::path_search_resolution_matrix"
+
+[PROC-24]
+status = "implemented"
+test = "src/iocp/process/tests.rs::spawn_cwd_explicit_and_long"
+
+[PROC-25]
+status = "implemented"
+test = "src/iocp/process/tests.rs::spawn_stdio_pipe_round_trip_and_exit"
+
+[PROC-26]
+status = "implemented"
+test = "src/iocp/process/tests.rs::stdio_verify_rejects_hostile_blobs"
+
+[PROC-27]
+status = "implemented"
+test = "src/iocp/process/tests.rs::spawn_stdio_pipe_round_trip_and_exit"
+
+[PROC-28]
+status = "implemented"
+test = "src/iocp/process/tests.rs::spawn_stdio_pipe_round_trip_and_exit"
+
+[PROC-29]
+status = "implemented"
+test = "src/iocp/process/tests.rs::spawn_failure_shapes"
+
+[PROC-30]
+status = "implemented"
+test = "src/iocp/process/tests.rs::spawn_failure_shapes"
+
+[PROC-31]
+status = "implemented"
+covered_by = "LOOP-41"
+
+[PROC-32]
+status = "implemented"
+test = "src/iocp/process/tests.rs::spawn_failure_shapes"
+
+[PROC-33]
+status = "implemented"
+test = "src/iocp/process/tests.rs::handle_list_blocks_stray_inheritable_leak"
+
+[PROC-34]
+status = "implemented"
+test = "src/iocp/process/tests.rs::disable_stdio_inheritance_smoke"
+
+[PROC-35]
+status = "implemented"
+test = "src/iocp/process/tests.rs::stdio_verify_rejects_hostile_blobs"
+
+[PROC-36]
+status = "implemented"
+covered_by = "PROC-30"
+
+[PROC-37]
+status = "implemented"
+covered_by = "PIPE-05"
+
+[PROC-38]
+status = "implemented"
+test = "src/iocp/process/tests.rs::spawn_stdio_pipe_round_trip_and_exit"
+
+[PROC-39]
+status = "implemented"
+test = "src/iocp/process/tests.rs::creation_flags_matrix"
+
+[PROC-40]
+status = "implemented"
+test = "src/iocp/process/tests.rs::creation_flags_matrix"
+
+[PROC-41]
+status = "implemented"
+test = "src/iocp/process/tests.rs::creation_flags_matrix"
+
+[PROC-42]
+status = "implemented"
+test = "src/iocp/process/tests.rs::job_membership_normal_vs_detached"
+
+[PROC-43]
+status = "implemented"
+covered_by = "PROC-42"
+
+[PROC-44]
+status = "implemented"
+test = "src/iocp/process/tests.rs::job_membership_normal_vs_detached"
+
+[PROC-45]
+status = "implemented"
+test = "src/iocp/process/tests.rs::unrefd_process_still_fires_exit_cb"
+
+[PROC-46]
+status = "implemented"
+test = "src/iocp/process/tests.rs::detached_child_outlives_closed_handle_and_loop"
+
+[PROC-47]
+status = "implemented"
+test = "src/iocp/process/tests.rs::spawn_exit_code_delivery_full_dword"
+
+[PROC-48]
+status = "implemented"
+test = "src/iocp/process/tests.rs::kill_term_records_signal_and_esrch_latch"
+
+[PROC-49]
+status = "implemented"
+test = "src/iocp/process/tests.rs::detached_child_outlives_closed_handle_and_loop"
+
+[PROC-50]
+status = "implemented"
+test = "src/iocp/process/tests.rs::spawn_failure_shapes"
+
+[PROC-51]
+status = "implemented"
+test = "src/iocp/process/tests.rs::kill_signal_range_shapes"
+
+[PROC-52]
+status = "implemented"
+test = "src/iocp/process/tests.rs::kill_pid_probe_and_two_step_disambiguation"
+
+[PROC-53]
+status = "implemented"
+test = "src/iocp/process/tests.rs::kill_signal_range_shapes"
+
+[PROC-54]
+status = "implemented"
+test = "src/iocp/process/tests.rs::kill_signal_range_shapes"
+
+[PROC-55]
+status = "implemented"
+test = "src/iocp/process/tests.rs::kill_pid_probe_and_two_step_disambiguation"
+
+[PROC-56]
+status = "pending"
+
+[PROC-57]
+status = "pending"
+
+[PROC-58]
+status = "implemented"
+test = "src/iocp/process/tests.rs::spawn_failure_shapes"
+
+[PROC-59]
+status = "implemented"
+test = "src/iocp/process/tests.rs::spawn_failure_shapes"
+
+[PROC-60]
+status = "skipped"
+reason = "Rust has no alloca temptation) — recorded so nobody adds a stack-buffer \"optimization\" for command lines. Target: n/a."
+
+[PROC-61]
+status = "pending"
+
+[PROC-62]
+status = "implemented"
+covered_by = "PROC-45"
+
+[PROC-63]
+status = "implemented"
+covered_by = "PROC-24"
+
+[PROC-64]
+status = "implemented"
+covered_by = "PROC-50"
+
+[SIGEV-01]
+status = "implemented"
+test = "src/iocp/signal.rs::console_ctrl_fixture_suite"
+
+[SIGEV-02]
+status = "implemented"
+test = "src/iocp/signal.rs::console_ctrl_fixture_suite"
+
+[SIGEV-03]
+status = "implemented"
+test = "src/iocp/signal.rs::ctrl_decision_table"
+
+[SIGEV-04]
+status = "implemented"
+test = "src/iocp/signal.rs::console_ctrl_default_action_suite"
+
+[SIGEV-05]
+status = "implemented"
+test = "src/iocp/signal.rs::ctrl_decision_table"
+
+[SIGEV-06]
+status = "implemented"
+test = "src/iocp/signal.rs::ctrl_decision_table"
+
+[SIGEV-07]
+status = "implemented"
+test = "src/iocp/signal.rs::signal_table_and_validation"
+
+[SIGEV-08]
+status = "implemented"
+test = "src/iocp/signal.rs::signal_table_and_validation"
+
+[SIGEV-09]
+status = "implemented"
+test = "src/iocp/signal.rs::dispatch_fans_out_across_loops_and_signums"
+
+[SIGEV-10]
+status = "implemented"
+test = "src/iocp/signal.rs::burst_coalesces_to_one_completion"
+
+[SIGEV-11]
+status = "implemented"
+test = "src/iocp/signal.rs::stale_completion_after_restart_swallowed"
+
+[SIGEV-12]
+status = "implemented"
+test = "src/iocp/signal.rs::restart_same_signum_swaps_callback_without_stop_window"
+
+[SIGEV-13]
+status = "implemented"
+test = "src/iocp/signal.rs::one_shot_delivers_once_then_parks"
+
+[SIGEV-14]
+status = "implemented"
+test = "src/iocp/signal.rs::close_with_inflight_completion_defers_endgame"
+
+[SIGEV-15]
+status = "implemented"
+test = "src/iocp/signal.rs::stop_from_sibling_callback_suppresses_pending_delivery"
+
+[SIGEV-16]
+status = "implemented"
+test = "src/iocp/signal.rs::console_ctrl_fixture_suite"
+
+[SIGEV-17]
+status = "implemented"
+covered_by = "SIGEV-01"
+
+[SIGEV-18]
+status = "skipped"
+reason = "C-ABI artifact; Rust uses `AtomicU32`/`AtomicI32` with native swap — no porting needed). Target: n/a."
+
+[SIGEV-19]
+status = "implemented"
+test = "src/iocp/signal.rs::burst_coalesces_to_one_completion"
+
+[SIGEV-20]
+status = "skipped"
+reason = "generic C hazards; Rust match exhaustiveness and `assert_eq!` eliminate the class — recorded so reviewers recognize the pattern in any C++ shims). Target: n/a."
+
+[SIGEV-21]
+status = "implemented"
+covered_by = "SIGEV-16"
+
+[SIGEV-22]
+status = "implemented"
+test = "src/iocp/fsevent.rs::restart_while_cancel_in_flight_defers_arm"
+
+[SIGEV-23]
+status = "implemented"
+covered_by = "SIGEV-44"
+
+[SIGEV-24]
+status = "implemented"
+covered_by = "SIGEV-22"
+
+[SIGEV-25]
+status = "implemented"
+test = "src/iocp/fsevent.rs::recursive_watch_long_relative_paths"
+
+[SIGEV-26]
+status = "implemented"
+test = "src/iocp/fsevent.rs::recursive_flag_survives_rearm"
+
+[SIGEV-27]
+status = "implemented"
+test = "src/iocp/fsevent.rs::file_watch_filters_siblings_and_reports_user_spelling"
+
+[SIGEV-28]
+status = "implemented"
+test = "src/iocp/fsevent.rs::file_watch_filters_siblings_and_reports_user_spelling"
+
+[SIGEV-29]
+status = "implemented"
+covered_by = "SIGEV-28"
+
+[SIGEV-30]
+status = "implemented"
+test = "src/iocp/fsevent.rs::path_helper_semantics"
+
+[SIGEV-31]
+status = "implemented"
+test = "src/iocp/fsevent.rs::path_helper_semantics"
+
+[SIGEV-32]
+status = "implemented"
+test = "src/iocp/fsevent.rs::dir_watch_create_modify_rename_delete"
+
+[SIGEV-33]
+status = "implemented"
+test = "src/paths/string_paths.rs::grow_probe::grows_then_fits"
+
+[SIGEV-34]
+status = "implemented"
+test = "src/iocp/fsevent.rs::path_helper_semantics"
+
+[SIGEV-35]
+status = "implemented"
+test = "src/iocp/fsevent.rs::path_helper_semantics"
+
+[SIGEV-36]
+status = "implemented"
+covered_by = "SIGEV-35"
+
+[SIGEV-37]
+status = "implemented"
+test = "src/iocp/fsevent.rs::dir_watch_create_modify_rename_delete"
+
+[SIGEV-38]
+status = "implemented"
+test = "src/iocp/fsevent.rs::watched_dir_deletion_reports_then_parks"
+
+[SIGEV-39]
+status = "implemented"
+test = "src/iocp/fsevent.rs::close_with_inflight_completion_drains_cleanly"
+
+[SIGEV-40]
+status = "implemented"
+test = "src/iocp/fsevent.rs::restart_while_cancel_in_flight_defers_arm"
+
+[SIGEV-41]
+status = "implemented"
+covered_by = "SIGEV-40"
+
+[SIGEV-42]
+status = "implemented"
+test = "src/iocp/fsevent.rs::overflow_surfaces_rescan_signal"
+
+[SIGEV-43]
+status = "implemented"
+test = "src/iocp/fsevent.rs::overflow_surfaces_rescan_signal"
+
+[SIGEV-44]
+status = "implemented"
+test = "src/iocp/fsevent.rs::recursive_watch_long_relative_paths"
+
+[SIGEV-45]
+status = "implemented"
+test = "src/iocp/fsevent.rs::dir_watch_create_modify_rename_delete"
+
+[SIGEV-46]
+status = "implemented"
+test = "src/iocp/fsevent.rs::stop_delivers_nothing_after"
+
+[SIGEV-47]
+status = "implemented"
+test = "src/iocp/fsevent.rs::watched_dir_deletion_reports_then_parks"
+
+[SIGEV-48]
+status = "implemented"
+test = "src/iocp/fsevent.rs::watched_dir_deletion_reports_then_parks"
+
+[SIGEV-49]
+status = "skipped"
+reason = "watched-dir rename undetected is the accepted libuv/Node behavior (documented in fsevent.rs module header); no consumer contract demands detection"
+
+[SIGEV-50]
+status = "implemented"
+covered_by = "SIGEV-45"
+
+[SIGEV-51]
+status = "implemented"
+test = "src/iocp/fsevent.rs::file_watch_filters_siblings_and_reports_user_spelling"
+
+[SIGEV-52]
+status = "implemented"
+covered_by = "SIGEV-39"
+
+[SIGEV-53]
+status = "skipped"
+reason = "OOM routes through the global-allocator abort policy; no per-allocation recovery in the watch path"
+
+[SIGEV-54]
+status = "implemented"
+test = "src/iocp/fsevent.rs::recursive_watch_long_relative_paths"
+
+[SIGEV-55]
+status = "implemented"
+test = "src/iocp/fsevent.rs::recursive_watch_long_relative_paths"
+
+[SIGEV-56]
+status = "skipped"
+reason = "dead API surface; Bun's watcher options are its own — just don't copy these enum values expecting behavior). Target: n/a."
+
+[SIGEV-57]
+status = "skipped"
+reason = "exotic FS yields an async terminal error (parked, restartable); no polling fallback by decision"
+
+[SOCK-01]
+status = "pending"
+
+[SOCK-02]
+status = "pending"
+
+[SOCK-03]
+status = "pending"
+
+[SOCK-04]
+status = "pending"
+
+[SOCK-05]
+status = "pending"
+
+[SOCK-06]
+status = "pending"
+
+[SOCK-07]
+status = "pending"
+
+[SOCK-08]
+status = "pending"
+
+[SOCK-09]
+status = "pending"
+
+[SOCK-10]
+status = "pending"
+
+[SOCK-11]
+status = "pending"
+
+[SOCK-12]
+status = "pending"
+
+[SOCK-13]
+status = "pending"
+
+[SOCK-14]
+status = "pending"
+
+[SOCK-15]
+status = "pending"
+
+[SOCK-16]
+status = "pending"
+
+[SOCK-17]
+status = "pending"
+
+[SOCK-18]
+status = "pending"
+
+[SOCK-19]
+status = "pending"
+
+[SOCK-20]
+status = "pending"
+
+[SOCK-21]
+status = "pending"
+
+[SOCK-22]
+status = "pending"
+
+[SOCK-23]
+status = "pending"
+
+[SOCK-24]
+status = "pending"
+
+[SOCK-25]
+status = "pending"
+
+[SOCK-26]
+status = "pending"
+
+[SOCK-27]
+status = "pending"
+
+[SOCK-28]
+status = "pending"
+
+[SOCK-29]
+status = "pending"
+
+[SOCK-30]
+status = "pending"
+
+[SOCK-31]
+status = "pending"
+
+[SOCK-32]
+status = "pending"
+
+[SOCK-33]
+status = "pending"
+
+[SOCK-34]
+status = "pending"
+
+[SOCK-35]
+status = "pending"
+
+[SOCK-36]
+status = "pending"
+
+[SOCK-37]
+status = "pending"
+
+[SOCK-38]
+status = "pending"
+
+[SOCK-39]
+status = "pending"
+
+[SOCK-40]
+status = "pending"
+
+[SOCK-41]
+status = "pending"
+
+[SOCK-42]
+status = "pending"
+
+[SOCK-43]
+status = "pending"
+
+[SOCK-44]
+status = "pending"
+
+[SOCK-45]
+status = "pending"
+
+[SOCK-46]
+status = "pending"
+
+[SOCK-47]
+status = "pending"
+
+[SOCK-48]
+status = "pending"
+
+[SOCK-49]
+status = "pending"
+
+[SOCK-50]
+status = "pending"
+
+[SOCK-51]
+status = "pending"
+
+[SOCK-52]
+status = "pending"
+
+[SOCK-53]
+status = "pending"
+
+[SOCK-54]
+status = "pending"
+
+[SOCK-55]
+status = "pending"
+
+[SOCK-56]
+status = "pending"
+
+[SOCK-57]
+status = "pending"
+
+[SOCK-58]
+status = "implemented"
+covered_by = "POLL-44"
+
+[SOCK-59]
+status = "pending"
+
+[SOCK-60]
+status = "skipped"
+reason = "deprecated/no-op on Bun's 1809+ baseline; setting it adds an ioctl + RSS for zero gain). Recorded so nobody \"discovers\" it later."
+
+[SOCK-61]
+status = "skipped"
+reason = "complexity not justified; fresh-socket cost is tiny on modern Windows; uSockets likewise creates fresh sockets). Record the rejection rationale."
+
+[SOCK-62]
+status = "pending"
+
+[SOCK-63]
+status = "pending"
+
+[SOCK-64]
+status = "skipped"
+reason = "libuv-specific API shape) — but the \"unwind partial handle registration on init failure\" pattern is must-port wherever Bun mirrors handle queues. Target: Phase 1 loop handle bookkeeping."
+
+[SOCK-65]
+status = "pending"
+
+[SOCK-66]
+status = "skipped"
+reason = "Bun should use const statics — Rust makes this free). Recorded because a naive port that re-derives them lazily per loop reintroduces a benign-looking but real data race."
+
+[TTY-01]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[TTY-02]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[TTY-03]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::open_rejects_non_console_handles"
+
+[TTY-04]
+status = "pending"
+
+[TTY-05]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::open_rejects_non_console_handles"
+
+[TTY-06]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[TTY-07]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_global_state_probe"
+
+[TTY-08]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_global_state_probe"
+
+[TTY-09]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_global_state_probe"
+
+[TTY-10]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[TTY-11]
+status = "skipped"
+reason = "emulator-only per ledger; height-from-window concept kept in get_winsize (TTY-48)"
+
+[TTY-12]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::write_transform_eol_chunk_surrogate_kats"
+
+[TTY-13]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::write_transform_eol_chunk_surrogate_kats"
+
+[TTY-14]
+status = "skipped"
+reason = "minimum-viable per ledger allowance: probe + passthrough; decision recorded in module doc - escape sequences pass through unparsed when VT rejected (1809+ baseline forces VT)"
+
+[TTY-15]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::write_transform_eol_chunk_surrogate_kats"
+
+[TTY-16]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::write_transform_eol_chunk_surrogate_kats"
+
+[TTY-17]
+status = "skipped"
+reason = "emulator-only; skipped with the emulator per its own disposition"
+
+[TTY-18]
+status = "skipped"
+reason = "emulator-only; skipped with the emulator per its own disposition"
+
+[TTY-19]
+status = "skipped"
+reason = "emulator-only; skipped with the emulator per its own disposition"
+
+[TTY-20]
+status = "skipped"
+reason = "emulator-only retry sites; the one remaining SetConsoleCursorPosition (cancel-restore) is untried-on-failure exactly like libuv"
+
+[TTY-21]
+status = "skipped"
+reason = "emulator-only; skipped with the emulator per its own disposition"
+
+[TTY-22]
+status = "skipped"
+reason = "emulator-only; skipped with the emulator per its own disposition"
+
+[TTY-23]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[TTY-24]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::vt100_table_and_alt_prefix_kats"
+
+[TTY-25]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::vt100_table_and_alt_prefix_kats"
+
+[TTY-26]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[TTY-27]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::raw_record_filter_repeat_surrogate_kats"
+
+[TTY-28]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::raw_record_filter_repeat_surrogate_kats"
+
+[TTY-29]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::raw_record_filter_repeat_surrogate_kats"
+
+[TTY-30]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::wtf8_encode_kats"
+
+[TTY-31]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::raw_record_filter_repeat_surrogate_kats"
+
+[TTY-32]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::raw_record_filter_repeat_surrogate_kats"
+
+[TTY-33]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::raw_carryover_preserves_partial_sequence"
+
+[TTY-34]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::raw_wake_record_kat"
+
+[TTY-35]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[TTY-36]
+status = "implemented"
+covered_by = "TTY-31"
+
+[TTY-37]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[TTY-38]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[TTY-39]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[TTY-40]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[TTY-41]
+status = "implemented"
+covered_by = "TTY-39"
+
+[TTY-42]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::mode_flag_sets_kat"
+
+[TTY-43]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::mode_flag_sets_kat"
+
+[TTY-44]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[TTY-45]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[TTY-46]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[TTY-47]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[TTY-48]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[TTY-49]
+status = "implemented"
+covered_by = "TTY-50"
+
+[TTY-50]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[TTY-51]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[TTY-52]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[TTY-53]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[TTY-54]
+status = "skipped"
+reason = "Bun builds with a modern SDK; the *values* 0x0004/0x0200/0x4000 are stable constants worth keeping in Bun's win32 bindings). Target: n/a."
+
+[TTY-55]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[TTY-56]
+status = "implemented"
+test = "src/iocp/tty/tests.rs::console_fixture_suite"
+
+[OS-01]
+status = "pending"
+
+[OS-02]
+status = "pending"
+
+[OS-03]
+status = "pending"
+
+[OS-04]
+status = "pending"
+
+[OS-05]
+status = "skipped"
+reason = "Rust `std::mem::transmute` on `FARPROC`/`Option<unsafe extern \"system\" fn...>` is the idiom; no union needed). Reason: language-specific workaround."
+
+[OS-06]
+status = "pending"
+
+[OS-07]
+status = "pending"
+
+[OS-08]
+status = "pending"
+
+[OS-09]
+status = "pending"
+
+[OS-10]
+status = "pending"
+
+[OS-11]
+status = "pending"
+
+[OS-12]
+status = "pending"
+
+[OS-13]
+status = "pending"
+
+[OS-14]
+status = "pending"
+
+[OS-15]
+status = "pending"
+
+[OS-16]
+status = "pending"
+
+[OS-17]
+status = "pending"
+
+[OS-18]
+status = "pending"
+
+[OS-19]
+status = "implemented"
+test = "src/paths/string_paths.rs::grow_probe::unbounded_growth_fails"
+
+[OS-20]
+status = "pending"
+
+[OS-21]
+status = "pending"
+
+[OS-22]
+status = "pending"
+
+[OS-23]
+status = "skipped"
+reason = "the C protocol itself (Rust returns owned Strings) but must-port the off-by-one awareness when calling libuv-compat shims in `src/libuv_sys` / sys_uv.rs. Target: `src/sys/sys_uv.rs` interop."
+
+[OS-24]
+status = "pending"
+
+[OS-25]
+status = "pending"
+
+[OS-26]
+status = "pending"
+
+[OS-27]
+status = "skipped"
+reason = "Bun has no 32-bit Windows builds; KEY_WOW64_64KEY is a no-op for x64/arm64 processes) — but keep the flag anyway if code is shared, it is harmless. Target: `node:os` version."
+
+[OS-28]
+status = "pending"
+
+[OS-29]
+status = "pending"
+
+[OS-30]
+status = "pending"
+
+[OS-31]
+status = "pending"
+
+[OS-32]
+status = "pending"
+
+[OS-33]
+status = "pending"
+
+[OS-34]
+status = "pending"
+
+[OS-35]
+status = "pending"
+
+[OS-36]
+status = "pending"
+
+[OS-37]
+status = "pending"
+
+[OS-38]
+status = "pending"
+
+[OS-39]
+status = "pending"
+
+[OS-40]
+status = "pending"
+
+[OS-41]
+status = "pending"
+
+[OS-42]
+status = "pending"
+
+[OS-43]
+status = "pending"
+
+[OS-44]
+status = "pending"
+
+[OS-45]
+status = "pending"
+
+[OS-46]
+status = "pending"
+
+[OS-47]
+status = "pending"
+
+[OS-48]
+status = "pending"
+
+[OS-49]
+status = "implemented"
+test = "src/errno/win_error.rs::ntstatus_from_win32_formula"
+
+[OS-50]
+status = "skipped"
+reason = "the C preprocessor mechanics (Rust windows-sys crates own this), but must-port the awareness for the handful of NT items Bun hand-declares in `src/windows_sys/externs.rs`: anything not in windows-sys (FILE_STAT_BASIC_INFORMATION until recently, AppExecLink reparse layout) must be byte-compared against the SDK (see OS-51). Target: `src/windows_sys`."
+
+[OS-51]
+status = "pending"
+
+[OS-52]
+status = "pending"
+
+[OS-53]
+status = "pending"
+
+[OS-54]
+status = "pending"
+
+[OS-55]
+status = "skipped"
+reason = "for Rust (windows-sys has no such constraint) but must-port for Bun's C++ JSC bindings touching winsock (keep the discipline + comment where applicable). Target: C++ bindings hygiene."
+
+[OS-56]
+status = "pending"
+
+[OS-57]
+status = "pending"

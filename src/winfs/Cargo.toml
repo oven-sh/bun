@@ -1,0 +1,19 @@
+[package]
+name = "bun_winfs"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+# Tier-0+ on purpose: depending only on `bun_windows_sys` keeps this crate's
+# test binary natively linkable (no mi_*/crash-handler externs), so the stat
+# engine's unit tests actually execute — the rest of the workspace links only
+# inside the full bun build. Error policy follows from this: the crate
+# traffics in raw Win32Error/NTSTATUS and never produces an `E` — consumers
+# translate exactly once at their boundary. // quirk: SOCK-58
+[dependencies]
+bun_windows_sys.workspace = true

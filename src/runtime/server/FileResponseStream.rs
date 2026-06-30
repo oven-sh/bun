@@ -205,6 +205,15 @@ impl FileResponseStream {
             return;
         }
 
+        // On Windows, regular-file reads drain synchronously inside
+        // `reader.start()`, so the response can already be complete here (the
+        // deferred eof task owns its own ref). Don't rearm the reader: `read()`
+        // unpauses, and re-reading at EOF would deliver a second
+        // `on_reader_done`/hold a read ref that nothing releases.
+        if this.state.contains(State::RESPONSE_DONE) {
+            return;
+        }
+
         this.reader.update_ref(true);
 
         #[cfg(unix)]
@@ -244,17 +253,23 @@ impl FileResponseStream {
                 if state_ != ReadState::Eof && *max == 0 {
                     #[cfg(not(unix))]
                     self.reader.pause();
+                    // The queued task points into `self`, so it must own a ref:
+                    // the reader can still deliver a real EOF (`on_reader_done`)
+                    // before the task drains, finishing the stream and releasing
+                    // every other ref while the queue entry is live.
+                    self.ref_();
                     self.eof_task = Some(AnyTask::AnyTask::from_typed(this, |p| {
                         // SAFETY: `p` is the `*mut FileResponseStream` stored just
-                        // above; the eof_task lives inside `*p` and the ref taken
-                        // for the in-flight read keeps the allocation alive until
-                        // `on_reader_done` releases it.
+                        // above; the guard adopts the ref taken at enqueue, which
+                        // keeps the allocation alive for this call.
+                        let _guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(p) };
+                        // SAFETY: live — the adopted ref above.
                         unsafe { (*p).on_reader_done() };
                         Ok(())
                     }));
                     // SAFETY: `vm.event_loop()` returns the live JS loop;
-                    // `eof_task` was just set and lives inside `*this` which
-                    // outlives the task (refcount held until `on_reader_done`).
+                    // `eof_task` was just set and lives inside `*this`, which the
+                    // task's own ref keeps alive until the callback runs.
                     unsafe {
                         (*self.vm.event_loop()).enqueue_task(Task::init(std::ptr::from_mut::<
                             AnyTask::AnyTask,
@@ -548,16 +563,8 @@ impl FileResponseStream {
     }
 
     pub(crate) fn r#loop(&self) -> *mut bun_io::Loop {
-        #[cfg(windows)]
-        {
-            // SAFETY: `r#loop()` returns the live uws WindowsLoop; its `uv_loop`
-            // is set by C `us_create_loop` and valid for the loop's lifetime.
-            return unsafe { (*self.event_loop().r#loop()).uv_loop };
-        }
-        #[cfg(not(windows))]
-        {
-            self.event_loop().r#loop()
-        }
+        // The uws wrapper IS the platform loop on every target.
+        self.event_loop().r#loop()
     }
 
     // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive single-thread RC.
@@ -566,8 +573,8 @@ impl FileResponseStream {
 }
 
 // BufferedReader vtable parent.
-// `loop_` delegates to the inherent `r#loop()` which already does the
-// cfg(windows) `.uv_loop` projection.
+// `loop_` delegates to the inherent `r#loop()` (the uws wrapper IS the
+// platform loop on every target).
 bun_io::impl_buffered_reader_parent! {
     FileResponseStream for FileResponseStream;
     has_on_read_chunk = true;
@@ -585,9 +592,6 @@ impl Drop for FileResponseStream {
         // field — closes the poll handle. `bun.destroy(this)` is owned by
         // `heap::take` in `deref`, not here.
         if self.auto_close {
-            #[cfg(windows)]
-            Closer::close(self.fd, bun_sys::windows::libuv::Loop::get());
-            #[cfg(not(windows))]
             Closer::close(self.fd, ());
         }
     }

@@ -37,7 +37,7 @@ pub enum Yield {
         // the throw boundary.
         err: Option<bun_sys::SystemError>,
     },
-    /// Execution is waiting on async IO (epoll/kqueue/uv). The caller's task
+    /// Execution is waiting on async IO (epoll/kqueue/IOCP). The caller's task
     /// callback will resume by calling `.run()` again later.
     Suspended,
     /// Threw a JS error.
@@ -102,8 +102,27 @@ impl Drop for DbgDepthGuard {
 
 impl Yield {
     /// Trampoline: drive the interpreter until it suspends/finishes.
+    ///
+    /// Re-entrancy: file reads/writes can complete inline under the
+    /// submitting call, so completion callbacks can call `run` while this
+    /// interpreter's trampoline is already on the stack. Such yields are
+    /// pushed to the interpreter's deferred-yield inbox; the active
+    /// (outermost) trampoline delivers them FIFO once its current chain
+    /// suspends. Depth stays bounded per interpreter, and the state-machine
+    /// invariant holds on every platform: a completion handler never runs
+    /// until the chain that submitted the IO has suspended.
     pub fn run(self, interp: &Interpreter) {
         let tag: &'static str = (&self).into();
+        if !interp.try_enter_trampoline() {
+            // Suspended/Failed/Done carry no work — deferring them would only
+            // burn an inbox slot on a no-op loop iteration.
+            if !matches!(self, Yield::Suspended | Yield::Failed | Yield::Done) {
+                log!("Yield({}) deferred (trampoline active)", tag);
+                interp.defer_yield(self);
+            }
+            return;
+        }
+        scopeguard::defer! { interp.exit_trampoline(); }
         let _depth = DbgDepthGuard::enter(tag);
 
         // A pipeline starts multiple "threads" of execution (`cmd1 | cmd2 | cmd3`).
@@ -141,6 +160,8 @@ impl Yield {
                 } => crate::shell::io_writer::on_io_writer_chunk(interp, child, written, err),
                 Yield::Suspended | Yield::Failed | Yield::Done => {
                     if let Some(y) = Self::drain_pipelines(interp, &mut pipeline_stack) {
+                        y
+                    } else if let Some(y) = interp.take_deferred_yield() {
                         y
                     } else {
                         return;

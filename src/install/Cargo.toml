@@ -70,3 +70,6 @@ bun_uws.workspace = true
 bun_which.workspace = true
 bun_wyhash.workspace = true
 bun_zlib.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+bun_iocp.workspace = true

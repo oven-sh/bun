@@ -144,7 +144,7 @@ export type Source =
        * Paths to delete (relative to destDir) after extraction. WebKit
        * deletes `include/unicode` on macOS (conflicts with system ICU
        * headers); nodejs-headers deletes openssl/uv (conflict with
-       * BoringSSL/our libuv). Most deps won't need it.
+       * BoringSSL/our uv stub headers). Most deps won't need it.
        *
        * Paths, not a shell command — cross-platform via fs.rm, no quoting
        * through ninja.
@@ -446,7 +446,7 @@ export interface Dependency {
 
   /**
    * Whether this dep participates in the build at all. Defaults to always-on.
-   * E.g. libuv is windows-only, tinycc is disabled on windows-arm64.
+   * E.g. tinycc is disabled on windows-arm64.
    */
   enabled?: (cfg: Config) => boolean;
 

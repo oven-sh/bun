@@ -123,19 +123,12 @@ pub type ExtraFd = process::PosixStdio;
 #[cfg(windows)]
 pub use process::{
     WindowsOptions, WindowsSpawnOptions, WindowsSpawnResult, WindowsStdio as Stdio,
-    WindowsStdioResult as SpawnedStdio,
+    WindowsStdioResult as SpawnedStdio, close_engine_pipe,
 };
 #[cfg(windows)]
 pub type SpawnResult = process::WindowsSpawnResult;
 #[cfg(windows)]
 pub type ExtraFd = process::WindowsStdio;
-#[cfg(windows)]
-pub mod windows {
-    /// `bun.windows.libuv.Pipe` raw pointer payload of `Stdio::Buffer` /
-    /// `Stdio::Ipc`. Erased so this crate stays libuv-agnostic at the type
-    /// surface; `bun_runtime` casts it back on consumption.
-    pub type UvPipePtr = *mut bun_sys::windows::libuv::Pipe;
-}
 
 /// Blocking (synchronous) spawn helpers.
 pub mod sync {
@@ -274,17 +267,11 @@ pub struct RunResult {
 /// flattened to `KEY=VALUE\0`.
 #[cfg_attr(windows, allow(unreachable_code, unused_variables, unused_mut))]
 pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Error> {
-    // Windows: `process::sync::spawn`
-    // below is libuv-based on Windows and reads `options.windows.loop_` to get
-    // the `uv_loop_t*`, but the only caller (`repository::exec`) runs on a
-    // ThreadPool worker thread that has no event loop; supplying one via
-    // `MiniEventLoop::init_global` from a worker thread would create a second
-    // `us_loop` wrapping the *process-global* `uv_default_loop()` and then
-    // `uv_run` it concurrently with the main install thread (libuv UB). Route
-    // through `std::process` here instead —
-    // the PORTING.md `std::process` ban is about not bypassing Bun's event
-    // loop, which is exactly what this off-thread `git` call site does
-    // intentionally.
+    // Windows: the only caller (`repository::exec`) runs on a ThreadPool
+    // worker thread with no event loop, so this deliberately bypasses Bun's
+    // loop via `std::process` — the PORTING.md ban targets in-loop code.
+    // (`process::sync::spawn` now ticks a private engine loop per call, so
+    // converting this site is possible; kept as-is to avoid a behavior swap.)
     #[cfg(windows)]
     {
         use std::ffi::OsString;
@@ -392,15 +379,10 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
         stdout: process::sync::SyncStdio::Buffer,
         stderr: process::sync::SyncStdio::Buffer,
         argv0: argv0_ptr,
-        // `process::sync::spawn` → `spawn_process_windows`
-        // reads `options.windows.loop_` to get the `uv_loop_t*`.
-        // `WindowsOptions::default()` leaves `loop_` zeroed,
-        // so the deref segfaults at the `uv_loop` field offset. Supply the
-        // thread's mini event loop — `init_global` is idempotent and, for the
-        // sole caller (`repository.exec` under `bun add`/`install`), returns
-        // the `MiniEventLoop` the PackageManager already published into
-        // `GLOBAL` (PackageManager.rs:2110), matching what other install-side
-        // sync-spawn callers pass.
+        // Sync spawns tick a private engine loop, but `loop_` is still
+        // stored as the resulting `Process.event_loop`; supply the thread's
+        // mini loop (`init_global` is idempotent — for the sole caller,
+        // `repository.exec`, it returns the PackageManager's published one).
         #[cfg(windows)]
         windows: process::sync::WindowsOptions {
             loop_: EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
@@ -422,7 +404,7 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
     // Map `Status` → `Term` (the subset
     // `repository.exec` matches on — `Exited`/else).
     let term = match result.status {
-        Status::Exited(e) => Term::Exited(u32::from(e.code)),
+        Status::Exited(e) => Term::Exited(e.code),
         Status::Signaled(sig) => Term::Signal(u32::from(sig)),
         Status::Err(_) | Status::Running => Term::Unknown(0),
     };

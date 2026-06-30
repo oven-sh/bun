@@ -34,7 +34,7 @@ use bun_paths::resolve_path;
 use bun_semver as Semver;
 use bun_sha_hmac::sha;
 use bun_sys::{
-    self, CloseOnDrop, Dir, Fd, FdDirExt as _, FdExt as _, File, dir_iterator as DirIterator,
+    self, CloseOnDrop, Dir, Fd, FdDirExt as _, File, dir_iterator as DirIterator,
 };
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2670,23 +2670,10 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 }
             };
 
-            let fd: Fd = match file
-                .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail)
-            {
-                Ok(fd) => fd,
-                Err(err) => {
-                    Output::err(
-                        err,
-                        "failed to open file: \"{}\"",
-                        format_args!("{}", bstr::BStr::new(item.path.as_bytes())),
-                    );
-                    Global::crash();
-                }
-            };
+            let fd: Fd = file;
+let _close_fd = CloseOnDrop::new(fd);
 
-            let _close_fd = CloseOnDrop::new(fd);
-
-            let stat = match bun_sys::sys_uv::fstat(fd) {
+            let stat = match bun_sys::fstat(fd) {
                 Ok(s) => s,
                 Err(err) => {
                     Output::err(

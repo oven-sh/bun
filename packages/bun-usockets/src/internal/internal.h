@@ -59,8 +59,8 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 #include "internal/eventing/epoll_kqueue.h"
 #endif
 
-#ifdef LIBUS_USE_LIBUV
-#include "internal/eventing/libuv.h"
+#ifdef LIBUS_USE_BUN_IOCP
+#include "internal/eventing/bun_iocp.h"
 #endif
 
 #ifndef LIKELY
@@ -371,6 +371,17 @@ struct us_internal_callback_t {
   unsigned has_added_timer_to_event_loop;
 };
 
+#endif
+
+#ifdef LIBUS_USE_BUN_IOCP
+/* The Rust backend allocates timers/asyncs as one block sized off this
+ * struct and reaches `loop` through the cast at loop.c:326 — both are ABI.
+ * Twin asserts live in src/iocp/usockets.rs with the same literals. */
+_Static_assert(sizeof(struct us_internal_callback_t) == 64,
+               "us_internal_callback_t layout drifted - update "
+               "src/iocp/usockets.rs::UsInternalCallback");
+_Static_assert(offsetof(struct us_internal_callback_t, loop) == 24,
+               "us_internal_callback_t.loop offset drifted");
 #endif
 
 #if __cplusplus

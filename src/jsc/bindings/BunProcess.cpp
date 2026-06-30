@@ -4102,6 +4102,17 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort, (JSC::JSGlobalObject * globalObjec
     return true;
 }
 
+#if OS(WINDOWS)
+// libuv semantics for process.title: a set title is cached and returned on
+// every later get; before any set, the live console title is reported.
+static WTF::Lock processTitleLock;
+static WTF::String& processTitleCache()
+{
+    static NeverDestroyed<WTF::String> cache;
+    return cache.get();
+}
+#endif
+
 JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -4114,13 +4125,19 @@ JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC:
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(result));
 #else
-    char title[1024];
-    title[0] = '\0'; // Initialize buffer to empty string
-    if (uv_get_process_title(title, sizeof(title)) != 0 || title[0] == '\0') {
+    {
+        Locker locker { processTitleLock };
+        if (!processTitleCache().isNull()) {
+            auto* result = jsString(vm, processTitleCache());
+            RELEASE_AND_RETURN(scope, JSValue::encode(result));
+        }
+    }
+    wchar_t title[1024];
+    DWORD len = GetConsoleTitleW(title, 1024);
+    if (len == 0) {
         RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, String("bun"_s))));
     }
-
-    auto* result = jsString(vm, WTF::String::fromUTF8(title));
+    auto* result = jsString(vm, WTF::String({ reinterpret_cast<const char16_t*>(title), len }));
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(result));
 #endif
@@ -4142,8 +4159,17 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
 #else
     WTF::String str = jsString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
-    CString cstr = str.utf8();
-    return uv_set_process_title(cstr.data()) == 0;
+    Vector<wchar_t> wide;
+    wide.reserveInitialCapacity(str.length() + 1);
+    for (unsigned i = 0; i < str.length(); ++i)
+        wide.append(static_cast<wchar_t>(str[i]));
+    wide.append(L'\0');
+    bool ok = SetConsoleTitleW(wide.span().data());
+    {
+        Locker locker { processTitleLock };
+        processTitleCache() = str.isolatedCopy();
+    }
+    return ok;
 #endif
 }
 

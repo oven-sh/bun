@@ -319,10 +319,12 @@ impl WindowsNamedPipe {
     }
     #[inline]
     pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {
+        // SAFETY: `self` is a live pipe; (ptr,len) come from one live slice.
         unsafe { WindowsNamedPipe__encode_and_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
     pub fn raw_write(&mut self, data: &[u8]) -> i32 {
+        // SAFETY: as encode_and_write.
         unsafe { WindowsNamedPipe__raw_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]

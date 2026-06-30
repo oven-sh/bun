@@ -123,12 +123,8 @@ impl<'a> ProcessHandle<'a> {
         };
         #[cfg(unix)]
         let (stdout_fd, stderr_fd) = (spawned.stdout, spawned.stderr);
-        // Windows: `spawn_process_windows` has already moved the heap pipe out of
-        // `options.stdout/stderr` (via `heap::take`) into `spawned.stdout/stderr`
-        // as `WindowsStdioResult::Buffer(Box<Pipe>)`. The raw `*mut Pipe` left in
-        // `options` is dangling-by-design — re-`heap::take`ing it here would be a
-        // double `Box::from_raw` (UAF + double-free). Take the Box from the
-        // *result* instead, before `to_process` consumes `spawned`.
+        // Windows: take the adopted engine pipe ends from the result before
+        // `to_process` consumes `spawned` (and before its Drop closes them).
         #[cfg(windows)]
         let mut spawned = spawned;
         #[cfg(windows)]
@@ -138,16 +134,6 @@ impl<'a> ProcessHandle<'a> {
         let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle).cast::<c_void>();
         handle.stdout.set_parent(handle_ptr);
         handle.stderr.set_parent(handle_ptr);
-
-        #[cfg(windows)]
-        {
-            if let spawn::WindowsStdioResult::Buffer(pipe) = stdout_pipe {
-                handle.stdout.source = Some(bun_io::Source::Pipe(pipe));
-            }
-            if let spawn::WindowsStdioResult::Buffer(pipe) = stderr_pipe {
-                handle.stderr.source = Some(bun_io::Source::Pipe(pipe));
-            }
-        }
 
         #[cfg(unix)]
         {
@@ -162,8 +148,12 @@ impl<'a> ProcessHandle<'a> {
         }
         #[cfg(not(unix))]
         {
-            handle.stdout.start_with_current_pipe()?;
-            handle.stderr.start_with_current_pipe()?;
+            if let spawn::WindowsStdioResult::Buffer(pipe) = stdout_pipe {
+                handle.stdout.start_with_pipe(pipe)?;
+            }
+            if let spawn::WindowsStdioResult::Buffer(pipe) = stderr_pipe {
+                handle.stderr.start_with_pipe(pipe)?;
+            }
         }
 
         handle.process = Some(ProcessInfo {
@@ -587,7 +577,7 @@ impl<'a> State<'a> {
         }
     }
 
-    pub(crate) fn finalize(&mut self) -> u8 {
+    pub(crate) fn finalize(&mut self) -> u32 {
         if self.aborted {
             let _ = self.redraw(true);
         }
@@ -600,7 +590,7 @@ impl<'a> State<'a> {
                         }
                     }
                     Status::Signaled(signal) => {
-                        return bun_sys::SignalCode(*signal).to_exit_code().unwrap_or(1);
+                        return u32::from(bun_sys::SignalCode(*signal).to_exit_code().unwrap_or(1));
                     }
                     _ => return 1,
                 }
@@ -947,18 +937,8 @@ pub(crate) fn run_scripts_with_filter(
             process: None,
             options: SpawnOptions {
                 stdin: spawn::Stdio::Ignore,
-                #[cfg(unix)]
                 stdout: spawn::Stdio::Buffer,
-                #[cfg(not(unix))]
-                stdout: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                ))),
-                #[cfg(unix)]
                 stderr: spawn::Stdio::Buffer,
-                #[cfg(not(unix))]
-                stderr: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                ))),
                 cwd: bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                     &script.package_json_path,
                 )
@@ -1061,7 +1041,7 @@ pub(crate) fn run_scripts_with_filter(
 
     let status = state.finalize();
 
-    Global::exit(status as u32);
+    Global::exit(status);
 }
 
 fn has_cycle(current: &mut ProcessHandle) -> bool {

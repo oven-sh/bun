@@ -1,18 +1,19 @@
-//! Windows-only filesystem watcher backed by libuv `uv_fs_event_t`.
+//! Windows-only filesystem watcher backed by the native IOCP engine
+//! (`bun_iocp::fsevent::FsEventHandle`, ReadDirectoryChangesW).
 
 #![cfg(windows)]
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::c_void;
 use core::ptr;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{String as BunString, ZStr};
+use bun_iocp::Loop;
+use bun_iocp::fsevent::{FS_EVENT_RENAME, FS_EVENT_RESCAN, FsEventHandle};
 use bun_jsc as jsc;
-use bun_paths::PathBuffer;
+use bun_paths::{PathBuffer, string_paths};
 use bun_sys as sys;
-use bun_sys::ReturnCodeExt as _;
-use bun_sys::windows::libuv as uv;
-use bun_sys::windows::libuv::UvHandle as _;
+use bun_sys::windows::{Win32Error, win_error};
 use bun_threading::Mutex;
 
 use super::path_watcher::EventType;
@@ -44,17 +45,16 @@ pub static fs_watch: bun_output::ScopedLogger =
 // pointer — and lets every load/store be safe code (`RacyCell` required an
 // `unsafe` block per access for the same single-word op).
 //
-// NOTE: the manager binds to one VM's `uv_loop`, so it is a per-VM resource —
+// NOTE: the manager binds to one VM's event loop, so it is a per-VM resource —
 // `watch()` allocates a fresh manager whenever the caller's `vm` differs from
 // the one stored here (last caller wins the slot), so a Worker never mutates
-// another VM's manager or drives its uv_loop cross-thread. Promoting this to
+// another VM's manager or drives its loop cross-thread. Promoting this to
 // true per-VM storage (e.g. `RareData`) is the longer-term fix.
 static DEFAULT_MANAGER: bun_core::AtomicCell<*mut PathWatcherManager> =
     bun_core::AtomicCell::new(ptr::null_mut());
 static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
 
 // TODO: make this a generic so we can reuse code with path_watcher
-// TODO: we probably should use native instead of libuv abstraction here for better performance
 pub(crate) struct PathWatcherManager {
     // Keys are owned path bytes, values are raw heap
     // PathWatcher ptrs. `StringArrayHashMap` lets `get`/`insert` take `&[u8]` borrows.
@@ -81,16 +81,9 @@ impl PathWatcherManager {
     }
 
     /// unregister is always called from main thread
-    fn unregister_watcher(&mut self, watcher: *mut PathWatcher, path: &ZStr) {
-        #[cfg(not(debug_assertions))]
-        let _ = path;
+    fn unregister_watcher(&mut self, watcher: *mut PathWatcher, path: &[u8]) {
         if let Some(index) = self.watchers.values().iter().position(|&w| w == watcher) {
-            #[cfg(debug_assertions)]
-            {
-                if !path.as_bytes().is_empty() {
-                    debug_assert!(&*self.watchers.keys()[index] == path.as_bytes());
-                }
-            }
+            debug_assert!(&*self.watchers.keys()[index] == path);
 
             // Key is `Box<[u8]>`; swap_remove drops it (replaces `allocator.free(keys[index])`).
             self.watchers.swap_remove_at(index);
@@ -143,7 +136,12 @@ impl PathWatcherManager {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct PathWatcher {
-    handle: uv::uv_fs_event_t,
+    /// Engine watcher; heap-pinned, freed only in `fs_event_closed_callback`
+    /// (the engine's close protocol — the kernel owns its buffer until then).
+    handle: *mut FsEventHandle,
+    /// Watched path (post-readlink, WTF-8) — the manager-map key bytes and
+    /// the dedupe-hash seed.
+    path: Box<[u8]>,
     // LIFETIMES.tsv: BACKREF → Option<*mut PathWatcherManager>
     manager: Option<*mut PathWatcherManager>,
     emit_in_progress: bool,
@@ -193,38 +191,27 @@ impl ChangeEvent {
 pub type Callback = fn(ctx: Option<*mut c_void>, event: Event, is_file: bool);
 
 impl PathWatcher {
-    extern "C" fn uv_event_callback(
-        event: *mut uv::uv_fs_event_t,
-        filename: *const c_char,
-        events: c_int,
-        status: uv::ReturnCode,
+    /// Engine event callback (`FsEventCb`). `filename` is raw WTF-16,
+    /// relative to the watch root, and valid only for this call.
+    unsafe fn fs_event_callback(
+        loop_: &mut Loop,
+        data: *mut c_void,
+        filename: &[u16],
+        events: u32,
+        err: Win32Error,
     ) {
-        // SAFETY: libuv guarantees `event` is the handle we registered; read `.data`
-        // through the raw pointer so we don't form a `&mut uv_fs_event_t` that would
-        // alias the `&mut PathWatcher` we derive below (Stacked Borrows).
-        if unsafe { (*event).data }.is_null() {
-            bun_core::debug_warn!("uvEventCallback called with null data");
-            return;
-        }
-        // SAFETY: event points to PathWatcher.handle; recover the parent via offset_of.
-        let this: *mut PathWatcher =
-            unsafe { bun_core::from_field_ptr!(PathWatcher, handle, event) };
-        // SAFETY: `this` was heap-allocated in `init` and is kept alive until uv_close fires.
-        // This is the *only* live `&mut` covering the embedded handle for the rest of this fn.
-        let this = unsafe { &mut *this };
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(this.handle.data == this as *mut PathWatcher as *mut c_void);
-        }
+        // SAFETY: `data` is the heap-pinned PathWatcher registered in `init`;
+        // the engine fires no callback after stop/close, so it is live here.
+        let this = unsafe { &mut *data.cast::<PathWatcher>() };
 
-        // SAFETY: libuv contract — `loop_` is valid while the handle is open.
-        let timestamp = unsafe { (*this.handle.loop_).time };
-
-        if let Some(err) = status.to_error(sys::Tag::watch) {
+        if err != Win32Error::SUCCESS {
+            // Terminal: the engine parks the watcher; the JS side closes in
+            // response to the error event, which detaches handlers → deinit.
+            let error = sys::Error::new(win_error::translate(err), sys::Tag::watch);
             this.emit_in_progress = true;
 
             for &ctx in this.handlers.keys() {
-                on_path_update_fn(Some(ctx), Event::Error(err.clone()), false);
+                on_path_update_fn(Some(ctx), Event::Error(error.clone()), false);
                 on_update_end_fn(Some(ctx));
             }
 
@@ -234,31 +221,57 @@ impl PathWatcher {
             return;
         }
 
-        let Some(path) = (if filename.is_null() {
-            None
-        } else {
-            // SAFETY: libuv passes a valid NUL-terminated string when non-null.
-            Some(ZStr::from_cstr(unsafe {
-                core::ffi::CStr::from_ptr(filename)
-            }))
-        }) else {
-            return;
-        };
+        // SAFETY: the engine handle outlives every event callback (freed only
+        // after its close callback runs).
+        let is_file = !unsafe { (*this.handle).is_directory_watch() };
 
+        if events & FS_EVENT_RESCAN != 0 {
+            // Overflow: changes were LOST. Deliver Node's rescan signal —
+            // 'change' with filename === null — to every handler, bypassing the
+            // ChangeEvent dedupe so no rescan is collapsed. // quirk: SIGEV-43
+            this.emit_in_progress = true;
+            for &ctx in this.handlers.keys() {
+                on_path_update_fn(
+                    Some(ctx),
+                    Event::Change(StringOrBytesToDecode::BytesToFree(Box::default())),
+                    is_file,
+                );
+                on_update_end_fn(Some(ctx));
+            }
+            this.emit_in_progress = false;
+            this.maybe_deinit();
+            return;
+        }
+
+        // The engine's name slice dies with this callback: encode to WTF-8
+        // (lone surrogates preserved) before queuing. // quirk: SIGEV-50
+        let mut name: Vec<u8> = Vec::new();
+        bun_core::strings::convert_wtf16_to_wtf8_append(&mut name, filename);
+
+        let timestamp = loop_.now_ms();
         // Intentional wrap to bun_watcher::HashType
-        let hash = this.handle.hash(path.as_bytes(), events, status) as bun_watcher::HashType;
-        let is_file = !this.handle.is_dir();
+        let hash = this.event_hash(&name, events) as bun_watcher::HashType;
         this.emit(
-            path.as_bytes(),
+            &name,
             hash,
             timestamp,
             is_file,
-            if events & uv::UV_RENAME != 0 {
+            if events & FS_EVENT_RENAME != 0 {
                 EventType::Rename
             } else {
                 EventType::Change
             },
         );
+    }
+
+    /// Wyhash over the watched path, event bits, and event filename — the
+    /// per-handler dedupe key fed to [`ChangeEvent::emit`].
+    fn event_hash(&self, filename: &[u8], events: u32) -> u64 {
+        let mut hasher = bun_wyhash::Wyhash::init(0);
+        hasher.update(&self.path);
+        hasher.update(&events.to_ne_bytes());
+        hasher.update(filename);
+        hasher.final_()
     }
 
     pub(crate) fn emit(
@@ -317,8 +330,8 @@ impl PathWatcher {
     ) -> sys::Result<*mut PathWatcher> {
         let mut outbuf = PathBuffer::uninit();
         // Windows `sys::readlink` returns the byte length; the link target is
-        // written into `outbuf[..len]` with `outbuf[len] == 0` (sys_uv NUL-terminates). Reconstruct
-        // the NUL-terminated string via `ZStr::from_buf`.
+        // written into `outbuf[..len]` with `outbuf[len] == 0` (the wrapper
+        // NUL-terminates). Reconstruct the string via `ZStr::from_buf`.
         let readlink_result = sys::readlink(path, &mut outbuf);
         let event_path: &ZStr = match readlink_result {
             sys::Result::Err(err) => 'brk: {
@@ -341,42 +354,40 @@ impl PathWatcher {
             return sys::Result::Ok(existing);
         }
 
-        let this_box = Box::new(PathWatcher {
-            handle: bun_core::ffi::zeroed(),
+        // The engine takes UTF-16 verbatim (no `\\?\` rewrite), so reported
+        // event names keep the user's path spelling.
+        if !string_paths::fits_in_wide_path_buffer(event_path.as_bytes()) {
+            return sys::Result::Err(sys::Error::new(sys::E::NAMETOOLONG, sys::Tag::watch));
+        }
+        let mut wbuf = bun_paths::os_path_buffer_pool::get();
+        let wide = string_paths::to_w_path(&mut *wbuf, event_path.as_bytes());
+
+        // SAFETY: `uws_loop` is the calling VM's live loop pointer; the loop
+        // outlives every watcher (watchers are torn down before the VM).
+        let lp = unsafe { bun_iocp::usockets::native_loop(manager.vm.uws_loop().cast()) };
+        // SAFETY: `lp` outlives the handle (above); the box stays alive until
+        // `fs_event_closed_callback` frees it (engine close protocol).
+        let handle = bun_core::heap::into_raw(unsafe { FsEventHandle::new(lp) });
+
+        let this = bun_core::heap::into_raw(Box::new(PathWatcher {
+            handle,
+            path: Box::from(event_path.as_bytes()),
             manager: Some(manager_ptr),
             emit_in_progress: false,
             handlers: ArrayHashMap::default(),
-        });
-        let this = bun_core::heap::into_raw(this_box);
+        }));
 
-        // uv_fs_event_init on Windows unconditionally returns 0 (vendor/libuv/src/win/fs-event.c).
-        // bun.assert evaluates its argument before the inline early-return, so this runs in release too.
-        // SAFETY: `this` is a freshly-allocated valid pointer; uv_loop comes from the VM.
-        unsafe {
-            // `ptr::addr_of_mut!` (not `&mut (*this).handle`): libuv stashes this pointer and
-            // hands it back to `uv_event_callback`, which `from_field_ptr!`-offsets it to recover
-            // the parent `PathWatcher`. Deriving via `addr_of_mut!` keeps `this`'s whole-allocation
-            // provenance so that container-of access stays in-bounds under Stacked Borrows.
-            let rc = uv::uv_fs_event_init(manager.vm.uv_loop(), ptr::addr_of_mut!((*this).handle));
-            debug_assert!(rc == uv::ReturnCode::zero());
-            (*this).handle.data = this.cast::<c_void>();
-        }
-
-        // UV_FS_EVENT_RECURSIVE only works for Windows and OSX
-        // SAFETY: `(*this).handle` was initialized by uv_fs_event_init above; event_path is NUL-terminated.
-        let start_rc = unsafe {
-            uv::uv_fs_event_start(
-                ptr::addr_of_mut!((*this).handle),
-                Some(PathWatcher::uv_event_callback),
-                event_path.as_ptr().cast::<c_char>(),
-                if recursive {
-                    uv::UV_FS_EVENT_RECURSIVE as u32
-                } else {
-                    0
-                },
+        // SAFETY: `handle`/`this` are live heap pointers; `this` stays valid
+        // for every event callback until the close callback frees it.
+        let start_result = unsafe {
+            (*handle).start(
+                wide.as_slice(),
+                recursive,
+                PathWatcher::fs_event_callback,
+                this.cast::<c_void>(),
             )
         };
-        if let Some(err) = start_rc.to_error(sys::Tag::watch) {
+        if let Err(w) = start_result {
             // Clean up the half-initialized watcher inline (see #26254). No map
             // entry was inserted yet (see reshape above), so there is nothing
             // to swap_remove here.
@@ -385,11 +396,11 @@ impl PathWatcher {
                 (*this).manager = None; // prevent deinit() from re-entering unregister_watcher
                 PathWatcher::deinit(this);
             }
-            return sys::Result::Err(err);
+            return sys::Result::Err(sys::Error::new(win_error::translate(w), sys::Tag::watch));
         }
-        // we handle this in node_fs_watcher
-        // SAFETY: handle is open (uv_fs_event_start succeeded); uv_unref only flips the ref flag.
-        unsafe { uv::uv_unref(ptr::addr_of_mut!((*this).handle).cast()) };
+        // we handle keep-alive in node_fs_watcher
+        // SAFETY: handle is live and started; unref only drops the loop keep-alive.
+        unsafe { (*handle).unref() };
 
         // Owned key: dupe of event_path bytes (the sentinel NUL is not part of the
         // slice's `.len`, so the StringArrayHashMap key compares equal to `event_path.as_bytes()`).
@@ -398,17 +409,17 @@ impl PathWatcher {
         sys::Result::Ok(this)
     }
 
-    extern "C" fn uv_closed_callback(handler: *mut uv::uv_handle_t) {
-        // Body discharges its own preconditions; safe `extern "C" fn` coerces
-        // to libuv's `uv_close_cb` pointer type.
+    /// Engine close callback: the in-flight RDCW (if any) has drained, so
+    /// freeing the handle box — and the watcher that owns it — is now safe.
+    unsafe fn fs_event_closed_callback(_loop: &mut Loop, data: *mut c_void) {
         bun_output::scoped_log!(fs_watch, "onClose");
-        // SAFETY: `uv_fs_event_t` is `#[repr(C)]` and prefixed with `uv_handle_t` (UvHandle impl);
-        // libuv passes back the same pointer registered in `uv_close`.
-        let event = handler.cast::<uv::uv_fs_event_t>();
-        // SAFETY: event.data was set to the PathWatcher* in `init`.
-        let this = unsafe { (*event).data.cast::<PathWatcher>() };
-        // SAFETY: `this` was heap-allocated in `init`.
-        drop(unsafe { bun_core::heap::take(this) });
+        let this = data.cast::<PathWatcher>();
+        // SAFETY: `data` was set to the heap-pinned PathWatcher in `deinit`;
+        // both boxes were heap-allocated in `init` and are freed exactly here.
+        unsafe {
+            bun_core::heap::destroy((*this).handle);
+            bun_core::heap::destroy(this);
+        }
     }
 
     /// JS-thread entry point from `FSWatcher.detach()`. Signature matches the posix
@@ -430,8 +441,9 @@ impl PathWatcher {
         }
     }
 
-    /// NOTE: not `impl Drop` — destruction is deferred through `uv_close` and the close callback
-    /// frees the box, so this type is always managed via raw `*mut PathWatcher`.
+    /// NOTE: not `impl Drop` — destruction is deferred through the engine's
+    /// close protocol; `fs_event_closed_callback` frees the boxes, so this
+    /// type is always managed via raw `*mut PathWatcher`.
     unsafe fn deinit(this: *mut PathWatcher) {
         bun_output::scoped_log!(fs_watch, "deinit");
         // SAFETY: caller guarantees `this` is a live heap-allocated pointer (see `init`).
@@ -439,29 +451,20 @@ impl PathWatcher {
         me.handlers.clear();
 
         if let Some(manager) = me.manager.take() {
-            let path: &ZStr = if !me.handle.path.is_null() {
-                // SAFETY: handle.path is a NUL-terminated C string owned by libuv.
-                ZStr::from_cstr(unsafe { core::ffi::CStr::from_ptr(me.handle.path) })
-            } else {
-                ZStr::EMPTY
-            };
             // SAFETY: manager backref is valid until the manager deinits (see PathWatcherManager::deinit).
-            unsafe { (*manager).unregister_watcher(this, path) };
+            unsafe { (*manager).unregister_watcher(this, &me.path) };
         }
 
-        // `UvHandle::is_closed` reads `flags & UV_HANDLE_CLOSED` via the handle prefix.
-        if me.handle.is_closed() {
-            // SAFETY: `this` was heap-allocated in `init`.
-            drop(unsafe { bun_core::heap::take(this) });
-        } else {
-            // SAFETY: handle is open and not yet closing; stop/close are valid in that state.
-            unsafe {
-                uv::uv_fs_event_stop(&mut me.handle);
-                uv::uv_close(
-                    ptr::addr_of_mut!(me.handle).cast(),
-                    Some(PathWatcher::uv_closed_callback),
-                );
-            }
+        // stop() is synchronously effective (no event callback after it);
+        // close() defers the frees to `fs_event_closed_callback` once the
+        // in-flight completion drains. Deinit runs once, so close is too.
+        // SAFETY: `me.handle` is the live engine handle owned by this watcher.
+        unsafe {
+            (*me.handle).stop();
+            (*me.handle).close(
+                Some(PathWatcher::fs_event_closed_callback),
+                this.cast::<c_void>(),
+            );
         }
     }
 }
@@ -484,8 +487,8 @@ pub fn watch(
     // Workers releasing the lock before that mutation would alias `&mut *manager`.
     let _g = DEFAULT_MANAGER_MUTEX.lock_guard();
     let existing = DEFAULT_MANAGER.load();
-    // The manager is bound to one VM's uv_loop; reusing it from a different VM
-    // (Worker) would mutate its watcher map and drive libuv cross-thread.
+    // The manager is bound to one VM's event loop; reusing it from a different
+    // VM (Worker) would mutate its watcher map and drive the loop cross-thread.
     // Allocate a fresh manager for this VM instead; the displaced one frees
     // itself once its last watcher unregisters (`deinit_on_last_watcher`).
     // SAFETY: `existing` is a non-null pointer published under

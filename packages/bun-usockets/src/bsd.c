@@ -342,8 +342,8 @@ LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd) {
 static LIBUS_SOCKET_DESCRIPTOR win32_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
 #if _WIN32
     if (fd != LIBUS_SOCKET_ERROR) {
-        // libuv will set non-blocking, but only on poll init!
-        // we need it to be set on connect as well
+        // AfdPoll::init sets non-blocking at poll registration (POLL-13);
+        // connect needs it before the socket is ever polled
         DWORD yes = 1;
         ioctlsocket(fd, FIONBIO, &yes);
     }
@@ -354,7 +354,8 @@ static LIBUS_SOCKET_DESCRIPTOR win32_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd)
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
-/* Libuv will set windows sockets as non-blocking */
+/* Windows sockets become non-blocking at poll registration
+ * (bun_iocp AfdPoll::init, quirk POLL-13). */
 #ifndef _WIN32
     if (LIKELY(fd != LIBUS_SOCKET_ERROR)) {
         int flags = fcntl(fd, F_GETFL, 0);
@@ -593,10 +594,9 @@ int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay)
         return 0;
 
     if (delay < 1) {
-        #ifdef LIBUS_USE_LIBUV
-            return -4071; //UV_EINVAL;
+        #ifdef _WIN32
+            return WSAEINVAL;
         #else
-            //TODO: revisit this when IOCP loop is implemented without libuv here
             return 4071;
         #endif
     }
@@ -1500,6 +1500,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
      * race ahead of a real packet in WSARecvFrom either. */
     {
         DWORD off = 0, br;
+#ifndef SIO_UDP_CONNRESET
+/* mstcpip.h; reached us via uv headers before the eventing flip */
+#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
+#endif
         WSAIoctl(listenFd, SIO_UDP_CONNRESET, &off, sizeof(off), NULL, 0, &br, NULL, NULL);
 #ifdef SIO_UDP_NETRESET
         WSAIoctl(listenFd, SIO_UDP_NETRESET, &off, sizeof(off), NULL, 0, &br, NULL, NULL);

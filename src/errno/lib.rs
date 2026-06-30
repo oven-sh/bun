@@ -51,7 +51,7 @@ macro_rules! __decl_uv_e {
         /// returned to JS — i.e. `-uv_e::FOO`.
         pub fn name(neg_uv_err: i32) -> Option<&'static str> {
             // Target-independent libuv-synthetic codes (no `uv_e::*` const).
-            // Values from vendor/libuv/include/uv/errno.h.
+            // Values match the uv errno protocol (src/jsc/bindings/libuv/uv/errno.h).
             match neg_uv_err {
                 -4095 => return Some("EOF"),
                 -4094 => return Some("UNKNOWN"),
@@ -87,14 +87,14 @@ macro_rules! __decl_uv_e {
 // The (IDENT, "E…") column pair is byte-for-byte identical across
 // linux/darwin/freebsd/windows; only the middle `i32` value differs by design
 // (native `SystemErrno::$e as i32` on POSIX vs libuv-synthetic
-// `-bun_libuv_sys::UV_E*` on Windows / for codes the host OS lacks). Rather
+// `-uv_numbers::UV_E*` on Windows / for codes the host OS lacks). Rather
 // than re-list the rows 4×, the caller supplies a tiny *value-producer* macro
 // `$cb!($id, $e, $uv) -> i32-expr` and this forwards each row to the existing
 // `__decl_uv_e!` expander (consts + reverse `name()` fn).
 //
 // `$id`/`$e`/`$uv` are passed as **literal** tokens (never captured as
 // `:ident`), so the per-OS `$cb` can override individual rows by literal-token
-// match — e.g. `(CHARSET, $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv }` — while
+// match — e.g. `(CHARSET, $e:tt, $uv:tt) => { -$crate::uv_numbers::$uv }` — while
 // a final `($i:tt, $e:tt, $uv:tt)` arm handles the native default.
 // ──────────────────────────────────────────────────────────────────────────
 #[macro_export]
@@ -178,6 +178,7 @@ macro_rules! __uv_e_rows {
 
 #[cfg(target_os = "macos")]
 pub mod darwin_errno;
+pub mod uv_numbers;
 #[cfg(target_os = "macos")]
 pub use darwin_errno::*;
 #[cfg(target_os = "freebsd")]
@@ -195,6 +196,8 @@ pub use linux_errno::*;
 pub mod windows_errno;
 #[cfg(windows)]
 pub use windows_errno::{posix, *};
+#[cfg(windows)]
+pub mod win_error;
 
 // ──────────────────────────────────────────────────────────────────────────
 // posix — mode_t, the errno enum, S_* mode bits, and the C errno accessor

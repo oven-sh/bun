@@ -12,10 +12,6 @@ use crate::api::bun::process::Status as SpawnStatus;
 use crate::webcore::jsc::{CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsResult};
 use crate::webcore::readable_stream::{self, ReadableStream};
 use crate::webcore::{self, AutoFlusher, PathOrFileDescriptor, streams};
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
-#[cfg(windows)]
-use bun_sys::windows::libuv::UvHandle as _;
 
 bun_core::declare_scope!(FileSink, visible);
 
@@ -183,7 +179,7 @@ bun_io::impl_streaming_writer_parent! {
     on_close   = on_close,
     event_loop = |this| (*this).io_evtloop(),
     uws_loop   = |this| (*this).event_loop_handle.r#loop(),
-    uv_loop    = |this| (*this).event_loop_handle.uv_loop(),
+    windows_loop = |this| (*this).event_loop_handle.native_loop(),
     ref_       = |this| (&*this).ref_(),
     deref      = |this| FileSink::deref(this),
 }
@@ -246,45 +242,31 @@ pub extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
     }
     #[cfg(windows)]
     {
-        // SAFETY(JsCell): closure does not call into JS — pure libuv FFI.
-        let did_set_blocking = this.writer.with_mut(|w| {
-            if let Some(source) = w.source.as_mut() {
-                match source {
-                    bun_io::Source::Pipe(pipe) => {
-                        // SAFETY: `pipe` is a live `Box<uv::Pipe>` owned by `writer.source`;
-                        // `uv_pipe_t` is `#[repr(C)]` with `uv_stream_t` as its first field
-                        // (libuv handle subtyping), so the pointer cast is valid.
-                        let rc = unsafe {
-                            uv::uv_stream_set_blocking(
-                                (&mut **pipe) as *mut uv::Pipe as *mut uv::uv_stream_t,
-                                1,
-                            )
-                        };
-                        if rc == uv::ReturnCode::ZERO {
-                            return true;
-                        }
-                    }
-                    bun_io::Source::Tty(tty) => {
-                        // SAFETY: `tty` is a live `NonNull<uv_tty_t>` (heap or static stdin tty);
-                        // `uv_tty_t` embeds `uv_stream_t` as its first field, so the cast is the
-                        // libuv handle-subtype downcast.
-                        let rc = unsafe {
-                            uv::uv_stream_set_blocking(tty.as_ptr().cast::<uv::uv_stream_t>(), 1)
-                        };
-                        if rc == uv::ReturnCode::ZERO {
-                            return true;
-                        }
-                    }
-                    _ => {}
-                }
+        // The engine has no per-handle blocking-write mode; a started pipe
+        // source is swapped for the synchronous file path instead (WriteFile
+        // on the originating fd — what blocking writes degraded to anyway).
+        // Tty writes already run synchronously on the loop thread, and file
+        // sources are already synchronous, so only pipes swap.
+        // SAFETY(JsCell): the closure does not call into JS — pure source
+        // bookkeeping (the engine close callback only frees the wrapper).
+        this.writer.with_mut(|w| {
+            if w.has_pending_data() {
+                // A queued write rides the engine FIFO; swapping now would
+                // reorder it. Leave the source as-is.
+                return;
             }
-            false
+            let fd = match w.source.as_ref() {
+                Some(bun_io::Source::Pipe(pipe)) if pipe.fd.is_valid() => pipe.fd,
+                _ => return,
+            };
+            // Close only the engine handle (a private duplicate); the
+            // originating fd stays open for the synchronous writes.
+            w.source.take().expect("matched Some above").close(false);
+            w.source = Some(bun_io::Source::SyncFile(bun_io::Source::open_file(fd)));
         });
-        if did_set_blocking {
-            return;
-        }
 
-        // Fallback to WriteFile() if it fails.
+        // Covers the not-yet-started case too: setup() then takes the
+        // synchronous start path.
         this.force_sync.set(true);
     }
 }
@@ -557,19 +539,17 @@ impl FileSink {
     #[cfg(windows)]
     pub fn create_with_pipe(
         event_loop_: impl Into<EventLoopHandle>,
-        pipe: *mut uv::Pipe,
+        pipe: Box<bun_iocp::PipeHandle>,
     ) -> *mut FileSink {
         let evtloop: EventLoopHandle = event_loop_.into();
 
         let this = bun_core::heap::into_raw(Box::new(FileSink {
             ref_count: Cell::new(1),
             event_loop_handle: evtloop,
-            // SAFETY: `pipe` is a live `*mut uv::Pipe` provided by the caller.
-            // `UvHandle::fd()` returns the raw `uv_os_fd_t` (HANDLE on Windows);
-            // INVALID_HANDLE_VALUE maps to `Fd::INVALID`, anything else is
-            // tagged as a system handle.
-            fd: Cell::new(match unsafe { (*pipe).fd() } {
-                h if h == uv::INVALID_HANDLE_VALUE => Fd::INVALID,
+            // INVALID_HANDLE_VALUE maps to `Fd::INVALID`; anything else is
+            // tagged as a system handle (the engine owns it).
+            fd: Cell::new(match pipe.raw_handle() {
+                h if h as usize == usize::MAX => Fd::INVALID,
                 h => Fd::from_system(h),
             }),
             ..FileSink::default_fields()
@@ -720,9 +700,8 @@ impl FileSink {
         sys::Result::Ok(())
     }
 
-    /// Returns the platform's `bun.Async.Loop` (`uv_loop_t*` on Windows,
-    /// `us_loop_t*` on POSIX). `bun_io::Loop` is the cfg-aliased nominal that
-    /// resolves to the correct one per target — see `aio/{posix,windows}_event_loop.rs`.
+    /// Returns the platform's `bun.Async.Loop` (the `us_loop_t` wrapper on
+    /// every platform).
     pub fn loop_(&self) -> *mut bun_io::Loop {
         self.event_loop_handle.native_loop()
     }
@@ -1138,7 +1117,7 @@ impl FileSink {
     pub fn update_ref(&self, value: bool) {
         // `with_mut`: the Windows `BaseWindowsPipeWriter` impls take `&mut self`
         // (the posix `PosixStreamingWriter` impls are `&self`); `with_mut`
-        // covers both. No JS re-entry — pure libuv ref/unref.
+        // covers both. No JS re-entry — pure handle ref/unref.
         self.writer.with_mut(|w| {
             if value {
                 w.enable_keeping_process_alive(self.io_evtloop());
@@ -1232,7 +1211,7 @@ impl FileSink {
         {
             match self.fd.get().decode_windows() {
                 bun_sys::fd::DecodeWindows::Windows(_) => -1, // TODO:
-                bun_sys::fd::DecodeWindows::Uv(num) => num,
+                bun_sys::fd::DecodeWindows::Table(num) => num as i32,
             }
         }
         #[cfg(not(windows))]

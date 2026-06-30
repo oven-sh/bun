@@ -220,7 +220,7 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), bun_core::Error> {
                 }
 
                 if let bun_process::Status::Exited(exited) = spawn_result.status {
-                    Global::exit(exited.code as u32);
+                    Global::exit(exited.code);
                 }
 
                 Global::crash();
@@ -396,7 +396,7 @@ pub fn generate_files(
                             }
 
                             if let bun_process::Status::Exited(exited) = spawn_result.status {
-                                Global::exit(exited.code as u32);
+                                Global::exit(exited.code);
                             }
 
                             Global::crash();
@@ -458,7 +458,7 @@ pub fn generate_files(
                 }
 
                 if let bun_process::Status::Exited(exited) = spawn_result.status {
-                    Global::exit(exited.code as u32);
+                    Global::exit(exited.code);
                 }
 
                 Global::crash();

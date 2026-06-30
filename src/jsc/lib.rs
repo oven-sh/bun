@@ -201,6 +201,9 @@ pub mod dom_url;
 pub mod exception;
 #[path = "ipc.rs"]
 pub mod ipc;
+#[cfg(windows)]
+#[path = "ipc_frame.rs"]
+pub(crate) mod ipc_frame;
 #[path = "JSArray.rs"]
 pub mod js_array;
 #[path = "JSBigInt.rs"]

@@ -34,11 +34,8 @@ use crate::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New};
 // MOVE-IN: EventLoopHandle relocated from bun_jsc — see AnyEventLoop.rs.
 use crate::EventLoopHandle;
 
-/// The platform's native event loop type.
-#[cfg(not(windows))]
+/// The platform's native event loop type (the uws wrapper everywhere).
 pub type PlatformEventLoop = UwsLoop;
-#[cfg(windows)]
-pub type PlatformEventLoop = bun_sys::windows::libuv::Loop;
 
 // ─── Upward link-time externs (LAYERING) ────────────────────────────────────
 // The bodies live in `bun_runtime` (which
@@ -482,11 +479,11 @@ impl<'a> MiniEventLoop<'a> {
 
     /// Returns an erased `*mut webcore::blob::Store`. Callers in tier-6 cast back.
     pub fn stderr(&mut self) -> *mut () {
-        // NB: deliberately uses `Fd::from_uv(2)` here, not
+        // NB: deliberately uses `Fd::from_js_fd(2)` here, not
         // `Fd::stderr()` — Windows uv-fd vs native-handle distinction. Do not "tidy".
         Self::lazy_stdio_store(
             &mut self.stderr_store,
-            Fd::from_uv(2),
+            Fd::from_js_fd(2),
             Output::stderr_descriptor_type() == Output::OutputStreamDescriptor::Terminal,
         )
     }

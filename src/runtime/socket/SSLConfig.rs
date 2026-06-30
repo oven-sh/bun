@@ -262,8 +262,8 @@ fn handle_path(
 ) -> JsResult<*const c_char> {
     let name = string.to_owned_slice_z();
     // `bun_sys::access` routes to `access(2)` on POSIX and
-    // `GetFileAttributesW` on Windows (via `sys_uv`), so this is the
-    // cross-platform existence probe.
+    // `GetFileAttributesW` on Windows, so this is the cross-platform
+    // existence probe.
     if bun_sys::access(&name, bun_sys::posix::F_OK).is_err() {
         // Error path: free_sensitive(name) — zero before drop. Route through
         // the canonical helper so the secure-zero core stays single-sourced.

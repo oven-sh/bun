@@ -1,7 +1,3 @@
-use core::ffi::c_int;
-#[cfg(windows)]
-use core::ffi::c_void;
-use core::fmt;
 
 // `Fd` (the packed handle struct + pure-data accessors) is canonical in
 // bun_core. This file adds the syscall-touching surface as an extension trait.
@@ -19,20 +15,6 @@ bun_core::define_scoped_log!(log, SYS, visible);
 /// Native fd backing int — `c_int` on POSIX, `HANDLE` on Windows. Same as `FdNative`.
 pub type FdT = FdNative;
 /// `bun.windows.libuv.uv_file` (c-runtime file descriptor); on POSIX this is also `c_int`.
-pub type UvFile = c_int;
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum ErrorCase {
-    CloseOnFail,
-    LeakFdOnFail,
-}
-
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum MakeLibUvOwnedError {
-    #[error("SystemFdQuotaExceeded")]
-    SystemFdQuotaExceeded,
-}
-bun_core::named_error_set!(MakeLibUvOwnedError);
 
 // ──────────────────────────────────────────────────────────────────────────
 // FdExt — syscall-touching methods on `bun_core::Fd`.
@@ -63,12 +45,6 @@ pub trait FdExt: Copy + Sized {
     /// Consider fd the raw close method.
     fn close_allowing_standard_io(self, return_address: Option<usize>) -> Option<sys::Error>;
     /// Assumes given a valid file descriptor. If error, the handle has not been closed.
-    fn make_lib_uv_owned(self) -> Result<Fd, MakeLibUvOwnedError>;
-    fn make_lib_uv_owned_for_syscall(
-        self,
-        syscall_tag: sys::Tag,
-        error_case: ErrorCase,
-    ) -> sys::Result<Fd>;
     fn make_path_u8(self, subpath: &[u8]) -> sys::Maybe<()>;
     fn delete_tree(self, subpath: &[u8]) -> Result<(), bun_core::Error>;
     fn as_socket_fd(self) -> sys::SocketT;
@@ -152,30 +128,11 @@ impl FdExt for Fd {
             }
             #[cfg(windows)]
             {
-                use sys::windows::{NTSTATUS, Win32Error, Win32ErrorExt as _, libuv as uv};
+                use sys::windows::{NTSTATUS, Win32Error, Win32ErrorExt as _};
                 match self.decode_windows() {
-                    DecodeWindows::Uv(file_number) => {
-                        let mut req = uv::fs_t::uninitialized();
-                        // SAFETY: synchronous libuv fs call (cb = None); req lives on the
-                        // stack for the duration of the call.
-                        let rc = unsafe {
-                            uv::uv_fs_close(uv::Loop::get(), &mut req, file_number, None)
-                        };
-                        // fs_t has no Drop impl, so cleanup
-                        // must be explicit (uv_fs_req_cleanup).
-                        req.deinit();
-                        if let Some(errno) = rc.errno() {
-                            Some(sys::Error {
-                                errno,
-                                syscall: sys::Tag::close,
-                                fd: self,
-                                from_libuv: true,
-                                ..Default::default()
-                            })
-                        } else {
-                            None
-                        }
-                    }
+                    // Table fds get the full POSIX close protocol (stdio
+                    // no-op, stale → EBADF, exactly-once surrender).
+                    DecodeWindows::Table(_) => sys::windows::fs::close(self),
                     DecodeWindows::Windows(handle) => {
                         unsafe extern "system" {
                             // safe: by-value `HANDLE` only; bad/stale handle →
@@ -228,52 +185,6 @@ impl FdExt for Fd {
             let _ = return_address;
         }
         result
-    }
-
-    fn make_lib_uv_owned(self) -> Result<Fd, MakeLibUvOwnedError> {
-        debug_assert!(self.is_valid());
-        #[cfg(not(windows))]
-        {
-            Ok(self)
-        }
-        #[cfg(windows)]
-        {
-            match self.kind() {
-                FdKind::System => {
-                    let n = uv_open_osfhandle(self.native())?;
-                    Ok(Fd::from_uv(n))
-                }
-                FdKind::Uv => Ok(self),
-            }
-        }
-    }
-
-    fn make_lib_uv_owned_for_syscall(
-        self,
-        syscall_tag: sys::Tag,
-        error_case: ErrorCase,
-    ) -> sys::Result<Fd> {
-        #[cfg(not(windows))]
-        {
-            let _ = (syscall_tag, error_case);
-            Ok(self)
-        }
-        #[cfg(windows)]
-        {
-            match self.make_lib_uv_owned() {
-                Ok(fd) => Ok(fd),
-                Err(MakeLibUvOwnedError::SystemFdQuotaExceeded) => {
-                    if matches!(error_case, ErrorCase::CloseOnFail) {
-                        self.close();
-                    }
-                    Err(sys::Error {
-                        errno: sys::E::EMFILE as _,
-                        syscall: syscall_tag,
-                        ..Default::default()
-                    })
-                }
-            }
-        }
     }
 
     fn make_path_u8(self, subpath: &[u8]) -> sys::Maybe<()> {
@@ -383,128 +294,19 @@ impl Prehashed {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// MovableIfWindowsFd — represents an FD that may be moved into libuv ownership.
-//
-// On Windows we use libuv and often pass file descriptors to functions like
-// `uv_pipe_open`, `uv_tty_init`. But `uv_pipe` and `uv_tty` **take ownership
-// of the file descriptor**. This can easily cause use-after-frees, double
-// closing the FD, etc. So this type represents an FD that could possibly be
-// moved to libuv. On POSIX this is just a wrapper over Fd and does nothing.
-// ──────────────────────────────────────────────────────────────────────────
-pub struct MovableIfWindowsFd {
-    #[cfg(windows)]
-    inner: Option<Fd>,
-    #[cfg(not(windows))]
-    inner: Fd,
-}
-impl MovableIfWindowsFd {
-    #[inline]
-    pub fn init(fd: Fd) -> Self {
-        #[cfg(windows)]
-        {
-            Self { inner: Some(fd) }
-        }
-        #[cfg(not(windows))]
-        {
-            Self { inner: fd }
-        }
-    }
-    #[inline]
-    pub fn get(&self) -> Option<Fd> {
-        #[cfg(windows)]
-        {
-            self.inner
-        }
-        #[cfg(not(windows))]
-        {
-            Some(self.inner)
-        }
-    }
-    #[cfg(not(windows))]
-    #[inline]
-    pub fn get_posix(&self) -> Fd {
-        self.inner
-    }
-    // Windows: `getPosix` is a `@compileError` — not provided.
-
-    pub fn close(&mut self) {
-        #[cfg(not(windows))]
-        {
-            self.inner.close();
-            self.inner = Fd::INVALID;
-        }
-        #[cfg(windows)]
-        {
-            if let Some(fd) = self.inner {
-                fd.close();
-                self.inner = None;
-            }
-        }
-    }
-    #[inline]
-    pub fn is_valid(&self) -> bool {
-        #[cfg(not(windows))]
-        {
-            self.inner.is_valid()
-        }
-        #[cfg(windows)]
-        {
-            self.inner.is_some_and(|fd| fd.is_valid())
-        }
-    }
-    #[inline]
-    pub fn is_owned(&self) -> bool {
-        #[cfg(not(windows))]
-        {
-            true
-        }
-        #[cfg(windows)]
-        {
-            self.inner.is_some()
-        }
-    }
-    /// Takes the FD, leaving `self` in a "moved-from" state. Only on Windows.
-    #[cfg(windows)]
-    pub fn take(&mut self) -> Option<Fd> {
-        self.inner.take()
-    }
-    // POSIX: `take` is a `@compileError` — not provided.
-}
-impl fmt::Display for MovableIfWindowsFd {
-    fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
-        #[cfg(not(windows))]
-        {
-            write!(w, "{}", self.inner)
-        }
-        #[cfg(windows)]
-        {
-            match self.inner {
-                Some(fd) => write!(w, "{}", fd),
-                None => w.write_str("[moved]"),
-            }
-        }
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Platform helpers (Windows libuv / macOS close_nocancel).
 // ──────────────────────────────────────────────────────────────────────────
+#[cfg(target_os = "macos")]
+use core::ffi::c_int;
+
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     // Darwin libc: close that doesn't get interrupted by pthread cancellation.
     // By-value `c_int` only; bad fd → `EBADF`, no UB.
     #[link_name = "close$NOCANCEL"]
     safe fn close_nocancel(fd: c_int) -> c_int;
-}
-
-#[cfg(windows)]
-pub(crate) fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwnedError> {
-    let out = bun_core::fd::uv_open_osfhandle(in_);
-    debug_assert!(out >= -1);
-    if out == -1 {
-        return Err(MakeLibUvOwnedError::SystemFdQuotaExceeded);
-    }
-    Ok(out)
 }
 
 // fd → path bodies moved down to `bun_core::fd_path_raw[_w]` (libc/kernel32-

@@ -1725,7 +1725,7 @@ impl FileSystemFlags {
             // code that operates on bun.O flags works correctly.
             #[cfg(windows)]
             {
-                return Ok(Some(FileSystemFlags(bun_libuv_sys::O::to_bun_o(flags))));
+                return Ok(Some(FileSystemFlags(bun_sys::windows::fs::bun_o_from_ucrt(flags))));
             }
             #[cfg(not(windows))]
             {
@@ -1961,10 +1961,15 @@ impl Dirent {
         global_object: &JSGlobalObject,
         cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
     ) -> JsResult<JSValue> {
-        use bun_libuv_sys::{
-            UV_DIRENT_BLOCK, UV_DIRENT_CHAR, UV_DIRENT_DIR, UV_DIRENT_FIFO, UV_DIRENT_FILE,
-            UV_DIRENT_LINK, UV_DIRENT_SOCKET, UV_DIRENT_UNKNOWN,
-        };
+        // uv dirent numbering — node-visible protocol (Dirent type tags).
+        const UV_DIRENT_UNKNOWN: i32 = 0;
+        const UV_DIRENT_FILE: i32 = 1;
+        const UV_DIRENT_DIR: i32 = 2;
+        const UV_DIRENT_LINK: i32 = 3;
+        const UV_DIRENT_FIFO: i32 = 4;
+        const UV_DIRENT_SOCKET: i32 = 5;
+        const UV_DIRENT_CHAR: i32 = 6;
+        const UV_DIRENT_BLOCK: i32 = 7;
         let kind_int: i32 = match self.kind {
             DirentKind::File => UV_DIRENT_FILE,
             DirentKind::BlockDevice => UV_DIRENT_BLOCK,

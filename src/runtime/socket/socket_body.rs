@@ -3256,7 +3256,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `.uv()` panics for anything but stdio. The sys_jsc helper branches on
         // kind (system→u64, uv→i32, posix→i32).
         use bun_sys_jsc::FdJsc as _;
-        this.socket.get().fd().to_js_without_making_lib_uv_owned()
+        this.socket.get().fd().to_js_without_minting()
     }
 
     #[bun_jsc::host_fn(getter)]

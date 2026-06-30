@@ -30,6 +30,7 @@ use bun_core::WTFStringImplExt as _;
 use bun_jsc::JsCell;
 use core::cell::Cell;
 use core::fmt;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_sys::{self, Fd};
@@ -342,6 +343,14 @@ pub struct Interpreter {
     /// `bun run` CLI context for `$N` expansion on the mini event loop.
     /// Null when constructed from JS (no `ContextData` is reachable).
     pub command_ctx: *mut bun_options_types::context::ContextData,
+
+    /// Completion yields deferred by a re-entrant `Yield::run` (inline I/O
+    /// completions firing while this interpreter's trampoline is on the
+    /// stack). Drained FIFO by the active trampoline; chunk completions for
+    /// a node are scrubbed when `free_node` recycles it.
+    yield_inbox: JsCell<VecDeque<Yield>>,
+    /// Whether this interpreter's `Yield::run` trampoline is on the stack.
+    trampoline_active: Cell<bool>,
 }
 
 #[repr(transparent)]
@@ -613,6 +622,8 @@ impl Interpreter {
             last_err: JsCell::new(None),
             vm_args_utf8: JsCell::new(Vec::new()),
             command_ctx: ctx,
+            yield_inbox: JsCell::new(VecDeque::new()),
+            trampoline_active: Cell::new(false),
         });
         // Wire the interpreter backref into root stdin so async poll
         // callbacks can drive `Yield::run`.
@@ -912,11 +923,70 @@ impl Interpreter {
         if id == NodeId::NONE || id == NodeId::INTERPRETER {
             return;
         }
+        // A deferred chunk completion targeting the freed node must not be
+        // delivered — the slot may be recycled before the trampoline drains
+        // the inbox (mirrors `IOWriter::cancel_chunks` for queued chunks).
+        self.scrub_deferred_chunks(|c| c.node == id);
         self.nodes.with_mut(|n| {
             debug_assert!(!matches!(n[id.idx()], Node::Free), "double-free of {}", id);
             n[id.idx()] = Node::Free;
         });
         self.free_list.with_mut(|f| f.push(id.0));
+    }
+
+    /// Drop deferred `OnIoWriterChunk`s whose target matches `pred`,
+    /// releasing their error payloads. Called when a completion target dies
+    /// so a parked completion can't be delivered to freed/recycled memory.
+    fn scrub_deferred_chunks(
+        &self,
+        mut pred: impl FnMut(&crate::shell::io_writer::ChildPtr) -> bool,
+    ) {
+        self.yield_inbox.with_mut(|q| {
+            q.retain_mut(|y| match y {
+                Yield::OnIoWriterChunk { child, err, .. } if pred(child) => {
+                    if let Some(e) = err.take() {
+                        e.deref();
+                    }
+                    false
+                }
+                _ => true,
+            })
+        });
+    }
+
+    /// `WriterTag::Subproc` variant of the `free_node` scrub: the target is
+    /// a raw `*mut CapturedWriter` outside the NodeId arena. Called by
+    /// `PipeReader::drop`.
+    pub(crate) fn scrub_deferred_subproc_chunks(&self, raw: *mut core::ffi::c_void) {
+        self.scrub_deferred_chunks(|c| c.raw == raw);
+    }
+
+    // ── deferred-yield inbox (see `Yield::run`) ──────────────────────────────
+
+    /// Claim the trampoline. `false` = one is already on the stack; the
+    /// caller must defer its yield instead of running it.
+    #[inline]
+    pub(crate) fn try_enter_trampoline(&self) -> bool {
+        if self.trampoline_active.get() {
+            return false;
+        }
+        self.trampoline_active.set(true);
+        true
+    }
+
+    #[inline]
+    pub(crate) fn exit_trampoline(&self) {
+        self.trampoline_active.set(false);
+    }
+
+    #[inline]
+    pub(crate) fn defer_yield(&self, y: Yield) {
+        self.yield_inbox.with_mut(|q| q.push_back(y));
+    }
+
+    #[inline]
+    pub(crate) fn take_deferred_yield(&self) -> Option<Yield> {
+        self.yield_inbox.with_mut(VecDeque::pop_front)
     }
 
     #[inline]
@@ -1776,7 +1846,7 @@ pub fn throw_shell_err(
 #[cfg(unix)]
 type PidT = libc::pid_t;
 #[cfg(windows)]
-type PidT = i32; // bun_sys::windows::libuv::uv_pid_t
+type PidT = i32; // pid is i32 on every platform (Windows DWORD pids fit)
 
 /// Shell execution environment (env vars, cwd, captured stdout/stderr).
 /// Every state node holds a `*mut ShellExecEnv` in its `Base`; some nodes
@@ -2357,21 +2427,10 @@ pub fn closefd(fd: Fd) {
     let _ = fd.close_allowing_bad_file_descriptor(None);
 }
 
-/// Same as `bun_sys::dup` on POSIX; on Windows the duped handle is converted
-/// to a libuv-owned fd via `makeLibUVOwnedForSyscall(.dup, .close_on_fail)` so
-/// the IOWriter/IOReader uv-based async write/read paths receive a uv fd
-/// instead of a raw NT handle.
+/// `bun_sys::dup` on every platform — on Windows the duplicate is minted
+/// into the fd table, so reader/writer paths receive a table fd.
 pub fn shell_dup(fd: Fd) -> bun_sys::Result<Fd> {
-    #[cfg(windows)]
-    {
-        use bun_sys::FdExt;
-        bun_sys::dup(fd)?
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::dup, bun_sys::ErrorCase::CloseOnFail)
-    }
-    #[cfg(not(windows))]
-    {
-        bun_sys::dup(fd)
-    }
+    bun_sys::dup(fd)
 }
 
 /// Windows-only: rewrite shell paths so POSIX-absolute `/foo` resolves onto
@@ -2436,7 +2495,7 @@ pub fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<bun_sys:
 /// POSIX: `bun_sys::openat` with the error tagged `.with_path(path)`.
 /// Windows: for `O_DIRECTORY` opens, rewrite POSIX-absolute paths via
 /// `shell_get_path` and use `openDirAtWindowsA(.iterable=true)` +
-/// `makeLibUVOwnedForSyscall`; for file opens, resolve via `shell_get_path`
+/// `make_table_ownedForSyscall`; for file opens, resolve via `shell_get_path`
 /// then `bun_sys::open`.
 pub fn shell_openat(
     dir: Fd,
@@ -2446,7 +2505,6 @@ pub fn shell_openat(
 ) -> bun_sys::Result<Fd> {
     #[cfg(windows)]
     {
-        use bun_sys::FdExt;
         if flags & bun_sys::O::DIRECTORY != 0 {
             if bun_paths::Platform::Posix.is_absolute(path.as_bytes()) {
                 let mut buf = bun_paths::path_buffer_pool::get();
@@ -2460,11 +2518,7 @@ pub fn shell_openat(
                         ..Default::default()
                     },
                 )
-                .map_err(|e| e.with_path(path.as_bytes()))?
-                .make_lib_uv_owned_for_syscall(
-                    bun_sys::Tag::open,
-                    bun_sys::ErrorCase::CloseOnFail,
-                );
+                .map_err(|e| e.with_path(path.as_bytes()));
             }
             return bun_sys::open_dir_at_windows_a(
                 dir,
@@ -2475,13 +2529,10 @@ pub fn shell_openat(
                     ..Default::default()
                 },
             )
-            .map_err(|e| e.with_path(path.as_bytes()))?
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail);
+            .map_err(|e| e.with_path(path.as_bytes()));
         }
         let mut buf = bun_paths::path_buffer_pool::get();
         let p = shell_get_path(dir, path, &mut buf)?;
-        // No `makeLibUVOwnedForSyscall` here: `bun_sys::open` on Windows
-        // routes through `sys_uv` and already yields a uv-owned fd.
         return bun_sys::open(p, flags, perm);
     }
     #[cfg(not(windows))]
@@ -2490,25 +2541,13 @@ pub fn shell_openat(
     }
 }
 
-/// `bun_sys::open` already routes through `sys_uv` on Windows (returns a uv
-/// fd), so unlike `openat`'s NT-handle directory path this needs no explicit
-/// `makeLibUVOwnedForSyscall`.
 // no callers yet; kept for syscall-wrapper surface parity
 pub fn shell_open(
     file_path: &bun_core::ZStr,
     flags: i32,
     perm: bun_sys::Mode,
 ) -> bun_sys::Result<Fd> {
-    #[cfg(windows)]
-    {
-        use bun_sys::FdExt;
-        return bun_sys::open(file_path, flags, perm)?
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail);
-    }
-    #[cfg(not(windows))]
-    {
-        bun_sys::open(file_path, flags, perm)
-    }
+    bun_sys::open(file_path, flags, perm)
 }
 
 // ────────────────────────────────────────────────────────────────────────────

@@ -75,7 +75,7 @@ bun_io::impl_buffered_writer_parent! {
     // lifetime parameter.
     get_buffer = |this| &*(*this).buffer.as_ptr(),
     event_loop = |this| (*this).io_evtloop(),
-    uv_loop    = |this| (*this).event_loop.uv_loop(),
+    windows_loop = |this| (*this).event_loop.native_loop(),
     ref_       = |this| RefCount::<Self>::ref_(this),
     deref      = |this| RefCount::<Self>::deref(this),
     win_on_write_guard = |_this| (),
@@ -137,15 +137,12 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             // On Windows `StdioResult` is the `WindowsStdioResult` union and
             // the caller invariant is that the `Buffer` arm is set. Enforce
             // that here: any other arm is a logic bug, not a silent no-op.
-            // Ownership of the boxed `uv::Pipe` transfers into the writer's
-            // `Source::Pipe`, so we move it out (replacing with `Unavailable`)
-            // and `heap::alloc` it (set_pipe re-wraps via `heap::take`).
+            // Ownership of the raw server-end HANDLE transfers into the
+            // writer (it adopts the pipe at start).
             use crate::process::WindowsStdioResult;
             match core::mem::replace(&mut this_ref.stdio_result, WindowsStdioResult::Unavailable) {
                 WindowsStdioResult::Buffer(pipe) => {
-                    // SAFETY: `pipe` is a Box-allocated `uv::Pipe`; `set_pipe`
-                    // takes ownership via `heap::take`.
-                    unsafe { this_ref.writer.set_pipe(bun_core::heap::into_raw(pipe)) };
+                    this_ref.writer.set_pipe(pipe);
                 }
                 WindowsStdioResult::BufferFd(_) | WindowsStdioResult::Unavailable => {
                     unreachable!("StaticPipeWriter stdin requires WindowsStdioResult::Buffer");

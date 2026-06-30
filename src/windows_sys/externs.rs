@@ -12,18 +12,18 @@ pub type BOOL = c_int;
 pub type BOOLEAN = u8;
 pub type BYTE = u8;
 pub type WORD = c_ushort;
-pub type DWORD = c_ulong;
+pub type DWORD = u32; // always 32-bit on Windows; c_ulong is 8 bytes on non-Windows hosts
 pub type DWORD_PTR = usize;
 pub type UINT = c_uint;
-pub type ULONG = c_ulong;
-pub type LONG = c_long;
+pub type ULONG = u32; // Windows ULONG is always 32-bit; c_ulong is 8 bytes on non-Windows hosts
+pub type LONG = i32; // always 32-bit on Windows
 pub type ULONGLONG = u64;
 pub type LARGE_INTEGER = i64;
 pub type WCHAR = u16;
 pub type CHAR = c_char;
 pub type HANDLE = *mut c_void;
 pub type HMODULE = *mut c_void;
-pub type HRESULT = c_long;
+pub type HRESULT = i32; // always 32-bit on Windows
 pub type LPVOID = *mut c_void;
 pub type LPCVOID = *const c_void;
 pub type LPSTR = *mut CHAR;
@@ -89,6 +89,16 @@ pub struct OVERLAPPED {
     pub Offset: DWORD,
     pub OffsetHigh: DWORD,
     pub hEvent: HANDLE,
+}
+
+/// `OVERLAPPED_ENTRY` (`minwinbase.h`) — one dequeued IOCP completion.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct OVERLAPPED_ENTRY {
+    pub lpCompletionKey: ULONG_PTR,
+    pub lpOverlapped: *mut OVERLAPPED,
+    pub Internal: ULONG_PTR,
+    pub dwNumberOfBytesTransferred: DWORD,
 }
 
 /// `RTL_CRITICAL_SECTION` (`winnt.h`) — 40 bytes / align 8 on x64.
@@ -177,11 +187,10 @@ pub struct INPUT_RECORD {
     pub Event: INPUT_RECORD_Event,
 }
 
-// Layout pins: a typo in any of the above is a silent ABI break across the
-// libuv embed boundary; assert the authoritative Windows-x64 sizes. Gated on
-// `windows` (not just pointer width) because `DWORD = c_ulong` is 4 bytes
-// under LLP64 but 8 under LP64, so the sizes differ on a Linux cross-check.
-#[cfg(all(windows, target_pointer_width = "64"))]
+// Layout pins: a typo in any of the above is a silent ABI break; assert the
+// authoritative Windows-x64 sizes. All field types are fixed-width now, so
+// these hold on cross-checks from any 64-bit host.
+#[cfg(target_pointer_width = "64")]
 const _: () = {
     assert!(core::mem::size_of::<OVERLAPPED>() == 32);
     assert!(core::mem::size_of::<CRITICAL_SECTION>() == 40);
@@ -351,8 +360,11 @@ pub const PIPE_WAIT: DWORD = 0x0000_0000;
 pub const SYMBOLIC_LINK_FLAG_DIRECTORY: DWORD = 0x1;
 pub const SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE: DWORD = 0x2;
 
-/// `FILE_BASIC_INFORMATION` (`wdm.h`) — output of `NtQueryAttributesFile`.
+/// `FILE_BASIC_INFORMATION` (`wdm.h`) — output of `NtQueryAttributesFile`;
+/// embedded in `FILE_ALL_INFORMATION`. All-zero is the valid initial state
+/// (the kernel fills it), so `Default` is sound.
 #[repr(C)]
+#[derive(Copy, Clone, Default)]
 pub struct FILE_BASIC_INFORMATION {
     pub CreationTime: LARGE_INTEGER,
     pub LastAccessTime: LARGE_INTEGER,
@@ -457,7 +469,311 @@ pub struct GetFinalPathNameByHandleFormat {
 
 impl FILE_INFORMATION_CLASS {
     pub const FileRenameInformationEx: Self = Self(65);
+    /// `FileAllInformation` (`wdm.h`) — `FILE_ALL_INFORMATION` payload.
+    pub const FileAllInformation: Self = Self(18);
+    /// `FileIdFullDirectoryInformation` (`wdm.h`) —
+    /// `FILE_ID_FULL_DIR_INFORMATION` records from `NtQueryDirectoryFile`.
+    pub const FileIdFullDirectoryInformation: Self = Self(38);
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Stat-family NT info structs + consts (consumed by `bun_winfs`).
+// Layouts transcribed from libuv src/win/winapi.h (4134-4453) / the Windows
+// SDK; values cross-checked against SDK 10.0.26100 headers.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `FS_INFORMATION_CLASS` (`wdm.h`) — selector for
+/// `NtQueryVolumeInformationFile`. Newtype-over-u32 so unmapped values
+/// round-trip (mirrors `FILE_INFORMATION_CLASS`).
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct FS_INFORMATION_CLASS(pub u32);
+impl FS_INFORMATION_CLASS {
+    pub const FileFsVolumeInformation: Self = Self(1);
+    pub const FileFsDeviceInformation: Self = Self(4);
+}
+
+/// `FILE_INFO_BY_NAME_CLASS` (`winnt.h`, ≥ NTDDI_WIN11_ZN) — selector for
+/// `GetFileInformationByName`. Re-declared (libuv winapi.h:4798-4804) because
+/// pre-Win11-ZN SDKs lack it.
+pub type FILE_INFO_BY_NAME_CLASS = u32;
+pub const FileStatBasicByNameInfo: FILE_INFO_BY_NAME_CLASS = 3;
+
+/// `FILE_ID_128` (`winnt.h`) — 128-bit ReFS file id.
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct FILE_ID_128 {
+    pub Identifier: [u8; 16],
+}
+
+/// `FILE_STAT_BASIC_INFORMATION` (`winnt.h`, ≥ NTDDI_WIN11_ZN) — payload of
+/// `GetFileInformationByName(FileStatBasicByNameInfo)`. Re-declared (libuv
+/// winapi.h:4134-4150) because pre-Win11-ZN SDKs lack it. Also doubles as the
+/// single stat-normalizer carrier struct. // quirk: FSMETA-01, FSMETA-02
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct FILE_STAT_BASIC_INFORMATION {
+    pub FileId: LARGE_INTEGER,
+    pub CreationTime: LARGE_INTEGER,
+    pub LastAccessTime: LARGE_INTEGER,
+    pub LastWriteTime: LARGE_INTEGER,
+    pub ChangeTime: LARGE_INTEGER,
+    pub AllocationSize: LARGE_INTEGER,
+    pub EndOfFile: LARGE_INTEGER,
+    pub FileAttributes: ULONG,
+    pub ReparseTag: ULONG,
+    pub NumberOfLinks: ULONG,
+    pub DeviceType: ULONG,
+    pub DeviceCharacteristics: ULONG,
+    pub Reserved: ULONG,
+    /// `LARGE_INTEGER` in the SDK; some volumes carry 64 bits here, but the
+    /// stat contract reads the low 32 only. // quirk: FSMETA-08
+    pub VolumeSerialNumber: LARGE_INTEGER,
+    pub FileId128: FILE_ID_128,
+}
+
+/// `FILE_STANDARD_INFORMATION` (`wdm.h`).
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct FILE_STANDARD_INFORMATION {
+    pub AllocationSize: LARGE_INTEGER,
+    pub EndOfFile: LARGE_INTEGER,
+    pub NumberOfLinks: ULONG,
+    pub DeletePending: BOOLEAN,
+    pub Directory: BOOLEAN,
+}
+
+/// `FILE_INTERNAL_INFORMATION` (`ntifs.h`) — the 64-bit NTFS file index.
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct FILE_INTERNAL_INFORMATION {
+    pub IndexNumber: LARGE_INTEGER,
+}
+
+/// `FILE_EA_INFORMATION` (`wdm.h`).
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct FILE_EA_INFORMATION {
+    pub EaSize: ULONG,
+}
+
+/// `FILE_ACCESS_INFORMATION` (`wdm.h`).
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct FILE_ACCESS_INFORMATION {
+    pub AccessFlags: ACCESS_MASK,
+}
+
+/// `FILE_POSITION_INFORMATION` (`wdm.h`).
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct FILE_POSITION_INFORMATION {
+    pub CurrentByteOffset: LARGE_INTEGER,
+}
+
+/// `FILE_MODE_INFORMATION` (`wdm.h`).
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct FILE_MODE_INFORMATION {
+    pub Mode: ULONG,
+}
+
+/// `FILE_ALIGNMENT_INFORMATION` (`wdm.h`).
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct FILE_ALIGNMENT_INFORMATION {
+    pub AlignmentRequirement: ULONG,
+}
+
+/// `FILE_NAME_INFORMATION` (`ntifs.h`). `FileName` is a flexible array;
+/// declared `[WCHAR; 1]` to match the C layout.
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct FILE_NAME_INFORMATION {
+    pub FileNameLength: ULONG,
+    pub FileName: [WCHAR; 1],
+}
+
+/// `FILE_ALL_INFORMATION` (`ntifs.h`) — `NtQueryInformationFile`
+/// (`FileAllInformation`) payload. Ends with the variable-length
+/// `NameInformation`, so a fixed-size query returns `STATUS_BUFFER_OVERFLOW`
+/// (warning severity) with every fixed member valid. // quirk: FSMETA-06
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct FILE_ALL_INFORMATION {
+    pub BasicInformation: FILE_BASIC_INFORMATION,
+    pub StandardInformation: FILE_STANDARD_INFORMATION,
+    pub InternalInformation: FILE_INTERNAL_INFORMATION,
+    pub EaInformation: FILE_EA_INFORMATION,
+    pub AccessInformation: FILE_ACCESS_INFORMATION,
+    pub PositionInformation: FILE_POSITION_INFORMATION,
+    pub ModeInformation: FILE_MODE_INFORMATION,
+    pub AlignmentInformation: FILE_ALIGNMENT_INFORMATION,
+    pub NameInformation: FILE_NAME_INFORMATION,
+}
+
+/// `FILE_ID_FULL_DIR_INFORMATION` (`ntifs.h`) — `NtQueryDirectoryFile`
+/// (`FileIdFullDirectoryInformation`) record; carries attributes, all four
+/// timestamps, sizes and the 64-bit FileId — a nearly full stat without
+/// opening the file. `FileName` is a flexible array. // quirk: FSMETA-10
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct FILE_ID_FULL_DIR_INFORMATION {
+    pub NextEntryOffset: ULONG,
+    pub FileIndex: ULONG,
+    pub CreationTime: LARGE_INTEGER,
+    pub LastAccessTime: LARGE_INTEGER,
+    pub LastWriteTime: LARGE_INTEGER,
+    pub ChangeTime: LARGE_INTEGER,
+    pub EndOfFile: LARGE_INTEGER,
+    pub AllocationSize: LARGE_INTEGER,
+    pub FileAttributes: ULONG,
+    pub FileNameLength: ULONG,
+    pub EaSize: ULONG,
+    pub FileId: LARGE_INTEGER,
+    pub FileName: [WCHAR; 1],
+}
+
+/// `FILE_FS_VOLUME_INFORMATION` (`ntifs.h`) — `NtQueryVolumeInformationFile`
+/// (`FileFsVolumeInformation`) payload; `VolumeLabel` is a flexible array, so
+/// fixed-size queries return `STATUS_BUFFER_OVERFLOW` with the serial valid.
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct FILE_FS_VOLUME_INFORMATION {
+    pub VolumeCreationTime: LARGE_INTEGER,
+    pub VolumeSerialNumber: ULONG,
+    pub VolumeLabelLength: ULONG,
+    pub SupportsObjects: BOOLEAN,
+    pub VolumeLabel: [WCHAR; 1],
+}
+
+/// `FILE_FS_DEVICE_INFORMATION` (`wdm.h`) — `NtQueryVolumeInformationFile`
+/// (`FileFsDeviceInformation`) payload.
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct FILE_FS_DEVICE_INFORMATION {
+    pub DeviceType: DWORD,
+    pub Characteristics: ULONG,
+}
+
+// `FILE_DEVICE_*` (`winioctl.h`) — `FILE_FS_DEVICE_INFORMATION.DeviceType`
+// values consumed by the stat engine.
+pub const FILE_DEVICE_FILE_SYSTEM: DWORD = 0x0000_0009;
+pub const FILE_DEVICE_NAMED_PIPE: DWORD = 0x0000_0011;
+pub const FILE_DEVICE_NULL: DWORD = 0x0000_0015;
+pub const FILE_DEVICE_CONSOLE: DWORD = 0x0000_0050;
+
+/// `GetFileType` return values (`fileapi.h`).
+pub const FILE_TYPE_UNKNOWN: DWORD = 0x0000;
+pub const FILE_TYPE_DISK: DWORD = 0x0001;
+pub const FILE_TYPE_CHAR: DWORD = 0x0002;
+pub const FILE_TYPE_PIPE: DWORD = 0x0003;
+pub const FILE_TYPE_REMOTE: DWORD = 0x8000;
+
+/// `CTL_CODE(FILE_DEVICE_FILE_SYSTEM, 42, METHOD_BUFFERED, FILE_ANY_ACCESS)`
+/// (`winioctl.h`): `(device << 16) | (access << 14) | (function << 2) | method`.
+pub const FSCTL_GET_REPARSE_POINT: DWORD = (FILE_DEVICE_FILE_SYSTEM << 16) | (42 << 2);
+/// `CTL_CODE(FILE_DEVICE_FILE_SYSTEM, 41, METHOD_BUFFERED, FILE_SPECIAL_ACCESS)`
+/// (`winioctl.h`); `FILE_SPECIAL_ACCESS == FILE_ANY_ACCESS == 0`.
+pub const FSCTL_SET_REPARSE_POINT: DWORD = (FILE_DEVICE_FILE_SYSTEM << 16) | (41 << 2);
+
+/// `MAXIMUM_REPARSE_DATA_BUFFER_SIZE` (`winnt.h`) — upper bound of any
+/// `FSCTL_GET_REPARSE_POINT` output.
+pub const MAXIMUM_REPARSE_DATA_BUFFER_SIZE: usize = 16 * 1024;
+
+// Reparse tags (`winnt.h`; `IO_REPARSE_TAG_LX_SYMLINK` from libuv
+// winapi.h:4590 — absent from older SDKs).
+pub const IO_REPARSE_TAG_MOUNT_POINT: ULONG = 0xA000_0003;
+pub const IO_REPARSE_TAG_SYMLINK: ULONG = 0xA000_000C;
+pub const IO_REPARSE_TAG_LX_SYMLINK: ULONG = 0xA000_001D;
+pub const IO_REPARSE_TAG_APPEXECLINK: ULONG = 0x8000_001B;
+
+/// `REPARSE_DATA_BUFFER.SymbolicLinkReparseBuffer` (`ntifs.h`).
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct SYMBOLIC_LINK_REPARSE_BUFFER {
+    pub SubstituteNameOffset: u16,
+    pub SubstituteNameLength: u16,
+    pub PrintNameOffset: u16,
+    pub PrintNameLength: u16,
+    pub Flags: ULONG,
+    pub PathBuffer: [WCHAR; 1],
+}
+
+/// `REPARSE_DATA_BUFFER.MountPointReparseBuffer` (`ntifs.h`).
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct MOUNT_POINT_REPARSE_BUFFER {
+    pub SubstituteNameOffset: u16,
+    pub SubstituteNameLength: u16,
+    pub PrintNameOffset: u16,
+    pub PrintNameLength: u16,
+    pub PathBuffer: [WCHAR; 1],
+}
+
+/// `REPARSE_DATA_BUFFER.LinuxSymbolicLinkReparseBuffer` (libuv
+/// winapi.h:4166-4169) — WSL `LX_SYMLINK` payload: a 4-byte version field
+/// then raw target bytes (no encoding conversion).
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct LINUX_SYMBOLIC_LINK_REPARSE_BUFFER {
+    pub Version: ULONG,
+    pub PathBuffer: [u8; 1],
+}
+
+/// `REPARSE_DATA_BUFFER.AppExecLinkReparseBuffer` (libuv winapi.h:4180-4183)
+/// — `StringList` is `StringCount` NUL-separated strings.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct APP_EXEC_LINK_REPARSE_BUFFER {
+    pub StringCount: ULONG,
+    pub StringList: [WCHAR; 1],
+}
+
+/// `REPARSE_DATA_BUFFER.GenericReparseBuffer` (`ntifs.h`).
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct GENERIC_REPARSE_BUFFER {
+    pub DataBuffer: [u8; 1],
+}
+
+/// The anonymous payload union of `REPARSE_DATA_BUFFER` (`ntifs.h`); named
+/// `u` here because Rust lacks anonymous unions.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union REPARSE_DATA_BUFFER_u {
+    pub SymbolicLinkReparseBuffer: SYMBOLIC_LINK_REPARSE_BUFFER,
+    pub MountPointReparseBuffer: MOUNT_POINT_REPARSE_BUFFER,
+    pub LinuxSymbolicLinkReparseBuffer: LINUX_SYMBOLIC_LINK_REPARSE_BUFFER,
+    pub AppExecLinkReparseBuffer: APP_EXEC_LINK_REPARSE_BUFFER,
+    pub GenericReparseBuffer: GENERIC_REPARSE_BUFFER,
+}
+
+/// `REPARSE_DATA_BUFFER` (`ntifs.h`) — header of `FSCTL_GET_REPARSE_POINT`
+/// output. All `PathBuffer` members are flexible arrays; read past them via
+/// the offset/length fields, bounded by `ReparseDataLength`.
+#[repr(C)]
+pub struct REPARSE_DATA_BUFFER {
+    pub ReparseTag: ULONG,
+    pub ReparseDataLength: u16,
+    pub Reserved: u16,
+    pub u: REPARSE_DATA_BUFFER_u,
+}
+
+// Layout pins for the stat-family structs (authoritative Windows-x64 sizes;
+// `FILE_ID_FULL_DIR_INFORMATION == 88` is also the empirically verified
+// `IO_STATUS_BLOCK.Information` of a fixed-size single-entry query).
+// // quirk: FSMETA-06, FSMETA-12
+#[cfg(all(windows, target_pointer_width = "64"))]
+const _: () = {
+    assert!(core::mem::size_of::<FILE_STAT_BASIC_INFORMATION>() == 104);
+    assert!(core::mem::size_of::<FILE_ALL_INFORMATION>() == 104);
+    assert!(core::mem::size_of::<FILE_STANDARD_INFORMATION>() == 24);
+    assert!(core::mem::size_of::<FILE_ID_FULL_DIR_INFORMATION>() == 88);
+    assert!(core::mem::size_of::<FILE_FS_VOLUME_INFORMATION>() == 24);
+    assert!(core::mem::size_of::<FILE_FS_DEVICE_INFORMATION>() == 8);
+    assert!(core::mem::size_of::<REPARSE_DATA_BUFFER>() == 24);
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // ntdll namespace (subset).
@@ -465,8 +781,48 @@ impl FILE_INFORMATION_CLASS {
 pub mod ntdll {
     use super::*;
 
+    /// `SystemProcessorPerformanceInformation` (class 8) row — 100ns units.
+    #[repr(C)]
+    #[derive(Copy, Clone, Default)]
+    pub struct SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION {
+        pub IdleTime: i64,
+        pub KernelTime: i64,
+        pub UserTime: i64,
+        pub DpcTime: i64,
+        pub InterruptTime: i64,
+        pub InterruptCount: u32,
+    }
+    pub const SystemProcessorPerformanceInformation: u32 = 8;
+
+    /// `RTL_OSVERSIONINFOW` (`wdm.h`) — out-param of `RtlGetVersion`;
+    /// `dwOSVersionInfoSize` must be stamped with `size_of` before the call.
+    #[repr(C)]
+    pub struct RTL_OSVERSIONINFOW {
+        pub dwOSVersionInfoSize: ULONG,
+        pub dwMajorVersion: ULONG,
+        pub dwMinorVersion: ULONG,
+        pub dwBuildNumber: ULONG,
+        pub dwPlatformId: ULONG,
+        /// Service-pack string; empty on every modern Windows.
+        pub szCSDVersion: [WCHAR; 128],
+    }
+    // Layout pin: fixed-width fields only, so this holds on cross-host checks.
+    const _: () = assert!(core::mem::size_of::<RTL_OSVERSIONINFOW>() == 276);
+
     #[link(name = "ntdll")]
     unsafe extern "system" {
+        /// `NtQuerySystemInformation` (`winternl.h`).
+        pub fn NtQuerySystemInformation(
+            SystemInformationClass: u32,
+            SystemInformation: *mut c_void,
+            SystemInformationLength: u32,
+            ReturnLength: *mut u32,
+        ) -> NTSTATUS;
+        /// `RtlGetVersion` (`wdm.h`) — the unmanifested `GetVersionExW`:
+        /// reports the real OS version regardless of compatibility shims.
+        /// safe: out-param is a non-null `&mut` that ntdll only writes; the
+        /// caller-stamped `dwOSVersionInfoSize` is validated, not trusted.
+        pub safe fn RtlGetVersion(VersionInformation: &mut RTL_OSVERSIONINFOW) -> NTSTATUS;
         pub fn RtlCaptureStackBackTrace(
             FramesToSkip: u32,
             FramesToCapture: u32,
@@ -519,7 +875,35 @@ pub mod ntdll {
             Length: ULONG,
             FileInformationClass: FILE_INFORMATION_CLASS,
         ) -> NTSTATUS;
+        /// `NtQueryVolumeInformationFile` (`ntifs.h`) — volume-level info
+        /// classes (`FS_INFORMATION_CLASS`). `STATUS_BUFFER_OVERFLOW`
+        /// (warning severity) means the fixed-size members are valid.
+        /// // quirk: FSMETA-06
+        pub fn NtQueryVolumeInformationFile(
+            FileHandle: HANDLE,
+            IoStatusBlock: *mut IO_STATUS_BLOCK,
+            FsInformation: *mut c_void,
+            Length: ULONG,
+            FsInformationClass: FS_INFORMATION_CLASS,
+        ) -> NTSTATUS;
         pub fn NtClose(Handle: HANDLE) -> NTSTATUS;
+        /// `NtDeviceIoControlFile` (`ntifs.h`; libuv winapi.h:4607-4617).
+        /// `ApcContext` is what an associated IOCP dequeues as `lpOverlapped`:
+        /// pass the OVERLAPPED to get a completion packet, NULL to suppress
+        /// it. Linked directly — ntdll exports it since NT, no GetProcAddress
+        /// probe needed on the supported baseline. // quirk: POLL-33, POLL-43
+        pub fn NtDeviceIoControlFile(
+            FileHandle: HANDLE,
+            Event: HANDLE,
+            ApcRoutine: *mut c_void,
+            ApcContext: *mut c_void,
+            IoStatusBlock: *mut IO_STATUS_BLOCK,
+            IoControlCode: ULONG,
+            InputBuffer: *mut c_void,
+            InputBufferLength: ULONG,
+            OutputBuffer: *mut c_void,
+            OutputBufferLength: ULONG,
+        ) -> NTSTATUS;
 
         // ── futex (`WaitOnAddress`) — used by `bun_threading::Futex` ──
         // Linked from ntdll instead of `API-MS-Win-Core-Synch-l1-2-0.dll`
@@ -567,9 +951,189 @@ pub mod ntdll {
 pub use ntdll::NtClose;
 
 /// `user32` namespace (subset placeholder; fill in as needed).
-pub mod user32 {}
-/// `advapi32` namespace (subset placeholder; fill in as needed).
-pub mod advapi32 {}
+pub mod user32 {
+    /// `SM_CLEANBOOT` (winuser.h) — `GetSystemMetrics` index: 0 normal
+    /// boot, 1 safe mode, 2 safe mode with networking.
+    pub const SM_CLEANBOOT: i32 = 67;
+
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        pub safe fn GetSystemMetrics(nIndex: i32) -> i32;
+    }
+}
+/// `advapi32` namespace.
+pub mod advapi32 {
+    use super::*;
+
+    pub type HKEY = *mut c_void;
+    pub const HKEY_LOCAL_MACHINE: HKEY = 0x8000_0002usize as HKEY;
+    pub const KEY_QUERY_VALUE: u32 = 0x0001;
+    /// `KEY_WOW64_64KEY` (`winnt.h`) — force the 64-bit registry view.
+    pub const KEY_WOW64_64KEY: u32 = 0x0100;
+    /// `RRF_RT_REG_SZ` (`winreg.h`) — `RegGetValueW` type filter.
+    pub const RRF_RT_REG_SZ: DWORD = 0x0000_0002;
+    pub const TOKEN_READ: DWORD = 0x0002_0008;
+
+    #[link(name = "advapi32")]
+    unsafe extern "system" {
+        /// `RegOpenKeyExW` (`winreg.h`).
+        pub fn RegOpenKeyExW(
+            hKey: HKEY,
+            lpSubKey: LPCWSTR,
+            ulOptions: DWORD,
+            samDesired: u32,
+            phkResult: *mut HKEY,
+        ) -> i32;
+        /// `RegQueryValueExW` (`winreg.h`).
+        pub fn RegQueryValueExW(
+            hKey: HKEY,
+            lpValueName: LPCWSTR,
+            lpReserved: *mut DWORD,
+            lpType: *mut DWORD,
+            lpData: *mut u8,
+            lpcbData: *mut DWORD,
+        ) -> i32;
+        /// `RegCloseKey` (`winreg.h`).
+        pub fn RegCloseKey(hKey: HKEY) -> i32;
+        /// `RegGetValueW` (`winreg.h`). Unlike `RegQueryValueExW`, the
+        /// returned string is guaranteed NUL-terminated and `pcbData`
+        /// includes that terminator.
+        pub fn RegGetValueW(
+            hkey: HKEY,
+            lpSubKey: LPCWSTR,
+            lpValue: LPCWSTR,
+            dwFlags: DWORD,
+            pdwType: *mut DWORD,
+            pvData: *mut c_void,
+            pcbData: *mut DWORD,
+        ) -> i32;
+        /// `OpenProcessToken` (`processthreadsapi.h`).
+        pub fn OpenProcessToken(
+            ProcessHandle: HANDLE,
+            DesiredAccess: DWORD,
+            TokenHandle: *mut HANDLE,
+        ) -> BOOL;
+    }
+}
+
+/// `userenv` namespace.
+pub mod userenv {
+    use super::*;
+
+    #[link(name = "userenv")]
+    unsafe extern "system" {
+        /// `GetUserProfileDirectoryW` (`userenv.h`). Size-probe-then-fill.
+        pub fn GetUserProfileDirectoryW(
+            hToken: HANDLE,
+            lpProfileDir: LPWSTR,
+            lpcchSize: *mut DWORD,
+        ) -> BOOL;
+    }
+}
+
+/// `iphlpapi` namespace — adapter enumeration for `os.networkInterfaces`.
+pub mod iphlpapi {
+    use super::*;
+
+    /// `SOCKET_ADDRESS` (`ws2def.h`).
+    #[repr(C)]
+    pub struct SOCKET_ADDRESS {
+        pub lpSockaddr: *mut ws2_32::sockaddr,
+        pub iSockaddrLength: c_int,
+    }
+
+    /// `MAX_ADAPTER_ADDRESS_LENGTH` (`iptypes.h`).
+    pub const MAX_ADAPTER_ADDRESS_LENGTH: usize = 8;
+
+    /// `IP_ADAPTER_UNICAST_ADDRESS_LH` (`iptypes.h`) — node of the
+    /// per-adapter unicast address list.
+    #[repr(C)]
+    pub struct IP_ADAPTER_UNICAST_ADDRESS {
+        /// Anonymous `{ULONG Length; DWORD Flags}` union, kept as one u64.
+        pub Alignment: u64,
+        pub Next: *mut IP_ADAPTER_UNICAST_ADDRESS,
+        pub Address: SOCKET_ADDRESS,
+        /// `IP_PREFIX_ORIGIN` (4-byte enum).
+        pub PrefixOrigin: u32,
+        /// `IP_SUFFIX_ORIGIN` (4-byte enum).
+        pub SuffixOrigin: u32,
+        /// `IP_DAD_STATE` (4-byte enum).
+        pub DadState: u32,
+        pub ValidLifetime: ULONG,
+        pub PreferredLifetime: ULONG,
+        pub LeaseLifetime: ULONG,
+        pub OnLinkPrefixLength: u8,
+    }
+
+    /// `IP_ADAPTER_ADDRESSES_LH` (`iptypes.h`) — **version-stable prefix**:
+    /// the OS record is 448 bytes on x64 but only the fields through
+    /// `OperStatus` are declared (all this crate reads). Never allocate or
+    /// index arrays of this type — records are walked via `Next` inside the
+    /// caller-allocated `GetAdaptersAddresses` buffer.
+    #[repr(C)]
+    pub struct IP_ADAPTER_ADDRESSES {
+        /// Anonymous `{ULONG Length; IF_INDEX IfIndex}` union, kept as one u64.
+        pub Alignment: u64,
+        pub Next: *mut IP_ADAPTER_ADDRESSES,
+        pub AdapterName: *mut c_char,
+        pub FirstUnicastAddress: *mut IP_ADAPTER_UNICAST_ADDRESS,
+        pub FirstAnycastAddress: *mut c_void,
+        pub FirstMulticastAddress: *mut c_void,
+        pub FirstDnsServerAddress: *mut c_void,
+        pub DnsSuffix: *mut WCHAR,
+        pub Description: *mut WCHAR,
+        /// NUL-terminated UTF-16 display name (may be localized).
+        pub FriendlyName: *mut WCHAR,
+        pub PhysicalAddress: [BYTE; MAX_ADAPTER_ADDRESS_LENGTH],
+        pub PhysicalAddressLength: ULONG,
+        pub Flags: ULONG,
+        pub Mtu: ULONG,
+        /// `IF_TYPE_*` (`ipifcons.h`).
+        pub IfType: ULONG,
+        /// `IF_OPER_STATUS` (`ifdef.h`).
+        pub OperStatus: u32,
+    }
+
+    /// `IfOperStatusUp` (`ifdef.h`, `IF_OPER_STATUS`).
+    pub const IfOperStatusUp: u32 = 1;
+    /// `IF_TYPE_SOFTWARE_LOOPBACK` (`ipifcons.h`).
+    pub const IF_TYPE_SOFTWARE_LOOPBACK: ULONG = 24;
+
+    // `GAA_FLAG_*` (`iptypes.h`).
+    pub const GAA_FLAG_SKIP_ANYCAST: ULONG = 0x0002;
+    pub const GAA_FLAG_SKIP_MULTICAST: ULONG = 0x0004;
+    pub const GAA_FLAG_SKIP_DNS_SERVER: ULONG = 0x0008;
+
+    // Layout pins (x64 sizes/offsets from the Windows SDK; the prefix size is
+    // the through-`OperStatus` slice of the 448-byte LH record).
+    #[cfg(target_pointer_width = "64")]
+    const _: () = {
+        assert!(core::mem::size_of::<SOCKET_ADDRESS>() == 16);
+        assert!(core::mem::size_of::<IP_ADAPTER_UNICAST_ADDRESS>() == 64);
+        assert!(core::mem::offset_of!(IP_ADAPTER_UNICAST_ADDRESS, Address) == 16);
+        assert!(core::mem::offset_of!(IP_ADAPTER_UNICAST_ADDRESS, OnLinkPrefixLength) == 56);
+        assert!(core::mem::size_of::<IP_ADAPTER_ADDRESSES>() == 112);
+        assert!(core::mem::offset_of!(IP_ADAPTER_ADDRESSES, FriendlyName) == 72);
+        assert!(core::mem::offset_of!(IP_ADAPTER_ADDRESSES, PhysicalAddress) == 80);
+        assert!(core::mem::offset_of!(IP_ADAPTER_ADDRESSES, IfType) == 100);
+        assert!(core::mem::offset_of!(IP_ADAPTER_ADDRESSES, OperStatus) == 104);
+    };
+
+    #[link(name = "iphlpapi")]
+    unsafe extern "system" {
+        /// `GetAdaptersAddresses` (`iphlpapi.h`). Size-probe-then-fill:
+        /// returns `ERROR_BUFFER_OVERFLOW` with the required byte count in
+        /// `SizePointer` until the buffer is large enough; on success the
+        /// buffer holds a `Next`-linked list of adapter records.
+        pub fn GetAdaptersAddresses(
+            Family: ULONG,
+            Flags: ULONG,
+            Reserved: *mut c_void,
+            AdapterAddresses: *mut IP_ADAPTER_ADDRESSES,
+            SizePointer: *mut ULONG,
+        ) -> ULONG;
+    }
+}
 
 // `bun.windows.libuv` is exposed from the higher-tier `bun_sys::windows`
 // module, NOT here — `bun_windows_sys` is the leaf Win32 externs crate and
@@ -594,6 +1158,23 @@ pub mod kernel32 {
     }
     pub const MEM_FREE: u32 = 0x10000;
 
+    /// `MEMORYSTATUSEX` (`sysinfoapi.h`) — out-param of `GlobalMemoryStatusEx`;
+    /// `dwLength` must be stamped with `size_of` before the call.
+    #[repr(C)]
+    pub struct MEMORYSTATUSEX {
+        pub dwLength: DWORD,
+        pub dwMemoryLoad: DWORD,
+        pub ullTotalPhys: ULONGLONG,
+        pub ullAvailPhys: ULONGLONG,
+        pub ullTotalPageFile: ULONGLONG,
+        pub ullAvailPageFile: ULONGLONG,
+        pub ullTotalVirtual: ULONGLONG,
+        pub ullAvailVirtual: ULONGLONG,
+        pub ullAvailExtendedVirtual: ULONGLONG,
+    }
+    // Layout pin: fixed-width fields only, so this holds on cross-host checks.
+    const _: () = assert!(core::mem::size_of::<MEMORYSTATUSEX>() == 64);
+
     #[link(name = "kernel32")]
     unsafe extern "system" {
         /// No preconditions; reads thread-local Win32 error slot.
@@ -610,6 +1191,13 @@ pub mod kernel32 {
         pub safe fn GetStdHandle(nStdHandle: DWORD) -> HANDLE;
         /// No preconditions; returns the pseudo-handle constant `(HANDLE)-1`.
         pub safe fn GetCurrentProcess() -> HANDLE;
+        /// `GetTickCount64` (`sysinfoapi.h`) — milliseconds since boot. No
+        /// preconditions; cannot fail.
+        pub safe fn GetTickCount64() -> ULONGLONG;
+        /// `GlobalMemoryStatusEx` (`sysinfoapi.h`). safe: out-param is a
+        /// non-null `&mut` the kernel only writes; the caller-stamped
+        /// `dwLength` is validated (bad length → FALSE), never trusted.
+        pub safe fn GlobalMemoryStatusEx(lpBuffer: &mut MEMORYSTATUSEX) -> BOOL;
         pub fn DuplicateHandle(
             hSourceProcessHandle: HANDLE,
             hSourceHandle: HANDLE,
@@ -639,9 +1227,74 @@ pub mod kernel32 {
             lpOverlapped: *mut c_void,
         ) -> BOOL;
         pub fn LoadLibraryExW(lpLibFileName: LPCWSTR, hFile: HANDLE, dwFlags: DWORD) -> HMODULE;
+        /// Cannot fail on XP+ (always returns TRUE and writes the count).
+        pub fn QueryPerformanceCounter(lpPerformanceCount: *mut i64) -> BOOL;
+        /// Cannot fail on XP+. The frequency is fixed at boot; cacheable.
+        pub fn QueryPerformanceFrequency(lpFrequency: *mut i64) -> BOOL;
+        /// Process-global; returns the previous mode (last writer wins).
+        pub safe fn SetErrorMode(uMode: DWORD) -> DWORD;
+        /// No preconditions; reads the process error mode.
+        pub safe fn GetErrorMode() -> DWORD;
+        /// `CreateIoCompletionPort` (`ioapiset.h`). Creates a port
+        /// (`FileHandle = INVALID_HANDLE_VALUE`, `ExistingCompletionPort =
+        /// null`) or associates a handle with one.
+        pub fn CreateIoCompletionPort(
+            FileHandle: HANDLE,
+            ExistingCompletionPort: HANDLE,
+            CompletionKey: ULONG_PTR,
+            NumberOfConcurrentThreads: DWORD,
+        ) -> HANDLE;
+        /// `GetQueuedCompletionStatusEx` (`ioapiset.h`). May return before
+        /// `dwMilliseconds` elapses (timeouts quantize to the scheduler
+        /// tick); deadline callers must recompute and re-arm. // quirk: LOOP-02
+        pub fn GetQueuedCompletionStatusEx(
+            CompletionPort: HANDLE,
+            lpCompletionPortEntries: *mut OVERLAPPED_ENTRY,
+            ulCount: ULONG,
+            ulNumEntriesRemoved: *mut ULONG,
+            dwMilliseconds: DWORD,
+            fAlertable: BOOL,
+        ) -> BOOL;
+        /// `PostQueuedCompletionStatus` (`ioapiset.h`). `lpOverlapped` may be
+        /// null — consumers must filter null entries before dereferencing.
+        /// // quirk: LOOP-03
+        pub fn PostQueuedCompletionStatus(
+            CompletionPort: HANDLE,
+            dwNumberOfBytesTransferred: DWORD,
+            dwCompletionKey: ULONG_PTR,
+            lpOverlapped: *mut OVERLAPPED,
+        ) -> BOOL;
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
+        /// `DeviceIoControl` (`ioapiset.h`). `lpOverlapped` may be null for
+        /// synchronous handles.
+        pub fn DeviceIoControl(
+            hDevice: HANDLE,
+            dwIoControlCode: DWORD,
+            lpInBuffer: LPVOID,
+            nInBufferSize: DWORD,
+            lpOutBuffer: LPVOID,
+            nOutBufferSize: DWORD,
+            lpBytesReturned: *mut DWORD,
+            lpOverlapped: *mut OVERLAPPED,
+        ) -> BOOL;
+        /// safe: `HANDLE` is a by-value opaque; bad handle →
+        /// `FILE_TYPE_UNKNOWN` + GetLastError, no UB.
+        pub safe fn GetFileType(hFile: HANDLE) -> DWORD;
+        /// `GetModuleHandleW` (`libloaderapi.h`). Resolution-only — returns
+        /// the already-loaded module's base or NULL; never loads, so probing
+        /// an apiset DLL has no DLL-planting surface. // quirk: FSMETA-02
+        pub fn GetModuleHandleW(lpModuleName: LPCWSTR) -> HMODULE;
+        /// `RemoveDirectoryW` (`fileapi.h`).
+        pub fn RemoveDirectoryW(lpPathName: LPCWSTR) -> BOOL;
+        /// `GetVolumeNameForVolumeMountPointW` (`fileapi.h`) — yields the
+        /// `\\?\Volume{guid}\` name backing a mount point / drive root.
+        pub fn GetVolumeNameForVolumeMountPointW(
+            lpszVolumeMountPoint: LPCWSTR,
+            lpszVolumeName: LPWSTR,
+            cchBufferLength: DWORD,
+        ) -> BOOL;
         /// `SetHandleInformation` (`handleapi.h`). No pointer preconditions:
         /// `hObject` is an opaque kernel handle (validated kernel-side; bad
         /// handle → `FALSE` + `GetLastError`), `dwMask`/`dwFlags` are by-value.
@@ -666,7 +1319,29 @@ pub mod kernel32 {
             HandlerRoutine: Option<unsafe extern "system" fn(DWORD) -> BOOL>,
             Add: BOOL,
         ) -> BOOL;
+        /// `CancelIoEx` (`ioapiset.h`). Cancels pending I/O on `hFile`
+        /// matching `lpOverlapped` (all of the handle's I/O when null); the
+        /// cancelled operations complete with STATUS_CANCELLED.
+        pub fn CancelIoEx(hFile: HANDLE, lpOverlapped: *mut OVERLAPPED) -> BOOL;
+        /// `CreateEventW` (`synchapi.h`). Null name = anonymous event.
+        pub fn CreateEventW(
+            lpEventAttributes: *mut SECURITY_ATTRIBUTES,
+            bManualReset: BOOL,
+            bInitialState: BOOL,
+            lpName: LPCWSTR,
+        ) -> HANDLE;
+        /// `QueueUserWorkItem` (`threadpoollegacyapiset.h`) — run `Function`
+        /// on the SYSTEM thread pool (not a Bun pool). `Context` is passed
+        /// through verbatim; lifetime is the caller's contract.
+        pub fn QueueUserWorkItem(
+            Function: unsafe extern "system" fn(*mut c_void) -> DWORD,
+            Context: *mut c_void,
+            Flags: ULONG,
+        ) -> BOOL;
     }
+    /// `WT_EXECUTELONGFUNCTION` (`winnt.h`) — hints the pool that the work
+    /// item may block, so it spins up extra threads instead of starving.
+    pub const WT_EXECUTELONGFUNCTION: ULONG = 0x0000_0010;
     #[link(name = "kernel32")]
     unsafe extern "system" {
         /// `GetConsoleScreenBufferInfo` (`wincon.h`).
@@ -791,6 +1466,60 @@ impl NTSTATUS {
     /// `STATUS_END_OF_FILE` — `NtReadFile` past EOF.
     pub const END_OF_FILE: NTSTATUS = NTSTATUS(0xC000_0011);
 
+    // Statuses surfaced by AFD/socket completions, consumed by
+    // `bun_sys::windows::win_error::ntstatus_to_winsock` (values transcribed
+    // from libuv src/win/winapi.h).
+    pub const PENDING: NTSTATUS = NTSTATUS(0x0000_0103);
+    pub const ACCESS_VIOLATION: NTSTATUS = NTSTATUS(0xC000_0005);
+    pub const OBJECT_TYPE_MISMATCH: NTSTATUS = NTSTATUS(0xC000_0024);
+    pub const INSUFFICIENT_RESOURCES: NTSTATUS = NTSTATUS(0xC000_009A);
+    pub const PAGEFILE_QUOTA: NTSTATUS = NTSTATUS(0xC000_0007);
+    pub const COMMITMENT_LIMIT: NTSTATUS = NTSTATUS(0xC000_012D);
+    pub const WORKING_SET_QUOTA: NTSTATUS = NTSTATUS(0xC000_00A1);
+    pub const NO_MEMORY: NTSTATUS = NTSTATUS(0xC000_0017);
+    pub const QUOTA_EXCEEDED: NTSTATUS = NTSTATUS(0xC000_0044);
+    pub const TOO_MANY_PAGING_FILES: NTSTATUS = NTSTATUS(0xC000_0097);
+    pub const REMOTE_RESOURCES: NTSTATUS = NTSTATUS(0xC000_013D);
+    pub const TOO_MANY_ADDRESSES: NTSTATUS = NTSTATUS(0xC000_0209);
+    pub const ADDRESS_ALREADY_EXISTS: NTSTATUS = NTSTATUS(0xC000_020A);
+    pub const LINK_TIMEOUT: NTSTATUS = NTSTATUS(0xC000_013F);
+    pub const IO_TIMEOUT: NTSTATUS = NTSTATUS(0xC000_00B5);
+    pub const GRACEFUL_DISCONNECT: NTSTATUS = NTSTATUS(0xC000_0237);
+    pub const REMOTE_DISCONNECT: NTSTATUS = NTSTATUS(0xC000_013C);
+    pub const CONNECTION_RESET: NTSTATUS = NTSTATUS(0xC000_020D);
+    pub const LINK_FAILED: NTSTATUS = NTSTATUS(0xC000_013E);
+    pub const CONNECTION_DISCONNECTED: NTSTATUS = NTSTATUS(0xC000_020C);
+    pub const PORT_UNREACHABLE: NTSTATUS = NTSTATUS(0xC000_023F);
+    pub const HOPLIMIT_EXCEEDED: NTSTATUS = NTSTATUS(0xC000_A012);
+    pub const LOCAL_DISCONNECT: NTSTATUS = NTSTATUS(0xC000_013B);
+    pub const TRANSACTION_ABORTED: NTSTATUS = NTSTATUS(0xC000_020F);
+    pub const CONNECTION_ABORTED: NTSTATUS = NTSTATUS(0xC000_0241);
+    pub const BAD_NETWORK_PATH: NTSTATUS = NTSTATUS(0xC000_00BE);
+    pub const NETWORK_UNREACHABLE: NTSTATUS = NTSTATUS(0xC000_023C);
+    pub const PROTOCOL_UNREACHABLE: NTSTATUS = NTSTATUS(0xC000_023E);
+    pub const HOST_UNREACHABLE: NTSTATUS = NTSTATUS(0xC000_023D);
+    pub const CANCELLED: NTSTATUS = NTSTATUS(0xC000_0120);
+    pub const REQUEST_ABORTED: NTSTATUS = NTSTATUS(0xC000_0240);
+    /// Warning severity (0x8...), unlike most of its neighbors.
+    pub const BUFFER_OVERFLOW: NTSTATUS = NTSTATUS(0x8000_0005);
+    pub const INVALID_BUFFER_SIZE: NTSTATUS = NTSTATUS(0xC000_0206);
+    pub const BUFFER_TOO_SMALL: NTSTATUS = NTSTATUS(0xC000_0023);
+    pub const DEVICE_NOT_READY: NTSTATUS = NTSTATUS(0xC000_00A3);
+    pub const REQUEST_NOT_ACCEPTED: NTSTATUS = NTSTATUS(0xC000_00D0);
+    pub const INVALID_NETWORK_RESPONSE: NTSTATUS = NTSTATUS(0xC000_00C3);
+    pub const NETWORK_BUSY: NTSTATUS = NTSTATUS(0xC000_00BF);
+    pub const NO_SUCH_DEVICE: NTSTATUS = NTSTATUS(0xC000_000E);
+    pub const UNEXPECTED_NETWORK_ERROR: NTSTATUS = NTSTATUS(0xC000_00C4);
+    pub const INVALID_CONNECTION: NTSTATUS = NTSTATUS(0xC000_0140);
+    pub const REMOTE_NOT_LISTENING: NTSTATUS = NTSTATUS(0xC000_00BC);
+    pub const CONNECTION_REFUSED: NTSTATUS = NTSTATUS(0xC000_0236);
+    pub const PIPE_DISCONNECTED: NTSTATUS = NTSTATUS(0xC000_00B0);
+    pub const CONFLICTING_ADDRESSES: NTSTATUS = NTSTATUS(0xC000_0018);
+    pub const INVALID_ADDRESS: NTSTATUS = NTSTATUS(0xC000_0141);
+    pub const INVALID_ADDRESS_COMPONENT: NTSTATUS = NTSTATUS(0xC000_0207);
+    pub const NOT_SUPPORTED: NTSTATUS = NTSTATUS(0xC000_00BB);
+    pub const NOT_IMPLEMENTED: NTSTATUS = NTSTATUS(0xC000_0002);
+
     #[inline]
     pub const fn from_raw(raw: u32) -> Self {
         NTSTATUS(raw)
@@ -805,7 +1534,47 @@ impl NTSTATUS {
 pub const fn NT_SUCCESS(status: NTSTATUS) -> bool {
     (status.0 as i32) >= 0
 }
+/// `NT_ERROR` (`ntdef.h`): severity field == 3. NOT `!NT_SUCCESS` —
+/// warning-severity statuses (e.g. `STATUS_BUFFER_OVERFLOW`) fail
+/// `NT_SUCCESS` yet carry valid data. // quirk: FSMETA-06
+#[inline]
+pub const fn NT_ERROR(status: NTSTATUS) -> bool {
+    (status.0 >> 30) == 3
+}
 pub const STATUS_SUCCESS: NTSTATUS = NTSTATUS::SUCCESS;
+
+/// NTSTATUS facility code for wrapped Win32 errors.
+pub const FACILITY_NTWIN32: u32 = 0x7;
+pub const ERROR_SEVERITY_WARNING: u32 = 0x8000_0000;
+pub const ERROR_SEVERITY_ERROR: u32 = 0xC000_0000;
+
+/// Embed a Win32 error in an NTSTATUS. The DDK's `NTSTATUS_FROM_WIN32` macro
+/// uses ERROR severity (0xC007xxxx); the kernel's own convention for
+/// FACILITY_NTWIN32-wrapped errors is WARNING severity (0x8007xxxx), and only
+/// the warning form round-trips through `RtlNtStatusToDosError`.
+/// // quirk: OS-49
+#[inline]
+pub const fn ntstatus_from_win32(code: Win32Error) -> NTSTATUS {
+    NTSTATUS(ERROR_SEVERITY_WARNING | (FACILITY_NTWIN32 << 16) | code.0 as u32)
+}
+
+/// If `status` is a FACILITY_NTWIN32-wrapped Win32 error, extract it.
+///
+/// Kept bit-for-bit at libuv parity (a bit-subset test on the facility field,
+/// not full-field equality): the predecessor of this check AND-ed the combined
+/// facility+severity mask, classifying nearly every real NTSTATUS as a wrapped
+/// Win32 error (upstream 0ded5d29). // quirk: POLL-44
+#[inline]
+pub const fn ntwin32_unwrap(status: NTSTATUS) -> Option<Win32Error> {
+    let s = status.0;
+    if (s & (FACILITY_NTWIN32 << 16)) == (FACILITY_NTWIN32 << 16)
+        && (s & (ERROR_SEVERITY_ERROR | ERROR_SEVERITY_WARNING)) != 0
+    {
+        Some(Win32Error((s & 0xffff) as u16))
+    } else {
+        None
+    }
+}
 
 #[link(name = "ntdll")]
 unsafe extern "system" {
@@ -1057,8 +1826,257 @@ pub mod ws2_32 {
     pub const SOCKET_ERROR: c_int = -1;
     /// `POLLWRNORM` (`winsock2.h`).
     pub const POLLWRNORM: i16 = 0x0010;
+
+    // ── AFD socket-poll support: provider identification, peer-socket
+    // creation, LSP base-handle unwrap, and the select() slow path
+    // (consumed by `bun_iocp::afd`). ──────────────────────────────────────
+
+    /// `SOCKET` (`winsock2.h`) — `UINT_PTR`.
+    pub type SOCKET = usize;
+    pub const INVALID_SOCKET: SOCKET = usize::MAX;
+
+    /// `WSAPROTOCOLCHAIN` (`winsock2.h`); `MAX_PROTOCOL_CHAIN` = 7.
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct WSAPROTOCOLCHAIN {
+        pub ChainLen: c_int,
+        pub ChainEntries: [DWORD; 7],
+    }
+
+    /// `WSAPROTOCOL_INFOW` (`winsock2.h`) — a socket's winsock catalog entry;
+    /// `ProviderId` names the base provider (the AFD fast-poll eligibility
+    /// check) and the whole struct seeds `WSASocketW` to create a peer from
+    /// the exact same catalog entry. // quirk: POLL-06, POLL-14
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct WSAPROTOCOL_INFOW {
+        pub dwServiceFlags1: DWORD,
+        pub dwServiceFlags2: DWORD,
+        pub dwServiceFlags3: DWORD,
+        pub dwServiceFlags4: DWORD,
+        pub dwProviderFlags: DWORD,
+        pub ProviderId: GUID,
+        pub dwCatalogEntryId: DWORD,
+        pub ProtocolChain: WSAPROTOCOLCHAIN,
+        pub iVersion: c_int,
+        pub iAddressFamily: c_int,
+        pub iMaxSockAddr: c_int,
+        pub iMinSockAddr: c_int,
+        pub iSocketType: c_int,
+        pub iProtocol: c_int,
+        pub iProtocolMaxOffset: c_int,
+        pub iNetworkByteOrder: c_int,
+        pub iSecurityScheme: c_int,
+        pub iMessageSize: c_int,
+        pub iProviderReserved: c_int,
+        pub szProtocol: [WCHAR; 256],
+    }
+    const _: () = assert!(core::mem::size_of::<WSAPROTOCOL_INFOW>() == 628);
+
+    /// The four MSAFD base-provider GUIDs whose sockets are real AFD handles
+    /// and accept `IOCTL_AFD_POLL`: MSAFD Tcpip IPv4, MSAFD Tcpip IPv6, MSAFD
+    /// RfComm (Bluetooth), AF_UNIX (Win10+). Any other provider is not
+    /// pollable via AFD. Values transcribed from libuv src/win/poll.c:31-40.
+    /// // quirk: POLL-07
+    pub const MSAFD_PROVIDER_IDS: [GUID; 4] = [
+        GUID {
+            Data1: 0xe70f1aa0,
+            Data2: 0xab8b,
+            Data3: 0x11cf,
+            Data4: [0x8c, 0xa3, 0x00, 0x80, 0x5f, 0x48, 0xa1, 0x92],
+        },
+        GUID {
+            Data1: 0xf9eab0c0,
+            Data2: 0x26d4,
+            Data3: 0x11d0,
+            Data4: [0xbb, 0xbf, 0x00, 0xaa, 0x00, 0x6c, 0x34, 0xe4],
+        },
+        GUID {
+            Data1: 0x9fc48064,
+            Data2: 0x7298,
+            Data3: 0x43e4,
+            Data4: [0xb7, 0xbd, 0x18, 0x1f, 0x20, 0x89, 0x79, 0x2a],
+        },
+        GUID {
+            Data1: 0xa00943d9,
+            Data2: 0x9c2e,
+            Data3: 0x4633,
+            Data4: [0x9b, 0x59, 0x00, 0x57, 0xa3, 0x16, 0x09, 0x94],
+        },
+    ];
+
+    /// `LINGER` (`winsock2.h`).
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct LINGER {
+        pub l_onoff: u16,
+        pub l_linger: u16,
+    }
+
+    /// `TIMEVAL` (`winsock2.h`).
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct TIMEVAL {
+        pub tv_sec: i32,
+        pub tv_usec: i32,
+    }
+
+    pub const SOL_SOCKET: c_int = 0xffff;
+    /// `SO_PROTOCOL_INFOW` (`winsock2.h`).
+    pub const SO_PROTOCOL_INFOW: c_int = 0x2005;
+    pub const SO_LINGER: c_int = 0x0080;
+    /// `FIONBIO` (`winsock2.h`): `_IOW('f', 126, u_long)` = 0x8004667E
+    /// (negative in the `c_long` `ioctlsocket` takes).
+    pub const FIONBIO: i32 = 0x8004_667Eu32 as i32;
+    /// `SIO_BASE_HANDLE` (`mswsock.h`): `_WSAIOR(IOC_WS2, 34)`. Returns the
+    /// bottom-of-LSP-chain socket. // quirk: POLL-11
+    pub const SIO_BASE_HANDLE: DWORD = 0x4800_0022;
+    /// `SIO_BSP_HANDLE_POLL` (`mswsock.h`): `_WSAIOR(IOC_WS2, 29)`. Returns
+    /// the next-lower chain entry's socket; Komodia-family LSPs deliberately
+    /// break `SIO_BASE_HANDLE` but not this. // quirk: POLL-12
+    pub const SIO_BSP_HANDLE_POLL: DWORD = 0x4800_001D;
+    pub const WSA_FLAG_OVERLAPPED: DWORD = 0x01;
+    /// Atomic non-inheritability at creation time — never the two-step
+    /// `SetHandleInformation` dance (race: a concurrent `CreateProcess`
+    /// between the two calls leaks the handle). // quirk: POLL-10
+    pub const WSA_FLAG_NO_HANDLE_INHERIT: DWORD = 0x80;
+
+    #[link(name = "ws2_32")]
+    unsafe extern "system" {
+        pub fn WSASocketW(
+            af: c_int,
+            ty: c_int,
+            protocol: c_int,
+            lpProtocolInfo: *mut WSAPROTOCOL_INFOW,
+            g: c_uint,
+            dwFlags: DWORD,
+        ) -> SOCKET;
+        pub fn WSAIoctl(
+            s: SOCKET,
+            dwIoControlCode: DWORD,
+            lpvInBuffer: *mut c_void,
+            cbInBuffer: DWORD,
+            lpvOutBuffer: *mut c_void,
+            cbOutBuffer: DWORD,
+            lpcbBytesReturned: *mut DWORD,
+            lpOverlapped: *mut OVERLAPPED,
+            lpCompletionRoutine: *mut c_void,
+        ) -> c_int;
+        pub fn ioctlsocket(s: SOCKET, cmd: c_long, argp: *mut c_ulong) -> c_int;
+        pub fn getsockopt(
+            s: SOCKET,
+            level: c_int,
+            optname: c_int,
+            optval: *mut u8,
+            optlen: *mut c_int,
+        ) -> c_int;
+        pub fn setsockopt(
+            s: SOCKET,
+            level: c_int,
+            optname: c_int,
+            optval: *const u8,
+            optlen: c_int,
+        ) -> c_int;
+        /// `select` (`winsock2.h`). `nfds` is ignored on Windows. The set
+        /// pointers use the `{u_int fd_count; SOCKET fd_array[]}` ABI prefix,
+        /// so callers may pass shorter-than-`fd_set` single-slot sets.
+        /// // quirk: POLL-40
+        pub fn select(
+            nfds: c_int,
+            readfds: *mut c_void,
+            writefds: *mut c_void,
+            exceptfds: *mut c_void,
+            timeout: *const TIMEVAL,
+        ) -> c_int;
+        pub fn bind(s: SOCKET, name: *const sockaddr, namelen: c_int) -> c_int;
+        pub fn listen(s: SOCKET, backlog: c_int) -> c_int;
+        pub fn connect(s: SOCKET, name: *const sockaddr, namelen: c_int) -> c_int;
+        pub fn accept(s: SOCKET, addr: *mut sockaddr, addrlen: *mut c_int) -> SOCKET;
+        pub fn getsockname(s: SOCKET, name: *mut sockaddr, namelen: *mut c_int) -> c_int;
+    }
 }
 pub use ws2_32::WSAGetLastError;
+
+// ──────────────────────────────────────────────────────────────────────────
+// AFD (`\Device\Afd`) poll surface — the kernel driver winsock dispatches
+// to; the only IOCP-compatible socket-readiness primitive Windows has.
+// Undocumented ABI: values/layouts transcribed from libuv
+// src/win/winsock.h:116-178 + include/uv/win.h:206-217 and match
+// wepoll/ReactOS bit-exactly. // quirk: POLL-01
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `GUID` (`guiddef.h`).
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub struct GUID {
+    pub Data1: u32,
+    pub Data2: u16,
+    pub Data3: u16,
+    pub Data4: [u8; 8],
+}
+
+// AFD poll event bits (DDK-only, absent from user-mode SDK headers; libuv
+// src/win/winsock.h:116-140). Eleven exist; the poll machinery requests and
+// consumes seven (RECEIVE, SEND, DISCONNECT, ABORT, LOCAL_CLOSE, ACCEPT,
+// CONNECT_FAIL) — the rest are defined for documentation and the ALL mask.
+// // quirk: POLL-48
+pub const AFD_POLL_RECEIVE: ULONG = 1 << 0;
+pub const AFD_POLL_RECEIVE_EXPEDITED: ULONG = 1 << 1;
+pub const AFD_POLL_SEND: ULONG = 1 << 2;
+pub const AFD_POLL_DISCONNECT: ULONG = 1 << 3;
+pub const AFD_POLL_ABORT: ULONG = 1 << 4;
+pub const AFD_POLL_LOCAL_CLOSE: ULONG = 1 << 5;
+pub const AFD_POLL_CONNECT: ULONG = 1 << 6;
+pub const AFD_POLL_ACCEPT: ULONG = 1 << 7;
+pub const AFD_POLL_CONNECT_FAIL: ULONG = 1 << 8;
+pub const AFD_POLL_QOS: ULONG = 1 << 9;
+pub const AFD_POLL_GROUP_QOS: ULONG = 1 << 10;
+pub const AFD_NUM_POLL_EVENTS: u32 = 11;
+pub const AFD_POLL_ALL: ULONG = (1 << AFD_NUM_POLL_EVENTS) - 1;
+
+/// `IOCTL_AFD_POLL` = `(FSCTL_AFD_BASE << 12) | (AFD_POLL << 2) | METHOD_BUFFERED`
+/// = `(0x12 << 12) | (9 << 2) | 0` = 0x00012024 — AFD packs its control codes
+/// nonstandardly; the SDK `CTL_CODE` macro yields 0x120024, which the driver
+/// rejects. (libuv src/win/winsock.h:159-178.) // quirk: POLL-02
+pub const IOCTL_AFD_POLL: ULONG = 0x0001_2024;
+
+/// `AFD_POLL_HANDLE_INFO` (libuv include/uv/win.h:206-210). On input,
+/// `Handle` is the TARGET socket (which need not be the socket the ioctl is
+/// issued through) and `Events` the requested mask; on output `Events` holds
+/// the triggered bits and `Status` a per-handle NTSTATUS.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct AFD_POLL_HANDLE_INFO {
+    pub Handle: HANDLE,
+    pub Events: ULONG,
+    pub Status: NTSTATUS,
+}
+
+/// `AFD_POLL_INFO` (libuv include/uv/win.h:212-217) — the `IOCTL_AFD_POLL`
+/// input AND output payload (METHOD_BUFFERED). Undocumented kernel ABI that
+/// must be replicated bit-exactly: a wrong layout is
+/// `STATUS_INVALID_PARAMETER` or garbage polls. // quirk: POLL-03
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct AFD_POLL_INFO {
+    pub Timeout: LARGE_INTEGER,
+    pub NumberOfHandles: ULONG,
+    pub Exclusive: ULONG,
+    pub Handles: [AFD_POLL_HANDLE_INFO; 1],
+}
+
+// Layout pins (authoritative x64 values, identical to wepoll's afd.h):
+// pointer-sized `Handle` 8-aligns the `Handles` array, leaving 4 bytes of
+// padding after `Exclusive`. // quirk: POLL-03
+#[cfg(all(windows, target_pointer_width = "64"))]
+const _: () = {
+    assert!(core::mem::size_of::<GUID>() == 16);
+    assert!(core::mem::size_of::<AFD_POLL_HANDLE_INFO>() == 16);
+    assert!(core::mem::size_of::<AFD_POLL_INFO>() == 32);
+    assert!(core::mem::offset_of!(AFD_POLL_INFO, NumberOfHandles) == 8);
+    assert!(core::mem::offset_of!(AFD_POLL_INFO, Exclusive) == 12);
+    assert!(core::mem::offset_of!(AFD_POLL_INFO, Handles) == 16);
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Win32Error — a transparent newtype with associated consts so unmapped
@@ -1085,6 +2103,8 @@ impl Win32Error {
     pub const INVALID_DRIVE: Win32Error = Win32Error(15);
     pub const NOT_SAME_DEVICE: Win32Error = Win32Error(17);
     pub const WRITE_PROTECT: Win32Error = Win32Error(19);
+    /// Drive exists but has no media (e.g. empty CD/card reader).
+    pub const NOT_READY: Win32Error = Win32Error(21);
     pub const CRC: Win32Error = Win32Error(23);
     pub const GEN_FAILURE: Win32Error = Win32Error(31);
     pub const SHARING_VIOLATION: Win32Error = Win32Error(32);
@@ -1093,6 +2113,8 @@ impl Win32Error {
     pub const HANDLE_DISK_FULL: Win32Error = Win32Error(39);
     pub const NOT_SUPPORTED: Win32Error = Win32Error(50);
     pub const NETNAME_DELETED: Win32Error = Win32Error(64);
+    /// `ERROR_BAD_NET_NAME` — the UNC share name cannot be found.
+    pub const BAD_NET_NAME: Win32Error = Win32Error(67);
     pub const FILE_EXISTS: Win32Error = Win32Error(80);
     pub const CANNOT_MAKE: Win32Error = Win32Error(82);
     pub const INVALID_PARAMETER: Win32Error = Win32Error(87);
@@ -1104,6 +2126,11 @@ impl Win32Error {
     pub const INSUFFICIENT_BUFFER: Win32Error = Win32Error(122);
     pub const INVALID_NAME: Win32Error = Win32Error(123);
     pub const MOD_NOT_FOUND: Win32Error = Win32Error(126);
+    /// CreateProcessW/LoadLibrary on a non-PE or wrong-architecture file.
+    pub const BAD_EXE_FORMAT: Win32Error = Win32Error(193);
+    /// What current Win11 (probed: 26200) actually returns for non-PE spawns
+    /// where older kernels returned BAD_EXE_FORMAT. // quirk: PROC-58
+    pub const EXE_MACHINE_TYPE_MISMATCH: Win32Error = Win32Error(216);
     pub const DIR_NOT_EMPTY: Win32Error = Win32Error(145);
     pub const SIGNAL_REFUSED: Win32Error = Win32Error(156);
     pub const BAD_PATHNAME: Win32Error = Win32Error(161);
@@ -1137,6 +2164,9 @@ impl Win32Error {
     pub const DEVICE_DOOR_OPEN: Win32Error = Win32Error(1166);
     pub const CONNECTION_REFUSED: Win32Error = Win32Error(1225);
     pub const ADDRESS_ALREADY_ASSOCIATED: Win32Error = Win32Error(1227);
+    /// `ERROR_ADDRESS_NOT_ASSOCIATED` — `GetAdaptersAddresses` before any
+    /// address has been associated (transient; uv maps it to EAGAIN).
+    pub const ADDRESS_NOT_ASSOCIATED: Win32Error = Win32Error(1228);
     pub const NETWORK_UNREACHABLE: Win32Error = Win32Error(1231);
     pub const HOST_UNREACHABLE: Win32Error = Win32Error(1232);
     pub const CONNECTION_ABORTED: Win32Error = Win32Error(1236);
@@ -1150,6 +2180,9 @@ impl Win32Error {
     pub const CANT_RESOLVE_FILENAME: Win32Error = Win32Error(1921);
     pub const NOT_CONNECTED: Win32Error = Win32Error(2250);
     pub const IO_REISSUE_AS_CACHED: Win32Error = Win32Error(3950);
+    /// `ERROR_NOT_A_REPARSE_POINT` — `FSCTL_GET_REPARSE_POINT` on a file whose
+    /// reparse attribute is set but carries no reparse data.
+    pub const NOT_A_REPARSE_POINT: Win32Error = Win32Error(4390);
     pub const INVALID_REPARSE_DATA: Win32Error = Win32Error(4392);
 
     // — WSA pseudo-variants —
@@ -1277,6 +2310,10 @@ unsafe extern "system" {
     pub fn GetCurrentDirectoryW(nBufferLength: DWORD, lpBuffer: LPWSTR) -> DWORD;
 
     pub fn GetFileAttributesW(lpFileName: LPCWSTR) -> DWORD;
+
+    /// `SetFileAttributesW` (`fileapi.h`). Acts on the named file itself —
+    /// does NOT follow symlinks.
+    pub fn SetFileAttributesW(lpFileName: LPCWSTR, dwFileAttributes: DWORD) -> BOOL;
 
     pub fn CreateFileW(
         lpFileName: LPCWSTR,
@@ -1637,6 +2674,43 @@ pub const CTRL_CLOSE_EVENT: DWORD = 2;
 pub const CTRL_LOGOFF_EVENT: DWORD = 5;
 pub const CTRL_SHUTDOWN_EVENT: DWORD = 6;
 
+// `SetErrorMode` flags (`errhandlingapi.h`).
+pub const SEM_FAILCRITICALERRORS: DWORD = 0x0001;
+pub const SEM_NOGPFAULTERRORBOX: DWORD = 0x0002;
+pub const SEM_NOOPENFILEERRORBOX: DWORD = 0x8000;
+
+// Power broadcast events (`winuser.h`) delivered to suspend/resume callbacks.
+/// Resume triggered by user input; only follows RESUMEAUTOMATIC.
+pub const PBT_APMRESUMESUSPEND: ULONG = 7;
+/// Any resume from suspend — the reliable one to act on.
+pub const PBT_APMRESUMEAUTOMATIC: ULONG = 18;
+
+/// `DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS.Callback` (`powrprof.h`).
+pub type DeviceNotifyCallbackRoutine =
+    unsafe extern "system" fn(context: *mut c_void, ty: ULONG, setting: *mut c_void) -> ULONG;
+
+/// `_DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS` (`powrprof.h`).
+#[repr(C)]
+pub struct DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS {
+    pub Callback: DeviceNotifyCallbackRoutine,
+    pub Context: *mut c_void,
+}
+
+/// `Recipient` is `DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS*` when `Flags` is
+/// `DEVICE_NOTIFY_CALLBACK` (2). Win8+; always present on Bun's baseline.
+pub const DEVICE_NOTIFY_CALLBACK: DWORD = 2;
+
+#[link(name = "powrprof")]
+unsafe extern "system" {
+    /// Returns ERROR_SUCCESS (0) on success. The registration handle may be
+    /// discarded for process-lifetime registrations.
+    pub fn PowerRegisterSuspendResumeNotification(
+        Flags: DWORD,
+        Recipient: *mut DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS,
+        RegistrationHandle: *mut *mut c_void,
+    ) -> DWORD;
+}
+
 #[link(name = "kernel32")]
 unsafe extern "system" {
     pub fn CreateDirectoryExW(
@@ -1761,4 +2835,677 @@ unsafe extern "system" {
 
 unsafe extern "C" {
     pub fn windows_enable_stdio_inheritance();
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// bun_winfs fsio engine (open/read/write) — file access rights and
+// CreateFileW flag constants. Values transcribed from the Windows SDK
+// 10.0.26100 headers (`um/winnt.h` access masks, `um/winbase.h` FILE_FLAG_*).
+// ──────────────────────────────────────────────────────────────────────────
+
+// `winnt.h` specific file access rights (file & pipe).
+pub const FILE_WRITE_DATA: ACCESS_MASK = 0x0002;
+pub const FILE_WRITE_EA: ACCESS_MASK = 0x0010;
+// `winnt.h`: STANDARD_RIGHTS_WRITE == READ_CONTROL (same as the READ variant).
+pub const STANDARD_RIGHTS_WRITE: ACCESS_MASK = READ_CONTROL;
+// `winnt.h` composite generic-mapping rights. Decomposed (unlike GENERIC_*)
+// so individual bits can be subtracted — O_APPEND needs `FILE_GENERIC_WRITE &
+// ~FILE_WRITE_DATA | FILE_APPEND_DATA`.
+pub const FILE_GENERIC_READ: ACCESS_MASK =
+    STANDARD_RIGHTS_READ | FILE_READ_DATA | FILE_READ_ATTRIBUTES | FILE_READ_EA | SYNCHRONIZE;
+pub const FILE_GENERIC_WRITE: ACCESS_MASK = STANDARD_RIGHTS_WRITE
+    | FILE_WRITE_DATA
+    | FILE_WRITE_ATTRIBUTES
+    | FILE_WRITE_EA
+    | FILE_APPEND_DATA
+    | SYNCHRONIZE;
+
+// `winbase.h` CreateFileW dwFlagsAndAttributes (BACKUP_SEMANTICS,
+// OPEN_REPARSE_POINT, OVERLAPPED already declared above).
+pub const FILE_FLAG_WRITE_THROUGH: DWORD = 0x8000_0000;
+pub const FILE_FLAG_NO_BUFFERING: DWORD = 0x2000_0000;
+pub const FILE_FLAG_RANDOM_ACCESS: DWORD = 0x1000_0000;
+pub const FILE_FLAG_SEQUENTIAL_SCAN: DWORD = 0x0800_0000;
+pub const FILE_FLAG_DELETE_ON_CLOSE: DWORD = 0x0400_0000;
+
+// `wdm.h` FileModeInformation (class 16): NtQueryInformationFile returns the
+// handle's open mode; `FILE_WRITE_THROUGH` (0x2, declared above with the NT
+// create options) is set when the handle was opened write-through — the only
+// way to observe FILE_FLAG_WRITE_THROUGH/O_DSYNC on a live handle.
+impl FILE_INFORMATION_CLASS {
+    pub const FileModeInformation: Self = Self(16);
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// bun_winfs fslnk engine (links/dirs) — externs + constants. Values from
+// the Windows SDK 10.0.26100 `um/winbase.h` FILE_INFO_BY_HANDLE_CLASS enum.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `FileBasicInfo` — `FILE_BASIC_INFO` payload (layout-identical to the wdm
+/// `FILE_BASIC_INFORMATION` declared above).
+pub const FileBasicInfo: FILE_INFO_BY_HANDLE_CLASS = 0;
+/// `FileRenameInfo` — classic rename; first field is `BOOLEAN
+/// ReplaceIfExists` (union with the Ex `Flags` DWORD, so
+/// `FILE_RENAME_INFORMATION_EX` with `Flags = 1` is the same bytes).
+pub const FileRenameInfo: FILE_INFO_BY_HANDLE_CLASS = 3;
+/// `FileRenameInfoEx` (≥ win10 rs1) — `FILE_RENAME_INFORMATION_EX` payload
+/// with `FILE_RENAME_*` flag bits.
+pub const FileRenameInfoEx: FILE_INFO_BY_HANDLE_CLASS = 22;
+
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    /// `GetFileInformationByHandleEx` (`winbase.h`) — one syscall, unlike
+    /// legacy `GetFileInformationByHandle` which also queries volume info.
+    pub fn GetFileInformationByHandleEx(
+        hFile: HANDLE,
+        FileInformationClass: FILE_INFO_BY_HANDLE_CLASS,
+        lpFileInformation: LPVOID,
+        dwBufferSize: DWORD,
+    ) -> BOOL;
+    /// `ReOpenFile` (`winbase.h`) — reopens an open handle's file with a new
+    /// access mask without a path round trip.
+    pub fn ReOpenFile(
+        hOriginalFile: HANDLE,
+        dwDesiredAccess: DWORD,
+        dwShareMode: DWORD,
+        dwFlagsAndAttributes: DWORD,
+    ) -> HANDLE;
+    /// `CreateHardLinkW` (`winbase.h`) — argument order is (new, existing),
+    /// the reverse of POSIX `link(2)`.
+    pub fn CreateHardLinkW(
+        lpFileName: LPCWSTR,
+        lpExistingFileName: LPCWSTR,
+        lpSecurityAttributes: *mut SECURITY_ATTRIBUTES,
+    ) -> BOOL;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// bun_iocp pipe engine (src/iocp/pipe.rs) — named-pipe externs, modes and
+// the NT pipe info classes. Values from SDK 10.0.26100 winbase.h/winnt.h;
+// FILE_PIPE_LOCAL_INFORMATION transcribed from libuv src/win/winapi.h
+// (4379-4390). // quirk: PIPE-04, PIPE-50, PIPE-60
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `FILE_FLAG_FIRST_PIPE_INSTANCE` (`winbase.h`) — CreateNamedPipe fails if
+/// the name already exists, making bind-on-existing detectable.
+/// // quirk: PIPE-01, PIPE-21
+pub const FILE_FLAG_FIRST_PIPE_INSTANCE: DWORD = 0x0008_0000;
+/// `PIPE_UNLIMITED_INSTANCES` (`winbase.h`).
+pub const PIPE_UNLIMITED_INSTANCES: DWORD = 255;
+/// `PIPE_NOWAIT` (`winbase.h`) — LAN Manager 2.0 relic; rejected outright.
+/// // quirk: PIPE-11
+pub const PIPE_NOWAIT: DWORD = 0x0000_0001;
+/// `PIPE_READMODE_MESSAGE` (`winbase.h`) — tolerated on adopted handles
+/// (Cygwin/MSYS stdio). // quirk: PIPE-10
+pub const PIPE_READMODE_MESSAGE: DWORD = 0x0000_0002;
+/// `WRITE_DAC` (`winnt.h`) — required at creation for any later pipe chmod.
+/// // quirk: PIPE-59
+pub const WRITE_DAC: ACCESS_MASK = 0x0004_0000;
+/// `FILE_SYNCHRONOUS_IO_ALERT` (`wdm.h`) — with NONALERT (0x20, declared
+/// above), the FileModeInformation bits that mark a handle synchronous.
+/// // quirk: PIPE-13
+pub const FILE_SYNCHRONOUS_IO_ALERT: ULONG = 0x0000_0010;
+
+// `SetFileCompletionNotificationModes` flag bytes (`winbase.h`).
+// // quirk: PIPE-18
+pub const FILE_SKIP_COMPLETION_PORT_ON_SUCCESS: u8 = 0x1;
+pub const FILE_SKIP_SET_EVENT_ON_HANDLE: u8 = 0x2;
+
+/// `FILE_PIPE_LOCAL_INFORMATION` (`ntifs.h`; libuv winapi.h:4379-4390) —
+/// `NtQueryInformationFile(FilePipeLocalInformation)` payload. The shutdown
+/// probe compares `WriteQuotaAvailable` against `OutboundQuota`: equal iff
+/// the peer drained every written byte. // quirk: PIPE-50
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct FILE_PIPE_LOCAL_INFORMATION {
+    pub NamedPipeType: ULONG,
+    pub NamedPipeConfiguration: ULONG,
+    pub MaximumInstances: ULONG,
+    pub CurrentInstances: ULONG,
+    pub InboundQuota: ULONG,
+    pub ReadDataAvailable: ULONG,
+    pub OutboundQuota: ULONG,
+    pub WriteQuotaAvailable: ULONG,
+    pub NamedPipeState: ULONG,
+    pub NamedPipeEnd: ULONG,
+}
+
+impl FILE_INFORMATION_CLASS {
+    /// `FileAccessInformation` (`wdm.h`) — the handle's granted access mask;
+    /// how adopted pipe fds report readable/writable. // quirk: PIPE-15
+    pub const FileAccessInformation: Self = Self(8);
+    /// `FilePipeLocalInformation` (`ntifs.h`) — shutdown probe input.
+    /// // quirk: PIPE-50, PIPE-60
+    pub const FilePipeLocalInformation: Self = Self(24);
+}
+
+impl Win32Error {
+    /// `ERROR_PIPE_CONNECTED` (535) — ConnectNamedPipe on an already
+    /// connected client; means success. // quirk: PIPE-07
+    pub const PIPE_CONNECTED: Win32Error = Win32Error(535);
+    /// `ERROR_IO_PENDING` (997) under its overlapped-I/O name (the WSA alias
+    /// above carries the same value).
+    pub const IO_PENDING: Win32Error = Win32Error(997);
+    /// `ERROR_MORE_DATA` (234) — message-mode read into a short buffer; the
+    /// buffer IS full, remainder follows. // quirk: PIPE-10
+    pub const MORE_DATA: Win32Error = Win32Error(234);
+}
+
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    /// `ConnectNamedPipe` (`namedpipeapi.h`). Overlapped form returns 0;
+    /// ERROR_PIPE_CONNECTED means already connected (success).
+    /// // quirk: PIPE-07
+    pub fn ConnectNamedPipe(hNamedPipe: HANDLE, lpOverlapped: *mut OVERLAPPED) -> BOOL;
+    /// `DisconnectNamedPipe` (`namedpipeapi.h`) — server-side disconnect;
+    /// pending client I/O fails with ERROR_PIPE_NOT_CONNECTED.
+    pub fn DisconnectNamedPipe(hNamedPipe: HANDLE) -> BOOL;
+    /// `WaitNamedPipeW` (`namedpipeapi.h`) — blocks until an instance of the
+    /// named pipe is listening, or the timeout elapses. // quirk: PIPE-27
+    pub fn WaitNamedPipeW(lpNamedPipeName: LPCWSTR, nTimeOut: DWORD) -> BOOL;
+    /// `SetNamedPipeHandleState` (`namedpipeapi.h`). Requires GENERIC_WRITE
+    /// or FILE_WRITE_ATTRIBUTES on the handle. // quirk: PIPE-10
+    pub fn SetNamedPipeHandleState(
+        hNamedPipe: HANDLE,
+        lpMode: *mut DWORD,
+        lpMaxCollectionCount: *mut DWORD,
+        lpCollectDataTimeout: *mut DWORD,
+    ) -> BOOL;
+    /// `GetNamedPipeHandleStateW` (`namedpipeapi.h`).
+    pub fn GetNamedPipeHandleStateW(
+        hNamedPipe: HANDLE,
+        lpState: *mut DWORD,
+        lpCurInstances: *mut DWORD,
+        lpMaxCollectionCount: *mut DWORD,
+        lpCollectDataTimeout: *mut DWORD,
+        lpUserName: LPWSTR,
+        nMaxUserNameSize: DWORD,
+    ) -> BOOL;
+    /// `SetFileCompletionNotificationModes` (`winbase.h`). // quirk: PIPE-18
+    pub fn SetFileCompletionNotificationModes(FileHandle: HANDLE, Flags: u8) -> BOOL;
+    /// `CreatePipe` (`namedpipeapi.h`) — anonymous (non-overlapped) pipe
+    /// pair, the shape inherited from cmd.exe-spawned parents.
+    /// // quirk: PIPE-13
+    pub fn CreatePipe(
+        hReadPipe: *mut HANDLE,
+        hWritePipe: *mut HANDLE,
+        lpPipeAttributes: *mut SECURITY_ATTRIBUTES,
+        nSize: DWORD,
+    ) -> BOOL;
+    /// `CancelSynchronousIo` (`ioapiset.h`) — cancels the synchronous I/O
+    /// the target thread is currently blocked in; ERROR_NOT_FOUND when the
+    /// thread is not inside a cancellable wait (caller must spin).
+    /// // quirk: PIPE-35
+    pub fn CancelSynchronousIo(hThread: HANDLE) -> BOOL;
+    /// `SwitchToThread` (`processthreadsapi.h`) — yield to any ready thread.
+    /// No preconditions.
+    pub safe fn SwitchToThread() -> BOOL;
+    /// `GetCurrentProcessId` (`processthreadsapi.h`). No preconditions.
+    pub safe fn GetCurrentProcessId() -> DWORD;
+}
+
+#[link(name = "advapi32")]
+unsafe extern "system" {
+    /// `RtlGenRandom` (`ntsecapi.h`, exported as `SystemFunction036`) — the
+    /// tier-0 CSPRNG; seeds pipe-pair names (the retry loop, not the seed,
+    /// is the uniqueness mechanism). // quirk: PIPE-03
+    #[link_name = "SystemFunction036"]
+    pub fn RtlGenRandom(RandomBuffer: *mut c_void, RandomBufferLength: ULONG) -> BOOLEAN;
+}
+
+// `GetStdHandle` selectors (`processenv.h`): `(DWORD)-10/-11/-12`.
+pub const STD_INPUT_HANDLE: DWORD = -10i32 as DWORD;
+pub const STD_OUTPUT_HANDLE: DWORD = -11i32 as DWORD;
+pub const STD_ERROR_HANDLE: DWORD = -12i32 as DWORD;
+
+impl Win32Error {
+    /// `ERROR_SEEK_ON_DEVICE` (132, `winerror.h`) — "the file pointer cannot
+    /// be set on the specified device or file": the raw ESPIPE shape the fd
+    /// table reports for positioned I/O on non-seekable fd kinds. Not in the
+    /// libuv general table (it never produced it); the fd-table consumer maps
+    /// it to ESPIPE at its boundary.
+    pub const SEEK_ON_DEVICE: Win32Error = Win32Error(132);
+}
+
+impl NTSTATUS {
+    /// `STATUS_INVALID_INFO_CLASS` (`ntstatus.h`) — the object/filesystem does
+    /// not implement the requested information class (e.g. npfs rejects the
+    /// FileId directory-enumeration classes); distinct from the
+    /// `STATUS_INVALID_PARAMETER` that `NtQueryDirectoryFile` returns for a
+    /// non-directory handle. // quirk: FSLNK-35
+    pub const INVALID_INFO_CLASS: NTSTATUS = NTSTATUS(0xC000_0003);
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Console I/O (wincon.h / consoleapi.h) — the uv_tty_t replacement surface.
+// Console handles cannot use IOCP/overlapped I/O at all; everything below is
+// synchronous and is driven from wait registrations or pool workers.
+// // quirk: TTY-56
+// ──────────────────────────────────────────────────────────────────────────
+
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    /// `ReadConsoleW` (`consoleapi.h`) — cooked-mode UTF-16 console read;
+    /// blocks until Enter (or a trap injection). // quirk: TTY-35
+    pub fn ReadConsoleW(
+        hConsoleInput: HANDLE,
+        lpBuffer: *mut c_void,
+        nNumberOfCharsToRead: DWORD,
+        lpNumberOfCharsRead: *mut DWORD,
+        pInputControl: *mut c_void,
+    ) -> BOOL;
+    /// `ReadConsoleInputW` (`consoleapi.h`) — blocks when no records are
+    /// queued; gate on `GetNumberOfConsoleInputEvents`. // quirk: TTY-26
+    pub fn ReadConsoleInputW(
+        hConsoleInput: HANDLE,
+        lpBuffer: *mut INPUT_RECORD,
+        nLength: DWORD,
+        lpNumberOfEventsRead: *mut DWORD,
+    ) -> BOOL;
+    /// `WriteConsoleW` (`consoleapi.h`) — keep single writes at or below 8192
+    /// WCHARs; large writes fail outright. // quirk: TTY-15
+    pub fn WriteConsoleW(
+        hConsoleOutput: HANDLE,
+        lpBuffer: *const c_void,
+        nNumberOfCharsToWrite: DWORD,
+        lpNumberOfCharsWritten: *mut DWORD,
+        lpReserved: *mut c_void,
+    ) -> BOOL;
+    /// `WriteConsoleInputW` (`consoleapi.h`) — injects records into the input
+    /// queue; `EventType` must be a valid type (0 is rejected by modern
+    /// Windows). // quirk: TTY-34, TTY-37
+    pub fn WriteConsoleInputW(
+        hConsoleInput: HANDLE,
+        lpBuffer: *const INPUT_RECORD,
+        nLength: DWORD,
+        lpNumberOfEventsWritten: *mut DWORD,
+    ) -> BOOL;
+    /// `GetNumberOfConsoleInputEvents` (`consoleapi.h`) — also the
+    /// is-this-an-input-handle probe (fails on screen buffers).
+    /// // quirk: TTY-05
+    pub fn GetNumberOfConsoleInputEvents(
+        hConsoleInput: HANDLE,
+        lpcNumberOfEvents: *mut DWORD,
+    ) -> BOOL;
+    /// `FlushConsoleInputBuffer` (`consoleapi.h`).
+    pub fn FlushConsoleInputBuffer(hConsoleInput: HANDLE) -> BOOL;
+    /// `AllocConsole` (`consoleapi.h`) — attach a fresh console to a process
+    /// that has none. No pointer preconditions.
+    pub safe fn AllocConsole() -> BOOL;
+    /// `FreeConsole` (`consoleapi.h`). No pointer preconditions.
+    pub safe fn FreeConsole() -> BOOL;
+    /// `CreateSemaphoreW` (`synchapi.h`). Null name = anonymous. A semaphore
+    /// (not a mutex) is required when the release happens on a different
+    /// thread than the acquire. // quirk: TTY-10
+    pub fn CreateSemaphoreW(
+        lpSemaphoreAttributes: *mut SECURITY_ATTRIBUTES,
+        lInitialCount: LONG,
+        lMaximumCount: LONG,
+        lpName: LPCWSTR,
+    ) -> HANDLE;
+    /// `ReleaseSemaphore` (`synchapi.h`).
+    pub fn ReleaseSemaphore(
+        hSemaphore: HANDLE,
+        lReleaseCount: LONG,
+        lpPreviousCount: *mut LONG,
+    ) -> BOOL;
+    /// `SetEvent` (`synchapi.h`).
+    pub fn SetEvent(hEvent: HANDLE) -> BOOL;
+    /// `ResetEvent` (`synchapi.h`).
+    pub fn ResetEvent(hEvent: HANDLE) -> BOOL;
+    /// `Sleep` (`synchapi.h`). No preconditions.
+    pub safe fn Sleep(dwMilliseconds: DWORD);
+    /// `RegisterWaitForSingleObject` (`winbase.h`) — fires `Callback` on a
+    /// thread-pool wait thread when `hObject` signals. Console input handles
+    /// are waitable: signaled while records are queued. // quirk: TTY-25
+    pub fn RegisterWaitForSingleObject(
+        phNewWaitObject: *mut HANDLE,
+        hObject: HANDLE,
+        Callback: WAITORTIMERCALLBACK,
+        Context: *mut c_void,
+        dwMilliseconds: ULONG,
+        dwFlags: ULONG,
+    ) -> BOOL;
+    /// `UnregisterWait` (`winbase.h`) — non-blocking; ERROR_IO_PENDING means
+    /// a callback is still running and deletion is deferred. // quirk: TTY-46
+    pub fn UnregisterWait(WaitHandle: HANDLE) -> BOOL;
+}
+
+/// `WAITORTIMERCALLBACK` (`winnt.h`).
+pub type WAITORTIMERCALLBACK = unsafe extern "system" fn(*mut c_void, BOOLEAN);
+
+/// `WT_EXECUTEINWAITTHREAD` (`winnt.h`) — run the callback on the wait thread
+/// itself (short, non-blocking callbacks only).
+pub const WT_EXECUTEINWAITTHREAD: ULONG = 0x0000_0004;
+/// `WT_EXECUTEONLYONCE` (`winnt.h`) — one-shot wait registration.
+pub const WT_EXECUTEONLYONCE: ULONG = 0x0000_0008;
+
+#[link(name = "ntdll")]
+unsafe extern "system" {
+    /// `NtQueryInformationProcess` (`winternl.h`) — undocumented info classes
+    /// included; `ProcessConsoleHostProcess` yields the conhost PID for
+    /// scoping `SetWinEventHook` (hooking pid 0 froze machines).
+    /// // quirk: TTY-49
+    pub fn NtQueryInformationProcess(
+        ProcessHandle: HANDLE,
+        ProcessInformationClass: u32,
+        ProcessInformation: *mut c_void,
+        ProcessInformationLength: ULONG,
+        ReturnLength: *mut ULONG,
+    ) -> NTSTATUS;
+}
+
+/// `ProcessConsoleHostProcess` info class (=49). The returned ULONG_PTR
+/// carries flag bits in its low 2 bits — mask with `!3` before use as a PID.
+/// // quirk: TTY-49
+pub const ProcessConsoleHostProcess: u32 = 49;
+
+// Console input-mode flags (`wincon.h`). NORMAL mode deliberately sets only
+// ECHO|LINE|PROCESSED without ENABLE_EXTENDED_FLAGS so the user's
+// insert/quick-edit preferences survive. // quirk: TTY-43
+pub const ENABLE_PROCESSED_INPUT: DWORD = 0x0001;
+pub const ENABLE_LINE_INPUT: DWORD = 0x0002;
+pub const ENABLE_ECHO_INPUT: DWORD = 0x0004;
+pub const ENABLE_WINDOW_INPUT: DWORD = 0x0008;
+pub const ENABLE_MOUSE_INPUT: DWORD = 0x0010;
+pub const ENABLE_INSERT_MODE: DWORD = 0x0020;
+pub const ENABLE_QUICK_EDIT_MODE: DWORD = 0x0040;
+pub const ENABLE_EXTENDED_FLAGS: DWORD = 0x0080;
+/// Win10 1607+: conhost delivers keys as VT byte sequences. Rejected by the
+/// legacy console; callers must retry without it. // quirk: TTY-44
+pub const ENABLE_VIRTUAL_TERMINAL_INPUT: DWORD = 0x0200;
+/// Console output-mode flag (`wincon.h`): conhost interprets ANSI/VT
+/// sequences natively. No query API — probe by setting it. // quirk: TTY-08
+pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
+
+// `INPUT_RECORD.EventType` values (`wincon.h`). NOTE: the *struct* named
+// `WINDOW_BUFFER_SIZE_EVENT` above is canonically `WINDOW_BUFFER_SIZE_RECORD`
+// in wincon.h; the constant below is the real Win32 spelling of the event
+// type and coexists in the value namespace.
+pub const KEY_EVENT: WORD = 0x0001;
+pub const MOUSE_EVENT: WORD = 0x0002;
+pub const WINDOW_BUFFER_SIZE_EVENT: WORD = 0x0004;
+pub const MENU_EVENT: WORD = 0x0008;
+pub const FOCUS_EVENT: WORD = 0x0010;
+
+// `KEY_EVENT_RECORD.dwControlKeyState` flags (`wincon.h`).
+pub const RIGHT_ALT_PRESSED: DWORD = 0x0001;
+pub const LEFT_ALT_PRESSED: DWORD = 0x0002;
+pub const RIGHT_CTRL_PRESSED: DWORD = 0x0004;
+pub const LEFT_CTRL_PRESSED: DWORD = 0x0008;
+pub const SHIFT_PRESSED: DWORD = 0x0010;
+/// Gray nav-cluster keys carry this; the numpad twins (same VK codes) do
+/// not — the only way to tell them apart. // quirk: TTY-29
+pub const ENHANCED_KEY: DWORD = 0x0100;
+
+// Virtual-key codes (`winuser.h`) used by the console key translator.
+pub const VK_CLEAR: WORD = 0x0C;
+pub const VK_RETURN: WORD = 0x0D;
+pub const VK_MENU: WORD = 0x12;
+pub const VK_PRIOR: WORD = 0x21;
+pub const VK_NEXT: WORD = 0x22;
+pub const VK_END: WORD = 0x23;
+pub const VK_HOME: WORD = 0x24;
+pub const VK_LEFT: WORD = 0x25;
+pub const VK_UP: WORD = 0x26;
+pub const VK_RIGHT: WORD = 0x27;
+pub const VK_DOWN: WORD = 0x28;
+pub const VK_INSERT: WORD = 0x2D;
+pub const VK_DELETE: WORD = 0x2E;
+pub const VK_NUMPAD0: WORD = 0x60;
+pub const VK_NUMPAD1: WORD = 0x61;
+pub const VK_NUMPAD2: WORD = 0x62;
+pub const VK_NUMPAD3: WORD = 0x63;
+pub const VK_NUMPAD4: WORD = 0x64;
+pub const VK_NUMPAD5: WORD = 0x65;
+pub const VK_NUMPAD6: WORD = 0x66;
+pub const VK_NUMPAD7: WORD = 0x67;
+pub const VK_NUMPAD8: WORD = 0x68;
+pub const VK_NUMPAD9: WORD = 0x69;
+pub const VK_DECIMAL: WORD = 0x6E;
+pub const VK_F1: WORD = 0x70;
+pub const VK_F2: WORD = 0x71;
+pub const VK_F3: WORD = 0x72;
+pub const VK_F4: WORD = 0x73;
+pub const VK_F5: WORD = 0x74;
+pub const VK_F6: WORD = 0x75;
+pub const VK_F7: WORD = 0x76;
+pub const VK_F8: WORD = 0x77;
+pub const VK_F9: WORD = 0x78;
+pub const VK_F10: WORD = 0x79;
+pub const VK_F11: WORD = 0x7A;
+pub const VK_F12: WORD = 0x7B;
+
+/// `EVENT_CONSOLE_LAYOUT` (`winuser.h`) — the WinEvent conhost emits on
+/// console layout (size) changes. // quirk: TTY-49
+pub const EVENT_CONSOLE_LAYOUT: DWORD = 0x4005;
+/// `WINEVENT_OUTOFCONTEXT` (`winuser.h`) — hook callback delivered via the
+/// registering thread's message queue (which therefore needs a pump).
+/// // quirk: TTY-51
+pub const WINEVENT_OUTOFCONTEXT: DWORD = 0x0000;
+/// `MAPVK_VK_TO_VSC` (`winuser.h`) — `MapVirtualKeyW` mapping selector.
+pub const MAPVK_VK_TO_VSC: u32 = 0;
+
+// ──────────────────────────────────────────────────────────────────────────
+// bun_iocp fs-event engine (src/iocp/fsevent.rs) — ReadDirectoryChangesW
+// externs and notify constants. Values from SDK 10.0.26100 winnt.h /
+// fileapi.h / winbase.h / stringapiset.h.
+// ──────────────────────────────────────────────────────────────────────────
+
+// `winnt.h` ReadDirectoryChangesW dwNotifyFilter bits. // quirk: SIGEV-24
+pub const FILE_NOTIFY_CHANGE_FILE_NAME: DWORD = 0x0000_0001;
+pub const FILE_NOTIFY_CHANGE_DIR_NAME: DWORD = 0x0000_0002;
+pub const FILE_NOTIFY_CHANGE_ATTRIBUTES: DWORD = 0x0000_0004;
+pub const FILE_NOTIFY_CHANGE_SIZE: DWORD = 0x0000_0008;
+pub const FILE_NOTIFY_CHANGE_LAST_WRITE: DWORD = 0x0000_0010;
+pub const FILE_NOTIFY_CHANGE_LAST_ACCESS: DWORD = 0x0000_0020;
+pub const FILE_NOTIFY_CHANGE_CREATION: DWORD = 0x0000_0040;
+pub const FILE_NOTIFY_CHANGE_SECURITY: DWORD = 0x0000_0100;
+
+// `winnt.h` FILE_NOTIFY_INFORMATION.Action values. A rename produces TWO
+// records (OLD_NAME then NEW_NAME). // quirk: SIGEV-45
+pub const FILE_ACTION_ADDED: DWORD = 0x0000_0001;
+pub const FILE_ACTION_REMOVED: DWORD = 0x0000_0002;
+pub const FILE_ACTION_MODIFIED: DWORD = 0x0000_0003;
+pub const FILE_ACTION_RENAMED_OLD_NAME: DWORD = 0x0000_0004;
+pub const FILE_ACTION_RENAMED_NEW_NAME: DWORD = 0x0000_0005;
+
+impl FILE_INFORMATION_CLASS {
+    /// `FileStandardInformation` (`wdm.h`) — `FILE_STANDARD_INFORMATION`
+    /// payload; the DeletePending/Directory probe input. // quirk: SIGEV-47
+    pub const FileStandardInformation: Self = Self(5);
+}
+
+/// `CompareStringOrdinal` "equal" result (`winnls.h`; CSTR_LESS_THAN=1,
+/// CSTR_EQUAL=2, CSTR_GREATER_THAN=3, 0=error).
+pub const CSTR_EQUAL: c_int = 2;
+
+/// `MoveFileExW` dwFlags bit (`winbase.h`).
+pub const MOVEFILE_REPLACE_EXISTING: DWORD = 0x0000_0001;
+
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    /// `ReadDirectoryChangesW` (`winbase.h`). The buffer must be
+    /// DWORD-aligned and at most 64 KiB for network paths; for overlapped
+    /// calls the result arrives only via the OVERLAPPED (`lpBytesReturned`
+    /// is undefined). // quirk: SIGEV-22, SIGEV-23
+    pub fn ReadDirectoryChangesW(
+        hDirectory: HANDLE,
+        lpBuffer: LPVOID,
+        nBufferLength: DWORD,
+        bWatchSubtree: BOOL,
+        dwNotifyFilter: DWORD,
+        lpBytesReturned: *mut DWORD,
+        lpOverlapped: *mut OVERLAPPED,
+        lpCompletionRoutine: *mut c_void,
+    ) -> BOOL;
+    /// `GetShortPathNameW` (`fileapi.h`). Two-call sizing: a too-small
+    /// buffer returns the required size INCLUDING the NUL; success returns
+    /// chars written EXCLUDING it. Fails legitimately on volumes with 8.3
+    /// generation disabled. // quirk: SIGEV-29, SIGEV-33
+    pub fn GetShortPathNameW(
+        lpszLongPath: LPCWSTR,
+        lpszShortPath: LPWSTR,
+        cchBuffer: DWORD,
+    ) -> DWORD;
+    /// `GetLongPathNameW` (`fileapi.h`). Same two-call size convention as
+    /// `GetShortPathNameW`; resolves against the live filesystem, so it
+    /// fails for paths that no longer exist. // quirk: SIGEV-33
+    pub fn GetLongPathNameW(
+        lpszShortPath: LPCWSTR,
+        lpszLongPath: LPWSTR,
+        cchBuffer: DWORD,
+    ) -> DWORD;
+    /// `CompareStringOrdinal` (`stringapiset.h`) — binary comparison via the
+    /// OS upcase table when bIgnoreCase is set, which matches kernel/NTFS
+    /// case folding (unlike CRT `_wcsnicmp`'s locale folding).
+    /// // quirk: SIGEV-31
+    pub fn CompareStringOrdinal(
+        lpString1: LPCWSTR,
+        cchCount1: c_int,
+        lpString2: LPCWSTR,
+        cchCount2: c_int,
+        bIgnoreCase: BOOL,
+    ) -> c_int;
+    /// `MoveFileExW` (`winbase.h`).
+    pub fn MoveFileExW(lpExistingFileName: LPCWSTR, lpNewFileName: LPCWSTR, dwFlags: DWORD)
+    -> BOOL;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// bun_iocp process engine (src/iocp/process.rs) — spawn/wait/kill externs
+// and constants. Values from SDK 10.0.26100 winbase.h / winnt.h /
+// processthreadsapi.h / processenv.h.
+// ──────────────────────────────────────────────────────────────────────────
+
+// `CreateProcessW` dwCreationFlags (`winbase.h`).
+pub const CREATE_SUSPENDED: DWORD = 0x0000_0004;
+/// `DETACHED_PROCESS` — child gets no inherited console. Deliberately paired
+/// with `CREATE_NEW_PROCESS_GROUP`, never `CREATE_BREAKAWAY_FROM_JOB` (which
+/// fails the spawn under no-breakaway job control). // quirk: PROC-40
+pub const DETACHED_PROCESS: DWORD = 0x0000_0008;
+pub const CREATE_NEW_PROCESS_GROUP: DWORD = 0x0000_0200;
+/// Without this flag lpEnvironment is parsed as ANSI and the child gets
+/// mojibake. // quirk: PROC-07
+pub const CREATE_UNICODE_ENVIRONMENT: DWORD = 0x0000_0400;
+pub const EXTENDED_STARTUPINFO_PRESENT: DWORD = 0x0008_0000;
+/// Prevents console-subsystem children from getting a console AT ALL —
+/// breaks children that inherit the parent console's fds. // quirk: PROC-39
+pub const CREATE_NO_WINDOW: DWORD = 0x0800_0000;
+
+// `STARTUPINFOW.dwFlags` / `wShowWindow` (`winbase.h` / `winuser.h`).
+pub const STARTF_USESHOWWINDOW: DWORD = 0x0000_0001;
+pub const SW_HIDE: WORD = 0;
+pub const SW_SHOWDEFAULT: WORD = 10;
+
+/// `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE` (`winbase.h`, Win10 1809+) —
+/// ProcThreadAttributeValue(22, FALSE, TRUE, FALSE).
+pub const PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE: usize = 0x0002_0016;
+
+/// `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` (`winbase.h`) —
+/// ProcThreadAttributeHandleList(2) | PROC_THREAD_ATTRIBUTE_INPUT(0x20000).
+/// Restricts bInheritHandles=TRUE to exactly the listed handles.
+/// // quirk: PROC-33
+pub const PROC_THREAD_ATTRIBUTE_HANDLE_LIST: DWORD_PTR = 0x0002_0002;
+
+// `JOBOBJECT_BASIC_LIMIT_INFORMATION.LimitFlags` bits (`winnt.h`); composes
+// with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` declared above. // quirk: PROC-42
+pub const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION: DWORD = 0x0000_0400;
+pub const JOB_OBJECT_LIMIT_BREAKAWAY_OK: DWORD = 0x0000_0800;
+pub const JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK: DWORD = 0x0000_1000;
+
+/// `STILL_ACTIVE` (`winbase.h`, = STATUS_PENDING & 0x103) —
+/// `GetExitCodeProcess` for a running process; ambiguous with a process that
+/// exited with code 259. // quirk: PROC-53
+pub const STILL_ACTIVE: DWORD = 259;
+
+// `OpenProcess` access rights (`winnt.h`). SYNCHRONIZE is declared above;
+// forgetting it breaks the WaitForSingleObject liveness probes.
+// // quirk: PROC-54
+pub const PROCESS_TERMINATE: ACCESS_MASK = 0x0001;
+pub const PROCESS_QUERY_INFORMATION: ACCESS_MASK = 0x0400;
+
+/// `SetHandleInformation` mask bit (`winbase.h`).
+pub const HANDLE_FLAG_INHERIT: DWORD = 0x0000_0001;
+
+/// `GetFileAttributesW` failure sentinel (`fileapi.h`).
+pub const INVALID_FILE_ATTRIBUTES: DWORD = 0xFFFF_FFFF;
+
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    /// `TerminateProcess` (`processthreadsapi.h`). Fails ACCESS_DENIED on an
+    /// exited-but-handle-open process — same code as a real permissions
+    /// failure; disambiguate with the two-step probe. // quirk: PROC-52
+    pub fn TerminateProcess(hProcess: HANDLE, uExitCode: UINT) -> BOOL;
+    /// `UnregisterWaitEx` (`winbase.h`). With CompletionEvent =
+    /// INVALID_HANDLE_VALUE, blocks until the wait was cancelled or the
+    /// callback completed — the only race-free teardown. // quirk: PROC-46
+    pub fn UnregisterWaitEx(WaitHandle: HANDLE, CompletionEvent: HANDLE) -> BOOL;
+    /// `GetEnvironmentVariableW` (`processenv.h`). Size-probe-then-fill; the
+    /// second call can return MORE than the probe (concurrent mutation) —
+    /// re-check, never trust probe==fill. // quirk: PROC-63, PROC-13
+    pub fn GetEnvironmentVariableW(lpName: LPCWSTR, lpBuffer: LPWSTR, nSize: DWORD) -> DWORD;
+    /// `SetEnvironmentVariableW` (`processenv.h`). Null value deletes.
+    pub fn SetEnvironmentVariableW(lpName: LPCWSTR, lpValue: LPCWSTR) -> BOOL;
+    /// `NeedCurrentDirectoryForExePathW` (`processenv.h`) — consults the
+    /// `NoDefaultCurrentDirectoryInExePath` env var; gates the cwd-before-
+    /// PATH search step. // quirk: PROC-18
+    pub fn NeedCurrentDirectoryForExePathW(ExeName: LPCWSTR) -> BOOL;
+    /// `DeleteProcThreadAttributeList` (`processthreadsapi.h`).
+    pub fn DeleteProcThreadAttributeList(lpAttributeList: *mut u8);
+    /// `GetStartupInfoW` (`processenv.h`) — cannot fail; yields OUR inherited
+    /// lpReserved2 blob, which must be verified before walking.
+    /// // quirk: PROC-35
+    pub fn GetStartupInfoW(lpStartupInfo: *mut STARTUPINFOW);
+    /// `SetLastError` (`errhandlingapi.h`). No preconditions.
+    pub safe fn SetLastError(dwErrCode: DWORD);
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// bun_winfs misc engine (src/winfs/fsmisc.rs) — utimes/statfs externs.
+// Values from SDK 10.0.26100 fileapi.h/sysinfoapi.h/ntifs.h.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `FILE_FS_FULL_SIZE_INFORMATION` (`ntifs.h`) — `NtQueryVolumeInformationFile`
+/// (`FileFsFullSizeInformation`) payload. 64-bit allocation-unit counts, so
+/// volumes with more than 2^32 clusters report correctly; `CallerAvailable`
+/// respects per-user NTFS quotas while `ActualAvailable` is the raw free
+/// count. // quirk: FSMETA-44, FSMETA-45
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct FILE_FS_FULL_SIZE_INFORMATION {
+    pub TotalAllocationUnits: LARGE_INTEGER,
+    pub CallerAvailableAllocationUnits: LARGE_INTEGER,
+    pub ActualAvailableAllocationUnits: LARGE_INTEGER,
+    pub SectorsPerAllocationUnit: ULONG,
+    pub BytesPerSector: ULONG,
+}
+
+const _: () = assert!(core::mem::size_of::<FILE_FS_FULL_SIZE_INFORMATION>() == 32);
+
+impl FS_INFORMATION_CLASS {
+    pub const FileFsFullSizeInformation: Self = Self(7);
+}
+
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    /// `SetFileTime` (`fileapi.h`) — needs `FILE_WRITE_ATTRIBUTES` on the
+    /// handle; a NULL timestamp pointer natively means "leave unchanged"
+    /// (the perfect UTIME_OMIT match). // quirk: FSMETA-30, FSMETA-31
+    pub fn SetFileTime(
+        hFile: HANDLE,
+        lpCreationTime: *const FILETIME,
+        lpLastAccessTime: *const FILETIME,
+        lpLastWriteTime: *const FILETIME,
+    ) -> BOOL;
+    /// `GetSystemTimeAsFileTime` (`sysinfoapi.h`). Cannot fail.
+    pub fn GetSystemTimeAsFileTime(lpSystemTimeAsFileTime: *mut FILETIME);
+    /// `GetDiskFreeSpaceExW` (`fileapi.h`) — byte-granular volume totals.
+    /// Out-params are `ULARGE_INTEGER` (plain u64 here); any may be null.
+    pub fn GetDiskFreeSpaceExW(
+        lpDirectoryName: LPCWSTR,
+        lpFreeBytesAvailableToCaller: *mut u64,
+        lpTotalNumberOfBytes: *mut u64,
+        lpTotalNumberOfFreeBytes: *mut u64,
+    ) -> BOOL;
 }

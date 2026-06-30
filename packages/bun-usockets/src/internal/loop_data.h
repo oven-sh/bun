@@ -56,7 +56,6 @@ struct us_internal_loop_data_t {
      * uv loop wakes for lsquic's time-driven state. POSIX folds the deadline
      * into the epoll_pwait2 timeout via getTimeout() instead, so this stays
      * NULL there. */
-    struct us_timer_t *quic_timer;
     struct us_socket_group_t *iterator;
     char *recv_buf;
     char *send_buf;

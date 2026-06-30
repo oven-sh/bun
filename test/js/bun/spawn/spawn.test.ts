@@ -625,12 +625,11 @@ describe("spawn unref and kill should not hang", () => {
     expect().pass();
   });
 
-  // process.unref() on Windows does not work ye :(
   it("should not hang after unref", async () => {
     const proc = spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "does-not-hang.js")],
     });
-
+    proc.unref();
     await proc.exited;
     expect().pass();
   });

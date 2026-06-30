@@ -933,7 +933,7 @@ type FdBacking = u64;
 pub struct Fd(pub FdBacking);
 
 // Packed u64 { value: u63, kind: u1 } — fields are LSB-first, so
-// `value` is bits 0..63, `kind` is bit 63. (.system=0, .uv=1)
+// `value` is bits 0..63, `kind` is bit 63. (.system=0, .table=1)
 #[cfg(windows)]
 const FD_KIND_BIT: u64 = 1u64 << 63;
 #[cfg(windows)]
@@ -957,18 +957,24 @@ impl Fd {
     pub const fn from_native(v: FdBacking) -> Fd {
         Fd(v)
     }
-    /// libuv fd (== posix fd on non-windows; uv-tagged on windows).
+    /// The JS-visible numeric fd (== posix fd on non-windows; a table index
+    /// on windows). Callers validate non-negative before constructing.
     #[inline]
-    pub const fn from_uv(v: i32) -> Fd {
+    pub const fn from_js_fd(v: i32) -> Fd {
         #[cfg(windows)]
-        // kind=.uv (bit 63 = 1); uv_file is i32, store sign-extended into low 63.
         {
-            Fd(FD_KIND_BIT | ((v as i64 as u64) & FD_VALUE_MASK))
+            Fd::from_table_index(v as u32)
         }
         #[cfg(not(windows))]
         {
             Fd(v)
         }
+    }
+    /// kind=.table (bit 63 = 1); the payload indexes the process fd table.
+    #[cfg(windows)]
+    #[inline]
+    pub const fn from_table_index(idx: u32) -> Fd {
+        Fd(FD_KIND_BIT | (idx as u64))
     }
     #[cfg(windows)]
     #[inline]
@@ -978,9 +984,10 @@ impl Fd {
         Fd((h as u64) & FD_VALUE_MASK)
     }
     /// Native OS file descriptor (`fd_t`). On POSIX this is just the backing
-    /// `c_int`. On Windows, when `kind == Uv`, calls `uv_get_osfhandle` to
-    /// obtain the underlying HANDLE — so the returned value may not be safely
-    /// closed via libc; use `FdExt::close()` instead.
+    /// `c_int`. On Windows, when `kind == Table`, resolves the index through
+    /// the process fd table — a dead slot yields `INVALID_HANDLE_VALUE` so
+    /// `native()` stays infallible and downstream syscalls report EBADF; the
+    /// returned HANDLE must not be closed directly, use `FdExt::close()`.
     #[cfg(not(windows))]
     #[inline]
     pub const fn native(self) -> FdNative {
@@ -991,7 +998,10 @@ impl Fd {
     pub fn native(self) -> FdNative {
         match self.decode_windows() {
             DecodeWindows::Windows(handle) => handle,
-            DecodeWindows::Uv(file_number) => fd::uv_get_osfhandle(file_number),
+            DecodeWindows::Table(idx) => match bun_fdtable::the().get(idx) {
+                Ok(h) => h,
+                Err(_) => usize::MAX as FdNative, // INVALID_HANDLE_VALUE
+            },
         }
     }
     /// Borrow this `Fd` as a [`std::os::fd::BorrowedFd`] for handing to APIs
@@ -1019,37 +1029,24 @@ impl Fd {
         // borrow cannot outlive `&self`.
         unsafe { std::os::fd::BorrowedFd::borrow_raw(raw) }
     }
-    /// libuv c_int file number. On POSIX this equals `native()`. On Windows,
-    /// when kind=uv this extracts the stored uv_file; when kind=system this
-    /// maps stdio handles to 0/1/2 (checking both the cached statics and the
-    /// live `GetStdHandle` result) and **panics** otherwise — converting an
-    /// arbitrary HANDLE to a uv fd makes closing impossible. The supplier
-    /// should call `make_lib_uv_owned()` near where `open()` was called.
+    /// The JS-visible numeric fd. On POSIX this equals `native()`. On
+    /// Windows, kind=table extracts the table index; kind=system **panics**
+    /// unless it is a live std handle — a raw HANDLE has no number JS can
+    /// close. The supplier should call `make_table_owned()` near where
+    /// `open()` was called.
     #[cfg(not(windows))]
     #[inline]
-    pub const fn uv(self) -> i32 {
+    pub const fn js_fd(self) -> i32 {
         self.0
     }
     #[cfg(windows)]
-    pub fn uv(self) -> i32 {
+    pub fn js_fd(self) -> i32 {
         match self.decode_windows() {
-            DecodeWindows::Uv(v) => v,
+            DecodeWindows::Table(idx) => idx as i32,
             DecodeWindows::Windows(handle) => {
-                // `.stdin()`/`.stdout()`/`.stderr()` hand out the cached
-                // `WINDOWS_CACHED_STD{IN,OUT,ERR}` (snapshotted at startup),
-                // so round-trip against those first. Comparing only against
-                // the live `GetStdHandle` result panics if the process std
-                // handle was swapped after startup via `SetStdHandle`,
-                // `AllocConsole`, `AttachConsole`, etc.
-                if Some(self) == fd::WINDOWS_CACHED_STDIN.get().copied() {
-                    return 0;
-                }
-                if Some(self) == fd::WINDOWS_CACHED_STDOUT.get().copied() {
-                    return 1;
-                }
-                if Some(self) == fd::WINDOWS_CACHED_STDERR.get().copied() {
-                    return 2;
-                }
+                // A System Fd wrapping a live std handle is the same
+                // descriptor the table reserved at init — map it to its
+                // reserved slot.
                 if fd::is_stdio_handle(fd::STD_INPUT_HANDLE, handle) {
                     return 0;
                 }
@@ -1060,8 +1057,8 @@ impl Fd {
                     return 2;
                 }
                 panic!(
-                    "Cast bun.FD.uv({}) makes closing impossible!\n\n\
-                     The supplier of fd FD should call 'FD.makeLibUVOwned',\n\
+                    "Cast bun.FD.js_fd({}) makes closing impossible!\n\n\
+                     The supplier of fd FD should call 'FD.make_table_owned',\n\
                      probably where open() was called.",
                     self,
                 );
@@ -1090,29 +1087,22 @@ impl Fd {
         Fd(libc::AT_FDCWD)
     }
 
+    // The fd table reserves slots 0/1/2 for stdio at init, so the JS
+    // contract (process.stdin.fd === 0, …) holds by construction.
     #[cfg(windows)]
     #[inline]
-    pub fn stdin() -> Fd {
-        fd::WINDOWS_CACHED_STDIN
-            .get()
-            .copied()
-            .unwrap_or(Fd::INVALID)
+    pub const fn stdin() -> Fd {
+        Fd::from_table_index(0)
     }
     #[cfg(windows)]
     #[inline]
-    pub fn stdout() -> Fd {
-        fd::WINDOWS_CACHED_STDOUT
-            .get()
-            .copied()
-            .unwrap_or(Fd::INVALID)
+    pub const fn stdout() -> Fd {
+        Fd::from_table_index(1)
     }
     #[cfg(windows)]
     #[inline]
-    pub fn stderr() -> Fd {
-        fd::WINDOWS_CACHED_STDERR
-            .get()
-            .copied()
-            .unwrap_or(Fd::INVALID)
+    pub const fn stderr() -> Fd {
+        Fd::from_table_index(2)
     }
     #[cfg(windows)]
     #[inline]
@@ -1128,19 +1118,18 @@ impl Fd {
     }
     #[cfg(windows)]
     pub fn is_stdio(self) -> bool {
-        // Cache check first (matches `to_uv_index`): the cache reflects what the
-        // process saw at startup, even after `SetStdHandle`/`AllocConsole`.
-        if self == Self::stdin() || self == Self::stdout() || self == Self::stderr() {
-            return true;
+        match self.decode_windows() {
+            DecodeWindows::Table(idx) => idx <= 2,
+            // A raw System handle counts when it IS a live std handle.
+            DecodeWindows::Windows(handle) => {
+                fd::is_stdio_handle(fd::STD_INPUT_HANDLE, handle)
+                    || fd::is_stdio_handle(fd::STD_OUTPUT_HANDLE, handle)
+                    || fd::is_stdio_handle(fd::STD_ERROR_HANDLE, handle)
+            }
         }
-        // Cache may not be populated yet; fall back to a live `GetStdHandle`.
-        let handle = self.native();
-        fd::is_stdio_handle(fd::STD_INPUT_HANDLE, handle)
-            || fd::is_stdio_handle(fd::STD_OUTPUT_HANDLE, handle)
-            || fd::is_stdio_handle(fd::STD_ERROR_HANDLE, handle)
     }
 
-    // ── Kind tag (Windows: bit 63 = uv/system) ───────────────────────────
+    // ── Kind tag (Windows: bit 63 = table/system) ────────────────────────
     #[cfg(not(windows))]
     #[inline]
     pub const fn kind(self) -> FdKind {
@@ -1152,7 +1141,7 @@ impl Fd {
         if self.0 & FD_KIND_BIT == 0 {
             FdKind::System
         } else {
-            FdKind::Uv
+            FdKind::Table
         }
     }
 
@@ -1173,21 +1162,19 @@ impl Fd {
                 let h = if n == 0 { usize::MAX } else { n as usize };
                 DecodeWindows::Windows(h as *mut core::ffi::c_void)
             }
-            // Direct extract — do NOT recurse into self.uv() (which calls decode_windows).
-            FdKind::Uv => DecodeWindows::Uv((self.0 & FD_VALUE_MASK) as u32 as i32),
+            FdKind::Table => DecodeWindows::Table((self.0 & FD_VALUE_MASK) as u32),
         }
     }
 
-    /// On Windows, convert a system-kind
-    /// `Fd` (raw `HANDLE`) into a libuv-kind `Fd` (CRT `_open_osfhandle`-backed
-    /// `int`) so libuv `uv_fs_*` APIs can consume it. uv-kind passes through.
-    /// On POSIX this is the identity (libuv fd == posix fd).
+    /// On Windows, adopt a system-kind `Fd` (raw `HANDLE`) into the process
+    /// fd table so it gains a JS-visible number and POSIX close semantics.
+    /// Table-kind passes through; on POSIX this is the identity.
     ///
-    /// Returns `Err(())` when
-    /// `uv_open_osfhandle` returns `-1`; the caller decides whether to close
-    /// the original handle (see `make_libuv_owned_for_syscall`).
+    /// On `Ok`, table ownership of the handle begins (close via
+    /// `FdExt::close()`). On `Err` the table already closed the handle
+    /// (mint's leak-impossible contract) and the raw Win32 code is returned.
     #[inline]
-    pub fn make_libuv_owned(self) -> Result<Fd, ()> {
+    pub fn make_table_owned(self) -> Result<Fd, u32> {
         debug_assert!(self.is_valid());
         #[cfg(not(windows))]
         {
@@ -1195,13 +1182,18 @@ impl Fd {
         }
         #[cfg(windows)]
         match self.kind() {
-            FdKind::Uv => Ok(self),
+            FdKind::Table => Ok(self),
             FdKind::System => {
-                let crt_fd = fd::uv_open_osfhandle(self.native());
-                if crt_fd == -1 {
-                    Err(())
-                } else {
-                    Ok(Fd::from_uv(crt_fd))
+                let handle = self.native();
+                // SAFETY: `is_valid` asserted above; the caller owns the
+                // handle until mint succeeds (then the table does).
+                let kind = unsafe { bun_fdtable::classify_handle(handle) }.map_err(|e| e.0 as u32)?;
+                // SAFETY: same ownership contract; on Err the table already
+                // closed the handle (leak-impossible mint).
+                match unsafe { bun_fdtable::the().mint(handle, kind, bun_fdtable::FdFlags::ADOPTED) }
+                {
+                    Ok(idx) => Ok(Fd::from_table_index(idx)),
+                    Err(e) => Err(e.0 as u32),
                 }
             }
         }
@@ -1217,7 +1209,7 @@ impl Fd {
         {
             match self.kind() {
                 FdKind::System => self.value_as_system() != 0, // INVALID_VALUE = minInt(u63) = 0
-                FdKind::Uv => true,
+                FdKind::Table => true,
             }
         }
     }
@@ -1264,7 +1256,7 @@ impl Fd {
                         None
                     }
                 }
-                DecodeWindows::Uv(n) => match n {
+                DecodeWindows::Table(n) => match n {
                     0 => Some(Stdio::StdIn),
                     1 => Some(Stdio::StdOut),
                     2 => Some(Stdio::StdErr),
@@ -1293,13 +1285,15 @@ pub enum FdKind {
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum FdKind {
     System = 0,
-    Uv = 1,
+    /// The payload indexes the process fd table (bun_fdtable) — the
+    /// JS-visible numeric fd domain.
+    Table = 1,
 }
 
 #[cfg(windows)]
 pub enum DecodeWindows {
     Windows(*mut core::ffi::c_void),
-    Uv(i32),
+    Table(u32),
 }
 
 #[repr(u8)]
@@ -1445,6 +1439,51 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
     }
 }
 
+/// Shape of a `GetFinalPathNameByHandleW(VOLUME_NAME_DOS)` result, per the
+/// prefix policy of [`rewrite_final_path_prefix`].
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum FinalPathShape {
+    /// `\\?\` drive form (`\\?\C:\x`).
+    Dos,
+    /// `\\?\UNC\` form (case-insensitive `UNC`).
+    Unc,
+    /// Neither prefix — left unchanged so callers choose policy.
+    Other,
+}
+
+/// Classify `p` against the two `GetFinalPathNameByHandleW` prefixes.
+/// Matching only; [`rewrite_final_path_prefix`] applies the rewrite.
+pub fn final_path_shape(p: &[u16]) -> FinalPathShape {
+    const BS: u16 = b'\\' as u16;
+    if !(p.len() >= 4 && p[0] == BS && p[1] == BS && p[2] == b'?' as u16 && p[3] == BS) {
+        return FinalPathShape::Other;
+    }
+    if p.len() >= 8
+        && (p[4] == b'U' as u16 || p[4] == b'u' as u16)
+        && (p[5] == b'N' as u16 || p[5] == b'n' as u16)
+        && (p[6] == b'C' as u16 || p[6] == b'c' as u16)
+        && p[7] == BS
+    {
+        return FinalPathShape::Unc;
+    }
+    FinalPathShape::Dos
+}
+
+/// Canonical in-place final-path prefix rewrite (T0 so [`fd_path_raw_w`] can
+/// share it; the public home is `bun_paths::string_paths`):
+/// `\\?\C:\x` → `C:\x`; `\\?\UNC\srv\sh` → `\\srv\sh` (writes `\` at index 6,
+/// slices from 6); neither shape → input unchanged. // quirk: FSMETA-42
+pub fn rewrite_final_path_prefix(p: &mut [u16]) -> (FinalPathShape, &mut [u16]) {
+    match final_path_shape(p) {
+        FinalPathShape::Dos => (FinalPathShape::Dos, &mut p[4..]),
+        FinalPathShape::Unc => {
+            p[6] = b'\\' as u16;
+            (FinalPathShape::Unc, &mut p[6..])
+        }
+        FinalPathShape::Other => (FinalPathShape::Other, p),
+    }
+}
+
 /// Wide-char fd → path (Windows `GetFinalPathNameByHandleW`). Returns code
 /// units written (>0), -1 on lookup failure,
 /// -2 when the buffer is too small, 0 on
@@ -1477,39 +1516,20 @@ pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
             // Buffer too small.
             return -2;
         }
-        // Strip the `\\?\` prefix if present so callers see a plain DOS path
-        // (matches `bun_sys::windows::GetFinalPathNameByHandle` post-processing).
-        // Work entirely through raw-pointer reads/writes — never form a `&[u16]`
-        // or `&mut [u16]` over `buf` while the memmove runs, or the write through
-        // `buf` would invalidate that borrow's tag under Stacked Borrows.
-        // SAFETY: kernel32 wrote `n` u16s into `buf`; every `.add(i)` below is
-        // bounds-checked against `n` first.
-        let at = |i: usize| -> u16 { unsafe { *buf.add(i) } };
-        let bs = b'\\' as u16;
-        let off: usize =
-            if n >= 4 && at(0) == bs && at(1) == bs && at(2) == b'?' as u16 && at(3) == bs {
-                if n >= 8
-                    && (at(4) == b'U' as u16 || at(4) == b'u' as u16)
-                    && (at(5) == b'N' as u16 || at(5) == b'n' as u16)
-                    && (at(6) == b'C' as u16 || at(6) == b'c' as u16)
-                    && at(7) == bs
-                {
-                    // `\\?\UNC\server\share` → `\\server\share`
-                    // SAFETY: index 6 < n (checked above).
-                    unsafe { *buf.add(6) = bs };
-                    6
-                } else {
-                    // `\\?\C:\...` → `C:\...`
-                    4
-                }
-            } else {
-                0
-            };
+        // Strip the `\\?\` / `\\?\UNC\` prefix so callers see a plain DOS
+        // path (one policy: `rewrite_final_path_prefix`). The temporary
+        // `&mut [u16]` over `buf` ends before the raw-pointer memmove below.
+        // SAFETY: kernel32 wrote `n` initialized u16s into `buf` (n < cap).
+        let off = {
+            let s = unsafe { core::slice::from_raw_parts_mut(buf, n) };
+            let (_, rewritten) = rewrite_final_path_prefix(s);
+            n - rewritten.len()
+        };
         let out_len = n - off;
         if off != 0 {
-            // SAFETY: src = buf+off and dst = buf both derive from the same
-            // raw `*mut u16` provenance (no intervening reference), src > dst,
-            // and `out_len` units fit within the `n` initialized units.
+            // SAFETY: src = buf+off and dst = buf share the raw `*mut u16`
+            // provenance (the slice borrow above has ended), src > dst, and
+            // `out_len` units fit within the `n` initialized units.
             unsafe { core::ptr::copy(buf.add(off), buf, out_len) };
         }
         return out_len as isize;
@@ -1518,6 +1538,56 @@ pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
     {
         let _ = (fd, buf, cap);
         0
+    }
+}
+
+/// Outcome of [`win32_grow_probe`].
+#[cfg(windows)]
+pub enum ProbeResult<'a> {
+    /// The call succeeded; the slice is the written value (chars, excl. NUL).
+    Done(&'a mut [u16]),
+    /// The call returned 0 (caller reads `GetLastError`), or the required
+    /// size kept growing past the retry bound.
+    Failed,
+}
+
+/// Generic Win32 two-call size probe (`GetEnvironmentVariableW`,
+/// `GetLongPathNameW`, `GetCurrentDirectoryW` convention).
+/// `call(buf) -> u32` returns the Win32 DWORD verbatim:
+/// `0` → [`ProbeResult::Failed`] (caller reads `GetLastError`);
+/// `< buf.len()` → done, that many chars written (excl. NUL);
+/// `>= buf.len()` → required size *incl.* NUL → grow `heap` and re-call.
+/// Loops (bounded) because the value can change between calls.
+/// // quirk: SIGEV-33, OS-19
+#[cfg(windows)]
+pub fn win32_grow_probe<'a>(
+    stack: &'a mut [u16],
+    heap: &'a mut Vec<u16>,
+    mut call: impl FnMut(&mut [u16]) -> u32,
+) -> ProbeResult<'a> {
+    // 8 growth rounds is far past any real flapping; on exhaustion fail
+    // rather than loop forever against an adversarial writer.
+    const MAX_ROUNDS: usize = 8;
+    let mut needed = match call(stack) as usize {
+        0 => return ProbeResult::Failed,
+        n if n < stack.len() => return ProbeResult::Done(&mut stack[..n]),
+        n => n,
+    };
+    let mut done = None;
+    for _ in 0..MAX_ROUNDS {
+        heap.resize(needed, 0);
+        match call(heap.as_mut_slice()) as usize {
+            0 => return ProbeResult::Failed,
+            n if n < heap.len() => {
+                done = Some(n);
+                break;
+            }
+            n => needed = n,
+        }
+    }
+    match done {
+        Some(n) => ProbeResult::Done(&mut heap[..n]),
+        None => ProbeResult::Failed,
     }
 }
 
@@ -1547,42 +1617,17 @@ impl core::fmt::Display for Fd {
         {
             match fd.decode_windows() {
                 DecodeWindows::Windows(_) => write!(w, "{}[handle]", fd.value_as_system()),
-                DecodeWindows::Uv(n) => write!(w, "{}[libuv]", n),
+                DecodeWindows::Table(n) => write!(w, "{}[table]", n),
             }
         }
     }
 }
 
-/// Fd module-level statics + Windows libuv/PEB FFI shims (T0 → no
-/// crate dep, just `extern` symbols; libuv is linked into the final binary).
+/// Windows PEB/stdio handle helpers (T0 → no crate dep).
 pub mod fd {
-    use super::Fd;
     #[cfg(windows)]
-    use core::ffi::{c_int, c_void};
+    use core::ffi::c_void;
 
-    // Written once in windows_stdio::init() during single-threaded startup
-    // (S015: write-once → `Once`; readers fall back to `Fd::INVALID`).
-    pub static WINDOWS_CACHED_STDIN: crate::Once<Fd> = crate::Once::new();
-    pub static WINDOWS_CACHED_STDOUT: crate::Once<Fd> = crate::Once::new();
-    pub static WINDOWS_CACHED_STDERR: crate::Once<Fd> = crate::Once::new();
-    #[cfg(debug_assertions)]
-    pub static WINDOWS_CACHED_FD_SET: core::sync::atomic::AtomicBool =
-        core::sync::atomic::AtomicBool::new(false);
-
-    #[cfg(windows)]
-    unsafe extern "C" {
-        /// libuv: convert C-runtime fd → OS HANDLE. By-value `c_int` in, opaque
-        /// HANDLE out — wraps `_get_osfhandle`, which validates the fd and
-        /// returns `INVALID_HANDLE_VALUE` on a bad index. No memory-safety
-        /// preconditions.
-        pub safe fn uv_get_osfhandle(fd: c_int) -> *mut c_void;
-        /// libuv: `_open_osfhandle(os_fd, 0)` — wraps a HANDLE in a CRT fd so
-        /// libuv `uv_fs_*` (which speak `uv_file == int`) can use it. Returns
-        /// `-1` on `EMFILE` (CRT fd table full) or invalid handle. The `*mut
-        /// c_void` is an opaque kernel HANDLE, never dereferenced; no
-        /// memory-safety preconditions.
-        pub safe fn uv_open_osfhandle(os_fd: *mut c_void) -> c_int;
-    }
     #[cfg(windows)]
     pub use crate::windows_sys::{STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
     #[cfg(windows)]
@@ -4376,24 +4421,17 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
         if n >= wbuf.0.len() {
             return Err(crate::err!(NameTooLong));
         }
-        // WTF-16 → WTF-8 into the caller's `PathBuffer`. Surrogate pairs are
-        // combined; unpaired surrogates are encoded as 3-byte WTF-8.
+        // WTF-16 → WTF-8 into the caller's `PathBuffer` (surrogate pairs
+        // combine; unpaired surrogates pass through as 3-byte WTF-8),
+        // reserving the last byte for the NUL.
         let src = &wbuf.0[..n];
-        let out = &mut buf.0;
-        let mut wi = 0usize;
-        let mut bi = 0usize;
-        while wi < src.len() {
-            let (cp, adv) = crate::strings::decode_wtf16_raw(&src[wi..]);
-            wi += adv as usize;
-            let mut tmp = [0u8; 4];
-            let nb = crate::strings::encode_wtf8_rune(&mut tmp, cp);
-            if bi + nb >= out.len() {
-                return Err(crate::err!(NameTooLong));
-            }
-            out[bi..bi + nb].copy_from_slice(&tmp[..nb]);
-            bi += nb;
+        let last = buf.0.len() - 1;
+        let r = crate::strings::copy_wtf16_into_wtf8(&mut buf.0[..last], src);
+        if (r.read as usize) < src.len() {
+            return Err(crate::err!(NameTooLong));
         }
-        out[bi] = 0;
+        let bi = r.written as usize;
+        buf.0[bi] = 0;
         Ok(ZStr::from_buf(&buf.0[..], bi))
     }
     #[cfg(not(any(unix, windows)))]

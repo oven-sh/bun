@@ -3101,7 +3101,7 @@ impl VirtualMachine {
     }
 
     /// Returns this VM's libuv event loop handle (must already be initialized).
-    pub fn uv_loop(&self) -> *mut Async::Loop {
+    pub fn platform_loop(&self) -> *mut Async::Loop {
         #[cfg(debug_assertions)]
         {
             return self
@@ -3203,7 +3203,7 @@ impl VirtualMachine {
                 .ok()
                 .filter(|&n| n >= 0)
             {
-                Some(fd) => self.init_ipc_instance(bun_sys::Fd::from_uv(fd), mode),
+                Some(fd) => self.init_ipc_instance(bun_sys::Fd::from_js_fd(fd), mode),
                 None => bun_core::warn!(
                     "Failed to parse IPC channel number '{}'",
                     bstr::BStr::new(&fd_s[..])

@@ -64,12 +64,26 @@ pub fn is_windows_absolute_path_missing_drive_letter<T: Ch + From<u8>>(chars: &[
     bun_core::strings::is_windows_absolute_path_missing_drive_letter(chars)
 }
 
+/// One final-path prefix policy: `\\?\C:\x` → `C:\x`, `\\?\UNC\srv` → `\\srv`
+/// (case-insensitive `UNC`), neither shape → unchanged. Canonical body lives
+/// in `bun_core` so `fd_path_raw_w` can share it. // quirk: FSMETA-42
+pub use bun_core::{FinalPathShape, final_path_shape, rewrite_final_path_prefix};
+
 pub fn from_w_path<'a>(buf: &'a mut [u8], utf16: &[u16]) -> &'a ZStr {
     debug_assert!(!buf.is_empty());
-    let to_copy = strings::trim_prefix_comptime::<u16>(utf16, &windows::LONG_PATH_PREFIX);
+    // Prefix trim per `final_path_shape`; the Unc rewrite (`\` over the `C` of
+    // `UNC`) is expressed borrow-only as one lead byte + copy from `utf16[7]`
+    // (always `\`). WTF-8-preserving transcode. // quirk: FSIO-40, FSMETA-42
+    let (lead, to_copy): (&[u8], &[u16]) = match final_path_shape(utf16) {
+        FinalPathShape::Dos => (b"", &utf16[4..]),
+        FinalPathShape::Unc => (b"\\", &utf16[7..]),
+        FinalPathShape::Other => (b"", utf16),
+    };
     let last = buf.len() - 1;
-    let encode_into_result = strings::copy_utf16_into_utf8(&mut buf[..last], to_copy);
-    let written = encode_into_result.written as usize;
+    let lead_n = lead.len().min(last);
+    buf[..lead_n].copy_from_slice(&lead[..lead_n]);
+    let encode_into_result = strings::copy_wtf16_into_wtf8(&mut buf[lead_n..last], to_copy);
+    let written = lead_n + encode_into_result.written as usize;
     debug_assert!(written < buf.len());
     buf[written] = 0;
     ZStr::from_buf(buf, written)
@@ -336,11 +350,70 @@ pub fn to_w_dir_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
 /// safe to an empty path — such input merely gets a generic syscall error
 /// instead of the precise `ENAMETOOLONG`.
 pub fn fits_in_wide_path_buffer(utf8: &[u8]) -> bool {
+    fits_in_wide_buffer(utf8, crate::PATH_MAX_WIDE)
+}
+
+/// [`fits_in_wide_path_buffer`] against an arbitrary buffer size: the budget
+/// is `buf_units` minus the converter overhead (longest prefix `\??\UNC\`,
+/// trailing slash, NUL).
+fn fits_in_wide_buffer(utf8: &[u8], buf_units: usize) -> bool {
     const OVERHEAD: usize = windows::NT_UNC_OBJECT_PREFIX.len() + 2;
-    const MAX_UNITS: usize = crate::PATH_MAX_WIDE - OVERHEAD;
-    utf8.len() <= MAX_UNITS
-        || (utf8.len() <= 3 * MAX_UNITS
-            && strings::element_length_utf8_into_utf16(utf8) <= MAX_UNITS)
+    let max_units = buf_units.saturating_sub(OVERHEAD);
+    utf8.len() <= max_units
+        || (utf8.len() <= 3 * max_units
+            && strings::element_length_utf8_into_utf16(utf8) <= max_units)
+}
+
+/// Why a fallible wide-path conversion refused the input.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum WidePathError {
+    /// The UTF-16 form cannot fit the wide-path budget — the smaller of
+    /// `PATH_MAX_WIDE` and the caller's buffer, minus converter overhead.
+    TooLong,
+    /// Genuinely malformed WTF-8 (stray continuation byte, truncated tail,
+    /// overlong, >U+10FFFF). Lone surrogates are valid WTF-8 and convert.
+    Invalid,
+}
+
+/// Shared guard for the fallible converters: strict WTF-8 validation first
+/// (malformed paths error instead of converting with U+FFFD), then the fit
+/// check, so the infallible converters' silent-`""` fail-safe is unreachable
+/// behind an `Ok`. Validating first also makes the simdutf length estimate in
+/// [`fits_in_wide_buffer`] exact.
+fn check_wide_path(utf8: &[u8], wbuf_units: usize) -> Result<(), WidePathError> {
+    if !strings::is_valid_wtf8(utf8) {
+        return Err(WidePathError::Invalid);
+    }
+    if !fits_in_wide_buffer(
+        without_nt_prefix(utf8),
+        wbuf_units.min(crate::PATH_MAX_WIDE),
+    ) {
+        return Err(WidePathError::TooLong);
+    }
+    Ok(())
+}
+
+/// Fallible [`to_kernel32_path`]: fuses the two-step
+/// [`fits_in_wide_path_buffer`] guard + silent-empty conversion into one call
+/// that returns [`WidePathError::TooLong`] instead of `""`. Lone surrogates
+/// (WTF-8) remain valid input. // quirk: FSIO-41, FSIO-42
+pub fn try_to_kernel32_path<'a>(
+    wbuf: &'a mut [u16],
+    utf8: &[u8],
+) -> Result<&'a WStr, WidePathError> {
+    check_wide_path(utf8, wbuf.len())?;
+    let w = to_kernel32_path(wbuf, utf8);
+    debug_assert!(utf8.is_empty() || w.len() > 0);
+    Ok(w)
+}
+
+/// Fallible [`to_nt_path`]; see [`try_to_kernel32_path`].
+/// // quirk: FSIO-41, FSIO-42
+pub fn try_to_nt_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> Result<&'a WStr, WidePathError> {
+    check_wide_path(utf8, wbuf.len())?;
+    let w = to_nt_path(wbuf, utf8);
+    debug_assert!(utf8.is_empty() || w.len() > 0);
+    Ok(w)
 }
 
 pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
@@ -618,6 +691,156 @@ mod tests {
             .sum()
     }
 
+    /// Scalar `bun_highway::index_of_char` — backs
+    /// `strings::contains_char_t` in `normalize_slashes_only` (the
+    /// `to_nt_path` success path). Returns `haystack_len` when absent.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_index_of_char(
+        haystack: *const u8,
+        haystack_len: usize,
+        needle: u8,
+    ) -> usize {
+        // SAFETY: test stub; callers pass a valid (ptr, len) input pair.
+        let input = unsafe { core::slice::from_raw_parts(haystack, haystack_len) };
+        input
+            .iter()
+            .position(|&b| b == needle)
+            .unwrap_or(haystack_len)
+    }
+
+    /// Scalar `simdutf::validate::with_errors::ascii` — backs
+    /// `first_non_ascii_usize` for >32-byte inputs (the WTF-8 validator's
+    /// ASCII fast path). Error position in `count`, like the real one.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn simdutf__validate_ascii_with_errors(
+        buf: *const u8,
+        len: usize,
+    ) -> SIMDUTFResult {
+        // SAFETY: test stub; callers pass a valid (ptr, len) input pair.
+        let input = unsafe { core::slice::from_raw_parts(buf, len) };
+        match input.iter().position(|&b| b >= 0x80) {
+            None => SIMDUTFResult {
+                status: Status::SUCCESS,
+                count: len,
+            },
+            Some(i) => SIMDUTFResult {
+                status: Status::TOO_LARGE,
+                count: i,
+            },
+        }
+    }
+
+    /// Scalar `simdutf::convert::utf16::to::utf8::with_errors::le`: writes
+    /// UTF-8 for the valid prefix; an unpaired surrogate yields SURROGATE +
+    /// its input-unit position (the WTF-8 fallbacks then re-encode from
+    /// scratch). Success `count` is bytes written.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn simdutf__convert_utf16le_to_utf8_with_errors(
+        buf: *const u16,
+        len: usize,
+        utf8_output: *mut u8,
+    ) -> SIMDUTFResult {
+        // SAFETY: test stub; callers pass a valid (ptr, len) input pair.
+        let input = unsafe { core::slice::from_raw_parts(buf, len) };
+        let mut written = 0usize;
+        let mut i = 0usize;
+        while i < len {
+            let c0 = input[i];
+            let (cp, adv): (u32, usize) = if (0xD800..0xDC00).contains(&c0) {
+                match input.get(i + 1) {
+                    Some(&c1) if (0xDC00..0xE000).contains(&c1) => (
+                        0x10000 + ((u32::from(c0) - 0xD800) << 10) + (u32::from(c1) - 0xDC00),
+                        2,
+                    ),
+                    _ => {
+                        return SIMDUTFResult {
+                            status: Status::SURROGATE,
+                            count: i,
+                        };
+                    }
+                }
+            } else if (0xDC00..0xE000).contains(&c0) {
+                return SIMDUTFResult {
+                    status: Status::SURROGATE,
+                    count: i,
+                };
+            } else {
+                (u32::from(c0), 1)
+            };
+            // SAFETY: test stub mirroring simdutf — the caller guarantees
+            // output capacity for the full conversion before calling (that is
+            // the invariant under test).
+            unsafe {
+                if cp < 0x80 {
+                    utf8_output.add(written).write(cp as u8);
+                    written += 1;
+                } else if cp < 0x800 {
+                    utf8_output.add(written).write(0xC0 | (cp >> 6) as u8);
+                    utf8_output.add(written + 1).write(0x80 | (cp & 0x3F) as u8);
+                    written += 2;
+                } else if cp < 0x10000 {
+                    utf8_output.add(written).write(0xE0 | (cp >> 12) as u8);
+                    utf8_output
+                        .add(written + 1)
+                        .write(0x80 | ((cp >> 6) & 0x3F) as u8);
+                    utf8_output.add(written + 2).write(0x80 | (cp & 0x3F) as u8);
+                    written += 3;
+                } else {
+                    utf8_output.add(written).write(0xF0 | (cp >> 18) as u8);
+                    utf8_output
+                        .add(written + 1)
+                        .write(0x80 | ((cp >> 12) & 0x3F) as u8);
+                    utf8_output
+                        .add(written + 2)
+                        .write(0x80 | ((cp >> 6) & 0x3F) as u8);
+                    utf8_output.add(written + 3).write(0x80 | (cp & 0x3F) as u8);
+                    written += 4;
+                }
+            }
+            i += adv;
+        }
+        SIMDUTFResult {
+            status: Status::SUCCESS,
+            count: written,
+        }
+    }
+
+    /// Scalar `simdutf::length::utf8::from::utf16::le_with_replacement`:
+    /// exact UTF-8 length charging 3 bytes per unpaired surrogate — the same
+    /// count both U+FFFD replacement and WTF-8 passthrough produce.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn simdutf__utf8_length_from_utf16le_with_replacement(
+        input: *const u16,
+        length: usize,
+    ) -> usize {
+        // SAFETY: test stub; callers pass a valid (ptr, len) input pair.
+        let input = unsafe { core::slice::from_raw_parts(input, length) };
+        let mut n = 0usize;
+        let mut i = 0usize;
+        while i < input.len() {
+            let c0 = input[i];
+            if (0xD800..0xDC00).contains(&c0)
+                && input
+                    .get(i + 1)
+                    .is_some_and(|&c1| (0xDC00..0xE000).contains(&c1))
+            {
+                n += 4;
+                i += 2;
+            } else if c0 < 0x80 {
+                n += 1;
+                i += 1;
+            } else if c0 < 0x800 {
+                n += 2;
+                i += 1;
+            } else {
+                // BMP scalar or unpaired surrogate: 3 bytes either way.
+                n += 3;
+                i += 1;
+            }
+        }
+        n
+    }
+
     /// The u16 length of the buffer `PathLike::os_path_kernel32` uses on
     /// Windows: the 98302-byte (3 × PATH_MAX_WIDE + 1) `PathBuffer`
     /// reinterpreted as `[u16]`.
@@ -719,6 +942,260 @@ mod tests {
         let result = bun_core::strings::convert_utf8_to_utf16_in_buffer_z(&mut wbuf, &[b'a'; 16]);
         assert_eq!(result.len(), 0);
         assert_eq!(wbuf[0], 0);
+    }
+
+    #[test]
+    fn lone_surrogate_round_trips_through_wide_and_back() {
+        // quirk: FSIO-40
+        // WTF-8 U+D800 (ED A0 80) → UTF-16 0xD800 → identical WTF-8 back.
+        let wtf8: &[u8] = b"C:\\a\xED\xA0\x80b";
+        let mut wbuf = [0u16; 64];
+        let wide = try_to_kernel32_path(&mut wbuf, wtf8).unwrap();
+        let prefix: Vec<u16> = "\\\\?\\C:\\a".encode_utf16().collect();
+        assert_eq!(&wide.as_slice()[..8], &prefix[..]);
+        assert_eq!(wide.as_slice()[8], 0xD800);
+        assert_eq!(wide.as_slice()[9], u16::from(b'b'));
+        assert_eq!(wide.len(), 10);
+
+        let mut buf = [0u8; 64];
+        let back = from_w_path(&mut buf, wide.as_slice());
+        assert_eq!(back.as_bytes(), wtf8);
+    }
+
+    #[test]
+    fn rewrite_final_path_prefix_shapes() {
+        // quirk: FSMETA-42
+        let w = |s: &str| s.encode_utf16().collect::<Vec<u16>>();
+
+        let mut dos = w("\\\\?\\C:\\x");
+        let (shape, out) = rewrite_final_path_prefix(&mut dos);
+        assert_eq!(shape, FinalPathShape::Dos);
+        assert_eq!(&out[..], &w("C:\\x")[..]);
+
+        let mut unc = w("\\\\?\\UNC\\srv\\sh");
+        let (shape, out) = rewrite_final_path_prefix(&mut unc);
+        assert_eq!(shape, FinalPathShape::Unc);
+        assert_eq!(&out[..], &w("\\\\srv\\sh")[..]);
+
+        // `UNC` matches case-insensitively.
+        let mut lower = w("\\\\?\\unc\\srv");
+        let (shape, out) = rewrite_final_path_prefix(&mut lower);
+        assert_eq!(shape, FinalPathShape::Unc);
+        assert_eq!(&out[..], &w("\\\\srv")[..]);
+
+        let mut plain = w("C:\\plain");
+        let (shape, out) = rewrite_final_path_prefix(&mut plain);
+        assert_eq!(shape, FinalPathShape::Other);
+        assert_eq!(&out[..], &w("C:\\plain")[..]);
+    }
+
+    #[test]
+    fn from_w_path_rewrites_prefixes() {
+        // quirk: FSMETA-42
+        let w = |s: &str| s.encode_utf16().collect::<Vec<u16>>();
+        let mut buf = [0u8; 32];
+        let cases: &[(&str, &[u8])] = &[
+            ("\\\\?\\UNC\\srv\\sh", b"\\\\srv\\sh"),
+            ("\\\\?\\unc\\srv\\sh", b"\\\\srv\\sh"),
+            ("\\\\?\\C:\\x", b"C:\\x"),
+            ("D:\\y", b"D:\\y"),
+        ];
+        for &(wide, expected) in cases {
+            assert_eq!(from_w_path(&mut buf, &w(wide)).as_bytes(), expected);
+        }
+    }
+
+    #[test]
+    fn try_to_paths_reject_over_budget_input() {
+        // PATH_MAX_WIDE (32767) minus the 10-unit converter overhead = 32757
+        // is the largest accepted size (mirrors `fits_in_wide_path_buffer`).
+        let mut wbuf = vec![0u16; crate::PATH_MAX_WIDE];
+        let over = vec![b'a'; 32758];
+        assert_eq!(
+            try_to_kernel32_path(&mut wbuf, &over).err(),
+            Some(WidePathError::TooLong)
+        );
+        assert_eq!(
+            try_to_nt_path(&mut wbuf, &over).err(),
+            Some(WidePathError::TooLong)
+        );
+        // At the limit converts.
+        assert_eq!(
+            try_to_kernel32_path(&mut wbuf, &vec![b'a'; 32757])
+                .unwrap()
+                .len(),
+            32757
+        );
+
+        // Long enough to trip the wide conversion itself: the fallible form
+        // reports TooLong where the legacy infallible form fail-safes to "".
+        let far_over = vec![b'a'; 40_000];
+        assert_eq!(
+            try_to_kernel32_path(&mut wbuf, &far_over).err(),
+            Some(WidePathError::TooLong)
+        );
+        assert_eq!(to_kernel32_path(&mut wbuf, &far_over).len(), 0);
+    }
+
+    #[test]
+    fn try_to_paths_reject_malformed_wtf8() {
+        // quirk: FSIO-42
+        // Stray continuation byte: genuinely malformed (unlike a lone
+        // surrogate, which is valid WTF-8 and converts).
+        let bad: &[u8] = b"C:\\\x80x";
+        let mut wbuf = [0u16; 32];
+        assert_eq!(
+            try_to_kernel32_path(&mut wbuf, bad).err(),
+            Some(WidePathError::Invalid)
+        );
+        assert_eq!(
+            try_to_nt_path(&mut wbuf, bad).err(),
+            Some(WidePathError::Invalid)
+        );
+        // The legacy lenient form still converts (U+FFFD), unchanged.
+        assert!(to_kernel32_path(&mut wbuf, bad).len() > 0);
+    }
+
+    #[test]
+    fn try_to_nt_path_prefixes_drive_paths() {
+        let mut wbuf = [0u16; 32];
+        let wide = try_to_nt_path(&mut wbuf, b"C:\\x").unwrap();
+        let expected: Vec<u16> = "\\??\\C:\\x".encode_utf16().collect();
+        assert_eq!(wide.as_slice(), &expected[..]);
+    }
+
+    #[test]
+    fn copy_wtf16_into_wtf8_diverges_from_utf8_on_lone_surrogates() {
+        // quirk: FSIO-40
+        // The intentional difference: WTF-8 passthrough vs U+FFFD.
+        let mut wtf8 = [0u8; 8];
+        let r = strings::copy_wtf16_into_wtf8(&mut wtf8, &[0xD800]);
+        assert_eq!((r.read, r.written), (1, 3));
+        assert_eq!(&wtf8[..3], b"\xED\xA0\x80");
+
+        let mut utf8 = [0u8; 8];
+        let r = strings::copy_utf16_into_utf8(&mut utf8, &[0xD800]);
+        assert_eq!((r.read, r.written), (1, 3));
+        assert_eq!(&utf8[..3], b"\xEF\xBF\xBD");
+
+        // Well-formed pairs combine identically in both.
+        let pair = [0xD83D, 0xDE00]; // U+1F600
+        let mut a = [0u8; 8];
+        let mut b = [0u8; 8];
+        let ra = strings::copy_wtf16_into_wtf8(&mut a, &pair);
+        let rb = strings::copy_utf16_into_utf8(&mut b, &pair);
+        assert_eq!((ra.read, ra.written), (2, 4));
+        assert_eq!((rb.read, rb.written), (2, 4));
+        assert_eq!(&a[..4], b"\xF0\x9F\x98\x80");
+        assert_eq!(&a[..4], &b[..4]);
+    }
+
+    #[test]
+    fn convert_wtf16_to_wtf8_append_preserves_lone_surrogates() {
+        // quirk: FSIO-40
+        // simdutf fast path (valid input)…
+        let mut list = b"x".to_vec();
+        let valid: Vec<u16> = "a\u{4E16}".encode_utf16().collect();
+        strings::convert_wtf16_to_wtf8_append(&mut list, &valid);
+        assert_eq!(list, b"xa\xE4\xB8\x96");
+        // …and the scalar WTF-8 fallback on a lone surrogate.
+        let mut list = Vec::new();
+        strings::convert_wtf16_to_wtf8_append(&mut list, &[u16::from(b'a'), 0xD800, 0x4E16]);
+        assert_eq!(list, b"a\xED\xA0\x80\xE4\xB8\x96");
+    }
+
+    // Pure-closure coverage of the Win32 two-call grow probe (no FFI).
+    // quirk: SIGEV-33, OS-19
+    #[cfg(windows)]
+    mod grow_probe {
+        use bun_core::util::{ProbeResult, win32_grow_probe};
+
+        #[test]
+        fn zero_return_fails() {
+            let mut stack = [0u16; 4];
+            let mut heap = Vec::new();
+            assert!(matches!(
+                win32_grow_probe(&mut stack, &mut heap, |_| 0),
+                ProbeResult::Failed
+            ));
+            assert!(heap.is_empty());
+        }
+
+        #[test]
+        fn fits_in_stack() {
+            let mut stack = [0u16; 8];
+            let mut heap = Vec::new();
+            let r = win32_grow_probe(&mut stack, &mut heap, |buf| {
+                buf[..3].copy_from_slice(&[7, 8, 9]);
+                3
+            });
+            match r {
+                ProbeResult::Done(s) => assert_eq!(s[..], [7u16, 8, 9]),
+                ProbeResult::Failed => panic!("expected Done"),
+            }
+            assert!(heap.is_empty());
+        }
+
+        #[test]
+        fn grows_then_fits() {
+            let mut stack = [0u16; 4];
+            let mut heap = Vec::new();
+            let mut calls = 0u32;
+            let r = win32_grow_probe(&mut stack, &mut heap, |buf| {
+                calls += 1;
+                // Too small → required size *incl.* NUL (14).
+                if buf.len() < 14 {
+                    return 14;
+                }
+                for (i, c) in buf[..13].iter_mut().enumerate() {
+                    *c = i as u16;
+                }
+                13
+            });
+            match r {
+                ProbeResult::Done(s) => {
+                    assert_eq!(s.len(), 13);
+                    assert_eq!(s[12], 12);
+                }
+                ProbeResult::Failed => panic!("expected Done"),
+            }
+            assert_eq!(calls, 2);
+            assert_eq!(heap.len(), 14);
+        }
+
+        #[test]
+        fn return_equal_to_len_means_grow() {
+            // ret == buf.len() is the required-size sentinel, not success.
+            let mut stack = [0u16; 4];
+            let mut heap = Vec::new();
+            let mut heap_calls = 0u32;
+            let r = win32_grow_probe(&mut stack, &mut heap, |buf| {
+                if buf.len() < 6 {
+                    return 6;
+                }
+                heap_calls += 1;
+                if heap_calls == 1 { 6 } else { 5 }
+            });
+            match r {
+                ProbeResult::Done(s) => assert_eq!(s.len(), 5),
+                ProbeResult::Failed => panic!("expected Done"),
+            }
+            assert_eq!(heap_calls, 2);
+        }
+
+        #[test]
+        fn unbounded_growth_fails() {
+            let mut stack = [0u16; 4];
+            let mut heap = Vec::new();
+            let mut calls = 0u32;
+            let r = win32_grow_probe(&mut stack, &mut heap, |buf| {
+                calls += 1;
+                (buf.len() as u32) * 2
+            });
+            assert!(matches!(r, ProbeResult::Failed));
+            // 1 stack probe + the 8 bounded heap rounds.
+            assert_eq!(calls, 9);
+        }
     }
 
     #[test]

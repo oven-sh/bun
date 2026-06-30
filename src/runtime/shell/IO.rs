@@ -180,16 +180,12 @@ impl OutKind {
                 if let Some(cap) = val.captured {
                     Stdio::Capture(Capture { buf: cap })
                 } else {
-                    // `IOWriter::fd()` (IOWriter.rs) returns `Fd::INVALID`
-                    // once the fd has been handed off to libuv, so the
-                    // sentinel compare here checks for that hand-off state.
                     let fd = val.writer.fd();
                     if fd != bun_sys::Fd::INVALID {
                         Stdio::Fd(fd)
                     } else {
-                        // Windows: fd was moved to libuv → inherit (libuv
-                        // already manages it). On POSIX `IOWriter::fd()` is
-                        // always the live fd, so this branch is unreachable.
+                        // A writer can exist without a backing fd; inherit
+                        // rather than passing the sentinel to spawn.
                         Stdio::Inherit
                     }
                 }

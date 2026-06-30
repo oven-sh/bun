@@ -136,7 +136,6 @@ EXPORTS
   uv_version_string
   uv_async_init
   uv_async_send
-  uv_fatal_error
   uv_loop_init
   uv_update_time
   uv_backend_fd
@@ -153,13 +152,11 @@ EXPORTS
   uv_async_init
   uv_mutex_destroy
   uv_translate_sys_error
-  uv_fatal_error
   uv_is_closing
   uv_dlopen
   uv_dlclose
   uv_dlsym
   uv_dlerror
-  uv_fatal_error
   uv_translate_sys_error
   uv_fs_req_cleanup
   uv_fs_open
@@ -200,7 +197,6 @@ EXPORTS
   uv_fs_statfs
   uv_fs_get_system_error
   uv_mutex_init
-  uv_fatal_error
   uv_translate_sys_error
   uv_mutex_lock
   uv_mutex_unlock
@@ -209,8 +205,6 @@ EXPORTS
   uv_fs_event_start
   uv_fs_event_stop
   uv_translate_sys_error
-  uv_fatal_error
-  uv_directory_watcher_buffer_size
   uv_freeaddrinfo
   uv_getaddrinfo
   uv_if_indextoname
@@ -250,7 +244,6 @@ EXPORTS
   uv_pipe_getpeername
   uv_pipe_pending_type
   uv_pipe_chmod
-  uv_fatal_error
   uv_translate_sys_error
   uv_close
   uv_timer_start
@@ -297,7 +290,6 @@ EXPORTS
   uv_cond_timedwait
   uv_key_create
   uv_key_delete
-  uv_fatal_error
   uv_cpumask_size
   uv_translate_sys_error
   uv_poll_init
@@ -306,11 +298,9 @@ EXPORTS
   uv_poll_stop
   uv_translate_sys_error
   uv_once
-  uv_fatal_error
   uv_spawn
   uv_process_kill
   uv_kill
-  uv_fatal_error
   uv_translate_sys_error
   uv_once
   uv_disable_stdio_inheritance
@@ -318,7 +308,6 @@ EXPORTS
   uv_signal_stop
   uv_signal_start
   uv_signal_start_oneshot
-  uv_fatal_error
   uv_listen
   uv_accept
   uv_read_stop
@@ -342,20 +331,12 @@ EXPORTS
   uv_tcp_open
   uv_socketpair
   uv_translate_sys_error
-  uv_tcp_non_ifs_lsp_ipv6
-  uv_tcp_non_ifs_lsp_ipv4
   uv_close
-  uv_addr_ip4_any_
-  uv_fatal_error
   uv_buf_init
   uv_read_stop
-  uv_addr_ip6_any_
-  uv_simultaneous_server_accepts
   uv_tty_init
   uv_tty_set_mode
   uv_tty_get_winsize
-  uv_process_tty_read_raw_req
-  uv_process_tty_read_line_req
   uv_tty_reset_mode
   uv_tty_set_vterm_state
   uv_tty_get_vterm_state
@@ -367,7 +348,6 @@ EXPORTS
   uv_buf_init
   uv_mutex_lock
   uv_mutex_unlock
-  uv_fatal_error
   uv_udp_getpeername
   uv_udp_getsockname
   uv_udp_using_recvmmsg
@@ -381,9 +361,7 @@ EXPORTS
   uv_udp_set_multicast_loop
   uv_translate_sys_error
   uv_udp_recv_stop
-  uv_addr_ip4_any_
   uv_buf_init
-  uv_addr_ip6_any_
   uv_ip6_addr
   uv_ip4_addr
   uv_inet_pton
@@ -424,17 +402,10 @@ EXPORTS
   uv_os_uname
   uv_gettimeofday
   uv_sleep
-  uv_fatal_error
   uv_translate_sys_error
   uv_os_free_passwd
-  uv_fatal_error
-  uv_addr_ip4_any_
   uv_ip4_addr
-  uv_addr_ip6_any_
   uv_ip6_addr
-  uv_tcp_non_ifs_lsp_ipv4
-  uv_tcp_non_ifs_lsp_ipv6
-  uv_fatal_error
   napi_get_undefined
   napi_get_null
   napi_get_boolean

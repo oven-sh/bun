@@ -1793,7 +1793,7 @@ pub mod fs {
             #[cfg(unix)]
             let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S + stat.st_mtime_nsec as i128;
             #[cfg(windows)]
-            let mtime: i128 = (stat.mtim.sec as i128) * NS_PER_S + stat.mtim.nsec as i128;
+            let mtime: i128 = (stat.st_mtim.sec as i128) * NS_PER_S + stat.st_mtim.nsec as i128;
             let seconds = mtime / NS_PER_S;
 
             // We can't detect changes if the file system zeros out the

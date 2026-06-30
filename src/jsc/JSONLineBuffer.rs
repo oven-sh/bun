@@ -133,7 +133,7 @@ impl JSONLineBuffer {
     /// `on_read` refactor removed.
     pub fn notify_written(&mut self, nread: usize) {
         // SAFETY: caller (libuv on_read) wrote `nread` bytes into the uv_alloc_spare* slice.
-        unsafe { self.data.uv_commit(nread) };
+        unsafe { self.data.alloc_cb_commit(nread) };
         self.scan_for_newline();
     }
 }

@@ -2083,7 +2083,7 @@ impl<'a> PackageInstall<'a> {
         }
         #[cfg(windows)]
         {
-            match sys::sys_uv::open(path, 0, 0) {
+            match sys::open(path, 0, 0) {
                 Err(_) => return true,
                 Ok(fd) => {
                     fd.close();

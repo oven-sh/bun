@@ -1353,7 +1353,7 @@ impl BunxCommand {
                 }
 
                 if exited.code != 0 {
-                    Global::exit(exited.code as u32);
+                    Global::exit(exited.code);
                 }
             }
             SpawnStatus::Signaled(sig) => {

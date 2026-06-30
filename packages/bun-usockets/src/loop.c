@@ -93,14 +93,11 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
     free(loop->data.send_buf);
 
     us_timer_close(loop->data.sweep_timer, 0);
-    if (loop->data.quic_timer) us_timer_close(loop->data.quic_timer, 0);
     us_internal_async_close(loop->data.wakeup_async);
 }
 
 __attribute__((always_inline)) void us_wakeup_loop(struct us_loop_t *loop) {
-#ifndef LIBUS_USE_LIBUV
     __atomic_fetch_add(&loop->pending_wakeups, 1, __ATOMIC_RELEASE);
-#endif
     us_internal_async_wakeup(loop->data.wakeup_async);
 }
 
@@ -372,10 +369,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             struct us_internal_callback_t *cb = (struct us_internal_callback_t *) p;
             /* Timers, asyncs should accept (read), while UDP sockets should obviously not */
             if (!cb->leave_poll_ready) {
-                /* Let's just have this macro to silence the CodeQL alert regarding empty function when using libuv */
-    #ifndef LIBUS_USE_LIBUV
                 us_internal_accept_poll_event(p);
-    #endif
             }
             cb->cb(cb->cb_expects_the_loop ? (struct us_internal_callback_t *) cb->loop : (struct us_internal_callback_t *) &cb->p);
             break;

@@ -1127,6 +1127,30 @@ it("Bun.file().stream() read text from large file", async () => {
   }
 });
 
+it("Bun.file().stream() delivers a large file in multiple chunks", async () => {
+  // A regular-file source must honor pull backpressure instead of draining
+  // the whole file into one synchronous chunk.
+  using dir = tempDir("file-stream-chunked", {
+    "big.bin": Buffer.alloc(1024 * 1024, "a").toString(),
+  });
+  const chunks = [];
+  for await (const chunk of Bun.file(join(String(dir), "big.bin")).stream()) {
+    chunks.push(chunk);
+  }
+  expect(Buffer.concat(chunks).byteLength).toBe(1024 * 1024);
+  expect(chunks.length).toBeGreaterThan(1);
+});
+
+it("Bun.file().stream() of a directory rejects instead of ending empty", async () => {
+  using dir = tempDir("file-stream-dir", { "sub/x.txt": "x" });
+  await expect(
+    (async () => {
+      for await (const _ of Bun.file(join(String(dir), "sub")).stream()) {
+      }
+    })(),
+  ).rejects.toThrow();
+});
+
 it("fs.createReadStream(filename) should be able to break inside async loop", async () => {
   for (let i = 0; i < 10; i++) {
     const fileStream = createReadStream(join(import.meta.dir, "..", "fetch", "fixture.png"));

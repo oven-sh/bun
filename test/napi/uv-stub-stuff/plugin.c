@@ -4,7 +4,9 @@
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 #include <uv.h>
 
 napi_value call_uv_func(napi_env env, napi_callback_info info) {
@@ -209,14 +211,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_cpu_info") == 0) {
-    uv_cpu_info_t **arg0 = NULL;
-    int *arg1 = {0};
-
-    uv_cpu_info(arg0, arg1);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_cpumask_size") == 0) {
 
     uv_cpumask_size();
@@ -303,22 +297,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     uv_os_fd_t *arg1 = {0};
 
     uv_fileno(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_free_cpu_info") == 0) {
-    uv_cpu_info_t *arg0 = {0};
-    int arg1 = {0};
-
-    uv_free_cpu_info(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_free_interface_addresses") == 0) {
-    uv_interface_address_t *arg0 = {0};
-    int arg1 = {0};
-
-    uv_free_interface_addresses(arg0, arg1);
     return NULL;
   }
 
@@ -867,13 +845,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_get_osfhandle") == 0) {
-    int arg0 = {0};
-
-    uv_get_osfhandle(arg0);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_get_process_title") == 0) {
     char *arg0 = {0};
     size_t arg1 = {0};
@@ -911,24 +882,10 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_getrusage") == 0) {
-    uv_rusage_t *arg0 = {0};
-
-    uv_getrusage(arg0);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_gettimeofday") == 0) {
     uv_timeval64_t *arg0 = {0};
 
     uv_gettimeofday(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_guess_handle") == 0) {
-    uv_file arg0 = {0};
-
-    uv_guess_handle(arg0);
     return NULL;
   }
 
@@ -1023,30 +980,12 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_inet_ntop") == 0) {
-    int arg0 = {0};
-    const void *arg1 = {0};
-    char *arg2 = {0};
-    size_t arg3 = {0};
-
-    uv_inet_ntop(arg0, arg1, arg2, arg3);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_inet_pton") == 0) {
     int arg0 = {0};
     const char *arg1 = {0};
     void *arg2 = {0};
 
     uv_inet_pton(arg0, arg1, arg2);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_interface_addresses") == 0) {
-    uv_interface_address_t **arg0 = NULL;
-    int *arg1 = {0};
-
-    uv_interface_addresses(arg0, arg1);
     return NULL;
   }
 
@@ -1149,14 +1088,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     void *arg1 = {0};
 
     uv_key_set(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_kill") == 0) {
-    int arg0 = {0};
-    int arg1 = {0};
-
-    uv_kill(arg0, arg1);
     return NULL;
   }
 
@@ -1351,14 +1282,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_os_getpriority") == 0) {
-    uv_pid_t arg0 = {0};
-    int *arg1 = {0};
-
-    uv_os_getpriority(arg0, arg1);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_os_homedir") == 0) {
     char *arg0 = {0};
     size_t *arg1 = {0};
@@ -1372,14 +1295,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     const char *arg1 = {0};
 
     uv_os_setenv(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_os_setpriority") == 0) {
-    uv_pid_t arg0 = {0};
-    int arg1 = {0};
-
-    uv_os_setpriority(arg0, arg1);
     return NULL;
   }
 
@@ -1706,13 +1621,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_resident_set_memory") == 0) {
-    size_t *arg0 = {0};
-
-    uv_resident_set_memory(arg0);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_run") == 0) {
     uv_loop_t *arg0 = {0};
     uv_run_mode arg1 = {0};
@@ -1926,13 +1834,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     int arg1 = {0};
 
     uv_stream_set_blocking(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_strerror") == 0) {
-    int arg0 = {0};
-
-    uv_strerror(arg0);
     return NULL;
   }
 
@@ -2430,12 +2331,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
   if (strcmp(buffer, "uv_version") == 0) {
 
     uv_version();
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_version_string") == 0) {
-
-    uv_version_string();
     return NULL;
   }
 

@@ -107,10 +107,7 @@ impl KeepAlive {
         }
         self.status = Status::Inactive;
         // vm.pending_unref_counter +|= 1;
-        #[cfg(not(windows))]
         event_loop_ctx.increment_pending_unref_counter();
-        #[cfg(windows)]
-        event_loop_ctx.loop_dec();
     }
 
     /// From another thread, prevent a poll from keeping the process alive on the next tick.
@@ -122,11 +119,7 @@ impl KeepAlive {
         // Cross-thread increment: the counter is an `AtomicI32` RMW'd with
         // `Ordering::Relaxed` (see
         // `jsc::VirtualMachine::pending_unref_counter`).
-        #[cfg(not(windows))]
         vm.increment_pending_unref_counter();
-        // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194
-        #[cfg(windows)]
-        vm.loop_dec();
     }
 
     /// Allow a poll to keep the process alive.

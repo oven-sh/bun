@@ -667,7 +667,10 @@ extern "C" void bun_initialize_process()
     }
 #elif OS(WINDOWS)
     for (int fd = 0; fd <= 2; ++fd) {
-        auto handle = reinterpret_cast<HANDLE>(uv_get_osfhandle(fd));
+        // CRT probe (`_get_osfhandle`), NOT `uv_get_osfhandle`: the latter now
+        // answers from Bun's fd table, which must not be constructed (it
+        // snapshots GetStdHandle) until this repair publishes nul below.
+        auto handle = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
         if (handle == INVALID_HANDLE_VALUE || GetFileType(handle) == FILE_TYPE_UNKNOWN) {
             // Ignore _close result. If it fails or not depends on used Windows
             // version. We will just check _open result.
@@ -676,20 +679,21 @@ extern "C" void bun_initialize_process()
             if (fd != _open("nul", O_RDWR)) {
                 RELEASE_ASSERT_NOT_REACHED();
             } else {
+                HANDLE nul = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
                 switch (fd) {
                 case 0: {
-                    SetStdHandle(STD_INPUT_HANDLE, uv_get_osfhandle(fd));
-                    ASSERT(GetStdHandle(STD_INPUT_HANDLE) == uv_get_osfhandle(fd));
+                    SetStdHandle(STD_INPUT_HANDLE, nul);
+                    ASSERT(GetStdHandle(STD_INPUT_HANDLE) == nul);
                     break;
                 }
                 case 1: {
-                    SetStdHandle(STD_OUTPUT_HANDLE, uv_get_osfhandle(fd));
-                    ASSERT(GetStdHandle(STD_OUTPUT_HANDLE) == uv_get_osfhandle(fd));
+                    SetStdHandle(STD_OUTPUT_HANDLE, nul);
+                    ASSERT(GetStdHandle(STD_OUTPUT_HANDLE) == nul);
                     break;
                 }
                 case 2: {
-                    SetStdHandle(STD_ERROR_HANDLE, uv_get_osfhandle(fd));
-                    ASSERT(GetStdHandle(STD_ERROR_HANDLE) == uv_get_osfhandle(fd));
+                    SetStdHandle(STD_ERROR_HANDLE, nul);
+                    ASSERT(GetStdHandle(STD_ERROR_HANDLE) == nul);
                     break;
                 }
                 default: {

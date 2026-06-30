@@ -1552,6 +1552,37 @@ pub(crate) mod strings_impl {
         }
     }
 
+    /// Strict WTF-8 validity: shortest-form UTF-8 plus surrogate code points
+    /// (`ED A0 80`..`ED BF BF` — lone surrogates are *valid*). Rejects stray
+    /// continuation bytes, truncated tails, overlongs, and >U+10FFFF.
+    pub fn is_valid_wtf8(s: &[u8]) -> bool {
+        // ASCII fast path (simdutf): most inputs never reach the scalar walk.
+        let mut rest = match first_non_ascii_usize(s) {
+            None => return true,
+            Some(i) => &s[i..],
+        };
+        while let Some(&b0) = rest.first() {
+            let len = match b0 {
+                0x00..=0x7F => 1,
+                0xC2..=0xDF => 2,
+                0xE0..=0xEF => 3,
+                0xF0..=0xF4 => 4,
+                _ => return false,
+            };
+            if rest.len() < len || !rest[1..len].iter().all(|&b| b & 0xC0 == 0x80) {
+                return false;
+            }
+            match (len, b0) {
+                (3, 0xE0) if rest[1] < 0xA0 => return false, // overlong
+                (4, 0xF0) if rest[1] < 0x90 => return false, // overlong
+                (4, 0xF4) if rest[1] > 0x8F => return false, // > U+10FFFF
+                _ => {}
+            }
+            rest = &rest[len..];
+        }
+        true
+    }
+
     // ── UTF-16 surrogate primitives (ICU `utf16.h` macros) ────────────────────
     // Canonical home is bun_core (not bun_string) because bun_core::strings itself
     // needs these for the simdutf scalar-fallback paths (append_wtf8_from_utf16,
@@ -1732,6 +1763,51 @@ pub(crate) mod strings_impl {
         }
     }
 
+    /// Scalar WTF-8 egress loop: surrogate pairs combine, *unpaired*
+    /// surrogates are encoded as 3-byte WTF-8 (`decode_wtf16_raw`), never
+    /// replaced. WTF-8 sibling of [`append_wtf8_from_utf16`].
+    fn append_wtf8_raw_from_utf16(list: &mut Vec<u8>, utf16: &[u16]) {
+        let mut i = 0usize;
+        let mut buf = [0u8; 4];
+        while i < utf16.len() {
+            let (cp, adv) = decode_wtf16_raw(&utf16[i..]);
+            i += adv as usize;
+            let n = encode_wtf8_rune(&mut buf, cp);
+            list.extend_from_slice(&buf[..n]);
+        }
+    }
+
+    /// WTF-8-preserving sibling of [`convert_utf16_to_utf8_append`]: unpaired
+    /// surrogates pass through as 3-byte WTF-8 instead of becoming U+FFFD.
+    /// Reserves internally — [`element_length_utf16_into_utf8`] is WTF-8-exact
+    /// (3 bytes per unpaired surrogate, same as U+FFFD). // quirk: FSIO-40
+    pub fn convert_wtf16_to_wtf8_append(list: &mut Vec<u8>, utf16: &[u16]) {
+        list.reserve(element_length_utf16_into_utf8(utf16) + 16);
+        // SAFETY: simdutf writes only initialized bytes into the spare slice
+        // (reserved above for the full conversion) and reports the count; on
+        // SURROGATE we commit 0 and fall back below.
+        let r = unsafe {
+            crate::vec::fill_spare(list, 0, |spare| {
+                let r = simdutf::simdutf__convert_utf16le_to_utf8_with_errors(
+                    utf16.as_ptr(),
+                    utf16.len(),
+                    spare.as_mut_ptr(),
+                );
+                (
+                    if r.status == simdutf::Status::SURROGATE {
+                        0
+                    } else {
+                        r.count
+                    },
+                    r,
+                )
+            })
+        };
+        if r.status == simdutf::Status::SURROGATE {
+            append_wtf8_raw_from_utf16(list, utf16);
+        }
+    }
+
     pub fn convert_utf16_to_utf8(mut list: Vec<u8>, utf16: &[u16]) -> Vec<u8> {
         let need = simdutf::length::utf8::from::utf16::le(utf16);
         list.reserve(need + 16);
@@ -1859,6 +1935,58 @@ pub(crate) mod strings_impl {
         let mut tmp = [0u8; 4];
         while read < utf16.len() {
             let (cp, adv) = decode_utf16_with_fffd(&utf16[read..]);
+            let n = encode_wtf8_rune(&mut tmp, cp);
+            if written + n > buf.len() {
+                break;
+            }
+            buf[written..written + n].copy_from_slice(&tmp[..n]);
+            written += n;
+            read += adv as usize;
+        }
+        EncodeIntoResult {
+            read: read as u32,
+            written: written as u32,
+        }
+    }
+
+    /// WTF-8-preserving sibling of [`copy_utf16_into_utf8`] for fixed
+    /// buffers: unpaired surrogates pass through as 3-byte WTF-8 instead of
+    /// becoming U+FFFD. Same partial-fill contract — stops at the last code
+    /// point that fits. // quirk: FSIO-40
+    pub fn copy_wtf16_into_wtf8(buf: &mut [u8], utf16: &[u16]) -> EncodeIntoResult {
+        if utf16.is_empty() || buf.is_empty() {
+            return EncodeIntoResult::default();
+        }
+        let worst_case = utf16.len().saturating_mul(3);
+        let utf8_len = if worst_case <= buf.len() {
+            worst_case
+        } else {
+            // WTF-8-exact: 3 bytes per unpaired surrogate (same as U+FFFD).
+            element_length_utf16_into_utf8(utf16)
+        };
+        // Fast path: if buf can definitely hold the whole conversion, try simdutf.
+        if utf8_len > 0 && utf8_len <= buf.len() {
+            // SAFETY: buf has `utf8_len` writable bytes; simdutf reads exactly utf16.len() u16.
+            let r = unsafe {
+                simdutf::simdutf__convert_utf16le_to_utf8_with_errors(
+                    utf16.as_ptr(),
+                    utf16.len(),
+                    buf.as_mut_ptr(),
+                )
+            };
+            if r.status == simdutf::Status::SUCCESS {
+                return EncodeIntoResult {
+                    read: utf16.len() as u32,
+                    written: r.count as u32,
+                };
+            }
+        }
+        // Scalar path (handles unpaired surrogates + partial-buffer fill).
+        let mut read = 0usize;
+        let mut written = 0usize;
+        let mut tmp = [0u8; 4];
+        while read < utf16.len() {
+            let (cp, adv) = decode_wtf16_raw(&utf16[read..]);
             let n = encode_wtf8_rune(&mut tmp, cp);
             if written + n > buf.len() {
                 break;
@@ -2768,6 +2896,13 @@ pub mod ffi {
     unsafe impl Zeroable for bun_windows_sys::externs::OVERLAPPED {}
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::PROCESS_INFORMATION {}
+    #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::ntdll::RTL_OSVERSIONINFOW {}
+    #[cfg(windows)]
+    // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
+    unsafe impl Zeroable for bun_windows_sys::SYSTEM_INFO {}
+    #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::kernel32::MEMORYSTATUSEX {}
 
     /// Conjure a value of a zero-sized type without `unsafe` at the call site.
     ///

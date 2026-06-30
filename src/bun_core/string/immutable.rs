@@ -1556,6 +1556,29 @@ pub fn str_utf8(bytes: &[u8]) -> Option<&str> {
     }
 }
 
+/// Borrow `bytes` when they are already well-formed UTF-8 (SIMD-validated);
+/// otherwise allocate a copy in which every maximal ill-formed subsequence is
+/// replaced with U+FFFD, per the WHATWG "UTF-8 decode" algorithm (the same
+/// substitution `String::from_utf8_lossy` performs).
+///
+/// For consumers that require `str`'s char-boundary invariant over
+/// user-supplied bytes (e.g. the CSS tokenizer). NOT for data that must
+/// round-trip byte-exactly (paths, binary file contents).
+pub fn to_valid_utf8_lossy(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if is_valid_utf8(bytes) {
+        return std::borrow::Cow::Borrowed(bytes);
+    }
+    let mut out: Vec<u8> = Vec::new();
+    crate::handle_oom(out.try_reserve(bytes.len() + UNICODE_REPLACEMENT_STR.len()));
+    for chunk in bytes.utf8_chunks() {
+        out.extend_from_slice(chunk.valid().as_bytes());
+        if !chunk.invalid().is_empty() {
+            out.extend_from_slice(&UNICODE_REPLACEMENT_STR);
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 pub use index_of_newline_or_non_ascii as index_of_newline_or_non_ascii_or_ansi;
 
 /// Checks if slice[offset..] has any < 0x20 or > 127 characters
@@ -3180,5 +3203,28 @@ mod tests {
         assert_eq!(super::first_non_ascii(b"ab\xC3"), Some(2));
         assert!(super::eql_case_insensitive_ascii(b"A", b"a", true));
         assert!(!super::eql_case_insensitive_ascii(b"Ab", b"a", true));
+    }
+
+    #[test]
+    fn to_valid_utf8_lossy_borrows_well_formed_input() {
+        let valid: &[u8] = "a \u{e9} 日本 b".as_bytes();
+        assert!(matches!(
+            super::to_valid_utf8_lossy(valid),
+            std::borrow::Cow::Borrowed(b) if b == valid
+        ));
+    }
+
+    #[test]
+    fn to_valid_utf8_lossy_replaces_ill_formed_sequences() {
+        // Lone continuation byte (Latin-1 0xAF).
+        assert_eq!(
+            super::to_valid_utf8_lossy(b".a { color: red \xAF}").as_ref(),
+            b".a { color: red \xEF\xBF\xBD}"
+        );
+        // Truncated 4-byte sequence followed by ASCII.
+        assert_eq!(
+            super::to_valid_utf8_lossy(b"x\xF0\x9F!").as_ref(),
+            b"x\xEF\xBF\xBD!"
+        );
     }
 }

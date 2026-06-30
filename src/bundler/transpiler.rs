@@ -3159,9 +3159,17 @@ impl<'a> Transpiler<'a> {
         // `'bump`-threading note).
         let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(self.arena) };
 
+        // The CSS tokenizer requires well-formed UTF-8; decode ill-formed
+        // sources with U+FFFD replacement (CSS Syntax §3.2), mirroring the
+        // bundler's `run_with_source_code`.
+        let code: &[u8] = match strings::to_valid_utf8_lossy(entry.contents()) {
+            std::borrow::Cow::Borrowed(valid) => valid,
+            std::borrow::Cow::Owned(decoded) => alloc.alloc_slice_copy(&decoded),
+        };
+
         let (mut sheet, extra) = match bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
             alloc,
-            entry.contents(),
+            code,
             opts,
             None,
             bun_ast::Index::INVALID,

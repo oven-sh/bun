@@ -291,6 +291,8 @@ pub enum ParserError {
     deprecated_nest_rule,
     /// An invalid selector in an `@page` rule.
     invalid_page_selector,
+    /// The source text is not well-formed UTF-8.
+    invalid_utf8,
     /// An invalid value was encountered.
     invalid_value,
     /// Invalid qualified rule.
@@ -325,6 +327,7 @@ impl fmt::Display for ParserError {
                 f.write_str("The @nest rule is deprecated, use standard CSS nesting instead")
             }
             Self::invalid_page_selector => f.write_str("Invalid @page selector"),
+            Self::invalid_utf8 => f.write_str("Invalid UTF-8 byte sequence"),
             Self::invalid_value => f.write_str("Invalid value"),
             Self::qualified_rule_invalid => f.write_str("Invalid qualified rule"),
             Self::selector_error(err) => write!(f, "Invalid selector. {}", err),

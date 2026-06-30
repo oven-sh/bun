@@ -2300,7 +2300,17 @@ pub mod parse_worker {
         }
         *step = Step::Parse;
 
-        let entry_contents: &[u8] = entry.contents.as_slice();
+        // The CSS tokenizer requires well-formed UTF-8, so decode ill-formed CSS
+        // up front with U+FFFD replacement (CSS Syntax §3.2). The decoded copy
+        // lives in `bump` so `Source.contents` and recorded positions agree.
+        let entry_contents: &[u8] = if loader.is_css() {
+            match strings::to_valid_utf8_lossy(entry.contents.as_slice()) {
+                std::borrow::Cow::Borrowed(valid) => valid,
+                std::borrow::Cow::Owned(decoded) => bump.alloc_slice_copy(&decoded),
+            }
+        } else {
+            entry.contents.as_slice()
+        };
         let is_empty = strings::is_all_whitespace(entry_contents);
 
         // SAFETY: `transpiler` derived from a live `&mut` above. Reborrow only the

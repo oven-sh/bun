@@ -2510,6 +2510,19 @@ impl<AtRule> StyleSheet<AtRule> {
 mod stylesheet_impl {
     use super::*;
 
+    /// The tokenizer ports `rust-cssparser`, which takes `&str`: every position
+    /// it records must lie on a UTF-8 char boundary. Callers that accept
+    /// arbitrary bytes decode them first (`strings::to_valid_utf8_lossy`).
+    fn require_valid_utf8(code: &[u8]) -> Maybe<(), Err<ParserError>> {
+        if strings::is_valid_utf8(code) {
+            return Ok(());
+        }
+        Err(Err {
+            kind: ParserError::invalid_utf8,
+            loc: None,
+        })
+    }
+
     impl<AtRule> StyleSheet<AtRule> {
         /// Minify and transform the style sheet for the provided browser targets.
         ///
@@ -2775,6 +2788,7 @@ mod stylesheet_impl {
             // returned `StyleSheet`.
             // TODO(refactor): re-thread the lifetime through `CssRuleList<'bump, R>`
             // and drop the `'static` bound on `arena`.
+            require_valid_utf8(code)?;
             let mut composes = ComposesMap::default();
             let mut parser_extra = ParserExtra {
                 local_scope: LocalScope::default(),
@@ -3011,6 +3025,7 @@ mod stylesheet_impl {
             // TODO: 'bump lifetime threading — `DeclarationBlock<'static>` in
             // `StyleAttribute` vs `Parser<'a>` here; `arena: &'static Bump`
             // matches the crate-wide erasure (see `parse_with`).
+            require_valid_utf8(code)?;
             let mut parser_extra = ParserExtra {
                 local_scope: LocalScope::default(),
                 symbols: SymbolList::default(),

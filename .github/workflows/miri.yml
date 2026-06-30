@@ -26,6 +26,8 @@ on:
       - "scripts/rust-miri.ts"
       - "Cargo.toml"
       - "Cargo.lock"
+      # Applied onto vendor/rust-argon2 before cargo resolves the workspace.
+      - "patches/rust-argon2/**"
       - "rust-toolchain.toml"
       - ".github/workflows/miri.yml"
       - ".github/actions/setup-bun/**"

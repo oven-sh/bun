@@ -8103,6 +8103,14 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Expected error argument")));
         }
 
+        // Like `goaway`: only numbers reach `to_u32` (it requires one), and the code is read
+        // once before any `&mut Stream` exists instead of once per stream inside the loop.
+        let error_arg = args_list.ptr[0];
+        if !error_arg.is_number() {
+            return Err(global_object.throw(format_args!("Expected errorCode to be a number")));
+        }
+        let rst_code = error_arg.to_u32();
+
         // R-2: StreamResumableIterator stores a `ParentRef`; `streams` is `JsCell`-backed,
         // so the loop body can keep using `this` (`&Self`) directly.
         let mut it = StreamResumableIterator::init(this);
@@ -8112,15 +8120,11 @@ impl H2FrameParser {
             let stream = unsafe { &mut *stream_ptr };
             if stream.state != StreamState::CLOSED {
                 stream.state = StreamState::CLOSED;
-                stream.rst_code = args_list.ptr[0].to_u32();
+                stream.rst_code = rst_code;
                 let identifier = stream.get_identifier();
                 identifier.ensure_still_alive();
                 stream.free_resources::<false>(this);
-                this.dispatch_with_extra(
-                    JSH2FrameParser::Gc::onStreamError,
-                    identifier,
-                    args_list.ptr[0],
-                );
+                this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, identifier, error_arg);
             }
         }
         Ok(JSValue::UNDEFINED)

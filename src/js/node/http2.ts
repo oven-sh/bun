@@ -2194,12 +2194,20 @@ class Http2Stream extends Duplex {
     // empty trailer object (which the compat Http2ServerResponse does
     // unconditionally from onStreamTrailersReady), emit an empty DATA frame
     // with END_STREAM instead — this matches Node's wire output.
-    if (ObjectKeys(headers).length === 0) {
-      session[bunHTTP2Native]?.noTrailers(this.#id);
-    } else {
-      session[bunHTTP2Native]?.sendTrailers(this.#id, headers, sensitiveNames);
-    }
+    // Mark before the native call so a re-entrant sendTrailers() from a header-value
+    // coercion hits ERR_HTTP2_TRAILERS_ALREADY_SENT, but clear it if validation throws
+    // (no frame is written then) so a corrected retry succeeds like node.
     this.#sentTrailers = headers;
+    try {
+      if (ObjectKeys(headers).length === 0) {
+        session[bunHTTP2Native]?.noTrailers(this.#id);
+      } else {
+        session[bunHTTP2Native]?.sendTrailers(this.#id, headers, sensitiveNames);
+      }
+    } catch (error) {
+      this.#sentTrailers = undefined;
+      throw error;
+    }
   }
 
   setTimeout(timeout, callback) {

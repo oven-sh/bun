@@ -824,6 +824,109 @@ describe("inbound stream lifecycle", () => {
     expect(exitCode).toBe(0);
   }, 30_000);
 
+  // emitErrorToAllStreams must reject a non-numeric error code up front (the native
+  // conversion requires a number) instead of reading it once per live stream. goaway()
+  // is stubbed because its own number check sits in front of this path in destroy().
+  test("session teardown rejects a non-numeric error code instead of reading it per stream", async () => {
+    const fixture = String.raw`
+      const http2 = require("node:http2");
+      const { Duplex } = require("node:stream");
+      function encodeFrame(type, flags, streamId, payload = Buffer.alloc(0)) {
+        const header = Buffer.alloc(9);
+        header.writeUIntBE(payload.length, 0, 3);
+        header.writeUInt8(type, 3);
+        header.writeUInt8(flags, 4);
+        header.writeUInt32BE(streamId & 0x7fffffff, 5);
+        return Buffer.concat([header, payload]);
+      }
+      class FakeSocket extends Duplex {
+        _read() {}
+        _write(chunk, _enc, cb) {
+          cb();
+        }
+      }
+      const socket = new FakeSocket();
+      const client = http2.connect("http://localhost:80", { createConnection: () => socket });
+      client.on("error", e => console.log("session error", e.message));
+      // peer SETTINGS + ACK of ours
+      socket.push(encodeFrame(0x4, 0, 0));
+      socket.push(encodeFrame(0x4, 0x1, 0));
+      client.on("connect", () => {
+        const req = client.request({ ":method": "POST", ":path": "/" });
+        req.on("error", e => console.log("req error", e.message));
+        req.on("close", () => console.log("req close rst=" + req.rstCode));
+        client.goaway = () => {};
+        let calls = 0;
+        try {
+          client.destroy(new Error("boom"), {
+            valueOf() {
+              console.log("valueOf:" + ++calls);
+              return 8;
+            },
+          });
+          console.log("destroy:returned calls=" + calls);
+        } catch (e) {
+          console.log("destroy threw: " + e.message);
+        }
+        // A numeric code must still tear every open stream down.
+        client.destroy(undefined, 8);
+        console.log("destroy:done");
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "destroy threw: Expected errorCode to be a number
+      destroy:done
+      req error boom
+      req close rst=8"
+    `);
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
+  // node only marks trailers as sent after header validation succeeds, so a corrected
+  // retry after a validation error must reach the wire.
+  test("a sendTrailers validation error does not mark the trailers as sent", async () => {
+    const trailerError = Promise.withResolvers<any>();
+    const trailers = Promise.withResolvers<any>();
+    const server = http2.createServer();
+    server.on("stream", (stream: any) => {
+      stream.on("error", (e: any) => trailers.reject(e));
+      stream.respond({ ":status": 200 }, { waitForTrailers: true });
+      stream.on("wantTrailers", () => {
+        try {
+          stream.sendTrailers({ ":status": "200" });
+        } catch (e: any) {
+          trailerError.resolve(e);
+          stream.sendTrailers({ "x-ok": "1" });
+        }
+      });
+      stream.end("body");
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const client = http2.connect(`http://localhost:${(server.address() as net.AddressInfo).port}`);
+    client.on("error", e => trailers.reject(e));
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", e => trailers.reject(e));
+      req.on("trailers", headers => trailers.resolve(headers));
+      req.resume();
+      req.end();
+      expect((await trailerError.promise).code).toBe("ERR_HTTP2_INVALID_PSEUDOHEADER");
+      expect((await trailers.promise)["x-ok"]).toBe("1");
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+
   test("refuses a new request stream once queued response data exhausts maxSessionMemory", async () => {
     const server = http2.createServer({ maxSessionMemory: 1 });
     server.on("stream", (stream: any) => {

@@ -182,8 +182,6 @@ declare function $getAsyncGeneratorInternalField(): TODO;
 declare function $getAbstractModuleRecordInternalField(): TODO;
 declare function $getArrayIteratorInternalField(): TODO;
 declare function $getStringIteratorInternalField(): TODO;
-declare function $getMapIteratorInternalField(): TODO;
-declare function $getSetIteratorInternalField(): TODO;
 declare function $getProxyInternalField(): TODO;
 declare function $idWithProfile(): TODO;
 /**
@@ -215,8 +213,6 @@ declare function $isSet<V>(obj: unknown): obj is Set<V>;
 declare function $isShadowRealm(obj: unknown): obj is ShadowRealm;
 declare function $isStringIterator(obj: unknown): obj is Iterator<string>;
 declare function $isArrayIterator(obj: unknown): obj is Iterator<any>;
-declare function $isMapIterator(obj: unknown): obj is Iterator<any>;
-declare function $isSetIterator(obj: unknown): obj is Iterator<any>;
 declare function $isUndefinedOrNull(obj: unknown): obj is null | undefined;
 declare function $tailCallForwardArguments(fn: CallableFunction, thisValue: ThisType): any;
 /**
@@ -234,8 +230,6 @@ declare function $throwRangeError(message: string): never;
  * @deprecated
  */
 declare function $throwOutOfMemoryError(): never;
-declare function $tryGetById(): TODO;
-declare function $tryGetByIdWithWellKnownSymbol(obj: any, key: WellKnownSymbol): any;
 declare function $putByIdDirect(obj: any, key: PropertyKey, value: any): void;
 
 /**
@@ -264,8 +258,6 @@ declare function $putGeneratorInternalField(): TODO;
 declare function $putAsyncGeneratorInternalField(): TODO;
 declare function $putArrayIteratorInternalField(): TODO;
 declare function $putStringIteratorInternalField(): TODO;
-declare function $putMapIteratorInternalField(): TODO;
-declare function $putSetIteratorInternalField(): TODO;
 declare function $superSamplerBegin(): TODO;
 declare function $superSamplerEnd(): TODO;
 declare function $toNumber(x: any): number;
@@ -328,9 +320,7 @@ declare const $arrayIteratorFieldIndex: TODO;
 declare const $arrayIteratorFieldIteratedObject: TODO;
 declare const $arrayIteratorFieldKind: TODO;
 declare const $mapIteratorFieldMapBucket: TODO;
-declare const $mapIteratorFieldKind: TODO;
 declare const $setIteratorFieldSetBucket: TODO;
-declare const $setIteratorFieldKind: TODO;
 declare const $stringIteratorFieldIndex: TODO;
 declare const $stringIteratorFieldIteratedString: TODO;
 declare const $asyncGeneratorFieldSuspendReason: TODO;

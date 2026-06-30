@@ -2794,6 +2794,16 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(() => Buffer.from("deadbeaf", "hex")).not.toThrow(); // Should not throw.
       });
 
+      it("Buffer.from honors a Symbol.toPrimitive accessor", () => {
+        const value = {};
+        Object.defineProperty(value, Symbol.toPrimitive, {
+          get() {
+            return () => "via getter";
+          },
+        });
+        expect(Buffer.from(value)).toStrictEqual(Buffer.from("via getter"));
+      });
+
       it("new Buffer() (Node.js test/test-buffer-new.js)", () => {
         const LENGTH = 16;
 

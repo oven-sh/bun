@@ -63,6 +63,34 @@ describe("console.Console", () => {
     expect(await outValue()).toBe("hello world!\n");
     expect(await errValue()).toBe("uh oh!\n");
   });
+
+  test("table renders Map and Set iterators", async () => {
+    const [stream, value] = writable();
+    const c = new Console({ stdout: stream, stderr: stream, colorMode: false });
+    c.table(
+      new Map([
+        ["a", 1],
+        ["b", 2],
+      ]).entries(),
+    );
+    c.table(new Set([7, 8]).values());
+    stream.end();
+    expect(await value()).toMatchInlineSnapshot(`
+      "┌───────────────────┬────────────┐
+      │ (iteration index) │   Values   │
+      ├───────────────────┼────────────┤
+      │         0         │ [ 'a', 1 ] │
+      │         1         │ [ 'b', 2 ] │
+      └───────────────────┴────────────┘
+      ┌───────────────────┬────────┐
+      │ (iteration index) │ Values │
+      ├───────────────────┼────────┤
+      │         0         │   7    │
+      │         1         │   8    │
+      └───────────────────┴────────┘
+      "
+    `);
+  });
 });
 
 test("console._stdout", () => {

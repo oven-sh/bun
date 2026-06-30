@@ -1119,6 +1119,7 @@ impl Win32Error {
     pub const DIRECTORY: Win32Error = Win32Error(267);
     pub const EA_TABLE_FULL: Win32Error = Win32Error(277);
     pub const DELETE_PENDING: Win32Error = Win32Error(303);
+    pub const UNTRUSTED_MOUNT_POINT: Win32Error = Win32Error(448);
     pub const ELEVATION_REQUIRED: Win32Error = Win32Error(740);
     pub const OPERATION_ABORTED: Win32Error = Win32Error(995);
     pub const NOACCESS: Win32Error = Win32Error(998);

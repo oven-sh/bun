@@ -8834,11 +8834,56 @@ mod win_symlink_impl {
                 },
             }
         }
-        sys_uv::symlink_uv(
+        match sys_uv::symlink_uv(
             abs_fallback_junction_target.unwrap_or(target),
             dest,
             bun_libuv_sys::UV_FS_SYMLINK_JUNCTION,
-        )
+        ) {
+            Ok(()) => {}
+            Err(e) => return Err(e),
+        }
+        // A junction created by a sandboxed process (e.g. a Windows
+        // AppContainer) is silently rewritten by the kernel into an untrusted
+        // mount point that NOTHING can traverse, ever
+        // (ERROR_UNTRUSTED_MOUNT_POINT). Creation still reports success, so
+        // probe traversability and report EACCES rather than leaving a dead
+        // link behind for the consumer to trip over.
+        {
+            use bun_windows_sys::externs as k32;
+            let mut w16 = bun_paths::w_path_buffer_pool::get();
+            let wdest = bun_paths::string_paths::to_w_path_normalize_auto_extend(
+                &mut w16[..],
+                dest.as_bytes(),
+            );
+            // SAFETY: wdest is NUL-terminated; null security/template handles.
+            let handle = unsafe {
+                k32::CreateFileW(
+                    wdest.as_ptr(),
+                    0,
+                    k32::FILE_SHARE_READ | k32::FILE_SHARE_WRITE | k32::FILE_SHARE_DELETE,
+                    core::ptr::null_mut(),
+                    k32::OPEN_EXISTING,
+                    k32::FILE_FLAG_BACKUP_SEMANTICS,
+                    core::ptr::null_mut(),
+                )
+            };
+            if handle == bun_windows_sys::INVALID_HANDLE_VALUE {
+                if bun_windows_sys::kernel32::GetLastError()
+                    == u32::from(bun_windows_sys::externs::Win32Error::UNTRUSTED_MOUNT_POINT.0)
+                {
+                    let _ = sys_uv::rmdir(dest);
+                    return Err(Error::new(E::EACCES, Tag::symlink).with_path(dest.as_bytes()));
+                }
+                // Any other probe failure: keep the junction; the create
+                // itself succeeded.
+            } else {
+                // SAFETY: handle is a valid handle from CreateFileW.
+                unsafe {
+                    let _ = k32::CloseHandle(handle);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// `unlinkW` — `DeleteFileW` with errno mapping.

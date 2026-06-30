@@ -692,6 +692,10 @@ impl SystemErrno {
             W::WSAEACCES => SystemErrno::EACCES,
             W::ELEVATION_REQUIRED => SystemErrno::EACCES,
             W::CANT_ACCESS_FILE => SystemErrno::EACCES,
+            // The path cannot be traversed because it contains an untrusted
+            // mount point: junctions created by a sandboxed process are
+            // permanently rewritten to this state by the kernel.
+            W::UNTRUSTED_MOUNT_POINT => SystemErrno::EACCES,
             W::ADDRESS_ALREADY_ASSOCIATED => SystemErrno::EADDRINUSE,
             W::WSAEADDRINUSE => SystemErrno::EADDRINUSE,
             W::WSAEADDRNOTAVAIL => SystemErrno::EADDRNOTAVAIL,

@@ -106,7 +106,6 @@ const banned = [
   "pipe",
   "_start",
   "wait",
-  "wait",
   "sleep",
   "exit",
   "kill",
@@ -182,14 +181,9 @@ function allThePropertyNames(object, banned) {
     pro = Object.getPrototypeOf(pro);
   }
 
-  for (const ban of banned) {
-    const index = names.indexOf(ban);
-    if (index !== -1) {
-      names.splice(index, 1);
-    }
-  }
-
-  return names;
+  // A name can appear once per prototype that defines it (process.stdin sees
+  // "pipe" from ReadStream, Readable and Stream), so drop every occurrence.
+  return names.filter(name => !banned.includes(name));
 }
 
 if (ENABLE_LOGGING) {

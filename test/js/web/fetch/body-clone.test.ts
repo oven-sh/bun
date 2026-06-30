@@ -520,6 +520,73 @@ test("ReadableStream with mixed content (starting with ArrayBuffer) can be conve
   expect(text).toContain("Здравствуй, мир!");
 });
 
+// The tee behind Request/Response.clone() structured-clones every chunk for the
+// second branch. That clone must copy only the bytes the view covers: cloning the
+// whole backing ArrayBuffer retains the larger shared buffer fetch() slices from.
+test.each(["Request", "Response"])(
+  "%s.clone() chunk clones do not retain the chunk's whole backing buffer",
+  async kind => {
+    const backing = new Uint8Array(1 << 20);
+    const chunk = backing.subarray(17, 17 + 64);
+    chunk.fill(7);
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(chunk);
+        controller.close();
+      },
+    });
+
+    const target =
+      kind === "Request" ? new Request("https://example.com", { method: "POST", body: stream }) : new Response(stream);
+    const clone = target.clone();
+
+    const [originalBytes, clonedRead] = await Promise.all([target.bytes(), clone.body!.getReader().read()]);
+    const clonedChunk = clonedRead.value as Uint8Array<ArrayBuffer>;
+
+    expect(originalBytes).toEqual(chunk);
+    expect(clonedChunk).toEqual(chunk);
+    expect(clonedChunk.buffer.byteLength).toBe(64);
+  },
+);
+
+test("fetch().clone(): chunks buffered for the unread clone own exactly their bytes", async () => {
+  const total = 8 * 1024 * 1024;
+  const chunk = new Uint8Array(64 * 1024).fill(42);
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      let sent = 0;
+      return new Response(
+        new ReadableStream({
+          pull(controller) {
+            if (sent >= total) return controller.close();
+            controller.enqueue(chunk);
+            sent += chunk.byteLength;
+          },
+        }),
+      );
+    },
+  });
+
+  const response = await fetch(server.url);
+  const clone = response.clone();
+
+  // Read the original to completion: the cache-a-copy pattern. Everything the
+  // clone will ever emit is now sitting in its queue.
+  const original = await response.bytes();
+  expect(original.byteLength).toBe(total);
+
+  let bytes = 0;
+  let backing = 0;
+  for await (const teed of clone.body!) {
+    bytes += teed.byteLength;
+    backing += teed.buffer.byteLength;
+  }
+  // fetch() delivers chunks as views into a larger shared receive buffer; the
+  // clones queued for the second branch must not each retain a copy of it.
+  expect({ bytes, backing }).toEqual({ bytes: total, backing: total });
+});
+
 // clone() on a locked-stream body must throw a single catchable TypeError.
 // It must not also report the error as uncaught: that sets exit code 1 and
 // clears the pending exception even though the user handled the throw.

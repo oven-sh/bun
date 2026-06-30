@@ -674,10 +674,9 @@ fn leads_a_number(contents: &[u8]) -> bool {
     }
 }
 
-/// The `.env`/`--define` "auto quote" path: lex the whole input as a string
-/// literal with no quote character (terminated by a newline or EOF),
-/// decoding escape sequences — the JS lexer's
-/// `parse_string_literal_inner::<0>` contract.
+/// The `.env`/`--define` "auto quote" path: the whole input is one string
+/// literal with no quote characters (newlines included); escape sequences
+/// are decoded.
 fn parse_auto_quoted_string(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -855,7 +854,8 @@ pub fn property_value_loc_or_key(contents: &[u8], key_loc: bun_ast::Loc) -> bun_
 /// has fewer than `index + 1` items (or `contents`/`array_loc` don't match).
 ///
 /// Linear in the array's source extent: a caller visiting every item should
-/// sweep with [`array_first_item`] / [`array_next_item`] instead.
+/// take the first item's loc (`index == 0`) and sweep forward with
+/// [`array_next_item_loc`] instead.
 pub fn array_item_loc(
     contents: &[u8],
     array_loc: bun_ast::Loc,

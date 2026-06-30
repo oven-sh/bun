@@ -265,7 +265,6 @@ function toSingleQuoted(token: string): string {
   return "'" + token.slice(1, -1) + "'";
 }
 
-const STRUCTURAL = new Set(["{", "}", "[", "]", ",", ":"]);
 
 /**
  * Re-serializes `tokens` (a valid JSON document) using JSONC-only syntax:

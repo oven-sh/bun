@@ -913,8 +913,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       typeof this.maxHeaderSize !== "undefined" ? this.maxHeaderSize : getMaxHTTPHeaderSize(),
       onServerClientError.bind(this),
       // headersTimeout/requestTimeout are enforced natively in whole seconds (0 = disabled).
-      this.headersTimeout > 0 ? MathMax(1, MathCeil(this.headersTimeout / 1000)) : 0,
-      this.requestTimeout > 0 ? MathMax(1, MathCeil(this.requestTimeout / 1000)) : 0,
+      this.headersTimeout > 0 ? MathMin(940, MathMax(1, MathCeil(this.headersTimeout / 1000))) : 0,
+      this.requestTimeout > 0 ? MathMin(940, MathMax(1, MathCeil(this.requestTimeout / 1000))) : 0,
     );
 
     if (this?._unref) {

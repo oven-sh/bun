@@ -4309,4 +4309,56 @@ describe("server headersTimeout/requestTimeout enforcement", () => {
       enabledServer.close();
     }
   }, 20_000);
+
+  it("a headersTimeout of more than 2**32 seconds does not become a short deadline", async () => {
+    // 4_294_967_297_000 ms is 2**32 + 1 seconds; narrowed naively to a 32-bit
+    // count of seconds it wraps to a 1-second deadline. Negative contract
+    // bounded by an awaited condition: a sibling server whose 6s headersTimeout
+    // 408-closes first proves a wrapped 1s deadline (plus a full 4s timer
+    // sweep) would already have reaped the huge-timeout connection.
+    const hugeServer = createServer(
+      { headersTimeout: 4_294_967_297_000, requestTimeout: 4_294_967_297_000, connectionsCheckingInterval: 100 },
+      (req, res) => {
+        res.end("late-but-fine");
+      },
+    );
+    const siblingServer = createServer(
+      { headersTimeout: 6000, requestTimeout: 30000, connectionsCheckingInterval: 100 },
+      () => {},
+    );
+    try {
+      hugeServer.listen(0, "127.0.0.1");
+      siblingServer.listen(0, "127.0.0.1");
+      await Promise.all([once(hugeServer, "listening"), once(siblingServer, "listening")]);
+
+      const hugeSocket = connect((hugeServer.address() as AddressInfo).port, "127.0.0.1");
+      hugeSocket.on("error", () => {});
+      let hugeClosed = false;
+      hugeSocket.on("close", () => (hugeClosed = true));
+      let hugeReceived = "";
+      hugeSocket.on("data", chunk => (hugeReceived += chunk.toString()));
+      const hugeClosedPromise = new Promise<void>(resolve => hugeSocket.on("close", () => resolve()));
+      hugeSocket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nX-Partial: ");
+
+      const siblingSocket = connect((siblingServer.address() as AddressInfo).port, "127.0.0.1");
+      siblingSocket.on("error", () => {});
+      const siblingClosed = new Promise<void>(resolve => siblingSocket.on("close", () => resolve()));
+      siblingSocket.write("GET / HTTP/1.1\r\nHost: localhost\r\nX-Partial: ");
+
+      await siblingClosed;
+      expect(hugeClosed).toBe(false);
+      expect(hugeReceived).toBe("");
+
+      // The connection is still alive: finishing the headers gets a normal 200.
+      hugeSocket.write("1\r\n\r\n");
+      await hugeClosedPromise;
+      expect(hugeReceived).toStartWith("HTTP/1.1 200 OK\r\n");
+      expect(hugeReceived).toEndWith("late-but-fine");
+    } finally {
+      hugeServer.closeAllConnections();
+      hugeServer.close();
+      siblingServer.closeAllConnections();
+      siblingServer.close();
+    }
+  }, 30_000);
 });

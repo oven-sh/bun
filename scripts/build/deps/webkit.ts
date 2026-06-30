@@ -7,9 +7,7 @@
 // -lto variants built with ThinLTO (per-module summaries for cross-language
 // importing), and the Windows ICU data table filtered + per-item zstd
 // compressed (lazily decompressed via bun_icu_decompress.cpp).
-// Preview build of oven-sh/WebKit#261; bump to the merge commit's
-// autobuild-<sha> tag once that PR lands.
-export const WEBKIT_VERSION = "autobuild-preview-pr-261-d3fd8195";
+export const WEBKIT_VERSION = "0d9ee56ba4f6f691cad8390e07300303f613cb67";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

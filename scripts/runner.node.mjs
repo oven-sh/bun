@@ -34,6 +34,7 @@ import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
+import { downloadArtifactZip } from "./download-artifact.mjs";
 import pLimit from "./p-limit.mjs";
 import {
   getAbi,
@@ -2250,44 +2251,7 @@ async function getExecPathFromBuildKite(target, buildId) {
   }
 
   const releasePath = join(cwd, "release");
-  mkdirSync(releasePath, { recursive: true });
-
-  let zipPath;
-  downloadLoop: for (let i = 0; i < 10; i++) {
-    const args = ["artifact", "download", "**", releasePath, "--step", target];
-    if (buildId) {
-      args.push("--build", buildId);
-    }
-
-    const { error } = await spawnSafe({
-      command: "buildkite-agent",
-      args,
-      timeout: 120000,
-    });
-    if (error === "timeout") {
-      throw new Error(
-        `buildkite-agent artifact download timed out after 120s for step '${target}'. ` +
-          `Refusing to continue with a partial download (would silently fall back to the wrong binary).`,
-      );
-    }
-
-    zipPath = readdirSync(releasePath, { recursive: true, encoding: "utf-8" })
-      .filter(filename => /^bun.*\.zip$/i.test(filename))
-      .map(filename => join(releasePath, filename))
-      .sort((a, b) => b.includes("profile") - a.includes("profile"))
-      .at(0);
-
-    if (zipPath) {
-      break downloadLoop;
-    }
-
-    console.warn(`Waiting for ${target}.zip to be available...`);
-    await new Promise(resolve => setTimeout(resolve, i * 1000));
-  }
-
-  if (!zipPath) {
-    throw new Error(`Could not find ${target}.zip from Buildkite: ${releasePath}`);
-  }
+  const zipPath = await downloadArtifactZip({ target, buildId, releasePath, spawn: spawnSafe });
 
   await unzip(zipPath, releasePath);
 

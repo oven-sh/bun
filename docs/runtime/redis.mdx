@@ -251,26 +251,37 @@ await client.publish(channelName, message);
 ```
 
 The message can be a string or binary data (`Buffer`, a typed array, or a
-`Blob`). Binary payloads are written to the wire as-is, which is useful when a
-subscriber in another process or language expects raw bytes:
+`Blob`). Binary payloads are written to the wire as-is:
 
 ```typescript redis.ts icon="/icons/typescript.svg"
 await client.publish("updates", Buffer.from([0x00, 0x01, 0x02]));
 ```
 
-Subscribers created with Bun's `.subscribe()` currently receive every message
-as a string. To consume a binary message from a Bun subscriber, encode it
-before publishing (for example with base64) and decode it in the listener.
-
 ### Subscriptions
 
-Subscribe to channels with the `.subscribe()` method:
+Subscribe to channels with the `.subscribe()` method. The listener receives
+each message decoded as a string:
 
 ```typescript redis.ts icon="/icons/typescript.svg"
 await client.subscribe(channel, (message, channel) => {});
 ```
 
-Unsubscribe with the `.unsubscribe()` method:
+To receive a message's raw bytes instead, use `.subscribeBuffer()`. The
+listener is called with a `Uint8Array`, so binary payloads round-trip
+unchanged:
+
+```typescript redis.ts icon="/icons/typescript.svg"
+await client.subscribeBuffer("updates", (message, channel) => {
+  console.log(message); // Uint8Array [0, 1, 2]
+});
+await client.publish("updates", new Uint8Array([0, 1, 2]));
+```
+
+String and buffer listeners can be registered on the same channel; each
+receives the message in its own form.
+
+Unsubscribe with the `.unsubscribe()` method, which works the same way for
+listeners registered with either `.subscribe()` or `.subscribeBuffer()`:
 
 ```typescript redis.ts icon="/icons/typescript.svg"
 await client.unsubscribe(); // Unsubscribe from all channels.

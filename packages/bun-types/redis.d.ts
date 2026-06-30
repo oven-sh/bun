@@ -44,10 +44,21 @@ declare module "bun" {
 
   export namespace RedisClient {
     type KeyLike = string | ArrayBufferView | Blob;
+
+    /**
+     * A listener registered with {@link RedisClient.subscribe `.subscribe()`}.
+     * Receives each message decoded as a string.
+     */
     type StringPubSubListener = (message: string, channel: string) => void;
 
-    // Buffer subscriptions are not yet implemented
-    // type BufferPubSubListener = (message: Uint8Array<ArrayBuffer>, channel: string) => void;
+    /**
+     * A listener registered with
+     * {@link RedisClient.subscribeBuffer `.subscribeBuffer()`}. Receives each
+     * message's raw bytes as a `Uint8Array`.
+     */
+    type BufferPubSubListener = (message: Uint8Array<ArrayBuffer>, channel: string) => void;
+
+    type PubSubListener = StringPubSubListener | BufferPubSubListener;
   }
 
   export class RedisClient {
@@ -2681,9 +2692,10 @@ declare module "bun" {
      *
      * @param channel The channel to publish to.
      * @param message The message to publish. Binary payloads (`Buffer`,
-     * `Uint8Array`, `Blob`) are sent as-is. Subscribers in Bun currently
-     * receive messages as strings, so deliver binary data to a non-Bun
-     * subscriber or encode it (for example with base64) for a Bun one.
+     * `Uint8Array`, `Blob`) are sent as-is; subscribe with
+     * {@link subscribeBuffer `.subscribeBuffer()`} to receive them as raw
+     * bytes, or with {@link subscribe `.subscribe()`} to receive them decoded
+     * as a string.
      *
      * @returns The number of clients that received the message. In a cluster,
      * this is the total number of clients in the same node.
@@ -2732,6 +2744,43 @@ declare module "bun" {
     subscribe(channels: string[], listener: RedisClient.StringPubSubListener): Promise<number>;
 
     /**
+     * Subscribe to a Redis channel, receiving each message as a `Uint8Array`.
+     *
+     * Identical to {@link subscribe `.subscribe()`} except that the listener
+     * receives the message's raw bytes instead of a decoded string, so binary
+     * payloads published with a `Buffer`, typed array, or `Blob` round-trip
+     * unchanged. Both kinds of listener can be registered on the same channel.
+     *
+     * @param channel The channel to subscribe to.
+     * @param listener The listener to call when a message is received. It
+     * receives the message bytes as the first argument and the channel as the
+     * second.
+     *
+     * @example
+     * ```ts
+     * await client.subscribeBuffer("events", (message, channel) => {
+     *   console.log(channel, message); // Uint8Array
+     * });
+     * await client.publish("events", new Uint8Array([0x00, 0x01, 0x02]));
+     * ```
+     */
+    subscribeBuffer(channel: string, listener: RedisClient.BufferPubSubListener): Promise<number>;
+
+    /**
+     * Subscribe to multiple Redis channels, receiving each message as a
+     * `Uint8Array`.
+     *
+     * Identical to {@link subscribe `.subscribe()`} except that the listener
+     * receives each message's raw bytes instead of a decoded string.
+     *
+     * @param channels An array of channels to subscribe to.
+     * @param listener The listener to call when a message is received on any of
+     * the subscribed channels. It receives the message bytes as the first
+     * argument and the channel as the second.
+     */
+    subscribeBuffer(channels: string[], listener: RedisClient.BufferPubSubListener): Promise<number>;
+
+    /**
      * Unsubscribe from a single Redis channel.
      *
      * If there are no more channels subscribed to, the client automatically
@@ -2756,11 +2805,13 @@ declare module "bun" {
      * {@link subscribe `.subscribe()`}.
      *
      * @param channel The channel to unsubscribe from.
-     * @param listener The listener to remove. This is tested against
+     * @param listener The listener to remove, whether it was registered with
+     * {@link subscribe `.subscribe()`} or
+     * {@link subscribeBuffer `.subscribeBuffer()`}. This is tested against
      * referential equality so you must pass the exact same listener instance as
      * when subscribing.
      */
-    unsubscribe(channel: string, listener: RedisClient.StringPubSubListener): Promise<void>;
+    unsubscribe(channel: string, listener: RedisClient.PubSubListener): Promise<void>;
 
     /**
      * Unsubscribe from all registered Redis channels.

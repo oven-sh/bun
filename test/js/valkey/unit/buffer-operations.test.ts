@@ -2,37 +2,44 @@ import { RedisClient } from "bun";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { ConnectionType, createClient, ctx, isEnabled } from "../test-utils";
 
+/**
+ * `null` when the call passed argument validation (the returned Promise's
+ * connection-error rejection is swallowed), else the synchronously thrown message.
+ */
+function validationError(call: () => Promise<unknown>): string | null {
+  try {
+    call().catch(() => {});
+    return null;
+  } catch (error) {
+    return (error as Error).message;
+  }
+}
+
+/**
+ * A client that never connects: nothing listens on port 1, and the offline
+ * queue is disabled so returned promises reject immediately. Argument
+ * validation runs synchronously before any connection attempt, so the
+ * validation tests below need no server.
+ */
+function createUnconnectedClient(): RedisClient {
+  return new RedisClient("redis://127.0.0.1:1", {
+    enableOfflineQueue: false,
+    autoReconnect: false,
+  });
+}
+
 // PUBLISH and SPUBLISH share one argument path that accepts the same value
-// types as every other command. Argument validation runs synchronously before
-// any connection attempt, so these tests need no server.
+// types as every other command.
 describe.each(["publish", "spublish"] as const)("RedisClient.%s argument types", method => {
   let client: RedisClient;
 
   beforeEach(() => {
-    // Nothing listens on port 1, and the offline queue is disabled so the
-    // returned promises reject immediately instead of waiting on a connection.
-    client = new RedisClient("redis://127.0.0.1:1", {
-      enableOfflineQueue: false,
-      autoReconnect: false,
-    });
+    client = createUnconnectedClient();
   });
 
   afterEach(() => {
     client.close();
   });
-
-  /**
-   * `null` when the call passed argument validation (the returned Promise's
-   * connection-error rejection is swallowed), else the synchronously thrown message.
-   */
-  function validationError(call: () => Promise<unknown>): string | null {
-    try {
-      call().catch(() => {});
-      return null;
-    } catch (error) {
-      return (error as Error).message;
-    }
-  }
 
   test("accepts binary and string-coercible message types", () => {
     // 0xff and 0x80 are not valid UTF-8, so this payload is genuinely binary.
@@ -72,6 +79,38 @@ describe.each(["publish", "spublish"] as const)("RedisClient.%s argument types",
       booleanMessage: `Expected message to be a string or buffer for '${method}'.`,
       objectChannel: `Expected channel to be a string or buffer for '${method}'.`,
       missingChannel: `Expected channel to be a string or buffer for '${method}'.`,
+    });
+  });
+});
+
+// `subscribeBuffer` shares `subscribe`'s argument handling; only the form the
+// listener receives the message in differs.
+describe.each(["subscribe", "subscribeBuffer"] as const)("RedisClient.%s argument validation", method => {
+  let client: RedisClient;
+
+  beforeEach(() => {
+    client = createUnconnectedClient();
+  });
+
+  afterEach(() => {
+    client.close();
+  });
+
+  test("rejects invalid arguments before connecting", () => {
+    const listener = () => {};
+
+    expect({
+      isFunction: typeof client[method],
+      missingListener: validationError(() => (client as any)[method]("channel")),
+      numberListener: validationError(() => client[method]("channel", 42 as any)),
+      numberChannel: validationError(() => client[method](42 as any, listener)),
+      emptyChannelArray: validationError(() => client[method]([], listener)),
+    }).toEqual({
+      isFunction: "function",
+      missingListener: `Expected listener to be a function for '${method}'.`,
+      numberListener: `Expected listener to be a function for '${method}'.`,
+      numberChannel: `Expected channel to be a string or array for '${method}'.`,
+      emptyChannelArray: `${method} requires at least one channel`,
     });
   });
 });
@@ -184,29 +223,125 @@ describe.skipIf(!isEnabled)("Valkey: Buffer Operations", () => {
     expect(out).toStrictEqual(value);
   });
 
-  test("publish delivers a binary message payload to a subscriber", async () => {
-    const channel = ctx.generateKey("binary-pubsub");
+  /**
+   * Run `body` with a freshly connected subscriber client, then tear it down.
+   * Closing a client that is still subscribed keeps the event loop alive
+   * (https://github.com/oven-sh/bun/issues/33103), so unsubscribe before close.
+   */
+  async function withSubscriber(body: (subscriber: RedisClient) => Promise<void>): Promise<void> {
     const subscriber = createClient(ConnectionType.TCP);
     await subscriber.connect();
-
     try {
+      await body(subscriber);
+    } finally {
+      try {
+        await subscriber.unsubscribe();
+      } catch {}
+      subscriber.close();
+    }
+  }
+
+  test("publish delivers a binary message payload to a subscriber", async () => {
+    const channel = ctx.generateKey("binary-pubsub");
+    await withSubscriber(async subscriber => {
       const received = Promise.withResolvers<string>();
       // An unexpected disconnect must fail the test, not stall it until timeout.
       subscriber.onclose = error => received.reject(error);
       await subscriber.subscribe(channel, message => received.resolve(message));
 
       // Publish the raw UTF-8 bytes of a multi-byte string as a Uint8Array.
-      // Subscribers receive messages as strings, so getting the original text
-      // back proves the binary payload crossed the wire byte for byte.
+      // `subscribe` listeners receive messages as strings, so getting the
+      // original text back proves the payload crossed the wire byte for byte.
       const text = "binary-pubsub \u00e9\u20ac\u{1f600}";
       expect(await ctx.redis.publish(channel, new TextEncoder().encode(text))).toBe(1);
       expect(await received.promise).toBe(text);
-    } finally {
-      // Closing a client that is still subscribed keeps the event loop alive
-      // (https://github.com/oven-sh/bun/issues/33103), so unsubscribe first.
-      await subscriber.unsubscribe(channel).catch(() => {});
-      subscriber.close();
-    }
+    });
+  });
+
+  test("subscribeBuffer delivers each message's raw bytes", async () => {
+    // Two channels so the `subscribeBuffer(channels[], listener)` overload is covered.
+    const channels = [ctx.generateKey("buffer-sub-a"), ctx.generateKey("buffer-sub-b")];
+    await withSubscriber(async subscriber => {
+      const received = new Map(channels.map(channel => [channel, Promise.withResolvers<Uint8Array>()]));
+      subscriber.onclose = error => received.forEach(r => r.reject(error));
+      await subscriber.subscribeBuffer(channels, (message, channel) => received.get(channel)!.resolve(message));
+
+      // 0xff, 0xfe, and 0x80 are not valid UTF-8, so only a byte-level path
+      // can round-trip this payload unchanged.
+      const payload = new Uint8Array([0x00, 0xff, 0xfe, 0x80, 0x01, 0x7f]);
+      for (const channel of channels) {
+        expect(await ctx.redis.publish(channel, payload)).toBe(1);
+      }
+      for (const channel of channels) {
+        const message = await received.get(channel)!.promise;
+        expect(message).toBeInstanceOf(Uint8Array);
+        expect(message).toStrictEqual(payload);
+      }
+    });
+  });
+
+  test("string and buffer listeners coexist on one channel", async () => {
+    const channel = ctx.generateKey("mixed-sub");
+    await withSubscriber(async subscriber => {
+      const asString = Promise.withResolvers<string>();
+      const asBuffer = Promise.withResolvers<Uint8Array>();
+      subscriber.onclose = error => {
+        asString.reject(error);
+        asBuffer.reject(error);
+      };
+      await subscriber.subscribe(channel, message => asString.resolve(message));
+      await subscriber.subscribeBuffer(channel, message => asBuffer.resolve(message));
+
+      const text = "mixed \u00e9\u20ac\u{1f600}";
+      const bytes = new TextEncoder().encode(text);
+      // PUBLISH reports one receiver: both listeners share a single subscriber connection.
+      expect(await ctx.redis.publish(channel, bytes)).toBe(1);
+
+      // The same payload reaches each listener in its own form.
+      expect(await asString.promise).toBe(text);
+      expect(await asBuffer.promise).toStrictEqual(bytes);
+    });
+  });
+
+  test("unsubscribe removes a buffer listener without affecting string listeners", async () => {
+    const channel = ctx.generateKey("unsub-buffer");
+    await withSubscriber(async subscriber => {
+      const stringSeen: string[] = [];
+      const bufferSeen: string[] = [];
+      const sawFirstString = Promise.withResolvers<void>();
+      const sawFirstBuffer = Promise.withResolvers<void>();
+      const sawSecondString = Promise.withResolvers<void>();
+      subscriber.onclose = error => {
+        sawFirstString.reject(error);
+        sawFirstBuffer.reject(error);
+        sawSecondString.reject(error);
+      };
+
+      const bufferListener = (message: Uint8Array) => {
+        bufferSeen.push(new TextDecoder().decode(message));
+        sawFirstBuffer.resolve();
+      };
+      await subscriber.subscribe(channel, message => {
+        stringSeen.push(message);
+        (stringSeen.length === 1 ? sawFirstString : sawSecondString).resolve();
+      });
+      await subscriber.subscribeBuffer(channel, bufferListener);
+
+      expect(await ctx.redis.publish(channel, "one")).toBe(1);
+      // Wait for both listeners to observe "one" before removing one of them,
+      // since PUBLISH resolves independently of delivery to the subscriber.
+      await Promise.all([sawFirstString.promise, sawFirstBuffer.promise]);
+
+      await subscriber.unsubscribe(channel, bufferListener);
+      expect(await ctx.redis.publish(channel, "two")).toBe(1);
+      await sawSecondString.promise;
+
+      // The string listener saw both messages; the removed buffer listener only the first.
+      expect({ stringSeen, bufferSeen }).toEqual({
+        stringSeen: ["one", "two"],
+        bufferSeen: ["one"],
+      });
+    });
   });
 });
 

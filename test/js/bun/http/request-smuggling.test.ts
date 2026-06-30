@@ -1525,7 +1525,8 @@ describe("Host header field value validation", () => {
       client.on("error", reject);
       client.on("data", chunk => chunks.push(chunk));
       client.on("end", () => resolve(Buffer.concat(chunks).toString()));
-      client.write(payload);
+      // latin1 keeps bytes >= 0x80 as single bytes on the wire (a string write would UTF-8-encode them).
+      client.write(Buffer.from(payload, "latin1"));
     });
   }
 
@@ -1549,6 +1550,7 @@ describe("Host header field value validation", () => {
     [0x21, 0x40],
     [0x41, 0x60],
     [0x61, 0x7e],
+    [0x7f, 0xff],
   ])(
     "the HTTP/1.1 parser charset and the HTTP/1.0 request-URL charset accept the same Host bytes (%i-%i)",
     async (firstByte, lastByte) => {
@@ -1559,7 +1561,8 @@ describe("Host header field value validation", () => {
         },
       });
 
-      // RFC 3986 `uri-host [ ":" port ]`: unreserved / sub-delims / "%" / ":" / "[" / "]"
+      // RFC 3986 `uri-host [ ":" port ]`: unreserved / sub-delims / "%" / ":" / "[" / "]".
+      // Every byte in [0x7f, 0xff] is outside that set, so both validators must reject all of them.
       const isHostByte = (char: string) => /^[A-Za-z0-9._~%!$&'()*+,;=:\[\]-]$/.test(char);
 
       async function checkByte(byte: number) {

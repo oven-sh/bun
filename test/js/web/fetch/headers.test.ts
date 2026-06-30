@@ -77,6 +77,60 @@ describe("Headers", () => {
       expect(headers.get("x-third")).toBeNull();
       expect(headers.get("x-fourth")).toBe("fourth");
     });
+    // The literal takes the fast path; redefining "x-second" transitions the structure, so the
+    // remaining keys must be re-read through [[GetOwnProperty]], which invokes the new getter.
+    test("constructing headers from an object observes a getter installed by an earlier value's toString", () => {
+      const record: any = {
+        "x-first": {
+          toString() {
+            Object.defineProperty(record, "x-second", { get: () => "from-getter", enumerable: true });
+            return "first";
+          },
+        },
+        "x-second": "second",
+        "x-third": "third",
+      };
+      expect([...new Headers(record)]).toEqual([
+        ["x-first", "first"],
+        ["x-second", "from-getter"],
+        ["x-third", "third"],
+      ]);
+    });
+    test("constructing headers from an object propagates an exception from a getter installed by an earlier value's toString", () => {
+      const record: any = {
+        "x-first": {
+          toString() {
+            Object.defineProperty(record, "x-second", {
+              get: () => {
+                throw new Error("getter boom");
+              },
+              enumerable: true,
+            });
+            return "first";
+          },
+        },
+        "x-second": "second",
+      };
+      expect(() => new Headers(record)).toThrow("getter boom");
+    });
+    test("constructing headers from an object keeps own-property semantics after setPrototypeOf mid-conversion", () => {
+      const proto = { "x-second": "from-proto" };
+      const record: any = {
+        "x-first": {
+          toString() {
+            delete record["x-second"];
+            Object.setPrototypeOf(record, proto);
+            return "first";
+          },
+        },
+        "x-second": "second",
+        "x-third": "third",
+      };
+      expect([...new Headers(record)]).toEqual([
+        ["x-first", "first"],
+        ["x-third", "third"],
+      ]);
+    });
     test("can create headers from object with duplicates", () => {
       const headers = new Headers({
         "accept": "*/*",

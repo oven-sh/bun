@@ -2051,15 +2051,18 @@ describe.skipIf(!isWindows)("windows existsSync/accessSync attribute-query seman
     fs.symlinkSync(p("junction-target"), p("junction-dangling"), "junction");
     fs.rmdirSync(p("junction-target"));
 
+    // "code" is a string, or an array when the OS version changes which
+    // errno Windows reports for the same bad input.
     const throws = (fn, code) => {
+      const codes = [].concat(code);
       let threw;
       try {
         fn();
       } catch (err) {
         threw = err;
       }
-      assert.ok(threw, "expected " + code + ", did not throw");
-      assert.strictEqual(threw.code, code);
+      assert.ok(threw, "expected " + codes.join("|") + ", did not throw");
+      assert.ok(codes.includes(threw.code), "expected " + codes.join("|") + ", got " + threw.code);
       assert.strictEqual(threw.syscall, "access");
       return threw;
     };
@@ -2110,7 +2113,10 @@ describe.skipIf(!isWindows)("windows existsSync/accessSync attribute-query seman
       assert.strictEqual(enoent.path, p("missing.txt"));
       throws(() => fs.accessSync(p("missing-dir", "x.txt"), F_OK), "ENOENT");
       throws(() => fs.accessSync(p("ro.txt"), W_OK), "EPERM");
-      throws(() => fs.accessSync(p("file.txt") + "\\", F_OK), "ENOTDIR");
+      // Trailing separator on a file: both arms fall through to
+      // GetFileAttributesW, but the error it reports is OS-version dependent
+      // (ENOTDIR on Windows 11, ENOENT on Windows Server 2019).
+      throws(() => fs.accessSync(p("file.txt") + "\\", F_OK), ["ENOTDIR", "ENOENT"]);
       throws(() => fs.accessSync("", F_OK), "ENOENT");
 
       // The async flavors share the same syscall layer.

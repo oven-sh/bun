@@ -352,8 +352,9 @@ impl Default for FSWatchTaskWindows {
 pub enum StringOrBytesToDecode {
     String(bun_core::String),
     BytesToFree(Box<[u8]>),
-    /// ReadDirectoryChangesW overflow: events were lost and no filename is
-    /// available. JS receives a null filename (matches node).
+    /// libuv passed a NULL filename: a ReadDirectoryChangesW overflow (events
+    /// were lost) or a name whose UTF-16 to UTF-8 conversion failed. JS
+    /// receives a null filename either way (matches node).
     NoFilename,
 }
 

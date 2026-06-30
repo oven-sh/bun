@@ -234,9 +234,9 @@ impl PathWatcher {
             return;
         }
 
-        // A NULL filename with status 0 is libuv's ReadDirectoryChangesW
-        // buffer-overflow notification (win/fs-event.c): events were lost.
-        // Match node: deliver 'change' with a null filename so callers can rescan.
+        // libuv (win/fs-event.c) passes a NULL filename with status 0 both for a
+        // ReadDirectoryChangesW buffer overflow (events were lost) and for a name
+        // whose UTF-16 to UTF-8 conversion failed; node delivers null for both.
         let path: Option<&[u8]> = if filename.is_null() {
             None
         } else {
@@ -277,10 +277,17 @@ impl PathWatcher {
 
         for i in 0..self.handlers.len() {
             let event = &mut self.handlers.values_mut()[i];
-            // An overflow notification is never a suppressible duplicate — node
-            // delivers every one — so it bypasses dedup, like the posix
-            // `emit_unsuppressed`.
-            if path.is_none() || event.emit(hash, timestamp, event_type) {
+            // An overflow is never a suppressible duplicate (node delivers every
+            // one), so it bypasses dedup and resets it: the next path event is
+            // not consecutive with the one that preceded the overflow.
+            let should_emit = match path {
+                None => {
+                    *event = ChangeEvent::default();
+                    true
+                }
+                Some(_) => event.emit(hash, timestamp, event_type),
+            };
+            if should_emit {
                 let ctx: *mut FSWatcher = self.handlers.keys()[i].cast::<FSWatcher>();
                 // SAFETY: handlers keys are `*mut FSWatcher` erased to `*mut c_void` in `watch()`.
                 let encoding = unsafe { (*ctx).encoding };

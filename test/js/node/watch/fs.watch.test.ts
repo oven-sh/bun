@@ -1055,12 +1055,16 @@ test.skipIf(!isWindows)(
           : `silent loss: ${JSON.stringify(s)}`;
 
     const okDelivery = expect.stringMatching(/^(all events delivered|overflow signaled via \["change"\])$/);
+    // stderr is in the asserted object so a watcher 'error'/'close' rejection
+    // (whose message the fixture writes to stderr) shows up in the diff.
     expect({
+      stderr,
       utf8: summarize(result.utf8),
       buffer: summarize(result.buffer),
       signalCode: proc.signalCode, // the fixture must exit on its own
       exitCode,
     }).toEqual({
+      stderr: "",
       utf8: okDelivery,
       buffer: okDelivery,
       signalCode: null,

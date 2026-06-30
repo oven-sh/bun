@@ -1144,44 +1144,46 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let full_run = self.run(cursor);
         let start = self.pos_at(cursor);
 
-        // `-` is its own token, so `- 5` (whitespace between) is accepted.
-        // A `-` run with nothing else defers to the next run.
-        let (neg, num_off, num_run): (bool, usize, &[u8]) = if full_run[0] == b'-' {
-            if full_run.len() > 1 && !self.rest_is_ws_cold(&full_run[1..]) {
-                if !matches!(full_run[1], b'0'..=b'9' | b'.') {
-                    self.expected(cursor, "number");
-                    return Err(self.unexpected(cursor));
-                }
-                (true, 1, &full_run[1..])
-            } else {
-                // The digits are the next run (if any).
-                self.cursor += 1;
-                let next = self.cursor;
-                let p = self.pos_at(next);
-                if p >= self.contents.len() || !matches!(self.contents[p], b'0'..=b'9' | b'.') {
-                    self.expected(next, "number");
-                    return Err(self.unexpected(next));
-                }
-                self.token_start = p;
-                let run = self.run(next);
-                let (value, used) = self.parse_number_text(run, p)?;
-                if !self.rest_is_ws_cold(&run[used..]) {
-                    return Err(self.number_trailing_junk(p + used));
-                }
-                self.cursor += 1;
-                return Ok(Expr::init(E::Number::new(-value), loc));
-            }
-        } else {
-            (false, 0, full_run)
-        };
+        // `-` is its own token in this dialect: whitespace (ASCII or
+        // exotic) and comments may separate it from its digits.
+        if full_run[0] == b'-' {
+            return self.parse_negative_number_at(start, loc);
+        }
 
-        let (value, used) = self.parse_number_text(num_run, start + num_off)?;
-        if !self.rest_is_ws_cold(&num_run[used..]) {
-            return Err(self.number_trailing_junk(start + num_off + used));
+        let (value, used) = self.parse_number_text(full_run, start)?;
+        if !self.rest_is_ws_cold(&full_run[used..]) {
+            return Err(self.number_trailing_junk(start + used));
         }
         self.cursor += 1;
-        let value = if neg { -value } else { value };
         Ok(Expr::init(E::Number::new(value), loc))
+    }
+
+    /// A `-` at `minus_pos` (the cursor's run): find its digits — possibly
+    /// after whitespace, exotic whitespace, or comments, in this run or a
+    /// later one — parse them, and return the negated number.
+    #[cold]
+    fn parse_negative_number_at(&mut self, minus_pos: usize, loc: Loc) -> PResult<Expr> {
+        self.token_start = minus_pos;
+        let contents = self.contents;
+        let q = match crate::json::skip_ws_and_comments(contents, minus_pos + 1) {
+            Some(q) if matches!(contents[q], b'0'..=b'9' | b'.') => q,
+            _ => {
+                self.expected(self.cursor, "number");
+                return Err(self.unexpected(self.cursor));
+            }
+        };
+        // Advance onto the index whose run contains the digits.
+        while self.pos_at(self.cursor) < q && self.pos_at(self.cursor + 1) <= q {
+            self.cursor += 1;
+        }
+        self.token_start = q;
+        let run = &contents[q..self.pos_at(self.cursor + 1)];
+        let (value, used) = self.parse_number_text(run, q)?;
+        if !self.rest_is_ws_cold(&run[used..]) {
+            return Err(self.number_trailing_junk(q + used));
+        }
+        self.cursor += 1;
+        Ok(Expr::init(E::Number::new(-value), loc))
     }
 
     #[cold]
@@ -1485,24 +1487,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 self.cursor += 1;
                 Ok(Expr::init(E::Null {}, loc_tail))
             }
-            b'0'..=b'9' | b'.' | b'-' => {
-                // `parse_number_text` takes no sign; strip a leading `-`,
-                // which must be followed by a digit or `.`.
-                let (neg, body, body_pos) = if tail[0] == b'-' {
-                    if tail.len() < 2 || !matches!(tail[1], b'0'..=b'9' | b'.') {
-                        self.expected(self.cursor, "number");
-                        return Err(self.unexpected(self.cursor));
-                    }
-                    (true, &tail[1..], pos + 1)
-                } else {
-                    (false, tail, pos)
-                };
-                let (value, used) = self.parse_number_text(body, body_pos)?;
-                if !self.rest_is_ws_cold(&body[used..]) {
-                    return Err(self.number_trailing_junk(body_pos + used));
+            b'-' => self.parse_negative_number_at(pos, loc_tail),
+            b'0'..=b'9' | b'.' => {
+                let (value, used) = self.parse_number_text(tail, pos)?;
+                if !self.rest_is_ws_cold(&tail[used..]) {
+                    return Err(self.number_trailing_junk(pos + used));
                 }
                 self.cursor += 1;
-                let value = if neg { -value } else { value };
                 Ok(Expr::init(E::Number::new(value), loc_tail))
             }
             c if is_identifier_start(c) => {

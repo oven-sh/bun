@@ -960,7 +960,7 @@ fn skip_string_token(contents: &[u8], start: usize) -> Option<usize> {
 /// exotic unicode whitespace the parser skips between tokens) or part of a
 /// `//` / `/* */` comment. `None` at end of input or in an unterminated
 /// block comment.
-fn skip_ws_and_comments(contents: &[u8], mut p: usize) -> Option<usize> {
+pub(crate) fn skip_ws_and_comments(contents: &[u8], mut p: usize) -> Option<usize> {
     use bun_core::strings;
     while p < contents.len() {
         let b = contents[p];
@@ -1615,6 +1615,37 @@ mod tests {
         let mut got = String::new();
         to_json_string(p.root.as_ref().unwrap(), &mut got);
         assert_eq!(got, "[true,false,null]");
+    }
+
+    #[test]
+    fn minus_separated_from_its_digits() {
+        // `-` is its own token in this dialect (like the old lexer): ASCII
+        // whitespace, exotic whitespace, and comments may separate it from
+        // its digits, in the same index run or a later one.
+        for (doc, want) in [
+            ("[- 5]", -5.0),
+            ("[-\u{a0}5]", -5.0),
+            ("[-\u{feff}.5]", -0.5),
+            ("[- /* x */ 5]", -5.0),
+            ("[-\u{a0}/* x */\u{a0}5e1]", -50.0),
+            ("[\u{feff}-\u{a0}5]", -5.0),
+            ("[1, -\u{a0}5]", -5.0),
+        ] {
+            let p = run(doc.as_bytes(), Which::TsConfig);
+            assert_eq!(p.errors, 0, "{doc}: {}", p.first_msg);
+            let Data::EArray(a) = &p.root.as_ref().unwrap().data else {
+                panic!()
+            };
+            let Data::ENumber(n) = &a.items.last().unwrap().data else {
+                panic!("{doc}")
+            };
+            assert_eq!(n.value(), want, "{doc}");
+        }
+        // Still an error when no number follows the `-`.
+        for doc in ["[- ]", "[-\u{a0}true]", "[- , 1]", "[-]"] {
+            let p = run(doc.as_bytes(), Which::TsConfig);
+            assert!(p.errors > 0, "{doc}");
+        }
     }
 
     #[test]

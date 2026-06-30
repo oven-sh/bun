@@ -670,15 +670,9 @@ function isPermissionDenied(err: any) {
   const code = err?.code;
   return code === "EPERM" || code === "EACCES";
 }
-// A path component the walk may not inspect (EPERM/EACCES -- e.g. drive
-// roots and profile directories when running sandboxed, such as inside a
-// Windows AppContainer) must never be assumed to be a plain directory: a
-// denied component can hide a link from realpath-based containment checks.
-// Resolve through the handle-based native path instead, which follows the
-// true chain (including in sandboxes). If that also fails, its error is the
-// more definitive one (it resolved further than the walk could -- e.g. ELOOP
-// for a quarantined junction, ENOENT for a missing tail), so it propagates
-// as-is; either way the walk never reports a guessed resolution.
+// A denied component (e.g. drive roots when sandboxed) can hide a link, so
+// never assume it is a plain directory: resolve through the native path
+// (true chain); if that also fails, its more definitive error propagates.
 function resolveDeniedComponentSync(p: string, encoding: any) {
   return encodeRealpathResult(fs.realpathNativeSync(p, undefined), encoding);
 }
@@ -699,11 +693,9 @@ const realpathSync: typeof import("node:fs").realpathSync =
             );
           }
         }
-        // Ported from node.js to emulate how it is unable to resolve subst
-        // drives to their underlying location (the native call sees through
-        // that) - except for permission-denied components, which defer to
-        // the native resolution rather than guessing (see
-        // resolveDeniedComponentSync).
+        // Ported from node.js to emulate not resolving subst drives (the
+        // native call sees through them) - except permission-denied
+        // components, which defer to native (resolveDeniedComponentSync).
         if (p instanceof URL) {
           const pathname = p.pathname;
           if (pathname.indexOf("%00") != -1) {

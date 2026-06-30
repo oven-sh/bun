@@ -65,14 +65,16 @@ shipped apps cannot rely on.
   points_ whose traversal is denied (reads through them report `ELOOP`), so
   treat junction-based layouts as unavailable. (Some Windows Server builds
   leave such junctions traversable.) `bun install` works with the default
-  (hoisted) linker; the isolated linker depends on junctions and will report
-  `ELOOP` per package instead of producing dead links.
+  (hoisted) linker; the isolated linker depends on junctions and fails
+  (`ELOOP`/`ENOENT` lines, varying with cache state) instead of producing
+  dead links.
 - **`os.homedir()` points at an inaccessible directory.** `USERPROFILE` is
   inherited unchanged, but the profile directory carries no ACE for the
   container. Drive roots (`C:\`) are not listable either; Bun's resolver
-  treats those inaccessible ancestors as opaque directories, and
-  `fs.realpath` resolves through them via the handle-based native path, so
-  project-relative work is unaffected.
+  treats those inaccessible ancestors as opaque directories (a
+  `node_modules` physically inside one is not found — keep dependencies
+  under the granted project tree), and `fs.realpath` resolves through them
+  via the handle-based native path, so project-relative work is unaffected.
 - **Process visibility is limited.** `process.kill` of unrelated pids and
   enumerating other users' processes are denied; managing your own children
   works.

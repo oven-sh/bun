@@ -133,7 +133,7 @@
 /**
  * @typedef {Object} Serialized
  * @property {"NODE_HANDLE"} cmd
- * @property {unknown} message
+ * @property {unknown} msg
  * @property {"net.Socket" | "net.Server" | "dgram.Socket"} type
  */
 /**
@@ -151,7 +151,8 @@ export function serialize(message, handle, _options) {
     // The Listener stays alive (protected) until the fd is flushed.
     const native = handle._handle;
     if (!native) return null;
-    return [native, { cmd: "NODE_HANDLE", message, type: "net.Server" }];
+    // node's wire format keys the user payload as `msg` (lib/internal/child_process.js).
+    return [native, { cmd: "NODE_HANDLE", msg: message, type: "net.Server" }];
   }
   if (handle instanceof net.Socket) {
     // The native socket is paused on the Rust side once the handle is
@@ -160,7 +161,7 @@ export function serialize(message, handle, _options) {
     // leave the socket paused forever.
     const native = handle._handle;
     if (!native) return null;
-    return [native, { cmd: "NODE_HANDLE", message, type: "net.Socket" }];
+    return [native, { cmd: "NODE_HANDLE", msg: message, type: "net.Socket" }];
   }
   if (handle instanceof require("node:dgram").Socket) {
     // node can send dgram sockets; Bun cannot yet. Deliver the message
@@ -243,14 +244,14 @@ export function parseHandle(target, serialized, fd) {
       // kRealListen; the default path would ship the bare fd *number* to the
       // primary through cluster._getServer and leak the actual handle.
       server.listen({ fd, exclusive: true }, () => {
-        emit(target, serialized.message, server);
+        emit(target, serialized.msg, server);
       });
       return;
     }
     case "net.Socket": {
       const socket = new net.Socket({ readable: true, writable: true });
       socket.connect({ fd, fdIsRawSocket: true });
-      emit(target, serialized.message, socket);
+      emit(target, serialized.msg, socket);
       return;
     }
     case "dgram.Socket": {

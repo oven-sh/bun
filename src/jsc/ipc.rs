@@ -671,6 +671,11 @@ pub struct Handle {
     /// and closes the local handle after NODE_HANDLE_ACK unless the caller
     /// passed `keepOpen`.
     pub close_on_complete: bool,
+    /// `fd` is this Handle's own dup (closed on Drop). A handle message can
+    /// sit queued behind a pending ack or backpressure; without the dup, the
+    /// user destroying the socket meanwhile invalidates - or worse, recycles -
+    /// the descriptor that sendmsg(SCM_RIGHTS) ships.
+    pub owns_fd: bool,
 }
 
 impl Handle {
@@ -679,6 +684,7 @@ impl Handle {
             fd,
             js: js.protected(),
             close_on_complete: false,
+            owns_fd: false,
         }
     }
 
@@ -687,6 +693,29 @@ impl Handle {
             fd,
             js: js.protected(),
             close_on_complete: true,
+            owns_fd: false,
+        }
+    }
+
+    /// Capture a Handle-owned dup of `fd` for the wire (see `owns_fd`).
+    /// `None` when `dup` fails; callers fall back to sending the bare message.
+    pub fn init_dup(fd: Fd, js: JSValue, close_on_complete: bool) -> Option<Self> {
+        let Ok(wire_fd) = bun_sys::dup(fd) else {
+            return None;
+        };
+        Some(Self {
+            fd: wire_fd,
+            js: js.protected(),
+            close_on_complete,
+            owns_fd: true,
+        })
+    }
+}
+
+impl Drop for Handle {
+    fn drop(&mut self) {
+        if self.owns_fd {
+            FdExt::close(self.fd);
         }
     }
 }

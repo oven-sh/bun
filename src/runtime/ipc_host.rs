@@ -200,7 +200,17 @@ pub(crate) fn do_send(
                     // owned by uSockets; `get_socket` only reinterpret-casts to
                     // `&mut us_socket_t` and `get_fd` is a read-only FFI call.
                     let fd = unsafe { &mut *socket_uws }.get_socket().get_fd();
-                    zig_handle = Some(Handle::init(fd, handle));
+                    // POSIX: the Handle owns a dup so a server.close() while
+                    // this message waits behind an ack cannot invalidate the
+                    // fd sendmsg ships. Windows exports the SOCKET below.
+                    #[cfg(not(windows))]
+                    {
+                        zig_handle = Handle::init_dup(fd, handle, false);
+                    }
+                    #[cfg(windows)]
+                    {
+                        zig_handle = Some(Handle::init(fd, handle));
+                    }
                 }
                 crate::socket::listener::ListenerType::NamedPipe(_named_pipe) => {}
                 crate::socket::listener::ListenerType::None => {}
@@ -224,11 +234,23 @@ pub(crate) fn do_send(
                 if !keep_open {
                     pause_target = handle;
                 }
-                zig_handle = Some(if keep_open {
-                    Handle::init(fd, handle)
-                } else {
-                    Handle::init_owned(fd, handle)
-                });
+                // POSIX: the Handle owns a dup so a socket.destroy() while
+                // this message waits behind an ack/backpressure cannot
+                // invalidate (or recycle) the fd sendmsg ships. node gets the
+                // same effect by detaching `_handle`; Windows exports the
+                // SOCKET synchronously below instead.
+                #[cfg(not(windows))]
+                {
+                    zig_handle = Handle::init_dup(fd, handle, !keep_open);
+                }
+                #[cfg(windows)]
+                {
+                    zig_handle = Some(if keep_open {
+                        Handle::init(fd, handle)
+                    } else {
+                        Handle::init_owned(fd, handle)
+                    });
+                }
             }
         }
     }

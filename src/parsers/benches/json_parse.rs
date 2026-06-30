@@ -119,8 +119,9 @@ fn bench_json(c: &mut Criterion) {
                 std::hint::black_box(&e);
             })
         });
-        // Mirrors the real callers (npm.rs PackageManifest::parse, package_json.rs):
-        // thread-local AST stores reset per parse, fresh Log + Bump per parse.
+        // The classic-output entry point (rows parsed, then materialized),
+        // as the remaining classic-AST CLI callers use it: thread-local AST
+        // stores reset per parse, fresh Log + Bump per parse.
         group.bench_function(BenchmarkId::new("parse_utf8", &name), |b| {
             let mut bump = Bump::new();
             b.iter(|| {

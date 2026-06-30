@@ -3892,6 +3892,19 @@ describe("Buffer.fill offset/end argument handling", () => {
     );
   });
 
+  // Bun coerces an object encoding via toString (Node rejects a non-string
+  // encoding up front with ERR_INVALID_ARG_TYPE instead). An exception thrown
+  // from that toString must surface, not degrade to an empty or null string.
+  it("propagates an exception thrown from an object encoding's toString", () => {
+    const boom = {
+      toString() {
+        throw new Error("boom");
+      },
+    };
+    expect(() => Buffer.alloc(4, 0xaa).fill("a", 0, 4, boom)).toThrow("boom");
+    expect(() => Buffer.alloc(4, "a", boom)).toThrow("boom");
+  });
+
   // Differential test: the fixture enumerates every fill() argument shape and
   // prints the resulting bytes or the thrown error class + code. Running it
   // under Node.js and under Bun must produce byte-identical output.

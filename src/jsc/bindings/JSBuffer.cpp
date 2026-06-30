@@ -295,7 +295,7 @@ static WebCore::BufferEncodingType parseEncoding(JSC::ThrowScope& scope, JSC::JS
 
 static WebCore::BufferEncodingType parseEncoding(JSC::ThrowScope& scope, JSC::JSGlobalObject* lexicalGlobalObject, JSValue arg, bool validateUnknown)
 {
-    auto arg_ = arg.toStringOrNull(lexicalGlobalObject);
+    auto arg_ = arg.toString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return parseEncoding(scope, lexicalGlobalObject, arg_, arg, validateUnknown);
 }
@@ -313,7 +313,9 @@ static std::optional<JSString*> resolveEncodingString(JSC::ThrowScope& scope, JS
             return std::nullopt;
         return str;
     }
-    auto* str = value.toStringOrNull(lexicalGlobalObject);
+    // toString() can run user JS and throw; unlike toStringOrNull it returns the
+    // empty string on the exception path, so an engaged optional never holds null.
+    auto* str = value.toString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return str;
 }

@@ -109,6 +109,14 @@ test("stdin with 'data' event handler should NOT receive data when paused", asyn
   expect(proc.exitCode).toBe(1);
 });
 
+// Drains the child; its stderr joins the comparison only when it failed, so a
+// crash shows up in the diff without asserting stderr empty on success (debug
+// builds write benign noise there).
+async function stdioResult(proc: Bun.Subprocess<"pipe", "pipe", "pipe">) {
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, exitCode, stderr: exitCode === 0 ? undefined : stderr };
+}
+
 test("paused mode read(n) returns the buffered remainder at EOF", async () => {
   // 8 bytes pulled 3 at a time: the final read(3) must return the 2 byte tail
   // once EOF is reached, and 'end' must mark readableEnded.
@@ -133,9 +141,8 @@ test("paused mode read(n) returns the buffered remainder at EOF", async () => {
   proc.stdin.write("abcdefgh");
   proc.stdin.end();
 
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: JSON.parse(stdout), exitCode }).toEqual({
-    stdout: { chunks: ["abc", "def", "gh"], readableEnded: true },
+  expect(await stdioResult(proc)).toEqual({
+    stdout: JSON.stringify({ chunks: ["abc", "def", "gh"], readableEnded: true }) + "\n",
     exitCode: 0,
   });
 });
@@ -173,9 +180,8 @@ test("explicit read(n) with no 'readable' listener still pulls from stdin", asyn
   proc.stdin.write("abcdefgh");
   proc.stdin.end();
 
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: JSON.parse(stdout), exitCode }).toEqual({
-    stdout: { chunks: ["abc", "def", "gh"], readableEnded: true },
+  expect(await stdioResult(proc)).toEqual({
+    stdout: JSON.stringify({ chunks: ["abc", "def", "gh"], readableEnded: true }) + "\n",
     exitCode: 0,
   });
 });
@@ -201,9 +207,9 @@ test("a read() that throws does not keep the process alive", async () => {
     env: bunEnv,
   });
 
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = await stdioResult(proc);
   proc.stdin.end();
-  expect({ stdout, exitCode }).toEqual({ stdout: "ERR_OUT_OF_RANGE\n", exitCode: 0 });
+  expect(result).toEqual({ stdout: "ERR_OUT_OF_RANGE\n", exitCode: 0 });
 });
 
 test("touching stdin again after 'end' does not keep the process alive", async () => {
@@ -228,8 +234,7 @@ test("touching stdin again after 'end' does not keep the process alive", async (
   proc.stdin.write("abcdefgh");
   proc.stdin.end();
 
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: "END\nEXIT\n", exitCode: 0 });
+  expect(await stdioResult(proc)).toEqual({ stdout: "END\nEXIT\n", exitCode: 0 });
 });
 
 test("'end' is not emitted when the buffer is never drained, and the process still exits", async () => {
@@ -249,8 +254,7 @@ test("'end' is not emitted when the buffer is never drained, and the process sti
   proc.stdin.write("abcdefgh");
   proc.stdin.end();
 
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: "EXIT 8\n", exitCode: 0 });
+  expect(await stdioResult(proc)).toEqual({ stdout: "EXIT 8\n", exitCode: 0 });
 });
 
 test("stdin should allow process to exit when paused", async () => {

@@ -22,18 +22,3 @@ extern "C" fn Bun__StackCheck__getMaxStack() -> *mut core::ffi::c_void {
 extern "Rust" fn __bun_crash_handler_out_of_memory() -> ! {
     panic!("out of memory");
 }
-
-/// Scalar stand-in for the highway kernel the old lexer used (only reached
-/// for strings >= 4 KiB). Same result contract as the real one.
-#[unsafe(no_mangle)]
-extern "C" fn highway_index_of_interesting_character_in_string_literal(
-    text: *const u8,
-    text_len: usize,
-    quote: u8,
-) -> usize {
-    // SAFETY: callers pass a valid (ptr, len) readable range.
-    let s = unsafe { core::slice::from_raw_parts(text, text_len) };
-    s.iter()
-        .position(|&c| c == quote || c == b'\\' || c < 0x20 || c > 0x7e)
-        .unwrap_or(text_len)
-}

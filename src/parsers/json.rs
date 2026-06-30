@@ -183,6 +183,11 @@ fn parse_impl_in(
     let contents: &[u8] = &source.contents;
 
     let mut sidx = StructuralIndex::new(contents);
+    // A construction-time index error (the document is too large to
+    // address) has no index window for stage 2 to walk; report it now.
+    if let Some(e) = sidx.index_error {
+        return Err(report_index_error(e, source, log));
+    }
     let log_mark = (log.errors, log.warnings, log.msgs.len());
     let result = run_stage2(source, log, &mut sidx, opts, check_len, tape_alloc);
 
@@ -199,9 +204,17 @@ fn parse_impl_in(
         return Err(report_index_error(e, source, log));
     }
     // Comments are detected by the indexer (the index contains nothing for
-    // their bytes) so a single stage 2 serves both modes.
+    // their bytes) so a single stage 2 serves both modes. Comments are
+    // skipped, not truncated, so an error stage 2 reported *before* the
+    // first comment is the document's real first problem — keep it.
     if !opts.allow_comments
         && let Some(range) = sidx.first_comment
+        && log.msgs[log_mark.2..]
+            .iter()
+            .filter(|m| m.kind == bun_ast::Kind::Err)
+            .filter_map(|m| m.data.location.as_ref().map(|l| l.offset))
+            .min()
+            .is_none_or(|first_err| first_err as i32 >= range.loc.start)
     {
         drop_stage2_msgs(log);
         log.add_error_fmt_opts(
@@ -677,6 +690,26 @@ pub fn parse_env_json(
         return Ok(empty_object_expr());
     }
 
+    // JSON-in-JSON (`--define X='\\"str\\"'`): a leading escaped quote means
+    // the value is a JSON string whose quotes the outer document escaped
+    // (`ignore_leading_escape_sequences` / `ignore_trailing_escape_sequences`).
+    // Unescape the two quotes and parse the result as JSON.
+    if contents.len() >= 2 && contents[0] == b'\\' && matches!(contents[1], b'"' | b'\'') {
+        let quote = contents[1];
+        let mut unescaped: Vec<u8> = Vec::with_capacity(contents.len());
+        unescaped.extend_from_slice(&contents[1..]);
+        let n = unescaped.len();
+        if n >= 3 && unescaped[n - 2] == b'\\' && unescaped[n - 1] == quote {
+            unescaped.truncate(n - 2);
+            unescaped.push(quote);
+        }
+        // The parsed string borrows the rewritten text zero-copy, so it
+        // must live as long as the returned AST: allocate it in `bump`.
+        let rewritten: &[u8] = bump.alloc_slice_copy(&unescaped);
+        let rw_source = bun_ast::Source::init_path_string("", rewritten);
+        return Ok(parse_classic(&rw_source, log, bump, DOTENV_JSON_OPTS, false)?.root);
+    }
+
     match contents[0] {
         b'{' | b'[' | b'0'..=b'9' | b'"' | b'\'' => {
             Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
@@ -754,26 +787,16 @@ fn parse_auto_quoted_string(
     let contents: &[u8] = &source.contents;
     let loc = bun_ast::Loc { start: 0 };
 
-    // Find the end (an unescaped newline) and whether decoding is needed.
+    // The whole input is the string: a define/env value is one complete
+    // value (it can legitimately contain newlines, e.g. an inlined
+    // environment variable). Scan only to decide whether decoding is needed.
     let mut needs_decode = false;
-    let mut end = contents.len();
     let mut i = 0;
     while i < contents.len() {
-        let c = contents[i];
-        match c {
+        match contents[i] {
             b'\\' => {
                 needs_decode = true;
                 i += 2;
-            }
-            b'\n' => {
-                end = i;
-                break;
-            }
-            b'\r' => {
-                return log_string_error(source, log, b"Unterminated string literal");
-            }
-            c if c < 0x20 => {
-                return log_string_error(source, log, b"Syntax Error");
             }
             c if c >= 0x80 => {
                 needs_decode = true;
@@ -782,7 +805,7 @@ fn parse_auto_quoted_string(
             _ => i += 1,
         }
     }
-    let body = &contents[..end.min(contents.len())];
+    let body = contents;
     if !needs_decode {
         return Ok(Expr::allocate(bump, E::String::init(body), loc));
     }
@@ -792,23 +815,6 @@ fn parse_auto_quoted_string(
         Ok(s) => Ok(Expr::allocate(bump, s, loc)),
         Err(e) => Err(e),
     }
-}
-
-#[cold]
-fn log_string_error(
-    source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
-    msg: &[u8],
-) -> Result<Expr, bun_core::Error> {
-    log.add_error_fmt_opts(
-        format_args!("{}", bstr::BStr::new(msg)),
-        bun_ast::AddErrorOptions {
-            source: Some(source),
-            loc: bun_ast::Loc { start: 0 },
-            ..Default::default()
-        },
-    );
-    Err(bun_core::err!("SyntaxError"))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2366,6 +2372,50 @@ mod tests {
             panic!()
         };
         assert!(!a.is_single_line);
+        // A newline hidden inside (or before) a block comment still breaks
+        // the line, exactly like the bare newline above (JSONC).
+        for doc in [
+            "{\"a\": 1 /* x\n*/, \"b\": 2}",
+            "{\"a\": 1\n/* x */, \"b\": 2}",
+        ] {
+            let p = run(doc.as_bytes(), Which::TsConfig);
+            assert_eq!(p.errors, 0, "{doc:?}: {}", p.first_msg);
+            let Data::EObject(o) = &p.root.as_ref().unwrap().data else {
+                panic!()
+            };
+            assert!(!o.is_single_line, "{doc:?}");
+        }
+        // A comment in a scalar's index run (between the value and the next
+        // structural token) is not trailing junk.
+        for doc in [
+            "{\"a\": 1 /* x */, \"b\": true /* y */ , \"c\": null // z\n}",
+            "[1 /* a */, 2.5 // b\n, -3 /* c */ ]",
+        ] {
+            let p = run(doc.as_bytes(), Which::TsConfig);
+            assert_eq!(p.errors, 0, "{doc:?}: {}", p.first_msg);
+        }
+        // ... and so does a newline between a trailing comma and the closer.
+        let p = run(b"[1,\n]", Which::TsConfig);
+        let Data::EArray(a) = &p.root.as_ref().unwrap().data else {
+            panic!()
+        };
+        assert!(!a.is_single_line);
+        let p = run(b"{\"a\":1,\n}", Which::TsConfig);
+        let Data::EObject(o) = &p.root.as_ref().unwrap().data else {
+            panic!()
+        };
+        assert!(!o.is_single_line);
+        // The closing token's location survives into the classic tree.
+        let doc = b"{\"a\": [1, 2] }";
+        let p = run(doc, Which::Utf8);
+        let Data::EObject(o) = &p.root.as_ref().unwrap().data else {
+            panic!()
+        };
+        assert_eq!(o.close_brace_loc.start as usize, doc.len() - 1);
+        let Data::EArray(a) = &o.properties[0].value.as_ref().unwrap().data else {
+            panic!()
+        };
+        assert_eq!(doc[a.close_bracket_loc.start as usize], b']');
     }
 
     // ── errors ───────────────────────────────────────────────────────────
@@ -2416,11 +2466,29 @@ mod tests {
             ("hello world", "hello world"),
             ("*{box-sizing:border-box}", "*{box-sizing:border-box}"),
             ("a\\nb", "a\nb"),
-            ("first line\nsecond", "first line"),
+            // The whole value is the string, embedded newlines included: a
+            // define/`--env` value is one complete value, not a `.env` line.
+            ("first line\nsecond", "first line\nsecond"),
+            ("(\nrest", "(\nrest"),
+            ("*\nrest", "*\nrest"),
+            // `-`/`.` followed by anything but a number is a string.
+            ("-abc", "-abc"),
+            (".env-like", ".env-like"),
+            // JSON-in-JSON: the outer document escaped the quotes.
+            (r#"\"hello\""#, "hello"),
         ] {
             let p = run(src.as_bytes(), Which::Env);
             assert_eq!(p.errors, 0, "{src}: {}", p.first_msg);
             assert_eq!(root_string(&p), want, "{src}");
+        }
+        // A sign or dot followed by a number is JSON, not an auto-quoted
+        // string.
+        for (src, want) in [("-1", -1.0), (".5", 0.5), ("-.25", -0.25)] {
+            let p = run(src.as_bytes(), Which::Env);
+            let Some(Data::ENumber(n)) = p.root.as_ref().map(|r| &r.data) else {
+                panic!("{src}: expected a number ({})", p.first_msg);
+            };
+            assert_eq!(n.value(), want, "{src}");
         }
         let p = run(b"true", Which::Env);
         assert!(matches!(

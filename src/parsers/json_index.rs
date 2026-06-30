@@ -50,8 +50,6 @@ pub const FLAG_HAS_NON_ASCII: u32 = 1 << 2;
 /// visible in [`StructuralIndex::flags`].
 pub const FLAG_ODDITY: u32 = 1 << 3;
 /// Scalar indexer only: the document contained at least one single-quoted
-/// string.
-pub const FLAG_HAS_SINGLE_QUOTE: u32 = 1 << 4;
 
 /// Number of sentinel entries appended after the real indices.
 pub const SENTINELS: usize = 2;
@@ -329,9 +327,6 @@ impl<'c> StructuralIndex<'c> {
                 // An escaped quote outside a string does not open one; the
                 // byte is an ordinary scalar-run byte (the `_` arm below).
                 b'"' | b'\'' if !was_escaped => {
-                    if c == b'\'' {
-                        self.flags |= FLAG_HAS_SINGLE_QUOTE;
-                    }
                     emit!(i);
                     self.s_prev_scalar = false;
                     let quote = c;

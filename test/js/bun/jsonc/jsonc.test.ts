@@ -24,6 +24,17 @@ test("Bun.JSONC.parse handles comments", () => {
   expect(result).toEqual({ name: "test", value: 42 });
 });
 
+test("Bun.JSONC.parse handles a comment after a scalar on the same line", () => {
+  // tsconfig.json's documented style: `"declaration": true /* note */,`.
+  const jsonc = `{
+    "a": 1 /* one */,
+    "b": true /* yes */ ,
+    "c": null // nothing
+    , "d": -2.5 /* negative */
+  }`;
+  expect(Bun.JSONC.parse(jsonc)).toEqual({ a: 1, b: true, c: null, d: -2.5 });
+});
+
 test("Bun.JSONC.parse handles trailing commas", () => {
   const jsonc = `{
     "name": "test",

@@ -1465,7 +1465,12 @@ impl Tag {
 
     pub fn typeof_(tag: Tag) -> Option<&'static [u8]> {
         Some(match tag {
-            Tag::EArray | Tag::EObject | Tag::ENull | Tag::ERegExp => b"object",
+            Tag::EArray
+            | Tag::EObject
+            | Tag::EArrayJSON
+            | Tag::EObjectJSON
+            | Tag::ENull
+            | Tag::ERegExp => b"object",
             Tag::EUndefined => b"undefined",
             Tag::EBoolean | Tag::EBranchBoolean => b"boolean",
             Tag::ENumber => b"number",
@@ -1477,7 +1482,7 @@ impl Tag {
     }
 
     pub fn is_array(self) -> bool {
-        matches!(self, Tag::EArray)
+        matches!(self, Tag::EArray | Tag::EArrayJSON)
     }
     pub fn is_unary(self) -> bool {
         matches!(self, Tag::EUnary)
@@ -1549,7 +1554,7 @@ impl Tag {
         matches!(self, Tag::EBigInt)
     }
     pub fn is_object(self) -> bool {
-        matches!(self, Tag::EObject)
+        matches!(self, Tag::EObject | Tag::EObjectJSON)
     }
     pub fn is_spread(self) -> bool {
         matches!(self, Tag::ESpread)

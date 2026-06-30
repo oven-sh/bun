@@ -34,8 +34,8 @@ full() { curl -fsSL "https://registry.npmjs.org/$1" -o "packument-full-$2.json";
 full express express
 full axios axios
 
-ls -la
-
 # huge real-world manifests bun install parses constantly
 abbrev drizzle-orm drizzle-orm
 abbrev drizzle-kit drizzle-kit
+
+ls -la

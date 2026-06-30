@@ -120,10 +120,6 @@ impl<'a> Iterator for JsonObjectStringRows<'a> {
     }
 }
 
-/// The classic `E::Array` behind `expr` (a JSON array of either
-/// representation): a classic array is returned as-is; the immutable
-/// representation is materialized from `source` at `loc` (the array's own
-/// `[`) so item diagnostics keep their exact source positions.
 /// Cold path: the location of the value of the property whose key string
 /// starts at `key_loc`. The immutable JSON AST stores only key locations, so a
 /// diagnostic that points at a value re-scans the source it was parsed from;

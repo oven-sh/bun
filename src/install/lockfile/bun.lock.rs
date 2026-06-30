@@ -1609,7 +1609,7 @@ fn array_items(expr: &Expr) -> &[JSON::E::JsonValue] {
 }
 
 /// Location of item `index` of the array that is the value of the property
-/// whose key starts at `key_loc`. Cold path, see [`value_loc`].
+/// whose key starts at `key_loc`. Cold path, see [`value_loc_of`].
 fn item_loc(source: &bun_ast::Source, key_loc: bun_ast::Loc, index: usize) -> bun_ast::Loc {
     let array_loc = value_loc_of(source, key_loc);
     JSON::array_item_loc(&source.contents, array_loc, index).unwrap_or(array_loc)

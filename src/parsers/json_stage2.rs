@@ -398,20 +398,41 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
         match self.contents[p - 1] {
             b'\n' | b'\r' => true,
-            b' ' | b'\t' => self.newline_in_gap_before(p - 1),
-            _ => false,
+            // Anything else defers to the gap scan, which also steps over
+            // comments (a newline inside `/* … */` still breaks the line).
+            _ => self.newline_in_gap_before(p),
         }
     }
 
     /// See [`Self::newline_before`]: the rest of a non-empty whitespace gap.
+    /// The gap can also contain comments (JSONC): a `*/` is stepped over to
+    /// its `/*`, counting any newline inside; the body of a `//` comment is
+    /// always followed by the newline that ends it, so it needs no casing.
     fn newline_in_gap_before(&self, p: usize) -> bool {
-        for &b in self.contents[..p].iter().rev() {
-            match b {
-                b' ' | b'\t' => {}
+        let bytes = self.contents;
+        let mut i = p;
+        while i > 0 {
+            match bytes[i - 1] {
+                b' ' | b'\t' => i -= 1,
                 b'\n' | b'\r' => return true,
+                b'/' if i >= 2 && bytes[i - 2] == b'*' => {
+                    // `*/`: find its `/*` (block comments don't nest).
+                    let body_end = i - 2;
+                    let Some(open) = bytes[..body_end].windows(2).rposition(|w| w == b"/*") else {
+                        return false;
+                    };
+                    if bytes[open + 2..body_end]
+                        .iter()
+                        .any(|&b| b == b'\n' || b == b'\r')
+                    {
+                        return true;
+                    }
+                    i = open;
+                }
                 _ => return false,
             }
         }
+        // Start of file counts as a newline before it.
         true
     }
 
@@ -718,7 +739,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         run.len() == n || self.rest_is_ws_cold(&run[n..])
     }
 
-    /// ASCII whitespace fast check + exotic-unicode-whitespace fallback.
+    /// ASCII whitespace fast check + the cold fallback for everything else
+    /// a scalar run's tail may legally hold: exotic unicode whitespace and,
+    /// in the comment dialects, comments (`1 /* note */,` — the indexer
+    /// emits no index inside a comment, so its bytes stay in the run).
     #[cold]
     fn rest_is_ws_cold(&self, rest: &[u8]) -> bool {
         if rest
@@ -727,11 +751,36 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         {
             return true;
         }
-        let iterator = strings::CodepointIterator::init(rest);
-        let mut iter = strings::Cursor::default();
-        while iterator.next(&mut iter) {
-            if !matches!(iter.c, 0x09 | 0x0A | 0x0D | 0x20) && !is_exotic_whitespace(iter.c) {
-                return false;
+        let mut i = 0;
+        while i < rest.len() {
+            match rest[i] {
+                b' ' | b'\t' | b'\n' | b'\r' => i += 1,
+                b'/' if self.opts.allow_comments => match rest.get(i + 1) {
+                    Some(b'/') => {
+                        i += 2;
+                        while i < rest.len() && !matches!(rest[i], b'\n' | b'\r') {
+                            i += 1;
+                        }
+                    }
+                    Some(b'*') => {
+                        // The indexer guarantees `*/` exists (an unterminated
+                        // block comment is an index error before stage 2).
+                        let Some(close) = rest[i + 2..].windows(2).position(|w| w == b"*/") else {
+                            return false;
+                        };
+                        i += 2 + close + 2;
+                    }
+                    _ => return false,
+                },
+                _ => {
+                    // One (possibly exotic-whitespace) codepoint.
+                    let iterator = strings::CodepointIterator::init(&rest[i..]);
+                    let mut iter = strings::Cursor::default();
+                    if !iterator.next(&mut iter) || !is_exotic_whitespace(iter.c) {
+                        return false;
+                    }
+                    i += (iter.width as usize).max(1);
+                }
             }
         }
         true
@@ -747,6 +796,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let mark = self.scratch_json_items.len();
         let here = self.pos_at(self.cursor);
         let mut is_single_line = !self.newline_before(here);
+        let mut close_loc = Loc::EMPTY;
         let result: PResult = loop {
             let (b, p) = self.peek();
             let cursor = self.cursor;
@@ -760,6 +810,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 if is_single_line && self.newline_before(p) {
                     is_single_line = false;
                 }
+                close_loc = usize2loc(p);
                 self.cursor += 1;
                 break Ok(());
             }
@@ -792,6 +843,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                             format_args!("JSON does not support trailing commas"),
                         );
                     }
+                    if is_single_line && self.newline_before(after) {
+                        is_single_line = false;
+                    }
+                    close_loc = usize2loc(after);
                     self.cursor += 1; // ]
                     break Ok(());
                 }
@@ -819,7 +874,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
         let (first, count) = self.push_items_block(mark);
         Ok(Expr::init(
-            E::ArrayJSON::new(self.tape_ref(), first, count, is_single_line, Loc::EMPTY),
+            E::ArrayJSON::new(self.tape_ref(), first, count, is_single_line, close_loc),
             loc,
         ))
     }
@@ -833,6 +888,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let hmark = self.dup_hashes.len();
         let here = self.pos_at(self.cursor);
         let mut is_single_line = !self.newline_before(here);
+        let mut close_loc = Loc::EMPTY;
         let warn_dup = self.opts.json_warn_duplicate_keys;
 
         let result: PResult = loop {
@@ -848,6 +904,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 if is_single_line && self.newline_before(p) {
                     is_single_line = false;
                 }
+                close_loc = usize2loc(p);
                 self.cursor += 1;
                 break Ok(());
             }
@@ -877,6 +934,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                             format_args!("JSON does not support trailing commas"),
                         );
                     }
+                    if is_single_line && self.newline_before(after) {
+                        is_single_line = false;
+                    }
+                    close_loc = usize2loc(after);
                     self.cursor += 1; // }
                     break Ok(());
                 }
@@ -956,7 +1017,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
         let (first, count) = self.push_props_block(mark);
         Ok(Expr::init(
-            E::ObjectJSON::new(self.tape_ref(), first, count, is_single_line, Loc::EMPTY),
+            E::ObjectJSON::new(self.tape_ref(), first, count, is_single_line, close_loc),
             loc,
         ))
     }

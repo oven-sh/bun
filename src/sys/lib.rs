@@ -8889,15 +8889,11 @@ mod win_symlink_impl {
                 },
             }
         }
-        match sys_uv::symlink_uv(
+        sys_uv::symlink_uv(
             abs_fallback_junction_target.unwrap_or(target),
             dest,
             bun_libuv_sys::UV_FS_SYMLINK_JUNCTION,
-        ) {
-            Ok(()) => {}
-            Err(e) => return Err(e),
-        }
-        Ok(())
+        )
     }
 
     /// `unlinkW` — `DeleteFileW` with errno mapping.

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { once } from "events";
 import fs from "fs";
-import { gcTick, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, gcTick, tempDirWithFiles, tls, tmpdirSync } from "harness";
 import { createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
@@ -1259,5 +1259,57 @@ describe("tagName, endTag.name, and comment.text setters", () => {
     expect(savedElement.tagName).toBeUndefined();
     expect(savedEndTag.name).toBeUndefined();
     expect(savedComment.text).toBeNull();
+  });
+});
+
+// `transform()` returns a Response whose body stays pending until the input
+// finishes buffering. Consumers that convert that pending body into a
+// ReadableStream before then (Bun.serve returning the transformed response,
+// `response.body`) previously never received the rewritten bytes, so the
+// request / read hung forever. Pre-buffered inputs (strings, buffers) resolve
+// synchronously inside transform() and never hit this path.
+// https://github.com/oven-sh/bun/issues/6068
+// https://github.com/oven-sh/bun/issues/19305
+describe("HTMLRewriter output of a streaming input body", () => {
+  const inputHTML = "<!doctype html><html><head><title>a</title></head><body><h1>hi</h1></body></html>";
+  const expectedHTML = inputHTML.replace("<title>a</title>", "<title>rewritten</title>");
+  const dir = tempDirWithFiles("html-rewriter-stream", { "streaming-input.html": inputHTML });
+  const htmlFile = join(dir, "streaming-input.html");
+  const missingFile = join(dir, "does-not-exist.html");
+
+  // Every case runs in a child process (see the fixture): the broken behavior
+  // is a fetch / body read that never completes, and a never-settling
+  // in-process await would wedge this test process. On a timeout the test
+  // runner reaps the dangling child; `await using` never runs for a
+  // timed-out test, which is also why this is not `it.concurrent.each`.
+  it.each([
+    ["Bun.serve a transform of a Bun.file() body", "serve", htmlFile, { status: 200, text: expectedHTML }],
+    [
+      "Bun.serve a transform of a proxied streaming fetch() body",
+      "serve-upstream",
+      htmlFile,
+      { status: 200, text: expectedHTML },
+    ],
+    // The 200 and headers are committed before the body starts streaming, so
+    // an error after that can only surface as an ended/empty body; the bug
+    // was the request never completing at all.
+    ["Bun.serve a transform of a missing Bun.file() body", "serve", missingFile, { status: 200, text: "" }],
+    [
+      "Bun.serve a transform whose element handler throws on a streaming input",
+      "serve-throw",
+      htmlFile,
+      { status: 200, text: "" },
+    ],
+    [".body of a transformed Bun.file() response", "body", htmlFile, { text: expectedHTML }],
+    [".body of a transformed missing Bun.file() response rejects", "body", missingFile, { error: "ENOENT" }],
+  ])("%s", async (_name, mode, path, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "html-rewriter-streaming-fixture.ts"), mode, path],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
   });
 });

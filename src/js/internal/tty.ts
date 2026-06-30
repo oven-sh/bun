@@ -181,7 +181,7 @@ function getColorDepth(env: NodeJS.ProcessEnv) {
       return COLORS_16m;
     }
 
-    if (/^xterm-256/.test(TERM)) {
+    if (TERM.startsWith("xterm-256")) {
       return COLORS_256;
     }
 

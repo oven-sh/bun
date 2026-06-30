@@ -364,11 +364,17 @@ for (const args of [["update", "--latest"], ["update"], ["update", "baz", "baz-a
 }
 
 // https://github.com/oven-sh/bun/issues/13388
-// When the same name appears in two dependency groups, `bun update` with no
-// package names only moves the first group in PackageJSONEditor's
-// DEPENDENCY_GROUPS order (devDependencies before dependencies). bun.lock must
-// leave the other group's entry alone too, or the two files disagree again.
-for (const args of [["update", "--latest"], ["update"]]) {
+// When the same name appears in two dependency groups, `bun update` only moves
+// one of them in package.json: with no package names, the first group in
+// edit_update_no_args's DEPENDENCY_GROUPS order (devDependencies before
+// dependencies); with a package name, the first group edit() scans
+// (dependencies before devDependencies). bun.lock must leave the other group's
+// entry alone too, or the two files disagree again.
+for (const { args, expected } of [
+  { args: ["update", "--latest"], expected: { dependencies: "~0.0.3", devDependencies: "~0.0.5" } },
+  { args: ["update"], expected: { dependencies: "~0.0.3", devDependencies: "~0.0.5" } },
+  { args: ["update", "baz"], expected: { dependencies: "~0.0.5", devDependencies: "~0.0.3" } },
+]) {
   it(`${args.join(" ")} leaves the other group untouched in the lockfile, issue#13388`, async () => {
     const urls: string[] = [];
     const registry: Record<string, any> = { "0.0.3": {}, latest: "0.0.3" };
@@ -391,8 +397,8 @@ for (const args of [["update", "--latest"], ["update"]]) {
 
     expect(await file(join(package_dir, "package.json")).json()).toEqual({
       name: "foo",
-      dependencies: { "baz": "~0.0.3" },
-      devDependencies: { "baz": "~0.0.5" },
+      dependencies: { "baz": expected.dependencies },
+      devDependencies: { "baz": expected.devDependencies },
     });
     const lockfile = await file(join(package_dir, "bun.lock")).text();
     const workspaces = lockfile.slice(0, lockfile.indexOf(`"packages"`));

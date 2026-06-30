@@ -826,13 +826,15 @@ impl Lockfile {
                                 }
 
                                 let npm_version = res.npm().version;
-                                let new_literal = positional_update_literal(
+                                let Some(new_literal) = positional_update_literal(
                                     &manager.updating_packages,
                                     dep,
                                     &npm_version,
                                     string_builder.string_bytes.as_slice(),
                                     exact_versions,
-                                );
+                                ) else {
+                                    continue;
+                                };
 
                                 if new_literal.len() >= SemverString::MAX_INLINE_LEN {
                                     string_builder.cap += new_literal.len();
@@ -879,13 +881,15 @@ impl Lockfile {
                                 }
 
                                 let npm_version = res.npm().version;
-                                let new_literal = positional_update_literal(
+                                let Some(new_literal) = positional_update_literal(
                                     &manager.updating_packages,
                                     dep,
                                     &npm_version,
                                     string_builder.string_bytes.as_slice(),
                                     exact_versions,
-                                );
+                                ) else {
+                                    continue;
+                                };
 
                                 let external_version =
                                     string_builder.append::<ExternalString>(&new_literal);
@@ -1444,23 +1448,29 @@ fn clean_preprocess_updating_packages_cold(
 /// literal on `updating_packages`; preserve its pin level and `npm:<name>@`
 /// alias prefix so the lockfile matches what `PackageJSONEditor::edit` writes.
 /// `bun add` never records an entry and keeps saving `^<resolved>`.
+///
+/// Returns `None` when the entry was recorded from a different dependency
+/// group than `dep` belongs to. `PackageJSONEditor::edit` only rewrites the
+/// entry's own group in package.json, so the lockfile must leave this one
+/// alone too.
 fn positional_update_literal(
     updating_packages: &StringArrayHashMap<PackageUpdateInfo>,
     dep: &Dependency,
     resolved_version: &Semver::Version,
     string_buf: &[u8],
     exact_versions: bool,
-) -> Vec<u8> {
+) -> Option<Vec<u8>> {
     if let Some(entry) = updating_packages.get(dep.name.slice(string_buf)) {
-        if dep.behavior.intersects(entry.group_behavior) {
-            return format_updated_version_literal(
-                resolved_version,
-                string_buf,
-                entry,
-                dep.version.literal.slice(string_buf),
-                exact_versions,
-            );
+        if !dep.behavior.intersects(entry.group_behavior) {
+            return None;
         }
+        return Some(format_updated_version_literal(
+            resolved_version,
+            string_buf,
+            entry,
+            dep.version.literal.slice(string_buf),
+            exact_versions,
+        ));
     }
 
     let mut out: Vec<u8> = Vec::new();
@@ -1471,7 +1481,7 @@ fn positional_update_literal(
         resolved_version.fmt(string_buf),
     )
     .expect("infallible: in-memory write");
-    out
+    Some(out)
 }
 
 /// Formats the version literal `bun update` writes for a root dependency that

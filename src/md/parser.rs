@@ -171,10 +171,10 @@ pub(crate) const MAX_LOOKAHEAD: OFF = 1 + crate::line_analysis::CDATA_OPEN.len()
 /// never to wrap.
 pub const MAX_INPUT_LEN: usize = (OFF::MAX - MAX_LOOKAHEAD) as usize;
 
-/// The most bytes `block_bytes` may hold: block offsets are
-/// stored as `u32`s (`BlockHeader.data` links, `Container.block_byte_off`),
-/// and each new header is written at the end of `block_bytes` rounded up to
-/// its alignment, so the buffer must stop one aligned header short of
+/// The most bytes `block_bytes` may hold: a block's offset into the buffer
+/// is stored as a `u32` (`Container.block_byte_off` and the casts that feed
+/// it), and each new header is written at the end of `block_bytes` rounded
+/// up to its alignment, so the buffer must stop one aligned header short of
 /// `OFF::MAX`.
 pub(crate) const MAX_BLOCK_BYTES: usize =
     OFF::MAX as usize - (size_of::<BlockHeader>() + align_of::<BlockHeader>());

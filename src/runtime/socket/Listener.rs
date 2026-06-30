@@ -279,17 +279,14 @@ impl Listener {
                         // SAFETY: reclaim the Box we leaked via into_raw; drops connection,
                         // protos, and (the moved) handlers exactly once.
                         drop(unsafe { bun_core::heap::take(this) });
-                        // Surface coded syscall failures the way node:net does
-                        // - EADDRINUSE (name taken) and EACCES (pipe namespace
-                        // denied, e.g. a sandboxed process binding outside
-                        // \\.\pipe\LOCAL\) need different handling by callers
-                        // - rather than an invalid-arguments TypeError.
+                        // Surface coded syscall failures the way node:net
+                        // does (EADDRINUSE vs EACCES need different caller
+                        // handling) rather than an invalid-arguments TypeError.
                         let name = e.name();
                         if let Ok(se) = <bun_sys::SystemErrno as core::str::FromStr>::from_str(name)
                         {
                             let err = jsc::SystemError {
-                                // Node-shaped errors carry the negated errno
-                                // (matches fill_system_error_common).
+                                // Negated errno per fill_system_error_common.
                                 errno: -(se as c_int),
                                 code: bun_core::String::static_(name),
                                 message: bun_core::String::clone_utf8(

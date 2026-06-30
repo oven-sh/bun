@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync } from "fs";
+import { chmodSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
@@ -31,6 +31,7 @@ describe.skipIf(isWindows || process.getuid?.() === 0)("resolver with unreadable
       expect(proc.exitCode).toBe(0);
     } finally {
       chmodSync(outer, 0o755);
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
@@ -39,7 +40,10 @@ describe.skipIf(isWindows || process.getuid?.() === 0)("resolver with unreadable
       "project/index.js": `console.log("should not run");`,
     });
     const project = join(dir, "project");
-    chmodSync(project, 0o000);
+    // Execute-only: chdir succeeds (so the failure under test is the
+    // resolver's read of the requested directory, not the child's chdir),
+    // but listing it is denied -- this must stay fatal, unlike ancestors.
+    chmodSync(project, 0o111);
     try {
       const proc = Bun.spawnSync({
         cmd: [bunExe(), "index.js"],
@@ -50,6 +54,7 @@ describe.skipIf(isWindows || process.getuid?.() === 0)("resolver with unreadable
       expect(proc.stdout.toString()).not.toContain("should not run");
     } finally {
       chmodSync(project, 0o755);
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

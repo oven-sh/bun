@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
-import { lstatSync, mkdirSync, realpath, realpathSync, symlinkSync } from "fs";
+import { lstatSync, mkdirSync, realpath, realpathSync, rmSync, symlinkSync } from "fs";
 import { isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
@@ -25,11 +25,13 @@ let preconditionHolds = false;
 let linkedFile = "";
 let expected = "";
 let denied = "";
+let fixtureDir = "";
 
 if (isWindows) {
   const dir = tempDirWithFiles("realpath-denied", {
     "target/secret.txt": "out-of-root",
   });
+  fixtureDir = dir;
   const root = join(dir, "root");
   const target = join(dir, "target");
   denied = join(root, "sub");
@@ -61,6 +63,9 @@ afterAll(() => {
   if (!isWindows || !denied) return;
   try {
     execSync(`icacls "${denied}" /remove:d "%USERNAME%"`, { shell: "cmd.exe" });
+  } catch {}
+  try {
+    rmSync(fixtureDir, { recursive: true, force: true });
   } catch {}
 });
 

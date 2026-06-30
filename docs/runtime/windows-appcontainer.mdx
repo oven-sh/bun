@@ -77,6 +77,10 @@ shipped apps cannot rely on.
 - **Process visibility is limited.** `process.kill` of unrelated pids and
   enumerating other users' processes are denied; managing your own children
   works.
+- On hosts that deny the `NUL` device (some Server AppContainers), an
+  `"ignore"` stdio slot is a closed pipe rather than a sink: a child that
+  treats a stdout/stderr write failure as fatal exits nonzero there, where
+  outside the sandbox it would write to `NUL` and exit 0.
 - A package cache created **outside** the container is currently
   re-validated as a miss inside it; prefer letting the sandboxed process
   populate its own `BUN_INSTALL_CACHE_DIR`.

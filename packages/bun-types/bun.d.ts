@@ -1,12 +1,6 @@
-/**
- * Internal alias for the ambient `"bun"` module, used by `bun.ns.d.ts` to build
- * the global `Bun` namespace without routing through module resolution (which
- * would land on the `@types/bun` stub under TypeScript 6 and lose all members).
- * The `:` in the name makes TypeScript treat it as an absolute URI and skip
- * file lookups, so only this ambient declaration is considered.
- *
- * See `bun.ns.d.ts` and https://github.com/oven-sh/bun/issues/30503.
- */
+// Ambient-only alias re-exporting `"bun"`; `bun.ns.d.ts` imports this instead
+// of `"bun"` so the `Bun` global never resolves through the `@types/bun` stub.
+// See #30503.
 declare module "bun-types:internal" {
   export * from "bun";
 }

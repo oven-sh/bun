@@ -323,40 +323,17 @@ describe("@types/bun integration test", () => {
     });
   });
 
-  // Regression test for https://github.com/oven-sh/bun/issues/30503.
-  //
-  // `bun-types/bun.ns.d.ts` used to do `import * as BunModule from "bun"` to
-  // build the global `Bun` namespace alias. With TypeScript 6's tighter module
-  // resolution and the DefinitelyTyped `@types/bun` stub installed alongside
-  // (the layout `bun add -d @types/bun` produces — the stub depends on
-  // `bun-types`), the `"bun"` specifier here resolves to the stub's
-  // `index.d.ts` (a one-line `/// <reference types="bun-types" />`) rather
-  // than the `declare module "bun"` block in `bun-types/bun.d.ts`.
-  //
-  // Type-checking often still appears to work because TypeScript merges the
-  // ambient `declare module "bun"` into the resolved module's symbol table —
-  // but that merge is fragile and layout-dependent (monorepos in particular
-  // hit layouts where it no longer rescues the namespace). The only reliable
-  // signal is the module resolution itself: `bun.ns.d.ts` must not reach the
-  // `@types/bun` stub as the source of its `BunModule` binding.
-  //
-  // The fix routes the binding through an ambient `"bun-types:internal"`
-  // module whose `:` makes TypeScript skip file-based module resolution.
+  // https://github.com/oven-sh/bun/issues/30503
   test("bun.ns.d.ts does not resolve through the @types/bun stub (#30503)", async () => {
     const fixtureDir = await createIsolatedFixture();
     const bunNsPath = join(fixtureDir, "node_modules", "bun-types", "bun.ns.d.ts");
     const atTypesBunStub = join(fixtureDir, "node_modules", "@types", "bun", "index.d.ts");
 
-    // Sanity check: both files exist (the `beforeAll` hook is supposed to
-    // have installed `bun-types` from the freshly packed tarball and written
-    // the DefinitelyTyped stub).
     expect(await Bun.file(bunNsPath).exists()).toBe(true);
     expect(await Bun.file(atTypesBunStub).exists()).toBe(true);
 
-    // Parse `bun.ns.d.ts` and pull out the specifier of the sole namespace
-    // import. We verify the specifier itself rather than trusting only that
-    // the compiler "worked", because ambient-module merging can paper over
-    // the misresolution in the fresh-install layout.
+    // Extract the namespace-import specifier; ambient merging can hide the
+    // misresolution at type-check time, so assert on resolution directly.
     const nsSource = ts.createSourceFile(bunNsPath, readFileSync(bunNsPath, "utf8"), ts.ScriptTarget.ESNext, true);
     let specifier: string | undefined;
     nsSource.forEachChild(node => {
@@ -370,20 +347,13 @@ describe("@types/bun integration test", () => {
     });
     expect(specifier).toBeDefined();
 
-    // Resolve that specifier from `bun.ns.d.ts`'s location using the same
-    // compiler options the rest of the integration suite uses. Two things
-    // must hold:
-    //   1. The resolution does not land on `@types/bun/index.d.ts`. That
-    //      file is the stub with nothing but a triple-slash reference, so
-    //      using it as the source of the namespace alias empties `Bun`.
-    //   2. Either the specifier is unresolvable (ambient-only, like our
-    //      `bun-types:internal` alias) or it points at a real bun-types
-    //      declaration file.
     const resolved = ts.resolveModuleName(specifier!, bunNsPath, DEFAULT_COMPILER_OPTIONS, {
       fileExists: ts.sys.fileExists,
       readFile: ts.sys.readFile,
     }).resolvedModule?.resolvedFileName;
 
+    // Must not reach the empty stub; unresolvable (ambient-only) or a real
+    // bun-types declaration is fine.
     expect(resolved).not.toBe(atTypesBunStub);
     if (resolved !== undefined) {
       expect(resolved).toMatch(/bun-types[\\/].+\.d\.ts$/);

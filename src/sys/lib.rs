@@ -5506,6 +5506,7 @@ pub mod linux {
         pub const ISDIR: u32 = libc::IN_ISDIR;
         pub const ONESHOT: u32 = libc::IN_ONESHOT;
         pub const IGNORED: u32 = libc::IN_IGNORED;
+        pub const Q_OVERFLOW: u32 = libc::IN_Q_OVERFLOW;
         pub const CLOEXEC: c_int = libc::IN_CLOEXEC;
         pub const NONBLOCK: c_int = libc::IN_NONBLOCK;
         use core::ffi::c_int;

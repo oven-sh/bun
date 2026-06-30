@@ -223,8 +223,7 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
   const state = this[kStateSymbol];
 
   if (state.bindState !== BIND_STATE_UNBOUND) {
-    this.emit("error", $ERR_SOCKET_ALREADY_BOUND());
-    return;
+    throw $ERR_SOCKET_ALREADY_BOUND();
   }
 
   state.bindState = BIND_STATE_BINDING;

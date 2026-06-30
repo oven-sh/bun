@@ -666,18 +666,31 @@ function encodeRealpathResult(result, encoding) {
 }
 
 let assertEncodingForWindows: any = undefined;
-// Path components that exist but cannot be inspected (EPERM/EACCES -- e.g.
-// drive roots and profile directories when running sandboxed, such as inside
-// a Windows AppContainer) are treated as plain, hard directories: not a
-// link, not a pipe or socket.
-const inaccessibleComponentStat: any = {
-  isFIFO: () => false,
-  isSocket: () => false,
-  isSymbolicLink: () => false,
-};
 function isPermissionDenied(err: any) {
   const code = err?.code;
   return code === "EPERM" || code === "EACCES";
+}
+// A path component the walk may not inspect (EPERM/EACCES -- e.g. drive
+// roots and profile directories when running sandboxed, such as inside a
+// Windows AppContainer) must never be assumed to be a plain directory: a
+// denied component can hide a link from realpath-based containment checks.
+// Resolve through the handle-based native path instead, which follows the
+// true chain (including in sandboxes), and fail closed with the original
+// error if it cannot.
+function resolveDeniedComponentSync(p: string, originalErr: any, encoding: any) {
+  let resolved;
+  try {
+    resolved = fs.realpathNativeSync(p, undefined);
+  } catch {
+    throw originalErr;
+  }
+  return encodeRealpathResult(resolved, encoding);
+}
+function resolveDeniedComponent(p: string, originalErr: any, encoding: any, callback: any) {
+  fs.realpathNative(p, undefined).then(
+    resolved => callback(null, encodeRealpathResult(resolved, encoding)),
+    () => callback(originalErr),
+  );
 }
 const realpathSync: typeof import("node:fs").realpathSync =
   process.platform !== "win32"
@@ -730,7 +743,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
           lastStat = lstatSync(base, { throwIfNoEntry: true });
         } catch (err) {
           if (!isPermissionDenied(err)) throw err;
-          lastStat = inaccessibleComponentStat;
+          return resolveDeniedComponentSync(p, err, encoding);
         }
         if (lastStat === undefined) return;
         knownHard.$add(base);
@@ -768,7 +781,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
             lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
           } catch (err) {
             if (!isPermissionDenied(err)) throw err;
-            lastStat = inaccessibleComponentStat;
+            return resolveDeniedComponentSync(p, err, encoding);
           }
           if (lastStat === undefined) return;
 
@@ -794,7 +807,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
               lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
             } catch (err) {
               if (!isPermissionDenied(err)) throw err;
-              lastStat = inaccessibleComponentStat;
+              return resolveDeniedComponentSync(p, err, encoding);
             }
             if (lastStat === undefined) return;
             knownHard.$add(base);
@@ -868,7 +881,7 @@ const realpath: typeof import("node:fs").realpath =
           lstat(base, (err, s) => {
             if (err) {
               if (!isPermissionDenied(err)) return callback(err);
-              s = inaccessibleComponentStat;
+              return resolveDeniedComponent(p, err, encoding, callback);
             }
             lastStat = s;
             knownHard.add(base);
@@ -916,9 +929,7 @@ const realpath: typeof import("node:fs").realpath =
         function gotStat(err, stats) {
           if (err) {
             if (!isPermissionDenied(err)) return callback(err);
-            // Treat an uninspectable component as a plain directory.
-            knownHard.add(base);
-            return process.nextTick(LOOP);
+            return resolveDeniedComponent(p, err, encoding, callback);
           }
 
           // If not a symlink, skip to the next path part
@@ -954,7 +965,10 @@ const realpath: typeof import("node:fs").realpath =
           // On windows, check that the root exists. On unix there is no need.
           if (!knownHard.has(base)) {
             lstat(base, err => {
-              if (err && !isPermissionDenied(err)) return callback(err);
+              if (err) {
+                if (!isPermissionDenied(err)) return callback(err);
+                return resolveDeniedComponent(p, err, encoding, callback);
+              }
               knownHard.add(base);
               LOOP();
             });

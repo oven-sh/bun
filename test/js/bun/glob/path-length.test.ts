@@ -106,15 +106,18 @@ describe.skipIf(isWindows)("Glob path length", () => {
     expect(scanCode).toBe(0);
   });
 
-  test("matched file whose absolute path exceeds the join buffer is returned", async () => {
+  // Linux-only: this needs a directory that is still walkable (absolute path
+  // under MAX_PATH_BYTES, 4096 there) while joining one more name onto it
+  // exceeds the 4096-byte join buffer. On macOS MAX_PATH_BYTES is 1024, so a
+  // matched path can never reach the join buffer's size.
+  test.skipIf(isMacOS)("matched file whose absolute path exceeds the join buffer is returned", async () => {
     const root = tmpdirSync("bun-glob-overflow-abs-file-");
     const segName = "D".repeat(255);
     const fileName = "F".repeat(255);
-    // Deepest directory stays under MAX_PATH_BYTES (1024 on macOS, 4096 on
-    // Linux) so the walker can open it, while joining the 255-byte file name
-    // onto it produces a path longer than the join buffer.
-    const maxPathBytes = isMacOS ? 1024 : 4096;
-    const depth = Math.floor((maxPathBytes - 1 - root.length) / (segName.length + 1));
+    // Deepest directory stays under 4096 bytes so the walker can open it,
+    // while joining the 255-byte file name onto it exceeds the join buffer.
+    const joinBufLen = 4096;
+    const depth = Math.floor((joinBufLen - 1 - root.length) / (segName.length + 1));
     await buildDeepTree(root, depth, segName, fileName);
 
     const expected = [root, ...Array(depth).fill(segName), fileName].join("/");

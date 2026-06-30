@@ -2735,6 +2735,11 @@ where
                 }
             }
         }
+
+        // A truthy non-Response, non-Error, non-Promise value (object, string,
+        // number, ...). The async twin (`handle_resolve`) reports this via
+        // `render_missing_invalid_response`; do the same on the sync path.
+        ctx.render_missing_invalid_response(response_value);
     }
 
     pub fn handle_resolve_stream(req: &mut Self) {

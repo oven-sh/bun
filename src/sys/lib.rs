@@ -8824,10 +8824,6 @@ mod win_symlink_impl {
         }
     }
 
-    /// `symlinkOrJunction`. Tries `CreateSymbolicLinkW`
-    /// (directory flavour) first; on failure other than ENOENT/EEXIST falls
-    /// back to a libuv junction. `abs_fallback_junction_target = None` says
-    /// `target` is already absolute and reusable for the junction.
     /// Memoized `TokenIsAppContainer` query for the current process; the
     /// lowbox state of a token cannot change after process creation.
     fn in_app_container() -> bool {
@@ -8870,6 +8866,10 @@ mod win_symlink_impl {
         result
     }
 
+    /// `symlinkOrJunction`. Tries `CreateSymbolicLinkW`
+    /// (directory flavour) first; on failure other than ENOENT/EEXIST falls
+    /// back to a libuv junction. `abs_fallback_junction_target = None` says
+    /// `target` is already absolute and reusable for the junction.
     pub fn symlink_or_junction(
         dest: &ZStr,
         target: &ZStr,
@@ -8940,7 +8940,7 @@ mod win_symlink_impl {
                     == u32::from(bun_windows_sys::externs::Win32Error::UNTRUSTED_MOUNT_POINT.0)
                 {
                     let _ = sys_uv::rmdir(dest);
-                    return Err(Error::new(E::EACCES, Tag::symlink).with_path(dest.as_bytes()));
+                    return Err(Error::new(E::ELOOP, Tag::symlink).with_path(dest.as_bytes()));
                 }
                 // Any other probe failure: keep the junction; the create
                 // itself succeeded.

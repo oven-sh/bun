@@ -3650,7 +3650,9 @@ fn eq_w_ascii_case_insensitive(a: &[u16], b: &[u16]) -> bool {
 
 /// Record `\Device\X → L:` when `dos` (`L:\a\b`) provably names the same
 /// directory as its own handle's NT path: the `VOLUME_NAME_NONE` tail must
-/// equal `dos` minus the drive, which rules out junction/subst indirection.
+/// equal `dos` minus the drive. Best-effort: an alias whose NT tail
+/// coincides (e.g. a subst or junction onto a same-named path of another
+/// volume) can pass.
 fn learn_nt_device(map: &mut Vec<(Vec<u16>, u16)>, dos: &[u16]) {
     if dos.len() < 3
         || dos[0] >= 128

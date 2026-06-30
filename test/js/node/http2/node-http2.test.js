@@ -3110,7 +3110,78 @@ it("http2 allowHTTP1 fallback writes a close-delimited body raw and ends the con
     expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
     expect(raw.toLowerCase()).not.toContain("content-length");
     expect(raw.toLowerCase()).not.toContain("transfer-encoding");
+    // The advertised connection state must match the close-delimited transport.
+    expect(raw.slice(0, raw.indexOf("\r\n\r\n") + 4).toLowerCase()).toContain("\r\nconnection: close\r\n");
     expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("part1part2");
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 allowHTTP1 fallback writes no terminating chunk after a keep-alive HEAD with a user-set Transfer-Encoding: chunked", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    if (req.method === "HEAD") {
+      res.setHeader("Transfer-Encoding", "chunked");
+      res.end();
+      return;
+    }
+    res.end("body2");
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const socket = tls.connect(
+      { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+      () => socket.write("HEAD / HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+    );
+    const chunks = [];
+    let sentSecond = false;
+    socket.on("error", reject);
+    socket.on("data", chunk => {
+      chunks.push(chunk);
+      if (!sentSecond && Buffer.concat(chunks).includes("\r\n\r\n")) {
+        // The HEAD head arrived; reuse the connection for a second request.
+        sentSecond = true;
+        socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      }
+    });
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    const raw = await promise;
+    const afterHead = raw.slice(raw.indexOf("\r\n\r\n") + 4);
+    // A HEAD response has no body and no terminating chunk: the next bytes on
+    // the connection must be the second response's status line.
+    expect(afterHead).toStartWith("HTTP/1.1 200 ");
+    expect(raw).not.toContain("0\r\n\r\n");
+    expect(afterHead.slice(afterHead.indexOf("\r\n\r\n") + 4)).toBe("body2");
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited response when the user removed it", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    res.removeHeader("content-length");
+    res.removeHeader("transfer-encoding");
+    res.removeHeader("connection");
+    res.end("body");
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const socket = tls.connect(
+      { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+      () => socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+    );
+    const chunks = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    const raw = await promise;
+    expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
+    // Node writes no Connection (and no Keep-Alive) header here at all.
+    expect(raw.toLowerCase()).not.toContain("connection:");
+    expect(raw.toLowerCase()).not.toContain("keep-alive");
+    expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("body");
   } finally {
     server.close();
   }

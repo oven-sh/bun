@@ -5397,7 +5397,10 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     if (!hasDate) {
       out += `Date: ${new Date().toUTCString()}\r\n`;
     }
-    if (!hasConnection) {
+    // A close-delimited response with no Connection pair means the user removed
+    // it (Node's _removedConnection): write none rather than inventing
+    // keep-alive on a connection that ends with the body.
+    if (!hasConnection && !closeDelimited) {
       if (shouldKeepAlive) {
         out += `Connection: keep-alive\r\nKeep-Alive: timeout=${Math.floor((keepAliveTimeout || 5000) / 1000)}\r\n`;
       } else {
@@ -5464,7 +5467,10 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       const length = buf ? (buf.byteLength ?? buf.length) : 0;
       writeHeadToSocket(length);
       writeBody(buf);
-      if (chunked) socket.write("0\r\n\r\n");
+      // Like Node's `_hasBody && chunkedEncoding` gate: a bodiless (HEAD)
+      // response never writes the terminating chunk, even when the user set
+      // Transfer-Encoding: chunked themselves.
+      if (chunked && !noBody) socket.write("0\r\n\r\n");
       this.ended = true;
       this.finished = true;
       const onfinished = this.onfinished;

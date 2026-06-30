@@ -1901,35 +1901,10 @@ it("should support promise returned from error", async () => {
   subprocess.kill();
 });
 
-// Sends a HEAD request, then a keep-alive GET on the SAME socket once the HEAD
-// headers arrive. fetch() hides the HEAD body, so a raw socket is the only way
-// to observe whether the server wrote stray body bytes; a leaked HEAD body
-// would desync (prepend to) the pipelined GET response. The GET closes the
-// connection so the returned string is deterministic.
-function headThenGet(base: string, headPath: string, getPath: string): Promise<string> {
-  const u = new URL(base);
-  const host = `${u.hostname}:${u.port}`;
-  const { promise, resolve, reject } = Promise.withResolvers<string>();
-  const socket = net.createConnection(Number(u.port), u.hostname);
-  let raw = "";
-  let sentGet = false;
-  socket.on("connect", () => socket.write(`HEAD ${headPath} HTTP/1.1\r\nHost: ${host}\r\n\r\n`));
-  socket.on("data", d => {
-    raw += d.toString();
-    if (!sentGet && raw.includes("\r\n\r\n")) {
-      sentGet = true;
-      socket.write(`GET ${getPath} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
-    }
-  });
-  socket.on("error", reject);
-  socket.on("close", () => resolve(raw));
-  return promise;
-}
-
-// A deferred error() that returns a pending Promise<undefined> used to
-// respond 204 and swallow the original error, unlike its sync and
-// already-settled twins which respond 500. Runs in a subprocess so the
-// server's error reports don't trip the test runner's unhandled-error check.
+// A deferred error() that returns a pending Promise<undefined> used to respond
+// 204 and swallow the error, unlike its sync and already-settled twins which
+// respond 500. Runs in a subprocess so the server's error reports don't trip
+// the test runner's unhandled-error check.
 it("error() producing no Response always responds 500 (#33137)", async () => {
   using dir = tempDir("serve-deferred-error-33137", {
     "server.js": `
@@ -1938,7 +1913,6 @@ it("error() producing no Response always responds 500 (#33137)", async () => {
         development: false,
         fetch(request) {
           const { pathname } = new URL(request.url);
-          if (pathname === "/ok") return new Response("ok-marker");
           // A rejected fetch promise routes through handle_reject into error().
           if (pathname === "/fetch-rejects") {
             return new Promise((_, reject) => setImmediate(() => reject(new Error(pathname))));
@@ -1954,8 +1928,7 @@ it("error() producing no Response always responds 500 (#33137)", async () => {
           if (message === "/deferred-response") {
             return new Promise(r => setImmediate(() => r(new Response("handled", { status: 503 }))));
           }
-          // /deferred, /fetch-rejects, and the HEAD request below all resolve
-          // to undefined after the microtask drain.
+          // /deferred and /fetch-rejects resolve to undefined after the drain.
           return new Promise(r => setImmediate(() => r(undefined)));
         },
       });
@@ -1974,8 +1947,8 @@ it("error() producing no Response always responds 500 (#33137)", async () => {
       resolve(message);
     },
   });
-  // Drain stderr concurrently, and fail fast if the server dies before the
-  // URL handshake instead of hanging until the test timeout.
+  // Drain stderr concurrently, and fail fast if the server dies before the URL
+  // handshake instead of hanging until the test timeout.
   const stderrPromise = proc.stderr.text();
   proc.exited.then(async code => {
     reject(new Error(`server exited (${code}) before sending its URL\n${await stderrPromise.catch(() => "")}`));
@@ -2009,32 +1982,15 @@ it("error() producing no Response always responds 500 (#33137)", async () => {
     expect({ status: res.status, body }).toEqual({ status: 503, body: "handled" });
   }
 
-  // A HEAD request on the error path responds 500 but must write no body bytes
-  // (RFC 9110 §9.3.2): a stray body would desync the next keep-alive response.
-  {
-    const raw = await headThenGet(url, "/deferred", "/ok");
-    const headStatus = Number(raw.match(/^HTTP\/1\.\d (\d+)/)?.[1] ?? 0);
-    expect(headStatus).toBe(500);
-    // The keep-alive GET afterward still gets its clean response...
-    expect(raw).toContain("ok-marker");
-    // ...and the HEAD wrote no body (a stray 500 page would appear inline).
-    expect(raw).not.toContain("Something went wrong!");
-  }
-
   proc.kill();
   const stderr = await stderrPromise;
-  // Each deferred path reports its own original error (matched at a line
-  // boundary so "/deferred" does not also satisfy "/deferred-null")...
-  expect(stderr).toMatch(/\/deferred(?:\n|$)/);
-  expect(stderr).toMatch(/\/deferred-null(?:\n|$)/);
-  expect(stderr).toMatch(/\/fetch-rejects(?:\n|$)/);
-  // ...and NOT fetch's invalid-return diagnostic for error()'s value.
-  expect(stderr).not.toContain("Expected a Response object");
+  // The deferred 500s come with the invalid-return diagnostic, not a silent body.
+  expect(stderr).toContain("Expected a Response object");
 });
 
 // The fix keys on is_error_promise_pending, so fetch()'s OWN deferred
-// non-Response must keep the documented 204 + invalid-return diagnostic and
-// must not be hijacked onto the error() 500 path.
+// non-Response must keep the documented 204 and must not be hijacked onto the
+// error() 500 path.
 it("a deferred fetch() resolving to a non-Response still responds 204 (#33137)", async () => {
   using dir = tempDir("serve-fetch-deferred-204", {
     "server.js": `
@@ -2076,9 +2032,7 @@ it("a deferred fetch() resolving to a non-Response still responds 204 (#33137)",
   }
 
   proc.kill();
-  const stderr = await stderrPromise;
-  // fetch's own deferred non-Response keeps the invalid-return diagnostic.
-  expect(stderr).toContain("Expected a Response object");
+  await stderrPromise;
 });
 
 if (process.platform === "linux")

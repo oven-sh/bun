@@ -162,11 +162,6 @@ pub struct RequestContext<
     // fall back to `response_weakref` (see its doc below), so a `Strong`
     // here would root the Response unconditionally and change GC behavior.
     pub response_jsvalue: JSValue,
-
-    /// Original error passed to `error()` when it returned a pending promise.
-    /// Protected while in-flight so a deferred non-Response resolution can
-    /// still report it; cleared on settle and in finalize_without_deinit.
-    pub error_promise_value: JSValue,
     pub ref_count: u8,
 
     /// Weak: for plain Blob/InternalBlob bodies the Response JSValue is
@@ -738,41 +733,18 @@ where
         if self.is_aborted_or_ended() {
             return;
         }
-        self.render_missing();
-    }
-
-    /// Release the GC root taken for a pending `error()` promise in
-    /// process_on_error_promise and clear the deferred-error state. Idempotent.
-    fn clear_error_promise_value(&mut self) {
-        self.flags.set_is_error_promise_pending(false);
-        let value = self.error_promise_value;
-        if !value.is_empty() {
-            value.unprotect();
-            self.error_promise_value = JSValue::ZERO;
+        // A deferred `error()` handler that produced no Response responds 500,
+        // like its sync and already-settled twins, instead of the fetch path's 204.
+        if self.flags.is_error_promise_pending() {
+            self.flags.set_is_error_promise_pending(false);
+            return self.render_production_error(500);
         }
+        self.render_missing();
     }
 
     fn handle_resolve(ctx: &mut Self, value: JSValue) {
         if ctx.is_aborted_or_ended() || ctx.did_upgrade_web_socket() {
             return;
-        }
-
-        // A deferred `error()` handler shares fetch's resolve callback; a
-        // non-Response fulfillment must report the original error at 500, not
-        // render a misleading empty 204 (matches the sync/settled twins).
-        if ctx.flags.is_error_promise_pending() {
-            // SAFETY: only probed for Response-ness; the borrow ends here.
-            if (unsafe { as_response(value) }).is_none() {
-                // The stash stays GC-rooted via its protect() across this
-                // JS-reentering report; clear_error_promise_value releases it after.
-                let original_error = ctx.error_promise_value;
-                ctx.finish_running_error_handler(original_error, 500);
-                ctx.clear_error_promise_value();
-                return;
-            }
-            // Deferred error() that produced a Response: release the root and
-            // fall through to render it.
-            ctx.clear_error_promise_value();
         }
 
         if ctx.server.is_none() {
@@ -1325,7 +1297,6 @@ where
                 flags: Flags::<DEBUG_MODE>::default(),
                 upgrade_context: None,
                 response_jsvalue: JSValue::ZERO,
-                error_promise_value: JSValue::ZERO,
                 ref_count: 1,
                 response_weakref: response::WeakRef::EMPTY,
                 blob: AnyBlob::Blob(Blob::default()),
@@ -1516,9 +1487,6 @@ where
             }
             self.response_jsvalue = JSValue::ZERO;
         }
-        // Release the root taken for a deferred error() promise that never
-        // settled (e.g. the connection aborted while it was in-flight).
-        self.clear_error_promise_value();
         self.response_weakref.deref();
 
         self.request_body_readable_stream_ref.deinit();
@@ -3348,14 +3316,7 @@ where
                         self.flags.set_has_written_status(true);
                     }
 
-                    if self.method == Method::HEAD {
-                        // HEAD must not carry a body (RFC 9110 §9.3.2); a stray
-                        // body desyncs the keep-alive connection. Mirror the 404
-                        // arm above and let uWS frame the empty body.
-                        self.end_without_body(self.should_close_connection());
-                    } else {
-                        self.end(b"Something went wrong!", self.should_close_connection());
-                    }
+                    self.end(b"Something went wrong!", self.should_close_connection());
                 }
             }
         }
@@ -3479,10 +3440,6 @@ where
         match promise.unwrap(vm.global().vm(), jsc::PromiseUnwrapMode::MarkHandled) {
             jsc::PromiseResult::Pending => {
                 ctx.flags.set_is_error_promise_pending(true);
-                // Keep the original error rooted across the await so a deferred
-                // non-Response resolution can still report it (handle_resolve).
-                ctx.error_promise_value = value;
-                value.protect();
                 ctx.ref_();
                 let cell = NativePromiseContext::create(server.global_this(), ctx);
                 promise_js.then_with_value(

@@ -19,7 +19,7 @@ import type { Dependency } from "../source.ts";
 // disambiguation, the NUL-device pipe fallback for ignored stdio, and
 // uv_pipe/realpath/stat error-reporting fixes, plus uv_os_is_app_container().
 // To bump upstream, rebase the `bun` branch and update this SHA.
-const LIBUV_COMMIT = "826ec5e6637fcae70950f63dd89484b9310e1b7a";
+const LIBUV_COMMIT = "e2918f87d152e697c4edc1fa0db69ef245caf8cb";
 
 // prettier-ignore
 const SHARED = [

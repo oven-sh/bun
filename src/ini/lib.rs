@@ -451,7 +451,7 @@ mod draft {
                     )?
                     .into_key();
                 let is_array: bool = {
-                    key_raw.len() > 2 && bun_core::ends_with(key_raw, b"[]")
+                    key_raw.len() > 2 && bun_core::strings::ends_with(key_raw, b"[]")
                     // Commenting out because options are not supported but we might
                     // support them.
                     // if (this.opts.bracked_array) {
@@ -466,7 +466,7 @@ mod draft {
                     // }
                 };
 
-                let key = if is_array && bun_core::ends_with(key_raw, b"[]") {
+                let key = if is_array && bun_core::strings::ends_with(key_raw, b"[]") {
                     &key_raw[..key_raw.len() - 2]
                 } else {
                     key_raw
@@ -1229,7 +1229,9 @@ mod draft {
 
             if let Some(keyexpr) = prop.key {
                 if let Some(key) = keyexpr.as_utf8_string_literal() {
-                    if bun_core::has_prefix(key, b"@") && bun_core::ends_with(key, b":registry") {
+                    if bun_core::has_prefix(key, b"@")
+                        && bun_core::strings::ends_with(key, b":registry")
+                    {
                         if !self.count {
                             let registry = 'brk: {
                                 if let Some(value) = prop.value {

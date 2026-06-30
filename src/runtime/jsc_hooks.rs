@@ -3086,8 +3086,22 @@ fn transpile_source_code_inner(
             }
         }
 
-        // `provideFetch()` should be called.
-        L::Napi => unreachable!("napi modules go through provideFetch()"),
+        // The `.node` fast-paths in `moduleLoaderFetch` / `overridableRequire`
+        // only match module keys that literally end in `.node`, so `?query`
+        // suffixes and `--loader <ext>:napi` mappings still reach here.
+        L::Napi => {
+            if global_object.is_null() {
+                return Err(bun_core::err!("NotSupported"));
+            }
+            // SAFETY: null-checked above; `global_object` is the live
+            // per-thread global.
+            let global = unsafe { &*global_object };
+            Err(global
+                .throw_type_error(format_args!(
+                    "To load Node-API modules, use require() or process.dlopen instead of import."
+                ))
+                .into())
+        }
 
         // ────────────────────────────────────────────────────────────────────
         // .wasm
@@ -3224,7 +3238,7 @@ fn transpile_source_code_inner(
                     break 'auto_watch;
                 }
                 if !bun_paths::is_absolute(path.text)
-                    || bun_core::contains(path.text, b"node_modules")
+                    || bun_core::strings::contains(path.text, b"node_modules")
                 {
                     break 'auto_watch;
                 }
@@ -3343,7 +3357,7 @@ fn maybe_watch_file(
     }
     if is_node_override
         || !bun_paths::is_absolute(path.text)
-        || bun_core::contains(path.text, b"node_modules")
+        || bun_core::strings::contains(path.text, b"node_modules")
     {
         return;
     }
@@ -3749,7 +3763,7 @@ unsafe fn normalize_specifier_for_loader<'a>(
     }
     let specifier = slice;
     let mut query: &[u8] = b"";
-    if let Some(i) = bun_core::index_of_char(slice, b'?') {
+    if let Some(i) = bun_core::strings::index_of_char_usize(slice, b'?') {
         let i = i as usize;
         query = &slice[i..];
         slice = &slice[..i];
@@ -4660,7 +4674,7 @@ fn normalize_specifier_for_resolution<'a>(
     specifier: &'a [u8],
     query_string: &mut &'a [u8],
 ) -> &'a [u8] {
-    if let Some(i) = bun_core::index_of_char(specifier, b'?') {
+    if let Some(i) = bun_core::strings::index_of_char_usize(specifier, b'?') {
         let i = i as usize;
         *query_string = &specifier[i..];
         &specifier[..i]

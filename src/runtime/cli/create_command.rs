@@ -1546,10 +1546,10 @@ impl CreateCommand {
         if example_tag == ExampleTag::GithubRepository {
             let mut display_name = template;
 
-            if let Some(first_slash) = bun_core::index_of_char(display_name, b'/') {
+            if let Some(first_slash) = bun_core::strings::index_of_char_usize(display_name, b'/') {
                 let first_slash = first_slash as usize;
                 if let Some(second_slash) =
-                    bun_core::index_of_char(&display_name[first_slash + 1..], b'/')
+                    bun_core::strings::index_of_char_usize(&display_name[first_slash + 1..], b'/')
                 {
                     display_name = &template[0..first_slash + 1 + second_slash as usize];
                 }
@@ -1761,9 +1761,13 @@ impl CreateCommand {
                 }
 
                 if repo_begin == usize::MAX && positional[0] != b'/' {
-                    if let Some(first_slash_index) = bun_core::index_of_char(positional, b'/') {
+                    if let Some(first_slash_index) =
+                        bun_core::strings::index_of_char_usize(positional, b'/')
+                    {
                         let first_slash_index = first_slash_index as usize;
-                        if let Some(last_slash_index) = bun_core::index_of_char(positional, b'/') {
+                        if let Some(last_slash_index) =
+                            bun_core::strings::index_of_char_usize(positional, b'/')
+                        {
                             let last_slash_index = last_slash_index as usize;
                             if first_slash_index == last_slash_index
                                 && !positional[last_slash_index..].is_empty()
@@ -1777,11 +1781,11 @@ impl CreateCommand {
 
                 if repo_begin != usize::MAX {
                     let remainder = &positional[repo_begin..];
-                    if let Some(i) = bun_core::index_of_char(remainder, b'/') {
+                    if let Some(i) = bun_core::strings::index_of_char_usize(remainder, b'/') {
                         let i = i as usize;
                         if i > 0 && !remainder[i + 1..].is_empty() {
                             if let Some(last_slash) =
-                                bun_core::index_of_char(&remainder[i + 1..], b'/')
+                                bun_core::strings::index_of_char_usize(&remainder[i + 1..], b'/')
                             {
                                 let last_slash = last_slash as usize;
                                 example_tag = ExampleTag::GithubRepository;
@@ -2221,11 +2225,11 @@ impl Example {
         refresher: &mut Progress,
         progress: &mut ProgressNode,
     ) -> Result<MutableString, bun_core::Error> {
-        let owner_i = bun_core::index_of_char(name, b'/').unwrap() as usize;
+        let owner_i = bun_core::strings::index_of_char_usize(name, b'/').unwrap() as usize;
         let owner = &name[0..owner_i];
         let mut repository = &name[owner_i + 1..];
 
-        if let Some(i) = bun_core::index_of_char(repository, b'/') {
+        if let Some(i) = bun_core::strings::index_of_char_usize(repository, b'/') {
             repository = &repository[0..i as usize];
         }
 
@@ -2637,7 +2641,9 @@ impl Example {
                         .data
                         .slice();
                     list[i] = Example {
-                        name: if let Some(slash) = bun_core::index_of_char(name, b'/') {
+                        name: if let Some(slash) =
+                            bun_core::strings::index_of_char_usize(name, b'/')
+                        {
                             &name[slash as usize + 1..]
                         } else {
                             name

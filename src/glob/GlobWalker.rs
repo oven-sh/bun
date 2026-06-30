@@ -2232,14 +2232,20 @@ fn work_item_logical_path(path: &[u8]) -> &[u8] {
 // const bunJoin = if (!sentinel) ResolvePath.join else ResolvePath.joinZ;
 fn bun_join<const SENTINEL: bool>(parts: &[&[u8]]) -> Box<[u8]> {
     use bun_paths::platform;
+    // Deeply nested trees join to more than the fixed thread-local buffer
+    // holds; the `_spill` variants grow onto the heap instead of writing
+    // past it. Oversized work items still fail with ENAMETOOLONG later.
+    let mut spill: Vec<u8> = Vec::new();
     if SENTINEL {
-        let s = resolve_path::join_z::<platform::Auto>(parts);
+        let s = resolve_path::join_z_spill::<platform::Auto>(&mut spill, parts);
         // include trailing NUL in the owned box
         let mut v = s.as_bytes().to_vec();
         v.push(0);
         v.into_boxed_slice()
     } else {
-        Box::from(resolve_path::join::<platform::Auto>(parts))
+        Box::from(resolve_path::join_spill::<platform::Auto>(
+            &mut spill, parts,
+        ))
     }
 }
 

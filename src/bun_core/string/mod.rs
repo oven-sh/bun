@@ -33,9 +33,11 @@ pub mod wtf;
 pub mod write;
 pub use write::Write;
 
-// `bun.strings.*` — SIMD-backed scanners over highway/simdutf FFI.
+// `bun.strings.*` — SIMD-backed scanners over highway/simdutf FFI. Public as
+// `bun_core::strings` (the alias in lib.rs); `immutable` is the module name.
 #[path = "immutable.rs"]
 pub mod immutable;
+use crate::strings;
 
 // Unicode ID-Start/ID-Continue two-stage tables.
 // Pure data with no upward deps; hosted here so [`lexer`], [`mutable_string`],
@@ -894,7 +896,7 @@ impl String {
     /// `self`, treating ANSI escape sequences as zero-width.
     /// Dispatches on encoding to [`strings::visible::width::exclude_ansi_colors`].
     pub fn visible_width_exclude_ansi_colors(&self, ambiguous_as_wide: bool) -> usize {
-        use crate::string::strings::visible::width::exclude_ansi_colors as w;
+        use crate::strings::visible::width::exclude_ansi_colors as w;
         if self.is_utf16() {
             return w::utf16(self.utf16(), ambiguous_as_wide);
         }
@@ -1609,7 +1611,7 @@ impl ZigString {
                 .iter()
                 .position(|&c| c < 256 && chars.contains(&(c as u8)))
         } else {
-            crate::string::strings::index_of_any(self.slice(), chars).map(|i| i as usize)
+            crate::strings::index_of_any(self.slice(), chars)
         }
     }
 
@@ -2311,9 +2313,6 @@ pub mod encoding {
     }
 }
 pub use encoding::Encoding as NodeEncoding;
-
-// `strings` is the canonical `bun.strings` namespace name; alias to the real module.
-pub use immutable as strings;
 
 // ──────────────────────────────────────────────────────────────────────────
 // `lexer` — identifier predicates. Thin `u32`-taking wrapper over the

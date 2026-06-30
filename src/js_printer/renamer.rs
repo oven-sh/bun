@@ -14,7 +14,7 @@ use bun_ast::{Ref, Symbol};
 use bun_collections::hive_array::Fallback as HiveArrayFallback;
 use bun_collections::{HashMap, StringHashMap, VecExt};
 use bun_core::Output;
-use bun_core::{MutableString, immutable as strings};
+use bun_core::{MutableString, strings};
 use bun_options_types::Format;
 use enum_map::EnumMap;
 

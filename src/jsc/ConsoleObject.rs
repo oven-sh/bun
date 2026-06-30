@@ -753,7 +753,7 @@ impl<'a> TablePrinter<'a> {
         Ok(CellRef {
             offset,
             len: text.len(),
-            width: strings::immutable::visible::width::exclude_ansi_colors::utf8(text) as u32,
+            width: strings::visible::width::exclude_ansi_colors::utf8(text) as u32,
         })
     }
 
@@ -2833,7 +2833,7 @@ pub mod formatter {
         pub fn write_latin1(&mut self, buf: &[u8]) {
             let mut remain = buf;
             while !remain.is_empty() {
-                if let Some(i) = strings::immutable::first_non_ascii(remain) {
+                if let Some(i) = strings::first_non_ascii(remain) {
                     if i > 0 {
                         if self.ctx.write_all(&remain[0..i as usize]).is_err() {
                             self.failed = true;
@@ -2842,11 +2842,9 @@ pub mod formatter {
                     }
                     if self
                         .ctx
-                        .write_all(
-                            &strings::immutable::latin1_to_codepoint_bytes_assume_not_ascii(
-                                remain[i as usize],
-                            ),
-                        )
+                        .write_all(&strings::latin1_to_codepoint_bytes_assume_not_ascii(
+                            remain[i as usize],
+                        ))
                         .is_err()
                     {
                         self.failed = true;
@@ -3167,10 +3165,10 @@ pub mod formatter {
                     writer.write_all(b"\"");
 
                     const QUOTE_U16: &[u16] = &[b'"' as u16];
-                    while let Some(j) = strings::immutable::index_of_any16(utf16_slice, QUOTE_U16) {
-                        writer.write_16_bit(&utf16_slice[0..j as usize]);
+                    while let Some(j) = strings::index_of_any16(utf16_slice, QUOTE_U16) {
+                        writer.write_16_bit(&utf16_slice[0..j]);
                         writer.write_all(b"\"");
-                        utf16_slice = &utf16_slice[j as usize + 1..];
+                        utf16_slice = &utf16_slice[j + 1..];
                     }
 
                     writer.write_16_bit(utf16_slice);
@@ -3786,8 +3784,7 @@ pub mod formatter {
                 writer.write_all(slice);
             } else if !str.is_empty() {
                 // slow path
-                let buf =
-                    strings::immutable::allocate_latin1_into_utf8(str.latin1()).unwrap_or_default();
+                let buf = strings::allocate_latin1_into_utf8(str.latin1()).unwrap_or_default();
                 if !buf.is_empty() {
                     writer.write_all(&buf);
                 }
@@ -5172,7 +5169,7 @@ pub mod formatter {
 
             // `ZigStringSlice` frees on `Drop`, so no explicit cleanup is
             // needed.
-            let tag_name_slice: strings::ZigStringSlice;
+            let tag_name_slice: bun_core::ZigStringSlice;
             let mut is_tag_kind_primitive = false;
 
             if let Some(type_value) = value.get(self.global_this, "type")? {
@@ -5652,7 +5649,7 @@ pub mod formatter {
 
             if self.format_buffer_as_text
                 && js_type == jsc::JSType::Uint8Array
-                && bun_core::immutable::is_valid_utf8(slice)
+                && bun_core::strings::is_valid_utf8(slice)
             {
                 if C {
                     writer.write_all(pfmt!("<r><green>", true).as_bytes());

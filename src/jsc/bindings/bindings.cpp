@@ -2103,11 +2103,12 @@ bool WebCore__FetchHeaders__has(WebCore::FetchHeaders* headers, const ZigString*
     } else
         return result.releaseReturnValue();
 }
-extern "C" void WebCore__FetchHeaders__put(WebCore::FetchHeaders* headers, HTTPHeaderName name, const ZigString* arg2, JSC::JSGlobalObject* global)
+extern "C" void WebCore__FetchHeaders__put(WebCore::FetchHeaders* headers, HTTPHeaderName name, const BunString* arg2, JSC::JSGlobalObject* global)
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
     throwScope.assertNoException(); // can't throw an exception when there's already one.
-    WebCore::propagateException(*global, throwScope, headers->set(name, Bun::toStringCopy(*arg2)));
+    // `toWTFString()` refs a `WTFStringImpl`-tagged value instead of copying it.
+    WebCore::propagateException(*global, throwScope, headers->set(name, arg2->toWTFString()));
 }
 void WebCore__FetchHeaders__remove(WebCore::FetchHeaders* headers, const ZigString* arg1, JSC::JSGlobalObject* global)
 {

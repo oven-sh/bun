@@ -49,7 +49,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (7.50 KB) {
+    "Response (8.0 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -129,6 +129,14 @@ test("Response.redirect keeps a non-absolute url as-is in Location", () => {
   expect(Response.redirect("/login?next=1#a").headers.get("location")).toBe("/login?next=1#a");
   // non-ASCII must round-trip, not come back as a latin-1 view of the UTF-8 bytes
   expect(Response.redirect("/café").headers.get("location")).toBe("/café");
+});
+
+test("Response.redirect rejects a non-absolute url that is not a valid header value", () => {
+  // A code point above U+00FF cannot be a header value, so this throws the same
+  // TypeError that `new Headers({ location: "/€" })` does, instead of silently
+  // writing a latin-1-corrupted Location ("/â¬").
+  expect(() => Response.redirect("/€")).toThrow("Header 'Location' has invalid value: '/€'");
+  expect(() => Response.redirect("/搜索")).toThrow("Header 'Location' has invalid value: '/搜索'");
 });
 
 test("new Response(123, { statusText: 123 }) does not throw", () => {

@@ -741,6 +741,46 @@ describe("clone() throws when the body is disturbed or locked", () => {
     expect(await promise).toEqual(["hello", "hello"]);
   });
 
+  // `routes:` handlers receive a BunRequest subclass whose own `clone` is a
+  // separate native entry point (JSBunRequest::clone -> Request__clone) from
+  // Request.prototype.clone; it must run the same usability check.
+  test("Bun.serve routes: clone() of an already-read BunRequest throws", async () => {
+    const results: string[] = [];
+    const handler = async (req: Request) => {
+      await req.text();
+      try {
+        const cloned = req.clone();
+        results.push(`no throw, clone.text()=${JSON.stringify(await cloned.text())}`);
+      } catch (e) {
+        results.push(`${(e as Error).constructor.name}: ${(e as Error).message}`);
+      }
+      return new Response("ok");
+    };
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/param/:id": handler, "/static": handler },
+    });
+    await fetch(new URL("/param/1", server.url), { method: "POST", body: "hello" });
+    await fetch(new URL("/static", server.url), { method: "POST", body: "hello" });
+    expect(results).toEqual(["TypeError: Body is disturbed or locked", "TypeError: Body is disturbed or locked"]);
+  });
+
+  test("Bun.serve routes: clone() of an unread BunRequest still works", async () => {
+    const results: string[][] = [];
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/param/:id": async (req: Request) => {
+          const cloned = req.clone();
+          results.push(await Promise.all([req.text(), cloned.text()]));
+          return new Response("ok");
+        },
+      },
+    });
+    await fetch(new URL("/param/1", server.url), { method: "POST", body: "hello" });
+    expect(results).toEqual([["hello", "hello"]]);
+  });
+
   test("clone() still succeeds on a null body", () => {
     expect(new Request("http://example.com/").clone().body).toBeNull();
     expect(new Response(null).clone().body).toBeNull();

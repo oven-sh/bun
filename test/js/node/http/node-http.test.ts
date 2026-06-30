@@ -4319,6 +4319,122 @@ describe("server headersTimeout/requestTimeout enforcement", () => {
     }
   }, 20_000);
 
+  it("a Content-Length: 0 request whose headers complete on the buffered fallback path does not leak its start time into the next keep-alive request", async () => {
+    // The parser's buffered (ConsumeMinimally) header path never delivers the
+    // empty fin body chunk for an explicit Content-Length: 0 request, so the
+    // message boundary must not depend on it. The second request's
+    // headersTimeout must restart at its own first byte: a deadline inherited
+    // from the first message (begun ~7s earlier) expires within one 4s uWS
+    // timer sweep, long before the second headers complete at +6.5s.
+    const { promise: firstResponse, resolve: onFirstResponse } = Promise.withResolvers<void>();
+    const { promise: secondResponse, resolve: onSecondResponse } = Promise.withResolvers<void>();
+    const server = createServer(
+      { headersTimeout: 9000, requestTimeout: 30000, connectionsCheckingInterval: 100, keepAliveTimeout: 0 },
+      (req, res) => {
+        req.on("error", () => {});
+        res.on("error", () => {});
+        res.end(`resp:${req.url};`);
+      },
+    );
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      let received = "";
+      socket.on("data", chunk => {
+        received += chunk.toString();
+        if (received.includes("resp:/first;")) onFirstResponse();
+        if (received.includes("resp:/second;")) onSecondResponse();
+      });
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      // Message 1's headers span two packets so they complete on the parser's
+      // buffered fallback path.
+      socket.write("DELETE /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nX-Split: ");
+      // Deliberate fixed waits: they are inputs (when bytes reach the socket relative to the
+      // per-message deadline, which has no observable event), not waits for a condition.
+      await Bun.sleep(200);
+      socket.write("a\r\n\r\n");
+      await firstResponse;
+      await Bun.sleep(7000);
+      received = "";
+      socket.write("GET /second HTTP/1.1\r\nHost: localhost\r\nX-Partial: ");
+      // Complete the headers after an inherited deadline would have fired, but
+      // well within this message's own headersTimeout.
+      await Bun.sleep(6500);
+      socket.write("1\r\n\r\n");
+      await Promise.race([secondResponse, closed]);
+      expect(received).toStartWith("HTTP/1.1 200 OK\r\n");
+      expect(received).toEndWith("resp:/second;");
+      socket.end();
+      await closed;
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 30_000);
+
+  it("a synchronous res.write() from a 'data' listener does not re-base the next keep-alive request's deadline", async () => {
+    // The echo handler's res.write() runs while the parser is still delivering
+    // the request body's final chunk, so the resetTimeout() it triggers
+    // observes the Body receive phase across the message boundary; it must not
+    // restore a message start the boundary already retired. The second
+    // request's headersTimeout must restart at its own first byte, exactly as
+    // in the test above.
+    const { promise: firstResponse, resolve: onFirstResponse } = Promise.withResolvers<void>();
+    const { promise: secondResponse, resolve: onSecondResponse } = Promise.withResolvers<void>();
+    const server = createServer(
+      { headersTimeout: 9000, requestTimeout: 30000, connectionsCheckingInterval: 100, keepAliveTimeout: 0 },
+      (req, res) => {
+        req.on("error", () => {});
+        res.on("error", () => {});
+        if (req.url === "/first") {
+          req.on("data", chunk => res.write(chunk));
+          req.on("end", () => res.end("resp:/first;"));
+          return;
+        }
+        res.end("resp:/second;");
+      },
+    );
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      let received = "";
+      socket.on("data", chunk => {
+        received += chunk.toString();
+        if (received.includes("resp:/first;")) onFirstResponse();
+        if (received.includes("resp:/second;")) onSecondResponse();
+      });
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: 8\r\n\r\nabcd");
+      // Deliberate fixed waits: they are inputs (when bytes reach the socket relative to the
+      // per-message deadline, which has no observable event), not waits for a condition.
+      await Bun.sleep(200);
+      // The body's final chunk: the 'data' listener echoes it synchronously.
+      socket.write("efgh");
+      await firstResponse;
+      await Bun.sleep(7000);
+      received = "";
+      socket.write("GET /second HTTP/1.1\r\nHost: localhost\r\nX-Partial: ");
+      // Complete the headers after an inherited deadline would have fired, but
+      // well within this message's own headersTimeout.
+      await Bun.sleep(6500);
+      socket.write("1\r\n\r\n");
+      await Promise.race([secondResponse, closed]);
+      expect(received).toStartWith("HTTP/1.1 200 OK\r\n");
+      expect(received).toEndWith("resp:/second;");
+      socket.end();
+      await closed;
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 30_000);
+
   it("disabled timeouts (0) do not close a stalled connection", async () => {
     // Negative contract bounded by an awaited condition: a sibling server with
     // the timeouts enabled answers its own stalled request with a 408 first,

@@ -179,27 +179,15 @@ public:
     static bool tryArmNodeReceiveTimeout(us_socket_t *s, HttpResponseData<SSL> *httpResponseData) {
         NodeReceivePhase phase = nodeReceivePhase(httpResponseData);
         if (phase == NodeReceivePhase::None) {
-            httpResponseData->nodeArmedReceivePhase = NodeReceivePhase::None;
             return false;
         }
-        /* Like Node (last_message_start_), the clock starts at the message's
-         * first received byte, or at connection open while no bytes have
-         * arrived yet for the first message. Only a message boundary (the fin
-         * reset in onData) clears it: the phase passes through None inside the
-         * request handler for a chunked message (its framing is only known
-         * after dispatch), which must not restart the clock. */
-        bool messageStarted = httpResponseData->nodeMessageStarted;
-        if (messageStarted && phase == httpResponseData->nodeArmedReceivePhase) {
-            /* Both deadlines are absolute from the message start: received
-             * bytes never extend them, so a client trickling data slowly
-             * cannot hold the socket past them. */
-            return true;
-        }
-        if (!messageStarted) {
-            httpResponseData->nodeMessageStartMs = nodeNowMs();
-            httpResponseData->nodeMessageStarted = phase == NodeReceivePhase::Body || httpResponseData->hasPartialRequest();
-        }
-        httpResponseData->nodeArmedReceivePhase = phase;
+        /* Like Node (last_message_start_), the clock is the message's first
+         * received byte (or connection open before any byte arrives). onData
+         * and the parser own nodeMessageStartMs; this only reads it, so nothing
+         * a handler reaches synchronously can re-base a message's deadlines.
+         * Both deadlines are absolute from that start: received bytes never
+         * extend them, so a client trickling data slowly cannot hold the
+         * socket past them. */
         us_socket_timeout(s, nodeRemainingReceiveSeconds(s, httpResponseData, phase));
         return true;
     }
@@ -274,6 +262,9 @@ private:
              * deadline owns the socket timer until a complete request arrives. */
             httpResponseData->hasNodeReceiveTimeouts = true;
             httpResponseData->idleTimeout = 0;
+            /* The first message's receive deadlines are measured from
+             * connection open until its first byte arrives and re-bases them. */
+            httpResponseData->nodeMessageStartMs = nodeNowMs();
         }
         ((HttpResponse<SSL> *) s)->resetTimeout();
 
@@ -355,6 +346,13 @@ private:
         /* Mark that we are inside the parser now */
         httpContextData->flags.isParsingHttp = true;
         httpResponseData->isIdle = false;
+
+        if (httpResponseData->hasNodeReceiveTimeouts) {
+            /* Every message whose request line begins in this packet starts its
+             * receive deadlines here; the parser stamps nodeMessageStartMs with
+             * this as it reaches each one (see HttpParser). */
+            httpResponseData->nodePacketTimestampMs = nodeNowMs();
+        }
 
         // clients need to know the cursor after http parse, not servers!
         // how far did we read then? we need to know to continue with websocket parsing data? or?
@@ -452,14 +450,6 @@ private:
             return s;
 
         }, [httpResponseData, httpContextData](void *user, std::string_view data, bool fin) -> void * {
-
-            /* The message is now fully received: the next receive phase belongs to the next
-             * keep-alive message, so its deadlines restart at its own first byte (a coalesced
-             * packet can reach it without ever passing through NodeReceivePhase::None). */
-            if (fin && httpResponseData->hasNodeReceiveTimeouts) {
-                httpResponseData->nodeArmedReceivePhase = NodeReceivePhase::None;
-                httpResponseData->nodeMessageStarted = false;
-            }
 
             if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketData) {
                 httpContextData->onSocketData(httpResponseData->socketData, SSL, (struct us_socket_t *) user, data.data(), data.length(), fin);

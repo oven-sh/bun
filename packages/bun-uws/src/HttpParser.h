@@ -879,6 +879,15 @@ namespace uWS
         data[length + 1] = 'a'; /* Anything that is not \n, to trigger "invalid request" */
         req->ancientHttp = false;
         for (;length;) {
+            /* node:http: a message whose request line begins here arrived in the
+             * packet onData is delivering, so its receive deadlines are measured
+             * from that packet's arrival. ConsumeMinimally only ever resumes a
+             * message buffered from an earlier packet, which keeps its own start. */
+            if constexpr (!ConsumeMinimally) {
+                if (nodePacketTimestampMs) {
+                    nodeMessageStartMs = nodePacketTimestampMs;
+                }
+            }
             auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp, isConnectRequest, useStrictMethodValidation, maxHeaderSize);
             if(result.isError()) {
                 return result;
@@ -1061,6 +1070,14 @@ public:
     bool hasPartialRequest() const {
         return fallback.length() > 0;
     }
+
+    /* node:http receive deadlines are absolute per message, measured from the
+     * message's first received byte. HttpContext::onData stamps the packet's
+     * arrival time here before parsing (0 = those deadlines are off), and the
+     * parser copies it into nodeMessageStartMs as each message's request line
+     * begins. See HttpContext::tryArmNodeReceiveTimeout. */
+    uint64_t nodePacketTimestampMs = 0;
+    uint64_t nodeMessageStartMs = 0;
 
     HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
         /* This resets BloomFilter by construction, but later we also reset it again.

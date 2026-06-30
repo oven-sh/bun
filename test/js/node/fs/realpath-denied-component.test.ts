@@ -34,17 +34,26 @@ if (isWindows) {
   const target = join(dir, "target");
   denied = join(root, "sub");
   mkdirSync(denied, { recursive: true });
-  // A junction needs no privilege; symlinkSync(type "junction") uses one.
-  symlinkSync(target, join(denied, "j"), "junction");
-  linkedFile = join(denied, "j", "secret.txt");
-  expected = realpathSync(join(target, "secret.txt"));
-
-  execSync(`icacls "${denied}" /deny "%USERNAME%:(OI)(CI)(RA,RD,REA)"`, { shell: "cmd.exe" });
+  let junctionLive = false;
   try {
-    lstatSync(join(denied, "j"));
-    // Succeeded: the deny is bypassed (elevated) — skip below.
-  } catch (e: any) {
-    preconditionHolds = e.code === "EPERM" || e.code === "EACCES";
+    // Sandboxed tokens get their junctions quarantined by the kernel (dead,
+    // ELOOP on traversal); the scenario needs a live junction, so probe
+    // through it and skip below where it is dead.
+    symlinkSync(target, join(denied, "j"), "junction");
+    lstatSync(join(denied, "j", "secret.txt"));
+    junctionLive = true;
+  } catch {}
+  if (junctionLive) {
+    linkedFile = join(denied, "j", "secret.txt");
+    expected = realpathSync(join(target, "secret.txt"));
+
+    execSync(`icacls "${denied}" /deny "%USERNAME%:(OI)(CI)(RA,RD,REA)"`, { shell: "cmd.exe" });
+    try {
+      lstatSync(join(denied, "j"));
+      // Succeeded: the deny is bypassed (elevated) — skip below.
+    } catch (e: any) {
+      preconditionHolds = e.code === "EPERM" || e.code === "EACCES";
+    }
   }
 }
 
@@ -57,25 +66,16 @@ afterAll(() => {
 
 describe.skipIf(!isWindows)("realpath with a permission-denied component", () => {
   test.skipIf(!preconditionHolds)("realpathSync resolves the true chain through the denied component", () => {
-    // Fail-closed: either the true (out-of-root) resolution, or an error —
-    // never the unresolved in-root spelling.
-    let result: string | undefined;
-    try {
-      result = realpathSync(linkedFile);
-    } catch (e: any) {
-      expect(typeof e.code).toBe("string");
-      return;
-    }
-    expect(result).toBe(expected);
+    // The native resolution must succeed here (traverse is not denied), so
+    // anything but the true out-of-root path — including the old fail-open
+    // in-root spelling or a rethrown EPERM — is a regression.
+    expect(realpathSync(linkedFile)).toBe(expected);
   });
 
   test.skipIf(!preconditionHolds)("callback realpath matches", async () => {
-    const result = await new Promise<string | undefined>((resolve, reject) =>
+    const result = await new Promise<string>((resolve, reject) =>
       realpath(linkedFile, (err, p) => (err ? reject(err) : resolve(p as string))),
-    ).catch((e: any) => {
-      expect(typeof e.code).toBe("string");
-      return undefined;
-    });
-    if (result !== undefined) expect(result).toBe(expected);
+    );
+    expect(result).toBe(expected);
   });
 });

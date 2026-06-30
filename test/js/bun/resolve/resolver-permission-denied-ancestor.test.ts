@@ -33,4 +33,23 @@ describe.skipIf(isWindows || process.getuid?.() === 0)("resolver with unreadable
       chmodSync(outer, 0o755);
     }
   });
+
+  test("errors on the requested directory itself stay fatal", () => {
+    const dir = tempDirWithFiles("unreadable-cwd", {
+      "project/index.js": `console.log("should not run");`,
+    });
+    const project = join(dir, "project");
+    chmodSync(project, 0o000);
+    try {
+      const proc = Bun.spawnSync({
+        cmd: [bunExe(), "index.js"],
+        cwd: project,
+        env: bunEnv,
+      });
+      expect(proc.exitCode).not.toBe(0);
+      expect(proc.stdout.toString()).not.toContain("should not run");
+    } finally {
+      chmodSync(project, 0o755);
+    }
+  });
 });

@@ -2215,6 +2215,19 @@ mod tests {
             };
             assert!(o.is_single_line, "{doc:?}");
         }
+        // Exotic whitespace immediately followed by a comment (no ASCII
+        // whitespace in between): the comment lives inside the whitespace
+        // run and must be stepped over.
+        for doc in [
+            "\u{feff}// c\n{\"a\": 1}",
+            "\u{feff}/* x */[1]",
+            "{\u{a0}/* x */ \"a\": 1}",
+            "[1,\u{a0} // c\n2]",
+            "[\u{a0}/* a */\u{a0}1\u{a0}/* b */]",
+        ] {
+            let p = run(doc.as_bytes(), Which::TsConfig);
+            assert_eq!(p.errors, 0, "{doc:?}: {}", p.first_msg);
+        }
         // A comment in a scalar's index run (between the value and the next
         // structural token) is not trailing junk.
         for doc in [

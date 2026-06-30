@@ -355,6 +355,16 @@ test("Bun.JSONC.parse accepts a BOM adjacent to any token", () => {
   });
 });
 
+test("Bun.JSONC.parse accepts a comment immediately after exotic whitespace", () => {
+  // The whitespace codepoint and the comment share one index run (comment
+  // bytes are never indexed); a Notepad-saved tsconfig starts exactly like
+  // the first case: a BOM, then a // comment.
+  expect(Bun.JSONC.parse('\uFEFF// see https://aka.ms/tsconfig\n{"a": 1}')).toEqual({ a: 1 });
+  expect(Bun.JSONC.parse('{\u00A0/* x */ "a": 1\u00A0// t\n}')).toEqual({ a: 1 });
+  expect(Bun.JSONC.parse("[1,\u00A0// c\n2]")).toEqual([1, 2]);
+  expect(Bun.JSONC.parse("\uFEFF/* x */[\u00A0/* y */1]")).toEqual([1]);
+});
+
 test("Bun.JSONC.parse accepts a BOM and exotic whitespace between tokens", () => {
   expect(Bun.JSONC.parse('﻿{"a": 1}')).toEqual({ a: 1 });
   expect(Bun.JSONC.parse('{ "a" : 1 }')).toEqual({ a: 1 });

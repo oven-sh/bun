@@ -321,7 +321,9 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     /// accepted between any two tokens. Those bytes are not whitespace to
     /// stage 1 (they are ordinary scalar-run bytes), so this works on byte
     /// positions: decode codepoints forward from the current token position
-    /// until the first non-whitespace one, then resync the cursor onto the
+    /// until the first non-whitespace one — stepping over any comment that
+    /// follows it with no intervening ASCII whitespace, which therefore
+    /// lives inside the same index run — then resync the cursor onto the
     /// index containing (or starting at) that position.
     ///
     /// Returns the first non-whitespace byte position, which is either
@@ -331,14 +333,44 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     fn skip_unicode_ws(&mut self) -> Option<usize> {
         let start = self.pos_at(self.cursor);
         let mut p = start;
-        let iterator = strings::CodepointIterator::init(&self.contents[start..]);
-        let mut iter = strings::Cursor::default();
-        while iterator.next(&mut iter) {
-            let is_ws = matches!(iter.c, 0x09 | 0x0A | 0x0D | 0x20) || is_exotic_whitespace(iter.c);
-            if !is_ws {
+        'outer: loop {
+            let from = p;
+            let iterator = strings::CodepointIterator::init(&self.contents[from..]);
+            let mut iter = strings::Cursor::default();
+            while iterator.next(&mut iter) {
+                let is_ws =
+                    matches!(iter.c, 0x09 | 0x0A | 0x0D | 0x20) || is_exotic_whitespace(iter.c);
+                if !is_ws {
+                    break;
+                }
+                p = from + iter.i as usize + iter.width as usize;
+            }
+            if p >= self.contents.len() || !self.opts.allow_comments || self.contents[p] != b'/' {
                 break;
             }
-            p = start + iter.i as usize + iter.width as usize;
+            match self.contents.get(p + 1) {
+                Some(b'/') => {
+                    p += 2;
+                    while p < self.contents.len()
+                        && !matches!(self.contents[p], b'\n' | b'\r')
+                        && !jidx::is_ls_ps(self.contents, p)
+                    {
+                        p += 1;
+                    }
+                }
+                Some(b'*') => {
+                    // The indexer rejects unterminated block comments
+                    // before stage 2 runs; treat one as end of input.
+                    let Some(close) = strings::index_of(&self.contents[p + 2..], b"*/") else {
+                        p = self.contents.len();
+                        break 'outer;
+                    };
+                    p += 2 + close as usize + 2;
+                }
+                // A `/` that opens no comment: the indexer already
+                // reported it; stop here.
+                _ => break,
+            }
         }
         if p >= self.contents.len() {
             // Trailing whitespace: park the cursor on the sentinel.

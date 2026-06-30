@@ -1641,6 +1641,13 @@ static int64_t indexOfNumber(JSC::JSGlobalObject* lexicalGlobalObject, bool last
     return result + byteOffset;
 }
 
+// ucs2 and utf16le name the same encoding (the parser normalizes every alias
+// to utf16le); UTF-16 searches operate on whole 16-bit units.
+static inline bool isUTF16Encoding(BufferEncodingType encoding)
+{
+    return encoding == BufferEncodingType::utf16le || encoding == BufferEncodingType::ucs2;
+}
+
 static int64_t indexOfString(JSC::JSGlobalObject* lexicalGlobalObject, bool last, const uint8_t* typedVector, size_t byteLength, double byteOffsetD, double endD, JSString* str, BufferEncodingType encoding)
 {
     VM& vm = lexicalGlobalObject->vm();
@@ -1654,18 +1661,17 @@ static int64_t indexOfString(JSC::JSGlobalObject* lexicalGlobalObject, bool last
     auto* arrayValue = uncheckedDowncast<JSC::JSUint8Array>(JSC::JSValue::decode(encodedBuffer));
     size_t needleLength = arrayValue->byteLength();
 
-    // UCS2 searches operate on whole 16-bit units.
-    size_t haystackLength = encoding == BufferEncodingType::ucs2 ? byteLength & ~static_cast<size_t>(1) : byteLength;
+    size_t haystackLength = isUTF16Encoding(encoding) ? byteLength & ~static_cast<size_t>(1) : byteLength;
 
     size_t byteOffset = 0;
     size_t searchEnd = 0;
     int64_t immediateResult = -1;
     if (!computeIndexOfRange(haystackLength, byteOffsetD, endD, needleLength, !last, &byteOffset, &searchEnd, &immediateResult))
         return immediateResult;
-    if (encoding == BufferEncodingType::ucs2) searchEnd &= ~static_cast<size_t>(1);
+    if (isUTF16Encoding(encoding)) searchEnd &= ~static_cast<size_t>(1);
 
     const uint8_t* typedVectorValue = arrayValue->typedVector();
-    if (encoding == BufferEncodingType::ucs2) {
+    if (isUTF16Encoding(encoding)) {
         return last ? lastIndexOf16(typedVector, searchEnd, typedVectorValue, needleLength, byteOffset)
                     : indexOf16(typedVector, searchEnd, typedVectorValue, needleLength, byteOffset);
     }
@@ -1676,17 +1682,17 @@ static int64_t indexOfString(JSC::JSGlobalObject* lexicalGlobalObject, bool last
 static int64_t indexOfBuffer(JSC::JSGlobalObject* lexicalGlobalObject, bool last, const uint8_t* typedVector, size_t byteLength, double byteOffsetD, double endD, JSC::JSGenericTypedArrayView<JSC::Uint8Adaptor>* array, BufferEncodingType encoding)
 {
     size_t needleLength = array->byteLength();
-    size_t haystackLength = encoding == BufferEncodingType::ucs2 ? byteLength & ~static_cast<size_t>(1) : byteLength;
+    size_t haystackLength = isUTF16Encoding(encoding) ? byteLength & ~static_cast<size_t>(1) : byteLength;
 
     size_t byteOffset = 0;
     size_t searchEnd = 0;
     int64_t immediateResult = -1;
     if (!computeIndexOfRange(haystackLength, byteOffsetD, endD, needleLength, !last, &byteOffset, &searchEnd, &immediateResult))
         return immediateResult;
-    if (encoding == BufferEncodingType::ucs2) searchEnd &= ~static_cast<size_t>(1);
+    if (isUTF16Encoding(encoding)) searchEnd &= ~static_cast<size_t>(1);
 
     const uint8_t* typedVectorValue = array->typedVector();
-    if (encoding == BufferEncodingType::ucs2) {
+    if (isUTF16Encoding(encoding)) {
         return last ? lastIndexOf16(typedVector, searchEnd, typedVectorValue, needleLength, byteOffset)
                     : indexOf16(typedVector, searchEnd, typedVectorValue, needleLength, byteOffset);
     }

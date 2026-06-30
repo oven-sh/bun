@@ -1548,7 +1548,12 @@ mod tests {
         expect_error("{\"a\": /* x */ 1}", "JSON does not support comments");
         // A comment inside a scalar's index run (no whitespace before it)
         // must also be reported as a comment, not as junk after the value.
-        for doc in ["[1 // x\n]", "[1// x\n]", "{\"a\": 1 /* c */}", "[-\u{feff}]"] {
+        for doc in [
+            "[1 // x\n]",
+            "[1// x\n]",
+            "{\"a\": 1 /* c */}",
+            "[-\u{feff}]",
+        ] {
             let p = run(doc.as_bytes(), Which::Utf8);
             assert!(p.errors > 0, "{doc}");
         }

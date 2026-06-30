@@ -321,8 +321,12 @@ impl SubscriptionCtx {
                 }
                 // `event_loop_mut()` is the safe accessor for the VM-owned
                 // event-loop self-pointer (see `VirtualMachine::event_loop_mut`).
-                vm.event_loop_mut()
-                    .run_callback(callback, global_object, JSValue::UNDEFINED, &args);
+                vm.event_loop_mut().run_callback(
+                    callback,
+                    global_object,
+                    JSValue::UNDEFINED,
+                    &args,
+                );
             }
         }
         Ok(())

@@ -169,7 +169,7 @@ export function getStdinStream(
   const originalOn = stream.on;
 
   let stream_destroyed = false;
-  let stream_endEmitted = false;
+  let stream_reachedEof = false;
   stream.addListener = stream.on = function (event, listener) {
     // Streams don't generally required to present any data when only
     // `readable` events are present, i.e. `readableFlowing === false`
@@ -215,6 +215,17 @@ export function getStdinStream(
     return originalResume.$call(this);
   };
 
+  const originalRead = stream.read;
+  stream.read = function (size) {
+    // An explicit read() must acquire the native reader, otherwise _read() has
+    // no source and never produces data. Internal read(0) kicks (maybeReadMore,
+    // nReadingNextTick) must not re-own a reader that pause() released.
+    if (size !== 0 && reader === undefined && !stream_destroyed && !stream_reachedEof) {
+      own();
+    }
+    return originalRead.$call(this, size);
+  };
+
   async function internalRead(stream) {
     $debug("internalRead();");
     try {
@@ -226,15 +237,14 @@ export function getStdinStream(
 
         if (shouldDisown) disown();
       } else {
-        if (!stream_endEmitted) {
-          stream_endEmitted = true;
-          stream.emit("end");
-        }
-        if (!stream_destroyed) {
-          stream_destroyed = true;
-          stream.destroy();
-          disown();
-        }
+        // EOF. Route it through push(null) so read(n) can still return the
+        // buffered < n byte remainder and 'end'/'readableEnded' come from the
+        // stream machinery instead of firing while data is still buffered.
+        stream_reachedEof = true;
+        stream.push(null);
+        // Nothing is left to read, so the process must be able to exit even
+        // if the consumer never drains the buffer.
+        disown();
       }
     } catch (err) {
       if (err?.code === "ERR_STREAM_RELEASE_LOCK") {
@@ -279,6 +289,17 @@ export function getStdinStream(
         disown();
       }
     });
+  });
+
+  // The stream is created with autoClose: false so autoDestroy is off; match
+  // Node by destroying stdin once 'end' has emitted ('close' follows 'end').
+  stream.on("end", () => {
+    if (!stream_destroyed) {
+      stream_destroyed = true;
+      process.nextTick(() => {
+        stream.destroy();
+      });
+    }
   });
 
   stream.on("close", () => {

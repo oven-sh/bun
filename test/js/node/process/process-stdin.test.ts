@@ -109,6 +109,98 @@ test("stdin with 'data' event handler should NOT receive data when paused", asyn
   expect(proc.exitCode).toBe(1);
 });
 
+test("paused mode read(n) returns the buffered remainder at EOF", async () => {
+  // 8 bytes pulled 3 at a time: the final read(3) must return the 2 byte tail
+  // once EOF is reached, and 'end' must mark readableEnded.
+  const proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const chunks = [];
+      process.stdin.on("readable", () => {
+        let chunk;
+        while ((chunk = process.stdin.read(3)) !== null) chunks.push(chunk.toString());
+      });
+      process.stdin.on("end", () => {
+        console.log(JSON.stringify({ chunks, readableEnded: process.stdin.readableEnded }));
+      });`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  proc.stdin.write("abcdefgh");
+  proc.stdin.end();
+
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: JSON.parse(stdout), exitCode }).toEqual({
+    stdout: { chunks: ["abc", "def", "gh"], readableEnded: true },
+    exitCode: 0,
+  });
+});
+
+test("explicit read(n) with no 'readable' listener still pulls from stdin", async () => {
+  // read() must start the underlying stdin reader even when no 'readable'
+  // listener or resume() ever ran.
+  const proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const chunks = [];
+      process.stdin.on("end", () => {
+        console.log(JSON.stringify({ chunks, readableEnded: process.stdin.readableEnded }));
+      });
+      let spins = 0;
+      function poll() {
+        let chunk;
+        while ((chunk = process.stdin.read(3)) !== null) chunks.push(chunk.toString());
+        if (process.stdin.readableEnded) return;
+        // Bounded so a regression fails with output instead of spinning forever.
+        if (++spins > 20000) {
+          console.log(JSON.stringify({ chunks, readableEnded: false }));
+          process.exit(1);
+        }
+        setImmediate(poll);
+      }
+      poll();`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  proc.stdin.write("abcdefgh");
+  proc.stdin.end();
+
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: JSON.parse(stdout), exitCode }).toEqual({
+    stdout: { chunks: ["abc", "def", "gh"], readableEnded: true },
+    exitCode: 0,
+  });
+});
+
+test("'end' is not emitted when the buffer is never drained, and the process still exits", async () => {
+  const proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.stdin.on("readable", () => {});
+      process.stdin.on("end", () => console.log("END"));
+      process.on("exit", () => console.log("EXIT " + process.stdin.readableLength));`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  proc.stdin.write("abcdefgh");
+  proc.stdin.end();
+
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "EXIT 8\n", exitCode: 0 });
+});
+
 test("stdin should allow process to exit when paused", async () => {
   const proc = Bun.spawn({
     cmd: [

@@ -3886,6 +3886,42 @@ describe("server headersTimeout/requestTimeout enforcement", () => {
     }
   }, 20_000);
 
+  it("stalled headers of a pipelined second request behind an async handler are answered with a 408", async () => {
+    // The next request's partial header bytes are already buffered when the
+    // handler later completes via a one-shot res.end(); finishing the response
+    // must still arm the buffered message's headersTimeout.
+    const server = createServer(timeoutOptions, (req, res) => {
+      setImmediate(() => res.end("first-response"));
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      const chunks: Buffer[] = [];
+      let firstResponse: ((value: void) => void) | undefined;
+      const receivedFirstResponse = new Promise<void>(resolve => (firstResponse = resolve));
+      socket.on("data", chunk => {
+        chunks.push(chunk);
+        if (Buffer.concat(chunks).toString().endsWith("first-response")) {
+          firstResponse!();
+        }
+      });
+      // The complete first request and the partial start of the second share one packet.
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\nGET /second HTTP/1.1\r\nHost: ");
+      await receivedFirstResponse;
+      expect(Buffer.concat(chunks).toString()).toStartWith("HTTP/1.1 200 OK\r\n");
+      chunks.length = 0;
+      await closed;
+      expect(Buffer.concat(chunks).toString()).toBe(REQUEST_TIMEOUT_408_RESPONSE);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
   it("requestTimeout does not apply to a fully received request with a slow handler", async () => {
     // The receive deadlines stop once the message is fully received. The
     // handler holds the response until a sibling stalled connection on the same

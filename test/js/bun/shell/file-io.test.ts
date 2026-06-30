@@ -1,4 +1,5 @@
-import { describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -154,5 +155,31 @@ describe("IOWriter file output redirection", () => {
       .runAsTest("builtin echo with &> redirect");
 
     TestBuilder.command`pwd &>> append_output.txt`.exitCode(0).runAsTest("builtin pwd with &>> append redirect");
+  });
+});
+
+// On Windows the uv_fs_write completion callback re-enters JS (resolving the
+// command's promise), which drops the redirect IOWriter's last reference; the
+// rest of that callback must not touch it. https://github.com/oven-sh/bun/pull/33114
+test.concurrent("write completion survives dropping the redirect writer's last reference", async () => {
+  using dir = tempDir("shell-redirect-writer-keepalive", {
+    "redirect-fixture.ts": /* ts */ `
+      import { $ } from "bun";
+      await $\`echo hello > out.txt\`.quiet();
+      process.stdout.write(await Bun.file("out.txt").text());
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "redirect-fixture.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "hello\n",
+    stderr: expect.any(String),
+    exitCode: 0,
   });
 });

@@ -706,9 +706,11 @@ const realpathSync: typeof import("node:fs").realpathSync =
             );
           }
         }
-        // This function is ported 1:1 from node.js, to emulate how it is unable to
-        // resolve subst drives to their underlying location. The native call is
-        // able to see through that.
+        // Ported from node.js to emulate how it is unable to resolve subst
+        // drives to their underlying location (the native call sees through
+        // that) - except for permission-denied components, which defer to
+        // the native resolution rather than guessing (see
+        // resolveDeniedComponentSync).
         if (p instanceof URL) {
           const pathname = p.pathname;
           if (pathname.indexOf("%00") != -1) {

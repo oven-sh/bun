@@ -128,6 +128,9 @@ export function getStdinStream(
   let forceUnref = false;
 
   function own() {
+    // After EOF there is nothing left to read: no acquisition path ('readable'
+    // listeners, resume(), ref(), an explicit read()) may take the reader back.
+    if (stream_reachedEof) return;
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
     source.updateRef(forceUnref ? false : true);
@@ -221,7 +224,7 @@ export function getStdinStream(
     // An explicit read() must acquire the native reader: _read() without one only
     // records needsInternalReadRefresh, which own() replays. Owning afterwards so a
     // throwing size never refs stdin; read(0) kicks never own (pause() relies on it).
-    if (size !== 0 && reader === undefined && !stream_destroyed && !stream_reachedEof) {
+    if (size !== 0 && reader === undefined && !stream_destroyed) {
       own();
     }
     return ret;

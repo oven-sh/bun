@@ -206,6 +206,32 @@ test("a read() that throws does not keep the process alive", async () => {
   expect({ stdout, exitCode }).toEqual({ stdout: "ERR_OUT_OF_RANGE\n", exitCode: 0 });
 });
 
+test("touching stdin again after 'end' does not keep the process alive", async () => {
+  const proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.stdin.on("data", () => {});
+      process.stdin.on("end", () => {
+        console.log("END");
+        process.stdin.resume();
+        process.stdin.ref();
+        process.stdin.on("readable", () => {});
+      });
+      process.on("exit", () => console.log("EXIT"));`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  proc.stdin.write("abcdefgh");
+  proc.stdin.end();
+
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "END\nEXIT\n", exitCode: 0 });
+});
+
 test("'end' is not emitted when the buffer is never drained, and the process still exits", async () => {
   const proc = Bun.spawn({
     cmd: [

@@ -241,14 +241,15 @@ export function getStdinStream(
 
         if (shouldDisown) disown();
       } else {
-        // EOF. Route it through push(null) so read(n) can still return the
-        // buffered < n byte remainder and 'end'/'readableEnded' come from the
-        // stream machinery instead of firing while data is still buffered.
+        // EOF. Nothing is left to read, so release the native reader before
+        // push(null) runs user 'readable' listeners; the process must be able
+        // to exit even if one of them throws or never drains the buffer.
         stream_reachedEof = true;
-        stream.push(null);
-        // Nothing is left to read, so the process must be able to exit even
-        // if the consumer never drains the buffer.
         disown();
+        // push(null) instead of emitting 'end' by hand so read(n) can still
+        // return the buffered < n byte remainder and 'end'/'readableEnded'
+        // come from the stream machinery once the buffer drains.
+        stream.push(null);
       }
     } catch (err) {
       if (err?.code === "ERR_STREAM_RELEASE_LOCK") {

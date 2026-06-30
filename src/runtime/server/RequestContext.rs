@@ -742,6 +742,12 @@ where
             // is always true when `server` is None, so there is nothing to render.
             return;
         };
+        // Mirror `on_response`: a returned `Error` instance reaches `error()`
+        // as itself, not wrapped, so the synchronous and asynchronous paths
+        // hand the handler the same object.
+        if let Some(err) = value.to_error() {
+            return self.run_error_handler(err);
+        }
         // server is a BACKREF — valid while this RequestContext is alive
         let global_this: &JSGlobalObject = server.global_this();
 

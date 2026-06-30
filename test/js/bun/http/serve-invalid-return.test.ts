@@ -74,6 +74,47 @@ describe("returning a non-Response value from fetch", () => {
     expect(error.message).toBe("Expected a Response object, but received '42'");
   });
 
+  // A returned `Error` instance reaches `error()` as itself on every path,
+  // the same as the synchronous return already did, instead of being
+  // wrapped in an ERR_INVALID_RETURN_VALUE TypeError.
+  it("returning an Error instance passes it to the error handler unwrapped", async () => {
+    class ReturnedError extends Error {
+      code = "RETURNED_ERROR";
+    }
+    const handlers = {
+      "sync": () => new ReturnedError("boom"),
+      "fulfilled": () => Promise.resolve(new ReturnedError("boom")),
+      "deferred": () => new Promise(resolve => setImmediate(() => resolve(new ReturnedError("boom")))),
+    };
+
+    const results: unknown[] = [];
+    for (const [path, fetchImpl] of Object.entries(handlers)) {
+      let error: unknown = null;
+      await using server = serve({
+        port: 0,
+        // @ts-ignore the invalid return value is the point
+        fetch: fetchImpl,
+        error(err: any) {
+          error = { code: err.code, name: err.constructor.name, message: err.message };
+          return new Response("handled", { status: 500 });
+        },
+      });
+      const response = await fetch(server.url);
+      results.push({ path, status: response.status, body: await response.text(), error });
+    }
+
+    const handled = {
+      status: 500,
+      body: "handled",
+      error: { code: "RETURNED_ERROR", name: "ReturnedError", message: "boom" },
+    };
+    expect(results).toEqual([
+      { path: "sync", ...handled },
+      { path: "fulfilled", ...handled },
+      { path: "deferred", ...handled },
+    ]);
+  });
+
   // `undefined` and `null` mean the handler produced no response; that is not
   // an error, and production still renders an empty 204.
   it.each([

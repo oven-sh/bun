@@ -413,7 +413,7 @@ fn parse_classic(
 /// warnings** — these documents are machine-generated, the warnings are never
 /// surfaced to anyone, and computing them costs a measurable fraction of
 /// every manifest parse. Containers are the compact read-only immutable AST
-/// (`E::ObjectJSON` / `E::ArrayJSON` — see `JSONOptions::immutable`).
+/// (`E::ObjectJSON` / `E::ArrayJSON` — see [`ParsedJson`]).
 pub fn parse_utf8_registry(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -668,7 +668,7 @@ pub fn parse_ts_config<const FORCE_UTF8: bool>(
 
 /// `Bun.JSONC.parse`: the same dialect as tsconfig (comments, trailing
 /// commas), but producing the compact JSON-only containers
-/// (`E::ObjectJSON` — see `JSONOptions::immutable`). The only
+/// (`E::ObjectJSON` — see [`ParsedJson`]). The only
 /// consumer is `Expr::to_js`, which understands them.
 pub fn parse_jsonc(
     source: &bun_ast::Source,
@@ -1510,9 +1510,9 @@ mod tests {
         TsConfig,
         Env,
         PackageJson,
-        /// `Bun.JSONC.parse`'s entry: tsconfig dialect + `immutable`.
+        /// `Bun.JSONC.parse`'s entry: tsconfig dialect, row output.
         Jsonc,
-        /// Strict JSON + `immutable` (what a registry-manifest caller
+        /// Strict JSON, row output (what a registry-manifest caller
         /// would use).
         Immutable,
     }
@@ -1866,7 +1866,7 @@ mod tests {
     }
 
     /// One parse, two output shapes: the compact row containers
-    /// (`immutable`) and the classic tree the classic-output entry
+    /// and the classic tree the classic-output entry
     /// points materialize from them must be semantically identical — same
     /// canonical JSON, same warnings, same errors — on every shape the
     /// parser supports.

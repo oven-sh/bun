@@ -2,6 +2,12 @@
 # Fetch the JSON benchmark fixture corpus: real package.json files and real
 # npm registry API responses (both abbreviated install-v1 manifests, which is
 # what `bun install` fetches, and full packuments).
+#
+# The package.json fixtures are pinned to exact versions. The manifests and
+# packuments are a package's *whole publish history*, which the registry only
+# serves live (there is no immutable snapshot URL), so they drift over time;
+# the corpus is gitignored and only ever compared within one local checkout
+# (fetch once, then bench both binaries against the same files).
 set -euo pipefail
 cd "$(dirname "$0")"
 

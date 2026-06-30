@@ -373,6 +373,9 @@ test("Bun.JSONC.parse handles huge documents with every value type", () => {
   }
   const minified = JSON.stringify(big);
   const pretty = JSON.stringify(big, null, 2);
+  // The structural indexer streams the document through an 8 KiB window;
+  // both shapes must be large enough to force many window refills.
+  expect(minified.length).toBeGreaterThan(16 * 8192);
   expect(Bun.JSONC.parse(minified)).toEqual(big as any);
   expect(Bun.JSONC.parse(pretty)).toEqual(big as any);
 });

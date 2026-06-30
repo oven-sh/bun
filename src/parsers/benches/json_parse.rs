@@ -81,26 +81,18 @@ fn bench_json(c: &mut Criterion) {
                 std::hint::black_box(&e);
             })
         });
-        // The compact-AST form (`JSONOptions::immutable` →
-        // `E::ObjectJSON`): what JSON-data consumers (registry manifests,
-        // `Bun.JSONC.parse`) get. Same options as parse_nowarn otherwise.
-        // No arena: the document's `JsonTape` (returned in the result and
-        // dropped at the end of every iteration) owns everything the simple
-        // AST allocates, so this measures parse + free of the whole document.
+        // The row AST alone (`E::ObjectJSON`): what JSON-data consumers
+        // (registry manifests, `Bun.JSONC.parse`) get. Same options as
+        // parse_nowarn but without the materialize step. No arena: the
+        // document's `JsonTape` (returned in the result and dropped at the
+        // end of every iteration) owns everything the parse allocates, so
+        // this measures parse + free of the whole document.
         group.bench_function(BenchmarkId::new("parse_immutable", &name), |b| {
-            let bump = Bump::borrowing_default();
             b.iter(|| {
                 let _store_scope = js_ast::StoreResetGuard::new();
                 let mut log = js_ast::Log::init();
                 let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
-                let opts = json::JSONOptions {
-                    is_json: true,
-                    json_warn_duplicate_keys: false,
-                    immutable: true,
-                    ..json::JSONOptions::DEFAULT
-                };
-                let e = json::parse_package_json_utf8_with_opts_rt(opts, &source, &mut log, &bump)
-                    .expect("parse failed");
+                let e = json::parse_utf8_registry(&source, &mut log).expect("parse failed");
                 std::hint::black_box(&e);
             })
         });

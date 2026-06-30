@@ -44,7 +44,7 @@ for (const f of files) {
   const bytes = Buffer.byteLength(text);
   const jsonc = bench("jsonc", () => Bun.JSONC.parse(text));
   const jsonp = bench("json", () => JSON.parse(text));
-  const mbs = bytes / (jsonc.median / 1e3) / 1.048576; // MiB/s
+  const mbs = bytes / (jsonc.median / 1e9) / (1 << 20); // bytes/sec -> MiB/s
   console.log(
     f.padEnd(40),
     String(bytes).padStart(10),

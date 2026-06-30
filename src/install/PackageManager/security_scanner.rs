@@ -1554,7 +1554,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             bun_ast::Source::init_path_string("ipc-message.json", self.ipc_data.as_slice());
 
         let mut temp_log = bun_ast::Log::init();
-        let bump = bun_alloc::Arena::new();
+        let bump = bun_alloc::Arena::borrowing_default();
 
         // `parsed` owns the row tape `json_expr` borrows; both (and
         // `self.ipc_data`) outlive every advisory string, which

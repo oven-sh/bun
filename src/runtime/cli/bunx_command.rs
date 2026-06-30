@@ -303,7 +303,7 @@ impl BunxCommand {
         // Everything we keep is cloned into `Box<[u8]>` before returning, so
         // the parsed document (and the `package_json_bytes` it borrows) only
         // needs to live to the end of this function.
-        let bump = bun_alloc::Arena::new();
+        let bump = bun_alloc::Arena::borrowing_default();
         let parsed = json::parse_package_json_utf8_immutable(&source, log)?;
         let expr = parsed.root;
 

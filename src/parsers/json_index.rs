@@ -49,7 +49,6 @@ pub const FLAG_HAS_NON_ASCII: u32 = 1 << 2;
 /// output is unusable and indexing restarts with the scalar indexer. Never
 /// visible in [`StructuralIndex::flags`].
 pub const FLAG_ODDITY: u32 = 1 << 3;
-/// Scalar indexer only: the document contained at least one single-quoted
 
 /// Number of sentinel entries appended after the real indices.
 pub const SENTINELS: usize = 2;

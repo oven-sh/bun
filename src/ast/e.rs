@@ -865,7 +865,7 @@ impl BigInt {
 // ── immutable JSON nodes ───────────────────────────────────────────────────
 //
 // Compact, read-only object/array nodes: the JSON parser's native output.
-// Entry points that return them (`JSONOptions::immutable`: npm registry
+// Entry points that return them (`json::parse_*_immutable`: npm registry
 // manifests, package.json readers, `Bun.JSONC.parse`, tsconfig) hand the
 // caller the rows plus the [`JsonTape`] that owns them; the classic-output
 // entry points deep-convert them into `E::Object` / `E::Array` at their

@@ -24,7 +24,6 @@
     incomplete_features,
     dead_code
 )]
-#![feature(adt_const_params)]
 
 // ── /NODEFAULTLIB CRT stubs ────────────────────────────────────────────────
 // With `/NODEFAULTLIB` the MSVC CRT isn't linked, so the two CRT-hosted

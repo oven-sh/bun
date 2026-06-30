@@ -442,8 +442,9 @@ impl LauncherMode {
 enum LauncherRet {
     /// `.launch` in non-standalone returned (validation fallback path).
     LaunchFellThrough,
-    /// `.read_without_launch` result.
-    Read(ReadWithoutLaunchResult),
+    /// `.read_without_launch` result. Only `read_without_launch` (`host`)
+    /// reads the payload; the standalone exe only matches on the variant.
+    Read(#[cfg_attr(not(feature = "host"), allow(dead_code))] ReadWithoutLaunchResult),
 }
 
 /// Abstraction over `()` (standalone), `FromBunRunContext`, and `FromBunShellContext`
@@ -1564,7 +1565,9 @@ pub struct FromBunRunContext {
 impl FromBunRunContext {
     /// View `base_path[0..base_path_len]` as a slice. Centralises the (ptr, len)
     /// → slice reconstruction so callers don't open-code `from_raw_parts`.
+    /// Only the `host` entry points `debug_assert!` on it.
     #[inline]
+    #[cfg_attr(any(not(feature = "host"), not(debug_assertions)), allow(dead_code))]
     pub(crate) fn base_path_slice(&self) -> &[u16] {
         // SAFETY: caller of `try_startup_from_bun_js` (run_command.rs) sets
         // `base_path`/`base_path_len` from a live `[u16]` buffer it owns for
@@ -1652,7 +1655,9 @@ pub(crate) type FromBunShellContextBuf = [u16; BUF2_U16_LEN];
 impl FromBunShellContext {
     /// View `base_path[0..base_path_len]` as a slice. Centralises the (ptr, len)
     /// → slice reconstruction so callers don't open-code `from_raw_parts`.
+    /// Only the `host` entry points `debug_assert!` on it.
     #[inline]
+    #[cfg_attr(any(not(feature = "host"), not(debug_assertions)), allow(dead_code))]
     pub(crate) fn base_path_slice(&self) -> &[u16] {
         // SAFETY: caller of `read_without_launch` sets `base_path`/`base_path_len`
         // from a live `[u16]` buffer it owns for the duration of the call.

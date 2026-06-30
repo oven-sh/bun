@@ -184,8 +184,11 @@ public:
         }
         /* Like Node (last_message_start_), the clock starts at the message's
          * first received byte, or at connection open while no bytes have
-         * arrived yet for the first message. */
-        bool messageStarted = httpResponseData->nodeArmedReceivePhase != NodeReceivePhase::None && httpResponseData->nodeMessageStarted;
+         * arrived yet for the first message. Only a message boundary (the fin
+         * reset in onData) clears it: the phase passes through None inside the
+         * request handler for a chunked message (its framing is only known
+         * after dispatch), which must not restart the clock. */
+        bool messageStarted = httpResponseData->nodeMessageStarted;
         if (messageStarted && phase == httpResponseData->nodeArmedReceivePhase) {
             /* Both deadlines are absolute from the message start: received
              * bytes never extend them, so a client trickling data slowly

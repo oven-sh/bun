@@ -4165,6 +4165,51 @@ describe("server headersTimeout/requestTimeout enforcement", () => {
     }
   }, 30_000);
 
+  it("requestTimeout for a chunked request is measured from the message's first byte, not from header completion", async () => {
+    // Chunked framing is only known after the request is dispatched, so the
+    // receive phase passes through None inside the handler; the message-start
+    // time must survive that. The headers take 10s of the 13s requestTimeout,
+    // so the absolute deadline expires 3s into the stalled body — long before
+    // the client finishes the body at +16s. A deadline re-based at header
+    // completion would instead let the request complete with a 200.
+    const server = createServer(
+      { headersTimeout: 13000, requestTimeout: 13000, connectionsCheckingInterval: 100 },
+      (req, res) => {
+        req.on("error", () => {});
+        res.on("error", () => {});
+        req.on("data", () => {});
+        req.on("end", () => res.end("chunked-done"));
+      },
+    );
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      let received = "";
+      const { promise: respondedTo, resolve: onRespondedTo } = Promise.withResolvers<void>();
+      socket.on("data", chunk => {
+        received += chunk.toString();
+        if (received.includes("chunked-done")) onRespondedTo();
+      });
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\nX-Slow: ");
+      // Deliberate fixed waits: they are inputs (when bytes reach the socket relative to the
+      // per-message deadline, which has no observable event), not waits for a condition.
+      await Bun.sleep(10_000);
+      socket.write("a\r\n\r\n5\r\nhello\r\n");
+      await Bun.sleep(6_000);
+      if (!socket.destroyed && !socket.writableEnded) socket.write("0\r\n\r\n");
+      await Promise.race([closed, respondedTo]);
+      expect(received).toBe(REQUEST_TIMEOUT_408_RESPONSE);
+      await closed;
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 40_000);
+
   it("a second keep-alive request coalesced with the first request's body tail gets its own headersTimeout", async () => {
     // The first message's last body bytes and the second message's partial
     // headers arrive in one packet, so the receive phase moves straight from

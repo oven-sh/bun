@@ -59,25 +59,16 @@ impl PostinstallOptimizer {
                 continue;
             };
             // JSON parsing never folds strings into ropes (same invariant
-            // `as_utf8_string_literal` asserted before this was inlined).
+            // `as_utf8_string_literal` asserted before this was inlined),
+            // and JSON-parsed strings are always UTF-8.
             debug_assert!(s.next.is_none());
-            // The JSON lexer emits UTF-16 `EString`s for non-ASCII
-            // package.json strings, so both representations must hash the same
-            // UTF-8 bytes.
-            let hash = if s.is_utf8() {
-                let str = s.slice8();
-                if str.is_empty() {
-                    continue;
-                }
-                semver::string::Builder::string_hash(str)
-            } else {
-                let utf8 = bun_core::strings::to_utf8_alloc(s.slice16());
-                if utf8.is_empty() {
-                    continue;
-                }
-                semver::string::Builder::string_hash(&utf8)
-            };
-            list.dynamic.put(hash, value)?;
+            debug_assert!(s.is_utf8());
+            let str = s.slice8();
+            if str.is_empty() {
+                continue;
+            }
+            list.dynamic
+                .put(semver::string::Builder::string_hash(str), value)?;
         }
 
         Ok(true)

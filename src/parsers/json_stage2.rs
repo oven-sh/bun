@@ -784,9 +784,9 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     /// ASCII whitespace fast check + the cold fallback for everything else
-    /// a scalar run's tail may legally hold: exotic unicode whitespace and,
-    /// in the comment dialects, comments (`1 /* note */,` — the indexer
-    /// emits no index inside a comment, so its bytes stay in the run).
+    /// a scalar run's tail may legally hold: exotic unicode whitespace and
+    /// comments (`1 /* note */,` — the indexer emits no index inside a
+    /// comment, so its bytes stay in the run).
     #[cold]
     fn rest_is_ws_cold(&self, rest: &[u8]) -> bool {
         if rest

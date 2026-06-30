@@ -7617,10 +7617,7 @@ impl NodeFS {
                     });
                 }
                 let fb = fallback_buf.insert(Box::new(PathBuffer::uninit()));
-                match sys::realpath_handle(
-                    args.path.slice_z(&mut self.sync_error_buf),
-                    &mut **fb,
-                ) {
+                match sys::realpath_handle(args.path.slice_z(&mut self.sync_error_buf), &mut **fb) {
                     Ok(resolved) => resolved,
                     // Report the original realpath errno, not the fallback's.
                     Err(_) => {

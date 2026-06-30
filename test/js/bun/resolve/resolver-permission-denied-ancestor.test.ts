@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import { chmodSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 // An ancestor directory the process may traverse but not read (mode 0o111 —

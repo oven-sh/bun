@@ -1093,7 +1093,10 @@ describe("pathological reference definition inputs", () => {
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
-      timeout: 30_000,
+      // 220k lines through a debug+ASAN child run close to 30s on a loaded
+      // runner, which made this the flakiest test in the file; the hard stop
+      // only has to stay under the test's own 90s timeout.
+      timeout: 75_000,
       killSignal: "SIGKILL",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

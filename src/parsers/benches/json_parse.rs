@@ -92,7 +92,8 @@ fn bench_json(c: &mut Criterion) {
                 let _store_scope = js_ast::StoreResetGuard::new();
                 let mut log = js_ast::Log::init();
                 let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
-                let e = json::ParsedJson::parse_npm_manifest(&source, &mut log).expect("parse failed");
+                let e =
+                    json::ParsedJson::parse_npm_manifest(&source, &mut log).expect("parse failed");
                 std::hint::black_box(&e);
             })
         });

@@ -1872,14 +1872,20 @@ mod tests {
         let doc = br#"{"a":1,"b":2,"a":3}"#;
         let sep = std::path::MAIN_SEPARATOR;
         for (path, warnings) in [
-            (format!("{sep}app{sep}node_modules{sep}dep{sep}package.json"), 0usize),
+            (
+                format!("{sep}app{sep}node_modules{sep}dep{sep}package.json"),
+                0usize,
+            ),
             (format!("{sep}app{sep}package.json"), 1),
         ] {
             let _scope = js_ast::StoreResetGuard::new();
             let mut log = bun_ast::Log::init();
             let source = bun_ast::Source::init_path_string(path.as_str(), &doc[..]);
             let parsed = ParsedJson::parse_package_json(&source, &mut log).unwrap();
-            assert!(matches!(parsed.root.data, js_ast::expr::Data::EObjectJSON(_)));
+            assert!(matches!(
+                parsed.root.data,
+                js_ast::expr::Data::EObjectJSON(_)
+            ));
             assert_eq!(log.warnings as usize, warnings, "{path}");
         }
     }

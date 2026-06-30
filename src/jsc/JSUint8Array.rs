@@ -11,8 +11,8 @@ bun_opaque::opaque_ffi! {
 impl JSUint8Array {
     pub fn ptr(&self) -> *mut u8 {
         // SAFETY: `self` points at a live JSUint8Array cell; the typed-array vector
-        // pointer lives at a fixed byte offset computed by the C++ codegen (sizes.zig).
-        // Using byte_add preserves provenance vs. the Zig `@ptrFromInt(@intFromPtr(..)+off)`.
+        // pointer lives at a fixed byte offset computed by the C++ codegen
+        // (`crate::sizes`). `byte_add` preserves pointer provenance.
         unsafe {
             std::ptr::from_ref::<Self>(self)
                 .byte_add(sizes::BUN_FFI_POINTER_OFFSET_TO_TYPED_ARRAY_VECTOR)
@@ -33,16 +33,15 @@ impl JSUint8Array {
     }
 
     pub fn slice(&mut self) -> &mut [u8] {
-        // PORT NOTE: detached/empty JSUint8Array has ptr=null, len=0. Zig `ptr[0..0]` is
-        // valid for any ptr; `ffi::slice_mut` tolerates `(null, 0)` so no extra guard.
+        // Note: detached/empty JSUint8Array has ptr=null, len=0;
+        // `ffi::slice_mut` tolerates `(null, 0)` so no extra guard.
         // SAFETY: JSC guarantees `ptr()` is valid for `len()` bytes while the cell is alive.
         unsafe { bun_core::ffi::slice_mut(self.ptr(), self.len()) }
     }
 
     /// `bytes` must come from `bun.default_allocator` (the global mimalloc allocator);
     /// ownership is transferred to the returned JS Uint8Array.
-    // PORT NOTE: Zig took `[]u8` + a doc comment requiring default_allocator provenance.
-    // In Rust the global allocator IS mimalloc, so `Box<[u8]>` encodes that ownership.
+    // The global allocator IS mimalloc, so `Box<[u8]>` encodes that ownership.
     pub fn from_bytes(global: &JSGlobalObject, bytes: Box<[u8]>) -> JSValue {
         let len = bytes.len();
         let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
@@ -69,7 +68,6 @@ impl JSUint8Array {
     }
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     fn JSUint8Array__fromDefaultAllocator(
         global: *const JSGlobalObject,
@@ -84,5 +82,3 @@ unsafe extern "C" {
         buffer: bool,
     ) -> JSValue;
 }
-
-// ported from: src/jsc/JSUint8Array.zig

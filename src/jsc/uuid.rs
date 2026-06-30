@@ -57,7 +57,6 @@ impl UUID {
             return Err(UuidError::InvalidUUID);
         }
 
-        // PERF(port): was `inline for` (comptime unroll) — profile if it shows up on a hot path.
         for (j, &i) in ENCODED_POS.iter().enumerate() {
             uuid.bytes[j] = bun_core::fmt::hex_pair_value(buf[i as usize], buf[i as usize + 1])
                 .ok_or(UuidError::InvalidUUID)?;
@@ -93,7 +92,6 @@ fn print_bytes(bytes: &[u8; 16], buf: &mut [u8; 36]) {
     buf[13] = b'-';
     buf[18] = b'-';
     buf[23] = b'-';
-    // PERF(port): was `inline for` (comptime unroll) — profile if it shows up on a hot path.
     for (j, &i) in ENCODED_POS.iter().enumerate() {
         let [hi, lo] = bun_core::fmt::hex_byte_lower(bytes[j]);
         buf[i as usize] = hi;
@@ -179,8 +177,7 @@ pub struct UUID5 {
     pub bytes: [u8; 16],
 }
 
-// PORT NOTE: Zig nested `pub const namespaces = struct { ... }` used as a namespace;
-// Rust cannot nest a module inside an `impl`, so it lives adjacent to `UUID5`.
+/// Well-known UUID v5 namespaces (RFC 4122 Appendix C).
 pub mod namespaces {
     use super::*;
 
@@ -259,5 +256,3 @@ impl fmt::Display for UUID5 {
         self.to_uuid().fmt(f)
     }
 }
-
-// ported from: src/jsc/uuid.zig

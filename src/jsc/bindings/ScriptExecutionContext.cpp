@@ -264,7 +264,7 @@ void ScriptExecutionContext::postTask(EventLoopTask* task)
     static_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
 }
 
-// Zig bindings
+// Native bindings
 extern "C" ScriptExecutionContextIdentifier ScriptExecutionContextIdentifier__forGlobalObject(JSC::JSGlobalObject* globalObject)
 {
     return defaultGlobalObject(globalObject)->scriptExecutionContext()->identifier();

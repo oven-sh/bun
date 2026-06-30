@@ -19,7 +19,6 @@ pub struct KEventWatcher {
 const CHANGELIST_COUNT: usize = 128;
 
 impl KEventWatcher {
-    // TODO(port): narrow error set
     pub fn init(&mut self, _: &[u8]) -> Result<(), bun_core::Error> {
         let fd = bun_sys::kqueue()?;
         if fd.native() == 0 {
@@ -107,8 +106,8 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
 
     let changes_len = usize::try_from(count.max(0)).expect("int cast");
     let changes = &changelist[0..changes_len];
-    // PORT NOTE: reshaped for borrowck — Zig re-slices `watchevents` in place; Rust tracks out_len
-    // and slices once at the end to avoid overlapping &mut borrows of `this`.
+    // Track out_len and slice once at the end to avoid overlapping &mut
+    // borrows of `this`.
     let watchevents = &mut this.watch_events[0..changes_len];
     let mut out_len: usize = 0;
     if changes_len > 0 {
@@ -129,10 +128,10 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     }
 
     // RAII: `MutexGuard` holds the mutex by raw pointer (no borrow of `this`)
-    // and unlocks on Drop — Zig: `this.mutex.lock(); defer this.mutex.unlock();`.
+    // and unlocks on Drop.
     let _guard = this.mutex.lock_guard();
     if this.running.load() {
-        // PORT NOTE: reshaped for borrowck — copy the (small, ≤128) deduped slice
+        // reshaped for borrowck — copy the (small, ≤128) deduped slice
         // into a local so `this` is no longer mutably borrowed via `watch_events`
         // when calling `write_trace_events(&self, …)`.
         let mut deduped: Vec<WatchEvent> = this.watch_events[0..out_len].to_vec();
@@ -141,10 +140,8 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         (this.on_file_update)(this.ctx, &mut deduped, changed, &this.watchlist);
     }
 
-    // Zig: `defer Output.flush()`. No early returns above, so flush once at the
-    // single exit point instead of via scopeguard.
+    // No early returns above, so flush once at the single exit point instead
+    // of via scopeguard.
     Output::flush();
     Ok(())
 }
-
-// ported from: src/watcher/KEventWatcher.zig

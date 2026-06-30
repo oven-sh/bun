@@ -13,7 +13,7 @@ impl SIMDUTFResult {
     }
 }
 
-// Zig: `enum(i32) { ..., _ }` — the `_` arm means *any* i32 is a valid bit
+// Any i32 is a valid bit
 // pattern (C++ may return values outside the named set). A `#[repr(i32)] enum`
 // in Rust would be UB on unknown discriminants, so we use a transparent newtype
 // with associated consts instead.
@@ -212,6 +212,10 @@ unsafe extern "C" {
     pub fn simdutf__count_utf16be(buf: *const u16, length: usize) -> usize;
     pub fn simdutf__count_utf8(buf: *const u8, length: usize) -> usize;
     pub(crate) fn simdutf__utf8_length_from_utf16le(input: *const u16, length: usize) -> usize;
+    pub(crate) fn simdutf__utf8_length_from_utf16le_with_replacement(
+        input: *const u16,
+        length: usize,
+    ) -> usize;
     pub fn simdutf__utf8_length_from_utf16be(input: *const u16, length: usize) -> usize;
     pub(crate) fn simdutf__utf32_length_from_utf16le(input: *const u16, length: usize) -> usize;
     pub fn simdutf__utf32_length_from_utf16be(input: *const u16, length: usize) -> usize;
@@ -605,6 +609,18 @@ pub mod length {
                     // SAFETY: input is a valid slice; FFI reads exactly len u16s.
                     unsafe { simdutf__utf8_length_from_utf16le(input.as_ptr(), input.len()) }
                 }
+                /// Like [`le`], but charges 3 bytes (U+FFFD) per unpaired
+                /// surrogate instead of assuming valid UTF-16. This is the
+                /// exact byte count produced by the replacement encoder.
+                pub fn le_with_replacement(input: &[u16]) -> usize {
+                    // SAFETY: input is a valid slice; FFI reads exactly len u16s.
+                    unsafe {
+                        simdutf__utf8_length_from_utf16le_with_replacement(
+                            input.as_ptr(),
+                            input.len(),
+                        )
+                    }
+                }
                 pub fn be(input: &[u16]) -> usize {
                     // SAFETY: input is a valid slice; FFI reads exactly len u16s.
                     unsafe { simdutf__utf8_length_from_utf16be(input.as_ptr(), input.len()) }
@@ -628,8 +644,6 @@ pub mod length {
         pub mod from {
             use super::*;
             pub fn utf8(input: &[u8]) -> usize {
-                // TODO(port): Zig had `if (@inComptime())` branch using std.unicode.utf8CountCodepoints
-                // for compile-time evaluation; Rust has no equivalent — runtime path only.
                 // SAFETY: input is a valid slice; FFI reads exactly len bytes.
                 unsafe { simdutf__utf16_length_from_utf8(input.as_ptr(), input.len()) }
             }
@@ -845,5 +859,3 @@ pub mod base64 {
         }
     }
 }
-
-// ported from: src/simdutf_sys/simdutf.zig

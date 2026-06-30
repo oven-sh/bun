@@ -73,7 +73,6 @@ impl PmVersionCommand {
         positionals: &[&[u8]],
         original_cwd: &[u8],
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let package_json_dir = Self::find_package_dir(original_cwd)?;
 
         if positionals.len() <= 1 {
@@ -105,8 +104,7 @@ impl PmVersionCommand {
             package_json_path.as_bytes(),
             &*package_json_contents,
         );
-        // PORT NOTE: Zig passed `ctx.allocator`; Rust ctx dropped allocator (global mimalloc),
-        // so we hand the parser a local bump arena for its scratch allocations.
+        // Hand the parser a local bump arena for its scratch allocations.
         let json_bump = Arena::new();
         let json_result = match JSON::parse_package_json_utf8_with_opts::<
             true,  // IS_JSON
@@ -227,7 +225,6 @@ impl PmVersionCommand {
                 Global::exit(1);
             }
 
-            // Zig used `std.fs.cwd().writeFile`; ported to bun_sys (no std::fs).
             if let Err(err) = bun_sys::File::write_file(
                 Fd::cwd(),
                 package_json_path,
@@ -339,15 +336,14 @@ impl PmVersionCommand {
         }
 
         Output::err_generic("Invalid version argument: \"{}\"", (BStr::new(arg),));
-        Output::note(
-            "Valid options: patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific semver version",
+        bun_core::note!(
+            "Valid options: patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific semver version"
         );
         Global::exit(1);
     }
 
     fn get_current_version(ctx: &command::ContextData, cwd: &[u8]) -> Option<Vec<u8>> {
-        // PORT NOTE: reshaped — Zig returned a slice borrowing from ctx.allocator-owned
-        // package.json bytes (leaked for process lifetime). Return owned Vec<u8> instead.
+        // Returns an owned Vec<u8> (no borrow of the package.json bytes).
         let mut path_buf = PathBuffer::uninit();
         let package_json_path = path::join_abs_string_buf_z::<path_platform::Auto>(
             cwd,
@@ -393,15 +389,12 @@ impl PmVersionCommand {
         let _current_version = Self::get_current_version(ctx, cwd);
         let current_version: &[u8] = _current_version.as_deref().unwrap_or(b"1.0.0");
 
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><b>bun pm version<r> <d>v{}<r>",
             Global::package_json_version_with_sha
-        ));
+        );
         if let Some(version) = &_current_version {
-            Output::prettyln(format_args!(
-                "Current package version: <green>v{}<r>",
-                BStr::new(version)
-            ));
+            bun_core::prettyln!("Current package version: <green>v{}<r>", BStr::new(version));
         }
 
         let preid = pm.options.preid;
@@ -421,14 +414,14 @@ impl PmVersionCommand {
         )?;
         // `defer ctx.allocator.free(...)` — handled by Drop.
 
-        Output::pretty(format_args!(
-            "\n<b>Increment<r>:\n  <cyan>patch<r>      <d>{cv} → {pv}<r>\n  <cyan>minor<r>      <d>{cv} → {miv}<r>\n  <cyan>major<r>      <d>{cv} → {mav}<r>\n  <cyan>prerelease<r> <d>{cv} → {prv}<r>\n",
-            cv = BStr::new(current_version),
-            pv = BStr::new(&patch_version),
-            miv = BStr::new(&minor_version),
-            mav = BStr::new(&major_version),
-            prv = BStr::new(&prerelease_version),
-        ));
+        bun_core::pretty!(
+            "\n<b>Increment<r>:\n  <cyan>patch<r>      <d>{0} → {1}<r>\n  <cyan>minor<r>      <d>{0} → {2}<r>\n  <cyan>major<r>      <d>{0} → {3}<r>\n  <cyan>prerelease<r> <d>{0} → {4}<r>\n",
+            BStr::new(current_version),
+            BStr::new(&patch_version),
+            BStr::new(&minor_version),
+            BStr::new(&major_version),
+            BStr::new(&prerelease_version),
+        );
 
         if strings::index_of_char(current_version, b'-').is_some() || !preid.is_empty() {
             let prepatch_version = Self::calculate_new_version(
@@ -453,13 +446,13 @@ impl PmVersionCommand {
                 cwd,
             )?;
 
-            Output::pretty(format_args!(
-                "  <cyan>prepatch<r>   <d>{cv} → {pp}<r>\n  <cyan>preminor<r>   <d>{cv} → {pmi}<r>\n  <cyan>premajor<r>   <d>{cv} → {pma}<r>\n",
-                cv = BStr::new(current_version),
-                pp = BStr::new(&prepatch_version),
-                pmi = BStr::new(&preminor_version),
-                pma = BStr::new(&premajor_version),
-            ));
+            bun_core::pretty!(
+                "  <cyan>prepatch<r>   <d>{0} → {1}<r>\n  <cyan>preminor<r>   <d>{0} → {2}<r>\n  <cyan>premajor<r>   <d>{0} → {3}<r>\n",
+                BStr::new(current_version),
+                BStr::new(&prepatch_version),
+                BStr::new(&preminor_version),
+                BStr::new(&premajor_version),
+            );
         }
 
         let beta_prerelease_version = Self::calculate_new_version(
@@ -470,7 +463,7 @@ impl PmVersionCommand {
             cwd,
         )?;
 
-        Output::pretty(format_args!(
+        bun_core::pretty!(
             "  <cyan>from-git<r>   <d>Use version from latest git tag<r>\n\
              \x20 <blue>1.2.3<r>      <d>Set specific version<r>\n\
              \n\
@@ -478,7 +471,7 @@ impl PmVersionCommand {
              \x20 <cyan>--no-git-tag-version<r> <d>Skip git operations<r>\n\
              \x20 <cyan>--allow-same-version<r> <d>Prevents throwing error if version is the same<r>\n\
              \x20 <cyan>--message<d>=\\<val\\><r>, <cyan>-m<r>  <d>Custom commit message, use %s for version substitution<r>\n\
-             \x20 <cyan>--preid<d>=\\<val\\><r>        <d>Prerelease identifier (i.e beta → {bpv})<r>\n\
+             \x20 <cyan>--preid<d>=\\<val\\><r>        <d>Prerelease identifier (i.e beta → {})<r>\n\
              \x20 <cyan>--force<r>, <cyan>-f<r>          <d>Bypass dirty git history check<r>\n\
              \n\
              <b>Examples<r>:\n\
@@ -487,8 +480,8 @@ impl PmVersionCommand {
              \x20 <d>$<r> <b><green>bun pm version<r> <cyan>prerelease<r> <cyan>--preid<r> <blue>beta<r> <cyan>--message<r> <blue>\"Release beta: %s\"<r>\n\
              \n\
              More info: <magenta>https://bun.com/docs/cli/pm#version<r>\n",
-            bpv = BStr::new(&beta_prerelease_version),
-        ));
+            BStr::new(&beta_prerelease_version),
+        );
         Output::flush();
         Ok(())
     }
@@ -845,7 +838,6 @@ impl PmVersionCommand {
         }
 
         let commit_message: Vec<u8> = if let Some(msg) = custom_message {
-            // std.mem.replaceOwned(u8, allocator, msg, "%s", version)
             msg.replace(b"%s", version)
         } else {
             fmt_bytes(format_args!("v{}", BStr::new(version)))
@@ -927,7 +919,7 @@ impl PmVersionCommand {
     }
 }
 
-// PORT NOTE: helper for `std.fmt.allocPrint` — builds into Vec<u8> (never `format!`).
+// Builds formatted output into a `Vec<u8>` (never `format!`).
 #[inline]
 fn fmt_bytes(args: core::fmt::Arguments<'_>) -> Vec<u8> {
     let mut v = Vec::new();
@@ -935,8 +927,8 @@ fn fmt_bytes(args: core::fmt::Arguments<'_>) -> Vec<u8> {
     v
 }
 
-// PORT NOTE: build `sync::Options.argv: Vec<Box<[u8]>>` from a slice of byte
-// slices (Zig was `&.{...}` of `[]const u8`).
+// Note: build `sync::Options.argv: Vec<Box<[u8]>>` from a slice of byte
+// slices.
 #[inline]
 fn build_argv(parts: &[&[u8]]) -> Vec<Box<[u8]>> {
     parts.iter().map(|p| Box::<[u8]>::from(*p)).collect()
@@ -952,5 +944,3 @@ fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
         ..Default::default()
     }
 }
-
-// ported from: src/cli/pm_version_command.zig

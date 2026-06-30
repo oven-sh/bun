@@ -281,8 +281,7 @@ pub(crate) unsafe extern "C" fn TextEncoder__encodeInto16(
     // SAFETY: caller guarantees input_ptr[0..input_len] is valid UTF-16 data
     let input = unsafe { core::slice::from_raw_parts(input_ptr, input_len) };
     let result: strings::EncodeIntoResult = strings::copy_utf16_into_utf8(output, input);
-    // Zig `@bitCast([2]u32 → u64)`: field 0 (`read`) at byte offset 0, field 1 (`written`)
-    // at offset 4. Compose via native-endian bytes — identical bit pattern, no `unsafe`.
+    // Pack `read` at byte offset 0 and `written` at offset 4 via native-endian bytes — no `unsafe`.
     let mut b = [0u8; 8];
     b[..4].copy_from_slice(&result.read.to_ne_bytes());
     b[4..].copy_from_slice(&result.written.to_ne_bytes());
@@ -304,12 +303,9 @@ pub(crate) unsafe extern "C" fn TextEncoder__encodeInto8(
     // SAFETY: caller guarantees input_ptr[0..input_len] is valid Latin-1 data
     let input = unsafe { core::slice::from_raw_parts(input_ptr, input_len) };
     let result: strings::EncodeIntoResult = strings::copy_latin1_into_utf8(output, input);
-    // Zig `@bitCast([2]u32 → u64)`: field 0 (`read`) at byte offset 0, field 1 (`written`)
-    // at offset 4. Compose via native-endian bytes — identical bit pattern, no `unsafe`.
+    // Pack `read` at byte offset 0 and `written` at offset 4 via native-endian bytes — no `unsafe`.
     let mut b = [0u8; 8];
     b[..4].copy_from_slice(&result.read.to_ne_bytes());
     b[4..].copy_from_slice(&result.written.to_ne_bytes());
     u64::from_ne_bytes(b)
 }
-
-// ported from: src/runtime/webcore/TextEncoder.zig

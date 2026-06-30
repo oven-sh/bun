@@ -51,5 +51,3 @@ impl<T: Copy> Errorable<T> {
         }
     }
 }
-
-// ported from: src/jsc/Errorable.zig

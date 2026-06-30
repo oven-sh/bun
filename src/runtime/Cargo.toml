@@ -21,7 +21,6 @@ blake2 = { version = "0.10", default-features = false }
 bytemuck = "1"
 thiserror.workspace = true
 strum.workspace = true
-phf.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
 const_format.workspace = true
@@ -65,7 +64,7 @@ bun_libarchive.workspace = true
 bun_libdeflate_sys.workspace = true
 bun_ast.workspace = true
 bun_ast_jsc.workspace = true
-bun_lolhtml_sys.workspace = true
+lol_html.workspace = true
 bun_md.workspace = true
 bun_options_types.workspace = true
 bun_output.workspace = true

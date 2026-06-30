@@ -18,7 +18,4 @@ pub use super::valkey::Options;
 pub use super::valkey::Protocol;
 pub use super::valkey::Status;
 pub use super::valkey::ValkeyClient;
-// ValkeyCommand.zig is a file-as-struct; in Rust the module itself is the namespace.
 pub use super::valkey_command as Command;
-
-// ported from: src/runtime/valkey_jsc/index.zig

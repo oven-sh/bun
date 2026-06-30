@@ -24,7 +24,6 @@ const PREFIX_MIDDLE: &[u8] = b"  \xE2\x94\x9C\xE2\x94\x80 "; // "  ├─ "
 const PREFIX_CONTINUE: &[u8] = b"  \xE2\x94\x82  "; // "  │  "
 const PREFIX_SPACE: &[u8] = b"     ";
 
-// PORT NOTE: Zig `var max_depth: usize = 100;` is a mutable container-level global.
 // Using AtomicUsize for safe interior mutability on a single-threaded CLI path.
 static MAX_DEPTH: AtomicUsize = AtomicUsize::new(100);
 
@@ -90,8 +89,7 @@ fn get_dependency_type_priority(dep_type: DependencyType) -> u8 {
     }
 }
 
-// PORT NOTE: Zig signature was `fn(void, a, b) bool` (lessThan for std.sort).
-// Kept bool-returning lessThan semantics; call sites wrap into a total Ordering
+// Bool-returning lessThan semantics; call sites wrap into a total Ordering
 // (Less if a<b, Greater if b<a, else Equal — required since Rust 1.81 sort_by
 // panics on non-total comparators).
 fn compare_dependents(a: &DependentInfo, b: &DependentInfo) -> bool {
@@ -132,7 +130,7 @@ enum PatternType {
     Invalid,
 }
 
-// PORT NOTE: fields borrow slices of the input `pattern`; lifetime added even though
+// Fields borrow slices of the input `pattern`; lifetime added even though
 // PORTING.md prefers Box/&'static for []const u8 fields — these are pure views over
 // a caller-owned slice (BORROW_PARAM), never freed, never literal-only.
 struct GlobPattern<'a> {
@@ -270,13 +268,13 @@ impl<'a> GlobPattern<'a> {
 
 impl WhyCommand {
     pub(crate) fn print_usage() {
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             concat!("<r><b>bun why<r> <d>v", "{}", "<r>"),
             Global::package_json_version_with_sha
-        ));
+        );
 
-        // PORT NOTE: Zig multiline literal preserved verbatim.
-        let usage_text = "Explain why a package is installed\n\
+        bun_core::pretty!(
+            "Explain why a package is installed\n\
 \n\
 <b>Arguments:<r>\n\
   <blue>\\<package\\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>\n\
@@ -289,14 +287,14 @@ impl WhyCommand {
   <d>$<r> <b><green>bun why<r> <blue>react<r>\n\
   <d>$<r> <b><green>bun why<r> <blue>\"@types/*\"<r> <cyan>--depth<r> <blue>2<r>\n\
   <d>$<r> <b><green>bun why<r> <blue>\"*-lodash\"<r> <cyan>--top<r>\n\
-";
-        Output::pretty(format_args!("{usage_text}"));
+"
+        );
         Output::flush();
     }
 
     pub(crate) fn exec(ctx: command::Context) -> Result<(), bun_core::Error> {
         let cli = CommandLineArguments::parse(Subcommand::Why)?;
-        // PORT NOTE: capture the few `cli` fields we read after `init` consumes it.
+        // Capture the few `cli` fields we read after `init` consumes it.
         let positionals = cli.positionals;
         let top_only = cli.top_only;
 
@@ -337,9 +335,7 @@ impl WhyCommand {
         package_pattern: &[u8],
         top_only: bool,
     ) -> Result<(), bun_core::Error> {
-        // PORT NOTE: reshaped for borrowck — Zig calls
-        // `pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true)` which aliases
-        // `*PackageManager` with `*Lockfile`. Detach the `Box<Lockfile>` from `pm`
+        // Detach the `Box<Lockfile>` from `pm`
         // so `load_from_cwd` can take `Option<&mut PackageManager>` without
         // overlapping the `&mut self` lockfile borrow. `pm.options.depth` is read
         // up front so we never need `pm` again once `lockfile` is borrowed.
@@ -374,18 +370,13 @@ impl WhyCommand {
         let pkg_res_slices = packages.items_resolutions();
         let _pkg_resolution = packages.items_resolution();
 
-        // PERF(port): was arena bulk-free — Zig used ArenaAllocator for all_dependents
-        // and per-dep string dupes. Now using global allocator + Drop.
-
         let mut target_versions: Vec<VersionInfo> = Vec::new();
-        // (defer free loop deleted — Box<[u8]> field + Vec Drop handle it)
 
         let mut all_dependents: HashMap<PackageID, Vec<DependentInfo>> = HashMap::default();
 
         let glob = GlobPattern::init(package_pattern);
 
-        // PORT NOTE: Zig `MultiArrayList<Package>.get(pkg_idx)` returns a row
-        // copy. The Rust column-backed `PackageList` exposes
+        // The column-backed `PackageList` exposes
         // `items_name()` / `items_dependencies()` / … directly, so we read
         // columns by index instead of materialising a `Package` row.
         let pkg_names = packages.items_name();
@@ -474,31 +465,30 @@ impl WhyCommand {
         }
 
         if target_versions.is_empty() {
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "<r><red>error<r>: No packages matching '{}' found in lockfile",
                 BStr::new(package_pattern)
-            ));
+            );
             Global::exit(1);
         }
 
         for target_version in &target_versions {
             let target_name = pkg_names[target_version.pkg_id as usize].slice(string_bytes);
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "<b>{}@{}<r>",
                 BStr::new(target_name),
                 BStr::new(&target_version.version)
-            ));
+            );
 
             if let Some(dependents) = all_dependents.get(&target_version.pkg_id) {
                 if dependents.is_empty() {
-                    Output::prettyln(format_args!("<d>  └─ No dependents found<r>"));
+                    bun_core::prettyln!("<d>  └─ No dependents found<r>");
                 } else if MAX_DEPTH.load(AtomicOrdering::Relaxed) == 0 {
-                    Output::prettyln(format_args!("<d>  └─ (deeper dependencies hidden)<r>"));
+                    bun_core::prettyln!("<d>  └─ (deeper dependencies hidden)<r>");
                 } else {
                     let _ctx_data = TreeContext::init(&all_dependents);
-                    // PORT NOTE: reshaped for borrowck — Zig sorted via mutable
-                    // `dependents.items` while also holding `&all_dependents` in
-                    // ctx_data. Clone the slice to sort independently.
+                    // Clone the slice so it can be sorted while `ctx_data`
+                    // still borrows `all_dependents`.
                     let mut sorted: Vec<DependentInfo> = dependents.clone();
                     sorted.sort_by(cmp_dependents);
 
@@ -529,10 +519,10 @@ impl WhyCommand {
                     ctx_data.clear_path_tracker();
                 }
             } else {
-                Output::prettyln(format_args!("<d>  └─ No dependents found<r>"));
+                bun_core::prettyln!("<d>  └─ No dependents found<r>");
             }
 
-            Output::prettyln(format_args!(""));
+            bun_core::prettyln!("");
             Output::flush();
         }
 
@@ -544,35 +534,32 @@ impl WhyCommand {
 }
 
 fn print_package_with_type(prefix: &[u8], package: &DependentInfo) {
-    Output::pretty(format_args!("<d>{}<r>", BStr::new(prefix)));
+    bun_core::pretty!("<d>{}<r>", BStr::new(prefix));
 
     match package.dep_type {
-        DependencyType::Dev => Output::pretty(format_args!("<magenta>dev<r> ")),
-        DependencyType::Peer => Output::pretty(format_args!("<yellow>peer<r> ")),
-        DependencyType::Optional => Output::pretty(format_args!("<cyan>optional<r> ")),
-        DependencyType::OptionalPeer => Output::pretty(format_args!("<cyan>optional peer<r> ")),
+        DependencyType::Dev => bun_core::pretty!("<magenta>dev<r> "),
+        DependencyType::Peer => bun_core::pretty!("<yellow>peer<r> "),
+        DependencyType::Optional => bun_core::pretty!("<cyan>optional<r> "),
+        DependencyType::OptionalPeer => bun_core::pretty!("<cyan>optional peer<r> "),
         _ => {}
     }
 
     if package.workspace {
-        Output::pretty(format_args!("<blue>{}<r>", BStr::new(&package.name)));
+        bun_core::pretty!("<blue>{}<r>", BStr::new(&package.name));
         if !package.version.is_empty() {
-            Output::pretty(format_args!("<d><blue>@workspace<r>"));
+            bun_core::pretty!("<d><blue>@workspace<r>");
         }
     } else {
-        Output::pretty(format_args!("{}", BStr::new(&package.name)));
+        bun_core::pretty!("{}", BStr::new(&package.name));
         if !package.version.is_empty() {
-            Output::pretty(format_args!("<d>@{}<r>", BStr::new(&package.version)));
+            bun_core::pretty!("<d>@{}<r>", BStr::new(&package.version));
         }
     }
 
     if !package.spec.is_empty() {
-        Output::prettyln(format_args!(
-            " <d>(requires {})<r>",
-            BStr::new(&package.spec)
-        ));
+        bun_core::prettyln!(" <d>(requires {})<r>", BStr::new(&package.spec));
     } else {
-        Output::prettyln(format_args!(""));
+        bun_core::prettyln!("");
     }
 }
 
@@ -603,17 +590,13 @@ fn print_dependency_tree(
     parent_is_workspace: bool,
 ) {
     if ctx.path_tracker.get(&current_pkg_id).is_some() {
-        Output::prettyln(format_args!(
-            "<d>{}└─ <yellow>*circular<r>",
-            BStr::new(prefix)
-        ));
+        bun_core::prettyln!("<d>{}└─ <yellow>*circular<r>", BStr::new(prefix));
         return;
     }
 
     ctx.path_tracker.insert(current_pkg_id, depth);
-    // PORT NOTE: reshaped for borrowck — Zig used `defer path_tracker.remove(...)`.
     // All post-insert exit paths below remove explicitly. Error paths are gone
-    // (alloc failures abort under global mimalloc), so no errdefer needed.
+    // (alloc failures abort under global mimalloc).
 
     if let Some(dependents) = ctx.all_dependents.get(&current_pkg_id) {
         let mut sorted_dependents: Vec<DependentInfo> = dependents.clone();
@@ -626,10 +609,7 @@ fn print_dependency_tree(
             }
 
             if depth >= MAX_DEPTH.load(AtomicOrdering::Relaxed) {
-                Output::prettyln(format_args!(
-                    "<d>{}└─ (deeper dependencies hidden)<r>",
-                    BStr::new(prefix)
-                ));
+                bun_core::prettyln!("<d>{}└─ (deeper dependencies hidden)<r>", BStr::new(prefix));
                 ctx.path_tracker.remove(&current_pkg_id);
                 return;
             }
@@ -666,12 +646,10 @@ fn print_dependency_tree(
             );
 
             if print_break_line {
-                Output::prettyln(format_args!("<d>{}<r>", BStr::new(prefix)));
+                bun_core::prettyln!("<d>{}<r>", BStr::new(prefix));
             }
         }
     }
 
     ctx.path_tracker.remove(&current_pkg_id);
 }
-
-// ported from: src/cli/why_command.zig

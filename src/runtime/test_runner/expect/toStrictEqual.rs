@@ -51,5 +51,3 @@ impl Expect {
         this.throw(global, signature, format_args!("\n\n{}\n", diff_formatter))
     }
 }
-
-// ported from: src/test_runner/expect/toStrictEqual.zig

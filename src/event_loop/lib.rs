@@ -12,9 +12,9 @@ pub mod ManagedTask;
 // AnyEventLoop / SpawnSyncEventLoop / MiniEventLoop.
 // `InternalLoopData::set_parent_event_loop`
 // is reached via the lower-tier `set_parent_raw(tag, ptr)` +
-// `EventLoopHandle::into_tag_ptr()`. Windows-only `MiniVM::platform_event_loop`
-// (`uws::Loop::uv_loop`) remains `#[cfg(windows)]`-guarded with a
-// `TODO(port)` marker; the POSIX build is gate-free.
+// `EventLoopHandle::into_tag_ptr()`. The Windows-only `uv_loop` projection
+// lives on `EventLoopHandle::uv_loop` (`#[cfg(windows)]`); the POSIX build is
+// gate-free.
 // ────────────────────────────────────────────────────────────────────────────
 
 #[path = "MiniEventLoop.rs"]

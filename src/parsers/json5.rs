@@ -531,7 +531,7 @@ impl<'a> JSON5Parser<'a> {
             }
             TokenData::Number(n) => {
                 self.scan()?;
-                Ok(Expr::init(E::Number { value: n }, loc))
+                Ok(Expr::init(E::Number::new(n), loc))
             }
             TokenData::Boolean(b) => {
                 self.scan()?;
@@ -544,15 +544,10 @@ impl<'a> JSON5Parser<'a> {
             TokenData::Identifier(s) => {
                 if s == b"NaN" {
                     self.scan()?;
-                    return Ok(Expr::init(E::Number { value: f64::NAN }, loc));
+                    return Ok(Expr::init(E::Number::new(f64::NAN), loc));
                 } else if s == b"Infinity" {
                     self.scan()?;
-                    return Ok(Expr::init(
-                        E::Number {
-                            value: f64::INFINITY,
-                        },
-                        loc,
-                    ));
+                    return Ok(Expr::init(E::Number::new(f64::INFINITY), loc));
                 }
                 Err(ParseError::UnexpectedToken)
             }
@@ -1118,5 +1113,3 @@ fn append_codepoint_to_utf8(buf: &mut BumpVec<'_, u8>, cp: i32) -> Result<(), Pa
 fn is_ident_continue_ascii(c: u8) -> bool {
     matches!(c, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$')
 }
-
-// ported from: src/interchange/json5.zig

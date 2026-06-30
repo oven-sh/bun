@@ -91,5 +91,3 @@ impl InternalLoopData {
         (self.parent_tag, self.parent_ptr)
     }
 }
-
-// ported from: src/uws_sys/InternalLoopData.zig

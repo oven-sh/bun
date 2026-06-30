@@ -42,7 +42,7 @@ bun_core::named_error_set!(RedisError);
 impl From<bun_core::Error> for RedisError {
     /// Reverse of the `RedisError → bun_core::Error` interning above so the
     /// `JSValkeyClient::send` → `valkey_error_to_js` path round-trips through
-    /// `bun_core::Error` (Zig's open `!` set) without losing the variant.
+    /// `bun_core::Error` without losing the variant.
     /// Unknown names collapse to `ConnectionClosed` — the only non-`RedisError`
     /// producer on the `send` path is the offline-queue OOM, which `OutOfMemory`
     /// already covers.
@@ -234,8 +234,7 @@ impl<'a> ValkeyReader<'a> {
 
     /// Current read offset into the underlying buffer.
     ///
-    /// Mirrors the public `pos` field on the Zig `ValkeyReader` struct; callers
-    /// use this to compute how many bytes a `read_value` call consumed.
+    /// Callers use this to compute how many bytes a `read_value` call consumed.
     #[inline]
     pub fn pos(&self) -> usize {
         self.pos
@@ -802,22 +801,17 @@ pub enum SubscriptionPushMessage {
     Unsubscribe,
 }
 
-impl SubscriptionPushMessage {
-    // PERF(port): Zig's `bun.ComptimeStringMap` lowers this 3-entry table to a
-    // length-then-bytes switch at compile time. An earlier port used
-    // `phf::Map`, which pays a SipHash + indirect probe per lookup — overkill
-    // for three keys whose lengths are all distinct (7/9/11). A length-gated
-    // match rejects the miss case on a single `usize` compare and confirms the
-    // hit with one fixed-size byte compare, matching the Zig codegen.
-    #[inline]
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        match bytes.len() {
-            7 if bytes == b"message" => Some(Self::Message),
-            9 if bytes == b"subscribe" => Some(Self::Subscribe),
-            11 if bytes == b"unsubscribe" => Some(Self::Unsubscribe),
-            _ => None,
-        }
-    }
+bun_core::comptime_string_map! {
+    static SUBSCRIPTION_PUSH_MESSAGES: SubscriptionPushMessage = {
+        b"message" => SubscriptionPushMessage::Message,
+        b"subscribe" => SubscriptionPushMessage::Subscribe,
+        b"unsubscribe" => SubscriptionPushMessage::Unsubscribe,
+    };
 }
 
-// ported from: src/valkey/valkey_protocol.zig
+impl SubscriptionPushMessage {
+    #[inline]
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        SUBSCRIPTION_PUSH_MESSAGES.get(bytes).copied()
+    }
+}

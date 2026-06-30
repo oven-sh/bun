@@ -90,7 +90,7 @@ impl ElfFile {
                 return;
             }
 
-            // PORT NOTE: reshaped for borrowck — compute replacement under an
+            // reshaped for borrowck — compute replacement under an
             // immutable borrow, then take a mutable borrow for the writes.
             let replacement: &'static [u8] = {
                 let interp_region = &self.data[interp_offset..][..interp_filesz];
@@ -169,7 +169,7 @@ impl ElfFile {
         if strtab_end > self.data.len() as u64 {
             return;
         }
-        // PORT NOTE: reshaped for borrowck — copy strtab bounds out so we can
+        // reshaped for borrowck — copy strtab bounds out so we can
         // re-borrow self.data mutably below.
         let strtab_off = usize::try_from(strtab_shdr.sh_offset).expect("int cast");
         let strtab_len = usize::try_from(strtab_shdr.sh_size).expect("int cast");
@@ -254,7 +254,7 @@ impl ElfFile {
         // Place the new data at a page-aligned virtual address past every
         // existing mapping. page_size is ≥ 128 so this also guarantees the
         // 128-byte alignment that JSC's bytecode cache requires — see
-        // `target_mod = 120` in StandaloneModuleGraph.zig, which assumes the
+        // `target_mod = 120` in StandaloneModuleGraph.rs, which assumes the
         // payload starts on a 128-byte boundary so bytecode at payload-offset
         // 120 lands 128-aligned once the 8-byte `[u64 size]` header is
         // accounted for. A non-page-aligned `new_vaddr` (e.g. one inheriting
@@ -309,9 +309,8 @@ impl ElfFile {
 
         let total_new_size: u64 = move_dst_end;
 
-        // PERF(port): Zig used ensureTotalCapacity + raw len bump leaving the
-        // new region uninitialized; resize() zero-fills. The explicit @memset
-        // calls below become partially redundant but stay for parity.
+        // resize() zero-fills, so the explicit zero-fills below are
+        // partially redundant but harmless.
         let total_new_size_usz = usize::try_from(total_new_size).expect("int cast");
         self.data
             .reserve(total_new_size_usz.saturating_sub(self.data.len()));
@@ -430,8 +429,6 @@ impl ElfFile {
     }
 
     pub fn write(&self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
-        // PORT NOTE: Zig used `writer: anytype` (`std.Io.Writer`); std::io::Write
-        // is the canonical Rust equivalent. bun_io has no Write trait.
         writer.write_all(&self.data)?;
         Ok(())
     }
@@ -500,9 +497,6 @@ impl ElfFile {
         }
     }
 }
-
-// `deinit` in Zig only freed `data` and destroyed `self` — both handled by
-// `Drop` on `Vec<u8>` / `Box<ElfFile>`. No explicit `Drop` impl needed.
 
 struct BunSectionInfo {
     /// File offset of the .bun section's data (sh_offset).
@@ -578,7 +572,7 @@ fn host_uses_nix_store_interpreter() -> bool {
             // Test-only override: lets #29290's regression test force the
             // Nix-host branch without mutating `/etc/NIXOS` on the shared
             // rootfs (which would poison concurrent test workers).
-            // PORT NOTE: env_var .get() returns Option<bool> (nullability
+            // env_var .get() returns Option<bool> (nullability
             // collapsed in the macro port); default-false makes None ≡ false.
             if env_var::BUN_DEBUG_FORCE_NIX_HOST.get() == Some(true) {
                 return true;
@@ -610,7 +604,7 @@ fn host_uses_nix_store_interpreter() -> bool {
                 Ok(fd) => fd,
                 Err(_) => return false,
             };
-            // PORT NOTE: close moved up; fd not needed after read (was `defer fd.close()`).
+            // close moved up; fd not needed after read (was `defer fd.close()`).
             let n = match bun_sys::read(fd, &mut buf) {
                 Ok(n) => n,
                 Err(_) => {
@@ -662,8 +656,7 @@ fn host_uses_nix_store_interpreter() -> bool {
     }
 }
 
-// --- ELF definitions (from Zig std.elf; defined locally for cross-platform use) ---
-// TODO(port): consider moving to a shared bun_exe_format::elf_defs module.
+// --- ELF definitions (defined locally for cross-platform use) ---
 
 const EI_CLASS: usize = 4;
 const EI_DATA: usize = 5;
@@ -740,11 +733,9 @@ pub(crate) struct Elf64_Shdr {
     pub sh_entsize: u64,
 }
 
-// --- byte helpers (Zig std.mem.writeInt) ---
+// --- byte helpers ---
 
 #[inline]
 fn write_u64_le(bytes: &mut [u8], value: u64) {
     bytes[..8].copy_from_slice(&value.to_le_bytes());
 }
-
-// ported from: src/exe_format/elf.zig

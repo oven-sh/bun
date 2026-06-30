@@ -2,14 +2,13 @@
 //!
 //! Two distinct generators feed this file:
 //!
-//!   1. **bindgen option-structs** (`src/codegen/bindgen.ts` →
-//!      `build/*/codegen/bindgen_generated/*.zig`). Each emits a
+//!   1. **bindgen option-structs** (`src/codegen/bindgen.ts`). Each emits a
 //!      `bindgenConvertJSTo<Name>` C++ shim that fills a `#[repr(C)]` extern
 //!      struct, plus a `convertFromExtern` that reshapes it into the public
-//!      Zig/Rust type. `from_js` glues the two.
+//!      Rust type. `from_js` glues the two.
 //!
-//!   2. **per-class accessor modules** (`src/codegen/generate-classes.ts` →
-//!      `ZigGeneratedClasses.zig`). Each `JS${Type}` exposes
+//!   2. **per-class accessor modules** (`src/codegen/generate-classes.ts`).
+//!      Each `JS${Type}` exposes
 //!      `from_js` / `from_js_direct` / `to_js` / `get_constructor` thin-wrapping
 //!      the `${Type}__fromJS` / `__fromJSDirect` / `__create` / `__getConstructor`
 //!      C++ exports, plus one `${name}_get_cached` / `${name}_set_cached` pair
@@ -33,7 +32,7 @@ use crate::{JSCArrayBuffer, JSGlobalObject, JSValue, JsResult};
 // ──────────────────────────────────────────────────────────────────────────
 // Generic accessor wrappers.
 //
-// The Zig bindgen emits per-field newtypes with `.get()` (optional) /
+// Per-field accessors come in two shapes: `.get()` (optional) /
 // `.items()` (array). Dependents pattern-match on these without naming the
 // wrapper type directly, so a pair of generic carriers covers every field.
 // ──────────────────────────────────────────────────────────────────────────
@@ -71,11 +70,11 @@ impl<T> GenList<T> {
     }
 }
 
-/// Bindgen option-structs for `BunObject.bind.ts` (`GeneratedBindings.zig`).
+/// Bindgen option-structs for `BunObject.bind.ts`.
 pub mod bun_object {
     /// `gen.BunObject.BracesOptions` — `#[repr(C)]` extern struct passed by
-    /// pointer from the C++ dispatch shim. Field order matches
-    /// `GeneratedBindings.zig` (`parse`, `tokenize`).
+    /// pointer from the C++ dispatch shim. Field order is
+    /// `parse`, `tokenize`.
     #[repr(C)]
     #[derive(Default, Clone, Copy)]
     pub struct BracesOptions {
@@ -90,10 +89,11 @@ pub mod bun_object {
 // already provides.
 pub type GenString = bun_core::String;
 
-/// `bun.bun_js.jsc.JSCArrayBuffer.Ref` — adopted `*mut JSC::ArrayBuffer` (refcount
-/// already +1 from C++); deref via `JSC__ArrayBuffer__deref` on drop.
-// TODO(port): wrap in `bun_ptr::ExternalShared<JSCArrayBuffer>` once that crate
-// exposes `adopt(*mut T)`. Raw ptr for now (leaks on drop).
+/// `bun.bun_js.jsc.JSCArrayBuffer.Ref` — adopted `*mut JSC::ArrayBuffer`
+/// (refcount already +1 from C++). Stays a raw `Copy` pointer because it is
+/// also embedded in the `#[repr(C)]` extern unions below, which require POD
+/// arms; the +1 ref is released exactly once via
+/// `release_gen_val_array_buffer` in the owning containers' `Drop` impls.
 pub type GenArrayBuffer = *mut JSCArrayBuffer;
 
 /// `bun.bun_js.webcore.Blob.Ref` — adopted `*mut Blob` (the codegen `m_ctx`
@@ -105,10 +105,10 @@ pub type GenArrayBuffer = *mut JSCArrayBuffer;
 pub type GenBlob = *mut core::ffi::c_void;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Extern-ABI helper layouts (mirror `src/jsc/bindgen.zig`).
+// Extern-ABI helper layouts.
 //
-// `ExternTaggedUnion(&.{T0, T1, ...})` in Zig is `extern struct { data:
-// extern union { @"0": T0, ... }, tag: u8 }`. Rust has no variadic
+// The bindgen's tagged-union extern layout is `{ data: union, tag: u8 }`.
+// Rust has no variadic
 // `#[repr(C)] union`, so we hand-roll the few arities the bindgen actually
 // emits for the structs below. All extern types are `Copy` POD; the
 // `convert_from_extern` step takes ownership of any embedded heap refs.
@@ -175,7 +175,7 @@ fn adopt_opt_string(ptr: RawWTFStringImpl) -> GenOpt<GenString> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// SocketConfigHandlers (build/*/codegen/bindgen_generated/socket_config_handlers.zig)
+// SocketConfigHandlers
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(u32)]
@@ -197,6 +197,10 @@ pub struct SocketConfigHandlers {
     pub on_end: JSValue,
     pub on_error: JSValue,
     pub on_handshake: JSValue,
+    pub on_session: JSValue,
+    pub on_keylog: JSValue,
+    pub on_server_name: JSValue,
+    pub on_alpn_callback: JSValue,
     pub binary_type: SocketConfigHandlersBinaryType,
 }
 
@@ -212,6 +216,10 @@ struct ExternSocketConfigHandlers {
     onEnd: JSValue,
     onConnectError: JSValue,
     onTimeout: JSValue,
+    onSession: JSValue,
+    onKeylog: JSValue,
+    onServerName: JSValue,
+    onALPNCallback: JSValue,
     binary_type: SocketConfigHandlersBinaryType,
 }
 
@@ -239,12 +247,16 @@ impl SocketConfigHandlers {
             on_end: ext.onEnd,
             on_connect_error: ext.onConnectError,
             on_timeout: ext.onTimeout,
+            on_session: ext.onSession,
+            on_keylog: ext.onKeylog,
+            on_server_name: ext.onServerName,
+            on_alpn_callback: ext.onALPNCallback,
             binary_type: ext.binary_type,
         }
     }
 
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
-        // Zig wraps this in an `ExceptionValidationScope` for the
+        // Wrapped in an `ExceptionValidationScope` for the
         // `assertExceptionPresenceMatches(!success)` check; the scope must exist
         // *before* the FFI call so the C++ ThrowScope's `simulateThrow()` is
         // satisfied under `validateExceptionChecks=1`.
@@ -258,7 +270,7 @@ impl SocketConfigHandlers {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// SSLConfig (build/*/codegen/bindgen_generated/ssl_config.zig + friends)
+// SSLConfig
 // ──────────────────────────────────────────────────────────────────────────
 
 pub enum SSLConfigAlpnProtocols {
@@ -291,6 +303,8 @@ pub struct SSLConfig {
     pub reject_unauthorized: Option<bool>,
     pub request_cert: bool,
     pub secure_options: u32,
+    pub ssl_min_version: i32,
+    pub ssl_max_version: i32,
     pub ca: SSLConfigFile,
     pub cert: SSLConfigFile,
     pub key: SSLConfigFile,
@@ -306,12 +320,8 @@ pub struct SSLConfig {
 // ── refcount release on drop ──────────────────────────────────────────────
 //
 // `adopt_string` adopts a +1 `WTF::StringImpl` ref into a `GenString`
-// (= `bun_core::String`), which is `Copy` and has no `Drop`. The Zig
-// bindgen output instead types these fields as `bun.string.WTFString.Optional`
-// — an RAII `WTF::Ref`-alike whose `deinit()` derefs — and the generated
-// struct's `deinit()` calls `bun.memory.deinit(&field)` on each. We replicate
-// that here by deref-ing every owned string field from the container's `Drop`
-// (matches `bindgen_generated.SSLConfig.deinit` in ssl_config.zig).
+// (= `bun_core::String`), which is `Copy` and has no `Drop`. So the
+// container's `Drop` deref's every owned string field to release those refs.
 //
 // `GenArrayBuffer` / `GenBlob` raw-pointer payloads likewise carry an adopted
 // +1 ref (C++ `ExternTraits<RefPtr<T>>::convertToExtern` calls `leakRef()`);
@@ -482,10 +492,8 @@ impl SSLConfigFile {
                         let elem = unsafe { *arr.data.add(i) };
                         out.push(SSLConfigSingleFile::convert_from_extern(elem));
                     }
-                    // PORT NOTE: Zig `BindgenArray` reuses the allocation in-place
-                    // when `ZigType == ExternType`. This path copies-then-frees the
-                    // source buffer; in-place reuse deferred.
-                    // PERF(port): was BindgenArray in-place convert — profile if it shows up on a hot path.
+                    // This path copies-then-frees the
+                    // source buffer; profile if it shows up on a hot path.
                     // SAFETY: `arr.data` was allocated by `WTF::fastMalloc` ≡ mimalloc
                     // (per crate prereq); `mi_free` is size-agnostic.
                     unsafe { bun_alloc::basic::free_without_size(arr.data.cast()) };
@@ -543,6 +551,8 @@ struct ExternSSLConfig {
     cert: ExternSSLConfigFile,
     key: ExternSSLConfigFile,
     secure_options: u32,
+    ssl_min_version: i32,
+    ssl_max_version: i32,
     key_file: RawWTFStringImpl,
     cert_file: RawWTFStringImpl,
     ca_file: RawWTFStringImpl,
@@ -575,6 +585,8 @@ impl SSLConfig {
             cert: SSLConfigFile::convert_from_extern(ext.cert),
             key: SSLConfigFile::convert_from_extern(ext.key),
             secure_options: ext.secure_options,
+            ssl_min_version: ext.ssl_min_version,
+            ssl_max_version: ext.ssl_max_version,
             key_file: adopt_opt_string(ext.key_file),
             cert_file: adopt_opt_string(ext.cert_file),
             ca_file: adopt_opt_string(ext.ca_file),
@@ -596,7 +608,7 @@ impl SSLConfig {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// SocketConfig (build/*/codegen/bindgen_generated/socket_config.zig)
+// SocketConfig
 // ──────────────────────────────────────────────────────────────────────────
 
 pub enum SocketConfigTls {
@@ -716,7 +728,7 @@ impl SocketConfig {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Per-class cached-accessor modules (`jsc.Codegen.JS*` in Zig).
+// Per-class cached-accessor modules.
 //
 // Each `JS${Type}` module exposes the C++-side hooks the `.classes.ts`
 // generator emits: `from_js` / `from_js_direct` / `to_js` / `get_constructor`
@@ -952,8 +964,8 @@ macro_rules! impl_js_class_via_generated {
 /// / `to_js` / `to_js_unchecked` / `dangerously_set_ptr` / `get_constructor`,
 /// plus a cached-accessor pair per listed property.
 ///
-/// Mirrors Zig `jsc.Codegen.JS${T}` (one impl, generated once — see
-/// `src/codegen/generate-classes.ts:2428`). All extern symbols use
+/// One impl, generated once — see
+/// `src/codegen/generate-classes.ts:2428`. All extern symbols use
 /// `JSC_CALLCONV` (= sysv64 on win-x64, C otherwise).
 ///
 /// `$Payload` is the native `m_ctx` payload type. When the payload struct is
@@ -1066,10 +1078,9 @@ macro_rules! js_class_module {
                 __create(global.as_ptr(), ptr)
             }
 
-            /// Zig-compat alias for [`to_js`] with `(global, ptr)` argument
-            /// order — matches `jsc.Codegen.JS${T}.toJSUnchecked` so ported
-            /// `Response::to_js` / `Request::to_js` call sites resolve without
-            /// reordering.
+            /// Alias for [`to_js`] with `(global, ptr)` argument
+            /// order, so `Response::to_js` / `Request::to_js` call sites
+            /// resolve without reordering.
             #[inline]
             pub fn to_js_unchecked(global: &JSGlobalObject, ptr: *mut Payload) -> JSValue {
                 to_js(ptr, global)
@@ -1083,8 +1094,7 @@ macro_rules! js_class_module {
 
             /// Detach (`ptr = null`) or replace the wrapped native pointer on
             /// an existing JS wrapper. Returns `false` if `value` is not (a
-            /// subclass of) the wrapper type. Mirrors Zig
-            /// `js.dangerouslySetPtr` (ZigGeneratedClasses.zig).
+            /// subclass of) the wrapper type.
             ///
             /// # Safety
             /// Caller must ensure the previous `m_ctx` is finalized exactly
@@ -1112,7 +1122,7 @@ js_class_module!(JSResumableS3UploadSink = "ResumableS3UploadSink" { ondrain, on
 // `values: ["resolve", "reject"]` in src/runtime/api/Shell.classes.ts.
 js_class_module!(JSShellInterpreter      = "ShellInterpreter"      { resolve, reject });
 // `src/runtime/crypto/crypto.classes.ts` — one entry per `StaticCryptoHasher`
-// monomorphization (Zig: `@field(jsc.Codegen, "JS" ++ name)`). Payload erased;
+// monomorphization. Payload erased;
 // the native struct lives in `bun_runtime::crypto`.
 js_class_module!(JSMD4        = "MD4"        {});
 js_class_module!(JSMD5        = "MD5"        {});
@@ -1122,5 +1132,3 @@ js_class_module!(JSSHA256     = "SHA256"     {});
 js_class_module!(JSSHA384     = "SHA384"     {});
 js_class_module!(JSSHA512     = "SHA512"     {});
 js_class_module!(JSSHA512_256 = "SHA512_256" {});
-
-// ported from: build/*/codegen/bindgen_generated/{socket_config*,ssl_config*}.zig

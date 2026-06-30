@@ -1,5 +1,5 @@
 /**
- * Fast SQLite3 driver for Bun.js
+ * Fast SQLite3 driver for Bun
  * @since v0.0.83
  *
  * @example
@@ -50,9 +50,9 @@ declare module "bun:sqlite" {
     readwrite?: boolean;
 
     /**
-     * When set to `true`, integers are returned as `bigint` types.
+     * When `true`, integers are returned as `bigint`.
      *
-     * When set to `false`, integers are returned as `number` types and truncated to 52 bits.
+     * When `false`, integers are returned as `number` and truncated to 52 bits.
      *
      * @default false
      * @since v1.1.14
@@ -61,7 +61,7 @@ declare module "bun:sqlite" {
 
     /**
      * When set to `false` or `undefined`:
-     * - Queries missing bound parameters will NOT throw an error
+     * - Queries missing bound parameters do NOT throw an error
      * - Bound named parameters in JavaScript need to exactly match the SQL query.
      *
      * @example
@@ -71,8 +71,8 @@ declare module "bun:sqlite" {
      * ```
      *
      * When set to `true`:
-     * - Queries missing bound parameters will throw an error
-     * - Bound named parameters in JavaScript no longer need to be `$`, `:`, or `@`. The SQL query will remain prefixed.
+     * - Queries missing bound parameters throw an error
+     * - Bound named parameters in JavaScript no longer need the `$`, `:`, or `@` prefix. The SQL query keeps its prefix.
      *
      * @example
      * ```ts
@@ -124,7 +124,7 @@ declare module "bun:sqlite" {
     constructor(filename?: string, options?: number | DatabaseOptions);
 
     /**
-     * Open or create a SQLite3 databases
+     * Open or create a SQLite3 database
      *
      * @param filename The filename of the database to open. Pass an empty string (`""`) or `":memory:"` or undefined for an in-memory database.
      * @param options defaults to `{readwrite: true, create: true}`. If a number, then it's treated as `SQLITE_OPEN_*` constant flags.
@@ -138,9 +138,9 @@ declare module "bun:sqlite" {
     /**
      * Execute a SQL query **without returning any results**.
      *
-     * This does not cache the query, so if you want to run a query multiple times, you should use {@link prepare} instead.
+     * This does not cache the query. To run a query multiple times, use {@link prepare} instead.
      *
-     * Under the hood, this calls `sqlite3_prepare_v3` followed by `sqlite3_step` and `sqlite3_finalize`.
+     * Internally, this calls `sqlite3_prepare_v3` followed by `sqlite3_step` and `sqlite3_finalize`.
      *
      * The following types can be used when binding parameters:
      *
@@ -194,12 +194,12 @@ declare module "bun:sqlite" {
 
     /**
      * Compile a SQL query and return a {@link Statement} object. This is the
-     * same as {@link prepare} except that it caches the compiled query.
+     * same as {@link prepare} except that it caches the compiled query if
+     * possible.
      *
-     * This **does not execute** the query, but instead prepares it for later
-     * execution and caches the compiled query if possible.
+     * This **does not execute** the query; it prepares it for later execution.
      *
-     * Under the hood, this calls `sqlite3_prepare_v3`.
+     * Internally, this calls `sqlite3_prepare_v3`.
      *
      * @example
      * ```ts
@@ -213,7 +213,7 @@ declare module "bun:sqlite" {
      * ```
      *
      * @param sql The SQL query to compile
-     * @returns `Statment` instance
+     * @returns A {@link Statement} instance
      */
     query<ReturnType, ParamsType extends SQLQueryBindings | SQLQueryBindings[]>(
       sql: string,
@@ -224,7 +224,7 @@ declare module "bun:sqlite" {
      *
      * This does not cache the compiled query and does not execute the query.
      *
-     * Under the hood, this calls `sqlite3_prepare_v3`.
+     * Internally, this calls `sqlite3_prepare_v3`.
      *
      * @example
      * ```ts
@@ -245,7 +245,7 @@ declare module "bun:sqlite" {
     ): Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>;
 
     /**
-     * Is the database in a transaction?
+     * Whether the database is in a transaction.
      *
      * @returns `true` if the database is in a transaction, `false` otherwise
      *
@@ -255,7 +255,8 @@ declare module "bun:sqlite" {
      * db.run("INSERT INTO foo VALUES (?)", ["baz"]);
      * db.run("BEGIN");
      * db.run("INSERT INTO foo VALUES (?)", ["qux"]);
-     * console.log(db.inTransaction());
+     * console.log(db.inTransaction);
+     * // => true
      * ```
      */
     get inTransaction(): boolean;
@@ -265,7 +266,7 @@ declare module "bun:sqlite" {
      *
      * It is safe to call this method multiple times. If the database is already
      * closed, this is a no-op. Running queries after the database has been
-     * closed will throw an error.
+     * closed throws an error.
      *
      * @example
      * ```ts
@@ -277,15 +278,14 @@ declare module "bun:sqlite" {
      */
     close(
       /**
-       * If `true`, then the database will throw an error if it is in use
+       * If `true`, throw an error if the database is in use
        * @default false
        *
-       * When true, this calls `sqlite3_close` instead of `sqlite3_close_v2`.
+       * When `true`, this calls `sqlite3_close` instead of `sqlite3_close_v2`.
        *
-       * Learn more about this in the [sqlite3 documentation](https://www.sqlite.org/c3ref/close.html).
+       * Learn more in the [sqlite3 documentation](https://www.sqlite.org/c3ref/close.html).
        *
-       * Bun will automatically call close by default when the database instance is garbage collected.
-       * In The future, Bun may default `throwOnError` to be true but for backwards compatibility, it is false by default.
+       * In the future, Bun may default `throwOnError` to `true`, but for backwards compatibility it is `false` by default.
        */
       throwOnError?: boolean,
     ): void;
@@ -311,7 +311,7 @@ declare module "bun:sqlite" {
     /**
      * Load a SQLite3 extension
      *
-     * macOS requires a custom SQLite3 library to be linked because the Apple build of SQLite for macOS disables loading extensions. See {@link Database.setCustomSQLite}
+     * On macOS, this requires linking a custom SQLite3 library because the Apple build of SQLite disables loading extensions. See {@link Database.setCustomSQLite}
      *
      * Bun chooses the Apple build of SQLite on macOS because it brings a ~50% performance improvement.
      *
@@ -325,10 +325,10 @@ declare module "bun:sqlite" {
      *
      * @note macOS-only
      *
-     * This only works before SQLite is loaded, so
-     * that's before you call `new Database()`.
+     * This only works before SQLite is loaded, that is,
+     * before you call `new Database()`.
      *
-     * It can only be run once because this will load
+     * It can only be run once because it loads
      * the SQLite library into the process.
      *
      * @param path The path to the SQLite library
@@ -336,10 +336,10 @@ declare module "bun:sqlite" {
     static setCustomSQLite(path: string): boolean;
 
     /**
-     * Closes the database when using the async resource proposal
+     * Closes the database at the end of a `using` block (explicit resource management)
      *
      * @example
-     * ```
+     * ```ts
      * using db = new Database("myapp.db");
      * doSomethingWithDatabase(db);
      * // Automatically closed when `db` goes out of scope
@@ -349,10 +349,9 @@ declare module "bun:sqlite" {
 
     /**
      * Creates a function that always runs inside a transaction. When the
-     * function is invoked, it will begin a new transaction. When the function
-     * returns, the transaction will be committed. If an exception is thrown,
-     * the transaction will be rolled back (and the exception will propagate as
-     * usual).
+     * function is invoked, it begins a new transaction. When the function
+     * returns, the transaction is committed. If an exception is thrown, the
+     * transaction is rolled back (and the exception propagates as usual).
      *
      * @param insideTransaction The callback which runs inside a transaction
      *
@@ -481,8 +480,8 @@ declare module "bun:sqlite" {
     static deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, isReadOnly?: boolean): Database;
 
     /**
-     * Load a serialized SQLite3 database. This version enables you to specify
-     * additional options such as `strict` to put the database into strict mode.
+     * Load a serialized SQLite3 database. This overload accepts additional
+     * options, such as `strict` to put the database into strict mode.
      *
      * Internally, this calls `sqlite3_deserialize`.
      *
@@ -590,14 +589,13 @@ declare module "bun:sqlite" {
    * ```ts
    * const stmt = db.prepare("SELECT * FROM foo WHERE bar = ?");
    * stmt.run("baz");
-   * // => undefined
    * ```
    */
   export class Statement<ReturnType = unknown, ParamsType extends SQLQueryBindings[] = any[]> implements Disposable {
     /**
      * Creates a new prepared statement from native code.
      *
-     * This is used internally by the {@link Database} class. Probably you don't need to call this yourself.
+     * Used internally by the {@link Database} class. You don't need to call this yourself.
      */
     constructor(nativeHandle: any);
 
@@ -658,10 +656,9 @@ declare module "bun:sqlite" {
     get(...params: ParamsType): ReturnType | null;
 
     /**
-     * Execute the prepared statement and return an
+     * Execute the prepared statement and return an iterator over the results.
      *
      * @param params optional values to bind to the statement. If omitted, the statement is run with the last bound values or no parameters if there are none.
-     *
      */
     iterate(...params: ParamsType): IterableIterator<ReturnType>;
     [Symbol.iterator](): IterableIterator<ReturnType>;
@@ -702,9 +699,7 @@ declare module "bun:sqlite" {
     /**
      * Execute the prepared statement and return the results as an array of arrays.
      *
-     * In Bun v0.6.7 and earlier, this method returned `null` if there were no
-     * results instead of `[]`. This was changed in v0.6.8 to align
-     * more with what people expect.
+     * If there are no results, returns an empty array.
      *
      * @param params optional values to bind to the statement. If omitted, the statement is run with the last bound values or no parameters if there are none.
      *
@@ -743,8 +738,8 @@ declare module "bun:sqlite" {
      * Execute the prepared statement and return all results as arrays of
      * `Uint8Array`s.
      *
-     * This is similar to `values()` but returns all values as Uint8Array
-     * objects, regardless of their original SQLite type.
+     * This is similar to {@link values} but returns every value as a
+     * `Uint8Array`, regardless of its original SQLite type.
      *
      * @param params optional values to bind to the statement. If omitted, the
      * statement is run with the last bound values or no parameters if there are
@@ -793,8 +788,9 @@ declare module "bun:sqlite" {
     readonly paramsCount: number;
 
     /**
-     * The actual SQLite column types from the first row of the result set.
-     * Useful for expressions and computed columns, which are not covered by `declaredTypes`
+     * The actual SQLite column types from the first row of the result set, as
+     * reported by `sqlite3_column_type()`. Useful for expressions and computed
+     * columns, which are not covered by {@link declaredTypes}.
      *
      * Returns an array of SQLite type constants as uppercase strings:
      * - `"INTEGER"` for integer values
@@ -804,13 +800,8 @@ declare module "bun:sqlite" {
      * - `"NULL"` for null values
      * - `null` for unknown/unsupported types
      *
-     * **Requirements:**
-     * - Only available for read-only statements (SELECT queries)
-     * - For non-read-only statements, throws an error
-     *
-     * **Behavior:**
-     * - Uses `sqlite3_column_type()` to get actual data types from the first row
-     * - Returns `null` for columns with unknown SQLite type constants
+     * Only available for read-only statements (SELECT queries). For other
+     * statements, accessing this property throws an error.
      *
      * @example
      * ```ts
@@ -831,19 +822,15 @@ declare module "bun:sqlite" {
     readonly columnTypes: Array<"INTEGER" | "FLOAT" | "TEXT" | "BLOB" | "NULL" | null>;
 
     /**
-     * The declared column types from the table schema.
+     * The declared column types from the table schema, as reported by
+     * `sqlite3_column_decltype()`.
      *
-     * Returns an array of declared type strings from `sqlite3_column_decltype()`:
-     * - Raw type strings as declared in the CREATE TABLE statement
-     * - `null` for columns without declared types (e.g., expressions, computed columns)
+     * Returns an array of:
+     * - The exact type string declared in the `CREATE TABLE` statement
+     * - `null` for columns without declared types, such as expressions and computed columns
      *
-     * **Requirements:**
-     * - Statement must be executed at least once before accessing this property
-     * - Available for both read-only and read-write statements
-     *
-     * **Behavior:**
-     * - Uses `sqlite3_column_decltype()` to get schema-declared types
-     * - Returns the exact type string from the table definition
+     * The statement must be executed at least once before accessing this
+     * property. Available for both read-only and read-write statements.
      *
      * @example
      * ```ts
@@ -900,19 +887,15 @@ declare module "bun:sqlite" {
     toString(): string;
 
     /**
-     *
      * Make {@link get} and {@link all} return an instance of the provided
-     * `Class` instead of the default `Object`.
+     * `Class` instead of the default `Object`, so the returned objects can have
+     * methods, getters, and setters.
      *
-     * @param Class A class to use
+     * For performance reasons, class constructors are not called: initializers
+     * do not run and private fields are not accessible.
+     *
+     * @param Class The class to return rows as
      * @returns The same statement instance, modified to return an instance of `Class`
-     *
-     * This lets you attach methods, getters, and setters to the returned
-     * objects.
-     *
-     * For performance reasons, constructors for classes are not called, which means
-     * initializers will not be called and private fields will not be
-     * accessible.
      *
      * @example
      *
@@ -954,7 +937,7 @@ declare module "bun:sqlite" {
   /**
    * Constants from `sqlite3.h`
    *
-   * This list isn't exhaustive, but some of the ones which are relevant
+   * This list isn't exhaustive; it covers the most relevant ones
    */
   export namespace constants {
     /**
@@ -1099,10 +1082,10 @@ declare module "bun:sqlite" {
     /**
      * @constant 10
      *
-     * Control whether or not the WAL is persisted
+     * Control whether the WAL (write-ahead log) is persisted.
      * Some versions of macOS configure WAL to be persistent by default.
      *
-     * You can change this with code like the below:
+     * To change this:
      * ```ts
      * import { Database, constants } from "bun:sqlite";
      *
@@ -1245,14 +1228,14 @@ declare module "bun:sqlite" {
   /**
    * The native module implementing the sqlite3 C bindings
    *
-   * It is lazily-initialized, so this will return `undefined` until the first
-   * call to new Database().
+   * It is lazily initialized, so it is `undefined` until the first call to
+   * `new Database()`.
    *
-   * The native module makes no gurantees about ABI stability, so it is left
+   * The native module makes no guarantees about ABI stability, so it is left
    * untyped
    *
-   * If you need to use it directly for some reason, please let us know because
-   * that probably points to a deficiency in this API.
+   * If you need to use it directly, let us know; that probably points to a
+   * deficiency in this API.
    */
   export var native: any;
 
@@ -1268,8 +1251,7 @@ declare module "bun:sqlite" {
   export default Database;
 
   /**
-   * Errors from SQLite have a name `SQLiteError`.
-   *
+   * An error from SQLite. The `name` is `"SQLiteError"`.
    */
   export class SQLiteError extends Error {
     readonly name: "SQLiteError";
@@ -1287,7 +1269,9 @@ declare module "bun:sqlite" {
      * The name of the SQLite3 error code
      *
      * @example
+     * ```ts
      * "SQLITE_CONSTRAINT_UNIQUE"
+     * ```
      *
      * @since v1.0.21
      */
@@ -1315,6 +1299,8 @@ declare module "bun:sqlite" {
     changes: number;
 
     /**
+     * The `rowid` of the most recently inserted row.
+     *
      * If `safeIntegers` is `true`, this is a `bigint`. Otherwise, it is a `number`.
      */
     lastInsertRowid: number | bigint;

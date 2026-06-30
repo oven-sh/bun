@@ -28,8 +28,6 @@ pub const ATOMIC_FILE_WATCHER: bool = env::IS_LINUX;
 
 pub const HTTP_BUFFER_POOLING: bool = true;
 
-pub const DISABLE_LOLHTML: bool = false;
-
 /// There is, what I think is, a bug in getaddrinfo()
 /// on macOS that specifically impacts localhost and not
 /// other ipv4 hosts. This is a workaround for that.
@@ -131,5 +129,3 @@ pub fn bake() -> bool {
 /// Additional debugging features for bake.DevServer, such as the incremental visualizer.
 /// To use them, extra flags are passed in addition to this one.
 pub const BAKE_DEBUGGING_FEATURES: bool = env::IS_CANARY || env::IS_DEBUG;
-
-// ported from: src/bun_core/feature_flags.zig

@@ -1,4 +1,4 @@
-//! `js_parser/ast/Ast.zig` — the parser-output struct.
+//! The parser-output struct.
 //!
 //! Moved down from `bun_js_parser` so `bun_js_printer` can consume it without
 //! a `bun_js_parser` dep. The previous blocker (`Target`/`ImportRecord` living
@@ -51,9 +51,8 @@ pub struct Ast<'a> {
     /// they can be manipulated efficiently without a full AST traversal
     pub import_records: ImportRecordList<'a>,
 
-    // `hashbang`/`directive` are `[]const u8` slices into source text (not
-    // freed in Zig `deinit`). `StoreStr` records them under the same
-    // lifetime-erased contract as `StoreRef`.
+    // `hashbang`/`directive` are slices into source text. `StoreStr` records
+    // them under the same lifetime-erased contract as `StoreRef`.
     pub hashbang: StoreStr,
     pub directive: Option<StoreStr>,
     pub parts: PartList<'a>,
@@ -76,7 +75,6 @@ pub struct Ast<'a> {
     pub named_exports: NamedExports,
     pub export_star_import_records: AstVec<u32>,
 
-    // arena: std.mem.Allocator,
     pub top_level_symbols_to_parts: TopLevelSymbolToParts,
 
     pub commonjs_named_exports: CommonJSNamedExports,
@@ -96,10 +94,6 @@ pub struct Ast<'a> {
     pub import_meta_ref: Ref,
 }
 
-// PORT NOTE: Zig field defaults reference named constants (`Ref.None`, `logger.Range.None`,
-// `ExportsKind.none`, `Target.browser`) whose equivalence to the Rust types' `Default::default()`
-// is unverified across crates, so spell them out here instead of `#[derive(Default)]`.
-//
 // `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
 // so `Default` no longer applies; use `Ast::empty_in(arena)`.
 impl<'a> Ast<'a> {
@@ -186,13 +180,10 @@ impl<'a> Ast<'a> {
         }
     }
 
-    // Zig `deinit` only freed `parts`, `symbols`, `import_records` via `bun.default_allocator`,
-    // and was guarded by "Do not call this if it wasn't globally allocated!".
-    // In Rust those fields own their storage and free on Drop; no explicit body needed.
-    // TODO(port): Vec<T> Drop semantics must distinguish arena-backed vs heap-backed to
-    // preserve the Zig conditional-free behavior. Revisit.
+    // `parts`/`symbols`/`import_records` are `ArenaVec`s (`BabyVec`) whose
+    // `Drop` deallocates through the allocator each instance was constructed
+    // with, so arena-vs-heap conditional-free is encoded in the type — no
+    // explicit body needed.
 }
 
 pub use crate::g::Class;
-
-// ported from: src/js_parser/ast/Ast.zig

@@ -36,7 +36,6 @@ impl TriState {
     }
 }
 
-// Zig: `pub var enabled: enum { yes, no, unknown } = .unknown;`
 static ENABLED: AtomicU8 = AtomicU8::new(TriState::Unknown as u8);
 
 pub(crate) fn enabled() -> TriState {
@@ -52,9 +51,9 @@ pub fn is_enabled() -> bool {
         TriState::No => false,
         TriState::Unknown => {
             let detected = 'detect: {
-                // PORT NOTE: `env_var::*.get()` returns `Option<ValueType>` in
-                // the Rust port even when a default exists; `DO_NOT_TRACK` has
-                // `default: false` so `.unwrap_or(false)` matches Zig semantics.
+                // `env_var::*.get()` returns `Option<ValueType>` even when a
+                // default exists; `DO_NOT_TRACK` has `default: false`, hence
+                // `.unwrap_or(false)`.
                 if env_var::DO_NOT_TRACK.get().unwrap_or(false) {
                     break 'detect TriState::No;
                 }
@@ -79,38 +78,51 @@ pub fn is_enabled() -> bool {
 
 /// This answers, "What parts of bun are people actually using?"
 ///
-/// PORT NOTE: In Zig this is a `struct` used purely as a namespace of `pub var`
-/// decls, iterated via `@typeInfo` reflection. Rust has no decl reflection, so
-/// the feature list is declared once via `define_features!` and that macro
+/// The feature list is declared once via `define_features!` and that macro
 /// generates the statics, `PACKED_FEATURES_LIST`, `PackedFeatures`,
 /// `packed_features()`, and the `Display` body.
 pub mod features {
     use super::*;
 
-    // PORT NOTE (cyclebreak): the Zig original is
-    // `EnumSet(bun.jsc.ModuleLoader.HardcodedModule)`. That enum lives in
+    // Note (cyclebreak): `bun.jsc.ModuleLoader.HardcodedModule` lives in
     // `bun_resolve_builtins` (T5) and pulling it here would create a forward
     // dep (analytics is T1). The only operations we need are `insert` and
     // ordered iteration of the module *names* for the crash-report formatter,
     // so store the `&'static str` name (= `@tagName(HardcodedModule)`) instead
     // of the enum value. Writers (`runtime/jsc_hooks.rs`) call
     // `BUILTIN_MODULES.lock().insert(<&'static str>::from(hardcoded))`.
-    // PERF(port): Zig used a packed `EnumSet` (bitset); BTreeSet is O(log n)
-    // insert — fine for ≤~80 entries written once each at module-load time.
+    // PERF: BTreeSet is O(log n) insert — fine for ≤~80 entries written once
+    // each at module-load time.
     pub(crate) static BUILTIN_MODULES: bun_core::Mutex<std::collections::BTreeSet<&'static str>> =
         bun_core::Mutex::new(std::collections::BTreeSet::new());
-    // PORT NOTE: Zig used a plain mutable global; wrapped in a Mutex here
-    // because the set is not a single atomic word.
+
+    /// Record a builtin-module load.
+    pub fn insert_builtin_module(name: &'static str) {
+        BUILTIN_MODULES.lock().insert(name);
+    }
 
     macro_rules! define_features {
-        ( $( $(#[$doc:meta])* $idx:literal => ($ident:ident, $name:literal) ),* $(,)? ) => {
+        // Storage for one feature counter. Entries tagged `core = IDENT` alias
+        // the tier-0 `bun_core::Global::features::IDENT` static (the MOVE_DOWN
+        // set written by low-tier crates: dotenv/install/css/todo_panic!/...)
+        // so the crash-report/analytics readers below observe those writes —
+        // a fresh static here would be a split brain that stays forever 0.
+        // Entries with an `export_name` attribute must NOT be `core`-tagged:
+        // the exported symbol has to be the single canonical definition here.
+        (@storage $(#[$doc:meta])* $ident:ident) => {
+            $(#[$doc])*
+            #[allow(non_upper_case_globals)]
+            pub static $ident: AtomicUsize = AtomicUsize::new(0);
+        };
+        (@storage $(#[$doc:meta])* $ident:ident, $core:ident) => {
+            $(#[$doc])*
+            pub use ::bun_core::Global::features::$core as $ident;
+        };
+        ( $( $(#[$doc:meta])* $idx:literal => ($ident:ident, $name:literal $(, core = $core:ident)?) ),* $(,)? ) => {
             $(
-                $(#[$doc])*
-                #[allow(non_upper_case_globals)]
-                pub static $ident: AtomicUsize = AtomicUsize::new(0);
+                define_features! { @storage $(#[$doc])* $ident $(, $core)? }
             )*
 
-            // Zig: `validateFeatureName(decl.name)` per entry at comptime.
             $(
                 const _: () = assert!(
                     super::validate_feature_name($name.as_bytes()),
@@ -118,12 +130,10 @@ pub mod features {
                 );
             )*
 
-            /// Zig: `pub const packed_features_list = brk: { ... }`
             pub const PACKED_FEATURES_LIST: &[&str] = &[ $( $name ),* ];
 
-            // Zig: `pub const PackedFeatures = @Type(.{ .@"struct" = .{ .layout = .@"packed", .backing_integer = u64, ... } })`
             // All fields are `bool` → bitflags over u64.
-            // PORT NOTE: nightly `${index()}` (macro_metavar_expr) is unavailable
+            // Note: nightly `${index()}` (macro_metavar_expr) is unavailable
             // on stable, so each feature carries an explicit `$idx` literal at the
             // call site. The dense-index assertion below catches gaps/duplicates.
             ::bitflags::bitflags! {
@@ -148,7 +158,8 @@ pub mod features {
                 "feature indices must be dense 0..N with no gaps or duplicates"
             );
 
-            /// Zig: `pub fn packedFeatures() PackedFeatures`
+            /// Snapshot of all feature counters as a `PackedFeatures` bitset
+            /// (bit set iff the feature was used at least once).
             pub fn packed_features() -> PackedFeatures {
                 let mut bits = PackedFeatures::empty();
                 $(
@@ -214,73 +225,71 @@ pub mod features {
         };
     }
 
-    // PORT NOTE: Zig identifiers `@"Bun.stderr"` etc. cannot be Rust idents;
-    // renamed to `bun_stderr` etc. The string literal preserves the original
-    // name for output / `PACKED_FEATURES_LIST` (matches `@tagName` semantics).
+    // The string literal is the name used for output / `PACKED_FEATURES_LIST`.
     // The leading integer is the bit index in `PackedFeatures` (must be dense
     // 0..N — asserted at compile time inside the macro).
     define_features! {
-        0 => (bun_stderr, "Bun.stderr"),
-        1 => (bun_stdin, "Bun.stdin"),
-        2 => (bun_stdout, "Bun.stdout"),
-        3 => (web_socket, "WebSocket"),
-        4 => (abort_signal, "abort_signal"),
-        5 => (binlinks, "binlinks"),
-        6 => (bunfig, "bunfig"),
-        7 => (define, "define"),
-        8 => (dotenv, "dotenv"),
-        9 => (debugger, "debugger"),
-        10 => (external, "external"),
-        11 => (extracted_packages, "extracted_packages"),
-        12 => (fetch, "fetch"),
-        13 => (git_dependencies, "git_dependencies"),
-        14 => (html_rewriter, "html_rewriter"),
+        0 => (bun_stderr, "Bun.stderr", core = BUN_STDERR),
+        1 => (bun_stdin, "Bun.stdin", core = BUN_STDIN),
+        2 => (bun_stdout, "Bun.stdout", core = BUN_STDOUT),
+        3 => (web_socket, "WebSocket", core = WEBSOCKET),
+        4 => (abort_signal, "abort_signal", core = ABORT_SIGNAL),
+        5 => (binlinks, "binlinks", core = BINLINKS),
+        6 => (bunfig, "bunfig", core = BUNFIG),
+        7 => (define, "define", core = DEFINE),
+        8 => (dotenv, "dotenv", core = DOTENV),
+        9 => (debugger, "debugger", core = DEBUGGER),
+        10 => (external, "external", core = EXTERNAL),
+        11 => (extracted_packages, "extracted_packages", core = EXTRACTED_PACKAGES),
+        12 => (fetch, "fetch", core = FETCH),
+        13 => (git_dependencies, "git_dependencies", core = GIT_DEPENDENCIES),
+        14 => (html_rewriter, "html_rewriter", core = HTML_REWRITER),
         /// TCP server from `Bun.listen`
-        15 => (tcp_server, "tcp_server"),
+        15 => (tcp_server, "tcp_server", core = TCP_SERVER),
         /// TLS server from `Bun.listen`
-        16 => (tls_server, "tls_server"),
-        17 => (http_server, "http_server"),
-        18 => (https_server, "https_server"),
-        19 => (http_client_proxy, "http_client_proxy"),
+        16 => (tls_server, "tls_server", core = TLS_SERVER),
+        17 => (http_server, "http_server", core = HTTP_SERVER),
+        18 => (https_server, "https_server", core = HTTPS_SERVER),
+        19 => (http_client_proxy, "http_client_proxy", core = HTTP_CLIENT_PROXY),
         /// Set right before JSC::initialize is called
-        20 => (jsc, "jsc"),
+        20 => (jsc, "jsc", core = JSC),
         /// Set when bake.DevServer is initialized
-        21 => (dev_server, "dev_server"),
-        22 => (lifecycle_scripts, "lifecycle_scripts"),
-        23 => (loaders, "loaders"),
-        24 => (lockfile_migration_from_package_lock, "lockfile_migration_from_package_lock"),
-        25 => (text_lockfile, "text_lockfile"),
-        26 => (isolated_bun_install, "isolated_bun_install"),
-        27 => (hoisted_bun_install, "hoisted_bun_install"),
-        28 => (macros, "macros"),
-        29 => (no_avx2, "no_avx2"),
-        30 => (no_avx, "no_avx"),
-        31 => (shell, "shell"),
-        32 => (spawn, "spawn"),
-        33 => (standalone_executable, "standalone_executable"),
-        34 => (standalone_shell, "standalone_shell"),
+        21 => (dev_server, "dev_server", core = DEV_SERVER),
+        22 => (lifecycle_scripts, "lifecycle_scripts", core = LIFECYCLE_SCRIPTS),
+        23 => (loaders, "loaders", core = LOADERS),
+        24 => (lockfile_migration_from_package_lock, "lockfile_migration_from_package_lock", core = LOCKFILE_MIGRATION_FROM_PACKAGE_LOCK),
+        25 => (text_lockfile, "text_lockfile", core = TEXT_LOCKFILE),
+        26 => (isolated_bun_install, "isolated_bun_install", core = ISOLATED_BUN_INSTALL),
+        27 => (hoisted_bun_install, "hoisted_bun_install", core = HOISTED_BUN_INSTALL),
+        28 => (macros, "macros", core = MACROS),
+        29 => (no_avx2, "no_avx2", core = NO_AVX2),
+        30 => (no_avx, "no_avx", core = NO_AVX),
+        31 => (shell, "shell", core = SHELL),
+        32 => (spawn, "spawn", core = SPAWN),
+        33 => (standalone_executable, "standalone_executable", core = STANDALONE_EXECUTABLE),
+        34 => (standalone_shell, "standalone_shell", core = STANDALONE_SHELL),
         /// Set when invoking a todo panic
-        35 => (todo_panic, "todo_panic"),
-        36 => (transpiler_cache, "transpiler_cache"),
-        37 => (tsconfig, "tsconfig"),
-        38 => (tsconfig_paths, "tsconfig_paths"),
-        39 => (virtual_modules, "virtual_modules"),
-        40 => (workers_spawned, "workers_spawned"),
-        41 => (workers_terminated, "workers_terminated"),
+        35 => (todo_panic, "todo_panic", core = TODO_PANIC),
+        36 => (transpiler_cache, "transpiler_cache", core = TRANSPILER_CACHE),
+        37 => (tsconfig, "tsconfig", core = TSCONFIG),
+        38 => (tsconfig_paths, "tsconfig_paths", core = TSCONFIG_PATHS),
+        39 => (virtual_modules, "virtual_modules", core = VIRTUAL_MODULES),
+        40 => (workers_spawned, "workers_spawned", core = WORKERS_SPAWNED),
+        41 => (workers_terminated, "workers_terminated", core = WORKERS_TERMINATED),
         #[unsafe(export_name = "Bun__napi_module_register_count")]
         42 => (napi_module_register, "napi_module_register"),
         #[unsafe(export_name = "Bun__process_dlopen_count")]
         43 => (process_dlopen, "process_dlopen"),
         44 => (postgres_connections, "postgres_connections"),
         45 => (s3, "s3"),
-        46 => (valkey, "valkey"),
+        46 => (valkey, "valkey", core = VALKEY),
         47 => (csrf_verify, "csrf_verify"),
         48 => (csrf_generate, "csrf_generate"),
         49 => (unsupported_uv_function, "unsupported_uv_function"),
-        50 => (exited, "exited"),
-        51 => (yarn_migration, "yarn_migration"),
-        52 => (pnpm_migration, "pnpm_migration"),
-        53 => (yaml_parse, "yaml_parse"),
+        50 => (exited, "exited", core = EXITED),
+        51 => (yarn_migration, "yarn_migration", core = YARN_MIGRATION),
+        52 => (pnpm_migration, "pnpm_migration", core = PNPM_MIGRATION),
+        53 => (yaml_parse, "yaml_parse", core = YAML_PARSE),
         54 => (cpu_profile, "cpu_profile"),
         #[unsafe(export_name = "Bun__Feature__heap_snapshot")]
         55 => (heap_snapshot, "heap_snapshot"),
@@ -290,8 +299,7 @@ pub mod features {
         57 => (webview_webkit, "webview_webkit"),
     }
 
-    // Zig: `comptime { @export(&napi_module_register, .{ .name = "Bun__napi_module_register_count" }); ... }`
-    // PORT NOTE: C++ declares these as `extern "C" size_t Bun__...;` and
+    // C++ declares these as `extern "C" size_t Bun__...;` and
     // reads/increments the value directly, so the exported symbol must BE the
     // `usize` storage (not a pointer to it). `AtomicUsize` is `#[repr(C)]
     // usize`-layout-compatible. Handled via `#[unsafe(export_name = "...")]`
@@ -300,13 +308,11 @@ pub mod features {
     // attached to the single definition.
 }
 
-// Re-exports to mirror Zig's `Features.packedFeatures()` etc. at module scope.
 pub use features::{
     Formatter as FeaturesFormatter, PACKED_FEATURES_LIST, PackedFeatures, packed_features,
 };
 
-/// Zig: `pub fn validateFeatureName(name: []const u8) void` (comptime-only).
-/// In Rust this is enforced at the macro definition site; kept as a `const fn`
+/// Enforced at the macro definition site; kept as a `const fn`
 /// for documentation / debug assertions.
 pub(crate) const fn validate_feature_name(name: &[u8]) -> bool {
     if name.len() > 64 {
@@ -335,11 +341,6 @@ pub enum EventName {
     http_start,
     http_build,
 }
-
-// Zig: `var random: std.rand.DefaultPrng = undefined;`
-// PORT NOTE: declared but never read in analytics.zig — dead code. Dropped
-// rather than gated; if a future schema-encode path needs a PRNG, seed one
-// locally (PORTING.md §Concurrency: OnceLock<...>, no `static mut`).
 
 const PLATFORM_ARCH: analytics::Architecture = {
     #[cfg(target_arch = "aarch64")]
@@ -409,11 +410,8 @@ pub mod generate_header {
         // Linux / Android
         // ──────────────────────────────────────────────────────────────────
 
-        // Zig: `pub var linux_os_name: std.c.utsname = undefined;`
-        // PORT NOTE: Zig's `Environment.isLinux` is true on Android (it checks
-        // the kernel, not the libc target), so all Linux-gated items below are
-        // `any(linux, android)` — `for_linux()` itself branches on Android.
-        // The cached `utsname` itself now lives in T1 at
+        // All Linux-gated items below are `any(linux, android)` —
+        // `for_linux()` itself branches on Android. The cached `utsname` itself now lives in T1 at
         // `bun_core::ffi::cached_uname()` so `bun_sys` feature probes share the
         // same single `uname(2)` syscall.
 
@@ -512,18 +510,27 @@ pub mod generate_header {
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub fn kernel_version() -> semver::Version {
-            // Zig: @compileError("This function is only implemented on Linux")
             unreachable!("kernel_version() is only implemented on Linux");
         }
 
         #[unsafe(no_mangle)]
         pub(crate) extern "C" fn Bun__isEpollPwait2SupportedOnLinuxKernel() -> i32 {
-            #[cfg(not(any(target_os = "linux", target_os = "android")))]
+            // Android's per-app seccomp policy does not whitelist
+            // epoll_pwait2 (bionic SYSCALLS.TXT only lists epoll_pwait).
+            // https://github.com/oven-sh/bun/issues/32489
+            #[cfg(not(target_os = "linux"))]
             {
                 0
             }
-            #[cfg(any(target_os = "linux", target_os = "android"))]
+            #[cfg(target_os = "linux")]
             {
+                if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2
+                    .get()
+                    .unwrap_or(false)
+                {
+                    return 0;
+                }
+
                 // https://man.archlinux.org/man/epoll_pwait2.2.en#HISTORY
                 let min_epoll_pwait2 = semver::Version {
                     major: 5,
@@ -578,9 +585,6 @@ pub mod generate_header {
         // FreeBSD
         // ──────────────────────────────────────────────────────────────────
 
-        // Zig std's `std.c.utsname` has no FreeBSD branch; use translate-c's.
-        // PORT NOTE: Rust's `libc` crate does provide `utsname`/`uname` on
-        // FreeBSD, so the translate-c indirection is unnecessary here.
         #[cfg(target_os = "freebsd")]
         fn for_freebsd() -> analytics::Platform {
             let name = bun_core::ffi::cached_uname();
@@ -597,5 +601,3 @@ pub use generate_header as GenerateHeader;
 
 pub mod schema;
 pub use schema::{BufReader, Reader, SchemaInt};
-
-// ported from: src/analytics/analytics.zig

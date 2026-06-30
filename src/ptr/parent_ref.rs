@@ -224,7 +224,7 @@ impl<T: ?Sized> ParentRef<T> {
         }
     }
 
-    /// Wrap a raw `*mut T` with **write provenance** preserved (Zig `*T`).
+    /// Wrap a raw `*mut T` with **write provenance** preserved.
     ///
     /// This is the constructor for sites that will later call
     /// [`assume_mut`](Self::assume_mut): the pointer must originate from

@@ -4,13 +4,12 @@ use bun_core::ZigString;
 use super::DiffFormatter;
 use super::Expect;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub(crate) fn to_have_property(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // PORT NOTE: `defer this.postMatch(globalThis)` — guard owns `this` and calls post_match on drop.
+    // `defer this.postMatch(globalThis)` — guard owns `this` and calls post_match on drop.
     let this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
@@ -69,8 +68,7 @@ pub(crate) fn to_have_property(
     }
 
     // handle failure
-    // PORT NOTE: Zig shares one `*Formatter` across both `to_fmt` calls; in Rust each `to_fmt`
-    // takes `&mut Formatter`, so use a second formatter for the second value (matches toBe.rs /
+    // Each `to_fmt` takes `&mut Formatter`, so use a second formatter for the second value (matches toBe.rs /
     // toInclude.rs / toStartWith.rs).
     let mut formatter = super::make_formatter(global);
     let mut formatter2 = super::make_formatter(global);
@@ -140,5 +138,3 @@ pub(crate) fn to_have_property(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toHaveProperty.zig

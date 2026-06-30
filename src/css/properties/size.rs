@@ -25,9 +25,8 @@ pub enum BoxSizing {
     /// Include the padding and border (but not the margin) in the width and height.
     BorderBox,
 }
-// PORT NOTE: css::DefineEnumProperty(@This()) — provided eql/hash/parse/toCss/deepClone via
-// comptime reflection over @tagName. Hand-written here (only two variants) so the inherent
-// `parse`/`to_css` participate in `impl_parse_tocss_via_inherent!` without a derive-coherence clash.
+// Hand-written (only two variants) so the inherent `parse`/`to_css` participate in
+// `impl_parse_tocss_via_inherent!` without a derive-coherence clash.
 impl BoxSizing {
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<BoxSizing> {
         let location = input.current_source_location();
@@ -70,9 +69,8 @@ pub enum Size {
 }
 
 /// Case-insensitive keyword dispatch for `Size`/`MaxSize` parse bodies.
-/// PORT NOTE: Zig used `bun.ComptimeStringMap(..).getASCIIICaseInsensitive` —
-/// expanded as an `if`-chain over `eql_case_insensitive_ascii::<true>` (≤14 keys;
-/// per PORTING.md a phf table is overkill at this size).
+/// An `if`-chain over `eql_case_insensitive_ascii::<true>` (≤14 keys;
+/// a phf table is overkill at this size).
 macro_rules! size_ident_match {
     ($ident:expr, { $($lit:literal => $val:expr,)+ } else $err:expr) => {{
         let __ident: &[u8] = $ident;
@@ -153,7 +151,7 @@ impl Size {
     }
 }
 
-// PORT NOTE: split out of `impl Size` above — these don't depend on
+// Split out of `impl Size` above — these don't depend on
 // `parse`/`to_css` surface and are needed by `SizeHandler`.
 impl Size {
     pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
@@ -184,13 +182,11 @@ impl Size {
     }
 
     pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
-        // TODO(port): css.implementDeepClone — comptime field-walk; `Size` carries
-        // only `LengthPercentage`/`VendorPrefix` payloads, both `Clone`-via-derive.
+        // `Size` carries only `LengthPercentage`/`VendorPrefix` payloads, both `Clone`-via-derive.
         self.clone()
     }
 
     pub(crate) fn eql(lhs: &Self, rhs: &Self) -> bool {
-        // TODO(port): css.implementEql — comptime field-walk; #[derive(PartialEq)] above covers it.
         lhs == rhs
     }
 }
@@ -291,7 +287,7 @@ impl MaxSize {
     }
 }
 
-// PORT NOTE: split out of `impl MaxSize` above — these don't depend on
+// Split out of `impl MaxSize` above — these don't depend on
 // `parse`/`to_css` surface and are needed by `SizeHandler`.
 impl MaxSize {
     pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
@@ -322,8 +318,7 @@ impl MaxSize {
     }
 
     pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
-        // TODO(port): css.implementDeepClone — comptime field-walk; `MaxSize` carries
-        // only `LengthPercentage`/`VendorPrefix` payloads, both `Clone`-via-derive.
+        // `MaxSize` carries only `LengthPercentage`/`VendorPrefix` payloads, both `Clone`-via-derive.
         self.clone()
     }
 
@@ -375,7 +370,7 @@ impl AspectRatio {
     }
 
     pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
-        // PORT NOTE: css.implementDeepClone — `Ratio` is two `f32`s; #[derive(Clone)] is exact.
+        // `Ratio` is two `f32`s; #[derive(Clone)] is exact.
         *self
     }
 
@@ -410,8 +405,6 @@ bitflags::bitflags! {
 
 impl SizeProperty {
     pub(crate) fn try_from_property_id_tag(property_id: PropertyIdTag) -> Option<SizeProperty> {
-        // TODO(port): Zig used `inline for (std.meta.fields(@This()))` to compare each
-        // bitfield name against PropertyIdTag's @tagName. Expanded explicitly here.
         match property_id {
             PropertyIdTag::Width => Some(SizeProperty::WIDTH),
             PropertyIdTag::Height => Some(SizeProperty::HEIGHT),
@@ -449,17 +442,11 @@ pub struct SizeHandler {
     pub category: PropertyCategory,
 }
 
-// PORT NOTE: `context.arena` was dropped from PropertyHandlerContext; the
+// `context.arena` was dropped from PropertyHandlerContext; the
 // arena is recovered via `dest.bump()`.
 use css::compat::Feature;
 
-// ─── helper macros (Zig used `inline fn` + `comptime []const u8` field names + @field/@unionInit) ───
-//
-// TODO(port): the following four macros replace Zig's `propertyHelper`, `logicalUnparsedHelper`,
-// `flushPrefixHelper`, `flushPropertyHelper`, `flushLogicalHelper`. The Zig code passes field
-// names as comptime strings and uses @field/@unionInit/@tagName to splice them into struct/enum
-// accesses. Rust has no equivalent reflection — macro_rules! is the closest 1:1 mapping.
-// PERF(port): was comptime monomorphization.
+// ─── helper macros ───
 
 macro_rules! property_helper {
     ($this:expr, $field:ident, $ty:ty, $value:expr, $category:expr, $dest:expr, $context:expr) => {{
@@ -487,8 +474,7 @@ macro_rules! logical_unparsed_helper {
             $this.flushed_properties.insert(
                 SizeProperty::try_from_property_id_tag($unparsed.property_id.tag()).unwrap(),
             );
-            // PORT NOTE: Zig pushed `property.deepClone(arena)`; the matched
-            // payload is `Unparsed`, so reconstruct directly.
+            // The matched payload is `Unparsed`, so reconstruct directly.
             $dest.push(Property::Unparsed($unparsed.deep_clone(bump)));
         } else {
             $dest.push(Property::Unparsed(
@@ -506,7 +492,7 @@ macro_rules! flush_prefix_helper {
                 .targets
                 .prefixes(VendorPrefix::NONE, css::prefixes::Feature::$feature)
                 .difference(VendorPrefix::NONE);
-            // TODO(port): `inline for (css.VendorPrefix.FIELDS)` — iterate set bits.
+            // Iterate set bits.
             for prefix in prefixes.iter() {
                 $dest.push(Property::$prop_variant($size_ty::$size_variant(prefix)));
             }
@@ -966,5 +952,3 @@ impl SizeHandler {
         self.flushed_properties = SizeProperty::empty();
     }
 }
-
-// ported from: src/css/properties/size.zig

@@ -147,6 +147,91 @@ describe("TypeScript 'declare' statements discard scopes of dropped statements",
   });
 });
 
+describe("macro tagged templates visit their interpolations", () => {
+  // When a tagged template's tag resolves to a macro import, the macro dispatch
+  // replaces the whole expression (dead code, macros disabled, or the macro call
+  // failing) without visiting the template parts. Scopes recorded during the parse
+  // pass for arrows/functions inside the interpolations were then never consumed by
+  // the visit pass, panicking with "Scope mismatch while visiting" on the next scope.
+  const macroFile = `export function mac(...args: any[]) { return "from-macro"; }`;
+
+  test.concurrent("tagged template macro with arrow interpolation reports the macro error", async () => {
+    using dir = tempDir("macro-template-scope", {
+      "macro.ts": macroFile,
+      "index.ts": `
+import { mac } from './macro.ts' with { type: 'macro' };
+const r = mac\`a\${() => { let q = 1; }}b\`;
+function g() { { let y = 1; } }
+g();`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Must fail with the intended transpiler error, not a scope mismatch panic.
+    expect(stderr).not.toContain("Scope mismatch");
+    expect(stderr).toContain("template literal macro invocations are not supported");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test.concurrent("tagged template macro with arrow interpolation in dead code is erased", async () => {
+    using dir = tempDir("macro-template-scope-dead", {
+      "macro.ts": macroFile,
+      "index.ts": `
+import { mac } from './macro.ts' with { type: 'macro' };
+false && mac\`a\${() => { let q = 1; }}b\`;
+function g() { { let y = 2; console.log("ran", y); } }
+g();`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("Scope mismatch");
+    expect(stdout).toBe("ran 2\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("member-expression macro tag with function interpolation reports the macro error", async () => {
+    using dir = tempDir("macro-template-scope-ns", {
+      "macro.ts": macroFile,
+      "index.ts": `
+import * as macros from './macro.ts' with { type: 'macro' };
+macros.mac\`x\${function inner() { let z = 3; }}y\`;
+class C { m() { { let w = 4; } } }
+new C().m();`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("Scope mismatch");
+    expect(stderr).toContain("template literal macro invocations are not supported");
+    expect(exitCode).not.toBe(0);
+  });
+});
+
 describe("dropped TypeScript class members discard scopes", () => {
   // Decorators and computed keys are parsed before the parser knows whether the class
   // member they belong to will be kept. When the member is then dropped (an overload

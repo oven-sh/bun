@@ -17,12 +17,11 @@ use crate::server::web_socket_server_context::HandlerFlags;
 
 bun_output::declare_scope!(WebSocketServer, visible);
 
-// PORT NOTE: `'a` on a `.classes.ts` m_ctx payload is wrong — the JS wrapper
-// outlives any stack frame. LIFETIMES.tsv says BORROW_PARAM but the handler
-// lives in `ServerConfig.websocket` for the server's lifetime. Raw `*const` +
-// SAFETY notes is the runtime shape.
+// No `'a` on a `.classes.ts` m_ctx payload — the JS wrapper outlives any
+// stack frame. The handler lives in `ServerConfig.websocket` for the server's
+// lifetime, so a raw back-pointer + SAFETY notes is the runtime shape.
 //
-// R-2 (PORT_NOTES_PLAN): every uws/JS callback into this socket can re-enter
+// R-2: every uws/JS callback into this socket can re-enter
 // — `on_open` → `ws.cork(JS)` → `ws.close()` → `on_close` mutates `flags` /
 // `this_value` on the SAME `m_ctx`. A `&mut Self` receiver would alias under
 // Stacked Borrows. Receivers therefore take `&self`; per-field interior
@@ -33,14 +32,14 @@ pub struct ServerWebSocket {
     handler: bun_ptr::BackRef<WebSocketServerHandler>,
     this_value: JsCell<JsRef>,
     flags: Cell<Flags>,
-    // PORT NOTE (§Pointers): `?*bun.webcore.AbortSignal` is an opaque C++ type
+    // `AbortSignal` is an opaque C++ type
     // with intrusive WebCore ref-counting (ref/unref) — never `Arc`. The init
     // caller transfers a +1 ref; `finalize`/`on_close` unref it.
     signal: Cell<Option<NonNull<AbortSignal>>>,
 }
 
-// We pack the per-socket data into this struct below
-// Zig: packed struct(u64) { ssl:1, closed:1, opened:1, binary_type:4, packed_websocket_ptr:57 }
+// We pack the per-socket data into this struct below:
+// ssl:1, closed:1, opened:1, binary_type:4, packed_websocket_ptr:57
 #[repr(transparent)]
 #[derive(Copy, Clone, Default)]
 pub struct Flags(u64);
@@ -110,7 +109,7 @@ impl Flags {
             12 => BinaryType::BigInt64Array,
             13 => BinaryType::BigUint64Array,
             // 4-bit field; only `set_binary_type` writes it, so 14/15 indicate
-            // memory corruption — trap (matches Zig's safety-checked enum cast).
+            // memory corruption — trap.
             n => unreachable!("invalid BinaryType {n}"),
         }
     }
@@ -159,10 +158,9 @@ pub mod js {
 ///
 /// `len` is the **byte** length actually written — callers holding an
 /// `ArrayBuffer` view must pass `buffer.slice().len()`, not the typed-array
-/// element count. `suffix` is `"bytes"` or `"bytes string"` to preserve the
-/// Zig log shape (ServerWebSocket.zig ~729-1015).
+/// element count. `suffix` is `"bytes"` or `"bytes string"`.
 #[inline]
-fn send_status_to_js(
+pub(super) fn send_status_to_js(
     status: SendStatus,
     len: usize,
     op: &'static str,
@@ -218,16 +216,14 @@ impl ServerWebSocket {
     // ──────────────────────────────────────────────────────────────────────
     // Shared helpers for the publish*/send* family.
     //
-    // The Zig original (ServerWebSocket.zig publish/publishText/publishBinary/
-    // publish*WithoutTypeChecks) open-codes each of these blocks 5-6× with no
-    // shared helper; the Rust port was a 1:1 transliteration. These collapse
-    // the duplication while remaining byte-identical in observable behaviour —
-    // including the `args_len > 1` guard on `compress` even when compress is
-    // args[2] (Zig parity; do not "fix").
+    // These collapse duplicated per-method blocks while remaining
+    // byte-identical in observable behaviour — including the `args_len > 1`
+    // guard on `compress` even when compress is args[2] (long-standing
+    // user-visible behavior; do not "fix").
     //
     // A unified `publish_prologue` covering the full callframe header was
     // considered and rejected: publishText omits the empty-topic check and
-    // reuses "publish" in its min-args message (both Zig-spec), so a single
+    // reuses "publish" in its min-args message (both user-visible), so a single
     // prologue would either change user-visible errors or carry per-caller
     // bool flags — net more code than three small orthogonal helpers.
     // ──────────────────────────────────────────────────────────────────────
@@ -249,7 +245,7 @@ impl ServerWebSocket {
     }
 
     /// Shared `compress` argument validation for publish*/send*. Preserves the
-    /// Zig `args.len > 1` guard verbatim (even where compress is `args[2]`).
+    /// `args.len > 1` guard verbatim (even where compress is `args[2]`).
     #[inline]
     fn parse_compress_arg(
         global_this: &JSGlobalObject,
@@ -270,8 +266,7 @@ impl ServerWebSocket {
 
     /// Route a publish through either the per-socket uWS handle (when
     /// `!publish_to_self && !closed`) or the app-wide broadcast, then map the
-    /// bool result to the JS number contract: success → `len & 0x7FFF_FFFF`,
-    /// failure → `0`.
+    /// aggregated `SendStatus` to the JS number contract shared with `send()`.
     #[inline]
     fn do_publish(
         &self,
@@ -283,16 +278,12 @@ impl ServerWebSocket {
         opcode: Opcode,
         compress: bool,
     ) -> JSValue {
-        let result = if !publish_to_self && !self.is_closed() {
+        let status = if !publish_to_self && !self.is_closed() {
             self.websocket().publish(topic, buffer, opcode, compress)
         } else {
             AnyWebSocket::publish_with_options(ssl, app, topic, buffer, opcode, compress)
         };
-        JSValue::js_number(if result {
-            (buffer.len() as u32 & 0x7FFF_FFFF) as f64
-        } else {
-            0.0
-        })
+        send_status_to_js(status, buffer.len(), "publish", "bytes")
     }
 
     /// Shared body for `subscribe` / `unsubscribe` / `isSubscribed`: identical
@@ -392,7 +383,7 @@ impl ServerWebSocket {
 
         let handler = self.handler();
         let vm = handler.vm();
-        // PORT NOTE: reshaped for borrowck — handler is &'a, mutate via interior helper
+        // The handler is shared (&), so mutate via the interior-mutability helper.
         handler.active_connections_saturating_add(1);
         let global_object = handler.global_object();
         let on_open_handler = handler.on_open;
@@ -506,7 +497,7 @@ impl ServerWebSocket {
         if let Some(promise) = result.as_any_promise() {
             match promise.status() {
                 jsc::js_promise::Status::Rejected => {
-                    // Zig: `_ = promise.result(vm)` — value discarded; the side
+                    // Value discarded; the side
                     // effect (JSC__JSPromise__result) conditionally sets
                     // `isHandledFlag` so this doesn't surface as an
                     // unhandledRejection.
@@ -646,7 +637,7 @@ impl ServerWebSocket {
         }
         let signal = self.signal.take();
 
-        // PORT NOTE: reshaped for borrowck — Zig defer block; downgrade + signal
+        // Downgrade + signal
         // cleanup runs at fn exit. `this_value` is not mutated between here and
         // the deferred `downgrade()`, so hoisting these reads is sound.
         let was_not_empty = self.this_value.get().is_not_empty();
@@ -734,7 +725,7 @@ impl ServerWebSocket {
         Wrap::<ServerType, Self, SSL>::apply(opts)
     }
 
-    // PORT NOTE: no `#[bun_jsc::host_fn]` here — the constructor extern shim is
+    // No `#[bun_jsc::host_fn]` here — the constructor extern shim is
     // emitted by `generated_classes.rs`, which calls `<Self>::constructor`
     // directly.
     pub fn constructor(
@@ -1036,7 +1027,7 @@ impl ServerWebSocket {
         }
 
         let mut corker = Corker {
-            args: &[],
+            args: &[this_value],
             global_object: global_this,
             this_value,
             callback,
@@ -1235,7 +1226,6 @@ impl ServerWebSocket {
         self.send_ping(global_this, callframe, "pong", Opcode::Pong)
     }
 
-    // PERF(port): was comptime monomorphization (name + opcode) — profile if hot.
     #[inline]
     fn send_ping(
         &self,
@@ -1494,9 +1484,8 @@ impl ServerWebSocket {
         let mut text_buf = [0u8; 512];
 
         let address_bytes = self.websocket().get_remote_address(&mut buf);
-        // Zig: `std.net.Address.initIp{4,6}(.., 0)` → `bun.fmt.formatIp` (strips
-        // trailing `:port` and `[..]`). Mirror with `SocketAddr{V4,V6}` so
-        // `format_ip`'s strip logic sees the same `addr:port` / `[addr]:port`
+        // `format_ip` strips trailing `:port` and `[..]`. Use `SocketAddr{V4,V6}` so
+        // `format_ip`'s strip logic sees the expected `addr:port` / `[addr]:port`
         // shape — passing a bare `IpAddr` would corrupt IPv6 (no brackets/port,
         // so the rfind(':') strip eats the last hextet).
         let address: std::net::SocketAddr = match address_bytes.len() {
@@ -1519,9 +1508,7 @@ impl ServerWebSocket {
     }
 }
 
-// Zig: `WebSocketBehavior.Wrap(ServerType, @This(), ssl)` duck-types `@This()`
-// for `onOpen`/`onMessage`/etc. via `@hasDecl`. Rust needs an explicit trait
-// impl; delegate straight to the inherent methods above.
+// Delegate straight to the inherent methods above.
 impl WebSocketHandler for ServerWebSocket {
     // R-2: trait keeps `*mut Self` (FFI userdata round-trip needs raw write
     // provenance); the single `&*this` reborrow here is the ONE audited unsafe
@@ -1584,5 +1571,3 @@ impl<'a> Corker<'a> {
         };
     }
 }
-
-// ported from: src/runtime/server/ServerWebSocket.zig

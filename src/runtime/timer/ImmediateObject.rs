@@ -20,7 +20,7 @@ impl ImmediateObject {
         Self::init_with(global, id, Kind::SetImmediate, 0, callback, arguments)
     }
 
-    /// Spec ImmediateObject.zig `runImmediateTask` — thin forwarder to
+    /// Thin forwarder to
     /// `internals.run_immediate_task`. Reached from `bun_jsc::event_loop`
     /// via `__bun_run_immediate_task` (definer in [`crate::dispatch`]).
     ///
@@ -52,5 +52,3 @@ impl ImmediateObject {
         }
     }
 }
-
-// ported from: src/runtime/timer/ImmediateObject.zig

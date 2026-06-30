@@ -1,6 +1,7 @@
 src/bun.js/WebKit
 vendor
 test/snapshots
+test/bundler/transpiler/react-compiler-fixtures
 src/**/*.generated.rs
 test/js/deno
 test/node.js

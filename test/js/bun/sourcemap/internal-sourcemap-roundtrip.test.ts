@@ -176,6 +176,123 @@ function buildSyntheticVLQ(): string {
 
 // --- Tests ---
 
+describe("InternalSourceMap.fromVLQ validation", () => {
+  // fromVLQ accumulates relative VLQ deltas into absolute i32 values. A
+  // malformed/hostile mappings string can drive an accumulator negative or
+  // overflow it; both must be rejected as an invalid source map (matching
+  // Mapping.parse) instead of panicking in debug builds or carrying wrapped
+  // garbage into the serialized blob in release builds.
+  //
+  // "+/////D" encodes +2147483647 (i32::MAX); "D" encodes -1.
+  const INT32_MAX_VLQ = "+/////D";
+  const invalid: Record<string, string> = {
+    "generated column overflows i32": `${INT32_MAX_VLQ},${INT32_MAX_VLQ}`,
+    "negative absolute generated column": "D",
+    "negative absolute source index": "ADAA",
+    "negative absolute original line": "AADA",
+    "negative absolute original column": "AAAD",
+    "source index overflows i32": `A${INT32_MAX_VLQ}AA,A${INT32_MAX_VLQ}AA`,
+    "original line overflows i32": `AA${INT32_MAX_VLQ}A,AA${INT32_MAX_VLQ}A`,
+    "original column overflows i32": `AAA${INT32_MAX_VLQ},AAA${INT32_MAX_VLQ}`,
+  };
+
+  for (const [name, vlq] of Object.entries(invalid)) {
+    test.concurrent(name, async () => {
+      // Run fromVLQ in a child process: on a build without the validation,
+      // the debug-mode i32 overflow trap aborts the whole process, which must
+      // not take down the test runner (and must still be recorded as a
+      // failure here).
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { internalSourceMap } = require("bun:internal-for-testing");
+           try {
+             internalSourceMap.fromVLQ(${JSON.stringify(vlq)});
+             console.log("FROMVLQ_RETURNED_A_BLOB");
+           } catch (e) {
+             console.log("FROMVLQ_THREW: " + e.message);
+           }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      // Must reject the mappings as invalid — not return a blob built from
+      // wrapped/negative garbage, and not crash.
+      expect(stdout).toContain("FROMVLQ_THREW: InternalSourceMap.fromVLQ: invalid VLQ input");
+      expect(stdout).not.toContain("FROMVLQ_RETURNED_A_BLOB");
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  test("negative deltas with non-negative absolutes are still accepted", () => {
+    // gen col 5 → 2 (delta -3), original line 4 → 1 (delta -3): legal,
+    // out-of-order mappings exist in real maps.
+    const vlq = [
+      encodeVLQ(5) + encodeVLQ(0) + encodeVLQ(4) + encodeVLQ(7),
+      encodeVLQ(-3) + encodeVLQ(0) + encodeVLQ(-3) + encodeVLQ(-7),
+    ].join(",");
+    const blob = internalSourceMap.fromVLQ(vlq);
+    expect(blob.byteLength).toBeGreaterThan(32);
+    expect(decodeMappings(internalSourceMap.toVLQ(blob))).toEqual([
+      { genLine: 0, genCol: 5, srcIdx: 0, origLine: 4, origCol: 7 },
+      { genLine: 0, genCol: 2, srcIdx: 0, origLine: 1, origCol: 0 },
+    ]);
+  });
+
+  test("i32::MAX absolutes are accepted (boundary)", () => {
+    const vlq = `${INT32_MAX_VLQ}A${INT32_MAX_VLQ}${INT32_MAX_VLQ}`;
+    const blob = internalSourceMap.fromVLQ(vlq);
+    expect(decodeMappings(internalSourceMap.toVLQ(blob))).toEqual([
+      { genLine: 0, genCol: 2147483647, srcIdx: 0, origLine: 2147483647, origCol: 2147483647 },
+    ]);
+  });
+});
+
+describe("InternalSourceMap.toVLQ", () => {
+  test.concurrent("window state of i32::MIN must not crash the VLQ encoder", async () => {
+    // SyncEntry state is raw i32, so a blob whose first window starts at
+    // generated column i32::MIN makes appendVLQTo pass a delta of exactly
+    // i32::MIN to VLQ.encode. i32::MIN has no sign-magnitude representation;
+    // the encoder's magnitude negation overflowed on it (debug builds abort
+    // with "attempt to negate with overflow"). The crash handler reaches the
+    // same encoder edge with bitcast u32 address halves while reporting a
+    // crash. fromVLQ rejects negative absolutes, so craft the blob by hand.
+    // Run in a child process so the abort is recorded as a failure here
+    // instead of taking down the test runner.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { internalSourceMap } = require("bun:internal-for-testing");
+         // Blob layout (see src/sourcemap/InternalSourceMap.rs):
+         // [0..8] total_len u64, [8..16] mapping_count u64,
+         // [16..24] input_line_count u64, [24..28] sync_count u32,
+         // [28..32] stream_offset u32, [32..56] SyncEntry, [56..88] window
+         // header (count=1, no deltas), [88] stream tail pad.
+         const blob = new Uint8Array(89);
+         const dv = new DataView(blob.buffer);
+         dv.setBigUint64(0, 89n, true); // total_len
+         dv.setBigUint64(8, 1n, true); // mapping_count
+         dv.setUint32(24, 1, true); // sync_count
+         dv.setUint32(28, 56, true); // stream_offset
+         dv.setInt32(36, -2147483648, true); // SyncEntry.generated_column
+         blob[56] = 1; // window mapping count
+         console.log("TOVLQ: " + internalSourceMap.toVLQ(blob));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // i32::MIN wraps to the "-0" encoding ("B"); the other three fields are 0.
+    expect(stdout).toBe("TOVLQ: BAAA\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("InternalSourceMap round-trip", () => {
   test("synthetic: fromVLQ → toVLQ preserves all 4-field positions; names dropped, 1-field skipped", () => {
     const vlqIn = buildSyntheticVLQ();
@@ -290,4 +407,68 @@ console.log(go());
       });
     }
   });
+});
+
+// LineOffsetTable::generate builds the per-line column table directly from the
+// raw source bytes, so it must tolerate a truncated trailing multi-byte UTF-8
+// sequence: a lead byte that declares more bytes than the file has left.
+describe.concurrent("sourcemap of a source with a truncated trailing UTF-8 sequence", () => {
+  test.each([
+    ["lone 4-byte lead 0xF0", [0xf0]],
+    ["lone 3-byte lead 0xE2", [0xe2]],
+    ["lone 2-byte lead 0xC3", [0xc3]],
+    ["overlong 2-byte lead 0xC1", [0xc1]],
+    ["2 of 3 bytes 0xE0 0x81", [0xe0, 0x81]],
+    ["3 of 4 bytes 0xF0 0x9F 0x92", [0xf0, 0x9f, 0x92]],
+  ] as [string, number[]][])("%s", async (_name, tail) => {
+    using dir = tempDir("sourcemap-truncated-utf8", {
+      "in.js": Buffer.concat([Buffer.from("console.log(1);//"), Buffer.from(tail)]),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--sourcemap=external", "--outdir=out", "in.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ exitCode, stdout, stderr }).toEqual({
+      exitCode: 0,
+      stdout: expect.any(String),
+      stderr: expect.any(String),
+    });
+    // `console.log(1);` is identical in every variant and the truncated bytes
+    // live in a stripped comment, so the encoded mappings must be identical too.
+    const map = await Bun.file(path.join(String(dir), "out", "in.js.map")).json();
+    expect(map).toMatchObject({
+      sources: ["../in.js"],
+      mappings: ";AAAA,QAAQ,IAAI,CAAC;",
+    });
+  });
+});
+
+// `sources` entries in the emitted map are URLs: the path from the chunk
+// directory to each source must use forward slashes on every platform, never
+// the host path separator.
+test.concurrent("sourcemap sources use forward slashes on every platform", async () => {
+  using dir = tempDir("sourcemap-forward-slashes", {
+    "src/nested/in.js": `import { v } from "../dep.js";\nconsole.log(v);\n`,
+    "src/dep.js": `export const v = 1;\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--sourcemap=external", "--outdir=out", "src/nested/in.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stdout, stderr }).toEqual({
+    exitCode: 0,
+    stdout: expect.any(String),
+    stderr: expect.any(String),
+  });
+  // Two sources so both `sources` emission paths (first entry and the rest) are covered.
+  const map = await Bun.file(path.join(String(dir), "out", "in.js.map")).json();
+  expect(map.sources).toEqual(["../src/dep.js", "../src/nested/in.js"]);
 });

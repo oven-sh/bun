@@ -18,7 +18,6 @@ pub(crate) fn throw_err_invalid_arg_value(
     global_this: &JSGlobalObject,
     args: fmt::Arguments<'_>,
 ) -> JsError {
-    // Zig: `global.ERR(.INVALID_ARG_VALUE, fmt, args).throw()` — TypeError with `.code = "ERR_INVALID_ARG_VALUE"`.
     global_this
         .err(jsc::ErrorCode::INVALID_ARG_VALUE, args)
         .throw()
@@ -29,16 +28,12 @@ pub(crate) fn throw_err_invalid_arg_type_with_message(
     global_this: &JSGlobalObject,
     args: fmt::Arguments<'_>,
 ) -> JsError {
-    // Zig: `global.ERR(.INVALID_ARG_TYPE, fmt, args).throw()` — TypeError with `.code = "ERR_INVALID_ARG_TYPE"`.
     global_this
         .err(jsc::ErrorCode::INVALID_ARG_TYPE, args)
         .throw()
 }
 
-// PORT NOTE: Zig took `comptime name_fmt: string, name_args: anytype` and did
-// comptime string concatenation (`"The \"" ++ name_fmt ++ "\" ..."`) plus tuple
-// concatenation (`name_args ++ .{expected_type, actual_type}`). Rust cannot
-// concat a caller-supplied format string at compile time, so callers pass the
+// Callers pass the
 // already-formatted name as anything `Display`-able (e.g. `&str` or
 // `format_args!(...)`) and we embed it via `{}`.
 #[cold]
@@ -60,7 +55,6 @@ pub(crate) fn throw_err_invalid_arg_type(
 
 #[cold]
 pub(crate) fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>) -> JsError {
-    // Zig: `global.ERR(.OUT_OF_RANGE, fmt, args).throw()` — RangeError with `.code = "ERR_OUT_OF_RANGE"`.
     global_this.err(jsc::ErrorCode::OUT_OF_RANGE, args).throw()
 }
 
@@ -100,10 +94,8 @@ fn throw_range_error_min_max<V: bun_core::fmt::OutOfRangeValue>(
     )
 }
 
-// PORT NOTE: Zig had `comptime min_value: ?i64, comptime max_value: ?i64` with a
-// `comptime { @compileError }` bounds check. `Option<i64>` is not a valid const-
-// generic type on stable, so demoted to runtime params + debug_assert.
-// PERF(port): was comptime monomorphization.
+// `Option<i64>` is not a valid const-generic type on stable, so the bounds
+// are runtime params + debug_assert.
 pub(crate) fn validate_integer(
     global_this: &JSGlobalObject,
     value: JSValue,
@@ -243,7 +235,6 @@ pub(crate) fn validate_uint32(
             ),
         ));
     }
-    // Zig: @truncate(@as(u63, @intCast(num))) — bounds check above guarantees 0..=u32::MAX.
     Ok(num as u32)
 }
 
@@ -359,7 +350,6 @@ impl ValidateObjectOptions {
     }
 }
 
-// PERF(port): `options` was `comptime` in Zig (monomorphized per call site).
 pub(crate) fn validate_object(
     global_this: &JSGlobalObject,
     value: JSValue,
@@ -432,7 +422,6 @@ pub(crate) fn validate_array(
         ));
     }
     if let Some(min_length) = min_length {
-        // PORT NOTE: Zig compared `usize < ?i32` (peer-type widened); cast to i64 to match.
         if (value.get_length(global_this)? as i64) < i64::from(min_length) {
             return Err(throw_err_invalid_arg_value(
                 global_this,
@@ -498,14 +487,13 @@ pub(crate) fn validate_function(
     Ok(value)
 }
 
-/// Zig used `@typeInfo(T).@"enum".fields` to iterate variants and match by
-/// `@tagName`. Rust has no field reflection; enums opt in via this trait.
+/// Rust has no field reflection; enums opt in via this trait.
 /// Implementors should typically `#[derive(strum::EnumString, strum::VariantNames)]`
 /// and provide `VALUES_INFO` as the `|`-joined variant names.
 pub(crate) trait StringEnum: Sized {
-    /// `|`-joined list of variant names (matches Zig's comptime-built `values_info`).
+    /// `|`-joined list of variant names.
     const VALUES_INFO: &'static str;
-    /// Match `s` against variant names exactly (Zig: `str.eqlComptime(field.name)`).
+    /// Match `s` against variant names exactly.
     fn from_bun_string(s: &bun_core::String) -> Option<Self>;
 }
 
@@ -514,7 +502,7 @@ pub(crate) fn validate_string_enum<T: StringEnum>(
     value: JSValue,
     name: impl fmt::Display,
 ) -> JsResult<T> {
-    // Zig: `defer str.deref()`. `bun_core::String` is `Copy` with no `Drop`;
+    // `bun_core::String` is `Copy` with no `Drop`;
     // `OwnedString` is the RAII guard that releases the +1 ref on scope exit.
     let str = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
     if let Some(v) = T::from_bun_string(&str) {
@@ -526,5 +514,3 @@ pub(crate) fn validate_string_enum<T: StringEnum>(
         format_args!("{} must be one of: {}", name, T::VALUES_INFO),
     ))
 }
-
-// ported from: src/runtime/node/util/validators.zig

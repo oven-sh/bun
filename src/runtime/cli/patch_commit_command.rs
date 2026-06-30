@@ -10,5 +10,3 @@ impl PatchCommitCommand {
         Ok(())
     }
 }
-
-// ported from: src/cli/patch_commit_command.zig

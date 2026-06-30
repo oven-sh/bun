@@ -1,12 +1,13 @@
 services:
   # PostgreSQL Services
   postgres_plain:
-    image: postgres:15
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres-plain
+    image: bun-postgres-plain:local
     environment:
       POSTGRES_HOST_AUTH_METHOD: trust
       POSTGRES_USER: postgres
-    volumes:
-      - ./init-scripts/postgres:/docker-entrypoint-initdb.d:ro
     ports:
       - target: 5432
         published: 0
@@ -49,13 +50,13 @@ services:
       start_interval: 1s
 
   postgres_auth:
-    image: postgres:15
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres-auth
+    image: bun-postgres-auth:local
     environment:
       POSTGRES_HOST_AUTH_METHOD: trust
       POSTGRES_USER: postgres
-    volumes:
-      - ./init-scripts/postgres-auth:/docker-entrypoint-initdb.d:ro
-      - ./config/pg_hba_auth.conf:/etc/postgresql/pg_hba.conf:ro
     ports:
       - target: 5432
         published: 0
@@ -205,9 +206,10 @@ services:
   # because it validates the Host header against its configured listening port.
   # Dynamic port mapping causes "port X does not match server listening port 9002" errors.
   autobahn:
-    image: crossbario/autobahn-testsuite
-    volumes:
-      - ./config/fuzzingserver.json:/config/fuzzingserver.json:ro
+    build:
+      context: .
+      dockerfile: Dockerfile.autobahn
+    image: bun-autobahn:local
     command: wstest -m fuzzingserver -s /config/fuzzingserver.json
     ports:
       - target: 9002
@@ -226,9 +228,10 @@ services:
 
   # Squid proxy for WebSocket proxy testing
   squid:
-    image: ubuntu/squid:5.2-22.04_beta
-    volumes:
-      - ./config/squid.conf:/etc/squid/squid.conf:ro
+    build:
+      context: .
+      dockerfile: Dockerfile.squid
+    image: bun-squid:local
     ports:
       - target: 3128
         published: 0

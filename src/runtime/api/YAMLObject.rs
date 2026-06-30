@@ -75,8 +75,7 @@ pub(crate) struct Stringifier {
 pub(crate) enum Space {
     Minified,
     Number(u32),
-    /// +1 WTF ref owned for the lifetime of the `Stringifier` (Zig:
-    /// `Space.deinit() → str.deref()`).
+    /// +1 WTF ref owned for the lifetime of the `Stringifier`.
     Str(OwnedString),
 }
 
@@ -114,10 +113,9 @@ pub(crate) struct AnchorAlias {
 
 impl Default for AnchorAlias {
     fn default() -> Self {
-        // PORT NOTE: `HashMap::get_or_put` requires `V: Default` to fill the
-        // freshly-inserted slot before the caller overwrites `*value_ptr`. Zig
-        // left it `undefined`; this is the closest legal Rust equivalent and is
-        // immediately overwritten by the caller (see `find_anchors_and_aliases`).
+        // Exists only because `HashMap::get_or_put` requires `V: Default` to
+        // fill the freshly-inserted slot; the value is immediately overwritten
+        // by the caller (see `find_anchors_and_aliases`).
         AnchorAlias {
             anchored: false,
             used: false,
@@ -240,7 +238,6 @@ impl Stringifier {
             return Ok(());
         }
 
-        // Zig: `bun.assertWithLocation(cond, @src())` gated on `bun.Environment.ci_assert`.
         debug_assert!(unwrapped.is_object());
 
         let object_entry = self.known_collections.get_or_put(unwrapped)?;
@@ -380,7 +377,6 @@ impl Stringifier {
             return Ok(());
         }
 
-        // Zig: `bun.assertWithLocation(cond, @src())` gated on `bun.Environment.ci_assert`.
         debug_assert!(unwrapped.is_object());
 
         let has_anchor: Option<&mut AnchorAlias> = 'has_anchor: {
@@ -424,7 +420,8 @@ impl Stringifier {
                 return Ok(());
             }
 
-            // PORT NOTE: reshaped for borrowck — set anchored before newline()
+            // `anchored` is set before `newline()` (the order is irrelevant to
+            // output; doing it here releases the `anchor` borrow first).
             anchor.anchored = true;
             match self.space {
                 Space::Minified => {
@@ -644,16 +641,16 @@ impl Stringifier {
                 0x7f => self.builder.append_latin1(b"\\x7f"), // delete
                 0x85 => self.builder.append_latin1(b"\\N"),  // next line
                 0xa0 => self.builder.append_latin1(b"\\_"),  // non-breaking space
-                0xa8 => self.builder.append_latin1(b"\\L"),  // line separator
-                0xa9 => self.builder.append_latin1(b"\\P"),  // paragraph separator
+                0x2028 => self.builder.append_latin1(b"\\L"), // line separator
+                0x2029 => self.builder.append_latin1(b"\\P"), // paragraph separator
 
                 0x20..=0x21
                 | 0x23..=0x5b
                 | 0x5d..=0x7e
                 | 0x80..=0x84
                 | 0x86..=0x9f
-                | 0xa1..=0xa7
-                | 0xaa..=u16::MAX => self.builder.append_uchar(c),
+                | 0xa1..=0x2027
+                | 0x202a..=u16::MAX => self.builder.append_uchar(c),
             }
         }
 
@@ -886,8 +883,8 @@ fn string_needs_quotes(str: &BunString) -> bool {
             | 0x7f
             | 0x85
             | 0xa0
-            | 0xa8
-            | 0xa9 => return true,
+            | 0x2028
+            | 0x2029 => return true,
 
             _ => {
                 i += 1;
@@ -1159,7 +1156,7 @@ impl<'a> ParserCtx<'a> {
         match expr.data {
             ExprData::ENull(_) => Ok(JSValue::NULL),
             ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
-            ExprData::ENumber(number) => Ok(JSValue::js_number(number.value)),
+            ExprData::ENumber(number) => Ok(JSValue::js_number(number.value())),
             ExprData::EString(str) => Ok(bun_js_parser_jsc::value_string_to_js(
                 str.get(),
                 self.global,
@@ -1218,5 +1215,3 @@ impl<'a> ParserCtx<'a> {
         }
     }
 }
-
-// ported from: src/runtime/api/YAMLObject.zig

@@ -80,7 +80,8 @@ pub fn create_bun_socket_error_to_js(
 pub use bun_jsc::system_error::verify_error_to_js;
 
 // ── AnyWebSocket.getTopicsAsJSArray ────────────────────────────────────────
-// TODO(port): move to bun_uws_sys
+// Declared inline; migrate into `bun_uws_sys` with the rest of the
+// WebSocket FFI surface.
 unsafe extern "C" {
     // Opaque-handle (`RawWebSocket` is an `opaque_ffi!` ZST — `&mut` carries no
     // `noalias`, dereferences zero bytes) + live `&JSGlobalObject`
@@ -125,12 +126,9 @@ pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
     // dereferenced to `&mut` at each point of use. The JS calls below
     // (`from_js_with_encoding_value_allow_request_response`, `throw_*`) can re-enter
     // `JSNodeHTTPServerSocket.write` on the same socket, which would alias a long-lived
-    // `&mut *socket` / `&mut *buffer` under Stacked Borrows. The Zig spec uses raw
-    // pointers (`*uws.us_socket_t` / `*us_socket_stream_buffer_t`) with no uniqueness
-    // assertion, so we mirror that here.
+    // `&mut *socket` / `&mut *buffer` under Stacked Borrows, so raw pointers with
+    // no uniqueness assertion are used throughout.
 
-    // PERF(port): was stack-fallback (std.heap.stackFallback(16 * 1024)) — profile if hot.
-    //
     // Convert `data`/`encoding` BEFORE materializing the stream buffer into an owning
     // `Vec<u8>`: the conversion can run arbitrary JS (toString/Symbol.toPrimitive,
     // Request/Response body coercion) which can re-enter this function on the same
@@ -176,8 +174,8 @@ pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
     let mut stream_buffer = unsafe { &mut *buffer }.to_stream_buffer();
     let mut total_written: usize = 0;
 
-    // PORT NOTE: Zig `defer { buffer.update(stream_buffer); buffer.wrote(total_written); }`
-    // reshaped as a labeled block + post-block cleanup so the side effects run on every
+    // Labeled block + post-block cleanup so the `buffer.update` / `buffer.wrote`
+    // side effects run on every
     // exit path without a scopeguard borrow conflict.
     let result: JSValue = 'body: {
         let data_slice = node_buffer.slice();
@@ -222,5 +220,3 @@ pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
     }
     result
 }
-
-// ported from: src/runtime/socket/uws_jsc.zig

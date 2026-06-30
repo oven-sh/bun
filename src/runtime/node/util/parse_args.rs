@@ -992,7 +992,6 @@ fn parse_args_impl(
 
     // Phase 0.C: Parse the options definitions
 
-    // PERF(port): was stack-fallback (std.heap.stackFallback(2048, ...)) — profile if hot.
     let mut option_defs: Vec<OptionDefinition> = Vec::new();
 
     if !config_options.is_undefined_or_null() {
@@ -1071,5 +1070,3 @@ fn parse_args_impl(
     result.put(global, ZigString::static_("positionals"), state.positionals);
     Ok(result)
 }
-
-// ported from: src/runtime/node/util/parse_args.zig

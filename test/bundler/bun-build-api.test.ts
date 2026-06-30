@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
 import path, { join } from "path";
+import { SourceMapConsumer } from "source-map";
 import { buildNoThrow } from "./buildNoThrow";
 
 describe("Bun.build", () => {
@@ -909,6 +910,46 @@ describe.concurrent("sourcemap boolean values", () => {
   });
 });
 
+describe.concurrent("sourcemap positions", () => {
+  // Source-map columns count UTF-16 code units. Tokens after the first
+  // non-ASCII character on a line (Latin-1, astral, CJK) must still map to
+  // their exact original column.
+  test("original columns after non-ASCII characters on the same line", async () => {
+    const source = [
+      `export function a1() { throw new Error("A"); } export const za = "e";`,
+      `export const zb = "é"; export function b1() { throw new Error("B"); }`,
+      `export const zc = "🎉"; export function c1() { throw new Error("C"); }`,
+      `export const zd = "汉字 wörld"; export function d1() { throw new Error("D"); }`,
+      ``,
+    ].join("\n");
+    const dir = tempDirWithFiles("build-sourcemap-unicode-columns", { "in.ts": source });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "in.ts")],
+      outdir: join(dir, "out"),
+      sourcemap: "external",
+    });
+    expect(build.success).toBe(true);
+
+    const generated = await build.outputs.find(o => o.kind === "entry-point")!.text();
+    const map = await build.outputs.find(o => o.kind === "sourcemap")!.json();
+
+    // 1-based line, 0-based UTF-16 column: the convention `source-map` uses on
+    // both sides of originalPositionFor.
+    const lineColumn = (text: string, index: number) => {
+      const before = text.slice(0, index);
+      return { line: before.split("\n").length, column: index - (before.lastIndexOf("\n") + 1) };
+    };
+
+    await SourceMapConsumer.with(map, null, consumer => {
+      for (const token of ['new Error("A")', 'new Error("B")', 'new Error("C")', 'new Error("D")']) {
+        const { line, column } = consumer.originalPositionFor(lineColumn(generated, generated.indexOf(token)));
+        expect({ token, line, column }).toEqual({ token, ...lineColumn(source, source.indexOf(token)) });
+      }
+    });
+  });
+});
+
 const originalCwd = process.cwd() + "";
 
 describe("tsconfig option", () => {
@@ -1329,3 +1370,65 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
   expect(growth).toBeLessThan(48 * 1024 * 1024);
   expect(exitCode).toBe(0);
 }, 120_000);
+
+// Regression: repeated in-process `Bun.build()` calls panicked with
+// `index out of bounds: the len is 4095 but the index is 4095` (SIGTRAP) after
+// a couple thousand builds. `Path.dupeAlloc` interns every module path into the
+// process-lifetime `FilenameStore`. The Rust port had dropped two things the
+// Zig original does: (1) the `isSliceInBuffer` short-circuit that returns an
+// already-interned path unchanged, and (2) routing the disjoint `text`/`pretty`
+// case (a freshly-relativized display path, recomputed every build) into the
+// per-build arena instead of the store. Without them, each build re-appended
+// every path, and once the store's overflow blocks filled
+// (`OVERFLOW_GROUP_MAX` = 4095 blocks), the next append indexed one past the
+// fixed-capacity pointer array and panicked.
+//
+// Many modules per build reaches the cap in far fewer builds: with 500 modules
+// the broken binary panics roughly a third of the way through this loop, while
+// the fixed binary keeps the store bounded and exits cleanly after all 400.
+// (MODULES stays well under the ~550 where the unrelated recursive tree-shaker
+// overflows its thread stack.) Not gated to debug/ASAN — the panic reproduces
+// on release builds too.
+//
+// An explicit timeout is required (not optional): this runs hundreds of real
+// bundles, far past bun:test's 5s default. The sibling leak tests above do the
+// same. 180s matches the CI runner's own per-test ceiling.
+test("Bun.build can be called thousands of times in one process without crashing", async () => {
+  const MODULES = 500;
+  const BUILDS = 400;
+  const files: Record<string, string> = {};
+  for (let i = 0; i < MODULES; i++) {
+    files[`m${i}.js`] =
+      `import { f${(i + 1) % MODULES} } from "./m${(i + 1) % MODULES}.js";\n` +
+      `export const v${i} = ${i};\n` +
+      `export function f${i}() { return v${i}; }\n`;
+  }
+  files["entry.js"] = Array.from(
+    { length: MODULES },
+    (_, i) => `import { f${i} } from "./m${i}.js"; console.log(f${i}());`,
+  ).join("\n");
+  files["run.ts"] = `
+    const entry = process.argv[2];
+    const BUILDS = ${BUILDS};
+    for (let i = 1; i <= BUILDS; i++) {
+      const res = await Bun.build({ entrypoints: [entry], minify: true, sourcemap: "external" });
+      if (!res.success) throw new AggregateError(res.logs, "build failed");
+      for (const o of res.outputs) await o.arrayBuffer();
+    }
+    console.log("OK " + BUILDS);
+  `;
+  const dir = tempDirWithFiles("bun-build-filename-store-overflow", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(dir, "run.ts"), join(dir, "entry.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // A crash surfaces as a non-zero (signal) exit and a panic on stderr; assert
+  // the run completed cleanly instead.
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK 400");
+  expect(exitCode).toBe(0);
+}, 180_000);

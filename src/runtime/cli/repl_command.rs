@@ -33,8 +33,6 @@ pub(crate) struct ReplCommand;
 impl ReplCommand {
     #[cold]
     pub(crate) fn exec(ctx: Command::Context<'_>) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-
         // Initialize the REPL
         let mut repl = Repl::init();
         // `defer repl.deinit()` → handled by Drop
@@ -47,7 +45,6 @@ impl ReplCommand {
         ctx: Command::Context<'_>,
         repl: &mut Repl<'r>,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         // Load bunfig if not already loaded
         if !ctx.debug.loaded_bunfig {
             Arguments::load_config_path(
@@ -62,25 +59,22 @@ impl ReplCommand {
         jsc::initialize(true); // true for eval mode
 
         bun_ast::initialize_store();
-        // TODO(port): arena is threaded into VirtualMachine (vm.arena / vm.allocator). Non-AST
-        // crate would normally drop MimallocArena, but VM init protocol requires it. Note
-        // `bun_alloc::Arena` is bumpalo-backed and NOT semantically `bun.allocators.MimallocArena`
-        // (mi_heap wrapper) — TODO(refactor): either have bun_jsc::VirtualMachine own its arena
-        // internally (drop the param) or expose a distinct `bun_alloc::MimallocArena` type.
+        // The arena is threaded into VirtualMachine (vm.arena). `bun_alloc::Arena`
+        // is `MimallocArena` (a per-heap mimalloc wrapper).
         let arena = Arena::new();
 
-        // Validate DNS result order (InitOptions doesn't carry it yet — see TODO below).
-        let _dns_order = DnsOrder::from_string(&ctx.runtime_options.dns_result_order)
+        // Validate DNS result order before VM init; wired onto the VM
+        // post-init below, like run_command.rs.
+        let dns_order = DnsOrder::from_string(&ctx.runtime_options.dns_result_order)
             .unwrap_or_else(|| {
-                Output::pretty_errorln("<r><red>error<r><d>:<r> Invalid DNS result order.");
+                bun_core::pretty_errorln!("<r><red>error<r><d>:<r> Invalid DNS result order.");
                 Global::exit(1);
             });
 
-        // Initialize the VM
-        // TODO(port): `jsc::VirtualMachineInitOptions` still lacks `store_fd` /
-        // `eval` / `dns_result_order` (wired post-init below where applicable).
+        // Initialize the VM. `InitOptions` has no allocator field (the VM does
+        // not take a caller-provided allocator in the Rust port; `vm.arena` is
+        // set below).
         let vm: *mut VirtualMachine = VirtualMachine::init(jsc::VirtualMachineInitOptions {
-            // TODO(port): allocator field — VM owns arena allocator; see note above
             transform_options: core::mem::take(&mut ctx.args),
             debugger: core::mem::take(&mut ctx.runtime_options.debugger),
             log: core::ptr::NonNull::new(ctx.log),
@@ -96,13 +90,15 @@ impl ReplCommand {
         unsafe {
             (*vm).preload = core::mem::take(&mut ctx.preloads);
             (*vm).argv = core::mem::take(&mut ctx.passthrough);
+            // `vm.dns_result_order` is a `u8` (see VirtualMachine.rs); set
+            // post-init like run_command.rs since InitOptions doesn't carry it.
+            (*vm).dns_result_order = dns_order as u8;
         }
-        // TODO(port): vm.allocator = vm.arena.arena(); — allocator threading dropped in Rust
-        // (vm.arena assignment moved below ReplRunner construction to avoid move-after-borrow)
+        // There is no per-VM allocator handle; the `vm.arena` assignment itself happens below
+        // ReplRunner construction to avoid a move-after-borrow.
 
         // Configure bundler options
-        // Spec: `b.options.install = ctx.install` (raw `?*const Api.BunInstall`
-        // copy). `BundleOptions.install` is `Option<NonNull<_>>` so no
+        // `BundleOptions.install` is `Option<NonNull<_>>` so no
         // lifetime-extension cast is needed.
         let install_ptr = ctx.install.as_deref().map(core::ptr::NonNull::from);
         b.options.install = install_ptr;
@@ -118,8 +114,9 @@ impl ReplCommand {
             .offline_mode_setting
             .unwrap_or(OfflineMode::Online)
             == OfflineMode::Latest;
-        // TODO(port): blocked_on: bun_resolver::options::BundleOptions::prefer_latest_install —
-        // resolver's forward-decl stub lacks this field; assign directly to b.options below.
+        // The resolver's `BundleOptions` stub has no `prefer_latest_install` field and the
+        // resolver never reads it; only the bundler-side mirror carries it (matches
+        // run_command.rs / production.rs).
         b.options.global_cache = b.resolver.opts.global_cache;
         b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
         b.options.prefer_latest_install = prefer_latest;
@@ -151,9 +148,9 @@ impl ReplCommand {
             repl,
             vm,
             arena,
-            // PORT NOTE: ctx is the process-global ContextData; extend the
-            // borrow past the local reborrow lifetime via raw ptr (the runner
-            // never outlives ctx — global_exit() is `!`).
+            // ctx is the process-global ContextData; extend the borrow past the
+            // local reborrow lifetime via raw ptr (the runner never outlives
+            // ctx — global_exit() is `!`).
             eval_script: {
                 let ptr: *const [u8] = &raw const *ctx.runtime_options.eval.script;
                 // SAFETY: ctx.runtime_options.eval.script lives in the process-global
@@ -163,18 +160,16 @@ impl ReplCommand {
             },
             eval_and_print: ctx.runtime_options.eval.eval_and_print,
         };
-        // TODO(port): @constCast(&arena) — vm.arena stores a *mut Arena pointing at runner.arena;
-        // lifetime is the holdAPILock scope (globalExit() never returns so the frame never unwinds).
-        // Assigned AFTER moving `arena` into `runner` — assigning from the pre-move local would
-        // dangle. Model as raw ptr until VM arena ownership is decided.
+        // vm.arena stores a *mut Arena pointing at runner.arena;
+        // lifetime is the holdAPILock scope (globalExit() never returns so the frame never
+        // unwinds). Assigned AFTER moving `arena` into `runner` — assigning from the pre-move
+        // local would dangle.
         // SAFETY: vm is valid for process lifetime (see above); runner.arena is pinned on this
         // stack frame for the holdAPILock scope and global_exit() (`!`) prevents unwind past it.
         unsafe { (*vm).arena = NonNull::new(&raw mut runner.arena) };
 
-        // PORT NOTE: jsc.OpaqueWrap(ReplRunner, ReplRunner.start) — comptime fn-ptr wrapper that
-        // produces an `extern "C" fn(*mut c_void)` thunk. `bun_jsc::opaque_wrap` requires a
-        // type implementing `FnTyped<Ctx>`; rather than depend on that upstream trait, write
-        // the trivial thunk locally.
+        // `bun_jsc::opaque_wrap` requires a type implementing `FnTyped<Ctx>`;
+        // rather than depend on that upstream trait, write the trivial thunk locally.
         extern "C" fn repl_runner_thunk(ctx: *mut c_void) {
             // SAFETY: caller passes `&mut ReplRunner` cast to *mut c_void.
             let runner = unsafe { bun_ptr::callback_ctx::<ReplRunner<'_, '_>>(ctx) };
@@ -207,7 +202,7 @@ impl ReplCommand {
 }
 
 /// Runs the REPL within the VM's API lock
-// PORT NOTE: split lifetimes — `'a` is the stack borrow of the runner/repl,
+// Split lifetimes — `'a` is the stack borrow of the runner/repl,
 // `'r` is the (effectively process-lifetime) VM/global references stored in
 // `Repl<'r>`. Tying them as `&'a mut Repl<'a>` makes the borrow invariant and
 // outlive the local, tripping the borrow checker against `Drop for Repl`.
@@ -252,8 +247,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         } else {
             // Interactive: run the REPL loop
             if let Err(err) = this.repl.run_with_vm(Some(VirtualMachine::get())) {
-                // TODO(port): Output.prettyErrorln color-tag formatting macro
-                Output::pretty_errorln(format_args!("<r><red>REPL error: {}<r>", err.name()));
+                bun_core::pretty_errorln!("<r><red>REPL error: {}<r>", err.name());
             }
         }
 
@@ -287,7 +281,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         if let Some(tz) = unsafe { (*vm.transpiler.env).get(b"TZ") } {
             if !tz.is_empty() {
                 // SAFETY: vm.global is valid; ZigString borrows `tz` for the FFI call duration.
-                // PORT NOTE: `JSGlobalObject::set_time_zone` isn't exposed on the Rust
+                // `JSGlobalObject::set_time_zone` isn't exposed on the Rust
                 // wrapper yet — call the underlying C++ export directly.
                 let _ = unsafe { JSGlobalObject__setTimeZone(vm.global, &ZigString::init(tz)) };
             }
@@ -299,7 +293,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
     }
 }
 
-// TODO(port): move to bun_jsc_sys (or wherever bun.cpp externs land)
+// Local extern declarations for C++ exports the bun_jsc wrappers don't expose yet.
 unsafe extern "C" {
     fn Bun__ExposeNodeModuleGlobals(global: *const JSGlobalObject);
     // Local shim for `JSGlobalObject::setTimeZone` (ZigGlobalObject.cpp) until
@@ -312,5 +306,3 @@ unsafe extern "C" {
 
 use bun_bundler::options::EnvBehavior;
 use bun_options_types::offline_mode::OfflineMode;
-
-// ported from: src/cli/repl_command.zig

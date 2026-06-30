@@ -15,10 +15,8 @@ pub(crate) fn create_postgres_error(
         b"code",
         bun_string_jsc::create_utf8_for_js(global, options.code)?,
     );
-    // PORT NOTE: Zig used `inline for (std.meta.fields(PostgresErrorOptions))` + `@typeInfo`
-    // to reflect over every optional field and `put` it by name when `Some`. Rust has no
-    // field reflection; expand by hand. Property names must match the Zig struct field
-    // names verbatim (camelCase: `internalPosition`, `internalQuery`, `dataType`) since
+    // Each optional field is `put` by name when `Some`. Property names must
+    // stay camelCase (`internalPosition`, `internalQuery`, `dataType`) since
     // the JS consumer reads `options.internalPosition` etc.
     let optional_fields: [(&'static [u8], Option<&[u8]>); 16] = [
         (b"errno", options.errno),
@@ -58,6 +56,8 @@ pub(crate) fn postgres_error_to_js(
     use AnyPostgresError::*;
     let code: &'static [u8] = match err {
         ConnectionClosed => b"ERR_POSTGRES_CONNECTION_CLOSED",
+        ConnectionFailed => b"ERR_POSTGRES_CONNECTION_FAILED",
+        ConnectionRefused => b"ERR_POSTGRES_CONNECTION_REFUSED",
         ExpectedRequest => b"ERR_POSTGRES_EXPECTED_REQUEST",
         ExpectedStatement => b"ERR_POSTGRES_EXPECTED_STATEMENT",
         InvalidBackendKeyData => b"ERR_POSTGRES_INVALID_BACKEND_KEY_DATA",
@@ -122,7 +122,6 @@ pub(crate) fn postgres_error_to_js(
     let msg: &[u8] = if let Some(m) = message {
         m
     } else {
-        // PORT NOTE: reshaped for borrowck — capture remaining len before re-borrowing buffer.
         use std::io::Write;
         let name: &'static str = <&'static str>::from(err);
         let mut cursor = &mut buffer_message[..];
@@ -147,5 +146,3 @@ pub(crate) fn postgres_error_to_js(
         Err(e) => global.take_error(e),
     }
 }
-
-// ported from: src/sql_jsc/postgres/error_jsc.zig

@@ -1111,5 +1111,3 @@ pub enum Code {
     /// Used by node:util parseArgs
     ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL,
 }
-
-// ported from: src/runtime/node/nodejs_error_code.zig

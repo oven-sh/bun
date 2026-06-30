@@ -1,11 +1,10 @@
-//! HTML `FormData` parsing + JS bridge. Moved from `url/url.zig` because the
-//! struct is webcore (fetch Body) and JSC-heavy; `url/` is JSC-free.
+//! HTML `FormData` parsing + JS bridge.
 
 use bun_collections::ArrayHashMap;
 use bun_core::{self, declare_scope, err, scoped_log};
 use bun_core::{ZigString, ZigStringSlice, strings};
 use bun_jsc::{
-    AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult,
+    AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult, JsTerminated,
     ZigStringJsc as _,
 };
 use bun_semver::{self, SlicedString};
@@ -16,16 +15,13 @@ use crate::webcore::BlobExt as _;
 
 declare_scope!(FormData, visible);
 
-pub struct FormData {
-    pub fields: Map,
-    // TODO(port): lifetime — borrows into caller-owned input; could lift
-    // to `&'a [u8]` once borrowck threads through callers.
-    pub buffer: *const [u8],
+pub struct FormData<'a> {
+    pub fields: Map<'a>,
+    /// Borrows into caller-owned input.
+    pub buffer: &'a [u8],
 }
 
-pub type Map = ArrayHashMap<bun_semver::String, FieldEntry>;
-// PORT NOTE: Zig used `bun.Semver.String.ArrayHashContext` + store_hash=false;
-// `bun_collections::ArrayHashMap` is wyhash-keyed — TODO(port): confirm context match.
+pub type Map<'a> = ArrayHashMap<bun_semver::String, FieldEntry<'a>>;
 
 // `Encoding`, `get_boundary`, and `AsyncFormData` are JSC-free and live in the
 // lower-tier `bun_core::form_data` so `Body`/`Request`/`Response` can name them
@@ -36,13 +32,23 @@ pub use bun_core::form_data::{AsyncFormData, Encoding, get_boundary};
 /// JSC-touching extension on `AsyncFormData` (lives in this crate because it
 /// needs `JSGlobalObject` + `AnyPromise`).
 pub trait AsyncFormDataExt {
-    fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()>;
+    fn to_js(
+        &self,
+        global: &JSGlobalObject,
+        data: &[u8],
+        promise: AnyPromise,
+    ) -> Result<(), JsTerminated>;
 }
 
 impl AsyncFormDataExt for AsyncFormData {
-    // TODO(port): `bun.JSTerminated!void` — mapped to `JsResult<()>`; could
-    // narrow to a `Terminated`-only error set if one exists.
-    fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()> {
+    // Only a VM-termination error can escape
+    // (JS exceptions are routed into the promise rejection above).
+    fn to_js(
+        &self,
+        global: &JSGlobalObject,
+        data: &[u8],
+        promise: AnyPromise,
+    ) -> Result<(), JsTerminated> {
         if let Encoding::Multipart(b) = &self.encoding {
             if b.is_empty() {
                 scoped_log!(
@@ -76,20 +82,19 @@ impl AsyncFormDataExt for AsyncFormData {
 /// Raw slice into the input buffer. Not using `bun.Semver.String` because
 /// file bodies are binary data that can contain null bytes, which
 /// Semver.String's inline storage treats as terminators.
-pub struct Field {
-    // TODO(port): lifetime — borrows into caller-owned input buffer (binary
-    // body slice, never freed here); could lift to `&'a [u8]`.
-    pub value: *const [u8],
+pub struct Field<'a> {
+    /// Borrows into the caller-owned input buffer (binary body slice).
+    pub value: &'a [u8],
     pub filename: bun_semver::String,
     pub content_type: bun_semver::String,
     pub is_file: bool,
     pub zero_count: u8,
 }
 
-impl Default for Field {
+impl Default for Field<'_> {
     fn default() -> Self {
         Field {
-            value: std::ptr::from_ref::<[u8]>(b""),
+            value: b"",
             filename: bun_semver::String::default(),
             content_type: bun_semver::String::default(),
             is_file: false,
@@ -98,9 +103,9 @@ impl Default for Field {
     }
 }
 
-pub enum FieldEntry {
-    Field(Field),
-    List(Vec<Field>),
+pub enum FieldEntry<'a> {
+    Field(Field<'a>),
+    List(Vec<Field<'a>>),
 }
 
 #[repr(C)]
@@ -120,8 +125,7 @@ impl Default for FieldExternal {
     }
 }
 
-impl FormData {
-    // TODO(port): narrow error set
+impl FormData<'_> {
     pub fn to_js(
         global: &JSGlobalObject,
         input: &[u8],
@@ -139,16 +143,12 @@ impl FormData {
     }
 }
 
-// Zig: `@export(&jsc.toJSHostFn(fromMultipartData), .{ .name = "FormData__jsFunctionFromMultipartData" })`
 #[bun_jsc::host_fn(export = "FormData__jsFunctionFromMultipartData")]
 pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // PORT NOTE: `jsc.markBinding(@src())` dropped — debug-only source marker.
-
     let args = frame.arguments_old::<2>();
     let input_value = args.ptr[0];
     let boundary_value = args.ptr[1];
     let boundary_slice: ZigStringSlice;
-    // PORT NOTE: `defer boundary_slice.deinit()` — handled by `Drop`.
 
     let mut encoding = Encoding::URLEncoded;
 
@@ -173,7 +173,6 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         }
     }
     let input_slice: ZigStringSlice;
-    // PORT NOTE: `defer input_slice.deinit()` — handled by `Drop`.
     // Keep the `ArrayBuffer` view alive for the duration of `input`'s borrow.
     let input_array_buffer;
     let input: &[u8];
@@ -199,7 +198,6 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     }
 }
 
-// TODO(port): narrow error set
 pub fn to_js_from_multipart_data(
     global: &JSGlobalObject,
     input: &[u8],
@@ -218,22 +216,19 @@ pub fn to_js_from_multipart_data(
     }
 
     impl<'a> Wrapper<'a> {
-        fn on_entry(wrap: &mut Self, name: bun_semver::String, field: &Field, buf: &[u8]) {
-            // SAFETY: `field.value` points into `buf` (caller-owned input), valid for this call.
-            let value_str: &[u8] = unsafe { &*field.value };
+        fn on_entry(wrap: &mut Self, name: bun_semver::String, field: &Field<'_>, buf: &[u8]) {
+            let value_str: &[u8] = field.value;
             let key = ZigString::init_utf8(name.slice(buf));
 
             if field.is_file {
                 let filename_str = field.filename.slice(buf);
 
-                // PORT NOTE: dropped `bun.default_allocator` arg.
                 let mut blob = Blob::create(value_str, wrap.global, false);
                 let filename = ZigString::init_utf8(filename_str);
 
-                // PORT NOTE: Zig used a labeled `:brk` block returning a borrowed
-                // `[]const u8`. `MimeType.value` is now `Cow<'static,[u8]>`, so
-                // split the two ownership cases instead of unifying through a
-                // single `&[u8]` (avoids borrowing a temporary).
+                // `MimeType.value` is `Cow<'static,[u8]>`, so split the two
+                // ownership cases instead of unifying through a single
+                // `&[u8]` (avoids borrowing a temporary).
                 if !field.content_type.is_empty() {
                     let ct = field.content_type.slice(buf);
                     blob.content_type_allocated.set(true);
@@ -280,11 +275,8 @@ pub fn to_js_from_multipart_data(
                     (&raw mut blob).cast::<c_void>(),
                     &filename,
                 );
-                // PORT NOTE: Zig `defer blob.detach()` — no early returns in
-                // this branch, so call explicitly at scope end.
                 // `append_blob` dupes the content type, so the copy boxed above
-                // is solely owned by this stack-local and must be released here
-                // (Zig stored a borrowed slice and had nothing to free).
+                // is solely owned by this stack-local and must be released here.
                 blob.detach();
                 blob.free_content_type();
             } else {
@@ -315,20 +307,19 @@ pub fn to_js_from_multipart_data(
     Ok(form_data_value)
 }
 
-// TODO(port): narrow error set
 pub fn for_each_multipart_entry<C>(
     input: &[u8],
     boundary: &[u8],
     ctx: &mut C,
-    mut iterator: impl FnMut(&mut C, bun_semver::String, &Field, &[u8]),
+    mut iterator: impl FnMut(&mut C, bun_semver::String, &Field<'_>, &[u8]),
 ) -> Result<(), bun_core::Error> {
     let mut slice = input;
     let subslicer = SlicedString::init(input, input);
 
     let mut buf = [0u8; 76];
     {
-        // PORT NOTE: hand-rolled `std.fmt.bufPrint(&buf, "--{s}--", .{boundary})`
-        // — boundary is raw bytes, not guaranteed UTF-8, so avoid `core::fmt`.
+        // Hand-rolled `--{boundary}--` formatting — boundary is raw bytes,
+        // not guaranteed UTF-8, so avoid `core::fmt`.
         let need = boundary.len() + 4;
         if need > buf.len() {
             return Err(err!("boundary is too long"));
@@ -344,7 +335,7 @@ pub fn for_each_multipart_entry<C>(
         slice = &slice[..final_boundary_index];
     }
 
-    // PORT NOTE: hand-rolled `std.fmt.bufPrint(&buf, "--{s}\r\n", .{boundary})`.
+    // Hand-rolled `--{boundary}\r\n` formatting (same raw-bytes caveat).
     // Length check already passed above (same `boundary.len() + 4`).
     let sep_len = boundary.len() + 4;
     buf[..2].copy_from_slice(b"--");
@@ -470,5 +461,3 @@ pub fn for_each_multipart_entry<C>(
 
     Ok(())
 }
-
-// ported from: src/runtime/webcore/FormData.zig

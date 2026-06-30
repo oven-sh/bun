@@ -77,14 +77,12 @@ fn generate_compile_result_for_css_chunk_impl(
     // borrow via `BackRef::get` is fine. The heap is pinned for the worker's
     // lifetime; see `Worker::arena`.
     let arena = worker.arena.get();
-    // PERF(port): was arena bulk-free (worker.temporary_arena.reset(.retain_capacity)).
     let _arena_reset = scopeguard::guard(&mut worker.temporary_arena, |arena| {
         // temporary_arena is initialized in Worker::create before any task runs.
         if let Some(a) = arena.as_mut() {
             a.reset();
         }
     });
-    // TODO(port): worker.arena threading — css crate is an AST crate and may want &'bump Bump
     let mut allocating_writer: Vec<u8> = Vec::new();
 
     let Content::Css(css_content) = &chunk.content else {
@@ -230,7 +228,7 @@ fn generate_compile_result_for_css_chunk_impl(
             if !output.is_empty() {
                 // CONCURRENCY: key set is frozen before parallel codegen; take a
                 // shared `&AtomicUsize` so concurrent workers updating the same
-                // source counter never alias a `&mut` (Zig: @atomicRmw .Add .monotonic).
+                // source counter never alias a `&mut`.
                 if let Some(bytes) = chunk.files_with_parts_in_chunk.get(&idx.get()) {
                     let _ = bytes.fetch_add(output.len(), Ordering::Relaxed);
                 }
@@ -247,5 +245,3 @@ fn generate_compile_result_for_css_chunk_impl(
 pub use crate::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
-
-// ported from: src/bundler/linker_context/generateCompileResultForCssChunk.zig

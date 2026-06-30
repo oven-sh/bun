@@ -11,7 +11,6 @@ workspace = true
 
 [dependencies]
 strum.workspace = true
-phf.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
 const_format.workspace = true
@@ -24,3 +23,9 @@ bun_alloc.workspace = true
 bun_core.workspace = true
 
 thiserror.workspace = true
+
+[dev-dependencies]
+# Nominal `SIMDUTFResult`/`Status` for the test-only simdutf stubs in
+# `string_paths.rs` — Miri requires the stub's signature to match the extern
+# declaration's types exactly, not just their ABI layout.
+bun_simdutf_sys.workspace = true

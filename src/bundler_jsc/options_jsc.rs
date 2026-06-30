@@ -80,5 +80,3 @@ pub fn compile_target_from_slice(
 
     Ok(target_parsed)
 }
-
-// ported from: src/bundler_jsc/options_jsc.zig

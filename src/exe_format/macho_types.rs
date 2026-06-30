@@ -1,13 +1,11 @@
-//! Port of the subset of Zig `std.macho` (vendor/zig/lib/std/macho.zig) needed
-//! by `macho.rs`. All structs are `#[repr(C)]` POD matching the on-disk Mach-O
-//! format so they can be read/written via unaligned `ptr::{read,write}_unaligned`
-//! exactly like Zig's `*align(1) const T` casts.
+//! Mach-O type definitions needed by `macho.rs`. All structs are `#[repr(C)]`
+//! POD matching the on-disk Mach-O format so they can be read/written via
+//! unaligned `ptr::{read,write}_unaligned`.
 //!
 //! `LoadCommandIterator` deliberately stores a raw `*const u8` rather than a
 //! borrowed `&'a [u8]`: macho.rs interleaves iterator reads with in-place
-//! mutation of the same backing `Vec<u8>` (matching the Zig original, which
-//! has no borrow checker). Holding a Rust borrow across that mutation would
-//! force a structural rewrite; raw pointers preserve the Zig semantics.
+//! mutation of the same backing `Vec<u8>`. Holding a Rust borrow across that
+//! mutation would force a structural rewrite; raw pointers avoid that.
 //! SAFETY contract: callers must not reallocate or shrink the backing buffer
 //! while a `LoadCommandIterator` derived from it is live.
 
@@ -27,8 +25,8 @@ pub(crate) const S_ATTR_NO_DEAD_STRIP: u32 = 0x1000_0000;
 
 pub(crate) const LC_REQ_DYLD: u32 = 0x8000_0000;
 
-/// Zig `std.macho.LC` is a non-exhaustive `enum(u32)`. On-disk load commands
-/// can carry arbitrary tag values, so model it as bare `u32` constants instead
+/// On-disk load commands
+/// can carry arbitrary tag values, so model them as bare `u32` constants instead
 /// of a Rust `enum` (which would make `read_unaligned` of unknown discriminants
 /// instant UB).
 pub mod LC {
@@ -140,7 +138,7 @@ pub(crate) struct dyld_info_command {
 
 // ── code-signing blobs ────────────────────────────────────────────────────
 
-/// Tailored at version 0x20400 (matches Zig's std.macho.CodeDirectory).
+/// Tailored at version 0x20400.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct CodeDirectory {

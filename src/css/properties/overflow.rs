@@ -29,8 +29,6 @@ impl Overflow {
 
 /// An [overflow](https://www.w3.org/TR/css-overflow-3/#overflow-properties) keyword
 /// as used in the `overflow-x`, `overflow-y`, and `overflow` properties.
-// PORT NOTE: css.DefineEnumProperty(@This()) — comptime mixin providing
-// eql/hash/parse/to_css/deep_clone from @tagName.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 pub enum OverflowKeyword {
     /// Overflowing content is visible.
@@ -53,5 +51,3 @@ pub enum TextOverflow {
     /// Overflowing text is truncated with an ellipsis.
     Ellipsis,
 }
-
-// ported from: src/css/properties/overflow.zig

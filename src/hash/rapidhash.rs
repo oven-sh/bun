@@ -1,8 +1,7 @@
 //! RapidHash.
 //!
-//! Ported from `src/bun_core/deprecated.zig` (`bun.deprecated.RapidHash`).
-//! `HashObject.zig` exposes this via `hashWrap(bun.deprecated.RapidHash)`,
-//! which calls `hash(seed: u64, input: []const u8) -> u64`.
+//! `HashObject.rs` exposes this via `hash_wrap::<RapidHash>`,
+//! which calls `hash(seed: u64, input: &[u8]) -> u64`.
 
 pub struct RapidHash;
 
@@ -35,7 +34,6 @@ impl RapidHash {
                 is[1] = is[0];
                 is[2] = is[0];
                 while remain >= 96 {
-                    // PERF(port): was `inline for (0..6)` — rely on optimizer.
                     for i in 0..6usize {
                         let m1 = Self::r64(&k[8 * i * 2..]);
                         let m2 = Self::r64(&k[8 * (i * 2 + 1)..]);
@@ -45,7 +43,6 @@ impl RapidHash {
                     remain -= 96;
                 }
                 if remain >= 48 {
-                    // PERF(port): was `inline for (0..3)` — rely on optimizer.
                     for i in 0..3usize {
                         let m1 = Self::r64(&k[8 * i * 2..]);
                         let m2 = Self::r64(&k[8 * (i * 2 + 1)..]);
@@ -105,7 +102,6 @@ impl RapidHash {
 mod tests {
     use super::RapidHash;
 
-    /// Mirrors the `RapidHash.hash` test in `src/bun_core/deprecated.zig`.
     #[test]
     fn vectors() {
         // "abcdefgh" ** 128

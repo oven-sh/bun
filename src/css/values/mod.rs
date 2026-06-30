@@ -34,10 +34,9 @@ pub mod position;
 pub mod rect;
 pub mod size;
 pub mod syntax;
-// `color_generated.rs` is the codegen'd named-color tables (47KB). Its parent
-// in Zig was `color.zig`'s `pub usingnamespace`; here it's a sibling module
-// re-exported through `color::*` so the stub-set re-export at crate root
-// (`pub use values::color::{CssColor, RGBA, ...}`) keeps resolving.
+// `color_generated.rs` is the codegen'd named-color tables (47KB). It's a
+// sibling module re-exported through `color::*` so the stub-set re-export at
+// crate root (`pub use values::color::{CssColor, RGBA, ...}`) keeps resolving.
 #[path = "color_generated.rs"]
 pub mod color_generated;
 pub mod ident;
@@ -52,5 +51,3 @@ pub mod protocol {
         TryMap, TryOp, TryOpTo, TrySign, Zero,
     };
 }
-
-// ported from: src/css/values/values.zig

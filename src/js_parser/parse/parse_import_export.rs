@@ -8,10 +8,6 @@ use bun_ast::op::Level;
 use bun_ast::{ClauseItem, E, Expr, LocRef};
 use bun_core::Error;
 
-// Zig: `fn ParseImportExport(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block.
-
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// Note: The caller has already parsed the "import" keyword
     pub fn parse_import_expr(&mut self, loc: bun_ast::Loc, level: Level) -> Result<Expr, Error> {
@@ -73,7 +69,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.allow_in = old_allow_in;
 
         if SCAN_ONLY {
-            // PORT NOTE: reshaped for borrowck — EString::slice takes &mut self (rope flatten),
+            // Reshaped for borrowck — EString::slice takes &mut self (rope flatten),
             // so capture the slice (arena-lifetime) before re-using `value` by-value below.
             let slice_opt: Option<&'a [u8]> = if let ExprData::EString(e_string) = &mut value.data {
                 if e_string.is_utf8() && e_string.is_present() {
@@ -113,13 +109,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn parse_import_clause(&mut self) -> Result<ImportClause<'a>, Error> {
         let p = self;
-        // TODO(port): narrow error set
         let mut items = bun_alloc::ArenaVec::<ClauseItem>::new_in(p.arena);
         p.lexer.expect(T::TOpenBrace)?;
         let mut is_single_line = !p.lexer.has_newline_before;
         // this variable should not exist if we're not in a typescript file
-        // PORT NOTE: in Zig this var was comptime-gated to only exist when TS is enabled;
-        // in Rust we declare it unconditionally — dead-store elim removes it when !TS.
+        // Declared unconditionally — dead-store elim removes it when !TS.
         let mut had_type_only_imports = false;
 
         while p.lexer.token != T::TCloseBrace {
@@ -129,7 +123,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let alias = p.parse_clause_alias(b"import")?;
             let mut name = LocRef {
                 loc: alias_loc,
-                ref_: Some(p.store_name_in_ref(alias)?),
+                ref_: p.store_name_in_ref(alias)?,
             };
             let mut original_name = alias;
             p.lexer.next()?;
@@ -153,7 +147,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         original_name = p.lexer.identifier;
                         name = LocRef {
                             loc: p.lexer.loc(),
-                            ref_: Some(p.store_name_in_ref(original_name)?),
+                            ref_: p.store_name_in_ref(original_name)?,
                         };
                         p.lexer.next()?;
 
@@ -179,7 +173,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         original_name = p.lexer.identifier;
                         name = LocRef {
                             loc: p.lexer.loc(),
-                            ref_: Some(p.store_name_in_ref(original_name)?),
+                            ref_: p.store_name_in_ref(original_name)?,
                         };
                         p.lexer.expect(T::TIdentifier)?;
 
@@ -228,7 +222,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     original_name = p.lexer.identifier;
                     name = LocRef {
                         loc: alias_loc,
-                        ref_: Some(p.store_name_in_ref(original_name)?),
+                        ref_: p.store_name_in_ref(original_name)?,
                     };
                     p.lexer.expect(T::TIdentifier)?;
                 } else if !is_identifier {
@@ -290,7 +284,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn parse_export_clause(&mut self) -> Result<ExportClauseResult<'a>, Error> {
         let p = self;
-        // TODO(port): narrow error set
         let mut items = bun_alloc::ArenaVec::<ClauseItem>::with_capacity_in(1, p.arena);
         p.lexer.expect(T::TOpenBrace)?;
         let mut is_single_line = !p.lexer.has_newline_before;
@@ -303,7 +296,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let name = LocRef {
                 loc: alias_loc,
-                ref_: Some(p.store_name_in_ref(alias).expect("unreachable")),
+                ref_: p.store_name_in_ref(alias).expect("unreachable"),
             };
             let original_name = alias;
 
@@ -348,7 +341,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     name,
                                     original_name: original_name.into(),
                                 });
-                                // PERF(port): was assume_capacity (catch unreachable on append)
                             }
                         } else if p.lexer.token != T::TComma && p.lexer.token != T::TCloseBrace {
                             // "export { type as xxx }"
@@ -472,5 +464,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 }
-
-// ported from: src/js_parser/ast/parseImportExport.zig

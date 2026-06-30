@@ -36,7 +36,7 @@ impl ZigStackFrame {
     /// `ZigException::deinit()` → `frame.deinit()` to release the strings, but
     /// the array elements are then later dropped by Rust when `Holder` itself
     /// drops. A `Drop` impl would deref the same `WTF::StringImpl` a second
-    /// time (UAF). Match the Zig spec: explicit `deinit` only.
+    /// time (UAF). Explicit `deinit` only.
     pub fn deinit(&mut self) {
         self.function_name.deref();
         self.source_url.deref();
@@ -47,15 +47,9 @@ impl ZigStackFrame {
         root_path: &[u8],
         origin: Option<&ZigURL<'_>>,
     ) -> Result<api::StackFrame, bun_alloc::AllocError> {
-        // Zig was `!api.StackFrame` with alloc-only `try` sites; allocator param dropped.
-        // Zig used `comptime std.mem.zeroes` (zero-valued slices/enums) — `Default` is the
-        // semantic equivalent here since `Box<[u8]>` fields are NonNull and not zero-safe.
         let mut frame: api::StackFrame = api::StackFrame::default();
         if !self.function_name.is_empty() {
             let slicer = self.function_name.to_utf8();
-            // Zig: `(try slicer.cloneIfBorrowed(allocator)).slice()` — clone-if-borrowed then leak
-            // the slice into `frame.function_name`. `Box::from(slice)` always copies, which is the
-            // semantic equivalent now that the field owns its bytes (drops the Zig leak).
             // TODO: Memory leak? `frame.function_name` may have just been allocated by this
             // function, but it doesn't seem like we ever free it. Changing to `toUTF8Owned` would
             // make the ownership clearer, but would also make the memory leak worse without an
@@ -76,7 +70,7 @@ impl ZigStackFrame {
 
         frame.position = self.position;
         // api::StackFrameScope is a #[repr(transparent)] u8 newtype with the same
-        // discriminants as ZigStackFrameCode (schema.zig:373 / ZigStackFrameCode.zig).
+        // discriminants as ZigStackFrameCode.
         frame.scope = api::StackFrameScope(self.code_type.0);
 
         Ok(frame)
@@ -93,8 +87,6 @@ impl ZigStackFrame {
     };
 
     pub fn name_formatter(&self, enable_color: bool) -> NameFormatter {
-        // PERF(port): was comptime monomorphization (`comptime enable_color: bool`) — but the
-        // formatter stores it as a runtime field anyway, so no monomorphization was happening.
         NameFormatter {
             function_name: self.function_name,
             code_type: self.code_type,
@@ -110,8 +102,6 @@ impl ZigStackFrame {
         exclude_line_column: bool,
         enable_color: bool,
     ) -> SourceURLFormatter<'a> {
-        // PERF(port): was comptime monomorphization (`comptime enable_color: bool`) — stored as
-        // runtime field.
         SourceURLFormatter {
             source_url: self.source_url,
             exclude_line_column,
@@ -322,5 +312,3 @@ impl fmt::Display for NameFormatter {
         Ok(())
     }
 }
-
-// ported from: src/jsc/ZigStackFrame.zig

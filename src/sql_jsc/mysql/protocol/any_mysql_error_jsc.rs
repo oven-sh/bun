@@ -5,9 +5,8 @@ use bun_sql::mysql::protocol::error_packet::MySQLErrorOptions;
 use super::error_packet_jsc::create_mysql_error;
 
 /// Coerces the assorted error types callers thread through (`AnyMySQLError`
-/// enum or the interned `bun_core::Error`) into the Zig-style error *name*
-/// that the match below keys on. In Zig both are the same `error.Foo` value;
-/// in Rust we bridge them via name string.
+/// enum or the interned `bun_core::Error`) into the error *name*
+/// that the match below keys on.
 pub(crate) trait IntoAnyMySQLError: Copy {
     fn mysql_error_name(self) -> &'static str;
 }
@@ -26,7 +25,7 @@ impl IntoAnyMySQLError for bun_core::Error {
     }
 }
 
-/// Zig `?[]const u8`. Callers pass either a bare byte-ish value (`&str`,
+/// Callers pass either a bare byte-ish value (`&str`,
 /// `&[u8]`, `&[u8; N]`, `&Vec<u8>`) or the same wrapped in `Option<_>`, so
 /// this trait — rather than `AsRef<[u8]>` directly — lets one signature
 /// accept both shapes without touching every callsite.
@@ -78,7 +77,7 @@ impl<T: MaybeBytes> MaybeBytes for Option<T> {
 
 pub(crate) fn mysql_error_to_js(
     global_object: &JSGlobalObject,
-    // Zig: `?[]const u8` — `message orelse @errorName(err)`.
+    // Falls back to the error name when no message is given.
     message: impl MaybeBytes,
     err: impl IntoAnyMySQLError,
 ) -> JSValue {
@@ -87,6 +86,8 @@ pub(crate) fn mysql_error_to_js(
 
     let code: &'static [u8] = match name {
         "ConnectionClosed" => b"ERR_MYSQL_CONNECTION_CLOSED",
+        "ConnectionFailed" => b"ERR_MYSQL_CONNECTION_FAILED",
+        "ConnectionRefused" => b"ERR_MYSQL_CONNECTION_REFUSED",
         "Overflow" => b"ERR_MYSQL_OVERFLOW",
         "AuthenticationFailed" => b"ERR_MYSQL_AUTHENTICATION_FAILED",
         "UnsupportedAuthPlugin" => b"ERR_MYSQL_UNSUPPORTED_AUTH_PLUGIN",
@@ -143,5 +144,3 @@ pub(crate) fn mysql_error_to_js(
     )
     .unwrap_or_else(|ex| global_object.take_exception(ex))
 }
-
-// ported from: src/sql_jsc/mysql/protocol/any_mysql_error_jsc.zig

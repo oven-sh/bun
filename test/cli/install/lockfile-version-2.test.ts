@@ -30,6 +30,119 @@ it("a freshly written text lockfile defaults to version 2", async () => {
   expect(exitCode).toBe(0);
 });
 
+// Re-saving an existing lockfile must never bump its version. A v1 `bun.lock`
+// that is rewritten — here because a new dependency is added — keeps
+// `lockfileVersion: 1`, even though every entry would satisfy the v2 invariants.
+// Only a lockfile with no prior version (fresh install / migration) is written
+// at the current version.
+it("re-saving a v1 lockfile keeps it at version 1 even after adding a dependency", async () => {
+  const v1Lockfile =
+    JSON.stringify(
+      {
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "root", dependencies: { a: "file:./a" } } },
+        packages: { a: ["a@file:a", {}] },
+      },
+      null,
+      2,
+    ) + "\n";
+
+  using dir = tempDir("lockfile-v1-no-bump", {
+    // package.json asks for a second `file:` dep the lockfile doesn't have yet,
+    // forcing a real re-save (not a no-op skip).
+    "package.json": JSON.stringify({ name: "root", dependencies: { a: "file:./a", b: "file:./b" } }),
+    "a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+    "b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+    "bun.lock": v1Lockfile,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const after = await file(join(String(dir), "bun.lock")).text();
+  expect(err).not.toContain("error:");
+  // The lockfile was actually rewritten (the new dep is present)...
+  expect(after).toContain(`"b": ["b@file:b"`);
+  // ...but its version was preserved, not bumped to 2.
+  expect(after).toContain(`"lockfileVersion": 1,`);
+  expect(after).not.toContain(`"lockfileVersion": 2,`);
+  expect(exitCode).toBe(0);
+});
+
+// A v0 lockfile is the one version that must NOT be preserved verbatim: v0→v1
+// was a content-format change (v1 stopped emitting a workspace package's deps
+// object), and the writer only ever emits the v1+ single-element
+// `["name@workspace:path"]` form. Stamping v0 on that output would make the
+// next parse fail with "Missing dependencies object". So a re-saved v0 lockfile
+// is floored to v1 — and, critically, must still parse on the next install.
+it("re-saving a v0 lockfile floors it to version 1 so it stays parseable", async () => {
+  const v0Lockfile =
+    JSON.stringify(
+      {
+        lockfileVersion: 0,
+        workspaces: {
+          "": { name: "root", dependencies: { pkg1: "workspace:*" } },
+          "packages/pkg1": { name: "pkg1" },
+        },
+        // v0 workspace entry shape (with a trailing object).
+        packages: { pkg1: ["pkg1@workspace:packages/pkg1", {}] },
+      },
+      null,
+      2,
+    ) + "\n";
+
+  using dir = tempDir("lockfile-v0-floor", {
+    "package.json": JSON.stringify({
+      name: "root",
+      workspaces: ["packages/*"],
+      dependencies: { pkg1: "workspace:*" },
+    }),
+    "packages/pkg1/package.json": JSON.stringify({ name: "pkg1" }),
+    "bun.lock": v0Lockfile,
+  });
+
+  // First install re-saves the lockfile.
+  await using first = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, firstErr, firstExit] = await Promise.all([first.stdout.text(), first.stderr.text(), first.exited]);
+
+  const after = await file(join(String(dir), "bun.lock")).text();
+  expect(firstErr).not.toContain("error:");
+  // Floored to v1 — never left at v0 (the writer can't emit v0 content), and
+  // not bumped past the existing version to v2 either.
+  expect(after).toContain(`"lockfileVersion": 1,`);
+  expect(after).not.toContain(`"lockfileVersion": 0,`);
+  expect(after).not.toContain(`"lockfileVersion": 2,`);
+  expect(firstExit).toBe(0);
+
+  // The re-saved lockfile must still parse. With the version left at v0 this
+  // would fail with "failed to parse lockfile" / "Missing dependencies object".
+  await using second = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, secondErr, secondExit] = await Promise.all([second.stdout.text(), second.stderr.text(), second.exited]);
+  expect(secondErr).not.toContain("failed to parse lockfile");
+  expect(secondErr).not.toContain("Ignoring lockfile");
+  expect(secondErr).not.toContain("lockfile had changes, but lockfile is frozen");
+  expect(secondExit).toBe(0);
+});
+
 it("an existing v1 lockfile still loads (backward compatible)", async () => {
   const v1Lockfile =
     JSON.stringify(

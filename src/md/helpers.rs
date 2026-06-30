@@ -430,7 +430,7 @@ pub fn generate_slug<'a>(
     let mut out_len: usize = 0;
     let mut prev_hyphen: bool = true; // true to trim leading hyphens
 
-    // PORT NOTE: reshaped for borrowck — index instead of `for &c in text_items`
+    // reshaped for borrowck — index instead of `for &c in text_items`
     for idx in 0..text_len {
         let c = text_buf[idx];
         if c >= b'A' && c <= b'Z' {
@@ -456,25 +456,25 @@ pub fn generate_slug<'a>(
         out_len -= 1;
     }
 
-    // Deduplicate via slug_counts
-    // TODO(port): exact bun_collections::StringHashMap entry/get_or_put API — Zig used getOrPut
-    // with a borrowed key then duped it on first insert. Here we look up first, then insert an
-    // owned key on miss; map is assumed to own its keys (so Drop frees them).
-    if let Some(value) = slug_counts.get_mut(&text_buf[..out_len]) {
-        // Already seen — append -N suffix
-        let count = *value + 1;
-        *value = count;
-        text_buf.truncate(out_len);
-        text_buf.push(b'-');
-
-        let mut dec_buf = bun_core::fmt::ItoaBuf::new();
-        text_buf.extend_from_slice(bun_core::fmt::itoa(&mut dec_buf, count));
-        return text_buf.as_slice();
+    // Deduplicate via slug_counts. `StringHashMap::get_or_put` probes
+    // once (the map owns its keys, value starts at 0 on miss).
+    let Ok(gop) = slug_counts.get_or_put(&text_buf[..out_len]) else {
+        return &text_buf[..out_len];
+    };
+    if !gop.found_existing {
+        // First occurrence — value initialised to 0 by `get_or_put`.
+        return &text_buf[..out_len];
     }
 
-    // First occurrence — store an owned key so the map owns it
-    slug_counts.put_assume_capacity(&text_buf[..out_len], 0);
-    &text_buf[..out_len]
+    // Already seen — append -N suffix
+    let count = *gop.value_ptr + 1;
+    *gop.value_ptr = count;
+    text_buf.truncate(out_len);
+    text_buf.push(b'-');
+
+    let mut dec_buf = bun_core::fmt::ItoaBuf::new();
+    text_buf.extend_from_slice(bun_core::fmt::itoa(&mut dec_buf, count));
+    text_buf.as_slice()
 }
 
 /// Shared heading-ID state used by all renderers (HTML, React AST, JS callbacks).
@@ -540,5 +540,3 @@ impl HeadingIdTracker {
         self.text_buf.clear();
     }
 }
-
-// ported from: src/md/helpers.zig

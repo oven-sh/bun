@@ -1,5 +1,3 @@
-//! Port of src/cli/create/SourceFileProjectGenerator.zig
-
 use crate::api::bun::process as bun_process;
 use crate::api::bun::process::SignalCodeExt as _;
 use crate::api::bun::process::sync as spawn_sync;
@@ -156,9 +154,6 @@ fn string_with_replacements(
     relative_name: &[u8],
     react_component_export: &[u8],
 ) -> Result<Vec<u8>, bun_alloc::AllocError> {
-    // PORT NOTE: Zig threaded an allocator and reassigned `input` to leaked
-    // intermediate slices. In Rust we own `Vec<u8>` and rebind it; intermediates
-    // are dropped automatically.
     let mut input: Vec<u8> = original_input.to_vec();
 
     if strings::contains(&input, b"REPLACE_ME_WITH_YOUR_REACT_COMPONENT_EXPORT") {
@@ -268,17 +263,12 @@ pub fn generate_files(
     }
 
     // Generate files based on template type
-    // PORT NOTE: Zig used `switch (tag) { inline else => |active| @field(Self, @tagName(active)) }`
-    // to comptime-dispatch to the per-template `files` const and stack-size the
-    // `filenames`/`created_files` arrays. Rust cannot reflect on decl names, so
-    // we route through `Tag::files()` and use heap Vecs sized at runtime.
-    // PERF(port): was comptime monomorphization + stack arrays.
+    // Route through `Tag::files()` and use heap Vecs sized at runtime.
     {
         let files: &'static [TemplateFile] = template.tag().files();
 
         let mut max_filename_len: usize = 0;
-        // PORT NOTE: reshaped for borrowck — Zig kept parallel `[N][]const u8 filenames`
-        // + `[N]bool created_files` arrays of arena-backed slices. Here a single
+        // A single
         // Vec<Option<Vec<u8>>> owns the names; Some(_) doubles as the created flag.
         let mut filenames: Vec<Option<Vec<u8>>> = vec![None; files.len()];
 
@@ -325,17 +315,14 @@ pub fn generate_files(
         if log.has_written_initial_message {
             Output::print(format_args!("\n"));
         }
-        Output::pretty(format_args!(
+        bun_core::pretty!(
             "<r>📦 <b>Auto-installing {} detected dependencies<r>\n",
             dependencies.len() + dev_dependencies.len()
-        ));
+        );
     }
 
     if !dependencies.is_empty() {
-        let mut argv: Vec<&[u8]> = Vec::new();
-        argv.push(b"bun");
-        argv.push(b"--only-missing");
-        argv.push(b"install");
+        let mut argv: Vec<&[u8]> = vec![b"bun", b"--only-missing", b"install", b"--"];
         argv.extend(dependencies.iter().map(|d| &d[..]));
         run_install(&mut argv)?;
     }
@@ -361,12 +348,11 @@ pub fn generate_files(
                     shadcn_argv.push(b"--src-dir");
                 }
                 shadcn_argv.push(b"-y");
+                shadcn_argv.push(b"--");
                 shadcn_argv.extend(components.keys().iter().map(|k| &k[..]));
 
                 // print "bun" but use bun.selfExePath()
-                Output::prettyln(format_args!(
-                    "\n<r>😎 <b>Setting up shadcn/ui components<r>"
-                ));
+                bun_core::prettyln!("\n<r>😎 <b>Setting up shadcn/ui components<r>");
                 Output::command_out(Output::CommandArgv::List(&shadcn_argv));
                 Output::flush();
                 shadcn_argv[0] = bun_core::self_exe_path()?;
@@ -676,10 +662,8 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
             }
 
             if filename[0] >= b'a' && filename[0] <= b'z' {
-                // PORT NOTE: Zig leaked `duped` on the success returns below
-                // (only freed on the fall-through). Route through the process-
-                // lifetime CLI arena to match the returned-slice lifetime; the
-                // fall-through `free` is a no-op (arena-backed).
+                // Route through the process-
+                // lifetime CLI arena to match the returned-slice lifetime.
                 let duped: &'static mut [u8] = crate::cli::cli_arena().alloc_slice_copy(filename);
                 duped[0] -= 32;
                 if js_lexer::is_identifier(duped) {
@@ -747,15 +731,13 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                         return Some(&duped[0..output_index]);
                     }
                 }
-
-                // Zig: default_allocator.free(duped) — intentionally leaked above; see PORT NOTE.
             }
 
             let Ok(name_to_try) = MutableString::ensure_valid_identifier(filename) else {
                 return None;
             };
             if exports.contains(&name_to_try) {
-                // Zig returns an allocator-owned slice; route through the
+                // Route through the
                 // process-lifetime CLI arena.
                 return Some(crate::cli::cli_dupe(&name_to_try));
             }
@@ -978,7 +960,6 @@ impl Tag {
         }
     }
 
-    /// Replaces Zig's `@field(SourceFileProjectGenerator, @tagName(active)).files`.
     pub fn files(self) -> &'static [TemplateFile] {
         match self {
             Tag::ReactTailwindSpa => react_tailwind_spa::FILES,
@@ -1005,18 +986,15 @@ pub struct Logger {
 impl Logger {
     pub fn file(&mut self, template_file: &TemplateFile, name: &[u8], max_name_len: usize) {
         self.has_written_initial_message = true;
-        Output::pretty(format_args!(" <green>create<r>  "));
-        Output::pretty(format_args!("{}", bstr::BStr::new(name)));
+        bun_core::pretty!(" <green>create<r>  ");
+        bun_core::pretty!("{}", bstr::BStr::new(name));
         let name_len = name.len();
         let mut padding: usize = max_name_len - name_len;
         while padding > 0 {
-            Output::pretty(format_args!(" "));
+            bun_core::pretty!(" ");
             padding -= 1;
         }
-        Output::prettyln(format_args!(
-            "   <d>{}<r>",
-            <&'static str>::from(template_file.reason)
-        ));
+        bun_core::prettyln!("   <d>{}<r>", <&'static str>::from(template_file.reason));
     }
 
     pub fn if_new(&mut self) {
@@ -1024,7 +1002,7 @@ impl Logger {
             return;
         }
 
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><d>--------------------------------<r>\n\
              ✨ <b>{}<r> project configured\n\
              \n\
@@ -1038,8 +1016,6 @@ impl Logger {
              \n\
              <blue>Happy bunning! 🐇<r>",
             bstr::BStr::new(self.template.label())
-        ));
+        );
     }
 }
-
-// ported from: src/cli/create/SourceFileProjectGenerator.zig

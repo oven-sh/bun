@@ -2038,3 +2038,71 @@ describe("bundler", () => {
     },
   });
 });
+
+describe("bundler", () => {
+  // The browser-map checker probes candidates in four stages: exact key, key +
+  // implicit extension, key + "/index", and key + "/index" + implicit extension.
+  // Only the remap *target* of a successful probe may be consumed by the
+  // resolver — the matched candidate string itself (which can point into
+  // scratch storage) must not leak into later resolution. These cases pin each
+  // probe stage individually through a relative import.
+  itBundled("packagejson/BrowserMapProbeStages", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import {value as a} from './demo-pkg/exact.js'
+        import {value as b} from './demo-pkg/with-ext'
+        import {value as c} from './demo-pkg/as-index'
+        import {value as d} from './demo-pkg/as-index-ext'
+        console.log(a, b, c, d)
+      `,
+      "/Users/user/project/src/demo-pkg/package.json": /* json */ `
+        {
+          "browser": {
+            "./exact.js": "./remapped/exact.js",
+            "./with-ext.js": "./remapped/with-ext.js",
+            "./as-index/index": "./remapped/as-index.js",
+            "./as-index-ext/index.js": "./remapped/as-index-ext.js"
+          }
+        }
+      `,
+      "/Users/user/project/src/demo-pkg/exact.js": `export let value = 'node'`,
+      "/Users/user/project/src/demo-pkg/with-ext.js": `export let value = 'node'`,
+      "/Users/user/project/src/demo-pkg/as-index/index.js": `export let value = 'node'`,
+      "/Users/user/project/src/demo-pkg/as-index-ext/index.js": `export let value = 'node'`,
+      "/Users/user/project/src/demo-pkg/remapped/exact.js": `export let value = 'exact'`,
+      "/Users/user/project/src/demo-pkg/remapped/with-ext.js": `export let value = 'with-ext'`,
+      "/Users/user/project/src/demo-pkg/remapped/as-index.js": `export let value = 'as-index'`,
+      "/Users/user/project/src/demo-pkg/remapped/as-index-ext.js": `export let value = 'as-index-ext'`,
+    },
+    run: {
+      stdout: "exact with-ext as-index as-index-ext",
+    },
+  });
+  // Browser-map keys are normalized at parse time ("./name" -> "name"), so a
+  // "./name" entry also remaps the *package path* "name" imported from within
+  // the same package (Browserify compatibility quirk); the normalized key
+  // matches the package specifier on the checker's first probe.
+  itBundled("packagejson/BrowserMapDotSlashOverridesPackagePath", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import {value} from './demo-pkg'
+        console.log(value)
+      `,
+      "/Users/user/project/src/demo-pkg/package.json": /* json */ `
+        {
+          "main": "./main.js",
+          "browser": {
+            "./fake-pkg": "./fake-pkg-browser.js"
+          }
+        }
+      `,
+      "/Users/user/project/src/demo-pkg/main.js": /* js */ `
+        export {value} from 'fake-pkg'
+      `,
+      "/Users/user/project/src/demo-pkg/fake-pkg-browser.js": `export let value = 'browser-override'`,
+    },
+    run: {
+      stdout: "browser-override",
+    },
+  });
+});

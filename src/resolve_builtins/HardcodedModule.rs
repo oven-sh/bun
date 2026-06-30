@@ -3,8 +3,6 @@ use bun_ast::import_record;
 use bun_core::ZStr;
 use bun_core::zstr;
 
-// Zig: `const string = []const u8;` — in Rust we use `&'static [u8]` directly for keys.
-
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr)]
 pub enum HardcodedModule {
     #[strum(serialize = "bun")]
@@ -83,6 +81,10 @@ pub enum HardcodedModule {
     NodeStream,
     #[strum(serialize = "node:stream/consumers")]
     NodeStreamConsumers,
+    #[strum(serialize = "node:stream/iter")]
+    NodeStreamIter,
+    #[strum(serialize = "node:zlib/iter")]
+    NodeZlibIter,
     #[strum(serialize = "node:stream/promises")]
     NodeStreamPromises,
     #[strum(serialize = "node:stream/web")]
@@ -176,13 +178,11 @@ pub enum HardcodedModule {
     BunInternalForTesting,
 }
 
-impl HardcodedModule {
+bun_core::comptime_string_map! {
     /// The module loader first uses `Aliases` to get a single string during
     /// resolution, then maps that single string to the actual module.
     /// Do not include aliases here; Those go in `Aliases`.
-    // Zig: `pub const map = bun.ComptimeStringMap(...)`. Associated `static` is
-    // unstable (E0658); `phf::Map` is const-constructible so use an associated const.
-    pub const MAP: phf::Map<&'static [u8], HardcodedModule> = phf::phf_map! {
+    pub static HARDCODED_MODULE_MAP: HardcodedModule = {
         // Bun
         b"bun" => HardcodedModule::Bun,
         b"bun:app" => HardcodedModule::BunApp,
@@ -232,6 +232,8 @@ impl HardcodedModule {
         b"node:repl" => HardcodedModule::NodeRepl,
         b"node:stream" => HardcodedModule::NodeStream,
         b"node:stream/consumers" => HardcodedModule::NodeStreamConsumers,
+        b"node:stream/iter" => HardcodedModule::NodeStreamIter,
+        b"node:zlib/iter" => HardcodedModule::NodeZlibIter,
         b"node:stream/promises" => HardcodedModule::NodeStreamPromises,
         b"node:stream/web" => HardcodedModule::NodeStreamWeb,
         b"node:string_decoder" => HardcodedModule::NodeStringDecoder,
@@ -272,13 +274,21 @@ impl HardcodedModule {
     };
 }
 
+impl HardcodedModule {
+    // Associated `static` is unstable (E0658), so the map lives at module
+    // level; this zero-sized const keeps the `HardcodedModule::MAP` call
+    // shape stable.
+    pub const MAP: __ComptimeStringMap_HARDCODED_MODULE_MAP =
+        __ComptimeStringMap_HARDCODED_MODULE_MAP(());
+}
+
 /// Contains the list of built-in modules from the perspective of the module
 /// loader. This logic is duplicated for `isBuiltinModule` and the like.
 // Note: `ZStr` is a bare DST without `PartialEq`/`Debug`, so `Alias` can't
-// auto-derive them. The Zig struct doesn't define equality either.
+// auto-derive them.
 #[derive(Copy, Clone)]
 pub struct Alias {
-    // Zig: `[:0]const u8` → `&'static ZStr` per PORTING.md type map
+    // `&'static ZStr` per PORTING.md type map
     // (length-carrying NUL-terminated; module specifiers are bytes, not &str).
     pub path: &'static ZStr,
     pub tag: import_record::Tag,
@@ -298,7 +308,6 @@ impl Default for Alias {
 }
 
 /// Prepend `"node:"` to a literal at compile time iff it isn't already prefixed.
-/// Mirrors Zig: `if (path.len > 5 and std.mem.eql(u8, path[0..5], "node:")) path else "node:" ++ path`.
 macro_rules! ensure_node_prefix {
     ($path:literal) => {{
         const HAS_PREFIX: bool = {
@@ -363,14 +372,10 @@ macro_rules! entry {
     };
 }
 
-// Zig builds three `ComptimeStringMap`s by concatenating these const arrays
-// (`common ++ bun_extra ++ bun_test_extra`). `phf::phf_map!` only accepts
-// inline literal entries, so it cannot consume const slices directly.
-//
-// TODO(perf): generate `NODE_ALIASES` / `BUN_ALIASES` /
-// `BUN_TEST_ALIASES` as `phf::Map<&'static [u8], Alias>` via `phf_codegen` in
-// `build.rs`, fed from these const slices. The `get()` lookups below are the
-// only public surface, so swapping the backing store is mechanical.
+// `comptime_string_map!` only accepts inline literal entries, so it cannot
+// consume const slices directly; instead the const tables stay the source of
+// truth (callers like `ModuleLoader` iterate them) and `lookup` goes through
+// lazily-built hash maps.
 
 type AliasKv = (&'static [u8], Alias);
 
@@ -413,6 +418,8 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     node_entry!("node:repl"),
     node_entry!("node:stream"),
     node_entry!("node:stream/consumers"),
+    node_entry!("node:stream/iter"),
+    node_entry!("node:zlib/iter"),
     node_entry!("node:stream/promises"),
     node_entry!("node:stream/web"),
     node_entry!("node:string_decoder"),
@@ -469,6 +476,8 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     node_entry!("repl"),
     node_entry!("stream"),
     node_entry!("stream/consumers"),
+    node_entry!("stream/iter"),
+    node_entry!("zlib/iter"),
     node_entry!("stream/promises"),
     node_entry!("stream/web"),
     node_entry!("string_decoder"),
@@ -776,9 +785,9 @@ const BUN_TEST_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     ),
 ];
 
-// TODO(port): replace with `phf::Map<&'static [u8], Alias>` generated by
-// `phf_codegen` in build.rs (Zig: `bun.ComptimeStringMap(Alias, common_alias_kvs)`).
-// PERF(port): linear scan placeholder — Zig used a comptime perfect-hash map.
+// A lazily-built `HashMap` per alias table (see `lookup`); the const
+// slice-of-tables form is kept public because `ModuleLoader` iterates the raw
+// entries.
 const NODE_ALIASES: &[&[AliasKv]] = &[COMMON_ALIAS_KVS];
 pub const BUN_ALIASES: &[&[AliasKv]] = &[COMMON_ALIAS_KVS, BUN_EXTRA_ALIAS_KVS];
 const BUN_TEST_ALIASES: &[&[AliasKv]] = &[
@@ -787,17 +796,69 @@ const BUN_TEST_ALIASES: &[&[AliasKv]] = &[
     BUN_TEST_EXTRA_ALIAS_KVS,
 ];
 
-#[inline]
-fn lookup(tables: &[&[AliasKv]], name: &[u8]) -> Option<Alias> {
-    // PERF(port): O(n) scan; could replace with a phf perfect-hash lookup.
+static STREAM_ITER_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// `--experimental-stream-iter` (node parity): `stream/iter` resolves as a
+/// builtin only when the flag was passed on the CLI as an exec argument.
+/// Set once during CLI parsing (`cli/Arguments.rs`), which owns the
+/// exec-arg/script-positional distinction — a raw argv scan here would also
+/// match the flag appearing after the script name, where node treats it as
+/// a script argument.
+pub fn stream_iter_enabled() -> bool {
+    STREAM_ITER_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_stream_iter_enabled(enabled: bool) {
+    STREAM_ITER_ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Read by C++ (`createStreamIterEnabledFlag`, NodeModuleModule.cpp) so JS
+/// builtins can consult the write-once CLI bit instead of the user-mutable
+/// `process.execArgv`.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__streamIterEnabled() -> bool {
+    stream_iter_enabled()
+}
+
+/// True when `name` is a stream/iter specifier that must stay invisible
+/// because `--experimental-stream-iter` was not passed. Consulted by every
+/// reader of the alias tables (`Alias::get` and `ModuleLoader`'s raw-table
+/// scan) so introspection APIs like `require.resolve.paths` agree with
+/// `require` about what is a builtin.
+pub fn stream_iter_alias_gated(name: &[u8]) -> bool {
+    (name == b"stream/iter"
+        || name == b"node:stream/iter"
+        || name == b"zlib/iter"
+        || name == b"node:zlib/iter")
+        && !stream_iter_enabled()
+}
+
+fn build_alias_map(tables: &[&[AliasKv]]) -> bun_collections::HashMap<&'static [u8], Alias> {
+    let mut map = bun_collections::HashMap::with_capacity(tables.iter().map(|t| t.len()).sum());
     for table in tables {
         for (k, v) in *table {
-            if *k == name {
-                return Some(*v);
-            }
+            // First table wins, matching the previous in-order scan
+            // (keys are unique across tables anyway).
+            map.entry(*k).or_insert_with(|| *v);
         }
     }
-    None
+    map
+}
+
+static NODE_ALIAS_MAP: std::sync::LazyLock<bun_collections::HashMap<&'static [u8], Alias>> =
+    std::sync::LazyLock::new(|| build_alias_map(NODE_ALIASES));
+static BUN_ALIAS_MAP: std::sync::LazyLock<bun_collections::HashMap<&'static [u8], Alias>> =
+    std::sync::LazyLock::new(|| build_alias_map(BUN_ALIASES));
+static BUN_TEST_ALIAS_MAP: std::sync::LazyLock<bun_collections::HashMap<&'static [u8], Alias>> =
+    std::sync::LazyLock::new(|| build_alias_map(BUN_TEST_ALIASES));
+
+#[inline]
+fn lookup(
+    map: &std::sync::LazyLock<bun_collections::HashMap<&'static [u8], Alias>>,
+    name: &[u8],
+) -> Option<Alias> {
+    map.get(name).copied()
 }
 
 #[derive(Copy, Clone, Default)]
@@ -811,17 +872,22 @@ impl Alias {
     }
 
     pub fn get(name: &[u8], target: Target, cfg: Cfg) -> Option<Alias> {
+        // Without `--experimental-stream-iter` the aliases stay invisible so
+        // the bare specifier falls through to filesystem resolution
+        // ("Cannot find module") and the node:-prefixed one reports
+        // "No such built-in module", matching node.
+        if stream_iter_alias_gated(name) {
+            return None;
+        }
         if target.is_bun() {
             if cfg.rewrite_jest_for_tests {
-                return lookup(BUN_TEST_ALIASES, name);
+                return lookup(&BUN_TEST_ALIAS_MAP, name);
             } else {
-                return lookup(BUN_ALIASES, name);
+                return lookup(&BUN_ALIAS_MAP, name);
             }
         } else if target.is_node() {
-            return lookup(NODE_ALIASES, name);
+            return lookup(&NODE_ALIAS_MAP, name);
         }
         None
     }
 }
-
-// ported from: src/resolve_builtins/HardcodedModule.zig

@@ -5,37 +5,25 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 // Shared S3 option-string ladder (get_truthy → is_string → from_js → to_utf8).
 use super::__s3_credentials_jsc::get_truthy_string_utf8;
 use bun_core::{ZigStringSlice as Utf8Slice, strings};
-use bun_ptr::RawSlice;
 
 pub struct S3ListObjectsOptions {
-    // Self-referential views: these borrow from the corresponding
-    // `_field: Utf8Slice` below. In Zig the slice and its backing storage are
-    // separate fields; `RawSlice` encodes the non-owning contract so callers
-    // read `.as_deref()` instead of open-coding `unsafe { &*p }`.
-    pub continuation_token: Option<RawSlice<u8>>,
-    pub delimiter: Option<RawSlice<u8>>,
-    pub encoding_type: Option<RawSlice<u8>>,
+    // Each `Utf8Slice` owns (or ref-holds) its backing storage; readers go
+    // through `.slice()`.
+    pub continuation_token: Option<Utf8Slice>,
+    pub delimiter: Option<Utf8Slice>,
+    pub encoding_type: Option<Utf8Slice>,
     pub fetch_owner: Option<bool>,
     pub max_keys: Option<i64>,
-    pub prefix: Option<RawSlice<u8>>,
-    pub start_after: Option<RawSlice<u8>>,
-
-    // TODO(port): Utf8Slice<'_> lifetime — Zig's ZigString.Slice owns or
-    // ref-holds its backing WTFStringImpl; modeled as 'static here. Pick
-    // the real lifetime / collapse the dual fields.
-    pub _continuation_token: Option<Utf8Slice>,
-    pub _delimiter: Option<Utf8Slice>,
-    pub _encoding_type: Option<Utf8Slice>,
-    pub _prefix: Option<Utf8Slice>,
-    pub _start_after: Option<Utf8Slice>,
+    pub prefix: Option<Utf8Slice>,
+    pub start_after: Option<Utf8Slice>,
 }
 
-// Zig deinit only forwarded to each Utf8Slice field's deinit; Rust handles
-// that via field Drop, so no explicit `impl Drop` is needed here.
+// Each Utf8Slice field cleans up via Drop, so no explicit `impl Drop` is
+// needed here.
 
-// PORT NOTE: result structs borrow slices out of the input `xml: &[u8]`
-// passed to `parse_s3_list_objects_result`. The Zig code never frees these
-// (they alias the request body buffer). Represented with an explicit `'a` —
+// result structs borrow slices out of the input `xml: &[u8]`
+// passed to `parse_s3_list_objects_result` (they alias the request body
+// buffer). Represented with an explicit `'a` —
 // the borrow is unambiguous and any other encoding (Box / raw ptr) would
 // misrepresent ownership. The caller keeps `xml` alive for the result's
 // lifetime (result is consumed by toJS before the response body is freed).
@@ -47,8 +35,7 @@ struct ObjectOwner<'a> {
 
 pub struct S3ListObjectsContents<'a> {
     key: &'a [u8],
-    // Zig: ?bun.ptr.OwnedIn([]const u8, MaybeOwned(DefaultAllocator)) —
-    // i.e. a maybe-owned slice. Cow<'a, [u8]> is the direct equivalent.
+    // a maybe-owned slice.
     etag: Option<Cow<'a, [u8]>>,
     checksum_type: Option<&'a [u8]>,
     checksum_algorithme: Option<&'a [u8]>,
@@ -57,8 +44,6 @@ pub struct S3ListObjectsContents<'a> {
     storage_class: Option<&'a [u8]>,
     owner: Option<ObjectOwner<'a>>,
 }
-
-// Zig deinit only freed `etag` when owned; Cow handles that in Drop.
 
 pub struct S3ListObjectsV2Result<'a> {
     pub name: Option<&'a [u8]>,
@@ -75,8 +60,8 @@ pub struct S3ListObjectsV2Result<'a> {
     pub contents: Option<Vec<S3ListObjectsContents<'a>>>,
 }
 
-// Zig deinit freed `contents` items (etag) + the two ArrayLists. All handled
-// by Drop on Vec / Cow; no explicit Drop impl needed.
+// `contents` items (etag) + the two Vecs are all handled by Drop on
+// Vec / Cow; no explicit Drop impl needed.
 
 impl<'a> S3ListObjectsV2Result<'a> {
     pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
@@ -185,9 +170,8 @@ impl<'a> S3ListObjectsV2Result<'a> {
     }
 }
 
-// PORT NOTE: Zig signature was `!S3ListObjectsV2Result` but the only `try`
-// sites were allocations (Vec::push / alloc) which abort on OOM in Rust, so
-// this is now infallible.
+// Infallible: the only fallible operations are allocations
+// (Vec::push / alloc), which abort on OOM.
 pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
     let mut result = S3ListObjectsV2Result {
         contents: None,
@@ -311,8 +295,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                     {
                                         let input = &xml[i..i + __tag_end];
 
-                                        // std.mem.replacementSize / std.mem.replace
-                                        // for "&quot;" → "\""
+                                        // unescape "&quot;" → "\""
                                         let output =
                                             strings::replace_owned(input, b"&quot;", b"\"");
                                         if output.len() != input.len() {
@@ -526,7 +509,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
         if !contents.is_empty() {
             result.contents = Some(contents);
         }
-        // else branch: Vec drops itself (Zig: contents.deinit())
+        // else branch: Vec drops itself
 
         if !common_prefixes.is_empty() {
             result.common_prefixes = Some(common_prefixes);
@@ -549,12 +532,6 @@ pub fn get_list_objects_options_from_js(
         max_keys: None,
         prefix: None,
         start_after: None,
-
-        _continuation_token: None,
-        _delimiter: None,
-        _encoding_type: None,
-        _prefix: None,
-        _start_after: None,
     };
 
     if !list_options.is_object() {
@@ -564,23 +541,20 @@ pub fn get_list_objects_options_from_js(
     if let Some(slice) =
         get_truthy_string_utf8(list_options, global_this, b"continuationToken", false)?
     {
-        list_objects_options.continuation_token = Some(RawSlice::new(slice.slice()));
-        list_objects_options._continuation_token = Some(slice);
+        list_objects_options.continuation_token = Some(slice);
     }
 
     if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"delimiter", false)? {
-        list_objects_options.delimiter = Some(RawSlice::new(slice.slice()));
-        list_objects_options._delimiter = Some(slice);
+        list_objects_options.delimiter = Some(slice);
     }
 
     if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"encodingType", false)?
     {
-        list_objects_options.encoding_type = Some(RawSlice::new(slice.slice()));
-        list_objects_options._encoding_type = Some(slice);
+        list_objects_options.encoding_type = Some(slice);
     }
 
-    // PORT NOTE: `JSValue::get_boolean_loose` is not yet exposed in bun_jsc; emulate via
-    // `get_truthy` + `to_boolean()` (matches Zig getBooleanLoose semantics for truthy values).
+    // `JSValue::get_boolean_loose` is not yet exposed in bun_jsc; emulate via
+    // `get_truthy` + `to_boolean()`.
     if let Some(val) = list_options.get_truthy(global_this, b"fetchOwner")? {
         list_objects_options.fetch_owner = Some(val.to_boolean());
     }
@@ -592,16 +566,12 @@ pub fn get_list_objects_options_from_js(
     }
 
     if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"prefix", false)? {
-        list_objects_options.prefix = Some(RawSlice::new(slice.slice()));
-        list_objects_options._prefix = Some(slice);
+        list_objects_options.prefix = Some(slice);
     }
 
     if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"startAfter", false)? {
-        list_objects_options.start_after = Some(RawSlice::new(slice.slice()));
-        list_objects_options._start_after = Some(slice);
+        list_objects_options.start_after = Some(slice);
     }
 
     Ok(list_objects_options)
 }
-
-// ported from: src/runtime/webcore/s3/list_objects.zig

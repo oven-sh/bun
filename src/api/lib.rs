@@ -2,14 +2,13 @@
 #![warn(unused_must_use)]
 //! `bun.schema.api` namespace.
 //!
-//! Ground truth: `src/options_types/schema.zig` (the `pub const api = struct {…}`
-//! block — generated from `src/api/schema.peechy`). The full peechy → `.rs`
-//! emitter is not landed yet; this crate hand-ports the slice of the schema
-//! that downstream crates name today (`bun_ini`, `bun_install`, `bun_runtime`
-//! bunfig parser) so they can un-gate against real field shapes.
+//! Ground truth: `src/api/schema.peechy`. The full peechy → `.rs` emitter is
+//! not landed yet; this crate hand-writes the slice of the schema that
+//! downstream crates name today (`bun_ini`, `bun_install`, `bun_runtime`
+//! bunfig parser).
 //!
 //! LAYERING: the actual data shapes (`NpmRegistry`, `NpmRegistryMap`, `Ca`,
-//! `BunInstall`) were originally hand-ported in two places — here *and* in
+//! `BunInstall`) were originally hand-written in two places — here *and* in
 //! `bun_options_types::schema::api`. Downstream crates ended up holding values
 //! of one and passing them to functions typed against the other (e.g.
 //! `bun_options_types::context::install` vs. `bun_ini::load_npmrc_config`),
@@ -34,20 +33,18 @@ pub use bun_options_types::schema::api::{
 // npm_registry  — module path for the nested `NpmRegistry::Parser`
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Zig nests `pub const Parser = struct {…}` inside `NpmRegistry`. Rust can't
-/// nest a type inside a struct, so it lives in a sibling module and the
-/// canonical path becomes `bun_api::npm_registry::Parser`.
+/// `Parser` lives in a sibling module of `NpmRegistry`; the canonical path
+/// is `bun_api::npm_registry::Parser`.
 pub mod npm_registry {
     use bun_url::URL;
 
     pub use super::NpmRegistry;
 
-    // PORT NOTE: `Parser` stays generic over `L` (Log) / `S` (Source) so this
-    // leaf schema crate doesn't need to name `bun_logger`. The lone live body
-    // (`parse_registry_url_string_impl`) doesn't touch log/source — only the
-    // not-yet-ported `parse_registry_object` / `parse_registry` paths do, and
-    // those need `js_ast::Expr` so they belong upstream in the bunfig parser
-    // anyway.
+    // `Parser` stays generic over `L` (Log) / `S` (Source) so this leaf
+    // schema crate doesn't need to name `bun_logger`. The lone live body
+    // (`parse_registry_url_string_impl`) doesn't touch log/source — only
+    // `parse_registry_object` / `parse_registry` would, and those need
+    // `js_ast::Expr` so they belong upstream in the bunfig parser anyway.
     pub struct Parser<'a, L, S> {
         pub log: &'a mut L,
         pub source: &'a S,
@@ -79,5 +76,3 @@ pub mod npm_registry {
         }
     }
 }
-
-// ported from: src/options_types/schema.zig

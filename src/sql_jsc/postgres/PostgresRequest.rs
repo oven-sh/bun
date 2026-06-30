@@ -5,6 +5,7 @@ use bun_core::fmt as bun_fmt;
 use bun_sql::postgres::PostgresProtocol as protocol;
 use bun_sql::postgres::PostgresTypes as types;
 use bun_sql::postgres::PostgresTypes::{AnyPostgresError, Int4, Short};
+use bun_sql::postgres::Status;
 use bun_sql::postgres::protocol::{ReaderContext, WriterContext};
 
 use crate::jsc::js_error_to_postgres;
@@ -16,10 +17,9 @@ use crate::shared::QueryBindingIterator;
 
 bun_core::declare_scope!(Postgres, visible);
 
-/// Zig: `comptime MessageType: @Type(.enum_literal)` — the set of backend
-/// message tags `PostgresSQLConnection.on()` dispatches over. Defined here
+/// The set of backend message tags `PostgresSQLConnection.on()` dispatches over. Defined here
 /// (the dispatch site) rather than in `bun_sql::postgres::protocol` because
-/// it is purely a compile-time switch tag in Zig with no wire encoding.
+/// it is purely a dispatch tag with no wire encoding.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
 pub enum MessageType {
     DataRow,
@@ -43,6 +43,7 @@ pub enum MessageType {
     CopyOutResponse,
     CopyDone,
     CopyBothResponse,
+    NotificationResponse,
 }
 
 /// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
@@ -61,8 +62,7 @@ pub fn write_bind<Context: WriterContext>(
     writer.write(b"B")?;
     let length = writer.length()?;
 
-    // Zig `.String` (bun.String) vs `.string` ([]const u8) both snake_case to
-    // `string`; the bun.String overload is `bun_string` on NewWriter.
+    // The bun.String overload is `bun_string` on NewWriter.
     writer.bun_string(&cursor_name)?;
     writer.string(name)?;
 
@@ -424,9 +424,11 @@ pub(crate) fn execute_query<Context: WriterContext>(
     query: &[u8],
     mut writer: protocol::NewWriter<Context>,
 ) -> Result<(), AnyPostgresError> {
+    // A simple Query ('Q') is its own sync point: the backend always answers it
+    // with exactly one ReadyForQuery. Do not append a Sync here: it would elicit
+    // a second, unaccounted ReadyForQuery that re-arms advance() mid-prepare.
     protocol::write_query(query, &mut writer)?;
     writer.write(&protocol::FLUSH)?;
-    writer.write(&protocol::SYNC)?;
     Ok(())
 }
 
@@ -436,6 +438,12 @@ pub(crate) fn on_data<Context: ReaderContext>(
 ) -> Result<(), AnyPostgresError> {
     use MessageType as M;
     loop {
+        // `fail()` inside a handler tears the connection down (status = Failed,
+        // socket closed, queue rejected). Stop dispatching: later messages in
+        // the same read must not act on the dead connection.
+        if connection.status.get() == Status::Failed {
+            return Ok(());
+        }
         reader.mark_message_start();
         let c = reader.int::<u8>()?;
         bun_core::scoped_log!(Postgres, "read: {}", c as char);
@@ -494,10 +502,12 @@ pub(crate) fn on_data<Context: ReaderContext>(
             b'H' => connection.on(M::CopyOutResponse, reader.reborrow())?,
             b'c' => connection.on(M::CopyDone, reader.reborrow())?,
             b'W' => connection.on(M::CopyBothResponse, reader.reborrow())?,
+            b'A' => connection.on(M::NotificationResponse, reader.reborrow())?,
 
             _ => {
                 bun_core::scoped_log!(Postgres, "Unknown message: {}", c as char);
-                let to_skip = reader.length()?.saturating_sub(1);
+                let length = reader.length()?;
+                let to_skip = length - 4;
                 bun_core::scoped_log!(Postgres, "to_skip: {}", to_skip);
                 reader.skip(usize::try_from(to_skip).expect("int cast"))?;
             }
@@ -513,5 +523,3 @@ pub(crate) type Queue = bun_collections::linear_fifo::LinearFifo<
 >;
 
 use crate::postgres::postgres_sql_connection::{SslMode, TlsStatus};
-
-// ported from: src/sql_jsc/postgres/PostgresRequest.zig

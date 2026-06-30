@@ -1,13 +1,21 @@
-use phf::phf_map;
-
-// PORT NOTE: Zig `enum(u8) { ..., _ }` is non-exhaustive — it can hold any u8
-// value, not just the named tags. A plain `#[repr(u8)] enum` cannot express
-// that (Rust enums are exhaustive; transmuting an unnamed discriminant is UB).
-// Modeled as a transparent u8 newtype with associated consts so the `else`
-// arm in `label()` remains reachable, matching Zig control flow.
+// This type can hold any u8 value, not just the named tags. A plain
+// `#[repr(u8)] enum` cannot express that (Rust enums are exhaustive;
+// transmuting an unnamed discriminant is UB). Modeled as a transparent u8
+// newtype with associated consts so the fallback arm in `label()` remains
+// reachable.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct EventType(pub u8);
+
+bun_core::comptime_string_map! {
+    pub static MAP: EventType = {
+        b"event" => EventType::Event,
+        b"message" => EventType::MessageEvent,
+        b"close" => EventType::CloseEvent,
+        b"error" => EventType::ErrorEvent,
+        b"open" => EventType::OpenEvent,
+    };
+}
 
 #[allow(non_upper_case_globals)]
 impl EventType {
@@ -18,13 +26,9 @@ impl EventType {
     pub const OpenEvent: Self = Self(4);
     pub const unknown: Self = Self(254);
 
-    pub const MAP: phf::Map<&'static [u8], EventType> = phf_map! {
-        b"event" => EventType::Event,
-        b"message" => EventType::MessageEvent,
-        b"close" => EventType::CloseEvent,
-        b"error" => EventType::ErrorEvent,
-        b"open" => EventType::OpenEvent,
-    };
+    /// The map type is a zero-sized handle, so this is the same map as the
+    /// module-level `MAP` static.
+    pub const MAP: __ComptimeStringMap_MAP = __ComptimeStringMap_MAP(());
 
     pub fn label(self) -> &'static [u8] {
         match self {
@@ -37,5 +41,3 @@ impl EventType {
         }
     }
 }
-
-// ported from: src/jsc/EventType.zig

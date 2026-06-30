@@ -28,8 +28,8 @@ pub fn from_js(arg: JSValue, global_this: &JSGlobalObject) -> JsResult<SignalCod
             );
         }
 
-        // PORT NOTE: SignalCode is `#[repr(transparent)] struct(u8)` (non-exhaustive
-        // Zig enum), so the public ctor is used instead of transmute.
+        // SignalCode is non-exhaustive over `u8`, so construct via the public
+        // ctor instead of a transmute.
         return Ok(SignalCode(sig64 as u8));
     } else if arg.is_string() {
         // SAFETY: `is_string()` ⇒ `as_string()` returns a non-null JSString cell;
@@ -47,5 +47,3 @@ pub fn from_js(arg: JSValue, global_this: &JSGlobalObject) -> JsResult<SignalCod
 
     Ok(SignalCode::DEFAULT)
 }
-
-// ported from: src/sys_jsc/signal_code_jsc.zig

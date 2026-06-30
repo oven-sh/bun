@@ -942,3 +942,84 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     });
   });
 });
+
+describe("removing a patched dependency", () => {
+  // A patch that only adds a new file applies cleanly to any package contents.
+  const isOddNewFilePatch = `diff --git a/bun-patch-test.txt b/bun-patch-test.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..2f9a147b6e5d17254f1bfce0d4e109a24a42dcab
+--- /dev/null
++++ b/bun-patch-test.txt
+@@ -0,0 +1 @@
++patched
+`;
+
+  test("install with an empty cache downloads the package unpatched", async () => {
+    const filedir = tempDirWithFiles("patch-remove", {
+      "package.json": JSON.stringify({
+        name: "remove-patch-test",
+        dependencies: {
+          "is-odd": "3.0.1",
+        },
+        patchedDependencies: {
+          "is-odd@3.0.1": "patches/is-odd@3.0.1.patch",
+        },
+      }),
+      patches: {
+        "is-odd@3.0.1.patch": isOddNewFilePatch,
+      },
+    });
+
+    // First install: bun.lock records the patched dependency and the patch is applied.
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: filedir,
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(filedir, "cache-with-patch") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+    expect(await Bun.file(join(filedir, "node_modules", "is-odd", "bun-patch-test.txt")).exists()).toBe(true);
+    expect(await Bun.file(join(filedir, "bun.lock")).text()).toContain("patchedDependencies");
+
+    // Remove the patch from package.json (bun.lock still references it) and
+    // install again with an empty cache so the package has to be downloaded.
+    await Bun.write(
+      join(filedir, "package.json"),
+      JSON.stringify({
+        name: "remove-patch-test",
+        dependencies: {
+          "is-odd": "3.0.1",
+        },
+      }),
+    );
+
+    // This used to panic with `called Option::unwrap() on a None value` while
+    // creating the download task: the patch entry had already been moved out of
+    // `lockfile.patched_dependencies` into the to-remove list.
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: filedir,
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(filedir, "cache-empty") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+
+    // The package is reinstalled without the patch.
+    expect(await Bun.file(join(filedir, "node_modules", "is-odd", "package.json")).json()).toMatchObject({
+      name: "is-odd",
+      version: "3.0.1",
+    });
+    expect(await Bun.file(join(filedir, "node_modules", "is-odd", "bun-patch-test.txt")).exists()).toBe(false);
+    expect(await Bun.file(join(filedir, "bun.lock")).text()).not.toContain("patchedDependencies");
+  });
+});

@@ -2,7 +2,7 @@
 
 #include "ZigGlobalObject.h"
 
-// Implemented in Zig (src/runtime/api/NativePromiseContext.zig). Switches on
+// Implemented in src/runtime/api/NativePromiseContext.rs. Switches on
 // tag to release the ref on the right native type.
 extern "C" void Bun__NativePromiseContext__destroy(void* ctx, uint8_t tag);
 

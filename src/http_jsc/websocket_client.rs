@@ -7,7 +7,7 @@
 //!
 //! This is only used **after** the websocket handshaking step is completed.
 
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 use core::ptr::NonNull;
@@ -20,7 +20,7 @@ use bun_http::websocket::{Opcode, WebsocketHeader};
 use bun_io::KeepAlive;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue};
-use bun_ptr::ThisPtr;
+use bun_ptr::{AsCtxPtr, ThisPtr};
 use bun_uws::{self as uws, NewSocketHandler, SslCtx, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
 
@@ -63,55 +63,55 @@ pub struct WebSocket<const SSL: bool> {
     // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) → intrusive refcount
     pub ref_count: Cell<u32>,
 
-    pub tcp: Socket<SSL>,
-    pub outgoing_websocket: Option<NonNull<CppWebSocket>>,
+    pub tcp: Cell<Socket<SSL>>,
+    pub outgoing_websocket: Cell<Option<NonNull<CppWebSocket>>>,
 
-    pub receive_state: ReceiveState,
-    pub receiving_type: Opcode,
+    pub receive_state: Cell<ReceiveState>,
+    pub receiving_type: Cell<Opcode>,
     // we need to start with final so we validate the first frame
-    pub receiving_is_final: bool,
+    pub receiving_is_final: Cell<bool>,
 
-    pub ping_frame_bytes: [u8; 128 + 6],
-    pub ping_len: u8,
-    pub ping_received: bool,
-    pub pong_received: bool,
-    pub close_received: bool,
-    pub close_frame_buffering: bool,
+    pub ping_frame_bytes: Cell<[u8; 128 + 6]>,
+    pub ping_len: Cell<u8>,
+    pub ping_received: Cell<bool>,
+    pub pong_received: Cell<bool>,
+    pub close_received: Cell<bool>,
+    pub close_frame_buffering: Cell<bool>,
     /// `Some` once `send_close_with_body` has enqueued the close frame: blocks
     /// further outbound writes and drives `clear_data` + `dispatch_close` once
     /// the frame is fully flushed (or the socket dies).
-    pub close_dispatch_pending: Option<(u16, bun_core::String)>,
+    pub close_dispatch_pending: Cell<Option<(u16, bun_core::String)>>,
 
-    pub receive_frame: usize,
-    pub receive_body_remain: usize,
-    pub receive_pending_chunk_len: usize,
-    pub receive_buffer: LinearFifo<u8, DynamicBuffer<u8>>,
+    pub receive_frame: Cell<usize>,
+    pub receive_body_remain: Cell<usize>,
+    pub receive_pending_chunk_len: Cell<usize>,
+    pub receive_buffer: RefCell<LinearFifo<u8, DynamicBuffer<u8>>>,
 
-    pub send_buffer: LinearFifo<u8, DynamicBuffer<u8>>,
+    pub send_buffer: RefCell<LinearFifo<u8, DynamicBuffer<u8>>>,
 
     pub global_this: GlobalRef,
-    pub poll_ref: KeepAlive,
+    pub poll_ref: Cell<KeepAlive>,
 
-    pub header_fragment: Option<u8>,
+    pub header_fragment: Cell<Option<u8>>,
 
-    pub payload_length_frame_bytes: [u8; 8],
-    pub payload_length_frame_len: u8,
+    pub payload_length_frame_bytes: Cell<[u8; 8]>,
+    pub payload_length_frame_len: Cell<u8>,
 
     // Non-owning; the allocation is managed by the microtask queue, not deinit.
-    pub initial_data_handler: Option<NonNull<InitialDataHandler<SSL>>>,
+    pub initial_data_handler: Cell<Option<NonNull<InitialDataHandler<SSL>>>>,
     pub event_loop: &'static EventLoop,
-    pub deflate: Option<Box<WebSocketDeflate>>,
+    pub deflate: RefCell<Option<Box<WebSocketDeflate>>>,
 
     /// Track if current message is compressed
-    pub receiving_compressed: bool,
+    pub receiving_compressed: Cell<bool>,
     /// Track compression state of the entire message (across fragments)
-    pub message_is_compressed: bool,
+    pub message_is_compressed: Cell<bool>,
 
     /// `us_ssl_ctx_t` inherited from the upgrade client when it was built
     /// with a custom CA. The socket's `SSL*` references the `SSL_CTX`
     /// inside, so this must outlive the connection. None when the upgrade
     /// used the shared default context.
-    pub secure: Option<*mut SslCtx>,
+    pub secure: Cell<Option<*mut SslCtx>>,
 
     /// Proxy tunnel for wss:// through HTTP proxy.
     /// When set, all I/O goes through the tunnel (TLS encryption/decryption).
@@ -122,7 +122,7 @@ pub struct WebSocket<const SSL: bool> {
     /// the tunnel does not (yet) implement `bun_ptr::RefCounted`. Ownership
     /// semantics match `RefPtr`: assigning here implies a held ref, released
     /// in `clear_data` via `WebSocketProxyTunnel::deref`.
-    pub proxy_tunnel: Option<NonNull<WebSocketProxyTunnel>>,
+    pub proxy_tunnel: Cell<Option<NonNull<WebSocketProxyTunnel>>>,
 }
 
 impl<const SSL: bool> WebSocket<SSL> {
@@ -147,7 +147,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     fn should_compress(&self, data_len: usize, opcode: Opcode) -> bool {
         // Check if compression is available
-        if self.deflate.is_none() {
+        if self.deflate.borrow().is_none() {
             return false;
         }
 
@@ -176,23 +176,29 @@ impl<const SSL: bool> WebSocket<SSL> {
     // pub const onEnd = handleEnd; → see handle_end
     // pub const onHandshake = handleHandshake; → see handle_handshake
 
-    pub fn clear_data(&mut self) {
+    fn unref_keep_alive(&self) {
+        let mut poll_ref = self.poll_ref.take();
+        poll_ref.unref(Self::vm_loop_ctx(&self.global_this));
+        self.poll_ref.set(poll_ref);
+    }
+
+    pub fn clear_data(&self) {
         log!("clearData");
-        self.poll_ref.unref(Self::vm_loop_ctx(&self.global_this));
+        self.unref_keep_alive();
         self.clear_receive_buffers(true);
         self.clear_send_buffers(true);
-        self.ping_received = false;
-        self.pong_received = false;
-        self.ping_len = 0;
-        self.close_frame_buffering = false;
+        self.ping_received.set(false);
+        self.pong_received.set(false);
+        self.ping_len.set(0);
+        self.close_frame_buffering.set(false);
         if let Some((_, r)) = self.close_dispatch_pending.take() {
             r.deref();
         }
-        self.receive_pending_chunk_len = 0;
-        self.receiving_compressed = false;
-        self.message_is_compressed = false;
+        self.receive_pending_chunk_len.set(0);
+        self.receiving_compressed.set(false);
+        self.message_is_compressed.set(false);
         // deflate is Option<Box<_>>; dropping it runs Drop
-        self.deflate = None;
+        self.deflate.replace(None);
         if let Some(s) = self.secure.take() {
             // SAFETY: s is a valid SSL_CTX* owned by us per field invariant
             unsafe { boringssl::c::SSL_CTX_free(s) };
@@ -222,9 +228,8 @@ impl<const SSL: bool> WebSocket<SSL> {
             // tunnel mode never adopts a socket so that callback never runs.
             // Callers that touch `self` after clear_data() must hold a local
             // ref guard (see cancel/finalize).
-            // SAFETY: `self: &mut Self` coerces to `*mut Self` with write
-            // provenance; allocation is live (guarded by callers' ref).
-            unsafe { Self::deref(self) };
+            // SAFETY: allocation is live (guarded by callers' ref).
+            unsafe { Self::deref(self.as_ctx_ptr()) };
         }
     }
 
@@ -240,16 +245,16 @@ impl<const SSL: bool> WebSocket<SSL> {
         let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
         // SAFETY: called from C++ with a valid pointer; the guard's ref keeps
         // the allocation alive past every re-entrant call below.
-        let this = unsafe { &mut *this_ptr };
+        let this = unsafe { &*this_ptr };
 
-        let had_tunnel = this.proxy_tunnel.is_some();
+        let had_tunnel = this.proxy_tunnel.get().is_some();
         this.clear_data();
 
         if SSL {
             // we still want to send pending SSL buffer + close_notify
-            this.tcp.close(uws::CloseKind::Normal);
+            this.tcp.get().close(uws::CloseKind::Normal);
         } else {
-            this.tcp.close(uws::CloseKind::Failure);
+            this.tcp.get().close(uws::CloseKind::Failure);
         }
 
         // In tunnel mode tcp is .detached so close() above is a no-op and
@@ -264,21 +269,21 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    pub fn fail(&mut self, code: ErrorCode) {
+    pub fn fail(&self, code: ErrorCode) {
         jsc::mark_binding!();
         if let Some(ws) = self.outgoing_websocket.take() {
             log!("fail ({})", <&'static str>::from(code));
             CppWebSocket::opaque_ref(ws.as_ptr()).did_abrupt_close(code);
-            // SAFETY: `self: &mut Self` → `*mut Self`; allocation kept live by
-            // the socket/tunnel I/O ref (or by caller's guard).
-            unsafe { Self::deref(self) };
+            // SAFETY: allocation kept live by the socket/tunnel I/O ref (or by
+            // the caller's guard).
+            unsafe { Self::deref(self.as_ctx_ptr()) };
         }
 
-        Self::cancel(self);
+        Self::cancel(self.as_ctx_ptr());
     }
 
     pub fn handle_handshake(
-        &mut self,
+        &self,
         socket: Socket<SSL>,
         success: i32,
         ssl_error: us_bun_verify_error_t,
@@ -289,7 +294,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         log!("onHandshake({})", success);
 
-        if let Some(ws) = self.outgoing_websocket {
+        if let Some(ws) = self.outgoing_websocket.get() {
             let ws_ref = CppWebSocket::opaque_ref(ws.as_ptr());
             let reject_unauthorized = ws_ref.reject_unauthorized();
 
@@ -342,39 +347,45 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    pub fn handle_close(&mut self, _socket: Socket<SSL>, _code: c_int, _reason: *mut c_void) {
+    fn detach_tcp(&self) {
+        let mut tcp = self.tcp.get();
+        tcp.detach();
+        self.tcp.set(tcp);
+    }
+
+    pub fn handle_close(&self, _socket: Socket<SSL>, _code: c_int, _reason: *mut c_void) {
         log!("onClose");
         jsc::mark_binding!();
         if let Some((code, mut reason)) = self.close_dispatch_pending.take() {
             // The socket closed while our close frame was mid-flush; the peer
             // either got it or didn't, but JS should still see the
             // user-initiated code/reason (not an abrupt 1006).
-            self.tcp.detach();
+            self.detach_tcp();
             self.clear_data();
             self.dispatch_close(code, &mut reason);
             // For the socket.
-            // SAFETY: `self: &mut Self` → `*mut Self`; this is the terminal
-            // release of the socket's I/O-layer ref.
-            unsafe { Self::deref(self) };
+            // SAFETY: this is the terminal release of the socket's
+            // I/O-layer ref.
+            unsafe { Self::deref(self.as_ctx_ptr()) };
             return;
         }
         self.clear_data();
-        self.tcp.detach();
+        self.detach_tcp();
 
         self.dispatch_abrupt_close(ErrorCode::Ended);
 
         // For the socket.
-        // SAFETY: `self: &mut Self` → `*mut Self`; this is the terminal
-        // release of the socket's I/O-layer ref.
-        unsafe { Self::deref(self) };
+        // SAFETY: this is the terminal release of the socket's
+        // I/O-layer ref.
+        unsafe { Self::deref(self.as_ctx_ptr()) };
     }
 
-    pub fn terminate(&mut self, code: ErrorCode) {
+    pub fn terminate(&self, code: ErrorCode) {
         log!("terminate");
         self.fail(code);
     }
 
-    fn clear_receive_buffers(&mut self, free: bool) {
+    fn clear_receive_buffers(&self, free: bool) {
         // LinearFifo's fields are private. `discard` only advances
         // `head` (it does not rewind it), so pair it with
         // `reset_head_if_empty` to match the Zig `head = 0; count = 0`
@@ -382,29 +393,40 @@ impl<const SSL: bool> WebSocket<SSL> {
         // messages and eventually wrap the ring, and `readable_slice(0)`
         // (used to dispatch buffered messages) returns only the first
         // contiguous segment.
-        self.receive_buffer
-            .discard(self.receive_buffer.readable_length());
-        self.receive_buffer.reset_head_if_empty();
-
-        if free {
-            self.receive_buffer = LinearFifo::<u8, DynamicBuffer<u8>>::init();
+        {
+            let mut receive_buffer = self.receive_buffer.borrow_mut();
+            let len = receive_buffer.readable_length();
+            receive_buffer.discard(len);
+            receive_buffer.reset_head_if_empty();
         }
 
-        self.receive_pending_chunk_len = 0;
-        self.receive_body_remain = 0;
+        if free {
+            self.receive_buffer
+                .replace(LinearFifo::<u8, DynamicBuffer<u8>>::init());
+        }
+
+        self.receive_pending_chunk_len.set(0);
+        self.receive_body_remain.set(0);
     }
 
-    fn clear_send_buffers(&mut self, free: bool) {
+    fn clear_send_buffers(&self, free: bool) {
         // see clear_receive_buffers — discard instead of poking
         // private `head`/`count`.
-        self.send_buffer.discard(self.send_buffer.readable_length());
+        {
+            let mut send_buffer = self.send_buffer.borrow_mut();
+            let len = send_buffer.readable_length();
+            send_buffer.discard(len);
+        }
         if free {
-            self.send_buffer = LinearFifo::<u8, DynamicBuffer<u8>>::init();
+            self.send_buffer
+                .replace(LinearFifo::<u8, DynamicBuffer<u8>>::init());
         }
     }
 
-    fn dispatch_compressed_data(&mut self, data: &[u8], kind: Opcode) {
-        let Some(deflate) = self.deflate.as_mut() else {
+    fn dispatch_compressed_data(&self, data: &[u8], kind: Opcode) {
+        let mut deflate_slot = self.deflate.borrow_mut();
+        let Some(deflate) = deflate_slot.as_mut() else {
+            drop(deflate_slot);
             self.terminate(ErrorCode::CompressionUnsupported);
             return;
         };
@@ -419,18 +441,20 @@ impl<const SSL: bool> WebSocket<SSL> {
                 websocket_deflate::Error::TooLarge => ErrorCode::MessageTooBig,
                 websocket_deflate::Error::OutOfMemory => ErrorCode::FailedToAllocateMemory,
             };
+            drop(deflate_slot);
             self.terminate(error_code);
             return;
         }
 
         // reshaped for borrowck — drop deflate borrow before re-borrowing self
+        drop(deflate_slot);
         let items = decompressed.as_slice();
         self.dispatch_data(items, kind);
     }
 
     /// Data will be cloned in C++.
-    fn dispatch_data(&mut self, data: &[u8], kind: Opcode) {
-        let Some(out) = self.outgoing_websocket else {
+    fn dispatch_data(&self, data: &[u8], kind: Opcode) {
+        let Some(out) = self.outgoing_websocket.get() else {
             self.clear_data();
             return;
         };
@@ -482,7 +506,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     pub fn consume(
-        &mut self,
+        &self,
         data: &[u8],
         left_in_fragment: usize,
         kind: Opcode,
@@ -491,49 +515,52 @@ impl<const SSL: bool> WebSocket<SSL> {
         debug_assert!(data.len() <= left_in_fragment);
 
         // For compressed messages, we must buffer all fragments until the message is complete
-        if self.receiving_compressed {
+        if self.receiving_compressed.get() {
             // Always buffer compressed data
             if !data.is_empty() {
-                let writable = match self.receive_buffer.writable_with_size(data.len()) {
-                    Ok(w) => w,
+                let mut receive_buffer = self.receive_buffer.borrow_mut();
+                match receive_buffer.writable_with_size(data.len()) {
+                    Ok(writable) => {
+                        writable[..data.len()].copy_from_slice(data);
+                        receive_buffer.update(data.len());
+                    }
                     Err(_) => {
+                        drop(receive_buffer);
                         self.terminate(ErrorCode::Closed);
                         return 0;
                     }
-                };
-                writable[..data.len()].copy_from_slice(data);
-                self.receive_buffer.update(data.len());
+                }
             }
 
             if left_in_fragment >= data.len()
-                && left_in_fragment - data.len() - self.receive_pending_chunk_len == 0
+                && left_in_fragment - data.len() - self.receive_pending_chunk_len.get() == 0
             {
-                self.receive_pending_chunk_len = 0;
-                self.receive_body_remain = 0;
+                self.receive_pending_chunk_len.set(0);
+                self.receive_body_remain.set(0);
                 if is_final {
                     // Decompress the complete message
-                    // take ownership of the fifo so the readable
-                    // slice does not alias `&mut self` while dispatching
-                    // (PORTING.md §Forbidden: aliased-&mut). `dispatch_*` may
+                    // take ownership of the fifo before dispatching:
+                    // `dispatch_*` may
                     // call `terminate → clear_data → clear_receive_buffers(true)`
-                    // which would drop the Vec backing a laundered `&[u8]`.
-                    let buf = core::mem::replace(
-                        &mut self.receive_buffer,
-                        LinearFifo::<u8, DynamicBuffer<u8>>::init(),
-                    );
+                    // which would drop the Vec backing the readable slice.
+                    let buf = self
+                        .receive_buffer
+                        .replace(LinearFifo::<u8, DynamicBuffer<u8>>::init());
                     self.dispatch_compressed_data(buf.readable_slice(0), kind);
                     // Restore the taken fifo so `clear_receive_buffers(false)`
                     // can keep its capacity for the next message instead of
                     // starting from a fresh zero-capacity `init()`.
-                    self.receive_buffer = buf;
+                    self.receive_buffer.replace(buf);
                     self.clear_receive_buffers(false);
-                    self.receiving_compressed = false;
-                    self.message_is_compressed = false;
+                    self.receiving_compressed.set(false);
+                    self.message_is_compressed.set(false);
                 }
             } else {
-                self.receive_pending_chunk_len = self
-                    .receive_pending_chunk_len
-                    .saturating_sub(left_in_fragment);
+                self.receive_pending_chunk_len.set(
+                    self.receive_pending_chunk_len
+                        .get()
+                        .saturating_sub(left_in_fragment),
+                );
             }
             return data.len();
         }
@@ -541,26 +568,25 @@ impl<const SSL: bool> WebSocket<SSL> {
         // Non-compressed path remains the same
         // did all the data fit in the buffer?
         // we can avoid copying & allocating a temporary buffer
-        if is_final && data.len() == left_in_fragment && self.receive_pending_chunk_len == 0 {
-            if self.receive_buffer.readable_length() == 0 {
+        if is_final && data.len() == left_in_fragment && self.receive_pending_chunk_len.get() == 0 {
+            let buffered_len = self.receive_buffer.borrow().readable_length();
+            if buffered_len == 0 {
                 self.dispatch_data(data, kind);
-                self.message_is_compressed = false;
+                self.message_is_compressed.set(false);
                 return data.len();
             } else if data.is_empty() {
-                // take ownership of the fifo so the readable slice
-                // does not alias `&mut self` while dispatching (PORTING.md
-                // §Forbidden: aliased-&mut).
-                let buf = core::mem::replace(
-                    &mut self.receive_buffer,
-                    LinearFifo::<u8, DynamicBuffer<u8>>::init(),
-                );
+                // take ownership of the fifo before dispatching: `dispatch_*`
+                // may free the Vec backing the readable slice.
+                let buf = self
+                    .receive_buffer
+                    .replace(LinearFifo::<u8, DynamicBuffer<u8>>::init());
                 self.dispatch_data(buf.readable_slice(0), kind);
                 // Restore the taken fifo so `clear_receive_buffers(false)`
                 // can keep its capacity for the next message instead of
                 // starting from a fresh zero-capacity `init()`.
-                self.receive_buffer = buf;
+                self.receive_buffer.replace(buf);
                 self.clear_receive_buffers(false);
-                self.message_is_compressed = false;
+                self.message_is_compressed.set(false);
                 return 0;
             }
         }
@@ -570,48 +596,47 @@ impl<const SSL: bool> WebSocket<SSL> {
             return 0;
         }
 
-        let writable = self
-            .receive_buffer
-            .writable_with_size(data.len())
-            .expect("unreachable");
-        writable[..data.len()].copy_from_slice(data);
-        self.receive_buffer.update(data.len());
+        {
+            let mut receive_buffer = self.receive_buffer.borrow_mut();
+            let writable = receive_buffer
+                .writable_with_size(data.len())
+                .expect("unreachable");
+            writable[..data.len()].copy_from_slice(data);
+            receive_buffer.update(data.len());
+        }
 
         if left_in_fragment >= data.len()
-            && left_in_fragment - data.len() - self.receive_pending_chunk_len == 0
+            && left_in_fragment - data.len() - self.receive_pending_chunk_len.get() == 0
         {
-            self.receive_pending_chunk_len = 0;
-            self.receive_body_remain = 0;
+            self.receive_pending_chunk_len.set(0);
+            self.receive_body_remain.set(0);
             if is_final {
-                // take ownership of the fifo so the readable slice
-                // does not alias `&mut self` while dispatching (PORTING.md
-                // §Forbidden: aliased-&mut).
-                let buf = core::mem::replace(
-                    &mut self.receive_buffer,
-                    LinearFifo::<u8, DynamicBuffer<u8>>::init(),
-                );
+                // take ownership of the fifo before dispatching: `dispatch_*`
+                // may free the Vec backing the readable slice.
+                let buf = self
+                    .receive_buffer
+                    .replace(LinearFifo::<u8, DynamicBuffer<u8>>::init());
                 self.dispatch_data(buf.readable_slice(0), kind);
                 // Restore the taken fifo so `clear_receive_buffers(false)`
                 // can keep its capacity for the next message instead of
                 // starting from a fresh zero-capacity `init()`.
-                self.receive_buffer = buf;
+                self.receive_buffer.replace(buf);
                 self.clear_receive_buffers(false);
-                self.message_is_compressed = false;
+                self.message_is_compressed.set(false);
             }
         } else {
-            self.receive_pending_chunk_len = self
-                .receive_pending_chunk_len
-                .saturating_sub(left_in_fragment);
+            self.receive_pending_chunk_len.set(
+                self.receive_pending_chunk_len
+                    .get()
+                    .saturating_sub(left_in_fragment),
+            );
         }
         data.len()
     }
 
-    // takes a raw `*mut Self` instead of `&mut self` because
+    // takes a raw `*mut Self` instead of `&self` because
     // `handle_without_deinit()` re-enters this very function on the same
-    // allocation. A live outer `&mut self`
-    // across that re-entry would yield two `&mut WebSocket` to one allocation
-    // (Stacked-Borrows UB), so the preamble works through `this_ptr` and only
-    // materializes `&mut *this_ptr` once re-entry is no longer possible.
+    // allocation through its own raw back-pointer.
     //
     // There is no `socket` parameter: the dispatch thunk wraps the same
     // `us_socket_t*` that `adopt_group` stored into `self.tcp`, so the parse
@@ -626,52 +651,45 @@ impl<const SSL: bool> WebSocket<SSL> {
         // with no outstanding `&`/`&mut` borrow (uWS dispatches from userdata).
         let this = unsafe { ThisPtr::new(this_ptr) };
         // after receiving close we should ignore the data
-        if this.close_received {
+        if this.close_received.get() {
             return;
         }
-        // Bumps the intrusive refcount and derefs on Drop, after every
-        // `&mut *this_ptr` reborrow below has ended.
+        // Bumps the intrusive refcount and derefs on Drop.
         let _guard = this.ref_guard();
 
         // Due to scheduling, it is possible for the websocket onData
         // handler to run with additional data before the microtask queue is
         // drained.
-        if let Some(initial_handler) = this.initial_data_handler {
+        if let Some(initial_handler) = this.initial_data_handler.get() {
             // This calls `handle_data`
             // We deliberately do not set self.initial_data_handler to None here, that's done in handle_without_deinit.
             // We do not free the memory here since the lifetime is managed by the microtask queue (it should free when called from there)
             // SAFETY: `initial_handler` is valid (managed by microtask queue).
             // `handle_without_deinit` re-enters `Self::handle_data` via the
-            // `adopted` raw ptr (same `heap::alloc` provenance as
-            // `this_ptr`); no `&mut *this_ptr` is live here, so the nested
-            // call may freely form its own exclusive reborrow.
+            // `adopted` raw ptr (same `heap::alloc` provenance as `this_ptr`).
             unsafe { (*initial_handler.as_ptr()).handle_without_deinit() };
 
             // handle_without_deinit is supposed to clear the handler from WebSocket*
             // to prevent an infinite loop
-            debug_assert!(this.initial_data_handler.is_none());
+            debug_assert!(this.initial_data_handler.get().is_none());
 
             // If we disconnected for any reason in the re-entrant case, we should just ignore the data
-            if this.outgoing_websocket.is_none() || !this.has_tcp() {
+            if this.outgoing_websocket.get().is_none() || !this.has_tcp() {
                 return;
             }
         }
 
-        // No further `handle_data` re-entry on this stack frame; hand the
-        // remainder to the `&mut self` parse loop. The reborrow ends before
-        // `_guard` drops (LIFO), so `deref(this_ptr)` observes a clean stack.
-        // SAFETY: `_guard` ref keeps `*this_ptr` live; sole owner on this thread.
-        unsafe { (*this.as_ptr()).handle_data_loop(data_) };
+        this.handle_data_loop(data_);
     }
 
-    fn handle_data_loop(&mut self, data_: &[u8]) {
+    fn handle_data_loop(&self, data_: &[u8]) {
         let mut data = data_;
-        let mut receive_state = self.receive_state;
+        let mut receive_state = self.receive_state.get();
         let mut terminated = false;
         let mut is_fragmented = false;
-        let mut receiving_type = self.receiving_type;
-        let mut receive_body_remain = self.receive_body_remain;
-        let mut is_final = self.receiving_is_final;
+        let mut receiving_type = self.receiving_type.get();
+        let mut receive_body_remain = self.receive_body_remain.get();
+        let mut is_final = self.receiving_is_final.get();
         let mut last_receive_data_type = receiving_type;
 
         // Cleanup runs as an explicit epilogue after the loop below.
@@ -708,13 +726,13 @@ impl<const SSL: bool> WebSocket<SSL> {
                 ReceiveState::NeedHeader => {
                     if data.len() < 2 {
                         debug_assert!(!data.is_empty());
-                        if self.header_fragment.is_none() {
-                            self.header_fragment = Some(data[0]);
+                        if self.header_fragment.get().is_none() {
+                            self.header_fragment.set(Some(data[0]));
                             break;
                         }
                     }
 
-                    if let Some(header_fragment) = self.header_fragment {
+                    if let Some(header_fragment) = self.header_fragment.get() {
                         header_bytes[0] = header_fragment;
                         header_bytes[1] = data[0];
                         data = &data[1..];
@@ -723,7 +741,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                         header_bytes[1] = data[1];
                         data = &data[2..];
                     }
-                    self.header_fragment = None;
+                    self.header_fragment.set(None);
 
                     receive_body_remain = 0;
                     let mut need_compression = false;
@@ -739,7 +757,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                     );
                     if receiving_type == Opcode::Continue {
                         // if is final is true continue is invalid
-                        if self.receiving_is_final {
+                        if self.receiving_is_final.get() {
                             // nothing to continue here
                             // Per Autobahn test case 5.9: "The connection is failed immediately, since there is no message to continue."
                             self.terminate(ErrorCode::UnexpectedOpcode);
@@ -747,16 +765,16 @@ impl<const SSL: bool> WebSocket<SSL> {
                             break;
                         }
                         // only update final if is a valid continue
-                        self.receiving_is_final = is_final;
+                        self.receiving_is_final.set(is_final);
                     } else if receiving_type == Opcode::Text || receiving_type == Opcode::Binary {
                         // if the last one is not final this is invalid because we are waiting a continue
-                        if !self.receiving_is_final {
+                        if !self.receiving_is_final.get() {
                             self.terminate(ErrorCode::UnexpectedOpcode);
                             terminated = true;
                             break;
                         }
                         // for text and binary frames we need to keep track of final and type
-                        self.receiving_is_final = is_final;
+                        self.receiving_is_final.set(is_final);
                         last_receive_data_type = receiving_type;
                     } else if receiving_type.is_control() && is_fragmented {
                         // Control frames must not be fragmented.
@@ -779,7 +797,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                         }
                     }
 
-                    if need_compression && self.deflate.is_none() {
+                    if need_compression && self.deflate.borrow().is_none() {
                         self.terminate(ErrorCode::CompressionUnsupported);
                         terminated = true;
                         break;
@@ -795,11 +813,12 @@ impl<const SSL: bool> WebSocket<SSL> {
                     // Track compression state for this message
                     if receiving_type == Opcode::Text || receiving_type == Opcode::Binary {
                         // New message starts - set both compression states
-                        self.message_is_compressed = need_compression;
-                        self.receiving_compressed = need_compression;
+                        self.message_is_compressed.set(need_compression);
+                        self.receiving_compressed.set(need_compression);
                     } else if receiving_type == Opcode::Continue {
                         // Continuation frame - use the compression state from the message start
-                        self.receiving_compressed = self.message_is_compressed;
+                        self.receiving_compressed
+                            .set(self.message_is_compressed.get());
                     }
 
                     // Handle when the payload length is 0, but it is a message
@@ -824,8 +843,8 @@ impl<const SSL: bool> WebSocket<SSL> {
                         // Return to the header state to read the next frame
                         receive_state = ReceiveState::NeedHeader;
                         is_fragmented = false;
-                        self.receiving_compressed = false;
-                        self.message_is_compressed = false;
+                        self.receiving_compressed.set(false);
+                        self.message_is_compressed.set(false);
 
                         // Bail out if there's nothing left to read
                         if data.is_empty() {
@@ -853,31 +872,36 @@ impl<const SSL: bool> WebSocket<SSL> {
 
                     // copy available payload length bytes to a buffer held on this client instance
                     let total_received =
-                        (byte_size - self.payload_length_frame_len as usize).min(data.len());
-                    let start = self.payload_length_frame_len as usize;
-                    self.payload_length_frame_bytes[start..start + total_received]
+                        (byte_size - self.payload_length_frame_len.get() as usize).min(data.len());
+                    let start = self.payload_length_frame_len.get() as usize;
+                    let mut payload_length_frame_bytes = self.payload_length_frame_bytes.get();
+                    payload_length_frame_bytes[start..start + total_received]
                         .copy_from_slice(&data[..total_received]);
-                    self.payload_length_frame_len +=
-                        u8::try_from(total_received).expect("int cast");
+                    self.payload_length_frame_bytes
+                        .set(payload_length_frame_bytes);
+                    self.payload_length_frame_len.set(
+                        self.payload_length_frame_len.get()
+                            + u8::try_from(total_received).expect("int cast"),
+                    );
                     data = &data[total_received..];
 
                     // short read on payload length - we need to wait for more data
                     // whatever bytes were returned from the short read are kept in `payload_length_frame_bytes`
-                    if (self.payload_length_frame_len as usize) < byte_size {
+                    if (self.payload_length_frame_len.get() as usize) < byte_size {
                         break;
                     }
 
                     // Multibyte length quantities are expressed in network byte order
                     receive_body_remain = match byte_size {
-                        8 => u64::from_be_bytes(self.payload_length_frame_bytes) as usize,
+                        8 => u64::from_be_bytes(payload_length_frame_bytes) as usize,
                         2 => u16::from_be_bytes([
-                            self.payload_length_frame_bytes[0],
-                            self.payload_length_frame_bytes[1],
+                            payload_length_frame_bytes[0],
+                            payload_length_frame_bytes[1],
                         ]) as usize,
                         _ => unreachable!(),
                     };
 
-                    self.payload_length_frame_len = 0;
+                    self.payload_length_frame_len.set(0);
 
                     receive_state = ReceiveState::NeedBody;
 
@@ -890,25 +914,26 @@ impl<const SSL: bool> WebSocket<SSL> {
                     }
                 }
                 ReceiveState::Ping => {
-                    if !self.ping_received {
+                    if !self.ping_received.get() {
                         if receive_body_remain > 125 {
                             self.terminate(ErrorCode::InvalidControlFrame);
                             terminated = true;
                             break;
                         }
-                        self.ping_len = receive_body_remain as u8;
+                        self.ping_len.set(receive_body_remain as u8);
                         receive_body_remain = 0;
-                        self.ping_received = true;
+                        self.ping_received.set(true);
                     }
-                    let ping_len = self.ping_len as usize;
+                    let ping_len = self.ping_len.get() as usize;
 
                     if !data.is_empty() {
                         // copy the data to the ping frame
                         let total_received = ping_len.min(receive_body_remain + data.len());
-                        let slice =
-                            &mut self.ping_frame_bytes[6..][receive_body_remain..total_received];
+                        let mut ping_frame_bytes = self.ping_frame_bytes.get();
+                        let slice = &mut ping_frame_bytes[6..][receive_body_remain..total_received];
                         let slice_len = slice.len();
                         slice.copy_from_slice(&data[..slice_len]);
+                        self.ping_frame_bytes.set(ping_frame_bytes);
                         receive_body_remain = total_received;
                         data = &data[slice_len..];
                     }
@@ -918,20 +943,19 @@ impl<const SSL: bool> WebSocket<SSL> {
                         break;
                     }
 
-                    // copy the ≤125-byte payload to a stack array so
-                    // the slice does not alias `&mut self` across `dispatch_data`
-                    // (PORTING.md §Forbidden: aliased-&mut). `dispatch_data` may
+                    // copy the ≤125-byte payload to a stack array:
+                    // `dispatch_data` may
                     // call `terminate → clear_data` which mutates `ping_frame_bytes`'
-                    // bookkeeping while the laundered `&[u8]` would still be live.
+                    // bookkeeping while the readable `&[u8]` would still be live.
                     let mut ping_data_buf = [0u8; 125];
                     ping_data_buf[..ping_len]
-                        .copy_from_slice(&self.ping_frame_bytes[6..][..ping_len]);
+                        .copy_from_slice(&self.ping_frame_bytes.get()[6..][..ping_len]);
                     self.dispatch_data(&ping_data_buf[..ping_len], Opcode::Ping);
 
                     receive_state = ReceiveState::NeedHeader;
                     receive_body_remain = 0;
                     receiving_type = last_receive_data_type;
-                    self.ping_received = false;
+                    self.ping_received.set(false);
 
                     // we need to send all pongs to pass autobahn tests
                     let _ = self.send_pong();
@@ -940,24 +964,25 @@ impl<const SSL: bool> WebSocket<SSL> {
                     }
                 }
                 ReceiveState::Pong => {
-                    if !self.pong_received {
+                    if !self.pong_received.get() {
                         if receive_body_remain > 125 {
                             self.terminate(ErrorCode::InvalidControlFrame);
                             terminated = true;
                             break;
                         }
-                        self.ping_len = receive_body_remain as u8;
+                        self.ping_len.set(receive_body_remain as u8);
                         receive_body_remain = 0;
-                        self.pong_received = true;
+                        self.pong_received.set(true);
                     }
-                    let pong_len = self.ping_len as usize;
+                    let pong_len = self.ping_len.get() as usize;
 
                     if !data.is_empty() {
                         let total_received = pong_len.min(receive_body_remain + data.len());
-                        let slice =
-                            &mut self.ping_frame_bytes[6..][receive_body_remain..total_received];
+                        let mut ping_frame_bytes = self.ping_frame_bytes.get();
+                        let slice = &mut ping_frame_bytes[6..][receive_body_remain..total_received];
                         let slice_len = slice.len();
                         slice.copy_from_slice(&data[..slice_len]);
+                        self.ping_frame_bytes.set(ping_frame_bytes);
                         receive_body_remain = total_received;
                         data = &data[slice_len..];
                     }
@@ -967,29 +992,25 @@ impl<const SSL: bool> WebSocket<SSL> {
                         break;
                     }
 
-                    // copy the ≤125-byte payload to a stack array so
-                    // the slice does not alias `&mut self` across `dispatch_data`
-                    // (PORTING.md §Forbidden: aliased-&mut).
+                    // copy the ≤125-byte payload to a stack array:
+                    // `dispatch_data` may re-enter and mutate `ping_frame_bytes`.
                     let mut pong_data_buf = [0u8; 125];
                     pong_data_buf[..pong_len]
-                        .copy_from_slice(&self.ping_frame_bytes[6..][..pong_len]);
+                        .copy_from_slice(&self.ping_frame_bytes.get()[6..][..pong_len]);
                     self.dispatch_data(&pong_data_buf[..pong_len], Opcode::Pong);
 
                     receive_state = ReceiveState::NeedHeader;
                     receive_body_remain = 0;
                     receiving_type = last_receive_data_type;
-                    self.pong_received = false;
+                    self.pong_received.set(false);
 
                     if data.is_empty() {
                         break;
                     }
                 }
                 ReceiveState::NeedBody => {
-                    if self
-                        .receive_buffer
-                        .readable_length()
-                        .saturating_add(receive_body_remain)
-                        > MAX_RECEIVE_MESSAGE_LENGTH
+                    let buffered_len = self.receive_buffer.borrow().readable_length();
+                    if buffered_len.saturating_add(receive_body_remain) > MAX_RECEIVE_MESSAGE_LENGTH
                     {
                         self.terminate(ErrorCode::MessageTooBig);
                         terminated = true;
@@ -1024,25 +1045,28 @@ impl<const SSL: bool> WebSocket<SSL> {
                     }
 
                     if receive_body_remain > 0 {
-                        if !self.close_frame_buffering {
-                            self.ping_len = receive_body_remain as u8;
+                        if !self.close_frame_buffering.get() {
+                            self.ping_len.set(receive_body_remain as u8);
                             receive_body_remain = 0;
-                            self.close_frame_buffering = true;
+                            self.close_frame_buffering.set(true);
                         }
-                        let to_copy = data.len().min(self.ping_len as usize - receive_body_remain);
-                        self.ping_frame_bytes[6 + receive_body_remain..][..to_copy]
+                        let to_copy = data
+                            .len()
+                            .min(self.ping_len.get() as usize - receive_body_remain);
+                        let mut ping_frame_bytes = self.ping_frame_bytes.get();
+                        ping_frame_bytes[6 + receive_body_remain..][..to_copy]
                             .copy_from_slice(&data[..to_copy]);
+                        self.ping_frame_bytes.set(ping_frame_bytes);
                         receive_body_remain += to_copy;
-                        if receive_body_remain < self.ping_len as usize {
+                        if receive_body_remain < self.ping_len.get() as usize {
                             break;
                         }
 
-                        self.close_received = true;
-                        let ping_len = self.ping_len as usize;
-                        // copy close_data out to avoid borrowck conflict with &mut self below
+                        self.close_received.set(true);
+                        let ping_len = self.ping_len.get() as usize;
                         let mut close_data_buf = [0u8; 125];
                         close_data_buf[..ping_len]
-                            .copy_from_slice(&self.ping_frame_bytes[6..][..ping_len]);
+                            .copy_from_slice(&self.ping_frame_bytes.get()[6..][..ping_len]);
                         let close_data = &close_data_buf[..ping_len];
                         if ping_len >= 2 {
                             let received_code = u16::from_be_bytes([close_data[0], close_data[1]]);
@@ -1058,12 +1082,12 @@ impl<const SSL: bool> WebSocket<SSL> {
                         } else {
                             self.send_close();
                         }
-                        self.close_frame_buffering = false;
+                        self.close_frame_buffering.set(false);
                         terminated = true;
                         break;
                     }
 
-                    self.close_received = true;
+                    self.close_received.set(true);
                     self.send_close();
                     terminated = true;
                     break;
@@ -1078,28 +1102,23 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         // epilogue
         if terminated {
-            self.close_received = true;
+            self.close_received.set(true);
         } else {
-            self.receive_state = receive_state;
-            self.receiving_type = last_receive_data_type;
-            self.receive_body_remain = receive_body_remain;
+            self.receive_state.set(receive_state);
+            self.receiving_type.set(last_receive_data_type);
+            self.receive_body_remain.set(receive_body_remain);
         }
     }
 
-    pub fn send_close(&mut self) {
+    pub fn send_close(&self) {
         // Received a bodyless Close: echo a normal-closure frame on the wire,
         // but report 1005 ("no status received") to JS per RFC 6455 §7.1.5.
         self.send_close_with_body(1000, Some(1005), None, 0);
     }
 
-    // Takes no `socket` parameter: every
-    // caller would have passed `self.tcp`, and threading a `&Socket<SSL>`
-    // alongside `&mut self` is a Stacked-Borrows hazard (the receiver retag
-    // covers `self.tcp` and invalidates any prior `&self.tcp`-derived pointer
-    // before the argument is even retagged). Read `self.tcp` directly instead.
-    fn enqueue_encoded_bytes(&mut self, bytes: &[u8]) -> bool {
+    fn enqueue_encoded_bytes(&self, bytes: &[u8]) -> bool {
         // For tunnel mode, write through the tunnel instead of direct socket
-        if let Some(tunnel) = &self.proxy_tunnel {
+        if let Some(tunnel) = self.proxy_tunnel.get() {
             // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`).
             // `write_data()` may fire `write_encrypted(ctx)` which reborrows
             // the tunnel allocation, so call the raw-ptr overload that never
@@ -1121,7 +1140,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // fast path: no backpressure, no queue, just send the bytes.
         if !self.has_backpressure() {
             // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
-            let wrote = self.tcp.write(bytes);
+            let wrote = self.tcp.get().write(bytes);
             let expected = c_int::try_from(bytes.len()).expect("int cast");
             if wrote == expected {
                 return true;
@@ -1140,12 +1159,12 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.copy_to_send_buffer(bytes, true)
     }
 
-    fn copy_to_send_buffer(&mut self, bytes: &[u8], do_write: bool) -> bool {
+    fn copy_to_send_buffer(&self, bytes: &[u8], do_write: bool) -> bool {
         self.send_data(Copy::Raw(bytes), do_write, Opcode::Binary)
     }
 
-    fn send_data(&mut self, bytes: Copy<'_>, do_write: bool, opcode: Opcode) -> bool {
-        let should_compress = self.deflate.is_some()
+    fn send_data(&self, bytes: Copy<'_>, do_write: bool, opcode: Opcode) -> bool {
+        let should_compress = self.deflate.borrow().is_some()
             && (opcode == Opcode::Text || opcode == Opcode::Binary)
             && !matches!(bytes, Copy::Raw(_));
 
@@ -1195,6 +1214,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
                 if self
                     .deflate
+                    .borrow_mut()
                     .as_mut()
                     .unwrap()
                     .compress(content_to_compress, &mut compressed)
@@ -1206,7 +1226,8 @@ impl<const SSL: bool> WebSocket<SSL> {
 
                 // Create the compressed frame
                 let frame_size = WebsocketHeader::frame_size_including_mask(compressed.len());
-                let writable = match self.send_buffer.writable_with_size(frame_size) {
+                let mut send_buffer = self.send_buffer.borrow_mut();
+                let writable = match send_buffer.writable_with_size(frame_size) {
                     Ok(w) => w,
                     Err(_) => return false,
                 };
@@ -1217,16 +1238,16 @@ impl<const SSL: bool> WebSocket<SSL> {
                     opcode,
                     true,
                 );
-                self.send_buffer.update(frame_size);
+                send_buffer.update(frame_size);
             }
 
             if do_write {
                 #[cfg(debug_assertions)]
                 {
-                    if self.proxy_tunnel.is_none() {
-                        debug_assert!(!self.tcp.is_shutdown());
-                        debug_assert!(!self.tcp.is_closed());
-                        debug_assert!(self.tcp.is_established());
+                    if self.proxy_tunnel.get().is_none() {
+                        debug_assert!(!self.tcp.get().is_shutdown());
+                        debug_assert!(!self.tcp.get().is_closed());
+                        debug_assert!(self.tcp.get().is_established());
                     }
                 }
                 return self.send_buffer_out();
@@ -1238,30 +1259,32 @@ impl<const SSL: bool> WebSocket<SSL> {
         true
     }
 
-    fn send_data_uncompressed(&mut self, bytes: Copy<'_>, do_write: bool, opcode: Opcode) -> bool {
+    fn send_data_uncompressed(&self, bytes: Copy<'_>, do_write: bool, opcode: Opcode) -> bool {
         let mut content_byte_len: usize = 0;
         let write_len = bytes.len(&mut content_byte_len);
         debug_assert!(write_len > 0);
 
-        let writable = self
-            .send_buffer
-            .writable_with_size(write_len)
-            .expect("unreachable");
-        bytes.copy(
-            &self.global_this,
-            &mut writable[..write_len],
-            content_byte_len,
-            opcode,
-        );
-        self.send_buffer.update(write_len);
+        {
+            let mut send_buffer = self.send_buffer.borrow_mut();
+            let writable = send_buffer
+                .writable_with_size(write_len)
+                .expect("unreachable");
+            bytes.copy(
+                &self.global_this,
+                &mut writable[..write_len],
+                content_byte_len,
+                opcode,
+            );
+            send_buffer.update(write_len);
+        }
 
         if do_write {
             #[cfg(debug_assertions)]
             {
-                if self.proxy_tunnel.is_none() {
-                    debug_assert!(!self.tcp.is_shutdown());
-                    debug_assert!(!self.tcp.is_closed());
-                    debug_assert!(self.tcp.is_established());
+                if self.proxy_tunnel.get().is_none() {
+                    debug_assert!(!self.tcp.get().is_shutdown());
+                    debug_assert!(!self.tcp.get().is_closed());
+                    debug_assert!(self.tcp.get().is_established());
                 }
             }
             return self.send_buffer_out();
@@ -1270,22 +1293,15 @@ impl<const SSL: bool> WebSocket<SSL> {
         true
     }
 
-    // renamed from `sendBuffer` to avoid clash with `send_buffer`
-    // field. Takes no slice argument: every caller would pass
-    // the send buffer's readable slice, and laundering that slice
-    // through `from_raw_parts` while holding `&mut self` is aliased-&mut UB
-    // (PORTING.md §Forbidden). Instead, take ownership of the fifo, write its
-    // readable region, then restore and `discard` unconditionally.
-    fn send_buffer_out(&mut self) -> bool {
-        let mut buf = core::mem::replace(
-            &mut self.send_buffer,
-            LinearFifo::<u8, DynamicBuffer<u8>>::init(),
-        );
+    fn send_buffer_out(&self) -> bool {
+        let mut buf = self
+            .send_buffer
+            .replace(LinearFifo::<u8, DynamicBuffer<u8>>::init());
         // Do not use MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
         let wrote: Result<usize, bool> = {
             let out_buf = buf.readable_slice(0);
             debug_assert!(!out_buf.is_empty());
-            if let Some(tunnel) = &self.proxy_tunnel {
+            if let Some(tunnel) = self.proxy_tunnel.get() {
                 // In tunnel mode, route through the tunnel's TLS layer
                 // instead of the detached raw socket.
                 // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`).
@@ -1296,10 +1312,10 @@ impl<const SSL: bool> WebSocket<SSL> {
                     Ok(w) => Ok(w),
                     Err(_) => Err(true),
                 }
-            } else if self.tcp.is_closed() {
+            } else if self.tcp.get().is_closed() {
                 Err(false)
             } else {
-                let w = self.tcp.write(out_buf);
+                let w = self.tcp.get().write(out_buf);
                 if w < 0 {
                     Err(true)
                 } else {
@@ -1310,7 +1326,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         match wrote {
             Ok(wrote) => {
                 buf.discard(wrote);
-                self.send_buffer = buf;
+                self.send_buffer.replace(buf);
                 true
             }
             Err(true) => {
@@ -1321,13 +1337,13 @@ impl<const SSL: bool> WebSocket<SSL> {
                 false
             }
             Err(false) => {
-                self.send_buffer = buf;
+                self.send_buffer.replace(buf);
                 false
             }
         }
     }
 
-    fn send_pong(&mut self) -> bool {
+    fn send_pong(&self) -> bool {
         if !self.has_tcp() {
             self.dispatch_abrupt_close(ErrorCode::Ended);
             return false;
@@ -1340,35 +1356,31 @@ impl<const SSL: bool> WebSocket<SSL> {
         header.set_opcode(Opcode::Pong);
 
         header.set_mask(true);
-        header.set_len(self.ping_len & 0x7F); // @truncate to u7
+        header.set_len(self.ping_len.get() & 0x7F); // @truncate to u7
         let header_slice = header.slice();
-        self.ping_frame_bytes[0] = header_slice[0];
-        self.ping_frame_bytes[1] = header_slice[1];
+        let mut ping_frame_bytes = self.ping_frame_bytes.get();
+        ping_frame_bytes[0] = header_slice[0];
+        ping_frame_bytes[1] = header_slice[1];
 
-        let ping_len = self.ping_len as usize;
+        let ping_len = self.ping_len.get() as usize;
         if ping_len > 0 {
             // reshaped for borrowck — Mask::fill needs disjoint borrows of ping_frame_bytes
-            let (head, tail) = self.ping_frame_bytes.split_at_mut(6);
+            let (head, tail) = ping_frame_bytes.split_at_mut(6);
             let mask_buf: &mut [u8; 4] = (&mut head[2..6])
                 .try_into()
                 .expect("infallible: size matches");
             let to_mask = &mut tail[..ping_len];
             // SAFETY: input and output point to the same memory; Mask::fill supports in-place
             Mask::fill_in_place(&self.global_this, mask_buf, to_mask);
-            // copy the ≤(6+125)-byte frame to a stack array so the
-            // slice does not alias `&mut self` across `enqueue_encoded_bytes`
-            // (PORTING.md §Forbidden: aliased-&mut). `enqueue_encoded_bytes`
-            // may call `terminate → clear_data` while the laundered slice into
-            // `self.ping_frame_bytes` would still be live.
+            self.ping_frame_bytes.set(ping_frame_bytes);
+            // `enqueue_encoded_bytes` may call `terminate → clear_data`, which
+            // mutates `ping_frame_bytes`' bookkeeping; send the local copy.
             let frame_len = 6 + ping_len;
-            let mut frame_buf = [0u8; 6 + 125];
-            frame_buf[..frame_len].copy_from_slice(&self.ping_frame_bytes[..frame_len]);
-            self.enqueue_encoded_bytes(&frame_buf[..frame_len])
+            self.enqueue_encoded_bytes(&ping_frame_bytes[..frame_len])
         } else {
-            self.ping_frame_bytes[2..6].fill(0); // autobahn tests require that we mask empty pongs
-            let mut frame_buf = [0u8; 6];
-            frame_buf.copy_from_slice(&self.ping_frame_bytes[..6]);
-            self.enqueue_encoded_bytes(&frame_buf)
+            ping_frame_bytes[2..6].fill(0); // autobahn tests require that we mask empty pongs
+            self.ping_frame_bytes.set(ping_frame_bytes);
+            self.enqueue_encoded_bytes(&ping_frame_bytes[..6])
         }
     }
 
@@ -1377,7 +1389,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// from the wire code — e.g. a received bodyless Close echoes 1000 but
     /// reports 1005; when `None`, JS sees `code`.
     fn send_close_with_body(
-        &mut self,
+        &self,
         code: u16,
         dispatch_code: Option<u16>,
         body: Option<&mut [u8; 125]>,
@@ -1388,7 +1400,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // reason text is limited to 123 bytes.
         let body_len = body_len.min(123);
         log!("Sending close with code {}", code);
-        if self.close_dispatch_pending.is_some() {
+        if self.has_pending_close_dispatch() {
             // A close is already mid-flush (user-initiated ws.close() under
             // backpressure); don't enqueue a second close frame on top of it.
             return;
@@ -1445,7 +1457,8 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         if self.enqueue_encoded_bytes(slice) {
             let dispatch_code = dispatch_code.unwrap_or(code);
-            if self.send_buffer.readable_length() == 0 {
+            let pending_len = self.send_buffer.borrow().readable_length();
+            if pending_len == 0 {
                 self.shutdown_after_close_frame();
                 self.clear_data();
                 self.dispatch_close(dispatch_code, &mut reason);
@@ -1454,7 +1467,8 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // in send_buffer. clear_data() would discard it (and the
                 // proxy_tunnel needed to flush it), so defer teardown until
                 // handle_writable drains the buffer or the socket dies.
-                self.close_dispatch_pending = Some((dispatch_code, reason));
+                self.close_dispatch_pending
+                    .set(Some((dispatch_code, reason)));
             }
         }
     }
@@ -1465,14 +1479,14 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// cancel → close(Failure)`, which would RST and discard the queued close
     /// frame. SSL is excluded because the SSL handshake can happen during
     /// writes; tunnel mode operates on a detached socket.
-    fn shutdown_after_close_frame(&mut self) {
-        if !SSL && self.proxy_tunnel.is_none() {
-            self.tcp.shutdown_read();
-            self.tcp.shutdown();
+    fn shutdown_after_close_frame(&self) {
+        if !SSL && self.proxy_tunnel.get().is_none() {
+            self.tcp.get().shutdown_read();
+            self.tcp.get().shutdown();
         }
     }
 
-    fn finish_pending_close(&mut self) {
+    fn finish_pending_close(&self) {
         if let Some((code, mut reason)) = self.close_dispatch_pending.take() {
             self.shutdown_after_close_frame();
             self.clear_data();
@@ -1483,22 +1497,29 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// Shared tail of the writable handlers (direct socket and proxy tunnel):
     /// flush whatever is queued and, once the buffer is empty, dispatch a
     /// close that was deferred behind it.
-    fn drain_send_buffer_and_finish_close(&mut self) {
-        if self.send_buffer.readable_length() != 0 {
+    fn drain_send_buffer_and_finish_close(&self) {
+        if self.send_buffer.borrow().readable_length() != 0 {
             let _ = self.send_buffer_out();
         }
-        if self.send_buffer.readable_length() == 0 {
+        if self.send_buffer.borrow().readable_length() == 0 {
             self.finish_pending_close();
         }
     }
 
     pub fn is_same_socket(&self, socket: &Socket<SSL>) -> bool {
-        socket.socket == self.tcp.socket
+        socket.socket == self.tcp.get().socket
     }
 
-    pub fn handle_end(&mut self, socket: Socket<SSL>) {
+    fn has_pending_close_dispatch(&self) -> bool {
+        let pending = self.close_dispatch_pending.take();
+        let is_pending = pending.is_some();
+        self.close_dispatch_pending.set(pending);
+        is_pending
+    }
+
+    pub fn handle_end(&self, socket: Socket<SSL>) {
         debug_assert!(self.is_same_socket(&socket));
-        if self.close_dispatch_pending.is_some() {
+        if self.has_pending_close_dispatch() {
             // Peer FIN'd while we're still draining our close frame; finish the
             // drain on the next writable event instead of RST'ing via
             // terminate → fail → cancel(Failure).
@@ -1507,28 +1528,28 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.terminate(ErrorCode::Ended);
     }
 
-    pub fn handle_writable(&mut self, socket: Socket<SSL>) {
-        if self.close_received && self.close_dispatch_pending.is_none() {
+    pub fn handle_writable(&self, socket: Socket<SSL>) {
+        if self.close_received.get() && !self.has_pending_close_dispatch() {
             return;
         }
         debug_assert!(self.is_same_socket(&socket));
         self.drain_send_buffer_and_finish_close();
     }
 
-    pub fn handle_timeout(&mut self, _socket: Socket<SSL>) {
+    pub fn handle_timeout(&self, _socket: Socket<SSL>) {
         self.terminate(ErrorCode::Timeout);
     }
 
-    pub fn handle_connect_error(&mut self, _socket: Socket<SSL>, _errno: c_int) {
-        self.tcp.detach();
+    pub fn handle_connect_error(&self, _socket: Socket<SSL>, _errno: c_int) {
+        self.detach_tcp();
         self.terminate(ErrorCode::FailedToConnect);
     }
 
     pub fn has_backpressure(&self) -> bool {
-        if self.send_buffer.readable_length() > 0 {
+        if self.send_buffer.borrow().readable_length() > 0 {
             return true;
         }
-        if let Some(tunnel) = &self.proxy_tunnel {
+        if let Some(tunnel) = self.proxy_tunnel.get() {
             // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`).
             return unsafe { tunnel.as_ref() }.has_backpressure();
         }
@@ -1546,7 +1567,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // use, since `this` is declared after the guard).
         let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
         // SAFETY: called from C++ with a valid pointer; guarded above.
-        let this = unsafe { &mut *this_ptr };
+        let this = unsafe { &*this_ptr };
 
         if !this.has_tcp() || op > 0xF {
             this.dispatch_abrupt_close(ErrorCode::Ended);
@@ -1577,10 +1598,11 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     fn has_tcp(&self) -> bool {
         // For tunnel mode, we have an active connection through the tunnel
-        if self.proxy_tunnel.is_some() {
+        if self.proxy_tunnel.get().is_some() {
             return true;
         }
-        !self.tcp.is_closed() && !self.tcp.is_shutdown()
+        let tcp = self.tcp.get();
+        !tcp.is_closed() && !tcp.is_shutdown()
     }
 
     // `extern "C"` entrypoint; `this_ptr` is non-null by C++ contract (see SAFETY comments below).
@@ -1592,7 +1614,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // use, since `this` is declared after the guard).
         let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
         // SAFETY: called from C++ with a valid pointer; guarded above.
-        let this = unsafe { &mut *this_ptr };
+        let this = unsafe { &*this_ptr };
 
         if !this.has_tcp() || op > 0xF {
             this.dispatch_abrupt_close(ErrorCode::Ended);
@@ -1651,7 +1673,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // use, since `this` is declared after the guard).
         let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
         // SAFETY: called from C++ with a valid pointer; guarded above.
-        let this = unsafe { &mut *this_ptr };
+        let this = unsafe { &*this_ptr };
 
         // SAFETY: str_ is a valid pointer from C++
         let str = unsafe { &*str_ };
@@ -1709,28 +1731,27 @@ impl<const SSL: bool> WebSocket<SSL> {
         );
     }
 
-    fn dispatch_abrupt_close(&mut self, code: ErrorCode) {
+    fn dispatch_abrupt_close(&self, code: ErrorCode) {
         let Some(out) = self.outgoing_websocket.take() else {
             return;
         };
-        self.poll_ref.unref(Self::vm_loop_ctx(&self.global_this));
+        self.unref_keep_alive();
         jsc::mark_binding!();
         CppWebSocket::opaque_ref(out.as_ptr()).did_abrupt_close(code);
-        // SAFETY: `self: &mut Self` → `*mut Self`; allocation kept live by
-        // caller's ref guard (see cancel/handle_close).
-        unsafe { Self::deref(self) };
+        // SAFETY: allocation kept live by caller's ref guard (see
+        // cancel/handle_close).
+        unsafe { Self::deref(self.as_ctx_ptr()) };
     }
 
-    fn dispatch_close(&mut self, code: u16, reason: &mut bun_core::String) {
+    fn dispatch_close(&self, code: u16, reason: &mut bun_core::String) {
         let Some(out) = self.outgoing_websocket.take() else {
             return;
         };
-        self.poll_ref.unref(Self::vm_loop_ctx(&self.global_this));
+        self.unref_keep_alive();
         jsc::mark_binding!();
         CppWebSocket::opaque_ref(out.as_ptr()).did_close(code, reason);
-        // SAFETY: `self: &mut Self` → `*mut Self`; allocation kept live by
-        // caller's ref guard.
-        unsafe { Self::deref(self) };
+        // SAFETY: allocation kept live by caller's ref guard.
+        unsafe { Self::deref(self.as_ctx_ptr()) };
     }
 
     // `extern "C"` entrypoint; pointers are valid (or null where checked) by C++ contract.
@@ -1745,7 +1766,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // use, since `this` is declared after the guard).
         let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
         // SAFETY: called from C++ with a valid pointer; guarded above.
-        let this = unsafe { &mut *this_ptr };
+        let this = unsafe { &*this_ptr };
 
         if !this.has_tcp() {
             return;
@@ -1818,43 +1839,43 @@ impl<const SSL: bool> WebSocket<SSL> {
         let vm = global_this.bun_vm().as_mut();
         let ws = bun_core::heap::into_raw(Box::new(WebSocket::<SSL> {
             ref_count: Cell::new(1),
-            tcp: Socket::<SSL>::detached(),
-            outgoing_websocket: NonNull::new(outgoing),
-            receive_state: ReceiveState::NeedHeader,
-            receiving_type: Opcode::ResB,
-            receiving_is_final: true,
-            ping_frame_bytes: [0u8; 128 + 6],
-            ping_len: 0,
-            ping_received: false,
-            pong_received: false,
-            close_received: false,
-            close_frame_buffering: false,
-            close_dispatch_pending: None,
-            receive_frame: 0,
-            receive_body_remain: 0,
-            receive_pending_chunk_len: 0,
-            receive_buffer: LinearFifo::<u8, DynamicBuffer<u8>>::init(),
-            send_buffer: LinearFifo::<u8, DynamicBuffer<u8>>::init(),
+            tcp: Cell::new(Socket::<SSL>::detached()),
+            outgoing_websocket: Cell::new(NonNull::new(outgoing)),
+            receive_state: Cell::new(ReceiveState::NeedHeader),
+            receiving_type: Cell::new(Opcode::ResB),
+            receiving_is_final: Cell::new(true),
+            ping_frame_bytes: Cell::new([0u8; 128 + 6]),
+            ping_len: Cell::new(0),
+            ping_received: Cell::new(false),
+            pong_received: Cell::new(false),
+            close_received: Cell::new(false),
+            close_frame_buffering: Cell::new(false),
+            close_dispatch_pending: Cell::new(None),
+            receive_frame: Cell::new(0),
+            receive_body_remain: Cell::new(0),
+            receive_pending_chunk_len: Cell::new(0),
+            receive_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
+            send_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
             global_this: GlobalRef::from(global_this),
-            poll_ref: KeepAlive::init(),
-            header_fragment: None,
-            payload_length_frame_bytes: [0u8; 8],
-            payload_length_frame_len: 0,
-            initial_data_handler: None,
+            poll_ref: Cell::new(KeepAlive::init()),
+            header_fragment: Cell::new(None),
+            payload_length_frame_bytes: Cell::new([0u8; 8]),
+            payload_length_frame_len: Cell::new(0),
+            initial_data_handler: Cell::new(None),
             // reshaped for borrowck — `vm.event_loop()` returns a
             // `&'static`-tied borrow that would lock `vm` for the rest of the
             // fn; re-derive from `global_this` so `vm` stays usable below.
             // SAFETY: bun_vm() never returns null; event_loop ptr is live for VM lifetime.
             event_loop: global_this.bun_vm().event_loop_mut(),
-            deflate: None,
-            receiving_compressed: false,
-            message_is_compressed: false,
-            secure: if secure_ptr.is_null() {
+            deflate: RefCell::new(None),
+            receiving_compressed: Cell::new(false),
+            message_is_compressed: Cell::new(false),
+            secure: Cell::new(if secure_ptr.is_null() {
                 None
             } else {
                 Some(secure_ptr.cast::<SslCtx>())
-            },
-            proxy_tunnel: None,
+            }),
+            proxy_tunnel: Cell::new(None),
         }));
         bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::ALLOC_TYPE_NAME, ws);
         // SAFETY: ws was just allocated via heap::alloc
@@ -1862,8 +1883,8 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         if let Some(params) = deflate_params {
             match WebSocketDeflate::init(*params, vm.rare_data()) {
-                Ok(deflate) => ws_ref.deflate = Some(deflate),
-                Err(_) => ws_ref.deflate = None,
+                Ok(deflate) => *ws_ref.deflate.get_mut() = Some(deflate),
+                Err(_) => *ws_ref.deflate.get_mut() = None,
             }
         }
 
@@ -1894,7 +1915,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // SAFETY: `owner == ws` is a valid live allocation; raw-ptr field
             // write avoids materializing a second `&mut` that would alias
             // `ws_ref` above.
-            |owner, sock| unsafe { core::ptr::addr_of_mut!((*owner).tcp).write(sock) },
+            |owner, sock| unsafe { core::ptr::addr_of_mut!((*owner).tcp).write(Cell::new(sock)) },
         ) {
             // SAFETY: `ws` is the `heap::alloc` allocation just created
             // above; sole owner on this failure path.
@@ -1902,9 +1923,12 @@ impl<const SSL: bool> WebSocket<SSL> {
             return core::ptr::null_mut();
         }
 
-        bun_core::handle_oom(ws_ref.send_buffer.ensure_total_capacity(2048));
-        bun_core::handle_oom(ws_ref.receive_buffer.ensure_total_capacity(2048));
-        ws_ref.poll_ref.r#ref(Self::vm_loop_ctx(global_this));
+        bun_core::handle_oom(ws_ref.send_buffer.get_mut().ensure_total_capacity(2048));
+        bun_core::handle_oom(ws_ref.receive_buffer.get_mut().ensure_total_capacity(2048));
+        ws_ref
+            .poll_ref
+            .get_mut()
+            .r#ref(Self::vm_loop_ctx(global_this));
 
         if buffered_data_len > 0 {
             // SAFETY: buffered_data/len from C++; caller guarantees validity.
@@ -1931,7 +1955,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // Backref so `handle_data` can drain the buffered slice ahead of
             // fresh socket data, and so `deinit()` can detach from the box if
             // teardown races ahead of the microtask drain.
-            ws_ref.initial_data_handler = NonNull::new(initial_data);
+            ws_ref.initial_data_handler.set(NonNull::new(initial_data));
 
             // Use a higher-priority callback for the initial onData handler
             // `queue_microtask_callback` takes an erased
@@ -1979,39 +2003,39 @@ impl<const SSL: bool> WebSocket<SSL> {
         let vm = global_this.bun_vm().as_mut();
         let ws = bun_core::heap::into_raw(Box::new(WebSocket::<SSL> {
             ref_count: Cell::new(1),
-            tcp: Socket::<SSL>::detached(), // No direct socket - using tunnel
-            outgoing_websocket: NonNull::new(outgoing),
-            receive_state: ReceiveState::NeedHeader,
-            receiving_type: Opcode::ResB,
-            receiving_is_final: true,
-            ping_frame_bytes: [0u8; 128 + 6],
-            ping_len: 0,
-            ping_received: false,
-            pong_received: false,
-            close_received: false,
-            close_frame_buffering: false,
-            close_dispatch_pending: None,
-            receive_frame: 0,
-            receive_body_remain: 0,
-            receive_pending_chunk_len: 0,
-            receive_buffer: LinearFifo::<u8, DynamicBuffer<u8>>::init(),
-            send_buffer: LinearFifo::<u8, DynamicBuffer<u8>>::init(),
+            tcp: Cell::new(Socket::<SSL>::detached()), // No direct socket - using tunnel
+            outgoing_websocket: Cell::new(NonNull::new(outgoing)),
+            receive_state: Cell::new(ReceiveState::NeedHeader),
+            receiving_type: Cell::new(Opcode::ResB),
+            receiving_is_final: Cell::new(true),
+            ping_frame_bytes: Cell::new([0u8; 128 + 6]),
+            ping_len: Cell::new(0),
+            ping_received: Cell::new(false),
+            pong_received: Cell::new(false),
+            close_received: Cell::new(false),
+            close_frame_buffering: Cell::new(false),
+            close_dispatch_pending: Cell::new(None),
+            receive_frame: Cell::new(0),
+            receive_body_remain: Cell::new(0),
+            receive_pending_chunk_len: Cell::new(0),
+            receive_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
+            send_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
             global_this: GlobalRef::from(global_this),
-            poll_ref: KeepAlive::init(),
-            header_fragment: None,
-            payload_length_frame_bytes: [0u8; 8],
-            payload_length_frame_len: 0,
-            initial_data_handler: None,
+            poll_ref: Cell::new(KeepAlive::init()),
+            header_fragment: Cell::new(None),
+            payload_length_frame_bytes: Cell::new([0u8; 8]),
+            payload_length_frame_len: Cell::new(0),
+            initial_data_handler: Cell::new(None),
             // reshaped for borrowck — `vm.event_loop()` returns a
             // `&'static`-tied borrow that would lock `vm` for the rest of the
             // fn; re-derive from `global_this` so `vm` stays usable below.
             // SAFETY: bun_vm() never returns null; event_loop ptr is live for VM lifetime.
             event_loop: global_this.bun_vm().event_loop_mut(),
-            deflate: None,
-            receiving_compressed: false,
-            message_is_compressed: false,
-            secure: None,
-            proxy_tunnel: Some(tunnel_owned),
+            deflate: RefCell::new(None),
+            receiving_compressed: Cell::new(false),
+            message_is_compressed: Cell::new(false),
+            secure: Cell::new(None),
+            proxy_tunnel: Cell::new(Some(tunnel_owned)),
         }));
         bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::ALLOC_TYPE_NAME, ws);
         // SAFETY: ws was just allocated via heap::alloc
@@ -2019,14 +2043,17 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         if let Some(params) = deflate_params {
             match WebSocketDeflate::init(*params, vm.rare_data()) {
-                Ok(deflate) => ws_ref.deflate = Some(deflate),
-                Err(_) => ws_ref.deflate = None,
+                Ok(deflate) => *ws_ref.deflate.get_mut() = Some(deflate),
+                Err(_) => *ws_ref.deflate.get_mut() = None,
             }
         }
 
-        bun_core::handle_oom(ws_ref.send_buffer.ensure_total_capacity(2048));
-        bun_core::handle_oom(ws_ref.receive_buffer.ensure_total_capacity(2048));
-        ws_ref.poll_ref.r#ref(Self::vm_loop_ctx(global_this));
+        bun_core::handle_oom(ws_ref.send_buffer.get_mut().ensure_total_capacity(2048));
+        bun_core::handle_oom(ws_ref.receive_buffer.get_mut().ensure_total_capacity(2048));
+        ws_ref
+            .poll_ref
+            .get_mut()
+            .r#ref(Self::vm_loop_ctx(global_this));
 
         if buffered_data_len > 0 {
             // SAFETY: see `init()` — adopt the C++ mimalloc-owned buffer
@@ -2045,7 +2072,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // ref before C++ can finalize.
                 ws: NonNull::new(outgoing).map(|p| unsafe { CppWebSocketRef::new(p) }),
             }));
-            ws_ref.initial_data_handler = NonNull::new(initial_data);
+            ws_ref.initial_data_handler.set(NonNull::new(initial_data));
             // `queue_microtask_callback` takes an erased
             // `(*mut c_void, unsafe extern "C" fn(*mut c_void))`; cast both.
             global_this.queue_microtask_callback(
@@ -2084,7 +2111,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: caller contract — `this_ptr` is a live `heap::alloc` pointer
         // (the tunnel calls through its raw `connected_websocket` backref).
         let this = unsafe { ThisPtr::new(this_ptr) };
-        if this.close_received && this.close_dispatch_pending.is_none() {
+        if this.close_received.get() && !this.has_pending_close_dispatch() {
             return;
         }
         // send_buffer → tunnel.write() can re-enter fail() synchronously
@@ -2092,9 +2119,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // on_writable() but not this struct.
         let _guard = this.ref_guard();
 
-        // SAFETY: `_guard` ref keeps `*this_ptr` live; sole owner on this
-        // thread. The auto-ref `&mut *this_ptr` ends before `_guard` drops.
-        unsafe { (*this.as_ptr()).drain_send_buffer_and_finish_close() };
+        this.drain_send_buffer_and_finish_close();
     }
 
     // `extern "C"` entrypoint; `this_ptr` is non-null by C++ contract (see SAFETY comments below).
@@ -2109,24 +2134,22 @@ impl<const SSL: bool> WebSocket<SSL> {
         // use, since `this` is declared after the guard).
         let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
         // SAFETY: called from C++ with a valid pointer; guarded above.
-        let this = unsafe { &mut *this_ptr };
+        let this = unsafe { &*this_ptr };
 
         this.clear_data();
 
         // This is only called by outgoing_websocket.
-        if this.outgoing_websocket.is_some() {
-            this.outgoing_websocket = None;
-            // SAFETY: `this: &mut Self` → `*mut Self`; allocation kept live by
-            // the local `r#ref()` guard above.
-            unsafe { Self::deref(this) };
+        if this.outgoing_websocket.take().is_some() {
+            // SAFETY: allocation kept live by the local guard above.
+            unsafe { Self::deref(this_ptr) };
         }
 
-        if !this.tcp.is_closed() {
+        if !this.tcp.get().is_closed() {
             // no need to be .failure we still wanna to send pending SSL buffer + close_notify
             if SSL {
-                this.tcp.close(uws::CloseKind::Normal);
+                this.tcp.get().close(uws::CloseKind::Normal);
             } else {
-                this.tcp.close(uws::CloseKind::Failure);
+                this.tcp.get().close(uws::CloseKind::Failure);
             }
         }
     }
@@ -2138,7 +2161,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let this_ref = unsafe { &mut *this };
         this_ref.clear_data();
         // deflate already dropped in clear_data; this is defensive
-        this_ref.deflate = None;
+        *this_ref.deflate.get_mut() = None;
         if let Some(handler) = this_ref.initial_data_handler.take() {
             // SAFETY: the handler box was allocated via `heap::into_raw` in
             // init()/init_with_tunnel() and is normally freed by the queued
@@ -2164,8 +2187,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: called from C++ with a valid pointer
         let this = unsafe { &*this };
         let mut cost: usize = size_of::<Self>();
-        cost += this.send_buffer.capacity();
-        cost += this.receive_buffer.capacity();
+        cost += this.send_buffer.try_borrow().map_or(0, |b| b.capacity());
+        cost += this.receive_buffer.try_borrow().map_or(0, |b| b.capacity());
         // This is under-estimated a little, as we don't include usockets context.
         cost
     }
@@ -2312,13 +2335,11 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
             return;
         };
         let ws_ptr = this_socket_ptr.as_ptr();
-        // this fn is reachable re-entrantly from
-        // `WebSocket::handle_data` while that frame may later form its own
-        // `&mut *ws_ptr`, so never materialize a `&mut WebSocket` here —
-        // touch fields via raw projection only.
+        // this fn is reachable re-entrantly from `WebSocket::handle_data`,
+        // so never materialize a `&mut WebSocket` here.
         // SAFETY: `adopted` is a backref to a live WebSocket (heap::alloc
-        // provenance); raw field write of a `Copy`-sized `Option<NonNull<_>>`.
-        unsafe { core::ptr::addr_of_mut!((*ws_ptr).initial_data_handler).write(None) };
+        // provenance).
+        unsafe { (*ws_ptr).initial_data_handler.set(None) };
         // RAII: take the owned ref so it drops at
         // scope exit. Paired with the `adopted.take()` above so the ref is
         // released exactly once even when this fn is later re-called with
@@ -2329,9 +2350,9 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
         // SAFETY: `ws_ptr` is live (see above); brief shared borrows for
         // `is_closed()` / `is_some()` — no `&mut` to `*ws_ptr` is live.
         let is_connected =
-            unsafe { !(*ws_ptr).tcp.is_closed() || (*ws_ptr).proxy_tunnel.is_some() };
+            unsafe { !(*ws_ptr).tcp.get().is_closed() || (*ws_ptr).proxy_tunnel.get().is_some() };
         // SAFETY: `ws_ptr` is live; raw read of a `Copy` field.
-        if unsafe { (*ws_ptr).outgoing_websocket.is_some() } && is_connected {
+        if unsafe { (*ws_ptr).outgoing_websocket.get().is_some() } && is_connected {
             // SAFETY: `ws_ptr` carries `heap::alloc` provenance; `handle_data`
             // takes `*mut Self` and forms its own scoped `&mut` internally. No
             // borrow of `*ws_ptr` is live in this frame across the call.

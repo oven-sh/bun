@@ -1901,6 +1901,75 @@ it("should support promise returned from error", async () => {
   subprocess.kill();
 });
 
+// A deferred error() that returns a pending Promise<undefined> used to
+// respond 204 and swallow the original error, unlike its sync and
+// already-settled twins which respond 500. Runs in a subprocess so the
+// server's error reports don't trip the test runner's unhandled-error check.
+it("error() producing no Response always responds 500 (#33137)", async () => {
+  using dir = tempDir("serve-deferred-error-33137", {
+    "server.js": `
+      const server = Bun.serve({
+        port: 0,
+        development: false,
+        fetch(request) {
+          const { pathname } = new URL(request.url);
+          throw new Error(pathname);
+        },
+        error(cause) {
+          const { message } = cause;
+          if (message === "/sync") return undefined;
+          if (message === "/already-settled") return Promise.resolve(undefined);
+          if (message === "/already-settled-null") return Promise.resolve(null);
+          if (message === "/deferred") return new Promise(r => setImmediate(() => r(undefined)));
+          if (message === "/deferred-null") return new Promise(r => setImmediate(() => r(null)));
+          if (message === "/deferred-response") {
+            return new Promise(r => setImmediate(() => r(new Response("handled", { status: 503 }))));
+          }
+        },
+      });
+      process.send(server.url.href);
+    `,
+  });
+
+  const { promise, resolve } = Promise.withResolvers<string>();
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+    ipc(message) {
+      resolve(message);
+    },
+  });
+
+  const url = await promise;
+
+  for (const pathname of ["/sync", "/already-settled", "/already-settled-null", "/deferred", "/deferred-null"]) {
+    const res = await fetch(new URL(pathname, url));
+    const body = await res.text();
+    expect({ pathname, status: res.status, body }).toEqual({
+      pathname,
+      status: 500,
+      body: "Something went wrong!",
+    });
+  }
+
+  // A deferred error() that does return a Response still renders it.
+  {
+    const res = await fetch(new URL("/deferred-response", url));
+    const body = await res.text();
+    expect({ status: res.status, body }).toEqual({ status: 503, body: "handled" });
+  }
+
+  proc.kill();
+  const stderr = await proc.stderr.text();
+  // The original error for the deferred path must be reported...
+  expect(stderr).toContain("/deferred");
+  // ...and NOT fetch's invalid-return diagnostic for error()'s value.
+  expect(stderr).not.toContain("Expected a Response object");
+});
+
 if (process.platform === "linux")
   it("should use correct error when using a root range port(#7187)", () => {
     expect(() => {

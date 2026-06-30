@@ -162,6 +162,11 @@ pub struct RequestContext<
     // fall back to `response_weakref` (see its doc below), so a `Strong`
     // here would root the Response unconditionally and change GC behavior.
     pub response_jsvalue: JSValue,
+
+    /// Original error passed to `error()` when it returned a pending promise.
+    /// Protected while in-flight so a deferred non-Response resolution can
+    /// still report it; cleared on settle and in finalize_without_deinit.
+    pub error_promise_value: JSValue,
     pub ref_count: u8,
 
     /// Weak: for plain Blob/InternalBlob bodies the Response JSValue is
@@ -736,9 +741,33 @@ where
         self.render_missing();
     }
 
+    /// Stop treating the pending `error()` promise as in-flight and hand back
+    /// the original error, releasing the root taken in process_on_error_promise.
+    fn take_error_promise_value(&mut self) -> JSValue {
+        self.flags.set_is_error_promise_pending(false);
+        let value = self.error_promise_value;
+        if !value.is_empty() {
+            value.unprotect();
+            self.error_promise_value = JSValue::ZERO;
+        }
+        value
+    }
+
     fn handle_resolve(ctx: &mut Self, value: JSValue) {
         if ctx.is_aborted_or_ended() || ctx.did_upgrade_web_socket() {
             return;
+        }
+
+        // A deferred `error()` handler shares fetch's resolve callback; a
+        // non-Response fulfillment must report the original error at 500, not
+        // render a misleading empty 204 (matches the sync/settled twins).
+        if ctx.flags.is_error_promise_pending() {
+            let original_error = ctx.take_error_promise_value();
+            // SAFETY: only probed for Response-ness; the borrow ends here.
+            if (unsafe { as_response(value) }).is_none() {
+                ctx.finish_running_error_handler(original_error, 500);
+                return;
+            }
         }
 
         if ctx.server.is_none() {
@@ -1291,6 +1320,7 @@ where
                 flags: Flags::<DEBUG_MODE>::default(),
                 upgrade_context: None,
                 response_jsvalue: JSValue::ZERO,
+                error_promise_value: JSValue::ZERO,
                 ref_count: 1,
                 response_weakref: response::WeakRef::EMPTY,
                 blob: AnyBlob::Blob(Blob::default()),
@@ -1481,6 +1511,9 @@ where
             }
             self.response_jsvalue = JSValue::ZERO;
         }
+        // Release the root taken for a deferred error() promise that never
+        // settled (e.g. the connection aborted while it was in-flight).
+        let _ = self.take_error_promise_value();
         self.response_weakref.deref();
 
         self.request_body_readable_stream_ref.deinit();
@@ -3434,6 +3467,10 @@ where
         match promise.unwrap(vm.global().vm(), jsc::PromiseUnwrapMode::MarkHandled) {
             jsc::PromiseResult::Pending => {
                 ctx.flags.set_is_error_promise_pending(true);
+                // Keep the original error rooted across the await so a deferred
+                // non-Response resolution can still report it (handle_resolve).
+                ctx.error_promise_value = value;
+                value.protect();
                 ctx.ref_();
                 let cell = NativePromiseContext::create(server.global_this(), ctx);
                 promise_js.then_with_value(

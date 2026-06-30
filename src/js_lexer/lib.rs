@@ -15,10 +15,10 @@ use bun_ast as js_ast;
 use bun_ast::lexer_tables as tables;
 use bun_ast::{LexerLog, Loc, Log, Range, Source};
 use bun_core::fmt::hex_digit_value_u32;
+use bun_core::identifier as js_identifier;
 use bun_core::strings;
 use bun_core::strings::CodepointIterator;
 use bun_core::{Environment, feature_flags as FeatureFlags};
-use bun_core::identifier as js_identifier;
 // MOVE-IN: Indentation now lives in this crate (was bun_js_printer::Options::Indentation).
 use bun_alloc::Arena;
 use bun_ast::{Indentation, IndentationCharacter};

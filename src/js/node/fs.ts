@@ -675,22 +675,15 @@ function isPermissionDenied(err: any) {
 // Windows AppContainer) must never be assumed to be a plain directory: a
 // denied component can hide a link from realpath-based containment checks.
 // Resolve through the handle-based native path instead, which follows the
-// true chain (including in sandboxes), and fail closed with the original
-// error if it cannot.
-function resolveDeniedComponentSync(p: string, originalErr: any, encoding: any) {
-  let resolved;
-  try {
-    resolved = fs.realpathNativeSync(p, undefined);
-  } catch {
-    throw originalErr;
-  }
-  return encodeRealpathResult(resolved, encoding);
+// true chain (including in sandboxes). If that also fails, its error is the
+// more definitive one (it resolved further than the walk could -- e.g. ELOOP
+// for a quarantined junction, ENOENT for a missing tail), so it propagates
+// as-is; either way the walk never reports a guessed resolution.
+function resolveDeniedComponentSync(p: string, encoding: any) {
+  return encodeRealpathResult(fs.realpathNativeSync(p, undefined), encoding);
 }
-function resolveDeniedComponent(p: string, originalErr: any, encoding: any, callback: any) {
-  fs.realpathNative(p, undefined).then(
-    resolved => callback(null, encodeRealpathResult(resolved, encoding)),
-    () => callback(originalErr),
-  );
+function resolveDeniedComponent(p: string, encoding: any, callback: any) {
+  fs.realpathNative(p, undefined).then(resolved => callback(null, encodeRealpathResult(resolved, encoding)), callback);
 }
 const realpathSync: typeof import("node:fs").realpathSync =
   process.platform !== "win32"
@@ -745,7 +738,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
           lastStat = lstatSync(base, { throwIfNoEntry: true });
         } catch (err) {
           if (!isPermissionDenied(err)) throw err;
-          return resolveDeniedComponentSync(p, err, encoding);
+          return resolveDeniedComponentSync(p, encoding);
         }
         if (lastStat === undefined) return;
         knownHard.$add(base);
@@ -783,7 +776,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
             lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
           } catch (err) {
             if (!isPermissionDenied(err)) throw err;
-            return resolveDeniedComponentSync(p, err, encoding);
+            return resolveDeniedComponentSync(p, encoding);
           }
           if (lastStat === undefined) return;
 
@@ -809,7 +802,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
               lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
             } catch (err) {
               if (!isPermissionDenied(err)) throw err;
-              return resolveDeniedComponentSync(p, err, encoding);
+              return resolveDeniedComponentSync(p, encoding);
             }
             if (lastStat === undefined) return;
             knownHard.$add(base);
@@ -883,7 +876,7 @@ const realpath: typeof import("node:fs").realpath =
           lstat(base, (err, s) => {
             if (err) {
               if (!isPermissionDenied(err)) return callback(err);
-              return resolveDeniedComponent(p, err, encoding, callback);
+              return resolveDeniedComponent(p, encoding, callback);
             }
             lastStat = s;
             knownHard.add(base);
@@ -931,7 +924,7 @@ const realpath: typeof import("node:fs").realpath =
         function gotStat(err, stats) {
           if (err) {
             if (!isPermissionDenied(err)) return callback(err);
-            return resolveDeniedComponent(p, err, encoding, callback);
+            return resolveDeniedComponent(p, encoding, callback);
           }
 
           // If not a symlink, skip to the next path part
@@ -969,7 +962,7 @@ const realpath: typeof import("node:fs").realpath =
             lstat(base, err => {
               if (err) {
                 if (!isPermissionDenied(err)) return callback(err);
-                return resolveDeniedComponent(p, err, encoding, callback);
+                return resolveDeniedComponent(p, encoding, callback);
               }
               knownHard.add(base);
               LOOP();

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
 import { lstatSync, mkdirSync, realpath, realpathSync, symlinkSync } from "fs";
 import { isWindows, tempDirWithFiles } from "harness";
@@ -7,64 +7,73 @@ import { join } from "path";
 // fs.realpath's JS walk must never report a permission-denied component as a
 // plain directory: a denied component can hide a junction, and the unresolved
 // spelling would defeat realpath-based containment checks. The walk defers to
-// the handle-based native resolution (true chain) and rethrows the original
-// error if that also fails.
+// the handle-based native resolution (true chain); if that also fails, the
+// native error propagates.
 //
-// Setup: root/sub is deny-ACL'd for the current user (lstat fails EPERM) but
-// stays traversable, and root/sub/j is a junction escaping to an out-of-root
-// target. Elevated runners bypass deny ACEs (SeBackupPrivilege), so the test
-// skips itself when the precondition does not hold.
+// Setup: root/sub carries an INHERITED deny for the current user covering
+// read-data (list) and read-attributes. lstat of root/sub/j then fails even
+// through libuv's ACCESS_DENIED fallback (which recovers attributes by
+// listing the parent — denied here), so the walk cannot see that j is a
+// junction escaping to an out-of-root target. Traverse stays allowed, so the
+// native resolution sees the true chain. A deny without inheritance would
+// arm nothing: the fallback would list the undenied parent and the lstat
+// would succeed — leaving the test a silent no-op.
+//
+// Elevated runners bypass deny ACEs; the precondition is probed and the
+// tests skip visibly when it cannot hold.
+let preconditionHolds = false;
+let linkedFile = "";
+let expected = "";
+let denied = "";
+
+if (isWindows) {
+  const dir = tempDirWithFiles("realpath-denied", {
+    "target/secret.txt": "out-of-root",
+  });
+  const root = join(dir, "root");
+  const target = join(dir, "target");
+  denied = join(root, "sub");
+  mkdirSync(denied, { recursive: true });
+  // A junction needs no privilege; symlinkSync(type "junction") uses one.
+  symlinkSync(target, join(denied, "j"), "junction");
+  linkedFile = join(denied, "j", "secret.txt");
+  expected = realpathSync(join(target, "secret.txt"));
+
+  execSync(`icacls "${denied}" /deny "%USERNAME%:(OI)(CI)(RA,RD,REA)"`, { shell: "cmd.exe" });
+  try {
+    lstatSync(join(denied, "j"));
+    // Succeeded: the deny is bypassed (elevated) — skip below.
+  } catch (e: any) {
+    preconditionHolds = e.code === "EPERM" || e.code === "EACCES";
+  }
+}
+
+afterAll(() => {
+  if (!isWindows || !denied) return;
+  try {
+    execSync(`icacls "${denied}" /remove:d "%USERNAME%"`, { shell: "cmd.exe" });
+  } catch {}
+});
+
 describe.skipIf(!isWindows)("realpath with a permission-denied component", () => {
-  let root: string, target: string, linkedFile: string, expected: string;
-  let preconditionHolds = false;
-
-  beforeAll(() => {
-    const dir = tempDirWithFiles("realpath-denied", {
-      "target/secret.txt": "out-of-root",
-    });
-    root = join(dir, "root");
-    target = join(dir, "target");
-    mkdirSync(join(root, "sub"), { recursive: true });
-    // A junction needs no privilege; symlinkSync(type "junction") uses one.
-    symlinkSync(target, join(root, "sub", "j"), "junction");
-    linkedFile = join(root, "sub", "j", "secret.txt");
-    expected = realpathSync(join(target, "secret.txt"));
-
-    execSync(`icacls "${join(root, "sub")}" /deny "%USERNAME%:(RA,RD,REA)"`, { shell: "cmd.exe" });
-    try {
-      lstatSync(join(root, "sub"));
-      // lstat succeeded: deny ACE ineffective (elevated runner) — skip below.
-    } catch (e: any) {
-      preconditionHolds = e.code === "EPERM" || e.code === "EACCES";
-    }
-  });
-
-  afterAll(() => {
-    try {
-      execSync(`icacls "${join(root, "sub")}" /remove:d "%USERNAME%"`, { shell: "cmd.exe" });
-    } catch {}
-  });
-
-  test("realpathSync resolves the true chain through the denied component", () => {
-    if (!preconditionHolds) return; // elevated: deny ACE bypassed
-    // Fail-closed: either the true (out-of-root) resolution, or a rethrown
-    // permission error — never the unresolved in-root spelling.
+  test.skipIf(!preconditionHolds)("realpathSync resolves the true chain through the denied component", () => {
+    // Fail-closed: either the true (out-of-root) resolution, or an error —
+    // never the unresolved in-root spelling.
     let result: string | undefined;
     try {
       result = realpathSync(linkedFile);
     } catch (e: any) {
-      expect(["EPERM", "EACCES"]).toContain(e.code);
+      expect(typeof e.code).toBe("string");
       return;
     }
     expect(result).toBe(expected);
   });
 
-  test("callback realpath matches", async () => {
-    if (!preconditionHolds) return;
-    const result = await new Promise<string>((resolve, reject) =>
+  test.skipIf(!preconditionHolds)("callback realpath matches", async () => {
+    const result = await new Promise<string | undefined>((resolve, reject) =>
       realpath(linkedFile, (err, p) => (err ? reject(err) : resolve(p as string))),
     ).catch((e: any) => {
-      expect(["EPERM", "EACCES"]).toContain(e.code);
+      expect(typeof e.code).toBe("string");
       return undefined;
     });
     if (result !== undefined) expect(result).toBe(expected);

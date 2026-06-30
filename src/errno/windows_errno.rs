@@ -909,7 +909,7 @@ pub mod windows {
             NTSTATUS::NOT_SAME_DEVICE => E::XDEV,
             NTSTATUS::DELETE_PENDING => E::BUSY,
             // Junctions created by a sandboxed process are quarantined by the
-            // kernel; traversal fails with this status forever. ELOOP (an
+            // kernel; traversal is denied on client Windows builds. ELOOP (an
             // unresolvable link), not EACCES: permission-style errors are
             // treated as benign rename collisions by the installer.
             NTSTATUS::UNTRUSTED_MOUNT_POINT => E::LOOP,

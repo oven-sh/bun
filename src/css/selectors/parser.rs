@@ -732,7 +732,7 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
         empty = false;
     }
 
-    if parse_type_selector::<Impl>(parser, input, *state, builder).is_ok() {
+    if parse_type_selector::<Impl>(parser, input, *state, builder)? {
         empty = false;
     }
 
@@ -3917,11 +3917,14 @@ pub fn parse_nth_pseudo_class<Impl: BunSelectorImpl>(
         s
     };
 
+    // The of-list is a <complex-real-selector-list>, which is not forgiving: one
+    // invalid selector invalidates the whole pseudo-class. Forgiving recovery would
+    // leave the list empty, which has no valid serialization (`:nth-child(2n of )`).
     let selectors = GenericSelectorList::<Impl>::parse_with_state(
         parser,
         input,
         &mut child_state,
-        ParseErrorRecovery::IgnoreInvalidSelector,
+        ParseErrorRecovery::DiscardList,
         NestingRequirement::None,
     )?;
 

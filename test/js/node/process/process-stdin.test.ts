@@ -180,6 +180,32 @@ test("explicit read(n) with no 'readable' listener still pulls from stdin", asyn
   });
 });
 
+test("a read() that throws does not keep the process alive", async () => {
+  // stdin stays open for the child's whole lifetime: it only exits if the
+  // failed read did not start (and ref) the native stdin reader.
+  const proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `let code = "";
+      try {
+        process.stdin.read(2 ** 31);
+      } catch (err) {
+        code = err.code;
+      }
+      process.on("exit", () => console.log(code));`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  proc.stdin.end();
+  expect({ stdout, exitCode }).toEqual({ stdout: "ERR_OUT_OF_RANGE\n", exitCode: 0 });
+});
+
 test("'end' is not emitted when the buffer is never drained, and the process still exits", async () => {
   const proc = Bun.spawn({
     cmd: [

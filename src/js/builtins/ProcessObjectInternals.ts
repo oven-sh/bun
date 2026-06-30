@@ -217,13 +217,14 @@ export function getStdinStream(
 
   const originalRead = stream.read;
   stream.read = function (size) {
-    // An explicit read() must acquire the native reader, otherwise _read() has
-    // no source and never produces data. Internal read(0) kicks (maybeReadMore,
-    // nReadingNextTick) must not re-own a reader that pause() released.
+    const ret = originalRead.$call(this, size);
+    // An explicit read() must acquire the native reader: _read() without one only
+    // records needsInternalReadRefresh, which own() replays. Owning afterwards so a
+    // throwing size never refs stdin; read(0) kicks never own (pause() relies on it).
     if (size !== 0 && reader === undefined && !stream_destroyed && !stream_reachedEof) {
       own();
     }
-    return originalRead.$call(this, size);
+    return ret;
   };
 
   async function internalRead(stream) {

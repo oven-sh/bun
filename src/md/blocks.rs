@@ -3,7 +3,6 @@ use crate::helpers;
 use crate::parser::{self, Parser};
 use crate::types::{self, BlockType, Container, Line, OFF, VerbatimLine};
 
-use bun_collections::VecExt as _;
 use core::mem::{align_of, size_of};
 
 type BlockHeader = parser::BlockHeader;
@@ -842,25 +841,13 @@ impl Parser<'_> {
             _ => BlockType::P,
         };
 
-        // Align block_bytes for Block alignment
-        let align_mask: usize = align_of::<BlockHeader>() - 1;
-        let cur_len = self.block_bytes.len();
-        let aligned = (cur_len + align_mask) & !align_mask;
-        let needed = aligned + size_of::<BlockHeader>();
-        parser::check_block_bytes_len(needed)?;
-        self.block_bytes.ensure_total_capacity(needed);
-        // Zero-fill to `needed`; bytes in [aligned, needed) are immediately
-        // overwritten by the BlockHeader write below.
-        self.block_bytes.resize(needed, 0);
-
-        let hdr = self.get_block_header_at(aligned);
-        *hdr = BlockHeader {
+        let aligned = self.append_block_header(BlockHeader {
             block_type,
             _pad: [0; 3],
             flags: 0,
             data: line.data,
             n_lines: 0,
-        };
+        })?;
 
         self.current_block = Some(aligned);
         self.current_block_lines.clear();

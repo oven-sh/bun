@@ -2,6 +2,7 @@
 
 use core::cell::Cell;
 use core::ffi::c_void;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 
@@ -157,9 +158,11 @@ impl From<ParserError> for bun_core::Error {
     }
 }
 
-/// The longest fixed lookahead the parser performs from an in-bounds offset:
-/// the 9-byte `<![CDATA[` probe in `is_html_block_start_condition`.
-const MAX_LOOKAHEAD: OFF = 9;
+/// The longest `OFF`-typed fixed lookahead the parser performs from an
+/// in-bounds offset: the `<![CDATA[` probe in `is_html_block_start_condition`
+/// checks `off + MAX_LOOKAHEAD <= size`. (Probes that add in `usize`, like
+/// `match_html_tag`, cannot wrap and do not bound this.)
+pub(crate) const MAX_LOOKAHEAD: OFF = 1 + crate::line_analysis::CDATA_OPEN.len() as OFF;
 
 /// The largest input `input_size` accepts. Every offset, mark and span
 /// boundary in the parser is an `OFF` (u32), and bounds checks are written as
@@ -176,13 +179,35 @@ pub const MAX_INPUT_LEN: usize = (OFF::MAX - MAX_LOOKAHEAD) as usize;
 pub(crate) const MAX_BLOCK_BYTES: usize =
     OFF::MAX as usize - (size_of::<BlockHeader>() + align_of::<BlockHeader>());
 
+// The headroom proof: a buffer filled to the cap can still be aligned up and
+// take one more header without leaving `OFF` range.
+const _: () = assert!(
+    ((MAX_BLOCK_BYTES + (align_of::<BlockHeader>() - 1)) & !(align_of::<BlockHeader>() - 1))
+        + size_of::<BlockHeader>()
+        <= OFF::MAX as usize
+);
+
+/// The runtime block-metadata cap checked by [`check_block_bytes_len`]:
+/// always [`MAX_BLOCK_BYTES`] outside of tests, shrinkable only through
+/// [`set_max_block_bytes_for_testing`].
+static BLOCK_BYTES_LIMIT: AtomicUsize = AtomicUsize::new(MAX_BLOCK_BYTES);
+
+/// `bun:internal-for-testing` (`setMaxMarkdownBlockBytesForTesting`): shrink
+/// the block-metadata cap so the `TooManyBlocks` path is reachable without
+/// allocating 4 GiB of headers. The cap can only be lowered, never raised
+/// past [`MAX_BLOCK_BYTES`]. Returns the previous value so callers can
+/// restore it.
+pub fn set_max_block_bytes_for_testing(limit: usize) -> usize {
+    BLOCK_BYTES_LIMIT.swap(limit.min(MAX_BLOCK_BYTES), Ordering::Relaxed)
+}
+
 /// Rejects growing `block_bytes` to `needed` bytes once the parser's u32
 /// block offsets could no longer address it. Every site that grows the
-/// buffer (`start_new_block`, `push_container_bytes`, `end_current_block`)
-/// checks this before appending.
+/// buffer (`append_block_header`, `end_current_block`) checks this before
+/// appending.
 #[inline]
 pub(crate) fn check_block_bytes_len(needed: usize) -> Result<(), ParserError> {
-    if needed > MAX_BLOCK_BYTES {
+    if needed > BLOCK_BYTES_LIMIT.load(Ordering::Relaxed) {
         return Err(ParserError::TooManyBlocks);
     }
     Ok(())
@@ -219,6 +244,26 @@ impl<'a> Parser<'a> {
     #[inline]
     pub fn get_block_at(&mut self, off: usize) -> &mut BlockHeader {
         self.get_block_header_at(off)
+    }
+
+    /// Appends one aligned `BlockHeader` to `block_bytes` and returns its
+    /// byte offset. This is the only way a header is added, so the
+    /// block-metadata cap cannot be forgotten by a new caller.
+    pub(crate) fn append_block_header(
+        &mut self,
+        header: BlockHeader,
+    ) -> Result<usize, ParserError> {
+        let align_mask: usize = align_of::<BlockHeader>() - 1;
+        let aligned = (self.block_bytes.len() + align_mask) & !align_mask;
+        let needed = aligned + size_of::<BlockHeader>();
+        check_block_bytes_len(needed)?;
+        self.block_bytes
+            .reserve(needed.saturating_sub(self.block_bytes.len()));
+        // Zero-fill to `needed`; bytes in [aligned, needed) are immediately
+        // overwritten by the header write below.
+        self.block_bytes.resize(needed, 0);
+        *self.get_block_header_at(aligned) = header;
+        Ok(aligned)
     }
 
     fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Result<Parser<'a>, ParserError> {

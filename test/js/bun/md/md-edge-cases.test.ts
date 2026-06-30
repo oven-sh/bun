@@ -1243,10 +1243,6 @@ describe("inputs the parser cannot address", () => {
       },
       stdout: "pipe",
       stderr: "inherit",
-      // An accepted 4 GiB input would take minutes to scan; if a regression
-      // accepts one of these lengths again, kill the child instead.
-      timeout: 20_000,
-      killSignal: "SIGKILL",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     const message = (received: number) =>
@@ -1255,6 +1251,64 @@ describe("inputs the parser cannot address", () => {
       "SKIP",
       [message(2 ** 32), message(2 ** 32), message(2 ** 32), message(2 ** 32), message(2 ** 32 - 1)],
     ]).toContainEqual(JSON.parse(stdout.trim() || '"NO_OUTPUT"'));
+    expect(exitCode).toBe(0);
+  }, 30_000);
+});
+
+describe("documents whose block metadata the parser cannot address", () => {
+  // Block offsets are u32s too, so `block_bytes` (the flat buffer of block
+  // headers and verbatim-line records) is capped independently of the input
+  // length. Filling the real ~4 GiB cap needs ~256M blocks, so the child
+  // shrinks it through `setMaxMarkdownBlockBytesForTesting`
+  // (bun:internal-for-testing) and proves the exact boundary: a document
+  // whose metadata lands exactly on the cap renders, and one more block (or
+  // the container openers of a nested blockquote) raises the catchable
+  // RangeError that replaced the release-build integer-cast panic.
+  test("a document needing more block metadata than the cap throws a RangeError", async () => {
+    const script = `
+      import { setMaxMarkdownBlockBytesForTesting } from "bun:internal-for-testing";
+      // One single-line paragraph costs exactly one 16-byte BlockHeader plus
+      // one 12-byte VerbatimLine in block_bytes, with no alignment padding.
+      const PARAGRAPH_BYTES = 16 + 12;
+      const AT_LIMIT = 40;
+      const paragraphs = n => Array.from({ length: n }, (_, i) => "p" + i).join("\\n\\n");
+      const nestedQuotes = Buffer.alloc(128, "> ").toString() + "deep";
+      const render = input => {
+        try {
+          return typeof Bun.markdown.html(input);
+        } catch (e) {
+          return [e.constructor.name, e.code, e.message].join(" | ");
+        }
+      };
+      const results = [];
+      const previous = setMaxMarkdownBlockBytesForTesting(AT_LIMIT * PARAGRAPH_BYTES);
+      try {
+        results.push(render(paragraphs(AT_LIMIT)));
+        results.push(render(paragraphs(AT_LIMIT + 1)));
+        results.push(render(nestedQuotes));
+      } finally {
+        setMaxMarkdownBlockBytesForTesting(previous);
+      }
+      // The restore took: the same over-limit documents render again.
+      results.push(render(paragraphs(AT_LIMIT + 1)), render(nestedQuotes));
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const tooManyBlocks =
+      "RangeError | ERR_OUT_OF_RANGE | markdown input requires more block metadata than the parser can address (4 GiB)";
+    expect(JSON.parse(stdout.trim() || '"NO_OUTPUT"')).toEqual([
+      "string",
+      tooManyBlocks,
+      tooManyBlocks,
+      "string",
+      "string",
+    ]);
     expect(exitCode).toBe(0);
   }, 30_000);
 });

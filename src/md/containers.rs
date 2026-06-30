@@ -14,7 +14,8 @@ impl Parser<'_> {
             self.containers[self.n_containers as usize] = *c;
         }
 
-        // Record block_byte offset in the container
+        // Record block_byte offset in the container.
+        // In range: every `block_bytes` grower enforces `check_block_bytes_len`.
         let block_off: u32 = u32::try_from(self.block_bytes.len()).expect("int cast");
         self.containers[self.n_containers as usize].block_byte_off = block_off;
 
@@ -28,25 +29,13 @@ impl Parser<'_> {
         data: u32,
         flags: u32,
     ) -> Result<(), parser::Error> {
-        let align_mask: usize = align_of::<BlockHeader>() - 1;
-        let cur_len = self.block_bytes.len();
-        let aligned = (cur_len + align_mask) & !align_mask;
-        let needed = aligned + size_of::<BlockHeader>();
-        parser::check_block_bytes_len(needed)?;
-        self.block_bytes
-            .reserve(needed.saturating_sub(self.block_bytes.len()));
-        // Zero-fill to `needed`; bytes in [aligned, needed) are immediately
-        // overwritten by the BlockHeader assignment below.
-        self.block_bytes.resize(needed, 0);
-
-        let hdr = self.get_block_header_at(aligned);
-        *hdr = BlockHeader {
+        self.append_block_header(BlockHeader {
             block_type,
             _pad: [0; 3],
             flags,
             data,
             n_lines: 0,
-        };
+        })?;
         Ok(())
     }
 
@@ -66,6 +55,8 @@ impl Parser<'_> {
             } else if ch == b'-' || ch == b'+' || ch == b'*' {
                 // Save opener position for later loose-list patching
                 let align_mask_: usize = align_of::<BlockHeader>() - 1;
+                // In range: every `block_bytes` grower enforces
+                // `check_block_bytes_len`, which leaves alignment headroom.
                 self.containers[idx].block_byte_off =
                     u32::try_from((self.block_bytes.len() + align_mask_) & !align_mask_).unwrap();
                 // Unordered list + list item
@@ -82,6 +73,8 @@ impl Parser<'_> {
             } else if ch == b'.' || ch == b')' {
                 // Save opener position for later loose-list patching
                 let align_mask_: usize = align_of::<BlockHeader>() - 1;
+                // In range: every `block_bytes` grower enforces
+                // `check_block_bytes_len`, which leaves alignment headroom.
                 self.containers[idx].block_byte_off =
                     u32::try_from((self.block_bytes.len() + align_mask_) & !align_mask_).unwrap();
                 // Ordered list + list item

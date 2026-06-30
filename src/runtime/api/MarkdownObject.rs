@@ -109,6 +109,26 @@ pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
     )
 }
 
+/// `bun:internal-for-testing`'s `setMaxMarkdownBlockBytesForTesting(limit)`:
+/// shrink the parser's block-metadata cap so its `TooManyBlocks` error is
+/// testable without 4 GiB of input. Returns the previous limit.
+#[bun_jsc::host_fn]
+pub(crate) fn set_max_markdown_block_bytes_for_testing(
+    global_this: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let [limit_value] = callframe.arguments_as_array::<1>();
+    if !limit_value.is_number() {
+        return Err(global_this.throw_invalid_arguments(format_args!(
+            "setMaxMarkdownBlockBytesForTesting expects a number"
+        )));
+    }
+    let limit = usize::try_from(limit_value.coerce_to_int64(global_this)?.max(0))
+        .expect("non-negative i64 fits usize");
+    let prev = bun_md::parser::set_max_block_bytes_for_testing(limit);
+    Ok(JSValue::js_number(prev as f64))
+}
+
 /// `Bun.markdown.ansi(text, theme?)` — render markdown to an ANSI-colored
 /// terminal string. `theme` is an optional object: `{ colors?, hyperlinks?,
 /// light?, columns? }`. By default colors are enabled, hyperlinks are

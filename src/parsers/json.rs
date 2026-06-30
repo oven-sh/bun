@@ -2189,6 +2189,24 @@ mod tests {
             };
             assert!(!o.is_single_line, "{doc:?}");
         }
+        // A newline inside a comment whose body starts with `/` (the closer
+        // search must not match the opener's own `*`), and a newline next to
+        // exotic whitespace, still break the line.
+        for doc in [
+            "[1 /*/\n*/ ]",
+            "{\"a\":1,\n\u{a0}\"b\":2}",
+            "[\u{a0}\n1]",
+        ] {
+            let p = run(doc.as_bytes(), Which::TsConfig);
+            assert_eq!(p.errors, 0, "{doc:?}: {}", p.first_msg);
+            let root = p.root.as_ref().unwrap();
+            let single = match &root.data {
+                Data::EObject(o) => o.is_single_line,
+                Data::EArray(a) => a.is_single_line,
+                _ => panic!(),
+            };
+            assert!(!single, "{doc:?}");
+        }
         // A `/*` inside a comment body or an earlier string must not be
         // mistaken for the opener: these documents have no newline anywhere.
         for doc in [
@@ -2288,6 +2306,11 @@ mod tests {
             ("first line\nsecond", "first line\nsecond"),
             ("(\nrest", "(\nrest"),
             ("*\nrest", "*\nrest"),
+            // A raw newline/tab plus something that forces the escape
+            // decoder (a `\\` escape, a non-ASCII byte): the raw control
+            // characters pass through the decode unchanged.
+            ("a\\nb\nc", "a\nb\nc"),
+            ("caf\u{e9}\tx\nrest", "caf\u{e9}\tx\nrest"),
             // `-`/`.` followed by anything but a number is a string.
             ("-abc", "-abc"),
             (".env-like", ".env-like"),

@@ -68,7 +68,7 @@ const REFILL_INPUT: usize = 8 * 1024;
 /// Window entries kept *behind* the requested index when the window slides.
 /// Stage 2 looks back at most a handful of indices (an object key while its
 /// value is being checked, the token before an error position).
-const LOOKBEHIND: usize = 16;
+pub(crate) const LOOKBEHIND: usize = 16;
 
 /// Errors the indexer itself can detect. They surface after stage 2 finishes:
 /// the indexer truncates the index stream at the error (stage 2 then sees a

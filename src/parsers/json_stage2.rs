@@ -319,8 +319,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     /// Exotic unicode whitespace (BOM, NBSP, U+2028, VT, FF, ...) is
     /// accepted between any two tokens. Those bytes are not whitespace to
-    /// stage 1, and a multi-byte whitespace codepoint can even be split
-    /// across several (false-positive) indices, so this works on byte
+    /// stage 1 (they are ordinary scalar-run bytes), so this works on byte
     /// positions: decode codepoints forward from the current token position
     /// until the first non-whitespace one, then resync the cursor onto the
     /// index containing (or starting at) that position.
@@ -402,57 +401,44 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     /// See [`Self::newline_before`]: the rest of a non-empty whitespace gap.
-    /// The gap can also contain comments (JSONC): a `*/` is stepped over to
-    /// its `/*`, counting any newline inside; the body of a `//` comment is
-    /// always followed by the newline that ends it, so it needs no casing.
+    ///
+    /// Everything between the end of the previous token and `p` is the gap:
+    /// whitespace, (JSONC) comments, exotic-whitespace runs the cursor
+    /// skipped — and the unscanned tail of the previous token, which can
+    /// never contain a raw newline (a string with one is a syntax error; no
+    /// other token spans lines). So "is there a newline before this token",
+    /// including one hidden inside a block comment, is "does any byte after
+    /// the previous *token* and before `p` equal `\n` or `\r`".
     fn newline_in_gap_before(&mut self, p: usize) -> bool {
-        // The gap starts after the previous index's token: nothing before
-        // that position belongs to it. This bounds the opener search below —
-        // an earlier *string* can contain `/*` (`{"a": "/*", "b": 1}`).
-        // The previous index is a single structural byte, a closing quote, or
-        // the first byte of a scalar run, none of which can start with `/*`.
-        let floor = if self.cursor == 0 {
-            0
-        } else {
-            self.pos_at(self.cursor - 1) + 1
-        };
-        let bytes = self.contents;
-        let mut i = p;
-        while i > floor {
-            match bytes[i - 1] {
-                b' ' | b'\t' => i -= 1,
-                b'\n' | b'\r' => return true,
-                b'/' if i >= floor + 2 && bytes[i - 2] == b'*' => {
-                    // `*/`: find its `/*`. Block comments do not nest and a
-                    // body cannot contain `*/` (the first one closes the
-                    // comment), but it CAN contain `/*`, so the opener is the
-                    // first `/*` after the previous `*/` in the gap (not the
-                    // rightmost one before the closer).
-                    let body_end = i - 2;
-                    let search_from = bytes[floor..body_end]
-                        .windows(2)
-                        .rposition(|w| w == b"*/")
-                        .map_or(floor, |c| floor + c + 2);
-                    let Some(open) = bytes[search_from..body_end]
-                        .windows(2)
-                        .position(|w| w == b"/*")
-                        .map(|o| search_from + o)
-                    else {
-                        return false;
-                    };
-                    if bytes[open + 2..body_end]
-                        .iter()
-                        .any(|&b| b == b'\n' || b == b'\r')
-                    {
-                        return true;
-                    }
-                    i = open;
-                }
-                _ => return false,
+        // Walk back to the previous index that is a token (not a skipped
+        // run of exotic whitespace, which is part of the gap). A token index
+        // is a structural byte, a quote, or the first byte of a scalar run;
+        // string bodies (the only token bytes that can hold arbitrary
+        // newline-free data) end at their closing-quote index. The walk is
+        // bounded by the index window's look-behind; layouts with that many
+        // separate whitespace runs before one token give up (cosmetic).
+        let mut hi = p;
+        for step in 1..=(jidx::LOOKBEHIND - 2) {
+            if self.cursor < step {
+                // Start of file counts as a newline before it.
+                return true;
             }
+            let j = self.cursor - step;
+            let q = self.pos_at(j);
+            let b = self.contents[q];
+            let run = self.run(j);
+            if (b >= 0x80 || b == 0x0B || b == 0x0C) && self.rest_is_ws_cold(run) {
+                if self.contents[q..hi].iter().any(|&b| matches!(b, b'\n' | b'\r')) {
+                    return true;
+                }
+                hi = q;
+                continue;
+            }
+            return self.contents[q + 1..hi]
+                .iter()
+                .any(|&b| matches!(b, b'\n' | b'\r'));
         }
-        // Start of file counts as a newline before it.
-        i == 0
+        false
     }
 
     // ── values ───────────────────────────────────────────────────────────
@@ -720,7 +706,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     /// See [`decode_string_escapes`].
     #[inline]
     fn decode_escapes(&mut self, body: &[u8], buf: &mut Vec<u8>) -> PResult {
-        decode_string_escapes(self, body, buf)
+        decode_string_escapes::<false, _>(self, body, buf)
     }
 
     // ── scalars (numbers, keywords, junk) ────────────────────────────────
@@ -812,7 +798,9 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
         self.cursor += 1; // [
         let mark = self.scratch_json_items.len();
-        let here = self.pos_at(self.cursor);
+        // `peek` skips any exotic-whitespace runs so `here` is the first
+        // real token (or closer) inside the container.
+        let (_, here) = self.peek();
         let mut is_single_line = !self.newline_before(here);
         let mut close_loc = Loc::EMPTY;
         let result: PResult = loop {
@@ -902,7 +890,9 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         self.cursor += 1; // {
         let mark = self.scratch_props.len();
         let hmark = self.dup_hashes.len();
-        let here = self.pos_at(self.cursor);
+        // `peek` skips any exotic-whitespace runs so `here` is the first
+        // real token (or closer) inside the container.
+        let (_, here) = self.peek();
         let mut is_single_line = !self.newline_before(here);
         let mut close_loc = Loc::EMPTY;
         let warn_dup = self.opts.json_warn_duplicate_keys;
@@ -1404,9 +1394,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let start = self.pos_at(cursor);
 
         // Leading unicode whitespace (BOM, NBSP, LS/PS, VT, FF...): decode it
-        // away from the source (it may span several false-positive indices),
-        // then either re-dispatch on a fresh token or parse the rest of the
-        // run the first real byte lands in.
+        // away from the source, then either re-dispatch on a fresh token or
+        // parse the rest of the run the first real byte lands in.
         if run[0] >= 0x80 || run[0] == 0x0B || run[0] == 0x0C {
             let Some(p) = self.skip_unicode_ws() else {
                 // Nothing but whitespace where a value was expected.
@@ -1616,7 +1605,11 @@ fn read_trail_surrogate_escape(
 /// 3-byte WTF-8 encoding (`JSON.parse` round-trips it as a lone code unit).
 /// Generic over the error reporter so the `.env` auto-quote path can reuse
 /// it without a full parser.
-fn decode_string_escapes<'s, L: LexerLog<'s, Err = bun_core::Error>>(
+/// `ALLOW_RAW_CONTROL`: a real string literal rejects raw control characters
+/// in its body; an implicitly-quoted `.env`/`--define` value (the whole
+/// input is the "string") passes them through — it can legitimately contain
+/// newlines and tabs.
+fn decode_string_escapes<'s, const ALLOW_RAW_CONTROL: bool, L: LexerLog<'s, Err = bun_core::Error>>(
     l: &mut L,
     body: &[u8],
     buf: &mut Vec<u8>,
@@ -1626,7 +1619,7 @@ fn decode_string_escapes<'s, L: LexerLog<'s, Err = bun_core::Error>>(
     while iterator.next(&mut iter) {
         let c = iter.c;
         if c != '\\' as CodePoint {
-            if (0..0x20).contains(&c) {
+            if !ALLOW_RAW_CONTROL && (0..0x20).contains(&c) {
                 if c == 0x0A || c == 0x0D {
                     l.add_default_error(b"Unterminated string literal")?;
                 } else {
@@ -1738,6 +1731,6 @@ pub(crate) fn decode_auto_quoted(
         body = &body[1..];
     }
     let mut buf: Vec<u8> = Vec::with_capacity(body.len());
-    decode_string_escapes(&mut l, body, &mut buf)?;
+    decode_string_escapes::<true, _>(&mut l, body, &mut buf)?;
     Ok(E::String::init(bump.alloc_slice_copy(&buf)))
 }

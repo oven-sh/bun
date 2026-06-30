@@ -9620,6 +9620,74 @@ for (const field of ["resolutions", "overrides"]) {
       expect(exitCode).toBe(1);
     });
   });
+
+  it(`applies a root "${field}" file: path to a registry package's dependency`, async () => {
+    // overrides/resolutions are declared in the root package.json, so a file:
+    // path applied through them is trusted even for a dependency declared by a
+    // registry package (which is otherwise constrained; see the test above).
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      using dir = tempDir(`override-registry-file-dep-${field}`, {
+        "shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
+        "shared/index.js": "module.exports = 'shared';",
+      });
+      const sharedDir = join(String(dir), "shared");
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, {
+          "0.0.3": {
+            dependencies: {
+              shared: "1.0.0",
+            },
+          },
+        }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "my-app",
+          version: "1.0.0",
+          dependencies: {
+            baz: "0.0.3",
+          },
+          [field]: {
+            shared: "file:" + sharedDir.replaceAll("\\", "/"),
+          },
+        }),
+      );
+
+      // The first install resolves the override (enqueue path); the second
+      // starts from the saved lockfile with an empty node_modules (installer path).
+      for (let i = 0; i < 2; i++) {
+        if (i === 1) {
+          await rm(join(ctx.package_dir, "node_modules"), { recursive: true, force: true });
+        }
+        const { stdout, stderr, exited } = spawn({
+          cmd: i === 0 ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+        expect(err).not.toContain("Could not find package.json");
+        expect(err).not.toContain("failed to resolve");
+        expect(err).not.toContain("unsafe folder path");
+        expect(err).not.toContain("refusing to install");
+        expect(out).toContain("baz");
+        expect(exitCode).toBe(0);
+      }
+
+      // The registry package's dependency resolved to the override's file: path
+      // (no registry request for it was made).
+      expect(urls.filter(url => url.includes("shared"))).toEqual([]);
+      const lock = (await file(join(ctx.package_dir, "bun.lock")).text()).replaceAll("\\\\", "/");
+      expect(lock).toContain('"baz/shared"');
+      expect(lock).toContain("shared@file:");
+    });
+  });
 }
 
 it("installs the transitive file: dependency of a file: dependency", async () => {

@@ -1003,11 +1003,10 @@ impl Lockfile {
         invalid_package_id
     }
 
-    /// Is dependency `id` declared by a local package (the root, a workspace,
-    /// or a `file:` folder package)? Paths in those package.jsons are authored
-    /// by the user (or by files the user explicitly points the project at), so
-    /// their `file:` dependencies are trusted like root dependencies. Paths
-    /// declared by remote packages (registry, git, tarball) are not.
+    /// Is dependency `id` declared by a local package (see
+    /// [`resolution::Tag::is_local_package`])? Its `file:` paths are then
+    /// trusted like root dependencies; paths declared by remote packages
+    /// (registry, git, tarball) are not.
     ///
     /// A `Folder` declaring package is always itself declared by the root or a
     /// workspace: only those folder dependencies have their package.json
@@ -1019,10 +1018,9 @@ impl Lockfile {
         if parent_id == invalid_package_id {
             return false;
         }
-        let tag = self.packages.items_resolution()[parent_id as usize].tag;
-        tag == ResolutionTag::Root
-            || tag == ResolutionTag::Workspace
-            || tag == ResolutionTag::Folder
+        self.packages.items_resolution()[parent_id as usize]
+            .tag
+            .is_local_package()
     }
 
     /// Does this tree id belong to a workspace (including workspace root)?

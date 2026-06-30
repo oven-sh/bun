@@ -16,8 +16,10 @@ const myLoad = globalThis.__reloadCount;
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
-// One listener each after createInterface; if old listeners leaked across
-// the reload these would be 2, 3, ... on subsequent loads.
+// readline attaches one data/error/end listener, and getStdinStream keeps
+// one internal 'end' listener of its own, so the expected counts are
+// data=1 error=1 end=2 resize=0. If old listeners leaked across the reload
+// these would climb on subsequent loads.
 console.log(
   "LISTENERS",
   myLoad,
@@ -43,8 +45,8 @@ rl.on("line", line => {
 // The Windows file watcher can fire multiple events for a single
 // writeFileSync, so a single "reload trigger" below may advance the load
 // counter by more than one. The assertions therefore don't pin exact load
-// numbers — they verify that (a) every LISTENERS line reports exactly one
-// listener per event, and (b) each input line produces exactly one ECHO
+// numbers — they verify that (a) every LISTENERS line reports the same
+// fixed listener counts, and (b) each input line produces exactly one ECHO
 // from the current load (never from a previous one).
 it(
   "should not leak process.stdin listeners across --hot reloads",
@@ -143,13 +145,13 @@ it(
         expect(lines.filter(l => l.startsWith("ECHO ") && l.endsWith(` ${tag}`))).toHaveLength(1);
       }
 
-      // Every LISTENERS line observed over the whole run must show exactly
-      // one data/error/end listener on stdin and zero resize listeners on
-      // stdout — i.e. listeners never accumulated across reloads.
+      // Every LISTENERS line observed over the whole run must show the same
+      // fixed counts (data=1 error=1 end=2 resize=0; see the fixture comment)
+      // — i.e. listeners never accumulated across reloads.
       const listenerLines = lines.filter(l => l.startsWith("LISTENERS "));
       expect(listenerLines.length).toBeGreaterThanOrEqual(3);
       for (const l of listenerLines) {
-        expect(l).toMatch(/^LISTENERS \d+ 1 1 1 0$/);
+        expect(l).toMatch(/^LISTENERS \d+ 1 1 2 0$/);
       }
     } catch (e) {
       console.error("stdout lines so far:", lines, "buf:", buf);

@@ -2189,9 +2189,8 @@ mod tests {
             };
             assert!(!o.is_single_line, "{doc:?}");
         }
-        // A newline inside a comment whose body starts with `/` (the closer
-        // search must not match the opener's own `*`), and a newline next to
-        // exotic whitespace, still break the line.
+        // A newline inside a comment whose body starts with `/`, and a
+        // newline next to exotic whitespace, still break the line.
         for doc in ["[1 /*/\n*/ ]", "{\"a\":1,\n\u{a0}\"b\":2}", "[\u{a0}\n1]"] {
             let p = run(doc.as_bytes(), Which::TsConfig);
             assert_eq!(p.errors, 0, "{doc:?}: {}", p.first_msg);

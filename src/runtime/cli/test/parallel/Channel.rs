@@ -20,7 +20,7 @@ use core::marker::PhantomData;
 use core::mem::offset_of;
 
 use bun_collections::VecExt;
-use bun_core::{self, Output};
+use bun_core;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::{Fd, FdExt as _};
 use bun_uws as uws;
@@ -209,7 +209,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 .init(uv::Loop::get(), true)
                 .to_error(bun_sys::Tag::pipe)
             {
-                Output::debug_warn(format_args!(
+                bun_core::debug_warn(format_args!(
                     "Channel.adopt: uv_pipe_init failed: {}",
                     e.name().escape_ascii(),
                 ));
@@ -217,7 +217,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 return false;
             }
             if let Some(e) = pipe.open(fd.uv()).to_error(bun_sys::Tag::open) {
-                Output::debug_warn(format_args!(
+                bun_core::debug_warn(format_args!(
                     "Channel.adopt: uv_pipe_open({}) failed: {}",
                     fd.uv(),
                     e.name().escape_ascii(),
@@ -277,7 +277,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         // caller; we only borrow it to start reading.
         let rc = unsafe { (*pipe).read_start_ctx::<Self>(core::ptr::from_mut(self)) };
         if let Some(e) = rc.to_error(bun_sys::Tag::listen) {
-            Output::debug_warn(format_args!(
+            bun_core::debug_warn(format_args!(
                 "Channel.adoptPipe: readStart failed: {}",
                 e.name().escape_ascii(),
             ));

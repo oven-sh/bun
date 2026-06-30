@@ -345,7 +345,12 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 }
                 p = from + iter.i as usize + iter.width as usize;
             }
-            if p >= self.contents.len() || !self.opts.allow_comments || self.contents[p] != b'/' {
+            // Comments are stepped over regardless of the dialect: in
+            // strict mode the driver rejects the document afterwards (the
+            // indexer records `first_comment` unconditionally), and treating
+            // the comment as junk here would bury that error under a
+            // misleading one.
+            if p >= self.contents.len() || self.contents[p] != b'/' {
                 break;
             }
             match self.contents.get(p + 1) {
@@ -794,7 +799,9 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         while i < rest.len() {
             match rest[i] {
                 b' ' | b'\t' | b'\n' | b'\r' => i += 1,
-                b'/' if self.opts.allow_comments => match rest.get(i + 1) {
+                // Comments count as whitespace in every dialect: the driver
+                // rejects them in strict mode (see `parse_impl_in`).
+                b'/' => match rest.get(i + 1) {
                     Some(b'/') => {
                         i += 2;
                         while i < rest.len() && !matches!(rest[i], b'\n' | b'\r') {
@@ -1166,8 +1173,11 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         self.token_start = minus_pos;
         let contents = self.contents;
         let Some(q) = crate::json::skip_ws_and_comments(contents, minus_pos + 1) else {
-            // Nothing but whitespace and comments to the end of input.
-            self.cursor += 1;
+            // Nothing but whitespace and comments to the end of input: park
+            // the cursor on the sentinel so the error says so.
+            while self.pos_at(self.cursor) < contents.len() {
+                self.cursor += 1;
+            }
             self.expected(self.cursor, "number");
             return Err(self.unexpected(self.cursor));
         };

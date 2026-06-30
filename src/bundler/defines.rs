@@ -140,7 +140,7 @@ pub fn copy_env_for_define(
                 .map
                 .keys()
                 .iter()
-                .any(|k| bun_core::starts_with(k, prefix))
+                .any(|k| bun_core::strings::starts_with(k, prefix))
         } else {
             true
         };
@@ -158,7 +158,7 @@ pub fn copy_env_for_define(
                 let value: &[u8] = &v.value;
 
                 if behavior == DotEnvBehavior::Prefix {
-                    if bun_core::starts_with(k, prefix) {
+                    if bun_core::strings::starts_with(k, prefix) {
                         key_buf.clear();
                         key_buf.extend_from_slice(PROCESS_ENV);
                         key_buf.extend_from_slice(k);

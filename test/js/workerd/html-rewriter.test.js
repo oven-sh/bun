@@ -1182,3 +1182,82 @@ describe("invalid arguments throw instead of returning an error value", () => {
     expect(err.message).toBe("Expected a function");
   });
 });
+
+describe("tagName, endTag.name, and comment.text setters", () => {
+  it("element.tagName renames the start and end tag", () => {
+    const out = new HTMLRewriter()
+      .on("p", {
+        element(el) {
+          el.tagName = "section";
+        },
+      })
+      .transform("<p>hi</p>");
+    expect(out).toBe("<section>hi</section>");
+  });
+
+  it("endTag.name renames only the closing tag", () => {
+    const out = new HTMLRewriter()
+      .on("p", {
+        element(el) {
+          el.onEndTag(end => {
+            end.name = "div";
+          });
+        },
+      })
+      .transform("<p>hi</p>");
+    expect(out).toBe("<p>hi</div>");
+  });
+
+  it("the assigned value is coerced with ToString, which may re-enter the wrapper", () => {
+    const out = new HTMLRewriter()
+      .on("p", {
+        comments(comment) {
+          comment.text = {
+            toString() {
+              comment.before("A");
+              return "B";
+            },
+          };
+        },
+      })
+      .transform("<p><!--x--></p>");
+    expect(out).toBe("<p>A<!--B--></p>");
+  });
+
+  it("setters on a detached wrapper are a no-op and never coerce the value", () => {
+    let savedElement;
+    let savedEndTag;
+    let savedComment;
+    const out = new HTMLRewriter()
+      .on("p", {
+        element(el) {
+          savedElement = el;
+          el.onEndTag(end => {
+            savedEndTag = end;
+          });
+        },
+        comments(c) {
+          savedComment = c;
+        },
+      })
+      .transform("<p><!--x--></p>");
+    expect(out).toBe("<p><!--x--></p>");
+
+    // Every handler has returned, so every wrapper is detached; each setter
+    // must return before running the assigned value's toString.
+    const coerced = [];
+    const probe = tag => ({
+      toString() {
+        coerced.push(tag);
+        return "never";
+      },
+    });
+    savedElement.tagName = probe("element.tagName");
+    savedEndTag.name = probe("endTag.name");
+    savedComment.text = probe("comment.text");
+    expect(coerced).toEqual([]);
+    expect(savedElement.tagName).toBeUndefined();
+    expect(savedEndTag.name).toBeUndefined();
+    expect(savedComment.text).toBeNull();
+  });
+});

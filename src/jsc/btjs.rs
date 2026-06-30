@@ -4,6 +4,7 @@ use std::io::Write as _;
 
 #[cfg(debug_assertions)]
 use crate::CallFrame;
+#[cfg(debug_assertions)]
 use crate::virtual_machine::VirtualMachine;
 #[cfg(debug_assertions)]
 use bun_core::{self, Error, err};

@@ -886,6 +886,7 @@ function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   o.all.push(cppOut, rustStringEnumsOut);
   o.cppSources.push(cppOut);
+  o.rustInputs.push(rustStringEnumsOut);
 }
 
 function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {

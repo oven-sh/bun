@@ -530,9 +530,6 @@ interface InternalFieldObject<T extends any[]> {
   [__internal]: T;
 }
 
-// Types used in the above functions
-type WellKnownSymbol = keyof { [K in keyof SymbolConstructor as SymbolConstructor[K] extends symbol ? K : never]: K };
-
 // You can also `@` on any method on a classes to avoid prototype pollution and secret internals
 type ClassWithIntrinsics<T> = { [K in keyof T as T[K] extends Function ? `$${K}` : never]: T[K] };
 

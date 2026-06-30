@@ -1931,7 +1931,7 @@ it("error() producing no Response always responds 500 (#33137)", async () => {
     `,
   });
 
-  const { promise, resolve } = Promise.withResolvers<string>();
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
   await using proc = Bun.spawn({
     cmd: [bunExe(), "server.js"],
     cwd: String(dir),
@@ -1941,6 +1941,12 @@ it("error() producing no Response always responds 500 (#33137)", async () => {
     ipc(message) {
       resolve(message);
     },
+  });
+  // Drain stderr concurrently, and fail fast if the server dies before the
+  // URL handshake instead of hanging until the test timeout.
+  const stderrPromise = proc.stderr.text();
+  proc.exited.then(async code => {
+    reject(new Error(`server exited (${code}) before sending its URL\n${await stderrPromise.catch(() => "")}`));
   });
 
   const url = await promise;
@@ -1963,9 +1969,11 @@ it("error() producing no Response always responds 500 (#33137)", async () => {
   }
 
   proc.kill();
-  const stderr = await proc.stderr.text();
-  // The original error for the deferred path must be reported...
-  expect(stderr).toContain("/deferred");
+  const stderr = await stderrPromise;
+  // Both deferred paths must report their own original error (matched at a
+  // line boundary so "/deferred" does not also satisfy "/deferred-null")...
+  expect(stderr).toMatch(/\/deferred(?:\n|$)/);
+  expect(stderr).toMatch(/\/deferred-null(?:\n|$)/);
   // ...and NOT fetch's invalid-return diagnostic for error()'s value.
   expect(stderr).not.toContain("Expected a Response object");
 });

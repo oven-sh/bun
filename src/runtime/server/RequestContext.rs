@@ -741,16 +741,15 @@ where
         self.render_missing();
     }
 
-    /// Stop treating the pending `error()` promise as in-flight and hand back
-    /// the original error, releasing the root taken in process_on_error_promise.
-    fn take_error_promise_value(&mut self) -> JSValue {
+    /// Release the GC root taken for a pending `error()` promise in
+    /// process_on_error_promise and clear the deferred-error state. Idempotent.
+    fn clear_error_promise_value(&mut self) {
         self.flags.set_is_error_promise_pending(false);
         let value = self.error_promise_value;
         if !value.is_empty() {
             value.unprotect();
             self.error_promise_value = JSValue::ZERO;
         }
-        value
     }
 
     fn handle_resolve(ctx: &mut Self, value: JSValue) {
@@ -762,12 +761,18 @@ where
         // non-Response fulfillment must report the original error at 500, not
         // render a misleading empty 204 (matches the sync/settled twins).
         if ctx.flags.is_error_promise_pending() {
-            let original_error = ctx.take_error_promise_value();
             // SAFETY: only probed for Response-ness; the borrow ends here.
             if (unsafe { as_response(value) }).is_none() {
+                // The stash stays GC-rooted via its protect() across this
+                // JS-reentering report; clear_error_promise_value releases it after.
+                let original_error = ctx.error_promise_value;
                 ctx.finish_running_error_handler(original_error, 500);
+                ctx.clear_error_promise_value();
                 return;
             }
+            // Deferred error() that produced a Response: release the root and
+            // fall through to render it.
+            ctx.clear_error_promise_value();
         }
 
         if ctx.server.is_none() {
@@ -1513,7 +1518,7 @@ where
         }
         // Release the root taken for a deferred error() promise that never
         // settled (e.g. the connection aborted while it was in-flight).
-        let _ = self.take_error_promise_value();
+        self.clear_error_promise_value();
         self.response_weakref.deref();
 
         self.request_body_readable_stream_ref.deinit();

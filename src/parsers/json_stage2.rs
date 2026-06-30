@@ -383,11 +383,12 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     /// Is there a newline in the whitespace gap immediately before byte `p`?
-    /// (`has_newline_before` of the token starting at `p`; drives
-    /// `is_single_line`.) In minified documents the gap is empty (the byte
-    /// before `p` already decides), so only that byte is examined inline.
+    /// (`has_newline_before` of the token starting at `p`, which the cursor
+    /// points at; drives `is_single_line`.) In minified documents the gap is
+    /// empty (the byte before `p` already decides), so only that byte is
+    /// examined inline.
     #[inline(always)]
-    fn newline_before(&self, p: usize) -> bool {
+    fn newline_before(&mut self, p: usize) -> bool {
         if p == 0 {
             // Start of file counts as a newline before it.
             return true;
@@ -404,17 +405,39 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     /// The gap can also contain comments (JSONC): a `*/` is stepped over to
     /// its `/*`, counting any newline inside; the body of a `//` comment is
     /// always followed by the newline that ends it, so it needs no casing.
-    fn newline_in_gap_before(&self, p: usize) -> bool {
+    fn newline_in_gap_before(&mut self, p: usize) -> bool {
+        // The gap starts after the previous index's token: nothing before
+        // that position belongs to it. This bounds the opener search below —
+        // an earlier *string* can contain `/*` (`{"a": "/*", "b": 1}`).
+        // The previous index is a single structural byte, a closing quote, or
+        // the first byte of a scalar run, none of which can start with `/*`.
+        let floor = if self.cursor == 0 {
+            0
+        } else {
+            self.pos_at(self.cursor - 1) + 1
+        };
         let bytes = self.contents;
         let mut i = p;
-        while i > 0 {
+        while i > floor {
             match bytes[i - 1] {
                 b' ' | b'\t' => i -= 1,
                 b'\n' | b'\r' => return true,
-                b'/' if i >= 2 && bytes[i - 2] == b'*' => {
-                    // `*/`: find its `/*` (block comments don't nest).
+                b'/' if i >= floor + 2 && bytes[i - 2] == b'*' => {
+                    // `*/`: find its `/*`. Block comments do not nest and a
+                    // body cannot contain `*/` (the first one closes the
+                    // comment), but it CAN contain `/*`, so the opener is the
+                    // first `/*` after the previous `*/` in the gap (not the
+                    // rightmost one before the closer).
                     let body_end = i - 2;
-                    let Some(open) = bytes[..body_end].windows(2).rposition(|w| w == b"/*") else {
+                    let search_from = bytes[floor..body_end]
+                        .windows(2)
+                        .rposition(|w| w == b"*/")
+                        .map_or(floor, |c| floor + c + 2);
+                    let Some(open) = bytes[search_from..body_end]
+                        .windows(2)
+                        .position(|w| w == b"/*")
+                        .map(|o| search_from + o)
+                    else {
                         return false;
                     };
                     if bytes[open + 2..body_end]
@@ -429,7 +452,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             }
         }
         // Start of file counts as a newline before it.
-        true
+        i == 0
     }
 
     // ── values ───────────────────────────────────────────────────────────

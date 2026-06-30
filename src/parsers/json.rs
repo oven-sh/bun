@@ -2164,10 +2164,14 @@ mod tests {
         };
         assert!(!a.is_single_line);
         // A newline hidden inside (or before) a block comment still breaks
-        // the line, exactly like the bare newline above (JSONC).
+        // the line, exactly like the bare newline above (JSONC). A comment
+        // body may itself contain `/*` (comments do not nest), and a `/*`
+        // inside an earlier *string* is not a comment opener.
         for doc in [
             "{\"a\": 1 /* x\n*/, \"b\": 2}",
             "{\"a\": 1\n/* x */, \"b\": 2}",
+            "{\"a\":1/*\nX/* */,\"b\":2}",
+            "{\"x\":\"/*\",\"a\":1,\n\"b\":2}",
         ] {
             let p = run(doc.as_bytes(), Which::TsConfig);
             assert_eq!(p.errors, 0, "{doc:?}: {}", p.first_msg);
@@ -2175,6 +2179,19 @@ mod tests {
                 panic!()
             };
             assert!(!o.is_single_line, "{doc:?}");
+        }
+        // A `/*` inside a comment body or an earlier string must not be
+        // mistaken for the opener: these documents have no newline anywhere.
+        for doc in [
+            "{\"a\":1/* X/* */,\"b\":2}",
+            "{\"x\":\"/*\",\"a\":1/* c */,\"b\":2}",
+        ] {
+            let p = run(doc.as_bytes(), Which::TsConfig);
+            assert_eq!(p.errors, 0, "{doc:?}: {}", p.first_msg);
+            let Data::EObject(o) = &p.root.as_ref().unwrap().data else {
+                panic!()
+            };
+            assert!(o.is_single_line, "{doc:?}");
         }
         // A comment in a scalar's index run (between the value and the next
         // structural token) is not trailing junk.

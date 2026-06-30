@@ -4,9 +4,9 @@ use bun_collections::{ArrayHashMap, DynamicBitSet};
 use bun_core::Progress::Progress;
 use bun_core::{Global, Output};
 use bun_core::{MutableString, ZStr};
-use bun_paths::strings;
 #[cfg(not(windows))]
 use bun_paths::OSPathChar;
+use bun_paths::strings;
 use bun_paths::{self as path, OSPathSlice, PathBuffer, SEP, SEP_STR};
 use bun_semver::String as SemverString;
 #[cfg(not(windows))]

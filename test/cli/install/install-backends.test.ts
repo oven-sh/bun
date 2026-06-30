@@ -1,7 +1,7 @@
 import { Archive } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { rmSync, statSync } from "node:fs";
 import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
+import { rmSync, statSync } from "node:fs";
 import { join } from "path";
 
 // Per-backend materialization correctness: the tree must match the package
@@ -49,11 +49,7 @@ describe.concurrent("install --backend materializes the package", () => {
           stdout: "pipe",
           stderr: "pipe",
         });
-        const [stdout, stderr, exitCode] = await Promise.all([
-          proc.stdout.text(),
-          proc.stderr.text(),
-          proc.exited,
-        ]);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         return { stdout, stderr, exitCode };
       }
 

@@ -1538,22 +1538,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     return self.syntax_error().map(|_| unreachable!());
                 }
                 i += 2;
-                if run.get(i) == Some(&b'{') {
-                    i += 1;
-                    while run.get(i).is_some_and(|c| c.is_ascii_hexdigit()) {
-                        i += 1;
-                    }
-                    if run.get(i) != Some(&b'}') {
+                // Exactly four hex digits: JSON escapes have no `\u{...}`
+                // form (the decode pass rejects it too).
+                for _ in 0..4 {
+                    if !run.get(i).is_some_and(|c| c.is_ascii_hexdigit()) {
                         return self.syntax_error().map(|_| unreachable!());
                     }
                     i += 1;
-                } else {
-                    for _ in 0..4 {
-                        if !run.get(i).is_some_and(|c| c.is_ascii_hexdigit()) {
-                            return self.syntax_error().map(|_| unreachable!());
-                        }
-                        i += 1;
-                    }
                 }
                 continue;
             }

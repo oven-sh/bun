@@ -2720,11 +2720,11 @@ pub fn is_hex_code_point<T: TryInto<u8>>(cp: T) -> bool {
 /// Unicode `Zs` (Space_Separator) general category — the exact 17-codepoint
 /// set, stable since Unicode 4.0. Shared core of:
 ///   - ECMAScript `WhiteSpace` (js_parser::lexer)
-///   - the JSON5/JS-flavoured JSON lexer (parsers::json_lexer)
+///   - the JSON parser's exotic whitespace (parsers::json_stage2)
 ///   - CommonMark §2.1 "Unicode whitespace" (md::helpers)
 /// Callers compose with their own ASCII / U+FEFF / line-terminator extras —
-/// those differ per spec and MUST NOT be folded in here (FEFF is Cf, not Zs,
-/// and is ECMAScript-only; 2028/2029 are Zl/Zp, json_lexer-only).
+/// those differ per spec and MUST NOT be folded in here (FEFF is Cf, not Zs;
+/// 2028/2029 are Zl/Zp).
 #[inline]
 pub const fn is_unicode_space_separator(cp: u32) -> bool {
     matches!(

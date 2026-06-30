@@ -625,7 +625,7 @@ const sql = new SQL({
   // `tls` accepts a boolean, a TLSOptions object, or a Bun.BunFile.
   // To pick an SSL mode (disable | prefer | require | verify-ca | verify-full),
   // use the `sslmode` query parameter on the connection URL — see "SSL Modes"
-  // below. Passing `tls: true` enables TLS in `prefer` mode.
+  // below. Passing `tls: true` requires an encrypted connection (`require`).
   tls: true,
   // tls: {
   //   rejectUnauthorized: true,
@@ -921,7 +921,7 @@ const sql = new SQL("postgres://user:password@localhost/mydb?sslmode=verify-full
 });
 ```
 
-Passing `tls: true` (or an object) with no `sslmode=` on the URL enables TLS in `prefer` mode. The `ssl` option is accepted as a deprecated alias for `tls`; it takes the same shapes (`boolean | TLSOptions | BunFile`) and is **not** where the mode string goes.
+Passing `tls: true` (or an object) with no `sslmode=` on the URL requires an encrypted connection (`require` mode): if the server declines TLS the connection is aborted rather than downgraded to plaintext. Certificate verification is enabled only when you ask for it, either via a `verify-ca`/`verify-full` `sslmode` or by passing a `ca` or `rejectUnauthorized: true` in the `tls` object (both escalate to `verify-full`). The `ssl` option is accepted as a deprecated alias for `tls`; it takes the same shapes (`boolean | TLSOptions | BunFile`) and is **not** where the mode string goes.
 
 ---
 

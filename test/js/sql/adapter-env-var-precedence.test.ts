@@ -473,13 +473,7 @@ describe("SQL adapter environment variable precedence", () => {
     });
   });
 
-  // Issue #31015 — the docs used to claim that `ssl: "<mode>"` on the options
-  // object picked an SSL mode. It does not. These tests pin down what actually
-  // works so the docs stay honest:
-  //   - `sslmode=<mode>` on the URL is the only way to select a mode.
-  //   - `tls: true | {...}` configures the TLS material and coerces the mode
-  //     up to `prefer` when no explicit mode has been set.
-  //   - `ssl` is a deprecated alias for `tls` with the same shape.
+  // https://github.com/oven-sh/bun/issues/31015
   describe("SSL mode and TLS option parsing", () => {
     // Keep these mirrored with the SSLMode const enum in
     // src/js/internal/sql/shared.ts.
@@ -513,7 +507,7 @@ describe("SQL adapter environment variable precedence", () => {
       expect(options.options.tls).toBeUndefined();
     });
 
-    test("tls: true coerces sslMode to prefer", () => {
+    test("tls: true coerces sslMode to require", () => {
       const options = new SQL({
         adapter: "postgres",
         hostname: "localhost",
@@ -521,11 +515,11 @@ describe("SQL adapter environment variable precedence", () => {
         password: "pass",
         tls: true,
       });
-      expect(options.options.sslMode).toBe(SSLMode.prefer);
+      expect(options.options.sslMode).toBe(SSLMode.require);
       expect(options.options.tls).toBe(true);
     });
 
-    test("tls: TLSOptions keeps the object and coerces sslMode to prefer", () => {
+    test("tls: { rejectUnauthorized: false } keeps the object and coerces sslMode to require", () => {
       const options = new SQL({
         adapter: "postgres",
         hostname: "localhost",
@@ -533,8 +527,32 @@ describe("SQL adapter environment variable precedence", () => {
         password: "pass",
         tls: { rejectUnauthorized: false },
       });
-      expect(options.options.sslMode).toBe(SSLMode.prefer);
+      expect(options.options.sslMode).toBe(SSLMode.require);
       expect(options.options.tls).toEqual({ rejectUnauthorized: false });
+    });
+
+    test("tls: { rejectUnauthorized: true } escalates sslMode to verify-full", () => {
+      const options = new SQL({
+        adapter: "postgres",
+        hostname: "localhost",
+        username: "user",
+        password: "pass",
+        tls: { rejectUnauthorized: true },
+      });
+      expect(options.options.sslMode).toBe(SSLMode.verify_full);
+      expect(options.options.tls).toEqual({ rejectUnauthorized: true, serverName: "localhost" });
+    });
+
+    test("tls: { ca } escalates sslMode to verify-full", () => {
+      const options = new SQL({
+        adapter: "postgres",
+        hostname: "localhost",
+        username: "user",
+        password: "pass",
+        tls: { ca: "-----BEGIN CERTIFICATE-----" },
+      });
+      expect(options.options.sslMode).toBe(SSLMode.verify_full);
+      expect(options.options.tls).toEqual({ ca: "-----BEGIN CERTIFICATE-----", serverName: "localhost" });
     });
 
     test("URL sslmode + tls object combine (tls shape wins, sslmode wins)", () => {

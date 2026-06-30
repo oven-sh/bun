@@ -633,16 +633,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         return result;
     };
 
-    // Build a shallow, detached snapshot of the module's CURRENT exports so the
-    // factory can delegate to originals (`(original) => ({ ...original, foo: () =>
-    // original.foo() })`) without accidentally closing over the live namespace,
-    // which would see the mock's own exports after this call returns and recurse.
-    //
-    // Primitives (`module.exports = 42`) and callables (`module.exports = function(){}`
-    // or a class) are returned as-is: the snapshot is meant to preserve CALL
-    // semantics (`original()`, `new original()`, primitive delegation), and the
-    // future in-place override replaces the CJS exports slot rather than mutating
-    // the old value — so the captured reference is already detached.
+    // Detached shallow snapshot so `(original) => ({ ...original, foo: () => original.foo() })`
+    // can't recurse through the live (about-to-be-overwritten) namespace. Primitives and callables
+    // pass through as-is; the CJS apply replaces the exports slot, so the captured ref stays detached.
     auto buildOriginalSnapshot = [&](JSC::JSValue sourceExports) -> JSC::JSValue {
         if (!sourceExports) {
             return JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
@@ -660,7 +653,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         JSC::JSObject* sourceObject = sourceExports.getObject();
         JSC::JSObject* snapshot = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
         // StringsAndSymbols mirrors JS spread (`{ ...original }`), which copies
-        // own enumerable symbol keys too — a CJS `module.exports` can carry them.
+        // own enumerable symbol keys too; a CJS `module.exports` can carry them.
         JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
         sourceObject->methodTable()->getOwnPropertyNames(sourceObject, globalObject, names, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(innerScope, {});
@@ -713,13 +706,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         }
     }
 
-    // If the module was required (CJS), prefer the CJS exports as the
-    // factory's `original` argument — even when an ESM namespace also exists.
-    // For a callable CJS export (`module.exports = function(){}`) the ESM
-    // namespace is a wrapper object (`{ default: fn, length, name, prototype }`),
-    // which is not what `original()` / `new original()` should be operating
-    // against. `require()` returns the bare function, and so must the snapshot
-    // passed to the factory.
+    // Prefer CJS exports for `original` even when an ESM namespace also exists: for a
+    // callable `module.exports = fn`, the ESM namespace is a `{ default, length, name,
+    // prototype }` wrapper, not the bare function `original()`/`new original()` should target.
     JSValue entryValue = globalObject->requireMap()->get(globalObject, specifierString);
     RETURN_IF_EXCEPTION(scope, {});
     Bun::JSCommonJSModule* cjsModuleObject = nullptr;
@@ -727,7 +716,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         removeFromCJS = true;
         cjsModuleObject = dynamicDowncast<Bun::JSCommonJSModule>(entryValue);
         if (cjsModuleObject) {
-            // exportsObject() is a potentially-throwing JSObject::get — check
+            // exportsObject() is a potentially-throwing JSObject::get; check
             // before declaring a nested ThrowScope inside buildOriginalSnapshot.
             JSValue cjsExports = cjsModuleObject->exportsObject();
             RETURN_IF_EXCEPTION(scope, {});
@@ -737,9 +726,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     }
 
     if (!originalSnapshot) {
-        // No prior module — factory still receives a snapshot (an empty object)
-        // for a uniform signature, so `(original) => ...` works regardless of
-        // whether the module was imported before the mock call.
+        // No prior module, so the factory still receives a snapshot (an empty
+        // object) for a uniform signature, letting `(original) => ...` work
+        // regardless of whether the module was imported before the mock call.
         originalSnapshot = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
     }
 
@@ -1004,11 +993,8 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
 
         if (Zig::JSModuleMock* moduleMock = dynamicDowncast<Zig::JSModuleMock>(function)) {
             wasModuleMock = true;
-            // module mock
-            // Factory has not been called yet (the mock was installed before any
-            // import of the spec); pass an empty object so the factory's
-            // `(original) => ...` shape works consistently regardless of whether
-            // the module was imported before the mock call.
+            // Mock installed before any import ran, so there are no prior exports;
+            // pass `{}` so `(original) => ...` has a uniform shape either way.
             JSC::JSObject* empty = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
             result = moduleMock->executeOnce(globalObject, empty);
         } else {

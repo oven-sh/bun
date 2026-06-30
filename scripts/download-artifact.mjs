@@ -54,6 +54,8 @@ export async function downloadArtifactZip({
       lastError = error;
       console.warn(`buildkite-agent artifact download failed for step '${target}' (${error}), retrying...`);
     } else {
+      // When both are present, prefer bun-profile: it keeps its symbol table
+      // (the release bun is stripped), so CI crash backtraces symbolicate.
       const zipPath = readdirSync(releasePath, { recursive: true, encoding: "utf-8" })
         .filter(filename => /^bun.*\.zip$/i.test(filename))
         .map(filename => join(releasePath, filename))

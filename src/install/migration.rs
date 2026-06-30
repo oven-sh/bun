@@ -1462,6 +1462,20 @@ pub(crate) fn migrate_npm_lockfile<'a>(
         finalize_pkg!();
     }
 
+    // npm records `cpu`/`os` for every lockfile entry, but a fresh resolve only
+    // reads them for the root and npm registry packages (`Package::from_npm`);
+    // workspace, folder, tarball, and git packages install unconditionally.
+    for i in 0..pkg_count {
+        match this.packages.items_resolution()[i].tag {
+            resolution::Tag::Root | resolution::Tag::Npm => {}
+            _ => {
+                let meta = &mut this.packages.items_meta_mut()[i];
+                meta.arch = Npm::Architecture::ALL;
+                meta.os = Npm::OperatingSystem::ALL;
+            }
+        }
+    }
+
     // It is our fault if we hit an error here, making it safe to disable in release.
     #[cfg(debug_assertions)]
     {
@@ -1556,8 +1570,12 @@ fn package_name_from_path(pkg_path: &[u8]) -> &[u8] {
             last_index + b"/node_modules/".len()
         } else if pkg_path.starts_with(b"node_modules/") {
             b"node_modules/".len()
+        } else if let Some(last_index) = strings::last_index_of(pkg_path, b"/") {
+            // Link targets outside `node_modules/` (e.g. `vendor/a`) use the
+            // path's basename; skip past the separator itself.
+            last_index + b"/".len()
         } else {
-            strings::last_index_of(pkg_path, b"/").unwrap_or(0)
+            0
         };
 
     &pkg_path[pkg_name_start..]

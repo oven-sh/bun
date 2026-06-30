@@ -392,3 +392,116 @@ test("package-lock.json migration keeps dependencies declared as arbitrary tarba
   expect(fs.existsSync(join(testDir, "bun.lock"))).toBeTrue();
   expect(exitCode).toBe(0);
 });
+
+// Regular (non-optional) `file:` folder dependency whose package.json declares `os`/`cpu`
+// arrays. npm records those fields in the package-lock.json entry for every package, but
+// Bun only applies platform constraints to npm registry packages; a fresh `bun install`
+// of the same package.json installs the folder regardless. Migrating must not diverge.
+function filePlatformFixture(os: string[], cpu: string[]) {
+  const aPackageJson: Record<string, unknown> = { name: "a", version: "1.0.0" };
+  const aLockEntry: Record<string, unknown> = { version: "1.0.0" };
+  if (os.length) aPackageJson.os = aLockEntry.os = os;
+  if (cpu.length) aPackageJson.cpu = aLockEntry.cpu = cpu;
+  return {
+    "package.json": JSON.stringify({ name: "repro", dependencies: { a: "file:./vendor/a" } }),
+    "vendor/a/package.json": JSON.stringify(aPackageJson),
+    // Exactly what `npm install --package-lock-only` produces for this tree.
+    "package-lock.json": JSON.stringify({
+      name: "repro",
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        "": { name: "repro", dependencies: { a: "file:./vendor/a" } },
+        "node_modules/a": { resolved: "vendor/a", link: true },
+        "vendor/a": aLockEntry,
+      },
+    }),
+  };
+}
+
+async function install(testDir: string, ...args: string[]) {
+  await using proc = Bun.spawn([bunExe(), "install", ...args], {
+    env: bunEnv,
+    cwd: testDir,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  return { stderr, exitCode };
+}
+
+test("package-lock.json migration does not platform-skip a regular file: folder dependency", async () => {
+  const testDir = tempDirWithFiles(
+    "migrate-folder-platform",
+    filePlatformFixture([`!${process.platform}`], [`!${process.arch}`]),
+  );
+
+  const { stderr, exitCode } = await install(testDir);
+  expect(stderr).toContain("migrated lockfile from package-lock.json");
+  expect(stderr).not.toContain("InvalidNPMLockfile");
+  expect(await Bun.file(join(testDir, "node_modules", "a", "package.json")).json()).toHaveProperty("name", "a");
+  expect(exitCode).toBe(0);
+
+  // The migrated bun.lock matches what a fresh resolve of the same package.json writes:
+  // the folder package keeps its real name and carries no os/cpu constraint.
+  expect(await Bun.file(join(testDir, "bun.lock")).text()).toContain(`"a": ["a@file:vendor/a", {}]`);
+});
+
+test("package-lock.json migration writes a bun.lock its own parser accepts for file: folder dependencies", async () => {
+  const testDir = tempDirWithFiles("migrate-folder-name", filePlatformFixture([], []));
+
+  const first = await install(testDir);
+  expect(first.stderr).toContain("migrated lockfile from package-lock.json");
+  expect(await Bun.file(join(testDir, "bun.lock")).text()).toContain(`"a": ["a@file:vendor/a", {}]`);
+  expect(first.exitCode).toBe(0);
+
+  // The second install consumes the bun.lock the migration just wrote. It must parse,
+  // otherwise --frozen-lockfile is permanently broken after an npm migration.
+  const second = await install(testDir, "--frozen-lockfile");
+  expect(second.stderr).not.toContain("Invalid package name");
+  expect(second.stderr).not.toContain("Ignoring lockfile");
+  expect(await Bun.file(join(testDir, "node_modules", "a", "package.json")).json()).toHaveProperty("name", "a");
+  expect(second.exitCode).toBe(0);
+});
+
+test("package-lock.json migration does not platform-skip a regular file: tarball dependency", async () => {
+  // Same divergence as the folder variant, for a `LocalTarball` resolution. npm records
+  // the packed package's `os`/`cpu` arrays in its lockfile entry, and a fresh resolve of
+  // the same package.json extracts and installs the tarball regardless of them.
+  const nonMatching = { os: [`!${process.platform}`], cpu: [`!${process.arch}`] };
+  const testDir = tempDirWithFiles("migrate-tarball-platform", {
+    "package.json": JSON.stringify({ name: "repro", dependencies: { a: "file:./a-1.0.0.tgz" } }),
+    "src-a/package.json": JSON.stringify({ name: "a", version: "1.0.0", ...nonMatching }),
+  });
+
+  {
+    await using pack = Bun.spawn([bunExe(), "pm", "pack", "--destination", testDir], {
+      env: bunEnv,
+      cwd: join(testDir, "src-a"),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [packErr, packExit] = await Promise.all([pack.stderr.text(), pack.exited]);
+    expect(packExit, packErr).toBe(0);
+    expect(fs.existsSync(join(testDir, "a-1.0.0.tgz"))).toBeTrue();
+  }
+
+  await Bun.write(
+    join(testDir, "package-lock.json"),
+    JSON.stringify({
+      name: "repro",
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        "": { name: "repro", dependencies: { a: "file:./a-1.0.0.tgz" } },
+        "node_modules/a": { version: "1.0.0", resolved: "file:a-1.0.0.tgz", ...nonMatching },
+      },
+    }),
+  );
+
+  const { stderr, exitCode } = await install(testDir);
+  expect(stderr).toContain("migrated lockfile from package-lock.json");
+  expect(stderr).not.toContain("InvalidNPMLockfile");
+  expect(await Bun.file(join(testDir, "node_modules", "a", "package.json")).json()).toHaveProperty("name", "a");
+  expect(exitCode).toBe(0);
+});

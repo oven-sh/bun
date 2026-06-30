@@ -322,9 +322,9 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     /// stage 1 (they are ordinary scalar-run bytes), so this works on byte
     /// positions: decode codepoints forward from the current token position
     /// until the first non-whitespace one — stepping over any comment that
-    /// follows it with no intervening ASCII whitespace, which therefore
-    /// lives inside the same index run — then resync the cursor onto the
-    /// index containing (or starting at) that position.
+    /// follows inside the same index run (comment bytes are never indexed) —
+    /// then resync the cursor onto the index containing (or starting at)
+    /// that position.
     ///
     /// Returns the first non-whitespace byte position, which is either
     /// exactly at `pos_at(cursor)` (a fresh token) or inside the cursor's

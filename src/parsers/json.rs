@@ -2215,9 +2215,8 @@ mod tests {
             };
             assert!(o.is_single_line, "{doc:?}");
         }
-        // Exotic whitespace immediately followed by a comment (no ASCII
-        // whitespace in between): the comment lives inside the whitespace
-        // run and must be stepped over.
+        // A comment in the same index run as exotic whitespace (comment
+        // bytes are never indexed) must be stepped over.
         for doc in [
             "\u{feff}// c\n{\"a\": 1}",
             "\u{feff}/* x */[1]",

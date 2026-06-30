@@ -29,5 +29,8 @@ test("setSystemTime() keeps overriding Date.now() after the call site is JIT com
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  if (exitCode !== 0) {
+    expect(stderr).toBe("");
+  }
   expect({ divergedAt: stdout.trim(), exitCode }).toEqual({ divergedAt: "-1", exitCode: 0 });
 });

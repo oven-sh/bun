@@ -20,6 +20,9 @@ test("console.Console#table renders Map and Set iterators", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  if (exitCode !== 0) {
+    expect(stderr).toBe("");
+  }
   expect(stdout).toMatchInlineSnapshot(`
     "┌───────────────────┬────────────┐
     │ (iteration index) │   Values   │

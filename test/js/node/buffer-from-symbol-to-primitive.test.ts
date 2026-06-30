@@ -19,5 +19,8 @@ test("Buffer.from honors a Symbol.toPrimitive accessor", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  if (exitCode !== 0) {
+    expect(stderr).toBe("");
+  }
   expect({ stdout, exitCode }).toEqual({ stdout: "via getter true\n", exitCode: 0 });
 });

@@ -402,6 +402,62 @@ it("registers the current package with `bun link -g`", async () => {
   expect(exitCode).toBe(0);
 });
 
+// https://github.com/oven-sh/bun/issues/33141
+it("unregisters the current package with `bun unlink -g`", async () => {
+  const name = "my-unlink-global-pkg";
+  using projectDir = tempDir("bun-unlink-global", {
+    "package.json": JSON.stringify({
+      name,
+      version: "1.0.0",
+      bin: { [name]: "./cli.js" },
+    }),
+    "cli.js": "#!/usr/bin/env node\nconsole.log('hello');\n",
+  });
+  using installDir = tempDir("bun-unlink-global-install", {});
+  const spawnEnv = {
+    ...env,
+    BUN_INSTALL: String(installDir),
+    BUN_INSTALL_GLOBAL_DIR: undefined,
+    BUN_INSTALL_BIN: undefined,
+  };
+
+  // Register with plain `bun link` (works regardless of the fix) so the
+  // `bun unlink -g` step below is what this test actually exercises.
+  await using register = spawn({
+    cmd: [bunExe(), "link"],
+    cwd: String(projectDir),
+    env: spawnEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [registerOut, , registerExit] = await Promise.all([
+    register.stdout.text(),
+    register.stderr.text(),
+    register.exited,
+  ]);
+  expect(registerOut).toContain(`Success! Registered "${name}"`);
+  expect(registerExit).toBe(0);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "unlink", "-g"],
+    cwd: String(projectDir),
+    env: spawnEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain(`success: unlinked package "${name}"`);
+  expect(stderr).not.toContain(`missing "name"`);
+
+  // The global registration must be removed, not left behind.
+  const entries = await readdirSorted(join(String(installDir), "install", "global", "node_modules"));
+  expect(entries).not.toContain(name);
+
+  expect(exitCode).toBe(0);
+});
+
 it("should link dependency without crashing", async () => {
   const link_name = basename(link_dir).slice("bun-link.".length) + "-really-long-name";
   await writeFile(

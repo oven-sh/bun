@@ -1428,10 +1428,11 @@ pub fn init(
     cli: CommandLineArguments,
     subcommand: Subcommand,
 ) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
-    // `bun link` with no package name registers the current package globally;
-    // `-g` is redundant there, and fchdir'ing into the global install dir would
-    // read that dir's package.json and symlink it instead of the user's package.
-    let link_current_package = subcommand == Subcommand::Link && cli.positionals.len() == 1;
+    // `bun link`/`bun unlink` with no package name act on the current package
+    // via its package.json; `-g` is redundant there, and fchdir'ing into the
+    // global install dir would read that dir's package.json instead of the user's.
+    let link_current_package =
+        matches!(subcommand, Subcommand::Link | Subcommand::Unlink) && cli.positionals.len() == 1;
     if cli.global && !link_current_package {
         // Non-consuming peek: `ctx.install` is
         // `Option<Box<BunInstall>>` borrowed via `&mut ContextData`; reborrow with

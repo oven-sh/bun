@@ -240,7 +240,7 @@ test("spy with mock implementation", async () => {
 
 ## Module Mocks with mock.module()
 
-Use `mock.module(path: string, callback: () => Object)` to override the behavior of a module.
+Use `mock.module(path: string, callback: (original: any) => Object)` to override the behavior of a module.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, mock } from "bun:test";

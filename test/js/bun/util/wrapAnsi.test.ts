@@ -451,6 +451,92 @@ describe("Bun.wrapAnsi", () => {
           true,
           "\u001B[31m\u0600\u001B[39m\u{1F44D}\u{1F3FF}ab\ncd",
         ],
+        // ANSI-prefixed words: an SGR sequence (ESC is ASCII) at the start of a word
+        // must not hide the cluster-fusing codepoint that actually lands on the seam.
+        // Escape-wrapped emoji+modifier word after an escape-wrapped width-0 Prepend row.
+        [
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab cd",
+          7,
+          false,
+          false,
+          false,
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab c\nd",
+        ],
+        [
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab cd",
+          7,
+          false,
+          false,
+          true,
+          "\u001B[31m\u0600\u001B[39m\u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab\ncd",
+        ],
+        [
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab cd",
+          7,
+          false,
+          true,
+          false,
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab \ncd",
+        ],
+        [
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab cd",
+          7,
+          false,
+          true,
+          true,
+          "\u001B[31m\u0600\u001B[39m\u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab\ncd",
+        ],
+        [
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab cd",
+          7,
+          true,
+          false,
+          false,
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab c\nd",
+        ],
+        [
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab cd",
+          7,
+          true,
+          false,
+          true,
+          "\u001B[31m\u0600\u001B[39m\u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab\ncd",
+        ],
+        [
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab cd",
+          7,
+          true,
+          true,
+          false,
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab \ncd",
+        ],
+        [
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab cd",
+          7,
+          true,
+          true,
+          true,
+          "\u001B[31m\u0600\u001B[39m\u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab\ncd",
+        ],
+        // Escape-prefixed keycap word: SPACE + U+20E3 still fuses across the escape.
+        ["aa \u001B[31m\u20E3bb\u001B[39m cc", 7, false, false, false, "aa \u001B[31m\u20E3bb\u001B[39m \ncc"],
+        ["aa \u001B[31m\u20E3bb\u001B[39m cc", 7, false, false, true, "aa \u001B[31m\u20E3bb\u001B[39m\ncc"],
+        ["aa \u001B[31m\u20E3bb\u001B[39m cc", 7, false, true, false, "aa \u001B[31m\u20E3bb\u001B[39m \ncc"],
+        ["aa \u001B[31m\u20E3bb\u001B[39m cc", 7, false, true, true, "aa \u001B[31m\u20E3bb\u001B[39m\ncc"],
+        ["aa \u001B[31m\u20E3bb\u001B[39m cc", 7, true, false, false, "aa \u001B[31m\u20E3bb\u001B[39m \ncc"],
+        ["aa \u001B[31m\u20E3bb\u001B[39m cc", 7, true, false, true, "aa \u001B[31m\u20E3bb\u001B[39m\ncc"],
+        ["aa \u001B[31m\u20E3bb\u001B[39m cc", 7, true, true, false, "aa \u001B[31m\u20E3bb\u001B[39m \ncc"],
+        ["aa \u001B[31m\u20E3bb\u001B[39m cc", 7, true, true, true, "aa \u001B[31m\u20E3bb\u001B[39m\ncc"],
+        // At 9 columns the fused row fits exactly (real width 9); the stale additive
+        // width (10) would wrongly wrap it.
+        ["aa \u001B[31m\u20E3bb\u001B[39m cc", 9, false, false, false, "aa \u001B[31m\u20E3bb\u001B[39m cc"],
+        ["aa \u001B[31m\u20E3bb\u001B[39m cc", 9, false, false, true, "aa \u001B[31m\u20E3bb\u001B[39m cc"],
+        ["aa \u001B[31m\u20E3bb\u001B[39m cc", 9, false, true, false, "aa \u001B[31m\u20E3bb\u001B[39m cc"],
+        ["aa \u001B[31m\u20E3bb\u001B[39m cc", 9, false, true, true, "aa \u001B[31m\u20E3bb\u001B[39m cc"],
+        ["aa \u001B[31m\u20E3bb\u001B[39m cc", 9, true, false, false, "aa \u001B[31m\u20E3bb\u001B[39m cc"],
+        ["aa \u001B[31m\u20E3bb\u001B[39m cc", 9, true, false, true, "aa \u001B[31m\u20E3bb\u001B[39m cc"],
+        ["aa \u001B[31m\u20E3bb\u001B[39m cc", 9, true, true, false, "aa \u001B[31m\u20E3bb\u001B[39m cc"],
+        ["aa \u001B[31m\u20E3bb\u001B[39m cc", 9, true, true, true, "aa \u001B[31m\u20E3bb\u001B[39m cc"],
       ];
 
     test.each(cases)(

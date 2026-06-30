@@ -59,12 +59,24 @@ static size_t stringWidth(const Char* start, const Char* end, bool ambiguousIsNa
     }
 }
 
+// A word may begin with ANSI escape sequences whose code units are all ASCII
+// (ESC, '[', digits, 'm'), hiding the codepoint that actually lands on the seam.
+// Skip them before classifying; a word not starting with ESC never enters the scan.
+template<typename Char>
+static inline const Char* skipLeadingAnsi(const Char* start, const Char* end)
+{
+    if (start < end && ANSI::isEscapeCharacter(*start))
+        return ANSI::consumeANSI(start, end);
+    return start;
+}
+
 // True when a grapheme cluster boundary always precedes the word's first codepoint
 // (worst-case predecessor: the separator space). A word-initial cluster-fusing
 // codepoint (combining mark, ZWJ, VS16, keycap) makes row widths non-additive.
 template<typename Char>
 static inline bool wordStartsNewCluster(const Char* wordStart, const Char* wordEnd)
 {
+    wordStart = skipLeadingAnsi(wordStart, wordEnd);
     if (wordStart >= wordEnd)
         return true;
     char32_t cp;
@@ -86,6 +98,7 @@ static inline bool wordStartsNewCluster(const Char* wordStart, const Char* wordE
 template<typename Char>
 static inline bool wordSeamIsAscii(Char rowTail, const Char* wordStart, const Char* wordEnd)
 {
+    wordStart = skipLeadingAnsi(wordStart, wordEnd);
     if (wordStart >= wordEnd)
         return true;
     return static_cast<char32_t>(rowTail) < 0x80 && static_cast<char32_t>(*wordStart) < 0x80;

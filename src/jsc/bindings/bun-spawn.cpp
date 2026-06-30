@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/resource.h>
+#include <grp.h>
 
 #if OS(LINUX)
 #include <sys/syscall.h>
@@ -106,6 +107,10 @@ typedef struct bun_spawn_request_t {
     bun_spawn_file_action_list_t actions;
     int pty_slave_fd; // -1 if not using PTY, otherwise the slave fd to set as controlling terminal
     int linux_pdeathsig; // 0 = unset; otherwise signal delivered to child when parent thread dies
+    uint32_t uid; // setuid(uid) in the child before exec when set_uid is true
+    uint32_t gid; // setgid(gid) in the child before exec when set_gid is true
+    bool set_uid;
+    bool set_gid;
 } bun_spawn_request_t;
 
 // Raw exit syscall that doesn't go through libc.
@@ -156,6 +161,11 @@ extern "C" ssize_t posix_spawn_bun(
     volatile int child_errno = 0;
     bool use_fork_fallback = false;
 
+    // The vfork child shares this mm, and set*id in the child resets the
+    // mm-wide "dumpable" flag to /proc/sys/fs/suid_dumpable (commit_creds).
+    // Save it so the parent can restore it once vfork returns, like Go's
+    // forkAndExecInChild1 and systemd's safe_fork_full do.
+    int saved_dumpable = (request->set_uid || request->set_gid) ? prctl(PR_GET_DUMPABLE, 0, 0, 0, 0) : -1;
     pid_t child;
 #if OS(LINUX) && !defined(__OHOS__)
     child = vfork();
@@ -163,6 +173,9 @@ extern "C" ssize_t posix_spawn_bun(
         use_fork_fallback = true;
         child = fork();
     }
+#else
+    child = fork();
+    // OHOS: vfork blocked by seccomp, use fork() directly
 #else
     child = fork();
 #if defined(__OHOS__)
@@ -308,6 +321,40 @@ extern "C" ssize_t posix_spawn_bun(
             }
         }
 
+        // libuv order: setgroups (best-effort) -> setgid -> setuid, just before exec.
+        // Linux MUST use raw syscalls here: this is a vfork child sharing the parent's
+        // memory, and glibc's set*id wrappers broadcast SIGSETXID to every (parent) thread.
+        if (request->set_uid || request->set_gid) {
+            int savedErrno = errno;
+#if OS(LINUX)
+            (void)syscall(SYS_setgroups, 0, (const gid_t*)NULL);
+#else
+            (void)setgroups(0, NULL);
+#endif
+            errno = savedErrno;
+        }
+
+#if OS(LINUX)
+        if (request->set_gid && syscall(SYS_setgid, (gid_t)request->gid) != 0) {
+            return childFailed();
+        }
+        if (request->set_uid && syscall(SYS_setuid, (uid_t)request->uid) != 0) {
+            return childFailed();
+        }
+        // The kernel clears PR_SET_PDEATHSIG when the effective uid/gid changes
+        // (prctl(2)), so re-arm it after dropping credentials.
+        if (request->linux_pdeathsig != 0 && (request->set_uid || request->set_gid)) {
+            prctl(PR_SET_PDEATHSIG, request->linux_pdeathsig, 0, 0, 0);
+        }
+#else
+        if (request->set_gid && setgid((gid_t)request->gid) != 0) {
+            return childFailed();
+        }
+        if (request->set_uid && setuid((uid_t)request->uid) != 0) {
+            return childFailed();
+        }
+#endif
+
         sigprocmask(SIG_SETMASK, &childmask, 0);
         if (!envp)
             envp = environ;
@@ -403,6 +450,12 @@ extern "C" ssize_t posix_spawn_bun(
     } else {
         // fork/vfork() failed
         res = errno;
+    }
+
+    // PR_SET_DUMPABLE only accepts SUID_DUMP_DISABLE (0) / SUID_DUMP_USER (1);
+    // a saved value of 2 (suid_dumpable=2) means it was already the reset value.
+    if (saved_dumpable == 0 || saved_dumpable == 1) {
+        (void)prctl(PR_SET_DUMPABLE, saved_dumpable, 0, 0, 0);
     }
 #endif
 

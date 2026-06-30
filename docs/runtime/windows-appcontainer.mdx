@@ -1,5 +1,5 @@
 ---
-title: Running Bun in a Windows AppContainer
+title: Windows AppContainer
 description: What works, what the host must configure, and what the sandbox forbids when running Bun under an AppContainer (lowbox) token.
 ---
 
@@ -42,10 +42,11 @@ executable importing `user32.dll` (Bun does) dies at load with
 `STATUS_DLL_INIT_FAILED` (0xC0000142). Interactive sessions already carry the
 right ACEs.
 
-**Loopback to other processes is blocked by design.** In-process loopback
-always works (`Bun.serve` + `fetch` to yourself is fine). Reaching another
-local process's `127.0.0.1` port — a database, a dev server, an inspector —
-requires the machine-level debugging exemption
+**Loopback to processes outside the container is blocked by design.**
+In-process and same-container loopback always works (`Bun.serve` + `fetch`
+to yourself is fine, as is talking to your own child processes). Reaching an
+unsandboxed local process's `127.0.0.1` port — a database, a dev server, an
+inspector — requires the machine-level debugging exemption
 `CheckNetIsolation.exe LoopbackExempt -a -p=<container-sid>` (admin), which
 shipped apps cannot rely on.
 
@@ -59,16 +60,18 @@ shipped apps cannot rely on.
   internal pipes (stdio, IPC, ConPTY) already use `LOCAL\`.
 - **True symlinks are impossible** — a lowbox token cannot hold
   `SeCreateSymbolicLinkPrivilege`, so `fs.symlink` with `"file"`/`"dir"` fails
-  with `EPERM`. Hardlinks work. **Junctions are created but quarantined**: the
-  kernel rewrites them into _untrusted mount points_ that nothing can traverse
-  (reads through them report `EACCES`), so treat junction-based layouts as
-  unavailable. `bun install` works with the default (hoisted) linker; the
-  isolated linker depends on junctions and will report `EACCES` per package
-  instead of producing dead links.
+  with `EPERM`. Hardlinks work. **Junctions are created but quarantined** on
+  client Windows builds: the kernel rewrites them into _untrusted mount
+  points_ whose traversal is denied (reads through them report `ELOOP`), so
+  treat junction-based layouts as unavailable. (Some Windows Server builds
+  leave such junctions traversable.) `bun install` works with the default
+  (hoisted) linker; the isolated linker depends on junctions and will report
+  `EACCES` per package instead of producing dead links.
 - **`os.homedir()` points at an inaccessible directory.** `USERPROFILE` is
   inherited unchanged, but the profile directory carries no ACE for the
-  container. Drive roots (`C:\`) are not listable either; Bun's resolver and
-  `fs.realpath` treat those inaccessible ancestors as opaque directories, so
+  container. Drive roots (`C:\`) are not listable either; Bun's resolver
+  treats those inaccessible ancestors as opaque directories, and
+  `fs.realpath` resolves through them via the handle-based native path, so
   project-relative work is unaffected.
 - **Process visibility is limited.** `process.kill` of unrelated pids and
   enumerating other users' processes are denied; managing your own children
@@ -95,6 +98,6 @@ require("net")
   });
 ```
 
-If `spawn+pipes` hangs or the pipe server reports `EADDRINUSE` on a fresh
-name, the Bun build predates the AppContainer support (Bun ≥ 1.4.x with the
-patched libuv is required).
+If `spawn+pipes` hangs, or the `LOCAL\` pipe server reports `EACCES`, the
+Bun build predates AppContainer support; use a release that includes this
+documentation page.

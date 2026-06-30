@@ -14,10 +14,12 @@ import type { Dependency } from "../source.ts";
 // the `bun` branch (upstream f3ce527e + the win-pipe CancelIoEx race fix +
 // ConPTY support in uv_spawn) plus AppContainer (lowbox) support: LOCAL\
 // internal pipe names, bounded+randomized access-denied retries, console read
-// cancellation without input injection, sandbox-rewritten junction readback,
-// uv_pipe/realpath/stat error-reporting fixes, and uv_os_is_app_container().
+// cancellation without input injection (and exact-fill line-read fixes),
+// sandbox-rewritten junction readback, bind EACCES/EADDRINUSE
+// disambiguation, the NUL-device pipe fallback for ignored stdio, and
+// uv_pipe/realpath/stat error-reporting fixes, plus uv_os_is_app_container().
 // To bump upstream, rebase the `bun` branch and update this SHA.
-const LIBUV_COMMIT = "2d640bb3c12fe3f1dc6c60a9124fd869b683be6d";
+const LIBUV_COMMIT = "5374c844778b26e1844563f08f417c78d2c23b3d";
 
 // prettier-ignore
 const SHARED = [

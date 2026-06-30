@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { symlinkSync } from "node:fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { symlinkSync } from "node:fs";
 import { join } from "path";
 
 const cwd_root = tempDirWithFiles("testworkspace", {

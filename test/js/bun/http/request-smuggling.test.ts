@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { createServer } from "node:http";
 import net from "net";
+import { createServer } from "node:http";
 
 // CVE-2020-8287 style request smuggling tests
 // These tests ensure Bun's HTTP server properly validates Transfer-Encoding headers

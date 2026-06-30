@@ -2,7 +2,6 @@ import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { createHash } from "node:crypto";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;

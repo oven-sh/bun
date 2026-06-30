@@ -288,7 +288,7 @@ impl Request {
                 if !content_type_.is_empty() {
                     self.headers_mut().as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
-                        content_type_,
+                        &ZigString::init(content_type_),
                         global_this,
                     )?;
                 }
@@ -1481,7 +1481,7 @@ impl Request {
                     match req.headers_mut().as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
                         // SAFETY: ct_ptr borrows req.body which is not mutated here.
-                        unsafe { &*ct_ptr },
+                        &ZigString::init(unsafe { &*ct_ptr }),
                         global_this,
                     ) {
                         Ok(()) => {}

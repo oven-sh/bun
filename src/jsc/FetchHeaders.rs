@@ -151,7 +151,7 @@ impl FetchHeaders {
     pub fn put_default(
         &mut self,
         name_: HTTPHeaderName,
-        value: &[u8],
+        value: &ZigString,
         global: &JSGlobalObject,
     ) -> JsResult<()> {
         if self.fast_has(name_) {
@@ -231,15 +231,16 @@ impl FetchHeaders {
         WebCore__FetchHeaders__append(self, name_, value, global)
     }
 
+    /// `value`'s pointer tag carries its encoding (Latin-1 / UTF-16 / UTF-8); a
+    /// raw `&[u8]` parameter would force every caller into a Latin-1 read.
     pub fn put(
         &mut self,
         name_: HTTPHeaderName,
-        value: &[u8],
+        value: &ZigString,
         global: &JSGlobalObject,
     ) -> JsResult<()> {
         host_fn::from_js_host_call_generic(global, || {
-            let zs = ZigString::init(value);
-            WebCore__FetchHeaders__put(self, name_, &zs, global)
+            WebCore__FetchHeaders__put(self, name_, value, global)
         })
     }
 

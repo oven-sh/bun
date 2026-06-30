@@ -2,7 +2,7 @@ use core::ffi::{c_int, c_void};
 
 use crate::webcore::Response;
 use crate::webcore::response::{HeadersRef, Init};
-use bun_core::{String as BunString, ZigString};
+use bun_core::String as BunString;
 use bun_jsc::{CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsResult};
 
 pub fn fix_dead_code_elimination() {
@@ -188,11 +188,8 @@ pub(crate) fn construct_render(
             .throw_invalid_arguments(format_args!("Response.render() path must be a string")));
     }
 
-    // Get the path string
-    let path_str = bun_core::OwnedString::new(path_arg.to_bun_string(global_this)?);
-
-    let path_utf8 = path_str.to_utf8();
-    // `defer path_utf8.deinit()` → handled by Drop on the UTF-8 slice guard
+    // The path string in its native encoding, same as `Headers.prototype.set`.
+    let path = path_arg.get_zig_string(global_this)?;
 
     // Create a Response with Render body
     let response = Box::new(Response::init(
@@ -200,11 +197,7 @@ pub(crate) fn construct_render(
             status_code: 200,
             headers: {
                 let mut headers = HeadersRef::create_empty();
-                headers.put(
-                    HTTPHeaderName::Location,
-                    &ZigString::init(path_utf8.slice()),
-                    global_this,
-                )?;
+                headers.put(HTTPHeaderName::Location, &path, global_this)?;
                 Some(headers)
             },
             ..Default::default()

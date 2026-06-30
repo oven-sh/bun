@@ -3,7 +3,6 @@ use crate::helpers;
 use crate::parser::{self, Parser};
 use crate::types::{self, BlockType, Container, Line, OFF, VerbatimLine};
 
-use bun_collections::VecExt as _;
 use core::mem::{align_of, size_of};
 
 type BlockHeader = parser::BlockHeader;
@@ -48,7 +47,7 @@ impl Parser<'_> {
         p_end: &mut OFF,
         pivot_line: &Line,
         line: &mut Line,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), parser::Error> {
         let mut off = off_start;
         let mut total_indent: u32 = 0;
         let mut n_parents: u32 = 0;
@@ -692,7 +691,7 @@ impl Parser<'_> {
         cur_line_idx: usize,
         line_buf: &mut [Line; 2],
         line_idx: &mut usize,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), parser::Error> {
         // Index into line_buf via cur_line_idx instead of taking a `&mut Line`
         // parameter, which would alias line_buf.
         let line = &mut line_buf[cur_line_idx];
@@ -832,7 +831,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn start_new_block(&mut self, line: &Line) -> Result<(), bun_alloc::AllocError> {
+    pub fn start_new_block(&mut self, line: &Line) -> Result<(), parser::Error> {
         let block_type: BlockType = match line.r#type {
             LineType::Hr => BlockType::Hr,
             LineType::Atxheader => BlockType::H,
@@ -842,24 +841,13 @@ impl Parser<'_> {
             _ => BlockType::P,
         };
 
-        // Align block_bytes for Block alignment
-        let align_mask: usize = align_of::<BlockHeader>() - 1;
-        let cur_len = self.block_bytes.len();
-        let aligned = (cur_len + align_mask) & !align_mask;
-        let needed = aligned + size_of::<BlockHeader>();
-        self.block_bytes.ensure_total_capacity(needed);
-        // Zero-fill to `needed`; bytes in [aligned, needed) are immediately
-        // overwritten by the BlockHeader write below.
-        self.block_bytes.resize(needed, 0);
-
-        let hdr = self.get_block_header_at(aligned);
-        *hdr = BlockHeader {
+        let aligned = self.append_block_header(BlockHeader {
             block_type,
             _pad: [0; 3],
             flags: 0,
             data: line.data,
             n_lines: 0,
-        };
+        })?;
 
         self.current_block = Some(aligned);
         self.current_block_lines.clear();
@@ -879,7 +867,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn end_current_block(&mut self) -> Result<(), bun_alloc::AllocError> {
+    pub fn end_current_block(&mut self) -> Result<(), parser::Error> {
         if let Some(cb_off) = self.current_block {
             // Capture the header fields, drop the &mut borrow, then access
             // other &self fields.
@@ -926,6 +914,9 @@ impl Parser<'_> {
                     self.current_block_lines.len() * size_of::<VerbatimLine>(),
                 )
             };
+            // The block's lines land in `block_bytes` too (12 bytes per
+            // line), not just its header, so this growth needs the same cap.
+            parser::check_block_bytes_len(self.block_bytes.len() + line_bytes.len())?;
             self.block_bytes.extend_from_slice(line_bytes);
             self.current_block = None;
         }

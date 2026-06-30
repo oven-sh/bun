@@ -3177,9 +3177,15 @@ impl Lockfile {
         match version.tag {
             dependency::Tag::Npm => {
                 // SAFETY: tag checked == .npm above; `npm` is the active
-                // `dependency::Value` union field. Same for `Resolution.value`
-                // below — `.npm` is read unconditionally on this path.
+                // `dependency::Value` union field.
                 let npm_group = &version.npm().version;
+                // Only a resolution whose own tag is npm may be read through
+                // `Resolution::npm()`: the root package, workspace members, and
+                // folder/symlink deps share the name index with other variants.
+                let satisfies = |resolution: &Resolution| -> bool {
+                    resolution.tag == ResolutionTag::Npm
+                        && npm_group.satisfies(resolution.npm().version, buf, buf)
+                };
                 match entry {
                     PackageIndexEntry::Id(id) => {
                         let resolutions = self.packages.items_resolution();
@@ -3187,8 +3193,7 @@ impl Lockfile {
                         if cfg!(debug_assertions) {
                             debug_assert!((*id as usize) < resolutions.len());
                         }
-                        let res_ver = resolutions[*id as usize].npm().version;
-                        if npm_group.satisfies(res_ver, buf, buf) {
+                        if satisfies(&resolutions[*id as usize]) {
                             return Some(*id);
                         }
                     }
@@ -3199,8 +3204,7 @@ impl Lockfile {
                             if cfg!(debug_assertions) {
                                 debug_assert!((id as usize) < resolutions.len());
                             }
-                            let res_ver = resolutions[id as usize].npm().version;
-                            if npm_group.satisfies(res_ver, buf, buf) {
+                            if satisfies(&resolutions[id as usize]) {
                                 return Some(id);
                             }
                         }

@@ -80,9 +80,8 @@ pub struct WebSocket<const SSL: bool> {
     /// `Some` once `send_close_with_body` has enqueued the close frame: blocks
     /// further outbound writes and drives `clear_data` + `dispatch_close` once
     /// the frame is fully flushed (or the socket dies).
-    pub close_dispatch_pending: Cell<Option<(u16, bun_core::String)>>,
+    pub close_dispatch_pending: RefCell<Option<(u16, bun_core::String)>>,
 
-    pub receive_frame: Cell<usize>,
     pub receive_body_remain: Cell<usize>,
     pub receive_pending_chunk_len: Cell<usize>,
     pub receive_buffer: RefCell<LinearFifo<u8, DynamicBuffer<u8>>>,
@@ -191,8 +190,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.pong_received.set(false);
         self.ping_len.set(0);
         self.close_frame_buffering.set(false);
-        if let Some((_, r)) = self.close_dispatch_pending.take() {
-            r.deref();
+        let pending_close = self.close_dispatch_pending.borrow_mut().take();
+        if let Some((_, reason)) = pending_close {
+            reason.deref();
         }
         self.receive_pending_chunk_len.set(0);
         self.receiving_compressed.set(false);
@@ -356,7 +356,8 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub fn handle_close(&self, _socket: Socket<SSL>, _code: c_int, _reason: *mut c_void) {
         log!("onClose");
         jsc::mark_binding!();
-        if let Some((code, mut reason)) = self.close_dispatch_pending.take() {
+        let pending_close = self.close_dispatch_pending.borrow_mut().take();
+        if let Some((code, mut reason)) = pending_close {
             // The socket closed while our close frame was mid-flush; the peer
             // either got it or didn't, but JS should still see the
             // user-initiated code/reason (not an abrupt 1006).
@@ -516,56 +517,9 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         // For compressed messages, we must buffer all fragments until the message is complete
         if self.receiving_compressed.get() {
-            // Always buffer compressed data
-            if !data.is_empty() {
-                let mut receive_buffer = self.receive_buffer.borrow_mut();
-                match receive_buffer.writable_with_size(data.len()) {
-                    Ok(writable) => {
-                        writable[..data.len()].copy_from_slice(data);
-                        receive_buffer.update(data.len());
-                    }
-                    Err(_) => {
-                        drop(receive_buffer);
-                        self.terminate(ErrorCode::Closed);
-                        return 0;
-                    }
-                }
-            }
-
-            if left_in_fragment >= data.len()
-                && left_in_fragment - data.len() - self.receive_pending_chunk_len.get() == 0
-            {
-                self.receive_pending_chunk_len.set(0);
-                self.receive_body_remain.set(0);
-                if is_final {
-                    // Decompress the complete message
-                    // take ownership of the fifo before dispatching:
-                    // `dispatch_*` may
-                    // call `terminate → clear_data → clear_receive_buffers(true)`
-                    // which would drop the Vec backing the readable slice.
-                    let buf = self
-                        .receive_buffer
-                        .replace(LinearFifo::<u8, DynamicBuffer<u8>>::init());
-                    self.dispatch_compressed_data(buf.readable_slice(0), kind);
-                    // Restore the taken fifo so `clear_receive_buffers(false)`
-                    // can keep its capacity for the next message instead of
-                    // starting from a fresh zero-capacity `init()`.
-                    self.receive_buffer.replace(buf);
-                    self.clear_receive_buffers(false);
-                    self.receiving_compressed.set(false);
-                    self.message_is_compressed.set(false);
-                }
-            } else {
-                self.receive_pending_chunk_len.set(
-                    self.receive_pending_chunk_len
-                        .get()
-                        .saturating_sub(left_in_fragment),
-                );
-            }
-            return data.len();
+            return self.consume_compressed(data, left_in_fragment, kind, is_final);
         }
 
-        // Non-compressed path remains the same
         // did all the data fit in the buffer?
         // we can avoid copying & allocating a temporary buffer
         if is_final && data.len() == left_in_fragment && self.receive_pending_chunk_len.get() == 0 {
@@ -574,19 +528,9 @@ impl<const SSL: bool> WebSocket<SSL> {
                 self.dispatch_data(data, kind);
                 self.message_is_compressed.set(false);
                 return data.len();
-            } else if data.is_empty() {
-                // take ownership of the fifo before dispatching: `dispatch_*`
-                // may free the Vec backing the readable slice.
-                let buf = self
-                    .receive_buffer
-                    .replace(LinearFifo::<u8, DynamicBuffer<u8>>::init());
-                self.dispatch_data(buf.readable_slice(0), kind);
-                // Restore the taken fifo so `clear_receive_buffers(false)`
-                // can keep its capacity for the next message instead of
-                // starting from a fresh zero-capacity `init()`.
-                self.receive_buffer.replace(buf);
-                self.clear_receive_buffers(false);
-                self.message_is_compressed.set(false);
+            }
+            if data.is_empty() {
+                self.dispatch_buffered_message(kind, false);
                 return 0;
             }
         }
@@ -605,33 +549,92 @@ impl<const SSL: bool> WebSocket<SSL> {
             receive_buffer.update(data.len());
         }
 
-        if left_in_fragment >= data.len()
-            && left_in_fragment - data.len() - self.receive_pending_chunk_len.get() == 0
-        {
+        if self.completes_fragment(data.len(), left_in_fragment) {
             self.receive_pending_chunk_len.set(0);
             self.receive_body_remain.set(0);
             if is_final {
-                // take ownership of the fifo before dispatching: `dispatch_*`
-                // may free the Vec backing the readable slice.
-                let buf = self
-                    .receive_buffer
-                    .replace(LinearFifo::<u8, DynamicBuffer<u8>>::init());
-                self.dispatch_data(buf.readable_slice(0), kind);
-                // Restore the taken fifo so `clear_receive_buffers(false)`
-                // can keep its capacity for the next message instead of
-                // starting from a fresh zero-capacity `init()`.
-                self.receive_buffer.replace(buf);
-                self.clear_receive_buffers(false);
-                self.message_is_compressed.set(false);
+                self.dispatch_buffered_message(kind, false);
             }
         } else {
-            self.receive_pending_chunk_len.set(
-                self.receive_pending_chunk_len
-                    .get()
-                    .saturating_sub(left_in_fragment),
-            );
+            self.deduct_pending_chunk(left_in_fragment);
         }
         data.len()
+    }
+
+    fn consume_compressed(
+        &self,
+        data: &[u8],
+        left_in_fragment: usize,
+        kind: Opcode,
+        is_final: bool,
+    ) -> usize {
+        // Always buffer compressed data
+        if !data.is_empty() {
+            let mut receive_buffer = self.receive_buffer.borrow_mut();
+            match receive_buffer.writable_with_size(data.len()) {
+                Ok(writable) => {
+                    writable[..data.len()].copy_from_slice(data);
+                    receive_buffer.update(data.len());
+                }
+                Err(_) => {
+                    drop(receive_buffer);
+                    self.terminate(ErrorCode::Closed);
+                    return 0;
+                }
+            }
+        }
+
+        if self.completes_fragment(data.len(), left_in_fragment) {
+            self.receive_pending_chunk_len.set(0);
+            self.receive_body_remain.set(0);
+            if is_final {
+                // Decompress the complete message
+                self.dispatch_buffered_message(kind, true);
+            }
+        } else {
+            self.deduct_pending_chunk(left_in_fragment);
+        }
+        data.len()
+    }
+
+    /// True when `consumed` bytes finish the current fragment and no earlier
+    /// chunk of it is still pending.
+    fn completes_fragment(&self, consumed: usize, left_in_fragment: usize) -> bool {
+        left_in_fragment >= consumed
+            && left_in_fragment - consumed - self.receive_pending_chunk_len.get() == 0
+    }
+
+    fn deduct_pending_chunk(&self, left_in_fragment: usize) {
+        self.receive_pending_chunk_len.set(
+            self.receive_pending_chunk_len
+                .get()
+                .saturating_sub(left_in_fragment),
+        );
+    }
+
+    /// Dispatch the complete message buffered in `receive_buffer` (its raw
+    /// deflate stream when `compressed`), then reset the per-message state.
+    fn dispatch_buffered_message(&self, kind: Opcode, compressed: bool) {
+        // take ownership of the fifo before dispatching: `dispatch_*` may
+        // call `terminate → clear_data → clear_receive_buffers(true)`
+        // which would drop the Vec backing the readable slice.
+        let buf = self
+            .receive_buffer
+            .replace(LinearFifo::<u8, DynamicBuffer<u8>>::init());
+        if compressed {
+            self.dispatch_compressed_data(buf.readable_slice(0), kind);
+        } else {
+            self.dispatch_data(buf.readable_slice(0), kind);
+        }
+        // Restore the taken fifo so `clear_receive_buffers(false)`
+        // can keep its capacity for the next message instead of
+        // starting from a fresh zero-capacity `init()`.
+        self.receive_buffer.replace(buf);
+        self.clear_receive_buffers(false);
+        if compressed {
+            self.receiving_compressed.set(false);
+        }
+        self.message_is_compressed.set(false);
     }
 
     // takes a raw `*mut Self` instead of `&self` because
@@ -682,432 +685,387 @@ impl<const SSL: bool> WebSocket<SSL> {
         this.handle_data_loop(data_);
     }
 
-    fn handle_data_loop(&self, data_: &[u8]) {
-        let mut data = data_;
-        let mut receive_state = self.receive_state.get();
-        let mut terminated = false;
-        let mut is_fragmented = false;
-        let mut receiving_type = self.receiving_type.get();
-        let mut receive_body_remain = self.receive_body_remain.get();
-        let mut is_final = self.receiving_is_final.get();
-        let mut last_receive_data_type = receiving_type;
-
-        // Cleanup runs as an explicit epilogue after the loop below.
-
-        let mut header_bytes = [0u8; size_of::<usize>()];
-
+    fn handle_data_loop(&self, data: &[u8]) {
         // In the WebSocket specification, control frames may not be fragmented.
         // However, the frame parser should handle fragmented control frames nonetheless.
         // Whether or not the frame parser is given a set of fragmented bytes to parse is subject
         // to the strategy in which the client buffers and coalesces received bytes.
+        let receiving_type = self.receiving_type.get();
+        let mut cursor = RecvCursor {
+            data,
+            state: self.receive_state.get(),
+            receiving_type,
+            body_remain: self.receive_body_remain.get(),
+            is_final: self.receiving_is_final.get(),
+            is_fragmented: false,
+            last_data_type: receiving_type,
+        };
 
-        loop {
-            log!("onData ({})", <&'static str>::from(receive_state));
+        let terminated = loop {
+            log!("onData ({})", <&'static str>::from(cursor.state));
 
-            match receive_state {
-                // 0                   1                   2                   3
-                // 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-                // +-+-+-+-+-------+-+-------------+-------------------------------+
-                // |F|R|R|R| opcode|M| Payload len |    Extended payload length    |
-                // |I|S|S|S|  (4)  |A|     (7)     |             (16/64)           |
-                // |N|V|V|V|       |S|             |   (if payload len==126/127)   |
-                // | |1|2|3|       |K|             |                               |
-                // +-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - +
-                // |     Extended payload length continued, if payload len == 127  |
-                // + - - - - - - - - - - - - - - - +-------------------------------+
-                // |                               |Masking-key, if MASK set to 1  |
-                // +-------------------------------+-------------------------------+
-                // | Masking-key (continued)       |          Payload Data         |
-                // +-------------------------------- - - - - - - - - - - - - - - - +
-                // :                     Payload Data continued ...                :
-                // + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
-                // |                     Payload Data continued ...                |
-                // +---------------------------------------------------------------+
-                ReceiveState::NeedHeader => {
-                    if data.len() < 2 {
-                        debug_assert!(!data.is_empty());
-                        if self.header_fragment.get().is_none() {
-                            self.header_fragment.set(Some(data[0]));
-                            break;
-                        }
-                    }
-
-                    if let Some(header_fragment) = self.header_fragment.get() {
-                        header_bytes[0] = header_fragment;
-                        header_bytes[1] = data[0];
-                        data = &data[1..];
-                    } else {
-                        header_bytes[0] = data[0];
-                        header_bytes[1] = data[1];
-                        data = &data[2..];
-                    }
-                    self.header_fragment.set(None);
-
-                    receive_body_remain = 0;
-                    let mut need_compression = false;
-                    is_final = false;
-
-                    receive_state = parse_websocket_header(
-                        [header_bytes[0], header_bytes[1]],
-                        &mut receiving_type,
-                        &mut receive_body_remain,
-                        &mut is_fragmented,
-                        &mut is_final,
-                        &mut need_compression,
-                    );
-                    if receiving_type == Opcode::Continue {
-                        // if is final is true continue is invalid
-                        if self.receiving_is_final.get() {
-                            // nothing to continue here
-                            // Per Autobahn test case 5.9: "The connection is failed immediately, since there is no message to continue."
-                            self.terminate(ErrorCode::UnexpectedOpcode);
-                            terminated = true;
-                            break;
-                        }
-                        // only update final if is a valid continue
-                        self.receiving_is_final.set(is_final);
-                    } else if receiving_type == Opcode::Text || receiving_type == Opcode::Binary {
-                        // if the last one is not final this is invalid because we are waiting a continue
-                        if !self.receiving_is_final.get() {
-                            self.terminate(ErrorCode::UnexpectedOpcode);
-                            terminated = true;
-                            break;
-                        }
-                        // for text and binary frames we need to keep track of final and type
-                        self.receiving_is_final.set(is_final);
-                        last_receive_data_type = receiving_type;
-                    } else if receiving_type.is_control() && is_fragmented {
-                        // Control frames must not be fragmented.
-                        self.terminate(ErrorCode::ControlFrameIsFragmented);
-                        terminated = true;
-                        break;
-                    }
-
-                    match receiving_type {
-                        Opcode::Continue
-                        | Opcode::Text
-                        | Opcode::Binary
-                        | Opcode::Ping
-                        | Opcode::Pong
-                        | Opcode::Close => {}
-                        _ => {
-                            self.terminate(ErrorCode::UnsupportedControlFrame);
-                            terminated = true;
-                            break;
-                        }
-                    }
-
-                    if need_compression && self.deflate.borrow().is_none() {
-                        self.terminate(ErrorCode::CompressionUnsupported);
-                        terminated = true;
-                        break;
-                    }
-
-                    // Control frames must not be compressed
-                    if need_compression && receiving_type.is_control() {
-                        self.terminate(ErrorCode::InvalidControlFrame);
-                        terminated = true;
-                        break;
-                    }
-
-                    // Track compression state for this message
-                    if receiving_type == Opcode::Text || receiving_type == Opcode::Binary {
-                        // New message starts - set both compression states
-                        self.message_is_compressed.set(need_compression);
-                        self.receiving_compressed.set(need_compression);
-                    } else if receiving_type == Opcode::Continue {
-                        // Continuation frame - use the compression state from the message start
-                        self.receiving_compressed
-                            .set(self.message_is_compressed.get());
-                    }
-
-                    // Handle when the payload length is 0, but it is a message
-                    //
-                    // This should become
-                    //
-                    // - ArrayBuffer(0)
-                    // - ""
-                    // - Buffer(0) (etc)
-                    //
-                    if receive_body_remain == 0
-                        && receive_state == ReceiveState::NeedBody
-                        && is_final
-                    {
-                        let _ = self.consume(
-                            b"",
-                            receive_body_remain,
-                            last_receive_data_type,
-                            is_final,
-                        );
-
-                        // Return to the header state to read the next frame
-                        receive_state = ReceiveState::NeedHeader;
-                        is_fragmented = false;
-                        self.receiving_compressed.set(false);
-                        self.message_is_compressed.set(false);
-
-                        // Bail out if there's nothing left to read
-                        if data.is_empty() {
-                            break;
-                        }
-                    }
-                }
+            let step = match cursor.state {
+                ReceiveState::NeedHeader => self.recv_frame_header(&mut cursor),
                 ReceiveState::NeedMask => {
                     self.terminate(ErrorCode::UnexpectedMaskFromServer);
-                    terminated = true;
-                    break;
+                    Step::Terminated
                 }
-                rc @ (ReceiveState::ExtendedPayloadLength64
-                | ReceiveState::ExtendedPayloadLength16) => {
-                    let byte_size: usize = match rc {
-                        ReceiveState::ExtendedPayloadLength64 => 8,
-                        ReceiveState::ExtendedPayloadLength16 => 2,
-                        _ => unreachable!(),
-                    };
-
-                    // we need to wait for more data
-                    if data.is_empty() {
-                        break;
-                    }
-
-                    // copy available payload length bytes to a buffer held on this client instance
-                    let total_received =
-                        (byte_size - self.payload_length_frame_len.get() as usize).min(data.len());
-                    let start = self.payload_length_frame_len.get() as usize;
-                    let mut payload_length_frame_bytes = self.payload_length_frame_bytes.get();
-                    payload_length_frame_bytes[start..start + total_received]
-                        .copy_from_slice(&data[..total_received]);
-                    self.payload_length_frame_bytes
-                        .set(payload_length_frame_bytes);
-                    self.payload_length_frame_len.set(
-                        self.payload_length_frame_len.get()
-                            + u8::try_from(total_received).expect("int cast"),
-                    );
-                    data = &data[total_received..];
-
-                    // short read on payload length - we need to wait for more data
-                    // whatever bytes were returned from the short read are kept in `payload_length_frame_bytes`
-                    if (self.payload_length_frame_len.get() as usize) < byte_size {
-                        break;
-                    }
-
-                    // Multibyte length quantities are expressed in network byte order
-                    receive_body_remain = match byte_size {
-                        8 => u64::from_be_bytes(payload_length_frame_bytes) as usize,
-                        2 => u16::from_be_bytes([
-                            payload_length_frame_bytes[0],
-                            payload_length_frame_bytes[1],
-                        ]) as usize,
-                        _ => unreachable!(),
-                    };
-
-                    self.payload_length_frame_len.set(0);
-
-                    receive_state = ReceiveState::NeedBody;
-
-                    if receive_body_remain == 0 {
-                        // this is an error
-                        // the server should've set length to zero
-                        self.terminate(ErrorCode::InvalidControlFrame);
-                        terminated = true;
-                        break;
-                    }
+                ReceiveState::ExtendedPayloadLength64 => {
+                    self.recv_extended_payload_length(&mut cursor, 8)
                 }
-                ReceiveState::Ping => {
-                    if !self.ping_received.get() {
-                        if receive_body_remain > 125 {
-                            self.terminate(ErrorCode::InvalidControlFrame);
-                            terminated = true;
-                            break;
-                        }
-                        self.ping_len.set(receive_body_remain as u8);
-                        receive_body_remain = 0;
-                        self.ping_received.set(true);
-                    }
-                    let ping_len = self.ping_len.get() as usize;
-
-                    if !data.is_empty() {
-                        // copy the data to the ping frame
-                        let total_received = ping_len.min(receive_body_remain + data.len());
-                        let mut ping_frame_bytes = self.ping_frame_bytes.get();
-                        let slice = &mut ping_frame_bytes[6..][receive_body_remain..total_received];
-                        let slice_len = slice.len();
-                        slice.copy_from_slice(&data[..slice_len]);
-                        self.ping_frame_bytes.set(ping_frame_bytes);
-                        receive_body_remain = total_received;
-                        data = &data[slice_len..];
-                    }
-                    let pending_body = ping_len - receive_body_remain;
-                    if pending_body > 0 {
-                        // wait for more data it can be fragmented
-                        break;
-                    }
-
-                    // copy the ≤125-byte payload to a stack array:
-                    // `dispatch_data` may
-                    // call `terminate → clear_data` which mutates `ping_frame_bytes`'
-                    // bookkeeping while the readable `&[u8]` would still be live.
-                    let mut ping_data_buf = [0u8; 125];
-                    ping_data_buf[..ping_len]
-                        .copy_from_slice(&self.ping_frame_bytes.get()[6..][..ping_len]);
-                    self.dispatch_data(&ping_data_buf[..ping_len], Opcode::Ping);
-
-                    receive_state = ReceiveState::NeedHeader;
-                    receive_body_remain = 0;
-                    receiving_type = last_receive_data_type;
-                    self.ping_received.set(false);
-
-                    // we need to send all pongs to pass autobahn tests
-                    let _ = self.send_pong();
-                    if data.is_empty() {
-                        break;
-                    }
+                ReceiveState::ExtendedPayloadLength16 => {
+                    self.recv_extended_payload_length(&mut cursor, 2)
                 }
-                ReceiveState::Pong => {
-                    if !self.pong_received.get() {
-                        if receive_body_remain > 125 {
-                            self.terminate(ErrorCode::InvalidControlFrame);
-                            terminated = true;
-                            break;
-                        }
-                        self.ping_len.set(receive_body_remain as u8);
-                        receive_body_remain = 0;
-                        self.pong_received.set(true);
-                    }
-                    let pong_len = self.ping_len.get() as usize;
-
-                    if !data.is_empty() {
-                        let total_received = pong_len.min(receive_body_remain + data.len());
-                        let mut ping_frame_bytes = self.ping_frame_bytes.get();
-                        let slice = &mut ping_frame_bytes[6..][receive_body_remain..total_received];
-                        let slice_len = slice.len();
-                        slice.copy_from_slice(&data[..slice_len]);
-                        self.ping_frame_bytes.set(ping_frame_bytes);
-                        receive_body_remain = total_received;
-                        data = &data[slice_len..];
-                    }
-                    let pending_body = pong_len - receive_body_remain;
-                    if pending_body > 0 {
-                        // wait for more data - pong payload is fragmented across TCP segments
-                        break;
-                    }
-
-                    // copy the ≤125-byte payload to a stack array:
-                    // `dispatch_data` may re-enter and mutate `ping_frame_bytes`.
-                    let mut pong_data_buf = [0u8; 125];
-                    pong_data_buf[..pong_len]
-                        .copy_from_slice(&self.ping_frame_bytes.get()[6..][..pong_len]);
-                    self.dispatch_data(&pong_data_buf[..pong_len], Opcode::Pong);
-
-                    receive_state = ReceiveState::NeedHeader;
-                    receive_body_remain = 0;
-                    receiving_type = last_receive_data_type;
-                    self.pong_received.set(false);
-
-                    if data.is_empty() {
-                        break;
-                    }
-                }
-                ReceiveState::NeedBody => {
-                    let buffered_len = self.receive_buffer.borrow().readable_length();
-                    if buffered_len.saturating_add(receive_body_remain) > MAX_RECEIVE_MESSAGE_LENGTH
-                    {
-                        self.terminate(ErrorCode::MessageTooBig);
-                        terminated = true;
-                        break;
-                    }
-                    let to_consume = receive_body_remain.min(data.len());
-
-                    let consumed = self.consume(
-                        &data[..to_consume],
-                        receive_body_remain,
-                        last_receive_data_type,
-                        is_final,
-                    );
-
-                    receive_body_remain -= consumed;
-                    data = &data[to_consume..];
-                    if receive_body_remain == 0 {
-                        receive_state = ReceiveState::NeedHeader;
-                        is_fragmented = false;
-                    }
-
-                    if data.is_empty() {
-                        break;
-                    }
-                }
-
-                ReceiveState::Close => {
-                    if receive_body_remain == 1 || receive_body_remain > 125 {
-                        self.terminate(ErrorCode::InvalidControlFrame);
-                        terminated = true;
-                        break;
-                    }
-
-                    if receive_body_remain > 0 {
-                        if !self.close_frame_buffering.get() {
-                            self.ping_len.set(receive_body_remain as u8);
-                            receive_body_remain = 0;
-                            self.close_frame_buffering.set(true);
-                        }
-                        let to_copy = data
-                            .len()
-                            .min(self.ping_len.get() as usize - receive_body_remain);
-                        let mut ping_frame_bytes = self.ping_frame_bytes.get();
-                        ping_frame_bytes[6 + receive_body_remain..][..to_copy]
-                            .copy_from_slice(&data[..to_copy]);
-                        self.ping_frame_bytes.set(ping_frame_bytes);
-                        receive_body_remain += to_copy;
-                        if receive_body_remain < self.ping_len.get() as usize {
-                            break;
-                        }
-
-                        self.close_received.set(true);
-                        let ping_len = self.ping_len.get() as usize;
-                        let mut close_data_buf = [0u8; 125];
-                        close_data_buf[..ping_len]
-                            .copy_from_slice(&self.ping_frame_bytes.get()[6..][..ping_len]);
-                        let close_data = &close_data_buf[..ping_len];
-                        if ping_len >= 2 {
-                            let received_code = u16::from_be_bytes([close_data[0], close_data[1]]);
-                            let (echo_code, dispatch_code) = received_close_codes(received_code);
-                            let mut buf: [u8; 125] = [0; 125];
-                            buf[..ping_len - 2].copy_from_slice(&close_data[2..ping_len]);
-                            self.send_close_with_body(
-                                echo_code,
-                                Some(dispatch_code),
-                                Some(&mut buf),
-                                ping_len - 2,
-                            );
-                        } else {
-                            self.send_close();
-                        }
-                        self.close_frame_buffering.set(false);
-                        terminated = true;
-                        break;
-                    }
-
-                    self.close_received.set(true);
-                    self.send_close();
-                    terminated = true;
-                    break;
-                }
+                ReceiveState::Ping => self.recv_ping_or_pong(&mut cursor, Opcode::Ping),
+                ReceiveState::Pong => self.recv_ping_or_pong(&mut cursor, Opcode::Pong),
+                ReceiveState::NeedBody => self.recv_body(&mut cursor),
+                ReceiveState::Close => self.recv_close(&mut cursor),
                 ReceiveState::Fail => {
                     self.terminate(ErrorCode::UnsupportedControlFrame);
-                    terminated = true;
-                    break;
+                    Step::Terminated
                 }
+            };
+            match step {
+                Step::Continue => {}
+                Step::NeedMoreData => break false,
+                Step::Terminated => break true,
             }
-        }
+        };
 
         // epilogue
         if terminated {
             self.close_received.set(true);
         } else {
-            self.receive_state.set(receive_state);
-            self.receiving_type.set(last_receive_data_type);
-            self.receive_body_remain.set(receive_body_remain);
+            self.receive_state.set(cursor.state);
+            self.receiving_type.set(cursor.last_data_type);
+            self.receive_body_remain.set(cursor.body_remain);
         }
+    }
+
+    /// Parse the 2-byte frame header (see the diagram on
+    /// [`parse_websocket_header`]) and validate the opcode/fragmentation/
+    /// compression rules before moving to the payload state.
+    fn recv_frame_header(&self, cursor: &mut RecvCursor<'_>) -> Step {
+        if cursor.data.len() < 2 {
+            debug_assert!(!cursor.data.is_empty());
+            if self.header_fragment.get().is_none() {
+                self.header_fragment.set(Some(cursor.data[0]));
+                return Step::NeedMoreData;
+            }
+        }
+
+        let header_bytes = if let Some(header_fragment) = self.header_fragment.take() {
+            let bytes = [header_fragment, cursor.data[0]];
+            cursor.data = &cursor.data[1..];
+            bytes
+        } else {
+            let bytes = [cursor.data[0], cursor.data[1]];
+            cursor.data = &cursor.data[2..];
+            bytes
+        };
+
+        cursor.body_remain = 0;
+        let mut need_compression = false;
+        cursor.is_final = false;
+
+        cursor.state = parse_websocket_header(
+            header_bytes,
+            &mut cursor.receiving_type,
+            &mut cursor.body_remain,
+            &mut cursor.is_fragmented,
+            &mut cursor.is_final,
+            &mut need_compression,
+        );
+        match cursor.receiving_type {
+            Opcode::Continue => {
+                // if is final is true continue is invalid
+                if self.receiving_is_final.get() {
+                    // nothing to continue here
+                    // Per Autobahn test case 5.9: "The connection is failed immediately, since there is no message to continue."
+                    self.terminate(ErrorCode::UnexpectedOpcode);
+                    return Step::Terminated;
+                }
+                // only update final if is a valid continue
+                self.receiving_is_final.set(cursor.is_final);
+            }
+            Opcode::Text | Opcode::Binary => {
+                // if the last one is not final this is invalid because we are waiting a continue
+                if !self.receiving_is_final.get() {
+                    self.terminate(ErrorCode::UnexpectedOpcode);
+                    return Step::Terminated;
+                }
+                // for text and binary frames we need to keep track of final and type
+                self.receiving_is_final.set(cursor.is_final);
+                cursor.last_data_type = cursor.receiving_type;
+            }
+            // Control frames must not be fragmented.
+            kind if kind.is_control() && cursor.is_fragmented => {
+                self.terminate(ErrorCode::ControlFrameIsFragmented);
+                return Step::Terminated;
+            }
+            _ => {}
+        }
+
+        match cursor.receiving_type {
+            Opcode::Continue
+            | Opcode::Text
+            | Opcode::Binary
+            | Opcode::Ping
+            | Opcode::Pong
+            | Opcode::Close => {}
+            _ => {
+                self.terminate(ErrorCode::UnsupportedControlFrame);
+                return Step::Terminated;
+            }
+        }
+
+        if need_compression {
+            if self.deflate.borrow().is_none() {
+                self.terminate(ErrorCode::CompressionUnsupported);
+                return Step::Terminated;
+            }
+            // Control frames must not be compressed
+            if cursor.receiving_type.is_control() {
+                self.terminate(ErrorCode::InvalidControlFrame);
+                return Step::Terminated;
+            }
+        }
+
+        // Track compression state for this message
+        match cursor.receiving_type {
+            // New message starts - set both compression states
+            Opcode::Text | Opcode::Binary => {
+                self.message_is_compressed.set(need_compression);
+                self.receiving_compressed.set(need_compression);
+            }
+            // Continuation frame - use the compression state from the message start
+            Opcode::Continue => {
+                self.receiving_compressed
+                    .set(self.message_is_compressed.get());
+            }
+            _ => {}
+        }
+
+        // Handle when the payload length is 0, but it is a message
+        //
+        // This should become
+        //
+        // - ArrayBuffer(0)
+        // - ""
+        // - Buffer(0) (etc)
+        //
+        if cursor.body_remain == 0 && cursor.state == ReceiveState::NeedBody && cursor.is_final {
+            let _ = self.consume(
+                b"",
+                cursor.body_remain,
+                cursor.last_data_type,
+                cursor.is_final,
+            );
+
+            // Return to the header state to read the next frame
+            cursor.state = ReceiveState::NeedHeader;
+            cursor.is_fragmented = false;
+            self.receiving_compressed.set(false);
+            self.message_is_compressed.set(false);
+
+            // Bail out if there's nothing left to read
+            if cursor.data.is_empty() {
+                return Step::NeedMoreData;
+            }
+        }
+        Step::Continue
+    }
+
+    /// Accumulate the 2- or 8-byte extended payload length (which may itself
+    /// arrive split across reads) into `payload_length_frame_bytes`.
+    fn recv_extended_payload_length(&self, cursor: &mut RecvCursor<'_>, byte_size: usize) -> Step {
+        // we need to wait for more data
+        if cursor.data.is_empty() {
+            return Step::NeedMoreData;
+        }
+
+        // copy available payload length bytes to a buffer held on this client instance
+        let start = self.payload_length_frame_len.get() as usize;
+        let total_received = (byte_size - start).min(cursor.data.len());
+        let mut payload_length_frame_bytes = self.payload_length_frame_bytes.get();
+        payload_length_frame_bytes[start..start + total_received]
+            .copy_from_slice(&cursor.data[..total_received]);
+        self.payload_length_frame_bytes
+            .set(payload_length_frame_bytes);
+        self.payload_length_frame_len.set(
+            self.payload_length_frame_len.get() + u8::try_from(total_received).expect("int cast"),
+        );
+        cursor.data = &cursor.data[total_received..];
+
+        // short read on payload length - we need to wait for more data
+        // whatever bytes were returned from the short read are kept in `payload_length_frame_bytes`
+        if (self.payload_length_frame_len.get() as usize) < byte_size {
+            return Step::NeedMoreData;
+        }
+
+        // Multibyte length quantities are expressed in network byte order
+        cursor.body_remain = match byte_size {
+            8 => u64::from_be_bytes(payload_length_frame_bytes) as usize,
+            2 => u16::from_be_bytes([payload_length_frame_bytes[0], payload_length_frame_bytes[1]])
+                as usize,
+            _ => unreachable!(),
+        };
+
+        self.payload_length_frame_len.set(0);
+
+        cursor.state = ReceiveState::NeedBody;
+
+        if cursor.body_remain == 0 {
+            // this is an error
+            // the server should've set length to zero
+            self.terminate(ErrorCode::InvalidControlFrame);
+            return Step::Terminated;
+        }
+        Step::Continue
+    }
+
+    /// Ping and Pong share the ≤125-byte control payload assembly in
+    /// `ping_frame_bytes`; the only differences are which "header seen" flag
+    /// tracks the in-progress frame and that a Ping is answered with a Pong.
+    fn recv_ping_or_pong(&self, cursor: &mut RecvCursor<'_>, opcode: Opcode) -> Step {
+        let received = if opcode == Opcode::Ping {
+            &self.ping_received
+        } else {
+            &self.pong_received
+        };
+        if !received.get() {
+            if cursor.body_remain > 125 {
+                self.terminate(ErrorCode::InvalidControlFrame);
+                return Step::Terminated;
+            }
+            self.ping_len.set(cursor.body_remain as u8);
+            cursor.body_remain = 0;
+            received.set(true);
+        }
+        let payload_len = self.ping_len.get() as usize;
+
+        if !cursor.data.is_empty() {
+            // copy the data to the ping frame
+            let total_received = payload_len.min(cursor.body_remain + cursor.data.len());
+            let mut ping_frame_bytes = self.ping_frame_bytes.get();
+            let slice = &mut ping_frame_bytes[6..][cursor.body_remain..total_received];
+            let slice_len = slice.len();
+            slice.copy_from_slice(&cursor.data[..slice_len]);
+            self.ping_frame_bytes.set(ping_frame_bytes);
+            cursor.body_remain = total_received;
+            cursor.data = &cursor.data[slice_len..];
+        }
+        if payload_len - cursor.body_remain > 0 {
+            // wait for more data - the control payload is fragmented across TCP segments
+            return Step::NeedMoreData;
+        }
+
+        // copy the ≤125-byte payload to a stack array:
+        // `dispatch_data` may
+        // call `terminate → clear_data` which mutates `ping_frame_bytes`'
+        // bookkeeping while the readable `&[u8]` would still be live.
+        let mut payload_buf = [0u8; 125];
+        payload_buf[..payload_len]
+            .copy_from_slice(&self.ping_frame_bytes.get()[6..][..payload_len]);
+        self.dispatch_data(&payload_buf[..payload_len], opcode);
+
+        cursor.state = ReceiveState::NeedHeader;
+        cursor.body_remain = 0;
+        cursor.receiving_type = cursor.last_data_type;
+        received.set(false);
+
+        if opcode == Opcode::Ping {
+            // we need to send all pongs to pass autobahn tests
+            let _ = self.send_pong();
+        }
+        if cursor.data.is_empty() {
+            return Step::NeedMoreData;
+        }
+        Step::Continue
+    }
+
+    fn recv_body(&self, cursor: &mut RecvCursor<'_>) -> Step {
+        let buffered_len = self.receive_buffer.borrow().readable_length();
+        if buffered_len.saturating_add(cursor.body_remain) > MAX_RECEIVE_MESSAGE_LENGTH {
+            self.terminate(ErrorCode::MessageTooBig);
+            return Step::Terminated;
+        }
+        let to_consume = cursor.body_remain.min(cursor.data.len());
+
+        let consumed = self.consume(
+            &cursor.data[..to_consume],
+            cursor.body_remain,
+            cursor.last_data_type,
+            cursor.is_final,
+        );
+
+        cursor.body_remain -= consumed;
+        cursor.data = &cursor.data[to_consume..];
+        if cursor.body_remain == 0 {
+            cursor.state = ReceiveState::NeedHeader;
+            cursor.is_fragmented = false;
+        }
+
+        if cursor.data.is_empty() {
+            return Step::NeedMoreData;
+        }
+        Step::Continue
+    }
+
+    /// Assemble the (optional) close payload, echo a close frame back, and
+    /// stop reading: a received Close always terminates the parse loop.
+    fn recv_close(&self, cursor: &mut RecvCursor<'_>) -> Step {
+        if cursor.body_remain == 1 || cursor.body_remain > 125 {
+            self.terminate(ErrorCode::InvalidControlFrame);
+            return Step::Terminated;
+        }
+
+        if cursor.body_remain == 0 {
+            self.close_received.set(true);
+            self.send_close();
+            return Step::Terminated;
+        }
+
+        if !self.close_frame_buffering.get() {
+            self.ping_len.set(cursor.body_remain as u8);
+            cursor.body_remain = 0;
+            self.close_frame_buffering.set(true);
+        }
+        let to_copy = cursor
+            .data
+            .len()
+            .min(self.ping_len.get() as usize - cursor.body_remain);
+        let mut ping_frame_bytes = self.ping_frame_bytes.get();
+        ping_frame_bytes[6 + cursor.body_remain..][..to_copy]
+            .copy_from_slice(&cursor.data[..to_copy]);
+        self.ping_frame_bytes.set(ping_frame_bytes);
+        cursor.body_remain += to_copy;
+        if cursor.body_remain < self.ping_len.get() as usize {
+            return Step::NeedMoreData;
+        }
+
+        self.close_received.set(true);
+        let payload_len = self.ping_len.get() as usize;
+        let mut close_data_buf = [0u8; 125];
+        close_data_buf[..payload_len]
+            .copy_from_slice(&self.ping_frame_bytes.get()[6..][..payload_len]);
+        let close_data = &close_data_buf[..payload_len];
+        if payload_len >= 2 {
+            let received_code = u16::from_be_bytes([close_data[0], close_data[1]]);
+            let (echo_code, dispatch_code) = received_close_codes(received_code);
+            let mut buf: [u8; 125] = [0; 125];
+            buf[..payload_len - 2].copy_from_slice(&close_data[2..payload_len]);
+            self.send_close_with_body(
+                echo_code,
+                Some(dispatch_code),
+                Some(&mut buf),
+                payload_len - 2,
+            );
+        } else {
+            self.send_close();
+        }
+        self.close_frame_buffering.set(false);
+        Step::Terminated
     }
 
     pub fn send_close(&self) {
@@ -1167,101 +1125,86 @@ impl<const SSL: bool> WebSocket<SSL> {
         let should_compress = self.deflate.borrow().is_some()
             && (opcode == Opcode::Text || opcode == Opcode::Binary)
             && !matches!(bytes, Copy::Raw(_));
+        if !should_compress {
+            return self.send_data_uncompressed(bytes, do_write, opcode);
+        }
 
-        if should_compress {
-            // For compressed messages, we need to compress the content first
-            let temp_buffer: Option<Vec<u8>>;
-            // Uses global mimalloc rather than a pooled arena
-            // (potential perf gap).
-            let content_to_compress: &[u8] = match bytes {
-                Copy::Utf16(utf16) => 'brk: {
-                    // Convert UTF16 to UTF8 for compression
-                    let content_byte_len: usize = strings::element_length_utf16_into_utf8(utf16);
-                    let mut buf = vec![0u8; content_byte_len];
-                    let encode_result = strings::copy_utf16_into_utf8(&mut buf, utf16);
-                    buf.truncate(encode_result.written as usize);
-                    temp_buffer = Some(buf);
-                    break 'brk temp_buffer.as_deref().unwrap();
-                }
-                Copy::Latin1(latin1) => 'brk: {
-                    // Convert Latin1 to UTF8 for compression
-                    let content_byte_len: usize = strings::element_length_latin1_into_utf8(latin1);
-                    if content_byte_len == latin1.len() {
-                        // It's all ascii, we don't need to copy it an extra time.
-                        break 'brk latin1;
-                    }
-
+        // For compressed messages, we need to compress the content first.
+        // Uses global mimalloc rather than a pooled arena (potential perf gap).
+        let utf8_storage: Vec<u8>;
+        let content_to_compress: &[u8] = match bytes {
+            Copy::Utf16(utf16) => {
+                // Convert UTF16 to UTF8 for compression
+                let content_byte_len: usize = strings::element_length_utf16_into_utf8(utf16);
+                let mut buf = vec![0u8; content_byte_len];
+                let encode_result = strings::copy_utf16_into_utf8(&mut buf, utf16);
+                buf.truncate(encode_result.written as usize);
+                utf8_storage = buf;
+                &utf8_storage
+            }
+            Copy::Latin1(latin1) => {
+                // Convert Latin1 to UTF8 for compression
+                let content_byte_len: usize = strings::element_length_latin1_into_utf8(latin1);
+                if content_byte_len == latin1.len() {
+                    // It's all ascii, we don't need to copy it an extra time.
+                    latin1
+                } else {
                     let mut buf = vec![0u8; content_byte_len];
                     let encode_result = strings::copy_latin1_into_utf8(&mut buf, latin1);
                     buf.truncate(encode_result.written as usize);
-                    temp_buffer = Some(buf);
-                    break 'brk temp_buffer.as_deref().unwrap();
+                    utf8_storage = buf;
+                    &utf8_storage
                 }
-                Copy::Bytes(b) => b,
-                Copy::Raw(_) => unreachable!(),
-            };
-
-            // Check if compression is worth it
-            if !self.should_compress(content_to_compress.len(), opcode) {
-                return self.send_data_uncompressed(bytes, do_write, opcode);
             }
+            Copy::Bytes(b) => b,
+            Copy::Raw(_) => unreachable!(),
+        };
 
-            {
-                // Compress the content
-                let mut compressed: Vec<u8> = Vec::new();
-                // Allocated from the global allocator rather than a pooled
-                // arena (potential perf gap).
-
-                if self
-                    .deflate
-                    .borrow_mut()
-                    .as_mut()
-                    .unwrap()
-                    .compress(content_to_compress, &mut compressed)
-                    .is_err()
-                {
-                    // If compression fails, fall back to uncompressed
-                    return self.send_data_uncompressed(bytes, do_write, opcode);
-                }
-
-                // Create the compressed frame
-                let frame_size = WebsocketHeader::frame_size_including_mask(compressed.len());
-                let mut send_buffer = self.send_buffer.borrow_mut();
-                let writable = match send_buffer.writable_with_size(frame_size) {
-                    Ok(w) => w,
-                    Err(_) => return false,
-                };
-                Copy::copy_compressed(
-                    &self.global_this,
-                    &mut writable[..frame_size],
-                    &compressed,
-                    opcode,
-                    true,
-                );
-                send_buffer.update(frame_size);
-            }
-
-            if do_write {
-                #[cfg(debug_assertions)]
-                {
-                    if self.proxy_tunnel.get().is_none() {
-                        debug_assert!(!self.tcp.get().is_shutdown());
-                        debug_assert!(!self.tcp.get().is_closed());
-                        debug_assert!(self.tcp.get().is_established());
-                    }
-                }
-                return self.send_buffer_out();
-            }
-        } else {
+        // Check if compression is worth it
+        if !self.should_compress(content_to_compress.len(), opcode) {
             return self.send_data_uncompressed(bytes, do_write, opcode);
+        }
+
+        // Allocated from the global allocator rather than a pooled
+        // arena (potential perf gap).
+        let mut compressed: Vec<u8> = Vec::new();
+        let compressed_ok = self.deflate.borrow_mut().as_mut().is_some_and(|deflate| {
+            deflate
+                .compress(content_to_compress, &mut compressed)
+                .is_ok()
+        });
+        if !compressed_ok {
+            // If compression fails, fall back to uncompressed
+            return self.send_data_uncompressed(bytes, do_write, opcode);
+        }
+
+        // Create the compressed frame
+        let frame_size = WebsocketHeader::frame_size_including_mask(compressed.len());
+        {
+            let mut send_buffer = self.send_buffer.borrow_mut();
+            let Ok(writable) = send_buffer.writable_with_size(frame_size) else {
+                return false;
+            };
+            Copy::copy_compressed(
+                &self.global_this,
+                &mut writable[..frame_size],
+                &compressed,
+                opcode,
+                true,
+            );
+            send_buffer.update(frame_size);
+        }
+
+        if do_write {
+            self.debug_assert_socket_writable();
+            return self.send_buffer_out();
         }
 
         true
     }
 
     fn send_data_uncompressed(&self, bytes: Copy<'_>, do_write: bool, opcode: Opcode) -> bool {
-        let mut content_byte_len: usize = 0;
-        let write_len = bytes.len(&mut content_byte_len);
+        let (write_len, content_byte_len) = bytes.frame_and_content_len();
         debug_assert!(write_len > 0);
 
         {
@@ -1279,18 +1222,23 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
 
         if do_write {
-            #[cfg(debug_assertions)]
-            {
-                if self.proxy_tunnel.get().is_none() {
-                    debug_assert!(!self.tcp.get().is_shutdown());
-                    debug_assert!(!self.tcp.get().is_closed());
-                    debug_assert!(self.tcp.get().is_established());
-                }
-            }
+            self.debug_assert_socket_writable();
             return self.send_buffer_out();
         }
 
         true
+    }
+
+    /// In debug builds, assert that the underlying socket can still be written
+    /// to (tunnel mode writes through the tunnel instead of `tcp`).
+    fn debug_assert_socket_writable(&self) {
+        #[cfg(debug_assertions)]
+        if self.proxy_tunnel.get().is_none() {
+            let tcp = self.tcp.get();
+            debug_assert!(!tcp.is_shutdown());
+            debug_assert!(!tcp.is_closed());
+            debug_assert!(tcp.is_established());
+        }
     }
 
     fn send_buffer_out(&self) -> bool {
@@ -1467,8 +1415,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // in send_buffer. clear_data() would discard it (and the
                 // proxy_tunnel needed to flush it), so defer teardown until
                 // handle_writable drains the buffer or the socket dies.
-                self.close_dispatch_pending
-                    .set(Some((dispatch_code, reason)));
+                *self.close_dispatch_pending.borrow_mut() = Some((dispatch_code, reason));
             }
         }
     }
@@ -1487,7 +1434,8 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn finish_pending_close(&self) {
-        if let Some((code, mut reason)) = self.close_dispatch_pending.take() {
+        let pending_close = self.close_dispatch_pending.borrow_mut().take();
+        if let Some((code, mut reason)) = pending_close {
             self.shutdown_after_close_frame();
             self.clear_data();
             self.dispatch_close(code, &mut reason);
@@ -1511,10 +1459,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn has_pending_close_dispatch(&self) -> bool {
-        let pending = self.close_dispatch_pending.take();
-        let is_pending = pending.is_some();
-        self.close_dispatch_pending.set(pending);
-        is_pending
+        self.close_dispatch_pending.borrow().is_some()
     }
 
     pub fn handle_end(&self, socket: Socket<SSL>) {
@@ -1582,18 +1527,31 @@ impl<const SSL: bool> WebSocket<SSL> {
         // fast path: small frame, no backpressure, attempt to send without allocating
         let frame_size = WebsocketHeader::frame_size_including_mask(len);
         if !this.has_backpressure() && frame_size < STACK_FRAME_SIZE {
-            let mut inline_buf = [0u8; STACK_FRAME_SIZE];
-            bytes.copy(
-                &this.global_this,
-                &mut inline_buf[..frame_size],
-                slice.len(),
-                opcode,
-            );
-            let _ = this.enqueue_encoded_bytes(&inline_buf[..frame_size]);
+            this.send_inline_frame(bytes, slice.len(), frame_size, opcode);
             return;
         }
 
         let _ = this.send_data(bytes, !this.has_backpressure(), opcode);
+    }
+
+    /// Encode a frame small enough for a stack buffer and hand it straight to
+    /// the socket, bypassing the heap-backed send queue.
+    fn send_inline_frame(
+        &self,
+        bytes: Copy<'_>,
+        content_len: usize,
+        frame_size: usize,
+        opcode: Opcode,
+    ) {
+        debug_assert!(frame_size <= STACK_FRAME_SIZE);
+        let mut inline_buf = [0u8; STACK_FRAME_SIZE];
+        bytes.copy(
+            &self.global_this,
+            &mut inline_buf[..frame_size],
+            content_len,
+            opcode,
+        );
+        let _ = self.enqueue_encoded_bytes(&inline_buf[..frame_size]);
     }
 
     fn has_tcp(&self) -> bool {
@@ -1646,14 +1604,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // Fast path for small blobs
             let frame_size = WebsocketHeader::frame_size_including_mask(data.len());
             if !this.has_backpressure() && frame_size < STACK_FRAME_SIZE {
-                let mut inline_buf = [0u8; STACK_FRAME_SIZE];
-                bytes.copy(
-                    &this.global_this,
-                    &mut inline_buf[..frame_size],
-                    data.len(),
-                    opcode,
-                );
-                let _ = this.enqueue_encoded_bytes(&inline_buf[..frame_size]);
+                this.send_inline_frame(bytes, data.len(), frame_size, opcode);
                 return;
             }
 
@@ -1685,39 +1636,21 @@ impl<const SSL: bool> WebSocket<SSL> {
         // Note: 0 is valid
 
         let opcode = Opcode::from_raw(op & 0x0F);
-        {
-            let mut inline_buf = [0u8; STACK_FRAME_SIZE];
 
-            // fast path: small frame, no backpressure, attempt to send without allocating
-            if !str.is_16bit() && str.len < STACK_FRAME_SIZE {
-                let bytes = Copy::Latin1(str.slice());
-                let mut byte_len: usize = 0;
-                let frame_size = bytes.len(&mut byte_len);
-                if !this.has_backpressure() && frame_size < STACK_FRAME_SIZE {
-                    bytes.copy(
-                        &this.global_this,
-                        &mut inline_buf[..frame_size],
-                        byte_len,
-                        opcode,
-                    );
-                    let _ = this.enqueue_encoded_bytes(&inline_buf[..frame_size]);
-                    return;
-                }
-                // max length of a utf16 -> utf8 conversion is 4 times the length of the utf16 string
-            } else if (str.len * 4) < STACK_FRAME_SIZE && !this.has_backpressure() {
-                let bytes = Copy::Utf16(str.utf16_slice_aligned());
-                let mut byte_len: usize = 0;
-                let frame_size = bytes.len(&mut byte_len);
-                debug_assert!(frame_size <= STACK_FRAME_SIZE);
-                bytes.copy(
-                    &this.global_this,
-                    &mut inline_buf[..frame_size],
-                    byte_len,
-                    opcode,
-                );
-                let _ = this.enqueue_encoded_bytes(&inline_buf[..frame_size]);
+        // fast path: small frame, no backpressure, attempt to send without allocating
+        if !str.is_16bit() && str.len < STACK_FRAME_SIZE {
+            let bytes = Copy::Latin1(str.slice());
+            let (frame_size, byte_len) = bytes.frame_and_content_len();
+            if !this.has_backpressure() && frame_size < STACK_FRAME_SIZE {
+                this.send_inline_frame(bytes, byte_len, frame_size, opcode);
                 return;
             }
+            // max length of a utf16 -> utf8 conversion is 4 times the length of the utf16 string
+        } else if (str.len * 4) < STACK_FRAME_SIZE && !this.has_backpressure() {
+            let bytes = Copy::Utf16(str.utf16_slice_aligned());
+            let (frame_size, byte_len) = bytes.frame_and_content_len();
+            this.send_inline_frame(bytes, byte_len, frame_size, opcode);
+            return;
         }
 
         let _ = this.send_data(
@@ -1825,16 +1758,16 @@ impl<const SSL: bool> WebSocket<SSL> {
         this.send_close_with_body(code, None, None, 0);
     }
 
-    pub extern "C" fn init(
+    /// Allocate a client with `ref_count == 1` (the I/O-layer ref, released by
+    /// `handle_close` for adopted sockets and by `clear_data` in tunnel mode)
+    /// and an optional permessage-deflate context.
+    fn new_raw(
         outgoing: *mut CppWebSocket,
-        input_socket: *mut c_void,
         global_this: &JSGlobalObject,
-        buffered_data: *mut u8,
-        buffered_data_len: usize,
         deflate_params: Option<&websocket_deflate::Params>,
-        secure_ptr: *mut c_void,
-    ) -> *mut c_void {
-        let tcp = input_socket.cast::<us_socket_t>();
+        secure: Option<*mut SslCtx>,
+        proxy_tunnel: Option<NonNull<WebSocketProxyTunnel>>,
+    ) -> *mut Self {
         // outlives this call.
         let vm = global_this.bun_vm().as_mut();
         let ws = bun_core::heap::into_raw(Box::new(WebSocket::<SSL> {
@@ -1850,8 +1783,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             pong_received: Cell::new(false),
             close_received: Cell::new(false),
             close_frame_buffering: Cell::new(false),
-            close_dispatch_pending: Cell::new(None),
-            receive_frame: Cell::new(0),
+            close_dispatch_pending: RefCell::new(None),
             receive_body_remain: Cell::new(0),
             receive_pending_chunk_len: Cell::new(0),
             receive_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
@@ -1870,12 +1802,8 @@ impl<const SSL: bool> WebSocket<SSL> {
             deflate: RefCell::new(None),
             receiving_compressed: Cell::new(false),
             message_is_compressed: Cell::new(false),
-            secure: Cell::new(if secure_ptr.is_null() {
-                None
-            } else {
-                Some(secure_ptr.cast::<SslCtx>())
-            }),
-            proxy_tunnel: Cell::new(None),
+            secure: Cell::new(secure),
+            proxy_tunnel: Cell::new(proxy_tunnel),
         }));
         bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::ALLOC_TYPE_NAME, ws);
         // SAFETY: ws was just allocated via heap::alloc
@@ -1888,41 +1816,21 @@ impl<const SSL: bool> WebSocket<SSL> {
             }
         }
 
-        // `adopt_group` takes a closure to write the new socket.
-        let group = {
-            // reshaped for borrowck — `rare_data()` borrows `vm`
-            // mutably and `ws_client_group` also wants a `vm` reference.
-            let vm_ptr: *mut _ = vm;
-            // SAFETY: `rare_data()` returns `&mut RareData` reached through
-            // `vm.rare_data: Option<Box<RareData>>`, i.e. a SEPARATE heap
-            // allocation behind a `Box` — the returned `&mut` does not cover
-            // any byte of `*vm_ptr` itself, so forming `&*vm_ptr` alongside
-            // it is non-overlapping under Stacked Borrows. `lazy_group` only
-            // reads `vm.uws_loop()` / `vm.event_loop_handle` and never touches
-            // `vm.rare_data`, so the shared `&VirtualMachine` argument cannot
-            // observe or invalidate the `&mut RareData` receiver.
-            unsafe { (*vm_ptr).rare_data().ws_client_group::<SSL>(&*vm_ptr) }
-        };
-        if !Socket::<SSL>::adopt_group(
-            tcp,
-            group,
-            if SSL {
-                uws::DispatchKind::WsClientTls
-            } else {
-                uws::DispatchKind::WsClient
-            },
-            ws,
-            // SAFETY: `owner == ws` is a valid live allocation; raw-ptr field
-            // write avoids materializing a second `&mut` that would alias
-            // `ws_ref` above.
-            |owner, sock| unsafe { core::ptr::addr_of_mut!((*owner).tcp).write(Cell::new(sock)) },
-        ) {
-            // SAFETY: `ws` is the `heap::alloc` allocation just created
-            // above; sole owner on this failure path.
-            unsafe { Self::deref(ws) };
-            return core::ptr::null_mut();
-        }
+        ws
+    }
 
+    /// Shared tail of `init`/`init_with_tunnel`: reserve the I/O buffers, take
+    /// the keep-alive ref, queue any handshake-buffered bytes, and take the
+    /// C++-side ref. Returns the type-erased pointer handed back to C++.
+    fn finish_init(
+        ws: *mut Self,
+        outgoing: *mut CppWebSocket,
+        global_this: &JSGlobalObject,
+        buffered_data: *mut u8,
+        buffered_data_len: usize,
+    ) -> *mut c_void {
+        // SAFETY: `ws` is the live `heap::alloc` allocation from `new_raw`.
+        let ws_ref = unsafe { &mut *ws };
         bun_core::handle_oom(ws_ref.send_buffer.get_mut().ensure_total_capacity(2048));
         bun_core::handle_oom(ws_ref.receive_buffer.get_mut().ensure_total_capacity(2048));
         ws_ref
@@ -1972,6 +1880,61 @@ impl<const SSL: bool> WebSocket<SSL> {
         ws.cast::<c_void>()
     }
 
+    pub extern "C" fn init(
+        outgoing: *mut CppWebSocket,
+        input_socket: *mut c_void,
+        global_this: &JSGlobalObject,
+        buffered_data: *mut u8,
+        buffered_data_len: usize,
+        deflate_params: Option<&websocket_deflate::Params>,
+        secure_ptr: *mut c_void,
+    ) -> *mut c_void {
+        let tcp = input_socket.cast::<us_socket_t>();
+        let secure = if secure_ptr.is_null() {
+            None
+        } else {
+            Some(secure_ptr.cast::<SslCtx>())
+        };
+        let ws = Self::new_raw(outgoing, global_this, deflate_params, secure, None);
+
+        // `adopt_group` takes a closure to write the new socket.
+        let group = {
+            // reshaped for borrowck — `rare_data()` borrows `vm`
+            // mutably and `ws_client_group` also wants a `vm` reference.
+            let vm_ptr: *mut _ = global_this.bun_vm().as_mut();
+            // SAFETY: `rare_data()` returns `&mut RareData` reached through
+            // `vm.rare_data: Option<Box<RareData>>`, i.e. a SEPARATE heap
+            // allocation behind a `Box` — the returned `&mut` does not cover
+            // any byte of `*vm_ptr` itself, so forming `&*vm_ptr` alongside
+            // it is non-overlapping under Stacked Borrows. `lazy_group` only
+            // reads `vm.uws_loop()` / `vm.event_loop_handle` and never touches
+            // `vm.rare_data`, so the shared `&VirtualMachine` argument cannot
+            // observe or invalidate the `&mut RareData` receiver.
+            unsafe { (*vm_ptr).rare_data().ws_client_group::<SSL>(&*vm_ptr) }
+        };
+        if !Socket::<SSL>::adopt_group(
+            tcp,
+            group,
+            if SSL {
+                uws::DispatchKind::WsClientTls
+            } else {
+                uws::DispatchKind::WsClient
+            },
+            ws,
+            // SAFETY: `owner == ws` is a valid live allocation; raw-ptr field
+            // write avoids materializing a second `&mut` that would alias
+            // another borrow of the new allocation.
+            |owner, sock| unsafe { core::ptr::addr_of_mut!((*owner).tcp).write(Cell::new(sock)) },
+        ) {
+            // SAFETY: `ws` is the `heap::alloc` allocation just created
+            // above; sole owner on this failure path.
+            unsafe { Self::deref(ws) };
+            return core::ptr::null_mut();
+        }
+
+        Self::finish_init(ws, outgoing, global_this, buffered_data, buffered_data_len)
+    }
+
     /// Initialize a WebSocket client that uses a proxy tunnel for I/O.
     /// Used for wss:// through HTTP proxy where TLS is handled by the tunnel.
     /// The tunnel takes ownership of socket I/O, and this client reads/writes through it.
@@ -1999,91 +1962,15 @@ impl<const SSL: bool> WebSocket<SSL> {
         // that handle_close() releases). It is released in clear_data() when
         // proxy_tunnel is detached. The ws.ref() below adds the C++ ref
         // paired with m_connectedWebSocket.
-        // outlives this call.
-        let vm = global_this.bun_vm().as_mut();
-        let ws = bun_core::heap::into_raw(Box::new(WebSocket::<SSL> {
-            ref_count: Cell::new(1),
-            tcp: Cell::new(Socket::<SSL>::detached()), // No direct socket - using tunnel
-            outgoing_websocket: Cell::new(NonNull::new(outgoing)),
-            receive_state: Cell::new(ReceiveState::NeedHeader),
-            receiving_type: Cell::new(Opcode::ResB),
-            receiving_is_final: Cell::new(true),
-            ping_frame_bytes: Cell::new([0u8; 128 + 6]),
-            ping_len: Cell::new(0),
-            ping_received: Cell::new(false),
-            pong_received: Cell::new(false),
-            close_received: Cell::new(false),
-            close_frame_buffering: Cell::new(false),
-            close_dispatch_pending: Cell::new(None),
-            receive_frame: Cell::new(0),
-            receive_body_remain: Cell::new(0),
-            receive_pending_chunk_len: Cell::new(0),
-            receive_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
-            send_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
-            global_this: GlobalRef::from(global_this),
-            poll_ref: Cell::new(KeepAlive::init()),
-            header_fragment: Cell::new(None),
-            payload_length_frame_bytes: Cell::new([0u8; 8]),
-            payload_length_frame_len: Cell::new(0),
-            initial_data_handler: Cell::new(None),
-            // reshaped for borrowck — `vm.event_loop()` returns a
-            // `&'static`-tied borrow that would lock `vm` for the rest of the
-            // fn; re-derive from `global_this` so `vm` stays usable below.
-            // SAFETY: bun_vm() never returns null; event_loop ptr is live for VM lifetime.
-            event_loop: global_this.bun_vm().event_loop_mut(),
-            deflate: RefCell::new(None),
-            receiving_compressed: Cell::new(false),
-            message_is_compressed: Cell::new(false),
-            secure: Cell::new(None),
-            proxy_tunnel: Cell::new(Some(tunnel_owned)),
-        }));
-        bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::ALLOC_TYPE_NAME, ws);
-        // SAFETY: ws was just allocated via heap::alloc
-        let ws_ref = unsafe { &mut *ws };
+        let ws = Self::new_raw(
+            outgoing,
+            global_this,
+            deflate_params,
+            None,
+            Some(tunnel_owned),
+        );
 
-        if let Some(params) = deflate_params {
-            match WebSocketDeflate::init(*params, vm.rare_data()) {
-                Ok(deflate) => *ws_ref.deflate.get_mut() = Some(deflate),
-                Err(_) => *ws_ref.deflate.get_mut() = None,
-            }
-        }
-
-        bun_core::handle_oom(ws_ref.send_buffer.get_mut().ensure_total_capacity(2048));
-        bun_core::handle_oom(ws_ref.receive_buffer.get_mut().ensure_total_capacity(2048));
-        ws_ref
-            .poll_ref
-            .get_mut()
-            .r#ref(Self::vm_loop_ctx(global_this));
-
-        if buffered_data_len > 0 {
-            // SAFETY: see `init()` — adopt the C++ mimalloc-owned buffer
-            // directly so it is freed (not leaked) when the handler drops.
-            let buffered_slice: Box<[u8]> = unsafe {
-                bun_core::heap::take(std::ptr::slice_from_raw_parts_mut(
-                    buffered_data,
-                    buffered_data_len,
-                ))
-            };
-            let initial_data = bun_core::heap::into_raw(Box::new(InitialDataHandler::<SSL> {
-                adopted: NonNull::new(ws),
-                slice: buffered_slice,
-                // SAFETY: outgoing is a valid CppWebSocket* (extern-C contract);
-                // it outlives the handler — `handle_without_deinit` drops the
-                // ref before C++ can finalize.
-                ws: NonNull::new(outgoing).map(|p| unsafe { CppWebSocketRef::new(p) }),
-            }));
-            ws_ref.initial_data_handler.set(NonNull::new(initial_data));
-            // `queue_microtask_callback` takes an erased
-            // `(*mut c_void, unsafe extern "C" fn(*mut c_void))`; cast both.
-            global_this.queue_microtask_callback(
-                initial_data.cast::<c_void>(),
-                InitialDataHandler::<SSL>::handle,
-            );
-        }
-
-        ws_ref.ref_();
-
-        ws.cast::<c_void>()
+        Self::finish_init(ws, outgoing, global_this, buffered_data, buffered_data_len)
     }
 
     /// Handle data received from the proxy tunnel (already decrypted).
@@ -2488,6 +2375,33 @@ pub enum ReceiveState {
     Fail,
 }
 
+/// The receive-loop state carried across the `ReceiveState` handlers of one
+/// `handle_data_loop` call. Loaded from the persisted `Cell` fields on entry
+/// and written back by the epilogue unless the connection was terminated.
+struct RecvCursor<'a> {
+    /// Bytes from the socket not yet consumed by a handler.
+    data: &'a [u8],
+    state: ReceiveState,
+    receiving_type: Opcode,
+    /// Payload bytes of the current frame still expected from the wire.
+    body_remain: usize,
+    is_final: bool,
+    is_fragmented: bool,
+    /// Opcode of the data (Text/Binary) message being assembled; control
+    /// frames interleaved between its fragments must not overwrite it.
+    last_data_type: Opcode,
+}
+
+/// What a `ReceiveState` handler decided about the parse loop.
+enum Step {
+    /// Keep parsing the bytes left in the cursor.
+    Continue,
+    /// Mid-frame with nothing left to read; resume on the next socket read.
+    NeedMoreData,
+    /// The connection was failed/closed; stop and mark the receive side closed.
+    Terminated,
+}
+
 /// Map a status code received in a Close frame to the `(wire echo, JS dispatch)`
 /// pair. RFC 6455 §7.4.1-§7.4.2: codes outside the legal on-wire set (`<1000`,
 /// the reserved `1004`–`1006` and `1015`–`2999`, and the undefined `>4999`) are
@@ -2601,25 +2515,20 @@ enum Copy<'a> {
 }
 
 impl<'a> Copy<'a> {
-    pub(crate) fn len(&self, byte_len: &mut usize) -> usize {
-        match self {
-            Copy::Utf16(utf16) => {
-                *byte_len = strings::element_length_utf16_into_utf8(utf16);
-                WebsocketHeader::frame_size_including_mask(*byte_len)
-            }
-            Copy::Latin1(latin1) => {
-                *byte_len = strings::element_length_latin1_into_utf8(latin1);
-                WebsocketHeader::frame_size_including_mask(*byte_len)
-            }
-            Copy::Bytes(bytes) => {
-                *byte_len = bytes.len();
-                WebsocketHeader::frame_size_including_mask(*byte_len)
-            }
-            Copy::Raw(raw) => {
-                *byte_len = raw.len();
-                raw.len()
-            }
-        }
+    /// Returns `(frame_len, content_byte_len)`: the size of the full masked
+    /// frame to write out and the UTF-8/byte length of the payload it carries
+    /// (`Raw` is already a frame, so both are the raw length).
+    pub(crate) fn frame_and_content_len(&self) -> (usize, usize) {
+        let byte_len = match self {
+            Copy::Utf16(utf16) => strings::element_length_utf16_into_utf8(utf16),
+            Copy::Latin1(latin1) => strings::element_length_latin1_into_utf8(latin1),
+            Copy::Bytes(bytes) => bytes.len(),
+            Copy::Raw(raw) => return (raw.len(), raw.len()),
+        };
+        (
+            WebsocketHeader::frame_size_including_mask(byte_len),
+            byte_len,
+        )
     }
 
     pub(crate) fn copy(

@@ -2700,7 +2700,7 @@ declare module "bun" {
      * @returns The number of clients that received the message. In a cluster,
      * this is the total number of clients in the same node.
      */
-    publish(channel: RedisClient.KeyLike, message: RedisClient.KeyLike): Promise<number>;
+    publish(channel: string, message: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Subscribe to a Redis channel.

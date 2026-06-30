@@ -65,7 +65,9 @@ describe.each(["publish", "spublish"] as const)("RedisClient.%s argument types",
   });
 
   test("accepts a binary channel name", () => {
-    expect(validationError(() => client[method](Buffer.from("binary-channel"), "x"))).toBeNull();
+    // The runtime accepts binary channel names through the same shared
+    // argument path as keys, even though the documented channel type is string.
+    expect(validationError(() => client[method](Buffer.from("binary-channel") as any, "x"))).toBeNull();
   });
 
   test("still rejects values that are neither strings nor buffers", () => {

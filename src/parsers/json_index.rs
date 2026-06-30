@@ -404,12 +404,12 @@ impl<'c> StructuralIndex<'c> {
                 }
                 _ => {
                     // Classified by the generated table — the exact
-                    // classification the kernel's nibble LUTs compute, false
-                    // positives on non-ASCII bytes included. The streams of
-                    // the two producers must be identical: the post-oddity
-                    // restart swallows a *count* of already-delivered
-                    // indices, and this is the reference implementation the
-                    // kernel is differentially tested against.
+                    // classification the kernel's nibble LUTs compute. The
+                    // streams of the two producers must be identical: the
+                    // post-oddity restart swallows a *count* of
+                    // already-delivered indices, and this is the reference
+                    // implementation the kernel is differentially tested
+                    // against.
                     let cls = JSON_BYTE_CLASS[c as usize];
                     if cls & CLASS_STRUCTURAL != 0 {
                         emit!(i);
@@ -448,7 +448,7 @@ impl<'c> StructuralIndex<'c> {
 /// U+2028 / U+2029 (3-byte UTF-8: E2 80 A8/A9) terminate `//` comments, like
 /// the old lexer.
 #[inline]
-fn is_ls_ps(s: &[u8], i: usize) -> bool {
+pub(crate) fn is_ls_ps(s: &[u8], i: usize) -> bool {
     s[i] == 0xE2 && s.get(i + 1) == Some(&0x80) && matches!(s.get(i + 2), Some(0xA8) | Some(0xA9))
 }
 

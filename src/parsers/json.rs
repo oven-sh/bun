@@ -560,10 +560,11 @@ pub fn parse_for_macro(
 
 /// `tsconfig.json` / `.jsonc` (the dialect: comments, trailing commas).
 ///
-/// Classic `E::Object` AST — the tsconfig walker, bunfig, and the bundler's
-/// `.jsonc` module loader pattern-match `Expr` nodes (and the first two
-/// report diagnostics with per-value `Loc`s), so the immutable parse is
-/// [`materialize`]d at this boundary with every location intact.
+/// Classic `E::Object` AST — bunfig and the bundler's `.jsonc` module loader
+/// pattern-match `Expr` nodes (and bunfig reports diagnostics with per-value
+/// `Loc`s), so the immutable parse is [`materialize`]d at this boundary with
+/// every location intact. (The tsconfig walker itself reads the rows via
+/// [`ParsedJson::parse_jsonc`].)
 #[inline]
 pub fn parse_ts_config(
     source: &bun_ast::Source,
@@ -967,8 +968,13 @@ fn skip_ws_and_comments(contents: &[u8], mut p: usize) -> Option<usize> {
             b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C => p += 1,
             b'/' => match contents.get(p + 1) {
                 Some(b'/') => {
+                    // Terminated by any line ending the indexer accepts:
+                    // `\n`, `\r`, U+2028 or U+2029.
                     p += 2;
-                    while p < contents.len() && contents[p] != b'\n' {
+                    while p < contents.len()
+                        && !matches!(contents[p], b'\n' | b'\r')
+                        && !crate::json_index::is_ls_ps(contents, p)
+                    {
                         p += 1;
                     }
                 }
@@ -1884,13 +1890,16 @@ mod tests {
                 _ => {}
             }
         }
-        let docs: [&str; 5] = [
+        let docs: [&str; 6] = [
             r#"{"a":1,"b" : "two", "es\"cé\\" :  [1, "x", {"y":null}, true, ["", -2]], "c":{"d":3}}"#,
             // Multiline JSONC: line + block comments on both sides of `:`
             // and between array items, trailing commas.
             "{\n  // line\n  \"a\" /* k */ : // v\n   42,\n  \"arr\": [ /* a */ 1,\n     [2], // b\n   {'z': 'q'},\n  ],\n}",
             // Exotic unicode whitespace (NBSP, BOM) in the gaps.
             "{\"\u{e9}k\":\u{a0}\u{feff} 1,\"l\":\u{a0}[\u{a0}1\u{a0},\u{a0}2]}",
+            // Line comments ended by `\r` alone and by U+2028 (no `\n`),
+            // exactly the terminators the indexer accepts.
+            "{\"a\": // c\r 1, \"b\": [0, // d\u{2028} 2]}",
             "[]",
             "[ [ ] , { } , \"]\" ]",
         ];

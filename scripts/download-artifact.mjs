@@ -74,8 +74,13 @@ export async function downloadArtifactZip({
     }
   }
 
-  throw new Error(
+  // Tag the failure so the runner can exit with an infra status Buildkite
+  // auto-retries (getExitCode/main in runner.node.mjs, getRetry in ci.mjs)
+  // instead of a plain exit 1 that sits red until a human clicks Retry.
+  const error = new Error(
     `Could not download ${target}.zip from Buildkite after ${attempts} attempts: ${releasePath}` +
       (lastError ? ` (last download error: ${lastError})` : ""),
   );
+  error.code = "ARTIFACT_DOWNLOAD_FAILED";
+  throw error;
 }

@@ -298,25 +298,34 @@ function getImageName(platform, options) {
 }
 
 /**
- * @param {number} [limit]
+ * @param {{ artifactDownload?: boolean }} [options]
  * @link https://buildkite.com/docs/pipelines/command-step#retry-attributes
  */
-function getRetry() {
+function getRetry(options = {}) {
+  // Self-heal infra deaths once instead of leaving the build failed until a
+  // human notices and clicks retry:
+  //   -1  = agent lost / process killed (box died, agent restarted)
+  //   255 = step timeout kill (timeout_in_minutes SIGTERM cascade)
+  // User-canceled jobs are state=canceled, which never triggers automatic
+  // retry, so this cannot resurrect deliberately canceled builds. limit: 1
+  // caps the cost when a suite genuinely crashes with these statuses.
+  const automatic = [
+    { exit_status: -1, limit: 1 },
+    { exit_status: 255, limit: 1 },
+  ];
+  // Test steps download the build artifact before running any test;
+  // runner.node.mjs exits 4 when that download fails after its own retries
+  // (e.g. an agent with broken artifact-store connectivity). Reschedule the
+  // whole job so it can land on a healthy agent instead of going red on a
+  // lane that ran zero tests, which otherwise needs a manual retry click.
+  if (options.artifactDownload) {
+    automatic.push({ exit_status: 4, limit: 2 });
+  }
   return {
     manual: {
       permit_on_passed: true,
     },
-    // Self-heal infra deaths once instead of leaving the build failed until a
-    // human notices and clicks retry:
-    //   -1  = agent lost / process killed (box died, agent restarted)
-    //   255 = step timeout kill (timeout_in_minutes SIGTERM cascade)
-    // User-canceled jobs are state=canceled, which never triggers automatic
-    // retry, so this cannot resurrect deliberately canceled builds. limit: 1
-    // caps the cost when a suite genuinely crashes with these statuses.
-    automatic: [
-      { exit_status: -1, limit: 1 },
-      { exit_status: 255, limit: 1 },
-    ],
+    automatic,
   };
 }
 
@@ -831,7 +840,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
     label: `${getPlatformLabel(platform)} - test-bun`,
     depends_on: depends,
     agents: getTestAgent(platform, options),
-    retry: getRetry(),
+    retry: getRetry({ artifactDownload: true }),
     cancel_on_build_failing: isMergeQueue(),
     parallelism: os === "darwin" ? 2 : os === "windows" ? 8 : 20,
     timeout_in_minutes: profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,

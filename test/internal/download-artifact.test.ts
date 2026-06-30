@@ -93,15 +93,18 @@ describe("downloadArtifactZip", () => {
     const releasePath = join(String(dir), "release");
     const { spawn, calls } = fakeSpawn([{ error: "timeout" }]);
 
-    await expect(
-      downloadArtifactZip({
-        target: "darwin-aarch64-build-bun",
-        releasePath,
-        spawn,
-        attempts: 3,
-        sleep: noSleep,
-      }),
-    ).rejects.toThrow(/after 3 attempts.*last download error: timeout/s);
+    const error = await downloadArtifactZip({
+      target: "darwin-aarch64-build-bun",
+      releasePath,
+      spawn,
+      attempts: 3,
+      sleep: noSleep,
+    }).catch(e => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toMatch(/after 3 attempts.*last download error: timeout/s);
+    // Tagged so the runner exits an infra status Buildkite auto-retries.
+    expect(error.code).toBe("ARTIFACT_DOWNLOAD_FAILED");
     expect(calls.length).toBe(3);
   });
 

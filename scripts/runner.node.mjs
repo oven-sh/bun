@@ -2557,6 +2557,12 @@ function getExitCode(outcome) {
   if (outcome === "cancel") {
     return 3;
   }
+  // Infra failure (e.g. the build artifact could not be downloaded). Distinct
+  // from a test failure so Buildkite can auto-retry it (see getRetry in
+  // .buildkite/ci.mjs) without also retrying genuine test failures (exit 2).
+  if (outcome === "infra") {
+    return 4;
+  }
   return 1;
 }
 
@@ -2942,4 +2948,10 @@ export async function main() {
   process.exit(getExitCode(ok ? "pass" : "fail"));
 }
 
-await main();
+await main().catch(error => {
+  console.error(error);
+  // The runner could not obtain the build artifact after retrying. Exit with an
+  // infra status Buildkite auto-retries so the job reschedules (ideally onto an
+  // agent with working artifact connectivity) instead of needing a manual retry.
+  process.exit(error?.code === "ARTIFACT_DOWNLOAD_FAILED" ? getExitCode("infra") : 1);
+});

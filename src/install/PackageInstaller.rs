@@ -2385,7 +2385,7 @@ impl<'a> PackageInstaller<'a> {
 /// sign any that are not already signed. Called after a package is installed
 /// into node_modules, before lifecycle scripts run.
 #[cfg(target_env = "ohos")]
-fn ohos_sign_native_binaries(pkg_dir: &[u8]) {
+pub(crate) fn ohos_sign_native_binaries(pkg_dir: &[u8]) {
     use std::process::Command;
 
     let dir = match Dir::open(pkg_dir) {

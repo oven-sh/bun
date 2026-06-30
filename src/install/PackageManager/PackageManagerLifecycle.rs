@@ -488,6 +488,16 @@ impl PackageManager {
             foreground,
             install_ctx,
         )?;
+
+        #[cfg(target_env = "ohos")]
+        {
+            let cwd_path: &[u8] = list.cwd.as_bytes();
+            // Sign any .node files produced by lifecycle scripts (e.g. node-gyp rebuild).
+            if !cwd_path.is_empty() {
+                crate::PackageInstaller::ohos_sign_native_binaries(cwd_path);
+            }
+        }
+
         Ok(())
     }
 

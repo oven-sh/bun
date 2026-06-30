@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isMusl, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isMusl, isWindows, tmpdirSync } from "harness";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -108,9 +108,9 @@ describe.skipIf(isWindows)("Glob path length", () => {
 
   // Linux-only: this needs a directory that is still walkable (absolute path
   // under MAX_PATH_BYTES, 4096 there) while joining one more name onto it
-  // exceeds the 4096-byte join buffer. On macOS MAX_PATH_BYTES is 1024, so a
-  // matched path can never reach the join buffer's size.
-  test.skipIf(isMacOS)("matched file whose absolute path exceeds the join buffer is returned", async () => {
+  // exceeds the 4096-byte join buffer. Everywhere else MAX_PATH_BYTES is
+  // 1024, so a matched path can never reach the join buffer's size.
+  test.skipIf(!isLinux)("matched file whose absolute path exceeds the join buffer is returned", async () => {
     const root = tmpdirSync("bun-glob-overflow-abs-file-");
     const segName = "D".repeat(255);
     const fileName = "F".repeat(255);

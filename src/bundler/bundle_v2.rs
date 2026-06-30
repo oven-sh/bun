@@ -737,7 +737,7 @@ pub mod bv2_impl {
                 // The three `safe fn`s below take only Rust references / by-value
                 // scalars: every pointer the C++ side reads is guaranteed valid by
                 // the type system, so there is no caller-side precondition left to
-                // discharge (mirrors the `safe fn` pattern in `lolhtml_sys`).
+                // discharge.
                 #[link_name = "JSBundlerPlugin__anyMatches"]
                 safe fn JSBundlerPlugin__anyMatches(
                     this: &Plugin,
@@ -2790,6 +2790,19 @@ pub mod bv2_impl {
             // the resolver lives in `transpiler` which outlives `self` (same `'a`).
             this.linker.resolver = Some(bun_ptr::ParentRef::new(&this.transpiler.resolver));
             this.linker.graph.code_splitting = this.transpiler.options.code_splitting;
+
+            // Cross-chunk imports/exports are only generated for ESM (see
+            // computeCrossChunkDependencies). Reject other formats up front
+            // rather than panicking later. Matches esbuild.
+            if this.transpiler.options.code_splitting
+                && this.transpiler.options.output_format != options::Format::Esm
+            {
+                this.transpiler.log_mut().add_error(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    "Code splitting is currently only supported when format is set to \"esm\"",
+                );
+            }
 
             this.linker.options.minify_syntax = this.transpiler.options.minify_syntax;
             this.linker.options.minify_identifiers = this.transpiler.options.minify_identifiers;

@@ -97,7 +97,6 @@ leak:fse_run_loop
 leak:Zig::NapiClass_ConstructorFunction
 leak:runtime.webcore.fetch.FetchTasklet.toResponse
 leak:JSC::jsonProtoFuncStringify
-leak:lolhtml_sys.lol_html.HTMLString.toString
 leak:libarchive_sys.bindings.Archive.readNew
 leak:Zig::SourceProvider::create
 

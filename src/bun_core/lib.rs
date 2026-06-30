@@ -49,11 +49,6 @@ pub mod wtf;
 // ──────────────────────────────────────────────────────────────────────────
 pub mod string;
 pub use ::bstr::{BStr, BString, ByteSlice};
-/// `bun.strings` (the full SIMD-backed `immutable` module). Distinct from the
-/// scalar-fallback `crate::strings` shim below — several names
-/// (`index_of_char`, `CodepointIterator`, `Encoding`) differ in signature.
-/// Callers that previously wrote `bun_core::strings::X` import this.
-pub use string::immutable;
 pub use string::string_joiner::StringJoiner;
 pub use string::{
     ByteString, STRING_ALLOCATION_LIMIT, ZigStringGithubActionFormatter, cheap_prefix_normalizer,
@@ -264,7 +259,7 @@ pub mod feature_flags;
 /// (dirname, which) can use them without an upward dep. `bun_paths` re-exports
 /// these as the canonical `is_sep_*` set.
 pub mod path_sep {
-    use crate::strings::PathByte;
+    use crate::strings_impl::PathByte;
     pub use bun_alloc::{SEP, SEP_STR};
 
     // ─── u8 const fns (kept const for match-guard / const-eval callers) ─────
@@ -1220,32 +1215,26 @@ pub use fmt::{
 // ──────────────────────────────────────────────────────────────────────────
 // Flattened top-level string/fmt API.
 //
-// `string_immutable` is the full ported `bun.strings` namespace (was the
-// `bun_core::immutable` module before the crate merge). The former
-// `pub mod strings { … }` cycle-breaker shim is now an internal
-// `strings_impl` module whose items are glob-re-exported at crate root, and
-// `pub mod strings { pub use super::*; }` keeps `bun_core::strings::X`
-// resolving for callers that haven't been rewritten yet.
+// `crate::string::immutable` (aliased as `bun_core::strings`, see below) is
+// the canonical `bun.strings` namespace. A subset is additionally flattened
+// to the crate root here for the `bun_core::X` spelling.
 // ──────────────────────────────────────────────────────────────────────────
-pub use crate::string::immutable as string_immutable;
-
 pub use crate::string::immutable::{
-    CodePoint, DecodeHexError, LineRange, OptionalUsize, PercentEncodeError,
-    QuoteEscapeFormatFlags, SplitIterator, StringOrTinyString, UNICODE_REPLACEMENT,
-    UNICODE_REPLACEMENT_STR, UUID_LEN, WHITESPACE_CHARS, append, cat, concat_alloc_t,
-    concat_with_length, contains_char, contains_scalar, copy, count_char, decode_hex_to_bytes,
-    decode_hex_to_bytes_truncate, encode_bytes_to_hex, ends_with_any, ends_with_char,
-    ends_with_char_or_is_zero_length, ends_with_comptime, eql_any_comptime, eql_comptime,
-    eql_comptime_utf16, format_escapes, has_prefix, has_prefix_case_insensitive,
-    has_prefix_comptime, has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar,
-    index_of_t, is_all_whitespace, is_ip_address, is_npm_package_name,
-    is_npm_package_name_ignore_length, is_on_char_boundary, is_utf8_char_boundary, is_valid_utf8,
-    join, last_index_of, last_index_of_t, length_of_leading_whitespace_ascii, memmem, order,
-    order_t, percent_encode_write, sort_asc, sort_desc, split, starts_with_case_insensitive_ascii,
-    starts_with_char, str_utf8, to_ascii_hex_value, to_utf16_alloc, trim_leading_char, trim_prefix,
-    trim_prefix_comptime, trim_spaces, trim_suffix, trim_suffix_comptime,
-    utf8_byte_sequence_length, utf16_eql_string, without_prefix, without_prefix_comptime,
-    without_suffix_comptime, without_utf8_bom,
+    CodePoint, DecodeHexError, LineRange, PercentEncodeError, QuoteEscapeFormatFlags,
+    SplitIterator, StringOrTinyString, UNICODE_REPLACEMENT, UNICODE_REPLACEMENT_STR, UUID_LEN,
+    WHITESPACE_CHARS, append, cat, concat_alloc_t, concat_with_length, contains_char,
+    contains_scalar, copy, count_char, decode_hex_to_bytes, decode_hex_to_bytes_truncate,
+    encode_bytes_to_hex, ends_with_any, ends_with_char, ends_with_char_or_is_zero_length,
+    ends_with_comptime, eql_any_comptime, eql_comptime, eql_comptime_utf16, format_escapes,
+    has_prefix, has_prefix_case_insensitive, has_prefix_comptime, has_prefix_comptime_utf16,
+    has_suffix_comptime, index_of, index_of_scalar, index_of_t, is_all_whitespace, is_ip_address,
+    is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
+    is_utf8_char_boundary, is_valid_utf8, join, last_index_of, last_index_of_t,
+    length_of_leading_whitespace_ascii, memmem, order, order_t, percent_encode_write, sort_asc,
+    sort_desc, split, starts_with_case_insensitive_ascii, starts_with_char, str_utf8,
+    to_ascii_hex_value, to_utf16_alloc, trim_leading_char, trim_prefix, trim_prefix_comptime,
+    trim_spaces, trim_suffix, trim_suffix_comptime, utf8_byte_sequence_length, utf16_eql_string,
+    without_prefix, without_prefix_comptime, without_suffix_comptime, without_utf8_bom,
 };
 
 #[allow(deprecated)]
@@ -1264,12 +1253,10 @@ pub use crate::fmt::{
     truncated_hash32, truncated_hash32_bytes, utf16,
 };
 
-/// Surrogate/transcode primitives + scalar-fallback string helpers that
-/// predate the `string::immutable` merge. Glob-re-exported at crate root so
-/// `crate::strings::X` (via the alias module below) and `bun_core::X` both
-/// resolve. Do NOT add a `pub use string::immutable::*` glob here — several
-/// names (`first_non_ascii`, `index_of_char`, `Encoding`, `CodepointIterator`)
-/// have intentionally-different signatures in the two layers.
+/// Tier-0 surrogate/transcode primitives that [`crate::string::immutable`]
+/// (the public `bun.strings` namespace) wraps or re-exports. Nothing here
+/// duplicates an `immutable` scanner; when both layers need the same helper,
+/// the single implementation lives here and `immutable` re-exports it.
 pub(crate) mod strings_impl {
     // ─── UTF-16 surrogate-pair encoding (ICU U16_LEAD / U16_TRAIL) ─────────────
     // Defined here in
@@ -1310,33 +1297,7 @@ pub(crate) mod strings_impl {
         }
     }
 
-    #[inline]
-    pub fn includes(h: &[u8], n: &[u8]) -> bool {
-        ::bstr::ByteSlice::find(h, n).is_some()
-    }
-    #[inline]
-    pub fn contains(h: &[u8], n: &[u8]) -> bool {
-        includes(h, n)
-    }
-    #[inline]
-    pub fn index_of_char(h: &[u8], c: u8) -> Option<usize> {
-        h.iter().position(|&b| b == c)
-    }
-    #[inline]
-    pub fn starts_with(h: &[u8], p: &[u8]) -> bool {
-        h.starts_with(p)
-    }
-    #[inline]
-    pub fn ends_with(h: &[u8], p: &[u8]) -> bool {
-        h.ends_with(p)
-    }
-    #[inline]
-    pub fn eql(a: &[u8], b: &[u8]) -> bool {
-        a == b
-    }
-    pub use ::bun_alloc::{
-        ascii_lowercase_buf, copy_lowercase, copy_lowercase_if_needed, trim, trim_left, trim_right,
-    };
+    pub use ::bun_alloc::{ascii_lowercase_buf, copy_lowercase, trim, trim_left, trim_right};
 
     /// Byte length of `input` after replacing every
     /// occurrence of `needle` with `replacement`. Empty `needle` ⇒ `input.len()`
@@ -1457,9 +1418,7 @@ pub(crate) mod strings_impl {
     /// — true for `\foo`-style absolute paths that lack a `C:` / `\\?\` /
     /// `\\server\` prefix and therefore need the cwd's drive prepended.
     /// Generic over `u8`/`u16`.
-    pub fn is_windows_absolute_path_missing_drive_letter<T: crate::strings::PathByte>(
-        chars: &[T],
-    ) -> bool {
+    pub fn is_windows_absolute_path_missing_drive_letter<T: PathByte>(chars: &[T]) -> bool {
         // Release-mode callers may still pass `""`, so bail instead of
         // indexing OOB.
         debug_assert!(!chars.is_empty());
@@ -1501,16 +1460,6 @@ pub(crate) mod strings_impl {
         // '\Server\Share'   -> true  (posix-style)
         !(chars.len() >= 5 && sep(chars[1]) && !sep(chars[2]))
     }
-    /// `strings.eqlComptimeIgnoreLen` — caller has already checked `a.len() ==
-    /// b.len()` (the "ignore len" means "don't re-check"). This scalar
-    /// path is fine for the only T0/T1 caller (ComptimeStringMap, where
-    /// `b` is a small static).
-    #[inline]
-    pub fn eql_comptime_ignore_len(a: &[u8], b: &'static [u8]) -> bool {
-        debug_assert_eq!(a.len(), b.len());
-        a == b
-    }
-
     /// `const fn` byte-slice equality — slice `==` is not `const` on stable, so
     /// const-context callers (clap param-name lookup, MultiArrayList field-name
     /// reflection, host-fn error-set parsing) need the manual len-check + while
@@ -1557,9 +1506,12 @@ pub(crate) mod strings_impl {
         unsafe { simdutf::simdutf__validate_ascii(slice.as_ptr(), slice.len()) }
     }
 
-    /// Index of first non-ASCII byte, or None if all-ASCII. simdutf-backed.
+    /// Byte index of the first non-ASCII byte, or None if all-ASCII.
+    /// simdutf-backed. The canonical `bun.strings.firstNonASCII` is
+    /// [`crate::strings::first_non_ascii`] (`Option<u32>`), a thin view over
+    /// this; `_usize` is the raw form for callers that index with the result.
     #[inline]
-    pub fn first_non_ascii(slice: &[u8]) -> Option<usize> {
+    pub fn first_non_ascii_usize(slice: &[u8]) -> Option<usize> {
         // Short-string fast path: see is_all_ascii() above for the FFI-dispatch
         // cost rationale. position() autovectorizes; ≤32B beats the shim.
         if slice.len() <= 32 {
@@ -1704,7 +1656,7 @@ pub(crate) mod strings_impl {
         list.reserve(latin1.len());
         let mut rest = latin1;
         while !rest.is_empty() {
-            match first_non_ascii(rest) {
+            match first_non_ascii_usize(rest) {
                 None => {
                     list.extend_from_slice(rest);
                     break;
@@ -1843,11 +1795,12 @@ pub(crate) mod strings_impl {
         pub written: u32,
     }
 
-    /// Port of `elementLengthUTF16IntoUTF8` — exact UTF-8 byte length of a UTF-16
-    /// (LE) input. simdutf-backed; falls back to scalar would be in unicode_draft.
+    /// Port of `elementLengthUTF16IntoUTF8`: the exact UTF-8 byte length of a
+    /// UTF-16 (LE) input, charging 3 bytes (U+FFFD) per unpaired surrogate,
+    /// which is exactly what `copy_utf16_into_utf8` / `to_utf8_alloc` write.
     #[inline]
     pub fn element_length_utf16_into_utf8(utf16: &[u16]) -> usize {
-        simdutf::length::utf8::from::utf16::le(utf16)
+        simdutf::length::utf8::from::utf16::le_with_replacement(utf16)
     }
 
     /// Port of `elementLengthLatin1IntoUTF8`.
@@ -1869,7 +1822,7 @@ pub(crate) mod strings_impl {
         let utf8_len = if worst_case <= buf.len() {
             worst_case
         } else {
-            simdutf::length::utf8::from::utf16::le(utf16)
+            element_length_utf16_into_utf8(utf16)
         };
         copy_utf16_into_utf8_with_utf8_len(buf, utf16, utf8_len)
     }
@@ -2011,15 +1964,6 @@ pub(crate) mod strings_impl {
         crate::ZBox::from_vec_with_nul(to_utf8_alloc(utf16))
     }
 
-    /// Port of `firstNonASCII16`: index of the first u16 codeunit `>= 0x80`, or
-    /// `None` if all-ASCII. Single SIMD-upgrade target — simdutf exposes no
-    /// u16-ASCII-index fn and WTF's `charactersAreAllASCII<UChar>` is bool-only,
-    /// so scalar until portable_simd lands.
-    #[inline]
-    pub fn first_non_ascii16(utf16: &[u16]) -> Option<usize> {
-        utf16.iter().position(|&u| u >= 0x80)
-    }
-
     /// Narrow ASCII-only `src` into `dst`. Returns `Some(&mut dst[..src.len()])`
     /// iff every unit is `< 0x80` and `dst.len() >= src.len()`; otherwise `None`
     /// (partial writes to `dst` are not rolled back). Composes `firstNonASCII16`
@@ -2036,22 +1980,10 @@ pub(crate) mod strings_impl {
         Some(dst)
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // Generic-T helpers used by bun_paths (must live at T0).
-    // ──────────────────────────────────────────────────────────────────────
-
-    #[inline]
-    pub fn index_of_any_t<T: Copy + Eq>(s: &[T], chars: &[T]) -> Option<usize> {
-        s.iter().position(|c| chars.contains(c))
-    }
-
     // Bound relaxed Eq → PartialEq to match core::slice::<[T]>::starts_with /
     // ends_with exactly. Bodies are semantically identical to the stdlib
     // methods; kept as named free fns so call sites that read
     // `strings::has_prefix_t(a, b)` keep their shape.
-    // Rust already lowers slice `==` on integer T to
-    // memcmp, so the `eql_long`/`reinterpret_to_u8` perf path from
-    // immutable.rs is unnecessary.
     #[inline]
     pub fn has_prefix_t<T: PartialEq>(s: &[T], prefix: &[T]) -> bool {
         s.len() >= prefix.len() && s[..prefix.len()] == *prefix
@@ -2060,24 +1992,6 @@ pub(crate) mod strings_impl {
     #[inline]
     pub fn has_suffix_t<T: PartialEq>(s: &[T], suffix: &[T]) -> bool {
         s.len() >= suffix.len() && s[s.len() - suffix.len()..] == *suffix
-    }
-
-    /// Generic reverse scan for the last element equal to `c`.
-    /// For `T = u8` prefer `bun_core::strings::last_index_of_char` (glibc
-    /// `memrchr` on Linux).
-    #[inline]
-    pub fn last_index_of_char_t<T: Copy + Eq>(s: &[T], c: T) -> Option<usize> {
-        s.iter().rposition(|x| *x == c)
-    }
-    #[doc(hidden)]
-    #[inline]
-    pub fn last_index_of_char<T: Copy + Eq>(s: &[T], c: T) -> Option<usize> {
-        last_index_of_char_t(s, c)
-    }
-
-    #[inline]
-    pub fn eql_long(a: &[u8], b: &[u8]) -> bool {
-        a == b
     }
 
     #[inline]
@@ -2093,58 +2007,6 @@ pub(crate) mod strings_impl {
         haystack
             .iter()
             .any(|h| eql_case_insensitive_ascii(needle, h, true))
-    }
-
-    // ──────────────────────────────────────────────────────────────────────
-    // Scanners / sniffers used by fmt.rs (URL redaction, path quoting, etc.).
-    // Formerly a duplicate `mod strings` in fmt.rs; merged here so the crate
-    // has a single `bun_core::strings` and fmt.rs picks up the simdutf-backed
-    // `first_non_ascii`/`is_all_ascii` instead of scalar shims.
-    // ──────────────────────────────────────────────────────────────────────
-
-    #[inline]
-    pub fn index_of_any(s: &[u8], chars: &[u8]) -> Option<usize> {
-        s.iter().position(|b| chars.contains(b))
-    }
-
-    // ──────────────────────────────────────────────────────────────────────
-    // IP-literal predicates — backed by `ares_inet_pton`, the vendored
-    // c-ares implementation.
-    // Do NOT call the system `inet_pton` here: on Windows that resolves into
-    // ws2_32.dll and fails with WSANOTINITIALISED whenever it runs before
-    // `WSAStartup()`, which URL/host parsing can. c-ares' impl is pure C, no
-    // preconditions. bun_core sits below bun_cares_sys in the dep graph, so we
-    // re-declare the extern locally (zero new deps; `libc` is already here).
-    // ──────────────────────────────────────────────────────────────────────
-    unsafe extern "C" {
-        pub fn ares_inet_pton(
-            af: core::ffi::c_int,
-            src: *const core::ffi::c_char,
-            dst: *mut core::ffi::c_void,
-        ) -> core::ffi::c_int;
-    }
-    // dep-graph: bun_core < bun_sys, so cannot import the canonical
-    // `bun_sys::posix::AF`. Keep a thin libc/ws2def passthrough instead. The
-    // previous hand-rolled cfg ladder hardcoded `10` for the BSD fallback,
-    // which is wrong (FreeBSD AF_INET6 == 28); routing through `libc` fixes that.
-    #[cfg(not(windows))]
-    const AF_INET6: core::ffi::c_int = libc::AF_INET6 as core::ffi::c_int;
-    #[cfg(windows)]
-    const AF_INET6: core::ffi::c_int = 23; // ws2def.h
-
-    /// `ares_inet_pton(AF_INET6, …) > 0`.
-    /// Must be a strict parse, not a `contains(':')` heuristic: on Windows a
-    /// unix-socket path like `C:/Windows/Temp/…` contains a colon and the old
-    /// heuristic mis-bracketed it as `unix://[C:/…]`, which fails URL parsing.
-    pub fn is_ipv6_address(input: &[u8]) -> bool {
-        let mut buf = [0u8; 512];
-        if input.len() >= buf.len() {
-            return false;
-        }
-        buf[..input.len()].copy_from_slice(input);
-        let mut dst = [0u8; 28];
-        // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
-        unsafe { ares_inet_pton(AF_INET6, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0 }
     }
 
     pub fn starts_with_uuid(s: &[u8]) -> bool {
@@ -2224,7 +2086,10 @@ pub(crate) mod strings_impl {
         // newline if anything is unexpected
         if cont {
             let rest = &text[offset..];
-            return Some((offset, index_of_char(rest, b'\n').unwrap_or(rest.len())));
+            return Some((
+                offset,
+                crate::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len()),
+            ));
         }
         offset += 1;
 
@@ -2258,11 +2123,17 @@ pub(crate) mod strings_impl {
                 }
 
                 let rest = &text[offset..];
-                Some((offset, index_of_char(rest, b'\n').unwrap_or(rest.len())))
+                Some((
+                    offset,
+                    crate::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len()),
+                ))
             }
             _ => {
                 let rest = &text[offset..];
-                Some((offset, index_of_char(rest, b'\n').unwrap_or(rest.len())))
+                Some((
+                    offset,
+                    crate::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len()),
+                ))
             }
         }
     }
@@ -2328,14 +2199,6 @@ pub(crate) mod strings_impl {
         Some((scheme_end + colon + 1, at - colon - 1))
     }
 
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    pub enum Encoding {
-        Ascii,
-        Latin1,
-        Utf8,
-        Utf16,
-    }
-
     /// Returns the UTF-8/WTF-8 sequence length implied by a *leading* byte,
     /// or **0** if the byte is not a valid lead (continuation 0x80-0xBF, or 0xF8-0xFF).
     #[inline]
@@ -2379,52 +2242,6 @@ pub(crate) mod strings_impl {
             0x0800..=0xFFFF => 3,
             0x1_0000..=0x10_FFFF => 4,
             _ => 0,
-        }
-    }
-
-    // ─── CodepointIterator (fmt.rs identifier formatter) ──────────────────
-    #[derive(Default, Clone, Copy)]
-    pub struct CodepointIteratorCursor {
-        pub i: usize,
-        pub c: i32,
-        pub width: u8,
-    }
-    pub struct CodepointIterator<'a> {
-        bytes: &'a [u8],
-    }
-    impl<'a> CodepointIterator<'a> {
-        #[inline]
-        pub fn init(bytes: &'a [u8]) -> Self {
-            Self { bytes }
-        }
-        pub fn next(&self, cursor: &mut CodepointIteratorCursor) -> bool {
-            let i = cursor.i + cursor.width as usize;
-            if i >= self.bytes.len() {
-                return false;
-            }
-            let tail = &self.bytes[i..];
-            let b = tail[0];
-            cursor.i = i;
-            if b < 0x80 {
-                cursor.c = b as i32;
-                cursor.width = 1;
-                return true;
-            }
-            // Multi-byte: defer to the canonical WTF-8 decoder so this stub
-            // stays in lockstep with `strings::CodepointIterator::next`.
-            let len = wtf8_byte_sequence_length(b);
-            let take = (len as usize).min(tail.len());
-            let mut buf = [0u8; 4];
-            buf[..take].copy_from_slice(&tail[..take]);
-            let cp = crate::string::immutable::decode_wtf8_rune_t::<i32>(buf, len, -1);
-            if cp == -1 {
-                cursor.c = crate::string::immutable::UNICODE_REPLACEMENT as i32;
-                cursor.width = 1;
-            } else {
-                cursor.c = cp;
-                cursor.width = len;
-            }
-            true
         }
     }
 
@@ -2555,41 +2372,11 @@ pub(crate) mod strings_impl {
 pub use crate::string::immutable::convert_utf8_to_utf16_in_buffer;
 pub use strings_impl::*;
 
-/// Back-compat alias: `bun_core::strings::X` → `bun_core::X`. The full
-/// `bun.strings` namespace is `bun_core::immutable` (formerly
-/// `bun_core::strings`); this alias keeps the ~200 existing
-/// `bun_core::strings::` / `crate::strings::` call sites compiling.
-///
-/// NOTE: a handful of names (`index_of_char`, `eql_long`, `first_non_ascii`,
-/// `Encoding`, `CodepointIterator`) have a different signature here than in
-/// `bun_core::immutable`. Callers that need the canonical
-/// `bun.strings.*` form import `bun_core::immutable as strings` instead.
-pub mod strings {
-    // `bun_core::strings` is the union of the crate-root surface (`super::*`,
-    // which carries the scalar-fallback `strings_impl::*` glob plus every
-    // `bun_core::Foo`) and the full canonical `bun.strings.*` namespace
-    // (`string::immutable::*`). Names that exist in BOTH layers — same
-    // identifier, different signature — are explicitly disambiguated below
-    // in favour of `immutable` (matches every former `bun_core::strings::X`
-    // caller). Internal `bun_core` code that needs the scalar form spells
-    // `crate::strings_impl::X` directly.
-    pub use super::*;
-    pub use crate::string::immutable::*;
-    pub use crate::string::immutable::{
-        CodepointIterator, Cursor, Encoding, codepoint_size, concat, contains,
-        contains_newline_or_non_ascii_or_quote, convert_utf8_to_utf16_in_buffer,
-        convert_utf16_to_utf8_in_buffer, ends_with, eql, eql_case_insensitive_ascii,
-        eql_comptime_ignore_len, eql_long, first_non_ascii, first_non_ascii16, includes,
-        index_of_char, index_of_newline_or_non_ascii_or_ansi, is_ipv6_address, last_index_of_char,
-        last_index_of_char_t, remove_leading_dot_slash, starts_with, without_trailing_slash,
-    };
-    // Disambiguate vs the scalar tier-0 versions in `crate::strings_impl` (now
-    // dedup-hoisted) — `immutable` is the canonical impl callers expect.
-    pub use crate::string::immutable::{ares_inet_pton, copy_lowercase_if_needed};
-    // `index_of_any{,_t}` keep the scalar `Option<usize>` form (the canonical
-    // `immutable` returns `Option<OptionalUsize>` which no caller wants here).
-    pub use crate::strings_impl::{index_of_any, index_of_any_t};
-}
+/// `bun.strings` — the canonical SIMD-backed `&[u8]` namespace
+/// ([`crate::string::immutable`]). Tier-0 transcoding/scanning primitives that
+/// `immutable` itself depends on live in [`strings_impl`] and are re-exported
+/// from `immutable`, so this is the only public path.
+pub use crate::string::immutable as strings;
 
 // `true` when mimalloc is the `#[global_allocator]`; `false` under ASAN where
 // `std::alloc::System` is installed instead. Mirrors `bun_alloc::USE_MIMALLOC`.

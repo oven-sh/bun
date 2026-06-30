@@ -34,6 +34,7 @@ use crate::hir::ReactiveTerminalStatement;
 use crate::hir::ReactiveValue;
 use crate::hir::ScopeId;
 use crate::hir::environment::Environment;
+use crate::hir::is_array_type;
 use crate::hir::is_primitive_type;
 use crate::hir::visitors::each_instruction_value_operand;
 
@@ -971,7 +972,13 @@ impl<'a> CollectDependenciesVisitor<'a> {
                         }
                     }
                 }
-            } else if let InstructionValue::MethodCall { property, args, .. } = instr_value {
+            } else if let InstructionValue::MethodCall {
+                receiver,
+                property,
+                args,
+                ..
+            } = instr_value
+            {
                 if env
                     .get_hook_kind_for_id(property.identifier)
                     .ok()
@@ -980,6 +987,19 @@ impl<'a> CollectDependenciesVisitor<'a> {
                 {
                     let no_alias = env.has_no_alias_signature(property.identifier);
                     if !no_alias {
+                        for arg in args {
+                            let place = match arg {
+                                PlaceOrSpread::Spread(spread) => &spread.place,
+                                PlaceOrSpread::Place(place) => place,
+                            };
+                            let decl = env.identifiers[place.identifier.0 as usize].declaration_id;
+                            state.escaping_values.insert(decl);
+                        }
+                    }
+                } else if receiver.effect.is_mutable() {
+                    // Args of a mutable-array method call escape via the receiver.
+                    let type_id = env.identifiers[receiver.identifier.0 as usize].type_;
+                    if is_array_type(&env.types[type_id.0 as usize]) {
                         for arg in args {
                             let place = match arg {
                                 PlaceOrSpread::Spread(spread) => &spread.place,

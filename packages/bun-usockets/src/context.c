@@ -373,7 +373,17 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
     us_poll_init(p, listen_socket_fd, POLL_TYPE_SEMI_SOCKET);
-    us_poll_start(p, group->loop, LIBUS_SOCKET_READABLE);
+    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
+        /* EPOLL_CTL_ADD failed (e.g. ENOSPC at fs.epoll.max_user_watches).
+         * Report via both the out-param and thread-local errno: Bun.listen
+         * reads *error, Bun.serve reads errno. */
+        int saved_errno = errno;
+        bsd_close_socket(listen_socket_fd);
+        us_poll_free(p, group->loop);
+        *error = saved_errno;
+        errno = saved_errno;
+        return 0;
+    }
 
     struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
     us_internal_init_listen_socket(ls, group, kind, ssl_ctx, options, socket_ext_size);
@@ -395,7 +405,14 @@ struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t 
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
     us_poll_init(p, listen_socket_fd, POLL_TYPE_SEMI_SOCKET);
-    us_poll_start(p, group->loop, LIBUS_SOCKET_READABLE);
+    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
+        int saved_errno = errno;
+        bsd_close_socket(listen_socket_fd);
+        us_poll_free(p, group->loop);
+        *error = saved_errno;
+        errno = saved_errno;
+        return 0;
+    }
 
     struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
     us_internal_init_listen_socket(ls, group, kind, ssl_ctx, options, socket_ext_size);
@@ -485,7 +502,13 @@ struct us_socket_t *us_socket_group_connect_resolved_dns(struct us_socket_group_
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
-    us_poll_start(p, group->loop, LIBUS_SOCKET_WRITABLE);
+    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_WRITABLE) != 0) {
+        int saved_errno = errno;
+        bsd_close_socket(connect_socket_fd);
+        us_poll_free(p, group->loop);
+        errno = saved_errno;
+        return NULL;
+    }
 
     struct us_socket_t *socket = (struct us_socket_t *) p;
     us_internal_init_connect_socket(socket, group, kind, options);
@@ -560,20 +583,21 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
     struct addrinfo_request *ai_req;
     if (Bun__addrinfo_get(loop, host, (uint16_t)port, &ai_req) == 0) {
         struct addrinfo_result *result = Bun__addrinfo_getRequestResult(ai_req);
-        if (result->error) {
-            errno = result->error;
-            Bun__addrinfo_freeRequest(ai_req, 1);
-            return NULL;
-        }
-
-        struct addrinfo_result_entry *entries = result->entries;
-        if (entries && entries->info.ai_next == NULL) {
-            struct sockaddr_storage a;
-            init_addr_with_port(&entries->info, port, &a);
-            *has_dns_resolved = 1;
-            struct us_socket_t *s = us_socket_group_connect_resolved_dns(group, kind, ssl_ctx, &a, local_addr, options, socket_ext_size);
-            Bun__addrinfo_freeRequest(ai_req, s == NULL);
-            return s;
+        /* A cached resolver failure falls through to the connecting-socket path
+         * below (same as a multi-address result) so it is reported through the
+         * same connect-error callback, tagged `error_is_dns`, as an uncached
+         * one. Bun__addrinfo_set on an already-resolved request defers to the
+         * loop's dns_ready_head, never re-enters. */
+        if (!result->error) {
+            struct addrinfo_result_entry *entries = result->entries;
+            if (entries && entries->info.ai_next == NULL) {
+                struct sockaddr_storage a;
+                init_addr_with_port(&entries->info, port, &a);
+                *has_dns_resolved = 1;
+                struct us_socket_t *s = us_socket_group_connect_resolved_dns(group, kind, ssl_ctx, &a, local_addr, options, socket_ext_size);
+                Bun__addrinfo_freeRequest(ai_req, s == NULL);
+                return s;
+            }
         }
     }
 
@@ -616,7 +640,13 @@ struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
-    us_poll_start(p, group->loop, LIBUS_SOCKET_WRITABLE);
+    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_WRITABLE) != 0) {
+        int saved_errno = errno;
+        bsd_close_socket(connect_socket_fd);
+        us_poll_free(p, group->loop);
+        errno = saved_errno;
+        return 0;
+    }
 
     struct us_socket_t *connect_socket = (struct us_socket_t *) p;
     us_internal_init_connect_socket(connect_socket, group, kind, options);
@@ -641,9 +671,16 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
             continue;
         }
-        ++opened;
         bsd_socket_nodelay(connect_socket_fd, 1);
         struct us_socket_t *s = (struct us_socket_t *)us_create_poll(loop, 0, sizeof(struct us_socket_t) + c->socket_ext_size);
+        struct us_poll_t *poll = &s->p;
+        us_poll_init(poll, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
+        if (us_poll_start_rc(poll, loop, LIBUS_SOCKET_WRITABLE) != 0) {
+            bsd_close_socket(connect_socket_fd);
+            us_poll_free(poll, loop);
+            continue;
+        }
+        ++opened;
         us_internal_init_connect_socket(s, group, c->kind, c->options);
         s->timeout = c->timeout;
         s->long_timeout = c->long_timeout;
@@ -655,10 +692,6 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         s->connect_next = c->connecting_head;
         c->connecting_head = s;
         s->connect_state = c;
-
-        struct us_poll_t *poll = &s->p;
-        us_poll_init(poll, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
-        us_poll_start(poll, loop, LIBUS_SOCKET_WRITABLE);
     }
     return opened;
 }
@@ -686,6 +719,13 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 #endif
     struct addrinfo_result *result = Bun__addrinfo_getRequestResult(c->addrinfo_req);
     if (result->error) {
+        /* Preserve the getaddrinfo failure so the connect-error callback can
+         * report the resolver error (ENOTFOUND, ...) instead of the fabricated
+         * ECONNABORTED that us_connecting_socket_close fills in when `error`
+         * is still 0. `error_is_dns` tags the namespace: getaddrinfo return
+         * codes and errnos overlap numerically. */
+        c->error = result->error;
+        c->error_is_dns = 1;
         us_connecting_socket_close(c);
         return;
     }
@@ -694,6 +734,9 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 
     int opened = start_connections(c, CONCURRENT_CONNECTIONS);
     if (opened == 0) {
+        /* Same as the exhausted path in us_internal_socket_after_open: a
+         * real connect failure must not be reported as a caller abort. */
+        c->error = ECONNREFUSED;
         us_connecting_socket_close(c);
     }
 }
@@ -730,6 +773,11 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
             if (c->connecting_head == NULL || c->connecting_head->connect_next == NULL) {
                 int opened = start_connections(c, c->connecting_head == NULL ? CONCURRENT_CONNECTIONS : 1);
                 if (opened == 0 && c->connecting_head == NULL) {
+                    /* Every resolved address failed to connect. Without this,
+                     * us_connecting_socket_close defaults c->error to
+                     * ECONNABORTED (caller abort) and never invalidates the
+                     * DNS cache entry for the dead host. */
+                    c->error = ECONNREFUSED;
                     us_connecting_socket_close(c);
                 }
             }

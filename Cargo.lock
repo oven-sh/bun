@@ -363,7 +363,6 @@ dependencies = [
  "bun_io",
  "bun_js_parser",
  "bun_js_printer",
- "bun_lolhtml_sys",
  "bun_md",
  "bun_opaque",
  "bun_options_types",
@@ -385,6 +384,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
+ "lol_html",
  "scopeguard",
  "strum",
  "thiserror",
@@ -1286,24 +1286,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_lolhtml_sys"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_core",
- "bun_opaque",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "lol_html_c_api",
- "scopeguard",
- "strum",
- "thiserror",
-]
-
-[[package]]
 name = "bun_md"
 version = "0.0.0"
 dependencies = [
@@ -1678,7 +1660,6 @@ dependencies = [
  "bun_libarchive",
  "bun_libdeflate_sys",
  "bun_libuv_sys",
- "bun_lolhtml_sys",
  "bun_md",
  "bun_opaque",
  "bun_options_types",
@@ -1723,6 +1704,7 @@ dependencies = [
  "enumset",
  "getrandom",
  "libc",
+ "lol_html",
  "rust-argon2",
  "scopeguard",
  "sha3",
@@ -2954,16 +2936,6 @@ dependencies = [
  "mime",
  "precomputed-hash",
  "selectors",
- "thiserror",
-]
-
-[[package]]
-name = "lol_html_c_api"
-version = "1.3.1"
-dependencies = [
- "encoding_rs",
- "libc",
- "lol_html",
  "thiserror",
 ]
 

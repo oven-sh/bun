@@ -174,6 +174,72 @@ describe("fetch() decodes Content-Encoding case-insensitively", () => {
     }
   });
 
+  // The subprocess reads via `res.body` (ReadableStream) so the
+  // ResponseBodyStreaming signal is set, which makes the chunked-encoding
+  // handler call `decompress_chunk` per on_data instead of buffering the
+  // whole body first. Server writes yield to the event loop between chunks
+  // so they arrive in separate TCP segments / on_data callbacks, driving
+  // the decoder across multiple calls.
+  describe.each(["gzip", "deflate", "br", "zstd"] as const)(
+    "streaming %s decompression over multiple chunks",
+    encoding => {
+      it.concurrent.each(["0", "1"])("BUN_FEATURE_FLAG_NO_LIBDEFLATE=%s", async noLibdeflate => {
+        // Body large enough that the compressed form spans many 17-byte writes.
+        const expected = JSON.stringify({
+          data: Array.from({ length: 64 }, (_, i) => ({ i, s: `item-${i}` })),
+        });
+        const compress = { gzip: gzipSync, deflate: deflateSync, br: brotliCompressSync, zstd: zstdCompressSync };
+        const compressed = compress[encoding](expected);
+        const server = createNetServer(socket => {
+          socket.setNoDelay(true);
+          socket.write(
+            "HTTP/1.1 200 OK\r\n" +
+              `Content-Encoding: ${encoding}\r\n` +
+              "Transfer-Encoding: chunked\r\n" +
+              "Content-Type: application/json\r\n" +
+              "Connection: close\r\n\r\n",
+          );
+          (async () => {
+            for (let i = 0; i < compressed.length; i += 17) {
+              const chunk = compressed.subarray(i, i + 17);
+              socket.write(chunk.length.toString(16) + "\r\n");
+              socket.write(chunk);
+              socket.write("\r\n");
+              await new Promise(r => setImmediate(r));
+            }
+            socket.end("0\r\n\r\n");
+          })().catch(() => socket.destroy());
+        });
+        await once(server.listen(0), "listening");
+        try {
+          const { port } = server.address() as import("node:net").AddressInfo;
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `const res = await fetch(process.argv[1]);
+               if (res.status !== 200) throw new Error("status " + res.status);
+               const chunks = [];
+               for await (const c of res.body) chunks.push(c);
+               process.stdout.write(Buffer.concat(chunks).toString("utf8"));`,
+              `http://127.0.0.1:${port}/`,
+            ],
+            env: { ...bunEnv, BUN_FEATURE_FLAG_NO_LIBDEFLATE: noLibdeflate },
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr, exitCode }).toEqual({
+            stdout: expected,
+            stderr: expect.not.stringContaining("error"),
+            exitCode: 0,
+          });
+        } finally {
+          server.close();
+        }
+      });
+    },
+  );
+
   it("unknown Content-Encoding still passes through untouched", async () => {
     const server = createServer((req, res) => {
       res.setHeader("Content-Encoding", "foobar");

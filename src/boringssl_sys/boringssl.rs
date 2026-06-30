@@ -670,6 +670,7 @@ unsafe extern "C" {
     pub fn SSL_get_wbio(ssl: *const SSL) -> *mut BIO;
     pub fn SSL_do_handshake(ssl: *mut SSL) -> c_int;
     pub fn SSL_read(ssl: *mut SSL, buf: *mut c_void, num: c_int) -> c_int;
+    pub fn SSL_pending(ssl: *const SSL) -> c_int;
     pub fn SSL_write(ssl: *mut SSL, buf: *const c_void, num: c_int) -> c_int;
     pub fn SSL_shutdown(ssl: *mut SSL) -> c_int;
     pub fn SSL_get_error(ssl: *const SSL, ret_code: c_int) -> c_int;

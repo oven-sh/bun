@@ -616,7 +616,13 @@ impl PostgresSQLConnection {
     }
 
     pub fn set_status(&self, status: Status) {
-        if self.status.get() == status {
+        let current = self.status.get();
+        if current == status {
+            return;
+        }
+        // `Failed` is terminal: `fail_with_js_value` already closed the socket
+        // and rejected every pending request. Nothing may transition out of it.
+        if current == Status::Failed {
             return;
         }
         // reshaped for borrowck — `defer this.updateHasPendingActivity()` moved to explicit calls below.
@@ -2973,7 +2979,7 @@ impl PostgresSQLConnection {
             }
             MessageType::NoticeResponse => {
                 debug!("UNSUPPORTED NoticeResponse");
-                let _resp = protocol::NoticeResponse::decode_notice_internal(reader.reborrow())?;
+                let _resp = protocol::NoticeResponse::decode_internal(reader.reborrow())?;
                 // _resp dropped at scope end
             }
             MessageType::NotificationResponse => {

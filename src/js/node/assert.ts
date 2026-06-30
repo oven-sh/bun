@@ -744,7 +744,7 @@ async function waitForActual(promiseFn) {
   } else if (checkIsPromise(promiseFn)) {
     resultPromise = promiseFn;
   } else {
-    throw $ERR_INVALID_ARG_TYPE("promiseFn", ["function", "an instance of Promise"], promiseFn);
+    throw $ERR_INVALID_ARG_TYPE("promiseFn", ["Function", "Promise"], promiseFn);
   }
 
   try {

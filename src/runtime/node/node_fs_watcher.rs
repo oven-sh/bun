@@ -194,6 +194,7 @@ impl FSWatchTaskPosix {
                 Event::Rename(file_path) => self.ctx().emit::<{ EventType::Rename }>(file_path),
                 Event::Change(file_path) => self.ctx().emit::<{ EventType::Change }>(file_path),
                 Event::Error(err) => self.ctx().emit_error(err),
+                Event::NoFilename(event_type) => self.ctx().emit_null_filename(*event_type),
                 Event::Abort => self.ctx().emit_if_aborted(),
                 Event::Close => self.ctx().emit::<{ EventType::Close }>(b""),
             }
@@ -290,6 +291,10 @@ pub enum Event {
     Rename(EventPathString),
     Change(EventPathString),
     Error(bun_sys::Error),
+    /// An event with no filename, surfaced to JS with `null`, matching node:
+    /// `Change` when the OS event queue overflowed and changes were lost,
+    /// `Rename` when libuv could not convert a name to UTF-8 (Windows).
+    NoFilename(path_watcher::EventType),
     Abort,
     Close,
 }
@@ -301,6 +306,7 @@ impl Event {
             Event::Rename(path) => Event::Rename(Box::<[u8]>::from(&path[..])),
             Event::Change(path) => Event::Change(Box::<[u8]>::from(&path[..])),
             Event::Error(err) => Event::Error(err.clone()),
+            Event::NoFilename(event_type) => Event::NoFilename(*event_type),
             Event::Abort => Event::Abort,
             Event::Close => Event::Close,
         }
@@ -425,6 +431,7 @@ impl FSWatchTaskWindows {
             Event::Rename(path) => Self::run_path::<{ EventType::Rename }>(ctx, path),
             Event::Change(path) => Self::run_path::<{ EventType::Change }>(ctx, path),
             Event::Error(err) => ctx.emit_error(err),
+            Event::NoFilename(event_type) => ctx.emit_null_filename(*event_type),
             Event::Abort => ctx.emit_if_aborted(),
             Event::Close => ctx.emit::<{ EventType::Close }>(b""),
         }
@@ -840,6 +847,18 @@ impl FSWatcher {
             return;
         };
         emit_js::<EVENT_TYPE>(listener, &self.global_this, file_name);
+    }
+
+    /// `Event::NoFilename`: deliver `(event, null)` regardless of encoding.
+    fn emit_null_filename(&self, event_type: path_watcher::EventType) {
+        match event_type {
+            path_watcher::EventType::Rename => {
+                self.emit_with_filename::<{ EventType::Rename }>(JSValue::NULL);
+            }
+            path_watcher::EventType::Change => {
+                self.emit_with_filename::<{ EventType::Change }>(JSValue::NULL);
+            }
+        }
     }
 
     pub fn emit<const EVENT_TYPE: EventType>(&self, file_name: &[u8]) {

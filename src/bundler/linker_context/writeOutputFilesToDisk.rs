@@ -5,7 +5,7 @@ use bun_alloc::MaxHeapAllocator;
 use bun_ast::Loc;
 use bun_core::fmt::quote;
 use bun_core::{Error, err};
-use bun_core::{String as BunString, immutable as strings};
+use bun_core::{String as BunString, strings};
 use bun_paths::{self as paths, PathBuffer};
 use bun_wyhash::hash;
 

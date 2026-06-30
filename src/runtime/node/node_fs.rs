@@ -1358,8 +1358,8 @@ mod _async_tasks {
 
             if Self::HAVE_ABORT_SIGNAL {
                 if let Some(signal) = self.args.signal() {
-                    if let Some(reason) = signal.reason_if_aborted(global_object) {
-                        return promise.reject(global_object, Ok(reason.to_js(global_object)));
+                    if let Some(abort_error) = signal.node_abort_error_if_aborted(global_object) {
+                        return promise.reject(global_object, Ok(abort_error));
                     }
                 }
             }
@@ -2426,7 +2426,7 @@ mod _async_tasks {
                                 <$T as ReaddirEntry>::destroy_entry(item);
                             }
                             {
-                                let _lock = self.pending_err_mutex.lock();
+                                let _lock = self.pending_err_mutex.lock_guard();
                                 if self.pending_err.is_none() {
                                     let err_path: &[u8] = if !err.path.is_empty() {
                                         &err.path[..]
@@ -3488,7 +3488,10 @@ pub mod args {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
                     }
                 }
-                if val.is_number() || val.is_string() {
+                // Node branches on `typeof options === 'object'`, so a `String`
+                // wrapper is an options bag (the block above), never a positional
+                // mode; the string-like `is_string()` would route it through both.
+                if val.is_number() || val.is_string_literal() {
                     mode = node::mode_from_js(ctx, val)?.unwrap_or(mode);
                 }
             }
@@ -3838,16 +3841,32 @@ pub mod args {
                     // fs.write(fd, string[, position[, encoding]], callback)
                     _ => {
                         if current.is_number() {
-                            args.position = Some(i52::from_js(current));
-                            arguments.eat();
-                            let Some(next) = arguments.next() else {
-                                break 'parse;
-                            };
-                            current = next;
+                            let position = i52::from_js(current);
+                            if position >= 0 {
+                                args.position = Some(position);
+                            }
                         }
+                        // Node consumes the position slot whatever its type
+                        // (null, undefined, a non-number); the encoding is
+                        // strictly the next argument.
+                        arguments.eat();
+                        let Some(next) = arguments.next() else {
+                            break 'parse;
+                        };
+                        current = next;
                         if current.is_string() {
                             args.encoding = Encoding::assert(current, ctx, args.encoding)?;
                             arguments.eat();
+                            // `bv` was converted to UTF-8 before the encoding
+                            // argument was parsed; re-encode it now. Node
+                            // treats the "buffer" encoding name as UTF-8 here.
+                            if !matches!(args.encoding, Encoding::Utf8 | Encoding::Buffer) {
+                                if let Some(encoded) =
+                                    StringOrBuffer::from_js_with_encoding(ctx, bv, args.encoding)?
+                                {
+                                    args.buffer = encoded;
+                                }
+                            }
                         }
                     }
                 }
@@ -4150,9 +4169,7 @@ pub mod args {
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
                     if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.ok_or_else(|| {
-                            ctx.throw_invalid_arguments(format_args!("Invalid flag"))
-                        })?;
+                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                     }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {
@@ -4252,9 +4269,7 @@ pub mod args {
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
                     if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.ok_or_else(|| {
-                            ctx.throw_invalid_arguments(format_args!("Invalid flag"))
-                        })?;
+                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                     }
                     if let Some(mode_) = arg.get_truthy(ctx, "mode")? {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
@@ -4713,14 +4728,13 @@ pub mod ret {
                     Ok(array)
                 }
                 Readdir::Buffers(items) => {
-                    // `JSValue.fromAny(_, []Buffer, _)` — generic-slice arm:
-                    // build an empty array, push `item.toJS(globalObject)` for
-                    // each. Ownership of every `Buffer`'s bytes transfers to
-                    // JSC via `MarkedArrayBuffer::to_js`; the boxed slice
+                    // Node returns `Buffer[]` for `{ encoding: "buffer" }`, not
+                    // `Uint8Array[]`. Ownership of every `Buffer`'s bytes
+                    // transfers to JSC via `to_node_buffer`; the boxed slice
                     // itself is freed when `items` drops.
                     let array = JSValue::create_empty_array(global_object, items.len())?;
                     for (i, item) in items.iter().enumerate() {
-                        let res = item.to_js(global_object)?;
+                        let res = item.to_node_buffer(global_object);
                         if res == JSValue::ZERO {
                             return Ok(JSValue::ZERO);
                         }
@@ -5629,7 +5643,11 @@ impl NodeFS {
             to_sys_time_like(args.atime),
             to_sys_time_like(args.mtime),
         ) {
-            Err(err) => Err(err),
+            // `err.syscall` must be node's operation name, not `futimens(2)`.
+            Err(mut err) => {
+                err.syscall = sys::Tag::futime;
+                Err(err)
+            }
             Ok(_) => Ok(()),
         }
     }
@@ -8121,7 +8139,8 @@ impl NodeFS {
             to_sys_time_like(args.atime),
             to_sys_time_like(args.mtime),
         ) {
-            Err(err) => Err(err.with_path(args.path.slice())),
+            // `err.syscall` must be node's operation name, not `utimensat(2)`.
+            Err(err) => Err(err.with_path_and_syscall(args.path.slice(), sys::Tag::utime)),
             Ok(_) => Ok(()),
         }
     }
@@ -8143,7 +8162,7 @@ impl NodeFS {
             return if let Some(errno) = rc.errno() {
                 Err(sys::Error {
                     errno,
-                    syscall: sys::Tag::utime,
+                    syscall: sys::Tag::lutime,
                     path: args.path.slice().into(),
                     ..Default::default()
                 })
@@ -8157,7 +8176,8 @@ impl NodeFS {
             to_sys_time_like(args.atime),
             to_sys_time_like(args.mtime),
         ) {
-            Err(err) => Err(err.with_path(args.path.slice())),
+            // `err.syscall` must be node's operation name, not `utimensat(2)`.
+            Err(err) => Err(err.with_path_and_syscall(args.path.slice(), sys::Tag::lutime)),
             Ok(_) => Ok(()),
         }
     }

@@ -1736,23 +1736,37 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // Rust's `target_os = "linux"` excludes
                 // Android, so match both explicitly.
                 #[cfg(any(target_os = "linux", target_os = "android"))]
-                if bun_sys::get_errno(-1i32) == bun_sys::E::EACCES {
-                    let host = _hostname
-                        .as_ref()
-                        .map(|h| h.as_bytes())
-                        .unwrap_or(b"0.0.0.0");
-                    let err = jsc::SystemError {
-                        message: bun_core::String::create_format(format_args!(
-                            "permission denied {}:{}",
-                            bstr::BStr::new(host),
-                            port
-                        )),
-                        code: bun_core::String::static_("EACCES"),
-                        syscall: bun_core::String::static_("listen"),
-                        ..Default::default()
-                    };
-                    let _ = global.throw_value(err.to_error_instance(global));
-                    return;
+                {
+                    let errno = bun_sys::get_errno(-1i32);
+                    if errno == bun_sys::E::EACCES {
+                        let host = _hostname
+                            .as_ref()
+                            .map(|h| h.as_bytes())
+                            .unwrap_or(b"0.0.0.0");
+                        let err = jsc::SystemError {
+                            message: bun_core::String::create_format(format_args!(
+                                "permission denied {}:{}",
+                                bstr::BStr::new(host),
+                                port
+                            )),
+                            code: bun_core::String::static_("EACCES"),
+                            syscall: bun_core::String::static_("listen"),
+                            ..Default::default()
+                        };
+                        let _ = global.throw_value(err.to_error_instance(global));
+                        return;
+                    }
+                    // e.g. ENOSPC from epoll_ctl(EPOLL_CTL_ADD). Linux-only because
+                    // on other platforms errno is not reliably preserved through
+                    // the C++/callback chain to here; see PR #30364.
+                    if errno != bun_sys::E::SUCCESS && errno != bun_sys::E::EADDRINUSE {
+                        let err = jsc::SystemError::from(
+                            bun_sys::Error::from_code(errno, bun_sys::Tag::listen)
+                                .to_system_error(),
+                        );
+                        let _ = global.throw_value(err.to_error_instance(global));
+                        return;
+                    }
                 }
                 jsc::SystemError {
                     message: bun_core::String::create_format(format_args!(
@@ -2176,6 +2190,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 should_add_chrome_devtools_json_route = false;
             }
 
+            // An explicit HEAD handler route must stay the HEAD handler for its
+            // path: uWS keeps the last registration for a method and path, and
+            // static routes register after user routes.
+            let path_has_user_head_route =
+                self.user_routes
+                    .iter()
+                    .any(|route| match &route.route.method {
+                        server_config::RouteMethod::Specific(method) => {
+                            *method == http_method::Method::HEAD
+                                && route.route.path.as_bytes() == &*entry.path
+                        }
+                        server_config::RouteMethod::Any => false,
+                    });
+
             // Each `p`/`r` is the live `RefPtr<_>` stored in `entry.route`;
             // `app`/`h3_app` are the live uWS app handles owned by `self`.
             match &entry.route {
@@ -2186,6 +2214,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         p.as_ptr(),
                         &entry.path,
                         entry.method,
+                        path_has_user_head_route,
                     );
                     if Self::HAS_H3 {
                         if let Some(h3_app) = self.h3_app {
@@ -2196,6 +2225,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 p.as_ptr(),
                                 &entry.path,
                                 entry.method,
+                                path_has_user_head_route,
                             );
                         }
                     }
@@ -2207,6 +2237,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         p.as_ptr(),
                         &entry.path,
                         entry.method,
+                        path_has_user_head_route,
                     );
                     if Self::HAS_H3 {
                         if let Some(h3_app) = self.h3_app {
@@ -2217,6 +2248,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 p.as_ptr(),
                                 &entry.path,
                                 entry.method,
+                                path_has_user_head_route,
                             );
                         }
                     }
@@ -2228,6 +2260,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         r.as_ptr(),
                         &entry.path,
                         entry.method,
+                        path_has_user_head_route,
                     );
                     if Self::HAS_H3 {
                         if let Some(h3_app) = self.h3_app {
@@ -2238,6 +2271,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 r.as_ptr(),
                                 &entry.path,
                                 entry.method,
+                                path_has_user_head_route,
                             );
                         }
                     }
@@ -3498,17 +3532,16 @@ impl AnyServer {
         message: &[u8],
         opcode: uws::Opcode,
         compress: bool,
-    ) -> bool {
+    ) -> uws::SendStatus {
         any_server_dispatch!(self, |s| match s.app {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` via
             // `bun_opaque::opaque_deref_mut` (const-asserted ZST/align-1).
             Some(app) =>
                 bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress),
-            // Defensive false
-            // here for the post-stop window; assert in debug to catch misuse.
+            // Defensive for the post-stop window; assert in debug to catch misuse.
             None => {
                 debug_assert!(false, "publish on server with no app");
-                false
+                uws::SendStatus::Dropped
             }
         })
     }

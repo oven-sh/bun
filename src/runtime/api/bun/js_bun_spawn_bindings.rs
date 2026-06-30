@@ -397,6 +397,8 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut argv0: Option<*const c_char> = None;
     let mut ipc_channel: i32 = -1;
     let mut timeout: Option<i32> = None;
+    let mut uid: Option<u32> = None;
+    let mut gid: Option<u32> = None;
     let mut kill_signal: SignalCode = SignalCode::DEFAULT;
     let mut max_buffer: Option<i64> = None;
 
@@ -664,6 +666,40 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Some(detached_val) = args.get(global_this, "detached")? {
                 if detached_val.is_boolean() {
                     detached = detached_val.to_boolean();
+                }
+            }
+
+            // Node semantics: uid/gid are int32s passed through to the OS
+            // (negative values are cast to uid_t/gid_t, matching libuv).
+            if let Some(uid_value) = args.get(global_this, "uid")? {
+                if uid_value != JSValue::NULL {
+                    let uid_int = global_this.validate_integer_range::<i32>(
+                        uid_value,
+                        0,
+                        bun_sql_jsc::jsc::IntegerRange {
+                            min: i128::from(i32::MIN),
+                            max: i128::from(i32::MAX),
+                            field_name: b"uid",
+                            ..Default::default()
+                        },
+                    )?;
+                    uid = Some(uid_int as u32);
+                }
+            }
+
+            if let Some(gid_value) = args.get(global_this, "gid")? {
+                if gid_value != JSValue::NULL {
+                    let gid_int = global_this.validate_integer_range::<i32>(
+                        gid_value,
+                        0,
+                        bun_sql_jsc::jsc::IntegerRange {
+                            min: i128::from(i32::MIN),
+                            max: i128::from(i32::MAX),
+                            field_name: b"gid",
+                            ..Default::default()
+                        },
+                    )?;
+                    gid = Some(gid_int as u32);
                 }
             }
 
@@ -1052,6 +1088,8 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut spawn_options = SpawnOptions {
         cwd: cwd.to_vec().into_boxed_slice(),
         detached,
+        uid,
+        gid,
         stdin: match stdio[0].as_spawn_option(0) {
             stdio::ResultT::Result(opt) => opt,
             stdio::ResultT::Err(e) => return Err(e.throw_js(global_this)),

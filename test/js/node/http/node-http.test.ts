@@ -4201,6 +4201,8 @@ describe("server headersTimeout/requestTimeout enforcement", () => {
       // Message 1: a POST whose 4-byte body is withheld.
       socket.write("POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\n\r\n");
       await firstResponse;
+      // Deliberate fixed waits: they are inputs (when bytes reach the socket relative to the
+      // per-message deadline, which has no observable event), not waits for a condition.
       await Bun.sleep(5200);
       received = "";
       // One packet: message 1's body tail + message 2's partial headers.

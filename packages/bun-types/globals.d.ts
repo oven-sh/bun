@@ -1459,10 +1459,10 @@ interface Navigator {
    * everywhere, and `text/html` everywhere except Windows (use
    * `ClipboardItem.supports()` to feature-detect).
    *
-   * On Linux this drives `wl-paste`/`wl-copy` (Wayland), `xclip`, or `xsel`,
-   * so one of those must be installed and `$WAYLAND_DISPLAY` or `$DISPLAY`
-   * must be set; otherwise the methods reject with a `"NotAllowedError"`
-   * `DOMException`.
+   * On Linux this drives `wl-paste`/`wl-copy` (Wayland), `xclip`, or `xsel`
+   * (text only), so one of those must be installed and `$WAYLAND_DISPLAY` or
+   * `$DISPLAY` must be set; otherwise the methods reject with a
+   * `"NotAllowedError"` `DOMException`.
    *
    * @example
    * ```ts
@@ -1512,7 +1512,7 @@ interface Clipboard extends EventTarget {
   writeText(data: string): Promise<void>;
   /**
    * Read every supported representation of the clipboard's current item as a
-   * single `ClipboardItem` (an atomic snapshot).
+   * single `ClipboardItem`, in one operation.
    *
    * @returns `[item]`, or `[]` when no supported representation is present.
    * Rejects with a `"NotAllowedError"` `DOMException` when the platform

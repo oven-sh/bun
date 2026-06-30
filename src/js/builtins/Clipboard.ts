@@ -120,7 +120,8 @@ export function createClipboard(EventTargetConstructor, EventConstructor) {
   // by this constructor have it, it is unreachable from user code, and the
   // accessors throw for any receiver without it.
   class ClipboardItem {
-    constructor(items, options) {
+    // The default keeps `ClipboardItem.length` at 1 (`options` is optional).
+    constructor(items, options = undefined) {
       // WebIDL: `record<DOMString, ClipboardItemData>` requires an object.
       if (items === null || typeof items !== "object") {
         throw new TypeError("ClipboardItem requires a record of MIME type to data");
@@ -185,7 +186,8 @@ export function createClipboard(EventTargetConstructor, EventConstructor) {
   // and `cut` is synthetic-only (there is no selection to remove). Without
   // `DataTransfer`, `clipboardData` is always null.
   class ClipboardEvent extends EventConstructor {
-    constructor(type, eventInitDict) {
+    // The default keeps `ClipboardEvent.length` at 1 (the init is optional).
+    constructor(type, eventInitDict = undefined) {
       if (arguments.length < 1) throw new TypeError("ClipboardEvent requires a type argument");
       super(type, eventInitDict);
       $putByIdDirectPrivate(this, "clipboardEventBrand", true);

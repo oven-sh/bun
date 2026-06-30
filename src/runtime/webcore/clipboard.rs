@@ -347,6 +347,7 @@ mod platform {
 
     const CF_UNICODETEXT: c_uint = 13;
     const GMEM_MOVEABLE: c_uint = 0x0002;
+    const GMEM_ZEROINIT: c_uint = 0x0040;
 
     fn register(name: &CStr) -> Option<c_uint> {
         // SAFETY: a static NUL-terminated name; registering twice is fine.
@@ -470,9 +471,11 @@ mod platform {
             bytes
         };
         // `GlobalAlloc(_, 0)` returns a discarded object whose `GlobalLock`
-        // fails, so an empty representation still allocates one byte.
+        // fails, so an empty representation still allocates one byte; zeroed
+        // so no uninitialized heap byte (empty or rounding slack) is ever
+        // handed to the system-wide clipboard.
         // SAFETY: `SetClipboardData` requires a `GMEM_MOVEABLE` HGLOBAL.
-        let h = unsafe { GlobalAlloc(GMEM_MOVEABLE, payload.len().max(1)) };
+        let h = unsafe { GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, payload.len().max(1)) };
         if h.is_null() {
             return ptr::null_mut();
         }

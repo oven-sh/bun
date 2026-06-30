@@ -125,6 +125,8 @@ describe("ClipboardItem", () => {
   test("is a constructible global with the right shape", () => {
     expect(typeof ClipboardItem).toBe("function");
     expect(globalThis.ClipboardItem).toBe(ClipboardItem);
+    // WebIDL: the second constructor argument is optional.
+    expect(ClipboardItem.length).toBe(1);
     const item = new ClipboardItem({ "text/plain": "hello" });
     expect(item).toBeInstanceOf(ClipboardItem);
     expect(Object.prototype.toString.call(item)).toBe("[object ClipboardItem]");
@@ -194,6 +196,8 @@ describe("ClipboardEvent", () => {
   test("is a constructible Event subclass that can be dispatched synthetically", () => {
     expect(typeof ClipboardEvent).toBe("function");
     expect(Object.getPrototypeOf(ClipboardEvent.prototype)).toBe(Event.prototype);
+    // WebIDL: the event-init argument is optional.
+    expect(ClipboardEvent.length).toBe(1);
     const event = new ClipboardEvent("paste", { bubbles: true });
     expect(event).toBeInstanceOf(ClipboardEvent);
     expect(event).toBeInstanceOf(Event);

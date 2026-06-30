@@ -230,10 +230,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       // separate archives — cargo needs both on disk before it resolves the
       // manifest. Each `.ref` stamp's content is the pinned commit (plus
       // patch contents), so a bump or patch edit re-invokes cargo.
-      vendorStamps: [
-        ...(depsByName.get("lolhtml")?.outputs ?? []),
-        ...(depsByName.get("rust-argon2")?.outputs ?? []),
-      ],
+      vendorStamps: [...(depsByName.get("lolhtml")?.outputs ?? []), ...(depsByName.get("rust-argon2")?.outputs ?? [])],
     });
   }
 

@@ -319,11 +319,7 @@ async function runInPackageDir(cmd: string[]) {
 // stale range otherwise), and with package names it wrote `^<resolved>`
 // regardless of the original pin level, dropping the `npm:<name>@` prefix of
 // aliases; either way the very next `bun install` rewrote the lockfile.
-for (const args of [
-  ["update", "--latest"],
-  ["update"],
-  ["update", "baz", "baz-alias"],
-]) {
+for (const args of [["update", "--latest"], ["update"], ["update", "baz", "baz-alias"]]) {
   it(`${args.join(" ")} saves the resolved version range into the lockfile, issue#13388`, async () => {
     const urls: string[] = [];
     // `~0.0.3` so the plain `bun update` variants can move within the range once 0.0.5 appears.
@@ -372,10 +368,7 @@ for (const args of [
 // package names only moves the first group in PackageJSONEditor's
 // DEPENDENCY_GROUPS order (devDependencies before dependencies). bun.lock must
 // leave the other group's entry alone too, or the two files disagree again.
-for (const args of [
-  ["update", "--latest"],
-  ["update"],
-]) {
+for (const args of [["update", "--latest"], ["update"]]) {
   it(`${args.join(" ")} leaves the other group untouched in the lockfile, issue#13388`, async () => {
     const urls: string[] = [];
     const registry: Record<string, any> = { "0.0.3": {}, latest: "0.0.3" };

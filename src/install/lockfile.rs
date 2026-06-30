@@ -954,8 +954,7 @@ impl Lockfile {
         // `bun update` touched, stash it on the `updating_packages` entry, and
         // size the string builder.
         {
-            let root_deps: &[Dependency] =
-                root_deps_list.get(old.buffers.dependencies.as_slice());
+            let root_deps: &[Dependency] = root_deps_list.get(old.buffers.dependencies.as_slice());
             let old_resolutions_list =
                 old.packages.items_resolutions()[workspace_package_id as usize];
             let old_resolutions: &[PackageID] =
@@ -984,7 +983,9 @@ impl Lockfile {
                 }
 
                 let string_buf = string_builder.string_bytes.as_slice();
-                let Some(entry) = manager.updating_packages.get_mut(dep.name.slice(string_buf))
+                let Some(entry) = manager
+                    .updating_packages
+                    .get_mut(dep.name.slice(string_buf))
                 else {
                     continue;
                 };

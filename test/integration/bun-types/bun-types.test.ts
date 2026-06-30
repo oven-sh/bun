@@ -353,8 +353,9 @@ describe("@types/bun integration test", () => {
     }).resolvedModule?.resolvedFileName;
 
     // Must not reach the empty stub; unresolvable (ambient-only) or a real
-    // bun-types declaration is fine.
-    expect(resolved).not.toBe(atTypesBunStub);
+    // bun-types declaration is fine. TypeScript normalizes to forward slashes,
+    // so normalize the stub path too or the check is vacuous on Windows.
+    expect(resolved).not.toBe(atTypesBunStub.replaceAll("\\", "/"));
     if (resolved !== undefined) {
       expect(resolved).toMatch(/bun-types[\\/].+\.d\.ts$/);
     }

@@ -1,0 +1,98 @@
+---
+title: Running Bun in a Windows AppContainer
+description: What works, what the host must configure, and what the sandbox forbids when running Bun under an AppContainer (lowbox) token.
+---
+
+Bun can run inside a Windows AppContainer — the sandbox used by packaged apps and
+embedders that launch worker processes with a lowbox token
+(`CreateAppContainerProfile` + `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES`).
+Running a script, `bun run`, `bun install` (default linker), `bun build`,
+`bun test`, `Bun.spawn`/`child_process` with piped stdio, IPC
+(`process.send`), `Bun.serve` + `fetch` to itself, `fs.watch`, workers,
+`bun:sqlite`, `bun:ffi`, and `Bun.Terminal` all work inside the container.
+
+This page lists what the **host** (the process creating the container) must
+configure, and the platform behaviors that no amount of configuration changes.
+
+## Host configuration checklist
+
+The container only touches what its SID (or `ALL APPLICATION PACKAGES`) is
+ACL'd for, plus OS directories. Before launching Bun sandboxed:
+
+| Grant | Why |
+| --- | --- |
+| `RX` on `bun.exe` and its directory | the loader must read the image |
+| `(OI)(CI)` read (or modify) on the project tree | sources, `node_modules`, lockfile |
+| a writable working directory | Bun reads its cwd at startup |
+| nothing for TEMP | `CreateProcess` rewrites `TMP`/`TEMP` for an AppContainer child to the package's `AC\Temp`, which exists and is writable |
+
+```sh
+icacls C:\path\to\bun-dir /grant "*<container-sid>:(OI)(CI)(RX)" /T
+icacls C:\path\to\project /grant "*<container-sid>:(OI)(CI)(M)" /T
+```
+
+**Network needs capabilities.** With no capabilities the container has no DNS
+and no sockets (`EACCES`/`DNSResolveFailed`). Pass `internetClient` for
+outbound internet, `privateNetworkClientServer` for private-range addresses
+(corporate DNS included), `internetClientServer` for unsolicited inbound.
+
+**Services and CI must grant the window station.** Outside an interactive
+session, add the container SID to the window station and desktop DACLs or any
+executable importing `user32.dll` (Bun does) dies at load with
+`STATUS_DLL_INIT_FAILED` (0xC0000142). Interactive sessions already carry the
+right ACEs.
+
+**Loopback to other processes is blocked by design.** In-process loopback
+always works (`Bun.serve` + `fetch` to yourself is fine). Reaching another
+local process's `127.0.0.1` port — a database, a dev server, an inspector —
+requires the machine-level debugging exemption
+`CheckNetIsolation.exe LoopbackExempt -a -p=<container-sid>` (admin), which
+shipped apps cannot rely on.
+
+## Behavior differences inside the container
+
+- **Named pipe servers must live under `\\.\pipe\LOCAL\`.** The OS denies pipe
+  creation everywhere else; `net.createServer().listen(path)` and
+  `Bun.listen({ unix })` outside that prefix fail with `EACCES` (a name that
+  is genuinely taken still reports `EADDRINUSE`). Connecting to an existing
+  pipe elsewhere is allowed if that pipe's ACL admits the container. Bun's own
+  internal pipes (stdio, IPC, ConPTY) already use `LOCAL\`.
+- **True symlinks are impossible** — a lowbox token cannot hold
+  `SeCreateSymbolicLinkPrivilege`, so `fs.symlink` with `"file"`/`"dir"` fails
+  with `EPERM`. Hardlinks work. **Junctions are created but quarantined**: the
+  kernel rewrites them into *untrusted mount points* that nothing can traverse
+  (reads through them report `EACCES`), so treat junction-based layouts as
+  unavailable. `bun install` works with the default (hoisted) linker; the
+  isolated linker depends on junctions and will report `EACCES` per package
+  instead of producing dead links.
+- **`os.homedir()` points at an inaccessible directory.** `USERPROFILE` is
+  inherited unchanged, but the profile directory carries no ACE for the
+  container. Drive roots (`C:\`) are not listable either; Bun's resolver and
+  `fs.realpath` treat those inaccessible ancestors as opaque directories, so
+  project-relative work is unaffected.
+- **Process visibility is limited.** `process.kill` of unrelated pids and
+  enumerating other users' processes are denied; managing your own children
+  works.
+- A package cache created **outside** the container is currently
+  re-validated as a miss inside it; prefer letting the sandboxed process
+  populate its own `BUN_INSTALL_CACHE_DIR`.
+
+## Verifying a sandboxed setup
+
+A minimal smoke test that exercises the historically fragile paths:
+
+```js
+// smoke.js — run with: bun smoke.js (inside the container)
+const { spawnSync } = require("child_process");
+const r = spawnSync(process.execPath, ["-e", "0"], { stdio: ["pipe", "pipe", "pipe"] });
+console.log("spawn+pipes:", r.status === 0 ? "ok" : r.error);
+console.log("realpath:", require("fs").realpathSync("."));
+require("net").createServer(() => {}).listen("\\\\.\\pipe\\LOCAL\\smoke-" + process.pid, function () {
+  console.log("pipe server: ok");
+  this.close();
+});
+```
+
+If `spawn+pipes` hangs or the pipe server reports `EADDRINUSE` on a fresh
+name, the Bun build predates the AppContainer support (Bun ≥ 1.4.x with the
+patched libuv is required).

@@ -142,7 +142,8 @@
               "/runtime/shell",
               "/runtime/child-process",
               "/runtime/webview",
-              "/runtime/cron"
+              "/runtime/cron",
+              "/runtime/windows-appcontainer"
             ]
           },
           {

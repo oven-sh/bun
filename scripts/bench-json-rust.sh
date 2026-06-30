@@ -62,7 +62,10 @@ for f in abort targets per_target print timer nanobenchmark aligned_allocator; d
   build "$SUP/hwy_$f.o" $CXX -O3 -fPIC -std=c++17 -Ivendor/highway -c "vendor/highway/hwy/$f.cc"
 done
 if [ -f src/jsc/bindings/highway_json.cpp ]; then
-  build "$SUP/highway_json.o" $CXX -O3 -fPIC -std=c++17 -Ivendor/highway -Isrc/jsc/bindings -I"$BUN_CODEGEN_DIR" -c src/jsc/bindings/highway_json.cpp
+  # Always rebuild the kernel: it is the TU under iteration, and it includes
+  # the generated json_byte_class.h, which build()'s source-mtime cache
+  # would not see change.
+  $CXX -O3 -fPIC -std=c++17 -Ivendor/highway -Isrc/jsc/bindings -I"$BUN_CODEGEN_DIR" -c src/jsc/bindings/highway_json.cpp -o "$SUP/highway_json.o"
 fi
 rm -f "$SUP/libbun_bench_cdeps.a"
 ar rcs "$SUP/libbun_bench_cdeps.a" "$SUP"/*.o

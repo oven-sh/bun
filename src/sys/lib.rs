@@ -8913,7 +8913,7 @@ mod win_symlink_impl {
         // by the kernel into an untrusted mount point that traversal is
         // denied on (ERROR_UNTRUSTED_MOUNT_POINT) on client Windows builds,
         // while creation still reports success. Probe traversability and
-        // report EACCES rather than leaving a dead link behind for the
+        // report ELOOP rather than leaving a dead link behind for the
         // consumer to trip over. Outside an AppContainer the rewrite cannot
         // happen, so normal installs skip the probe entirely.
         if in_app_container() {

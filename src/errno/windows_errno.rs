@@ -694,7 +694,8 @@ impl SystemErrno {
             W::CANT_ACCESS_FILE => SystemErrno::EACCES,
             // The path cannot be traversed because it contains an untrusted
             // mount point: junctions created by a sandboxed process are
-            // permanently rewritten to this state by the kernel. ELOOP (an
+            // rewritten to this state by the kernel, and client Windows
+            // builds deny traversal on them. ELOOP (an
             // unresolvable link) rather than EACCES, which the installer
             // treats as a benign rename collision on Windows.
             W::UNTRUSTED_MOUNT_POINT => SystemErrno::ELOOP,

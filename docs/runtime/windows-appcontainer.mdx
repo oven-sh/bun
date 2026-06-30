@@ -66,7 +66,7 @@ shipped apps cannot rely on.
   treat junction-based layouts as unavailable. (Some Windows Server builds
   leave such junctions traversable.) `bun install` works with the default
   (hoisted) linker; the isolated linker depends on junctions and will report
-  `EACCES` per package instead of producing dead links.
+  `ELOOP` per package instead of producing dead links.
 - **`os.homedir()` points at an inaccessible directory.** `USERPROFILE` is
   inherited unchanged, but the profile directory carries no ACE for the
   container. Drive roots (`C:\`) are not listable either; Bun's resolver
@@ -98,6 +98,6 @@ require("net")
   });
 ```
 
-If `spawn+pipes` hangs, or the pipe listen throws a `TypeError` with no
-`code` property, the Bun build predates AppContainer support (requires a
-Bun release newer than v1.4.0).
+If `spawn+pipes` hangs, or the pipe listen fails with `ERR_INVALID_ARG_TYPE`
+instead of a system error code (`EACCES`/`EADDRINUSE`), the Bun build
+predates AppContainer support (requires Bun v1.4.0 or newer).

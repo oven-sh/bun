@@ -1036,9 +1036,14 @@ fn skip_json_value(contents: &[u8], p: usize) -> Option<usize> {
             None
         }
         // A primitive token (number, `true`/`false`/`null`): everything up
-        // to the next delimiter, whitespace, or comment.
+        // to the next delimiter, whitespace, or comment. A `-` is its own
+        // token in this dialect — whitespace and comments may separate it
+        // from its digits — so the value extends through them.
         _ => {
             let mut q = p;
+            if contents[q] == b'-' {
+                q = skip_ws_and_comments(contents, q + 1)?;
+            }
             while q < contents.len() {
                 match contents[q] {
                     b',' | b']' | b'}' | b':' => break,
@@ -1932,7 +1937,7 @@ mod tests {
                 _ => {}
             }
         }
-        let docs: [&str; 6] = [
+        let docs: [&str; 7] = [
             r#"{"a":1,"b" : "two", "es\"cé\\" :  [1, "x", {"y":null}, true, ["", -2]], "c":{"d":3}}"#,
             // Multiline JSONC: line + block comments on both sides of `:`
             // and between array items, trailing commas.
@@ -1942,6 +1947,8 @@ mod tests {
             // Line comments ended by `\r` alone and by U+2028 (no `\n`),
             // exactly the terminators the indexer accepts.
             "{\"a\": // c\r 1, \"b\": [0, // d\u{2028} 2]}",
+            // A `-` separated from its digits is one value.
+            "[- 5, 1, -\u{a0}2, /* c */ - /* d */ 3]",
             "[]",
             "[ [ ] , { } , \"]\" ]",
         ];

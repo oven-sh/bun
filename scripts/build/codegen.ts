@@ -38,6 +38,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { generateBuildOptionsRs } from "./buildOptionsRs.ts";
+import { generateJsonByteClass } from "./jsonByteClass.ts";
 import type { Config } from "./config.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
@@ -271,6 +272,13 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
   const buildOptionsRs = generateBuildOptionsRs(cfg);
   o.all.push(buildOptionsRs);
   o.rustInputs.push(buildOptionsRs);
+
+  // Same shape: the JSON byte-classification tables, consumed by both the
+  // Highway kernel (.h) and the Rust scalar indexer (.rs).
+  const jsonByteClass = generateJsonByteClass(cfg);
+  o.all.push(jsonByteClass.h, jsonByteClass.rs);
+  o.rustInputs.push(jsonByteClass.rs);
+  o.cppHeaders.push(jsonByteClass.h);
 
   emitBunError(ctx);
   emitStringMaps(ctx);

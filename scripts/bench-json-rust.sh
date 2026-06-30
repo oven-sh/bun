@@ -23,6 +23,13 @@ fi
 
 SUP=target/bench-json-cdeps
 mkdir -p "$SUP/wtf"
+# Generated at configure time (`bun bd` / `bun run build`): the byte-class
+# tables shared by the Highway kernel and the Rust scalar indexer.
+export BUN_CODEGEN_DIR=${BUN_CODEGEN_DIR:-$PWD/build/debug/codegen}
+if [ ! -f "$BUN_CODEGEN_DIR/json_byte_class.h" ]; then
+  echo "error: $BUN_CODEGEN_DIR/json_byte_class.h not found — run \`bun bd\` once first" >&2
+  exit 1
+fi
 CC=${CC:-cc}
 CXX=${CXX:-c++}
 # Pinned simdutf amalgamation for Bun's simdutf__* C wrapper (the real build
@@ -55,7 +62,7 @@ for f in abort targets per_target print timer nanobenchmark aligned_allocator; d
   build "$SUP/hwy_$f.o" $CXX -O3 -fPIC -std=c++17 -Ivendor/highway -c "vendor/highway/hwy/$f.cc"
 done
 if [ -f src/jsc/bindings/highway_json.cpp ]; then
-  build "$SUP/highway_json.o" $CXX -O3 -fPIC -std=c++17 -Ivendor/highway -Isrc/jsc/bindings -c src/jsc/bindings/highway_json.cpp
+  build "$SUP/highway_json.o" $CXX -O3 -fPIC -std=c++17 -Ivendor/highway -Isrc/jsc/bindings -I"$BUN_CODEGEN_DIR" -c src/jsc/bindings/highway_json.cpp
 fi
 rm -f "$SUP/libbun_bench_cdeps.a"
 ar rcs "$SUP/libbun_bench_cdeps.a" "$SUP"/*.o
@@ -66,7 +73,6 @@ ranlib "$SUP/libbun_bench_cdeps.a"
 # the OS between iterations and the bench turns into a page-fault storm bun
 # never sees in production. Keep pages resident like a busy install process.
 export MIMALLOC_PURGE_DELAY=${MIMALLOC_PURGE_DELAY:-2000}
-export BUN_CODEGEN_DIR=${BUN_CODEGEN_DIR:-$PWD/build/debug/codegen}
 export BUN_JSON_BENCH_FIXTURES=${BUN_JSON_BENCH_FIXTURES:-$PWD/bench/json-corpus}
 # Same link line everywhere; only the C++ runtime library name differs.
 CXXLIB=stdc++

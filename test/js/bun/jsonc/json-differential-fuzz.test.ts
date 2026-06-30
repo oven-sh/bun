@@ -268,8 +268,8 @@ function toSingleQuoted(token: string): string {
 /**
  * Re-serializes `tokens` (a valid JSON document) using JSONC-only syntax:
  * comments at random token boundaries (including immediately after scalars and
- * at EOF), trailing commas before `}` / `]`, and (when supported) single-quoted
- * strings. The decorated text must parse to the same value as the original.
+ * at EOF), trailing commas before `}` / `]`, and single-quoted strings. The
+ * decorated text must parse to the same value as the original.
  */
 function decorate(tokens: string[], rng: Rng): string {
   let s = "";
@@ -467,10 +467,7 @@ test(`differential fuzz: generated JSON and JSONC decorations agree with JSON.pa
       );
     }
   }
-  console.log(
-    `json-differential-fuzz: ${DOC_ITERS} generated docs OK (seed=${SEED}, largest doc=${maxTokens} tokens, ` +
-      "single-quote decoration enabled)",
-  );
+  console.log(`json-differential-fuzz: ${DOC_ITERS} generated docs OK (seed=${SEED}, largest doc=${maxTokens} tokens)`);
   // The generator must actually be producing documents.
   expect(maxTokens).toBeGreaterThan(1);
 });

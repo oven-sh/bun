@@ -2,6 +2,7 @@
 name = "bun_parsers"
 version.workspace = true
 edition.workspace = true
+build = "build.rs"
 
 [lib]
 path = "lib.rs"

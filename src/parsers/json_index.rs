@@ -35,6 +35,17 @@
 //!     differentially tested against.
 use bun_ast::Range;
 
+// The byte classification shared with the Highway JSON kernel: both sides are
+// generated from `scripts/build/jsonByteClass.ts`, so the two index producers
+// cannot disagree on a byte's class (the nibble-LUT scheme deliberately
+// false-positives a few bytes >= 0x80 — 0xBB, the middle byte of a UTF-8
+// BOM, among them — as structural; the scalar indexer must mirror that).
+#[allow(dead_code)]
+pub mod byte_class {
+    include!(concat!(env!("BUN_CODEGEN_DIR"), "/json_byte_class.rs"));
+}
+use byte_class::{CLASS_STRUCTURAL, CLASS_WHITESPACE, JSON_BYTE_CLASS};
+
 // Document-global facts collected during indexing. The first four match the
 // C++ kernel's flag bits. Flags accumulate as the document is indexed, so by
 // the time stage 2 looks at a token, the flags cover at least every byte of
@@ -363,15 +374,6 @@ impl<'c> StructuralIndex<'c> {
                     }
                     // Unterminated string: no closing index; stage 2 reports it.
                 }
-                b'{' | b'}' | b'[' | b']' | b':' | b',' => {
-                    emit!(i);
-                    self.s_prev_scalar = false;
-                    i += 1;
-                }
-                b' ' | b'\t' | b'\n' | b'\r' => {
-                    self.s_prev_scalar = false;
-                    i += 1;
-                }
                 b'/' => {
                     self.s_prev_scalar = false;
                     let start = i;
@@ -409,23 +411,35 @@ impl<'c> StructuralIndex<'c> {
                     }
                 }
                 _ => {
-                    // A backslash outside of a string "escapes" the next byte
-                    // exactly like the SIMD kernel's global odd-backslash-run
-                    // parity does: the only effect is whether a following `"`
-                    // opens a string. Such input is never valid JSON — both
-                    // producers feed stage 2 the same junk token — but they
-                    // must agree bit for bit to be testable against each
-                    // other.
-                    if c == b'\\' && !was_escaped {
-                        self.s_pending_escape = true;
-                    }
+                    // Classified by the generated table — the exact
+                    // classification the kernel's nibble LUTs compute, false
+                    // positives on non-ASCII bytes included. The streams of
+                    // the two producers must be identical: the post-oddity
+                    // restart swallows a *count* of already-delivered
+                    // indices, and this is the reference implementation the
+                    // kernel is differentially tested against.
                     if c >= 0x80 {
                         self.flags |= FLAG_HAS_NON_ASCII;
                     }
-                    if !self.s_prev_scalar {
+                    let cls = JSON_BYTE_CLASS[c as usize];
+                    if cls & CLASS_STRUCTURAL != 0 {
                         emit!(i);
+                        self.s_prev_scalar = false;
+                    } else if cls & CLASS_WHITESPACE != 0 {
+                        self.s_prev_scalar = false;
+                    } else {
+                        // A scalar-run byte. A backslash outside of a string
+                        // "escapes" the next byte exactly like the kernel's
+                        // global odd-backslash-run parity does: the only
+                        // effect is whether a following `"` opens a string.
+                        if c == b'\\' && !was_escaped {
+                            self.s_pending_escape = true;
+                        }
+                        if !self.s_prev_scalar {
+                            emit!(i);
+                        }
+                        self.s_prev_scalar = true;
                     }
-                    self.s_prev_scalar = true;
                     i += 1;
                 }
             }
@@ -533,7 +547,11 @@ mod tests {
             state ^= state << 17;
             state
         };
-        let alphabet: &[u8] = b"{}[]:,\"\\ \t\n\r0123456789aetfn.-+\x01\x1f\x80\xc3\xa9";
+        // `\xbb \xbc \xbd \xcc \xdb \xdd` are the high bytes the kernel's
+        // nibble LUT classifies as structural (and `\xef\xbb\xbf`, the BOM,
+        // contains one); the scalar indexer must agree on them.
+        let alphabet: &[u8] =
+            b"{}[]:,\"\\ \t\n\r0123456789aetfn.-+\x01\x1f\x80\xc3\xa9\xbb\xbc\xbd\xcc\xdb\xdd\xef\xbf";
         for _ in 0..20_000 {
             let len = (rng() % 200) as usize;
             let mut buf = Vec::with_capacity(len);
@@ -566,24 +584,30 @@ mod tests {
         // indices from the SIMD producer have been consumed; the scalar
         // restart must hand out the continuation seamlessly.
         for oddity in ["// trailing comment\n", "'single'"] {
-            let mut doc = String::new();
-            doc.push('[');
+            // With and without a UTF-8 BOM: the kernel indexes the BOM as
+            // three entries (its nibble LUT classifies 0xBB as structural)
+            // and the scalar indexer must match, or the restart's
+            // swallow-count misaligns and stage 2 sees a corrupt stream.
+            for prefix in ["", "\u{FEFF}"] {
+                let mut doc = String::from(prefix);
+                doc.push('[');
             while doc.len() < 5 * REFILL_INPUT {
                 doc.push_str("\"padding padding padding\", 12345, true, ");
             }
-            let tail = format!("{oddity} \"end\"]");
-            let strict = format!("{}\"x\"]", &doc);
-            doc.push_str(&tail);
-            let mut streamed = StructuralIndex::new(doc.as_bytes());
-            let (si, sf) = collect(&mut streamed);
-            let mut scalar = StructuralIndex::with_producer(doc.as_bytes(), true);
-            let (ci, cf) = collect(&mut scalar);
-            assert_eq!(si, ci);
-            assert_eq!(sf, cf);
-            // And a document with no oddity at all stays on the SIMD path.
-            let mut clean = StructuralIndex::new(strict.as_bytes());
-            collect(&mut clean);
-            assert!(!clean.use_scalar || !bun_core::env::IS_NATIVE);
+                let tail = format!("{oddity} \"end\"]");
+                let strict = format!("{}\"x\"]", &doc);
+                doc.push_str(&tail);
+                let mut streamed = StructuralIndex::new(doc.as_bytes());
+                let (si, sf) = collect(&mut streamed);
+                let mut scalar = StructuralIndex::with_producer(doc.as_bytes(), true);
+                let (ci, cf) = collect(&mut scalar);
+                assert_eq!(si, ci, "prefix {prefix:?} oddity {oddity:?}");
+                assert_eq!(sf, cf);
+                // And a document with no oddity at all stays on the SIMD path.
+                let mut clean = StructuralIndex::new(strict.as_bytes());
+                collect(&mut clean);
+                assert!(!clean.use_scalar || !bun_core::env::IS_NATIVE);
+            }
         }
     }
 

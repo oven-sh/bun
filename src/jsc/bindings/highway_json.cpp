@@ -59,6 +59,8 @@
 
 #include <string.h>
 
+#include "json_byte_class.h"
+
 // Output flag bits (mirrored in Rust: `bun_parsers::json_index::FLAG_*`).
 #define BUN_JSON_IDX_HAS_BACKSLASH_IN_STRING (1u << 0)
 #define BUN_JSON_IDX_HAS_CTRL_IN_STRING (1u << 1)
@@ -89,13 +91,10 @@ static HWY_INLINE uint64_t PrefixXor(uint64_t x)
 }
 
 // Class bits produced by the two-nibble lookup (cls = lo[b & 0xf] & hi[b >> 4]):
-//   0x07 structural { } [ ] : ,     0x18 whitespace sp \t \n \r
-//   0x20 oddity / '                 0x40 control < 0x20
-// Derived from simdjson's tables with the oddity/control classes folded in.
-alignas(16) static const uint8_t kLutLo[16] = { 0x50, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x60,
-    0x40, 0x48, 0x4C, 0x41, 0x42, 0x49, 0x40, 0x60 };
-alignas(16) static const uint8_t kLutHi[16] = { 0x48, 0x40, 0x32, 0x04, 0x00, 0x01, 0x00, 0x01,
-    0x00, 0x00, 0x00, 0x03, 0x02, 0x01, 0x00, 0x00 };
+//   structural { } [ ] : ,    whitespace sp \t \n \r    oddity / '    control
+// The LUTs (and the 256-entry table the Rust scalar indexer uses) are
+// generated from one definition — scripts/build/jsonByteClass.ts — so the
+// two producers can never disagree on a byte's class.
 
 // `base_offset` is added to every emitted index. `inout_state[0..3]` carries
 // the escape / in-string / scalar-run state across chunks (zeros for the
@@ -113,12 +112,12 @@ size_t JsonIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, size_t base_
     const auto v_bs = hn::Set(d, (uint8_t)'\\');
     const auto v_quote = hn::Set(d, (uint8_t)'"');
     const auto v_0f = hn::Set(d, (uint8_t)0x0f);
-    const auto lut_lo = hn::LoadDup128(d, kLutLo);
-    const auto lut_hi = hn::LoadDup128(d, kLutHi);
-    const auto v_op_bits = hn::Set(d, (uint8_t)0x07);
-    const auto v_opws_bits = hn::Set(d, (uint8_t)0x1f);
-    const auto v_odd_bits = hn::Set(d, (uint8_t)0x20);
-    const auto v_ctrl_bits = hn::Set(d, (uint8_t)0x40);
+    const auto lut_lo = hn::LoadDup128(d, kBunJsonLutLo);
+    const auto lut_hi = hn::LoadDup128(d, kBunJsonLutHi);
+    const auto v_op_bits = hn::Set(d, (uint8_t)BUN_JSON_CLASS_STRUCTURAL);
+    const auto v_opws_bits = hn::Set(d, (uint8_t)(BUN_JSON_CLASS_STRUCTURAL | BUN_JSON_CLASS_WHITESPACE));
+    const auto v_odd_bits = hn::Set(d, (uint8_t)BUN_JSON_CLASS_ODDITY);
+    const auto v_ctrl_bits = hn::Set(d, (uint8_t)BUN_JSON_CLASS_CONTROL);
     const auto v_zero = hn::Zero(d);
     const auto iota32 = hn::Iota(d32, 0);
 

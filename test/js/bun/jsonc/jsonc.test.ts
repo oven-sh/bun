@@ -630,4 +630,23 @@ describe("structural index window seams", () => {
       expectAgree(minifiedDocOfLength(n));
     }
   });
+
+  // A BOM-prefixed document whose first comment (or single quote) is past the
+  // first SIMD window: the kernel indexes the document until the comment
+  // makes it bail, then the scalar indexer restarts from byte 0 and must
+  // re-derive the exact same index stream — including for the BOM, whose
+  // middle byte is one of the few non-ASCII bytes the shared classification
+  // table calls structural.
+  test("BOM-prefixed document with a comment past the first window", () => {
+    let body = "";
+    let i = 0;
+    while (body.length < 3 * WINDOW) body += `"k${i++}": ${i},\n`;
+    const doc = "\uFEFF{\n" + body + '"z": 0 // trailing comment\n}\n';
+    expect(doc.indexOf("//")).toBeGreaterThan(WINDOW);
+    const expected = JSON.parse(doc.replace("\uFEFF", "").replace("// trailing comment", ""));
+    expect(Bun.JSONC.parse(doc)).toEqual(expected);
+
+    const singleQuoted = "\uFEFF{\n" + body + "'z': 'x'\n}\n";
+    expect((Bun.JSONC.parse(singleQuoted) as Record<string, unknown>).z).toBe("x");
+  });
 });

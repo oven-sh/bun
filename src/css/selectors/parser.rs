@@ -3983,11 +3983,14 @@ pub fn parse_has<Impl: BunSelectorImpl>(
     state: &mut SelectorParsingState,
 ) -> CResult<GenericComponent<Impl>> {
     let mut child_state = *state;
+    // Since https://github.com/w3c/csswg-drafts/issues/7676, :has() takes a
+    // <relative-selector-list>, which is not forgiving. Forgiving recovery would
+    // leave the list empty, which has no valid serialization (`:has()`).
     let inner = GenericSelectorList::<Impl>::parse_relative_with_state(
         parser,
         input,
         &mut child_state,
-        parser.is_and_where_error_recovery(),
+        ParseErrorRecovery::DiscardList,
         NestingRequirement::None,
     )?;
 

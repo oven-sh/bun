@@ -964,7 +964,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             let mut followed_link: Option<FollowedLink> = None;
                             let descend = child.count() != 0
                                 && match A::statat(dir_fd, ZStr::from_slice_with_nul(b".\0")) {
-                                    Ok(target) => match self.walker.check_followed_link(target) {
+                                    Ok(target) => match self.walker.check_followed_link(&target) {
                                         Some(link) => {
                                             followed_link = Some(link);
                                             true
@@ -2006,11 +2006,11 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
     /// Returns the record to attach to the descent's work item, or `None` when
     /// `target` is already on the followed-link ancestor chain (a cycle).
-    fn check_followed_link(&self, target: Stat) -> Option<FollowedLink> {
-        if self.is_followed_link_cycle(&target) {
+    fn check_followed_link(&self, target: &Stat) -> Option<FollowedLink> {
+        if self.is_followed_link_cycle(target) {
             return None;
         }
-        Some(FollowedLink { stat: target })
+        Some(FollowedLink { stat: *target })
     }
 
     /// Accessors with [`Accessor::ENTRY_KIND_FOLLOWS_SYMLINKS`] report a
@@ -2030,7 +2030,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         // SAFETY: dupe_z NUL-terminates
         let name_z_ref = ZStr::from_slice_with_nul(&name_z[..]);
         match A::statat(dir_fd, name_z_ref) {
-            Ok(target) => match self.check_followed_link(target) {
+            Ok(target) => match self.check_followed_link(&target) {
                 Some(link) => {
                     *followed_link = Some(link);
                     true

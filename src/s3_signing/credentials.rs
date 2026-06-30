@@ -1116,7 +1116,7 @@ pub fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
             let Some(start) = strings::index_of(endpoint, b"/") else {
                 return Some(&endpoint[0..end]);
             };
-            return Some(endpoint.get(start + 1..end).unwrap_or(&endpoint[0..end]));
+            return Some(endpoint.get(start + 1..end).unwrap_or_else(|| &endpoint[0..end]));
         }
     } else if let Some(r2_start) = strings::index_of(endpoint, b".r2.cloudflarestorage.com") {
         // check if is <BUCKET>.<ACCOUNT_ID>.r2.cloudflarestorage.com
@@ -1129,7 +1129,7 @@ pub fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
         let Some(start) = strings::index_of(endpoint, b"/") else {
             return Some(&endpoint[0..end]);
         };
-        return Some(endpoint.get(start + 1..end).unwrap_or(&endpoint[0..end]));
+        return Some(endpoint.get(start + 1..end).unwrap_or_else(|| &endpoint[0..end]));
     }
     None
 }

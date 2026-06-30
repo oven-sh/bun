@@ -554,11 +554,11 @@ test.each(["Request", "Response"])(
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stdout: stdout.trim().split("\n"), exitCode }).toEqual({
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
       stdout: ["caught TypeError: Body is disturbed or locked", "done"],
+      stderr: "",
       exitCode: 0,
     });
-    expect(stderr).not.toContain("Body is disturbed or locked");
   },
 );
 
@@ -592,11 +592,11 @@ test("new Request(request) with a locked stream body throws a catchable TypeErro
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stdout: stdout.trim().split("\n"), exitCode }).toEqual({
+  expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
     stdout: ["caught TypeError: ReadableStream is locked", "done"],
+    stderr: "",
     exitCode: 0,
   });
-  expect(stderr).not.toContain("ReadableStream is locked");
 });
 
 // https://fetch.spec.whatwg.org/#dom-request-clone (step 1)

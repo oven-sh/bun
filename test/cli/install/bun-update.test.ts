@@ -314,11 +314,8 @@ async function runInPackageDir(cmd: string[]) {
 
 // https://github.com/oven-sh/bun/issues/13388
 // `bun update` must write the same resolved version into bun.lock's workspace
-// entries that it writes into package.json. Previously the lockfile kept the
-// pre-resolution literal with no package names ("latest" under --latest, the
-// stale range otherwise), and with package names it wrote `^<resolved>`
-// regardless of the original pin level, dropping the `npm:<name>@` prefix of
-// aliases; either way the very next `bun install` rewrote the lockfile.
+// entries that it writes into package.json, preserving the pin level and the
+// `npm:<name>@` prefix of aliases, so the next `bun install` has nothing to do.
 for (const args of [["update", "--latest"], ["update"], ["update", "baz", "baz-alias"]]) {
   it(`${args.join(" ")} saves the resolved version range into the lockfile, issue#13388`, async () => {
     const urls: string[] = [];
@@ -364,12 +361,9 @@ for (const args of [["update", "--latest"], ["update"], ["update", "baz", "baz-a
 }
 
 // https://github.com/oven-sh/bun/issues/13388
-// When the same name appears in two dependency groups, `bun update` only moves
-// one of them in package.json: with no package names, the first group in
-// edit_update_no_args's DEPENDENCY_GROUPS order (devDependencies before
-// dependencies); with a package name, the first group edit() scans
-// (dependencies before devDependencies). bun.lock must leave the other group's
-// entry alone too, or the two files disagree again.
+// When a package exists in two dependency groups, only one group moves in
+// package.json, and no-arg and positional updates pick different groups. The
+// untouched group's bun.lock entry must stay unchanged too.
 for (const { args, expected } of [
   { args: ["update", "--latest"], expected: { dependencies: "~0.0.3", devDependencies: "~0.0.5" } },
   { args: ["update"], expected: { dependencies: "~0.0.3", devDependencies: "~0.0.5" } },

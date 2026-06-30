@@ -918,20 +918,9 @@ impl Lockfile {
         Ok(())
     }
 
-    /// `bun update` with no package names tracks the dependencies it updates
-    /// through `manager.updating_packages` rather than
-    /// `manager.update_requests`, so `preprocess_update_requests` never sees
-    /// them and the literal serialized into `bun.lock`'s workspaces section
-    /// stays whatever the pre-resolution in-memory package.json said (`latest`
-    /// under `--latest`, the old range otherwise). Rewrite the root package's
-    /// dependency versions here, before `clean` clones them into the lockfile
-    /// that gets saved, and record each resolved literal on its
-    /// `PackageUpdateInfo` so the post-install package.json edit writes the
-    /// identical string.
-    ///
-    /// The package.json edit must consume the recorded literal rather than
-    /// re-derive it: it runs after this rewrite, so anything it reads back off
-    /// the lockfile's root dependency would already be the new value.
+    /// `bun update` with no package names tracks its targets through
+    /// `manager.updating_packages`, which `preprocess_update_requests` never
+    /// sees. Rewrite the root dependency literals `clean` will serialize.
     fn preprocess_updating_packages(
         old: &mut Lockfile,
         manager: &mut PackageManager,
@@ -1191,10 +1180,9 @@ impl Lockfile {
         if !updates.is_empty() {
             clean_preprocess_update_requests_cold(old, manager, updates, exact_versions)?;
         } else if !manager.updating_packages.is_empty() {
-            // `bun update` with no package names has no `UpdateRequest`s; it
-            // tracks its targets through `updating_packages` instead. The
-            // positional path above reads those same entries inside
-            // `preprocess_update_requests`, so this must stay `else if`.
+            // `bun update` with no package names has no `UpdateRequest`s; its
+            // targets are in `updating_packages`. The positional path reads
+            // those same entries above, so this must stay `else if`.
             clean_preprocess_updating_packages_cold(old, manager, exact_versions)?;
         }
 
@@ -1442,17 +1430,9 @@ fn clean_preprocess_updating_packages_cold(
     Lockfile::preprocess_updating_packages(old, manager, exact_versions)
 }
 
-/// Literal to write into the lockfile's root dependency for a positional
-/// `bun update <name>` / `bun add <name>` request that resolved to
-/// `resolved_version`. `bun update <name>` recorded the original package.json
-/// literal on `updating_packages`; preserve its pin level and `npm:<name>@`
-/// alias prefix so the lockfile matches what `PackageJSONEditor::edit` writes.
-/// `bun add` never records an entry and keeps saving `^<resolved>`.
-///
-/// Returns `None` when the entry was recorded from a different dependency
-/// group than `dep` belongs to. `PackageJSONEditor::edit` only rewrites the
-/// entry's own group in package.json, so the lockfile must leave this one
-/// alone too.
+/// Root dependency literal for a positional `bun update <name>` / `bun add`
+/// request, matching what `PackageJSONEditor::edit` writes into package.json,
+/// or `None` if `dep` is in a different group than the recorded entry.
 fn positional_update_literal(
     updating_packages: &StringArrayHashMap<PackageUpdateInfo>,
     dep: &Dependency,
@@ -1484,10 +1464,9 @@ fn positional_update_literal(
     Some(out)
 }
 
-/// Formats the version literal `bun update` writes for a root dependency that
-/// resolved to `resolved_version`: the resolved version at the same pin level
-/// (`^`, `~`, exact) the user's package.json literal had, preserving the
-/// `npm:<name>@` prefix (taken from `dep_literal`) for aliased dependencies.
+/// Formats the version literal `bun update` writes for a root dependency:
+/// `resolved_version` at the user's original pin level (`^`, `~`, exact),
+/// preserving the `npm:<name>@` prefix of aliases (taken from `dep_literal`).
 pub(crate) fn format_updated_version_literal(
     resolved_version: &Semver::Version,
     string_buf: &[u8],

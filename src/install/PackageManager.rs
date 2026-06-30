@@ -625,11 +625,9 @@ pub struct PackageUpdateInfo {
     /// the lockfile's root `Dependency` for the same name can be matched when
     /// it appears in more than one group.
     pub group_behavior: Behavior,
-    /// The literal `bun update` (with no package names) resolved for this
-    /// dependency. Computed once in `Lockfile::preprocess_updating_packages`
-    /// and applied to both the lockfile's root dependency and (afterwards)
-    /// package.json, so the two can never disagree. `None` keeps the literal
-    /// the user already had.
+    /// The literal a no-argument `bun update` resolved, computed once in
+    /// `Lockfile::preprocess_updating_packages` and applied to both the
+    /// lockfile and package.json. `None` keeps the literal the user had.
     pub updated_version_literal: Option<Box<[u8]>>,
 }
 

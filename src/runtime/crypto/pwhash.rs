@@ -1,8 +1,10 @@
 //! Password hashing for `Bun.password` (argon2 / bcrypt). Neither algorithm is
 //! provided by BoringSSL, so this module implements the API surface that
 //! `PasswordObject` consumes (`str_hash` / `str_verify` / `Params` / `Mode` /
-//! `Encoding`) and routes to the pure-Rust `rust-argon2` and `bcrypt` crates
-//! from crates.io.
+//! `Encoding`) and routes to the pure-Rust `rust-argon2` and `bcrypt` crates.
+//! `rust-argon2` is fetched and patched at build time (`patches/rust-argon2/`):
+//! the patch only adds `verify_encoded_legacy_memory`, which `str_verify`
+//! routes `m < 8*p` hashes to so earlier Bun releases stay verifiable.
 //!
 //!   * argon2: PHC string format only (`str_hash` rejects `.crypt`), 32-byte
 //!     random salt, 32-byte tag, version 0x13.
@@ -217,6 +219,8 @@ pub mod argon2 {
             }
         };
 
+        let mut mem_cost: Option<u32> = None;
+        let mut parallelism: Option<u32> = None;
         if let Some(after_dollar) = normalised.strip_prefix('$') {
             if let Some(sep) = after_dollar.find('$') {
                 let mut rest = &after_dollar[sep + 1..];
@@ -235,9 +239,15 @@ pub mod argon2 {
                         continue;
                     };
                     let limit = match key {
-                        "m" => MAX_VERIFY_MEMORY_COST,
+                        "m" => {
+                            mem_cost = Some(value);
+                            MAX_VERIFY_MEMORY_COST
+                        }
                         "t" => MAX_VERIFY_TIME_COST,
-                        "p" => MAX_VERIFY_PARALLELISM,
+                        "p" => {
+                            parallelism = Some(value);
+                            MAX_VERIFY_PARALLELISM
+                        }
                         _ => continue,
                     };
                     if value > limit {
@@ -247,7 +257,19 @@ pub mod argon2 {
             }
         }
 
-        match vendor::verify_encoded(&normalised, password) {
+        // Earlier (Zig-backed) Bun accepted any `memoryCost >= 1`, so hashes
+        // with `m < 8*p` exist; `verify_encoded` would reject them up front.
+        // Route them to the legacy entry point. Hashing still floors `m` at 8.
+        let legacy_low_memory = match (mem_cost, parallelism) {
+            (Some(m), Some(p)) => m >= 1 && p >= 1 && m < 8 * p,
+            _ => false,
+        };
+        let result = if legacy_low_memory {
+            vendor::verify_encoded_legacy_memory(&normalised, password)
+        } else {
+            vendor::verify_encoded(&normalised, password)
+        };
+        match result {
             Ok(true) => Ok(()),
             // `rust-argon2` constant-time compares and returns `Ok(false)` on
             // mismatch; surface this as `PasswordVerificationFailed`.

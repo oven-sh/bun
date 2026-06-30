@@ -98,6 +98,6 @@ require("net")
   });
 ```
 
-If `spawn+pipes` hangs, or the `LOCAL\` pipe server reports `EACCES`, the
-Bun build predates AppContainer support; use a release that includes this
-documentation page.
+If `spawn+pipes` hangs, or the pipe listen throws a `TypeError` with no
+`code` property, the Bun build predates AppContainer support (requires a
+Bun release newer than v1.4.0).

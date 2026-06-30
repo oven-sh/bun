@@ -26,6 +26,7 @@ describe.skipIf(isWindows || process.getuid?.() === 0)("resolver with unreadable
         cwd: join(outer, "project"),
         env: bunEnv,
       });
+      if (proc.exitCode !== 0) console.error("stderr:", proc.stderr.toString());
       expect(proc.stdout.toString()).toContain("XONLY-OK 42");
       expect(proc.exitCode).toBe(0);
     } finally {

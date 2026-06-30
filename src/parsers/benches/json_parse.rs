@@ -101,8 +101,8 @@ fn bench_json(c: &mut Criterion) {
         // parse. This mirrors classic-AST callers with a long-lived arena
         // (the resolver's `JsonCache`, whose arena is never reset),
         // isolating the parser-only delta on small documents from the flat
-        // ~5us mi_heap lifecycle. (The simple AST no longer touches an arena
-        // at all, so it has no "warm" variant.)
+        // ~5us mi_heap lifecycle. (The row AST never touches an arena, so it
+        // has no "warm" variant.)
         group.bench_function(BenchmarkId::new("parse_nowarn_warm", &name), |b| {
             let mut bump = Bump::new();
             b.iter(|| {

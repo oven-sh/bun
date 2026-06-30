@@ -1919,8 +1919,8 @@ fn parse_data_loader<'a>(
     // export, whose AST goes straight to `to_js`) gets a classic tree: its
     // named-exports rewrite splices every top-level property's value `Expr`
     // into the module's statements, and the linker's visit/clone/shake
-    // passes only know the classic shape. The materialized tree carries the
-    // parser-recorded location of every node.
+    // passes only know the classic shape. The materializer recovers every
+    // node's exact location from the source (this parse records none).
     if !keep_json_and_toml_as_one_statement
         && matches!(
             expr.data,

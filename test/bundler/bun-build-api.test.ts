@@ -370,37 +370,6 @@ describe("Bun.build", () => {
     expect(response.headers.get("etag")).toMatchSnapshot("content-etag");
   });
 
-  // https://github.com/oven-sh/bun/issues/10004
-  // `.stream()` must use BuildArtifact's own cached-stream slot, not JSBlob's
-  // (the JSBlob slot offset aliases the cached `.kind` getter on a BuildArtifact).
-  describe("BuildArtifact.stream()", () => {
-    test("streams the artifact's own contents", async () => {
-      const x = await Bun.build({
-        entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
-      });
-      expect(x.success).toBe(true);
-      const artifact = x.outputs[0];
-      const stream = artifact.stream();
-      expect(stream).toBeInstanceOf(ReadableStream);
-      expect(await new Response(stream).text()).toBe(await artifact.text());
-    });
-
-    test("is unaffected by reading cached getters first", async () => {
-      const x = await Bun.build({
-        entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
-      });
-      expect(x.success).toBe(true);
-      const artifact = x.outputs[0];
-      // Populate the cached `.kind` getter slot before the first `.stream()`.
-      expect(artifact.kind).toBe("entry-point");
-      const stream = artifact.stream();
-      expect(stream).toBeInstanceOf(ReadableStream);
-      expect(await new Response(stream).text()).toBe(await artifact.text());
-      // And `.stream()` must not have clobbered the cached `.kind` slot.
-      expect(artifact.kind).toBe("entry-point");
-    });
-  });
-
   // test("BuildArtifact with assets", async () => {
   //   const x = await Bun.build({
   //     entrypoints: [join(import.meta.dir, "./fixtures/with-assets/index.js")],

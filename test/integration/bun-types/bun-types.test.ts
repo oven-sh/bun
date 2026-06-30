@@ -24,14 +24,9 @@ const DEFAULT_COMPILER_OPTIONS = ts.parseJsonConfigFileContent(
   dirname(TSCONFIG_SOURCE_PATH),
 ).options;
 
-// The shell below spawns `bun run build` / `bun pm pack` through $PATH. On CI
-// and most developer machines $PATH's `bun` is a release build whose
-// `Bun.version` differs from the debug / ASAN build running this test (e.g.
-// `1.3.14` vs `1.3.14-debug`). Without pinning the version every child
-// process agrees on, the build script stamps `package.json` with whatever
-// `$PATH`'s bun reports, `bun pm pack` names the tarball accordingly, and
-// our subsequent `bun add bun-types@${BUN_TYPES_TARBALL_NAME}` references a
-// filename that no longer exists.
+// Pin BUN_VERSION so $PATH's `bun` (release) and this process (debug/ASAN)
+// agree on the version stamped into package.json and the packed tarball name;
+// otherwise `bun add bun-types@${BUN_TYPES_TARBALL_NAME}` looks for a missing file.
 const $ = Shell.cwd(BUN_REPO_ROOT).env({ ...process.env, BUN_VERSION });
 
 let TEMP_DIR: string;

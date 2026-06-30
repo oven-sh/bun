@@ -786,19 +786,13 @@ impl<'a> Run<'a> {
                     // key into the `MacroContext` bump arena so it outlives the
                     // temporary `to_owned_slice()` Vec and the returned `Expr`.
                     let key_bytes: &[u8] = self.bump.alloc_slice_copy(&prop.to_owned_slice());
-                    // An own "__proto__" property must be printed as a computed key,
-                    // otherwise the object literal sets the prototype instead.
-                    let flags: bun_ast::flags::PropertySet = if key_bytes == b"__proto__" {
-                        bun_ast::flags::Property::IsComputed.into()
-                    } else {
-                        bun_ast::flags::PROPERTY_NONE
-                    };
+                    let key = Expr::init(E::EString::init(key_bytes), self.caller.loc);
                     VecExt::append(
                         &mut properties,
                         G::Property {
-                            key: Some(Expr::init(E::EString::init(key_bytes), self.caller.loc)),
+                            flags: E::own_key_property_flags(&key),
+                            key: Some(key),
                             value: Some(object_value),
-                            flags,
                             ..Default::default()
                         },
                     );

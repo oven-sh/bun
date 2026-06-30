@@ -4872,16 +4872,6 @@ pub mod __gated_printer {
                 set_flag(&mut item.flags, js_ast::flags::Property::IsComputed, true);
             }
 
-            // Data-file objects must define "__proto__" as an own property, so it
-            // must be printed as a computed key in a JavaScript object literal.
-            if !IS_JSON
-                && self.was_lazy_export
-                && !item.flags.contains(js_ast::flags::Property::IsComputed)
-                && matches!(&key.data, ExprData::EString(e) if e.eql_comptime(b"__proto__"))
-            {
-                set_flag(&mut item.flags, js_ast::flags::Property::IsComputed, true);
-            }
-
             if !IS_JSON && item.flags.contains(js_ast::flags::Property::IsComputed) {
                 self.print(b"[");
                 self.print_expr(key, Level::Comma, ExprFlag::none());
@@ -8408,7 +8398,6 @@ pub fn print_common_js<
     );
     // `defer { if (generate_source_map) printer.source_map_builder.line_offset_tables.deinit(opts.allocator); }`
     // — no longer needed: see `print_ast` above.
-    printer.was_lazy_export = tree.has_lazy_export;
     printer.binary_expression_stack = Vec::new();
 
     for part in tree.parts.iter() {

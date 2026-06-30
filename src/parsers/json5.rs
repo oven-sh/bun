@@ -573,6 +573,7 @@ impl<'a> JSON5Parser<'a> {
             let value = self.parse_value()?;
 
             properties.push(G::Property {
+                flags: E::own_key_property_flags(&key),
                 key: Some(key),
                 value: Some(value),
                 ..Default::default()

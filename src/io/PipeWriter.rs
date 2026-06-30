@@ -1138,9 +1138,6 @@ impl<Parent: PosixStreamingWriterParent> Drop for PosixStreamingWriter<Parent> {
 pub trait BaseWindowsPipeWriter {
     type Parent: WindowsWriterParent;
 
-    /// `true` for WindowsStreamingWriter (has `current_payload`), `false` for buffered.
-    const HAS_CURRENT_PAYLOAD: bool;
-
     fn source(&self) -> &Option<Source>;
     fn source_mut(&mut self) -> &mut Option<Source>;
     fn parent_ptr(&self) -> *mut Self::Parent;
@@ -1181,19 +1178,15 @@ pub trait BaseWindowsPipeWriter {
         let Some(source) = self.source_mut().take() else {
             return;
         };
-        // Check for in-flight file write before detaching. detach()
-        // nulls fs.data so onFsWriteComplete can't recover the writer
-        // to call deref(). We must balance processSend's ref() here.
-        let has_inflight_write = if Self::HAS_CURRENT_PAYLOAD {
-            match &source {
-                Source::SyncFile(file) | Source::File(file) => {
-                    file.state == crate::source::FileState::Operating
-                        || file.state == crate::source::FileState::Canceling
-                }
-                _ => false,
+        // Check for in-flight file write before detaching. detach() nulls
+        // fs.data so on_fs_write_complete can't recover the writer to call
+        // deref(); balance the ref taken when the write was submitted here.
+        let has_inflight_write = match &source {
+            Source::SyncFile(file) | Source::File(file) => {
+                file.state == crate::source::FileState::Operating
+                    || file.state == crate::source::FileState::Canceling
             }
-        } else {
-            false
+            _ => false,
         };
         match source {
             Source::SyncFile(file) | Source::File(file) => {
@@ -1462,7 +1455,6 @@ impl<Parent: WindowsBufferedWriterParent> Default for WindowsBufferedWriter<Pare
 #[cfg(windows)]
 impl<Parent: WindowsBufferedWriterParent> BaseWindowsPipeWriter for WindowsBufferedWriter<Parent> {
     type Parent = Parent;
-    const HAS_CURRENT_PAYLOAD: bool = true;
 
     fn source(&self) -> &Option<Source> {
         &self.source
@@ -1577,11 +1569,9 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         // them after the call. Launder so post-`on_write` reads see fresh
         // state.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        // Deref the parent at scope end to balance the ref taken in write():
-        // `Parent::on_write` re-entry may drop the last external strong ref,
-        // and the trailing `is_done`/`close()` reads below need parent (and
-        // `self`, intrusive in it) alive. Lazy `.parent` read at guard
-        // execution — see WindowsStreamingWriter::on_write_complete.
+        // Scopeguard deref to balance write()'s ref: `Parent::on_write` may
+        // drop the last external strong ref, and the trailing `is_done` /
+        // `close()` reads below need the parent (and `self`, inside it) alive.
         let _g = scopeguard::guard(this, |s| Self::r_deref(s));
         let written = Self::r(this).pending_payload_size;
         Self::r(this).pending_payload_size = 0;
@@ -1739,11 +1729,10 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
                 self.close();
                 self.parent_on_error(err);
             } else {
-                // Keep the parent (which owns `self` intrusively) alive while
-                // the write is in flight. The matching deref runs in
-                // on_fs_write_complete/on_write_complete, or in close() if the
-                // writer is torn down mid-flight.
-                // SAFETY: parent BACKREF valid; intrusive refcount bump.
+                // Ref the parent to prevent it from being freed while the async
+                // write is in flight. The matching deref is in on_write_complete,
+                // on_fs_write_complete, or close() (mid-flight teardown).
+                // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
                 unsafe { Parent::ref_(self.parent()) };
             }
         } else {
@@ -1993,7 +1982,6 @@ impl<Parent: WindowsStreamingWriterParent> BaseWindowsPipeWriter
     for WindowsStreamingWriter<Parent>
 {
     type Parent = Parent;
-    const HAS_CURRENT_PAYLOAD: bool = true;
 
     fn source(&self) -> &Option<Source> {
         &self.source
@@ -2751,11 +2739,6 @@ macro_rules! impl_streaming_writer_parent {
 
 /// Stamp `PosixBufferedWriterParent` + `WindowsWriterParent` +
 /// `WindowsBufferedWriterParent` for a parent type. See module comment above.
-///
-/// `win_on_write_guard` runs on Windows immediately before forwarding
-/// `on_write`; bind a keepalive there if the callback may drop the last
-/// external strong ref (and the inline `uv_write_t`) mid-re-entry. Pass
-/// `|_this| ()` for none.
 #[macro_export]
 macro_rules! impl_buffered_writer_parent {
     (@borrow mut    $p:expr) => { &mut *$p };
@@ -2773,7 +2756,6 @@ macro_rules! impl_buffered_writer_parent {
         uv_loop    = |$uv_this:ident| $uv:expr,
         ref_       = |$ref_this:ident| $ref_:expr,
         deref      = |$deref_this:ident| $deref:expr,
-        win_on_write_guard = |$guard_this:ident| $guard:expr,
     ) => {
         #[cfg(not(windows))]
         impl $($gen)* $crate::pipe_writer::PosixBufferedWriterParent for $Ty {
@@ -2843,9 +2825,6 @@ macro_rules! impl_buffered_writer_parent {
             #[inline]
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: BACKREF set via `set_parent`; see borrow-mode note.
-                let $guard_this = this;
-                #[allow(unused_unsafe, clippy::let_unit_value)]
-                let _guard = unsafe { $guard };
                 unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_write(amount, status) };
             }
             #[inline]

@@ -160,7 +160,7 @@ describe("IOWriter file output redirection", () => {
 
 // On Windows the uv_fs_write completion callback re-enters JS (resolving the
 // command's promise), which drops the redirect IOWriter's last reference; the
-// rest of that callback must not touch it. https://github.com/oven-sh/bun/pull/33114
+// rest of that callback must not touch it. https://github.com/oven-sh/bun/issues/33108
 test.concurrent("write completion survives dropping the redirect writer's last reference", async () => {
   using dir = tempDir("shell-redirect-writer-keepalive", {
     "redirect-fixture.ts": /* ts */ `

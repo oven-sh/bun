@@ -68,7 +68,7 @@ fn errno_sys(rc: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
     }
 }
 
-use bun_core::immutable::ares_inet_pton as inet_pton;
+use bun_core::strings::ares_inet_pton as inet_pton;
 
 unsafe extern "C" {
     // libc byte-order conversions are pure on the integer argument — no

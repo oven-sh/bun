@@ -441,10 +441,10 @@ impl PmPkgCommand {
             })),
             ExprData::ENumber(n) => {
                 let mut v = Vec::new();
-                if n.value.floor() == n.value {
-                    write!(&mut v, "{:.0}", n.value).or_write_failed()?;
+                if n.value().floor() == n.value() {
+                    write!(&mut v, "{:.0}", n.value()).or_write_failed()?;
                 } else {
-                    write!(&mut v, "{}", n.value).or_write_failed()?;
+                    write!(&mut v, "{}", n.value()).or_write_failed()?;
                 }
                 Ok(v.into_boxed_slice())
             }
@@ -764,16 +764,11 @@ impl PmPkgCommand {
             }
 
             if let Some(int_val) = bun_core::fmt::parse_decimal::<i64>(value) {
-                return Ok(Expr::init(
-                    E::Number {
-                        value: int_val as f64,
-                    },
-                    Loc::EMPTY,
-                ));
+                return Ok(Expr::init(E::Number::new(int_val as f64), Loc::EMPTY));
             }
 
             if let Some(float_val) = parse_f64(value) {
-                return Ok(Expr::init(E::Number { value: float_val }, Loc::EMPTY));
+                return Ok(Expr::init(E::Number::new(float_val), Loc::EMPTY));
             }
 
             let temp_source = Source::init_path_string(b"package.json", value);

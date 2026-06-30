@@ -5,8 +5,8 @@ const SharedHandle = require("internal/cluster/SharedHandle");
 const path = require("node:path");
 const { kHandle } = require("internal/shared");
 
-const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperPrimary", 4);
-const onInternalMessage = $newZigFunction("node_cluster_binding.zig", "onInternalMessagePrimary", 3);
+const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
+const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
 
 let child_process;
 

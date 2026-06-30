@@ -1,12 +1,9 @@
-//! Generated from `mime_type_list.txt` (hand-rolled stand-in until
-//! `src/codegen/generate-compact-string-table.ts` learns `.rs` output).
+//! Hand-maintained; derived from `mime_type_list.txt`.
 //!
 //! PERF: a packed `enum(u14)` (length-group:7 + position:7)
 //! indexing into one contiguous byte blob would be 2 bytes/entry. This stand-in
 //! stores a `&'static str` per entry (16 bytes on 64-bit). Swap for the
-//! packed encoding when the codegen script grows a Rust backend.
-//
-// The `.rs` path is not wired into codegen yet.
+//! packed encoding if a packed-enum generator is added.
 
 /// Compact handle to one of the 2310 known MIME-type strings.
 ///

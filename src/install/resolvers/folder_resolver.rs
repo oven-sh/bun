@@ -82,9 +82,18 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
     }
 }
 
+/// Value stored in the folder-resolution map: the resolution plus the
+/// normalized absolute `package.json` path the key hash was computed from.
+/// Lookups compare the path, since a different path whose hash collides must
+/// not reuse this resolution.
+pub struct Entry {
+    pub abs_path: Box<[u8]>,
+    pub resolution: FolderResolution,
+}
+
 // bun_collections::HashMap currently ignores the context/load-factor
 // type params (backed by std HashMap); identity hashing is a TODO(perf).
-pub type Map = HashMap<u64, FolderResolution, IdentityContext<u64>>;
+pub type Map = HashMap<u64, Entry, IdentityContext<u64>>;
 
 pub(crate) fn normalize(path: &[u8]) -> &[u8] {
     FileSystem::instance().normalize(path)
@@ -418,10 +427,14 @@ pub fn get_or_put(
     let abs_hash = hash(abs.as_bytes());
 
     // Check first, compute, then insert, because read_package_json_from_disk
-    // needs &mut manager.
-    if let Some(existing) = manager.folders.get(&abs_hash) {
-        return *existing;
-    }
+    // needs &mut manager. Compare the stored path, not just its hash: a
+    // different path whose hash collides must not reuse this resolution. On a
+    // collision, resolve fresh without caching so the first path's entry stays.
+    let hash_collision = match manager.folders.get(&abs_hash) {
+        Some(existing) if *existing.abs_path == *abs.as_bytes() => return existing.resolution,
+        Some(_) => true,
+        None => false,
+    };
 
     let result: Result<LockfilePackage, bun_core::Error> = match global_or_relative {
         GlobalOrRelative::Global(_) => 'global: {
@@ -487,13 +500,27 @@ pub fn get_or_put(
             } else {
                 FolderResolution::Err(err)
             };
-            manager.folders.insert(abs_hash, stored);
+            if !hash_collision {
+                manager.folders.insert(
+                    abs_hash,
+                    Entry {
+                        abs_path: abs.as_bytes().into(),
+                        resolution: stored,
+                    },
+                );
+            }
             return stored;
         }
     };
 
-    manager
-        .folders
-        .insert(abs_hash, FolderResolution::PackageId(package.meta.id));
+    if !hash_collision {
+        manager.folders.insert(
+            abs_hash,
+            Entry {
+                abs_path: abs.as_bytes().into(),
+                resolution: FolderResolution::PackageId(package.meta.id),
+            },
+        );
+    }
     FolderResolution::NewPackageId(package.meta.id)
 }

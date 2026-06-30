@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 
 import { disableAggressiveGCScope } from "harness";
@@ -207,15 +207,100 @@ describe("unref()", () => {
   });
 });
 
-describe("close()", () => {
-  test("send/bind/close on a closed socket throw ERR_SOCKET_DGRAM_NOT_RUNNING", async () => {
+describe("after close()", () => {
+  // Node throws ERR_SOCKET_DGRAM_NOT_RUNNING from these methods once the
+  // socket is closed. They must not surface an internal TypeError instead.
+  async function boundThenClosed() {
     const socket = createSocket("udp4");
-    await new Promise<void>(resolve => socket.bind(0, resolve));
-    await new Promise<void>(resolve => socket.close(resolve));
+    const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+    socket.bind(0, onListening);
+    await listening;
+    const port = socket.address().port;
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    socket.close(onClose);
+    await closed;
+    return { socket, port };
+  }
 
-    const notRunning = expect.objectContaining({ code: "ERR_SOCKET_DGRAM_NOT_RUNNING" });
-    expect(() => socket.send(Buffer.from("hello"), 12345, "127.0.0.1")).toThrow(notRunning);
-    expect(() => socket.bind(0)).toThrow(notRunning);
-    expect(() => socket.close()).toThrow(notRunning);
+  test("address() throws ERR_SOCKET_DGRAM_NOT_RUNNING", async () => {
+    const { socket } = await boundThenClosed();
+    let err: any;
+    try {
+      socket.address();
+    } catch (e) {
+      err = e;
+    }
+    expect({ name: err?.name, code: err?.code }).toEqual({ name: "Error", code: "ERR_SOCKET_DGRAM_NOT_RUNNING" });
+  });
+
+  test("remoteAddress() throws ERR_SOCKET_DGRAM_NOT_RUNNING", async () => {
+    const { socket } = await boundThenClosed();
+    expect(() => socket.remoteAddress()).toThrowWithCode(Error, "ERR_SOCKET_DGRAM_NOT_RUNNING");
+  });
+
+  test("send() throws ERR_SOCKET_DGRAM_NOT_RUNNING", async () => {
+    const { socket, port } = await boundThenClosed();
+    expect(() => socket.send(Buffer.from("hello"), port, "127.0.0.1")).toThrowWithCode(
+      Error,
+      "ERR_SOCKET_DGRAM_NOT_RUNNING",
+    );
+  });
+
+  test("send() with a callback throws ERR_SOCKET_DGRAM_NOT_RUNNING synchronously", async () => {
+    const { socket, port } = await boundThenClosed();
+    expect(() => socket.send(Buffer.from("hello"), port, "127.0.0.1", () => {})).toThrowWithCode(
+      Error,
+      "ERR_SOCKET_DGRAM_NOT_RUNNING",
+    );
+  });
+
+  test("close() throws ERR_SOCKET_DGRAM_NOT_RUNNING", async () => {
+    const { socket } = await boundThenClosed();
+    expect(() => socket.close()).toThrowWithCode(Error, "ERR_SOCKET_DGRAM_NOT_RUNNING");
+  });
+
+  test("bind() throws ERR_SOCKET_DGRAM_NOT_RUNNING", async () => {
+    const { socket } = await boundThenClosed();
+    expect(() => socket.bind(0)).toThrowWithCode(Error, "ERR_SOCKET_DGRAM_NOT_RUNNING");
+  });
+
+  test("close() of a never-bound socket can only be called once", async () => {
+    const socket = createSocket("udp4");
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    socket.close(onClose);
+    await closed;
+    expect(() => socket.close()).toThrowWithCode(Error, "ERR_SOCKET_DGRAM_NOT_RUNNING");
+  });
+
+  test("Symbol.asyncDispose resolves when the socket is already closed", async () => {
+    const { socket } = await boundThenClosed();
+    expect(await socket[Symbol.asyncDispose]()).toBeUndefined();
+  });
+});
+
+describe("bind()", () => {
+  // Node throws ERR_SOCKET_ALREADY_BOUND synchronously from bind(); the error
+  // must reach the caller's try/catch, never an attached 'error' listener.
+  test("on an already-bound socket throws ERR_SOCKET_ALREADY_BOUND and does not emit 'error'", async () => {
+    await using socket = createSocket("udp4");
+    const { promise: listening, resolve: onListening, reject } = Promise.withResolvers<void>();
+    const onError = jest.fn(reject);
+    socket.on("error", onError);
+    socket.bind(0, onListening);
+    await listening;
+    expect(() => socket.bind(0)).toThrowWithCode(Error, "ERR_SOCKET_ALREADY_BOUND");
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  test("while a bind is still in flight throws ERR_SOCKET_ALREADY_BOUND and does not emit 'error'", async () => {
+    await using socket = createSocket("udp4");
+    const { promise: listening, resolve: onListening, reject } = Promise.withResolvers<void>();
+    const onError = jest.fn(reject);
+    socket.on("error", onError);
+    socket.bind(0, onListening);
+    expect(() => socket.bind(0)).toThrowWithCode(Error, "ERR_SOCKET_ALREADY_BOUND");
+    // The in-flight first bind must still complete normally.
+    await listening;
+    expect(onError).not.toHaveBeenCalled();
   });
 });

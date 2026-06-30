@@ -2314,8 +2314,17 @@ mod posix_impl {
         }
     }
 
+    // `syscall` is the JS-facing `err.syscall` tag (`stat`/`lstat`/`fstat`):
+    // node reports the operation name, never the `statx(2)` implementation
+    // detail, and the non-statx fallback below already uses those same tags.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn statx_impl(fd: Fd, path: Option<&ZStr>, flags: c_int, mask: u32) -> Maybe<PosixStat> {
+    fn statx_impl(
+        fd: Fd,
+        path: Option<&ZStr>,
+        flags: c_int,
+        mask: u32,
+        syscall: Tag,
+    ) -> Maybe<PosixStat> {
         use core::sync::atomic::Ordering;
         let mut buf = core::mem::MaybeUninit::<lx::statx>::uninit();
         let pathname: *const c_char = match path {
@@ -2356,7 +2365,7 @@ mod posix_impl {
                 }
                 return Err(Error {
                     errno: raw_errno as _,
-                    syscall: Tag::statx,
+                    syscall,
                     ..Default::default()
                 });
             }
@@ -2400,11 +2409,17 @@ mod posix_impl {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn fstatx(fd: Fd, mask: u32) -> Maybe<PosixStat> {
-        statx_impl(fd, None, libc::AT_EMPTY_PATH, mask)
+        statx_impl(fd, None, libc::AT_EMPTY_PATH, mask, Tag::fstat)
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn statx(path: &ZStr, mask: u32) -> Maybe<PosixStat> {
-        statx_impl(Fd::from_native(libc::AT_FDCWD), Some(path), 0, mask)
+        statx_impl(
+            Fd::from_native(libc::AT_FDCWD),
+            Some(path),
+            0,
+            mask,
+            Tag::stat,
+        )
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn lstatx(path: &ZStr, mask: u32) -> Maybe<PosixStat> {
@@ -2413,6 +2428,7 @@ mod posix_impl {
             Some(path),
             libc::AT_SYMLINK_NOFOLLOW,
             mask,
+            Tag::lstat,
         )
     }
 
@@ -3799,7 +3815,8 @@ mod windows_impl {
         };
         if rc != bun_windows_sys::NTSTATUS::SUCCESS {
             // `errnoSys` for `NTSTATUS` routes through the curated
-            // `translateNTStatusToErrno` table, NOT `RtlNtStatusToDosError`.
+            // `translateNTStatusToErrno` table first, then falls back to
+            // `RtlNtStatusToDosError` for unmapped codes.
             let errno = w::translate_nt_status_to_errno(rc);
             return Err(Error::new(errno, Tag::ftruncate).with_fd(fd));
         }
@@ -4126,9 +4143,9 @@ mod windows_impl {
         // Windows has no lchmod; libuv chmod follows symlinks. Match Node: fall through.
         chmod(path, mode)
     }
-    pub fn lchown(_path: &ZStr, _uid: u32, _gid: u32) -> Maybe<()> {
+    pub fn lchown(path: &ZStr, uid: u32, gid: u32) -> Maybe<()> {
         // Windows has no ownership model; libuv uv_fs_lchown is a no-op success.
-        Ok(())
+        sys_uv::lchown(path, uid as _, gid as _)
     }
     pub fn fchownat(_dir: impl AsFd, _path: &ZStr, _uid: u32, _gid: u32, _flags: i32) -> Maybe<()> {
         let _dir = _dir.as_fd();
@@ -4920,9 +4937,9 @@ pub type EnvMap = std::collections::HashMap<String, String>;
 #[macro_export]
 macro_rules! syslog {
     ($fmt:literal $(, $arg:expr)* $(,)?) => {
-        // Gate on `debug_assertions` (== `Environment::ENABLE_LOGS`) — matches
+        // Gate on `env::IS_DEBUG` (== `Environment::ENABLE_LOGS`) — matches
         // bun_core::scoped_log!; there is no `debug_logs` Cargo feature.
-        if cfg!(debug_assertions) && $crate::fd::SYS.is_visible() {
+        if ::bun_core::env::IS_DEBUG && $crate::fd::SYS.is_visible() {
             const __NL: &str =
                 ::bun_core::output::_needs_nl(::bun_core::pretty_fmt!($fmt, false));
             // Branch on ANSI *before* `format_args!` so each `$arg` evaluates
@@ -5383,6 +5400,7 @@ pub mod linux {
     pub mod EPOLL {
         pub const IN: u32 = libc::EPOLLIN as u32;
         pub const OUT: u32 = libc::EPOLLOUT as u32;
+        pub const PRI: u32 = libc::EPOLLPRI as u32;
         pub const ERR: u32 = libc::EPOLLERR as u32;
         pub const HUP: u32 = libc::EPOLLHUP as u32;
         pub const RDHUP: u32 = libc::EPOLLRDHUP as u32;
@@ -5488,6 +5506,7 @@ pub mod linux {
         pub const ISDIR: u32 = libc::IN_ISDIR;
         pub const ONESHOT: u32 = libc::IN_ONESHOT;
         pub const IGNORED: u32 = libc::IN_IGNORED;
+        pub const Q_OVERFLOW: u32 = libc::IN_Q_OVERFLOW;
         pub const CLOEXEC: c_int = libc::IN_CLOEXEC;
         pub const NONBLOCK: c_int = libc::IN_NONBLOCK;
         use core::ffi::c_int;
@@ -5664,6 +5683,9 @@ pub mod darwin {
         pub const TIMER: i16 = libc::EVFILT_TIMER;
         pub const USER: i16 = libc::EVFILT_USER;
         pub const MACHPORT: i16 = libc::EVFILT_MACHPORT;
+        /// xnu-private filter used by libdispatch's `DISPATCH_SOURCE_TYPE_MEMORYPRESSURE`.
+        /// Not in `<sys/event.h>` (only `<sys/event_private.h>`), so hard-code the value.
+        pub const MEMORYSTATUS: i16 = -14;
     }
     /// kqueue event flags (Darwin).
     pub mod EV {
@@ -5693,6 +5715,11 @@ pub mod darwin {
         pub const LINK: u32 = libc::NOTE_LINK;
         pub const RENAME: u32 = libc::NOTE_RENAME;
         pub const REVOKE: u32 = libc::NOTE_REVOKE;
+        /// `EVFILT_MEMORYSTATUS` fflags (xnu `<sys/event_private.h>`). Values are
+        /// ABI-stable; libdispatch depends on them for `DISPATCH_MEMORYPRESSURE_*`.
+        pub const MEMORYSTATUS_PRESSURE_NORMAL: u32 = 0x00000001;
+        pub const MEMORYSTATUS_PRESSURE_WARN: u32 = 0x00000002;
+        pub const MEMORYSTATUS_PRESSURE_CRITICAL: u32 = 0x00000004;
     }
     /// Re-export of the platform errno enum so `bun_threading::Futex` can
     /// match `c::E::INTR` etc. against `__ulock_*` return codes.
@@ -7103,10 +7130,11 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
     // SAFETY: FFI; attr/basic_info valid for the call duration.
     let rc = unsafe { w::ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
     if rc != w::NTSTATUS::SUCCESS {
-        // `errnoSys` for
-        // `NTSTATUS` routes through the curated `translateNTStatusToErrno`
-        // table, NOT `RtlNtStatusToDosError`. `directory_exists_at()` then
-        // branches on `ENOENT`, so the mapping must match the spec table.
+        // `errnoSys` for `NTSTATUS` routes through the curated
+        // `translateNTStatusToErrno` table first (so `OBJECT_PATH_NOT_FOUND`
+        // deterministically maps to `ENOENT`, which `directory_exists_at()`
+        // branches on), then falls back to `RtlNtStatusToDosError` for
+        // unmapped codes.
         return Err(Error::from_code(
             windows::translate_nt_status_to_errno(rc),
             Tag::access,
@@ -8711,18 +8739,21 @@ mod win_symlink_impl {
                     WindowsSymlinkOptions::denied();
                     continue;
                 }
-                if let Some(sys_errno) = win_err.to_system_errno() {
-                    let e: E = sys_errno.to_e();
-                    // Only ENOENT/EEXIST keep `has_failed_to_create_symlink`
-                    // unset; every other failure flips the sticky bit so
-                    // `symlinkOrJunction` falls through to junctions next time.
-                    if !matches!(e, E::NOENT | E::EXIST) {
-                        WindowsSymlinkOptions::set_has_failed_to_create_symlink(true);
-                    }
-                    return Err(Error::from_code(e, Tag::symlink));
+                // `to_e()` falls back to `E::UNKNOWN` for Win32 codes not in
+                // the errno table. Filter drivers, network redirectors, and
+                // security software hooking `CreateSymbolicLinkW` can return
+                // codes outside the mapped set; treating those as success
+                // would leave the caller believing a symlink exists when it
+                // does not. Returning an error lets `symlink_or_junction`
+                // fall through to a junction.
+                let e: E = win_err.to_e();
+                // Only ENOENT/EEXIST keep `has_failed_to_create_symlink`
+                // unset; every other failure flips the sticky bit so
+                // `symlinkOrJunction` falls through to junctions next time.
+                if !matches!(e, E::NOENT | E::EXIST) {
+                    WindowsSymlinkOptions::set_has_failed_to_create_symlink(true);
                 }
-                // Win32 error without an errno mapping — treat as success
-                // (the `if let` yields `null`).
+                return Err(Error::from_code(e, Tag::symlink));
             }
             return Ok(());
         }

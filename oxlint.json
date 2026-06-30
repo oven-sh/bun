@@ -1,5 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/refs/heads/main/npm/oxlint/configuration_schema.json",
+  "jsPlugins": ["./scripts/oxlint-plugins/bun.js"],
   "categories": {
     "correctness": "error"
   },
@@ -81,6 +82,15 @@
       "files": ["src/js/builtins/**"],
       "rules": {
         "no-unused-expressions": "off"
+      }
+    },
+    {
+      "files": ["src/js/**"],
+      "rules": {
+        // Reading `obj.prop` in an `if` condition and again in the body hits
+        // the property (and any getter/Proxy trap) twice. Destructure or
+        // cache the value in a local instead.
+        "bun/no-duplicate-conditional-property-access": "error"
       }
     }
   ]

@@ -1718,8 +1718,9 @@ fn normalize_string_t<T: PathCharCwd, const PLATFORM: Platform>(
 
                 // Translated from the following JS code:
                 //   lastSegmentLength = i - lastSlash - 1;
-                let subtract = last_slash.map_or(2, |ls| ls + 1);
-                last_segment_length = i.saturating_sub(subtract);
+                // `lastSlash` starts at -1 in Node, so the first segment's
+                // length is `i - 0`, i.e. exactly the slice just appended.
+                last_segment_length = slice.len();
             }
             last_slash = Some(i);
             dots = Some(0);

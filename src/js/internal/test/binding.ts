@@ -2,7 +2,7 @@
 // like bun:internal-for-testing) so vendored node tests that declare
 // `--expose-internals` can run. Only the surface those tests use is
 // implemented.
-const clusterRawBind = $newZigFunction("node_cluster_binding.zig", "clusterRawBind", 4);
+const clusterRawBind = $newRustFunction("node_cluster_binding.rs", "clusterRawBind", 4);
 
 let fs;
 

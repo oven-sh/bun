@@ -3,7 +3,7 @@ const { kHandle } = require("internal/shared");
 
 let net;
 
-const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperPrimary", 4);
+const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
 
 const ArrayIsArray = Array.isArray;
 
@@ -173,14 +173,15 @@ export default class RoundRobinHandle {
       // failed on a live worker): the reply callback will never fire, so
       // reclaim the connection for another worker. `false` means queued
       // under backpressure and must NOT be reclaimed - the reply is coming.
-      this.inFlight.delete(worker.id);
+      const { id } = worker;
+      this.inFlight.delete(id);
       this.distribute(0, handle);
       // Return the worker to rotation AFTER redistributing, so the
       // distribute() above cannot synchronously pick the same failing
       // worker and spin; a dead worker self-heals via remove(), and a
       // transiently failing one (ENOBUFS) gets retried on a later event.
-      if (this.all.has(worker.id)) {
-        this.free.set(worker.id, worker);
+      if (this.all.has(id)) {
+        this.free.set(id, worker);
       }
     }
   }

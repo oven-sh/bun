@@ -19,7 +19,7 @@ use crate::parser::{
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
-use bun_ast::{B, E, Expr, G, S, Stmt, Symbol};
+use bun_ast::{B, E, Expr, G, S, Stmt};
 
 // Named instantiations of `P<'_, TS, SCAN>`.
 pub type JavaScriptParser<'a> = P<'a, false, false>;
@@ -178,6 +178,8 @@ impl<'a> Options<'a> {
             filepath_hash_for_hmr: self.filepath_hash_for_hmr,
             features: RuntimeFeatures {
                 react_fast_refresh: f.react_fast_refresh,
+                react_compiler: f.react_compiler,
+                react_compiler_parse_test_pragmas: f.react_compiler_parse_test_pragmas,
                 hot_module_reloading: f.hot_module_reloading,
                 server_components: f.server_components,
                 is_macro_runtime: f.is_macro_runtime,
@@ -313,7 +315,12 @@ impl<'a> Parser<'a> {
         define: &'a Define,
         bump: &'a Arena,
     ) -> Result<Parser<'a>, Error> {
-        let lexer = js_lexer::Lexer::init(log, source, bump)?;
+        let mut lexer = js_lexer::Lexer::init_without_reading(log, source, bump);
+        // Must be set before the priming `next()` so leading comments are seen.
+        lexer.track_comments = options.features.minify_identifiers;
+        lexer.track_react_suppressions = options.features.react_compiler.is_enabled();
+        lexer.step();
+        lexer.next()?;
         // Copy the lexer's `NonNull<Log>` so both handles share one provenance
         // chain (the `&'a mut Log` was consumed by `Lexer::init`).
         let log_ptr = lexer.log;
@@ -851,6 +858,32 @@ impl<'a> Parser<'a> {
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
         p.prepare_for_visit_pass()?;
 
+        if p.options.features.react_compiler.is_enabled() {
+            let rc_options = bun_react_compiler::ReactCompilerOptions {
+                enabled: true,
+                is_dev: p.options.jsx.development,
+                parse_test_pragmas: p.options.features.react_compiler_parse_test_pragmas,
+                output_mode: p
+                    .options
+                    .features
+                    .react_compiler
+                    .is_ssr()
+                    .then(|| "ssr".to_owned()),
+                ..Default::default()
+            };
+            let opt_out = bun_react_compiler::has_module_scope_opt_out(stmts);
+            let import_bindings = bun_react_compiler::collect_import_bindings(
+                stmts,
+                p.import_records.items(),
+                p.symbols.as_slice(),
+            );
+            p.react_compiler = Some(Box::new(bun_react_compiler::ReactCompilerState::new(
+                rc_options,
+                opt_out,
+                import_bindings,
+            )));
+        }
+
         let mut before = BumpVec::<js_ast::Part>::new_in(p.arena);
         let mut after = BumpVec::<js_ast::Part>::new_in(p.arena);
         let mut parts = BumpVec::<js_ast::Part>::new_in(p.arena);
@@ -1198,10 +1231,7 @@ impl<'a> Parser<'a> {
                     let (ns_ref, ns_loc, import_record_id) = {
                         let deferred_import = &p.imports_to_convert_from_require[i];
                         (
-                            deferred_import
-                                .namespace
-                                .ref_
-                                .expect("infallible: ref bound"),
+                            deferred_import.namespace.ref_,
                             deferred_import.namespace.loc,
                             deferred_import.import_record_id,
                         )
@@ -1213,7 +1243,7 @@ impl<'a> Parser<'a> {
 
                     import_part_stmts[0] = Stmt::alloc(
                         S::Import {
-                            star_name_loc: Some(ns_loc),
+                            star_name_loc: ns_loc,
                             import_record_index: import_record_id,
                             namespace_ref: ns_ref,
                             default_name: None,
@@ -1374,7 +1404,6 @@ impl<'a> Parser<'a> {
                                             && p.imports_to_convert_from_require.as_slice()[0]
                                                 .namespace
                                                 .ref_
-                                                .unwrap()
                                                 .eql(id.ref_)
                                         {
                                             // We know it's 0 because there is only one import in the whole file
@@ -1451,8 +1480,7 @@ impl<'a> Parser<'a> {
                                             p.imports_to_convert_from_require.as_slice()
                                                 [req.unwrapped_id as usize]
                                                 .namespace
-                                                .ref_
-                                                .unwrap();
+                                                .ref_;
 
                                         let stmt_loc = stmt.loc;
                                         part.stmts = {
@@ -1990,7 +2018,7 @@ impl<'a> Parser<'a> {
                     if p.symbols.as_slice()[r.inner_index() as usize].use_count_estimate > 0 {
                         clauses.push(js_ast::ClauseItem {
                             name: js_ast::LocRef {
-                                ref_: Some(r),
+                                ref_: r,
                                 loc: bun_ast::Loc::EMPTY,
                             },
                             alias: js_ast::StoreStr::new(symbol_name.as_bytes()),
@@ -2018,7 +2046,7 @@ impl<'a> Parser<'a> {
                         items: clauses,
                         import_record_index: import_record_id,
                         default_name: None,
-                        star_name_loc: None,
+                        star_name_loc: bun_ast::Loc::EMPTY,
                         is_single_line: false,
                         phase_defer: false,
                     },
@@ -2141,6 +2169,74 @@ impl<'a> Parser<'a> {
             )?;
         }
 
+        if let Some(rc_state) = p.react_compiler.take() {
+            let mut rc_stmts: Vec<Stmt> = Vec::new();
+            let result = bun_react_compiler::finish(
+                *rc_state,
+                &mut crate::react_compiler_host::ReactCompilerHost::new(p),
+                &mut rc_stmts,
+            );
+            if let bun_react_compiler::CompileOutput::Error { error, .. } = result {
+                p.log().add_range_error_fmt(
+                    Some(p.source),
+                    bun_ast::Range::NONE,
+                    format_args!("React Compiler: {error}"),
+                );
+            }
+            if !rc_stmts.is_empty() {
+                let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
+                let mut import_record_indices: js_ast::PartImportRecordIndices =
+                    bun_alloc::AstAlloc::vec();
+                for stmt in &rc_stmts {
+                    match &stmt.data {
+                        js_ast::StmtData::SImport(import) => {
+                            import_record_indices.push(import.import_record_index);
+                            declared_symbols.append(DeclaredSymbol {
+                                ref_: import.namespace_ref,
+                                is_top_level: true,
+                            })?;
+                            for item in import.items.iter() {
+                                declared_symbols.append(DeclaredSymbol {
+                                    ref_: item.name.ref_,
+                                    is_top_level: true,
+                                })?;
+                                p.is_import_item.insert(item.name.ref_, ());
+                                p.named_imports.put(
+                                    item.name.ref_,
+                                    js_ast::NamedImport {
+                                        alias: Some(item.alias),
+                                        alias_loc: item.alias_loc,
+                                        namespace_ref: import.namespace_ref,
+                                        import_record_index: import.import_record_index,
+                                        local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                        alias_is_star: false,
+                                        is_exported: false,
+                                    },
+                                )?;
+                            }
+                        }
+                        js_ast::StmtData::SFunction(func) => {
+                            if let Some(ref_) = func.func.name.map(|n| n.ref_) {
+                                declared_symbols.append(DeclaredSymbol {
+                                    ref_,
+                                    is_top_level: true,
+                                })?;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                before.push(js_ast::Part {
+                    stmts: p.arena.alloc_slice_copy(&rc_stmts).into(),
+                    tag: js_ast::PartTag::ReactCompiler,
+                    declared_symbols,
+                    import_record_indices,
+                    can_be_removed_if_unused: true,
+                    ..Default::default()
+                });
+            }
+        }
+
         if p.react_refresh.register_used || p.react_refresh.signature_used {
             p.generate_react_refresh_import(
                 &mut before,
@@ -2165,12 +2261,9 @@ impl<'a> Parser<'a> {
 
         // Bake: transform global `Response` to use `import { Response } from 'bun:app'`
         #[allow(deprecated)]
-        if !p.response_ref.is_null() && {
-            // We only want to do this if the symbol is used and didn't get
-            // bound to some other value
-            let symbol: &Symbol = &p.symbols.as_slice()[p.response_ref.inner_index() as usize];
-            !symbol.has_link() && symbol.use_count_estimate > 0
-        } {
+        if !p.response_ref.is_null()
+            && p.symbols.as_slice()[p.response_ref.inner_index() as usize].use_count_estimate > 0
+        {
             p.generate_import_stmt_for_bake_response(&mut before)?;
         }
 

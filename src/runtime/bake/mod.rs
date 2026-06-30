@@ -28,6 +28,11 @@ pub(crate) mod framework_router_body;
 #[path = "production.rs"]
 mod production_body;
 
+// `Bun__add{Bake,DevServer}SourceProvider*` host exports — the Rust side of
+// `BakeSourceProvider.h` / `DevServerSourceProvider.h`. Reached only via the
+// codegen-emitted `extern "C"` thunks in `generated_host_exports.rs`.
+pub mod source_provider_exports;
+
 // Re-exports from the submodule bodies so `production.rs` can name them
 // without going through the keystone stubs below.
 pub use bake_body::{PatternBuffer, UserOptions, print_warning};
@@ -624,9 +629,6 @@ pub use bake_body::get_hmr_runtime;
 // NUL-terminated `&ZStr` form for JSC handoff; the bundler-side one is plain
 // `&[u8]`.)
 
-// `bake.UserOptions` — top-level JS-facing options struct. Full body (with
-// `from_js`) lives in the un-gated `bake_body.rs` draft and is re-exported
-// above; the keystone `(())` stub is gone now that `bake_body` compiles.
 pub use bake_body::StringRefList;
 
 // ══════════════════════════════════════════════════════════════════════════

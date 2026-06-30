@@ -249,7 +249,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
         return Err(err!("InvalidNPMLockfile"));
     }
     if let Some(version) = json.get(b"lockfileVersion") {
-        if !(matches!(version.data, ExprData::ENumber(n) if n.value >= 2.0 && n.value <= 3.0)) {
+        if !(matches!(version.data, ExprData::ENumber(n) if n.value() >= 2.0 && n.value() <= 3.0)) {
             return Err(err!("NPMLockfileVersionMismatch"));
         }
     } else {

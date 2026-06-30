@@ -1,5 +1,5 @@
-const clusterRawBind = $newZigFunction("node_cluster_binding.zig", "clusterRawBind", 4);
-const closeRawHandle = $newZigFunction("node_cluster_binding.zig", "clusterCloseHandle", 1);
+const clusterRawBind = $newRustFunction("node_cluster_binding.rs", "clusterRawBind", 4);
+const closeRawHandle = $newRustFunction("node_cluster_binding.rs", "clusterCloseHandle", 1);
 
 // node's lib/internal/cluster/shared_handle.js: the primary binds (never
 // listens); every worker that asks gets the same fd (duplicated by
@@ -46,13 +46,14 @@ export default class SharedHandle {
     if (this.workers.size !== 0) return false;
 
     if (this.handle) {
-      closeRawHandle(this.handle.fd);
-      if (this.handle.path) {
+      const { fd, path } = this.handle;
+      closeRawHandle(fd);
+      if (path) {
         // node: uv__pipe_close unlinks the bound path when the primary's
         // handle closes; without this the next run's bind() EADDRINUSEs on
         // the stale socket file.
         try {
-          require("node:fs").unlinkSync(this.handle.path);
+          require("node:fs").unlinkSync(path);
         } catch {}
       }
       this.handle = null;

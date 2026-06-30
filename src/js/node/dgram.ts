@@ -221,13 +221,11 @@ function bufferSize(self, size, _buffer) {
 Socket.prototype.bind = function (port_, address_ /* , callback */) {
   let port = port_;
 
+  healthCheck(this);
   const state = this[kStateSymbol];
 
-  healthCheck(this);
-
   if (state.bindState !== BIND_STATE_UNBOUND) {
-    this.emit("error", $ERR_SOCKET_ALREADY_BOUND());
-    return;
+    throw $ERR_SOCKET_ALREADY_BOUND();
   }
 
   state.bindState = BIND_STATE_BINDING;
@@ -258,8 +256,9 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
   }
 
   // Open an existing fd instead of creating a new one.
-  if (port !== null && typeof port === "object" && isInt32(port.fd) && port.fd > 0) {
-    const fd = port.fd;
+  const portFd = port !== null && typeof port === "object" ? port.fd : undefined;
+  if (isInt32(portFd) && portFd > 0) {
+    const fd = portFd;
     const fdExclusive = !!port.exclusive;
 
     if (cluster === undefined) cluster = require("node:cluster");
@@ -484,7 +483,7 @@ function _connect(port, address, callback) {
   state.handle.lookup(address, afterDns);
 }
 
-const connectFn = $newZigFunction("udp_socket.zig", "UDPSocket.jsConnect", 2);
+const connectFn = $newRustFunction("udp_socket.rs", "UDPSocket.jsConnect", 2);
 
 function doConnect(ex, self, ip, address, port, callback) {
   const state = self[kStateSymbol];
@@ -514,7 +513,7 @@ function doConnect(ex, self, ip, address, port, callback) {
   process.nextTick(() => self.emit("connect"));
 }
 
-const disconnectFn = $newZigFunction("udp_socket.zig", "UDPSocket.jsDisconnect", 0);
+const disconnectFn = $newRustFunction("udp_socket.rs", "UDPSocket.jsDisconnect", 0);
 
 Socket.prototype.disconnect = function () {
   const state = this[kStateSymbol];
@@ -809,7 +808,7 @@ Socket.prototype.close = function (callback) {
 };
 
 Socket.prototype[SymbolAsyncDispose] = async function () {
-  if (!this[kStateSymbol].handle.socket) {
+  if (!this[kStateSymbol].handle) {
     return;
   }
   const { promise, resolve, reject } = $newPromiseCapability(Promise);
@@ -829,12 +828,16 @@ function socketCloseNT(self) {
 }
 
 Socket.prototype.address = function () {
+  healthCheck(this);
+
   const addr = this[kStateSymbol].handle.socket?.address;
   if (!addr) throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
   return addr;
 };
 
 Socket.prototype.remoteAddress = function () {
+  healthCheck(this);
+
   const state = this[kStateSymbol];
   const socket = state.handle.socket;
 

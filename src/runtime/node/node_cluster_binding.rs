@@ -167,9 +167,12 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
     bun_output::scoped_log!(IPC, "sendHelperPrimary");
 
     let arguments = frame.arguments_old::<4>().ptr;
-    // `as_class_ref` is the safe shared-borrow downcast (centralised deref
-    // proof in `JSValue`); `Subprocess::ipc(&self)` projects the `JsCell`.
-    let subprocess = arguments[0].as_class_ref::<Subprocess<'_>>().unwrap();
+    // `as_class_ref` is the safe shared-borrow downcast; `cluster.Worker({process})`
+    // accepts any object, so this is `undefined` unless `cluster.fork()` made it.
+    // Nothing can be delivered then: null, like the no-IPC guard below.
+    let Some(subprocess) = arguments[0].as_class_ref::<Subprocess<'_>>() else {
+        return Ok(JSValue::NULL);
+    };
     let message = arguments[1];
     let handle = arguments[2];
     let callback = arguments[3];
@@ -286,7 +289,11 @@ pub(crate) fn on_internal_message_primary(
 ) -> JsResult<JSValue> {
     let arguments = frame.arguments_old::<3>().ptr;
     // `as_class_ref` is the safe shared-borrow downcast; `ipc()` takes `&self`.
-    let subprocess = arguments[0].as_class_ref::<Subprocess<'_>>().unwrap();
+    // Same guard as `send_helper_primary`: nothing to subscribe to when the
+    // worker's process has no native child handle.
+    let Some(subprocess) = arguments[0].as_class_ref::<Subprocess<'_>>() else {
+        return Ok(JSValue::UNDEFINED);
+    };
     let Some(ipc_data) = subprocess.ipc() else {
         return Ok(JSValue::UNDEFINED);
     };
@@ -759,7 +766,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
                     sin6.sin6_port = (port as u16).to_be();
                     // The libc crate does not bind inet_pton; use the vendored
                     // c-ares implementation (same convention as bun_core).
-                    bun_core::immutable::ares_inet_pton(
+                    bun_core::strings::ares_inet_pton(
                         libc::AF_INET6,
                         addr_z.as_ptr().cast(),
                         (&raw mut sin6.sin6_addr).cast(),
@@ -769,7 +776,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
                         &mut *(&raw mut ss).cast::<libc::sockaddr_in>();
                     sin.sin_family = libc::AF_INET as libc::sa_family_t;
                     sin.sin_port = (port as u16).to_be();
-                    bun_core::immutable::ares_inet_pton(
+                    bun_core::strings::ares_inet_pton(
                         libc::AF_INET,
                         addr_z.as_ptr().cast(),
                         (&raw mut sin.sin_addr).cast(),

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunRun, isIPv6, isWindows, joinP, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isIPv6, isWindows, joinP, tempDirWithFiles } from "harness";
 
 test("cloneable and transferable equals", () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -302,4 +302,29 @@ if (cluster.isPrimary) {
   });
   const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
   expect(stdout).toContain("ipv6 connect ok");
+});
+
+test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
+  // `kHandle` is a private symbol that only `cluster.fork()` sets, so a
+  // `cluster.Worker({ process })` built around a plain object (how Node's own
+  // tests mock workers) hands `undefined` to the native `sendHelper` binding.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const cluster = require("node:cluster");
+        const fake = { on() {}, disconnect() {}, kill() {}, send() { return false; } };
+        const worker = new cluster.Worker({ process: fake });
+        const returned = worker.disconnect();
+        console.log("returned self:", returned === worker);
+      `,
+    ],
+    env: bunEnv,
+    // Inherited so that on regression the child's abort output reaches the
+    // runner log instead of filling an unread pipe.
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "returned self: true", exitCode: 0 });
 });

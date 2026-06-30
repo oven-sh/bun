@@ -11,7 +11,7 @@
     - 3.2. Optimization 2: The Direct Path - Zero-Copy Native Piping
     - 3.3. Optimization 3: `readMany()` - Efficient Async Iteration
 4.  [**Low-Level Implementation Details**](#4-low-level-implementation-details)
-    - 4.1. The Native Language: `streams.zig` Primitives
+    - 4.1. The Native Language: `streams.rs` Primitives
     - 4.2. Native Sink In-Depth: `HTTPSResponseSink` and Buffering
     - 4.3. The Native Collector: `Body.ValueBufferer`
     - 4.4. Memory and String Optimizations
@@ -36,26 +36,27 @@ To understand Bun's stream optimizations, two foundational concepts must be unde
 
 Identifying the _source_ of a `ReadableStream` at the native level unlocks many optimization opportunities. This is achieved by "tagging" the stream object internally.
 
-- **Mechanism:** Every `ReadableStream` in Bun holds a private field, `bunNativePtr`, which can point to a native Zig struct representing the stream's underlying source.
-- **Identification:** A C++ binding, `ReadableStreamTag__tagged` (from `ReadableStream.zig`), is the primary entry point for this identification. When native code needs to consume a stream (e.g., when sending a `Response` body), it calls this function on the JS `ReadableStream` object to determine its origin.
+- **Mechanism:** Every `ReadableStream` in Bun holds a private field, `bunNativePtr`, which can point to a native Rust struct representing the stream's underlying source.
+- **Identification:** A C++ binding, `ReadableStreamTag__tagged` (from `ReadableStream.rs`), is the primary entry point for this identification. When native code needs to consume a stream (e.g., when sending a `Response` body), it calls this function on the JS `ReadableStream` object to determine its origin.
 
-```zig
-// src/runtime/webcore/ReadableStream.zig
-pub const Tag = enum(i32) {
+```rust
+// src/runtime/webcore/ReadableStream.rs
+#[repr(i32)]
+pub enum Tag {
     JavaScript = 0, // A generic, user-defined stream. This is the "slow path".
     Blob = 1,       // An in-memory blob. Fast path available.
     File = 2,       // Backed by a native file reader. Fast path available.
     Bytes = 4,      // Backed by a native network byte stream. Fast path available.
     Direct = 3,     // Internal native-to-native stream.
     Invalid = -1,
-};
+}
 ```
 
 This tag is the key that unlocks all subsequent optimizations. It allows the runtime to dispatch to the correct, most efficient implementation path.
 
 ### 2.2. The `Body` Mixin: An Intelligent Gateway
 
-The `Body` mixin (used by `Request` and `Response`) is not merely a stream container; it's a sophisticated state machine and the primary API gateway to Bun's optimization paths. A `Body`'s content is represented by the `Body.Value` union in Zig, which can be a static buffer (`.InternalBlob`, `.WTFStringImpl`) or a live stream (`.Locked`).
+The `Body` mixin (used by `Request` and `Response`) is not merely a stream container; it's a sophisticated state machine and the primary API gateway to Bun's optimization paths. A `Body`'s content is represented by the `Body.Value` union in native code, which can be a static buffer (`.InternalBlob`, `.WTFStringImpl`) or a live stream (`.Locked`).
 
 Methods like `.text()`, `.json()`, and `.arrayBuffer()` are not simple stream consumers. They are entry points to a decision tree that aggressively seeks the fastest possible way to fulfill the request.
 
@@ -156,7 +157,7 @@ flowchart TB
 **Diagram 2: Synchronous Coercion Logic Flow**
 
 1.  **Entry Point:** A JS call to `response.text()` triggers `readableStreamToText` (`ReadableStream.ts`), which immediately calls `tryUseReadableStreamBufferedFastPath`.
-2.  **Native Check:** `tryUseReadableStreamBufferedFastPath` calls the native binding `jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer` (`Response.zig`).
+2.  **Native Check:** `tryUseReadableStreamBufferedFastPath` calls the native binding `jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer` (`Response.rs`).
 3.  **State Inspection:** This native function inspects the `Body.Value` tag. If the tag is `.InternalBlob`, `.Blob` (and not a disk-backed file), or `.WTFStringImpl`, the complete data is already in memory.
 4.  **Synchronous Data Transfer:** The function **synchronously** returns the underlying buffer as a native `ArrayBuffer` handle to JavaScript. The `Body` state is immediately transitioned to `.Used`. The buffer's ownership is often transferred (`.transfer` lifetime), avoiding a data copy.
 5.  **JS Resolution:** The JS layer receives a promise that is **already fulfilled** with the complete `ArrayBuffer`. It then performs the final conversion (e.g., `TextDecoder.decode()`) in a single step.
@@ -180,7 +181,7 @@ graph TD
         subgraph js["🟨 JavaScript Layer"]
             C["📄 new Response(file.stream())"]
         end
-        subgraph native["⚡ Native Layer (Zig)"]
+        subgraph native["⚡ Native Layer (Rust)"]
             A["💾 Disk I/O<br><b>FileReader Source</b>"]
             B["🔌 Socket Buffer<br><b>HTTPSResponseSink</b>"]
             A -."🚀 Zero-Copy View<br>streams.Result.temporary".-> B
@@ -207,8 +208,8 @@ graph TD
 1.  **Scenario:** A server handler returns `new Response(Bun.file("video.mp4").stream())`.
 2.  **Tagging:** The stream is created with a `File` tag, and its `bunNativePtr` points to a native `webcore.FileReader` struct. The HTTP server's response sink is a native `HTTPSResponseSink`.
 3.  **Connection via `assignToStream`:** The server's internal logic triggers `assignToStream` (`ReadableStreamInternals.ts`). This function detects the native source via its tag and dispatches to `readDirectStream`.
-4.  **Native Handoff:** `readDirectStream` calls the C++ binding `$startDirectStream`, which passes pointers to the native `FileReader` (source) and `HTTPSResponseSink` (sink) to the Zig engine.
-5.  **Zero-Copy Native Data Flow:** The Zig layer takes over. The `FileReader` reads a chunk from the disk. It yields a `streams.Result.temporary` variant, which is a **zero-copy view** into a shared read buffer. This view is passed directly to the `HTTPSResponseSink.write()` method, which appends it to its internal socket write buffer. When possible, Bun will skip the FileReader and use the `sendfile` system call for even less system call interactions.
+4.  **Native Handoff:** `readDirectStream` calls the C++ binding `$startDirectStream`, which passes pointers to the native `FileReader` (source) and `HTTPSResponseSink` (sink) to the Rust engine.
+5.  **Zero-Copy Native Data Flow:** The Rust layer takes over. The `FileReader` reads a chunk from the disk. It yields a `streams.Result.temporary` variant, which is a **zero-copy view** into a shared read buffer. This view is passed directly to the `HTTPSResponseSink.write()` method, which appends it to its internal socket write buffer. When possible, Bun will skip the FileReader and use the `sendfile` system call for even less system call interactions.
 
 **Architectural Impact:**
 
@@ -278,11 +279,11 @@ flowchart TB
 
 ### **4. Low-Level Implementation Details**
 
-The high-level optimizations are made possible by a robust and carefully designed native foundation in Zig.
+The high-level optimizations are made possible by a robust and carefully designed native foundation in Rust.
 
-#### **4.1. The Native Language: `streams.zig` Primitives**
+#### **4.1. The Native Language: `streams.rs` Primitives**
 
-The entire native architecture is built upon a set of generic, powerful Zig primitives that define the contracts for data flow.
+The entire native architecture is built upon a set of generic, powerful Rust primitives that define the contracts for data flow.
 
 - **`streams.Result` Union:** This is the universal data-carrying type for all native stream reads. Its variants are not just data containers; they are crucial signals from the source to the sink.
   - `owned: bun.ByteList`: Represents a heap-allocated buffer. The receiver is now responsible for freeing this memory. This is used when data must outlive the current scope.
@@ -299,7 +300,7 @@ The entire native architecture is built upon a set of generic, powerful Zig prim
 
 #### **4.2. Native Sink In-Depth: `HTTPSResponseSink` and Buffering**
 
-The `HTTPServerWritable` struct (instantiated as `HTTPSResponseSink` in `streams.zig`) is part of what makes Bun's HTTP server fast.
+The `HTTPServerWritable` struct (instantiated as `HTTPSResponseSink` in `streams.rs`) is part of what makes Bun's HTTP server fast.
 
 - **Intelligent Write Buffering:** The `write` method (`writeBytes`, `writeLatin1`, etc.) does not immediately issue a `write` syscall. It appends the incoming `streams.Result` slice to its internal `buffer: bun.ByteList`. This coalesces multiple small, high-frequency writes (common in streaming LLM responses or SSE) into a single, larger, more efficient syscall.
 
@@ -315,7 +316,7 @@ The `HTTPServerWritable` struct (instantiated as `HTTPSResponseSink` in `streams
 
 #### **4.3. The Native Collector: `Body.ValueBufferer`**
 
-When a consuming method like `.text()` is called on a body that cannot be resolved synchronously, the `Body.ValueBufferer` (`Body.zig`) is used to efficiently collect all chunks into a single native buffer.
+When a consuming method like `.text()` is called on a body that cannot be resolved synchronously, the `Body.ValueBufferer` (`Body.rs`) is used to efficiently collect all chunks into a single native buffer.
 
 - **Instantiation:** A `Body.ValueBufferer` is created with a callback, `onFinishedBuffering`, which will be invoked upon completion to resolve the original JS promise.
 - **Native Piping (`onStreamPipe`):** For a `ByteStream` source, the bufferer sets itself as the `pipe` destination. The `ByteStream.onData` method, instead of interacting with JavaScript, now directly calls the bufferer's `onStreamPipe` function. This function appends the received `streams.Result` slice to its internal `stream_buffer`. The entire collection loop happens natively.
@@ -325,7 +326,7 @@ When a consuming method like `.text()` is called on a body that cannot be resolv
 
 #### **4.4. Memory and String Optimizations**
 
-- **`Blob` and `Blob.Store` (`Blob.zig`):** A `Blob` is a lightweight handle to a `Blob.Store`. The store can be backed by memory (`.bytes`), a file (`.file`), or an S3 object (`.s3`). This allows Bun to implement optimized operations based on the blob's backing store (e.g., `Bun.write(file1, file2)` becomes a native file copy via `copy_file.zig`).
+- **`Blob` and `Blob.Store` (`Blob.rs`):** A `Blob` is a lightweight handle to a `Blob.Store`. The store can be backed by memory (`.bytes`), a file (`.file`), or an S3 object (`.s3`). This allows Bun to implement optimized operations based on the blob's backing store (e.g., `Bun.write(file1, file2)` becomes a native file copy via `copy_file.rs`).
 - **`Blob.slice()` as a Zero-Copy View:** `blob.slice()` is a constant-time operation that creates a new `Blob` handle pointing to the same store but with a different `offset` and `size`, avoiding any data duplication.
 - **`is_all_ascii` Flag:** `Blob`s and `ByteStream`s track whether their content is known to be pure ASCII. This allows `.text()` to skip expensive UTF-8 validation and decoding for a large class of text-based data, treating the Latin-1 bytes directly as a string.
 - **`WTFStringImpl` Integration:** Bun avoids copying JS strings by default, instead storing a pointer to WebKit's internal `WTF::StringImpl` (`Body.Value.WTFStringImpl`). The conversion to a UTF-8 byte buffer is deferred until it's absolutely necessary (e.g., writing to a socket), avoiding copies for string-based operations that might never touch the network.

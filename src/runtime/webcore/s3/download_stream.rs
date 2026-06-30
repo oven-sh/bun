@@ -39,6 +39,10 @@ pub struct S3HttpDownloadStreamingTask {
     pub concurrent_task: ConcurrentTask,
     pub range: Option<Box<[u8]>>,
     pub proxy_url: Box<[u8]>,
+    /// Captured once on the main thread before the request is queued so the cancel
+    /// path can call `schedule_shutdown_by_id` without dereferencing `http` (which
+    /// `update_state` overwrites on the HTTP thread under `mutex`).
+    pub async_http_id: u32,
 }
 
 // Hot-dispatch tag for `ConcurrentTask::from`.
@@ -71,6 +75,7 @@ impl Default for S3HttpDownloadStreamingTask {
             reported_response_buffer: MutableString::default(),
             state: AtomicU64::new(State::default().0),
             concurrent_task: ConcurrentTask::default(),
+            async_http_id: 0,
         }
     }
 }

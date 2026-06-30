@@ -68,7 +68,7 @@ pub(crate) fn attach_windows_socket_payload(
         return false;
     }
     let mut hex = vec![0u8; size * 2];
-    let n = bun_core::immutable::encode_bytes_to_hex(&mut hex, &info);
+    let n = bun_core::strings::encode_bytes_to_hex(&mut hex, &info);
     debug_assert!(n == size * 2);
     let Ok(str_js) = bun_jsc::bun_string_jsc::create_utf8_for_js(global, &hex[..n]) else {
         global.clear_exception();

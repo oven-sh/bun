@@ -1,8 +1,7 @@
 use bun_alloc::AllocError;
-#[cfg(not(windows))]
-use bun_sys::FdDirExt;
+use bun_core::FileKind;
 use bun_sys::walker_skippable::Walker;
-use bun_sys::{self as sys, EntryKind, Fd, FdExt};
+use bun_sys::{self as sys, Fd, FdExt};
 // OS-unit paths are u8 on POSIX, u16
 // on Windows — encoded here via the `OSPathChar` type alias so the struct's
 // `slice()`/`slice_z()` produce the platform-native width without per-field
@@ -113,13 +112,13 @@ impl Hardlinker {
 
                 let err: Option<sys::Error> = 'body: {
                     match entry.kind {
-                        EntryKind::Directory => {
+                        FileKind::Directory => {
                             let _ = sys::make_path::make_path::<u16>(
                                 &sys::Dir::cwd(),
                                 self.dest.slice(),
                             );
                         }
-                        EntryKind::File => {
+                        FileKind::File => {
                             let mut destfile_path_buf = bun_paths::w_path_buffer_pool::get();
                             let mut destfile_path_buf2 = bun_paths::w_path_buffer_pool::get();
                             // `dest` may already be absolute (global virtual store
@@ -252,10 +251,10 @@ impl Hardlinker {
 
                 let err: Option<sys::Error> = 'body: {
                     match entry.kind {
-                        EntryKind::Directory => {
-                            let _ = Fd::cwd().make_path(self.dest.slice());
+                        FileKind::Directory => {
+                            let _ = sys::mkdir_recursive_at(Fd::cwd(), self.dest.slice());
                         }
-                        EntryKind::File => {
+                        FileKind::File => {
                             match sys::linkat(
                                 entry.dir,
                                 entry.basename,
@@ -283,7 +282,7 @@ impl Hardlinker {
                                             break 'body Some(link_err1);
                                         };
 
-                                        let _ = Fd::cwd().make_path(dest_parent);
+                                        let _ = sys::mkdir_recursive_at(Fd::cwd(), dest_parent);
                                         match sys::linkat(
                                             entry.dir,
                                             entry.basename,

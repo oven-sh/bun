@@ -3,8 +3,8 @@ use core::ptr::NonNull;
 
 // LAYERING: re-export `bun_core::Timespec` so every embedder of
 // `EventLoopTimer.next` agrees on the type (was a local stub with the same
-// `{sec,nsec}` layout, which forced higher tiers — `bun_runtime`, `bun_sql_jsc`
-// — to convert at every assignment and risked silent layout drift).
+// `{sec,nsec}` layout, which forced higher tiers — `bun_runtime` and its
+// `sql_jsc` module — to convert at every assignment and risked silent layout drift).
 use Timespec as timespec;
 pub use bun_core::Timespec;
 
@@ -24,10 +24,6 @@ const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;
 // LAYERING: rather than a runtime-registered fn-ptr (init-order
 // hazard), the bodies are declared `extern "Rust"` and defined `#[no_mangle]`
 // in `bun_runtime`; the linker resolves them. No `AtomicPtr`, no registration.
-//
-// PERF: `__bun_js_timer_epoch` sits on the
-// heap-compare path. Consider denormalizing `epoch` into `EventLoopTimer`
-// to drop the cross-crate call if profiling shows it matters.
 unsafe extern "Rust" {
     /// Runtime owns the tag→variant `match`; `vm` is an erased
     /// `*mut VirtualMachine`. Defined in `bun_runtime::dispatch`.
@@ -37,14 +33,6 @@ unsafe extern "Rust" {
     /// keyed on `(*t).tag`, and may free that container. Caller must pass a
     /// live timer just popped from `All.timers` and must not touch `t` after.
     fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const timespec, vm: *mut ());
-    /// Returns the JS-timer epoch (TimerObjectInternals.flags.epoch) for
-    /// TimeoutObject/ImmediateObject/AbortSignalTimeout, else `None`.
-    /// Defined in `bun_runtime::dispatch`.
-    ///
-    /// SAFETY (genuine FFI precondition — NOT a `safe fn` candidate): impl
-    /// recovers the parent struct via `container_of` keyed on `tag`; `t` must
-    /// be the `event_loop_timer` field of that container (tag invariant).
-    fn __bun_js_timer_epoch(tag: Tag, t: *const EventLoopTimer) -> Option<u32>;
 }
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -56,6 +44,11 @@ pub struct EventLoopTimer {
     /// Internal heap fields.
     pub heap: IntrusiveField<EventLoopTimer>,
     pub in_heap: InHeap,
+    /// JS-timer fire-order epoch (only meaningful when [`Tag::is_js_timer`]).
+    /// Written by `All::update` / `TimerObjectInternals::refresh`; read by
+    /// [`EventLoopTimer::less`] to break ties between equal-deadline JS timers.
+    /// Logically a u25 — masked to 25 bits on write.
+    pub js_epoch: u32,
 }
 
 // Duck-typed `.heap` field access for `bun_io::heap::Intrusive`. Implemented
@@ -84,6 +77,7 @@ impl EventLoopTimer {
             tag,
             heap: IntrusiveField::default(),
             in_heap: InHeap::None,
+            js_epoch: 0,
         }
     }
 
@@ -122,8 +116,8 @@ impl EventLoopTimer {
                     //
                     // The epoch is logically a u25, stored in a wider int,
                     // so we mask the wrapping_sub result to 25 bits to wrap mod 2^25.
-                    // (`TimerFlags::epoch`/`set_epoch` below mask to 25 bits on both read
-                    // and write, so both operands here are already < 2^25.)
+                    // (`js_epoch` is masked to 25 bits by every writer, so both
+                    // operands here are already < 2^25.)
                     const U25_MAX: u32 = (1 << 25) - 1;
                     return (b_epoch.wrapping_sub(a_epoch) & U25_MAX) < U25_MAX / 2;
                 }
@@ -134,17 +128,14 @@ impl EventLoopTimer {
 
     /// If self was created by set{Immediate,Timeout,Interval}, return its
     /// JS-timer epoch (used for stable ordering of equal-deadline timers).
-    ///
-    /// The container_of dispatch into
-    /// `TimeoutObject`/`ImmediateObject`/`AbortSignalTimeout` (all tier-6
-    /// runtime types) lives in
-    /// `bun_runtime::dispatch::__bun_js_timer_epoch` (link-time extern).
     /// Returns `None` for non-JS timer tags.
     #[inline]
     pub fn js_timer_epoch(&self) -> Option<u32> {
-        // SAFETY: `self` is a live timer; the extern impl reads `tag` and
-        // recovers the container via `offset_of`.
-        unsafe { __bun_js_timer_epoch(self.tag, self) }
+        if self.tag.is_js_timer() {
+            Some(self.js_epoch)
+        } else {
+            None
+        }
     }
 
     /// Fire the timer's callback.
@@ -206,6 +197,16 @@ pub enum Tag {
 }
 
 impl Tag {
+    /// The three JS-timer container tags whose [`EventLoopTimer::js_epoch`]
+    /// participates in the equal-deadline fire-order tiebreak.
+    #[inline]
+    pub fn is_js_timer(self) -> bool {
+        matches!(
+            self,
+            Tag::TimeoutObject | Tag::ImmediateObject | Tag::AbortSignalTimeout
+        )
+    }
+
     pub fn allow_fake_timers(self) -> bool {
         match self {
             Tag::WTFTimer // internal
@@ -226,47 +227,17 @@ pub struct TimerCallback {
     pub event_loop_timer: EventLoopTimer,
 }
 
-/// Stamp out one `unsafe fn $method(*const EventLoopTimer) -> *mut Self` per
-/// `(method => field)` pair: each recovers the embedding owner from a pointer
-/// to the named intrusive [`EventLoopTimer`] slot (typed container_of).
-///
-/// The accessor layer exists only as a cross-crate visibility shim: the
-/// `__bun_fire_timer` tag-dispatch in `bun_runtime` cannot name private timer
-/// fields on owners defined elsewhere, so each owner exports a named thunk per
-/// slot. The input is `*const` (so `*mut` / `&mut` / `&` all coerce at the
-/// call site); the field may be a bare `EventLoopTimer` or any
-/// `#[repr(transparent)]` wrapper such as `JsCell<EventLoopTimer>` — the
-/// underlying `from_field_ptr!` infers the field type.
-///
-/// ```ignore
-/// bun_event_loop::impl_timer_owner!(JSValkeyClient;
-///     from_timer_ptr => timer,
-///     from_reconnect_timer_ptr => reconnect_timer,
-/// );
-/// ```
-#[macro_export]
-macro_rules! impl_timer_owner {
-    ($Owner:ty; $($method:ident => $field:ident),+ $(,)?) => {
-        impl $Owner {
-            $(
-                /// Recover `*mut Self` from a pointer to its intrusive
-                #[doc = concat!("`", stringify!($field), "` [`EventLoopTimer`] slot.")]
-                /// # Safety
-                #[doc = concat!("`t` must point at the `", stringify!($field), "` field of a live `Self`.")]
-                #[inline]
-                pub unsafe fn $method(
-                    t: *const $crate::EventLoopTimer::EventLoopTimer,
-                ) -> *mut Self {
-                    // SAFETY: caller contract — `t` addresses `Self.$field`
-                    // with whole-`Self` provenance.
-                    unsafe { ::bun_core::from_field_ptr!(Self, $field, t) }
-                }
-            )+
-        }
-    };
+impl TimerCallback {
+    /// Recover `*mut Self` from a pointer to its intrusive `event_loop_timer` [`EventLoopTimer`] slot.
+    /// # Safety
+    /// `t` must point at the `event_loop_timer` field of a live `Self`.
+    #[inline]
+    pub unsafe fn from_timer_ptr(t: *const EventLoopTimer) -> *mut Self {
+        // SAFETY: caller contract — `t` addresses `Self.event_loop_timer` with
+        // whole-`Self` provenance.
+        unsafe { bun_core::from_field_ptr!(Self, event_loop_timer, t) }
+    }
 }
-
-crate::impl_timer_owner!(TimerCallback; from_timer_ptr => event_loop_timer);
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Default)]
@@ -333,8 +304,11 @@ impl From<Kind> for KindBig {
 }
 
 /// Packed per-JS-timer state in a `u32`. Layout (LSB→MSB):
-///   epoch:u25, kind:u2, has_cleared_timer:1, is_keeping_event_loop_alive:1,
+///   (reserved):u25, kind:u2, has_cleared_timer:1, is_keeping_event_loop_alive:1,
 ///   has_accessed_primitive:1, has_js_ref:1, in_callback:1
+///
+/// The low 25 bits are unused; the JS-timer fire-order epoch lives on
+/// [`EventLoopTimer::js_epoch`].
 ///
 /// Used by `TimeoutObject` / `ImmediateObject` / `AbortSignal::Timeout`.
 #[repr(transparent)]
@@ -349,7 +323,6 @@ impl Default for TimerFlags {
 }
 
 impl TimerFlags {
-    const EPOCH_MASK: u32 = (1 << 25) - 1;
     const KIND_SHIFT: u32 = 25;
     const KIND_MASK: u32 = 0b11 << Self::KIND_SHIFT;
     const HAS_CLEARED_TIMER: u32 = 1 << 27;
@@ -358,18 +331,6 @@ impl TimerFlags {
     const HAS_JS_REF: u32 = 1 << 30;
     const IN_CALLBACK: u32 = 1 << 31;
 
-    /// Whenever a timer is inserted into the heap (creation or refresh), the
-    /// global epoch is incremented and the new epoch is set on the timer. For
-    /// JS timers, the epoch breaks ties between equal-deadline timers so that
-    /// refreshing a timer makes it fire after its peers (Node.js semantics).
-    #[inline]
-    pub fn epoch(self) -> u32 {
-        self.0 & Self::EPOCH_MASK
-    }
-    #[inline]
-    pub fn set_epoch(&mut self, v: u32) {
-        self.0 = (self.0 & !Self::EPOCH_MASK) | (v & Self::EPOCH_MASK);
-    }
     /// Kind does not include AbortSignal's timeout since it has no
     /// corresponding ID callback.
     #[inline]

@@ -2,8 +2,7 @@
 //!
 //! The `Run` struct (the per-process VM driver) is defined once in
 //! `crate::cli::run_command` so the CLI dispatch path can call it directly
-//! without a crate-cycle; this module re-exports it as
-//! `bun.js.Run` and hosts the handful of helpers that other crates reach for
+//! without a crate-cycle; this module hosts the handful of helpers that other crates reach for
 //! (`apply_standalone_runtime_flags`, `fail_with_build_error`, the
 //! `Bun__on{Resolve,Reject}EntryPointResult` host fns).
 
@@ -15,15 +14,11 @@ use bun_standalone_graph::StandaloneModuleGraph::{Flags as GraphFlags, Standalon
 pub use crate::api;
 pub use crate::webcore;
 
-/// Canonical `Run` lives in `cli::run_command`; re-export so callers that
-/// expect `bun.js.Run` resolve to the single definition.
-pub use crate::cli::run_command::Run;
-
 pub fn apply_standalone_runtime_flags(
     b: &mut bun_bundler::Transpiler,
     graph: &StandaloneModuleGraph,
 ) {
-    use bun_options_types::schema::api::DotEnvBehavior;
+    use bun_dotenv::DotEnvBehavior;
     let disable_env = graph.flags.contains(GraphFlags::DISABLE_DEFAULT_ENV_FILES);
     b.options.env.disable_default_env_files = disable_env;
     b.options.env.behavior = if disable_env {

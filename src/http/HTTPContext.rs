@@ -317,12 +317,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
     pub(crate) fn terminate_socket(socket: HTTPSocket<SSL>) {
         Self::mark_socket_as_dead(socket);
-        socket.close(uws::CloseKind::Failure);
+        socket.close(uws::CloseCode::failure);
     }
 
     pub(crate) fn close_socket(socket: HTTPSocket<SSL>) {
         Self::mark_socket_as_dead(socket);
-        socket.close(uws::CloseKind::Normal);
+        socket.close(uws::CloseCode::normal);
     }
 
     /// `ptr` is the *value* stored in the socket ext (the packed
@@ -496,10 +496,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         self.init_with_opts(&opts)
     }
 
-    fn init_with_opts(
-        &mut self,
-        opts: &uws::SocketContext::BunSocketContextOptions,
-    ) -> Result<(), InitError> {
+    fn init_with_opts(&mut self, opts: &uws::BunSocketContextOptions) -> Result<(), InitError> {
         debug_assert!(SSL, "ssl only");
         let mut err = uws::create_bun_socket_error_t::none;
         self.secure = match opts.create_ssl_context(&mut err) {
@@ -526,7 +523,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         init_opts: &HTTPThreadInitOpts,
     ) -> Result<(), InitError> {
         debug_assert!(SSL, "ssl only");
-        let opts = uws::SocketContext::BunSocketContextOptions {
+        let opts = uws::BunSocketContextOptions {
             ca: if !init_opts.ca.is_empty() {
                 init_opts.ca.as_ptr().cast()
             } else {
@@ -551,7 +548,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         if SSL {
             let mut err = uws::create_bun_socket_error_t::none;
             self.secure = Some(
-                uws::SocketContext::BunSocketContextOptions {
+                uws::BunSocketContextOptions {
                     // we request the cert so we load root certs and can verify it
                     request_cert: 1,
                     // we manually abort the connection if the hostname doesn't match
@@ -1085,7 +1082,7 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
                 // below force-closes the TCP without triggering the
                 // callback, same as addMemoryBackToPool().
                 pooled.release_parked_refs();
-                pooled.http_socket.close(uws::CloseKind::Failure);
+                pooled.http_socket.close(uws::CloseCode::failure);
             }
         }
 
@@ -1366,9 +1363,9 @@ impl<const SSL: bool> Handler<SSL> {
         // closing and it would leak.
         if let Some(client) = tagged.client_mut() {
             if client.has_unsent_request_body() {
-                socket.close(uws::CloseKind::Failure);
+                socket.close(uws::CloseCode::failure);
             } else {
-                socket.close(uws::CloseKind::Normal);
+                socket.close(uws::CloseCode::normal);
             }
             client.on_close::<SSL>(socket);
             return;
@@ -1377,11 +1374,11 @@ impl<const SSL: bool> Handler<SSL> {
             // An HTTP/2 session's streams may still be uploading; the same
             // undeliverable-bytes reasoning applies, and this matches the
             // pre-existing behaviour for this branch.
-            socket.close(uws::CloseKind::Failure);
+            socket.close(uws::CloseCode::failure);
             session.on_close(bun_core::err!("ConnectionClosed"));
             return;
         }
-        socket.close(uws::CloseKind::Normal);
+        socket.close(uws::CloseCode::normal);
     }
 }
 

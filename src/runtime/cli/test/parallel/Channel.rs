@@ -28,11 +28,11 @@ use bun_sys::FdExt as _;
 use bun_uws as uws;
 
 #[cfg(windows)]
+use bun_libuv_sys as uv;
+#[cfg(windows)]
 use bun_libuv_sys::{UvHandle as _, UvStream as _};
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
 
 use super::frame;
 
@@ -444,7 +444,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         }
         #[cfg(not(windows))]
         {
-            self.backend.socket.close(uws::CloseCode::Normal);
+            self.backend.socket.close(uws::CloseCode::normal);
         }
         self.mark_done();
     }
@@ -515,7 +515,7 @@ impl<Owner> Drop for Channel<Owner> {
         #[cfg(not(windows))]
         {
             if !self.backend.socket.is_detached() {
-                self.backend.socket.close(uws::CloseCode::Normal);
+                self.backend.socket.close(uws::CloseCode::normal);
                 self.backend.socket = Socket::DETACHED;
             }
         }
@@ -541,8 +541,8 @@ pub(crate) type PosixExt<Owner> = *mut Channel<Owner>;
 #[cfg(not(windows))]
 impl<Owner: ChannelOwner> PosixHandlers<Owner> {
     /// Per-Owner static vtable. `&Self::VTABLE` const-promotes to
-    /// `&'static SocketGroupVTable` (all fields are `Option<fn>`; no Drop).
-    pub(crate) const VTABLE: uws::SocketGroupVTable = uws::SocketGroupVTable {
+    /// `&'static socket_group::VTable` (all fields are `Option<fn>`; no Drop).
+    pub(crate) const VTABLE: uws::socket_group::VTable = uws::socket_group::VTable {
         on_open: None,
         on_data: Some(Self::raw_on_data),
         on_fd: None,
@@ -575,7 +575,7 @@ impl<Owner: ChannelOwner> PosixHandlers<Owner> {
         len: core::ffi::c_int,
     ) -> *mut uws::us_socket_t {
         // SAFETY: usockets guarantees `data[0..len]` is valid for the call.
-        let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
+        let slice = unsafe { bun_opaque::ffi::slice(data, len as usize) };
         // SAFETY: see `chan` doc.
         unsafe { Self::chan(s) }.ingest(slice);
         s
@@ -648,7 +648,7 @@ impl<Owner: ChannelOwner> uv::StreamReader for Channel<Owner> {
     }
     #[inline]
     fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
-        let e = bun_sys::windows::translate_uv_error_to_e(err);
+        let e = bun_core::errno::translate_uv_error_to_e(err);
         WindowsHandlers::<Owner>::on_error(this, e);
     }
     #[inline]

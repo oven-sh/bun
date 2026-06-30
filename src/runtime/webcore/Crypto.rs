@@ -3,6 +3,7 @@ use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
 use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsClass, JsResult, StringJsc};
 
 use crate::node::Encoding;
+use crate::node::types::EncodingExt as _;
 
 // `.classes.ts`-backed type: the C++ JSCell wrapper stays generated C++.
 // This struct is the `m_ctx` payload. `toJS`/`fromJS`/`fromJSDirect` are
@@ -54,8 +55,8 @@ impl Crypto {
         // `ffi::slice` tolerates `(null, 0)` for detached/empty arrays.
         let (a, b) = unsafe {
             (
-                bun_core::ffi::slice(a_ptr, len),
-                bun_core::ffi::slice(b_ptr, len),
+                bun_opaque::ffi::slice(a_ptr, len),
+                bun_opaque::ffi::slice(b_ptr, len),
             )
         };
         JSValue::from(bun_boringssl_sys::constant_time_eq(a, b))
@@ -100,7 +101,7 @@ impl Crypto {
         // SAFETY: JSC guarantees `ptr()` is valid for `len()` writable bytes while the
         // typed-array cell is alive; `ffi::slice_mut` tolerates `(null, 0)` for detached.
         random_data(global, unsafe {
-            bun_core::ffi::slice_mut(array.ptr(), array.len())
+            bun_opaque::ffi::slice_mut(array.ptr(), array.len())
         });
         // Encode the cell pointer back into a JSValue.
         JSValue::from_encoded(std::ptr::from_ref::<JSUint8Array>(array) as usize)
@@ -390,7 +391,7 @@ pub(crate) fn bun_random_uuid_v5(
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn CryptoObject__create(global: &JSGlobalObject) -> JSValue {
-    bun_jsc::mark_binding!();
+    bun_core::mark_binding!();
 
     // Box::new aborts on OOM, so an out-of-memory throw arm is unreachable.
     // `JsClass::to_js` boxes `self` internally and transfers ownership to the JS wrapper.

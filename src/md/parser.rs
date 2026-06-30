@@ -130,17 +130,13 @@ impl Default for BlockHeader {
     }
 }
 
-/// `Parser`'s error type: the union of `{ OutOfMemory, JSError, JSTerminated }`
-/// with the parser-specific `{ StackOverflow, InputTooLarge, TooManyBlocks }`.
-// (`bun_jsc::JsError` covers the first three, but the md crate sits below
-// `bun_jsc` in the layering, so the variants stay flat here.)
+/// `Parser`'s error type: the canonical `bun_core::JsError` union plus the
+/// parser-specific `{ StackOverflow, InputTooLarge, TooManyBlocks }`.
 pub type Error = ParserError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParserError {
-    OutOfMemory,
-    JSError,
-    JSTerminated,
+    Js(bun_core::JsError),
     StackOverflow,
     /// The input is longer than [`MAX_INPUT_LEN`], so the parser's `u32`
     /// offset arithmetic cannot address it.
@@ -150,11 +146,30 @@ pub enum ParserError {
     TooManyBlocks,
 }
 
-bun_core::oom_from_alloc!(ParserError);
+impl From<bun_core::JsError> for ParserError {
+    #[inline]
+    fn from(e: bun_core::JsError) -> Self {
+        Self::Js(e)
+    }
+}
+
+impl From<bun_alloc::AllocError> for ParserError {
+    #[inline]
+    fn from(_: bun_alloc::AllocError) -> Self {
+        Self::Js(bun_core::JsError::OutOfMemory)
+    }
+}
 
 impl From<ParserError> for bun_core::Error {
     fn from(e: ParserError) -> Self {
-        bun_core::err!(from e)
+        match e {
+            ParserError::Js(bun_core::JsError::OutOfMemory) => bun_core::err!("OutOfMemory"),
+            ParserError::Js(bun_core::JsError::Thrown) => bun_core::err!("JSError"),
+            ParserError::Js(bun_core::JsError::Terminated) => bun_core::err!("JSTerminated"),
+            ParserError::StackOverflow => bun_core::err!("StackOverflow"),
+            ParserError::InputTooLarge => bun_core::err!("InputTooLarge"),
+            ParserError::TooManyBlocks => bun_core::err!("TooManyBlocks"),
+        }
     }
 }
 

@@ -2,8 +2,8 @@
 //! the HTTP thread (`bun_http::compress_body`) so it can reuse
 //! `LibdeflateState`'s shared scratch buffer.
 
-use crate::webcore::jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_jsc::ComptimeStringMapExt as _;
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 pub use bun_http::compress_body::{
     CompressEncoding, CompressOption, DEFAULT_BROTLI_QUALITY, DEFAULT_DEFLATE_LEVEL,

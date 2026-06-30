@@ -2,18 +2,19 @@ use bstr::BStr;
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_ast as js_ast;
 use bun_collections::StringArrayHashMap;
+use bun_core::{MAX_PATH_BYTES, PathBuffer};
 use bun_core::{ZStr, strings};
 use bun_glob as glob;
 use bun_paths as path;
+use bun_paths::SEP_STR;
 use bun_paths::resolve_path;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP_STR};
 
-use crate::lockfile_real::StringBuilder;
+use crate::lockfile::StringBuilder;
 use crate::package_manager::workspace_package_json_cache::{
     GetJSONOptions, WorkspacePackageJSONCache,
 };
 
-bun_output::declare_scope!(Lockfile, hidden);
+bun_core::declare_scope!(Lockfile, hidden);
 
 pub(crate) struct WorkspaceMap {
     map: Map,
@@ -108,7 +109,7 @@ impl<'a> NamesArray<'a> {
         match self {
             NamesArray::Mutable(arr) => arr.slice()[i].loc,
             NamesArray::Immutable(_, array_loc) => {
-                crate::bun_json::array_item_loc(&source.contents, *array_loc, i)
+                bun_parsers::json::array_item_loc(&source.contents, *array_loc, i)
                     .unwrap_or(*array_loc)
             }
         }
@@ -156,7 +157,7 @@ fn process_workspace_name(
             break 'brk None;
         },
     };
-    bun_output::scoped_log!(
+    bun_core::scoped_log!(
         Lockfile,
         "processWorkspaceName({}) = {}",
         BStr::new(abs_package_json_path.as_bytes()),
@@ -344,7 +345,7 @@ impl WorkspaceMap {
                     cwd = bun_resolver::fs::FileSystem::instance().top_level_dir();
                 }
                 // GlobWalker::init_with_cwd is now an associated constructor
-                // returning `Result<Maybe<Self>>`; arena param dropped (heap-backed),
+                // returning `Result<bun_sys::Result<Self>>`; arena param dropped (heap-backed),
                 // ignore filter supplied as final arg.
                 let mut walker = match GlobWalker::init_with_cwd(
                     glob_pattern,
@@ -424,7 +425,7 @@ impl WorkspaceMap {
                                 | glob::MatchResult::NegateMatch => {}
 
                                 glob::MatchResult::NegateNoMatch => {
-                                    bun_output::scoped_log!(
+                                    bun_core::scoped_log!(
                                         Lockfile,
                                         "skipping negated path: {}, {}\n",
                                         BStr::new(matched_path_without_package_json),
@@ -436,7 +437,7 @@ impl WorkspaceMap {
                         }
                     }
 
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         Lockfile,
                         "matched path: {}, dirname: {}\n",
                         BStr::new(matched_path),

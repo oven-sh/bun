@@ -4,21 +4,21 @@ use core::ptr;
 
 use crate::api::{TCPSocket, TLSSocket};
 use crate::socket::NewSocket;
-use crate::socket::SSLConfig;
 use crate::socket::windows_named_pipe::{Handlers as NamedPipeHandlers, WindowsNamedPipe};
 use bun_boringssl_sys as boringssl;
+use bun_core::PathBuffer;
 use bun_core::ZStr;
 use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::Task;
+use bun_http::ssl_config::SSLConfig;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, SysErrorJsc};
-use bun_paths::PathBuffer;
 #[cfg(windows)]
-use bun_sys::windows::libuv as uv;
+use bun_libuv_sys as uv;
 use bun_sys::{self, Error as SysError, Fd, SystemErrno};
 use bun_uws::{self as uws, us_bun_verify_error_t};
 
-bun_output::declare_scope!(WindowsNamedPipeContext, visible);
+bun_core::declare_scope!(WindowsNamedPipeContext, visible);
 
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = schedule_deinit)]
@@ -84,7 +84,7 @@ fn socket_from_named_pipe<const SSL: bool>(
     #[cfg(windows)]
     {
         uws::NewSocketHandler {
-            socket: uws::InternalSocket::Pipe(pipe.cast()),
+            socket: uws::InternalSocket::Pipe(super::windows_named_pipe::named_pipe_handle(pipe)),
         }
     }
     #[cfg(not(windows))]
@@ -474,7 +474,7 @@ impl WindowsNamedPipeContext {
 
 impl Drop for WindowsNamedPipeContext {
     fn drop(&mut self) {
-        bun_output::scoped_log!(WindowsNamedPipeContext, "deinit");
+        bun_core::scoped_log!(WindowsNamedPipeContext, "deinit");
         // Deref the wrapped socket, then let `named_pipe` drop.
         match_socket!(
             core::mem::replace(&mut self.socket, SocketType::None),

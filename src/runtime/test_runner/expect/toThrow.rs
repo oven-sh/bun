@@ -1,9 +1,9 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use super::JSValueTestExt;
 use super::FormatterTestExt;
-use bun_jsc::console_object::Formatter;
+use super::JSValueTestExt;
+use bun_core::{ZigString, strings};
 use bun_jsc::JsClass;
-use bun_core::{strings, ZigString};
+use bun_jsc::console_object::Formatter;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
 use super::ExpectAny;
@@ -101,7 +101,7 @@ pub(crate) fn to_throw(
 
         if expected_value.is_string() {
             let received_message: JSValue = (if result.is_object() {
-                result.fast_get(global, bun_jsc::BuiltinName::Message)?
+                result.fast_get(global, bun_jsc::BuiltinName::message)?
             } else {
                 Some(JSValue::from_cell(result.to_js_string(global)?))
             })
@@ -134,7 +134,7 @@ pub(crate) fn to_throw(
 
         if expected_value.is_reg_exp() {
             let received_message: JSValue = (if result.is_object() {
-                result.fast_get(global, bun_jsc::BuiltinName::Message)?
+                result.fast_get(global, bun_jsc::BuiltinName::message)?
             } else {
                 Some(JSValue::from_cell(result.to_js_string(global)?))
             })
@@ -165,9 +165,11 @@ pub(crate) fn to_throw(
             );
         }
 
-        if let Some(expected_message) = expected_value.fast_get(global, bun_jsc::BuiltinName::Message)? {
+        if let Some(expected_message) =
+            expected_value.fast_get(global, bun_jsc::BuiltinName::message)?
+        {
             let received_message: JSValue = (if result.is_object() {
-                result.fast_get(global, bun_jsc::BuiltinName::Message)?
+                result.fast_get(global, bun_jsc::BuiltinName::message)?
             } else {
                 Some(JSValue::from_cell(result.to_js_string(global)?))
             })
@@ -198,7 +200,7 @@ pub(crate) fn to_throw(
         let mut expected_class = ZigString::EMPTY;
         expected_value.get_class_name(global, &mut expected_class)?;
         let received_message: JSValue = result
-            .fast_get(global, bun_jsc::BuiltinName::Message)?
+            .fast_get(global, bun_jsc::BuiltinName::message)?
             .unwrap_or(JSValue::UNDEFINED);
         return this.throw(
             global,
@@ -223,7 +225,7 @@ pub(crate) fn to_throw(
         };
 
         let received_message_opt: Option<JSValue> = if result.is_object() {
-            result.fast_get(global, bun_jsc::BuiltinName::Message)?
+            result.fast_get(global, bun_jsc::BuiltinName::message)?
         } else {
             Some(JSValue::from_cell(result.to_js_string(global)?))
         };
@@ -338,7 +340,9 @@ pub(crate) fn to_throw(
         // If it's not an object, we are going to crash here.
         debug_assert!(expected_value.is_object());
 
-        if let Some(expected_message) = expected_value.fast_get(global, bun_jsc::BuiltinName::Message)? {
+        if let Some(expected_message) =
+            expected_value.fast_get(global, bun_jsc::BuiltinName::message)?
+        {
             let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
 
             if let Some(received_message) = received_message_opt {
@@ -448,7 +452,9 @@ pub(crate) fn to_throw(
         );
     }
 
-    if let Some(expected_message) = expected_value.fast_get(global, bun_jsc::BuiltinName::Message)? {
+    if let Some(expected_message) =
+        expected_value.fast_get(global, bun_jsc::BuiltinName::message)?
+    {
         return this.throw(
             global,
             signature,

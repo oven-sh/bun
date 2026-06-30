@@ -65,7 +65,7 @@ pub struct Stream {
     /// window is exhausted. Borrows from `client.state.request_body`.
     // BACKREF: borrows from `client.state.request_body`; `RawSlice` carries
     // the outlives-holder invariant (client outlives every Stream it owns).
-    pub pending_body: bun_ptr::RawSlice<u8>,
+    pub pending_body: bun_core::RawSlice<u8>,
 }
 
 impl Stream {
@@ -144,7 +144,7 @@ impl Stream {
             unacked_bytes: 0,
             data_bytes_received: 0,
             send_window,
-            pending_body: bun_ptr::RawSlice::EMPTY,
+            pending_body: bun_core::RawSlice::EMPTY,
         })
     }
 

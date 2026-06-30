@@ -9,12 +9,14 @@ use core::mem::size_of;
 
 use bun_alloc::{AllocError, Arena, ArenaVec};
 use bun_collections::array_hash_map::ArrayHashContext;
-use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
+use bun_collections::{ArrayHashMap, StringArrayHashMap};
+use bun_core::BoundedArray;
 use bun_core::Output;
+use bun_core::{MAX_PATH_BYTES, PathBuffer};
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, Strong, StrongOptional,
 };
-use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer};
+use bun_paths::{self as paths};
 use bun_resolver::{DirInfo, Resolver};
 
 use bun_wyhash;
@@ -24,8 +26,7 @@ use crate::bake::dev_server::route_bundle::IndexOptional as RouteBundleIndexOpti
 /// Metadata for route files is specified out of line, either in DevServer where
 /// it is an IncrementalGraph(.server).FileIndex or the production build context
 /// where it is an entrypoint index.
-pub enum OpaqueFileIdMarker {}
-pub type OpaqueFileId = bun_core::GenericIndex<u32, OpaqueFileIdMarker>;
+pub use bun_bundler::bake_types::production::OpaqueFileId;
 pub type OpaqueFileIdOptional = Option<OpaqueFileId>;
 
 pub struct FrameworkRouter {
@@ -245,13 +246,13 @@ impl FrameworkRouter {
 pub struct EncodedPattern {
     // ARENA: backed by `pattern_string_arena` (arena owns the bytes; outlives
     // every `EncodedPattern` — see `RawSlice` invariant in `bun_ptr`).
-    pub data: bun_ptr::RawSlice<u8>,
+    pub data: bun_core::RawSlice<u8>,
 }
 
 impl EncodedPattern {
     /// `/` is represented by zero bytes
     pub const ROOT: EncodedPattern = EncodedPattern {
-        data: bun_ptr::RawSlice::EMPTY,
+        data: bun_core::RawSlice::EMPTY,
     };
 
     #[inline]
@@ -279,7 +280,7 @@ impl EncodedPattern {
             debug_assert!(fbs.pos == len);
         }
         Ok(EncodedPattern {
-            data: bun_ptr::RawSlice::new(slice),
+            data: bun_core::RawSlice::new(slice),
         })
     }
 
@@ -359,8 +360,8 @@ impl EncodedPattern {
                     }
                     params.params.resize(param_num + 1).unwrap();
                     params.params.slice()[param_num] = MatchedParamEntry {
-                        key: bun_ptr::RawSlice::new(name),
-                        value: bun_ptr::RawSlice::new(&path[i..end]),
+                        key: bun_core::RawSlice::new(name),
+                        value: bun_core::RawSlice::new(&path[i..end]),
                     };
                     param_num += 1;
                     i = if end == path.len() { end } else { end + 1 };
@@ -379,8 +380,8 @@ impl EncodedPattern {
                                 }
                                 params.params.resize(param_num + 1).unwrap();
                                 params.params.slice()[param_num] = MatchedParamEntry {
-                                    key: bun_ptr::RawSlice::new(name),
-                                    value: bun_ptr::RawSlice::new(
+                                    key: bun_core::RawSlice::new(name),
+                                    value: bun_core::RawSlice::new(
                                         &path[segment_start..segment_end],
                                     ),
                                 };
@@ -464,7 +465,7 @@ impl ArrayHashContext<EncodedPattern> for EffectiveUrlContext {
 pub struct StaticPattern {
     // ARENA: backed by `pattern_string_arena` (arena owns the bytes; outlives
     // every `StaticPattern` — see `RawSlice` invariant in `bun_ptr`).
-    pub route_path: bun_ptr::RawSlice<u8>,
+    pub route_path: bun_core::RawSlice<u8>,
 }
 
 impl StaticPattern {
@@ -1239,8 +1240,8 @@ pub struct MatchedParams {
 pub struct MatchedParamEntry {
     // Borrow from the input `path`/`pattern` buffers; both outlive the
     // `MatchedParams` stack frame. See `RawSlice` invariant.
-    pub key: bun_ptr::RawSlice<u8>,
-    pub value: bun_ptr::RawSlice<u8>,
+    pub key: bun_core::RawSlice<u8>,
+    pub value: bun_core::RawSlice<u8>,
 }
 
 impl MatchedParams {
@@ -1731,7 +1732,7 @@ impl FrameworkRouter {
                             }
                             debug_assert!(pos == allocation.len());
                             let pattern = StaticPattern {
-                                route_path: bun_ptr::RawSlice::new(allocation),
+                                route_path: bun_core::RawSlice::new(allocation),
                             };
                             self.insert(
                                 t_index,

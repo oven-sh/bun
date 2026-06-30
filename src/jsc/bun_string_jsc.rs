@@ -2,9 +2,9 @@
 //! `src/string/` free of `JSValue`/`JSGlobalObject`/`CallFrame` types — the
 //! original methods are aliased to the free fns here.
 
-use bun_core::{SliceWithUnderlyingString, String, Tag, ZigStringSlice, strings};
+use bun_core::{SliceWithUnderlyingString, String, Tag, ZigString, ZigStringSlice, strings};
 
-use crate::zig_string::{self, ZigString};
+use crate::zig_string;
 use crate::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigStringJsc as _};
 
 // ── extern decls ────────────────────────────────────────────────────────────
@@ -190,7 +190,7 @@ fn slice_with_underlying_string_to_js_with_options(
                 let zig = ZigString::from_bytes(
                     // SAFETY: `take_owned_raw` returned a leaked, contiguous
                     // mimalloc-owned buffer of `len` bytes.
-                    unsafe { bun_core::ffi::slice(ptr, len) },
+                    unsafe { bun_opaque::ffi::slice(ptr, len) },
                 );
                 return Ok(zig.to_external_value(global_object));
             } else {

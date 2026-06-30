@@ -111,8 +111,6 @@ impl CAllocator {
     }
 }
 
-impl crate::Allocator for CAllocator {}
-
 pub use z::ALLOCATOR as z_allocator;
 
 /// libc can free plain `malloc`/`calloc`/`realloc` allocations without being

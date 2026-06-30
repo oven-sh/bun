@@ -1,5 +1,8 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
+
+use core::fmt::{self, Display, Formatter};
+
 pub mod shared {
     #[path = "ColumnIdentifier.rs"]
     pub mod column_identifier;
@@ -98,7 +101,7 @@ pub mod mysql {
         #[path = "StmtPrepareOKPacket.rs"]
         pub mod stmt_prepare_ok_packet;
 
-        // ── flat re-exports for `bun_sql_jsc` ──────────────────────────────
+        // ── flat re-exports for `bun_runtime::sql_jsc` ─────────────────
         // sql_jsc names most of these via `bun_sql::mysql::protocol::Foo`,
         // so surface them here as well as via their leaf modules.
         pub use any_mysql_error::{AnyMySQLError, Error};
@@ -230,7 +233,7 @@ pub mod postgres {
         #[path = "StartupMessage.rs"]
         pub mod startup_message;
 
-        // ── flat re-exports for `bun_sql_jsc` (Decode/Write trait surface) ──
+        // ── flat re-exports for `bun_runtime::sql_jsc` (Decode/Write traits) ──
         pub use new_reader::{NewReader, NewReaderWrap, ProtocolInt, ReaderContext};
         pub use new_writer::{LengthWriter, NewWriter, WriterContext, new_writer};
     }
@@ -251,3 +254,40 @@ pub mod postgres {
 
 // Top-level convenience re-export (sql_jsc::jsc references `bun_sql::FieldMessage`).
 pub use postgres::protocol::field_message::FieldMessage;
+
+// ───────────────────────────────────────────────────────────────────────────
+// SQL connection-timeout error message
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Which connection-level timeout fired. Drives the message template in
+/// [`fmt_conn_timeout`]; shared by the Postgres and MySQL backends.
+#[derive(Clone, Copy)]
+pub enum ConnTimeoutKind {
+    Idle,
+    Connection,
+    MaxLifetime,
+}
+
+/// Render the canonical SQL connection-timeout error message.
+///
+/// `ms` is converted to nanoseconds with a saturating multiply and rendered
+/// through [`bun_core::fmt::fmt_duration_one_decimal`]. `suffix` is
+/// appended verbatim — used for the per-status `(sent startup message…)` /
+/// `(during authentication)` tails.
+pub fn fmt_conn_timeout(kind: ConnTimeoutKind, ms: u32, suffix: &str) -> impl Display + '_ {
+    struct F<'a>(ConnTimeoutKind, u32, &'a str);
+    impl Display for F<'_> {
+        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+            let prefix = match self.0 {
+                ConnTimeoutKind::Idle => "Idle timeout reached after ",
+                ConnTimeoutKind::Connection => "Connection timeout after ",
+                ConnTimeoutKind::MaxLifetime => "Max lifetime timeout reached after ",
+            };
+            f.write_str(prefix)?;
+            bun_core::fmt::fmt_duration_one_decimal((self.1 as u64).saturating_mul(1_000_000))
+                .fmt(f)?;
+            f.write_str(self.2)
+        }
+    }
+    F(kind, ms, suffix)
+}

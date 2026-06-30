@@ -29,142 +29,119 @@ pub fn create_from<T: Taskable>(task: *mut T) -> core::ptr::NonNull<ConcurrentTa
 #[inline]
 pub fn from_callback<T>(
     ptr: *mut T,
-    callback: fn(*mut T) -> crate::JsResult<()>,
+    callback: fn(*mut T) -> bun_core::JsResult<()>,
 ) -> core::ptr::NonNull<ConcurrentTask> {
     ConcurrentTask::from_callback(ptr, callback)
 }
 
 // ─── Task (hot-dispatch tag+ptr, see PORTING.md §Dispatch) ──────────────────
 // Low tier (event_loop) stores `(tag, ptr)`; `bun_runtime::dispatch::run_task`
-// owns the `match` over ~96 variants. Tag constants live in
-// `crate::task_tag::*` below.
-#[repr(transparent)]
+// owns the `match` over ~96 variants.
+/// One variant per dispatchable task type. `bun_runtime::dispatch::run_task`
+/// matches this EXHAUSTIVELY (no wildcard) — adding a variant fails to
+/// compile until the runtime arm exists, and each arm's cast macro
+/// const-asserts the casted type's [`Taskable::TAG`] against the arm's tag.
+/// Discriminants are sequential u8,
+/// same values as the old task_tag constants (declaration order preserved).
+#[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct TaskTag(pub u8);
-
-/// Tag constants for `Task` — one per dispatchable task type. Values are
-/// sequential by source
-/// order; `bun_runtime::dispatch::run_task` matches on these. Both sides MUST
-/// agree — adding a variant requires updating both this list and the runtime
-/// match arm.
-// The tag table (here) is split from the type→arm mapping (runtime tier-6).
-#[allow(non_upper_case_globals)]
-pub mod task_tag {
-    use super::TaskTag;
-    macro_rules! tags {
-        ($($name:ident),* $(,)?) => {
-            tags!(@ 0u8, $($name,)*);
-            /// Number of task tags. `bun_runtime::dispatch::run_task` asserts
-            /// exhaustiveness against this.
-            pub const COUNT: u8 = tags!(@count 0u8, $($name,)*);
-        };
-        (@ $n:expr, $head:ident, $($rest:ident,)*) => {
-            pub const $head: TaskTag = TaskTag($n);
-            tags!(@ $n + 1u8, $($rest,)*);
-        };
-        (@ $n:expr,) => {};
-        (@count $n:expr, $head:ident, $($rest:ident,)*) => { tags!(@count $n + 1u8, $($rest,)*) };
-        (@count $n:expr,) => { $n };
-    }
-    tags! {
-        Access,
-        AnyTask,
-        AppendFile,
-        ArchiveExtractTask,
-        ArchiveBlobTask,
-        ArchiveWriteTask,
-        ArchiveFilesTask,
-        AsyncGlobWalkTask,
-        AsyncImageTask,
-        AsyncTransformTask,
-        BakeHotReloadEvent,       // bun.bake.DevServer.HotReloadEvent
-        BundleV2DeferredBatchTask, // bun.bundle_v2.DeferredBatchTask
-        ShellYesTask,             // shell.Interpreter.Builtin.Yes.YesTask
-        Chmod,
-        Chown,
-        Close,
-        CopyFile,
-        CopyFilePromiseTask,
-        CppTask,
-        Exists,
-        Fchmod,
-        FChown,
-        Fdatasync,
-        FetchTasklet,
-        Fstat,
-        FSWatchTask,
-        Fsync,
-        FTruncate,
-        Futimes,
-        GetAddrInfoRequestTask,
-        HotReloadTask,
-        ImmediateObject,
-        JSCDeferredWorkTask,
-        Lchmod,
-        Lchown,
-        Link,
-        Lstat,
-        Lutimes,
-        ManagedTask,
-        Mkdir,
-        Mkdtemp,
-        NapiAsyncWork,            // napi_async_work
-        NapiFinalizerTask,
-        NativePromiseContextDeferredDerefTask,
-        NativeBrotli,
-        NativeZlib,
-        NativeZstd,
-        Open,
-        PollPendingModulesTask,
-        PosixSignalTask,
-        MemoryPressureTask,
-        ProcessWaiterThreadTask,
-        Read,
-        Readdir,
-        ReaddirRecursive,
-        ReadFile,
-        ReadFileTask,
-        Readlink,
-        Readv,
-        FlushPendingFileSinkTask,
-        Realpath,
-        RealpathNonNative,
-        Rename,
-        Rm,
-        Rmdir,
-        RuntimeTranspilerStore,
-        S3HttpDownloadStreamingTask,
-        S3HttpSimpleTask,
-        ServerAllConnectionsClosedTask,
-        ShellAsync,
-        ShellAsyncSubprocessDone,
-        ShellCondExprStatTask,
-        ShellCpTask,
-        ShellGlobTask,
-        ShellIOReaderAsyncDeinit,
-        ShellIOWriterAsyncDeinit,
-        ShellIOWriter,
-        ShellLsTask,
-        ShellMkdirTask,
-        ShellMvBatchedTask,
-        ShellMvCheckTargetTask,
-        ShellRmDirTask,
-        ShellRmTask,
-        ShellTouchTask,
-        Stat,
-        StatFS,
-        StreamPending,
-        Symlink,
-        ThreadSafeFunction,
-        TimeoutObject,
-        Truncate,
-        Unlink,
-        Utimes,
-        Write,
-        WriteFile,
-        WriteFileTask,
-        Writev,
-    }
+pub enum TaskTag {
+    Access,
+    AnyTask,
+    AppendFile,
+    ArchiveExtractTask,
+    ArchiveBlobTask,
+    ArchiveWriteTask,
+    ArchiveFilesTask,
+    AsyncGlobWalkTask,
+    AsyncImageTask,
+    AsyncTransformTask,
+    BakeHotReloadEvent,        // bun.bake.DevServer.HotReloadEvent
+    BundleV2DeferredBatchTask, // bun.bundle_v2.DeferredBatchTask
+    ShellYesTask,              // shell.Interpreter.Builtin.Yes.YesTask
+    Chmod,
+    Chown,
+    Close,
+    CopyFile,
+    CopyFilePromiseTask,
+    CppTask,
+    Exists,
+    Fchmod,
+    FChown,
+    Fdatasync,
+    FetchTasklet,
+    Fstat,
+    FSWatchTask,
+    Fsync,
+    FTruncate,
+    Futimes,
+    GetAddrInfoRequestTask,
+    HotReloadTask,
+    ImmediateObject,
+    JSCDeferredWorkTask,
+    Lchmod,
+    Lchown,
+    Link,
+    Lstat,
+    Lutimes,
+    ManagedTask,
+    Mkdir,
+    Mkdtemp,
+    NapiAsyncWork, // napi_async_work
+    NapiFinalizerTask,
+    NativePromiseContextDeferredDerefTask,
+    NativeBrotli,
+    NativeZlib,
+    NativeZstd,
+    Open,
+    PollPendingModulesTask,
+    PosixSignalTask,
+    MemoryPressureTask,
+    ProcessWaiterThreadTask,
+    Read,
+    Readdir,
+    ReaddirRecursive,
+    ReadFile,
+    ReadFileTask,
+    Readlink,
+    Readv,
+    FlushPendingFileSinkTask,
+    Realpath,
+    RealpathNonNative,
+    Rename,
+    Rm,
+    Rmdir,
+    RuntimeTranspilerStore,
+    S3HttpDownloadStreamingTask,
+    S3HttpSimpleTask,
+    ServerAllConnectionsClosedTask,
+    ShellAsync,
+    ShellAsyncSubprocessDone,
+    ShellCondExprStatTask,
+    ShellCpTask,
+    ShellGlobTask,
+    ShellIOReaderAsyncDeinit,
+    ShellIOWriterAsyncDeinit,
+    ShellLsTask,
+    ShellMkdirTask,
+    ShellMvBatchedTask,
+    ShellMvCheckTargetTask,
+    ShellRmDirTask,
+    ShellRmTask,
+    ShellTouchTask,
+    Stat,
+    StatFS,
+    StreamPending,
+    Symlink,
+    ThreadSafeFunction,
+    TimeoutObject,
+    Truncate,
+    Unlink,
+    Utimes,
+    Write,
+    WriteFile,
+    WriteFileTask,
+    Writev,
 }
 
 #[derive(Copy, Clone)]
@@ -178,7 +155,7 @@ pub struct Task {
 ///
 /// ```ignore
 /// impl bun_event_loop::Taskable for FetchTasklet {
-///     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTasklet;
+///     const TAG: bun_event_loop::TaskTag = bun_event_loop::TaskTag::FetchTasklet;
 /// }
 /// ```
 ///
@@ -186,8 +163,9 @@ pub struct Task {
 /// the hot-dispatch list, see PORTING.md §Dispatch) so that
 /// [`Task::init`] can use it without a dep cycle.
 pub trait Taskable {
-    /// The tag constant from [`task_tag`] for this type. Both this and the
-    /// `bun_runtime::dispatch::run_task` match arm MUST agree.
+    /// The [`TaskTag`] variant for this type. The binding is const-asserted
+    /// by the cast macros in `bun_runtime::dispatch::run_task` — a mismatched
+    /// impl is a compile error there.
     const TAG: TaskTag;
 
     /// Build a [`Task`] from a raw pointer to `Self`. Ownership semantics are
@@ -231,10 +209,10 @@ impl Task {
 
 // Taskable impls for the low-tier task wrappers defined in this crate.
 impl Taskable for crate::AnyTask::AnyTask {
-    const TAG: TaskTag = task_tag::AnyTask;
+    const TAG: TaskTag = TaskTag::AnyTask;
 }
 impl Taskable for crate::ManagedTask::ManagedTask {
-    const TAG: TaskTag = task_tag::ManagedTask;
+    const TAG: TaskTag = TaskTag::ManagedTask;
 }
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -254,8 +232,9 @@ pub struct ConcurrentTask {
 impl Default for ConcurrentTask {
     fn default() -> Self {
         Self {
-            // SAFETY: all-zero is a valid bit pattern for `Task` (plain tag
-            // byte + raw pointer); caller must set a real task before use.
+            // SAFETY: all-zero is a valid bit pattern for `Task` (tag
+            // discriminant 0 = `TaskTag::Access` + raw pointer); caller must
+            // set a real task before use.
             task: unsafe { bun_core::ffi::zeroed_unchecked() },
             next: Link::new(),
             auto_delete: false,
@@ -343,7 +322,7 @@ impl ConcurrentTask {
     // callers that have a `fn(*mut T)` should wrap it as `|p| { f(p); Ok(()) }` at the call site.
     pub fn from_callback<T>(
         ptr: *mut T,
-        callback: fn(*mut T) -> crate::JsResult<()>,
+        callback: fn(*mut T) -> bun_core::JsResult<()>,
     ) -> core::ptr::NonNull<ConcurrentTask> {
         bun_core::mark_binding!();
         Self::create(ManagedTask::ManagedTask::new(ptr, callback))

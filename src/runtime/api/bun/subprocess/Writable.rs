@@ -7,13 +7,13 @@ use bun_ptr::RefPtr;
 use bun_sys::{self, Fd, FdExt};
 
 use crate::api::bun_spawn::stdio::Stdio;
-use crate::node::types::FdJsc;
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::file_sink::{self, FileSink};
 use crate::webcore::sink;
 use crate::webcore::streams::SignalHandler;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
+use bun_sys_jsc::FdJsc;
 
 use super::{Flags, StaticPipeWriter, StdioResult, Subprocess, js};
 
@@ -324,7 +324,7 @@ impl<'a> Writable<'a> {
                 // through the FilePoll vtable shim.
                 pipe.writer.with_mut(|w| {
                     if let Some(poll) = w.handle.get_poll() {
-                        poll.set_flag(bun_io::FilePollFlag::Socket);
+                        poll.set_flag(bun_io::posix_event_loop::Flags::Socket);
                     }
                 });
 

@@ -1,4 +1,4 @@
-use crate::node::ErrorCode;
+use crate::ErrorCode;
 use crate::{JSGlobalObject, JSValue, StringJsc, ZigStringJsc};
 use bun_core::{String as BunString, ZigString};
 

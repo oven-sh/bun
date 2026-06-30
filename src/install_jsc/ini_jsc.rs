@@ -4,8 +4,8 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 /// Free-fn aliases of the [`IniTestingAPIs`] associated fns so
-/// `bun_runtime::dispatch::js2native` can `pub use` them (associated fns
-/// aren't importable items).
+/// `bun_runtime`'s generated js2native thunks can name them by a plain fn
+/// path.
 #[inline]
 pub fn ini_testing_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     IniTestingAPIs::parse(global, frame)
@@ -22,13 +22,13 @@ pub struct IniTestingAPIs;
 
 impl IniTestingAPIs {
     pub fn load_npmrc_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        use bun_api::BunInstall;
         use bun_ast::{Log, Source};
         use bun_core::String as BunString;
         use bun_core::ZStr;
         use bun_dotenv as dotenv;
         use bun_ini::{config_iterator, load_npmrc};
         use bun_install::npm::Registry;
+        use bun_options_types::schema::api::BunInstall;
 
         let arg = frame.argument(0);
         let npmrc_contents = bun_core::OwnedString::new(arg.to_bun_string(global)?);
@@ -190,9 +190,7 @@ impl IniTestingAPIs {
     }
 
     pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        use bun_ast::ToJSError;
         use bun_ini::Parser;
-        use bun_jsc::JsError;
 
         let arguments_ = frame.arguments_old::<1>();
         let arguments = arguments_.slice();
@@ -219,9 +217,6 @@ impl IniTestingAPIs {
 
         match bun_js_parser_jsc::expr_to_js(&parser.out, global) {
             Ok(v) => Ok(v),
-            Err(ToJSError::OutOfMemory) => Err(JsError::OutOfMemory),
-            Err(ToJSError::JSError) => Err(JsError::Thrown),
-            Err(ToJSError::JSTerminated) => Err(JsError::Terminated),
             Err(e) => Err(global.throw_error(e.into(), "failed to turn AST into JS")),
         }
     }

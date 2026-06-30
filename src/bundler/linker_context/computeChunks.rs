@@ -4,8 +4,9 @@ use core::sync::atomic::AtomicUsize;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::{ArrayHashMap, AutoBitSet, VecExt};
+use bun_core::PathBuffer;
 use bun_core::strings;
-use bun_paths::{PathBuffer, resolve_path};
+use bun_paths::resolve_path;
 use bun_sourcemap::SourceMapPieces;
 use bun_wyhash::{self, Wyhash};
 

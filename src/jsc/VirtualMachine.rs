@@ -9,18 +9,17 @@ use core::ptr::NonNull;
 
 use bun_bundler::Transpiler;
 use bun_io as Async;
+use bun_options_types::context::HotReload;
 use bun_uws as uws;
 
 use crate::counters::Counters;
 use crate::event_loop::EventLoop;
-use crate::ipc::IPC; // scoped logger static for `bun_core::scoped_log!(IPC, ...)`
 use crate::module_loader::{self as ModuleLoader, FetchFlags};
 use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
-    self as jsc, ErrorableResolvedSource, ErrorableString, Exception, JSGlobalObject,
-    JSInternalPromise, JSValue, JsResult, OpaqueCallback, PlatformEventLoop, ResolvedSource, VM,
-    ZigException,
+    self as jsc, ErrorableResolvedSource, ErrorableString, Exception, JSGlobalObject, JSPromise,
+    JSValue, JsResult, OpaqueCallback, PlatformEventLoop, ResolvedSource, VM, ZigException,
 };
 
 pub use crate::process_auto_killer as ProcessAutoKiller;
@@ -94,7 +93,7 @@ pub struct InitOptions {
     /// `RuntimeHooks::init_runtime_state` so the high-tier `Transpiler::init`
     /// reuses the caller's env loader.
     pub env_loader: Option<NonNull<bun_dotenv::Loader<'static>>>,
-    pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
+    pub graph: Option<&'static bun_resolver::StandaloneModuleGraph>,
     /// Must be applied to
     /// `transpiler.resolver.store_fd` BEFORE `configure_linker()` reads
     /// `top_level_dir`, so it threads through `init_runtime_state`.
@@ -156,7 +155,7 @@ pub struct VirtualMachine {
     /// every case the storage outlives this VM but is not Rust-`'static`.
     /// `RawSlice` carries the BACKREF outlives-holder invariant — read via
     /// `main()`.
-    main: bun_ptr::RawSlice<u8>,
+    main: bun_core::RawSlice<u8>,
     pub main_is_html_entrypoint: bool,
     pub main_resolved_path: bun_core::String,
     pub main_hash: u32,
@@ -164,20 +163,24 @@ pub struct VirtualMachine {
     pub overridden_main: crate::strong::Optional,
     pub entry_point: bun_bundler::entry_points::ServerEntryPoint,
     pub origin: bun_url::URL<'static>,
-    // LAYERING: real type is `Option<Box<bun_runtime::node::fs::NodeFS>>`, but
-    // `bun_runtime` is a forward dep of this crate; stored type-erased and
-    // cast back by the `bun_runtime` consumers.
-    pub node_fs: Option<*mut c_void>,
-    /// Opaque per-VM `bun_runtime` state (boxed `timer::All` +
+    /// Opaque per-VM `bun_runtime` state (boxed
     /// `Body::Value::HiveAllocator` + …). Set by
     /// `RuntimeHooks::init_runtime_state` in [`init`]; reclaimed by
     /// `RuntimeHooks::deinit_runtime_state` in [`destroy`]. Null when no high
     /// tier is installed (e.g. `bun_jsc` unit tests).
     ///
-    /// Note: the per-VM timer state and body-value pool live inside this box —
-    /// both types are owned by `bun_runtime` (forward dep). Access goes through
-    /// [`RuntimeHooks::timer_insert`] / [`RuntimeHooks::body_value_hive_ref`].
-    pub runtime_state: *mut c_void,
+    /// Note: the body-value pool lives inside this box — the type is owned by
+    /// `bun_runtime` (forward dep), which recovers it via
+    /// `jsc_hooks::runtime_state()`.
+    pub runtime_state: RuntimeState,
+    /// `setTimeout`/`setInterval`/`setImmediate` heap (+ uv timers on Windows).
+    ///
+    /// A separate heap allocation (NOT inline, NOT `Box`): timer callbacks
+    /// re-enter the VM, so `&mut VirtualMachine` must never alias `&mut All`.
+    /// Allocated in [`init`] right before `init_runtime_state` is dispatched;
+    /// freed in [`destroy`] right after `deinit_runtime_state` is dispatched.
+    /// Null when no VM is installed (e.g. `bun_jsc` unit tests).
+    pub timer: *mut crate::timer::All,
     pub event_loop_handle: Option<*mut PlatformEventLoop>,
     /// Pending `unref` count drained by the event-loop thread. Atomic because
     /// `KeepAlive::unref_on_next_tick_concurrently` increments it from OTHER
@@ -185,23 +188,17 @@ pub struct VirtualMachine {
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: Vec<Box<[u8]>>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
-    // Note: layering — the concrete `bun_standalone_graph::Graph` lives
-    // in a higher-tier crate. The resolver already broke that cycle with the
-    // `bun_resolver::StandaloneModuleGraph` trait; we hold the same trait
-    // object here so `init_with_module_graph` can hand it straight to
-    // `transpiler.resolver.standalone_module_graph` without a downcast.
-    pub standalone_module_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
+    // The concrete graph type is re-exported by `bun_resolver` (defined in
+    // `bun_standalone_graph_core`), so `init_with_module_graph` can hand it
+    // straight to `transpiler.resolver.standalone_module_graph`.
+    pub standalone_module_graph: Option<&'static bun_resolver::StandaloneModuleGraph>,
     pub smol: bool,
-    // LAYERING: real type is `bun_runtime::api::dns::Resolver::Order` (forward
-    // dep); stored as its `u8` repr.
-    pub dns_result_order: u8,
+    pub dns_result_order: bun_dns::Order,
     pub cpu_profiler_config: Option<crate::bun_cpu_profiler::CPUProfilerConfig>,
     pub heap_profiler_config: Option<crate::bun_heap_profiler::HeapProfilerConfig>,
     pub counters: Counters,
 
-    // LAYERING: real type is `bun_runtime::cli::Command::HotReload` (forward
-    // dep); stored as its `u8` repr (see `HOT_RELOAD_*` constants).
-    pub hot_reload: u8,
+    pub hot_reload: HotReload,
     pub jsc_vm: *mut VM,
 
     /// hide bun:wrap from stack traces
@@ -220,9 +217,7 @@ pub struct VirtualMachine {
     pub exit_handler: ExitHandler,
 
     pub default_tls_reject_unauthorized: Option<bool>,
-    // LAYERING: real type is `Option<http::HTTPVerboseLevel>` (forward dep);
-    // stored as the enum's `u8` repr.
-    pub default_verbose_fetch: Option<u8>,
+    pub default_verbose_fetch: Option<bun_http::HTTPVerboseLevel>,
 
     /// Do not access this field directly! It exists in the VirtualMachine struct so
     /// that we don't accidentally make a stack copy of it; only use it through
@@ -288,7 +283,7 @@ pub struct VirtualMachine {
     pub proxy_env_storage: crate::rare_data::ProxyEnvStorage,
     pub resolved_path_dups: Vec<Box<[u8]>>,
     pub is_us_loop_entered: bool,
-    pub pending_internal_promise: Option<*mut JSInternalPromise>,
+    pub pending_internal_promise: Option<*mut JSPromise>,
     pub pending_internal_promise_is_protected: bool,
     pub pending_internal_promise_reported_at: u32,
     pub hot_reload_deferred: bool,
@@ -309,9 +304,12 @@ pub struct VirtualMachine {
     pub module_loader: ModuleLoader::ModuleLoader,
 
     pub gc_controller: crate::GarbageCollectionController,
-    // BACKREF — WebWorker owns the VM. Real type: `*const bun_runtime::webcore::WebWorker`.
-    pub worker: Option<*const c_void>,
-    pub ipc: Option<IPCInstanceUnion>,
+    // BACKREF — the owning WebWorker (same crate; outlives the VM it owns).
+    pub worker: Option<*const crate::web_worker::WebWorker>,
+    /// `NODE_CHANNEL_FD` fd/mode parsed from the environment, held until JS
+    /// attaches a listener. Consumed by `bun_runtime::ipc::get_ipc_instance`,
+    /// which owns the live child-side IPC channel.
+    pub pending_ipc: Option<(bun_sys::Fd, crate::ipc_mode::Mode)>,
     pub hot_reload_counter: u32,
 
     pub debugger: Option<Box<crate::debugger::Debugger>>,
@@ -373,9 +371,6 @@ unsafe extern "C" {
     safe fn Bun__WebView__closeAllForTermination();
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
 }
-
-pub const HOT_RELOAD_HOT: u8 = 1;
-pub const HOT_RELOAD_WATCH: u8 = 2;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Nested types
@@ -764,6 +759,15 @@ impl VirtualMachine {
         self.event_loop_mut()
     }
 
+    /// Single writer for `self.event_loop`: stores the new active loop pointer
+    /// and re-installs the per-thread `bun_event_loop::JsEventLoop` handle so
+    /// `JsEventLoop::current()` always tracks the active loop.
+    #[inline]
+    pub fn install_event_loop(&mut self, el: *mut EventLoop) {
+        self.event_loop = el;
+        bun_event_loop::JsEventLoop::set_current(Some(crate::event_loop::js_event_loop_handle(el)));
+    }
+
     /// Safe `&VM` accessor for the JSC VM owned by this Bun VM. Set once in
     /// `init()` and live for the VM lifetime.
     #[inline(always)]
@@ -925,10 +929,9 @@ impl VirtualMachine {
     /// `WebWorker` is a heap allocation owned by C++ that outlives this VM.
     #[inline]
     pub fn worker_ref(&self) -> Option<&crate::web_worker::WebWorker> {
-        // SAFETY: `worker` is a `*const c_void` pointing at a heap `WebWorker`
-        // owned by C++ that outlives this VM (BACKREF — see field decl).
-        self.worker
-            .map(|w| unsafe { &*w.cast::<crate::web_worker::WebWorker>() })
+        // SAFETY: `worker` points at a heap `WebWorker` owned by C++ that
+        // outlives this VM (BACKREF — see field decl).
+        self.worker.map(|w| unsafe { &*w })
     }
 
     #[inline]
@@ -1142,7 +1145,7 @@ impl VirtualMachine {
             self.macro_event_loop.concurrent_tasks = Default::default();
         }
         // Idempotent; outside the `has_enabled_macro_mode` guard because
-        // `__bun_macro_context_deinit` runs per-job (RuntimeTranspilerStore
+        // `MacroContext::deinit` runs per-job (RuntimeTranspilerStore
         // scopeguard, JSTranspiler TransformTask, bundler `Worker::deinit`) and
         // frees the printer while this VM survives with the flag still set —
         // the next macro on the same pool thread would otherwise skip re-init
@@ -1158,7 +1161,8 @@ impl VirtualMachine {
             .fs
             .use_alternate_source_cache = true;
         self.macro_mode = true;
-        self.event_loop = &raw mut self.macro_event_loop;
+        let el = &raw mut self.macro_event_loop;
+        self.install_event_loop(el);
         bun_analytics::features::macros.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         self.transpiler_store.enabled = false;
     }
@@ -1171,7 +1175,8 @@ impl VirtualMachine {
             .fs
             .use_alternate_source_cache = false;
         self.macro_mode = false;
-        self.event_loop = &raw mut self.regular_event_loop;
+        let el = &raw mut self.regular_event_loop;
+        self.install_event_loop(el);
         self.transpiler_store.enabled = true;
     }
 
@@ -1260,38 +1265,9 @@ impl VirtualMachine {
         // The actual print path needs `ConsoleObject::Formatter` +
         // `ZigException` (high tier). Dispatch through `RuntimeHooks` —
         // mirroring `auto_tick`/`ensure_debugger` — so the error is actually
-        // emitted to stderr before callers hard-exit. With no hook installed
-        // (low-tier unit tests), fail loudly: PORTING.md §Forbidden bans a
-        // silent no-op here since the real path has observable logic.
-        if let Some(hooks) = runtime_hooks() {
-            (hooks.print_exception)(self, result, exception_list);
-        } else {
-            // Low-tier fallback (no `bun_runtime` installed — unit tests):
-            // we cannot reach `ConsoleObject::Formatter`, so emit a degraded
-            // one-line render via the buffered error writer. The full path
-            // routes through `printErrorlikeObject`
-            // (which formats name/message/stack); the closest we can do here
-            // without the high tier is the value's own `toString`.
-            let _ = exception_list;
-            let writer = bun_core::Output::error_writer();
-            let global = self.global();
-            let display = result
-                .to_error()
-                .unwrap_or(result)
-                .get_zig_string(global)
-                .ok();
-            match display {
-                Some(zs) => {
-                    let utf8 = zs.to_owned_slice();
-                    let _ = writer.write_all(utf8.as_slice());
-                    let _ = writer.write_all(b"\n");
-                }
-                None => {
-                    let _ = writer.write_all(b"[unhandled exception]\n");
-                }
-            }
-            let _ = writer.flush();
-        }
+        // emitted to stderr before callers hard-exit.
+        let hooks = runtime_hooks();
+        (hooks.print_exception)(self, result, exception_list);
 
         // The hook does not unwind across the dispatch boundary, so restore
         // linearly.
@@ -1308,7 +1284,7 @@ impl VirtualMachine {
         function_name: &[u8],
         specifier: &[u8],
         hash: i32,
-    ) -> Result<*mut JSInternalPromise, bun_core::Error> {
+    ) -> Result<*mut JSPromise, bun_core::Error> {
         use bun_bundler::entry_points::{Fs, MacroEntryPoint};
         use bun_collections::hash_map::Entry;
         let entry_point: *mut MacroEntryPoint = match self.macro_entry_points.entry(hash) {
@@ -1360,10 +1336,9 @@ impl VirtualMachine {
     /// [`reload_entry_point`] does. No-op when hooks aren't installed (pure
     /// `bun_jsc` unit tests).
     pub fn ensure_debugger(&mut self, block_until_connected: bool) -> Result<(), bun_core::Error> {
-        if let Some(hooks) = runtime_hooks() {
-            // SAFETY: hook contract — `self` is the live per-thread VM.
-            unsafe { (hooks.ensure_debugger)(self, block_until_connected) };
-        }
+        let hooks = runtime_hooks();
+        // SAFETY: hook contract — `self` is the live per-thread VM.
+        unsafe { (hooks.ensure_debugger)(self, block_until_connected) };
         Ok(())
     }
 
@@ -1391,7 +1366,7 @@ impl VirtualMachine {
             return true;
         }
 
-        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+        let hooks = runtime_hooks();
         if self.is_handling_uncaught_exception {
             self.run_error_handler(err, None);
             // SAFETY: `global_object` is the live VM global; `process_exit` is
@@ -1433,13 +1408,6 @@ impl VirtualMachine {
         // `panic!`, which never returns), so a linear reset here suffices.
         self.is_handling_uncaught_exception = false;
         handled
-    }
-
-    pub fn hot_map(&mut self) -> Option<&mut crate::rare_data::HotMap> {
-        if self.hot_reload != HOT_RELOAD_HOT {
-            return None;
-        }
-        Some(self.rare_data().hot_map())
     }
 
     pub fn on_before_exit(&mut self) {
@@ -1530,21 +1498,18 @@ impl VirtualMachine {
             // them instead of leaking. Must precede `close_all_socket_groups`
             // and `~RunLoop::Timer` so no dangling `WTFTimer` heap node is
             // observed during the walk.
-            if let Some(hooks) = runtime_hooks() {
-                // SAFETY: `self` is the live per-thread VM on the JS thread;
-                // `runtime_state` is still installed (it's torn down in
-                // `destroy()`, well after `global_exit`).
-                unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self)) };
-            }
+            let hooks = runtime_hooks();
+            // SAFETY: `self` is the live per-thread VM on the JS thread;
+            // `runtime_state` is still installed (it's torn down in
+            // `destroy()`, well after `global_exit`).
+            unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self)) };
             // Detached worker threads may still be in startVM()/spin() using
             // the process-global resolver BSSMap singletons. transpiler.deinit()
             // below frees those singletons, so request termination of every
             // live worker and wait for each to reach shutdown() first.
-            if let Some(hooks) = runtime_hooks() {
-                // Main-thread only; futex-waits on every registered worker
-                // until each unparks at shutdown().
-                (hooks.terminate_all_workers_and_wait)(10_000);
-            }
+            // Main-thread only; futex-waits on every registered worker
+            // until each unparks at shutdown().
+            (hooks.terminate_all_workers_and_wait)(10_000);
 
             // Every worker has now posted its close task to our concurrent
             // queue (OUTSTANDING is decremented after dispatchExit). Drop
@@ -1605,26 +1570,38 @@ impl VirtualMachine {
 extern crate alloc;
 
 // ──────────────────────────────────────────────────────────────────────────
-// §Dispatch — `bun_runtime` vtable.
-//
-// `init` / `load_entry_point` / the `bun -e` path reach into types that live
-// in the higher-tier `bun_runtime` crate (`api::Timer::All`, `node::fs`,
-// `webcore::Body`, the bundler entry-point generator, …). Per PORTING.md
-// §Dispatch (cold-path), the low tier defines a manual vtable; `bun_runtime`
-// defines the `#[no_mangle]` static `__BUN_RUNTIME_HOOKS`. The fn-ptr
-// indirection at every call site below is acceptable — each does
-// real work (I/O, JS callback, allocation).
+// §Dispatch — `bun_runtime` vtable (residual VM-lifecycle / formatting
+// CONTROL FLOW only). All per-VM DATA formerly reached through this table now
+// lives in typed fields (`vm.timer`, `rare_data` slots, the [`RuntimeState`]
+// box behind `vm.runtime_state`) or moved down (`object_url_registry`, the
+// module-loader bodies in `module_loader`). Each remaining slot is an upward
+// CONTROL transfer whose body requires types that cannot move below
+// `bun_runtime` without cycling through the mid-tier `*_jsc` crates (which
+// depend on `bun_jsc` and are depended on by `bun_runtime`); the per-slot doc
+// names the blocking type. The single-implementor `__BUN_RUNTIME_HOOKS`
+// static is link-time resolved.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Opaque per-VM state owned by `bun_runtime` (Timer::All, NodeFS, Body hive
-/// allocator, …). Stored as `*mut c_void` in `VirtualMachine`; the high tier
-/// casts back on the other side of each hook.
-pub type RuntimeState = *mut c_void;
+bun_opaque::opaque_ffi! {
+    /// Per-VM high-tier state owned by `bun_runtime::jsc_hooks::RuntimeState`.
+    pub struct RuntimeStateOpaque;
+}
+
+/// The ONE sanctioned type-erased per-VM pointer: `bun_runtime::jsc_hooks::
+/// RuntimeState`, the box holding the per-VM state this crate cannot type
+/// (Transpiler arena, Body hive, sql_rare, cron registry, dns data, watcher
+/// schedulers, …). Returned by `init_runtime_state`, stored in
+/// `VirtualMachine.runtime_state`, recovered only by `bun_runtime`
+/// (`jsc_hooks::runtime_state()`), reclaimed by `deinit_runtime_state`.
+pub type RuntimeState = *mut RuntimeStateOpaque;
 
 pub struct RuntimeHooks {
-    /// `bun.api.Timer.All.init()` + `Body.Value.HiveAllocator.init()` +
-    /// `configureDebugger()` — everything `init()` does that names a
-    /// `bun_runtime` type. Called once with the freshly-boxed VM AFTER
+    /// Allocate the per-VM `RuntimeState` box (Transpiler arena, `Body`
+    /// hive, `sql_rare`, cron registry, …) + `Transpiler::init` into
+    /// `vm.transpiler` + `configureDebugger()`. Blocking types:
+    /// `bun_runtime::jsc_hooks::RuntimeState`'s fields (`sql_jsc`,
+    /// `dns_jsc`, `server::HotMap`) and `bun_bundler::Transpiler`.
+    /// Called once with the freshly-boxed VM AFTER
     /// `vm.global` / `vm.jsc_vm` are populated;
     /// returns the opaque per-VM runtime state pointer (or null). `Err` when
     /// `Transpiler::init` fails (e.g. a deleted cwd → `getcwd` ENOENT); the
@@ -1634,25 +1611,57 @@ pub struct RuntimeHooks {
         vm: *mut VirtualMachine,
         opts: &mut InitOptions,
     ) -> Result<RuntimeState, bun_core::Error>,
-    /// Reclaim the per-VM state boxed by `init_runtime_state`. Called from
+    /// Reclaim the per-VM `RuntimeState` boxed by `init_runtime_state`
+    /// (it owns the Transpiler arena, `Body` hive, `sql_rare`, …). Called from
     /// [`VirtualMachine::destroy`] (worker teardown) with the exact opaque
     /// pointer `init_runtime_state` returned (or null). The high tier
     /// `heap::take`s it and clears its thread-local cache. Without this slot
     /// every worker leaked one box.
     pub deinit_runtime_state: unsafe fn(vm: *mut VirtualMachine, state: RuntimeState),
     /// `ServerEntryPoint.generate(watch, entry_path)` — produces the synthetic
-    /// `bun:main` module body for `entry_path`. Returns `false` on error
-    /// (error already logged into `vm.log`).
-    pub generate_entry_point: fn(vm: &VirtualMachine, watch: bool, entry_path: &[u8]) -> bool,
+    /// `bun:main` module body for `entry_path` into `vm.entry_point`.
+    /// `bun_bundler::entry_points::ServerEntryPoint::generate` calls into the
+    /// runtime CLI/options layer, so the call stays high-tier. Returns
+    /// `false` on error (error already logged into `vm.log`). Takes `*mut`
+    /// (not `&mut`) so the body can write `vm.entry_point` as a raw place
+    /// without aliasing the caller's other VM borrows.
+    pub generate_entry_point: fn(vm: *mut VirtualMachine, watch: bool, entry_path: &[u8]) -> bool,
+    /// `ModuleLoader.transpileSourceCode(...)` — full body. Returns `false`
+    /// on error (error is written into `*ret` as `.err(...)`). Stays high-tier
+    /// solely because the HTML-entry arm constructs `bun_runtime::api::HTMLBundle`
+    /// (a `#[JsClass]` whose data lives above this crate) and the body reaches
+    /// `node::fs` / the per-thread `BufferPrinter`; the loader-resolution
+    /// helpers it shares with `fetch_without_on_load_plugins` live in this
+    /// crate (`crate::loader_resolution`).
+    pub transpile_source_code: unsafe fn(
+        jsc_vm: *mut VirtualMachine,
+        args: &ModuleLoader::TranspileArgs<'_>,
+        ret: *mut ErrorableResolvedSource,
+    ) -> bool,
+    /// `ModuleLoader.fetchBuiltinModule(jsc_vm, specifier)` — writes `*out`
+    /// (as `ErrorableResolvedSource`) and returns a tri-state. On
+    /// `Found`/`Errored`, `*out` is populated; on `NotFound` it is untouched.
+    /// Stays high-tier because the standalone-module-graph probe reaches the
+    /// concrete `bun_standalone_graph::Graph` singleton (a forward dep).
+    pub fetch_builtin_module: unsafe fn(
+        jsc_vm: *mut VirtualMachine,
+        global: *mut JSGlobalObject,
+        specifier: &bun_core::String,
+        referrer: &bun_core::String,
+        out: *mut ErrorableResolvedSource,
+    ) -> ModuleLoader::FetchBuiltinResult,
     /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
     /// preload promise if any, else null. Errors propagate
     /// (resolver failures / `ModuleNotFound`).
     pub load_preloads:
-        unsafe fn(vm: *mut VirtualMachine) -> Result<*mut JSInternalPromise, bun_core::Error>,
+        unsafe fn(vm: *mut VirtualMachine) -> Result<*mut JSPromise, bun_core::Error>,
     /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
     pub ensure_debugger: unsafe fn(vm: *mut VirtualMachine, block_until_connected: bool),
-    /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
-    /// Hoisted here so `event_loop.rs` doesn't need its own hook table.
+    /// `eventLoop().autoTick()` — the event-loop tick body lives in
+    /// `bun_runtime::jsc_hooks` next to the rest of the per-VM
+    /// `RuntimeState` lifecycle (it fires user timer/immediate callbacks
+    /// that re-enter `bun_runtime`). Hoisted here so `event_loop.rs`
+    /// doesn't need its own hook table.
     pub auto_tick: unsafe fn(vm: *mut VirtualMachine),
     /// `eventLoop().autoTickActive()` — like `auto_tick` but only sleeps in
     /// the uSockets loop while it has active handles.
@@ -1667,84 +1676,32 @@ pub struct RuntimeHooks {
     /// [`VirtualMachine::run_error_handler`].
     pub print_exception:
         fn(vm: &mut VirtualMachine, value: JSValue, exception_list: Option<&mut ExceptionList>),
-    /// `vm.timer.insert(&mut event_loop_timer)` — `Timer::All` lives in
-    /// `bun_runtime::RuntimeState` (b2-cycle); low-tier callers
-    /// (`AbortSignal::Timeout`) reach it through this slot.
-    pub timer_insert: unsafe fn(
-        vm: *mut VirtualMachine,
-        timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
-    ),
-    /// `vm.timer.remove(&mut event_loop_timer)` — see `timer_insert`.
-    pub timer_remove: unsafe fn(
-        vm: *mut VirtualMachine,
-        timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
-    ),
-    /// `RareData.defaultClientSslCtx()` — lazy default-trust-store client
-    /// `SSL_CTX*`, shared by every `tls: true` outbound connection that didn't
-    /// supply explicit options. The storage slot lives in `RareData`
-    /// (low-tier) but population reaches `RuntimeState.ssl_ctx_cache`
-    /// (`bun_runtime`, b2-cycle).
-    pub default_client_ssl_ctx: unsafe fn(vm: *mut VirtualMachine) -> *mut uws::SslCtx,
-    /// `RareData.sslCtxCache().getOrCreateOpts(opts, &err)` — per-VM
-    /// digest-keyed weak `SSL_CTX*` cache. Returns a +1 ref or `None` on
-    /// BoringSSL rejection (`err` populated). `SSLContextCache` lives in
-    /// `bun_runtime::RuntimeState` (b2-cycle).
-    pub ssl_ctx_cache_get_or_create: unsafe fn(
-        vm: *mut VirtualMachine,
-        opts: &uws::SocketContext::BunSocketContextOptions,
-        err: &mut uws::create_bun_socket_error_t,
-    ) -> Option<*mut uws::SslCtx>,
-    /// Lazy `NodeFS` creation.
-    /// `NodeFS` lives in `bun_runtime`; the high tier boxes one and returns
-    /// the type-erased pointer. Stored back into `vm.node_fs`.
-    pub create_node_fs: unsafe fn(vm: *mut VirtualMachine) -> *mut c_void,
-    /// `ObjectURLRegistry` lookup. Registry lives in `bun_runtime::webcore`.
-    pub has_blob_url: fn(blob_id: &[u8]) -> bool,
-    /// `Response::get_blob_without_call_frame` /
-    /// `Request::get_blob_without_call_frame`. If
-    /// `value` downcasts to a `Response` or `Request` (both live in
-    /// `bun_runtime::webcore`), return its body Blob wrapped in a resolved
-    /// Promise; `Ok(None)` to fall through to the `Blob`/`BuildMessage`/
-    /// `ResolveMessage` arms in `Macro::Run::coerce`.
-    pub body_mixin_get_blob:
-        fn(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<JSValue>>,
+    /// `JSValue::as(Blob)` BuildArtifact fallback — a `BuildArtifact` wraps a
+    /// `Blob` as its first field, so downcasting a JSValue to `Blob` must also
+    /// match it. `BuildArtifact` lives in `bun_runtime::api` (forward dep).
+    /// Cold: only reached when the `JSBlob` downcast already failed.
+    pub blob_from_build_artifact: fn(value: JSValue) -> Option<*mut crate::webcore_types::Blob>,
+    /// `blob:` ObjectURL resolution for `loader_resolution`. `Ok(None)` ⇒ not
+    /// a blob: URL; `Err(())` ⇒ blob: URL absent from the registry;
+    /// `Ok(Some((blob, loader)))` ⇒ a duped Blob (caller owns it; `Drop`
+    /// releases the store ref) plus `BlobExt::get_loader`'s answer.
+    pub resolve_blob_url_for_loader:
+        unsafe fn(
+            specifier: &[u8],
+            vm: *mut VirtualMachine,
+        )
+            -> Result<Option<(crate::webcore_types::Blob, Option<bun_ast::Loader>)>, ()>,
     /// `process.exit(global, code)`. Main-thread is `noreturn`; in a worker
     /// it returns and the caller `panic!`s. Lives in `bun_runtime::node`
     /// (forward-dep cycle), so [`uncaught_exception`] reaches it through this
     /// slot instead of the linker.
     pub process_exit: unsafe fn(global: *mut JSGlobalObject, code: u8),
-    /// `node_cluster_binding.handleInternalMessageChild(global, data)`.
-    pub handle_ipc_internal_child: unsafe fn(global: *mut JSGlobalObject, data: JSValue),
-    /// `node_cluster_binding.child_singleton.deinit()`.
-    pub ipc_child_singleton_deinit: fn(),
-    /// `onBeforePrint()` for the `bun:test` runner, which lives in `bun_runtime`;
-    /// `console.log` calls this so the test reporter can flush its line state
-    /// before user output interleaves with it. No-op when `bun test` isn't
-    /// running.
-    pub console_on_before_print: fn(),
-    /// `ConsoleObject.Formatter` runtime-type dispatch
-    /// over `Response`/`Request`/`Blob`/`S3Client`/`Archive`/
-    /// `BuildArtifact`/`FetchHeaders`/`Timer`/`Immediate`/`BuildMessage`/
-    /// `ResolveMessage`/Jest asymmetric matchers. All of those types live in
-    /// `bun_runtime`; the high tier owns the downcast + `write_format` calls.
-    ///
-    /// Returns `Ok(true)` when `value` was one of the runtime types and was
-    /// fully formatted into `writer`; `Ok(false)` to fall through to the
-    /// generic object printer.
-    pub console_print_runtime_object: for<'a, 'f> fn(
-        formatter: &'a mut crate::console_object::Formatter<'f>,
-        writer: &'a mut dyn bun_io::Write,
-        value: JSValue,
-        name_buf: &'a [u8; 512],
-        enable_ansi_colors: bool,
-    ) -> JsResult<bool>,
     /// Applies `--compile`-baked runtime flags to the
-    /// worker's transpiler. `graph` is the same trait object stored in
-    /// `vm.standalone_module_graph` (the high tier downcasts to its concrete
-    /// `bun_standalone_graph::Graph` — the sole implementor).
+    /// worker's transpiler. `graph` is the same reference stored in
+    /// `vm.standalone_module_graph`.
     pub apply_standalone_runtime_flags: unsafe fn(
         transpiler: *mut Transpiler<'static>,
-        graph: &'static dyn bun_resolver::StandaloneModuleGraph,
+        graph: &'static bun_resolver::StandaloneModuleGraph,
     ),
     /// Parse `execArgv` against the `RunCommand`
     /// param table and return the resulting `allow_addons` value
@@ -1775,30 +1732,23 @@ pub struct RuntimeHooks {
     /// Standalone-graph sourcemap load.
     /// The concrete `bun_standalone_graph::Graph` / `File` / `LazySourceMap`
     /// live above `bun_jsc`; the high tier reaches them via the graph's own
-    /// `UnsafeCell` singleton accessor (NOT by downcasting the resolver trait
-    /// object — that shared-ref provenance is read-only and forming `&mut`
-    /// from it would be UB) and returns the lazily-decoded map (already
-    /// strong-ref'd via the returned `Arc`). [`resolve_source_mapping`]
+    /// `UnsafeCell` singleton accessor (NOT by casting the shared
+    /// `&'static Graph` field — that shared-ref provenance is read-only and
+    /// forming `&mut` from it would be UB) and returns the lazily-decoded map
+    /// (already strong-ref'd via the returned `Arc`). [`resolve_source_mapping`]
     /// caches it into `source_mappings` so subsequent lookups hit the fast
     /// path. The caller gates the call on `vm.standalone_module_graph`.
     pub load_standalone_sourcemap:
         fn(path: &[u8]) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>>,
-    /// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent)`.
-    /// Walks the active test file's
-    /// scope tree and emits `reportTestFoundWithLocation` for every test
-    /// discovered before the inspector connected. `Jest` / `DescribeScope`
-    /// live in `bun_runtime::test_runner` (forward-dep cycle), so the body is
-    /// hoisted to the high tier; low-tier `Bun__TestReporterAgentEnable`
-    /// dispatches here. No-op when `bun test` isn't running.
-    pub retroactively_report_discovered_tests:
-        unsafe fn(agent: *mut crate::debugger::TestReporterHandle),
     /// Cancel every `TimeoutObject` / `ImmediateObject` still in the calling
     /// thread's `timer::All` heap so their JS pins and in-heap `+1` refs drop
-    /// before the GC sweep. `timer::All` lives in `bun_runtime` (forward-dep);
-    /// callers (`global_exit`, `WebWorker::shutdown`) are in this crate.
+    /// before the GC sweep, and drain the `fs.watchFile` scheduler queue.
+    /// Stays a hook because that scheduler (`node_fs_stat_watcher`) lives in
+    /// `bun_runtime` (forward-dep); callers (`global_exit`,
+    /// `WebWorker::shutdown`) are in this crate.
     ///
     /// # Safety
-    /// `vm` is the live per-thread VM; `runtime_state` must still be installed
+    /// `vm` is the live per-thread VM; `(*vm).timer` must still be allocated
     /// and the JSC heap must not have been swept yet.
     pub cancel_all_timers: unsafe fn(vm: *mut VirtualMachine),
 }
@@ -1812,44 +1762,92 @@ pub struct RuntimeHooks {
 /// this module — every caller is an `unsafe fn` slot in
 /// [`VM_EVENT_LOOP_CTX_VTABLE`] whose contract guarantees `owner` was erased
 /// from a live `*mut VirtualMachine` in [`VirtualMachine::event_loop_ctx`].
+///
+/// # Safety
+/// `owner` must point to a live `VirtualMachine` not aliased by another `&mut`.
 #[inline(always)]
-fn vm_from_owner<'a>(owner: *mut ()) -> &'a mut VirtualMachine {
-    // SAFETY: vtable contract — `owner` is a live `*mut VirtualMachine`.
+unsafe fn vm_from_owner<'a>(owner: *mut ()) -> &'a mut VirtualMachine {
+    // SAFETY: caller contract above.
     unsafe { &mut *owner.cast::<VirtualMachine>() }
 }
 
-bun_io::link_impl_EventLoopCtx! {
-    Js for VirtualMachine => |this| {
-        platform_event_loop_ptr() => vm_from_owner(this.cast()).uws_loop(),
-        file_polls_ptr() => {
-            let rare = vm_from_owner(this.cast()).rare_data();
-            &raw mut **rare.file_polls_.get_or_insert_with(|| Box::new(bun_io::Store::init()))
-        },
-        // CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick_concurrently`.
-        // Do NOT route through `vm_from_owner()` — that mints `&mut VM`, which
-        // would alias the JS thread's `&mut`. Atomic RMW through a shared ref.
-        increment_pending_unref_counter() => {
-            (*this)
-                .pending_unref_counter
-                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-        },
-        // CROSS-THREAD: reached via `KeepAlive::{,un}ref_concurrently`. Do NOT
-        // use `vm_from_owner()` / `event_loop_mut()` — both mint `&mut`, UB
-        // against the JS thread's borrow. `event_loop()` takes `&self` (Sync)
-        // and `{,un}ref_concurrently` take `&self` (atomic fetch_add + wakeup).
-        ref_concurrently()   => (*(*this).event_loop()).ref_concurrently(),
-        unref_concurrently() => (*(*this).event_loop()).unref_concurrently(),
-        after_event_loop_callback() => vm_from_owner(this.cast()).after_event_loop_callback,
-        set_after_event_loop_callback(cb, ctx) => {
-            let vm = vm_from_owner(this.cast());
-            vm.after_event_loop_callback = cb;
-            vm.after_event_loop_callback_ctx = ctx.map(|p| p.as_ptr());
-        },
-        pipe_read_buffer() => {
-            core::ptr::from_mut::<[u8]>(vm_from_owner(this.cast()).rare_data().pipe_read_buffer())
-        },
+unsafe fn vmctx_platform_event_loop_ptr(this: *mut ()) -> *mut bun_uws_sys::Loop {
+    // SAFETY: vtable contract (see `vm_from_owner`) — `this` is the live VM.
+    unsafe { vm_from_owner(this.cast()).uws_loop() }
+}
+
+unsafe fn vmctx_file_polls_ptr(this: *mut ()) -> *mut bun_io::Store {
+    // SAFETY: vtable contract (see `vm_from_owner`) — `this` is the live VM.
+    unsafe {
+        let rare = vm_from_owner(this.cast()).rare_data();
+        &raw mut **rare
+            .file_polls_
+            .get_or_insert_with(|| Box::new(bun_io::Store::init()))
     }
 }
+
+// CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick_concurrently`.
+// Do NOT route through `vm_from_owner()` — that mints `&mut VM`, which
+// would alias the JS thread's `&mut`. Atomic RMW through a shared ref.
+unsafe fn vmctx_increment_pending_unref_counter(this: *mut ()) {
+    // SAFETY: `this` is the live VM (vtable contract); atomic RMW through a
+    // shared ref — see the cross-thread note above.
+    unsafe {
+        (*this.cast::<VirtualMachine>())
+            .pending_unref_counter
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+// CROSS-THREAD: reached via `KeepAlive::{,un}ref_concurrently`. Do NOT
+// use `vm_from_owner()` / `event_loop_mut()` — both mint `&mut`, UB
+// against the JS thread's borrow. `event_loop()` takes `&self` (Sync)
+// and `{,un}ref_concurrently` take `&self` (atomic fetch_add + wakeup).
+unsafe fn vmctx_ref_concurrently(this: *mut ()) {
+    // SAFETY: `this` is the live VM (vtable contract); `&self` accessors only.
+    unsafe { (*(*this.cast::<VirtualMachine>()).event_loop()).ref_concurrently() }
+}
+
+unsafe fn vmctx_unref_concurrently(this: *mut ()) {
+    // SAFETY: `this` is the live VM (vtable contract); `&self` accessors only.
+    unsafe { (*(*this.cast::<VirtualMachine>()).event_loop()).unref_concurrently() }
+}
+
+unsafe fn vmctx_after_event_loop_callback(this: *mut ()) -> Option<bun_io::OpaqueCallback> {
+    // SAFETY: vtable contract (see `vm_from_owner`) — `this` is the live VM.
+    unsafe { vm_from_owner(this.cast()).after_event_loop_callback }
+}
+
+unsafe fn vmctx_set_after_event_loop_callback(
+    this: *mut (),
+    cb: Option<bun_io::OpaqueCallback>,
+    ctx: Option<NonNull<c_void>>,
+) {
+    // SAFETY: vtable contract (see `vm_from_owner`) — `this` is the live VM.
+    unsafe {
+        let vm = vm_from_owner(this.cast());
+        vm.after_event_loop_callback = cb;
+        vm.after_event_loop_callback_ctx = ctx.map(|p| p.as_ptr());
+    }
+}
+
+unsafe fn vmctx_pipe_read_buffer(this: *mut ()) -> *mut [u8] {
+    // SAFETY: vtable contract (see `vm_from_owner`) — `this` is the live VM.
+    unsafe {
+        core::ptr::from_mut::<[u8]>(vm_from_owner(this.cast()).rare_data().pipe_read_buffer())
+    }
+}
+
+pub static VM_EVENT_LOOP_CTX_VTABLE: bun_io::EventLoopCtxVTable = bun_io::EventLoopCtxVTable {
+    platform_event_loop_ptr: vmctx_platform_event_loop_ptr,
+    file_polls_ptr: vmctx_file_polls_ptr,
+    increment_pending_unref_counter: vmctx_increment_pending_unref_counter,
+    ref_concurrently: vmctx_ref_concurrently,
+    unref_concurrently: vmctx_unref_concurrently,
+    after_event_loop_callback: vmctx_after_event_loop_callback,
+    set_after_event_loop_callback: vmctx_set_after_event_loop_callback,
+    pipe_read_buffer: vmctx_pipe_read_buffer,
+};
 
 impl VirtualMachine {
     /// # Safety
@@ -1858,7 +1856,13 @@ impl VirtualMachine {
     #[inline]
     pub unsafe fn event_loop_ctx(this: *mut Self) -> bun_io::EventLoopCtx {
         // SAFETY: caller contract above.
-        unsafe { bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Js, this) }
+        unsafe {
+            bun_io::EventLoopCtx::new(
+                bun_io::EventLoopCtxKind::Js,
+                this.cast(),
+                &VM_EVENT_LOOP_CTX_VTABLE,
+            )
+        }
     }
 
     /// `&self` overload of [`event_loop_ctx`]. Routes through
@@ -1872,39 +1876,6 @@ impl VirtualMachine {
     }
 }
 
-impl VirtualMachine {
-    /// `vm.timer.insert(timer)` — dispatches through `RuntimeHooks` because
-    /// `Timer::All` lives in `bun_runtime` (b2-cycle).
-    ///
-    /// # Safety
-    /// `timer` must point at a live `EventLoopTimer` not currently linked into
-    /// the heap; caller must be on the JS thread.
-    #[inline]
-    pub unsafe fn timer_insert(
-        vm: *mut Self,
-        timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
-    ) {
-        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-        // SAFETY: per fn contract; `vm` is the live per-thread VM.
-        unsafe { (hooks.timer_insert)(vm, timer) }
-    }
-
-    /// `vm.timer.remove(timer)` — see [`Self::timer_insert`].
-    ///
-    /// # Safety
-    /// `timer` must point at a live `EventLoopTimer` currently linked into the
-    /// heap (state == ACTIVE); caller must be on the JS thread.
-    #[inline]
-    pub unsafe fn timer_remove(
-        vm: *mut Self,
-        timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
-    ) {
-        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-        // SAFETY: per fn contract; `vm` is the live per-thread VM.
-        unsafe { (hooks.timer_remove)(vm, timer) }
-    }
-}
-
 unsafe extern "Rust" {
     /// The single `&'static` instance, defined `#[no_mangle]` in
     /// `bun_runtime::jsc_hooks`. Link-time resolved — no `AtomicPtr`, no
@@ -1915,11 +1886,9 @@ unsafe extern "Rust" {
 }
 
 #[inline]
-pub fn runtime_hooks() -> Option<&'static RuntimeHooks> {
-    // Link-time-resolved `&'static` Rust-ABI static. Always `Some` —
-    // kept as `Option` so existing call sites (`if let Some(hooks)`) compile
-    // unchanged; the branch folds away.
-    Some(&__BUN_RUNTIME_HOOKS)
+pub fn runtime_hooks() -> &'static RuntimeHooks {
+    // Link-time-resolved `&'static` Rust-ABI static.
+    &__BUN_RUNTIME_HOOKS
 }
 
 #[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
@@ -1937,7 +1906,7 @@ unsafe extern "C" {
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to a non-null `*mut`); remaining args are by-value scalars.
     // The returned cell pointer is GC-owned (caller checks before deref).
-    safe fn Bun__loadHTMLEntryPoint(global: &JSGlobalObject) -> *mut JSInternalPromise;
+    safe fn Bun__loadHTMLEntryPoint(global: &JSGlobalObject) -> *mut JSPromise;
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `callback`
     // (never dereferenced as Rust data).
     safe fn JSC__VM__holdAPILock(
@@ -1952,7 +1921,7 @@ unsafe extern "C" {
     safe fn JSC__JSInternalPromise__resolvedPromise(
         global: &JSGlobalObject,
         value: JSValue,
-    ) -> *mut JSInternalPromise;
+    ) -> *mut JSPromise;
 }
 
 fn get_origin_timestamp() -> u64 {
@@ -1974,7 +1943,7 @@ impl VirtualMachine {
     /// not name those types directly. The hook receives the boxed VM after the
     /// JSC-tier fields are populated and finishes the rest.
     pub fn init(mut opts: InitOptions) -> Result<*mut VirtualMachine, bun_core::Error> {
-        jsc::mark_binding();
+        bun_core::mark_binding!();
 
         let log: *mut bun_ast::Log = match opts.log {
             Some(l) => l.as_ptr(),
@@ -2010,6 +1979,16 @@ impl VirtualMachine {
         if opts.is_main_thread {
             MAIN_THREAD_VM.store(vm, core::sync::atomic::Ordering::Release);
         }
+        // Install the per-thread `EventLoopCtx` handle that
+        // `bun_io::get_vm_ctx(AllocatorType::Js)` / `js_vm_ctx()` hand out, at
+        // the same point the `VM` singleton (the old handle's source) becomes
+        // visible. Building the handle only stores `vm` + the static vtable —
+        // no field of the still-zeroed VM is read. Cleared in [`destroy`].
+        // SAFETY: `vm` is the live per-thread VM singleton established above.
+        bun_io::set_current_ctx(
+            bun_io::EventLoopCtxKind::Js,
+            Some(unsafe { Self::event_loop_ctx(vm) }),
+        );
 
         // ConsoleObject is self-referential (buffers + adapters) — allocate
         // stable storage and init in place.
@@ -2041,11 +2020,12 @@ impl VirtualMachine {
             addr_of_mut!((*vm).console).write(console);
             // `log` is a fresh leaked Box; outlives the VM.
             addr_of_mut!((*vm).log).write(NonNull::new(log));
-            addr_of_mut!((*vm).main).write(bun_ptr::RawSlice::EMPTY);
+            addr_of_mut!((*vm).main).write(bun_core::RawSlice::EMPTY);
             addr_of_mut!((*vm).main_hash).write(0);
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::empty());
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
             addr_of_mut!((*vm).is_main_thread).write(opts.is_main_thread);
+            addr_of_mut!((*vm).hot_reload).write(HotReload::None);
             // Left at the
             // zeroed default this aliases `hot_reload_counter`'s initial 0, so a
             // watcher event that races the very first entry-point load makes
@@ -2069,7 +2049,10 @@ impl VirtualMachine {
             // all-zero bytes decode as `Some(false)` — for TLS that would
             // silently disable certificate verification. Write `None` explicitly.
             addr_of_mut!((*vm).default_tls_reject_unauthorized).write(None);
-            addr_of_mut!((*vm).ipc).write(None);
+            // `Option<HTTPVerboseLevel>` is niche-optimized: all-zero bytes
+            // decode as `Some(None)`, which would skip the env-var lookup.
+            addr_of_mut!((*vm).default_verbose_fetch).write(None);
+            addr_of_mut!((*vm).pending_ipc).write(None);
             // Non-zero-valid container fields: `Vec`/`Box`/`HashMap`/
             // `ArrayHashMap` all carry a `NonNull` (dangling when empty), and
             // `URL` is a struct of `&[u8]` references — all-zero bytes violate
@@ -2108,6 +2091,9 @@ impl VirtualMachine {
             (*regular).virtual_machine = NonNull::new(vm);
             let _ = (*regular).tasks.ensure_unused_capacity(64);
             addr_of_mut!((*vm).event_loop).write(regular);
+            bun_event_loop::JsEventLoop::set_current(Some(
+                crate::event_loop::js_event_loop_handle(regular),
+            ));
 
             // `source_mappings.map` is a sibling-field backref onto
             // `saved_source_map_table`.
@@ -2117,26 +2103,35 @@ impl VirtualMachine {
             (*addr_of_mut!((*vm).source_mappings)).map = addr_of_mut!((*vm).saved_source_map_table);
         }
 
-        // High-tier per-VM state — Transpiler / Timer::All / entry_point.
-        // Note (init order): the transpiler and per-VM timer state must be
-        // built BEFORE `JSGlobalObject` creation. The C++ body
-        // of `Zig__GlobalObject__create` re-enters via `WTFTimer__create`/
-        // `WTFTimer__update` (JSC's GC scheduler), which dereferences
-        // `runtime_state().timer` — so this hook MUST run first or that path
-        // null-derefs.
-        if let Some(hooks) = runtime_hooks() {
-            // SAFETY: hook contract — `vm` is the unique live VM on this
-            // thread. Write through the raw `vm` ptr (not `vm_ref`) so no
-            // `&mut VirtualMachine` is held live across the hook call — the
-            // hook body itself dereferences `vm`.
-            //
-            // `?`: on `Err` (e.g. a deleted cwd → `getcwd` ENOENT out of
-            // `Transpiler::init`) the hook already unwound its own per-VM state,
-            // so abort `init` here — `vm.transpiler` was never written, and
-            // bailing out before the CLI reads it turns the old segfault into a
-            // clean error + non-zero exit.
-            unsafe { (*vm).runtime_state = (hooks.init_runtime_state)(vm, &mut opts)? };
-        }
+        // Per-VM timer heap. A separate heap allocation (NOT inline in the VM
+        // struct): timer callbacks re-enter the VM, so `&mut VirtualMachine`
+        // must never alias `&mut All`. Freed in [`destroy`] right after the
+        // `deinit_runtime_state` dispatch (the same point the heap died when it
+        // lived inside the high-tier `RuntimeState` box).
+        //
+        // Note (init order): the timer heap must be built BEFORE
+        // `JSGlobalObject` creation. The C++ body of `Zig__GlobalObject__create`
+        // re-enters via `WTFTimer__create`/`WTFTimer__update` (JSC's GC
+        // scheduler), which dereferences `(*vm).timer`.
+        // SAFETY: `vm` is the unique live zeroed VM allocation on this thread;
+        // raw-place write, no `&mut VirtualMachine` formed.
+        unsafe { (*vm).timer = bun_core::heap::into_raw(Box::new(crate::timer::All::init())) };
+
+        // High-tier per-VM state — Transpiler / entry_point.
+        // Note (init order): the transpiler must be
+        // built BEFORE `JSGlobalObject` creation.
+        let hooks = runtime_hooks();
+        // SAFETY: hook contract — `vm` is the unique live VM on this
+        // thread. Write through the raw `vm` ptr (not `vm_ref`) so no
+        // `&mut VirtualMachine` is held live across the hook call — the
+        // hook body itself dereferences `vm`.
+        //
+        // `?`: on `Err` (e.g. a deleted cwd → `getcwd` ENOENT out of
+        // `Transpiler::init`) the hook already unwound its own per-VM state,
+        // so abort `init` here — `vm.transpiler` was never written, and
+        // bailing out before the CLI reads it turns the old segfault into a
+        // clean error + non-zero exit.
+        unsafe { (*vm).runtime_state = (hooks.init_runtime_state)(vm, &mut opts)? };
 
         // JSGlobalObject creation. `ensure_waker()` must run before the FFI.
         // SAFETY: `vm` is the unique live VM on this thread; raw-ptr deref so
@@ -2228,7 +2223,7 @@ impl VirtualMachine {
     /// this VM (BACKREF — see `main` field doc).
     #[inline]
     pub fn set_main(&mut self, path: &[u8]) {
-        self.main = bun_ptr::RawSlice::new(path);
+        self.main = bun_core::RawSlice::new(path);
     }
 
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
@@ -2244,13 +2239,9 @@ impl VirtualMachine {
     /// (needs `Timer::All` for the poll timeout).
     #[inline]
     pub fn auto_tick(&mut self) {
-        if let Some(hooks) = runtime_hooks() {
-            // SAFETY: hook contract — `self` is the live per-thread VM.
-            unsafe { (hooks.auto_tick)(self) };
-        } else {
-            // No high tier (unit tests) — fall back to a non-blocking tick.
-            self.event_loop_mut().tick();
-        }
+        let hooks = runtime_hooks();
+        // SAFETY: hook contract — `self` is the live per-thread VM.
+        unsafe { (hooks.auto_tick)(self) };
     }
 
     /// `eventLoop().autoTickActive()` — like [`auto_tick`](Self::auto_tick)
@@ -2261,14 +2252,9 @@ impl VirtualMachine {
     /// `on_before_exit` / `bun_main` still make forward progress.
     #[inline]
     pub fn auto_tick_active(&mut self) {
-        if let Some(hooks) = runtime_hooks() {
-            // SAFETY: `self` is the live per-thread VM (hook contract).
-            unsafe { (hooks.auto_tick_active)(self) };
-        } else {
-            // No high-tier hook (unit tests) — drain JS tasks only so callers
-            // observe forward progress without blocking on the I/O loop.
-            self.event_loop_mut().tick();
-        }
+        let hooks = runtime_hooks();
+        // SAFETY: `self` is the live per-thread VM (hook contract).
+        unsafe { (hooks.auto_tick_active)(self) };
     }
 
     /// `reloadEntryPoint(entry_path)` — set `main`, generate the synthetic
@@ -2276,7 +2262,7 @@ impl VirtualMachine {
     pub fn reload_entry_point(
         &mut self,
         entry_path: &[u8],
-    ) -> Result<*mut JSInternalPromise, bun_core::Error> {
+    ) -> Result<*mut JSPromise, bun_core::Error> {
         self.has_loaded = false;
         self.set_main(entry_path);
         self.main_resolved_path.deref();
@@ -2308,7 +2294,6 @@ impl VirtualMachine {
                 .worker_ref()
                 .and_then(crate::web_worker::WebWorker::exec_argv)
                 .is_some_and(|exec_argv| {
-                    use bun_core::WTFStringImplExt as _;
                     exec_argv.iter().any(|&arg| {
                         // SAFETY: each entry borrows the C++ `WorkerOptions`
                         // array, kept alive by the owning `WebCore::Worker`
@@ -2324,26 +2309,22 @@ impl VirtualMachine {
         }
 
         if !self.main_is_html_entrypoint {
-            if let Some(hooks) = hooks {
-                let watch = self.is_watcher_enabled();
-                if !(hooks.generate_entry_point)(self, watch, entry_path) {
-                    return Err(bun_core::err!("ServerEntryPointGenerate"));
-                }
+            let watch = self.is_watcher_enabled();
+            if !(hooks.generate_entry_point)(self, watch, entry_path) {
+                return Err(bun_core::err!("ServerEntryPointGenerate"));
             }
         }
 
         if !self.transpiler.options.disable_transpilation {
             if !self.preload.is_empty() {
-                if let Some(hooks) = hooks {
-                    // SAFETY: hook contract.
-                    let p = unsafe { (hooks.load_preloads)(self) }?;
-                    if !p.is_null() {
-                        JSValue::from_cell(p).ensure_still_alive();
-                        JSValue::from_cell(p).protect();
-                        self.pending_internal_promise = Some(p);
-                        self.pending_internal_promise_is_protected = true;
-                        return Ok(p);
-                    }
+                // SAFETY: hook contract.
+                let p = unsafe { (hooks.load_preloads)(self) }?;
+                if !p.is_null() {
+                    JSValue::from_cell(p).ensure_still_alive();
+                    JSValue::from_cell(p).protect();
+                    self.pending_internal_promise = Some(p);
+                    self.pending_internal_promise_is_protected = true;
+                    return Ok(p);
                 }
 
                 // Check if Module.runMain was patched.
@@ -2379,7 +2360,7 @@ impl VirtualMachine {
                     .map(NonNull::as_ptr)
                     .ok_or_else(|| bun_core::err!("JSError"))?
             } else {
-                let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(global_ref, || {
+                let p: *mut JSPromise = jsc::from_js_host_call_generic(global_ref, || {
                     Bun__loadHTMLEntryPoint(global_ref)
                 })
                 .map_err(|_| bun_core::err!("JSError"))?;
@@ -2412,7 +2393,7 @@ impl VirtualMachine {
     pub fn load_entry_point(
         &mut self,
         entry_path: &[u8],
-    ) -> Result<*mut JSInternalPromise, bun_core::Error> {
+    ) -> Result<*mut JSPromise, bun_core::Error> {
         let promise = self.reload_entry_point(entry_path)?;
 
         // pending_internal_promise can change if hot module reloading is enabled
@@ -2565,7 +2546,7 @@ pub fn process_fetch_log(
                     .into_bytes()
                     .into_boxed_slice(),
             );
-            let mut message = crate::ZigString::init(message_text);
+            let mut message = bun_core::ZigString::init(message_text);
             message.mark_global();
             *ret = ErrorableResolvedSource::err(
                 err,
@@ -2774,148 +2755,16 @@ pub struct Options {
     pub env_loader: Option<NonNull<bun_dotenv::Loader<'static>>>,
     pub store_fd: bool,
     pub smol: bool,
-    // LAYERING: real type is `bun_runtime::api::dns::Resolver::Order` (forward
-    // dep); stored as its `u8` repr.
-    pub dns_result_order: u8,
+    pub dns_result_order: bun_dns::Order,
     /// `--print` needs the result from evaluating the main module.
     pub eval: bool,
-    // Note: layering — concrete `bun_standalone_graph::Graph` is in a
-    // forward-dep crate; callers pass it as the resolver's trait object so
-    // both VM and resolver can hold it without the cycle.
-    pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
+    pub graph: Option<&'static bun_resolver::StandaloneModuleGraph>,
     // Note: debugger
     // configuration is plumbed through `RuntimeHooks::ensure_debugger` (the
     // CLI option struct lives in `bun_cli`, a forward dep). See
     // `runtime/jsc_hooks.rs` for the `configureDebugger` call site.
     pub is_main_thread: bool,
     pub destruct_main_thread_on_exit: bool,
-}
-
-/// State of the child-side IPC channel: enabled-but-waiting for a JS listener, or fully initialized.
-pub enum IPCInstanceUnion {
-    /// IPC is put in this "enabled but not started" state when IPC is
-    /// detected but the client JavaScript has not yet done `.on("message")`.
-    Waiting {
-        fd: bun_sys::Fd,
-        mode: crate::ipc::Mode,
-    },
-    Initialized(*mut IPCInstance),
-}
-
-/// Child-side IPC channel: the send queue plus the global object it dispatches incoming messages into.
-pub struct IPCInstance {
-    pub global_this: *mut JSGlobalObject,
-    /// Embedded per-VM group on `RareData.spawn_ipc_group`; this is just a
-    /// borrowed handle so the isolation swap can skip it.
-    #[cfg(unix)]
-    pub group: *mut uws::SocketGroup,
-    #[cfg(not(unix))]
-    pub group: (),
-    pub data: crate::ipc::SendQueue,
-    pub has_disconnect_called: bool,
-}
-
-impl IPCInstance {
-    pub fn new(v: IPCInstance) -> *mut IPCInstance {
-        bun_core::heap::into_raw(Box::new(v))
-    }
-    pub fn ipc(&mut self) -> Option<&mut crate::ipc::SendQueue> {
-        Some(&mut self.data)
-    }
-    pub fn get_global_this(&self) -> Option<*mut JSGlobalObject> {
-        Some(self.global_this)
-    }
-    /// Only reached from the `get_ipc_instance` error path.
-    ///
-    /// # Safety
-    /// `this` must have been produced by `IPCInstance::new` (heap::alloc) and
-    /// not yet freed or aliased.
-    pub unsafe fn deinit(this: *mut IPCInstance) {
-        // SAFETY: caller contract — `this` is a live heap::alloc'd box.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
-
-    /// Dispatches a decoded IPC message (and optional handle) to the JS `process` listeners.
-    pub fn handle_ipc_message(&mut self, message: &crate::ipc::DecodedIPCMessage, handle: JSValue) {
-        crate::mark_binding!();
-        let global_this = self.global_this;
-        // SAFETY: VM singleton + its event loop are process-lifetime.
-        let event_loop = VirtualMachine::get().event_loop_mut();
-
-        match *message {
-            // In future versions we can read this in order to detect version mismatches,
-            // or disable future optimizations if the subprocess is old.
-            crate::ipc::DecodedIPCMessage::Version(v) => {
-                bun_core::scoped_log!(IPC, "Parent IPC version is {}", v);
-            }
-            crate::ipc::DecodedIPCMessage::Data(data) => {
-                bun_core::scoped_log!(IPC, "Received IPC message from parent");
-                event_loop.enter();
-                // `global_this` is the live VM global; `JSGlobalObject` is an
-                // opaque ZST handle so `opaque_ref` is the centralised
-                // zero-byte deref proof (panics on null).
-                Process__emitMessageEvent(JSGlobalObject::opaque_ref(global_this), data, handle);
-                event_loop.exit();
-            }
-            crate::ipc::DecodedIPCMessage::Internal(data) => {
-                bun_core::scoped_log!(IPC, "Received IPC internal message from parent");
-                event_loop.enter();
-                if let Some(hooks) = runtime_hooks() {
-                    // SAFETY: hook fn is supplied by `bun_runtime` at startup;
-                    // `global_this` is the live VM global.
-                    unsafe { (hooks.handle_ipc_internal_child)(global_this, data) };
-                }
-                event_loop.exit();
-            }
-        }
-    }
-
-    /// Tears down the IPC channel and emits the disconnect events on `process`.
-    pub fn handle_ipc_close(&mut self) {
-        bun_core::scoped_log!(IPC, "IPCInstance#handleIPCClose");
-        // SAFETY: VM singleton is process-lifetime.
-        let vm = VirtualMachine::get().as_mut();
-        let event_loop = vm.event_loop_mut();
-        if let Some(hooks) = runtime_hooks() {
-            (hooks.ipc_child_singleton_deinit)();
-        }
-        event_loop.enter();
-        Process__emitDisconnectEvent(vm.global());
-        event_loop.exit();
-        // Group is embedded in RareData and shared with subprocess IPC; nothing
-        // to free here.
-        vm.channel_ref.disable();
-    }
-}
-
-// `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle, so
-// `&JSGlobalObject` is ABI-identical to a non-null `JSGlobalObject*` and C++
-// mutating VM/process state through it is interior mutation invisible to Rust.
-unsafe extern "C" {
-    safe fn Process__emitMessageEvent(global: &JSGlobalObject, value: JSValue, handle: JSValue);
-    safe fn Process__emitDisconnectEvent(global: &JSGlobalObject);
-}
-
-/// `IPC.SendQueue` owner dispatch for the child-side `IPCInstance`. Mirrors
-/// the `Subprocess` impl in `bun_runtime`; lives here because `IPCInstance`
-/// itself is defined in this crate.
-impl crate::ipc::SendQueueOwner for IPCInstance {
-    fn global_this(&self) -> *const JSGlobalObject {
-        self.global_this
-    }
-    fn handle_ipc_close(&mut self) {
-        IPCInstance::handle_ipc_close(self)
-    }
-    fn handle_ipc_message(&mut self, msg: crate::ipc::DecodedIPCMessage, handle: JSValue) {
-        IPCInstance::handle_ipc_message(self, &msg, handle)
-    }
-    /// VM-side owner has no JS-visible `this`.
-    fn this_jsvalue(&self) -> JSValue {
-        JSValue::ZERO
-    }
-    fn kind(&self) -> crate::ipc::SendQueueOwnerKind {
-        crate::ipc::SendQueueOwnerKind::VirtualMachine
-    }
 }
 
 /// Output slot for module resolution: the resolver result plus the resolved path and query string.
@@ -2938,7 +2787,7 @@ pub(crate) static SOURCE_CODE_PRINTER: Cell<Option<NonNull<bun_js_printer::Buffe
 /// allocated [`SOURCE_CODE_PRINTER`] on this thread and no runtime VM has since
 /// claimed it via [`VirtualMachine::load_extra_env_and_source_code_printer`]
 /// (i.e. a bundler worker thread running a macro). Lets
-/// `__bun_macro_context_deinit` free the printer on worker teardown without
+/// `MacroContext::deinit` free the printer on worker teardown without
 /// touching the runtime VM's printer when an inline `Bun.build()` macro ran on
 /// the JS thread.
 #[thread_local]
@@ -2958,14 +2807,14 @@ fn normalize_specifier_for_resolution<'a>(
 
 /// Heap-backed so only a pointer lives in TLS; see test/js/bun/binary/tls-segment-size.
 #[thread_local]
-static SPECIFIER_CACHE_RESOLVER_BUF: core::cell::Cell<*mut bun_paths::PathBuffer> =
+static SPECIFIER_CACHE_RESOLVER_BUF: core::cell::Cell<*mut bun_core::PathBuffer> =
     core::cell::Cell::new(core::ptr::null_mut());
 
 #[inline]
-fn specifier_cache_resolver_buf() -> *mut bun_paths::PathBuffer {
+fn specifier_cache_resolver_buf() -> *mut bun_core::PathBuffer {
     let mut p = SPECIFIER_CACHE_RESOLVER_BUF.get();
     if p.is_null() {
-        p = bun_core::heap::into_raw(Box::new(bun_paths::PathBuffer::ZEROED));
+        p = bun_core::heap::into_raw(Box::new(bun_core::PathBuffer::ZEROED));
         SPECIFIER_CACHE_RESOLVER_BUF.set(p);
     }
     p
@@ -2992,7 +2841,7 @@ fn drop_source_code_printer() {
 
 /// Free this thread's [`SOURCE_CODE_PRINTER`] Box only if
 /// [`enable_macro_mode`](VirtualMachine::enable_macro_mode) allocated it.
-/// Called from `js_parser_jsc::Macro::__bun_macro_context_deinit` on bundler
+/// Called from `bun_runtime::macro_runner::MacroContext::drop` on bundler
 /// worker teardown — the macro VM never reaches `VirtualMachine::deinit`, so
 /// the box would otherwise leak when the worker thread's TLS block is torn down
 /// before LSan scans (issue 03830 on debian-13-asan after the
@@ -3002,7 +2851,7 @@ fn drop_source_code_printer() {
 /// keep their printer.
 ///
 /// Also a no-op while a [`MacroModeGuard`] is still active on this thread:
-/// `__bun_macro_context_deinit` can fire *inside* the guard scope (e.g. a
+/// `MacroContext::deinit` can fire *inside* the guard scope (e.g. a
 /// macro that calls `new Bun.Transpiler().transformSync(...)` —
 /// `TranspilerStateGuard::drop` deinits the nested `MacroContext`), and freeing
 /// here would panic the next module fetch at
@@ -3035,7 +2884,7 @@ pub fn drop_source_code_printer_if_macro_owned() {
 /// Only invoked from `bun_bundler::ThreadPool::Worker::deinit` (the call site
 /// is the discriminant — JS `Worker` threads never reach it), after both
 /// per-worker `MacroContext` boxes are freed. Not called from
-/// `__bun_macro_context_deinit`: that path is reached from
+/// `MacroContext::deinit`: that path is reached from
 /// `TranspilerStateGuard::drop` and `JSTranspiler::Drop` (during a sweep),
 /// where re-entering `run_gc` would be a recursion hazard.
 pub fn collect_macro_vm_garbage() {
@@ -3179,26 +3028,16 @@ impl VirtualMachine {
     pub fn get_verbose_fetch(&mut self) -> bun_http::HTTPVerboseLevel {
         use bun_http::HTTPVerboseLevel as L;
         if let Some(v) = self.default_verbose_fetch {
-            // Note: field is `Option<u8>` until the b2-cycle widens it;
-            // map ordinals back.
-            return match v {
-                1 => L::Headers,
-                2 => L::Curl,
-                _ => L::None,
-            };
+            return v;
         }
         // SAFETY: `transpiler.env` is set during init and live for VM lifetime.
-        if let Some(verbose_fetch) = self.env_loader().get(b"BUN_CONFIG_VERBOSE_FETCH") {
-            if verbose_fetch == b"true" || verbose_fetch == b"1" {
-                self.default_verbose_fetch = Some(1);
-                return L::Headers;
-            } else if verbose_fetch == b"curl" {
-                self.default_verbose_fetch = Some(2);
-                return L::Curl;
-            }
-        }
-        self.default_verbose_fetch = Some(0);
-        L::None
+        let level = match self.env_loader().get(b"BUN_CONFIG_VERBOSE_FETCH") {
+            Some(v) if v == b"true" || v == b"1" => L::Headers,
+            Some(v) if v == b"curl" => L::Curl,
+            _ => L::None,
+        };
+        self.default_verbose_fetch = Some(level);
+        level
     }
 
     /// Resolves a MIME type string via the VM's cached MIME-type table.
@@ -3216,7 +3055,7 @@ impl VirtualMachine {
 
         ensure_source_code_printer();
         // The runtime VM owns the printer from here on — even if a macro had
-        // allocated it first, `__bun_macro_context_deinit` must not free it.
+        // allocated it first, `MacroContext::deinit` must not free it.
         SOURCE_CODE_PRINTER_FROM_MACRO.set(false);
 
         if map.get(b"BUN_SHOW_BUN_STACKFRAMES").is_some() {
@@ -3236,8 +3075,8 @@ impl VirtualMachine {
                 .map
                 .get_index(b"NODE_CHANNEL_SERIALIZATION_MODE")
                 .map(|i| map.map.swap_remove_at(i).1)
-                .and_then(|v| crate::ipc::Mode::from_string(&v.value))
-                .unwrap_or(crate::ipc::Mode::Json);
+                .and_then(|v| crate::ipc_mode::Mode::from_string(&v.value))
+                .unwrap_or(crate::ipc_mode::Mode::Json);
             // Accept only
             // non-negative values that fit in i31 (i.e. `0..=i32::MAX`).
             // Parsing as `u32` then `as i32` would silently wrap values in
@@ -3246,7 +3085,7 @@ impl VirtualMachine {
                 .ok()
                 .filter(|&n| n >= 0)
             {
-                Some(fd) => self.init_ipc_instance(bun_sys::Fd::from_uv(fd), mode),
+                Some(fd) => self.pending_ipc = Some((bun_sys::Fd::from_uv(fd), mode)),
                 None => bun_core::warn!(
                     "Failed to parse IPC channel number '{}'",
                     bstr::BStr::new(&fd_s[..])
@@ -3461,11 +3300,8 @@ impl VirtualMachine {
         }
     }
 
-    /// `bun_resolver` holds the manager as an opaque forward-decl (it cannot
-    /// depend on `bun_install`). `bun_jsc` *can*, so cast the opaque back to
-    /// the concrete `bun_install::PackageManager` here — the resolver's
-    /// `PackageManager` is exactly that struct, just type-erased at a lower
-    /// tier.
+    /// Lazy-inits via `get_package_manager()`, then returns the typed
+    /// process-static singleton from `bun_install`.
     ///
     /// Panics when the lazy init fails (unreadable top-level dir). Production
     /// callers (AsyncModule's pending-task machinery) only run after a pending
@@ -3477,22 +3313,13 @@ impl VirtualMachine {
     /// lazy-init here and accepts the panic on its test-only surface.
     #[inline]
     pub fn package_manager(&mut self) -> &mut bun_install::PackageManager {
-        let pm = self
-            .transpiler
+        self.transpiler
             .get_package_manager()
             .expect("package manager init already succeeded when the pending task was enqueued");
-        // SAFETY: `bun_resolver::package_json::PackageManager` is an opaque
-        // forward-decl of `bun_install::PackageManager`; the pointer was
-        // produced by `PackageManager::init_with_runtime` (the install crate)
-        // and only ever names that one type, so the concrete 64-byte alignment
-        // is preserved through the `dyn` erasure. On success
-        // `get_package_manager` never returns null (it lazy-inits the
-        // process-static singleton).
-        unsafe {
-            &mut *NonNull::new_unchecked(pm)
-                .cast::<bun_install::PackageManager>()
-                .as_ptr()
-        }
+        // SAFETY: `get_package_manager()` succeeded, so `init_with_runtime`
+        // populated the process-static singleton (`holder::RAW_PTR`). This
+        // getter runs only on the JS thread; `&mut self` scopes the borrow.
+        unsafe { &mut *bun_install::package_manager::get() }
     }
 
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
@@ -3519,7 +3346,7 @@ impl VirtualMachine {
         let should_clear_terminal = !self
             .env_loader()
             .has_set_no_clear_terminal_on_reload(!bun_core::Output::enable_ansi_colors_stdout());
-        if self.hot_reload == HOT_RELOAD_WATCH {
+        if self.hot_reload == HotReload::Watch {
             bun_core::Output::flush();
             bun_core::reload_process(should_clear_terminal, false);
         }
@@ -3531,11 +3358,10 @@ impl VirtualMachine {
             bun_core::Output::enable_buffering();
         }
 
-        if let Some(hooks) = runtime_hooks() {
-            // The hook walks the VM's cron-job list and detaches each job from
-            // the old global so the new global can re-register them post-reload.
-            (hooks.cron_clear_all_reload)(self);
-        }
+        let hooks = runtime_hooks();
+        // The hook walks the VM's cron-job list and detaches each job from
+        // the old global so the new global can re-register them post-reload.
+        (hooks.cron_clear_all_reload)(self);
         // `JSGlobalObject::reload` drains microtasks + collects async + clears
         // the JSC module loader registry.
         self.global().reload().expect("Failed to reload");
@@ -3555,24 +3381,6 @@ impl VirtualMachine {
         }
     }
 
-    /// `NodeFS` lives in `bun_runtime` (forward-dep on `bun_jsc`), so the
-    /// field is stored type-erased and the lazy boxed allocation goes through
-    /// [`RuntimeHooks::create_node_fs`]. Callers in `bun_runtime` cast the
-    /// returned pointer back to `*mut node::fs::NodeFS`.
-    #[inline]
-    pub fn node_fs(&mut self) -> *mut c_void {
-        if let Some(existing) = self.node_fs {
-            return existing;
-        }
-        let hooks = runtime_hooks().expect("runtime hooks not installed");
-        // SAFETY: hook contract — `self` is the live per-thread VM. The hook
-        // boxes a `NodeFS{ vm: self if standalone else null }` and returns
-        // the leaked pointer.
-        let new = unsafe { (hooks.create_node_fs)(self) };
-        self.node_fs = Some(new);
-        new
-    }
-
     /// Returns the next debugger async-task id, or 0 when no debugger is attached.
     pub fn next_async_task_id(&mut self) -> u64 {
         let Some(debugger) = self.debugger.as_deref_mut() else {
@@ -3582,11 +3390,10 @@ impl VirtualMachine {
         debugger.next_debugger_id
     }
 
-    /// Note (§Dispatch): `task` is an erased
-    /// `*mut bun_runtime::timer::ImmediateObject` — see
-    /// [`crate::event_loop::RunImmediateFn`].
+    /// Note (§Dispatch): the per-task body dispatches through the link-time
+    /// `__bun_run_immediate_task` hook defined in `bun_runtime::dispatch`.
     #[inline]
-    pub fn enqueue_immediate_task(&mut self, task: *mut ()) {
+    pub fn enqueue_immediate_task(&mut self, task: *mut crate::timer::ImmediateObject) {
         self.event_loop_mut().enqueue_immediate_task(task);
     }
 
@@ -3696,7 +3503,7 @@ impl VirtualMachine {
         let vm = Self::init(init_opts)?;
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
-        vm_ref.worker = Some(std::ptr::from_ref::<crate::web_worker::WebWorker>(worker).cast());
+        vm_ref.worker = Some(std::ptr::from_ref(worker));
         // `parent_vm()` is a `BackRef`; the parent outlives this worker while
         // `parent_poll_ref` is held (see web_worker.rs file header).
         let parent = worker.parent_vm();
@@ -3818,7 +3625,7 @@ impl VirtualMachine {
     ) -> *mut crate::ref_string::RefString {
         use crate::ref_string::RefString;
         use bun_collections::zig_hash_map::MapEntry as Entry;
-        jsc::mark_binding();
+        bun_core::mark_binding!();
         debug_assert!(!input_.is_empty());
         let hash = hash_.unwrap_or_else(|| RefString::compute_hash(input_));
         // RAII guard releases on every
@@ -3859,7 +3666,7 @@ impl VirtualMachine {
                 // WTF on the JS thread when the impl refcount hits zero, with
                 // `ref_` as ctx.
                 let s = bun_core::String::create_external::<*mut RefString>(
-                    unsafe { bun_core::ffi::slice(ptr, len) },
+                    unsafe { bun_opaque::ffi::slice(ptr, len) },
                     true,
                     ref_,
                     free_ref_string,
@@ -3900,8 +3707,19 @@ impl VirtualMachine {
 
         let global_ptr = core::ptr::NonNull::from(global_object);
         let mut ret = ErrorableResolvedSource::ok(ResolvedSource::default());
-        let builtin =
-            ModuleLoader::fetch_builtin_module(jsc_vm, global_ptr, &specifier, &referrer, &mut ret);
+        let hooks = runtime_hooks();
+        // SAFETY: hook contract — `jsc_vm` is the live per-thread VM;
+        // `ret` is a valid out-param; `global_ptr` is the live JS-thread
+        // global passed through opaquely to the §Dispatch hook.
+        let builtin = unsafe {
+            (hooks.fetch_builtin_module)(
+                jsc_vm,
+                global_ptr.as_ptr(),
+                &specifier,
+                &referrer,
+                &raw mut ret,
+            )
+        };
         match builtin {
             ModuleLoader::FetchBuiltinResult::Found | ModuleLoader::FetchBuiltinResult::Errored => {
                 return ret.unwrap();
@@ -3913,35 +3731,18 @@ impl VirtualMachine {
         let referrer_clone = referrer.to_utf8();
 
         let mut virtual_source_to_use: Option<bun_ast::Source> = None;
-        // The blob crosses
-        // the bundler↔runtime boundary as an erased `OpaqueBlob`; deinit goes
-        // through the same `VmLoaderCtx` that produced it.
-        struct BlobDeinit(
-            Option<bun_bundler::options::OpaqueBlob>,
-            bun_bundler::options::VmLoaderCtx,
-        );
-        impl Drop for BlobDeinit {
-            fn drop(&mut self) {
-                if let Some(blob) = self.0.take() {
-                    self.1.blob_deinit(blob);
-                }
-            }
-        }
-        // SAFETY: `jsc_vm` outlives this stack frame.
-        let loader_ctx = unsafe {
-            bun_bundler::options::VmLoaderCtx::new(
-                bun_bundler::options::VmLoaderCtxKind::Runtime,
-                std::ptr::from_ref::<VirtualMachine>(jsc_vm).cast_mut(),
+        let mut blob_to_deinit: Option<crate::webcore_types::Blob> = None;
+        // SAFETY: `jsc_vm` is the live per-thread VM; returned borrows live as
+        // long as `specifier_clone` and the VM's resolver caches (this frame).
+        let lr = match unsafe {
+            crate::loader_resolution::get_loader_and_virtual_source(
+                specifier_clone.slice(),
+                std::ptr::from_mut::<VirtualMachine>(jsc_vm),
+                &mut virtual_source_to_use,
+                &mut blob_to_deinit,
+                None,
             )
-        };
-        let mut blob_to_deinit = BlobDeinit(None, loader_ctx);
-        let lr = match bun_bundler::options::get_loader_and_virtual_source(
-            specifier_clone.slice(),
-            &loader_ctx,
-            &mut virtual_source_to_use,
-            &mut blob_to_deinit.0,
-            None,
-        ) {
+        } {
             Ok(lr) => lr,
             Err(_) => return Err(bun_core::err!("ModuleNotFound")),
         };
@@ -3999,7 +3800,10 @@ impl VirtualMachine {
             extra: (&raw mut extra).cast::<c_void>(),
         };
         let mut ret = ErrorableResolvedSource::ok(ResolvedSource::default());
-        let ok = ModuleLoader::transpile_source_code(guard.0, &args, &mut ret);
+        let hooks = runtime_hooks();
+        // SAFETY: hook contract — `guard.0` is the live per-thread VM;
+        // `ret` is a valid out-param.
+        let ok = unsafe { (hooks.transpile_source_code)(guard.0, &args, &raw mut ret) };
 
         if !ok && flags == FetchFlags::PrintSource {
             guard.1 = true; // errdefer
@@ -4077,12 +3881,7 @@ impl VirtualMachine {
         }
         if let Some(blob_id) = specifier.strip_prefix(b"blob:".as_slice()) {
             ret.result = None;
-            // `WebCore.ObjectURLRegistry` lives in `bun_runtime`; routed
-            // through [`RuntimeHooks::has_blob_url`].
-            let has = runtime_hooks()
-                .map(|h| (h.has_blob_url)(blob_id))
-                .unwrap_or(false);
-            if has {
+            if crate::object_url_registry::ObjectURLRegistry::singleton().has(blob_id) {
                 ret.path = self.dupe_resolved_path(specifier);
                 return Ok(());
             }
@@ -4238,7 +4037,7 @@ impl VirtualMachine {
         is_esm: bool,
         is_user_require_resolve: bool,
     ) -> JsResult<()> {
-        const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
+        const MAX_LEN: usize = (bun_core::MAX_PATH_BYTES as f64 * 1.5) as usize;
         if IS_A_FILE_PATH && specifier.length() > MAX_LEN {
             let specifier_utf8 = specifier.to_utf8();
             let source_utf8 = source.to_utf8();
@@ -4440,15 +4239,11 @@ impl VirtualMachine {
         // each stored map and `deinit()`s the sibling `saved_source_map_table`.
         drop(core::mem::take(&mut self.source_mappings));
 
-        // Drain cron jobs BEFORE taking rare_data off `self`: the teardown
-        // hook reads `self.rare_data` to find the job list, so calling it
-        // after `take()` is a no-op and `RareData::drop`'s
-        // `debug_assert!(cron_jobs.is_empty())` fires.
-        if self.rare_data.is_some() {
-            if let Some(hooks) = runtime_hooks() {
-                (hooks.cron_clear_all_teardown)(self);
-            }
-        }
+        // Drain cron jobs before tearing down the rest of the VM: the job
+        // list lives on the high tier's per-VM `RuntimeState`
+        // (`bun_runtime::jsc_hooks`), reached through the hook.
+        let hooks = runtime_hooks();
+        (hooks.cron_clear_all_teardown)(self);
         if let Some(rare) = self.rare_data.take() {
             // Paired with `rare_data()`'s register_root_region. Without this,
             // every terminated Worker leaves a stale LSAN root entry pointing
@@ -4479,16 +4274,29 @@ impl VirtualMachine {
 
         self.overridden_main.deinit();
 
-        // `timer`/`entry_point` live in the high-tier `RuntimeState` box, so
-        // dispatch the reclaim through the hook.
-        if let Some(hooks) = runtime_hooks() {
-            let state = core::mem::replace(&mut self.runtime_state, core::ptr::null_mut());
-            // SAFETY: hook contract — `state` is exactly the pointer
-            // `init_runtime_state` returned for this VM (or null), handed back
-            // once on the same thread; `self` is the live per-thread VM.
-            unsafe { (hooks.deinit_runtime_state)(std::ptr::from_mut(self), state) };
+        // `entry_point` lives in the high-tier `RuntimeState` box, so dispatch
+        // the reclaim through the hook.
+        let state = core::mem::replace(&mut self.runtime_state, core::ptr::null_mut());
+        // SAFETY: hook contract — `state` is exactly the pointer
+        // `init_runtime_state` returned for this VM (or null), handed back
+        // once on the same thread; `self` is the live per-thread VM.
+        unsafe { (hooks.deinit_runtime_state)(std::ptr::from_mut(self), state) };
+        // Free the per-VM timer heap at the exact point the old `RuntimeState`
+        // box (which used to own it) was dropped: after the
+        // `deinit_runtime_state` dispatch above and before any further JSC
+        // teardown.
+        if !self.timer.is_null() {
+            // SAFETY: `self.timer` is the unique `heap::into_raw` result from
+            // [`init`]; nulled below so it is reclaimed exactly once.
+            unsafe { bun_core::heap::destroy(self.timer) };
+            self.timer = core::ptr::null_mut();
         }
         self.has_terminated = true;
+        // The per-thread handle installed in [`init`] points at this VM; clear
+        // it so a stale `js_vm_ctx()` after teardown panics instead of
+        // dispatching into freed memory.
+        bun_io::set_current_ctx(bun_io::EventLoopCtxKind::Js, None);
+        bun_event_loop::JsEventLoop::set_current(None);
     }
     /// Note: takes the concrete
     /// `bun_core::io::Writer` since every call site passes
@@ -4519,7 +4327,7 @@ impl VirtualMachine {
         if self.main().is_empty() {
             return Ok(());
         }
-        let str = crate::zig_string::ZigString::init(MAIN_FILE_NAME);
+        let str = bun_core::ZigString::init(MAIN_FILE_NAME);
         self.global().delete_module_registry_entry(&str)
     }
 
@@ -4535,7 +4343,7 @@ impl VirtualMachine {
     pub fn reload_entry_point_for_test_runner(
         &mut self,
         entry_path: &[u8],
-    ) -> Result<*mut JSInternalPromise, bun_core::Error> {
+    ) -> Result<*mut JSPromise, bun_core::Error> {
         self.has_loaded = false;
         self.set_main(entry_path);
         self.main_resolved_path.deref();
@@ -4548,16 +4356,15 @@ impl VirtualMachine {
         let _ = self.ensure_debugger(true);
 
         if !self.transpiler.options.disable_transpilation {
-            if let Some(hooks) = runtime_hooks() {
-                // SAFETY: hook contract.
-                let p = unsafe { (hooks.load_preloads)(self) }?;
-                if !p.is_null() {
-                    JSValue::from_cell(p).ensure_still_alive();
-                    self.pending_internal_promise = Some(p);
-                    JSValue::from_cell(p).protect();
-                    self.pending_internal_promise_is_protected = true;
-                    return Ok(p);
-                }
+            let hooks = runtime_hooks();
+            // SAFETY: hook contract.
+            let p = unsafe { (hooks.load_preloads)(self) }?;
+            if !p.is_null() {
+                JSValue::from_cell(p).ensure_still_alive();
+                self.pending_internal_promise = Some(p);
+                JSValue::from_cell(p).protect();
+                self.pending_internal_promise_is_protected = true;
+                return Ok(p);
             }
         }
 
@@ -4577,7 +4384,7 @@ impl VirtualMachine {
     pub fn load_entry_point_for_web_worker(
         &mut self,
         entry_path: &[u8],
-    ) -> Result<*mut JSInternalPromise, bun_core::Error> {
+    ) -> Result<*mut JSPromise, bun_core::Error> {
         let promise = self.reload_entry_point(entry_path)?;
         self.event_loop_mut().perform_gc();
         self.event_loop_mut()
@@ -4594,7 +4401,7 @@ impl VirtualMachine {
     pub fn load_entry_point_for_test_runner(
         &mut self,
         entry_path: &[u8],
-    ) -> Result<*mut JSInternalPromise, bun_core::Error> {
+    ) -> Result<*mut JSPromise, bun_core::Error> {
         let promise = self.reload_entry_point_for_test_runner(entry_path)?;
 
         // pending_internal_promise can change if hot module reloading is enabled
@@ -4632,7 +4439,7 @@ impl VirtualMachine {
 
     /// Tracks a listening socket so watch-mode reloads can close it.
     pub fn add_listening_socket_for_watch_mode(&mut self, socket: bun_sys::Fd) {
-        if self.hot_reload != HOT_RELOAD_WATCH && !self.test_isolation_enabled {
+        if self.hot_reload != HotReload::Watch && !self.test_isolation_enabled {
             return;
         }
         self.rare_data().add_listening_socket_for_watch_mode(socket);
@@ -4640,7 +4447,7 @@ impl VirtualMachine {
 
     /// Stops tracking a watch-mode listening socket.
     pub fn remove_listening_socket_for_watch_mode(&mut self, socket: bun_sys::Fd) {
-        if self.hot_reload != HOT_RELOAD_WATCH && !self.test_isolation_enabled {
+        if self.hot_reload != HotReload::Watch && !self.test_isolation_enabled {
             return;
         }
         self.rare_data()
@@ -4654,7 +4461,15 @@ impl VirtualMachine {
     /// Strongs, which otherwise pin the outgoing global) before the blind
     /// socket-group close below. That helper lives in the higher-tier crate
     /// and cannot be called from here.
-    pub fn swap_global_for_test_isolation(&mut self) {
+    ///
+    /// `skip_process_ipc` is the process's own inbound-IPC socket group (null
+    /// when there is none). The live child-side IPC channel lives in
+    /// `bun_runtime::ipc`, so callers supply the group to skip and must
+    /// repoint their `IPCInstance.global_this` at the returned new global.
+    pub fn swap_global_for_test_isolation(
+        &mut self,
+        skip_process_ipc: *mut uws::SocketGroup,
+    ) -> *mut JSGlobalObject {
         debug_assert!(self.test_isolation_enabled);
 
         let _ = self.event_loop_mut().drain_microtasks();
@@ -4673,17 +4488,6 @@ impl VirtualMachine {
                 ),
                 None => (core::ptr::null_mut(), core::ptr::null_mut()),
             };
-            #[cfg(unix)]
-            let skip_process_ipc: *mut uws::SocketGroup = match &self.ipc {
-                Some(IPCInstanceUnion::Initialized(inst)) => {
-                    // SAFETY: `inst` was produced by `IPCInstance::new` and is
-                    // live for as long as `self.ipc` holds it.
-                    unsafe { (**inst).group }
-                }
-                _ => core::ptr::null_mut(),
-            };
-            #[cfg(not(unix))]
-            let skip_process_ipc: *mut uws::SocketGroup = core::ptr::null_mut();
             // SAFETY: process-global usockets loop is live.
             let loop_ = unsafe { &mut *uws::Loop::get() };
             let mut maybe_group = loop_.internal_loop_data.head;
@@ -4730,11 +4534,10 @@ impl VirtualMachine {
         // — the scheduler's queue and in-flight work-pool task belong to the
         // outgoing file, and its brief spin-wait is bounded by at most one
         // in-flight `stat()`.
-        if let Some(hooks) = runtime_hooks() {
-            // SAFETY: live per-thread VM on the JS thread; `runtime_state`
-            // stays installed for the whole test run.
-            unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self)) };
-        }
+        let hooks = runtime_hooks();
+        // SAFETY: live per-thread VM on the JS thread; `runtime_state`
+        // stays installed for the whole test run.
+        unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self)) };
 
         self.overridden_main.deinit();
         self.entry_point_result.value.deinit();
@@ -4765,12 +4568,6 @@ impl VirtualMachine {
         self.regular_event_loop.global = NonNull::new(new_global);
         self.macro_event_loop.global = NonNull::new(new_global);
         self.has_loaded_constructors = true;
-        if let Some(IPCInstanceUnion::Initialized(inst)) = self.ipc {
-            // SAFETY: `inst` was produced by `IPCInstance::new` and stays live
-            // until `IPCInstance::deinit`; repoint at the new global so
-            // `Process__emitMessageEvent` doesn't dispatch on a freed cell.
-            unsafe { (*inst).global_this = new_global };
-        }
         if let Some(rare) = self.rare_data.as_deref_mut() {
             for hook in rare.cleanup_hooks.iter_mut() {
                 if hook.global_this == old_global {
@@ -4778,11 +4575,12 @@ impl VirtualMachine {
                 }
             }
         }
+        new_global
     }
 
     /// Loads and evaluates a macro entry module, waiting for its promise.
     #[inline]
-    pub fn _load_macro_entry_point(&mut self, entry_path: &[u8]) -> Option<*mut JSInternalPromise> {
+    pub fn _load_macro_entry_point(&mut self, entry_path: &[u8]) -> Option<*mut JSPromise> {
         let path_str = bun_core::String::init(entry_path);
         let promise =
             jsc::JSModuleLoader::load_and_evaluate_module_ptr(self.global, Some(&path_str))?
@@ -5098,7 +4896,7 @@ impl VirtualMachine {
         // source); do the straightforward per-frame resolve. See the PERF
         // note below.
         // SAFETY: caller passes `frames_count` valid `ZigStackFrame`s.
-        let frames = unsafe { bun_core::ffi::slice_mut(frames, frames_count) };
+        let frames = unsafe { bun_opaque::ffi::slice_mut(frames, frames_count) };
         for frame in frames {
             if frame.position.is_invalid() || frame.remapped {
                 continue;
@@ -5247,7 +5045,7 @@ impl VirtualMachine {
         // SAFETY: `frames_ptr[..frames_len]` is the caller-owned `Holder`
         // backing buffer (ZigStackTrace contract).
         let frames_buf =
-            unsafe { bun_core::ffi::slice_mut(exception.stack.frames_ptr, frames_len) };
+            unsafe { bun_opaque::ffi::slice_mut(exception.stack.frames_ptr, frames_len) };
 
         if self.hide_bun_stackframes {
             let mut start_index: Option<usize> = None;
@@ -5440,10 +5238,10 @@ impl VirtualMachine {
                 const N: usize = crate::zig_exception::Holder::SOURCE_LINES_COUNT;
                 // SAFETY: `Holder` backs both arrays with `[_; SOURCE_LINES_COUNT]`.
                 let source_lines =
-                    unsafe { bun_core::ffi::slice_mut(exception.stack.source_lines_ptr, N) };
+                    unsafe { bun_opaque::ffi::slice_mut(exception.stack.source_lines_ptr, N) };
                 // SAFETY: `Holder` backs `source_lines_numbers` with `[i32; SOURCE_LINES_COUNT]`.
                 let source_line_numbers =
-                    unsafe { bun_core::ffi::slice_mut(exception.stack.source_lines_numbers, N) };
+                    unsafe { bun_opaque::ffi::slice_mut(exception.stack.source_lines_numbers, N) };
                 for s in source_lines.iter_mut() {
                     *s = bun_core::String::empty();
                 }
@@ -5549,7 +5347,7 @@ impl VirtualMachine {
             // 3× PathBuffer ≈ 288 KB — empirically enough for the
             // `remap_zig_exception` → `transpile_source_code` chain on the
             // 16K-deep Error test (`bun-inspect.test.ts`).
-            bun_paths::MAX_PATH_BYTES * 3
+            bun_core::MAX_PATH_BYTES * 3
         } else {
             0
         };
@@ -5791,7 +5589,7 @@ impl VirtualMachine {
                             // SAFETY: `code_string` is moved into
                             // `code_string_guard` and outlives the borrow.
                             let bytes: &[u8] = unsafe {
-                                bun_core::ffi::slice(
+                                bun_opaque::ffi::slice(
                                     code_string.latin1().as_ptr(),
                                     code_string.latin1().len(),
                                 )
@@ -6302,7 +6100,7 @@ impl VirtualMachine {
                 cursor += i + 1;
             }
             if cursor > 0 {
-                let body = jsc::ZigString::init_utf8(&msg[cursor as usize..]);
+                let body = bun_core::ZigString::init_utf8(&msg[cursor as usize..]);
                 let _ = write!(writer, "{}", body.github_action());
             }
         } else {
@@ -6375,7 +6173,7 @@ impl VirtualMachine {
         // `UnsafeCell` singleton (write-provenance), not via this read-only
         // trait object.
         let _ = self.standalone_module_graph?;
-        let hooks = runtime_hooks()?;
+        let hooks = runtime_hooks();
         // JS-thread call; hook mutates only per-`File` lazy caches under the
         // standalone graph's internal `INIT_LOCK`.
         let map = (hooks.load_standalone_sourcemap)(path)?;
@@ -6398,144 +6196,6 @@ impl VirtualMachine {
             prefetched_source_code: None,
             name: None,
         })
-    }
-
-    /// Records the inherited IPC fd/mode in the waiting state until JS attaches a listener.
-    pub fn init_ipc_instance(&mut self, fd: bun_sys::Fd, mode: crate::ipc::Mode) {
-        bun_core::scoped_log!(IPC, "initIPCInstance {:?}", fd);
-        self.ipc = Some(IPCInstanceUnion::Waiting { fd, mode });
-    }
-
-    /// Returns the initialized IPC instance, lazily creating it from the waiting fd/mode.
-    pub fn get_ipc_instance(&mut self) -> Option<*mut IPCInstance> {
-        let (fd, mode) = match self.ipc.as_ref()? {
-            IPCInstanceUnion::Initialized(inst) => return Some(*inst),
-            IPCInstanceUnion::Waiting { fd, mode } => (*fd, *mode),
-        };
-
-        bun_core::scoped_log!(IPC, "getIPCInstance {:?}", fd);
-
-        self.event_loop_mut().ensure_waker();
-
-        // Note: reshaped for borrowck — `rare_data()` borrows `self` and
-        // `spawn_ipc_group` then needs `&mut VirtualMachine`. Split via raw
-        // pointers (disjoint fields) per the existing `Bun__RareData__*`
-        // accessors in virtual_machine_exports.rs.
-        #[cfg(not(windows))]
-        let this: *mut VirtualMachine = self;
-
-        #[cfg(not(windows))]
-        let instance: *mut IPCInstance = {
-            // SAFETY: disjoint borrow — `spawn_ipc_group` only touches the
-            // embedded `SocketGroup` field + `vm.uws_loop()`.
-            let group: *mut uws::SocketGroup = unsafe {
-                let rare = std::ptr::from_mut::<RareData>((*this).rare_data());
-                (*rare).spawn_ipc_group(&*this)
-            };
-
-            // Box the instance first so `data.owner` can name its final
-            // address.
-            let instance = IPCInstance::new(IPCInstance {
-                global_this: self.global,
-                group,
-                data: crate::ipc::SendQueue::init(
-                    mode,
-                    // Patched below once the box address is fixed.
-                    core::ptr::null_mut::<IPCInstance>() as *mut dyn crate::ipc::SendQueueOwner,
-                    crate::ipc::SocketUnion::Uninitialized,
-                ),
-                has_disconnect_called: false,
-            });
-            // PROVENANCE: `from_fd` STORES the `*mut SendQueue` in the socket
-            // ext slot for the socket's lifetime, so that pointer must derive
-            // from the root raw `instance` (SharedReadWrite tag, never popped),
-            // NOT from a `&mut IPCInstance` reborrow whose Unique tag would be
-            // invalidated by later writes through `instance`. Per-use raw deref
-            // also avoids holding a live `&mut` across `deinit` on the failure
-            // branch.
-            // SAFETY: `instance` was just boxed by `IPCInstance::new`.
-            unsafe { (*instance).data.owner = instance as *mut dyn crate::ipc::SendQueueOwner };
-
-            self.ipc = Some(IPCInstanceUnion::Initialized(instance));
-
-            // SAFETY: `group` is the live per-VM SocketGroup; `instance.data`
-            // is the freshly-initialized SendQueue stored inline in `*instance`.
-            let socket = unsafe {
-                crate::ipc::Socket::from_fd::<crate::ipc::SendQueue>(
-                    &mut *group,
-                    uws::SocketKind::SpawnIpc,
-                    fd,
-                    core::ptr::addr_of_mut!((*instance).data),
-                    true,
-                )
-            };
-            let Some(socket) = socket else {
-                // SAFETY: `instance` was produced by `IPCInstance::new`
-                // (heap::alloc) above and is not yet aliased.
-                unsafe { IPCInstance::deinit(instance) };
-                self.ipc = None;
-                bun_core::warn!("Unable to start IPC socket");
-                return None;
-            };
-            socket.set_timeout(0);
-
-            // SAFETY: `instance` is the live boxed IPCInstance.
-            unsafe { (*instance).data.socket = crate::ipc::SocketUnion::Open(socket) };
-
-            instance
-        };
-
-        #[cfg(windows)]
-        let instance: *mut IPCInstance = {
-            let instance = IPCInstance::new(IPCInstance {
-                global_this: self.global,
-                group: (),
-                data: crate::ipc::SendQueue::init(
-                    mode,
-                    // Patched below once the box address is fixed.
-                    core::ptr::null_mut::<IPCInstance>() as *mut dyn crate::ipc::SendQueueOwner,
-                    crate::ipc::SocketUnion::Uninitialized,
-                ),
-                has_disconnect_called: false,
-            });
-            // Per-use raw deref — do NOT bind a `&mut IPCInstance` here: it
-            // would remain live across `deinit(instance)` on the failure
-            // branch (live `&mut T` to freed memory violates the validity
-            // invariant even if never dereferenced).
-            // SAFETY: `instance` was just boxed by `IPCInstance::new`.
-            unsafe { (*instance).data.owner = instance as *mut dyn crate::ipc::SendQueueOwner };
-
-            self.ipc = Some(IPCInstanceUnion::Initialized(instance));
-
-            // PROVENANCE: `windows_configure_client` STORES the `*mut SendQueue`
-            // in `uv_handle_t.data` for the pipe's lifetime, so that pointer
-            // must derive from the root raw `instance` (SharedReadWrite tag,
-            // never popped), NOT from a `&mut SendQueue` auto-ref whose Unique
-            // tag would be invalidated by `(*instance).data.write_version_packet`
-            // below — every later libuv read callback would then deref a popped
-            // pointer (UB under Stacked Borrows). Mirror the POSIX branch's
-            // `addr_of_mut!` treatment.
-            // SAFETY: `instance` is the live boxed IPCInstance.
-            let data_ptr = unsafe { core::ptr::addr_of_mut!((*instance).data) };
-            // SAFETY: `data_ptr` points at the freshly-initialized SendQueue
-            // stored inline in `*instance`; no other live `&mut` aliases it.
-            if let Err(_) = unsafe { crate::ipc::SendQueue::windows_configure_client(data_ptr, fd) }
-            {
-                // SAFETY: `instance` was produced by `IPCInstance::new`
-                // (heap::alloc) above and is not yet aliased.
-                unsafe { IPCInstance::deinit(instance) };
-                self.ipc = None;
-                bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
-                return None;
-            }
-
-            instance
-        };
-
-        // SAFETY: `instance` is the live boxed IPCInstance.
-        unsafe { (*instance).data.write_version_packet(self.global()) };
-
-        Some(instance)
     }
 
     /// To satisfy the interface from NewHotReloader().

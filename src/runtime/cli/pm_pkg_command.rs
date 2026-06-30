@@ -4,12 +4,13 @@ use crate::cli::command::Context;
 use bun_ast::{E, Expr, ExprData, G};
 use bun_ast::{Loc, Log, Source};
 use bun_collections::{StringArrayHashMap, VecExt};
+use bun_core::PathBuffer;
 use bun_core::strings;
 use bun_core::{Error, Global, OrWriteFailed as _, Output, err};
 use bun_install::PackageManager;
 use bun_js_printer as js_printer;
 use bun_parsers::json;
-use bun_paths::{self as path, PathBuffer};
+use bun_paths::{self as path};
 use bun_sys;
 
 pub(crate) struct PmPkgCommand;

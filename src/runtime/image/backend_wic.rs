@@ -330,7 +330,7 @@ pub(crate) fn encode(
         let _ = unsafe { GlobalUnlock(hg) };
     }
     // SAFETY: ptr_ points to `pos` valid bytes inside the locked HGLOBAL.
-    let slice = unsafe { bun_core::ffi::slice(ptr_, usize::try_from(pos).expect("int cast")) };
+    let slice = unsafe { bun_opaque::ffi::slice(ptr_, usize::try_from(pos).expect("int cast")) };
     Ok(slice.to_vec())
 }
 
@@ -1088,6 +1088,6 @@ fn dup_global<const PREFIX: usize>(
     }
     let mut out = vec![0u8; PREFIX + size];
     // SAFETY: ptr_ points to `size` valid bytes inside the locked HGLOBAL.
-    out[PREFIX..].copy_from_slice(unsafe { bun_core::ffi::slice(ptr_, size) });
+    out[PREFIX..].copy_from_slice(unsafe { bun_opaque::ffi::slice(ptr_, size) });
     Ok(Some(out))
 }

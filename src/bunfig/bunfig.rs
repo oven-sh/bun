@@ -42,9 +42,8 @@ fn estring_to_owned(s: &E::EString, bump: &Bump) -> Box<[u8]> {
 /// Macro-remap parsing (the `PackageJSON.parseMacrosJSON` shape),
 /// implemented here against the value-shaped `bun_ast::Expr` (the
 /// tree produced by the TOML/JSON parsers) and returning the
-/// `bun_options_types::context::MacroMap` shape so the result slots directly
-/// into `ctx.debug.macros` without crossing the `bun_ast::Expr` /
-/// `StringArrayHashMap` newtype boundary that `bun_resolver`'s copy uses.
+/// shared `bun_options_types::context::MacroMap` so the result slots directly
+/// into both `ctx.debug.macros` and `transpiler.options.macro_remap`.
 fn parse_macros_json(
     macros: &Expr,
     log: &mut bun_ast::Log,
@@ -121,11 +120,11 @@ fn parse_macros_json(
                     continue;
                 }
             };
-            map.insert(Box::<[u8]>::from(import_name), remap_value_str);
+            map.insert(import_name, remap_value_str);
         }
 
         if map.len() > 0 {
-            macro_map.insert(Box::<[u8]>::from(key), map);
+            macro_map.insert(key, map);
         }
     }
 
@@ -159,7 +158,7 @@ impl<'a> Parser<'a> {
     fn add_error(&mut self, loc: bun_ast::Loc, text: &'static [u8]) -> Result<(), bun_core::Error> {
         self.log.add_error_opts(
             text,
-            bun_ast::ErrorOpts {
+            bun_ast::AddErrorOptions {
                 source: Some(self.source),
                 loc,
                 redact_sensitive_information: true,
@@ -176,7 +175,7 @@ impl<'a> Parser<'a> {
     ) -> Result<(), bun_core::Error> {
         self.log.add_error_fmt_opts(
             args,
-            bun_ast::ErrorOpts {
+            bun_ast::AddErrorOptions {
                 source: Some(self.source),
                 loc,
                 redact_sensitive_information: true,
@@ -1132,7 +1131,7 @@ impl Bunfig {
                     if log.errors + log.warnings == log_count {
                         log.add_error_opts(
                             b"Failed to parse",
-                            bun_ast::ErrorOpts {
+                            bun_ast::AddErrorOptions {
                                 source: Some(source),
                                 redact_sensitive_information: true,
                                 ..Default::default()
@@ -1149,7 +1148,7 @@ impl Bunfig {
                     if log.errors + log.warnings == log_count {
                         log.add_error_opts(
                             b"Failed to parse",
-                            bun_ast::ErrorOpts {
+                            bun_ast::AddErrorOptions {
                                 source: Some(source),
                                 redact_sensitive_information: true,
                                 ..Default::default()
@@ -1538,7 +1537,7 @@ impl<'a> Parser<'a> {
         let remap = |e: FromExprError| -> bun_core::Error {
             match e {
                 FromExprError::OutOfMemory => err!(OutOfMemory),
-                FromExprError::UnexpectedExpr | FromExprError::InvalidRegExp => {
+                FromExprError::UnexpectedExpr => {
                     err!("Invalid Bunfig")
                 }
             }
@@ -1634,18 +1633,18 @@ impl<'a> Parser<'a> {
         if let Some(env) = serve_obj.get(b"env") {
             match &env.data {
                 ExprData::ENull(_) => {
-                    self.ctx.args.serve_env_behavior = api::DotEnvBehavior::disable;
+                    self.ctx.args.serve_env_behavior = bun_dotenv::DotEnvBehavior::disable;
                 }
                 ExprData::EBoolean(b) => {
                     self.ctx.args.serve_env_behavior = if b.value {
-                        api::DotEnvBehavior::load_all
+                        bun_dotenv::DotEnvBehavior::load_all
                     } else {
-                        api::DotEnvBehavior::disable
+                        bun_dotenv::DotEnvBehavior::disable
                     };
                 }
                 ExprData::EString(str) => {
                     let slice = str.string(self.bump)?;
-                    match api::DotEnvBehavior::parse_str(slice) {
+                    match bun_dotenv::DotEnvBehavior::parse_str(slice) {
                         Ok((behavior, prefix)) => {
                             if let Some(prefix) = prefix {
                                 self.ctx.args.serve_env_prefix = Some(Box::<[u8]>::from(prefix));

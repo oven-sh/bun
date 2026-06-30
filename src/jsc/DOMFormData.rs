@@ -1,5 +1,6 @@
 use core::ffi::c_void;
 
+use crate::webcore_types::Blob;
 use crate::{JSGlobalObject, JSValue, JsResult};
 use bun_core::ZigString;
 
@@ -8,6 +9,8 @@ bun_opaque::opaque_ffi! {
     pub struct DOMFormData;
 }
 
+// `improper_ctypes`: the `Blob` payload is opaque to C++; only Rust dereferences it.
+#[allow(improper_ctypes)]
 unsafe extern "C" {
     safe fn WebCore__DOMFormData__create(arg0: &JSGlobalObject) -> JSValue;
     safe fn WebCore__DOMFormData__createFromURLQuery(
@@ -30,14 +33,13 @@ unsafe extern "C" {
     );
     // safe: `DOMFormData`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST
     // handles; `&ZigString` is ABI-identical to non-null `*const ZigString` and
-    // C++ only reads the named struct via `toStringCopy`. `arg3` is an opaque
-    // `*Blob` C++ owns (never dereferenced as Rust data) — same round-trip
-    // contract as `Zig__GlobalObject__resetModuleRegistryMap`'s `map` param.
+    // C++ only reads the named struct via `toStringCopy`. `arg3` is ABI-identical
+    // to a non-null `*Blob` that C++ clones from synchronously (never retained).
     safe fn WebCore__DOMFormData__appendBlob(
         arg0: &mut DOMFormData,
         arg1: &JSGlobalObject,
         arg2: &ZigString,
-        arg3: *mut c_void,
+        arg3: &mut Blob,
         arg4: &ZigString,
     );
     safe fn WebCore__DOMFormData__count(arg0: &mut DOMFormData) -> usize;
@@ -102,7 +104,7 @@ impl DOMFormData {
         &mut self,
         global: &JSGlobalObject,
         name_: &ZigString,
-        blob: *mut c_void,
+        blob: &mut Blob,
         filename_: &ZigString,
     ) {
         WebCore__DOMFormData__appendBlob(self, global, name_, blob, filename_);
@@ -112,23 +114,18 @@ impl DOMFormData {
         WebCore__DOMFormData__count(self)
     }
 
-    // LAYERING: `FormDataEntry::File::blob` is a `*mut webcore::Blob`, whose
-    // layout lives in `bun_runtime` (a dependent of this crate). The C++ side
-    // hands it as `*mut c_void`; this fn is generic over `B` so the caller (in
-    // `bun_runtime`) names the concrete `Blob` type and gets a typed `&B`
-    // borrow without `bun_jsc` ever seeing the layout.
-    pub fn for_each<B, F>(&mut self, callback: &mut F)
+    pub fn for_each<F>(&mut self, callback: &mut F)
     where
-        F: FnMut(ZigString, FormDataEntry<'_, B>),
+        F: FnMut(ZigString, FormDataEntry<'_>),
     {
-        extern "C" fn for_each_wrapper<B, F>(
+        extern "C" fn for_each_wrapper<F>(
             ctx_ptr: *mut c_void,
             name_: *mut ZigString,
             value_ptr: *mut c_void,
             filename: *mut ZigString,
             is_blob: u8,
         ) where
-            F: FnMut(ZigString, FormDataEntry<'_, B>),
+            F: FnMut(ZigString, FormDataEntry<'_>),
         {
             // SAFETY: ctx_ptr is the non-null `&mut F` passed below.
             let ctx_ = unsafe { bun_ptr::callback_ctx::<F>(ctx_ptr) };
@@ -137,10 +134,10 @@ impl DOMFormData {
                 FormDataEntry::String(unsafe { *value_ptr.cast::<ZigString>() })
             } else {
                 FormDataEntry::File {
-                    // SAFETY: when is_blob != 0, value_ptr points to a webcore
-                    // Blob (`bun_runtime::webcore::Blob`) valid for the callback
-                    // scope (LIFETIMES.tsv: BORROW_PARAM). Caller picks `B`.
-                    blob: unsafe { &*value_ptr.cast::<B>() },
+                    // SAFETY: when is_blob != 0, value_ptr is the C++
+                    // `JSBlob::m_ctx` `*mut Blob`, valid and exclusively
+                    // borrowed for the synchronous callback scope.
+                    blob: unsafe { &mut *value_ptr.cast::<Blob>() },
                     filename: if filename.is_null() {
                         ZigString::EMPTY
                     } else {
@@ -159,7 +156,7 @@ impl DOMFormData {
         DOMFormData__forEach(
             self,
             std::ptr::from_mut::<F>(callback).cast::<c_void>(),
-            for_each_wrapper::<B, F>,
+            for_each_wrapper::<F>,
         );
     }
 }
@@ -172,9 +169,10 @@ type ForEachFunction = extern "C" fn(
     is_blob: u8,
 );
 
-/// `B` is the caller's `webcore::Blob` type (lives in `bun_runtime`; see
-/// [`DOMFormData::for_each`]).
-pub enum FormDataEntry<'a, B> {
+pub enum FormDataEntry<'a> {
     String(ZigString),
-    File { blob: &'a B, filename: ZigString },
+    File {
+        blob: &'a mut Blob,
+        filename: ZigString,
+    },
 }

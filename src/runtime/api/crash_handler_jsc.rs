@@ -2,8 +2,8 @@
 //! `src/crash_handler/` free of JSC types.
 
 use bun_analytics as analytics;
-use bun_collections::BoundedArray;
 use bun_core::String as BunString;
+use bun_core::bounded_array::BoundedArray;
 use bun_core::{Environment, Global};
 use bun_crash_handler as crash_handler;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, StringJsc};

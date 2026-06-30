@@ -2,18 +2,19 @@ use core::fmt::Write as _;
 
 use bstr::BStr;
 
+use bun_core::PathBuffer;
 use bun_core::fmt::{Table, TableSymbols};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_glob as glob;
-use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::{
     self, LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
 };
 use bun_install::{CommandLineArguments, DependencyID, PackageID, PackageManager, resolution};
-use bun_paths::{self as path, PathBuffer};
+use bun_install_types::dependency::{self, Behavior};
+use bun_paths::{self as path};
 use bun_resolver::fs::FileSystem;
 use bun_wyhash::hash;
 

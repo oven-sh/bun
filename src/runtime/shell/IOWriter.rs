@@ -21,7 +21,9 @@ use core::ffi::c_void;
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_sys::{self as sys, E, Fd};
 
-use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId};
+use bun_jsc::EventLoopHandle;
+
+use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::yield_::Yield;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -180,14 +182,24 @@ pub fn on_poll(writer: &mut Poll, size_hint: isize, hup: bool) {
     writer.on_poll(size_hint, hup);
 }
 
-impl IOWriter {
-    /// Explicitly a no-op. Kept only because `task_tag::ShellIOWriter`
-    /// exists in the task-tag dispatch table. No code path enqueues this tag.
-    pub fn run_from_main_thread(_this: *mut IOWriter) {
-        // intentionally empty. No unsafe operations; the pointer is never
-        // dereferenced.
-    }
+/// `Owner.on_update` entry (was the SHELL_BUFFERED_WRITER arm) — routes
+/// through `on_poll` above so the Arc keepalive is held across re-entry.
+#[cfg(not(windows))]
+unsafe fn io_writer_run_file_poll(
+    owner: *mut (),
+    _poll: *mut bun_io::posix_event_loop::FilePoll,
+    size_or_offset: i64,
+    hup: bool,
+) {
+    // SAFETY: `owner` is the live `*mut Poll` stored via `set_parent`.
+    on_poll(
+        unsafe { &mut *owner.cast::<Poll>() },
+        size_or_offset as isize,
+        hup,
+    )
+}
 
+impl IOWriter {
     /// Tears down the underlying `WriterImpl` and drops the last strong ref.
     ///
     /// # Safety
@@ -357,14 +369,14 @@ impl IOWriter {
         cost
     }
 
-    /// `bun_io::EventLoopHandle` is an opaque `*mut c_void` that the io-layer
+    /// `bun_io::EventLoopCtx` is an opaque `*mut c_void` that the io-layer
     /// `FilePollVTable` round-trips back to the runtime. We pass the address of
     /// the stored `bun_event_loop::EventLoopHandle` so the (runtime-registered)
     /// vtable can recover it.
     #[cfg(not(windows))]
     #[inline]
-    fn io_evtloop(&self) -> bun_io::EventLoopHandle {
-        // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
+    fn io_evtloop(&self) -> bun_io::EventLoopCtx {
+        // SAFETY: `bun_io::EventLoopCtx` stores `*mut c_void` purely for
         // type-erasure; vtable consumers treat the pointee as read-only
         self.state().evtloop.as_event_loop_ctx()
     }
@@ -453,22 +465,22 @@ impl IOWriter {
         }
         #[cfg(not(windows))]
         {
-            use bun_io::FilePollFlag;
+            use bun_io::posix_event_loop::Flags;
             // NOTE: re-derive `state()` — the EINVAL/EPERM fallback paths
             // above re-enter `__start()` and mutate `writer.handle`, which
             // invalidates `s` under Stacked Borrows.
             let s = self.state();
             if let Some(poll) = s.writer.get_poll() {
                 if s.flags.nonblock {
-                    poll.set_flag(FilePollFlag::Nonblocking);
+                    poll.set_flag(Flags::Nonblocking);
                 }
                 // On macOS `sendto` with MSG_DONTWAIT can still block, so
                 // only mark as socket there if the fd is already O_NONBLOCK.
                 let sendto_msg_nowait_blocks = cfg!(target_os = "macos");
                 if s.flags.is_socket && (!sendto_msg_nowait_blocks || s.flags.nonblock) {
-                    poll.set_flag(FilePollFlag::Socket);
+                    poll.set_flag(Flags::Socket);
                 } else if s.flags.pollable {
-                    poll.set_flag(FilePollFlag::Fifo);
+                    poll.set_flag(Flags::Fifo);
                 }
             }
         }
@@ -1103,7 +1115,7 @@ enum WriteOutcome {
 
 bun_io::impl_buffered_writer_parent! {
     IOWriter;
-    poll_tag   = bun_io::posix_event_loop::poll_tag::SHELL_BUFFERED_WRITER,
+    on_poll    = io_writer_run_file_poll,
     // UnsafeCell aliasing model — child callbacks may re-enter `enqueue(&self)`.
     borrow     = shared,
     on_write   = on_write_pollable,
@@ -1126,7 +1138,7 @@ bun_io::impl_buffered_writer_parent! {
 fn try_write_with_write_fn(
     fd: Fd,
     buf: &[u8],
-    write_fn: fn(Fd, &[u8]) -> sys::Maybe<usize>,
+    write_fn: fn(Fd, &[u8]) -> sys::Result<usize>,
 ) -> bun_io::WriteResult {
     let mut offset: usize = 0;
     while offset < buf.len() {

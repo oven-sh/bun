@@ -48,7 +48,9 @@ use crate::reactive_scopes::{
     rename_variables,
 };
 
-use crate::program::{Host, JsxImportKind};
+use bun_ast::JSXImport;
+
+use crate::program::Host;
 
 /// Result of code generation for a single function.
 pub struct CodegenFunction {
@@ -2234,7 +2236,7 @@ fn codegen_base_instruction_value(
             for child in children {
                 child_elems.push(codegen_jsx_element(cx, child)?);
             }
-            let fragment_ref = cx.cg.host.jsx_import(JsxImportKind::Fragment);
+            let fragment_ref = cx.cg.host.jsx_import(JSXImport::Fragment);
             cx.cg.host.record_usage(fragment_ref);
             let tag_value = Expr::init(E::ImportIdentifier::new(fragment_ref, true), loc);
             Ok(codegen_jsx_call(
@@ -2667,11 +2669,11 @@ fn codegen_jsx_call(
     }
 
     let kind = if is_dev {
-        JsxImportKind::JsxDEV
+        JSXImport::JsxDEV
     } else if is_static_jsx {
-        JsxImportKind::Jsxs
+        JSXImport::Jsxs
     } else {
-        JsxImportKind::Jsx
+        JSXImport::Jsx
     };
     let target_ref = cx.cg.host.jsx_import(kind);
     cx.cg.host.record_usage(target_ref);

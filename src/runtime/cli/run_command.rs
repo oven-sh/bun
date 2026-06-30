@@ -11,7 +11,10 @@ use std::io::Write as _;
 use bun_ast::Loader;
 use bun_bundler::Transpiler;
 use bun_collections::{ArrayHashMap, StringHashMap};
-use bun_core::{self as core, Environment, Global, Output, ZStr};
+#[cfg(windows)]
+use bun_core::WPathBuffer;
+use bun_core::{self as core, Global, Output, ZStr};
+use bun_core::{MAX_PATH_BYTES, PathBuffer};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
 use bun_jsc::js_promise::Status as PromiseStatus;
@@ -19,10 +22,8 @@ use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, VirtualMachine};
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_md::root as md;
 use bun_options_types::schema::api;
-#[cfg(windows)]
-use bun_paths::WPathBuffer;
 use bun_paths::strings;
-use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_paths::{self as paths, DELIMITER, SEP};
 use bun_resolver::package_json::PackageJSON;
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_which::which;
@@ -51,13 +52,7 @@ macro_rules! path_literal {
     }};
 }
 
-/// Process-lifetime arena for the runner's `Transpiler`; threads an
-/// `&'static Arena` per PORTING.md §AST crates. Route through the shared
-/// `cli::cli_arena()` (a `LazyLock` — `MimallocArena` is `Sync`).
-#[inline]
-fn runner_arena() -> &'static bun_alloc::Arena {
-    crate::cli::cli_arena()
-}
+use bun_bundler::transpiler::runner_arena;
 
 // Passthrough-arg shell escaping. The escape tables + helpers are the lower-tier
 // `bun_shell_parser` crate's canonical copy — import them so future fixes to
@@ -101,7 +96,7 @@ impl RunCommand {
         // `<b>`/`<r>` tags verbatim.
         pretty!("<b>Usage<r>: <b><green>bun run<r> <cyan>[flags]<r> \\<file or script\\>\n\n");
         pretty!("<b>Flags:<r>");
-        bun_clap::simple_help(crate::cli::arguments::RUN_PARAMS);
+        bun_clap::simple_help(arguments::RUN_PARAMS);
         pretty!(
             "\n\n\
 <b>Examples:<r>
@@ -213,20 +208,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         })
     }
 
-    // Look for invocations of any: `yarn run` / `yarn $cmd` / `pnpm run` /
-    // `npm run` / `npx` / `pnpx` and replace them with `bun run` / `bun x`.
-    //
-    // so lifecycle scripts can call it without a bun_runtime → bun_install
-    // → bun_runtime cycle. This is a thin re-export for `bun run` /
-    // filter_run / multi_run callers.
-    #[inline]
-    pub fn replace_package_manager_run(
-        copy_script: &mut Vec<u8>,
-        script: &[u8],
-    ) -> Result<(), bun_core::Error> {
-        bun_install::lifecycle_script_runner::replace_package_manager_run(copy_script, script)
-    }
-
     /// Spawns the script body via the bun-shell or system shell and exits on
     /// non-zero.
     ///
@@ -286,7 +267,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // We're going to do this slowly.
         // Find exact matches of yarn, pnpm, npm
 
-        Self::replace_package_manager_run(&mut copy_script, original_script)?;
+        bun_install::lifecycle_script_runner::replace_package_manager_run(
+            &mut copy_script,
+            original_script,
+        )?;
 
         for part in passthrough {
             copy_script.push(b' ');
@@ -355,7 +339,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             return Ok(());
         }
 
-        use crate::api::bun_process::{Status as SpawnStatus, sync};
+        use ::bun_spawn::process::{Status as SpawnStatus, sync};
 
         let argv: Vec<Box<[u8]>> = vec![
             shell_bin.as_bytes().to_vec().into_boxed_slice(),
@@ -392,8 +376,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             stdin: sync::SyncStdio::Inherit,
             ipc: ipc_fd,
             #[cfg(windows)]
-            windows: crate::api::bun_process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(
+            windows: ::bun_spawn::process::WindowsOptions {
+                loop_: bun_event_loop::EventLoopHandle::init_mini(
                     bun_event_loop::MiniEventLoop::init_global(
                         // SAFETY: same lifetime erasure as the `!use_system_shell`
                         // branch above — `env` outlives the mini event loop.
@@ -599,7 +583,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         this_transpiler.write(Transpiler::init(arena, ctx.log, args, env)?);
         // SAFETY: fully written on the line above.
         let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
-        this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
+        this_transpiler.options.env.behavior = bun_dotenv::DotEnvBehavior::LoadAll;
         let env_loader = this_transpiler.env_mut();
         env_loader.quiet = true;
         this_transpiler.options.env.prefix = Box::default();
@@ -684,50 +668,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             .put_default(b"npm_config_local_prefix", top_level_dir)
             .expect("unreachable");
 
-        // Propagate --no-orphans / [run] noOrphans to the script's env so any
-        // Bun process the script spawns enables its own watchdog. The env
-        // loader snapshots `environ` before flag parsing runs, so the
-        // `setenv()` in `enable()` isn't reflected here.
-        if bun_io::ParentDeathWatchdog::is_enabled() {
-            env_loader
-                .map
-                .put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1")
-                .expect("unreachable");
-        }
-
-        // we have no way of knowing what version they're expecting without running the node executable
-        // running the node executable is too slow
-        // so we will just hardcode it to LTS
-        env_loader
-            .map
-            .put_default(
-                b"npm_config_user_agent",
-                // the use of npm/? is copying yarn
-                // e.g.
-                // > "yarn/1.22.4 npm/? node/v12.16.3 darwin x64",
-                const_format::concatcp!(
-                    "bun/",
-                    Global::package_json_version,
-                    " npm/? node/v",
-                    Environment::REPORTED_NODEJS_VERSION,
-                    " ",
-                    Global::os_name,
-                    " ",
-                    Global::arch_name
-                )
-                .as_bytes(),
-            )
-            .expect("unreachable");
-
-        if env_loader.get(b"npm_execpath").is_none() {
-            // we don't care if this fails
-            if let Ok(self_exe_path) = bun_core::self_exe_path() {
-                env_loader
-                    .map
-                    .put_default(b"npm_execpath", self_exe_path.as_bytes())
-                    .expect("unreachable");
-            }
-        }
+        bun_bundler::transpiler::seed_npm_runner_env(env_loader);
 
         if let Some(package_json) = root_dir_info.enclosing_package_json {
             if !package_json.name.is_empty() {
@@ -809,22 +750,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // resolver's forward-decl `BundleOptions` does not project
         // `minify_*` (resolver never reads them).
 
-        match &mut ctx.debug.macros {
+        match &ctx.debug.macros {
             MacroOptions::Disable => b.options.no_macros = true,
             MacroOptions::Map(macros) => {
-                // `ContextData::MacroMap` and
-                // `BundleOptions::macro_remap` are both
-                // `ArrayHashMap<Box<[u8]>, ArrayHashMap<Box<[u8]>, Box<[u8]>>>`
-                // but with different hasher contexts (`Auto` vs
-                // `BoxedSliceContext`), so re-seat by iterating instead of move.
                 // Cold path (only hit when bunfig declares `[macros]`).
                 for (k, v) in macros.iter() {
-                    let mut inner =
-                        bun_resolver::package_json::MacroImportReplacementMap::default();
-                    for (ik, iv) in v.iter() {
-                        inner.put(ik, iv.clone()).unwrap_or_oom();
-                    }
-                    b.options.macro_remap.put(k, inner).unwrap_or_oom();
+                    b.options
+                        .macro_remap
+                        .put(k, bun_core::handle_oom(v.clone()))
+                        .unwrap_or_oom();
                 }
             }
             MacroOptions::Unspecified => {}
@@ -927,7 +861,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         loader: Option<Loader>,
     ) -> Result<(), bun_core::Error> {
         if !ctx.debug.loaded_bunfig {
-            arguments::load_config_path(
+            bun_bunfig::arguments::load_config_path(
                 CommandTag::RunCommand,
                 true,
                 bun_core::zstr!("bunfig.toml"),
@@ -968,10 +902,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.argv = std::mem::take(&mut ctx.passthrough);
         // `InitOptions` has no `store_fd` field, so set it on the resolver directly.
         vm.transpiler.resolver.store_fd = ctx.debug.hot_reload != cli::command::HotReload::None;
-        // `vm.dns_result_order` is a `u8` until the b2-cycle widens
-        // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is exact.
         vm.dns_result_order =
-            bun_dns::Order::from_string_or_die(&ctx.runtime_options.dns_result_order) as u8;
+            bun_dns::Order::from_string_or_die(&ctx.runtime_options.dns_result_order);
         // `vm.main` is a BACKREF into these bytes; convert the `Box` to a raw
         // heap pointer now so the address
         // is stable for both `set_main` and the `RUN` write below. The runner
@@ -1048,7 +980,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let defines_ok = {
             let b = &mut vm.transpiler;
             Self::wire_transpiler_from_ctx(b, ctx);
-            b.options.env.behavior = api::DotEnvBehavior::LoadAllWithoutInlining;
+            b.options.env.behavior = bun_dotenv::DotEnvBehavior::LoadAllWithoutInlining;
             b.configure_defines().is_ok()
         };
         if !defines_ok {
@@ -1061,9 +993,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `configure_defines` above, so `$TZ` set in one is honored.
         if let Some(tz) = vm.env_loader().get(b"TZ") {
             if !tz.is_empty() {
-                let _ = vm
-                    .global()
-                    .set_time_zone(&bun_jsc::zig_string::ZigString::init(tz));
+                let _ = vm.global().set_time_zone(&bun_core::ZigString::init(tz));
             }
         }
 
@@ -1103,10 +1033,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 entry_path: entry_ptr,
             });
         }
-        // `ctx.debug.hot_reload` → `vm.hot_reload` (a `u8` until the
-        // b2-cycle widens it to `cli::HotReload`); `Run::start` re-reads it
-        // from `self.ctx` to drive the hot-reloader enable.
-        vm.hot_reload = ctx.debug.hot_reload as u8;
+        vm.hot_reload = ctx.debug.hot_reload;
 
         extern "C" fn trampoline(ctx: *mut c_void) {
             // SAFETY: `ctx` is `&mut RUN` passed through `holdAPILock`'s
@@ -1146,7 +1073,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // Load bunfig.toml unless disabled by compile flags. Config loading
         // with execArgv is handled earlier in `Command::start` via `init()`.
         if !ctx.debug.loaded_bunfig && !graph.flags.contains(GraphFlags::DISABLE_AUTOLOAD_BUNFIG) {
-            arguments::load_config_path(
+            bun_bunfig::arguments::load_config_path(
                 CommandTag::RunCommand,
                 true,
                 bun_core::zstr!("bunfig.toml"),
@@ -1154,30 +1081,21 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             )?;
         }
 
-        // layering — `Options::graph` is the resolver's trait object
-        // (`&'static dyn bun_resolver::StandaloneModuleGraph`); the concrete
-        // `bun_standalone_graph::Graph` implements it. The graph is the
-        // process-global singleton (`StandaloneModuleGraph::set` in
-        // `cli_body.rs`), so erasing the borrow lifetime via raw-pointer
-        // round-trip per PORTING.md §process-lifetime borrows is sound.
-        // SAFETY: `graph` lives in the process-global INSTANCE static; never
-        // freed (`global_exit` ends the process before any deinit).
-        let graph_dyn: &'static dyn bun_resolver::StandaloneModuleGraph = unsafe {
-            &*(std::ptr::from_ref::<bun_standalone_graph::Graph>(graph)
-                as *const (dyn bun_resolver::StandaloneModuleGraph + 'static))
-        };
         let vm_ptr = VirtualMachine::init_with_module_graph(bun_jsc::virtual_machine::Options {
             log: std::ptr::NonNull::new(ctx.log),
             args: ctx.args.clone(),
-            graph: Some(graph_dyn),
+            // The graph is the process-global singleton
+            // (`StandaloneModuleGraph::set` in `cli_body.rs`), so erasing the
+            // borrow lifetime via raw-pointer round-trip per PORTING.md
+            // §process-lifetime borrows is sound.
+            // SAFETY: `graph` lives in the process-global INSTANCE static;
+            // never freed (`global_exit` ends the process before any deinit).
+            graph: Some(unsafe { &*std::ptr::from_ref::<bun_standalone_graph::Graph>(graph) }),
             is_main_thread: true,
             smol: ctx.runtime_options.smol,
-            // `Options::dns_result_order` is `u8` until the
-            // b2-cycle widens it to `bun_dns::Order`; the enum is
-            // `#[repr(u8)]` so `as u8` is exact.
             dns_result_order: bun_dns::Order::from_string_or_die(
                 &ctx.runtime_options.dns_result_order,
-            ) as u8,
+            ),
             ..Default::default()
         })?;
         // SAFETY: `init_with_module_graph` returns the unique freshly-boxed VM
@@ -1358,7 +1276,7 @@ impl Run {
         // so `enable_hot_module_reloading` can store it without re-erasing.
         let mut entry: &'static [u8] = unsafe { &*self.entry_path };
 
-        vm.hot_reload = ctx.debug.hot_reload as u8;
+        vm.hot_reload = ctx.debug.hot_reload;
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
 
         // ── CPU profiler ────────────────────────────────────────────────────
@@ -1518,7 +1436,7 @@ impl Run {
                     // When --hot/--watch is on (or a user
                     // `uncaughtException` handler swallowed the error), keep the
                     // process alive instead of hard-exiting on a rejected entry.
-                    if vm.hot_reload != 0 || handled {
+                    if vm.hot_reload != cli::command::HotReload::None || handled {
                         vm.add_main_to_watcher_if_needed();
                         // SAFETY: `event_loop` is a self-pointer into this VM;
                         // uniquely accessed here.
@@ -1618,7 +1536,7 @@ impl Run {
                 // SAFETY: `vals[..1]` is the single stack `to_print`; null
                 // `ctype` routes to the VM's stdout/stderr default.
                 unsafe {
-                    bun_jsc::ConsoleObject::message_with_type_and_level(
+                    crate::jsc_hooks::console_message_with_type_and_level(
                         ::core::ptr::null_mut(),
                         bun_jsc::ConsoleObject::MessageType::Log,
                         bun_jsc::ConsoleObject::MessageLevel::Log,
@@ -1805,26 +1723,16 @@ impl RunCommand {
             bstr::BStr::new(display_name),
             bstr::BStr::new(err.name()),
         );
-        bun_core::handle_error_return_trace(err);
         Global::exit(1);
     }
-
-    // This path is almost always a path to a user directory. So it cannot be
-    // inlined like our uses of /tmp. On Windows use `GetTempPathW` /
-    // `RealFS.platformTempDir` instead — this const is POSIX-only and
-    // referencing it on Windows is a compile error.
-    //
-    // Canonical definition lives in `bun_install::RunCommand` (lower tier so
-    // the package manager can use it without depending on `bun_runtime`).
-    #[cfg(not(windows))]
-    pub const BUN_NODE_DIR: &'static str = bun_install::RunCommand::BUN_NODE_DIR;
 
     /// Returns the path to the
     /// fake `node` shim that points back at the running `bun` binary.
     pub fn bun_node_file_utf8() -> Result<&'static ZStr, bun_core::Error> {
         #[cfg(not(windows))]
         {
-            const BUN_NODE_DIR_Z: &str = const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
+            const BUN_NODE_DIR_Z: &str =
+                const_format::concatcp!(bun_install::RunCommand::BUN_NODE_DIR, "\0");
             Ok(ZStr::from_static(BUN_NODE_DIR_Z.as_bytes()))
         }
         #[cfg(windows)]
@@ -1851,8 +1759,8 @@ impl RunCommand {
 
             const FILE_NAME: &str = const_format::concatcp!(
                 "bun-node",
-                if Environment::GIT_SHA_SHORT.len() > 0 {
-                    const_format::concatcp!("-", Environment::GIT_SHA_SHORT)
+                if core::Environment::GIT_SHA_SHORT.len() > 0 {
+                    const_format::concatcp!("-", core::Environment::GIT_SHA_SHORT)
                 } else {
                     ""
                 },
@@ -1872,22 +1780,6 @@ impl RunCommand {
             // arena-backed slice lives for process lifetime.
             Ok(ZStr::from_buf(&stored[..], total))
         }
-    }
-
-    /// Creates
-    /// `<tmp>/bun-node*/node` and `<tmp>/bun-node*/bun` symlinks (or hard
-    /// links on Windows) pointing at the running `bun` binary, then appends
-    /// that directory to `path` so child processes resolve `node` to bun.
-    ///
-    /// Implementation lives in `bun_install::RunCommand` (lower tier) so the
-    /// package manager can call it without depending on `bun_runtime`; this is
-    /// a thin delegate so existing `Self::` callers keep compiling.
-    #[inline]
-    pub fn create_fake_temporary_node_executable(
-        path: &mut Vec<u8>,
-        optional_bun_path: &mut &[u8],
-    ) -> Result<(), bun_core::Error> {
-        bun_install::RunCommand::create_fake_temporary_node_executable(path, optional_bun_path)
     }
 
     /// Prepends workspace
@@ -1995,7 +1887,7 @@ impl RunCommand {
         let mut new_path: Vec<u8> = Vec::with_capacity(new_path_len);
 
         if needs_to_force_bun {
-            match Self::create_fake_temporary_node_executable(
+            match bun_install::RunCommand::create_fake_temporary_node_executable(
                 &mut new_path,
                 &mut optional_bun_self_path,
             ) {
@@ -2141,7 +2033,7 @@ impl RunCommand {
         passthrough: &[Box<[u8]>],
         original_script_for_bun_run: Option<&[u8]>,
     ) -> Result<::core::convert::Infallible, bun_core::Error> {
-        use crate::api::bun_process::{Status as SpawnStatus, sync};
+        use ::bun_spawn::process::{Status as SpawnStatus, sync};
 
         let mut argv: Vec<Box<[u8]>> = Vec::with_capacity(1 + passthrough.len());
         argv.push(executable.to_vec().into_boxed_slice());
@@ -2165,8 +2057,8 @@ impl RunCommand {
             stdin: sync::SyncStdio::Inherit,
             use_execve_on_macos: silent,
             #[cfg(windows)]
-            windows: crate::api::bun_process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(
+            windows: ::bun_spawn::process::WindowsOptions {
+                loop_: bun_event_loop::EventLoopHandle::init_mini(
                     bun_event_loop::MiniEventLoop::init_global(
                         Some(unsafe {
                             // SAFETY: env loader is process-lifetime; erase
@@ -2183,8 +2075,6 @@ impl RunCommand {
         }) {
             Ok(r) => r,
             Err(err) => {
-                bun_core::handle_error_return_trace(&err);
-
                 // an error occurred before the process was spawned
                 #[allow(unused_labels)]
                 'print_error: {
@@ -2392,9 +2282,9 @@ impl RunCommand {
         }
 
         if !ctx.debug.loaded_bunfig {
-            // `Arguments::load_config_path` — loads global bunfig (if the
+            // `bun_bunfig::arguments::load_config_path` — loads global bunfig (if the
             // command opts in via `read_global_config`) then `bunfig.toml`.
-            let _ = arguments::load_config_path(
+            let _ = bun_bunfig::arguments::load_config_path(
                 CommandTag::RunCommand,
                 true,
                 bun_core::zstr!("bunfig.toml"),
@@ -3176,7 +3066,7 @@ impl RunCommand {
 
         let arena: &'static bun_alloc::Arena = runner_arena();
         let mut this_transpiler = Transpiler::init(arena, ctx.log, args, None)?;
-        this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
+        this_transpiler.options.env.behavior = bun_dotenv::DotEnvBehavior::LoadAll;
         this_transpiler.options.env.prefix = Box::default();
 
         this_transpiler.resolver.care_about_bin_folder = true;
@@ -3188,8 +3078,8 @@ impl RunCommand {
     /// `bun feedback` — boots the embedded `eval/feedback.ts` script.
     fn bun_feedback(ctx: &mut ContextData) -> Result<::core::convert::Infallible, bun_core::Error> {
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
-        // SAFETY: bun_paths::PathBuffer and bun_core::PathBuffer are
-        // layout-identical newtypes over [u8; MAX_PATH_BYTES].
+        // SAFETY: bun_core::PathBuffer is a layout-identical newtype over
+        // [u8; MAX_PATH_BYTES].
         let cwd = bun_core::getcwd(unsafe {
             &mut *entry_point_buf.as_mut_ptr().cast::<bun_core::PathBuffer>()
         })?;
@@ -3554,7 +3444,9 @@ impl RunCommand {
         };
 
         let rendered = match md::render_to_ansi(&contents, md_opts, theme) {
-            Err(bun_md::parser::ParserError::OutOfMemory) => bun_core::out_of_memory(),
+            Err(bun_md::parser::ParserError::Js(bun_core::JsError::OutOfMemory)) => {
+                bun_core::out_of_memory()
+            }
             Err(bun_md::parser::ParserError::StackOverflow) => {
                 pretty_errorln!(
                     "<r><red>error<r>: markdown rendering exceeded the stack — input is too deeply nested",
@@ -3602,7 +3494,7 @@ impl RunCommand {
         let Ok(mut this_transpiler) = Transpiler::init(runner_arena(), ctx.log, args, None) else {
             return Ok(shell_out);
         };
-        this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
+        this_transpiler.options.env.behavior = bun_dotenv::DotEnvBehavior::LoadAll;
         this_transpiler.options.env.prefix = Box::default();
         // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
         unsafe { (*this_transpiler.env).quiet = true };
@@ -3638,7 +3530,7 @@ impl RunCommand {
         type ResultList = ArrayHashMap<Box<[u8]>, ()>;
 
         if let Some(shell) = this_transpiler.env().get(b"SHELL") {
-            shell_out.shell = crate::cli::shell_completions::Shell::from_env(shell);
+            shell_out.shell = bun_install::ShellCompletions::Shell::from_env(shell);
         }
 
         let mut results = ResultList::new();
@@ -3939,7 +3831,7 @@ impl BunXFastPath {
     /// rules. Writes into `buffer` and returns the number of u16s written.
     #[cfg(windows)]
     fn append_windows_argument(buffer: &mut [u16], arg: &[u8]) -> usize {
-        let mut wbuf = [0u16; bun_paths::MAX_WPATH];
+        let mut wbuf = [0u16; bun_core::PATH_MAX_WIDE];
         let warg = strings::convert_utf8_to_utf16_in_buffer(&mut wbuf, arg);
 
         if warg.is_empty() {
@@ -4068,7 +3960,7 @@ impl BunXFastPath {
 
         let env_block = env.map.write_windows_env_block();
 
-        let run_ctx = bun_install::windows_shim::bun_shim_impl::FromBunRunContext {
+        let run_ctx = bun_shim_impl::launcher::FromBunRunContext {
             handle,
             base_path: path_to_use[4..].as_mut_ptr(),
             base_path_len: path_to_use.len() - 4,
@@ -4086,7 +3978,7 @@ impl BunXFastPath {
             run_ctx.force_use_bun
         );
 
-        bun_install::windows_shim::bun_shim_impl::try_startup_from_bun_js(run_ctx);
+        bun_shim_impl::launcher::try_startup_from_bun_js(run_ctx);
 
         bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "did not start via shim");
     }
@@ -4105,7 +3997,7 @@ impl BunXFastPath {
         // reinterpret as `[u8; 2N]` for the UTF-16→UTF-8 transcoder's output.
         let out_buf = unsafe {
             let raw = bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get();
-            ::core::slice::from_raw_parts_mut(raw.cast::<u8>(), bun_paths::PATH_MAX_WIDE * 2)
+            ::core::slice::from_raw_parts_mut(raw.cast::<u8>(), bun_core::PATH_MAX_WIDE * 2)
         };
         let utf8 = strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath);
         if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {

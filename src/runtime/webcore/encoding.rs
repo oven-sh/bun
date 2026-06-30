@@ -4,9 +4,9 @@
 use core::slice;
 
 use crate::node::types::Encoding;
-use crate::webcore::jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_core::String as BunString;
 use bun_core::strings;
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_simdutf_sys::simdutf as bun_simdutf;
 
 // `bun_core::String` exposes safe `Vec<u8>`/`Vec<u16>` → WTF::ExternalStringImpl
@@ -163,7 +163,7 @@ pub(crate) unsafe extern "C" fn Bun__encoding__byteLengthUTF16AsUTF8(
     len: usize,
 ) -> usize {
     // SAFETY: forwarded from this fn's contract.
-    let input = unsafe { bun_core::ffi::slice(input, len) };
+    let input = unsafe { bun_opaque::ffi::slice(input, len) };
     strings::element_length_utf16_into_utf8(input)
 }
 
@@ -223,7 +223,7 @@ pub(crate) unsafe extern "C" fn Bun__encoding__toStringUTF8(
     global_object: &JSGlobalObject,
 ) -> JSValue {
     // SAFETY: forwarded from this fn's contract.
-    let input = unsafe { bun_core::ffi::slice(input, len) };
+    let input = unsafe { bun_opaque::ffi::slice(input, len) };
     match to_string_comptime::<{ enc::UTF8 }>(input, global_object) {
         Ok(v) => v,
         Err(_) => JSValue::ZERO,
@@ -240,7 +240,7 @@ pub(crate) unsafe extern "C" fn Bun__encoding__toString(
     encoding: u8,
 ) -> JSValue {
     // SAFETY: forwarded from this fn's contract.
-    let input = unsafe { bun_core::ffi::slice(input, len) };
+    let input = unsafe { bun_opaque::ffi::slice(input, len) };
     match to_string(input, global_object, encoding_from_u8(encoding)) {
         Ok(v) => v,
         Err(_) => JSValue::ZERO,
@@ -366,6 +366,21 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
             debug_assert_eq!(wrote, to_len);
             str
         }
+    }
+}
+
+/// `SliceWithUnderlyingString.transcodeFromOwnedSlice` — owned by this tier
+/// because the transcode dispatch lives here, not in bun_string.
+pub(crate) fn transcode_from_owned_slice(
+    input: Vec<u8>,
+    encoding: Encoding,
+) -> bun_core::SliceWithUnderlyingString {
+    if input.is_empty() {
+        return bun_core::SliceWithUnderlyingString::default();
+    }
+    bun_core::SliceWithUnderlyingString {
+        underlying: to_bun_string_from_owned_slice(input, encoding),
+        ..Default::default()
     }
 }
 
@@ -526,7 +541,7 @@ pub(crate) unsafe fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: boo
     // SAFETY: caller guarantees `input[..len]` and `to_ptr[..to_len]` are valid; len/to_len > 0.
     let (input_slice, to_slice) = unsafe {
         (
-            bun_core::ffi::slice(input, len),
+            bun_opaque::ffi::slice(input, len),
             slice::from_raw_parts_mut(to_ptr, to_len),
         )
     };
@@ -618,7 +633,7 @@ pub(crate) unsafe fn byte_length_u8<const ENCODING: u8>(input: *const u8, len: u
     }
 
     // SAFETY: forwarded from this fn's contract.
-    let input_slice = unsafe { bun_core::ffi::slice(input, len) };
+    let input_slice = unsafe { bun_opaque::ffi::slice(input, len) };
 
     match encoding_from_u8(ENCODING) {
         Encoding::Utf8 => strings::element_length_latin1_into_utf8(input_slice),
@@ -693,7 +708,7 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
             // non-overlapping for this encoding.
             let (input_slice, to_slice) = unsafe {
                 (
-                    bun_core::ffi::slice(input, len),
+                    bun_opaque::ffi::slice(input, len),
                     slice::from_raw_parts_mut(to, to_len),
                 )
             };
@@ -708,7 +723,7 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
             // non-overlapping for this encoding.
             let (input_slice, to_slice) = unsafe {
                 (
-                    bun_core::ffi::slice(input, out),
+                    bun_opaque::ffi::slice(input, out),
                     slice::from_raw_parts_mut(to, to_len),
                 )
             };
@@ -744,7 +759,7 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
             // non-overlapping for this encoding.
             let (input_slice, to_slice) = unsafe {
                 (
-                    bun_core::ffi::slice(input, len),
+                    bun_opaque::ffi::slice(input, len),
                     slice::from_raw_parts_mut(to, to_len),
                 )
             };
@@ -758,7 +773,7 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
             // decoder applies.
             // SAFETY: caller guarantees `input[..len]` is valid; only an immutable view is
             // needed here since the output goes through `write_u8` with raw `to`.
-            let input_slice = unsafe { bun_core::ffi::slice(input, len) };
+            let input_slice = unsafe { bun_opaque::ffi::slice(input, len) };
             let mut narrowed = vec![0u8; len];
             strings::copy_u16_into_u8(&mut narrowed, input_slice);
             // SAFETY: `narrowed` is a valid local Vec; `to[..to_len]` validity is
@@ -786,7 +801,7 @@ pub(crate) unsafe fn construct_from_u8<const ENCODING: u8>(
     }
 
     // SAFETY: forwarded from this fn's contract.
-    let input_slice = unsafe { bun_core::ffi::slice(input, len) };
+    let input_slice = unsafe { bun_opaque::ffi::slice(input, len) };
 
     match encoding_from_u8(ENCODING) {
         Encoding::Buffer => {
@@ -874,7 +889,7 @@ pub(crate) unsafe fn construct_from_u16<const ENCODING: u8>(
     }
 
     // SAFETY: forwarded from this fn's contract.
-    let input_slice = unsafe { bun_core::ffi::slice(input, len) };
+    let input_slice = unsafe { bun_opaque::ffi::slice(input, len) };
 
     match encoding_from_u8(ENCODING) {
         Encoding::Utf8 => strings::to_utf8_alloc_with_type(input_slice),

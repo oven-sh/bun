@@ -1,6 +1,6 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
-use core::ffi::{c_char, c_void};
+use core::ffi::c_char;
 
 use bun_core::ZStr;
 
@@ -13,12 +13,12 @@ use bun_core::ZStr;
 // callers no longer shim-convert between two layout-identical structs.
 //
 // Safe raw-pointer wrappers (`NewSocketHandler`/`SocketTCP`/`SocketTLS`,
-// `InternalSocket`, `AnySocket`, `ConnectError`, `CloseKind`, owned
+// `InternalSocket`, `AnySocket`, `ConnectError`, `CloseCode`, owned
 // `SocketAddress`) stay defined here; `bun_uws_sys::socket` has lifetime-
 // bearing variants of the same names that are not yet reconciled.
 
 pub use bun_uws_sys::{
-    AnyWebSocket, BodyReaderMixin, ConnectingSocket, ListenSocket, NewApp, RawWebSocket, Request,
+    AnyWebSocket, App, BodyReaderMixin, ConnectingSocket, ListenSocket, RawWebSocket, Request,
     Timer, WebSocketBehavior, us_socket_stream_buffer_t, us_socket_t, uws_res,
 };
 
@@ -124,6 +124,8 @@ pub(crate) unsafe extern "C" fn BUN__warn__extra_ca_load_failed(
 
 pub use bun_uws_sys::LIBUS_SOCKET_DESCRIPTOR;
 
+pub mod ssl_context_cache;
+
 mod c {
     unsafe extern "C" {
         // safe: no args; returns a process-static NUL-terminated cipher list.
@@ -215,10 +217,6 @@ pub mod ssl_wrapper {
         pub renegotiation_count: u8,
         pub renegotiation_window_start: Option<std::time::Instant>,
     }
-
-    /// CamelCase alias for callers that use the alternate spelling
-    /// (e.g. `http_jsc`).
-    pub type SslWrapper<T> = SSLWrapper<T>;
 
     /// `Cell`-backed bitfield so the R-2 noalias-laundered self-backref (see
     /// [`SSLWrapper::r`]) can read AND write flags through a shared `&Self`
@@ -506,7 +504,7 @@ pub mod ssl_wrapper {
         /// `jsc`/`http_types` dependency. The original `SSLConfig`-taking `init` lives as
         /// an extension in the higher tier.
         pub fn init_from_options(
-            ctx_opts: &crate::SocketContext::BunSocketContextOptions,
+            ctx_opts: &crate::BunSocketContextOptions,
             is_client: bool,
             handlers: Handlers<T>,
         ) -> Result<Self, InitError> {
@@ -1275,40 +1273,6 @@ pub mod ssl_wrapper {
 pub use bun_uws_sys::loop_::{LoopHandler, us_wakeup_loop};
 pub use bun_uws_sys::{InternalLoopData, Loop, PosixLoop, Timespec, WindowsLoop};
 
-/// Carrier trait so `set_parent_event_loop` can accept the higher-tier
-/// `EventLoopHandle` without depending on it. The event-loop crate impls this
-/// on its enum (`.js` → tag 1, `.mini` → tag 2).
-pub trait ParentEventLoopHandle {
-    fn into_tag_ptr(self) -> (core::ffi::c_char, *mut c_void);
-}
-
-/// Extension methods on the re-exported `bun_uws_sys::InternalLoopData` for the
-/// typed parent-loop accessors. The sys crate only stores tag+ptr; this tier
-/// adds the trait-generic setter and the panicking getter that callers use.
-pub trait InternalLoopDataExt {
-    fn set_parent_event_loop<H: ParentEventLoopHandle>(&mut self, parent: H);
-    fn get_parent(&self) -> (core::ffi::c_char, *mut c_void);
-}
-
-impl InternalLoopDataExt for InternalLoopData {
-    /// Tag 1 = JS
-    /// event loop, tag 2 = mini event loop. Generic over the handle so this
-    /// crate stays free of the `jsc` dependency.
-    #[inline]
-    fn set_parent_event_loop<H: ParentEventLoopHandle>(&mut self, parent: H) {
-        let (tag, ptr) = parent.into_tag_ptr();
-        self.set_parent_raw(tag, ptr);
-    }
-
-    /// Low tier returns the (tag, ptr)
-    /// pair; the typed enum wrapper lives in the higher-tier crate that can
-    /// name `jsc::EventLoop` / `jsc::MiniEventLoop`.
-    #[inline]
-    fn get_parent(&self) -> (core::ffi::c_char, *mut c_void) {
-        self.get_parent_raw()
-    }
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // SocketGroup
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1317,46 +1281,25 @@ impl InternalLoopDataExt for InternalLoopData {
 // definition forced callers (e.g. `socket_body.rs` start_tls) to
 // `.cast::<bun_uws_sys::SocketGroup>()` between two layout-identical types.
 
-/// Alias for the per-group C vtable struct under its pre-merge name.
-pub use bun_uws_sys::socket_group::VTable as SocketGroupVTable;
+pub use bun_uws_sys::socket_group;
 pub use bun_uws_sys::{ConnectResult, SocketGroup};
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SocketContext::BunSocketContextOptions
+// BunSocketContextOptions
 // ═══════════════════════════════════════════════════════════════════════════
-pub mod SocketContext {
-    /// `#[repr(C)]` mirror of `us_bun_socket_context_options_t`. What
-    /// `SSLConfig.asUSockets()` produces and `us_ssl_ctx_from_options` consumes.
-    /// The struct body, `Default`, `digest()` and `create_ssl_context()` live in
-    /// `bun_uws_sys`; re-exported so this crate and `_sys` share one definition
-    /// (callers in higher tiers pass values to `_sys` constructors directly).
-    pub use bun_uws_sys::BunSocketContextOptions;
-}
-/// Snake-case module alias.
-pub use SocketContext as socket_context;
-
-/// C-name alias for `SocketContext::BunSocketContextOptions` — what
-/// `SSLConfig.asUSockets()` produces and `us_ssl_ctx_from_options` consumes.
-/// Higher tiers (http, runtime/socket) reference it under the C struct name.
-pub type us_bun_socket_context_options_t = SocketContext::BunSocketContextOptions;
+/// The struct body, `Default`, `digest()` and `create_ssl_context()` live in
+/// `bun_uws_sys`.
+pub use bun_uws_sys::BunSocketContextOptions;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SocketKind (a.k.a. DispatchKind) / CloseKind
+// SocketKind / CloseCode
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Re-exported from `bun_uws_sys` so dispatch tables in both crates agree on
 /// one `#[repr(u8)]` enum.
 pub use bun_uws_sys::SocketKind;
 
-/// Alias used by some callers (`websocket_client`, `sql_jsc`) that named
-/// the dispatch tag `DispatchKind`. Same enum.
-pub type DispatchKind = SocketKind;
-
 pub use bun_uws_sys::CloseCode;
-/// Legacy alias — `bun_uws_sys::CloseCode` is the one canonical `#[repr(i32)]`
-/// enum (`normal`/`failure`/`fast_shutdown`, with `Normal`/`Failure`/
-/// `FastShutdown` associated-const aliases).
-pub type CloseKind = CloseCode;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Socket handlers (NewSocketHandler / SocketHandler / AnySocket)
@@ -1369,6 +1312,7 @@ pub use bun_uws_sys::socket::{
     AnySocket, ConnectError, InternalSocket, NewSocketHandler, SocketHandler, SocketTCP, SocketTLS,
     SocketTcp, SocketTls,
 };
+pub use bun_uws_sys::{DuplexHandle, DuplexVTable};
 
 /// Runtime-tagged TCP/TLS socket with a `None` arm for the "no active socket"
 /// state. Used by proxy-tunnel layers (HTTP `ProxyTunnel`, WebSocket

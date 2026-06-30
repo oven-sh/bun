@@ -2,8 +2,9 @@ use bun_ast as js_ast;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::Output;
 use bun_core::strings;
+use bun_core::{MAX_PATH_BYTES, PathBuffer};
 use bun_js_parser::lexer as js_lexer;
-use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, SEP_STR};
+use bun_paths::{self as resolve_path, SEP_STR};
 use bun_semver as Semver;
 use bun_semver::String as SemverString;
 
@@ -25,19 +26,6 @@ pub use ::bun_install_types::resolver_hooks::{
 };
 pub use ::bun_install_types::resolver_hooks::{INVALID_PACKAGE_ID, PackageID};
 
-/// Compat namespace: older callers spell `install_stubs::Version::Tag` etc.
-/// Everything re-exports `bun_install_types::resolver_hooks` — no local stubs.
-#[allow(non_snake_case)]
-pub mod install_stubs {
-    pub use ::bun_install_types::resolver_hooks::{
-        Architecture, AutoInstaller, Behavior as DepBehavior, Dependency, DependencyGroup,
-        DependencyVersion, OperatingSystem,
-    };
-    pub mod Version {
-        pub use ::bun_install_types::resolver_hooks::DependencyVersion as Version;
-        pub use ::bun_install_types::resolver_hooks::DependencyVersionTag as Tag;
-    }
-}
 // Deliberately a bare alias rather than `bun_collections::StringMap` (which
 // wraps the same `StringArrayHashMap<Box<[u8]>>` with a `dupe_keys` flag the
 // resolver never needs); callers here use the map API directly.
@@ -48,10 +36,9 @@ use bun_glob as glob;
 // Assume they're not going to have hundreds of main fields or browser map
 // so use an array-backed hash table instead of bucketed
 pub type BrowserMap = StringMap;
-/// Values are owned `Box<[u8]>` so callers (CLI bunfig → bundler options)
-/// can populate without `unsafe` lifetime-extension casts.
-pub type MacroImportReplacementMap = StringArrayHashMap<Box<[u8]>>;
-pub type MacroMap = StringArrayHashMap<MacroImportReplacementMap>;
+// Canonical definition in `bun_options_types::context`; same shape as before —
+// StringArrayHashMap with owned `Box<[u8]>` values.
+pub use bun_options_types::context::{MacroImportReplacementMap, MacroMap};
 
 // Values borrow the package.json source buffer; `'static` is a lifetime-erased
 // borrow kept alive by `PackageJSON::source_contents` (the owning field).
@@ -184,37 +171,20 @@ pub enum IncludeDependencies {
 
 const NODE_MODULES_PATH: &str = const_format::concatcp!(SEP_STR, "node_modules", SEP_STR);
 
-impl ::bun_install_types::resolver_hooks::PackageJsonView for PackageJSON {
-    fn name(&self) -> &[u8] {
-        &self.name
-    }
-    fn version(&self) -> &[u8] {
-        &self.version
-    }
-    fn source_path(&self) -> &[u8] {
-        self.source.path.text
-    }
-    fn dependency_source_buf(&self) -> &[u8] {
-        self.dependencies.source_buf
-    }
-    fn arch(&self) -> Architecture {
-        self.arch
-    }
-    fn os(&self) -> OperatingSystem {
-        self.os
-    }
-    fn dependency_iter(&self) -> Box<dyn Iterator<Item = (&[u8], &Dependency)> + '_> {
-        let buf = self.dependencies.source_buf;
-        Box::new(
-            self.dependencies
-                .map
-                .iter()
-                .map(move |(k, v)| (k.slice(buf), v)),
-        )
-    }
-}
-
 impl PackageJSON {
+    /// Install-side borrowed view consumed by
+    /// `AutoInstaller::lockfile_append_from_package_json`.
+    pub fn as_install_ref(&self) -> ::bun_install_types::resolver_hooks::PackageJsonRef<'_> {
+        ::bun_install_types::resolver_hooks::PackageJsonRef {
+            name: &self.name,
+            version: &self.version,
+            arch: self.arch,
+            os: self.os,
+            dependency_source_buf: self.dependencies.source_buf,
+            dependencies: &self.dependencies.map,
+        }
+    }
+
     /// Normalize path separators to forward slashes for glob matching
     /// This is needed because glob patterns use forward slashes but Windows uses backslashes
     fn normalize_path_for_glob(path: &[u8]) -> Result<Vec<u8>, bun_alloc::AllocError> {
@@ -888,7 +858,7 @@ impl PackageJSON {
                     }
                 }
 
-                type DependencyGroup = install_stubs::DependencyGroup;
+                type DependencyGroup = ::bun_install_types::resolver_hooks::DependencyGroup;
                 let dev_deps = INCLUDE_DEPENDENCIES == IncludeDependencies::Main;
                 let dependency_groups: &[DependencyGroup] = if dev_deps {
                     &[
@@ -1306,7 +1276,7 @@ impl Entry {
     }
 }
 
-pub type ConditionsMap = StringArrayHashMap<()>;
+pub use bun_options_types::resolve_options::ConditionsMap;
 
 pub struct ESModule<'a> {
     pub debug_logs: Option<&'a mut resolver::DebugLogs>,

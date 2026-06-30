@@ -589,26 +589,30 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn enter_span(&mut self, span_type: SpanType) -> crate::types::JsResult<()> {
+    pub fn enter_span(&mut self, span_type: SpanType) -> crate::types::ParserResult<()> {
         if self.image_nesting_level > 0 {
             return Ok(());
         }
         self.renderer.enter_span(span_type, Default::default())
     }
 
-    pub fn leave_span(&mut self, span_type: SpanType) -> crate::types::JsResult<()> {
+    pub fn leave_span(&mut self, span_type: SpanType) -> crate::types::ParserResult<()> {
         if self.image_nesting_level > 0 {
             return Ok(());
         }
         self.renderer.leave_span(span_type)
     }
 
-    pub fn emit_text(&mut self, text_type: TextType, content: &[u8]) -> crate::types::JsResult<()> {
+    pub fn emit_text(
+        &mut self,
+        text_type: TextType,
+        content: &[u8],
+    ) -> crate::types::ParserResult<()> {
         self.renderer.text(text_type, content)
     }
 
     /// Emit emphasis opening tags (outermost to innermost).
-    pub fn emit_emph_open_tags(&mut self, sizes: &[u8]) -> crate::types::JsResult<()> {
+    pub fn emit_emph_open_tags(&mut self, sizes: &[u8]) -> crate::types::ParserResult<()> {
         // First match = innermost, so emit in reverse (outermost first in HTML)
         for idx in 0..sizes.len() {
             let j = sizes.len() - 1 - idx;
@@ -623,7 +627,7 @@ impl Parser<'_> {
 
     /// Emit emphasis closing tags (innermost to outermost).
     /// First entry in sizes was matched first (innermost), emit in forward order.
-    pub fn emit_emph_close_tags(&mut self, sizes: &[u8]) -> crate::types::JsResult<()> {
+    pub fn emit_emph_close_tags(&mut self, sizes: &[u8]) -> crate::types::ParserResult<()> {
         for &size in sizes {
             if size == 2 {
                 self.leave_span(SpanType::Strong)?;

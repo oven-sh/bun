@@ -151,28 +151,6 @@ pub mod printer;
 #[path = "values/mod.rs"]
 pub mod values;
 
-/// Re-exports from `values::{color,ident,url}` so callers that still use
-/// the legacy `values_stub` path resolve to the canonical types.
-pub mod values_stub {
-    /// Re-export the real `values/color.rs` surface so any remaining
-    /// `values_stub::color::*` paths resolve to the canonical types.
-    pub mod color {
-        pub use crate::values::color::*;
-
-        pub type CssColorParseResult = crate::values::color::ParseResult;
-
-        /// https://drafts.csswg.org/css-color/#hsl-to-rgb (`hue` is 0..1 here).
-        /// Real body lives in `css_parser::color::hsl_to_rgb`; re-exported for
-        /// any callers that reached it via the stub path.
-        pub use crate::css_parser::color::hsl_to_rgb;
-    }
-
-    /// Re-export of the real `values/ident.rs`.
-    pub mod ident {
-        pub use crate::values::ident::*;
-    }
-}
-
 // ─── stub re-exports referenced cross-crate ────────────────────────────────
 
 /// Single-variant error type returned by every `to_css` path; the *kind*
@@ -210,11 +188,8 @@ pub use css_parser::{
     ParserOptions, StyleAttribute, StyleSheet, StylesheetExtra, ToCssResult,
 };
 pub use printer::{ImportInfo, Printer, PrinterOptions, PseudoClasses};
-/// Dependent crates name this `ImportRecordHandler`; the surviving type is
-/// `printer::ImportInfo`, exposed under both names.
-pub type ImportRecordHandler<'a> = printer::ImportInfo<'a>;
 pub use values::color::{CssColor, FloatColor, LABColor, LabColor, PredefinedColor, RGBA};
-pub use values_stub::color::CssColorParseResult;
+pub type CssColorParseResult = values::color::ParseResult;
 
 // Cross-crate re-exports.
 pub use error::{

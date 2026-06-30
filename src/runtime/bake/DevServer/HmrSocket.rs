@@ -4,7 +4,7 @@ use bun_core::{Output, feature_flags};
 use bun_uws::AnyWebSocket;
 use bun_uws_sys::{Opcode, SendStatus};
 
-use crate::timer::EventLoopTimerState;
+use bun_jsc::timer::EventLoopTimerState;
 
 use super::source_map_store::{self, RemoveOrUpgradeMode};
 use super::{ConsoleLogKind, DevServer, HmrTopic, IncomingMessageId, MessageId};
@@ -143,19 +143,16 @@ impl HmrSocket {
                                             dev.memory_visualizer_timer.state
                                                 != EventLoopTimerState::ACTIVE
                                         );
-                                        // Note (jsc/runtime crate cycle): `vm.timer` is `()` on the
-                                        // low-tier `VirtualMachine`; the real `timer::All`
-                                        // lives in `RuntimeState` (see jsc_hooks.rs).
-                                        let state = crate::jsc_hooks::runtime_state();
+                                        let all = bun_jsc::timer::timer_all();
                                         let next = bun_core::Timespec::ms_from_now(
                                             bun_core::TimespecMockMode::AllowMockedTime,
                                             1000,
                                         );
-                                        // SAFETY: `runtime_state()` is non-null after
-                                        // `bun_runtime::init()`; JS-thread only, sole
-                                        // `&mut` to `timer` in this scope.
+                                        // SAFETY: `timer_all()` is non-null while the
+                                        // VM is installed; JS-thread only, sole
+                                        // `&mut All` in this scope.
                                         unsafe {
-                                            (*state).timer.update(
+                                            (*all).update(
                                                 &raw mut dev.memory_visualizer_timer,
                                                 &next,
                                             );
@@ -332,13 +329,11 @@ impl HmrSocket {
                 if dev.emit_incremental_visualizer_events == 0
                     && dev.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE
                 {
-                    // Note (jsc/runtime crate cycle): `vm.timer` is `()` on the low-tier
-                    // `VirtualMachine`; the real `timer::All` lives in `RuntimeState`.
-                    let state = crate::jsc_hooks::runtime_state();
-                    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
-                    // JS-thread only, sole `&mut` to `timer` in this scope.
+                    let all = bun_jsc::timer::timer_all();
+                    // SAFETY: `timer_all()` is non-null while the VM is installed;
+                    // JS-thread only, sole `&mut All` in this scope.
                     unsafe {
-                        (*state).timer.remove(&raw mut dev.memory_visualizer_timer);
+                        (*all).remove(&raw mut dev.memory_visualizer_timer);
                     }
                 }
             }

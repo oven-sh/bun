@@ -38,6 +38,36 @@ pub enum Format {
     InternalBakeDev,
 }
 
+pub mod bundle_defaults {
+    pub const EXTENSION_ORDER: &[&[u8]] = &[
+        b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts", b".json",
+    ];
+
+    pub const MAIN_FIELD_EXTENSION_ORDER: &[&[u8]] =
+        &[b".js", b".cjs", b".cts", b".tsx", b".ts", b".jsx", b".json"];
+
+    pub const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
+        b".tsx", b".jsx", b".mts", b".ts", b".mjs", b".js", b".cts", b".cjs", b".json",
+    ];
+
+    pub const CSS_EXTENSION_ORDER: &[&[u8]] = &[b".css"];
+
+    pub mod node_modules {
+        pub const EXTENSION_ORDER: &[&[u8]] = &[
+            b".jsx", b".cjs", b".js", b".mjs", b".mts", b".tsx", b".ts", b".cts", b".json",
+        ];
+
+        pub const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
+            b".mjs", b".jsx", b".mts", b".js", b".cjs", b".tsx", b".ts", b".cts", b".json",
+        ];
+    }
+}
+
+#[inline]
+pub fn owned_string_list(s: &[&[u8]]) -> Box<[Box<[u8]>]> {
+    s.iter().map(|b| Box::<[u8]>::from(*b)).collect()
+}
+
 impl Format {
     pub fn keep_es6_import_export_syntax(self) -> bool {
         self == Format::Esm

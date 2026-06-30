@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use crate::host_fn::to_js_host_call;
 use crate::js_promise::{Status, UnwrapMode, Unwrapped};
-use crate::{JSGlobalObject, JSInternalPromise, JSPromise, JSValue, JsResult, JsTerminated, VM};
+use crate::{JSGlobalObject, JSPromise, JSValue, JsResult, JsTerminated, VM};
 
 /// `jsc.AnyPromise` — `JSPromise | JSInternalPromise`.
 ///
@@ -13,7 +13,7 @@ use crate::{JSGlobalObject, JSInternalPromise, JSPromise, JSValue, JsResult, JsT
 #[derive(Debug, Clone, Copy)]
 pub enum AnyPromise {
     Normal(*mut JSPromise),
-    Internal(*mut JSInternalPromise),
+    Internal(*mut JSPromise),
 }
 
 // S012: every method body is `match self { Variant(p) => (*p).foo() }` over a
@@ -29,7 +29,7 @@ macro_rules! any_promise_dispatch {
                 $body
             }
             Self::Internal(ptr) => {
-                let $p = JSInternalPromise::opaque_mut(ptr);
+                let $p = JSPromise::opaque_mut(ptr);
                 $body
             }
         }

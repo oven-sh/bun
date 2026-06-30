@@ -61,6 +61,17 @@ impl From<bun_core::Error> for AnyPostgresError {
     }
 }
 
+impl From<bun_core::JsError> for AnyPostgresError {
+    #[inline]
+    fn from(e: bun_core::JsError) -> Self {
+        match e {
+            bun_core::JsError::Thrown => Self::JSError,
+            bun_core::JsError::OutOfMemory => Self::OutOfMemory,
+            bun_core::JsError::Terminated => Self::JSTerminated,
+        }
+    }
+}
+
 /// Options for creating a PostgresError
 // These slices borrow from the parsed wire buffer for the duration of
 // `createPostgresError`; the `'a` lifetime ties them to that buffer.
@@ -109,4 +120,4 @@ impl Default for PostgresErrorOptions<'_> {
 }
 
 // `createPostgresError` / `postgresErrorToJS` live as extension-trait methods
-// in the `bun_sql_jsc` crate; the base crate has no mention of jsc.
+// in `bun_runtime::sql_jsc`; the base crate has no mention of jsc.

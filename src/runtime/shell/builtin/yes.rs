@@ -1,12 +1,14 @@
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinState, Impl, Kind};
-use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId, OutputNeedsIOSafeGuard};
+use bun_jsc::EventLoopHandle;
+
+use crate::shell::interpreter::{Interpreter, NodeId, OutputNeedsIOSafeGuard};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::states::cmd::Exec;
 use crate::shell::yield_::Yield;
 
 use bun_event_loop::ConcurrentTask::AutoDeinit;
-use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
+use bun_event_loop::{EventLoopTask, TaskTag, Taskable};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum State {
@@ -203,7 +205,7 @@ pub struct YesTask {
 }
 
 impl Taskable for YesTask {
-    const TAG: TaskTag = task_tag::ShellYesTask;
+    const TAG: TaskTag = TaskTag::ShellYesTask;
 }
 
 impl YesTask {

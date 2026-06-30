@@ -11,7 +11,6 @@ use bun_core::{Error, err};
 
 use super::stream::{State as StreamState, Stream};
 use super::{dispatch, encode};
-use crate::h2_frame_parser as wire;
 use crate::http_context::HTTPSocket;
 use crate::http_request_body::HTTPRequestBody;
 use crate::internal_state::HTTPStage;
@@ -19,6 +18,7 @@ use crate::lshpack;
 use crate::signals;
 use crate::ssl_config;
 use crate::{HTTPClient, HTTPVerboseLevel, HeaderResult, NewHTTPContext, Protocol};
+use bun_http_types::h2 as wire;
 
 /// HTTP/2 only ever runs over TLS in this client (ALPN "h2").
 pub type Socket = HTTPSocket<true>;
@@ -648,11 +648,11 @@ impl ClientSession {
     }
 
     pub fn flush(&mut self) -> Result<bool, Error> {
-        // Captured as `bun_ptr::RawSlice` (encapsulated outlives-holder
+        // Captured as `bun_core::RawSlice` (encapsulated outlives-holder
         // invariant) so the loop can borrow `self.socket` while still
         // subslicing `write_buffer`. The buffer is not reallocated until
         // `wrote()` after the loop.
-        let pending = bun_ptr::RawSlice::new(self.write_buffer.slice());
+        let pending = bun_core::RawSlice::new(self.write_buffer.slice());
         if pending.is_empty() {
             return Ok(false);
         }
@@ -692,10 +692,10 @@ impl ClientSession {
         } else {
             self.read_buffer.extend_from_slice(incoming);
             // `parse_frames` takes `&mut self` plus a view into
-            // `self.read_buffer`, so capture the view as `bun_ptr::RawSlice`:
+            // `self.read_buffer`, so capture the view as `bun_core::RawSlice`:
             // read_buffer is not reallocated during parse_frames (only
             // consumed), so the outlives-holder invariant holds for the call.
-            let buf = bun_ptr::RawSlice::new(self.read_buffer.as_slice());
+            let buf = bun_core::RawSlice::new(self.read_buffer.as_slice());
             let consumed = dispatch::parse_frames(self, buf.slice());
             self.read_buffer.drain_front(consumed);
         }
@@ -792,7 +792,7 @@ impl ClientSession {
         self.read_buffer.extend_from_slice(incoming);
         // See on_data note — `RawSlice` carries the outlives-holder invariant
         // (read_buffer is not reallocated during parse_frames).
-        let buf = bun_ptr::RawSlice::new(self.read_buffer.as_slice());
+        let buf = bun_core::RawSlice::new(self.read_buffer.as_slice());
         let consumed = dispatch::parse_frames(self, buf.slice());
         let tail = self.read_buffer.len() - consumed;
         if tail > 0 && consumed > 0 {
@@ -847,7 +847,7 @@ impl ClientSession {
         }
         NewHTTPContext::<true>::mark_socket_as_dead(sock);
         self.on_close(err);
-        sock.close(bun_uws::CloseKind::Failure);
+        sock.close(bun_uws::CloseCode::failure);
     }
 
     /// Called from the HTTP thread's shutdown queue when a fetch on this

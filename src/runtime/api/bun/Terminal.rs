@@ -17,7 +17,6 @@ use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::node::StringOrBuffer;
-use crate::webcore::blob::ZigStringBlobExt;
 use bun_core::SignalCode;
 use bun_core::ZigString;
 use bun_io::Loop as AsyncLoop;
@@ -25,6 +24,7 @@ use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
 use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
+use bun_jsc::ZigStringJsc as _;
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
     MarkedArrayBuffer, SysErrorJsc, ZigStringSlice,
@@ -36,7 +36,7 @@ use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 #[cfg(windows)]
 use bun_sys::windows;
 
-bun_output::declare_scope!(Terminal, hidden);
+bun_core::declare_scope!(Terminal, hidden);
 
 // Generated bindings — `jsc.Codegen.JSTerminal`. The `.classes.ts` codegen
 // emits `crate::generated_classes::js_Terminal` with `from_js`/`to_js` and the
@@ -525,7 +525,7 @@ impl Terminal {
                             // PTY behaves like a pipe, not a socket
                             r.flags
                                 .insert(PosixFlags::NONBLOCKING | PosixFlags::POLLABLE);
-                            poll.set_flag(bun_io::FilePollFlag::Nonblocking);
+                            poll.set_flag(bun_io::posix_event_loop::Flags::Nonblocking);
                         }
                     });
                 }
@@ -991,9 +991,9 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
 
     // Set close-on-exec on master side fds only
     // slave_fd should NOT have close-on-exec since child needs to inherit it
-    let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(master_fd_desc);
-    let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(read_fd);
-    let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(write_fd);
+    let _ = bun_sys::set_close_on_exec(master_fd_desc);
+    let _ = bun_sys::set_close_on_exec(read_fd);
+    let _ = bun_sys::set_close_on_exec(write_fd);
 
     Ok(PtyResult {
         master: master_fd_desc,
@@ -1648,7 +1648,7 @@ impl Terminal {
 
     // IOWriter callbacks
     fn on_writer_close(&self) {
-        bun_output::scoped_log!(Terminal, "onWriterClose");
+        bun_core::scoped_log!(Terminal, "onWriterClose");
         if !self.flags.get().contains(Flags::WRITER_DONE) {
             self.update_flags(|f| f.insert(Flags::WRITER_DONE));
             // Release writer's ref
@@ -1657,7 +1657,7 @@ impl Terminal {
     }
 
     fn on_writer_ready(&self) {
-        bun_output::scoped_log!(Terminal, "onWriterReady");
+        bun_core::scoped_log!(Terminal, "onWriterReady");
         // Call drain callback
         let Some(this_jsvalue) = self.this_value.get().try_get() else {
             return;
@@ -1674,7 +1674,7 @@ impl Terminal {
     }
 
     fn on_writer_error(&self, err: &sys::Error) {
-        bun_output::scoped_log!(Terminal, "onWriterError: {:?}", err);
+        bun_core::scoped_log!(Terminal, "onWriterError: {:?}", err);
         // On write error, close the terminal to prevent further operations
         // This handles cases like broken pipe when the child process exits
         if !self.flags.get().contains(Flags::CLOSED) {
@@ -1684,13 +1684,13 @@ impl Terminal {
 
     fn on_write(&self, amount: usize, status: WriteStatus) {
         let _ = status;
-        bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
+        bun_core::scoped_log!(Terminal, "onWrite: {} bytes", amount);
         let _ = self;
     }
 
     // IOReader callbacks
     pub(crate) fn on_reader_done(&self) {
-        bun_output::scoped_log!(Terminal, "onReaderDone");
+        bun_core::scoped_log!(Terminal, "onReaderDone");
         // R-2: `&self` (no `noalias`) + `Cell<Flags>` makes the prior
         // `black_box`-launder unnecessary — the post-`call_exit_callback`
         // `flags` load is a fresh `Cell::get()` that LLVM cannot fold across
@@ -1711,7 +1711,7 @@ impl Terminal {
     }
 
     pub(crate) fn on_reader_error(&self, err: &sys::Error) {
-        bun_output::scoped_log!(Terminal, "onReaderError: {:?}", err);
+        bun_core::scoped_log!(Terminal, "onReaderError: {:?}", err);
         // R-2: see `on_reader_done` — `&self` + `Cell<Flags>` replaces the
         // prior `black_box` launder.
         // Error - downgrade to weak ref to allow GC
@@ -1765,7 +1765,7 @@ impl Terminal {
     // Returns true to continue reading, false to pause
     pub(crate) fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
         let _ = has_more;
-        bun_output::scoped_log!(Terminal, "onReadChunk: {} bytes", chunk.len());
+        bun_core::scoped_log!(Terminal, "onReadChunk: {} bytes", chunk.len());
 
         if self.flags.get().contains(Flags::FINALIZED) {
             return true;
@@ -1790,7 +1790,7 @@ impl Terminal {
         // the process — log and `return true` to keep reading instead.
         let mut v: Vec<u8> = Vec::new();
         if v.try_reserve_exact(chunk.len()).is_err() {
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 Terminal,
                 "onReadChunk: dupe failed (OOM), dropping {} bytes",
                 chunk.len()
@@ -1827,7 +1827,7 @@ impl Terminal {
 
     /// Finalize - called by GC when object is collected
     pub(crate) fn finalize(self: Box<Self>) {
-        bun_output::scoped_log!(Terminal, "finalize");
+        bun_core::scoped_log!(Terminal, "finalize");
         jsc::mark_binding();
         bun_ptr::finalize_js_box(self, |this| {
             this.this_value.with_mut(|v| v.finalize());
@@ -1845,7 +1845,7 @@ impl Terminal {
 /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
 /// whose generated trait `destructor` upholds the sole-owner contract.
 fn deinit_and_destroy(this: *mut Terminal) {
-    bun_output::scoped_log!(Terminal, "deinit");
+    bun_core::scoped_log!(Terminal, "deinit");
     // SAFETY: caller is `deref_()` with ref_count == 0; `this` was heap-allocated.
     // R-2: deref as shared — `close_internal` takes `&self` and all field
     // mutation routes through `Cell`/`JsCell`.
@@ -1865,10 +1865,7 @@ fn deinit_and_destroy(this: *mut Terminal) {
 
 // BufferedReader vtable parent: Terminal declares
 // `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop`.
-bun_io::buffered_reader_parent_link!(Terminal for Terminal);
 impl BufferedReaderParent for Terminal {
-    const KIND: bun_io::BufferedReaderParentLinkKind =
-        bun_io::BufferedReaderParentLinkKind::Terminal;
     const HAS_ON_READ_CHUNK: bool = true;
 
     unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
@@ -1886,7 +1883,7 @@ impl BufferedReaderParent for Terminal {
         // `WindowsLoop`), NOT a raw cast of the `bun_uws::Loop` wrapper.
         Self::from_parent_ptr(this).loop_().cast()
     }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopCtx {
         Self::from_parent_ptr(this)
             .event_loop_handle
             .as_event_loop_ctx()
@@ -1898,7 +1895,8 @@ impl BufferedReaderParent for Terminal {
 // is an intrusive *field of* the parent — see PipeWriter.rs PosixStreamingWriterParent.
 #[cfg(unix)]
 impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
-    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::TERMINAL_POLL;
+    const ON_POLL: bun_io::posix_event_loop::OnPoll =
+        bun_io::pipe_writer::streaming_writer_run_file_poll::<Terminal>;
     const HAS_ON_READY: bool = true;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         Self::from_parent_ptr(this).on_write(amount, status)
@@ -1912,7 +1910,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
     unsafe fn on_close(this: *mut Self) {
         Self::from_parent_ptr(this).on_writer_close()
     }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopCtx {
         Self::from_parent_ptr(this)
             .event_loop_handle
             .as_event_loop_ctx()

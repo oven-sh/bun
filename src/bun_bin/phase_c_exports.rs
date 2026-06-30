@@ -96,7 +96,7 @@ pub(crate) extern "C" fn Bun__outOfMemory() -> ! {
 // REAL: now provided by bun_runtime (src/runtime/napi/napi_body.rs).
 // napi_internal_suppress_crash_on_abort_if_desired
 
-// REAL: now provided by bun_runtime (src/runtime/api/bun/SSLContextCache.rs).
+// REAL: now provided by bun_uws (src/uws/ssl_context_cache.rs).
 // bun_ssl_ctx_cache_on_free
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -132,7 +132,7 @@ pub(crate) extern "C" fn Bun__outOfMemory() -> ! {
 // AbortSignal__Timeout__create
 // AbortSignal__Timeout__deinit
 
-// REAL: src/jsc/ConsoleObject.rs
+// REAL: src/runtime/jsc_hooks.rs
 // Bun__ConsoleObject__messageWithTypeAndLevel
 
 // REAL: now provided by bun_jsc (src/jsc/VirtualMachine.rs).
@@ -152,7 +152,7 @@ pub(crate) extern "C" fn Bun__VM__scriptExecutionStatus(_vm: *const VirtualMachi
 // Bun__fetch
 // Bun__fetchPreconnect
 
-// REAL: src/runtime/webcore/ObjectURLRegistry.rs
+// REAL: src/jsc/object_url_registry.rs
 // Bun__createObjectURL
 // Bun__revokeObjectURL
 

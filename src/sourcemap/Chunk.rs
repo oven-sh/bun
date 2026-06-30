@@ -1,6 +1,7 @@
 use bun_ast::{Loc, Source};
+use bun_core::PathBuffer;
 use bun_core::{MutableString, strings};
-use bun_paths::{PathBuffer, fs::FileSystem};
+use bun_paths::fs::FileSystem;
 
 use crate::{
     InternalSourceMap, LineOffsetTable, SourceMapState, append_mapping_to_buffer,

@@ -3,10 +3,8 @@
 use bun_core::Timespec;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-// `bun.sys.PosixStat` — uv-shaped stat struct. Re-exported from `bun_sys` now
-// that the crate declares it; `PosixStat::init(&bun_sys::Stat)` handles the
-// libc-stat → uv_stat_t field copy on both POSIX and Windows there.
-pub use bun_sys::PosixStat;
+// bun.sys.PosixStat — uv-shaped stat struct; PosixStat::init(&bun_sys::Stat) does the libc-stat → uv_stat_t copy in bun_sys.
+use bun_sys::PosixStat;
 
 const MS_PER_S: i64 = bun_core::time::MS_PER_S as i64;
 const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;

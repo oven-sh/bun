@@ -742,6 +742,8 @@ pub(crate) static HEAP_ALLOCATOR_VTABLE: crate::AllocatorVTable = crate::Allocat
     resize: vtable_resize,
     remap: vtable_remap,
     free: vtable_free,
+    ptr_is_identity: true,
+    wtf_string_refcount: false,
 };
 
 // ── Global-mimalloc vtable ────────────────────────────────────────────────
@@ -762,15 +764,9 @@ pub(crate) static GLOBAL_MIMALLOC_VTABLE: crate::AllocatorVTable = crate::Alloca
     resize: crate::basic::MimallocAllocator::resize_with_default_allocator,
     remap: crate::basic::MimallocAllocator::remap_with_default_allocator,
     free: crate::basic::default_allocator_free,
+    ptr_is_identity: true,
+    wtf_string_refcount: false,
 };
-
-/// Both vtable addresses this module hands out, for
-/// `bun_safety::register_alloc_vtable` (so `has_ptr` recognises either form;
-/// see `is_instance` above which checks both).
-#[inline]
-pub fn std_vtables() -> [&'static crate::AllocatorVTable; 2] {
-    [&HEAP_ALLOCATOR_VTABLE, &GLOBAL_MIMALLOC_VTABLE]
-}
 
 // ── ArenaVec helpers ─────────────────────────────────────────────────────
 

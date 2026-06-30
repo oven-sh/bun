@@ -504,7 +504,7 @@ impl Drop for SocketAddress {
 
 impl SocketAddress {
     pub fn finalize(self: Box<Self>) {
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         // Box drop runs `<SocketAddress as Drop>::drop` (releases `_presentation`).
         drop(self);
     }

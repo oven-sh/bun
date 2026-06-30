@@ -89,10 +89,6 @@ pub mod yaml_object;
 // inline `mod bun { }` below is a re-export façade only — module bodies are
 // declared flat to avoid the non-mod-rs nested-path resolution rules.
 
-// Process struct + posix_spawn/uv_spawn machinery.
-#[path = "api/bun/process.rs"]
-pub mod bun_process;
-
 // posix_spawn(2) wrappers + Stdio enum.
 #[path = "api/bun/spawn.rs"]
 pub mod bun_spawn;
@@ -118,8 +114,7 @@ pub mod h2;
 #[path = "api/bun/h2_frame_parser.rs"]
 pub mod h2_frame_parser_body;
 
-#[path = "api/bun/SSLContextCache.rs"]
-pub mod bun_ssl_context_cache;
+pub use bun_uws::ssl_context_cache as bun_ssl_context_cache;
 
 #[path = "api/bun/SecureContext.rs"]
 pub mod bun_secure_context;
@@ -128,19 +123,20 @@ pub mod bun_secure_context;
 pub mod bun_x509;
 
 pub mod bun {
-    pub use super::bun_process as process;
     pub use super::bun_secure_context as secure_context;
     pub use super::bun_spawn as spawn;
     pub use super::bun_ssl_context_cache as ssl_context_cache;
     pub use super::bun_subprocess as subprocess;
     pub use super::bun_x509 as x509;
-    pub use process::StdioKind as SubprocessStdioKind;
-    pub use process::{
-        Dup2, Exited, ExtraPipe, PidFdType, PidT, Poller, PosixSpawnOptions, PosixSpawnResult,
-        PosixStdio, Process, ProcessExit, ProcessExitHandler, ProcessExitKind, Rusage,
-        SpawnOptions, SpawnProcessResult, Status, StdioKind, WaiterThread,
+    pub use ::bun_spawn::StdioKind as SubprocessStdioKind;
+    pub use ::bun_spawn::process;
+    pub use ::bun_spawn::process::{
+        Exited, Poller, Process, SpawnOptions, SpawnProcessResult, Status, WaiterThread,
     };
-    pub use spawn::posix_spawn;
+    pub use ::bun_spawn::{
+        Dup2, ExtraPipe, PidFdType, PidT, PosixSpawnOptions, PosixSpawnResult, PosixStdio,
+        ProcessExit, ProcessExitHandler, Rusage, StdioKind, rusage_zeroed,
+    };
 
     pub mod terminal {
         pub use crate::api::bun_terminal_body::Terminal;
@@ -169,7 +165,7 @@ pub use bun::process::Process as SpawnProcess;
 
 pub use crate::image as Image;
 pub use crate::shell as Shell;
-pub use crate::timer as Timer;
+pub use bun_jsc::timer as Timer;
 
 pub use crate::api::archive as Archive;
 pub use crate::api::bun::h2_frame_parser::H2FrameParser;
@@ -202,9 +198,9 @@ pub use crate::node::net::block_list as BlockList;
 pub use crate::node::zlib::native_brotli as NativeBrotli;
 pub use crate::node::zlib::native_zlib as NativeZlib;
 pub use crate::node::zlib::native_zstd as NativeZstd;
+pub use crate::sql_jsc::mysql as MySQL;
+pub use crate::sql_jsc::postgres as Postgres;
 pub use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
-pub use bun_sql_jsc::mysql as MySQL;
-pub use bun_sql_jsc::postgres as Postgres;
 
 pub use crate::webview::chrome_process as ChromeProcess;
 pub use crate::webview::host_process as WebViewHostProcess;

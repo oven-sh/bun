@@ -9,8 +9,9 @@ use core::ptr::NonNull;
 use std::cell::RefCell;
 
 use bun_collections::{ArrayHashMap, StringHashMap};
+use bun_core::PathBuffer;
 use bun_core::strings;
-use bun_paths::{self, PathBuffer, SEP, SEP_STR};
+use bun_paths::{self, SEP, SEP_STR};
 use bun_sys::Fd;
 use bun_url::PathnameScanner;
 
@@ -30,14 +31,13 @@ fn wyhash(input: &[u8]) -> u64 {
 // `bun.fs` namespace — `bun_router` depends on `bun_resolver` directly, so
 // name the real `FileSystem` / `Entry` / `DirEntry` / `DirnameStore` types.
 use bun_resolver::DirInfo;
-use bun_resolver::DirInfoRef;
 use bun_resolver::fs as Fs;
 use bun_resolver::fs::FileSystem;
 
-// peechy schema types: `StringPointer` lives in `bun_core::schema::api` (T0);
+// peechy schema types: `StringPointer` lives in `bun_core::util` (T0);
 // the route-config pair lives in `bun_options_types::schema::api`.
 mod api {
-    pub(crate) use bun_core::schema::api::StringPointer;
+    pub(crate) use bun_core::util::StringPointer;
     pub(crate) use bun_options_types::schema::api::{LoadedRouteConfig, RouteConfig};
 }
 
@@ -191,12 +191,8 @@ const INDEX_ROUTE_HASH: u32 =
 // Param/List are lifetime-parameterized: `name` borrows the route name
 // (DirnameStore-backed) and `value` borrows the *request URL buffer*, so the
 // correct representation is a borrowed `&'a [u8]`, not a forged `'static`.
-//
-// `bun_url::route_param::Param<'a>` is now lifetime-generic (TYPE_ONLY
-// move-down landed); collapse the local copy to a re-export so the param list
-// type matches `PathnameScanner::init`.
-pub use bun_url::route_param;
-pub use route_param::Param;
+use bun_url::route_param;
+use route_param::Param;
 
 pub struct Router<'a> {
     pub dir: Fd,
@@ -248,11 +244,11 @@ impl<'a> Router<'a> {
 
     // This loads routes recursively, in depth-first order.
     // it does not currently handle duplicate exact route matches. that's undefined behavior, for now.
-    pub fn load_routes<R: ResolverLike>(
+    pub fn load_routes(
         &mut self,
         log: &mut bun_ast::Log,
         root_dir_info: &DirInfo,
-        resolver: &mut R,
+        resolver: &mut bun_resolver::Resolver<'_>,
         base_dir: &[u8],
     ) -> Result<(), CoreError> {
         if self.loaded_routes {
@@ -261,63 +257,6 @@ impl<'a> Router<'a> {
         self.routes =
             RouteLoader::load_all(self.config.clone(), log, resolver, root_dir_info, base_dir);
         self.loaded_routes = true;
-        Ok(())
-    }
-
-    pub fn match_<S: ServerLike, C: RequestContextLike>(
-        app: &mut Self,
-        server: &mut S,
-        ctx: &mut C,
-    ) -> Result<(), CoreError> {
-        ctx.set_matched_route(None);
-
-        // If there's an extname assume it's an asset and not a page
-        match ctx.url().extname.len() {
-            0 => {}
-            // json is used for updating the route client-side without a page reload
-            4 /* "json".len */ => {
-                if ctx.url().extname != b"json" {
-                    ctx.handle_request()?;
-                    return Ok(());
-                }
-            }
-            _ => {
-                ctx.handle_request()?;
-                return Ok(());
-            }
-        }
-
-        // PERF: a borrowed `List<'a>` cannot soundly live in a `'static` thread_local,
-        // so we allocate per-request; revisit with an arena/SmallVec if hot.
-        {
-            let mut params_list = route_param::List::default();
-            if let Some(route) = app
-                .routes
-                .match_page(&app.config.dir, ctx.url(), &mut params_list)
-            {
-                if let Some(redirect) = route.redirect_path {
-                    ctx.handle_redirect(redirect)?;
-                    return Ok(());
-                }
-
-                debug_assert!(!route.path.is_empty());
-
-                if let Some(watcher) = server.watcher_mut() {
-                    if watcher.watchloop_handle().is_none() {
-                        let _ = watcher.start();
-                    }
-                }
-
-                // ctx.matched_route = route;
-                // RequestContextType.JavaScriptHandler.enqueue(ctx, server, &params_list) catch {
-                //     server.javascript_enabled = false;
-                // };
-            }
-        }
-
-        if !ctx.controlled() && !ctx.has_called_done() {
-            ctx.handle_request()?;
-        }
         Ok(())
     }
 }
@@ -699,10 +638,10 @@ impl<'a> RouteLoader<'a> {
         }
     }
 
-    pub(crate) fn load_all<R: ResolverLike>(
+    pub(crate) fn load_all(
         config: RouteConfig,
         log: &'a mut bun_ast::Log,
-        resolver: &mut R,
+        resolver: &mut bun_resolver::Resolver<'_>,
         root_dir_info: &DirInfo,
         base_dir: &[u8],
     ) -> Routes {
@@ -717,7 +656,7 @@ impl<'a> RouteLoader<'a> {
 
         let mut this = RouteLoader {
             log,
-            fs: resolver.fs(),
+            fs: FileSystem::instance(),
             config: config.clone(),
             static_list: StringHashMap::new(),
             dedupe_dynamic: ArrayHashMap::new(),
@@ -795,9 +734,9 @@ impl<'a> RouteLoader<'a> {
         }
     }
 
-    pub(crate) fn load<R: ResolverLike>(
+    pub(crate) fn load(
         &mut self,
-        resolver: &mut R,
+        resolver: &mut bun_resolver::Resolver<'_>,
         root_dir_info: &DirInfo,
         base_dir: &[u8],
     ) {
@@ -830,8 +769,9 @@ impl<'a> RouteLoader<'a> {
             // true, so null would be a latent crash / silent route-drop
             // once the stub forwards it.
             // SAFETY: no other live borrow of `*entry_ptr` here;
-            // `resolver.fs_impl()` points at the process-global RealFS.
-            let kind = unsafe { (&*entry_ptr).kind(resolver.fs_impl(), false) };
+            // `&raw mut (*resolver.fs()).fs` — the `Implementation` field of the
+            // process-global RealFS singleton.
+            let kind = unsafe { (&*entry_ptr).kind(&raw mut (*resolver.fs()).fs, false) };
             // SAFETY: shared read-only borrow for the match arms; the only
             // subsequent mutation is via `Route::parse` which takes the raw
             // pointer and reborrows internally.
@@ -1491,45 +1431,6 @@ impl<'a> Match<'a> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Traits abstracting over the router's collaborators
-// (Resolver, Server, RequestContext).
-// TODO(refactor): colocate these with the canonical types in
-// bun_resolver / bun_runtime.
-// ──────────────────────────────────────────────────────────────────────────
-
-pub trait ResolverLike {
-    // `bun_resolver::fs::FileSystem` is a process-global singleton, so `'static`
-    // here is faithful and avoids threading the resolver borrow into RouteLoader<'a>.
-    fn fs(&self) -> &'static FileSystem;
-    /// The resolver's `Implementation` field, passed to
-    /// `Entry.kind` for lazy stat.
-    fn fs_impl(&self) -> *mut Fs::Implementation;
-    /// Returns an arena handle (not a borrow) so the resolver's `&mut self`
-    /// borrow ends before the recursive `load()` re-borrows it.
-    fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef>;
-}
-
-pub trait WatcherLike {
-    fn watchloop_handle(&self) -> Option<Fd>;
-    fn start(&mut self) -> Result<(), CoreError>;
-}
-
-pub trait ServerLike {
-    type Watcher: WatcherLike;
-    /// Returns Some if the server has a watcher (replaces `@hasField`).
-    fn watcher_mut(&mut self) -> Option<&mut Self::Watcher>;
-}
-
-pub trait RequestContextLike {
-    fn url(&self) -> &URLPath;
-    fn controlled(&self) -> bool;
-    fn has_called_done(&self) -> bool;
-    fn set_matched_route(&mut self, m: Option<Match<'_>>);
-    fn handle_request(&mut self) -> Result<(), CoreError>;
-    fn handle_redirect(&mut self, redirect: &[u8]) -> Result<(), CoreError>;
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 // Pattern
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -2069,24 +1970,6 @@ mod tests {
         Ok(())
     }
 
-    /// Newtype so the orphan rule lets us `impl ResolverLike` for a
-    /// foreign-crate type.
-    struct TestResolver<'a>(bun_resolver::Resolver<'a>);
-
-    impl<'a> ResolverLike for TestResolver<'a> {
-        fn fs(&self) -> &'static FileSystem {
-            // SAFETY: process-static singleton (see `FileSystem::instance`).
-            unsafe { &*self.0.fs() }
-        }
-        fn fs_impl(&self) -> *mut Fs::Implementation {
-            // SAFETY: `&fs.fs` — the `Implementation` field of the singleton.
-            unsafe { core::ptr::from_mut(&mut (*self.0.fs()).fs) }
-        }
-        fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
-            self.0.read_dir_info_ignore_error(path)
-        }
-    }
-
     pub struct Test;
 
     impl Test {
@@ -2142,15 +2025,11 @@ mod tests {
             };
 
             // var resolver = Resolver.init1(default_allocator, &logger, &FileSystem.instance, opts);
-            let mut resolver = TestResolver(bun_resolver::Resolver::init1(
-                core::ptr::NonNull::from(&mut log),
-                fs,
-                opts,
-            ));
+            let mut resolver =
+                bun_resolver::Resolver::init1(core::ptr::NonNull::from(&mut log), fs, opts);
 
             // const root_dir = (try resolver.readDirInfo(pages_dir)).?;
             let root_dir = resolver
-                .0
                 .read_dir_info(pages_dir)?
                 .ok_or_else(|| bun_core::err!("FileNotFound"))?;
 
@@ -2207,15 +2086,11 @@ mod tests {
                 ..Default::default()
             };
 
-            let mut resolver = TestResolver(bun_resolver::Resolver::init1(
-                core::ptr::NonNull::from(&mut log),
-                fs,
-                opts,
-            ));
+            let mut resolver =
+                bun_resolver::Resolver::init1(core::ptr::NonNull::from(&mut log), fs, opts);
 
             // const root_dir = (try resolver.readDirInfo(pages_dir)).?;
             let root_dir = resolver
-                .0
                 .read_dir_info(pages_dir)?
                 .ok_or_else(|| bun_core::err!("FileNotFound"))?;
 

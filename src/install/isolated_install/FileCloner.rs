@@ -1,6 +1,6 @@
 use bun_paths::path_options::{Kind, PathSeparators};
 use bun_paths::{AutoRelPath, Path};
-use bun_sys::{self as sys, Errno, Fd, FdDirExt, FdExt};
+use bun_sys::{self as sys, Errno, Fd, FdExt};
 
 // macOS clonefileat only
 
@@ -51,7 +51,7 @@ impl FileCloner<'_> {
                     let Some(parent_dest_dir) = self.dest_subpath.dirname() else {
                         return Err(err);
                     };
-                    let _ = Fd::cwd().make_path(parent_dest_dir);
+                    let _ = sys::mkdir_recursive_at(Fd::cwd(), parent_dest_dir);
                     self.clonefileat()
                 }
                 _ => Err(err),

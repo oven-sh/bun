@@ -4,29 +4,31 @@ use core::ffi::c_void;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use crate::node::types::PathLikeExt as _;
 use bun_core::Output;
 use bun_core::ZigString;
 use bun_core::strings;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
-use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
+use bun_event_loop::{Task, TaskTag, Taskable};
+use bun_http_types::FetchRedirect::CommonAbortReason;
 use bun_io::KeepAlive;
 use bun_jsc::JsCell;
 use bun_jsc::abort_signal::AbortListener;
 use bun_jsc::event_loop::EventLoop;
-use bun_jsc::node::PathLike;
+use bun_jsc::node_path::PathLike;
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CallFrame, CommonAbortReason,
-    CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult, SysErrorJsc,
-    VirtualMachineRef as VirtualMachine, ZigStringJsc as _,
+    self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CallFrame, CommonAbortReasonExt as _,
+    GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult, SysErrorJsc, ZigStringJsc as _,
 };
 use bun_paths::resolve_path::{self as Path, platform};
 use bun_sys::{self, SystemErrno};
 use bun_threading::Mutex;
 
-use crate::node::types::{Encoding, PathLikeExt};
+use crate::node::types::{Encoding, EncodingExt as _};
 use crate::webcore::encoding as Encoder;
 
-bun_output::declare_scope!(fs_watch, hidden);
+bun_core::declare_scope!(fs_watch, hidden);
 
 #[cfg(not(windows))]
 use super::path_watcher;
@@ -145,7 +147,7 @@ pub struct FSWatchTaskPosix {
 
 #[cfg(not(windows))]
 impl Taskable for FSWatchTaskPosix {
-    const TAG: TaskTag = task_tag::FSWatchTask;
+    const TAG: TaskTag = TaskTag::FSWatchTask;
 }
 
 #[cfg(not(windows))]
@@ -359,7 +361,7 @@ pub struct FSWatchTaskWindows {
 }
 
 impl Taskable for FSWatchTaskWindows {
-    const TAG: TaskTag = task_tag::FSWatchTask;
+    const TAG: TaskTag = TaskTag::FSWatchTask;
 }
 
 impl Default for FSWatchTaskWindows {
@@ -996,7 +998,7 @@ impl FSWatcher {
                     // incrementing; bump the counter directly so the `unrefTask()` below is
                     // balanced and the count stays > 0 while the close event is emitted.
                     self.pending_activity_count.fetch_add(1, Ordering::Relaxed);
-                    bun_output::scoped_log!(fs_watch, "emit('close')");
+                    bun_core::scoped_log!(fs_watch, "emit('close')");
                     emit_js::<{ EventType::Close }>(
                         listener,
                         &self.global_this,

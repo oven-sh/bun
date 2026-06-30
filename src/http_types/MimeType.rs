@@ -2,22 +2,6 @@ use std::borrow::Cow;
 
 use bun_core::strings;
 
-// Cyclebreak: `by_loader` needs `bun_ast::Loader`, but
-// adding that dep creates a cargo cycle
-// (http_types → options_types → zlib → io → uws_sys → http_types). The Loader
-// enum is `#[repr(u8)]` with stable discriminants (pinned by
-// `bun-native-bundler-plugin-api/bundler_plugin.h`), so we mirror the handful
-// of variants `by_loader` actually inspects as local `u8` constants and accept
-// the raw discriminant. Callers pass `loader as u8`.
-mod loader_disc {
-    pub(super) const JSX: u8 = 0;
-    pub(super) const JS: u8 = 1;
-    pub(super) const TS: u8 = 2;
-    pub(super) const TSX: u8 = 3;
-    pub(super) const CSS: u8 = 4;
-    pub(super) const JSON: u8 = 6;
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // `Table` (= `mime_type_list_enum::MimeTypeList`). Hand-maintained `&'static
 // str` newtype derived from `mime_type_list.txt`; see the note at the top of
@@ -448,17 +432,67 @@ impl MimeType {
         // both cases copy here; never launder the borrow to 'static instead.
         Cow::Owned(s.to_vec())
     }
+
+    /// MimeType for a bundler `Loader` (moved from bun_bundler's LoaderExt;
+    /// this crate owns the MimeType vocabulary).
+    pub fn from_loader(loader: bun_core::loader::Loader, paths: &[&[u8]]) -> MimeType {
+        use bun_core::loader::Loader;
+        match loader {
+            Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx => JAVASCRIPT,
+            Loader::Css => CSS,
+            Loader::Toml | Loader::Yaml | Loader::Json | Loader::Jsonc | Loader::Json5 => JSON,
+            Loader::Wasm => WASM,
+            Loader::Html | Loader::Md => HTML,
+            _ => {
+                for path in paths {
+                    let mut extname = bun_paths::extension(path);
+                    if strings::starts_with_char(extname, b'.') {
+                        extname = &extname[1..];
+                    }
+                    if !extname.is_empty() {
+                        if let Some(mime) = by_extension_no_default(extname) {
+                            return mime;
+                        }
+                    }
+                }
+
+                OTHER
+            }
+        }
+    }
+
+    /// Loader inferred from a MimeType (moved from bun_bundler's LoaderExt).
+    pub fn to_loader(&self) -> bun_core::loader::Loader {
+        use bun_core::loader::Loader;
+        if self.value.starts_with(b"application/javascript-jsx") {
+            Loader::Jsx
+        } else if self.value.starts_with(b"application/typescript-jsx") {
+            Loader::Tsx
+        } else if self.value.starts_with(b"application/javascript") {
+            Loader::Js
+        } else if self.value.starts_with(b"application/typescript") {
+            Loader::Ts
+        } else if self.value.starts_with(b"application/json5") {
+            Loader::Json5
+        } else if self.value.starts_with(b"application/jsonc") {
+            Loader::Jsonc
+        } else if self.value.starts_with(b"application/json") {
+            Loader::Json
+        } else if self.category == Category::Text {
+            Loader::Text
+        } else {
+            // Be maximally permissive.
+            Loader::Tsx
+        }
+    }
 }
 
 // TODO: improve this
-// Cyclebreak: takes the `#[repr(u8)]` discriminant of
-// `bun_ast::Loader` to avoid a same-tier cargo cycle (see
-// `loader_disc` at top of file). Callers: `by_loader(loader as u8, ext)`.
-pub fn by_loader(loader: u8, ext: &[u8]) -> MimeType {
-    use loader_disc as L;
+pub fn by_loader(loader: bun_core::loader::Loader, ext: &[u8]) -> MimeType {
+    use bun_core::loader::Loader;
     match loader {
-        L::TSX | L::TS | L::JS | L::JSX | L::JSON => JAVASCRIPT,
-        L::CSS => CSS,
+        Loader::Tsx | Loader::Ts | Loader::Js | Loader::Jsx | Loader::Json => JAVASCRIPT,
+        Loader::Css => CSS,
         _ => by_extension(ext),
     }
 }

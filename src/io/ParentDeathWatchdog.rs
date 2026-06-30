@@ -45,7 +45,7 @@ use bun_sys::O;
 
 use crate::posix_event_loop::EventLoopCtx;
 #[cfg(target_os = "macos")]
-use crate::posix_event_loop::{FilePoll, Owner, poll_tag};
+use crate::posix_event_loop::{FilePoll, Owner};
 
 /// Unit struct — `FilePoll.Owner` needs a real pointer, but we have no
 /// per-instance state.
@@ -320,7 +320,7 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
             handle,
             Fd::from_native(original_ppid),
             Default::default(),
-            Owner::new(poll_tag::PARENT_DEATH_WATCHDOG, instance_ptr.cast()),
+            Owner::new(instance_ptr.cast(), run_file_poll),
         );
         // SAFETY: `poll` was just allocated by `FilePoll::init`; sole `&mut`
         // borrow; `register` does not re-derive the loop.
@@ -346,9 +346,24 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
     }
 }
 
-/// `FilePoll.Owner` dispatch target — invoked from the event loop's
-/// `ParentDeathWatchdog` poll arm. The kqueue `NOTE_EXIT` for our parent
-/// fired.
+/// `Owner.on_update` entry (was the PARENT_DEATH_WATCHDOG arm).
+/// Only registered from the macOS arm of `install_on_event_loop`.
+#[cfg(target_os = "macos")]
+fn run_file_poll(owner: *mut (), _poll: *mut crate::FilePoll, _size_or_offset: i64, _hup: bool) {
+    // SAFETY: `owner` was registered as `*mut ParentDeathWatchdog`.
+    let wd = unsafe { &mut *owner.cast::<ParentDeathWatchdog>() };
+    // Mac-only — Linux uses prctl(PR_SET_PDEATHSIG).
+    #[cfg(target_os = "macos")]
+    on_parent_exit(wd);
+    #[cfg(not(target_os = "macos"))]
+    {
+        debug_assert!(false, "ParentDeathWatchdog poll on non-mac");
+        let _ = wd;
+    }
+}
+
+/// `FilePoll.Owner` dispatch target — invoked when the kqueue `NOTE_EXIT` for
+/// our parent fired.
 pub fn on_parent_exit(_this: &mut ParentDeathWatchdog) {
     // Global.exit → Bun__onExit → on_process_exit → kill_descendants.
     bun_core::exit(EXIT_CODE as u32);

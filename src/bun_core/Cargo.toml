@@ -12,15 +12,18 @@ workspace = true
 [dependencies]
 bytemuck = "1"
 itoa.workspace = true
+bun_ascii.workspace = true
 bun_opaque.workspace = true
 strum.workspace = true
+enum-map.workspace = true
 bstr.workspace = true
 const_format.workspace = true
 libc.workspace = true
 bun_alloc.workspace = true
 bun_hash.workspace = true
-bun_dispatch.workspace = true
+bun_uv_errno.workspace = true
 bun_simdutf_sys.workspace = true
+bun_sync.workspace = true
 bun_core_macros.workspace = true
 bun_output_tags.workspace = true
 # merged from bun_string:

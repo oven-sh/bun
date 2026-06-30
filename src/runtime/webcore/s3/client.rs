@@ -4,14 +4,13 @@ use std::io::Write as _;
 
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::MutableString;
-use bun_http::HeadersExt as _;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 // Re-exports (thin aliases)
 pub use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 pub use crate::webcore::s3::multipart::{self, MultiPartUpload};
-pub use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
+pub use bun_s3_signing::MultiPartUploadOptions;
 pub use bun_s3_signing::acl::ACL;
 pub use bun_s3_signing::storage_class::StorageClass;
 
@@ -59,7 +58,7 @@ use bun_io::StreamBuffer;
 
 bun_core::declare_scope!(S3UploadStream, visible);
 
-type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
+use bun_jsc::JsTerminatedResult;
 
 pub(crate) fn stat(
     this: &S3Credentials,
@@ -293,7 +292,7 @@ pub(crate) fn list_objects(
 
     drop(search_params);
 
-    let headers = bun_http::Headers::from_pico_http_headers(result.headers());
+    let headers = bun_http::headers::from_pico_http_headers(result.headers());
 
     let task_ptr = bun_core::heap::into_raw(Box::new(S3HttpSimpleTask {
         // Written below via `MaybeUninit::write` before any read.
@@ -569,7 +568,7 @@ pub struct S3UploadStreamWrapper {
     pub callback: Option<fn(S3UploadResult, *mut c_void)>,
     pub callback_context: *mut c_void,
     /// this is owned by the task not by the wrapper
-    pub path: bun_ptr::RawSlice<u8>,
+    pub path: bun_core::RawSlice<u8>,
     pub global: GlobalRef, // JSC_BORROW
 }
 
@@ -594,7 +593,7 @@ impl S3UploadStreamWrapper {
     }
 
     fn detach_sink(&mut self) {
-        bun_output::scoped_log!(S3UploadStream, "detachSink {}", self.sink.is_some());
+        bun_core::scoped_log!(S3UploadStream, "detachSink {}", self.sink.is_some());
         if let Some(sink) = self.sink.take() {
             // SAFETY: sink is a live Box-allocated ResumableSink; deref_ releases our ref.
             unsafe { ResumableS3UploadSink::deref_(sink) };
@@ -617,7 +616,7 @@ impl S3UploadStreamWrapper {
     }
 
     pub(crate) fn on_writable(task: &mut MultiPartUpload, self_: &mut Self, _: u64) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             S3UploadStream,
             "onWritable {} {}",
             self_.sink.is_some(),
@@ -635,12 +634,12 @@ impl S3UploadStreamWrapper {
     }
 
     pub(crate) fn write_request_data(&mut self, data: &[u8]) -> ResumableSinkBackpressure {
-        bun_output::scoped_log!(S3UploadStream, "writeRequestData {}", data.len());
+        bun_core::scoped_log!(S3UploadStream, "writeRequestData {}", data.len());
         self.task_mut().write_bytes(data, false).expect("OOM")
     }
 
     pub(crate) fn write_end_request(&mut self, err: Option<JSValue>) {
-        bun_output::scoped_log!(S3UploadStream, "writeEndRequest {}", err.is_some());
+        bun_core::scoped_log!(S3UploadStream, "writeEndRequest {}", err.is_some());
         self.detach_sink();
         // scope-exit deref via guard (keeps borrowck happy)
         let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self), |s| {
@@ -669,7 +668,7 @@ impl S3UploadStreamWrapper {
     }
 
     pub(crate) fn resolve(result: S3UploadResult, self_: &mut Self) -> JsTerminatedResult<()> {
-        bun_output::scoped_log!(S3UploadStream, "resolve");
+        bun_core::scoped_log!(S3UploadStream, "resolve");
         // scope-exit deref via guard (keeps borrowck happy)
         let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), |s| {
             // SAFETY: s points to self_ which is alive for the duration of the guard; deref_
@@ -723,7 +722,7 @@ impl Drop for S3UploadStreamWrapper {
     /// RefCount finalizer body. Allocation is freed by
     /// `deref_()` when the last ref is dropped; this `Drop` only handles side effects.
     fn drop(&mut self) {
-        bun_output::scoped_log!(S3UploadStream, "deinit {}", self.sink.is_some());
+        bun_core::scoped_log!(S3UploadStream, "deinit {}", self.sink.is_some());
         self.detach_sink();
         // task.deref() — release our ref on the MultiPartUpload.
         // SAFETY: `self.task` is the +1 ref held since this stream was created.
@@ -897,7 +896,7 @@ pub fn upload_stream(
             sink: None,
             callback,
             callback_context,
-            path: bun_ptr::RawSlice::new(&task.path),
+            path: bun_core::RawSlice::new(&task.path),
             task: task_ptr,
             end_promise: bun_jsc::JSPromiseStrong::init(global_this),
             global: global_static,
@@ -992,9 +991,9 @@ pub(crate) fn download_stream(
                 &mut header_buffer,
                 bun_picohttp::Header::new(b"range", range_),
             );
-            break 'brk bun_http::Headers::from_pico_http_headers(_headers);
+            break 'brk bun_http::headers::from_pico_http_headers(_headers);
         } else {
-            break 'brk bun_http::Headers::from_pico_http_headers(result.headers());
+            break 'brk bun_http::headers::from_pico_http_headers(result.headers());
         }
     };
     let proxy = proxy_url.unwrap_or(b"");
@@ -1157,14 +1156,14 @@ pub fn readable_stream(
                     if has_more {
                         bytes.on_data(crate::webcore::streams::StreamResult::Temporary(
                             // chunk.list is borrowed for the duration of on_data.
-                            bun_ptr::RawSlice::new(chunk.list.as_slice()),
+                            bun_core::RawSlice::new(chunk.list.as_slice()),
                         ))?;
                         return Ok(());
                     }
 
                     bytes.on_data(crate::webcore::streams::StreamResult::TemporaryAndDone(
                         // chunk.list is borrowed for the duration of on_data.
-                        bun_ptr::RawSlice::new(chunk.list.as_slice()),
+                        bun_core::RawSlice::new(chunk.list.as_slice()),
                     ))?;
                     return Ok(());
                 }

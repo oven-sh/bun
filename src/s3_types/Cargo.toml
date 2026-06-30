@@ -1,0 +1,12 @@
+[package]
+name = "bun_s3_types"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]

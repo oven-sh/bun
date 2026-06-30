@@ -57,8 +57,7 @@ impl<'a> Writer<'a> {
 }
 
 pub mod api {
-    /// Canonical definition lives in bun_dotenv (lower tier).
-    pub use bun_dotenv::DotEnvBehavior;
+    use bun_dotenv::DotEnvBehavior;
 
     /// Open `enum(u8)` in the wire schema. Kept closed.
     /// Variants PascalCased to match the only downstream writer
@@ -74,19 +73,8 @@ pub mod api {
         Bundle = 4,
     }
 
-    /// Open `enum(u32)` in the wire schema. Kept closed.
-    /// PascalCased: `bun_ast::Kind::to_api` matches on `Err`/`Warn`/`Note`/`Debug`.
-    #[repr(u32)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-    pub enum MessageLevel {
-        #[default]
-        _none = 0,
-        Err = 1,
-        Warn = 2,
-        Note = 3,
-        Info = 4,
-        Debug = 5,
-    }
+    // Canonical defs live in bun_ast::api (bun_ast is below this crate).
+    pub use bun_ast::api::{Location, Log, Message, MessageData, MessageLevel, MessageMeta};
 
     /// `enum(u8)` (closed; not a peechy `smol`).
     #[repr(u8)]
@@ -644,37 +632,139 @@ pub mod api {
             for ex in &self.exceptions {
                 ex.encode(w);
             }
-            self.build.encode(w);
+            encode_log(&self.build, w);
         }
     }
 
-    /// peechy `message JsException` (all fields optional).
-    #[derive(Clone, Debug, Default)]
-    pub struct JsException {
-        pub name: Option<Box<[u8]>>,
-        pub message: Option<Box<[u8]>>,
-        pub runtime_type: Option<u16>,
-        pub code: Option<u8>,
-        // `stack: ?StackTrace` — omitted until StackTrace is ported.
+    use core::ffi::c_int;
+
+    pub use bun_core::Ordinal;
+
+    /// Represents a position in source code with line and column information
+    #[repr(C)]
+    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+    pub struct ZigStackFramePosition {
+        pub line: Ordinal,
+        pub column: Ordinal,
+        /// -1 if not present
+        pub line_start_byte: c_int,
     }
+
+    impl ZigStackFramePosition {
+        pub const INVALID: ZigStackFramePosition = ZigStackFramePosition {
+            line: Ordinal::INVALID,
+            column: Ordinal::INVALID,
+            line_start_byte: -1,
+        };
+
+        pub fn is_invalid(&self) -> bool {
+            *self == Self::INVALID
+        }
+
+        pub fn decode<R>(reader: &mut R) -> Result<Self, bun_core::Error>
+        where
+            R: ?Sized + bun_analytics::Reader,
+        {
+            Ok(Self {
+                line: Ordinal::from_zero_based(reader.read_value::<i32>()?),
+                column: Ordinal::from_zero_based(reader.read_value::<i32>()?),
+                // `encode` never writes this field, so a decoded frame has no
+                // line-start-byte information: -1 means "not present".
+                line_start_byte: -1,
+            })
+        }
+
+        pub fn encode(&self, writer: &mut super::Writer<'_>) {
+            writer.write_int(self.line.zero_based());
+            writer.write_int(self.column.zero_based());
+        }
+    }
+
+    /// Non-exhaustive stack-frame scope tag. Newtype keeps any-u8 FFI-safe.
+    #[repr(transparent)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    pub struct StackFrameScope(pub u8);
+
+    impl StackFrameScope {
+        pub const NONE: Self = Self(0);
+        pub const EVAL: Self = Self(1);
+        pub const MODULE: Self = Self(2);
+        pub const FUNCTION: Self = Self(3);
+        pub const GLOBAL: Self = Self(4);
+        pub const WASM: Self = Self(5);
+        pub const CONSTRUCTOR: Self = Self(6);
+    }
+
+    /// Line/column position of a stack frame (FFI layout shared with C++).
+    pub type StackFramePosition = ZigStackFramePosition;
+
+    /// One captured stack frame: function name, file, position, and scope (FFI layout shared with C++).
+    #[derive(Clone, Debug)]
+    pub struct StackFrame {
+        /// function_name
+        pub function_name: Box<[u8]>,
+        /// file
+        pub file: Box<[u8]>,
+        /// position
+        pub position: StackFramePosition,
+        /// scope
+        pub scope: StackFrameScope,
+    }
+
+    impl Default for StackFrame {
+        fn default() -> Self {
+            Self {
+                function_name: Box::default(),
+                file: Box::default(),
+                position: StackFramePosition::INVALID,
+                scope: StackFrameScope::NONE,
+            }
+        }
+    }
+
+    /// A line of source text with its line number, used for error previews.
+    #[derive(Clone, Default, Debug)]
+    pub struct SourceLine {
+        /// line
+        pub line: i32,
+        /// text
+        pub text: Box<[u8]>,
+    }
+
+    /// A captured stack trace: frames plus the source lines used to render previews.
+    #[derive(Clone, Default, Debug)]
+    pub struct StackTrace {
+        /// source_lines
+        pub source_lines: Vec<SourceLine>,
+        /// frames
+        pub frames: Vec<StackFrame>,
+    }
+
+    /// peechy `message JsException` plus captured `stack` (not wire-encoded).
+    #[derive(Clone, Default, Debug)]
+    pub struct JsException {
+        pub name: Box<[u8]>,
+        pub message: Box<[u8]>,
+        pub runtime_type: u16,
+        pub code: u16,
+        pub stack: StackTrace,
+    }
+
     impl JsException {
         pub fn encode(&self, w: &mut super::Writer<'_>) {
-            if let Some(ref v) = self.name {
+            if !self.name.is_empty() {
                 w.write_field_id(1);
-                w.write_array_u8(v);
+                w.write_array_u8(&self.name);
             }
-            if let Some(ref v) = self.message {
+            if !self.message.is_empty() {
                 w.write_field_id(2);
-                w.write_array_u8(v);
+                w.write_array_u8(&self.message);
             }
-            if let Some(v) = self.runtime_type {
-                w.write_field_id(3);
-                w.write_int(v);
-            }
-            if let Some(v) = self.code {
-                w.write_field_id(4);
-                w.write_int(v);
-            }
+            w.write_field_id(3);
+            w.write_int(self.runtime_type);
+            w.write_field_id(4);
+            // spec field is u8; the jsc-side copy widened to u16.
+            w.write_int(self.code as u8);
             w.end_message();
         }
     }
@@ -692,19 +782,12 @@ pub mod api {
         }
     }
 
-    /// peechy `struct Log` (minimal: `warnings`, `errors`, `msgs`).
-    #[derive(Copy, Clone, Debug, Default)]
-    pub struct Log {
-        pub warnings: u32,
-        pub errors: u32,
-        // `msgs: []Message` — omitted until `Message` is ported.
-    }
-    impl Log {
-        pub fn encode(self, w: &mut super::Writer<'_>) {
-            w.write_int(self.warnings);
-            w.write_int(self.errors);
-            w.write_int(0u32); // msgs.len
-        }
+    /// peechy `struct Log` encode. `msgs` is deliberately NOT encoded — the
+    /// pre-existing wire format always wrote `msgs.len = 0`.
+    pub fn encode_log(log: &Log, w: &mut super::Writer<'_>) {
+        w.write_int(log.warnings);
+        w.write_int(log.errors);
+        w.write_int(0u32); // msgs.len
     }
 
     /// peechy `message FallbackMessageContainer`.

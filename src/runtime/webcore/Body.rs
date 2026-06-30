@@ -5,25 +5,27 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use std::borrow::Cow;
 
-use crate::webcore::jsc::{
-    self as jsc, CallFrame, CommonAbortReason, CommonAbortReasonExt as _, DOMFormData,
-    JSGlobalObject, JSPromise, JSValue, JsResult, SystemError, URLSearchParams, VirtualMachine,
-};
 use crate::webcore::{
     self, AnyBlob, Blob, BlobExt as _, ByteStream, DrainResult, FetchHeaders, Lifetime,
     ReadableStream, blob, streams,
 };
 use bun_core::Output;
+use bun_http_types::FetchRedirect::CommonAbortReason;
 use bun_http_types::MimeType::MimeType;
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{
+    self as jsc, CallFrame, CommonAbortReasonExt as _, DOMFormData, JSGlobalObject, JSPromise,
+    JSValue, JsResult, SystemError, URLSearchParams,
+};
 // Re-export so callers can write `body::InternalBlob`.
-use crate::jsc::HTTPHeaderName;
 pub use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
 use crate::webcore::sink::{self, ArrayBufferSink};
 use bun_core::{MutableString, String as BunString, ZigString};
-use bun_core::{WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
+use bun_core::{WTFStringImpl, WTFStringImplStruct};
+use bun_http_types::Method::HeaderName as HTTPHeaderName;
 use bun_jsc::ZigStringJsc as _;
-use bun_jsc::{JsCell, StringJsc as _};
+use bun_jsc::{JsCell, StringJsc as _, SystemErrorJsc as _};
 
 /// Deref the `Value::WTFStringImpl` / `AnyBlob::WTFStringImpl` payload.
 /// Centralises the per-site `(**s)` raw deref at the dozen `match` arms below
@@ -195,7 +197,7 @@ impl Body {
         )?;
         formatter
             .print_as::<W, ENABLE_ANSI_COLORS>(
-                jsc::FormatAs::Boolean,
+                jsc::FormatTag::Boolean,
                 writer,
                 JSValue::from(matches!(self.value.get(), Value::Used)),
                 jsc::JSType::BooleanObject,
@@ -231,7 +233,7 @@ impl Body {
                     formatter.write_indent(writer)?;
                     formatter
                         .print_as::<W, ENABLE_ANSI_COLORS>(
-                            jsc::FormatAs::Object,
+                            jsc::FormatTag::Object,
                             writer,
                             stream.value,
                             stream.value.js_type(),
@@ -1153,7 +1155,6 @@ impl Value {
                             r?;
                             break 'inner;
                         };
-                        // `webcore::form_data::AsyncFormData` re-exports `bun_core::form_data::AsyncFormData`;
                         // `to_js` is provided via the `AsyncFormDataExt` extension trait.
                         let result = async_form_data.to_js(global, blob.slice(), promise);
                         blob.detach();
@@ -2104,14 +2105,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
 
         let mut blob: AnyBlob = value.use_as_any_blob();
-        // `encoder.encoding` is `bun_core::form_data::Encoding`; convert
-        // to the `webcore::form_data::Encoding` shape FormData::to_js expects.
-        let encoding = match encoder.encoding {
-            bun_core::form_data::Encoding::URLEncoded => webcore::form_data::Encoding::URLEncoded,
-            bun_core::form_data::Encoding::Multipart(b) => {
-                webcore::form_data::Encoding::Multipart(b)
-            }
-        };
+        let encoding = encoder.encoding;
         // encoder dropped at end of scope (replaces defer encoder.deinit())
 
         let js_value =

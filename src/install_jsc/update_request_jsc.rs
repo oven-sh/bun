@@ -49,7 +49,7 @@ pub fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
     ) {
         Ok(v) => v,
         Err(_) => {
-            return Err(global.throw_value(crate::dependency_jsc::log_to_js(
+            return Err(global.throw_value(bun_ast_jsc::log_to_js(
                 &log,
                 global,
                 b"Failed to parse dependencies",
@@ -61,7 +61,7 @@ pub fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
     }
 
     if !log.msgs.is_empty() {
-        return Err(global.throw_value(crate::dependency_jsc::log_to_js(
+        return Err(global.throw_value(bun_ast_jsc::log_to_js(
             &log,
             global,
             b"Failed to parse dependencies",

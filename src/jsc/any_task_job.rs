@@ -10,12 +10,14 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
+use bun_core::IntrusiveField as _;
 use bun_event_loop::AnyTask::AnyTask;
 use bun_io::KeepAlive;
-use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
+use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 use crate::event_loop::ConcurrentTask;
-use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
+use crate::virtual_machine::VirtualMachine;
+use crate::{JSGlobalObject, JsResult};
 
 /// Per-job payload trait. Implementors own the off-thread work body and the
 /// JS-thread completion; the surrounding heap/queue/keep-alive plumbing is
@@ -90,7 +92,7 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         unsafe {
             (*job).any_task = AnyTask {
                 ctx: NonNull::new(job.cast::<c_void>()),
-                callback: |p: *mut c_void| Self::run_from_js(p.cast::<Self>()).map_err(Into::into),
+                callback: |p: *mut c_void| Self::run_from_js(p.cast::<Self>()),
             };
         }
         // `ctx.init` may throw (e.g. CryptoJob<Scrypt>); on error, reclaim the
@@ -131,14 +133,14 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
     ///
     /// Reachable only via the `WorkPoolTask::callback` fn-ptr slot (safe fn
     /// coerces into it) for the `task` field initialised in [`Self::create`]; the
-    /// WorkPool calls back with exactly that field, so `from_task_ptr`
+    /// WorkPool calls back with exactly that field, so `from_field_ptr`
     /// recovers the live heap `Self` parent (owned until `run_from_js`
     /// reclaims it). Mirrors [`crate::WorkTask::run_from_thread_pool`].
     fn run_task(task: *mut WorkPoolTask) {
         // SAFETY: only reachable via the `WorkPoolTask::callback` slot wired
         // in `create`; `task` points to `Self.task` and the job is live until
         // `run_from_js` reclaims it.
-        let job = unsafe { &mut *Self::from_task_ptr(task) };
+        let job = unsafe { &mut *Self::from_field_ptr(task) };
         let vm = job.vm;
         job.ctx.run(vm.global);
         // `ConcurrentTask::create` heap-allocates a fresh task; the queue takes

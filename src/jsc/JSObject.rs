@@ -170,7 +170,7 @@ impl JSObject {
         length: u32,
         names: *mut ExternColumnIdentifier,
     ) -> JSValue {
-        crate::mark_binding!();
+        bun_core::mark_binding!();
         debug_assert!(owner.is_cell());
         // A cell-tagged JSValue's
         // payload IS the JSCell* (NotCellMask bits are zero), so the raw usize

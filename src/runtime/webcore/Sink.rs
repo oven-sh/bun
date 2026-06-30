@@ -197,7 +197,7 @@ impl UTF8Fallback {
 
             strings::replace_latin1_with_utf8(&mut buf[..str_.len()]);
             // Borrowed view is consumed by `write_fn` before `buf` drops.
-            let borrowed = bun_ptr::RawSlice::new(&buf[..str_.len()]);
+            let borrowed = bun_core::RawSlice::new(&buf[..str_.len()]);
             if input.is_done() {
                 let result = write_fn(ctx, &streams::Result::TemporaryAndDone(borrowed));
                 return result;
@@ -249,7 +249,7 @@ impl UTF8Fallback {
             debug_assert!(copied.written as usize <= Self::STACK_SIZE);
             debug_assert!(copied.read as usize <= Self::STACK_SIZE);
             // Borrowed view is consumed by `write_fn` before `buf` drops.
-            let borrowed = bun_ptr::RawSlice::new(&buf[..copied.written as usize]);
+            let borrowed = bun_core::RawSlice::new(&buf[..copied.written as usize]);
             if input.is_done() {
                 let result = write_fn(ctx, &streams::Result::TemporaryAndDone(borrowed));
                 return result;
@@ -569,36 +569,32 @@ macro_rules! impl_js_sink_abi {
 /// via `impl_js_sink_abi!`) for the generic `JSSink<T>` host-fn bodies to call.
 pub trait JsSinkAbi {
     /// `${abi_name}__fromJS` — encodes `*ThisSink` (or 0/1 sentinel) as `usize`.
-    fn from_js_extern(value: crate::webcore::jsc::JSValue) -> usize;
+    fn from_js_extern(value: bun_jsc::JSValue) -> usize;
     /// `${abi_name}__createObject`. Safe wrapper: takes `&JSGlobalObject` and
     /// performs the `as_ptr()` projection internally so the FFI call is the
     /// impl body's sole guarded operation.
     fn create_object_extern(
-        global: &crate::webcore::jsc::JSGlobalObject,
+        global: &bun_jsc::JSGlobalObject,
         object: *mut c_void,
         destructor: usize,
-    ) -> crate::webcore::jsc::JSValue;
+    ) -> bun_jsc::JSValue;
     /// `${abi_name}__setDestroyCallback`.
-    fn set_destroy_callback_extern(value: crate::webcore::jsc::JSValue, callback: usize);
+    fn set_destroy_callback_extern(value: bun_jsc::JSValue, callback: usize);
     /// `${abi_name}__assignToStream`. Safe wrapper: takes `&JSGlobalObject` and
     /// performs the `as_ptr()` projection internally so the FFI call is the
     /// impl body's sole guarded operation.
     fn assign_to_stream_extern(
-        global: &crate::webcore::jsc::JSGlobalObject,
-        stream: crate::webcore::jsc::JSValue,
+        global: &bun_jsc::JSGlobalObject,
+        stream: bun_jsc::JSValue,
         ptr: *mut c_void,
         jsvalue_ptr: *mut *mut c_void,
-    ) -> crate::webcore::jsc::JSValue;
+    ) -> bun_jsc::JSValue;
     /// `${abi_name}__onClose`.
-    fn on_close_extern(ptr: crate::webcore::jsc::JSValue, reason: crate::webcore::jsc::JSValue);
+    fn on_close_extern(ptr: bun_jsc::JSValue, reason: bun_jsc::JSValue);
     /// `${abi_name}__onReady`.
-    fn on_ready_extern(
-        ptr: crate::webcore::jsc::JSValue,
-        amount: crate::webcore::jsc::JSValue,
-        offset: crate::webcore::jsc::JSValue,
-    );
+    fn on_ready_extern(ptr: bun_jsc::JSValue, amount: bun_jsc::JSValue, offset: bun_jsc::JSValue);
     /// `${abi_name}__detachPtr`.
-    fn detach_ptr_extern(ptr: crate::webcore::jsc::JSValue);
+    fn detach_ptr_extern(ptr: bun_jsc::JSValue);
 }
 
 /// `from_js_extern` encodes two distinct failure types using 0 and 1. Any other
@@ -612,10 +608,10 @@ pub mod from_js_result {
 
 impl<T: JsSinkAbi> JSSink<T> {
     pub fn create_object(
-        global: &crate::webcore::jsc::JSGlobalObject,
+        global: &bun_jsc::JSGlobalObject,
         object: &mut T,
         destructor: usize,
-    ) -> crate::webcore::jsc::JSValue {
+    ) -> bun_jsc::JSValue {
         T::create_object_extern(
             global,
             std::ptr::from_mut::<T>(object).cast::<c_void>(),
@@ -623,13 +619,13 @@ impl<T: JsSinkAbi> JSSink<T> {
         )
     }
 
-    pub fn set_destroy_callback(value: crate::webcore::jsc::JSValue, callback: usize) {
+    pub fn set_destroy_callback(value: bun_jsc::JSValue, callback: usize) {
         T::set_destroy_callback_extern(value, callback)
     }
 
     /// `JSSink.fromJS(value)` — recover `*mut JSSink<T>` (= `*mut ThisSink`) from
     /// the JS wrapper, or `None` if detached / wrong type.
-    pub fn from_js(value: crate::webcore::jsc::JSValue) -> Option<*mut JSSink<T>> {
+    pub fn from_js(value: bun_jsc::JSValue) -> Option<*mut JSSink<T>> {
         let raw = T::from_js_extern(value);
         match raw {
             from_js_result::DETACHED | from_js_result::CAST_FAILED => None,
@@ -638,11 +634,11 @@ impl<T: JsSinkAbi> JSSink<T> {
     }
 
     pub fn assign_to_stream(
-        global: &crate::webcore::jsc::JSGlobalObject,
-        stream: crate::webcore::jsc::JSValue,
+        global: &bun_jsc::JSGlobalObject,
+        stream: bun_jsc::JSValue,
         ptr: &mut T,
         jsvalue_ptr: *mut *mut c_void,
-    ) -> crate::webcore::jsc::JSValue {
+    ) -> bun_jsc::JSValue {
         T::assign_to_stream_extern(
             global,
             stream,
@@ -653,8 +649,8 @@ impl<T: JsSinkAbi> JSSink<T> {
 
     /// `JSSink.detach(globalThis)` — disconnect the C++ controller cell stashed
     /// in `signal.ptr` (a JSValue's encoded bits, see `SinkSignal::init`).
-    pub fn detach(signal: &mut Signal, _global: &crate::webcore::jsc::JSGlobalObject) {
-        use crate::webcore::jsc::JSValue;
+    pub fn detach(signal: &mut Signal, _global: &bun_jsc::JSGlobalObject) {
+        use bun_jsc::JSValue;
         let Some(ptr) = signal.ptr else { return }; // is_dead()
         signal.clear();
         // SAFETY: `signal.ptr` was stored by `SinkSignal::<T>::init` as the
@@ -681,8 +677,8 @@ impl<T: JsSinkAbi> JSSink<T> {
 pub struct SinkSignal<T>(core::marker::PhantomData<T>);
 
 impl<T: JsSinkAbi> SinkSignal<T> {
-    pub fn init(cpp: crate::webcore::jsc::JSValue) -> Signal {
-        use crate::webcore::jsc::JSValue;
+    pub fn init(cpp: bun_jsc::JSValue) -> Signal {
+        use bun_jsc::JSValue;
         // Bypass `Signal::init_with_type` (which would form a fake
         // `&mut SinkSignal<T>` ref); build the vtable directly so `this` stays
         // a raw bit-pattern.
@@ -816,9 +812,9 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     /// fns are single-threaded and synchronous — only one `&mut JSSink<T>` per
     /// `this` is live for the body of each host call.
     fn get_this<'a>(
-        global: &crate::webcore::jsc::JSGlobalObject,
-        frame: &crate::webcore::jsc::CallFrame,
-    ) -> crate::webcore::jsc::JsResult<&'a mut JSSink<T>> {
+        global: &bun_jsc::JSGlobalObject,
+        frame: &bun_jsc::CallFrame,
+    ) -> bun_jsc::JsResult<&'a mut JSSink<T>> {
         let raw = T::from_js_extern(frame.this());
         match raw {
             from_js_result::DETACHED => Err(global.throw(format_args!(
@@ -835,9 +831,9 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
 
     /// `${abi_name}__construct` host-fn body.
     pub fn js_construct(
-        global: &crate::webcore::jsc::JSGlobalObject,
-        _frame: &crate::webcore::jsc::CallFrame,
-    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
+        global: &bun_jsc::JSGlobalObject,
+        _frame: &bun_jsc::CallFrame,
+    ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
         bun_core::mark_binding!();
 
         if !T::HAS_CONSTRUCT {
@@ -854,10 +850,10 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
 
     /// `${abi_name}__write` host-fn body.
     pub fn js_write(
-        global: &crate::webcore::jsc::JSGlobalObject,
-        frame: &crate::webcore::jsc::CallFrame,
-    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
-        use crate::webcore::jsc::JSValue;
+        global: &bun_jsc::JSGlobalObject,
+        frame: &bun_jsc::CallFrame,
+    ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+        use bun_jsc::JSValue;
         bun_core::mark_binding!();
         // SAFETY: get_this returns a live ThisSink* on Ok.
         let this = Self::get_this(global, frame)?;
@@ -890,7 +886,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
                 return Ok(JSValue::js_number(0.0));
             }
             // Borrowed view over GC-kept buffer for the duration of the call.
-            let data = bun_ptr::RawSlice::new(slice);
+            let data = bun_core::RawSlice::new(slice);
             return Ok(this
                 .sink
                 .write_bytes(&streams::Result::Temporary(data))
@@ -916,7 +912,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
             let utf16 = view.utf16_slice_aligned();
             let bytes: &[u8] = bytemuck::cast_slice(utf16);
             // Borrowed view over GC-kept JSString.
-            let data = bun_ptr::RawSlice::new(bytes);
+            let data = bun_core::RawSlice::new(bytes);
             return Ok(this
                 .sink
                 .write_utf16(&streams::Result::Temporary(data))
@@ -924,7 +920,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         }
 
         // Borrowed view over GC-kept JSString (Latin-1 path).
-        let data = bun_ptr::RawSlice::new(view.slice());
+        let data = bun_core::RawSlice::new(view.slice());
         Ok(this
             .sink
             .write_latin1(&streams::Result::Temporary(data))
@@ -933,10 +929,10 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
 
     /// `${abi_name}__flush` host-fn body.
     pub fn js_flush(
-        global: &crate::webcore::jsc::JSGlobalObject,
-        frame: &crate::webcore::jsc::CallFrame,
-    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
-        use crate::webcore::jsc::JSValue;
+        global: &bun_jsc::JSGlobalObject,
+        frame: &bun_jsc::CallFrame,
+    ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+        use bun_jsc::JSValue;
         use bun_sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
@@ -964,10 +960,10 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
 
     /// `${abi_name}__start` host-fn body.
     pub fn js_start(
-        global: &crate::webcore::jsc::JSGlobalObject,
-        frame: &crate::webcore::jsc::CallFrame,
-    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
-        use crate::webcore::jsc::JSValue;
+        global: &bun_jsc::JSGlobalObject,
+        frame: &bun_jsc::CallFrame,
+    ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+        use bun_jsc::JSValue;
         use bun_sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
@@ -997,9 +993,9 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
 
     /// `${abi_name}__end` host-fn body.
     pub fn js_end(
-        global: &crate::webcore::jsc::JSGlobalObject,
-        frame: &crate::webcore::jsc::CallFrame,
-    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
+        global: &bun_jsc::JSGlobalObject,
+        frame: &bun_jsc::CallFrame,
+    ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
         use bun_sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
@@ -1046,7 +1042,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     /// controller's bits — `connect()`-style signals store a live native
     /// pointer instead, and a sink re-assigned to a new stream holds the
     /// newer controller's bits.
-    pub fn js_controller_detached(this: &mut T, controller: crate::webcore::jsc::JSValue) {
+    pub fn js_controller_detached(this: &mut T, controller: bun_jsc::JSValue) {
         if let Some(signal) = this.signal() {
             if signal.ptr.map(|p| p.as_ptr() as usize) == Some(controller.encoded()) {
                 signal.clear();
@@ -1057,11 +1053,8 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     /// `${abi_name}__close` body — called from
     /// `${controller}__close` and `${name}__doClose` in JSSink.cpp with a raw
     /// `m_sinkPtr` (not a host-fn callframe), so exceptions become `.zero`.
-    pub fn js_close(
-        global: &crate::webcore::jsc::JSGlobalObject,
-        this: &mut T,
-    ) -> crate::webcore::jsc::JSValue {
-        use crate::webcore::jsc::JSValue;
+    pub fn js_close(global: &bun_jsc::JSGlobalObject, this: &mut T) -> bun_jsc::JSValue {
+        use bun_jsc::JSValue;
         use bun_sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
@@ -1088,11 +1081,8 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
 
     /// `${abi_name}__endWithSink` body —
     /// called from `JSReadable${name}Controller__end` with a raw `m_sinkPtr`.
-    pub fn js_end_with_sink(
-        this: &mut T,
-        global: &crate::webcore::jsc::JSGlobalObject,
-    ) -> crate::webcore::jsc::JSValue {
-        use crate::webcore::jsc::JSValue;
+    pub fn js_end_with_sink(this: &mut T, global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
+        use bun_jsc::JSValue;
         use bun_sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
@@ -1125,8 +1115,8 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
 
     /// `${abi_name}__getInternalFd` body.
     #[inline]
-    pub fn js_get_internal_fd(this: &mut T) -> crate::webcore::jsc::JSValue {
-        use crate::webcore::jsc::JSValue;
+    pub fn js_get_internal_fd(this: &mut T) -> bun_jsc::JSValue {
+        use bun_jsc::JSValue;
         if T::HAS_GET_FD {
             return JSValue::js_number(this.get_fd() as f64);
         }

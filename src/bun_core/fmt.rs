@@ -5,47 +5,25 @@ use core::fmt::{self, Display, Formatter, Write as _};
 use core::ptr::NonNull;
 
 use crate::output as Output;
-// `strings` is the canonical `crate::strings` (lib.rs); `js_printer`/`js_lexer`
-// are defined locally below (move-in subset) and re-exported at the crate root.
+// `strings` is the canonical `crate::strings` (lib.rs); `js_printer`
+// is defined locally below (move-in subset) and re-exported at the crate root.
 use crate::strings;
 
-/// SHA-512 digest length in bytes. Local constant to avoid bun_sha (T2) dependency.
-const SHA512_DIGEST: usize = 64;
-
 // ════════════════════════════════════════════════════════════════════════════
-// js_lexer / js_printer minimal subsets.
-// Only the free functions fmt.rs/output.rs actually call. The full modules
-// (codepoint tables, JSON printer) stay in bun_str / bun_js_parser which add
-// `pub use bun_core::strings::*` and extend with the heavy bits.
+// js_printer minimal subset.
+// Only the free functions fmt.rs/output.rs actually call. The full module
+// (the JSON printer) stays in bun_js_printer which adds
+// `pub use bun_core::strings::*` and extends with the heavy bits.
 // ════════════════════════════════════════════════════════════════════════════
-
-pub mod js_lexer {
-    /// ASCII fast path; bun_js_parser extends with the full Unicode ID_Start
-    /// table.
-    #[inline]
-    pub fn is_identifier_start(c: i32) -> bool {
-        matches!(c, 0x24 /* $ */ | 0x5F /* _ */)
-            || (c >= b'a' as i32 && c <= b'z' as i32)
-            || (c >= b'A' as i32 && c <= b'Z' as i32)
-            || c > 0x7F // non-ASCII: the full Unicode table lives in bun_js_parser
-    }
-    #[inline]
-    pub fn is_identifier_continue(c: i32) -> bool {
-        is_identifier_start(c) || (c >= b'0' as i32 && c <= b'9' as i32)
-    }
-}
 
 pub mod js_printer {
     use super::strings::Encoding;
     use core::fmt;
-    /// Minimal escape set for fmt.rs quoting.
-    /// bun_js_printer overrides with the full (ctrl-char, \u escape, encoding-aware) impl.
+    /// JSON string (with quotes). Delegates to the canonical escaper in
+    /// `string::printer` (json mode), same path `write_pre_quoted_string` uses.
     pub fn write_json_string(input: &[u8], f: &mut impl fmt::Write, enc: Encoding) -> fmt::Result {
         f.write_char('"')?;
-        match enc {
-            Encoding::Latin1 => super::encode_json_string_chars_latin1(f, input)?,
-            _ => super::encode_json_string_chars(f, input)?,
-        }
+        write_pre_quoted_string(input, f, b'"', false, enc)?;
         f.write_char('"')
     }
     pub fn write_pre_quoted_string(
@@ -336,48 +314,6 @@ impl Display for DependencyUrlFormatter<'_> {
 
 pub fn dependency_url(url: &[u8]) -> DependencyUrlFormatter<'_> {
     DependencyUrlFormatter { url }
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// IntegrityFormatter
-// ───────────────────────────────────────────────────────────────────────────
-
-// adt_const_params (enum const-generic) is nightly. Stable rewrite: const bool.
-pub const INTEGRITY_SHORT: bool = true;
-pub const INTEGRITY_FULL: bool = false;
-#[doc(hidden)]
-#[derive(PartialEq, Eq, Clone, Copy)]
-pub enum IntegrityFormatStyle {
-    Short,
-    Full,
-} // kept for callers that name the enum
-
-pub struct IntegrityFormatter<const SHORT: bool> {
-    pub bytes: [u8; SHA512_DIGEST],
-}
-
-impl<const SHORT: bool> Display for IntegrityFormatter<SHORT> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        const BUF_LEN: usize = SHA512_DIGEST.div_ceil(3) * 4;
-        let mut buf = [0u8; BUF_LEN];
-        let count =
-            bun_simdutf_sys::simdutf::base64::encode(&self.bytes[..SHA512_DIGEST], &mut buf, false);
-        let encoded = &buf[..count];
-        if SHORT {
-            write!(
-                f,
-                "sha512-{}[...]{}",
-                bstr::BStr::new(&encoded[..13]),
-                bstr::BStr::new(&encoded[encoded.len() - 15..]),
-            )
-        } else {
-            write!(f, "sha512-{}", bstr::BStr::new(encoded))
-        }
-    }
-}
-
-pub fn integrity<const SHORT: bool>(bytes: [u8; SHA512_DIGEST]) -> IntegrityFormatter<SHORT> {
-    IntegrityFormatter { bytes }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1234,7 +1170,7 @@ pub struct FormatValidIdentifier<'a> {
 
 impl Display for FormatValidIdentifier<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        use crate::js_lexer;
+        use crate::string::identifier as js_lexer;
 
         let mut iterator = strings::CodepointIterator::init(self.name);
         let mut cursor = strings::Cursor::default();
@@ -1252,7 +1188,7 @@ impl Display for FormatValidIdentifier<'_> {
         if !needs_gap {
             // Are there any non-alphanumeric chars at all?
             while iterator.next(&mut cursor) {
-                if !js_lexer::is_identifier_continue(cursor.c) || cursor.width > 1 {
+                if !js_lexer::is_identifier_part(cursor.c) || cursor.width > 1 {
                     needs_gap = true;
                     start_i = cursor.i as usize;
                     break;
@@ -1274,7 +1210,7 @@ impl Display for FormatValidIdentifier<'_> {
             cursor = strings::Cursor::default();
 
             while iterator.next(&mut cursor) {
-                if js_lexer::is_identifier_continue(cursor.c) && cursor.width == 1 {
+                if js_lexer::is_identifier_part(cursor.c) && cursor.width == 1 {
                     if needs_gap {
                         f.write_str("_")?;
                         needs_gap = false;
@@ -1742,7 +1678,7 @@ impl RedactedKeywords {
 
 impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
     fn fmt(&self, writer: &mut Formatter<'_>) -> fmt::Result {
-        use crate::js_lexer;
+        use crate::string::identifier as js_lexer;
 
         let mut text = self.text;
         if self.opts.check_for_unhighlighted_write {
@@ -1766,7 +1702,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
             if js_lexer::is_identifier_start(text[0] as i32) {
                 let mut i: usize = 1;
 
-                while i < text.len() && js_lexer::is_identifier_continue(text[i] as i32) {
+                while i < text.len() && js_lexer::is_identifier_part(text[i] as i32) {
                     i += 1;
                 }
 
@@ -2221,8 +2157,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                         {
                             i = 2;
 
-                            while i < text.len() && js_lexer::is_identifier_continue(text[i] as i32)
-                            {
+                            while i < text.len() && js_lexer::is_identifier_part(text[i] as i32) {
                                 i += 1;
                             }
 
@@ -2263,8 +2198,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             // The identifier scan's result is intentionally
                             // discarded: `i` resets to 1 below, so only the
                             // leading `<` (or `</`) is emitted by this arm.
-                            while i < text.len() && js_lexer::is_identifier_continue(text[i] as i32)
-                            {
+                            while i < text.len() && js_lexer::is_identifier_part(text[i] as i32) {
                                 i += 1;
                             }
                             i = 1;
@@ -3220,43 +3154,6 @@ pub fn fmt_duration_one_decimal(ns: u64) -> DurationOneDecimal {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// SQL connection-timeout error message — pure formatting, cycle-free: bun_core
-// is already a dep of bun_sql_jsc AND bun_runtime.
-// ───────────────────────────────────────────────────────────────────────────
-
-/// Which connection-level timeout fired. Drives the message template in
-/// [`fmt_conn_timeout`]; shared by the Postgres and MySQL backends.
-#[derive(Clone, Copy)]
-pub enum ConnTimeoutKind {
-    Idle,
-    Connection,
-    MaxLifetime,
-}
-
-/// Render the canonical SQL connection-timeout error message.
-///
-/// `ms` is converted to nanoseconds with a saturating multiply and rendered
-/// through [`fmt_duration_one_decimal`]. `suffix` is
-/// appended verbatim — used for the per-status `(sent startup message…)` /
-/// `(during authentication)` tails.
-pub fn fmt_conn_timeout(kind: ConnTimeoutKind, ms: u32, suffix: &str) -> impl Display + '_ {
-    struct F<'a>(ConnTimeoutKind, u32, &'a str);
-    impl Display for F<'_> {
-        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-            let prefix = match self.0 {
-                ConnTimeoutKind::Idle => "Idle timeout reached after ",
-                ConnTimeoutKind::Connection => "Connection timeout after ",
-                ConnTimeoutKind::MaxLifetime => "Max lifetime timeout reached after ",
-            };
-            f.write_str(prefix)?;
-            fmt_duration_one_decimal((self.1 as u64).saturating_mul(1_000_000)).fmt(f)?;
-            f.write_str(self.2)
-        }
-    }
-    F(kind, ms, suffix)
-}
-
-// ───────────────────────────────────────────────────────────────────────────
 // FormatSlice
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -3518,8 +3415,7 @@ impl<'a> OutOfRangeValue for &'a [u8] {
         "[]const u8"
     }
 }
-// MOVE_DOWN: bun_core::String → bun_alloc (T0). Re-import from there.
-impl OutOfRangeValue for bun_alloc::String {
+impl OutOfRangeValue for crate::String {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, " Received {}", self)
     }
@@ -3575,7 +3471,7 @@ impl<T: OutOfRangeValue> Display for NewOutOfRangeFormatter<'_, T> {
 pub type DoubleOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, f64>;
 pub type IntOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, i64>;
 pub type StringOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, &'a [u8]>;
-pub type BunStringOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, bun_alloc::String>;
+pub type BunStringOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, crate::String>;
 
 #[derive(Copy, Clone)]
 pub struct OutOfRangeOptions<'a> {
@@ -3713,54 +3609,6 @@ pub fn encode_json_string_chars(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Resul
                 let hex = hex_u16::<true>(b as u16);
                 w.write_str("\\u")?;
                 write_bytes(w, &hex)?;
-                run = i + 1;
-                continue;
-            }
-            _ => continue,
-        };
-        if run < i {
-            write_bytes(w, &s[run..i])?;
-        }
-        w.write_str(esc)?;
-        run = i + 1;
-    }
-    if run < s.len() {
-        write_bytes(w, &s[run..])?;
-    }
-    Ok(())
-}
-
-/// Latin-1 sibling of [`encode_json_string_chars`]: same escape table, but
-/// non-escaped bytes are widened (`b as char`) so 0x80..=0xFF are emitted as
-/// their U+0080..U+00FF UTF-8 encodings rather than passed through as raw
-/// (invalid) single bytes. ASCII runs are still batched via `write_bytes`.
-pub fn encode_json_string_chars_latin1(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
-    let mut run = 0;
-    for (i, &b) in s.iter().enumerate() {
-        let esc: &str = match b {
-            b'"' => "\\\"",
-            b'\\' => "\\\\",
-            0x08 => "\\b",
-            0x0C => "\\f",
-            b'\n' => "\\n",
-            b'\r' => "\\r",
-            b'\t' => "\\t",
-            0x00..=0x1F => {
-                if run < i {
-                    write_bytes(w, &s[run..i])?;
-                }
-                let hex = hex_u16::<true>(b as u16);
-                w.write_str("\\u")?;
-                write_bytes(w, &hex)?;
-                run = i + 1;
-                continue;
-            }
-            0x80..=0xFF => {
-                if run < i {
-                    write_bytes(w, &s[run..i])?;
-                }
-                // Widen Latin-1 byte → Unicode scalar → UTF-8.
-                w.write_char(b as char)?;
                 run = i + 1;
                 continue;
             }

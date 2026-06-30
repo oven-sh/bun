@@ -8,7 +8,7 @@ pub(crate) fn to_have_been_last_called_with(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    bun_jsc::mark_binding!();
+    bun_core::mark_binding!();
     let arguments = frame.arguments();
     let (this, calls, value) = this.mock_prologue(
         global,

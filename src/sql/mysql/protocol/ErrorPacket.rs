@@ -30,7 +30,7 @@ pub struct MySQLErrorOptions {
     pub sql_state: Option<[u8; 5]>,
 }
 
-// `createMySQLError` lives in bun_sql_jsc::mysql::protocol::error_packet_jsc — *_jsc alias deleted.
+// `createMySQLError` lives in bun_runtime::sql_jsc::mysql::protocol::error_packet_jsc — *_jsc alias deleted.
 
 impl ErrorPacket {
     pub fn decode_internal<Context: ReaderContext>(
@@ -75,4 +75,4 @@ pub fn decode<Context: ReaderContext>(
     this.decode_internal(reader)
 }
 
-// `toJS` lives in bun_sql_jsc::mysql::protocol::error_packet_jsc — *_jsc alias deleted.
+// `toJS` lives in bun_runtime::sql_jsc::mysql::protocol::error_packet_jsc — *_jsc alias deleted.

@@ -20,18 +20,19 @@ use bun_ast::Index;
 use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
 use bun_core::PathBuffer as CorePathBuffer;
+use bun_core::PathBuffer;
 use bun_core::strings;
 use bun_core::{self, Global, Output, env_var, fmt as bun_fmt};
 #[cfg(not(windows))]
 use bun_core::{ZBox, ZStr, getenv_z};
+#[cfg(windows)]
+use bun_event_loop::EventLoopHandle;
 #[cfg(not(windows))]
 use bun_jsc as jsc;
-#[cfg(windows)]
-use bun_jsc::EventLoopHandle;
 use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(not(windows))]
 use bun_paths::SEP;
-use bun_paths::{self, PathBuffer, platform, resolve_path};
+use bun_paths::{self, platform, resolve_path};
 use bun_ptr::Interned;
 #[cfg(not(windows))]
 use bun_resolver::fs::RealFS;
@@ -39,7 +40,7 @@ use bun_sys as sys;
 use bun_which::which;
 
 use crate::Command;
-use crate::api::bun_process::sync as spawn_sync;
+use ::bun_spawn::process::sync as spawn_sync;
 
 // `core::result::Result` is fully qualified throughout this file to avoid the
 // shadow.

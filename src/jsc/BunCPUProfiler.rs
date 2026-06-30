@@ -2,11 +2,11 @@ use core::ffi::c_int;
 use std::io::Write as _;
 
 use crate::VM;
+use bun_core::PathBuffer;
 use bun_core::{OwnedString, String as BunString};
 #[cfg(windows)]
 use bun_paths::OSPathBuffer;
-use bun_paths::PathBuffer;
-use bun_sys::{self, Errno, Fd, FdDirExt as _};
+use bun_sys::{self, Dir, Errno, Fd};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub(crate) enum ProfilerError {
@@ -126,7 +126,7 @@ fn write_profile_to_file(
         let errno = err.get_errno();
         if errno == Errno::ENOENT || errno == Errno::EPERM || errno == Errno::EACCES {
             if !config.dir.is_empty() {
-                let _ = Fd::cwd().make_path(config.dir);
+                let _ = Dir::cwd().make_path(config.dir);
                 // Retry write
                 let retry_result = bun_sys::File::write_file_os_path(
                     Fd::cwd(),

@@ -1,4 +1,6 @@
 #![feature(allocator_api)]
+// `core::marker::ConstParamTy` derive on `target::Side`.
+#![feature(adt_const_params)]
 // `#[thread_local]` for the per-node-allocation hot-path TLS
 // (`DATA_STORE_OVERRIDE`, `Expr/Stmt::data::Store::{INSTANCE,
 // MEMORY_ALLOCATOR, DISABLE_RESET}`, `store_ast_alloc_heap::ARENA`): bare
@@ -416,27 +418,48 @@ impl fmt::Debug for Ref {
     }
 }
 
-// Local mirror of `bun_resolver::fs`'s path+contents pair (canonical home would
-// be `bun_paths`); defined here so init_file / init_recycled_file resolve.
-// `pub` so `bun_bundler::Transpiler::parse_maybe` can construct it for
-// `Source::init_recycled_file`.
+/// Symbol-rename map shared by the JS printer, CSS modules, and the bundler.
+/// Single definition so the printer/css aliases stay structurally equal.
+pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
+
+/// JSX runtime import symbols. Canonical definition shared by `bun_js_parser`
+/// (jsx_imports table) and `bun_react_compiler` (`Host::jsx_import`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum JSXImport {
+    Jsx,
+    JsxDEV,
+    Jsxs,
+    Fragment,
+    CreateElement,
+}
+
+impl JSXImport {
+    /// The import-clause name as it appears in source.
+    #[inline]
+    pub fn tag_name(self) -> &'static [u8] {
+        match self {
+            JSXImport::Jsx => b"jsx",
+            JSXImport::JsxDEV => b"jsxDEV",
+            JSXImport::Jsxs => b"jsxs",
+            JSXImport::Fragment => b"Fragment",
+            JSXImport::CreateElement => b"createElement",
+        }
+    }
+}
+
 /// A [`Source`]'s path paired with its raw bytes (used by virtual-module
 /// injection: `BundleV2`'s `additional_files`, `Bun.build` inputs).
-#[derive(Clone, Copy)]
-pub struct PathContentsPair {
-    pub path: bun_paths::fs::Path<'static>,
-    pub contents: &'static [u8],
-}
+pub type PathContentsPair = bun_paths::fs::PathContentsPair<'static>;
 
 type Str = &'static [u8];
 // `Str` is a lifetime-erased byte-slice alias; see the module-level OWNERSHIP
 // note for the real ownership story.
 
 // ───────────────────────────────────────────────────────────────────────────
-// api — hand-written slice of `bun.schema.api` consumed by
-// `Kind/Location/Data/Msg/Log::to_api`. The full
-// peechy → .rs codegen (`bun_api`) will supersede this; field shapes are kept
-// faithful so the generated diff stays reviewable. Lives here (not `bun_api`)
+// api — the canonical `bun.schema.api` Message/Log family, consumed by
+// `Kind/Location/Data/Msg/Log::to_api` and re-exported by
+// `bun_options_types::schema::api`. Field shapes are kept faithful to the
+// peechy schema so a future codegen diff stays reviewable.
 // ───────────────────────────────────────────────────────────────────────────
 pub mod api {
     /// `MessageLevel` — u32 enum, 1-based; `None` = 0.
@@ -2086,7 +2109,7 @@ impl Log {
         let Some((tag_name, sys_errno)) = e.get_error_code_tag_name() else {
             return self.add_error_fmt(None, Loc::EMPTY, args);
         };
-        let prefix = bun_sys::coreutils_error_map::get(sys_errno).unwrap_or(tag_name);
+        let prefix = bun_core::errno::coreutils_typed::get(sys_errno).unwrap_or(tag_name);
         self.add_error_fmt(None, Loc::EMPTY, format_args!("{}: {}", prefix, args))
     }
 
@@ -2528,11 +2551,6 @@ pub struct AddErrorOptions<'a> {
     pub len: i32,
     pub redact_sensitive_information: bool,
 }
-
-/// Downstream-compat alias: some callers (`bunfig.rs`, `PnpmMatcher.rs`) spell
-/// the option-struct as `bun_ast::ErrorOpts { .. }`. Same layout as
-/// `AddErrorOptions`.
-pub type ErrorOpts<'a> = AddErrorOptions<'a>;
 
 /// Call-site helper: rewrites `<red>..<r>` markup
 /// in the *literal* format string via `bun_core::pretty_fmt!` (compile-time),
@@ -3137,25 +3155,21 @@ pub struct ToSourceOptions {
     pub convert_bom: bool,
 }
 
-/// Downstream-compat alias: some callers (`ini::load_npmrc_config`) spell the
-/// option-struct as `bun_ast::ToSourceOpts { convert_bom: true }`.
-pub type ToSourceOpts = ToSourceOptions;
-
 /// Read `path` (rooted at cwd) into memory and wrap it in a `Source`.
 ///
 /// MOVE_DOWN from `bun_sys::File::to_source` (T1 cannot name T2).
-pub fn source_from_file(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys::Maybe<Source> {
+pub fn source_from_file(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys::Result<Source> {
     source_from_file_at(bun_sys::Fd::cwd(), path, opts)
 }
 
 /// Read `path` (relative to `dir_fd`) into memory and wrap it in a `Source`.
 ///
 /// MOVE_DOWN from `bun_sys::File::to_source_at` (T1 cannot name T2).
-pub(crate) fn source_from_file_at(
+pub fn source_from_file_at(
     dir_fd: bun_sys::Fd,
     path: &bun_core::ZStr,
     opts: ToSourceOptions,
-) -> bun_sys::Maybe<Source> {
+) -> bun_sys::Result<Source> {
     let mut bytes = bun_sys::file::File::read_from(dir_fd, path)?;
     if opts.convert_bom {
         if let Some(bom) = bun_core::strings::BOM::detect(&bytes) {
@@ -3221,9 +3235,6 @@ pub use import_record::{
 pub use loader::{Loader, LoaderHashTable, LoaderOptional, SideEffects};
 pub use target::Target;
 pub mod transpiler_cache;
-// Glob re-export: `link_interface!` emits `#[doc(hidden)]` type aliases that
-// the `link_impl_*!` macro addresses as `$crate::__TranspilerCacheImpl__*`.
-// `$crate` resolves to this crate root, so the aliases must be reachable here.
 pub use transpiler_cache::*;
 
 pub use ast_memory_allocator::ASTMemoryAllocator;

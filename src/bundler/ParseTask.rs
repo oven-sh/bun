@@ -35,15 +35,11 @@ use crate::html_scanner::HTMLScanner;
 use crate::options::{self, Loader};
 use crate::transpiler::Transpiler;
 use crate::{ContentHasher, UseDirective, perf, target_from_hashbang};
+use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_resolver::fs::PathResolverExt as _;
 use bun_resolver::{self as _resolver, Resolver};
 
 declare_scope!(ParseTask, hidden);
-
-#[allow(non_snake_case)]
-mod EventLoop {
-    pub(super) type Task = bun_event_loop::ConcurrentTask::ConcurrentTask;
-}
 
 // the per-file parse arena is held as `bump: &'static Bump` (the
 // worker arena is pinned for the entire bundle pass — see `run_with_source_code`),
@@ -130,7 +126,7 @@ pub enum ParseTaskStage {
 
 /// The information returned to the Bundler thread when a parse finishes.
 pub struct Result {
-    pub task: EventLoop::Task,
+    pub task: ConcurrentTask,
     pub ctx: bun_ptr::ParentRef<BundleV2<'static>>,
     pub value: ResultValue,
     pub watcher_data: WatcherData,
@@ -720,9 +716,13 @@ pub mod parse_worker {
                 // field drift is a hard error) before the move.
                 let fallback_opts = opts.clone_for_lazy_export();
                 let module_type = opts.module_type;
-                return if let Some(res) =
-                    (crate::cache::JavaScript {}).parse(bump, opts, &topts.define, log, source)?
-                {
+                return if let Some(res) = (bun_resolver::cache::JavaScript {}).parse(
+                    bump,
+                    opts,
+                    &topts.define,
+                    log,
+                    source,
+                )? {
                     // `Cached`/`AlreadyBundled` are runtime-loader
                     // states that never reach the bundler's `getAST`, so unwrap.
                     match res {
@@ -1147,9 +1147,7 @@ pub mod parse_worker {
                 };
 
                 // Try to avoid generating unnecessary ESM <> CJS wrapper code.
-                if output_format == js_parser::options::Format::Esm
-                    || output_format == js_parser::options::Format::Iife
-                {
+                if output_format == options::Format::Esm || output_format == options::Format::Iife {
                     ast.exports_kind = ast::ExportsKind::Esm;
                 }
 
@@ -2350,16 +2348,7 @@ pub mod parse_worker {
         // Allocated in the worker arena so `js_parser::new_lazy_export_ast`'s
         // `&'bump Source` parameter is satisfied (`bump` is the same arena).
         let source: &'static Source = bump.alloc(Source {
-            // `Source.path` is `bun_paths::fs::Path<'static>`, distinct from
-            // `bun_resolver::fs::Path` (TYPE_ONLY mirror). Construct
-            // field-by-field across the type boundary.
-            path: bun_paths::fs::Path {
-                text: file_path.text,
-                namespace: file_path.namespace,
-                pretty: file_path.pretty,
-                is_disabled: file_path.is_disabled,
-                is_symlink: file_path.is_symlink,
-            },
+            path: *file_path,
             index: bun_ast::Index(task.source_index.get()),
             // `entry.contents` is owned by `task.stage` (written back by
             // the caller after parse — see `ParseTask::run`). `Source` is stored in
@@ -2396,7 +2385,7 @@ pub mod parse_worker {
 
         let output_format = topts.output_format;
 
-        // D042: `crate::options::jsx::Pragma` IS `bun_js_parser::options::JSX::Pragma`
+        // D042: `crate::options::jsx::Pragma` IS `bun_options_types::jsx::Pragma`
         // (both re-export `bun_options_types::jsx::Pragma`). `to_parser_jsx_pragma`
         // applies the `_None → Automatic` runtime fold the old `From` bridge did so
         // parser-side `== Automatic` checks keep their semantics.
@@ -2435,14 +2424,7 @@ pub mod parse_worker {
         opts.features.trim_unused_imports =
             loader.is_typescript() || topts.trim_unused_imports.unwrap_or(false);
         opts.features.inlining = topts.minify_syntax;
-        // `bun_options_types::Format` and `bun_js_parser::options::Format` are
-        // distinct enums; map explicitly.
-        opts.output_format = match output_format {
-            options::Format::Esm => js_parser::options::Format::Esm,
-            options::Format::Cjs => js_parser::options::Format::Cjs,
-            options::Format::Iife => js_parser::options::Format::Iife,
-            options::Format::InternalBakeDev => js_parser::options::Format::InternalBakeDev,
-        };
+        opts.output_format = output_format;
         opts.features.minify_syntax = topts.minify_syntax;
         opts.features.minify_identifiers = topts.minify_identifiers;
         opts.features.minify_keep_names = topts.keep_names;
@@ -2511,45 +2493,15 @@ pub mod parse_worker {
             bun_ast::runtime::ServerComponentsMode::None
         };
 
-        // `transpiler.options.framework: Option<&bake_types::Framework>`
-        // vs `opts.framework: Option<&js_parser::options::Framework>` — both
-        // TYPE_ONLY mirrors of `bake.Framework`. Project the fields the parser
-        // reads into the parser-side mirror and bump-alloc
-        // so `opts` can borrow it.
-        opts.framework = topts.framework.map(|f| {
-            // `Framework` is bump-allocated below, so `Drop` never runs — use arena-owned slices.
-            let projected = js_parser::options::Framework {
-                is_built_in_react: f.is_built_in_react,
-                server_components: f.server_components.as_ref().map(|sc| {
-                    js_parser::options::FrameworkServerComponents {
-                        separate_ssr_graph: sc.separate_ssr_graph,
-                        server_runtime_import: std::borrow::Cow::Borrowed(
-                            bump.alloc_slice_copy(&sc.server_runtime_import),
-                        ),
-                        server_register_client_reference: std::borrow::Cow::Borrowed(
-                            bump.alloc_slice_copy(&sc.server_register_client_reference),
-                        ),
-                        server_register_server_reference: std::borrow::Cow::Borrowed(
-                            bump.alloc_slice_copy(&sc.server_register_server_reference),
-                        ),
-                        client_register_server_reference: std::borrow::Cow::Borrowed(
-                            bump.alloc_slice_copy(&sc.client_register_server_reference),
-                        ),
-                    }
-                }),
-                react_fast_refresh: f.react_fast_refresh.as_ref().map(|rfr| {
-                    js_parser::options::ReactFastRefresh {
-                        import_source: std::borrow::Cow::Borrowed(
-                            bump.alloc_slice_copy(&rfr.import_source),
-                        ),
-                    }
-                }),
-            };
-            // SAFETY: ARENA — `bump: &'static Bump` (worker arena pinned for the
-            // bundle pass), so `bump.alloc(..)` already yields a `&'static` borrow.
-            unsafe {
-                bun_collections::detach_ref::<js_parser::options::Framework>(bump.alloc(projected))
-            }
+        // One nominal Framework now (bun_options_types::bake). The value is
+        // owned by the transpiler/BakeOptions for the whole bundle pass, which
+        // outlives every parse task, so borrow it directly instead of
+        // bump-copying a projection.
+        // SAFETY: same lifetime argument as the surrounding arena erasures —
+        // `topts` (BundleOptions) and the Framework it references outlive all
+        // parse tasks of this bundle.
+        opts.framework = topts.framework.map(|f| unsafe {
+            bun_collections::detach_ref::<bun_options_types::bake::Framework>(f)
         });
 
         opts.ignore_dce_annotations =
@@ -2777,7 +2729,7 @@ pub mod parse_worker {
 
         let result = Box::new(Result {
             ctx: this.ctx.expect("ParseTask.ctx unset"),
-            task: EventLoop::Task::default(),
+            task: ConcurrentTask::default(),
             value,
             // `ExternalFreeFunction`
             // doesn't derive `Copy`, so move it out (task is consumed here).

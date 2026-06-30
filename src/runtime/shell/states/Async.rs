@@ -1,8 +1,6 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{
-    EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, StateKind, log,
-};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::states::cmd::Cmd;
@@ -10,6 +8,7 @@ use crate::shell::states::cond_expr::CondExpr;
 use crate::shell::states::r#if::If;
 use crate::shell::states::pipeline::Pipeline;
 use crate::shell::yield_::Yield;
+use bun_event_loop::EventLoopHandle;
 
 pub struct Async {
     pub base: Base,
@@ -211,10 +210,10 @@ enum NextAction {
     Finish,
 }
 
-// `runtime::dispatch::run_task`'s `task_tag::ShellAsync` arm casts the
+// `runtime::dispatch::run_task`'s `TaskTag::ShellAsync` arm casts the
 // enqueued pointer back to `ShellAsyncTask`; both sides MUST agree.
 impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellAsyncTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellAsync;
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::TaskTag::ShellAsync;
 }
 
 /// Mini-loop trampoline.

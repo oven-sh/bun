@@ -7,10 +7,10 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
+use bun_core::PathBuffer;
 use bun_core::strings;
 use bun_core::{self, Output, ZBox, err};
 use bun_options_types::code_coverage_options::{CodeCoverageOptions, Fraction as CoverageFraction};
-use bun_paths::{self, PathBuffer};
 use bun_sourcemap_jsc::code_coverage::text as CoverageReportText;
 use bun_sys::{self, Fd, File, O};
 

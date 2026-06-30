@@ -2,22 +2,24 @@ use core::fmt;
 
 use bun_collections::{HashMap, IdentityContext};
 use bun_core::fmt::QuotedFormatter;
+use bun_core::{MAX_PATH_BYTES, PathBuffer};
 use bun_core::{ZStr, strings};
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
+use bun_paths::{self, SEP, SEP_STR};
 use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, String as SemverString};
 use bun_sys::{self, Fd, File, O};
 
-use crate::bun_json::Expr;
-use crate::dependency::{self};
-use crate::install::{Features, Lockfile, PackageID};
+use bun_ast::Expr;
+use bun_install_types::resolver_hooks::VersionedURLType;
+
 use crate::lockfile::Package as LockfilePackage;
-use crate::lockfile_real::StringBuilder;
-use crate::lockfile_real::package::ResolverContext;
+use crate::lockfile::StringBuilder;
+use crate::lockfile::package::ResolverContext;
 use crate::npm;
 use crate::package_manager_real::PackageManager;
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
-use crate::versioned_url::VersionedURLType;
+use crate::{Features, Lockfile, PackageID};
+use bun_install_types::dependency::{self};
 
 #[derive(Copy, Clone)]
 pub enum FolderResolution {
@@ -54,7 +56,7 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
         let joined_path: &mut PathBuffer =
             unsafe { &mut *joined.as_mut_ptr().add(2).cast::<PathBuffer>() };
         let mut paths = normalize_package_json_path(
-            GlobalOrRelative::Relative(dependency::version::Tag::Workspace),
+            GlobalOrRelative::Relative(dependency::Tag::Workspace),
             joined_path,
             self.manager.lockfile.str(str_to_use),
         );
@@ -289,7 +291,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
 
     if R::IS_WORKSPACE {
         let _tracer =
-            bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace);
+            bun_perf::trace(bun_core::PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace);
 
         // SAFETY: `manager_ptr` was just derived from the live `&mut PackageManager`
         // argument; `log` points into a separate `Log` allocation (see the
@@ -320,7 +322,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
         }
     } else {
         let _tracer =
-            bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskFolder);
+            bun_perf::trace(bun_core::PerfEvent::FolderResolverReadPackageJSONFromDiskFolder);
 
         let source = {
             let file = File::openat(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0)?;
@@ -376,7 +378,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
 #[derive(Copy, Clone)]
 pub enum GlobalOrRelative<'a> {
     Global(&'a [u8]),
-    Relative(dependency::version::Tag),
+    Relative(dependency::Tag),
     CacheFolder(&'a [u8]),
 }
 
@@ -452,7 +454,7 @@ pub fn get_or_put(
             );
         }
         GlobalOrRelative::Relative(tag) => match tag {
-            dependency::version::Tag::Folder => 'folder: {
+            dependency::Tag::Folder => 'folder: {
                 let mut resolver: Resolver = NewResolver { folder_path: rel };
                 break 'folder read_package_json_from_disk(
                     manager,
@@ -462,7 +464,7 @@ pub fn get_or_put(
                     &mut resolver,
                 );
             }
-            dependency::version::Tag::Workspace => 'workspace: {
+            dependency::Tag::Workspace => 'workspace: {
                 let mut resolver: WorkspaceResolver = NewResolver { folder_path: rel };
                 break 'workspace read_package_json_from_disk(
                     manager,

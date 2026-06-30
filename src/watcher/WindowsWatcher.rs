@@ -4,10 +4,11 @@ use core::mem::size_of;
 use core::ptr;
 
 use crate::watcher_impl::{Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher};
+use bun_core::RawSlice;
 use bun_core::strings;
+use bun_core::{PathBuffer, WPathBuffer};
 use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
-use bun_paths::{PathBuffer, WPathBuffer};
-use bun_ptr::{BackRef, RawSlice};
+use bun_ptr::BackRef;
 use bun_threading::Mutex;
 
 use bun_sys::windows as w;
@@ -392,7 +393,7 @@ pub(crate) enum Timeout {
     None = 0,
 }
 
-pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
+pub(crate) fn watch_loop_cycle<P: 'static>(this: &mut Watcher<P>) -> bun_sys::Result<()> {
     // We re-borrow buf inside the inner loop instead of holding `&this.platform.buf`
     // across calls to `this.platform.next()`.
     let base_idx = this.platform.base_idx;
@@ -498,7 +499,10 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     Ok(())
 }
 
-fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys::Result<()> {
+fn process_watch_event_batch<P: 'static>(
+    this: &mut Watcher<P>,
+    event_count: usize,
+) -> bun_sys::Result<()> {
     if event_count == 0 {
         return Ok(());
     }

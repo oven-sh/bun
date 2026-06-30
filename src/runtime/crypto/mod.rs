@@ -1,4 +1,4 @@
-use crate::jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue};
 
 // ─── submodules ───────────────────────────────────────────────────────────
 
@@ -37,35 +37,8 @@ pub fn pbkdf2<'a>(
     iteration_count: u32,
     algorithm: evp::Algorithm,
 ) -> Option<&'a [u8]> {
-    use bun_boringssl_sys as boringssl;
-    use core::ffi::c_uint;
-
-    output.fill(0);
-    boringssl::ERR_clear_error();
-    // `Algorithm::md()` lives in the lowered `bun_sha_hmac` crate and returns its
-    // own opaque `EVP_MD` newtype; both name the same BoringSSL `env_md_st`, so
-    // cast through to the `bun_boringssl_sys` spelling that `PKCS5_PBKDF2_HMAC`
-    // is declared against.
-    let digest = algorithm.md()?.cast::<boringssl::EVP_MD>();
-    // SAFETY: password/salt/output are valid for the given lengths; digest is a
-    // static EVP_MD singleton returned by BoringSSL above.
-    let rc = unsafe {
-        boringssl::PKCS5_PBKDF2_HMAC(
-            if password.is_empty() {
-                core::ptr::null()
-            } else {
-                password.as_ptr()
-            },
-            password.len(),
-            salt.as_ptr(),
-            salt.len(),
-            iteration_count as c_uint,
-            digest,
-            output.len(),
-            output.as_mut_ptr(),
-        )
-    };
-    if rc <= 0 {
+    let digest = algorithm.md()?;
+    if !bun_sha_hmac::pbkdf2_hmac(password, salt, iteration_count, digest, output) {
         return None;
     }
     Some(output)

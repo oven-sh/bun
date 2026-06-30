@@ -436,7 +436,7 @@ impl WebWorker {
         // SAFETY: `argv_ptr[..argv_len]` is borrowed from C++ WorkerOptions
         // (BACKREF — kept alive by the owning Worker for `self`'s lifetime).
         // `(null, 0)` is tolerated by `ffi::slice`.
-        unsafe { bun_core::ffi::slice(self.argv_ptr, self.argv_len) }
+        unsafe { bun_opaque::ffi::slice(self.argv_ptr, self.argv_len) }
     }
 
     /// `None` when
@@ -448,7 +448,7 @@ impl WebWorker {
             return None;
         }
         // SAFETY: see `argv()`.
-        Some(unsafe { bun_core::ffi::slice(self.exec_argv_ptr, self.exec_argv_len) })
+        Some(unsafe { bun_opaque::ffi::slice(self.exec_argv_ptr, self.exec_argv_len) })
     }
 
     fn set_requested_terminate(&self) -> bool {
@@ -483,7 +483,7 @@ impl WebWorker {
         preload_modules_ptr: *const BunString,
         preload_modules_len: usize,
     ) -> *mut WebWorker {
-        jsc::mark_binding();
+        bun_core::mark_binding!();
         log!("[{}] create", this_context_id);
 
         let spec_slice = specifier_str.to_utf8();
@@ -501,7 +501,7 @@ impl WebWorker {
 
         // SAFETY: caller passed valid (ptr,len) (or `(null,0)`); slice borrowed from C++.
         let preload_modules: &[BunString] =
-            unsafe { bun_core::ffi::slice(preload_modules_ptr, preload_modules_len) };
+            unsafe { bun_opaque::ffi::slice(preload_modules_ptr, preload_modules_len) };
 
         let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(preload_modules_len);
         for module in preload_modules {
@@ -827,7 +827,7 @@ impl WebWorker {
         debug_assert!(self.status.get() == Status::Start);
         debug_assert!(self.vm_ptr().is_null());
 
-        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+        let hooks = runtime_hooks();
 
         // `parent` is a `BackRef` and outlives this worker while
         // `parent_poll_ref` is held (see file header). The parent VM runs
@@ -1190,7 +1190,7 @@ impl WebWorker {
     /// Returns `()` and lets the thread fall out of the spawn
     /// closure — see the note at the bottom of this fn.
     fn shutdown(&self) {
-        jsc::mark_binding();
+        bun_core::mark_binding!();
         self.set_status(Status::Terminated);
         bun_analytics::features::workers_terminated.fetch_add(1, Ordering::Relaxed);
         log!("[{}] shutdown", self.execution_context_id);
@@ -1226,7 +1226,8 @@ impl WebWorker {
             vm.jsc_vm().clear_has_termination_request();
             vm.is_shutting_down = true;
             vm.on_exit();
-            if let Some(hooks) = runtime_hooks() {
+            {
+                let hooks = runtime_hooks();
                 (hooks.cron_clear_all_teardown)(vm);
                 // Drain `TimeoutObject`s from this worker's timer heap before
                 // `close_all_socket_groups` / `WebWorker__teardownJSCVM` so
@@ -1292,7 +1293,7 @@ impl WebWorker {
         {
             // Per-thread libuv loop teardown; closes any handles still open on
             // this worker's loop and drops the thread-local pointer.
-            bun_sys::windows::libuv::Loop::shutdown();
+            bun_libuv_sys::Loop::shutdown();
         }
         if !vm_ptr.is_null() {
             // SAFETY: vm_ptr valid; sole owner.
@@ -1331,7 +1332,6 @@ impl WebWorker {
             // SAFETY: `heap::alloc`'d in `start_vm`; sole owner.
             drop(unsafe { bun_core::heap::take(env_map) });
         }
-        bun_core::delete_all_pools_for_thread_exit();
         // Free this thread's lazily-created uWS loop and its 512 KiB recv
         // buffer. The C++ thread_local `~LoopCleaner` does not fire here:
         // we return normally and
@@ -1390,7 +1390,7 @@ impl WebWorker {
     }
 
     fn flush_logs(&self, vm: &VirtualMachine) {
-        jsc::mark_binding();
+        bun_core::mark_binding!();
         let vm_log = vm.log_ref().unwrap();
         if vm_log.msgs.is_empty() {
             return;
@@ -1470,7 +1470,7 @@ fn on_unhandled_rejection(
         }
         error_instance = global_object.try_take_exception().unwrap();
     }
-    jsc::mark_binding();
+    bun_core::mark_binding!();
     // We RETURN through
     // the live C++ frames after dispatching (see the note below), so the
     // simulated throw of the C++ `DECLARE_THROW_SCOPE` inside
@@ -1541,7 +1541,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
 ) -> Option<&'s [u8]> {
     // SAFETY: per fn contract; read-only field.
     if let Some(graph) = unsafe { (*parent).standalone_module_graph } {
-        if graph.find(str).is_some() {
+        if graph.find_shared(str).is_some() {
             return Some(str);
         }
 
@@ -1576,7 +1576,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
                 // ./foo -> ./foo.js
                 if extname.is_empty() {
                     pathbuf[base_len..base_len + 3].copy_from_slice(b".js");
-                    if let Some(js_file) = graph.find(&pathbuf[0..base_len + 3]) {
+                    if let Some(js_file) = graph.find_shared(&pathbuf[0..base_len + 3]) {
                         return Some(js_file);
                     }
                     break 'try_from_extension;
@@ -1585,7 +1585,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
                 // ./foo.ts -> ./foo.js
                 if extname == b".ts" {
                     pathbuf[base_len - 3..base_len].copy_from_slice(b".js");
-                    if let Some(js_file) = graph.find(&pathbuf[0..base_len]) {
+                    if let Some(js_file) = graph.find_shared(&pathbuf[0..base_len]) {
                         return Some(js_file);
                     }
                     break 'try_from_extension;
@@ -1599,7 +1599,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
                             pathbuf[base_len - ext.len()..base_len - ext.len() + js_len]
                                 .copy_from_slice(b".js");
                             let as_js = &pathbuf[0..base_len - ext.len() + js_len];
-                            if let Some(js_file) = graph.find(as_js) {
+                            if let Some(js_file) = graph.find_shared(as_js) {
                                 return Some(js_file);
                             }
                             break 'try_from_extension;
@@ -1616,8 +1616,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
     // this arm and report "Blob URL is missing".
     const BLOB_SPECIFIER_LEN: usize = b"blob:".len() + crate::uuid::UUID::STRING_LENGTH;
     if str.len() >= BLOB_SPECIFIER_LEN && str.starts_with(b"blob:") {
-        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-        if (hooks.has_blob_url)(&str[b"blob:".len()..]) {
+        if crate::object_url_registry::ObjectURLRegistry::singleton().has(&str[b"blob:".len()..]) {
             return Some(str);
         } else {
             *error_message = BunString::static_(b"Blob URL is missing");

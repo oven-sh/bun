@@ -154,15 +154,13 @@ impl Default for DumpStackTraceOptions {
         }
     }
 }
-/// Alias for `DumpStackTraceOptions`; also re-exported from `bun_crash_handler`.
-pub type WriteStackTraceLimits = DumpStackTraceOptions;
 
 /// T0 fallback prints raw return
 /// addresses — **no symbolication** (the `backtrace` crate is not a T0 dep,
 /// and `std::backtrace` cannot resolve a stored address list). This is a
 /// deliberate debug-UX downgrade for the *stored*-trace path
-/// (ref_count leak reports); the *current*-stack path below
-/// uses `std::backtrace` and stays symbolicated. Crash-report paths that need
+/// (ref_count leak reports); the current-stack path below
+/// prints the same raw addresses. Crash-report paths that need
 /// llvm-symbolizer / pdb-addr2line call `bun_crash_handler::dump_stack_trace`
 /// directly — that crate sits above us so it owns the rich impl without a hook.
 ///
@@ -185,33 +183,24 @@ pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
     }
 }
 
-/// Capture and dump the current call stack. Dispatches to
-/// `bun_crash_handler::dump_current_stack_trace`.
-/// The upward call is routed through a link-time `extern "Rust"`
-/// symbol defined by `bun_crash_handler` so the function pointer lives in
-/// read-only `.text` instead of a writable `AtomicPtr` slot — memory corruption
-/// cannot redirect it. Under `cfg(test)` (this crate's standalone test binary
-/// does not link `bun_crash_handler`) a stub note is printed instead.
+/// Capture and dump the current call stack as raw return addresses
+/// (`dump_stack_trace` above — no symbolication at T0; crash-report paths
+/// that need llvm-symbolizer call `bun_crash_handler::dump_stack_trace`
+/// directly, that crate sits above us).
 pub fn dump_current_stack_trace(first_address: Option<usize>, limits: DumpStackTraceOptions) {
-    #[cfg(not(test))]
-    {
-        unsafe extern "Rust" {
-            // Defined `#[no_mangle] extern "Rust"` in `bun_crash_handler` and
-            // linked into every binary that depends on this crate; all args
-            // by-value, no unsafe preconditions.
-            safe fn __bun_crash_handler_dump_stack_trace(
-                first_address: Option<usize>,
-                limits: DumpStackTraceOptions,
-            );
-        }
-        __bun_crash_handler_dump_stack_trace(first_address, limits)
-    }
-    #[cfg(test)]
-    {
-        let _ = (first_address, limits);
-        crate::output::flush();
-        eprintln!("    (stack trace unavailable: crash_handler not linked in test binary)");
-    }
+    // Not `unwrap_or_else`: the default trim anchor must be read from THIS
+    // frame, not from a closure's popped frame.
+    let first_address = match first_address {
+        Some(addr) => addr,
+        None => crate::return_address(),
+    };
+    let mut addrs: [usize; 32] = [0; 32];
+    let n = crate::capture_stack_trace(first_address, &mut addrs);
+    let trace = StackTrace {
+        index: n,
+        instruction_addresses: &addrs,
+    };
+    dump_stack_trace(&trace, limits);
 }
 
 // ─── panicking state (from bun_crash_handler) ─────────────────────────────
@@ -291,10 +280,12 @@ macro_rules! __define_signal_code {
 }
 for_each_signal!(__define_signal_code);
 
-// ─── analytics::features (MOVE_DOWN from bun_analytics) ───────────────────
-// Atomic counters so cross-thread `.fetch_add` is sound. Only the
-// counters are tier-0; `builtin_modules` (EnumSet over jsc HardcodedModule)
-// stays in bun_analytics (depends on tier-6).
+// ─── analytics::features ──────────────────────────────────────────────────
+// Atomic counters so cross-thread `.fetch_add` is sound. This module is the
+// canonical storage for ALL feature counters; `bun_analytics::features`
+// aliases them for the packed-bitset/formatter read side.
+// `builtin_modules` (EnumSet over jsc HardcodedModule) stays in
+// bun_analytics (depends on tier-6).
 pub mod features {
     use core::sync::atomic::AtomicUsize;
     macro_rules! feat { ($($name:ident),* $(,)?) => { $(pub static $name: AtomicUsize = AtomicUsize::new(0);)* } }
@@ -306,9 +297,26 @@ pub mod features {
         TEXT_LOCKFILE, ISOLATED_BUN_INSTALL, HOISTED_BUN_INSTALL, MACROS, NO_AVX2, NO_AVX,
         SHELL, SPAWN, STANDALONE_EXECUTABLE, STANDALONE_SHELL, TODO_PANIC, TRANSPILER_CACHE,
         TSCONFIG, TSCONFIG_PATHS, VIRTUAL_MODULES, WORKERS_SPAWNED, WORKERS_TERMINATED,
-        NAPI_MODULE_REGISTER, EXITED, YAML_PARSE, YARN_MIGRATION, PNPM_MIGRATION,
+        EXITED, YAML_PARSE, YARN_MIGRATION, PNPM_MIGRATION,
         VALKEY,
+        POSTGRES_CONNECTIONS, S3, CSRF_VERIFY, CSRF_GENERATE, UNSUPPORTED_UV_FUNCTION,
+        CPU_PROFILE,
     }
+    // C++ declares these as `extern "C" size_t Bun__...;` and reads/increments
+    // the value directly, so the exported symbol must BE the `usize` storage
+    // (not a pointer to it). `AtomicUsize` is `#[repr(C)] usize`-layout
+    // compatible. The `feat!` macro cannot carry attributes, so these are
+    // standalone statics in the same module.
+    #[unsafe(export_name = "Bun__napi_module_register_count")]
+    pub static NAPI_MODULE_REGISTER: AtomicUsize = AtomicUsize::new(0);
+    #[unsafe(export_name = "Bun__process_dlopen_count")]
+    pub static PROCESS_DLOPEN: AtomicUsize = AtomicUsize::new(0);
+    #[unsafe(export_name = "Bun__Feature__heap_snapshot")]
+    pub static HEAP_SNAPSHOT: AtomicUsize = AtomicUsize::new(0);
+    #[unsafe(export_name = "Bun__Feature__webview_chrome")]
+    pub static WEBVIEW_CHROME: AtomicUsize = AtomicUsize::new(0);
+    #[unsafe(export_name = "Bun__Feature__webview_webkit")]
+    pub static WEBVIEW_WEBKIT: AtomicUsize = AtomicUsize::new(0);
     /// dotenv crate calls `bun_core::analytics::Features::dotenv_inc()`.
     #[inline]
     pub fn dotenv_inc() {
@@ -390,14 +398,35 @@ macro_rules! mark_binding {
 pub static JSC_SCOPE: crate::output::ScopedLogger =
     crate::output::ScopedLogger::new("JSC", crate::output::Visibility::Hidden);
 
-// ─── debug_flags (MOVE_DOWN from bun_cli, for bun_resolver) ───────────────
-// Debug-build-only breakpoint matchers.
+// ─── debug_flags ──────────────────────────────────────────────────────────
+// Debug-build-only breakpoint matchers. Single home for the breakpoint
+// statics: the CLI sets them via `set_breakpoints`, the resolver and the
+// bundler read them via the `has_*_breakpoint` predicates.
 pub mod debug_flags {
     #[cfg(debug_assertions)]
     pub(crate) static RESOLVE_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> =
         crate::Once::new();
     #[cfg(debug_assertions)]
     pub(crate) static PRINT_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> = crate::Once::new();
+
+    /// Set the breakpoint lists once during CLI argument parsing. The slices
+    /// are argv-backed (process lifetime); the `Vec`s are leaked into the
+    /// `&'static` slices the statics expect.
+    pub fn set_breakpoints(resolve: Vec<&'static [u8]>, print: Vec<&'static [u8]>) {
+        #[cfg(debug_assertions)]
+        {
+            if !resolve.is_empty() {
+                let _ = RESOLVE_BREAKPOINTS.set(&*resolve.leak());
+            }
+            if !print.is_empty() {
+                let _ = PRINT_BREAKPOINTS.set(&*print.leak());
+            }
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            let _ = (resolve, print);
+        }
+    }
 
     #[inline]
     pub fn has_resolve_breakpoint(str_: &[u8]) -> bool {
@@ -570,15 +599,24 @@ pub fn set_thread_name(name: &ZStr) {
 // no memory-safety preconditions, so the call site needs no `unsafe` block.
 pub type ExitFn = extern "C" fn();
 
+/// Exit phase: `Pre` callbacks (FSEvents close-and-wait) run before the
+/// generic `Normal` list inside `Bun__onExit`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ExitPhase {
+    Pre,
+    Normal,
+}
+
 // Registration can happen from any thread (FFI `Bun__atexit`), so this is
-// guarded with a Mutex.
-static ON_EXIT_CALLBACKS: crate::Mutex<Vec<ExitFn>> = crate::Mutex::new(Vec::new());
+// guarded with a lock.
+static ON_EXIT_CALLBACKS: crate::Guarded<Vec<(ExitPhase, ExitFn)>> =
+    crate::Guarded::new(Vec::new());
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__atexit(function: ExitFn) {
     let mut cbs = ON_EXIT_CALLBACKS.lock();
-    if !cbs.iter().any(|f| *f as usize == function as usize) {
-        cbs.push(function);
+    if !cbs.iter().any(|(_, f)| *f as usize == function as usize) {
+        cbs.push((ExitPhase::Normal, function));
     }
 }
 
@@ -589,23 +627,35 @@ pub fn add_exit_callback(function: ExitFn) {
 /// Callbacks `Bun__onExit` runs BEFORE `run_exit_callbacks()`. FSEvents must
 /// close-and-wait ahead of the generic exit-callback list; that crate sits
 /// above us, so it pushes its callback
-/// here at first-loop creation (data moved down — same `Vec<ExitFn>` shape as
-/// `ON_EXIT_CALLBACKS`, no fn-ptr type-erase).
-static PRE_EXIT_CALLBACKS: crate::Mutex<Vec<ExitFn>> = crate::Mutex::new(Vec::new());
-
+/// here at first-loop creation. Pre-phase entries run before Normal ones in
+/// `Bun__onExit`.
 pub fn add_pre_exit_callback(function: ExitFn) {
-    let mut cbs = PRE_EXIT_CALLBACKS.lock();
-    if !cbs.iter().any(|f| *f as usize == function as usize) {
-        cbs.push(function);
+    let mut cbs = ON_EXIT_CALLBACKS.lock();
+    if !cbs.iter().any(|(_, f)| *f as usize == function as usize) {
+        cbs.push((ExitPhase::Pre, function));
     }
 }
 
 pub(crate) fn run_exit_callbacks() {
     // Drain under lock, run outside it (callbacks may call `Bun__atexit`).
-    let cbs: Vec<ExitFn> = core::mem::take(&mut *ON_EXIT_CALLBACKS.lock());
-    for callback in &cbs {
+    let cbs: Vec<(ExitPhase, ExitFn)> = core::mem::take(&mut *ON_EXIT_CALLBACKS.lock());
+    for (_, callback) in cbs.iter().filter(|(p, _)| *p == ExitPhase::Pre) {
         callback();
     }
+    for (_, callback) in cbs.iter().filter(|(p, _)| *p == ExitPhase::Normal) {
+        callback();
+    }
+    // Callbacks may register more callbacks; run those too.
+    for _ in 0..8 {
+        let more: Vec<(ExitPhase, ExitFn)> = core::mem::take(&mut *ON_EXIT_CALLBACKS.lock());
+        if more.is_empty() {
+            return;
+        }
+        for (_, callback) in &more {
+            callback();
+        }
+    }
+    debug_assert!(ON_EXIT_CALLBACKS.lock().is_empty());
 }
 
 static IS_EXITING: AtomicBool = AtomicBool::new(false);
@@ -662,7 +712,7 @@ pub fn exit(code: u32) -> ! {
     {
         Bun__onExit();
         // `ExitProcess` is `safe fn` (no preconditions; never returns).
-        crate::windows_sys::kernel32::ExitProcess(code)
+        bun_windows_sys::kernel32::ExitProcess(code)
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
@@ -794,12 +844,6 @@ macro_rules! keep_symbols {
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__onExit() {
-    // FSEvents close-and-wait runs BEFORE the generic exit-callback list.
-    // fs_events pushes into `PRE_EXIT_CALLBACKS` on first loop create.
-    let pre: Vec<ExitFn> = core::mem::take(&mut *PRE_EXIT_CALLBACKS.lock());
-    for callback in &pre {
-        callback();
-    }
     run_exit_callbacks();
     Output::flush();
     crate::keep_symbols!(Bun__atexit);

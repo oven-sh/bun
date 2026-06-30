@@ -12,17 +12,19 @@ use core::cell::Cell;
 use core::ffi::c_void;
 
 use bun_io::Closer;
+#[cfg(unix)]
+use bun_io::PosixFlags as ReaderFlags;
 #[cfg(windows)]
 use bun_io::pipe_reader::WindowsFlags as ReaderFlags;
-use bun_io::{BufferedReader, FileType, ReadState};
 #[cfg(unix)]
-use bun_io::{FilePollFlag, PosixFlags as ReaderFlags};
+use bun_io::posix_event_loop::Flags;
+use bun_io::{BufferedReader, FileType, ReadState};
 use bun_sys::{self as sys, Fd};
 use bun_uws::{AnyResponse, WriteResult};
 
 use crate::server::jsc::{AnyTask, EventLoopHandle, Task, VirtualMachine};
 
-bun_output::declare_scope!(FileResponseStream, hidden);
+bun_core::declare_scope!(FileResponseStream, hidden);
 
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct FileResponseStream {
@@ -32,7 +34,7 @@ pub(crate) struct FileResponseStream {
     // `'static` for the uWS callback userdata slot while giving safe `Deref`.
     vm: bun_ptr::BackRef<VirtualMachine>,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
-    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    /// (`bun_io::EventLoopCtx` wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
     fd: Fd,
     auto_close: bool,
@@ -156,7 +158,7 @@ impl FileResponseStream {
             std::ptr::from_mut::<FileResponseStream>(this),
         );
 
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             FileResponseStream,
             "start mode={} len={:?}",
             <&'static str>::from(this.mode),
@@ -210,11 +212,11 @@ impl FileResponseStream {
         #[cfg(unix)]
         if let Some(poll) = this.reader.handle.get_poll() {
             if this.reader.flags.contains(ReaderFlags::NONBLOCKING) {
-                poll.set_flag(FilePollFlag::Nonblocking);
+                poll.set_flag(Flags::Nonblocking);
             }
             match opts.file_type {
-                FileType::Socket => poll.set_flag(FilePollFlag::Socket),
-                FileType::NonblockingPipe | FileType::Pipe => poll.set_flag(FilePollFlag::Fifo),
+                FileType::Socket => poll.set_flag(Flags::Socket),
+                FileType::NonblockingPipe | FileType::Pipe => poll.set_flag(Flags::Fifo),
                 FileType::File => {}
             }
         }
@@ -330,7 +332,7 @@ impl FileResponseStream {
     }
 
     fn on_writable(&mut self, _: u64, _: AnyResponse) -> bool {
-        bun_output::scoped_log!(FileResponseStream, "onWritable");
+        bun_core::scoped_log!(FileResponseStream, "onWritable");
         // SAFETY: `self` is the live intrusive allocation (uWS userdata ptr).
         let _guard = unsafe { bun_ptr::ScopedRef::<Self>::new(self) };
 
@@ -351,7 +353,7 @@ impl FileResponseStream {
     // ───────────────────────── sendfile backend ─────────────────────────
 
     fn on_sendfile(&mut self) -> bool {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             FileResponseStream,
             "onSendfile remain={} offset={}",
             self.sendfile.remain,
@@ -452,7 +454,7 @@ impl FileResponseStream {
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     fn arm_sendfile_writable(&mut self) -> bool {
-        bun_output::scoped_log!(FileResponseStream, "armSendfileWritable");
+        bun_core::scoped_log!(FileResponseStream, "armSendfileWritable");
         if !self.sendfile.has_set_on_writable {
             self.sendfile.has_set_on_writable = true;
             self.resp.on_writable(
@@ -469,7 +471,7 @@ impl FileResponseStream {
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     fn end_sendfile(&mut self) {
-        bun_output::scoped_log!(FileResponseStream, "endSendfile");
+        bun_core::scoped_log!(FileResponseStream, "endSendfile");
         if self.state.contains(State::RESPONSE_DONE) {
             return;
         }
@@ -484,7 +486,7 @@ impl FileResponseStream {
     // ───────────────────────── lifecycle ─────────────────────────
 
     fn on_aborted(&mut self, _: AnyResponse) {
-        bun_output::scoped_log!(FileResponseStream, "onAborted");
+        bun_core::scoped_log!(FileResponseStream, "onAborted");
         if !self.state.contains(State::RESPONSE_DONE) {
             self.state.insert(State::RESPONSE_DONE);
             self.detach_resp();
@@ -520,7 +522,7 @@ impl FileResponseStream {
     }
 
     fn finish(&mut self) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             FileResponseStream,
             "finish (already={})",
             self.state.contains(State::FINISHED)
@@ -580,13 +582,13 @@ bun_io::impl_buffered_reader_parent! {
 
 impl Drop for FileResponseStream {
     fn drop(&mut self) {
-        bun_output::scoped_log!(FileResponseStream, "deinit");
+        bun_core::scoped_log!(FileResponseStream, "deinit");
         // `self.reader` (BufferedReader) is torn down by its own `Drop` as a
         // field — closes the poll handle. `bun.destroy(this)` is owned by
         // `heap::take` in `deref`, not here.
         if self.auto_close {
             #[cfg(windows)]
-            Closer::close(self.fd, bun_sys::windows::libuv::Loop::get());
+            Closer::close(self.fd, bun_libuv_sys::Loop::get());
             #[cfg(not(windows))]
             Closer::close(self.fd, ());
         }

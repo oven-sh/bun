@@ -3,7 +3,7 @@
 //! `valkey/`; only the `JSGlobalObject`/`JSValue`-touching conversions live
 //! here so `valkey/` is JSC-free.
 
-use crate::jsc::{Error as JscError, JSGlobalObject, JSValue, JsError, JsResult, bun_string_jsc};
+use bun_jsc::{ErrorCode as JscError, JSGlobalObject, JSValue, JsError, JsResult, bun_string_jsc};
 use bun_valkey::valkey_protocol::{RESPValue, RedisError};
 
 // keep `protocol` referenced for sibling drafts

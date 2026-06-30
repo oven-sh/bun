@@ -5,13 +5,14 @@ use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::thread::{self, ThreadId};
 use std::time::Instant;
 
+use crate::node::types::PathLikeExt as _;
 use bun_core::strings;
 use bun_core::{Timespec, TimespecMockMode, ZBox, ZStr};
 use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task};
 use bun_io::KeepAlive;
 use bun_jsc::call_frame::ArgumentsSlice;
-use bun_jsc::node::PathLike;
+use bun_jsc::node_path::PathLike;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, WorkPool,
@@ -24,13 +25,12 @@ use bun_sys::{self, PosixStat};
 use bun_threading::{Guarded, UnboundedQueue};
 
 use crate::node::stat::{StatsBig, StatsSmall};
-use crate::node::types::PathLikeExt;
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use bun_jsc::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
-bun_output::declare_scope!(StatWatcher, visible);
+bun_core::declare_scope!(StatWatcher, visible);
 
 macro_rules! log {
-    ($($arg:tt)*) => { bun_output::scoped_log!(StatWatcher, $($arg)*) };
+    ($($arg:tt)*) => { bun_core::scoped_log!(StatWatcher, $($arg)*) };
 }
 
 fn stat_to_js_stats(
@@ -72,7 +72,20 @@ pub struct StatWatcherScheduler {
     ref_count: ThreadSafeRefCount<StatWatcherScheduler>,
 }
 
-bun_event_loop::impl_timer_owner!(StatWatcherScheduler; from_timer_ptr => event_loop_timer);
+impl StatWatcherScheduler {
+    /// Recover `*mut Self` from a pointer to its intrusive `event_loop_timer`
+    /// [`EventLoopTimer`] slot.
+    /// # Safety
+    /// `t` must point at the `event_loop_timer` field of a live `Self`.
+    #[inline]
+    pub unsafe fn from_timer_ptr(
+        t: *const bun_event_loop::EventLoopTimer::EventLoopTimer,
+    ) -> *mut Self {
+        // SAFETY: caller contract — `t` addresses `Self.event_loop_timer` with
+        // whole-`Self` provenance.
+        unsafe { ::bun_core::from_field_ptr!(Self, event_loop_timer, t) }
+    }
+}
 
 type WatcherQueue = UnboundedQueue<StatWatcher>;
 
@@ -259,12 +272,9 @@ impl StatWatcherScheduler {
 
     /// Set the timer (this function is not thread safe, should be called only from the main thread)
     fn set_timer(this: *mut Self, interval: i32) {
-        // jsc/runtime crate cycle: `vm.timer: api.Timer.All` lives in `RuntimeState` (this crate),
-        // not as a value field on the low-tier `VirtualMachine`. Recover it via
-        // the per-thread `runtime_state()` (single JS thread; see jsc_hooks.rs).
-        // SAFETY: main-thread-only per fn contract; `runtime_state()` is non-null
-        // after `bun_runtime::init()`. Raw-ptr-per-field re-entry pattern.
-        let timer_all = unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer };
+        // SAFETY: main-thread-only per fn contract; the per-VM timer heap is
+        // non-null after VM init. Raw-ptr-per-field re-entry pattern.
+        let timer_all = bun_jsc::timer::timer_all_mut();
         // SAFETY: `this` is live — the caller holds a ref (`set_interval`'s
         // BACKREF, or `update_timer`'s `ParentRef`).
         let elt = unsafe { core::ptr::addr_of_mut!((*this).event_loop_timer) };
@@ -299,7 +309,7 @@ impl StatWatcherScheduler {
             task: AnyTask,
         }
 
-        fn update_timer(self_: *mut c_void) -> bun_event_loop::JsResult<()> {
+        fn update_timer(self_: *mut c_void) -> bun_core::JsResult<()> {
             // SAFETY: `self_` was heap-allocated below; reclaim and drop at end of scope.
             let self_ = unsafe { bun_core::heap::take(self_.cast::<Holder>()) };
             // `scheduler` is the refcounted singleton, kept alive across the
@@ -462,7 +472,7 @@ impl StatWatcherScheduler {
     }
 
     /// Drain every queued [`StatWatcher`] and release the per-VM scheduler ref
-    /// stored in `RareData`. Runs on the JS thread during `global_exit` /
+    /// stored in `RuntimeState`. Runs on the JS thread during `global_exit` /
     /// worker shutdown, before JSC teardown, so each watcher can still be
     /// `close()`'d (downgrades its `JsRef` Strong) and so `finalize()` —
     /// reached from `lastChanceToFinalize` — drops the last ref.
@@ -473,17 +483,16 @@ impl StatWatcherScheduler {
     ///
     /// # Safety
     /// `vm` is the live per-thread VM. Must be called on the JS thread.
-    pub unsafe fn shutdown_for_exit(vm: *mut VirtualMachine) {
-        // SAFETY: per fn contract; main-thread only. Touch the raw `rare_data`
-        // option directly so a never-used VM does not lazy-allocate `RareData`
-        // here just to find an empty slot.
-        let Some(rare) = (unsafe { &mut (*vm).rare_data }).as_deref_mut() else {
+    pub unsafe fn shutdown_for_exit(_vm: *mut VirtualMachine) {
+        let state = crate::jsc_hooks::runtime_state();
+        if state.is_null() {
+            return;
+        }
+        // SAFETY: per fn contract; main-thread only.
+        let Some(raw) = (unsafe { (*state).stat_watcher_scheduler.take() }) else {
             return;
         };
-        let Some(raw) = core::mem::take(rare.node_fs_stat_watcher_scheduler_slot()) else {
-            return;
-        };
-        let this: *mut StatWatcherScheduler = raw.as_ptr().cast();
+        let this: *mut StatWatcherScheduler = raw.as_ptr();
         let this_ref = ParentRef::from(NonNull::new(this).expect("shutdown: scheduler"));
         debug_assert_eq!(this_ref.main_thread, thread::current().id());
 
@@ -516,11 +525,11 @@ impl StatWatcherScheduler {
             unsafe { ThreadSafeRefCount::<StatWatcher>::deref(watcher) };
         }
 
-        // Release the RareData ref (`into_raw()` in `lazy_scheduler`). The
+        // Release the RuntimeState ref (`into_raw()` in `lazy_scheduler`). The
         // scheduler stays alive until every remaining `StatWatcher::finalize`
         // drops its `RefPtr` during `lastChanceToFinalize`; the last of those
         // brings the count to zero.
-        // SAFETY: `this` is live and we own the RareData ref.
+        // SAFETY: `this` is live and we own the RuntimeState ref.
         Self::deref(this);
     }
 }
@@ -634,22 +643,21 @@ impl StatWatcher {
         self.global_this.get()
     }
 
-    /// Spec `RareData.nodeFSStatWatcherScheduler`. Body lives here (high tier)
-    /// because `StatWatcherScheduler` cannot be named from `bun_jsc::rare_data`
-    /// without a crate cycle; the slot in `RareData` is an erased
-    /// `Option<NonNull<c_void>>` (§Dispatch).
+    /// Spec `RareData.nodeFSStatWatcherScheduler`. Stored as a typed field on
+    /// `jsc_hooks::RuntimeState` (high tier), so no erased slot or cast is
+    /// needed.
     fn lazy_scheduler(vm: *mut VirtualMachine) -> RefPtr<StatWatcherScheduler> {
-        // SAFETY: `vm` is the live per-thread VM; called only from the JS thread.
-        let slot = unsafe { (*vm).rare_data() }.node_fs_stat_watcher_scheduler_slot();
-        let raw = match *slot {
-            Some(p) => p.as_ptr().cast::<StatWatcherScheduler>(),
+        let state = crate::jsc_hooks::runtime_state();
+        // SAFETY: JS-thread only; `runtime_state()` is non-null after init
+        // (same contract as `set_timer` above).
+        let raw = match unsafe { (*state).stat_watcher_scheduler } {
+            Some(p) => p.as_ptr(),
             None => {
                 let arc = StatWatcherScheduler::init(vm);
                 let raw = arc.into_raw(); // VM owns this ref forever (never deref'd)
-                // SAFETY: `vm` is live; reborrow rare_data after `init` to avoid
-                // an aliasing `&mut RareData` across the call.
-                *unsafe { (*vm).rare_data() }.node_fs_stat_watcher_scheduler_slot() =
-                    core::ptr::NonNull::new(raw.cast());
+                // SAFETY: re-derive the slot after `init` so no `&mut` is held
+                // across the call (mirrors the old rare_data re-borrow).
+                unsafe { (*state).stat_watcher_scheduler = core::ptr::NonNull::new(raw) };
                 raw
             }
         };
@@ -848,7 +856,7 @@ impl StatWatcher {
         Self::deref(this_ptr);
     }
 
-    fn initial_stat_success_on_main_thread(this: *mut StatWatcher) -> bun_event_loop::JsResult<()> {
+    fn initial_stat_success_on_main_thread(this: *mut StatWatcher) -> bun_core::JsResult<()> {
         // SAFETY: balance the ref from createAndSchedule(); raw ptr captured (not `&self`).
         let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
         // BACKREF — `this` is alive (ref'd in
@@ -869,8 +877,7 @@ impl StatWatcher {
         // so swallowing it here leaves the VM with an exception pending and
         // the next queued task re-enters JS under a
         // `scope.assertNoException()` RELEASE_ASSERT.
-        let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
-            .map_err(Into::<bun_event_loop::ErasedJsError>::into)?;
+        let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)?;
         js::gc::prev_stat::set(js_this, global_this, jsvalue);
 
         // SAFETY: scheduler is live (`RefPtr`); `this` is live (ref'd, guard above).
@@ -878,7 +885,7 @@ impl StatWatcher {
         Ok(())
     }
 
-    fn initial_stat_error_on_main_thread(this: *mut StatWatcher) -> bun_event_loop::JsResult<()> {
+    fn initial_stat_error_on_main_thread(this: *mut StatWatcher) -> bun_core::JsResult<()> {
         // SAFETY: balance the ref from createAndSchedule(); raw ptr captured (not `&self`).
         let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
         // BACKREF — `this` is alive (ref'd in
@@ -895,8 +902,7 @@ impl StatWatcher {
             return Ok(());
         };
         let global_this = this_ref.global_this();
-        let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
-            .map_err(Into::<bun_event_loop::ErasedJsError>::into)?;
+        let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)?;
         js::gc::prev_stat::set(js_this, global_this, jsvalue);
 
         let result = js::listener_get_cached(js_this).unwrap().call(
@@ -918,7 +924,7 @@ impl StatWatcher {
         // Swallowing the error here leaves a termination exception on the VM
         // and the next queued task re-enters JS under a
         // `scope.assertNoException()` RELEASE_ASSERT.
-        result.map(drop).map_err(Into::into)
+        result.map(drop)
     }
 
     /// Called from any thread
@@ -967,9 +973,7 @@ impl StatWatcher {
     }
 
     /// After a restat found the file changed, this calls the listener function.
-    fn swap_and_call_listener_on_main_thread(
-        this: *mut StatWatcher,
-    ) -> bun_event_loop::JsResult<()> {
+    fn swap_and_call_listener_on_main_thread(this: *mut StatWatcher) -> bun_core::JsResult<()> {
         // SAFETY: balance the ref from restat(); raw ptr captured (not `&self`).
         let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
         // BACKREF — `this` is alive (ref'd in restat()). R-2: `cb.call()`
@@ -984,8 +988,7 @@ impl StatWatcher {
         let global_this = this_ref.global_this();
         let prev_jsvalue = js::gc::prev_stat::get(js_this).unwrap_or(JSValue::UNDEFINED);
         let current_jsvalue =
-            stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
-                .map_err(Into::<bun_event_loop::ErasedJsError>::into)?;
+            stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)?;
         js::gc::prev_stat::set(js_this, global_this, current_jsvalue);
 
         // Propagate to the dispatcher: `report_error_or_terminate` reports a
@@ -1001,7 +1004,6 @@ impl StatWatcher {
                 &[current_jsvalue, prev_jsvalue],
             )
             .map(drop)
-            .map_err(Into::into)
     }
 
     pub(crate) fn init(args: &Arguments) -> Result<*mut StatWatcher, bun_core::Error> {
@@ -1091,7 +1093,7 @@ impl StatWatcher {
 }
 
 // Shared by InitialStatTask::work_pool_callback and StatWatcher::restat — identical logic.
-fn restat_impl(path: &ZStr) -> bun_sys::Maybe<PosixStat> {
+fn restat_impl(path: &ZStr) -> bun_sys::Result<PosixStat> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         if bun_sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {

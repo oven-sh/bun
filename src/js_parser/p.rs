@@ -27,16 +27,20 @@ use crate::{
     ParseStatementOptions, ParsedPath, PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap,
     RuntimeImports, ScopeOrder, ScopeOrderList, SideEffects, StrictModeFeature, StringBoolMap,
     Substitution, TempRef, ThenCatchChain, TransposeState, WrapMode, fs, is_eval_or_arguments,
-    options, statement_cares_about_scope,
+    statement_cares_about_scope,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
+use bun_ast::Loader;
 use bun_ast::g::{Arg, Decl};
 use bun_ast::part::{SymbolPropertyUseMap, SymbolUseMap};
+use bun_ast::runtime::ServerComponentsMode;
 use bun_ast::{
     B, Binding, BindingNodeIndex, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef, S, Scope,
     Stmt, StmtNodeList, Symbol,
 };
+use bun_options_types::jsx as JSX;
+use bun_options_types::{Format, ModuleType};
 
 // In this AST crate, lists are arena-backed.
 type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
@@ -538,9 +542,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // warnings about non-string import paths will be omitted inside try blocks.
     pub await_target: Option<js_ast::ExprData>,
 
-    pub to_expr_wrapper_namespace: Binding2ExprWrapperNamespace,
-    pub to_expr_wrapper_hoisted: Binding2ExprWrapperHoisted,
-
     // This helps recognize the "import().catch()" pattern. We also try to avoid
     // warning about this just like the "try { await import() }" pattern.
     pub then_catch_chain: ThenCatchChain,
@@ -706,11 +707,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>
     }
 }
 
-// `binding::ToExprWrapper` type-erases `*P` (which is generic over
-// `<'a, TYPESCRIPT, J, SCAN_ONLY>`) - same shim
-// pattern as `ImportTransposer` above. Wired in `prepare_for_visit_pass`.
-pub(crate) type Binding2ExprWrapperNamespace = bun_ast::binding::ToExprWrapper;
-pub(crate) type Binding2ExprWrapperHoisted = bun_ast::binding::ToExprWrapper;
+#[derive(Copy, Clone)]
+pub(crate) enum BindingToExprMode {
+    Namespace,
+    Hoisting,
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -943,10 +944,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         kind: &'static str,
     ) -> Result<(), bun_core::Error> {
         if !self.options.bundle
-            || matches!(
-                self.options.allow_unresolved,
-                crate::parser::options::AllowUnresolved::All
-            )
+            || matches!(self.options.allow_unresolved, crate::AllowUnresolved::All)
         {
             return Ok(());
         }
@@ -1240,7 +1238,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // we must also unwrap requires into imports.
                 let should_unwrap_require = self.options.features.unwrap_commonjs_to_esm
                     && (self.unwrap_all_requires
-                        || path_package_name(&path)
+                        || path.package_name()
                             .map(|pkg| self.options.features.should_unwrap_require(pkg))
                             .unwrap_or(false))
                     // We cannot unwrap a require wrapped in a try/catch because
@@ -3019,29 +3017,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn prepare_for_visit_pass(&mut self) -> Result<(), bun_core::Error> {
         {
-            // The wrapper stores only the arena and a non-capturing
-            // fn-pointer trampoline; the `*mut P` context is supplied *at call
-            // time* (see `Binding::to_expr`) so the raw pointer's provenance is
-            // a child of the live `&mut P` at the call site rather than a stale
-            // tag captured here. The transposer shims need no wiring at all —
-            // call sites invoke `P::maybe_transpose_if_*` etc. directly.
-            self.to_expr_wrapper_namespace =
-                bun_ast::binding::ToExprWrapper::new(self.arena, |ctx, loc, ref_| {
-                    // SAFETY: `ctx` was derived from the caller's live `&mut P`
-                    // immediately before `Binding::to_expr`; no other `&mut P`
-                    // borrow is active for the duration of this call.
-                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
-                    p.wrap_identifier_namespace(loc, ref_)
-                });
-            self.to_expr_wrapper_hoisted =
-                bun_ast::binding::ToExprWrapper::new(self.arena, |ctx, loc, ref_| {
-                    // SAFETY: same as above.
-                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
-                    p.wrap_identifier_hoisting(loc, ref_)
-                });
-        }
-
-        {
             // Compact `scopes_in_order` (parse pass leaves None holes from
             // popAndDiscardScope) into a dense bump-slice for the visit pass.
             let mut buf =
@@ -3056,7 +3031,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.is_file_considered_to_have_esm_exports = !self.top_level_await_keyword.is_empty()
             || !self.esm_export_keyword.is_empty()
-            || self.options.module_type == options::ModuleType::Esm;
+            || self.options.module_type == ModuleType::Esm;
 
         self.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, loc_module_scope)?;
         self.fn_or_arrow_data_visit.is_outside_fn_or_arrow = true;
@@ -3069,23 +3044,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(factory) = self.lexer.jsx_pragma.jsx() {
             // `Span.text` is a `StoreStr` into lexer-owned source; valid for 'a.
             let text = factory.text.slice();
-            self.options.jsx.factory =
-                options::JSX::Pragma::member_list_to_components_if_different(
-                    core::mem::take(&mut self.options.jsx.factory),
-                    text,
-                )
-                .expect("unreachable");
+            self.options.jsx.factory = JSX::Pragma::member_list_to_components_if_different(
+                core::mem::take(&mut self.options.jsx.factory),
+                text,
+            )
+            .expect("unreachable");
         }
 
         if let Some(fragment) = self.lexer.jsx_pragma.jsx_frag() {
             // SAFETY: Span.text is `ArenaStr` valid for 'a.
             let text = fragment.text.slice();
-            self.options.jsx.fragment =
-                options::JSX::Pragma::member_list_to_components_if_different(
-                    core::mem::take(&mut self.options.jsx.fragment),
-                    text,
-                )
-                .expect("unreachable");
+            self.options.jsx.fragment = JSX::Pragma::member_list_to_components_if_different(
+                core::mem::take(&mut self.options.jsx.fragment),
+                text,
+            )
+            .expect("unreachable");
         }
 
         if let Some(import_source) = self.lexer.jsx_pragma.jsx_import_source() {
@@ -3099,7 +3072,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(runtime) = self.lexer.jsx_pragma.jsx_runtime() {
             // SAFETY: Span.text is `ArenaStr` valid for 'a.
             let text = runtime.text.slice();
-            if let Some(jsx_runtime) = options::JSX::RUNTIME_MAP.get(text) {
+            if let Some(jsx_runtime) = JSX::RUNTIME_MAP.get(text) {
                 self.options.jsx.runtime = jsx_runtime.runtime;
                 if let Some(dev) = jsx_runtime.development {
                     self.options.jsx.development = dev;
@@ -3195,22 +3168,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         {
             match self.options.features.server_components {
-                options::ServerComponents::None | options::ServerComponents::ClientSide => {}
-                options::ServerComponents::WrapExportsForClientReference => {
+                ServerComponentsMode::None | ServerComponentsMode::ClientSide => {}
+                ServerComponentsMode::WrapExportsForClientReference => {
                     self.server_components_wrap_ref = self.declare_generated_symbol(
                         js_ast::symbol::Kind::Other,
                         b"registerClientReference",
                     )?;
                 }
                 // TODO: these wrapping modes.
-                options::ServerComponents::WrapAnonServerFunctions => {}
-                options::ServerComponents::WrapExportsForServerReference => {}
+                ServerComponentsMode::WrapAnonServerFunctions => {}
+                ServerComponentsMode::WrapExportsForServerReference => {}
             }
 
             // Server-side components: declare "Response" / "bun:app" upfront.
             // By-name ambient — see `declare_common_js_symbol`.
             match self.options.features.server_components {
-                options::ServerComponents::None | options::ServerComponents::ClientSide => {}
+                ServerComponentsMode::None | ServerComponentsMode::ClientSide => {}
                 _ => {
                     self.response_ref =
                         self.declare_common_js_symbol(js_ast::symbol::Kind::Import, b"Response")?;
@@ -4305,7 +4278,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.import_records.items_mut()[stmt.import_record_index as usize].loader =
                 Some(loader);
 
-            if loader == options::Loader::Sqlite || loader == options::Loader::SqliteEmbedded {
+            if loader == Loader::Sqlite || loader == Loader::SqliteEmbedded {
                 // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
                 for item in stmt.items.iter() {
                     // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
@@ -4319,7 +4292,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         break;
                     }
                 }
-            } else if loader == options::Loader::File || loader == options::Loader::Text {
+            } else if loader == Loader::File || loader == Loader::Text {
                 // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
                 for item in stmt.items.iter() {
                     // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
@@ -6757,43 +6730,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-// `bun_paths::fs::Path` lacks a package-name method
-// (it lives on the resolver `Path`, which `bun_js_parser` cannot depend on), so
-// the slice logic is inlined here. Mirrors `src/resolver/fs.rs::Path::packageName`.
-fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
-    let mut name_to_use = path.pretty;
-    if let Some(node_modules) = strings::last_index_of(path.text, bun_paths::NODE_MODULES_NEEDLE) {
-        name_to_use = &path.text[node_modules + bun_paths::NODE_MODULES_NEEDLE.len()..];
-    }
-
-    let pkgname = {
-        let str = name_to_use;
-        'brk: {
-            if str.is_empty() {
-                break 'brk str;
-            }
-            if str[0] == b'@' {
-                if let Some(first_slash) = strings::index_of_char(&str[1..], b'/') {
-                    let first_slash = first_slash as usize;
-                    let remainder = &str[1 + first_slash + 1..];
-                    if let Some(last_slash) = strings::index_of_char(remainder, b'/') {
-                        let last_slash = last_slash as usize;
-                        break 'brk &str[0..first_slash + 1 + last_slash + 1];
-                    }
-                }
-            }
-            if let Some(first_slash) = strings::index_of_char(str, b'/') {
-                break 'brk &str[0..first_slash as usize];
-            }
-            str
-        }
-    };
-    if pkgname.is_empty() || !pkgname[0].is_ascii_alphanumeric() {
-        return None;
-    }
-    Some(pkgname)
-}
-
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn lower_class(&mut self, stmtorexpr: js_ast::StmtOrExpr) -> &'a mut [Stmt] {
         use js_ast::g::PropertyKind;
@@ -7583,6 +7519,84 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Expr::init_identifier(r#ref, loc)
     }
 
+    /// Ported from `bun_ast::binding::Binding::to_expr` — the binding→Expr
+    /// lowering needs the parser's arena and `wrap_identifier_*`, so it lives
+    /// here and takes `&mut self` directly (no type-erased trampoline).
+    pub(crate) fn binding_to_expr(
+        &mut self,
+        binding: &bun_ast::Binding,
+        mode: BindingToExprMode,
+    ) -> Expr {
+        let loc = binding.loc;
+        match binding.data {
+            js_ast::b::B::BMissing(_) => Expr {
+                data: js_ast::ExprData::EMissing(E::Missing {}),
+                loc,
+            },
+            js_ast::b::B::BIdentifier(b) => match mode {
+                BindingToExprMode::Namespace => self.wrap_identifier_namespace(loc, b.r#ref),
+                BindingToExprMode::Hoisting => self.wrap_identifier_hoisting(loc, b.r#ref),
+            },
+            js_ast::b::B::BArray(b) => {
+                let b = b.get();
+                let bump = self.arena;
+                let items = b.items();
+                let len = items.len();
+                let mut exprs = bun_alloc::ArenaVec::with_capacity_in(len, bump);
+                let mut i: usize = 0;
+                while i < len {
+                    let item = &items[i];
+                    let expr = self.binding_to_expr(&item.binding, mode);
+                    let converted = if b.has_spread && i == len - 1 {
+                        Expr::init(E::Spread { value: expr }, expr.loc)
+                    } else if let Some(default) = item.default_value {
+                        Expr::assign(expr, default)
+                    } else {
+                        expr
+                    };
+                    exprs.push(converted);
+                    i += 1;
+                }
+                Expr::init(
+                    E::Array {
+                        items: ExprNodeList::from_bump_vec(exprs),
+                        is_single_line: b.is_single_line,
+                        ..Default::default()
+                    },
+                    loc,
+                )
+            }
+            js_ast::b::B::BObject(b) => {
+                let b = b.get();
+                let bump = self.arena;
+                let props_in = b.properties();
+                let mut properties = bun_alloc::ArenaVec::with_capacity_in(props_in.len(), bump);
+                for item in props_in.iter() {
+                    properties.push(G::Property {
+                        flags: item.flags,
+                        key: Some(item.key),
+                        kind: if item.flags.contains(Flags::Property::IsSpread) {
+                            G::PropertyKind::Spread
+                        } else {
+                            G::PropertyKind::Normal
+                        },
+                        value: Some(self.binding_to_expr(&item.value, mode)),
+                        initializer: item.default_value,
+                        ..Default::default()
+                    });
+                }
+                Expr::init(
+                    E::Object {
+                        properties: G::PropertyList::from_bump_vec(properties),
+                        is_single_line: b.is_single_line,
+                        ..Default::default()
+                    },
+                    loc,
+                )
+            }
+        }
+    }
+
     // One statement could potentially expand to several statements
     pub fn stmts_to_single_stmt(&mut self, loc: bun_ast::Loc, stmts: &'a mut [Stmt]) -> Stmt {
         if stmts.is_empty() {
@@ -7954,7 +7968,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         debug_assert!(self.current_scope == self.module_scope);
 
         if self.options.features.server_components
-            == options::ServerComponents::WrapExportsForServerReference
+            == ServerComponentsMode::WrapExportsForServerReference
         {
             bun_core::todo_panic!("registerServerReference");
         }
@@ -8922,7 +8936,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-// The Binding2ExprWrapper / ExpressionTransposer self-referential helpers are
+// The ExpressionTransposer self-referential helpers are
 // seeded with arena-unit placeholders inside the struct literal; the real `*P`
 // back-pointer is wired lazily by the call sites.
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -8979,7 +8993,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Only enable during bundling, when not bundling CJS
         let commonjs_named_exports_deoptimized = if opts.bundle {
-            opts.output_format == options::Format::Cjs
+            opts.output_format == Format::Cjs
         } else {
             true
         };
@@ -8996,21 +9010,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let unwrap_all_requires = 'brk: {
-            if opts.bundle && opts.output_format != options::Format::Cjs {
-                // `bun_paths::fs::Path<'static>` is the
-                // crate-local minimal stub (no `pretty`, no `package_name()`),
-                // so reuse the free `path_package_name` body via a borrowed
-                // `bun_paths::fs::Path` view over the same `text`. `pretty`
-                // is irrelevant once `node_modules/` is found in `text`; when
-                // it isn't, the result won't match any `unwrap_commonjs_packages`
-                // entry anyway. (Goes away if `bun_paths::fs::Path<'static>` is
-                // ever unified with the resolver `bun_paths::fs::Path`.)
-                let path_view = fs::Path {
-                    text: source.path.text,
-                    pretty: source.path.text,
-                    ..Default::default()
-                };
-                if let Some(pkg) = path_package_name(&path_view) {
+            if opts.bundle && opts.output_format != Format::Cjs {
+                if let Some(pkg) = source.path.package_name() {
                     if opts.features.should_unwrap_require(pkg) {
                         if pkg == b"react" || pkg == b"react-dom" {
                             let version = opts.package_version;
@@ -9067,10 +9068,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 has_multiple_args: false,
                 has_catch: false,
             },
-            // Wired in `prepare_for_visit_pass` for the same
-            // reason as the transposers (self moves on return).
-            to_expr_wrapper_namespace: bun_ast::binding::ToExprWrapper::dangling(),
-            to_expr_wrapper_hoisted: bun_ast::binding::ToExprWrapper::dangling(),
             // The transposer recursion
             // lives as inherent `P::maybe_transpose_if_*` methods (no aliased
             // `&mut`). These ZST fields exist only to keep field-shape parity.
@@ -9197,9 +9194,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         });
 
         // The transposer recursion lives as inherent `P::maybe_transpose_if_*` methods
-        // called directly (no stored `*mut P`), and `Binding2ExprWrapper`
-        // receives its `*mut P` per-call from the live `&mut P` at the call
-        // site — `prepare_for_visit_pass` only wires the arena/trampoline.
+        // called directly (no stored `*mut P`).
         //
         // For SCAN_ONLY, the caller (Parser) assigns the borrowed
         // `import_records` / `named_imports` variants after construction; for

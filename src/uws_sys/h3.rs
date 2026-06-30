@@ -59,13 +59,13 @@ impl Request {
         let mut p: *const u8 = ptr::null();
         let n = c::uws_h3_req_get_url(self, &mut p);
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-        unsafe { bun_core::ffi::slice(p, n) }
+        unsafe { bun_opaque::ffi::slice(p, n) }
     }
     pub fn method(&mut self) -> &[u8] {
         let mut p: *const u8 = ptr::null();
         let n = c::uws_h3_req_get_method(self, &mut p);
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-        unsafe { bun_core::ffi::slice(p, n) }
+        unsafe { bun_opaque::ffi::slice(p, n) }
     }
     pub fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
         let mut p: *const u8 = ptr::null();
@@ -75,7 +75,7 @@ impl Request {
             None
         } else {
             // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-            Some(unsafe { bun_core::ffi::slice(p, n) })
+            Some(unsafe { bun_opaque::ffi::slice(p, n) })
         }
     }
     pub fn query(&mut self, name: &[u8]) -> &[u8] {
@@ -83,13 +83,13 @@ impl Request {
         // SAFETY: self is a live FFI handle; name ptr/len valid for read; out-ptr is a valid local
         let n = unsafe { c::uws_h3_req_get_query(self, name.as_ptr(), name.len(), &raw mut p) };
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-        unsafe { bun_core::ffi::slice(p, n) }
+        unsafe { bun_opaque::ffi::slice(p, n) }
     }
     pub fn parameter(&mut self, idx: u16) -> &[u8] {
         let mut p: *const u8 = ptr::null();
         let n = c::uws_h3_req_get_parameter(self, idx, &mut p);
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-        unsafe { bun_core::ffi::slice(p, n) }
+        unsafe { bun_opaque::ffi::slice(p, n) }
     }
     /// Iterate all request headers.
     ///
@@ -241,7 +241,7 @@ impl Response {
         }
         // SAFETY: uws returns a pointer+len pair valid until the next address lookup
         // on this thread; copied before returning.
-        let ip = unsafe { bun_core::ffi::slice(ip_ptr, len) };
+        let ip = unsafe { bun_opaque::ffi::slice(ip_ptr, len) };
         Some(SocketAddress::new(ip, port, is_ipv6))
     }
     pub fn force_close(&mut self) {

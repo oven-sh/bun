@@ -39,7 +39,7 @@ describe("issue/03830", () => {
     ["at macro-module top level (during Macro::init)", "top-level"],
   ])("nested Bun.Transpiler %s then import() does not free the printer", async (_, where) => {
     // Bun.Transpiler#transformSync drops a nested MacroContext via
-    // TranspilerStateGuard, which calls __bun_macro_context_deinit. On a
+    // TranspilerStateGuard, which calls MacroContext::deinit. On a
     // bundler-worker thread the macro was the first SOURCE_CODE_PRINTER
     // allocator; freeing it here would panic the subsequent module fetch.
     const macroTs =

@@ -2,7 +2,8 @@ use crate::bundled_ast::Flags as AstFlags;
 use crate::mal_prelude::*;
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export (AST crate: arenas are load-bearing)
 use bun_alloc::ArenaVecExt as _;
-use bun_collections::{BoundedArray, VecExt};
+use bun_collections::VecExt;
+use bun_core::BoundedArray;
 
 use bun_js_printer::renamer;
 use bun_js_printer::{self as js_printer, PrintResult, PrintResultSuccess};
@@ -13,7 +14,6 @@ use crate::options::Format as OutputFormat;
 use crate::{Chunk, DeclInfo, DeclInfoKind, Index, LinkerContext, Part, PartRange, WrapKind};
 
 use bun_ast::StoreRef;
-use bun_ast::binding::ToExprWrapper;
 use bun_ast::{B, Binding, E, Expr, G, Ref, S, Stmt};
 use bun_js_parser::lexer as js_lexer;
 
@@ -661,24 +661,12 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                         Expr::init_identifier(ref_, loc)
                     }
-
-                    /// Trampoline matching `ToExprWrapper`'s erased fn-pointer signature.
-                    fn wrap_trampoline(
-                        ctx: *mut core::ffi::c_void,
-                        loc: bun_ast::Loc,
-                        ref_: Ref,
-                    ) -> Expr {
-                        // SAFETY: `ctx` is `&mut ExportHoist` derived at the call site.
-                        let this = unsafe { bun_ptr::callback_ctx::<ExportHoist>(ctx) };
-                        this.wrap_identifier(loc, ref_)
-                    }
                 }
 
                 let mut hoist = ExportHoist {
                     decls: Vec::new(),
                     arena: bun_ptr::BackRef::new(temp_arena),
                 };
-                let hoist_wrapper = ToExprWrapper::new(temp_arena, ExportHoist::wrap_trampoline);
 
                 let mut inner_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
 
@@ -716,8 +704,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                             // ie `var { append } = { append() {} }` => `var append; __esm(() => ({ append } = { append() {} }))`
                                             let binding = Binding::to_expr(
                                                 &decl.binding,
-                                                (&raw mut hoist).cast::<core::ffi::c_void>(),
-                                                hoist_wrapper,
+                                                temp_arena,
+                                                &mut |loc, r| hoist.wrap_identifier(loc, r),
                                             );
                                             value = value.join_with_comma(Expr::assign(
                                                 binding,
@@ -727,8 +715,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                     } else {
                                         let _ = Binding::to_expr(
                                             &decl.binding,
-                                            (&raw mut hoist).cast::<core::ffi::c_void>(),
-                                            hoist_wrapper,
+                                            temp_arena,
+                                            &mut |loc, r| hoist.wrap_identifier(loc, r),
                                         );
                                     }
                                 }

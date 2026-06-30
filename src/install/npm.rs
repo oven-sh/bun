@@ -1,22 +1,23 @@
 use bun_collections::VecExt;
 use std::io::Write as _;
 
-use crate::bun_json as JSON;
 use crate::bun_schema::api;
 use bun_alloc::AllocError;
+use bun_ast::{Expr, ExprData, e as E};
 use bun_collections::{HashMap, IdentityContext, StringSet};
 use bun_core::{Error, Global, Output, err, fmt as bun_fmt};
 use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
 use bun_http::{self as http, AsyncHTTP, HeaderBuilder};
+use bun_parsers::json as JSON;
 use bun_picohttp as picohttp;
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
 use bun_sys::{self, Fd, File};
 use bun_url::{OwnedURL, URL};
 use bun_wyhash::Wyhash11;
 
+use crate::ExternalPackageNameHashList;
 use crate::bin::{self, Bin};
-use crate::external_slice::ExternalPackageNameHashList;
 use crate::integrity::Integrity;
 use crate::{
     Aligner, ExternalSlice, ExternalStringList, ExternalStringMap, PackageManager, PackageNameHash,
@@ -57,7 +58,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         Some(auth_type) => auth_type.as_str().as_bytes(),
         None => b"web",
     };
-    let ci_name = crate::ci_info::detect_ci_name();
+    let ci_name = bun_core::ci_info::detect_ci_name();
 
     let mut print_buf: Vec<u8> = Vec::new();
 
@@ -276,14 +277,8 @@ pub fn response_error<const OTP_RESPONSE: bool>(
 pub mod registry {
     use super::*;
 
-    // Single source of truth lives in `bun_install_types` (lower-tier crate so
-    // `ini`/`options_types` can read it without depending on the full package
-    // manager). Re-exported here as the same surface (`&str` const + `LazyLock`)
-    // so existing `Npm::Registry::DEFAULT_URL` / `*DEFAULT_URL_HASH` callers are
-    // untouched.
-    pub const DEFAULT_URL: &str = bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL;
-    pub static DEFAULT_URL_HASH: std::sync::LazyLock<u64> =
-        std::sync::LazyLock::new(bun_install_types::NodeLinker::npm::Registry::default_url_hash);
+    // Single source of truth lives in bun_install_types::NodeLinker::registry_defaults.
+    pub use bun_install_types::NodeLinker::registry_defaults::{DEFAULT_URL, DEFAULT_URL_HASH};
 
     // `MutableString: ObjectPoolType` (init = init2048) is provided in
     // bun_string; the `object_pool!` macro generates the per-monomorphization
@@ -616,23 +611,16 @@ impl ExternVersionMap {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// MOVE_DOWN: `Negatable` / `NegatableEnum` / `NegatableExt` / `OperatingSystem`
-// / `Libc` / `Architecture` (and their name maps) now live in
-// `bun_install_types::resolver_hooks` so `bun_resolver` and `bun_install`
-// share ONE nominal type per name. Re-export the canonical definitions; only
-// `negatable_from_json` (which depends on `bun_ast::Expr`) stays here.
-// ──────────────────────────────────────────────────────────────────────────
-
-pub use bun_install_types::resolver_hooks::{
-    Architecture, Libc, Negatable, NegatableEnum, NegatableExt, OperatingSystem,
+// The canonical definitions live in `bun_install_types::resolver_hooks`.
+use bun_install_types::resolver_hooks::{
+    Architecture, Libc, NegatableEnum, NegatableExt, OperatingSystem,
 };
 
 /// Lives here (not in `bun_install_types`) because `bun_ast::Expr` is not
 /// reachable from that crate.
-pub(crate) fn negatable_from_json<T: NegatableEnum>(expr: &JSON::Expr) -> Result<T, AllocError> {
+pub(crate) fn negatable_from_json<T: NegatableEnum>(expr: &Expr) -> Result<T, AllocError> {
     let mut this = T::NONE.negatable();
-    if let JSON::ExprData::EArray(a) = &expr.data {
+    if let ExprData::EArray(a) = &expr.data {
         for item in a.items.slice() {
             // JSON parsed via `parse_utf8` always yields UTF-8 EStrings,
             // so no transcode allocator is needed.
@@ -647,17 +635,17 @@ pub(crate) fn negatable_from_json<T: NegatableEnum>(expr: &JSON::Expr) -> Result
     Ok(this.combine())
 }
 
-pub(crate) fn negatable_from_json_value<T: NegatableEnum>(value: &JSON::E::JsonValue) -> T {
+pub(crate) fn negatable_from_json_value<T: NegatableEnum>(value: &E::JsonValue) -> T {
     let mut this = T::NONE.negatable();
     match value {
-        JSON::E::JsonValue::Array(arr) => {
+        E::JsonValue::Array(arr) => {
             for item in arr.get().items() {
                 if let Some(value) = item.as_str() {
                     this.apply(value);
                 }
             }
         }
-        JSON::E::JsonValue::String(str) => this.apply(str.slice()),
+        E::JsonValue::String(str) => this.apply(str.slice()),
         _ => {}
     }
 
@@ -956,7 +944,7 @@ pub mod package_manifest {
         ) -> Result<(), Error> {
             // SAFETY: T is Copy POD; sliceAsBytes equivalent
             let bytes = unsafe {
-                bun_core::ffi::slice(array.as_ptr().cast::<u8>(), core::mem::size_of_val(array))
+                bun_opaque::ffi::slice(array.as_ptr().cast::<u8>(), core::mem::size_of_val(array))
             };
             if bytes.is_empty() {
                 writer.write_int_le::<u64>(0)?;
@@ -989,7 +977,7 @@ pub mod package_manifest {
             let result_bytes = &remaining[..byte_len as usize];
             // SAFETY: alignment was advanced by Aligner::skip_amount; T is POD
             let result = unsafe {
-                bun_core::ffi::slice(
+                bun_opaque::ffi::slice(
                     result_bytes.as_ptr().cast::<T>(),
                     result_bytes.len() / core::mem::size_of::<T>(),
                 )
@@ -1026,7 +1014,7 @@ pub mod package_manifest {
                 // byte of `this.pkg` is therefore initialized, so viewing it
                 // as `&[u8]` is sound.
                 let bytes = unsafe {
-                    bun_core::ffi::slice(
+                    bun_opaque::ffi::slice(
                         (&raw const this.pkg).cast::<u8>(),
                         core::mem::size_of::<NpmPackage>(),
                     )
@@ -1064,7 +1052,7 @@ pub mod package_manifest {
             // GetFinalPathnameByHandle is very expensive if called many times
             // We skip calling it when we are giving an absolute file path.
             // This needs many more call sites, doesn't have much impact on this location.
-            let mut realpath_buf = bun_paths::PathBuffer::uninit();
+            let mut realpath_buf = bun_core::PathBuffer::uninit();
             // SAFETY: `crate::package_manager::get()` returns the live
             // singleton; `get_temporary_directory` only mutates its
             // lazy-init state and is called from the install thread.
@@ -1144,7 +1132,7 @@ pub mod package_manifest {
 
             #[cfg(windows)]
             {
-                let mut realpath2_buf = bun_paths::PathBuffer::uninit();
+                let mut realpath2_buf = bun_core::PathBuffer::uninit();
                 let cache_dir_abs = &PackageManager::get().cache_directory_path;
                 let cache_path_abs =
                     bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
@@ -1273,12 +1261,12 @@ pub mod package_manifest {
                 // run_from_thread_pool` in PackageInstall.rs). Safe `fn`
                 // coerces to the `unsafe fn(*mut Task)` field type.
                 pub(crate) fn run(task: *mut PoolTask) {
-                    use bun_threading::IntrusiveWorkTask as _;
+                    use bun_core::IntrusiveField as _;
                     let _tracer = bun_core::perf::trace("PackageManifest.Serializer.save");
 
                     // SAFETY: thread-pool callback contract — `task` points to
                     // `SaveTask.task`; allocated via `heap::into_raw` in `save_async`.
-                    let save_task = unsafe { bun_core::heap::take(SaveTask::from_task_ptr(task)) };
+                    let save_task = unsafe { bun_core::heap::take(SaveTask::from_field_ptr(task)) };
 
                     if let Err(err) = Serializer::save(
                         &save_task.manifest,
@@ -2064,7 +2052,7 @@ impl PackageManifest {
             let Some(versions_expr) = json.get(b"versions") else {
                 break 'get_versions;
             };
-            let JSON::ExprData::EObjectJSON(versions_obj) = &versions_expr.data else {
+            let ExprData::EObjectJSON(versions_obj) = &versions_expr.data else {
                 break 'get_versions;
             };
 
@@ -2115,7 +2103,7 @@ impl PackageManifest {
                 'bin: {
                     if let Some(bin) = version_obj.and_then(|o| o.get(b"bin")) {
                         match bin {
-                            JSON::E::JsonValue::Object(obj) => {
+                            E::JsonValue::Object(obj) => {
                                 let bin_props = obj.get().properties();
                                 match bin_props.len() {
                                     0 => break 'bin,
@@ -2133,7 +2121,7 @@ impl PackageManifest {
                                     string_builder.count(v);
                                 }
                             }
-                            JSON::E::JsonValue::String(str_) => {
+                            E::JsonValue::String(str_) => {
                                 string_builder.count(str_.slice());
                                 break 'bin;
                             }
@@ -2159,10 +2147,10 @@ impl PackageManifest {
                     .or_else(|| version_obj.and_then(|o| o.get(b"bundledDependencies")))
                 {
                     match bundled_deps_value {
-                        JSON::E::JsonValue::Boolean(boolean) => {
+                        E::JsonValue::Boolean(boolean) => {
                             bundle_all_deps = *boolean;
                         }
-                        JSON::E::JsonValue::Array(arr) => {
+                        E::JsonValue::Array(arr) => {
                             for bundled_dep in arr.get().items() {
                                 let Some(s) = bundled_dep.as_str() else {
                                     continue;
@@ -2210,7 +2198,7 @@ impl PackageManifest {
                         else {
                             continue;
                         };
-                        let JSON::E::JsonValue::Boolean(true) = optional else {
+                        let E::JsonValue::Boolean(true) = optional else {
                             continue;
                         };
                         dependency_sum += 1;
@@ -2225,7 +2213,7 @@ impl PackageManifest {
 
         let mut dist_tags_count: usize = 0;
         if let Some(dist) = json.get(b"dist-tags") {
-            if let JSON::ExprData::EObjectJSON(obj) = &dist.data {
+            if let ExprData::EObjectJSON(obj) = &dist.data {
                 for tag in obj.get().properties() {
                     string_builder.count(tag.key.slice());
                     extern_string_count += 2;
@@ -2316,7 +2304,7 @@ impl PackageManifest {
             let Some(versions_expr) = json.get(b"versions") else {
                 break 'get_versions2;
             };
-            let JSON::ExprData::EObjectJSON(versions_obj) = &versions_expr.data else {
+            let ExprData::EObjectJSON(versions_obj) = &versions_expr.data else {
                 break 'get_versions2;
             };
 
@@ -2366,10 +2354,10 @@ impl PackageManifest {
                     .or_else(|| version_obj.and_then(|o| o.get(b"bundledDependencies")))
                 {
                     match bundled_deps_value {
-                        JSON::E::JsonValue::Boolean(boolean) => {
+                        E::JsonValue::Boolean(boolean) => {
                             bundle_all_deps = *boolean;
                         }
-                        JSON::E::JsonValue::Array(arr) => {
+                        E::JsonValue::Array(arr) => {
                             for bundled_dep in arr.get().items() {
                                 let Some(s) = bundled_dep.as_str() else {
                                     continue;
@@ -2395,7 +2383,7 @@ impl PackageManifest {
                     package_version.libc = negatable_from_json_value::<Libc>(libc);
                 }
 
-                if let Some(JSON::E::JsonValue::Boolean(val)) =
+                if let Some(E::JsonValue::Boolean(val)) =
                     version_obj.and_then(|o| o.get(b"hasInstallScript"))
                 {
                     package_version.has_install_script = *val;
@@ -2406,7 +2394,7 @@ impl PackageManifest {
                     // We try to avoid storing copies the string
                     if let Some(bin) = version_obj.and_then(|o| o.get(b"bin")) {
                         match bin {
-                            JSON::E::JsonValue::Object(obj) => {
+                            E::JsonValue::Object(obj) => {
                                 let bin_props = obj.get().properties();
                                 match bin_props.len() {
                                     0 => {}
@@ -2517,7 +2505,7 @@ impl PackageManifest {
 
                                 break 'bin;
                             }
-                            JSON::E::JsonValue::String(stri) => {
+                            E::JsonValue::String(stri) => {
                                 let stri = stri.slice();
                                 if !stri.is_empty() {
                                     package_version.bin = Bin {
@@ -2575,11 +2563,11 @@ impl PackageManifest {
                             }
                         }
 
-                        if let Some(JSON::E::JsonValue::Number(n)) = dist.get(b"fileCount") {
+                        if let Some(E::JsonValue::Number(n)) = dist.get(b"fileCount") {
                             package_version.file_count = n.value() as u32;
                         }
 
-                        if let Some(JSON::E::JsonValue::Number(n)) = dist.get(b"unpackedSize") {
+                        if let Some(E::JsonValue::Number(n)) = dist.get(b"unpackedSize") {
                             package_version.unpacked_size = n.value() as u32;
                         }
 
@@ -2611,12 +2599,12 @@ impl PackageManifest {
                     // iteration's slice of `bundled_deps_buf`, so an
                     // unconditional empty pass would clobber the value the
                     // `dependencies` iteration just produced.
-                    let items: &[JSON::E::PropertyJSON] = version_obj
+                    let items: &[E::PropertyJSON] = version_obj
                         .and_then(|o| o.get(pair.prop))
                         .and_then(|deps| deps.as_object())
-                        .map(JSON::E::ObjectJSON::properties)
+                        .map(E::ObjectJSON::properties)
                         .unwrap_or(&[]);
-                    let peer_deps_meta: Option<&JSON::E::ObjectJSON> = if is_peer {
+                    let peer_deps_meta: Option<&E::ObjectJSON> = if is_peer {
                         version_obj
                             .and_then(|o| o.get(b"peerDependenciesMeta"))
                             .and_then(|meta| meta.as_object())
@@ -2645,7 +2633,7 @@ impl PackageManifest {
                                         .as_object()
                                         .and_then(|meta| meta.get(b"optional"))
                                     {
-                                        let JSON::E::JsonValue::Boolean(true) = optional else {
+                                        let E::JsonValue::Boolean(true) = optional else {
                                             continue;
                                         };
 
@@ -2747,7 +2735,7 @@ impl PackageManifest {
                                     else {
                                         continue;
                                     };
-                                    let JSON::E::JsonValue::Boolean(true) = optional else {
+                                    let E::JsonValue::Boolean(true) = optional else {
                                         continue;
                                     };
                                     let meta_key = meta_prop.key.slice();
@@ -2933,7 +2921,7 @@ impl PackageManifest {
                 }
 
                 if let Some(time_expr) = json.get(b"time") {
-                    if let JSON::ExprData::EObjectJSON(time_obj) = &time_expr.data {
+                    if let ExprData::EObjectJSON(time_obj) = &time_expr.data {
                         if let Some(publish_time_str) =
                             time_obj.get().get(version_name).and_then(|v| v.as_str())
                         {
@@ -2967,7 +2955,7 @@ impl PackageManifest {
         let _ = all_dependency_names_and_values_len;
 
         if let Some(dist) = json.get(b"dist-tags") {
-            if let JSON::ExprData::EObjectJSON(obj) = &dist.data {
+            if let ExprData::EObjectJSON(obj) = &dist.data {
                 let tags = obj.get().properties();
                 let extern_strings_slice_start = extern_strings_cursor;
                 let mut dist_tag_i: usize = 0;

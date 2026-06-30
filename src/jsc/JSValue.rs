@@ -11,9 +11,8 @@ use core::marker::PhantomData;
 
 use crate::array_buffer::MarkedArrayBuffer_deallocator;
 use crate::{
-    AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSInternalPromise,
-    JSObject, JSPromise, JSString, JSType, JsClass, JsError, JsResult, ZigException,
-    bun_string_jsc, ffi, host_fn,
+    AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSObject, JSPromise,
+    JSString, JSType, JsClass, JsError, JsResult, ZigException, bun_string_jsc, ffi, host_fn,
 };
 
 /// ABI-compatible with `EncodedJSValue` (`#[repr(transparent)]` over the
@@ -588,7 +587,7 @@ impl JSValue {
     /// `Buffer` (the `JSBufferSubclassStructure` Uint8Array subclass) of `len`
     /// zeroed bytes via `JSBuffer__bufferFromLength`. May throw OOM.
     pub fn create_buffer_from_length(global: &JSGlobalObject, len: usize) -> JsResult<JSValue> {
-        crate::mark_binding!();
+        bun_core::mark_binding!();
         host_fn::from_js_host_call(global, || JSBuffer__bufferFromLength(global, len as i64))
     }
     pub fn create_buffer(global: &JSGlobalObject, slice: &mut [u8]) -> JSValue {
@@ -1025,7 +1024,7 @@ impl JSValue {
     /// `JSValue.asInternalPromise()` — downcast to `JSInternalPromise`.
     /// Returns a raw pointer; see
     /// [`as_promise`] for the aliasing rationale.
-    pub fn as_internal_promise(self) -> Option<*mut JSInternalPromise> {
+    pub fn as_internal_promise(self) -> Option<*mut JSPromise> {
         if !self.is_cell() {
             return None;
         }
@@ -1068,7 +1067,7 @@ impl JSValue {
         let mut len: usize = 0;
         if JSC__JSValue__getClassInfoName(self, &mut ptr, &mut len) {
             // SAFETY: C++ guarantees `ptr[..len]` is a static `ClassInfo::className`.
-            Some(unsafe { bun_core::ffi::slice(ptr, len) })
+            Some(unsafe { bun_opaque::ffi::slice(ptr, len) })
         } else {
             None
         }
@@ -2081,7 +2080,7 @@ unsafe extern "C" {
     ) -> bool;
     safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> bool;
     safe fn JSC__JSValue__asPromise(this: JSValue) -> *mut JSPromise;
-    safe fn JSC__JSValue__asInternalPromise(this: JSValue) -> *mut JSInternalPromise;
+    safe fn JSC__JSValue__asInternalPromise(this: JSValue) -> *mut JSPromise;
     safe fn Bun__attachAsyncStackFromPromise(
         global: &JSGlobalObject,
         err: JSValue,
@@ -2129,8 +2128,6 @@ pub enum ProxyField {
     Target = 0,
     Handler = 1,
 }
-/// Alias kept for binding-name compatibility.
-pub type ProxyInternalField = ProxyField;
 
 /// `JSValue.SerializedFlags`.
 #[derive(Debug, Default, Clone, Copy)]
@@ -2154,7 +2151,7 @@ impl SerializedScriptValue {
         // SAFETY: C++ guarantees `bytes[..size]` is valid for the lifetime of
         // `handle` (until `Bun__SerializedScriptSlice__free`); the returned
         // borrow is tied to `&self` so it cannot outlive `Drop`.
-        unsafe { bun_core::ffi::slice(self.bytes, self.size) }
+        unsafe { bun_opaque::ffi::slice(self.bytes, self.size) }
     }
 }
 impl Drop for SerializedScriptValue {
@@ -2627,7 +2624,7 @@ impl JSValue {
         self,
         formatter: &'a mut crate::console_object::Formatter<'b>,
     ) -> crate::console_object::formatter::ZigFormatter<'a, 'b> {
-        formatter.remaining_values = bun_ptr::RawSlice::EMPTY;
+        formatter.remaining_values = bun_core::RawSlice::EMPTY;
         formatter.stack_check.update();
         crate::console_object::formatter::ZigFormatter::new(formatter, self)
     }

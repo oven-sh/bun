@@ -8,8 +8,9 @@ use bun_collections::VecExt;
 use core::cell::Cell;
 
 use bun_core::String as BunString;
+use bun_core::{declare_scope, scoped_log};
+use bun_jsc::SystemErrorJsc as _;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
-use bun_output::{declare_scope, scoped_log};
 
 use crate::node::{ErrorCode, StringOrBuffer};
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
@@ -257,7 +258,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         callframe: &CallFrame,
         this_value: JSValue,
     ) -> JsResult<JSValue> {
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         let args = callframe.arguments();
 
         if args.len() < 2 {
@@ -284,7 +285,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         let args = callframe.arguments();
         if args.len() > 0 && args[0].is_object() {
             if let Some(high_water_mark) =
@@ -303,7 +304,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         let args = callframe.arguments();
         // ignore any call if detached
         if this.is_detached() {
@@ -345,7 +346,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         _global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         let args = callframe.arguments();
         // ignore any call if detached
         if this.is_detached() {

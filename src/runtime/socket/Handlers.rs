@@ -1,6 +1,7 @@
 use core::cell::Cell;
 
 use bun_core::zig_string::Slice as ZigStringSlice;
+use bun_http::ssl_config::SSLConfig;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::generated::{
     SocketConfig as GeneratedSocketConfig, SocketConfigHandlers as GeneratedSocketConfigHandlers,
@@ -13,7 +14,6 @@ use bun_uws as uws;
 use super::Listener as SocketListener;
 use super::SocketMode;
 use super::listener::ListenerType;
-use super::{SSLConfig, SSLConfigFromJs};
 
 // ─── local shims (upstream-crate gaps) ──────────────────────────────────────
 unsafe extern "C" {
@@ -23,7 +23,7 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-bun_output::declare_scope!(Listener, visible);
+bun_core::declare_scope!(Listener, visible);
 
 pub struct Handlers {
     pub on_open: JSValue,
@@ -123,7 +123,7 @@ macro_rules! for_each_callback_field {
 
 impl Handlers {
     pub fn mark_active(&self) {
-        bun_output::scoped_log!(Listener, "markActive");
+        bun_core::scoped_log!(Listener, "markActive");
         self.active_connections
             .set(self.active_connections.get() + 1);
     }
@@ -216,7 +216,7 @@ impl Handlers {
     /// - After this returns `true`, `this` is dangling — caller must not
     ///   dereference it and must null any stored copy.
     pub unsafe fn mark_inactive(this: *mut Self) -> bool {
-        bun_output::scoped_log!(Listener, "markInactive");
+        bun_core::scoped_log!(Listener, "markInactive");
         let (remaining, mode) = {
             // SAFETY: caller contract — `this` is live on entry. Shared reborrow
             // scoped to this block so no `&Handlers` protector spans the
@@ -557,7 +557,7 @@ impl SocketConfig {
                     // SAFETY: `bun_vm()` is non-null for a Bun-owned global; single
                     // JS thread, no aliasing `&mut VirtualMachine` outlives this call.
                     let vm_mut = global.bun_vm().as_mut();
-                    SSLConfig::from_generated(vm_mut, global, ssl)?
+                    crate::socket::ssl_config::from_generated(vm_mut, global, ssl)?
                 }
             };
             break 'blk SocketConfig {

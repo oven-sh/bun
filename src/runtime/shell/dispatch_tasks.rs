@@ -33,7 +33,7 @@ pub(crate) struct ShellAsyncSubprocessDone {
 
 impl ShellAsyncSubprocessDone {
     /// Reached only via `runtime::dispatch::run_task` for
-    /// `task_tag::ShellAsyncSubprocessDone`, which always passes the
+    /// `TaskTag::ShellAsyncSubprocessDone`, which always passes the
     /// `heap::alloc` payload enqueued by `ShellSubprocess::on_process_exit`.
     ///
     /// # Safety
@@ -67,7 +67,7 @@ pub(crate) struct AsyncDeinitWriter {
 
 impl AsyncDeinitWriter {
     /// Reached only via `runtime::dispatch::run_task` for
-    /// `task_tag::ShellIOWriterAsyncDeinit`, which always passes the
+    /// `TaskTag::ShellIOWriterAsyncDeinit`, which always passes the
     /// `heap::alloc` payload enqueued by `IOWriter::async_deinit`.
     ///
     /// # Safety
@@ -94,7 +94,7 @@ pub(crate) struct AsyncDeinitReader {
 
 impl AsyncDeinitReader {
     /// Reached only via `runtime::dispatch::run_task` for
-    /// `task_tag::ShellIOReaderAsyncDeinit`, which always passes the
+    /// `TaskTag::ShellIOReaderAsyncDeinit`, which always passes the
     /// `heap::alloc` payload enqueued by `IOReader::async_deinit`.
     ///
     /// # Safety
@@ -166,7 +166,7 @@ pub(crate) struct ShellGlobTask {
 }
 
 impl bun_event_loop::Taskable for ShellGlobTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellGlobTask;
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::TaskTag::ShellGlobTask;
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellGlobTask {

@@ -22,7 +22,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-use bun_collections::BoundedArray;
+use bun_core::bounded_array::BoundedArray;
 use bun_core::strings;
 
 /// used in matchBrace to determine the size of the stack buffer used in the stack fallback allocator

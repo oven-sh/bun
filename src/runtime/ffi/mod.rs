@@ -11,7 +11,7 @@ use core::ptr::NonNull;
 
 use bun_core::ZBox;
 
-use crate::jsc::JSGlobalObject;
+use bun_jsc::JSGlobalObject;
 
 mod host_fns;
 pub use host_fns::{generate_symbol_for_function, generate_symbols};
@@ -45,7 +45,7 @@ pub use ffi_object_draft as ffi_object;
 // these shims are the exported wrappers.
 mod dom_call_slowpath {
     use super::ffi_object_draft as ffi_object;
-    use crate::jsc::{JSGlobalObject, JSValue};
+    use bun_jsc::{JSGlobalObject, JSValue};
 
     macro_rules! dom_call_slowpath {
         ($( $sym:ident => $target:path ),* $(,)?) => {$(

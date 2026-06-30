@@ -307,7 +307,7 @@ impl ArrayBuffer {
     // `KIND` is a true const-generic and the `match` const-folds (the
     // unreachable arm becomes a post-mono `panic!`).
     pub fn create<const KIND: JSType>(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
-        crate::mark_binding!();
+        bun_core::mark_binding!();
         match KIND {
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes
             // ptr/len come from a live slice, copied by callee.
@@ -324,7 +324,7 @@ impl ArrayBuffer {
     }
 
     pub fn create_empty<const KIND: JSType>(global: &JSGlobalObject) -> JsResult<JSValue> {
-        crate::mark_binding!();
+        bun_core::mark_binding!();
         match KIND {
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); null ptr
             // with len 0 is the documented empty case.
@@ -341,7 +341,7 @@ impl ArrayBuffer {
     }
 
     pub fn create_buffer(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
-        crate::mark_binding!();
+        bun_core::mark_binding!();
         // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes ptr/len
         // come from a live slice, copied by callee.
         crate::host_fn::from_js_host_call(global, || unsafe {
@@ -350,7 +350,7 @@ impl ArrayBuffer {
     }
 
     pub fn create_uint8_array(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
-        crate::mark_binding!();
+        bun_core::mark_binding!();
         // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes ptr/len
         // come from a live slice, copied by callee.
         crate::host_fn::from_js_host_call(global, || unsafe {
@@ -373,7 +373,7 @@ impl ArrayBuffer {
             _ => panic!("ArrayBuffer::alloc: KIND not implemented"),
         };
         // SAFETY: Bun__alloc*ForCopy writes a valid `len`-byte buffer pointer into ptr_out on success.
-        let slice = unsafe { bun_core::ffi::slice_mut(ptr_out, len as usize) };
+        let slice = unsafe { bun_opaque::ffi::slice_mut(ptr_out, len as usize) };
         Ok((buf, slice))
     }
 
@@ -967,7 +967,7 @@ impl MarkedArrayBuffer {
         let len = buf.len();
         let ptr = bun_core::heap::into_raw(buf).cast::<u8>();
         // SAFETY: ptr/len from heap::alloc; backed by the global allocator.
-        let bytes = unsafe { bun_core::ffi::slice_mut(ptr, len) };
+        let bytes = unsafe { bun_opaque::ffi::slice_mut(ptr, len) };
         Ok(MarkedArrayBuffer::from_bytes(bytes, JSType::Uint8Array))
     }
 
@@ -1154,11 +1154,11 @@ bun_opaque::opaque_ffi! {
     pub struct JSCArrayBuffer;
 }
 
-pub type JSCArrayBufferRef = bun_ptr::ExternalShared<JSCArrayBuffer>;
+pub type JSCArrayBufferRef = bun_core::ExternalShared<JSCArrayBuffer>;
 
 // SAFETY: `JSC__ArrayBuffer__ref`/`deref` operate on JSC's internal
 // `RefCounted<ArrayBuffer>` count; the pointee remains alive while count > 0.
-unsafe impl bun_ptr::ExternalSharedDescriptor for JSCArrayBuffer {
+unsafe impl bun_core::ExternalSharedDescriptor for JSCArrayBuffer {
     unsafe fn ext_ref(this: *mut Self) {
         // `opaque_ref` is the centralised ZST-handle non-null deref proof;
         // trait contract guarantees `this` is a valid `JSC::ArrayBuffer*`.

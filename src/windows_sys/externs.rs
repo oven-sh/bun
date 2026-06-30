@@ -571,9 +571,9 @@ pub mod user32 {}
 /// `advapi32` namespace (subset placeholder; fill in as needed).
 pub mod advapi32 {}
 
-// `bun.windows.libuv` is exposed from the higher-tier `bun_sys::windows`
-// module, NOT here — `bun_windows_sys` is the leaf Win32 externs crate and
-// must not depend on `bun_libuv_sys` (would invert the tier ordering).
+// libuv bindings live in `bun_libuv_sys`, NOT here — `bun_windows_sys` is the
+// leaf Win32 externs crate and must not depend on `bun_libuv_sys` (would
+// invert the tier ordering).
 
 // ──────────────────────────────────────────────────────────────────────────
 // kernel32 namespace (subset).
@@ -716,8 +716,8 @@ pub mod kernel32 {
     }
     // Re-export externs declared at the crate root so `kernel32::Foo` resolves.
     pub use super::{
-        CreateFileW, GetCurrentDirectoryW, GetFileAttributesW, GetSystemInfo, SYSTEM_INFO,
-        SetCurrentDirectoryW, SetFilePointerEx,
+        CreateDirectoryW, CreateFileW, GetCurrentDirectoryW, GetFileAttributesW, GetSystemInfo,
+        SYSTEM_INFO, SetCurrentDirectoryW, SetFilePointerEx,
     };
     pub use super::{
         GetConsoleCP, GetConsoleMode, GetConsoleOutputCP, SetConsoleCP, SetConsoleMode,
@@ -1555,9 +1555,6 @@ pub struct PEB {
     // reference would assert false immutability to the optimizer (UB).
     pub ProcessParameters: *const RTL_USER_PROCESS_PARAMETERS,
 }
-/// Legacy alias (former `bun_core::windows_sys` name).
-pub type PebView = PEB;
-
 /// `TEB` (`winternl.h`) — minimal view; only `ProcessEnvironmentBlock` is read.
 #[repr(C)]
 pub struct TEB {
@@ -1762,3 +1759,60 @@ unsafe extern "system" {
 unsafe extern "C" {
     pub fn windows_enable_stdio_inheritance();
 }
+
+// ── libuv (statically linked) ─────────────────────────────────────────────
+unsafe extern "C" {
+    /// libuv: walks the CRT fd table and clears HANDLE_FLAG_INHERIT. The full
+    /// libuv binding surface lives in `bun_libuv_sys`; this single decl exists
+    /// so tier-0 stdio init (`bun_core::output`) can call it without the
+    /// (cyclic) bun_libuv_sys edge. No preconditions.
+    pub safe fn uv_disable_stdio_inheritance();
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// `bun_opaque::ffi::Zeroable` impls — `#[repr(C)]` out-param structs that are
+// zero-init before the kernel fills them. They must live in this crate (the
+// types' defining crate) because the trait is foreign (`bun_opaque`). All
+// fields are integers / raw pointers / nested POD; audited against the Win32
+// SDK headers (S016).
+// ──────────────────────────────────────────────────────────────────────────
+use bun_opaque::ffi::Zeroable;
+// SAFETY: `#[repr(C)]` POD — all integer / raw-pointer fields.
+unsafe impl Zeroable for IO_STATUS_BLOCK {}
+// SAFETY: `#[repr(C)]` POD — all integer / raw-pointer fields.
+unsafe impl Zeroable for FILE_BASIC_INFORMATION {}
+// SAFETY: `#[repr(C)]` POD — all integer / raw-pointer fields.
+unsafe impl Zeroable for BY_HANDLE_FILE_INFORMATION {}
+// SAFETY: `#[repr(C)]` POD — all integer / raw-pointer fields.
+unsafe impl Zeroable for WIN32_FILE_ATTRIBUTE_DATA {}
+// SAFETY: `#[repr(C)]` POD — all integer / raw-pointer fields.
+unsafe impl Zeroable for OBJECT_ATTRIBUTES {}
+// SAFETY: `#[repr(C)]` POD — all integer / raw-pointer fields.
+unsafe impl Zeroable for UNICODE_STRING {}
+// SAFETY: `#[repr(C)]` POD — all integer / raw-pointer fields.
+unsafe impl Zeroable for SECURITY_ATTRIBUTES {}
+// SAFETY: `#[repr(C)]` POD — all integer / raw-pointer fields.
+unsafe impl Zeroable for FILETIME {}
+// SAFETY: nested `i16`/`u16` POD; all-zero is the documented pre-call state
+// for `GetConsoleScreenBufferInfo` out-params.
+unsafe impl Zeroable for CONSOLE_SCREEN_BUFFER_INFO {}
+// SAFETY: `#[repr(C)]` POD — all integer / raw-pointer fields.
+unsafe impl Zeroable for ws2_32::WSADATA {}
+// SAFETY: `#[repr(C)]` POD — all integer / raw-pointer fields.
+unsafe impl Zeroable for ws2_32::sockaddr_storage {}
+// SAFETY: `#[repr(C)]` POD — all integer / raw-pointer fields.
+unsafe impl Zeroable for ws2_32::sockaddr_in {}
+// SAFETY: `#[repr(C)]` POD — all integer / raw-pointer fields.
+unsafe impl Zeroable for ws2_32::sockaddr_in6 {}
+// SAFETY: `#[repr(C)]` POD — all integer / raw-pointer fields.
+unsafe impl Zeroable for ws2_32::addrinfo {}
+// SAFETY: `#[repr(C)]` POD — all integer / raw-pointer fields.
+unsafe impl Zeroable for IO_COUNTERS {}
+// SAFETY: `#[repr(C)]` POD — all integer / raw-pointer fields.
+unsafe impl Zeroable for JOBOBJECT_BASIC_LIMIT_INFORMATION {}
+// SAFETY: `#[repr(C)]` POD — all integer / raw-pointer fields.
+unsafe impl Zeroable for JOBOBJECT_EXTENDED_LIMIT_INFORMATION {}
+// SAFETY: `#[repr(C)]` POD — all integer / raw-pointer fields.
+unsafe impl Zeroable for OVERLAPPED {}
+// SAFETY: two raw-pointer HANDLEs (null-valid) + two u32.
+unsafe impl Zeroable for PROCESS_INFORMATION {}

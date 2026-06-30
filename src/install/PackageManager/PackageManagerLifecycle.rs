@@ -14,19 +14,19 @@ use bun_semver::string::Builder as SemverStringBuilder;
 use bun_sys as Syscall;
 use bun_threading::Mutex;
 
-use crate::bun_fs::FileSystem;
+use bun_resolver::fs::FileSystem;
 
 use super::directories;
 use crate::lifecycle_script_runner::{
     InstallCtx, LifecycleScriptSubprocess as RealLifecycleScriptSubprocess,
 };
-use crate::lockfile_real::package::scripts::List as ScriptsList;
-use crate::package_manager_real::Command;
-use crate::resolution_real::Tag as ResolutionTag;
-use bun_install::lockfile::{self, Lockfile, Package};
-use bun_install::{
-    PackageID, PackageManager, PreinstallState, TruncatedPackageNameHash, invalid_package_id,
+use crate::lockfile::package::scripts::List as ScriptsList;
+use crate::lockfile::{self, Lockfile, Package};
+use crate::resolution::Tag as ResolutionTag;
+use crate::{
+    INVALID_PACKAGE_ID, PackageID, PackageManager, PreinstallState, TruncatedPackageNameHash,
 };
+use bun_options_types::context::Context;
 
 #[derive(Default)]
 pub struct LifecycleScriptTimeLog {
@@ -393,7 +393,7 @@ impl PackageManager {
     /// TODO: re-evaluate whether some variables still need to be atomic
     pub fn spawn_package_lifecycle_scripts(
         &mut self,
-        ctx: Command::Context<'_>,
+        ctx: Context<'_>,
         list: ScriptsList,
         optional: bool,
         foreground: bool,
@@ -507,7 +507,7 @@ impl PackageManager {
                 for request in self.update_requests.iter() {
                     if request.matches(root_dep, self.lockfile.buffers.string_bytes.as_slice()) {
                         let package_id = self.lockfile.buffers.resolutions[dep_id as usize];
-                        if package_id == invalid_package_id {
+                        if package_id == INVALID_PACKAGE_ID {
                             continue;
                         }
 
@@ -545,7 +545,7 @@ fn add_dependencies_to_set(
     let mut dep_id = begin;
     while dep_id < end {
         let package_id = lockfile.buffers.resolutions[dep_id as usize];
-        if package_id == invalid_package_id {
+        if package_id == INVALID_PACKAGE_ID {
             dep_id += 1;
             continue;
         }
@@ -561,84 +561,4 @@ fn add_dependencies_to_set(
     }
 }
 
-use bun_install::LogLevel;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Free-function re-export surface. The `impl PackageManager` bodies
-// above are canonical; these thin shims keep the
-// `pub use lifecycle::{...}` re-exports in `PackageManager.rs` resolving the
-// same way `PackageManagerDirectories.rs` / `PackageManagerEnqueue.rs` do.
-// ──────────────────────────────────────────────────────────────────────────
-
-#[inline]
-pub fn ensure_preinstall_state_list_capacity(this: &mut PackageManager, count: usize) {
-    this.ensure_preinstall_state_list_capacity(count)
-}
-
-#[inline]
-pub fn set_preinstall_state(
-    this: &mut PackageManager,
-    package_id: PackageID,
-    value: PreinstallState,
-) {
-    this.set_preinstall_state(package_id, value)
-}
-
-#[inline]
-pub fn get_preinstall_state(this: &PackageManager, package_id: PackageID) -> PreinstallState {
-    this.get_preinstall_state(package_id)
-}
-
-#[inline]
-pub fn determine_preinstall_state(
-    this: &mut PackageManager,
-    pkg: &Package,
-    out_name_and_version_hash: &mut Option<u64>,
-    out_patchfile_hash: &mut Option<u64>,
-) -> PreinstallState {
-    this.determine_preinstall_state(pkg, out_name_and_version_hash, out_patchfile_hash)
-}
-
-#[inline]
-pub fn has_no_more_pending_lifecycle_scripts(this: &mut PackageManager) -> bool {
-    this.has_no_more_pending_lifecycle_scripts()
-}
-
-#[inline]
-pub fn tick_lifecycle_scripts(this: &mut PackageManager) {
-    this.tick_lifecycle_scripts()
-}
-
-#[inline]
-pub fn sleep(this: &mut PackageManager) {
-    this.sleep()
-}
-
-#[inline]
-pub fn report_slow_lifecycle_scripts(this: &mut PackageManager) {
-    this.report_slow_lifecycle_scripts()
-}
-
-#[inline]
-pub fn load_root_lifecycle_scripts(this: &mut PackageManager, root_package: &Package) {
-    this.load_root_lifecycle_scripts(root_package)
-}
-
-#[inline]
-pub fn spawn_package_lifecycle_scripts(
-    this: &mut PackageManager,
-    ctx: Command::Context<'_>,
-    list: ScriptsList,
-    optional: bool,
-    foreground: bool,
-    install_ctx: Option<InstallCtx<'_>>,
-) -> Result<(), bun_core::Error> {
-    this.spawn_package_lifecycle_scripts(ctx, list, optional, foreground, install_ctx)
-}
-
-#[inline]
-pub fn find_trusted_dependencies_from_update_requests(
-    this: &mut PackageManager,
-) -> ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>> {
-    this.find_trusted_dependencies_from_update_requests()
-}
+use crate::LogLevel;

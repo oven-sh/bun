@@ -9,9 +9,10 @@ use bun_alloc::{AllocError, allocators};
 use bun_collections::VecExt as _;
 use bun_core::MutableString;
 use bun_core::{FeatureFlags, Generation, ZStr, env_var};
+use bun_core::{MAX_PATH_BYTES, PathBuffer};
 use bun_paths::resolve_path::platform;
 use bun_paths::strings;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, resolve_path as path_handler};
+use bun_paths::{SEP, resolve_path as path_handler};
 use bun_ptr::Interned;
 use bun_sys::{self, Fd};
 use bun_threading::Mutex;
@@ -867,17 +868,6 @@ impl DirEntry {
 
 // `data` drops itself and `dir` is interned in DirnameStore (see the comment
 // on `DirEntry::dir`). Body would be empty, so no `impl Drop`.
-
-impl bun_dotenv::DirEntryProbe for DirEntry {
-    #[inline]
-    fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
-        DirEntry::has_comptime_query(self, query_lower)
-    }
-}
-
-/// Compat re-exports for callers that named the seam-type aliases.
-pub use EntryKind as FsEntryKind;
-pub use dir_entry::Err as DirEntryErr;
 
 // pub fn statBatch(fs: *FileSystemEntry, paths: []string) ![]?Stat {
 // }

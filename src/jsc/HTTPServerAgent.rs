@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use crate::VirtualMachineRef as VirtualMachine;
+use crate::virtual_machine::VirtualMachine;
 use bun_core::String as BunString;
 
 pub struct HTTPServerAgent {
@@ -92,7 +92,7 @@ impl Route {
     pub fn params(&self) -> &[BunString] {
         // SAFETY: param_names points to param_names_len contiguous BunString
         // values (or is `(null, 0)`, which `ffi::slice` tolerates).
-        unsafe { bun_core::ffi::slice(self.param_names, self.param_names_len) }
+        unsafe { bun_opaque::ffi::slice(self.param_names, self.param_names_len) }
     }
 }
 

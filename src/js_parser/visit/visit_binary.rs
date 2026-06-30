@@ -8,7 +8,7 @@ use crate::scan::scan_side_effects::SideEffects;
 use bun_ast::fold_string_addition::{FoldStringAdditionKind, fold_string_addition};
 use bun_ast::{
     self as js_ast, E, Expr, ExprData, Op, StoreRef, Symbol,
-    expr::{Equality, LooseEql, StrictEql},
+    expr::{Equality, Tag},
 };
 
 /// Try to optimize "typeof x === 'undefined'" to "typeof x > 'u'" or similar
@@ -72,21 +72,196 @@ fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bo
     ))
 }
 
-// `Expr.Data.eql(left, right, p, .{loose,strict})` — thin adapter
-// from the `const STRICT: bool` shape used at the four call sites below to the
-// canonical `ExprData::eql<P, K: EqlKindT>` (Expr.rs). Kept as a free fn so
-// the call sites don't each repeat the `LooseEql`/`StrictEql` type-select.
+// `Expr.Data.eql(left, right, p, .{loose,strict})` — canonical implementation,
+// ported from `bun_ast::expr`. Returns "equal, ok". If "ok" is false, then
+// nothing is known about the two values. If "ok" is true, the equality or
+// inequality of the two values is stored in "equal".
 #[inline]
 fn data_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
     left: &ExprData,
     right: &ExprData,
     p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
 ) -> Equality {
-    if STRICT {
-        ExprData::eql::<_, StrictEql>(left, right, p)
-    } else {
-        ExprData::eql::<_, LooseEql>(left, right, p)
+    // https://dorey.github.io/JavaScript-Equality-Table/
+    match left {
+        ExprData::EInlinedEnum(inlined) => {
+            return data_eql::<STRICT, TYPESCRIPT, SCAN_ONLY>(&inlined.value.data, right, p);
+        }
+
+        ExprData::ENull(_) | ExprData::EUndefined(_) => {
+            let right_tag = right.tag();
+            let ok = matches!(right_tag, Tag::ENull | Tag::EUndefined)
+                || right_tag.is_primitive_literal();
+
+            if !STRICT {
+                return Equality {
+                    equal: matches!(right_tag, Tag::ENull | Tag::EUndefined),
+                    ok,
+                    ..Default::default()
+                };
+            }
+
+            return Equality {
+                equal: right_tag == left.tag(),
+                ok,
+                ..Default::default()
+            };
+        }
+        ExprData::EBoolean(l) | ExprData::EBranchBoolean(l) => match right {
+            ExprData::EBoolean(r) | ExprData::EBranchBoolean(r) => {
+                return Equality {
+                    ok: true,
+                    equal: l.value == r.value,
+                    ..Default::default()
+                };
+            }
+            ExprData::ENumber(num) => {
+                if STRICT {
+                    // "true === 1" is false
+                    // "false === 0" is false
+                    return Equality::FALSE;
+                }
+                return Equality {
+                    ok: true,
+                    equal: if l.value {
+                        num.value() == 1.0
+                    } else {
+                        num.value() == 0.0
+                    },
+                    ..Default::default()
+                };
+            }
+            ExprData::ENull(_) | ExprData::EUndefined(_) => {
+                return Equality::FALSE;
+            }
+            _ => {}
+        },
+        ExprData::ENumber(l) => match right {
+            ExprData::ENumber(r) => {
+                return Equality {
+                    ok: true,
+                    equal: l.value() == r.value(),
+                    ..Default::default()
+                };
+            }
+            ExprData::EInlinedEnum(r) => {
+                if let ExprData::ENumber(rn) = &r.value.data {
+                    return Equality {
+                        ok: true,
+                        equal: l.value() == rn.value(),
+                        ..Default::default()
+                    };
+                }
+            }
+            ExprData::EBoolean(r) | ExprData::EBranchBoolean(r) => {
+                if !STRICT {
+                    return Equality {
+                        ok: true,
+                        // "1 == true" is true
+                        // "0 == false" is true
+                        equal: if r.value {
+                            l.value() == 1.0
+                        } else {
+                            l.value() == 0.0
+                        },
+                        ..Default::default()
+                    };
+                }
+                // "1 === true" is false
+                // "0 === false" is false
+                return Equality::FALSE;
+            }
+            ExprData::ENull(_) | ExprData::EUndefined(_) => {
+                // "(not null or undefined) == undefined" is false
+                return Equality::FALSE;
+            }
+            _ => {}
+        },
+        ExprData::EBigInt(l) => {
+            if let ExprData::EBigInt(r) = right {
+                if bun_core::strings::eql_long(&l.value, &r.value, true) {
+                    return Equality::TRUE;
+                }
+                // 0x0000n == 0n is true
+                return Equality {
+                    ok: false,
+                    ..Default::default()
+                };
+            } else {
+                return Equality {
+                    ok: matches!(right, ExprData::ENull(_) | ExprData::EUndefined(_)),
+                    equal: false,
+                    ..Default::default()
+                };
+            }
+        }
+        ExprData::EString(l) => {
+            // `StoreRef<EString>` is a Copy pointer; rebind mutably so
+            // `DerefMut` gives `&mut EString` for in-place rope flattening.
+            let mut l = *l;
+            match right {
+                ExprData::EString(r) => {
+                    let mut r = *r;
+                    r.resolve_rope_if_needed(p.arena);
+                    l.resolve_rope_if_needed(p.arena);
+                    return Equality {
+                        ok: true,
+                        equal: r.eql_string(&l),
+                        ..Default::default()
+                    };
+                }
+                ExprData::EInlinedEnum(inlined) => {
+                    if let ExprData::EString(r) = inlined.value.data {
+                        let mut r = r;
+                        r.resolve_rope_if_needed(p.arena);
+                        l.resolve_rope_if_needed(p.arena);
+                        return Equality {
+                            ok: true,
+                            equal: r.eql_string(&l),
+                            ..Default::default()
+                        };
+                    }
+                }
+                ExprData::ENull(_) | ExprData::EUndefined(_) => {
+                    return Equality::FALSE;
+                }
+                ExprData::ENumber(r) => {
+                    if !STRICT {
+                        l.resolve_rope_if_needed(p.arena);
+                        if r.value() == 0.0 && (l.is_blank() || l.eql_comptime(b"0")) {
+                            return Equality::TRUE;
+                        }
+                        if r.value() == 1.0 && l.eql_comptime(b"1") {
+                            return Equality::TRUE;
+                        }
+                        // the string could still equal 0 or 1 but it could be hex, binary, octal, ...
+                        return Equality::UNKNOWN;
+                    } else {
+                        return Equality::FALSE;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        _ => {
+            // Do not need to check left because e_require_main is
+            // always re-ordered to the right side.
+            if matches!(right, ExprData::ERequireMain) {
+                if let Some(id) = left.as_e_identifier() {
+                    if id.ref_.eql(p.module_ref) {
+                        return Equality {
+                            ok: true,
+                            equal: true,
+                            is_require_main_and_module: true,
+                        };
+                    }
+                }
+            }
+        }
     }
+
+    Equality::UNKNOWN
 }
 
 pub struct BinaryExpressionVisitor {

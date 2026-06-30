@@ -3,26 +3,15 @@ use core::ffi::c_char;
 use std::io::Write as _;
 
 #[cfg(debug_assertions)]
-use crate::{CallFrame, VirtualMachineRef as VirtualMachine};
+use crate::CallFrame;
+use crate::virtual_machine::VirtualMachine;
 #[cfg(debug_assertions)]
 use bun_core::{self, Error, err};
 
-// `SelfInfo`, `StackIterator`, plus the symbol-lookup helpers. The
-// frame-pointer unwinder lives in `bun_core::debug`.
 #[cfg(debug_assertions)]
-mod zig_std_debug {
-    pub(super) use bun_core::debug::{StackIterator, frame_address};
-
-    // ── SelfInfo ─────────────────────────────────────────────────────────
-    // D104: relocated to `bun_crash_handler::debug` (lower-tier crate, also
-    // needed by the crash handler's stack-trace printer). Re-export so the
-    // in-file callers below compile unchanged.
-    pub(super) use bun_crash_handler::debug::{
-        Module, SelfInfo, SourceLocation, SymbolInfo, get_self_debug_info,
-    };
-}
+use bun_core::debug::{StackIterator, frame_address};
 #[cfg(debug_assertions)]
-use zig_std_debug::{Module, SelfInfo, SourceLocation, StackIterator, SymbolInfo};
+use bun_crash_handler::debug::{Module, SelfInfo, SourceLocation, SymbolInfo, get_self_debug_info};
 
 // A Windows console-API colour variant is deliberately omitted because
 // btjs writes to an in-memory `Vec<u8>` returned to lldb, not to the live console
@@ -167,7 +156,7 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
 
     let tty_config = tty::detect_config_stdout();
 
-    let mut it = StackIterator::init(zig_std_debug::frame_address());
+    let mut it = StackIterator::init(frame_address());
 
     while let Some(return_address) = it.next() {
         // On arm64 macOS, the address of the last frame is 0x0 rather than 0x1 as on x86_64 macOS,
@@ -455,14 +444,6 @@ fn replace_scalar(slice: &mut [u8], from: u8, to: u8) {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Thin forwarders to `zig_std_debug`.
-// ──────────────────────────────────────────────────────────────────────────
-#[cfg(debug_assertions)]
-#[inline]
-fn get_self_debug_info() -> Result<*mut SelfInfo, Error> {
-    zig_std_debug::get_self_debug_info()
-}
 #[cfg(debug_assertions)]
 #[inline]
 fn get_module_for_address<'a>(di: &'a mut SelfInfo, addr: usize) -> Result<&'a mut Module, Error> {

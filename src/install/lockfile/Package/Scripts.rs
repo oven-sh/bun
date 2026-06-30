@@ -1,21 +1,23 @@
 use bstr::BStr;
 
+use crate::lockfile::Lockfile;
+use crate::lockfile::Scripts as LockfileScripts;
+use crate::resolution::Tag as ResolutionTag;
+use crate::{Resolution, initialize_store};
 use bun_core::ZBox;
 use bun_core::fmt::PathSep;
 use bun_core::strings;
-use bun_install::lockfile::Lockfile;
-use bun_install::lockfile::Scripts as LockfileScripts;
-use bun_install::{Resolution, ResolutionTag, initialize_store};
 use bun_paths::{self, SEP_STR};
 use bun_semver::String as SemverString;
 use bun_sys::{self, Fd};
 
-use crate::bun_json::{self, Expr};
+use bun_ast::Expr;
+use bun_parsers::json as bun_json;
 // The only concrete builder instantiation in install is the lockfile's,
-// so we take `crate::lockfile_real::StringBuilder` directly (matches Meta.rs).
-use crate::lockfile_real::{Lockfile as RealLockfile, StringBuilder as LockfileStringBuilder};
+// so we take `crate::lockfile::StringBuilder` directly (matches Meta.rs).
+use crate::lockfile::{Lockfile as RealLockfile, StringBuilder as LockfileStringBuilder};
 
-bun_output::declare_scope!(Lockfile, hidden);
+bun_core::declare_scope!(Lockfile, hidden);
 
 const SCRIPT_NAMES_LEN: usize = LockfileScripts::NAMES.len();
 
@@ -213,7 +215,7 @@ impl Scripts {
             self.get_script_entries(lockfile_buf, resolution_tag, add_node_gyp_rebuild_script);
         if first_index != -1 {
             #[cfg(windows)]
-            let mut cwd_buf = bun_paths::PathBuffer::uninit();
+            let mut cwd_buf = bun_core::PathBuffer::uninit();
 
             #[cfg(not(windows))]
             let cwd: &[u8] = cwd_.slice();
@@ -251,7 +253,7 @@ impl Scripts {
     }
 
     // Generic over `bun_semver::StringBuilder`
-    // so both `lockfile_real::StringBuilder` and `bun_semver::semver_string::Builder`
+    // so both `lockfile::StringBuilder` and `bun_semver::semver_string::Builder`
     // are accepted (both impl the trait).
     pub fn parse_count<B: bun_semver::StringBuilder>(builder: &mut B, json: Expr) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
@@ -479,7 +481,7 @@ impl List {
     pub fn append_to_lockfile(&self, lockfile: &mut Lockfile) {
         for (i, maybe_script) in self.items.iter().enumerate() {
             if let Some(script) = maybe_script {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     Lockfile,
                     "enqueue({}, {}) in {}",
                     "prepare",

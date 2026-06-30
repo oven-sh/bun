@@ -32,8 +32,8 @@ pub fn init() {
 /// Write trace events to the trace file if enabled.
 /// This is called from the watcher thread, so no locking is needed.
 /// Events are assumed to be already deduped by path.
-pub fn write_events(
-    watchlist: &WatchList,
+pub fn write_events<P: 'static>(
+    watchlist: &WatchList<P>,
     events: &[WatchEvent],
     changed_files: &[ChangedFilePath],
 ) {

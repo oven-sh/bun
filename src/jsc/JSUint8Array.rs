@@ -36,7 +36,7 @@ impl JSUint8Array {
         // Note: detached/empty JSUint8Array has ptr=null, len=0;
         // `ffi::slice_mut` tolerates `(null, 0)` so no extra guard.
         // SAFETY: JSC guarantees `ptr()` is valid for `len()` bytes while the cell is alive.
-        unsafe { bun_core::ffi::slice_mut(self.ptr(), self.len()) }
+        unsafe { bun_opaque::ffi::slice_mut(self.ptr(), self.len()) }
     }
 
     /// `bytes` must come from `bun.default_allocator` (the global mimalloc allocator);

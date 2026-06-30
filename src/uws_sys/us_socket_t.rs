@@ -139,8 +139,8 @@ impl us_socket_t {
             c::us_socket_local_address(self, buf.as_mut_ptr(), &raw mut length);
         }
         if length < 0 {
-            let errno = bun_errno::get_errno(length);
-            debug_assert!(errno != bun_errno::E::SUCCESS);
+            let errno = bun_core::get_errno(length);
+            debug_assert!(errno != bun_core::E::SUCCESS);
             return Err(bun_core::errno_to_zig_err(errno as i32));
         }
         debug_assert!(buf.len() >= length as usize);
@@ -155,8 +155,8 @@ impl us_socket_t {
             c::us_socket_remote_address(self, buf.as_mut_ptr(), &raw mut length);
         }
         if length < 0 {
-            let errno = bun_errno::get_errno(length);
-            debug_assert!(errno != bun_errno::E::SUCCESS);
+            let errno = bun_core::get_errno(length);
+            debug_assert!(errno != bun_core::E::SUCCESS);
             return Err(bun_core::errno_to_zig_err(errno as i32));
         }
         debug_assert!(buf.len() >= length as usize);
@@ -619,13 +619,7 @@ impl Default for us_socket_stream_buffer_t {
     }
 }
 
-/// Minimal structural mirror of `bun_io::StreamBuffer` for tier-0 interop.
-/// The higher-tier `bun_io::StreamBuffer` is field-identical and converts via
-/// `From`/`Into` (added in the move-in pass).
-pub struct StreamBuffer {
-    pub list: Vec<u8>,
-    pub cursor: usize,
-}
+pub use bun_collections::StreamBuffer;
 
 impl us_socket_stream_buffer_t {
     pub fn update(&mut self, stream_buffer: StreamBuffer) {

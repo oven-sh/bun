@@ -225,7 +225,7 @@ mod draft {
     use core::ptr;
 
     use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
-    use bun_api::{self, BunInstall, NpmRegistry, npm_registry};
+    use bun_api::{self, npm_registry};
     use bun_ast::E::Rope;
     use bun_ast::{E, Expr, ExprData};
     use bun_ast::{IntoStr, Loc, Log, Source};
@@ -233,6 +233,7 @@ mod draft {
     use bun_core::ZStr;
     use bun_core::{Global, Output};
     use bun_dotenv::Loader as DotEnvLoader;
+    use bun_options_types::schema::api::{BunInstall, Ca, NpmRegistry};
     use bun_url::URL;
 
     use super::{
@@ -1278,7 +1279,7 @@ mod draft {
         for &npmrc_path in npmrc_paths {
             let source = match bun_ast::source_from_file(
                 npmrc_path,
-                bun_ast::ToSourceOpts { convert_bom: true },
+                bun_ast::ToSourceOptions { convert_bom: true },
             ) {
                 Ok(s) => s,
                 Err(err) => {
@@ -1381,7 +1382,7 @@ mod draft {
 
         if let Some(query) = out.as_property(b"ca") {
             if let Some(str_) = query.expr.as_utf8_string_literal() {
-                install.ca = Some(bun_api::Ca::Str(Box::<[u8]>::from(str_)));
+                install.ca = Some(Ca::Str(Box::<[u8]>::from(str_)));
             } else if let ExprData::EArray(arr) = &query.expr.data {
                 let mut list: Vec<Box<[u8]>> = Vec::with_capacity(arr.items.len_u32() as usize);
                 for item in arr.items.slice() {
@@ -1389,7 +1390,7 @@ mod draft {
                         list.push(Box::<[u8]>::from(s));
                     }
                 }
-                install.ca = Some(bun_api::Ca::List(list.into_boxed_slice()));
+                install.ca = Some(Ca::List(list.into_boxed_slice()));
             }
         }
 
@@ -1496,7 +1497,7 @@ mod draft {
 
         if let Some(public_hoist_pattern_expr) = out.get(b"public-hoist-pattern") {
             install.public_hoist_pattern =
-                match pnpm_matcher_from_expr(&public_hoist_pattern_expr, log, source, bump) {
+                match PnpmMatcher::from_expr(&public_hoist_pattern_expr, log, source) {
                     Ok(v) => Some(v),
                     Err(FromExprError::OutOfMemory) => return Err(AllocError),
                     Err(_) => {
@@ -1508,16 +1509,15 @@ mod draft {
         }
 
         if let Some(hoist_pattern_expr) = out.get(b"hoist-pattern") {
-            install.hoist_pattern =
-                match pnpm_matcher_from_expr(&hoist_pattern_expr, log, source, bump) {
-                    Ok(v) => Some(v),
-                    Err(FromExprError::OutOfMemory) => return Err(AllocError),
-                    Err(_) => {
-                        // error.InvalidRegExp, error.UnexpectedExpr
-                        log.reset();
-                        None
-                    }
-                };
+            install.hoist_pattern = match PnpmMatcher::from_expr(&hoist_pattern_expr, log, source) {
+                Ok(v) => Some(v),
+                Err(FromExprError::OutOfMemory) => return Err(AllocError),
+                Err(_) => {
+                    // error.InvalidRegExp, error.UnexpectedExpr
+                    log.reset();
+                    None
+                }
+            };
         }
 
         let mut registry_map = install.scoped.take().unwrap_or_default();
@@ -1599,7 +1599,7 @@ mod draft {
                     break 'brk (Box::from(u.host), Box::from(u.pathname));
                 }
                 let u = URL::parse(
-                    bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL.as_bytes(),
+                    bun_install_types::NodeLinker::registry_defaults::DEFAULT_URL.as_bytes(),
                 );
                 (Box::from(u.host), Box::from(u.pathname))
             };
@@ -1699,7 +1699,7 @@ mod draft {
                             token: Box::default(),
                             username: Box::default(),
                             url: Box::<[u8]>::from(
-                                bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL
+                                bun_install_types::NodeLinker::registry_defaults::DEFAULT_URL
                                     .as_bytes(),
                             ),
                             email: Box::default(),
@@ -1803,125 +1803,7 @@ mod draft {
         Ok(())
     }
 
-    use bun_install_types::NodeLinker::{
-        Behavior as PnpmBehavior, CreateMatcherError, FromExprError, Matcher as PnpmMatcherEntry,
-        PnpmMatcher, create_matcher,
-    };
-
-    /// `PnpmMatcher.fromExpr` operating on
-    /// `bun_ast::Expr` instead of the lower-tier `bun_ast::Expr`.
-    ///
-    /// `bun_install_types` (T2) cannot depend on `bun_js_parser` (T4),
-    /// and the two `ExprData` enums are distinct (closed Rust enums; only the leaf
-    /// `E::*` payloads are shared). `bun_ini` depends on both, so the T4-typed
-    /// overload lives here. The matcher construction is delegated to the shared
-    /// `create_matcher` helper in `bun_install_types::NodeLinker`.
-    fn pnpm_matcher_from_expr(
-        expr: &Expr,
-        log: &mut Log,
-        source: &Source,
-        bump: &Arena,
-    ) -> Result<PnpmMatcher, FromExprError> {
-        let mut buf: Vec<u8> = Vec::new();
-
-        // bun.jsc.initialize(false) is performed lazily inside the regex vtable
-        // compile hook (tier-6 owns it).
-
-        let mut matchers: Vec<PnpmMatcherEntry> = Vec::new();
-        let mut has_include = false;
-        let mut has_exclude = false;
-
-        match &expr.data {
-            ExprData::EString(s) => {
-                // SAFETY: arena-backed `EString::slice` mutates only its own
-                // resolved-data cache; the StoreRef pointee outlives this call.
-                let s_mut: &mut E::EString = unsafe { &mut *s.as_ptr() };
-                let pattern = s_mut.slice(bump);
-                let matcher = match create_matcher(pattern, &mut buf) {
-                    Ok(m) => m,
-                    Err(CreateMatcherError::OutOfMemory) => return Err(FromExprError::OutOfMemory),
-                    Err(CreateMatcherError::InvalidRegExp) => {
-                        log.add_error_fmt_opts(
-                            format_args!("Invalid regex: {}", bstr::BStr::new(pattern)),
-                            bun_ast::AddErrorOptions {
-                                loc: expr.loc,
-                                redact_sensitive_information: true,
-                                source: Some(source),
-                                ..Default::default()
-                            },
-                        );
-                        return Err(FromExprError::InvalidRegExp);
-                    }
-                };
-                has_include = has_include || !matcher.is_exclude;
-                has_exclude = has_exclude || matcher.is_exclude;
-                matchers.push(matcher);
-            }
-            ExprData::EArray(patterns) => {
-                for pattern_expr in patterns.items.slice() {
-                    if let Some(pattern) = pattern_expr.as_string_cloned(bump)? {
-                        let matcher = match create_matcher(pattern, &mut buf) {
-                            Ok(m) => m,
-                            Err(CreateMatcherError::OutOfMemory) => {
-                                return Err(FromExprError::OutOfMemory);
-                            }
-                            Err(CreateMatcherError::InvalidRegExp) => {
-                                log.add_error_fmt_opts(
-                                    format_args!("Invalid regex: {}", bstr::BStr::new(pattern)),
-                                    bun_ast::AddErrorOptions {
-                                        loc: pattern_expr.loc,
-                                        redact_sensitive_information: true,
-                                        source: Some(source),
-                                        ..Default::default()
-                                    },
-                                );
-                                return Err(FromExprError::InvalidRegExp);
-                            }
-                        };
-                        has_include = has_include || !matcher.is_exclude;
-                        has_exclude = has_exclude || matcher.is_exclude;
-                        matchers.push(matcher);
-                    } else {
-                        log.add_error_opts(
-                            b"Expected a string or an array of strings",
-                            bun_ast::AddErrorOptions {
-                                loc: pattern_expr.loc,
-                                redact_sensitive_information: true,
-                                source: Some(source),
-                                ..Default::default()
-                            },
-                        );
-                        return Err(FromExprError::UnexpectedExpr);
-                    }
-                }
-            }
-            _ => {
-                log.add_error_opts(
-                    b"Expected a string or an array of strings",
-                    bun_ast::AddErrorOptions {
-                        loc: expr.loc,
-                        redact_sensitive_information: true,
-                        source: Some(source),
-                        ..Default::default()
-                    },
-                );
-                return Err(FromExprError::UnexpectedExpr);
-            }
-        }
-
-        let behavior = if !has_include {
-            PnpmBehavior::AllMatchersExclude
-        } else if !has_exclude {
-            PnpmBehavior::AllMatchersInclude
-        } else {
-            PnpmBehavior::HasExcludeAndIncludeMatchers
-        };
-
-        Ok(PnpmMatcher {
-            matchers: matchers.into_boxed_slice(),
-            behavior,
-        })
-    }
+    use bun_install_types::NodeLinker::{FromExprError, PnpmMatcher};
 
     fn handle_auth(
         v: &mut NpmRegistry,

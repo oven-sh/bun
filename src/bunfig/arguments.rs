@@ -5,11 +5,11 @@
 
 use bstr::BStr;
 use bun_bundler::options;
+use bun_core::PathBuffer;
 use bun_core::ZStr;
 use bun_core::{self, Global, Output, env_var};
 use bun_options_types::command_tag::{ALWAYS_LOADS_CONFIG, Tag as CommandTag};
 use bun_options_types::context::Context;
-use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
 use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
 

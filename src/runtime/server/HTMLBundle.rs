@@ -8,8 +8,8 @@ use core::ptr::NonNull;
 
 use bun_ast::Loader;
 use bun_ast::Log;
-use bun_bundler::bundle_v2::BundleV2Result;
-use bun_bundler::options::{self as bundler_options, LoaderExt as _};
+use bun_bundler::BundleThread::BundleV2Result;
+use bun_bundler::options as bundler_options;
 use bun_core::strings;
 use bun_http::Headers;
 use bun_http_types::Method::Method;
@@ -32,7 +32,7 @@ use crate::webcore::AnyBlob;
 // `pub static HTMLBundle` doesn't leak alongside the `pub struct HTMLBundle`
 // re-export from `crate::server`.
 mod debug_scope {
-    bun_output::declare_scope!(HTMLBundle, hidden);
+    bun_core::declare_scope!(HTMLBundle, hidden);
 }
 use debug_scope::HTMLBundle as debug;
 
@@ -318,7 +318,7 @@ impl Route {
             match route.state.get() {
                 State::Pending => {
                     if bun_core::Environment::ENABLE_LOGS {
-                        bun_output::scoped_log!(
+                        bun_core::scoped_log!(
                             debug,
                             "onRequest: {} - pending",
                             bstr::BStr::new(req.url())
@@ -329,7 +329,7 @@ impl Route {
                 }
                 State::Building(_) => {
                     if bun_core::Environment::ENABLE_LOGS {
-                        bun_output::scoped_log!(
+                        bun_core::scoped_log!(
                             debug,
                             "onRequest: {} - building",
                             bstr::BStr::new(req.url())
@@ -365,7 +365,7 @@ impl Route {
                 }
                 State::Err(_log) => {
                     if bun_core::Environment::ENABLE_LOGS {
-                        bun_output::scoped_log!(
+                        bun_core::scoped_log!(
                             debug,
                             "onRequest: {} - err",
                             bstr::BStr::new(req.url())
@@ -376,7 +376,7 @@ impl Route {
                 }
                 State::Html(html) => {
                     if bun_core::Environment::ENABLE_LOGS {
-                        bun_output::scoped_log!(
+                        bun_core::scoped_log!(
                             debug,
                             "onRequest: {} - html",
                             bstr::BStr::new(req.url())
@@ -439,9 +439,9 @@ impl Route {
             config.public_path.append_char(b'/')?;
         }
 
-        if xform.serve_env_behavior != bun_options_types::schema::api::DotEnvBehavior::_none {
+        if xform.serve_env_behavior != bun_dotenv::DotEnvBehavior::_none {
             config.env_behavior = xform.serve_env_behavior;
-            if config.env_behavior == bun_options_types::schema::api::DotEnvBehavior::Prefix {
+            if config.env_behavior == bun_dotenv::DotEnvBehavior::Prefix {
                 config
                     .env_prefix
                     .append_slice(xform.serve_env_prefix.as_deref().unwrap_or(b""))?;
@@ -503,7 +503,7 @@ impl Route {
                 .put(b"process.env.NODE_ENV", b"\"production\"")?;
             config.jsx.development = false;
         } else {
-            config.force_node_env = bundler_options::ForceNodeEnv::Development;
+            config.force_node_env = bun_options_types::ForceNodeEnv::Development;
             config.jsx.development = true;
         }
         config.source_map = bundler_options::SourceMapOption::Linked;
@@ -527,7 +527,7 @@ impl Route {
     }
 
     pub fn on_plugins_rejected(&self) -> Result<(), bun_core::Error> {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             debug,
             "HTMLBundleRoute(0x{:x}) plugins rejected",
             std::ptr::from_ref(self) as usize
@@ -545,7 +545,7 @@ impl Route {
         match &mut completion_task.result {
             BundleV2Result::Err(err) => {
                 if bun_core::Environment::ENABLE_LOGS {
-                    bun_output::scoped_log!(debug, "onComplete: err - {}", err);
+                    bun_core::scoped_log!(debug, "onComplete: err - {}", err);
                 }
                 let mut log = Log::init();
                 completion_task.log.clone_to_with_recycled(&mut log, true);
@@ -555,16 +555,17 @@ impl Route {
                         // `Log::print` accepts it via the `*mut io::Writer`
                         // `IntoLogWrite` adapter and dispatches on
                         // `enable_ansi_colors_stderr` internally.
-                        let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
+                        let writer: *mut bun_core::io::Writer =
+                            bun_core::output::error_writer_buffered();
                         let _ = log.print(writer);
-                        bun_output::flush();
+                        bun_core::output::flush();
                     }
                 }
                 self.state.set(State::Err(log));
             }
             BundleV2Result::Value(bundle) => {
                 if bun_core::Environment::ENABLE_LOGS {
-                    bun_output::scoped_log!(debug, "onComplete: success");
+                    bun_core::scoped_log!(debug, "onComplete: success");
                 }
                 // Find the HTML entry point and create static routes
                 let Some(server) = self.server.get() else {
@@ -579,18 +580,18 @@ impl Route {
                     let duration = now.saturating_sub(completion_task.started_at_ns);
                     let duration_f64 = duration as f64 / 1_000_000_000.0;
 
-                    bun_output::print_elapsed(duration_f64);
+                    bun_core::output::print_elapsed(duration_f64);
                     let mut byte_length: u64 = 0;
                     for output_file in output_files.iter() {
                         byte_length += output_file.size_without_sourcemap as u64;
                     }
 
-                    bun_output::pretty_errorln!(
+                    bun_core::pretty_errorln!(
                         " <green>bundle<r> {} <d>{:.2} KB<r>",
                         bstr::BStr::new(bun_paths::basename(&self.bundle.path)),
                         byte_length as f64 / 1000.0
                     );
-                    bun_output::flush();
+                    bun_core::output::flush();
                 }
 
                 // `AnyRoute::Static` carries
@@ -613,7 +614,10 @@ impl Route {
                             Some(ct) => ct,
                             None => {
                                 debug_assert!(false); // should be populated by `output_file.to_blob`
-                                fallback_mime = output_files[i].loader.to_mime_type(&[]);
+                                fallback_mime = bun_http_types::MimeType::MimeType::from_loader(
+                                    output_files[i].loader,
+                                    &[],
+                                );
                                 &fallback_mime.value
                             }
                         },

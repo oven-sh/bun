@@ -23,9 +23,9 @@ pub(crate) enum TestCategory {
     ParserOptions,
 }
 
-// These test-only wrappers are consumed as plain safe fns through
-// `dispatch_js2native.rs` re-exports, so they don't use the
-// `#[bun_jsc::host_fn]` C-ABI shim.
+// These test-only wrappers are consumed as plain safe fns by the
+// `generated_js2native.rs` thunks (generate-js2native.ts emits their crate
+// paths directly), so they don't use the `#[bun_jsc::host_fn]` C-ABI shim.
 
 pub fn minify_error_test_with_options(
     global: &JSGlobalObject,
@@ -92,8 +92,8 @@ pub(crate) fn testing_impl(
 ) -> JsResult<JSValue> {
     use bun_ast::ImportRecord;
     use bun_css::{
-        DefaultAtRule, ImportRecordHandler, LocalsResultsMap, MinifyOptions, ParserOptions,
-        PrinterOptions, StyleSheet,
+        DefaultAtRule, ImportInfo, LocalsResultsMap, MinifyOptions, ParserOptions, PrinterOptions,
+        StyleSheet,
     };
     use bun_jsc::{LogJsc as _, StringJsc as _};
 
@@ -204,9 +204,7 @@ pub(crate) fn testing_impl(
                     },
                     ..Default::default()
                 },
-                Some(ImportRecordHandler::init_outside_of_bundler(
-                    &import_records,
-                )),
+                Some(ImportInfo::init_outside_of_bundler(&import_records)),
                 Some(&local_names),
                 &symbols,
             ) {
@@ -301,9 +299,7 @@ fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers
 
 pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_ast::ImportRecord;
-    use bun_css::{
-        ImportRecordHandler, MinifyOptions, ParserOptions, PrinterOptions, StyleAttribute,
-    };
+    use bun_css::{ImportInfo, MinifyOptions, ParserOptions, PrinterOptions, StyleAttribute};
     use bun_jsc::{LogJsc as _, StringJsc as _};
 
     let arena = Arena::new();
@@ -365,9 +361,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
                     targets,
                     ..Default::default()
                 },
-                Some(ImportRecordHandler::init_outside_of_bundler(
-                    &import_records,
-                )),
+                Some(ImportInfo::init_outside_of_bundler(&import_records)),
             ) {
                 Ok(r) => r,
                 Err(_e) => {

@@ -4,16 +4,9 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
+use bun_core::JsResult;
+
 use crate::Task;
-
-/// Historical low-tier alias for `bun_jsc::JsError`. The canonical enum now lives in
-/// `bun_core` (tier-0), so this is a straight re-export — the old "erased discriminant"
-/// split exists only to keep call sites compiling.
-pub use bun_core::JsError as ErasedJsError;
-
-/// Result alias for tier-3 callbacks. Same type as `bun_jsc::JsResult<T>`; kept as a
-/// local alias so `AnyTask`/`ManagedTask` signatures don't take an upward dep.
-pub type JsResult<T> = core::result::Result<T, ErasedJsError>;
 
 pub struct AnyTask {
     pub ctx: Option<NonNull<c_void>>,

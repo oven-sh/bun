@@ -97,8 +97,6 @@ pub mod source_type;
 pub mod text_codec;
 #[path = "URLSearchParams.rs"]
 pub mod url_search_params;
-#[path = "WTF.rs"]
-pub mod wtf;
 #[path = "ZigErrorType.rs"]
 pub mod zig_error_type;
 #[path = "ZigStackFrameCode.rs"]
@@ -106,83 +104,14 @@ pub mod zig_stack_frame_code;
 #[path = "ZigStackFramePosition.rs"]
 pub mod zig_stack_frame_position;
 
-/// `bun.schema.api` types that reference `ZigStackFramePosition` (this crate)
-/// and so cannot live in `bun_options_types::schema::api` without a dep cycle.
+/// Path-compat: canonical defs moved to `bun_options_types::schema::api`.
 pub mod schema_api {
-    use crate::ZigStackFramePosition;
-
-    /// Non-exhaustive stack-frame scope tag. Newtype keeps any-u8 FFI-safe.
-    #[repr(transparent)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-    pub struct StackFrameScope(pub u8);
-
-    impl StackFrameScope {
-        pub const NONE: Self = Self(0);
-        pub const EVAL: Self = Self(1);
-        pub const MODULE: Self = Self(2);
-        pub const FUNCTION: Self = Self(3);
-        pub const GLOBAL: Self = Self(4);
-        pub const WASM: Self = Self(5);
-        pub const CONSTRUCTOR: Self = Self(6);
-    }
-
-    /// Line/column position of a stack frame (FFI layout shared with C++).
-    pub type StackFramePosition = ZigStackFramePosition;
-
-    /// One captured stack frame: function name, file, position, and scope (FFI layout shared with C++).
-    #[derive(Clone)]
-    pub struct StackFrame {
-        /// function_name
-        pub function_name: Box<[u8]>,
-        /// file
-        pub file: Box<[u8]>,
-        /// position
-        pub position: StackFramePosition,
-        /// scope
-        pub scope: StackFrameScope,
-    }
-
-    impl Default for StackFrame {
-        fn default() -> Self {
-            Self {
-                function_name: Box::default(),
-                file: Box::default(),
-                position: StackFramePosition::INVALID,
-                scope: StackFrameScope::NONE,
-            }
-        }
-    }
-
-    /// A line of source text with its line number, used for error previews.
-    #[derive(Clone, Default)]
-    pub struct SourceLine {
-        /// line
-        pub line: i32,
-        /// text
-        pub text: Box<[u8]>,
-    }
-
-    /// A captured stack trace: frames plus the source lines used to render previews.
-    #[derive(Clone, Default)]
-    pub struct StackTrace {
-        /// source_lines
-        pub source_lines: Vec<SourceLine>,
-        /// frames
-        pub frames: Vec<StackFrame>,
-    }
-
-    /// Lives here (not `bun_options_types::schema::api`) because `stack`'s
-    /// [`StackTrace`] transitively names `ZigStackFramePosition` from this
-    /// crate; the `bun_options_types` copy omits `stack` to avoid the cycle.
-    #[derive(Clone, Default)]
-    pub struct JsException {
-        pub name: Box<[u8]>,
-        pub message: Box<[u8]>,
-        pub runtime_type: u16,
-        pub code: u16,
-        pub stack: StackTrace,
-    }
+    pub use bun_options_types::schema::api::{
+        JsException, SourceLine, StackFrame, StackFramePosition, StackFrameScope, StackTrace,
+    };
 }
+#[path = "SpawnSyncEventLoop.rs"]
+pub mod SpawnSyncEventLoop;
 #[path = "array_buffer.rs"]
 pub mod array_buffer;
 #[path = "CommonStrings.rs"]
@@ -200,15 +129,13 @@ pub mod dom_url;
 #[path = "Exception.rs"]
 pub mod exception;
 #[path = "ipc.rs"]
-pub mod ipc;
+pub mod ipc_mode;
 #[path = "JSArray.rs"]
 pub mod js_array;
 #[path = "JSBigInt.rs"]
 pub mod js_big_int;
 #[path = "JSFunction.rs"]
 pub mod js_function;
-#[path = "JSInternalPromise.rs"]
-pub mod js_internal_promise;
 #[path = "JSModuleLoader.rs"]
 pub mod js_module_loader;
 #[path = "JSPromise.rs"]
@@ -238,8 +165,8 @@ pub mod zig_string;
 
 pub use self::js_value::{
     BackingInt, CoerceTo, ComparisonResult, ForEachCallback, FromAny, FromJsEnum, JSValue,
-    PropertyIteratorFn, Protected as ProtectedJSValue, ProxyField, ProxyInternalField,
-    SerializedFlags, SerializedScriptValue,
+    PropertyIteratorFn, Protected as ProtectedJSValue, ProxyField, SerializedFlags,
+    SerializedScriptValue,
 };
 
 // LAYERING (PORTING.md §Dispatch): the task dispatch covers every concrete
@@ -254,15 +181,11 @@ pub use self::array_buffer::{
 };
 pub use self::console_object as ConsoleObject;
 pub use self::console_object::Formatter;
-/// `ConsoleObject.Formatter.Tag` re-exported under both names downstream
-/// drafts use (`FormatAs::Double` in Response.rs, `FormatTag::Private` in
-/// Request.rs / S3Client.rs). Same enum; the split is naming drift only.
 pub use self::console_object::formatter::Tag as FormatTag;
-pub use self::console_object::formatter::Tag as FormatAs;
 pub use self::js_array_iterator::JSArrayIterator;
 pub use self::js_promise::JSPromise;
 pub use self::rare_data as RareData;
-pub use self::system_error::SystemError;
+pub use self::system_error::{SystemError, SystemErrorJsc};
 pub use self::task::Taskable;
 
 /// Trait surface for `write_format`-style hooks on runtime types
@@ -405,7 +328,6 @@ pub use self::counters::Counters;
 pub use self::decoded_js_value::DecodedJSValue;
 pub use self::deprecated_strong::DeprecatedStrong;
 pub use self::js_array::JSArray;
-pub use self::js_internal_promise::JSInternalPromise;
 pub use self::js_ref::JsRef;
 pub use self::string_builder::StringBuilder;
 pub use self::uuid::{UUID, UUID5, UUID7};
@@ -433,10 +355,8 @@ pub use self::common_strings::CommonStrings;
 pub use self::dom_url::DOMURL;
 pub use self::js_big_int::JSBigInt;
 
-pub use self::common_abort_reason::{CommonAbortReason, CommonAbortReasonExt};
+pub use self::common_abort_reason::CommonAbortReasonExt;
 pub use self::custom_getter_setter::CustomGetterSetter;
-/// Some drafts spell this `jsc::ErrCode` — keep both until call-sites converge.
-pub use self::error_code::ErrorCode as ErrCode;
 pub use self::error_code::{ErrorBuilder, ErrorCode};
 pub use self::errorable::Errorable;
 pub use self::event_type::EventType;
@@ -479,6 +399,7 @@ pub mod http_server_agent;
 pub mod js_secrets;
 #[path = "NodeModuleModule.rs"]
 pub mod node_module_module;
+pub mod object_url_registry;
 #[path = "PluginRunner.rs"]
 pub mod plugin_runner;
 #[path = "PosixSignalHandle.rs"]
@@ -494,37 +415,6 @@ pub mod virtual_machine_exports;
 #[path = "host_fn.rs"] pub mod host_fn;
 #[path = "AnyPromise.rs"]
 pub mod any_promise;
-#[path = "javascript_core_c_api.rs"]
-pub mod c_api;
-#[path = "CachedBytecode.rs"]
-pub mod cached_bytecode;
-#[path = "DeferredError.rs"]
-pub mod deferred_error;
-#[path = "DOMFormData.rs"]
-pub mod dom_form_data;
-#[path = "host_object.rs"]
-pub mod host_object;
-#[path = "JSArrayIterator.rs"]
-pub mod js_array_iterator;
-#[path = "JSGlobalObject.rs"]
-pub mod js_global_object;
-#[path = "JSPropertyIterator.rs"]
-pub mod js_property_iterator;
-#[path = "SystemError.rs"]
-pub mod system_error;
-#[path = "URL.rs"]
-pub mod url;
-#[path = "VM.rs"]
-pub mod vm;
-#[path = "ZigException.rs"]
-pub mod zig_exception;
-#[path = "ZigStackFrame.rs"]
-pub mod zig_stack_frame;
-#[path = "ZigStackTrace.rs"]
-pub mod zig_stack_trace;
-// `generated_classes_list.rs` is mounted by `bun_runtime` (see its lib.rs) —
-// every aliased type lives in api/webcore/test_runner/bake, so mounting it
-// here would create a `bun_jsc → bun_runtime` cycle.
 #[path = "AsyncModule.rs"]
 pub mod async_module;
 #[path = "bindgen.rs"]
@@ -537,24 +427,50 @@ pub mod bun_cpu_profiler;
 pub mod bun_heap_profiler;
 #[path = "bun_string_jsc.rs"]
 pub mod bun_string_jsc;
+#[path = "javascript_core_c_api.rs"]
+pub mod c_api;
+#[path = "CachedBytecode.rs"]
+pub mod cached_bytecode;
 #[path = "codegen.rs"]
 pub mod codegen_mod;
 #[path = "comptime_string_map_jsc.rs"]
 pub mod comptime_string_map_jsc;
 #[path = "ConcurrentPromiseTask.rs"]
 pub mod concurrent_promise_task;
-#[path = "EventLoopHandle.rs"]
-pub mod event_loop_handle;
+#[path = "DeferredError.rs"]
+pub mod deferred_error;
+#[path = "DOMFormData.rs"]
+pub mod dom_form_data;
 #[path = "FFI.rs"]
 pub mod ffi;
+#[path = "host_object.rs"]
+pub mod host_object;
+#[path = "JSArrayIterator.rs"]
+pub mod js_array_iterator;
+#[path = "JSGlobalObject.rs"]
+pub mod js_global_object;
+#[path = "JSPropertyIterator.rs"]
+pub mod js_property_iterator;
 #[path = "JSCScheduler.rs"]
 pub mod jsc_scheduler;
 #[path = "JSONLineBuffer.rs"]
 pub mod json_line_buffer;
 #[path = "ProcessAutoKiller.rs"]
 pub mod process_auto_killer;
+#[path = "SystemError.rs"]
+pub mod system_error;
+#[path = "URL.rs"]
+pub mod url;
+#[path = "VM.rs"]
+pub mod vm;
 #[path = "WorkTask.rs"]
 pub mod work_task;
+#[path = "ZigException.rs"]
+pub mod zig_exception;
+#[path = "ZigStackFrame.rs"]
+pub mod zig_stack_frame;
+#[path = "ZigStackTrace.rs"]
+pub mod zig_stack_trace;
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
 pub fn initialize(eval_mode: bool) {
@@ -608,7 +524,7 @@ fn is_one_shot_eval_invocation() -> bool {
 
 extern "C" fn on_jsc_invalid_env_var(name: *const u8, len: usize) {
     // SAFETY: C++ guarantees `name[..len]` is valid for the call.
-    let name = unsafe { bun_core::ffi::slice(name, len) };
+    let name = unsafe { bun_opaque::ffi::slice(name, len) };
     bun_core::err_generic!(
         "invalid JSC environment variable\n\n    <b>{}<r>\n\n\
 For a list of options, see this file:\n\n    \
@@ -620,16 +536,8 @@ Warning: options change between releases of Bun and WebKit without notice. This 
     bun_core::exit(1);
 }
 
-/// `bun.JSError` — the canonical Bun JS error union (`error{Thrown, OutOfMemory, Terminated}`).
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum JsError {
-    /// A JavaScript exception is pending in the VM's exception scope.
-    Thrown,
-    /// Allocation failure; caller must throw an `OutOfMemoryError`.
-    OutOfMemory,
-    /// The VM is terminating (worker shutdown / `process.exit`).
-    Terminated,
-}
+/// `bun.JSError` — canonical definition lives in `bun_core` (tier-0).
+pub use bun_core::JsError;
 /// `bun.JSError!T`. Dropping a `JsResult` swallows a pending JS exception —
 /// always `?`-propagate, [`JsResultExt::report_unhandled`], or `let _ =` with a
 /// comment justifying the swallow.
@@ -638,39 +546,6 @@ pub enum JsError {
 /// carries it. We instead `#![warn(unused_must_use)]` in every crate that
 /// blanket-`allow(unused)`s so the underlying lint is never silenced.
 pub type JsResult<T> = core::result::Result<T, JsError>;
-
-bun_core::oom_from_alloc!(JsError);
-
-impl From<bun_event_loop::ErasedJsError> for JsError {
-    #[inline]
-    fn from(e: bun_event_loop::ErasedJsError) -> Self {
-        use bun_event_loop::ErasedJsError as E;
-        match e {
-            E::Thrown => JsError::Thrown,
-            E::OutOfMemory => JsError::OutOfMemory,
-            E::Terminated => JsError::Terminated,
-        }
-    }
-}
-
-impl From<JsTerminated> for bun_event_loop::ErasedJsError {
-    #[inline]
-    fn from(_: JsTerminated) -> Self {
-        bun_event_loop::ErasedJsError::Terminated
-    }
-}
-
-impl From<JsError> for bun_event_loop::ErasedJsError {
-    #[inline]
-    fn from(e: JsError) -> Self {
-        use bun_event_loop::ErasedJsError as E;
-        match e {
-            JsError::Thrown => E::Thrown,
-            JsError::OutOfMemory => E::OutOfMemory,
-            JsError::Terminated => E::Terminated,
-        }
-    }
-}
 
 /// Converts `bun.JSError` → `std.Io.Writer.Error` for Console formatting paths.
 /// `Display` impls return `fmt::Error`; the JS exception, if any, remains on the VM.
@@ -717,31 +592,6 @@ impl<T> JsResultExt for JsResult<T> {
             if e != JsError::Terminated {
                 global.report_uncaught_exception_from_error(e);
             }
-        }
-    }
-}
-
-impl From<bun_core::Error> for JsError {
-    fn from(_: bun_core::Error) -> Self {
-        // Mapping to `Thrown` here lets `?` propagate while the actual throw
-        // is handled by the host-fn wrapper.
-        JsError::Thrown
-    }
-}
-
-impl From<JsError> for bun_core::Error {
-    /// Widen a `bun.JSError` value back into the `anyerror` newtype. Preserves
-    /// the exact error tag so call sites that round-trip through
-    /// `bun_core::Error` (e.g. the `bun_bundler::dispatch::DevServerVTable`
-    /// boundary) keep `error.OutOfMemory` distinguishable from `error.JSError`.
-    #[inline]
-    fn from(e: JsError) -> Self {
-        match e {
-            JsError::OutOfMemory => bun_core::err!("OutOfMemory"),
-            // `Terminated` (worker shutdown) has no distinct error tag of its
-            // own, so collapse into `JSError` like every other thrown JS
-            // exception.
-            JsError::Thrown | JsError::Terminated => bun_core::err!("JSError"),
         }
     }
 }
@@ -800,11 +650,6 @@ impl ThrowFmtArgs for core::fmt::Arguments<'_> {
 /// must use absolute `::bun_jsc::` paths and cannot assume `::bun_core` is in
 /// the consumer crate's dep graph.
 pub use bun_core::heap;
-/// Debug-only binding-presence marker.
-/// MOVE_DOWN: the macro lives in `bun_core` (no jsc dep) so `bun_io` /
-/// `bun_http_jsc` / `bun_event_loop` can call it without a `bun_jsc` cycle.
-/// Re-exported here so existing `crate::mark_binding!()` call sites resolve.
-pub use bun_core::mark_binding;
 
 pub use self::host_fn::{
     JSHostFn, JSHostFnZig, JSHostFnZigWithContext, JSHostFunctionTypeWithContext,
@@ -1022,8 +867,6 @@ impl Default for IntegerRange {
         }
     }
 }
-/// Back-compat alias — earlier ports spelled this `IntegerRangeOptions`.
-pub type IntegerRangeOptions = IntegerRange;
 
 // ──────────────────────────────────────────────────────────────────────────
 // ResolvedSource — `#[repr(C)]` mirror of the C struct in
@@ -1110,7 +953,7 @@ pub use self::resolved_source_tag::ResolvedSourceTag;
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "FetchHeaders.rs"]
 pub mod fetch_headers;
-pub use self::fetch_headers::{FetchHeaders, HTTPHeaderName};
+pub use self::fetch_headers::FetchHeaders;
 
 /// `BuiltinName` — fast-path property keys preallocated as `JSC::Identifier`s
 /// in C++ (`BunBuiltinNames.h`). Passed to `JSValue::fast_get` as a `u8` index
@@ -1149,27 +992,7 @@ pub enum BuiltinName {
     cmd,
 }
 
-#[allow(non_upper_case_globals)]
 impl BuiltinName {
-    // PascalCase aliases for downstream callers (Response.rs / Request.rs /
-    // streams.rs / fetch.rs / TextDecoder.rs / pretty_format.rs use these).
-    pub const Method: Self = Self::method;
-    pub const Headers: Self = Self::headers;
-    pub const Status: Self = Self::status;
-    pub const StatusText: Self = Self::statusText;
-    pub const Url: Self = Self::url;
-    pub const Body: Self = Self::body;
-    pub const Data: Self = Self::data;
-    pub const InspectCustom: Self = Self::inspectCustom;
-    pub const HighWaterMark: Self = Self::highWaterMark;
-    pub const Path: Self = Self::path;
-    pub const Stream: Self = Self::stream;
-    pub const Message: Self = Self::message;
-    pub const Error: Self = Self::error;
-    pub const Encoding: Self = Self::encoding;
-    pub const Type: Self = Self::type_;
-    pub const Signal: Self = Self::signal;
-
     pub fn has(property: &[u8]) -> bool {
         Self::get(property).is_some()
     }
@@ -1235,11 +1058,7 @@ pub use bun_ptr::RefPtr;
 /// so submodules can write `crate::String`.
 pub use bun_core::String;
 
-/// Legacy alias used by runtime drafts: `VirtualMachineRef` is just the
-/// `VirtualMachine` struct itself (callers hold `*mut VirtualMachineRef`).
-pub use self::virtual_machine::VirtualMachine as VirtualMachineRef;
-
-/// `jsc.AnyPromise` — `JSPromise | JSInternalPromise`.
+/// `jsc.AnyPromise` — `JSPromise`.
 pub use self::any_promise::AnyPromise;
 
 pub use self::js_promise::UnwrapMode as PromiseUnwrapMode;
@@ -1515,6 +1334,8 @@ pub use self::virtual_machine::InitOptions as VirtualMachineInitOptions;
 pub mod module_loader;
 pub use self::module_loader as ModuleLoader;
 
+pub mod timer;
+
 pub type ErrorableResolvedSource = Errorable<ResolvedSource>;
 pub type ErrorableZigString = Errorable<bun_core::ZigString>;
 pub type ErrorableJSValue = Errorable<JSValue>;
@@ -1523,10 +1344,6 @@ pub type ErrorableString = Errorable<bun_core::String>;
 #[path = "hot_reloader.rs"]
 pub mod hot_reloader;
 pub use self::hot_reloader::{HotReloader, ImportWatcher, NewHotReloader, WatchReloader};
-
-#[path = "RuntimeTranspilerCache.rs"]
-pub mod runtime_transpiler_cache;
-pub use self::runtime_transpiler_cache::RuntimeTranspilerCache;
 
 #[path = "RuntimeTranspilerStore.rs"]
 pub mod runtime_transpiler_store;
@@ -1569,16 +1386,13 @@ pub use self::c_api as C;
 pub use self::c_api as c;
 /// Deprecated: Remove all of these please.
 pub use self::sizes as Sizes;
-/// Deprecated: Use `bun_core::ZigString`
-#[deprecated]
-pub type ZigString = bun_core::ZigString;
 /// `ZigString.Slice` — re-exported under the path dependents expect.
 pub type ZigStringSlice = bun_core::ZigStringSlice;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Core webcore data types (Blob/Store/BuildArtifact) and node path types,
 // moved DOWN from `bun_runtime` so lower-tier crates (`bun_bundler_jsc`,
-// `bun_http_jsc`, `bun_js_parser_jsc`, `bun_sql_jsc`) can name them without a
+// `bun_http_jsc`, `bun_js_parser_jsc`) can name them without a
 // forward dep. `bun_runtime::webcore` re-exports these and layers behaviour
 // (S3 I/O, streaming, Body mixin, JS host-fns) on top.
 //
@@ -1586,6 +1400,8 @@ pub type ZigStringSlice = bun_core::ZigStringSlice;
 // inseparable from `bun_runtime` (streams/fetch). Code that needs to downcast
 // a `JSValue` to `Request`/`Response` lives in `bun_runtime`.
 // ──────────────────────────────────────────────────────────────────────────
+pub mod frontend_dev_server_agent;
+pub mod loader_resolution;
 #[path = "node_path.rs"]
 pub mod node_path;
 #[path = "webcore_types.rs"]
@@ -1593,35 +1409,6 @@ pub mod webcore_types;
 // RAII pair for `to_thread_safe()`/`unprotect()` — re-exported at crate root
 // so `bun_runtime` callers don't reach through `node_path`.
 pub use self::node_path::{ThreadSafe, Unprotect};
-
-/// `jsc.WebCore` (deprecated alias) — only the data-shape subset
-/// that was hoisted to this tier. Reach for `bun_runtime::webcore` for the
-/// full API surface.
-#[allow(non_snake_case)]
-pub mod WebCore {
-    pub use crate::webcore_types::store::{Store, StoreRef};
-    pub use crate::webcore_types::{Blob, MAX_SIZE, SizeType};
-}
-/// Lower-case alias + nested `blob` namespace.
-pub mod webcore {
-    pub use crate::webcore_types::{Blob, MAX_SIZE, SizeType};
-    pub mod blob {
-        pub use crate::webcore_types::store::*;
-        pub use crate::webcore_types::{MAX_SIZE, SizeType};
-    }
-}
-/// `jsc.Node` (deprecated alias) — `PathLike`/`PathOrFileDescriptor`
-/// hoisted to this tier; full `bun.api.node` lives in `bun_runtime::node`.
-#[allow(non_snake_case)]
-pub mod Node {
-    /// `bun.api.node.ErrorCode` — the Node-compat `ERR_*` codes; the
-    /// `node::ErrorCode` alias resolves directly to [`crate::ErrorCode`]
-    /// (LAYERING: avoids a
-    /// `bun_jsc → bun_runtime` cycle for `DeferredError` / `node_error_binding`).
-    pub use crate::ErrorCode;
-    pub use crate::node_path::*;
-}
-pub use self::Node as node;
 
 /// Opt-in `BUN_DEBUG_JSC=1` trace of every FFI binding entry.
 ///
@@ -1677,8 +1464,6 @@ pub mod codegen {
     }
 }
 pub use self::codegen as Codegen;
-// `GeneratedClassesList` lives in `bun_runtime::GeneratedClassesList`
-// (layering: every aliased type is defined above `bun_jsc`).
 
 /// Extension trait providing JSC-aware methods on `bun_core::String`.
 pub trait StringJsc {
@@ -1751,10 +1536,10 @@ impl SliceWithUnderlyingStringJsc for bun_core::SliceWithUnderlyingString {
 ///
 /// `bun_core::ZigString` is a lower-tier (no JSC dep) `#[repr(C)]` struct;
 /// JSC-side conversions (`toJS`, `toExternalValue`, `external`,
-/// `toJSONObject`, `toErrorInstance`, …) live as inherent methods on the
-/// `bun_jsc::zig_string::ZigString` twin. Higher-tier crates that import
+/// `toJSONObject`, `toErrorInstance`, …) live on the `ZigStringJsc`
+/// extension trait. Higher-tier crates that import
 /// `bun_core::ZigString` (e.g. `bun_runtime::webcore::Blob`) cannot reach those
-/// inherent methods cross-crate, so this trait re-surfaces them on the
+/// methods otherwise cross-crate, so this trait re-surfaces them on the
 /// canonical type.
 pub trait ZigStringJsc: Sized {
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
@@ -1917,7 +1702,7 @@ pub trait SysErrorJsc {
 }
 impl SysErrorJsc for bun_sys::Error {
     fn to_system_error(&self) -> SystemError {
-        SystemError::from(bun_sys::Error::to_system_error(self))
+        bun_sys::Error::to_system_error(self)
     }
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
         <Self as SysErrorJsc>::to_system_error(self).to_error_instance(global)
@@ -2101,10 +1886,6 @@ where
 pub trait FnTyped<Context> {
     fn call(this: &mut Context);
 }
-
-/// Legacy alias for [`ErrorCode`] (`src/jsc/ErrorCode.rs`) — the same type
-/// under both names.
-pub type Error = ErrorCode;
 
 /// Maximum Date in JavaScript is less than Number.MAX_SAFE_INTEGER (u52).
 pub const INIT_TIMESTAMP: JSTimeType = (1u64 << 52) - 1;

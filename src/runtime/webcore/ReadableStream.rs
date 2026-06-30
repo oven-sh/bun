@@ -2,11 +2,9 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use crate::webcore::jsc::SysErrorJsc as _;
-use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
-// `bun_jsc` not yet a dep; alias to local shim so `bun_jsc::Strong` etc. resolve.
-use crate::webcore::jsc as bun_jsc;
 use bun_collections::VecExt;
+use bun_jsc::SysErrorJsc as _;
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_sys as syscall;
 
 use crate::webcore::streams;
@@ -744,44 +742,40 @@ macro_rules! source_context_codegen {
         #[inline]
         fn js_create(
             ptr: *mut ::core::ffi::c_void,
-            global: &$crate::webcore::jsc::JSGlobalObject,
-        ) -> $crate::webcore::jsc::JSValue {
+            global: &::bun_jsc::JSGlobalObject,
+        ) -> ::bun_jsc::JSValue {
             $crate::generated_classes::$gen::to_js(ptr.cast(), global)
         }
         #[inline]
         fn js_pending_promise_set_cached(
-            this: $crate::webcore::jsc::JSValue,
-            global: &$crate::webcore::jsc::JSGlobalObject,
-            value: $crate::webcore::jsc::JSValue,
+            this: ::bun_jsc::JSValue,
+            global: &::bun_jsc::JSGlobalObject,
+            value: ::bun_jsc::JSValue,
         ) {
             $crate::generated_classes::$gen::pending_promise_set_cached(this, global, value)
         }
         #[inline]
         fn js_on_drain_callback_set_cached(
-            this: $crate::webcore::jsc::JSValue,
-            global: &$crate::webcore::jsc::JSGlobalObject,
-            value: $crate::webcore::jsc::JSValue,
+            this: ::bun_jsc::JSValue,
+            global: &::bun_jsc::JSGlobalObject,
+            value: ::bun_jsc::JSValue,
         ) {
             $crate::generated_classes::$gen::on_drain_callback_set_cached(this, global, value)
         }
         #[inline]
-        fn js_on_drain_callback_get_cached(
-            this: $crate::webcore::jsc::JSValue,
-        ) -> Option<$crate::webcore::jsc::JSValue> {
+        fn js_on_drain_callback_get_cached(this: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {
             $crate::generated_classes::$gen::on_drain_callback_get_cached(this)
         }
         #[inline]
         fn js_on_close_callback_set_cached(
-            this: $crate::webcore::jsc::JSValue,
-            global: &$crate::webcore::jsc::JSGlobalObject,
-            value: $crate::webcore::jsc::JSValue,
+            this: ::bun_jsc::JSValue,
+            global: &::bun_jsc::JSGlobalObject,
+            value: ::bun_jsc::JSValue,
         ) {
             $crate::generated_classes::$gen::on_close_callback_set_cached(this, global, value)
         }
         #[inline]
-        fn js_on_close_callback_get_cached(
-            this: $crate::webcore::jsc::JSValue,
-        ) -> Option<$crate::webcore::jsc::JSValue> {
+        fn js_on_close_callback_get_cached(this: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {
             $crate::generated_classes::$gen::on_close_callback_get_cached(this)
         }
     };

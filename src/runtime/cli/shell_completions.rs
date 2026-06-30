@@ -1,7 +1,6 @@
 use bun_core::Output;
 
-// here so existing `crate::cli::shell_completions::Shell` paths keep working.
-pub use bun_install::ShellCompletions::Shell;
+use bun_install::ShellCompletions::Shell;
 
 // The actual files live at `<repo>/completions/bun.{bash,zsh,fish}`.
 // The embedded script bodies must stay above the install tier (asset dependency),

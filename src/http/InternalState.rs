@@ -39,7 +39,7 @@ pub struct InternalState<'a> {
     // Self-borrow into `original_request_body.bytes`; `RawSlice` carries the
     // outlives-holder invariant (the backing `original_request_body` is a
     // sibling field, so it lives exactly as long as this struct).
-    pub request_body: bun_ptr::RawSlice<u8>,
+    pub request_body: bun_core::RawSlice<u8>,
     pub original_request_body: HTTPRequestBody<'a>,
     pub request_sent_len: usize,
     pub fail: Option<Error>,
@@ -133,7 +133,7 @@ impl Default for InternalState<'_> {
             compressed_body: MutableString::init_empty(),
             content_length: None,
             total_body_received: 0,
-            request_body: bun_ptr::RawSlice::EMPTY,
+            request_body: bun_core::RawSlice::EMPTY,
             original_request_body: HTTPRequestBody::Bytes(b""),
             request_sent_len: 0,
             fail: None,
@@ -148,7 +148,7 @@ impl Default for InternalState<'_> {
 
 impl<'a> InternalState<'a> {
     pub fn init(body: HTTPRequestBody<'a>, body_out_str: &mut MutableString) -> InternalState<'a> {
-        let request_body = bun_ptr::RawSlice::new(body.slice());
+        let request_body = bun_core::RawSlice::new(body.slice());
         InternalState {
             original_request_body: body,
             request_body,
@@ -193,7 +193,7 @@ impl<'a> InternalState<'a> {
             compressed_body: MutableString::init_empty(),
             response_message_buffer: MutableString::init_empty(),
             original_request_body: HTTPRequestBody::Bytes(b""),
-            request_body: bun_ptr::RawSlice::EMPTY,
+            request_body: bun_core::RawSlice::EMPTY,
             certificate_info: None,
             flags: InternalStateFlags::new(),
             total_body_received: 0,

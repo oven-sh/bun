@@ -1100,7 +1100,7 @@ pub(super) fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResul
     }
 
     // SAFETY: SSL_get0_alpn_selected guarantees alpn_proto points to alpn_proto_len bytes owned by the SSL.
-    let slice = unsafe { bun_core::ffi::slice(alpn_proto, alpn_proto_len as usize) };
+    let slice = unsafe { bun_opaque::ffi::slice(alpn_proto, alpn_proto_len as usize) };
     if strings::eql(slice, b"h2") {
         return BunString::static_("h2").to_js(global);
     }
@@ -1219,7 +1219,7 @@ pub(super) fn get_tls_ticket(
     }
 
     // SAFETY: SSL_SESSION_get0_ticket guarantees `ticket` points to `length` bytes owned by the session.
-    let slice = unsafe { bun_core::ffi::slice(ticket, length) };
+    let slice = unsafe { bun_opaque::ffi::slice(ticket, length) };
     jsc::ArrayBuffer::create_buffer(global, slice)
 }
 

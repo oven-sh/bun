@@ -1,7 +1,8 @@
 use core::ptr::NonNull;
 
-use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
-use bun_event_loop::{TaskTag, Taskable, task_tag};
+use crate::virtual_machine::VirtualMachine;
+use crate::{JSGlobalObject, JsResult};
+use bun_event_loop::{TaskTag, Taskable};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 #[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
@@ -18,12 +19,12 @@ bun_opaque::opaque_ffi! {
 }
 
 impl Taskable for CppTask {
-    const TAG: TaskTag = task_tag::CppTask;
+    const TAG: TaskTag = TaskTag::CppTask;
 }
 
 impl CppTask {
     pub fn run(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-        crate::mark_binding!();
+        bun_core::mark_binding!();
         // SAFETY: self is a valid C++ EventLoopTask; global outlives the call.
         //
         // `Bun__performTask` is `[[ZIG_EXPORT(check_slow)]]` — the task body
@@ -86,7 +87,7 @@ impl ConcurrentCppTask {
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNoContext) {
-    crate::mark_binding!();
+    bun_core::mark_binding!();
     // `EventLoopTaskNoContext` is an `opaque_ffi!` ZST handle; `opaque_ref` is
     // the centralised non-null deref proof. C++ just handed it over.
     if let Some(vm) = EventLoopTaskNoContext::opaque_ref(cpp_task).get_vm() {

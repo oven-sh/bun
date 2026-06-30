@@ -2,9 +2,9 @@ use std::cell::Cell;
 use std::io::Write as _;
 
 use bun_ast::ImportKind;
+use bun_core::ZigString;
 use bun_core::strings;
 
-use crate::zig_string::ZigString;
 use crate::{
     CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _, ZigStringJsc as _,
 };

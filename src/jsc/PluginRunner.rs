@@ -4,7 +4,7 @@
 //! live in `bun_bundler::transpiler::PluginRunner` (JSC-free, lowest tier).
 //! The stateful struct lives here because its only field is a typed
 //! `*mut JSGlobalObject`. `bun_bundler::Linker` references it through
-//! `*mut dyn PluginResolver`, so the linker stays JSC-free without
+//! `NonNull<dyn PluginResolver>`, so the linker stays JSC-free without
 //! type-erasing to `*mut c_void` or duplicating the body behind a fn-ptr.
 
 use std::io::Write as _;
@@ -20,8 +20,6 @@ pub struct PluginRunner {
     pub global_object: BackRef<JSGlobalObject>,
 }
 
-// Re-export the JSC-free static helpers so callers in this crate can keep
-// writing `PluginRunner::could_be_plugin(...)` without naming `bun_bundler`.
 impl PluginRunner {
     /// Borrow the JS global stored by `Bun__onDidAppendPlugin`.
     ///
@@ -31,15 +29,6 @@ impl PluginRunner {
     #[inline]
     fn global(&self) -> &JSGlobalObject {
         self.global_object.get()
-    }
-
-    #[inline]
-    pub fn extract_namespace(specifier: &[u8]) -> &[u8] {
-        bun_bundler::transpiler::PluginRunner::extract_namespace(specifier)
-    }
-    #[inline]
-    pub fn could_be_plugin(specifier: &[u8]) -> bool {
-        bun_bundler::transpiler::PluginRunner::could_be_plugin(specifier)
     }
 }
 
@@ -54,7 +43,7 @@ impl PluginResolver for PluginRunner {
     ) -> Result<Option<FsPath<'static>>, bun_core::Error> {
         let global = self.global();
 
-        let namespace_slice = Self::extract_namespace(specifier);
+        let namespace_slice = bun_bundler::transpiler::PluginRunner::extract_namespace(specifier);
         let namespace = if !namespace_slice.is_empty() && namespace_slice != b"file" {
             BunString::init(namespace_slice)
         } else {

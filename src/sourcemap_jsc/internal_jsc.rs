@@ -88,8 +88,8 @@ impl TestingAPIs {
 }
 
 /// Free-fn aliases of the [`TestingAPIs`] associated fns so
-/// `bun_runtime::dispatch::js2native` can `pub use` them (associated fns
-/// aren't importable items).
+/// `bun_runtime`'s generated js2native thunks can name them by a plain fn
+/// path.
 #[inline]
 pub fn testing_from_vlq(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     TestingAPIs::from_vlq(global, frame)

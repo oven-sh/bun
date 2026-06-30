@@ -182,7 +182,7 @@ bun_opaque::opaque_ffi! {
 
 impl Impl {
     pub fn init(global: &JSGlobalObject, value: JSValue) -> NonNull<Impl> {
-        crate::mark_binding!();
+        bun_core::mark_binding!();
         NonNull::new(Bun__StrongRef__new(global, value)).expect("Bun__StrongRef__new returned null")
     }
 
@@ -195,18 +195,18 @@ impl Impl {
     }
 
     pub fn set(this: NonNull<Impl>, global: &JSGlobalObject, value: JSValue) {
-        crate::mark_binding!();
+        bun_core::mark_binding!();
         Bun__StrongRef__set(Impl::opaque_ref(this.as_ptr()), global, value);
     }
 
     pub fn clear(this: NonNull<Impl>) {
-        crate::mark_binding!();
+        bun_core::mark_binding!();
         Bun__StrongRef__clear(Impl::opaque_ref(this.as_ptr()));
     }
 
     /// SAFETY: `this` must be a valid handle from `init`; consumed here (do not reuse).
     pub unsafe fn destroy(this: NonNull<Impl>) {
-        crate::mark_binding!();
+        bun_core::mark_binding!();
         // Defensive: a corrupted slot pointer here segfaults inside JSC's
         // HandleBlock::handleSet (the backing block is recovered by masking
         // the slot to the block base, then `+0x10` is read), which loses the

@@ -40,4 +40,4 @@ impl ErrorResponse {
     }
 }
 
-// `to_js` lives on an extension trait in the `bun_sql_jsc` crate.
+// `to_js` lives on an extension trait in `bun_runtime::sql_jsc`.

@@ -3,10 +3,8 @@
 pub mod channel;
 #[path = "Condition.rs"]
 pub mod condition;
-#[path = "Futex.rs"]
-pub mod futex;
-#[path = "Mutex.rs"]
-pub mod mutex;
+pub use bun_sync::futex;
+pub use bun_sync::mutex;
 #[path = "ResetEvent.rs"]
 pub mod reset_event;
 #[path = "RwLock.rs"]
@@ -17,22 +15,24 @@ pub mod semaphore;
 pub mod thread_pool;
 pub mod work_pool;
 
-pub mod guarded;
+pub mod guarded {
+    pub use bun_core::guarded::*;
+}
 pub mod unbounded_queue;
 #[path = "WaitGroup.rs"]
 pub mod wait_group;
 
 // ─── re-exports ───────────────────────────────────────────────────────────
 
-pub use channel::Channel;
-pub use condition::{Condition, Condvar};
 /// `Futex` re-exported as a capitalized module alias so callers can write
 /// `Futex::wait`, `Futex::wake`, `Futex::Deadline`.
-pub use futex as Futex;
+pub use bun_sync::futex as Futex;
+pub use bun_sync::{Mutex, MutexGuard};
+pub use channel::Channel;
+pub use condition::{Condition, Condvar};
 pub use guarded::Debug as DebugGuarded;
 pub use guarded::RawMutex;
 pub use guarded::{Guarded, GuardedBy, GuardedLock};
-pub use mutex::{Mutex, MutexGuard};
 pub use reset_event::ResetEvent;
 pub use rwlock::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 pub use semaphore::Semaphore;

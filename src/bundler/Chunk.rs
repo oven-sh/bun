@@ -1079,7 +1079,7 @@ impl IntermediateOutput {
 pub(crate) struct OutputPiece {
     /// Borrows `OutputPieces::_buffer`; `RawSlice` invariant (backing outlives
     /// holder) is upheld by `OutputPieces` keeping the box alongside `pieces`.
-    data: bun_ptr::RawSlice<u8>,
+    data: bun_core::RawSlice<u8>,
     pub query: Query,
 }
 
@@ -1090,7 +1090,7 @@ impl OutputPiece {
 
     pub(crate) fn init(data_slice: &[u8], query: Query) -> OutputPiece {
         OutputPiece {
-            data: bun_ptr::RawSlice::new(data_slice),
+            data: bun_core::RawSlice::new(data_slice),
             query,
         }
     }

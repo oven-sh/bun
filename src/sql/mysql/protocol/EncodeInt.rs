@@ -1,4 +1,4 @@
-use bun_collections::BoundedArray;
+use bun_core::bounded_array::BoundedArray;
 
 pub struct DecodedLengthInt {
     pub value: u64,

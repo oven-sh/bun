@@ -112,7 +112,7 @@ impl Id {
         hasher.update(b"@");
         // SAFETY: reading raw bytes of a POD value for hashing
         hasher.update(unsafe {
-            bun_core::ffi::slice(
+            bun_opaque::ffi::slice(
                 (&raw const package_version).cast::<u8>(),
                 core::mem::size_of::<semver::Version>(),
             )
@@ -602,7 +602,7 @@ fn read_and_extract(
         // through here from the install crate's `FileSystem` shim.
         File::read_from_user_input(
             Fd::cwd(),
-            crate::bun_fs::FileSystem::instance().top_level_dir(),
+            bun_resolver::fs::FileSystem::instance().top_level_dir(),
             tarball_path,
         )?
     } else {

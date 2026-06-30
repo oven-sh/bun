@@ -1,8 +1,8 @@
 use core::ffi::c_void;
 use core::ptr;
 
+use bun_libuv_sys as uv;
 use bun_sys::Fd;
-use bun_sys::windows::libuv as uv;
 use bun_uws_sys::WindowsLoop;
 
 use crate::posix_event_loop as posix;

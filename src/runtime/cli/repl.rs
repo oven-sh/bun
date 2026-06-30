@@ -19,6 +19,7 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_collections::VecExt;
+use bun_core::PathBuffer;
 use bun_core::strings;
 #[cfg(unix)]
 use bun_core::tty;
@@ -26,7 +27,7 @@ use bun_core::{Environment, Output, env_var, fmt};
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
-use bun_paths::{self as path, PathBuffer};
+use bun_paths::{self as path};
 use bun_sys::{self as sys, Fd};
 
 // ============================================================================

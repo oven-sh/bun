@@ -1,7 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-use super::mock;
 use super::Expect;
+use super::mock;
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum Mode {
@@ -27,7 +27,7 @@ fn to_have_returned_times_fn(
     callframe: &CallFrame,
     mode: Mode,
 ) -> JsResult<JSValue> {
-    bun_jsc::mark_binding!();
+    bun_core::mark_binding!();
     let arguments = callframe.arguments();
     let (this, returns_arr, _value) = this.mock_prologue(
         global,

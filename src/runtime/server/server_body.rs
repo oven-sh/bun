@@ -23,10 +23,11 @@ use bun_core::{String as BunString, ZigString, strings};
 use bun_http::{self as http, Method, MimeType};
 use bun_jsc::Debugger::DebuggerId;
 use bun_jsc::ZigStringJsc as _;
+use bun_jsc::node_path as Node;
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError,
-    JsResult, Node, StringJsc as _, Strong, StrongOptional, VirtualMachine, host_fn,
+    JsResult, StringJsc as _, Strong, StrongOptional, VirtualMachine, host_fn,
 };
 use bun_paths as paths;
 use bun_ptr::RefPtr;
@@ -38,14 +39,14 @@ use bun_uws::{self as uws, AnyWebSocket, ResponseKind, WebSocketUpgradeContext};
 use bun_uws_sys as uws_sys;
 use bun_wyhash::hash;
 
-bun_output::declare_scope!(Server, visible);
-bun_output::declare_scope!(RequestContext, visible);
+bun_core::declare_scope!(Server, visible);
+bun_core::declare_scope!(RequestContext, visible);
 
 macro_rules! httplog {
-    ($($arg:tt)*) => { bun_output::scoped_log!(Server, $($arg)*) };
+    ($($arg:tt)*) => { bun_core::scoped_log!(Server, $($arg)*) };
 }
 macro_rules! ctx_log {
-    ($($arg:tt)*) => { bun_output::scoped_log!(RequestContext, $($arg)*) };
+    ($($arg:tt)*) => { bun_core::scoped_log!(RequestContext, $($arg)*) };
 }
 
 use bun_jsc::bun_string_jsc;
@@ -77,7 +78,7 @@ where
     NewRequestContext<ThisServer, SSL, DBG, false>: super::any_request_context::CtxKind,
 {
     type Req = uws_sys::Request;
-    type Resp = uws_sys::NewAppResponse<SSL>;
+    type Resp = uws_sys::Response<SSL>;
     const IS_H3: bool = false;
 }
 impl<ThisServer, const SSL: bool, const DBG: bool> RequestCtx
@@ -336,41 +337,41 @@ pub trait RespLike {
     fn on_timeout_warn(&mut self, ud: *mut c_void);
     fn to_any_response(&mut self) -> uws::AnyResponse;
 }
-impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
+impl<const SSL: bool> RespLike for uws_sys::Response<SSL> {
     #[inline]
     fn write_status(&mut self, s: &[u8]) {
-        uws_sys::NewAppResponse::<SSL>::write_status(self, s)
+        uws_sys::Response::<SSL>::write_status(self, s)
     }
     #[inline]
     fn end_without_body(&mut self, c: bool) {
-        uws_sys::NewAppResponse::<SSL>::end_without_body(self, c)
+        uws_sys::Response::<SSL>::end_without_body(self, c)
     }
     #[inline]
     fn timeout(&mut self, s: u8) {
-        uws_sys::NewAppResponse::<SSL>::timeout(self, s)
+        uws_sys::Response::<SSL>::timeout(self, s)
     }
     #[inline]
     fn on_timeout_warn(&mut self, ud: *mut c_void) {
         // The dev-mode idle-timeout warning ignores both args; the user-data
         // pointer is an opaque sentinel (any non-null value satisfies uWS).
-        uws_sys::NewAppResponse::<SSL>::on_timeout(
+        uws_sys::Response::<SSL>::on_timeout(
             self,
-            |_: *mut c_void, _: &mut uws_sys::NewAppResponse<SSL>| on_timeout_for_idle_warn(),
+            |_: *mut c_void, _: &mut uws_sys::Response<SSL>| on_timeout_for_idle_warn(),
             ud,
         );
     }
     #[inline]
     fn to_any_response(&mut self) -> uws::AnyResponse {
-        // SAFETY: NewAppResponse<true>/NewAppResponse<false> are the only two
+        // SAFETY: Response<true>/Response<false> are the only two
         // monomorphizations; cast through the matching `From` arm. The const
         // bool is checked at compile time so only one branch is reachable.
         if SSL {
             uws::AnyResponse::from(
-                std::ptr::from_mut::<Self>(self).cast::<uws_sys::NewAppResponse<true>>(),
+                std::ptr::from_mut::<Self>(self).cast::<uws_sys::Response<true>>(),
             )
         } else {
             uws::AnyResponse::from(
-                std::ptr::from_mut::<Self>(self).cast::<uws_sys::NewAppResponse<false>>(),
+                std::ptr::from_mut::<Self>(self).cast::<uws_sys::Response<false>>(),
             )
         }
     }
@@ -643,7 +644,7 @@ impl AnyRoute {
                     // NOTE: `sys::exists_at_type` takes `&ZStr`; the store
                     // path is a borrowed byte slice. NUL-terminate into a path
                     // buffer for the syscall.
-                    let mut buf = bun_paths::PathBuffer::default();
+                    let mut buf = bun_core::PathBuffer::default();
                     let zpath = bun_paths::resolve_path::z(store_path, &mut buf);
                     match sys::exists_at_type(sys::Fd::cwd(), zpath) {
                         Ok(sys::ExistsAtType::Directory) => {
@@ -1308,7 +1309,7 @@ where
 {
     unsafe fn on_websocket_upgrade(
         this: *mut Self,
-        res: *mut uws_sys::NewAppResponse<SSL>,
+        res: *mut uws_sys::Response<SSL>,
         req: &mut uws_sys::Request,
         context: &mut WebSocketUpgradeContext,
         id: usize,
@@ -1351,8 +1352,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `&mut` accessor for the live uws App. Only call from paths where the
     /// server is running (`self.app` set in `listen()`).
     #[inline]
-    fn app_mut(&self) -> &mut uws_sys::NewApp<SSL> {
-        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref via
+    fn app_mut(&self) -> &mut uws_sys::App<SSL> {
+        // S008: `App<SSL>` is a ZST opaque — safe `*mut → &mut` deref via
         // const-asserted `bun_opaque::opaque_deref_mut`. `self.app` is `Some`
         // for the lifetime of any JS-reachable `Server` (set in `listen()`,
         // freed in `deinit()` after the JS wrapper is gone).
@@ -1733,7 +1734,7 @@ where
     ) -> JsResult<JSValue> {
         use super::node_http_response::Flags as NodeHTTPResponseFlags;
         use bun_core::ZigStringSlice;
-        use bun_jsc::HTTPHeaderName;
+        use bun_http_types::Method::HeaderName as HTTPHeaderName;
 
         if self.config.websocket.is_none() {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -1934,7 +1935,7 @@ where
         // is `*mut`), so go through the `BodyMixin` accessor which yields a
         // `NonNull` instead of the inherent `&FetchHeaders` getter.
         if let Some(head) = crate::webcore::body::BodyMixin::get_fetch_headers(request) {
-            use jsc::HTTPHeaderName;
+            use bun_http_types::Method::HeaderName as HTTPHeaderName;
             // `head` is a live, intrusively-refcounted C++ handle owned by
             // `request.headers`. `FetchHeaders` is an opaque ZST FFI handle
             // (S008) — safe `*mut → &mut` via `opaque_deref_mut`.
@@ -2009,18 +2010,18 @@ where
                         "upgrade options must be an object"
                     )));
                 }
-                if let Some(v) = opts.fast_get(global, jsc::BuiltinName::Data)? {
+                if let Some(v) = opts.fast_get(global, jsc::BuiltinName::data)? {
                     data_value = v;
                 }
                 if global.has_exception() {
                     return Err(JsError::Thrown);
                 }
 
-                if let Some(headers_value) = opts.fast_get(global, jsc::BuiltinName::Headers)? {
+                if let Some(headers_value) = opts.fast_get(global, jsc::BuiltinName::headers)? {
                     if headers_value.is_empty_or_undefined_or_null() {
                         break 'getter;
                     }
-                    use jsc::HTTPHeaderName;
+                    use bun_http_types::Method::HeaderName as HTTPHeaderName;
                     let fh: *mut FetchHeaders = match fetch_headers_from_js(headers_value, global) {
                         Some(h) => h,
                         None => {
@@ -2301,7 +2302,7 @@ where
 
     #[bun_jsc::host_fn(method)]
     pub fn on_fetch(&mut self, ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        jsc::mark_binding!();
+        bun_core::mark_binding!();
 
         if self.config.on_request.is_none() {
             return Ok(
@@ -2366,12 +2367,12 @@ where
 
             if arguments.len() >= 2 && arguments[1].is_object() {
                 let opts = arguments[1];
-                if let Some(method_) = opts.fast_get(ctx, jsc::BuiltinName::Method)? {
+                if let Some(method_) = opts.fast_get(ctx, jsc::BuiltinName::method)? {
                     let slice_ = method_.to_slice(ctx)?;
                     method = Method::which(slice_.slice()).unwrap_or(method);
                 }
 
-                if let Some(headers_) = opts.fast_get(ctx, jsc::BuiltinName::Headers)? {
+                if let Some(headers_) = opts.fast_get(ctx, jsc::BuiltinName::headers)? {
                     if let Some(headers__) = FetchHeaders::cast_(headers_, ctx.vm()) {
                         // NOTE: `cast_` returns the `FetchHeaders*` held by the
                         // JS `Headers` wrapper (`JSFetchHeaders`'s internal
@@ -2392,7 +2393,7 @@ where
                     }
                 }
 
-                if let Some(body__) = opts.fast_get(ctx, jsc::BuiltinName::Body)? {
+                if let Some(body__) = opts.fast_get(ctx, jsc::BuiltinName::body)? {
                     match Blob::get::<true, false>(ctx, body__) {
                         Ok(new_blob) => body = BodyValue::Blob(new_blob),
                         Err(_) => {
@@ -2757,9 +2758,9 @@ where
     pub fn on_bun_info_request(
         &mut self,
         req: &mut uws::Request,
-        resp: &mut uws_sys::NewAppResponse<SSL>,
+        resp: &mut uws_sys::Response<SSL>,
     ) {
-        jsc::mark_binding!();
+        bun_core::mark_binding!();
         if !matches!(self.config.address, server_config::Address::Unix(_))
             && (!bake::is_allowed_host_header(req, Some(&self.config.address))
                 || !resp
@@ -2937,7 +2938,7 @@ where
         create_js_request: CreateJsRequest,
         method: Option<http::Method>,
     ) -> Option<PreparedRequestFor<'_, Ctx>> {
-        jsc::mark_binding!();
+        bun_core::mark_binding!();
 
         // We need to register the handler immediately since uSockets will not buffer.
         //
@@ -3177,7 +3178,7 @@ where
 
     fn upgrade_web_socket_user_route(
         this: &mut UserRoute<SSL, DEBUG>,
-        resp: &mut uws_sys::NewAppResponse<SSL>,
+        resp: &mut uws_sys::Response<SSL>,
         req: &mut uws::Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
         method: Option<http::Method>,
@@ -3245,12 +3246,12 @@ where
     /// instant UB regardless of whether it is read).
     pub unsafe fn on_web_socket_upgrade(
         this: *mut Self,
-        resp: &mut uws_sys::NewAppResponse<SSL>,
+        resp: &mut uws_sys::Response<SSL>,
         req: &mut uws::Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
         id: usize,
     ) {
-        jsc::mark_binding!();
+        bun_core::mark_binding!();
         if id == 1 {
             // SAFETY: for `id == 1` the registered user-data IS
             // `*mut UserRoute<SSL,DEBUG>` (mod.rs `app.ws(path, ud, 1, ..)`);
@@ -3384,7 +3385,7 @@ where
     pub(super) fn on_chrome_dev_tools_json_request(
         &mut self,
         req: &mut uws::Request,
-        resp: &mut uws_sys::NewAppResponse<SSL>,
+        resp: &mut uws_sys::Response<SSL>,
     ) {
         if cfg!(debug_assertions) {
             // NOTE: scoped_log! expands each arg twice (ANSI/no-ANSI branches);
@@ -3472,11 +3473,7 @@ where
         resp.end(&json_string, resp.should_close_connection());
     }
 
-    pub fn on404(
-        _this: &mut Self,
-        req: &mut uws::Request,
-        resp: &mut uws_sys::NewAppResponse<SSL>,
-    ) {
+    pub fn on404(_this: &mut Self, req: &mut uws::Request, resp: &mut uws_sys::Response<SSL>) {
         if cfg!(debug_assertions) {
             // NOTE: see on_chrome_dev_tools_json_request — scoped_log! double-evaluates args.
             let m = req.method().to_vec();
@@ -3661,14 +3658,14 @@ pub(super) fn server_set_on_client_error_(
                         let packet: &[u8] = if raw_packet_len > 0 {
                             // SAFETY: uWS guarantees `raw_packet` points to `raw_packet_len`
                             // readable bytes when `raw_packet_len > 0`.
-                            unsafe { bun_core::ffi::slice(raw_packet, raw_packet_len as usize) }
+                            unsafe { bun_opaque::ffi::slice(raw_packet, raw_packet_len as usize) }
                         } else {
                             &[]
                         };
                         // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
                         this.on_client_error_callback(bun_opaque::opaque_deref_mut(socket), error_code, packet);
                     }
-                    // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                    // S008: `App<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                     bun_opaque::opaque_deref_mut(app).on_client_error(thunk, core::ptr::from_mut::<$T>(this).cast::<c_void>());
                 }
                 return Ok(JSValue::UNDEFINED);

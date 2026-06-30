@@ -18,16 +18,17 @@ use std::time::Instant;
 
 use bun_alloc::{AllocError, Arena};
 use bun_ast::Log;
-use bun_bundler::options_impl::TargetExt as _;
 use bun_collections::{ArrayHashMap, DynamicBitSet, HashMap, HiveArrayFallback, StringHashMap};
+#[cfg(feature = "bake_debugging_features")]
+use bun_core::MAX_PATH_BYTES;
+use bun_core::PathBuffer;
 use bun_core::{self as str, OwnedString, String as BunString, ZStr, strings};
 use bun_core::{Environment, Output};
+use bun_http_types::FetchRedirect::CommonAbortReason;
 use bun_jsc::StringJsc as _;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
-#[cfg(feature = "bake_debugging_features")]
-use bun_paths::MAX_PATH_BYTES;
-use bun_paths::{self as paths, PathBuffer};
+use bun_paths::{self as paths};
 use bun_sys as sys;
 use bun_uws::{self as uws, AnyResponse, Opcode, Request, WebSocketUpgradeContext};
 use bun_watcher::WatchItemColumns as _;
@@ -38,12 +39,13 @@ use crate::api::{AnyServer, SavedRequest};
 use crate::bake;
 use crate::bake::framework_router::{self as framework_router, FrameworkRouter, OpaqueFileId};
 use crate::server::html_bundle::HTMLBundleRoute;
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use crate::webcore::{Request as WebRequest, Response};
 use bun_ast::Loader;
+use bun_bundler::bake_types;
 use bun_bundler::{self as bundler, BundleV2, Transpiler};
+use bun_core::ThreadLock;
 use bun_http::{Method, MimeType};
-use bun_safety::ThreadLock;
+use bun_jsc::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_watcher::Watcher;
 
 pub(super) use crate::bake::dev_server::DirectoryWatchStore;
@@ -57,23 +59,6 @@ pub(super) use crate::bake::dev_server::error_report_request_body::ErrorReportRe
 // methods on the keystone `bake::Framework` (ported into `bake/mod.rs` from
 // `bake_body::Framework` so this file can call them without the trait shim).
 
-/// Shim: `bun_ast::Log::to_js_aggregate_error` — body lives in `bun_logger_jsc`.
-trait LogToJsAggregateErrorExt {
-    fn to_js_aggregate_error(
-        &mut self,
-        _global: &JSGlobalObject,
-        _msg: BunString,
-    ) -> JsResult<JSValue>;
-}
-impl LogToJsAggregateErrorExt for Log {
-    fn to_js_aggregate_error(
-        &mut self,
-        global: &JSGlobalObject,
-        msg: BunString,
-    ) -> JsResult<JSValue> {
-        bun_ast_jsc::log_to_js_aggregate_error(self, global, msg)
-    }
-}
 pub(super) use crate::bake::dev_server::HotReloadEvent;
 pub(super) use crate::bake::dev_server::incremental_graph::IncrementalGraph;
 pub(super) use crate::bake::dev_server::memory_cost_body::MemoryCost;
@@ -160,13 +145,13 @@ pub(super) use crate::bake::dev_server::route_bundle::RouteBundle;
 pub(super) use crate::bake::dev_server::serialized_failure::SerializedFailure;
 pub(super) use crate::bake::dev_server::source_map_store::SourceMapStore;
 
-bun_output::declare_scope!(DevServer, visible);
-bun_output::declare_scope!(IncrementalGraph, visible);
-bun_output::declare_scope!(SourceMapStore, visible);
+bun_core::declare_scope!(DevServer, visible);
+bun_core::declare_scope!(IncrementalGraph, visible);
+bun_core::declare_scope!(SourceMapStore, visible);
 
-bun_output::define_scoped_log!(debug_log, crate::bake::dev_server_body::DevServer);
-bun_output::define_scoped_log!(ig_log, crate::bake::dev_server_body::IncrementalGraph);
-bun_output::define_scoped_log!(map_log, crate::bake::dev_server_body::SourceMapStore);
+bun_core::define_scoped_log!(debug_log, crate::bake::dev_server_body::DevServer);
+bun_core::define_scoped_log!(ig_log, crate::bake::dev_server_body::IncrementalGraph);
+bun_core::define_scoped_log!(map_log, crate::bake::dev_server_body::SourceMapStore);
 pub(crate) use map_log;
 
 pub struct Options<'a> {
@@ -334,8 +319,8 @@ pub struct DevServer {
     /// only a debug assertion as contention to this is always a bug; If a bundle is
     /// active and a file is changed, that change is placed into the next bundle.
     pub graph_safety_lock: ThreadLock,
-    pub client_graph: IncrementalGraph<{ bake::Side::Client }>,
-    pub server_graph: IncrementalGraph<{ bake::Side::Server }>,
+    pub client_graph: IncrementalGraph<{ bake_types::Side::Client }>,
+    pub server_graph: IncrementalGraph<{ bake_types::Side::Server }>,
     /// Barrel files with deferred (is_unused) import records. These files must
     /// be re-parsed on every incremental build because the set of needed exports
     /// may have changed. Populated by applyBarrelOptimization.
@@ -447,7 +432,20 @@ pub struct DevServer {
     pub broadcast_console_log_from_browser_to_server: bool,
 }
 
-bun_event_loop::impl_timer_owner!(DevServer; from_timer_ptr => memory_visualizer_timer);
+impl DevServer {
+    /// Recover `*mut Self` from a pointer to its intrusive `memory_visualizer_timer`
+    /// [`EventLoopTimer`] slot.
+    /// # Safety
+    /// `t` must point at the `memory_visualizer_timer` field of a live `Self`.
+    #[inline]
+    pub unsafe fn from_timer_ptr(
+        t: *const bun_event_loop::EventLoopTimer::EventLoopTimer,
+    ) -> *mut Self {
+        // SAFETY: caller contract — `t` addresses `Self.memory_visualizer_timer`
+        // with whole-`Self` provenance.
+        unsafe { ::bun_core::from_field_ptr!(Self, memory_visualizer_timer, t) }
+    }
+}
 
 pub(super) const INTERNAL_PREFIX: &str = "/_bun";
 /// Assets which are routed to the `Assets` storage.
@@ -715,7 +713,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             arena,
             log,
             bake::Mode::Development,
-            bake::Graph::Server,
+            bake_types::Graph::Server,
             &mut *addr_of_mut!((*p).server_transpiler),
             &bundler_options.server,
         ) {
@@ -726,7 +724,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             arena,
             log,
             bake::Mode::Development,
-            bake::Graph::Client,
+            bake_types::Graph::Client,
             &mut *addr_of_mut!((*p).client_transpiler),
             &bundler_options.client,
         ) {
@@ -738,7 +736,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 arena,
                 log,
                 bake::Mode::Development,
-                bake::Graph::Ssr,
+                bake_types::Graph::Ssr,
                 &mut *addr_of_mut!((*p).ssr_transpiler),
                 &bundler_options.ssr,
             ) {
@@ -795,9 +793,6 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         ));
     }
 
-    // `bun_resolver::AnyResolveWatcher` is now a re-export of
-    // `bun_watcher::AnyResolveWatcher` (LAYERING: same type), so the watcher's
-    // vtable flows directly into the resolver without conversion.
     let resolve_watcher = dev.bun_watcher.get_resolve_watcher();
     dev.server_transpiler_mut().options.dev_server = dev_ptr as *const ();
     dev.server_transpiler_mut().resolver.watcher = Some(resolve_watcher);
@@ -829,7 +824,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         if dev.framework.is_built_in_react {
             bake::Framework::add_react_install_command_note(&mut dev.log);
         }
-        return Err(global.throw_value(dev.log.to_js_aggregate_error(
+        return Err(global.throw_value(bun_ast_jsc::log_to_js_aggregate_error(
+            &dev.log,
             global,
             BunString::static_("Framework is missing required files!"),
         )?));
@@ -873,8 +869,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             bun_core::write_any_to_hasher(&mut h, stat.st_mtime as i64);
             #[cfg(windows)]
             bun_core::write_any_to_hasher(&mut h, &(stat.mtim.sec as i64));
-            h.update(crate::bake::bake_body::get_hmr_runtime(bake::Side::Client).code);
-            h.update(crate::bake::bake_body::get_hmr_runtime(bake::Side::Server).code);
+            h.update(crate::bake::bake_body::get_hmr_runtime(bake_types::Side::Client).code);
+            h.update(crate::bake::bake_body::get_hmr_runtime(bake_types::Side::Server).code);
         } else {
             h.update(Environment::GIT_SHA_SHORT.as_bytes());
         }
@@ -958,7 +954,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         // the side-effecting `insert_stale`
         // out so the refresh runtime is registered at index 0 in all builds.
         let idx = dev.client_graph.insert_stale(&rfr.import_source, false)?;
-        debug_assert!(idx == incremental_graph::FileIndex::<{ bake::Side::Client }>::init(0));
+        debug_assert!(idx == incremental_graph::FileIndex::<{ bake_types::Side::Client }>::init(0));
     }
 
     if !dev.frontend_only {
@@ -1020,9 +1016,9 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                     .collect(),
                 style: fsr.style.clone(),
                 allow_layouts: fsr.allow_layouts,
-                server_file: to_opaque_file_id::<{ bake::Side::Server }>(server_file),
+                server_file: to_opaque_file_id::<{ bake_types::Side::Server }>(server_file),
                 client_file: if let Some(client) = &fsr.entry_client {
-                    Some(to_opaque_file_id::<{ bake::Side::Client }>(
+                    Some(to_opaque_file_id::<{ bake_types::Side::Client }>(
                         // SAFETY: `client_graph` is disjoint from `framework`.
                         unsafe { &mut (*dev_ptr).client_graph }.insert_stale(client, false)?,
                     ))
@@ -1685,7 +1681,7 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
 impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for DevServer {
     unsafe fn on_websocket_upgrade(
         this: *mut Self,
-        res: *mut bun_uws_sys::NewAppResponse<SSL>,
+        res: *mut bun_uws_sys::Response<SSL>,
         req: &mut Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
         id: usize,
@@ -1818,11 +1814,14 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         let entry_ptr: *const source_map_store::Entry = &raw const *entry;
         // SAFETY: `entry_ptr` points into `dev.source_maps.entries` storage,
         // which is not reallocated by `render_json`.
-        let json_bytes =
-            match unsafe { &*entry_ptr }.render_json(dev, source_id.kind(), bake::Side::Client) {
-                Ok(b) => b,
-                Err(e) => bun_core::handle_oom(Err(e)),
-            };
+        let json_bytes = match unsafe { &*entry_ptr }.render_json(
+            dev,
+            source_id.kind(),
+            bake_types::Side::Client,
+        ) {
+            Ok(b) => b,
+            Err(e) => bun_core::handle_oom(Err(e)),
+        };
         let response = StaticRoute::init_from_any_blob(
             crate::webcore::blob::Any::from_array_list(json_bytes),
             crate::server::static_route::InitFromBytesOptions {
@@ -2455,29 +2454,29 @@ impl DevServer {
                 let router_type = self.router.type_ptr_const(route.r#type);
                 let (rt_server_file, rt_client_file) =
                     (router_type.server_file, router_type.client_file);
-                self.append_opaque_entry_point::<{ bake::Side::Server }>(
+                self.append_opaque_entry_point::<{ bake_types::Side::Server }>(
                     server_file_names,
                     entry_points,
                     OpaqueFileIdOrOptional::Id(rt_server_file),
                 )?;
-                self.append_opaque_entry_point::<{ bake::Side::Client }>(
+                self.append_opaque_entry_point::<{ bake_types::Side::Client }>(
                     client_file_names,
                     entry_points,
                     rt_client_file,
                 )?;
-                self.append_opaque_entry_point::<{ bake::Side::Server }>(
+                self.append_opaque_entry_point::<{ bake_types::Side::Server }>(
                     server_file_names,
                     entry_points,
                     route.file_page,
                 )?;
-                self.append_opaque_entry_point::<{ bake::Side::Server }>(
+                self.append_opaque_entry_point::<{ bake_types::Side::Server }>(
                     server_file_names,
                     entry_points,
                     route.file_layout,
                 )?;
                 while let Some(parent_index) = route.parent {
                     route = self.router.route_ptr(parent_index);
-                    self.append_opaque_entry_point::<{ bake::Side::Server }>(
+                    self.append_opaque_entry_point::<{ bake_types::Side::Server }>(
                         server_file_names,
                         entry_points,
                         route.file_layout,
@@ -2487,7 +2486,7 @@ impl DevServer {
             route_bundle::Data::Html(html) => {
                 // SAFETY: html_bundle is a live *mut HTMLBundleRoute (held strong by route_bundle::Html)
                 let bundle_path = unsafe { &(&(*html.html_bundle).bundle).path };
-                entry_points.append(bundle_path, entry_point_list::Flags::CLIENT)?;
+                entry_points.append(bundle_path, EntryPointFlags(EntryPointFlags::CLIENT))?;
             }
         }
 
@@ -2576,7 +2575,7 @@ impl DevServer {
                     // SAFETY: `server_graph` is disjoint from `router` / `route_bundles`.
                     let name = unsafe {
                         &(*this).server_graph.bundled_files.keys()[from_opaque_file_id::<
-                            { bake::Side::Server },
+                            { bake_types::Side::Server },
                         >(
                             (*router_type).server_file
                         )
@@ -2625,7 +2624,7 @@ impl DevServer {
                         let mut route_name = BunString::clone_utf8(unsafe {
                             (*this).relative_path(
                                 &mut *buf,
-                                &keys[from_opaque_file_id::<{ bake::Side::Server }>(
+                                &keys[from_opaque_file_id::<{ bake_types::Side::Server }>(
                                     route.file_page.unwrap(),
                                 )
                                 .get() as usize],
@@ -2641,8 +2640,10 @@ impl DevServer {
                             let mut layout_name = BunString::clone_utf8(unsafe {
                                 (*this).relative_path(
                                     &mut *buf,
-                                    &keys[from_opaque_file_id::<{ bake::Side::Server }>(layout)
-                                        .get() as usize],
+                                    &keys[from_opaque_file_id::<{ bake_types::Side::Server }>(
+                                        layout,
+                                    )
+                                    .get() as usize],
                                 )
                             });
                             arr.put_index(
@@ -3096,7 +3097,7 @@ pub mod deferred_request {
     pub type List = bun_collections::pool::SinglyLinkedList<DeferredRequest>;
     pub type Node = bun_collections::pool::Node<DeferredRequest>;
 
-    bun_output::define_scoped_log!(debug_log_dr, DlogeferredRequest, hidden);
+    bun_core::define_scoped_log!(debug_log_dr, DlogeferredRequest, hidden);
     pub(super) use debug_log_dr;
 
     /// Sometimes we will call `await bundleNewRoute()` and this will either
@@ -3235,7 +3236,7 @@ impl DeferredRequest {
                 );
                 saved
                     .ctx
-                    .set_signal_aborted(jsc::CommonAbortReason::ConnectionClosed);
+                    .set_signal_aborted(CommonAbortReason::ConnectionClosed);
                 // Note: saved.js_request (jsc::Strong) drops at end of arm
                 drop(saved);
             }
@@ -3347,7 +3348,7 @@ impl DevServer {
             // SAFETY: see `heap_ptr` note above.
             unsafe { &*heap_ptr },
             event_loop,
-            false, // watching is handled separately
+            None, // watching is handled separately
             Some(::core::ptr::NonNull::from(
                 bun_threading::work_pool::WorkPool::get(),
             )),
@@ -3367,20 +3368,7 @@ impl DevServer {
             self.graph_safety_lock.unlock();
         }
 
-        // LAYERING: `bun_bundler::bake_types::EntryPointList` is the TYPE_ONLY
-        // mirror of this file's `EntryPointList` (moved down so `bun_bundler`
-        // can name it without depending on `bun_runtime`). Convert by value —
-        // both `Flags` are `#[repr(transparent)] u8` with identical bit layout.
-        let start_data = bv2.start_from_bake_dev_server(&{
-            let mut bt = bundler::bake_types::EntryPointList::empty();
-            for (k, v) in entry_points.set.iter() {
-                bun_core::handle_oom(
-                    bt.set
-                        .put(k, bundler::bake_types::EntryPointFlags(v.bits())),
-                );
-            }
-            bt
-        })?;
+        let start_data = bv2.start_from_bake_dev_server(&entry_points)?;
         drop(entry_points);
         // End the AST scope and move its state into the bundle so the small
         // `AstVec`s built during setup stay alive until the bundle completes.
@@ -3424,12 +3412,12 @@ impl DevServer {
                     // `resolution_failure_entries` keys are `OwnerPacked` (1-bit side + file).
                     let index = owner.file();
                     match owner.side() {
-                        bake::Side::Client => self.client_graph.insert_failure(
+                        bake_types::Side::Client => self.client_graph.insert_failure(
                             incremental_graph::InsertFailureKey::Index(index),
                             log,
                             false,
                         )?,
-                        bake::Side::Server => self.server_graph.insert_failure(
+                        bake_types::Side::Server => self.server_graph.insert_failure(
                             incremental_graph::InsertFailureKey::Index(index),
                             log,
                             true,
@@ -3618,7 +3606,7 @@ impl DevServer {
                 self.router
                     .type_ptr(type_idx)
                     .client_file
-                    .map(from_opaque_file_id::<{ bake::Side::Client }>)
+                    .map(from_opaque_file_id::<{ bake_types::Side::Client }>)
             }
             route_bundle::Data::Html(html) => Some(html.bundled_file),
         };
@@ -3732,13 +3720,13 @@ impl DevServer {
 
                 // Both framework entry points are considered
                 self.server_graph.trace_imports(
-                    from_opaque_file_id::<{ bake::Side::Server }>(rt_server_file),
+                    from_opaque_file_id::<{ bake_types::Side::Server }>(rt_server_file),
                     gts,
                     TraceImportGoal::FindCss,
                 )?;
                 if let Some(id) = rt_client_file {
                     self.client_graph.trace_imports(
-                        from_opaque_file_id::<{ bake::Side::Client }>(id),
+                        from_opaque_file_id::<{ bake_types::Side::Client }>(id),
                         gts,
                         goal,
                     )?;
@@ -3747,7 +3735,7 @@ impl DevServer {
                 // The route file is considered
                 if let Some(id) = route.file_page {
                     self.server_graph.trace_imports(
-                        from_opaque_file_id::<{ bake::Side::Server }>(id),
+                        from_opaque_file_id::<{ bake_types::Side::Server }>(id),
                         gts,
                         goal,
                     )?;
@@ -3757,7 +3745,7 @@ impl DevServer {
                 loop {
                     if let Some(id) = route.file_layout {
                         self.server_graph.trace_imports(
-                            from_opaque_file_id::<{ bake::Side::Server }>(id),
+                            from_opaque_file_id::<{ bake_types::Side::Server }>(id),
                             gts,
                             goal,
                         )?;
@@ -3831,7 +3819,9 @@ impl CachedFileIndex {
         self.0
     }
     #[inline]
-    pub fn unwrap<const SIDE: bake::Side>(self) -> Option<incremental_graph::FileIndex<SIDE>> {
+    pub fn unwrap<const SIDE: bake_types::Side>(
+        self,
+    ) -> Option<incremental_graph::FileIndex<SIDE>> {
         if self.0 == u32::MAX {
             None
         } else {
@@ -3839,7 +3829,9 @@ impl CachedFileIndex {
         }
     }
 }
-impl<const SIDE: bake::Side> From<Option<incremental_graph::FileIndex<SIDE>>> for CachedFileIndex {
+impl<const SIDE: bake_types::Side> From<Option<incremental_graph::FileIndex<SIDE>>>
+    for CachedFileIndex
+{
     fn from(v: Option<incremental_graph::FileIndex<SIDE>>) -> Self {
         match v {
             Some(i) => Self(i.get()),
@@ -3851,14 +3843,14 @@ impl<const SIDE: bake::Side> From<Option<incremental_graph::FileIndex<SIDE>>> fo
 impl<'a> HotUpdateContext<'a> {
     pub fn get_cached_index(
         &mut self,
-        side: bake::Side,
+        side: bake_types::Side,
         i: impl Into<bun_ast::Index>,
     ) -> &mut CachedFileIndex {
         let i: bun_ast::Index = i.into();
         let len = self.sources.len();
         let start = match side {
-            bake::Side::Client => 0,
-            bake::Side::Server => len,
+            bake_types::Side::Client => 0,
+            bake_types::Side::Server => len,
         };
 
         &mut self.resolved_index_cache[start..][..len][i.get() as usize]
@@ -4074,7 +4066,7 @@ pub(super) fn finalize_bundle(
         };
         let quoted_contents = &quoted_source_contents[part_range.source_index.get() as usize];
         match targets[part_range.source_index.get() as usize].bake_graph() {
-            bake::Graph::Client => dev.client_graph.receive_chunk(
+            bake_types::Graph::Client => dev.client_graph.receive_chunk(
                 &mut ctx,
                 index,
                 incremental_graph::ReceiveChunkContent::Js {
@@ -4092,24 +4084,26 @@ pub(super) fn finalize_bundle(
                 },
                 false,
             )?,
-            graph @ (bake::Graph::Server | bake::Graph::Ssr) => dev.server_graph.receive_chunk(
-                &mut ctx,
-                index,
-                incremental_graph::ReceiveChunkContent::Js {
-                    code: compile_result.code().to_vec().into_boxed_slice(),
-                    source_map: Some(incremental_graph::ReceiveChunkSourceMap {
-                        chunk: source_map,
-                        // `quoted_contents` lives in the per-bundle AST heap,
-                        // which is destroyed at bundle end; copy onto the
-                        // global heap so the dev-server can hold it across
-                        // rebuilds for stack-trace remapping.
-                        escaped_source: quoted_contents
-                            .as_ref()
-                            .map(|v| v.as_slice().to_vec().into_boxed_slice()),
-                    }),
-                },
-                graph == bake::Graph::Ssr,
-            )?,
+            graph @ (bake_types::Graph::Server | bake_types::Graph::Ssr) => {
+                dev.server_graph.receive_chunk(
+                    &mut ctx,
+                    index,
+                    incremental_graph::ReceiveChunkContent::Js {
+                        code: compile_result.code().to_vec().into_boxed_slice(),
+                        source_map: Some(incremental_graph::ReceiveChunkSourceMap {
+                            chunk: source_map,
+                            // `quoted_contents` lives in the per-bundle AST heap,
+                            // which is destroyed at bundle end; copy onto the
+                            // global heap so the dev-server can hold it across
+                            // rebuilds for stack-trace remapping.
+                            escaped_source: quoted_contents
+                                .as_ref()
+                                .map(|v| v.as_slice().to_vec().into_boxed_slice()),
+                        }),
+                    },
+                    graph == bake_types::Graph::Ssr,
+                )?
+            }
         }
     }
 
@@ -4224,8 +4218,8 @@ pub(super) fn finalize_bundle(
             false,
         )?;
         let client_index = ctx
-            .get_cached_index(bake::Side::Client, index)
-            .unwrap::<{ bake::Side::Client }>()
+            .get_cached_index(bake_types::Side::Client, index)
+            .unwrap::<{ bake_types::Side::Client }>()
             .expect("unresolved index");
         let route_bundle_index = dev.client_graph.html_route_bundle_index(client_index);
         let route_bundle = dev.route_bundle_ptr(route_bundle_index);
@@ -4276,12 +4270,14 @@ pub(super) fn finalize_bundle(
     // have been modified.
     for part_range in js_chunk.content.javascript().parts_in_chunk_in_order.iter() {
         match targets[part_range.source_index.get() as usize].bake_graph() {
-            bake::Graph::Server | bake::Graph::Ssr => dev.server_graph.process_chunk_dependencies(
-                &mut ctx,
-                incremental_graph::ProcessMode::Normal,
-                part_range.source_index,
-            )?,
-            bake::Graph::Client => dev.client_graph.process_chunk_dependencies(
+            bake_types::Graph::Server | bake_types::Graph::Ssr => {
+                dev.server_graph.process_chunk_dependencies(
+                    &mut ctx,
+                    incremental_graph::ProcessMode::Normal,
+                    part_range.source_index,
+                )?
+            }
+            bake_types::Graph::Client => dev.client_graph.process_chunk_dependencies(
                 &mut ctx,
                 incremental_graph::ProcessMode::Normal,
                 part_range.source_index,
@@ -4354,8 +4350,11 @@ pub(super) fn finalize_bundle(
                     }
                 };
 
-                let json_data =
-                    source_map_entry.render_json(dev, ChunkKind::HmrChunk, bake::Side::Server)?;
+                let json_data = source_map_entry.render_json(
+                    dev,
+                    ChunkKind::HmrChunk,
+                    bake_types::Side::Server,
+                )?;
                 break 'json Some(json_data);
             }
         } else {
@@ -4798,7 +4797,7 @@ pub(super) fn finalize_bundle(
 
     if dev.bundling_failures.is_empty() {
         if current_bundle!().had_reload_event {
-            let clear_terminal = !bun_output::scope_is_visible!(DevServer)
+            let clear_terminal = !DevServer.is_visible()
                 && !dev
                     .vm()
                     .env_loader()
@@ -4885,7 +4884,7 @@ pub(super) fn finalize_bundle(
                                 None => break 'file_name None,
                             };
                             let server_index =
-                                from_opaque_file_id::<{ bake::Side::Server }>(opaque_id);
+                                from_opaque_file_id::<{ bake_types::Side::Server }>(opaque_id);
                             let abs_path =
                                 &dev.server_graph.bundled_files.keys()[server_index.get() as usize];
                             break 'file_name Some(dev.relative_path(&mut *buf, abs_path));
@@ -5063,7 +5062,7 @@ impl DevServer {
     pub fn handle_parse_task_failure(
         &mut self,
         err: bun_core::Error,
-        graph: bake::Graph,
+        graph: bake_types::Graph,
         abs_path: &[u8],
         log: &Log,
         bv2: &mut BundleV2,
@@ -5081,24 +5080,24 @@ impl DevServer {
         if err == bun_core::err!(FileNotFound) || err == bun_core::err!(ModuleNotFound) {
             // Special-case files being deleted.
             match graph {
-                bake::Graph::Server | bake::Graph::Ssr => {
+                bake_types::Graph::Server | bake_types::Graph::Ssr => {
                     self.server_graph.on_file_deleted(abs_path, bv2)?
                 }
-                bake::Graph::Client => self.client_graph.on_file_deleted(abs_path, bv2)?,
+                bake_types::Graph::Client => self.client_graph.on_file_deleted(abs_path, bv2)?,
             }
         } else {
             match graph {
-                bake::Graph::Server => self.server_graph.insert_failure(
+                bake_types::Graph::Server => self.server_graph.insert_failure(
                     incremental_graph::InsertFailureKey::AbsPath(abs_path),
                     log,
                     false,
                 )?,
-                bake::Graph::Ssr => self.server_graph.insert_failure(
+                bake_types::Graph::Ssr => self.server_graph.insert_failure(
                     incremental_graph::InsertFailureKey::AbsPath(abs_path),
                     log,
                     true,
                 )?,
-                bake::Graph::Client => self.client_graph.insert_failure(
+                bake_types::Graph::Client => self.client_graph.insert_failure(
                     incremental_graph::InsertFailureKey::AbsPath(abs_path),
                     log,
                     false,
@@ -5112,20 +5111,20 @@ impl DevServer {
     pub fn get_log_for_resolution_failures(
         &mut self,
         abs_path: &[u8],
-        graph: bake::Graph,
+        graph: bake_types::Graph,
     ) -> Result<&mut Log, bun_core::Error> {
         debug_assert!(self.current_bundle.is_some());
 
         let _g = self.graph_safety_lock.guard();
 
-        let owner: serialized_failure::OwnerPacked = if graph == bake::Graph::Client {
+        let owner: serialized_failure::OwnerPacked = if graph == bake_types::Graph::Client {
             let idx = self.client_graph.insert_stale(abs_path, false)?;
-            serialized_failure::OwnerPacked::new(bake::Side::Client, idx.get())
+            serialized_failure::OwnerPacked::new(bake_types::Side::Client, idx.get())
         } else {
             let idx = self
                 .server_graph
-                .insert_stale(abs_path, graph == bake::Graph::Ssr)?;
-            serialized_failure::OwnerPacked::new(bake::Side::Server, idx.get())
+                .insert_stale(abs_path, graph == bake_types::Graph::Ssr)?;
+            serialized_failure::OwnerPacked::new(bake_types::Side::Server, idx.get())
         };
         let current_bundle = self
             .current_bundle
@@ -5141,13 +5140,11 @@ impl DevServer {
     }
 }
 
-#[derive(Copy, Clone)]
-pub struct CacheEntry {
-    pub kind: FileKind,
-}
+/// Canonical definition: `bun_bundler::bake_types::CacheEntry`.
+pub use bun_bundler::bake_types::CacheEntry;
 
 impl DevServer {
-    pub fn is_file_cached(&mut self, path: &[u8], side: bake::Graph) -> Option<CacheEntry> {
+    pub fn is_file_cached(&mut self, path: &[u8], side: bake_types::Graph) -> Option<CacheEntry> {
         // Barrel files with deferred records must always be re-parsed.
         if self.barrel_files_with_deferrals.contains_key(path) {
             return None;
@@ -5172,12 +5169,12 @@ impl DevServer {
             }};
         }
         match side {
-            bake::Graph::Client => check!(&self.client_graph),
-            bake::Graph::Server | bake::Graph::Ssr => check!(&self.server_graph),
+            bake_types::Graph::Client => check!(&self.client_graph),
+            bake_types::Graph::Server | bake_types::Graph::Ssr => check!(&self.server_graph),
         }
     }
 
-    fn append_opaque_entry_point<const SIDE: bake::Side>(
+    fn append_opaque_entry_point<const SIDE: bake_types::Side>(
         &self,
         file_names: &[Box<[u8]>],
         entry_points: &mut EntryPointList,
@@ -5193,11 +5190,11 @@ impl DevServer {
 
         let file_index = from_opaque_file_id::<SIDE>(file);
         let stale = match SIDE {
-            bake::Side::Server => self
+            bake_types::Side::Server => self
                 .server_graph
                 .stale_files
                 .is_set(file_index.get() as usize),
-            bake::Side::Client => self
+            bake_types::Side::Client => self
                 .client_graph
                 .stale_files
                 .is_set(file_index.get() as usize),
@@ -5565,7 +5562,7 @@ fn send_built_in_not_found<R: ResponseLike>(resp: &mut R) {
 
 impl DevServer {
     fn print_memory_line(&self) {
-        if !bun_output::scope_is_visible!(DevServer) {
+        if !DevServer.is_visible() {
             return;
         }
         bun_core::pretty_errorln!(
@@ -5621,7 +5618,7 @@ pub(super) use crate::bake::dev_server::ChunkKind;
 #[cfg(feature = "bake_debugging_features")]
 pub fn dump_bundle(
     dump_dir: &mut sys::Dir,
-    graph: bake::Graph,
+    graph: bake_types::Graph,
     rel_path: &[u8],
     chunk: &[u8],
     wrap: bool,
@@ -5674,7 +5671,7 @@ pub fn dump_bundle(
 pub fn dump_bundle_for_chunk(
     dev: &DevServer,
     dump_dir: &mut sys::Dir,
-    side: bake::Side,
+    side: bake_types::Side,
     key: &[u8],
     code: &[u8],
     wrap: bool,
@@ -5692,12 +5689,12 @@ pub fn dump_bundle_for_chunk(
     if let Err(err) = dump_bundle(
         dump_dir,
         match side {
-            bake::Side::Client => bake::Graph::Client,
-            bake::Side::Server => {
+            bake_types::Side::Client => bake_types::Graph::Client,
+            bake_types::Side::Server => {
                 if is_ssr_graph {
-                    bake::Graph::Ssr
+                    bake_types::Graph::Ssr
                 } else {
-                    bake::Graph::Server
+                    bake_types::Graph::Server
                 }
             }
         },
@@ -5733,8 +5730,8 @@ impl DevServer {
     }
 
     #[inline]
-    fn timer_heap(&self) -> &mut crate::timer::All {
-        crate::jsc_hooks::timer_all_mut()
+    fn timer_heap(&self) -> &mut bun_jsc::timer::All {
+        bun_jsc::timer::timer_all_mut()
     }
 
     pub fn emit_memory_visualizer_message_timer(
@@ -5857,24 +5854,24 @@ impl DevServer {
                     payload.push(
                         (g.stale_files.is_set_allow_out_of_bound(i, true) || file.failed) as u8,
                     );
-                    payload.push(($side == bake::Side::Server && file.is_rsc) as u8);
-                    payload.push(($side == bake::Side::Server && file.is_ssr) as u8);
+                    payload.push(($side == bake_types::Side::Server && file.is_rsc) as u8);
+                    payload.push(($side == bake_types::Side::Server && file.is_ssr) as u8);
                     payload.push(match $side {
-                        bake::Side::Server => file.is_route,
-                        bake::Side::Client => file.html_route_bundle_index.is_some(),
+                        bake_types::Side::Server => file.is_route,
+                        bake_types::Side::Client => file.html_route_bundle_index.is_some(),
                     } as u8);
                     payload.push(
-                        ($side == bake::Side::Client && file.is_special_framework_file) as u8,
+                        ($side == bake_types::Side::Client && file.is_special_framework_file) as u8,
                     );
                     payload.push(match $side {
-                        bake::Side::Server => file.is_client_component_boundary,
-                        bake::Side::Client => file.is_hmr_root,
+                        bake_types::Side::Server => file.is_client_component_boundary,
+                        bake_types::Side::Client => file.is_hmr_root,
                     } as u8);
                 }
             }};
         }
-        emit_files!(bake::Side::Client, &self.client_graph);
-        emit_files!(bake::Side::Server, &self.server_graph);
+        emit_files!(bake_types::Side::Client, &self.client_graph);
+        emit_files!(bake_types::Side::Server, &self.server_graph);
 
         // A small macro avoids duplicating the per-side body while still
         // monomorphizing on the const-generic graph type.
@@ -6043,7 +6040,7 @@ impl DevServer {
     pub fn inspector(&self) -> Option<&BunFrontendDevServerAgent> {
         if let Some(debugger) = self.vm().debugger.as_ref() {
             bun_core::hint::cold();
-            let agent = BunFrontendDevServerAgent::from_slot(&debugger.extension_agent);
+            let agent = &debugger.extension_agent;
             if agent.is_enabled() {
                 bun_core::hint::cold();
                 return Some(agent);
@@ -6194,14 +6191,14 @@ impl DevServer {
 #[derive(Copy, Clone)]
 struct SafeFileId(u32);
 impl SafeFileId {
-    fn new(side: bake::Side, index: u32) -> Self {
+    fn new(side: bake_types::Side, index: u32) -> Self {
         SafeFileId((side as u32) | (index << 1))
     }
-    fn side(self) -> bake::Side {
+    fn side(self) -> bake_types::Side {
         if (self.0 & 1) == 0 {
-            bake::Side::Client
+            bake_types::Side::Client
         } else {
-            bake::Side::Server
+            bake_types::Side::Server
         }
     }
     fn index(self) -> u32 {
@@ -6228,7 +6225,7 @@ impl DevServer {
                 file_kind == framework_router::FileKind::Layout,
             ),
         )?;
-        Ok(to_opaque_file_id::<{ bake::Side::Server }>(index))
+        Ok(to_opaque_file_id::<{ bake_types::Side::Server }>(index))
     }
 
     pub fn on_router_syntax_error(
@@ -6262,7 +6259,7 @@ impl DevServer {
             bstr::BStr::new(self.relative_path(
                 &mut *buf,
                 &self.server_graph.bundled_files.keys()
-                    [from_opaque_file_id::<{ bake::Side::Server }>(other_id).get() as usize]
+                    [from_opaque_file_id::<{ bake_types::Side::Server }>(other_id).get() as usize]
             ))
         );
         Output::flush();
@@ -6297,7 +6294,7 @@ impl framework_router::InsertionHandler for DevServer {
     }
 }
 
-fn to_opaque_file_id<const SIDE: bake::Side>(
+fn to_opaque_file_id<const SIDE: bake_types::Side>(
     index: incremental_graph::FileIndex<SIDE>,
 ) -> OpaqueFileId {
     if cfg!(debug_assertions) {
@@ -6306,7 +6303,7 @@ fn to_opaque_file_id<const SIDE: bake::Side>(
     OpaqueFileId::init(index.get())
 }
 
-fn from_opaque_file_id<const SIDE: bake::Side>(
+fn from_opaque_file_id<const SIDE: bake_types::Side>(
     id: OpaqueFileId,
 ) -> incremental_graph::FileIndex<SIDE> {
     if cfg!(debug_assertions) {
@@ -6338,7 +6335,7 @@ impl DevServer {
             return &path[self.root.len() + 1..];
         }
 
-        if path.len() + self.root.len() * 2 >= paths::MAX_PATH_BYTES {
+        if path.len() + self.root.len() * 2 >= bun_core::MAX_PATH_BYTES {
             return path;
         }
 
@@ -6467,64 +6464,10 @@ impl RouteIndexAndRecurseFlag {
         (self.0 >> 31) != 0
     }
 }
-/// Bake needs to specify which graph (client/server/ssr) each entry point is.
-#[derive(Default)]
-pub struct EntryPointList {
-    pub set: bun_collections::StringArrayHashMap<entry_point_list::Flags>,
-}
-
-pub mod entry_point_list {
-    bitflags::bitflags! {
-        #[derive(Default, Copy, Clone)]
-        #[repr(transparent)]
-        pub struct Flags: u8 {
-            const CLIENT = 1 << 0;
-            const SERVER = 1 << 1;
-            const SSR = 1 << 2;
-            /// When this is set, also set CLIENT
-            const CSS = 1 << 3;
-        }
-    }
-}
-
-impl EntryPointList {
-    pub fn empty() -> EntryPointList {
-        EntryPointList::default()
-    }
-
-    pub fn append_js(&mut self, abs_path: &[u8], side: bake::Graph) -> Result<(), bun_core::Error> {
-        self.append(
-            abs_path,
-            match side {
-                bake::Graph::Server => entry_point_list::Flags::SERVER,
-                bake::Graph::Client => entry_point_list::Flags::CLIENT,
-                bake::Graph::Ssr => entry_point_list::Flags::SSR,
-            },
-        )
-    }
-
-    pub fn append_css(&mut self, abs_path: &[u8]) -> Result<(), bun_core::Error> {
-        self.append(
-            abs_path,
-            entry_point_list::Flags::CLIENT | entry_point_list::Flags::CSS,
-        )
-    }
-
-    /// Deduplictes requests to bundle the same file twice.
-    pub fn append(
-        &mut self,
-        abs_path: &[u8],
-        flags: entry_point_list::Flags,
-    ) -> Result<(), bun_core::Error> {
-        let gop = self.set.get_or_put(abs_path)?;
-        if gop.found_existing {
-            *gop.value_ptr |= flags;
-        } else {
-            *gop.value_ptr = flags;
-        }
-        Ok(())
-    }
-}
+/// Canonical definition in `bun_bundler::bake_types` — one nominal type shared
+/// with `BundleV2::start_from_bake_dev_server`.
+pub(crate) use bun_bundler::bake_types::EntryPointFlags;
+pub use bun_bundler::bake_types::EntryPointList;
 
 /// This structure does not increment the reference count of its contents, as
 /// the lifetime of them are all tied to the underling Bun.serve instance.
@@ -7183,5 +7126,4 @@ use crate::bake::dev_server::route_bundle;
 use crate::bake::dev_server::serialized_failure;
 use crate::bake::dev_server::source_map_store;
 type DebuggerId = jsc::debugger::DebuggerId;
-type BunFrontendDevServerAgent =
-    crate::bake::dev_server::inspector_agent::BunFrontendDevServerAgent;
+type BunFrontendDevServerAgent = bun_jsc::frontend_dev_server_agent::BunFrontendDevServerAgent;

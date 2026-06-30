@@ -1,18 +1,22 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_ptr::{BackRef, RawSlice};
+use bun_core::RawSlice;
+use bun_ptr::BackRef;
 
-use crate::webcore::jsc::{
-    self as jsc, ArrayBuffer, CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject,
-    JSPromise, JSPromiseStrong, JSType, JSValue, JsResult, SysErrorJsc, VirtualMachine,
-};
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::{FeatureFlags, strings};
+use bun_http_types::FetchRedirect::CommonAbortReason;
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{
+    self as jsc, ArrayBuffer, CommonAbortReasonExt as _, JSGlobalObject, JSPromise,
+    JSPromiseStrong, JSType, JSValue, JsResult, SysErrorJsc,
+};
 use bun_sys::{self as sys, Error as SysError, Fd};
 use bun_uws as uws;
 
 use crate::webcore::blob::Any as AnyBlob;
+use crate::webcore::s3::MultiPartUpload;
 use crate::webcore::sink::Sink;
 use crate::webcore::{AutoFlusher, ByteListPool};
 
@@ -25,13 +29,6 @@ bun_core::declare_scope!(NetworkSinkLog, visible);
 /// `bun.ObjectPool(bun.Vec<u8>, ...)::Node` — pooled buffer node type used by
 /// `HTTPServerWritable.pooled_buffer`.
 pub type ByteListPoolNode = bun_collections::pool::Node<Vec<u8>>;
-
-// NetworkSink stores a borrowed `*MultiPartUpload`. Now that `webcore::s3` is
-// wired, alias the module to the real type so `bun_s3::MultiPartUpload` resolves
-// for callers that still spell it that way.
-pub mod bun_s3 {
-    pub use crate::webcore::s3::MultiPartUpload;
-}
 
 /// `Blob.SizeType` is `u64` (see `webcore::blob::SizeType`).
 // alias the canonical `webcore::BlobSizeType` so `SignalVTable.ready`'s
@@ -182,7 +179,7 @@ impl Start {
                     }
                 }
 
-                if let Some(val) = value.fast_get(global_this, jsc::BuiltinName::Stream)? {
+                if let Some(val) = value.fast_get(global_this, jsc::BuiltinName::stream)? {
                     if val.is_boolean() {
                         stream = val.to_boolean();
                         empty = false;
@@ -190,7 +187,7 @@ impl Start {
                 }
 
                 if let Some(chunk_size_val) =
-                    value.fast_get(global_this, jsc::BuiltinName::HighWaterMark)?
+                    value.fast_get(global_this, jsc::BuiltinName::highWaterMark)?
                 {
                     if chunk_size_val.is_number() {
                         empty = false;
@@ -210,14 +207,14 @@ impl Start {
                 let mut chunk_size: BlobSizeType = 0;
 
                 if let Some(chunk_size_val) =
-                    value.fast_get(global_this, jsc::BuiltinName::HighWaterMark)?
+                    value.fast_get(global_this, jsc::BuiltinName::highWaterMark)?
                 {
                     if chunk_size_val.is_number() {
                         chunk_size = 0i64.max(chunk_size_val.to_int64()) as BlobSizeType;
                     }
                 }
 
-                if let Some(path) = value.fast_get(global_this, jsc::BuiltinName::Path)? {
+                if let Some(path) = value.fast_get(global_this, jsc::BuiltinName::path)? {
                     if !path.is_string() {
                         return Ok(Start::Err(SysError {
                             errno: sys::SystemErrno::EINVAL as _,
@@ -272,7 +269,7 @@ impl Start {
                 let mut chunk_size: BlobSizeType = 2048;
 
                 if let Some(chunk_size_val) =
-                    value.fast_get(global_this, jsc::BuiltinName::HighWaterMark)?
+                    value.fast_get(global_this, jsc::BuiltinName::highWaterMark)?
                 {
                     if chunk_size_val.is_number() {
                         empty = false;
@@ -680,7 +677,7 @@ impl Pending {
 }
 
 impl bun_event_loop::Taskable for Pending {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::StreamPending;
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::TaskTag::StreamPending;
 }
 
 pub enum PendingFuture {
@@ -2118,7 +2115,7 @@ pub struct NetworkSink {
     // Stored as `BackRef`
     // (set-once); while `Some` the sink holds a counted ref on the intrusively
     // ref-counted `MultiPartUpload`, released in `detach_writable`.
-    pub task: Option<BackRef<bun_s3::MultiPartUpload>>,
+    pub task: Option<BackRef<MultiPartUpload>>,
     pub signal: Signal,
     // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
     pub global_this: Option<BackRef<JSGlobalObject>>,
@@ -2165,7 +2162,7 @@ impl NetworkSink {
     /// while `Some`, this sink holds a counted ref (released in `detach_writable`),
     /// so the pointee is live for at least `'_`.
     #[inline]
-    fn task_ref(&self) -> Option<&bun_s3::MultiPartUpload> {
+    fn task_ref(&self) -> Option<&MultiPartUpload> {
         // `BackRef::get` encapsulates the deref under the counted-ref invariant.
         self.task.as_ref().map(BackRef::get)
     }
@@ -2176,7 +2173,7 @@ impl NetworkSink {
     /// is its sole writer once attached; `&mut self` ensures no overlapping
     /// borrow from this sink. Mirrors the prior `task.as_ptr().as_mut()` sites.
     #[inline]
-    fn task_mut(&mut self) -> Option<&mut bun_s3::MultiPartUpload> {
+    fn task_mut(&mut self) -> Option<&mut MultiPartUpload> {
         // SAFETY: see doc comment — exclusive while `&mut self` held.
         self.task.as_mut().map(|p| unsafe { p.get_mut() })
     }
@@ -2227,14 +2224,14 @@ impl NetworkSink {
     fn detach_writable(&mut self) {
         if let Some(task) = self.task.take() {
             // task is ref-counted; deref releases our ref
-            bun_s3::MultiPartUpload::deref_(task.as_ptr());
+            MultiPartUpload::deref_(task.as_ptr());
         }
     }
 
     /// Narrowed like
     /// `flushPromise`; promise resolution only fails on VM termination.
     pub fn on_writable(
-        task: &mut bun_s3::MultiPartUpload,
+        task: &mut MultiPartUpload,
         this: &mut NetworkSink,
         flushed: u64,
     ) -> core::result::Result<(), jsc::JsTerminated> {

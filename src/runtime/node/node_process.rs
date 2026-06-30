@@ -2,9 +2,9 @@
 
 use core::ffi::c_char;
 
+use bun_core::ZigString;
 use bun_core::env_var::feature_flag;
 use bun_core::{self, Environment, Global};
-use bun_jsc::zig_string::ZigString;
 use bun_jsc::{JSGlobalObject, JSValue, ZigStringJsc as _};
 
 unsafe extern "C" {
@@ -122,14 +122,15 @@ pub(crate) static Bun__version_sha: CStrPtr = CStrPtr(
 );
 
 mod _impl {
+    use bun_core::PathBuffer;
+    use bun_core::ZigString;
     use bun_core::env_var;
     use bun_core::{String as BunString, strings};
     use bun_jsc::bun_string_jsc;
-    use bun_jsc::zig_string::ZigString;
     use bun_jsc::{
         JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker, ZigStringJsc as _,
     };
-    use bun_paths::{PathBuffer, SEP};
+    use bun_paths::SEP;
     use bun_sys as Syscall;
 
     #[cfg(windows)]
@@ -207,9 +208,6 @@ mod _impl {
         // For compiled/standalone executables, execArgv should contain compile_exec_argv and BUN_OPTIONS.
         // Use append_options_env for BUN_OPTIONS to correctly handle quoted values.
         if let Some(graph) = vm.standalone_module_graph {
-            // `standalone_module_graph` is the lower-crate trait object
-            // (`&'static dyn bun_resolver::StandaloneModuleGraph`); the field we
-            // need is exposed via the trait so no downcast is required.
             let compile_exec_argv = graph.compile_exec_argv();
             let bun_options_argc = bun_core::bun_options_argc();
             if !compile_exec_argv.is_empty() || bun_options_argc > 0 {

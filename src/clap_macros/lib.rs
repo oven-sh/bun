@@ -113,26 +113,6 @@ impl<'a> TokenizeAny<'a> {
     }
 }
 
-// local copy: proc-macro crate compiles for the HOST and cannot depend on
-// bun_string/bun_alloc (would drag mimalloc-sys into the proc-macro build for
-// a 6-line helper) — KEEP trim_left/trim bodies as-is.
-fn trim_left(s: &[u8]) -> &[u8] {
-    let mut i = 0;
-    while i < s.len() && (s[i] == b' ' || s[i] == b'\t') {
-        i += 1;
-    }
-    &s[i..]
-}
-
-fn trim(s: &[u8]) -> &[u8] {
-    let s = trim_left(s);
-    let mut e = s.len();
-    while e > 0 && (s[e - 1] == b' ' || s[e - 1] == b'\t') {
-        e -= 1;
-    }
-    &s[..e]
-}
-
 #[allow(clippy::disallowed_methods)] // proc-macro: compile-time input
 fn to_string(s: &[u8]) -> String {
     String::from_utf8(s.to_vec()).expect("param strings must be UTF-8")
@@ -170,7 +150,7 @@ fn parse_param(line: &[u8]) -> Result<Param, ParseParamError> {
     } else if found_comma {
         return Err(ParseParamError::TrailingComma);
     } else if short_name.is_none() {
-        return Ok(parse_param_rest(trim_left(line)));
+        return Ok(parse_param_rest(bun_ascii::trim_left(line, b" \t")));
     }
 
     let mut res = parse_param_rest(it.rest());
@@ -237,7 +217,7 @@ fn parse_param_rest(line: &[u8]) -> Param {
                 Values::One
             },
             id: Help {
-                msg: to_string(trim(&line[help_start..])),
+                msg: to_string(bun_ascii::trim(&line[help_start..], b" \t")),
                 value: to_string(&line[1..len]),
             },
             ..Default::default()
@@ -246,7 +226,7 @@ fn parse_param_rest(line: &[u8]) -> Param {
 
     Param {
         id: Help {
-            msg: to_string(trim(line)),
+            msg: to_string(bun_ascii::trim(line, b" \t")),
             ..Default::default()
         },
         ..Default::default()

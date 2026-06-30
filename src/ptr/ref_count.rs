@@ -1087,7 +1087,7 @@ const MAGIC_VALID: u128 = 0x2f84_e51d;
 #[cfg(debug_assertions)]
 pub struct DebugData<Count> {
     magic: u128,
-    lock: bun_core::Mutex<()>,
+    lock: bun_core::Guarded<()>,
     next_id: AtomicU32,
     map: HashMap<TrackedRefId, TrackedRef>,
     frees: ArrayHashMap<TrackedRefId, TrackedDeref>,
@@ -1100,7 +1100,7 @@ impl<Count: CountLoad> DebugData<Count> {
     pub fn empty() -> Self {
         Self {
             magic: MAGIC_VALID,
-            lock: bun_core::Mutex::new(()),
+            lock: bun_core::Guarded::new(()),
             next_id: AtomicU32::new(0),
             map: HashMap::new(),
             frees: ArrayHashMap::new(),

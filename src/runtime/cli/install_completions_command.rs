@@ -1,16 +1,17 @@
+use bun_core::PathBuffer;
+#[cfg(windows)]
+use bun_core::WPathBuffer;
 use bun_core::pretty_errorln;
 use bun_core::strings;
 use bun_core::{Global, Output, env_var};
 #[cfg(not(windows))]
 use bun_core::{note, print_errorln};
-use bun_paths::PathBuffer;
-#[cfg(windows)]
-use bun_paths::WPathBuffer;
 #[cfg(not(windows))]
 use bun_paths::{platform, resolve_path};
 use bun_sys::{self, E, File};
 
-use crate::shell_completions::{Shell, ShellCompletionsExt as _};
+use crate::shell_completions::ShellCompletionsExt as _;
+use bun_install::ShellCompletions::Shell;
 
 pub struct InstallCompletionsCommand;
 

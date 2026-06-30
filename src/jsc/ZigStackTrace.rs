@@ -92,12 +92,12 @@ impl ZigStackTrace {
     pub fn frames(&self) -> &[ZigStackFrame] {
         // SAFETY: frames_ptr points to a caller-owned buffer of at least frames_len elements
         // (populated by C++ via FFI).
-        unsafe { bun_core::ffi::slice(self.frames_ptr, self.frames_len as usize) }
+        unsafe { bun_opaque::ffi::slice(self.frames_ptr, self.frames_len as usize) }
     }
 
     pub fn frames_mutable(&mut self) -> &mut [ZigStackFrame] {
         // SAFETY: frames_ptr points to a caller-owned buffer of at least frames_len elements.
-        unsafe { bun_core::ffi::slice_mut(self.frames_ptr, self.frames_len as usize) }
+        unsafe { bun_opaque::ffi::slice_mut(self.frames_ptr, self.frames_len as usize) }
     }
 
     /// Mutable view of the populated source-line strings (`[0..source_lines_len]`).
@@ -106,7 +106,7 @@ impl ZigStackTrace {
         // SAFETY: `source_lines_ptr` points to a caller-owned buffer of at least
         // `source_lines_len` initialized elements (populated by C++ via FFI).
         // The borrow is tied to `&mut self`.
-        unsafe { bun_core::ffi::slice_mut(self.source_lines_ptr, self.source_lines_len as usize) }
+        unsafe { bun_opaque::ffi::slice_mut(self.source_lines_ptr, self.source_lines_len as usize) }
     }
 
     /// Immutable view of the populated source-line numbers (`[0..source_lines_len]`).
@@ -114,7 +114,7 @@ impl ZigStackTrace {
     pub fn source_line_numbers(&self) -> &[i32] {
         // SAFETY: `source_lines_numbers` points to a caller-owned buffer of at
         // least `source_lines_len` initialized elements (populated by C++ via FFI).
-        unsafe { bun_core::ffi::slice(self.source_lines_numbers, self.source_lines_len as usize) }
+        unsafe { bun_opaque::ffi::slice(self.source_lines_numbers, self.source_lines_len as usize) }
     }
 
     pub fn source_line_iterator(&self) -> SourceLineIterator<'_> {
@@ -146,7 +146,7 @@ impl<'a> SourceLineIterator<'a> {
         // SAFETY: source_lines_ptr points to a caller-owned buffer of at least
         // source_lines_len elements; self.i < source_lines_len by construction in
         // source_line_iterator().
-        let lines = unsafe { bun_core::ffi::slice(self.trace.source_lines_ptr, n) };
+        let lines = unsafe { bun_opaque::ffi::slice(self.trace.source_lines_ptr, n) };
         for line in lines {
             count += line.length();
         }

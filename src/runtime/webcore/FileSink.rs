@@ -9,13 +9,13 @@ use bun_jsc::JsCell;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
 use crate::api::bun::process::Status as SpawnStatus;
-use crate::webcore::jsc::{CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsResult};
 use crate::webcore::readable_stream::{self, ReadableStream};
 use crate::webcore::{self, AutoFlusher, PathOrFileDescriptor, streams};
+use bun_jsc::{CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsResult};
 #[cfg(windows)]
-use bun_sys::windows::libuv as uv;
+use bun_libuv_sys as uv;
 #[cfg(windows)]
-use bun_sys::windows::libuv::UvHandle as _;
+use bun_libuv_sys::UvHandle as _;
 
 bun_core::declare_scope!(FileSink, visible);
 
@@ -175,7 +175,7 @@ pub type Poll = IOWriter;
 // the raw ptr; `ref_` only touches `ref_count: Cell<u32>`.
 bun_io::impl_streaming_writer_parent! {
     FileSink;
-    poll_tag   = bun_io::posix_event_loop::poll_tag::FILE_SINK,
+    on_poll    = bun_io::pipe_writer::streaming_writer_run_file_poll::<Self>,
     borrow     = ptr,
     on_write   = on_write,
     on_error   = on_error,
@@ -686,7 +686,7 @@ impl FileSink {
                             .get()
                             .get_poll()
                             .unwrap()
-                            .set_flag(bun_io::FilePollFlag::Nonblocking);
+                            .set_flag(bun_io::posix_event_loop::Flags::Nonblocking);
                     }
 
                     if self.is_socket.get() {
@@ -694,13 +694,13 @@ impl FileSink {
                             .get()
                             .get_poll()
                             .unwrap()
-                            .set_flag(bun_io::FilePollFlag::Socket);
+                            .set_flag(bun_io::posix_event_loop::Flags::Socket);
                     } else if self.pollable.get() {
                         self.writer
                             .get()
                             .get_poll()
                             .unwrap()
-                            .set_flag(bun_io::FilePollFlag::Fifo);
+                            .set_flag(bun_io::posix_event_loop::Flags::Fifo);
                     }
                 }
             }
@@ -720,13 +720,13 @@ impl FileSink {
         self.event_loop_handle
     }
 
-    /// `bun_io::EventLoopHandle` is an opaque `*mut c_void` that the io-layer
+    /// `bun_io::EventLoopCtx` is an opaque `*mut c_void` that the io-layer
     /// `FilePollVTable` round-trips back to the runtime. We pass the address of
     /// the stored `bun_jsc::EventLoopHandle` so the (runtime-registered) vtable
     /// can recover it.
     #[inline]
-    fn io_evtloop(&self) -> bun_io::EventLoopHandle {
-        // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
+    fn io_evtloop(&self) -> bun_io::EventLoopCtx {
+        // SAFETY: `bun_io::EventLoopCtx` stores `*mut c_void` purely for
         // type-erasure; the vtable consumers treat the pointee as read-only
         self.event_loop_handle.as_event_loop_ctx()
     }
@@ -749,14 +749,14 @@ impl FileSink {
     /// typed `&mut VirtualMachine` (None for the mini loop or null).
     #[inline]
     #[allow(clippy::mut_from_ref)] // recovers `&mut` from a type-erased raw ptr (per-thread VM, not aliased)
-    fn js_vm(&self) -> Option<&mut bun_jsc::VirtualMachineRef> {
+    fn js_vm(&self) -> Option<&mut bun_jsc::virtual_machine::VirtualMachine> {
         let p = self.event_loop_handle.bun_vm();
         if p.is_null() {
             return None;
         }
         // SAFETY: `bun_vm()` returns an erased `*mut VirtualMachine` for the
         // Js arm; non-null implies the per-thread VM, never aliased here.
-        Some(unsafe { &mut *p.cast::<bun_jsc::VirtualMachineRef>() })
+        Some(unsafe { &mut *p.cast::<bun_jsc::virtual_machine::VirtualMachine>() })
     }
 
     pub fn connect(&self, signal: streams::Signal) {
@@ -793,11 +793,11 @@ impl FileSink {
             self.ref_();
             // The type→tag
             // map lives in `crate::dispatch`; the resolved tag for
-            // `*FlushPendingTask` is `task_tag::FlushPendingFileSinkTask`.
+            // `*FlushPendingTask` is `TaskTag::FlushPendingFileSinkTask`.
             // Ptr identity only — `run_from_js_thread` recovers `*mut FileSink`
             // via `from_field_ptr!` and never forms `&mut FileSink`.
             let task = bun_event_loop::Task::new(
-                bun_event_loop::task_tag::FlushPendingFileSinkTask,
+                bun_event_loop::TaskTag::FlushPendingFileSinkTask,
                 core::ptr::from_ref(&self.run_pending_later)
                     .cast_mut()
                     .cast::<()>(),
@@ -955,7 +955,7 @@ impl FileSink {
             // that already has a Bun VM (`get()` panics otherwise); `event_loop()`
             // is the live per-thread `jsc::EventLoop`.
             event_loop_handle: EventLoopHandle::init(
-                (*bun_jsc::VirtualMachineRef::get())
+                (*bun_jsc::virtual_machine::VirtualMachine::get())
                     .event_loop()
                     .cast::<()>(),
             ),

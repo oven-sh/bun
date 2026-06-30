@@ -1,11 +1,6 @@
 use bun_picohttp as picohttp;
 
-// `bun.schema.api.StringPointer` — canonical type is `bun_core::StringPointer`;
-// `bun_http_types` re-exports it. Public: downstream crates (e.g.
-// bun_install::NetworkTask) build raw `Entry` records and need the field type.
-pub mod api {
-    pub use bun_http_types::ETag::StringPointer;
-}
+use bun_core::StringPointer;
 
 // TYPE_ONLY moved-in: `bun_http_types::Method::HeaderName` is the `#[repr(u8)]`
 // enum mirroring WebCore's `HTTPHeaderNames.in` (same discriminants as
@@ -26,53 +21,46 @@ pub use bun_http_types::ETag::{HeaderEntry as Entry, HeaderEntryList as EntryLis
 // to_fetch_headers lives as an extension-trait method in bun_http_jsc.
 
 /// Extension constructors for `Headers` that depend on T5 crates
-/// (`bun_picohttp`). Kept as a trait so callers can keep writing
-/// `Headers::from_pico_http_headers(...)`.
-pub trait HeadersExt {
-    fn from_pico_http_headers(headers: &[picohttp::Header]) -> Headers;
-}
+/// (`bun_picohttp`).
+pub fn from_pico_http_headers(headers: &[picohttp::Header]) -> Headers {
+    let header_count = headers.len();
+    let mut result = Headers {
+        entries: EntryList::default(),
+        buf: Vec::new(),
+    };
 
-impl HeadersExt for Headers {
-    fn from_pico_http_headers(headers: &[picohttp::Header]) -> Headers {
-        let header_count = headers.len();
-        let mut result = Headers {
-            entries: EntryList::default(),
-            buf: Vec::new(),
-        };
-
-        let mut buf_len: usize = 0;
-        for header in headers {
-            buf_len += header.name().len() + header.value().len();
-        }
-        result
-            .entries
-            .ensure_total_capacity(header_count)
-            .expect("OOM");
-        result.buf.reserve_exact(buf_len);
-        for header in headers {
-            let name = header.name();
-            let value = header.value();
-            // Note: `as u32` truncates offsets/lengths
-            // (silent wrap on >4GiB aggregate headers) rather than `try_from().unwrap()`.
-            let name_offset = result.buf.len() as u32;
-            result.buf.extend_from_slice(name);
-            let value_offset = result.buf.len() as u32;
-            result.buf.extend_from_slice(value);
-
-            // Capacity was reserved above so `append_assume_capacity` is safe.
-            result.entries.append_assume_capacity(Entry {
-                name: api::StringPointer {
-                    offset: name_offset,
-                    length: name.len() as u32,
-                },
-                value: api::StringPointer {
-                    offset: value_offset,
-                    length: value.len() as u32,
-                },
-            });
-        }
-        result
+    let mut buf_len: usize = 0;
+    for header in headers {
+        buf_len += header.name().len() + header.value().len();
     }
+    result
+        .entries
+        .ensure_total_capacity(header_count)
+        .expect("OOM");
+    result.buf.reserve_exact(buf_len);
+    for header in headers {
+        let name = header.name();
+        let value = header.value();
+        // Note: `as u32` truncates offsets/lengths
+        // (silent wrap on >4GiB aggregate headers) rather than `try_from().unwrap()`.
+        let name_offset = result.buf.len() as u32;
+        result.buf.extend_from_slice(name);
+        let value_offset = result.buf.len() as u32;
+        result.buf.extend_from_slice(value);
+
+        // Capacity was reserved above so `append_assume_capacity` is safe.
+        result.entries.append_assume_capacity(Entry {
+            name: StringPointer {
+                offset: name_offset,
+                length: name.len() as u32,
+            },
+            value: StringPointer {
+                offset: value_offset,
+                length: value.len() as u32,
+            },
+        });
+    }
+    result
 }
 
 // `entries` and `buf` are both Drop types — no explicit Drop impl needed.

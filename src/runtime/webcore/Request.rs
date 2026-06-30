@@ -11,11 +11,7 @@ use enumset::EnumSet;
 use super::response::HeadersRef;
 use crate::api::AnyRequestContext;
 use crate::webcore::BlobExt as _;
-use crate::webcore::blob::ZigStringBlobExt as _;
 use crate::webcore::body::{self, BodyHiveHandle, BodyMixin, Value as BodyValue};
-use crate::webcore::jsc::{
-    self as jsc, CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult,
-};
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use bun_alloc::AllocError;
 use bun_core::{Output, fmt as bun_fmt};
@@ -27,10 +23,13 @@ use bun_http_jsc::method_jsc::MethodJsc as _;
 use bun_http_types::FetchCacheMode::FetchCacheMode;
 use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::FetchRequestMode::FetchRequestMode;
+use bun_http_types::Method::HeaderName as HTTPHeaderName;
 use bun_http_types::Method::Method;
 use bun_jsc::AbortSignalRef;
 use bun_jsc::StringJsc as _;
+use bun_jsc::ZigStringJsc as _;
 use bun_jsc::generated::JSRequest as js_gen;
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsRef, JsResult};
 use bun_ptr::weak_ptr::WeakPtrData;
 use bun_uws as uws;
 use core::mem::ManuallyDrop;
@@ -450,17 +449,14 @@ impl Request {
 
     pub fn get_form_data_encoding(
         &self,
-    ) -> JsResult<Option<Box<crate::webcore::form_data::AsyncFormData>>> {
+    ) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
         let Some(content_type_slice) = self.get_content_type()? else {
             return Ok(None);
         };
-        let Some(encoding) = crate::webcore::form_data::Encoding::get(content_type_slice.slice())
-        else {
+        let Some(encoding) = bun_core::form_data::Encoding::get(content_type_slice.slice()) else {
             return Ok(None);
         };
-        Ok(Some(crate::webcore::form_data::AsyncFormData::init(
-            encoding,
-        )))
+        Ok(Some(bun_core::form_data::AsyncFormData::init(encoding)))
     }
 
     pub fn estimated_size(&self) -> usize {
@@ -1294,7 +1290,7 @@ impl Request {
             }
 
             if !fields.contains(Fields::Body) {
-                match value.fast_get(global_this, bun_jsc::BuiltinName::Body) {
+                match value.fast_get(global_this, bun_jsc::BuiltinName::body) {
                     Ok(Some(body_)) => {
                         fields.insert(Fields::Body);
                         // fetch spec Request(init): `keepalive: true` with a ReadableStream
@@ -1327,7 +1323,7 @@ impl Request {
             }
 
             if !fields.contains(Fields::Url) {
-                match value.fast_get(global_this, bun_jsc::BuiltinName::Url) {
+                match value.fast_get(global_this, bun_jsc::BuiltinName::url) {
                     Ok(Some(url)) => {
                         match BunString::from_js(url, global_this) {
                             Ok(s) => req.url.set(s),
@@ -1406,7 +1402,7 @@ impl Request {
                     Ok(Some(response_init)) => {
                         let header_check = !explicit_check
                             || (explicit_check
-                                && match value.fast_get(global_this, bun_jsc::BuiltinName::Headers)
+                                && match value.fast_get(global_this, bun_jsc::BuiltinName::headers)
                                 {
                                     Ok(v) => v.is_some(),
                                     Err(e) => bail!(Err(e)),
@@ -1428,7 +1424,7 @@ impl Request {
 
                         let method_check = !explicit_check
                             || (explicit_check
-                                && match value.fast_get(global_this, bun_jsc::BuiltinName::Method) {
+                                && match value.fast_get(global_this, bun_jsc::BuiltinName::method) {
                                     Ok(v) => v.is_some(),
                                     Err(e) => bail!(Err(e)),
                                 });

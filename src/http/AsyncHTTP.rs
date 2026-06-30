@@ -3,8 +3,8 @@ use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use bun_ast::{Loc, Log};
 use bun_core::FeatureFlags;
+use bun_core::IntrusiveField as _;
 use bun_core::{MutableString, ZigStringSlice};
-use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{self, Batch, Task};
 use bun_url::{PercentEncoding, URL};
 
@@ -883,11 +883,11 @@ impl<'a> AsyncHTTP<'a> {
 /// `task` must point to the `task` field of a live `AsyncHTTP` scheduled via
 /// `schedule()`.
 pub unsafe fn start_async_http(task: *mut Task) {
-    // SAFETY: caller upholds the invariant above — `from_task_ptr` recovers the
+    // SAFETY: caller upholds the invariant above — `from_field_ptr` recovers the
     // live heap `AsyncHTTP` parent via container_of; the trampoline is its sole
     // borrower (HTTP-thread-only). Same single-step shape as every other
-    // `IntrusiveWorkTask` call site (`&mut *Self::from_task_ptr(task)`).
-    let this = unsafe { &mut *AsyncHTTP::<'static>::from_task_ptr(task) };
+    // `IntrusiveWorkTask` call site (`&mut *Self::from_field_ptr(task)`).
+    let this = unsafe { &mut *AsyncHTTP::<'static>::from_field_ptr(task) };
     this.on_start();
 }
 

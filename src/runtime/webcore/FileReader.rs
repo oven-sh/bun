@@ -10,11 +10,11 @@ use bun_ptr::AsCtxPtr;
 use bun_sys::{self as sys, Fd, FdExt};
 
 use crate::webcore::blob;
-use crate::webcore::jsc::{self as jsc, EventLoopHandle, JSValue};
-use crate::webcore::jsc::{EnsureStillAlive, strong::Optional as Strong};
 use crate::webcore::node_types::PathOrFileDescriptor;
 use crate::webcore::readable_stream;
 use crate::webcore::streams;
+use bun_jsc::{self as jsc, EventLoopHandle, JSValue};
+use bun_jsc::{EnsureStillAlive, strong::Optional as Strong};
 
 bun_core::declare_scope!(FileReader, visible);
 
@@ -104,7 +104,7 @@ pub enum ReadDuringJSOnPullResult {
     /// Borrows the reader/JS buffer for the duration of one `on_pull` call
     /// only. Holder-lifetime, not process-lifetime — `RawSlice<u8>` per
     /// `bun_ptr::Interned` Population-B triage.
-    Temporary(bun_ptr::RawSlice<u8>),
+    Temporary(bun_core::RawSlice<u8>),
     UseBuffered(usize),
 }
 
@@ -150,7 +150,7 @@ impl Lazy {
             fd: Fd::INVALID,
             ..Default::default()
         };
-        let mut file_buf = bun_paths::PathBuffer::uninit();
+        let mut file_buf = bun_core::PathBuffer::uninit();
         #[cfg(unix)]
         let mut is_nonblocking = false;
 
@@ -477,17 +477,17 @@ impl FileReader {
             let r = self.reader();
             if let Some(poll) = r.handle.get_poll() {
                 // `bun_io::FilePoll` is an opaque vtable wrapper; flag
-                // mutation goes through `set_flag(FilePollFlag)`.
+                // mutation goes through `set_flag(Flags)`.
                 if file_type == FileType::Socket || r.flags.contains(PosixFlags::SOCKET) {
-                    poll.set_flag(bun_io::FilePollFlag::Socket);
+                    poll.set_flag(bun_io::posix_event_loop::Flags::Socket);
                 } else {
                     // if it's a TTY, we report it as a fifo
                     // we want the behavior to be as though it were a blocking pipe.
-                    poll.set_flag(bun_io::FilePollFlag::Fifo);
+                    poll.set_flag(bun_io::posix_event_loop::Flags::Fifo);
                 }
 
                 if r.flags.contains(PosixFlags::NONBLOCKING) {
-                    poll.set_flag(bun_io::FilePollFlag::Nonblocking);
+                    poll.set_flag(bun_io::posix_event_loop::Flags::Nonblocking);
                 }
             }
         }
@@ -647,7 +647,7 @@ impl FileReader {
                     } else if !in_progress.is_empty() && !has_more {
                         // `buf` outlives the `on_pull` call that consumes this
                         // variant; holder-lifetime, encoded as `RawSlice<u8>`.
-                        *riop = ReadDuringJSOnPullResult::Temporary(bun_ptr::RawSlice::new(buf));
+                        *riop = ReadDuringJSOnPullResult::Temporary(bun_core::RawSlice::new(buf));
                     } else if has_more && !is_slice_in_vec_capacity(buf, self.buffered.get()) {
                         self.buffered.with_mut(|b| b.extend_from_slice(buf));
                         *riop = ReadDuringJSOnPullResult::UseBuffered(buf.len());
@@ -751,7 +751,7 @@ impl FileReader {
                         // SAFETY: see `reader_buffer` decl.
                         unsafe { (*reader_buffer).clear() };
                         self.pending.with_mut(|p| {
-                            p.result = streams::Result::Temporary(bun_ptr::RawSlice::new(buf))
+                            p.result = streams::Result::Temporary(bun_core::RawSlice::new(buf))
                         });
                     }
                     break 'pending !was_done;
@@ -760,9 +760,9 @@ impl FileReader {
                 if !is_slice_in_vec_capacity(buf, self.buffered.get()) {
                     self.pending.with_mut(|p| {
                         p.result = if self.reader().is_done() {
-                            streams::Result::TemporaryAndDone(bun_ptr::RawSlice::new(buf))
+                            streams::Result::TemporaryAndDone(bun_core::RawSlice::new(buf))
                         } else {
-                            streams::Result::Temporary(bun_ptr::RawSlice::new(buf))
+                            streams::Result::Temporary(bun_core::RawSlice::new(buf))
                         }
                     });
                     break 'pending !was_done;

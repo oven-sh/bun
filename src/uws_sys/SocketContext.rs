@@ -189,7 +189,7 @@ impl BunSocketContextOptions {
             hp.update(bun_core::bytes_of(&n));
             if !arr.is_null() {
                 // SAFETY: `arr` points to `n` (possibly null) C strings.
-                let slice = unsafe { bun_core::ffi::slice(arr, n as usize) };
+                let slice = unsafe { bun_opaque::ffi::slice(arr, n as usize) };
                 for &s in slice {
                     hp.update(&[(!s.is_null()) as u8]);
                     if !s.is_null() {
@@ -257,7 +257,7 @@ impl BunSocketContextOptions {
                 return;
             }
             // SAFETY: `arr` points to `count` (possibly null) C strings.
-            let slice = unsafe { bun_core::ffi::slice(arr, count as usize) };
+            let slice = unsafe { bun_opaque::ffi::slice(arr, count as usize) };
             for &s in slice {
                 if !s.is_null() {
                     // SAFETY: NUL-terminated C string.

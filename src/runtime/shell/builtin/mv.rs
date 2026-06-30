@@ -1,7 +1,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use bun_core::PathBuffer;
 use bun_core::{ZBox, ZStr};
-use bun_paths::{PathBuffer, resolve_path};
+use bun_paths::resolve_path;
 use bun_ptr::BackRef;
 
 use crate::shell::ExitCode;
@@ -508,7 +509,7 @@ impl ShellMvBatchedTask {
         let base = resolve_path::basename(src.as_bytes());
         let len =
             resolve_path::normalize_buf::<bun_paths::platform::Auto>(base, &mut buf[..]).len();
-        if len + 1 >= bun_paths::MAX_PATH_BYTES {
+        if len + 1 >= bun_core::MAX_PATH_BYTES {
             return Err(bun_sys::Error::from_code(
                 bun_sys::E::ENAMETOOLONG,
                 bun_sys::Tag::rename,
@@ -553,10 +554,10 @@ impl ShellMvBatchedTask {
 }
 
 impl bun_event_loop::Taskable for ShellMvCheckTargetTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvCheckTargetTask;
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::TaskTag::ShellMvCheckTargetTask;
 }
 impl bun_event_loop::Taskable for ShellMvBatchedTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvBatchedTask;
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::TaskTag::ShellMvBatchedTask;
 }
 
 // `*mut Self` sig is forced by the `ShellTaskCtx` trait contract; the body's

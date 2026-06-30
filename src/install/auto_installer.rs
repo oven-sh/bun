@@ -25,14 +25,13 @@ use core::mem::{align_of, size_of};
 use bun_install_types::resolver_hooks as hooks;
 use bun_semver::{SlicedString, String as SemverString};
 
-use crate::dependency::{self, DependencyExt as _};
 use crate::lockfile::{self, Package};
 use crate::package_manager::package_manager_directories as directories;
 use crate::package_manager::package_manager_enqueue as enqueue;
-use crate::package_manager::package_manager_lifecycle as lifecycle;
 use crate::package_manager::package_manager_resolution as pm_resolution;
 use crate::resolution;
 use crate::{DependencyID, Features, PackageID, PackageManager, PreinstallState};
+use bun_install_types::dependency::{self};
 
 // ─── Static layout asserts (Resolution overlay) ───────────────────────────
 // `resolution::ResolutionType<u64>` and `hooks::Resolution` are distinct
@@ -192,18 +191,16 @@ impl hooks::AutoInstaller for PackageManager {
 
     fn lockfile_append_from_package_json(
         &mut self,
-        package_json: &dyn hooks::PackageJsonView,
+        package_json: hooks::PackageJsonRef<'_>,
         features: Features,
     ) -> Result<PackageID, bun_core::Error> {
         // Builds a `Package` from a package.json and appends it to the
-        // lockfile, driven entirely off the
-        // `PackageJsonView` interface so this impl does not need to name
-        // `bun_resolver::PackageJSON` directly.
+        // lockfile, driven off the borrowed `PackageJsonRef` view so this
+        // impl does not need to name `bun_resolver::PackageJSON` directly.
 
         // Reshaped for borrowck — `string_builder!` borrows
         // `self.lockfile` mutably while `dep.clone_in` needs `&mut self`.
-        // Use a raw pointer for the disjoint reborrow (same approach as
-        // `Package::from_package_json`).
+        // Use a raw pointer for the disjoint reborrow.
         let pm: *mut PackageManager = self;
         // SAFETY: `pm` derives from `&mut self`; reborrows below are disjoint
         // from `string_builder`'s borrow of `lockfile.{string_bytes,string_pool}`.
@@ -214,10 +211,10 @@ impl hooks::AutoInstaller for PackageManager {
         let mut total_dependencies_count: u32 = 0;
 
         // --- Counting
-        string_builder.count(package_json.name());
-        string_builder.count(package_json.version());
-        let source_buf = package_json.dependency_source_buf();
-        for (_, dep) in package_json.dependency_iter() {
+        string_builder.count(package_json.name);
+        string_builder.count(package_json.version);
+        let source_buf = package_json.dependency_source_buf;
+        for dep in package_json.dependencies.values() {
             if dep.behavior.is_enabled(features) {
                 dep.count(source_buf, &mut string_builder);
                 total_dependencies_count += 1;
@@ -233,7 +230,7 @@ impl hooks::AutoInstaller for PackageManager {
 
         // --- Cloning
         let package_name: bun_semver::ExternalString =
-            string_builder.append::<bun_semver::ExternalString>(package_json.name());
+            string_builder.append::<bun_semver::ExternalString>(package_json.name);
         package.name_hash = package_name.hash;
         package.name = package_name.value;
         package.resolution = resolution::Resolution::init(resolution::TaggedValue::Root);
@@ -247,7 +244,7 @@ impl hooks::AutoInstaller for PackageManager {
         let mut dependencies: &mut [dependency::Dependency] =
             bun_core::vec::grow_default(dependencies_list, total_dependencies_count as usize);
 
-        for (_, dep) in package_json.dependency_iter() {
+        for dep in package_json.dependencies.values() {
             if !dep.behavior.is_enabled(features) {
                 continue;
             }
@@ -272,8 +269,8 @@ impl hooks::AutoInstaller for PackageManager {
         }
         let remaining = dependencies.len() as u32;
 
-        package.meta.arch = package_json.arch();
-        package.meta.os = package_json.os();
+        package.meta.arch = package_json.arch;
+        package.meta.os = package_json.os;
         // `scripts` is left zero-init by this path, so
         // has-install-script is always false here.
         package.meta.set_has_install_script(false);
@@ -320,22 +317,22 @@ impl hooks::AutoInstaller for PackageManager {
         resolution: &hooks::Resolution,
         buf: &'b mut [u8],
     ) -> Result<&'b [u8], bun_core::Error> {
-        // The resolver passes a `bun_paths::PathBuffer`-sized slice
+        // The resolver passes a `bun_core::PathBuffer`-sized slice
         // (`bufs!(path_in_global_disk_cache)`); reborrow it as the install
         // signature's `&mut PathBuffer`.
-        debug_assert!(buf.len() >= bun_paths::MAX_PATH_BYTES);
+        debug_assert!(buf.len() >= bun_core::MAX_PATH_BYTES);
         // SAFETY: `PathBuffer` is `#[repr(transparent)]` over
         // `[u8; MAX_PATH_BYTES]`; caller-provided slice is at least that long
         // (asserted above).
-        let path_buf: &mut bun_paths::PathBuffer =
-            unsafe { &mut *buf.as_mut_ptr().cast::<bun_paths::PathBuffer>() };
+        let path_buf: &mut bun_core::PathBuffer =
+            unsafe { &mut *buf.as_mut_ptr().cast::<bun_core::PathBuffer>() };
         let r = resolution_from_hooks(resolution);
         let out = directories::path_for_resolution(self, package_id, &r, path_buf)?;
         Ok(&*out)
     }
 
     fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState {
-        lifecycle::get_preinstall_state(self, package_id)
+        PackageManager::get_preinstall_state(self, package_id)
     }
 
     fn enqueue_package_for_download(
@@ -432,16 +429,17 @@ impl hooks::AutoInstaller for PackageManager {
     }
 
     fn infer_dependency_tag(&self, dep: &[u8]) -> hooks::DependencyVersionTag {
-        <dependency::Tag as dependency::TagExt>::infer(dep)
+        dependency::Tag::infer(dep)
     }
 }
 
-// ─── Lazy factory (resolver → install link-time hook) ─────────────────────
+// ─── Lazy factory (wired into `Resolver.package_manager_factory` by
+// bun_runtime::jsc_hooks) ─────────────────────
 //
-// `bun_resolver` cannot name `PackageManager` (it would create a dep cycle),
-// so it declares this `extern "Rust"` and we provide the body here. The
-// returned pointer is the process-static `PackageManager` singleton (`get()`),
-// upcast to the `dyn AutoInstaller` trait object the resolver stores.
+// `bun_resolver` cannot name `PackageManager` (it would create a dep cycle).
+// The returned pointer is the process-static `PackageManager` singleton
+// (`get()`), upcast to the `dyn AutoInstaller` trait object the resolver
+// stores.
 //
 // SAFETY (callee contract):
 //   • `log` is the resolver's `NonNull<bun_ast::Log>` (Transpiler-owned,
@@ -451,8 +449,7 @@ impl hooks::AutoInstaller for PackageManager {
 //   • `env` is the resolver's unwrapped `env_loader` (Transpiler-owned,
 //     process-lifetime). `init_with_runtime` stores it as
 //     `NonNull<Loader<'static>>`.
-#[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_resolver_init_package_manager(
+pub unsafe fn init_package_manager(
     mut log: core::ptr::NonNull<bun_ast::Log>,
     install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,
     mut env: core::ptr::NonNull<bun_dotenv::Loader<'static>>,

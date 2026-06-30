@@ -6,8 +6,8 @@
 #![feature(adt_const_params)]
 // ──────────────────────────────────────────────────────────────────────────
 // Resolver body. Higher-tier deps are reached via lower-tier crates:
-// bun_install -> bun_install_types::AutoInstaller trait; bun_standalone_graph ->
-// crate::StandaloneModuleGraph trait; HardcodedModule -> bun_resolve_builtins.
+// bun_install -> bun_install_types::AutoInstaller trait; HardcodedModule ->
+// bun_resolve_builtins.
 // ──────────────────────────────────────────────────────────────────────────
 
 // Submodules. `fs.rs` (full RealFS readdir/stat/kind path) is mounted as
@@ -23,9 +23,9 @@ pub mod package_json;
 pub mod tsconfig_json;
 
 // ── Re-exported resolver surface ──────────────────────────────────────────
-// Real types live in the `resolver` / `result` / `options` /
-// `standalone_module_graph` sibling modules; the header re-exports them so
-// dependents see the same paths as the old stub surface.
+// Real types live in the `resolver` / `result` / `options` sibling modules;
+// the header re-exports them so dependents see the same paths as the old
+// stub surface.
 
 /// Re-export real `GlobalCache`.
 pub use bun_options_types::global_cache::GlobalCache;
@@ -43,16 +43,14 @@ pub use tsconfig_json::TSConfigJSON;
 
 // Re-export the resolver implementation. `Resolver`, `Result`, `MatchResult`,
 // `PathPair`, `DebugLogs`, `SideEffects`, etc. are defined in the `resolver` /
-// `result` / `standalone_module_graph` sibling modules.
-/// Re-export so dependents can spell `bun_resolver::install_types::AutoInstaller`.
-pub use ::bun_install_types::resolver_hooks as install_types;
-pub use resolver::{AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver, RootPathPair};
+// `result` sibling modules.
+pub use bun_standalone_graph_core::Graph as StandaloneModuleGraph;
+pub use resolver::{BrowserMapPathKind, Bufs, Dirname, Resolver, RootPathPair};
 pub use result::{
     DebugLogs, DebugMeta, DirEntryResolveQueueItem, FlushMode, LoadResult, MatchResult,
     MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
     ResultUnion, SideEffectsData,
 };
-pub use standalone_module_graph::StandaloneModuleGraph;
 
 /// `bun_resolver::fs` namespace; re-exports from `fs_full` plus the
 /// in-tree types (`FileSystem`, `RealFS`, `Entry`, ...).
@@ -174,7 +172,7 @@ pub mod fs {
 
         // used on subsequent updates (process.chdir writes here and re-slices
         // `top_level_dir` to point into it).
-        pub top_level_dir_buf: bun_paths::PathBuffer,
+        pub top_level_dir_buf: bun_core::PathBuffer,
 
         pub fs: Implementation,
         pub dirname_store: &'static DirnameStore,
@@ -285,26 +283,22 @@ pub mod fs {
                 // (the singleton outlives every caller).
                 Some(d) => DirnameStore::instance().append_slice(d)?,
                 None => {
-                    let mut buf = bun_paths::PathBuffer::default();
+                    let mut buf = bun_core::PathBuffer::default();
                     let n = bun_sys::getcwd(&mut buf[..])?;
                     DirnameStore::instance().append_slice(&buf[..n])?
                 }
             };
-            // Seed the lower-tier `bun_paths::fs::FileSystem` singleton with the
-            // same cwd. `bun_paths::resolve_path::relative*` and
-            // `Path::init_top_level_dir` reach `bun_paths::fs::FileSystem::
-            // instance()` (a strict `OnceLock` — panics if unset), and the
-            // doc-comment on that `init` names this as the intended seeding
-            // point. This keeps both halves in lockstep.
-            // The call is a no-op on subsequent inits (`OnceLock::set` returns
-            // `Err`). `cwd` is passed as raw bytes — POSIX paths are not
-            // guaranteed UTF-8, and the lower tier stores/serves bytes.
+            // Marks the lower-tier `bun_paths::fs::FileSystem` facade as
+            // initialized and writes the canonical cwd storage in
+            // `bun_core::TOP_LEVEL_DIR` (first call only; later re-roots go
+            // through `set_top_level_dir`). `cwd` is raw bytes — POSIX paths
+            // are not guaranteed UTF-8.
             bun_paths::fs::FileSystem::init(cwd);
             // SAFETY: see above.
             unsafe {
                 (*INSTANCE.get()).write(FileSystem {
                     top_level_dir: cwd,
-                    top_level_dir_buf: bun_paths::PathBuffer::uninit(),
+                    top_level_dir_buf: bun_core::PathBuffer::uninit(),
                     fs: Implementation::init(cwd),
                     dirname_store: DirnameStore::instance(),
                     filename_store: FilenameStore::instance(),
@@ -517,7 +511,6 @@ pub mod fs {
         ) -> Result<Path<'static>, bun_core::Error>;
         fn hash_key(&self) -> u64;
         fn hash_for_kit(&self) -> u64;
-        fn package_name(&self) -> Option<&[u8]>;
         fn loader(&self, loaders: &bun_ast::LoaderHashTable) -> Option<bun_ast::Loader>;
     }
 
@@ -689,24 +682,6 @@ pub mod fs {
             self.hash_key() & ((1u64 << 52) - 1)
         }
 
-        fn package_name(&self) -> Option<&[u8]> {
-            let mut name_to_use = self.pretty;
-            // SEP_STR ++ "node_modules" ++ SEP_STR
-            let needle =
-                const_format::concatcp!(bun_paths::SEP_STR, "node_modules", bun_paths::SEP_STR)
-                    .as_bytes();
-            if let Some(node_modules) = bun_core::strings::last_index_of(self.text, needle) {
-                name_to_use = &self.text[node_modules + 14..];
-            }
-
-            let pkgname = parse_package_name(name_to_use);
-            if pkgname.is_empty() || !pkgname[0].is_ascii_alphanumeric() {
-                return None;
-            }
-
-            Some(pkgname)
-        }
-
         fn loader(&self, loaders: &bun_ast::LoaderHashTable) -> Option<bun_ast::Loader> {
             use bun_ast::Loader;
             if self.is_data_url() {
@@ -740,19 +715,12 @@ pub mod fs {
         }
     }
 
-    /// Port of `options.JSX.Pragma.parsePackageName` (a pure byte-slice helper).
-    /// D042: canonical body lives in `bun_options_types::jsx::Pragma`.
-    #[inline]
-    pub fn parse_package_name(str: &[u8]) -> &[u8] {
-        bun_options_types::jsx::Pragma::parse_package_name(str)
-    }
-
     // ── Entry / DirEntry / EntryKind ─────────────────────────────────────
     // Canonical definitions live in `fs.rs` (mounted as `crate::fs_full`).
     // Re-exported here so the public path `bun_resolver::fs::*` is preserved.
     pub use crate::fs_full::{
-        DifferentCase, DirEntry, DirEntryErr, DirEntryIterator, Entry, EntryCache, EntryKind,
-        EntryKindResolver, EntryLookup, FilenameStoreAppender, FsEntryKind, dir_entry,
+        DifferentCase, DirEntry, DirEntryIterator, Entry, EntryCache, EntryKind, EntryKindResolver,
+        EntryLookup, FilenameStoreAppender, dir_entry,
     };
 
     use bun_core::Generation;
@@ -867,7 +835,7 @@ pub mod fs {
                 scopeguard::defer! { let _ = bun_sys::close(tmp_dir); }
                 let flags = bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::CLOEXEC;
                 self.fd = bun_sys::openat(tmp_dir, name, flags, 0)?;
-                let mut buf = bun_paths::PathBuffer::uninit();
+                let mut buf = bun_core::PathBuffer::uninit();
                 let existing_path = bun_sys::get_fd_path(self.fd, &mut buf)?;
                 self.existing_path = Box::<[u8]>::from(&*existing_path);
                 Ok(())
@@ -898,10 +866,10 @@ pub mod fs {
             #[cfg(windows)]
             {
                 use bun_sys::windows as w;
-                use w::Win32ErrorUnwrap as _;
+                use w::Win32ErrorExt as _;
                 let _ = from_name;
-                let mut existing_buf = bun_paths::WPathBuffer::uninit();
-                let mut new_buf = bun_paths::WPathBuffer::uninit();
+                let mut existing_buf = bun_core::WPathBuffer::uninit();
+                let mut new_buf = bun_core::WPathBuffer::uninit();
                 self.close();
                 let existing = bun_paths::strings::paths::to_extended_path_normalized(
                     &mut new_buf.0[..],
@@ -930,7 +898,7 @@ pub mod fs {
                     )
                 } == w::FALSE
                 {
-                    w::Win32Error::get().unwrap()?;
+                    w::Win32Error::get().to_result()?;
                 }
                 Ok(())
             }
@@ -1411,7 +1379,7 @@ pub mod fs {
             };
 
             let combo: [&[u8]; 2] = [dir_, base];
-            let mut outpath = bun_paths::PathBuffer::uninit();
+            let mut outpath = bun_core::PathBuffer::uninit();
             let entry_path_len =
                 join_abs_string_buf::<platform::Auto>(self.cwd, &mut outpath[..], &combo).len();
 
@@ -1701,14 +1669,14 @@ pub mod fs {
                             return out;
                         }
                         if let Some(profile) = env_var::HOME.get() {
-                            let mut buf = bun_paths::PathBuffer::uninit();
+                            let mut buf = bun_core::PathBuffer::uninit();
                             let parts: [&[u8]; 1] = [b"AppData\\Local\\Temp"];
                             let out = bun_paths::resolve_path::join_abs_string_buf::<
                                 bun_paths::resolve_path::platform::Loose,
                             >(profile, &mut buf[..], &parts);
                             return out.to_vec();
                         }
-                        let mut tmp_buf = bun_paths::PathBuffer::uninit();
+                        let mut tmp_buf = bun_core::PathBuffer::uninit();
                         let cwd = match bun_sys::getcwd(&mut tmp_buf[..]) {
                             Ok(len) => &tmp_buf[..len],
                             Err(_) => panic!("Failed to get cwd for platformTempDir"),
@@ -1845,10 +1813,11 @@ pub mod fs {
 // ──────────────────────────────────────────────────────────────────────────
 pub mod dir_entry_accessor {
     use crate::fs::{DirEntry, EntriesOption, Entry, EntryKind, FileSystem as FS, Implementation};
+    use bun_core::PathBuffer;
     use bun_core::ZStr;
     use bun_glob::walk::{Accessor, AccessorDirEntry, AccessorDirIter, AccessorHandle};
-    use bun_paths::{PathBuffer, Platform, resolve_path};
-    use bun_sys::{self as Syscall, Error as SysError, Result as Maybe, Stat};
+    use bun_paths::{Platform, resolve_path};
+    use bun_sys::{self as Syscall, Error as SysError, Stat};
 
     pub struct DirEntryAccessor;
 
@@ -1900,12 +1869,12 @@ pub mod dir_entry_accessor {
         // BACKREF: borrowed slice into a `Box<[u8]>` key owned by
         // `DirEntry.data: HashMap`. Valid only while the parent `DirEntry`
         // is live and not regenerated by `read_directory`. Stored as
-        // [`bun_ptr::RawSlice`] (not `&'static [u8]`) per PORTING.md
+        // [`bun_core::RawSlice`] (not `&'static [u8]`) per PORTING.md
         // §Forbidden — the key is individually heap-allocated by the HashMap,
         // not a BSS-arena slice, so minting a `'static` borrow via
         // `from_raw_parts` would be a lifetime lie. `RawSlice` encapsulates
         // the outlives-holder invariant so `slice()` is safe.
-        pub value: bun_ptr::RawSlice<u8>,
+        pub value: bun_core::RawSlice<u8>,
     }
 
     impl DirEntryNameWrapper {
@@ -1936,7 +1905,7 @@ pub mod dir_entry_accessor {
         type Entry = DirEntryIterResult;
 
         #[inline]
-        fn next(&mut self) -> Maybe<Option<DirEntryIterResult>> {
+        fn next(&mut self) -> Syscall::Result<Option<DirEntryIterResult>> {
             if let Some(value) = &mut self.value {
                 let Some((key, val)) = value.next() else {
                     return Ok(None);
@@ -1965,7 +1934,7 @@ pub mod dir_entry_accessor {
                 // re-narrows the lifetime so it never escapes the iter result.
                 Ok(Some(DirEntryIterResult {
                     name: DirEntryNameWrapper {
-                        value: bun_ptr::RawSlice::new(&**key),
+                        value: bun_core::RawSlice::new(&**key),
                     },
                     kind: fskind,
                     symlink_target,
@@ -1991,7 +1960,7 @@ pub mod dir_entry_accessor {
         type Handle = DirEntryHandle;
         type DirIter = DirEntryDirIter;
 
-        fn statat(handle: DirEntryHandle, path_: &ZStr) -> Maybe<Stat> {
+        fn statat(handle: DirEntryHandle, path_: &ZStr) -> Syscall::Result<Stat> {
             let mut buf = PathBuffer::uninit();
             let path: &ZStr = if !Platform::AUTO.is_absolute(path_.as_bytes()) {
                 if let Some(entry) = handle.value {
@@ -2013,7 +1982,7 @@ pub mod dir_entry_accessor {
         }
 
         /// Like statat but does not follow symlinks.
-        fn lstatat(handle: DirEntryHandle, path_: &ZStr) -> Maybe<Stat> {
+        fn lstatat(handle: DirEntryHandle, path_: &ZStr) -> Syscall::Result<Stat> {
             let mut buf = PathBuffer::uninit();
             if let Some(entry) = handle.value {
                 return Syscall::lstatat(entry.fd, path_);
@@ -2038,14 +2007,14 @@ pub mod dir_entry_accessor {
             Syscall::lstat(path)
         }
 
-        fn open(path: &ZStr) -> Result<Maybe<DirEntryHandle>, bun_core::Error> {
+        fn open(path: &ZStr) -> Result<Syscall::Result<DirEntryHandle>, bun_core::Error> {
             Self::openat(DirEntryHandle::EMPTY, path)
         }
 
         fn openat(
             handle: DirEntryHandle,
             path_: &ZStr,
-        ) -> Result<Maybe<DirEntryHandle>, bun_core::Error> {
+        ) -> Result<Syscall::Result<DirEntryHandle>, bun_core::Error> {
             let mut buf = PathBuffer::uninit();
             let mut path: &[u8] = path_.as_bytes();
 
@@ -2057,7 +2026,7 @@ pub mod dir_entry_accessor {
                     );
                 }
             }
-            // TODO do we want to propagate ENOTDIR through the 'Maybe' to match the SyscallAccessor?
+            // TODO do we want to propagate ENOTDIR through the 'Result' to match the SyscallAccessor?
             // The glob implementation specifically checks for this error when dealing with symlinks
             // return Err(SysError::from_code(E::NOTDIR, Syscall::Tag::open));
             let res = FS::instance().fs.read_directory(path, None, 0, false)?;
@@ -2079,7 +2048,7 @@ pub mod dir_entry_accessor {
             None
         }
 
-        fn getcwd(path_buf: &mut PathBuffer) -> Maybe<&[u8]> {
+        fn getcwd(path_buf: &mut PathBuffer) -> Syscall::Result<&[u8]> {
             let cwd = FS::instance().fs.cwd;
             path_buf[..cwd.len()].copy_from_slice(cwd);
             // Returning the copied slice is what every Accessor caller expects
@@ -2100,8 +2069,9 @@ pub use dir_entry_accessor::DirEntryAccessor;
 pub mod cache {
     use core::ffi::c_void;
 
+    use bun_alloc::Arena as Bump;
     use bun_core::MutableString;
-    use bun_core::{Output, feature_flags};
+    use bun_core::{Output, feature_flags, strings};
     use bun_sys::{self, Fd};
 
     use crate::fs as fs_mod;
@@ -2234,7 +2204,7 @@ pub mod cache {
                 // `ParseTask.external_free_function`). In both cases
                 // `ptr` is non-null, aligned, and `ptr[..len]` is initialized
                 // and valid for shared reads for at least `'_`. Cannot be a
-                // `bun_ptr::RawSlice` field without breaking `src/bundler/`
+                // `bun_core::RawSlice` field without breaking `src/bundler/`
                 // struct-literal constructors (out-of-shard).
                 Contents::SharedBuffer { ptr, len } | Contents::External { ptr, len } => unsafe {
                     core::slice::from_raw_parts(*ptr, *len)
@@ -2614,19 +2584,96 @@ pub mod cache {
     /// Unit struct; AST caching is
     /// probably only relevant when bundling for production,
     /// so the struct is empty and `parse`/`scan` are stateless.
-    ///
-    /// CYCLEBREAK: `parse`/`scan` need `bun_js_parser::Parser::init` + the
-    /// `Define` table type, both of which are mid-unification with the bundler's
-    /// `defines.rs`. Until that lands, the bodies live in
-    /// `bun_bundler::cache::JavaScript` (which can name those types directly);
-    /// the resolver only needs the field shape so `Resolver.caches.js` exists.
     #[derive(Default)]
-    pub(crate) struct JavaScript {}
+    pub struct JavaScript {}
+
+    pub type JavaScriptResult<'a> = bun_js_parser::Result<'a>;
 
     impl JavaScript {
         #[inline]
-        pub(crate) fn init() -> JavaScript {
+        pub fn init() -> JavaScript {
             JavaScript {}
+        }
+    }
+
+    impl JavaScript {
+        // For now, we're not going to cache JavaScript ASTs.
+        // It's probably only relevant when bundling for production.
+        pub fn parse<'a>(
+            &self,
+            bump: &'a Bump,
+            opts: bun_js_parser::ParserOptions<'a>,
+            defines: &'a bun_js_parser::defines::Define,
+            log: &mut bun_ast::Log,
+            source: &'a bun_ast::Source,
+        ) -> Result<Option<bun_js_parser::Result<'a>>, bun_core::Error> {
+            let mut temp_log = bun_ast::Log::init();
+            temp_log.level = log.level;
+            let parser =
+                match bun_js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
+                    Ok(p) => p,
+                    Err(_) => {
+                        let _ = temp_log.append_to_maybe_recycled(log, source);
+                        return Ok(None);
+                    }
+                };
+
+            let result = match parser.parse() {
+                Ok(r) => r,
+                Err(err) => {
+                    // `Parser::parse` consumes `self`, so `parser` is gone in this
+                    // arm. The `&'a mut temp_log` it held is released, so read
+                    // `temp_log.errors` directly. The lexer range is lost; fall
+                    // back to `Range::None`.
+                    // TODO: thread the failing token range through the `Err`
+                    // payload (make `_parse` return a `(Error, Range)` pair) so the
+                    // diagnostic points at the failing token.
+                    if temp_log.errors == 0 {
+                        log.add_range_error(
+                            Some(source),
+                            bun_ast::Range::None,
+                            err.name().as_bytes(),
+                        );
+                    }
+                    let _ = temp_log.append_to_maybe_recycled(log, source);
+                    return Ok(None);
+                }
+            };
+
+            let _ = temp_log.append_to_maybe_recycled(log, source);
+            Ok(Some(result))
+        }
+
+        pub fn scan<'a>(
+            &mut self,
+            bump: &'a Bump,
+            scan_pass_result: &mut bun_js_parser::ScanPassResult,
+            opts: bun_js_parser::ParserOptions<'a>,
+            defines: &'a bun_js_parser::defines::Define,
+            log: &mut bun_ast::Log,
+            source: &'a bun_ast::Source,
+        ) -> Result<(), bun_core::Error> {
+            if strings::trim(source.contents(), b"\n\t\r ").is_empty() {
+                return Ok(());
+            }
+
+            let mut temp_log = bun_ast::Log::init();
+            // scopeguard cannot capture &mut temp_log while it's used below;
+            // explicit `append_to_maybe_recycled` calls at each exit.
+
+            let mut parser =
+                match bun_js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
+                    Ok(p) => p,
+                    Err(_) => {
+                        let _ = temp_log.append_to_maybe_recycled(log, source);
+                        return Ok(());
+                    }
+                };
+
+            let res = parser.scan_imports(scan_pass_result);
+            drop(parser);
+            let _ = temp_log.append_to_maybe_recycled(log, source);
+            res
         }
     }
 }
@@ -2638,4 +2685,3 @@ pub use ::bun_paths::{is_package_path, is_package_path_not_absolute};
 pub mod options;
 pub mod resolver;
 pub mod result;
-pub mod standalone_module_graph;

@@ -116,7 +116,7 @@ macro_rules! opaque_ffi {
         }
     )+};
     // Comma-list `pub Name, pub(super) Name2` form — kept for the
-    // `bun_core::opaque_extern!` re-export and the boringssl_sys wrapper.
+    // boringssl_sys wrapper and other comma-list callers.
     ($( $(#[$m:meta])* $v:vis $name:ident ),+ $(,)?) => {
         $crate::opaque_ffi! { $( $(#[$m])* $v struct $name; )+ }
     };
@@ -342,6 +342,98 @@ pub unsafe fn opaque_deref_mut_nn<'a, T>(p: *mut T) -> &'a mut T {
     unsafe { &mut *p }
 }
 
+// ─── RacyCell ─────────────────────────────────────────────────────────────
+/// Stable equivalent of `core::cell::SyncUnsafeCell<T>` (nightly-only as of
+/// 1.79). A `static`-safe interior-mutability cell with **no** synchronization.
+///
+/// This exists to replace `static mut` (banned per docs/PORTING.md §Global
+/// mutable state). Unlike `static mut`, taking `&RACY` does not assert
+/// uniqueness; callers stay in raw-ptr land via `.get()` and only deref for
+/// the duration of a single statement.
+///
+/// **Invariant the caller upholds:** all access is either single-threaded
+/// (e.g. HTTP-thread-only buffers, main-thread-only CLI state) or externally
+/// synchronized. For anything actually shared across threads, use
+/// `Atomic*` / `OnceLock` / `Mutex` instead — `RacyCell` is the last resort
+/// for scratch buffers and FFI-shaped globals with proven thread-affinity.
+#[repr(transparent)]
+pub struct RacyCell<T: ?Sized>(core::cell::Cell<T>);
+// SAFETY: by construction, callers promise external synchronization or
+// single-thread access. Unlike std's nightly `SyncUnsafeCell` (which gates
+// `Sync` on `T: Sync`), this impl is intentionally unconditional: many
+// payloads ported from `static mut` are `!Sync` only by auto-trait inference
+// (raw pointers, `MaybeUninit<T>` over FFI handles) yet are sound to share
+// because all access is single-threaded or externally synchronized — the
+// exact contract `static mut` already imposed. **Do not** wrap *payloads*
+// whose `!Sync` is load-bearing (`Cell<U>`, `Rc<U>`, `RefCell<U>`); use
+// `thread_local!` or a real lock for those. (The inner storage here is
+// `Cell<T>` purely so `read`/`write` bodies are safe code — the cross-thread
+// hazard is fully accounted for by this `unsafe impl Sync`.)
+unsafe impl<T: ?Sized> Sync for RacyCell<T> {}
+// SAFETY: `RacyCell<T>` owns a `T` by value via `Cell<T>`; sending the cell to
+// another thread is sound exactly when sending `T` itself is (`T: Send`).
+unsafe impl<T: ?Sized + Send> Send for RacyCell<T> {}
+
+impl<T> RacyCell<T> {
+    #[inline]
+    pub const fn new(value: T) -> Self {
+        Self(core::cell::Cell::new(value))
+    }
+    /// Raw pointer to the contained value. Never produces a reference; callers
+    /// deref per-access (`unsafe { *X.get() }` / `unsafe { (*X.get()).field }`).
+    #[inline]
+    pub const fn get(&self) -> *mut T {
+        self.0.as_ptr()
+    }
+    /// Convenience: read a `Copy` value. Single load, no aliasing assertion.
+    ///
+    /// # Safety
+    /// Caller guarantees no concurrent writer on another thread.
+    #[inline]
+    pub unsafe fn read(&self) -> T
+    where
+        T: Copy,
+    {
+        self.0.get()
+    }
+    /// Convenience: overwrite the value.
+    ///
+    /// # Safety
+    /// Caller guarantees no concurrent reader/writer on another thread.
+    #[inline]
+    pub unsafe fn write(&self, value: T) {
+        self.0.set(value)
+    }
+}
+impl<T: Default> Default for RacyCell<T> {
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}
+
+/// `w!("foo")` → `&'static [u16]` UTF-16 literal (ASCII-only). `bun.w`.
+#[macro_export]
+macro_rules! w {
+    ($s:literal) => {{
+        const __B: &[u8] = $s.as_bytes();
+        const __N: usize = __B.len();
+        const __W: [u16; __N] = {
+            let mut out = [0u16; __N];
+            let mut i = 0;
+            while i < __N {
+                // Const-evaluated: a non-ASCII byte is a hard compile error in
+                // every profile (`to_utf16_literal!` forwards here, so this
+                // also keeps that alias from silently mis-encoding non-ASCII).
+                assert!(__B[i] < 0x80, "w! is ASCII-only");
+                out[i] = __B[i] as u16;
+                i += 1;
+            }
+            out
+        };
+        &__W as &'static [u16]
+    }};
+}
+
 /// `core`-only FFI slice/string primitives shared between `bun_core::ffi` and
 /// the freestanding `bun_shim_impl` PE. Lives here (not `bun_core`) because
 /// `bun_core` carries `#[no_mangle]` C-ABI exports that become unsatisfiable
@@ -427,4 +519,166 @@ pub mod ffi {
             unsafe { core::slice::from_raw_parts_mut(ptr, len) }
         }
     }
+
+    /// All-bits-zero value of `T` for `#[repr(C)]` FFI structs.
+    ///
+    /// Single audited wrapper over `core::mem::zeroed()` so libc/uv/c-ares
+    /// out-param init sites (`let mut x: libc::sigaction = zeroed();`) don't
+    /// each open-code an `unsafe` block.
+    ///
+    /// The `T: Zeroable` bound discharges the `mem::zeroed` safety obligation
+    /// once per type (at the `unsafe impl`), so callers need no `unsafe`
+    /// block. Prefer `T::default()` when `T` implements (or can derive)
+    /// `Default` — reserve this for foreign POD where the orphan rule blocks a
+    /// `Default` impl (libc, bindgen output) or where `Default` would be wrong
+    /// but zero-init matches the C API contract.
+    #[inline(always)]
+    pub const fn zeroed<T: Zeroable>() -> T {
+        // SAFETY: `T: Zeroable` is exactly the assertion that the all-zero bit
+        // pattern is a valid `T` (no `NonNull`/`NonZero`/ref/fn-ptr fields, no
+        // niche enums). `core::mem::zeroed` is therefore sound for `T`.
+        unsafe { core::mem::zeroed() }
+    }
+
+    /// Marker: the all-zero bit pattern is a valid value of `Self`.
+    ///
+    /// Local re-spelling of `bytemuck::Zeroable` so we can blanket-`impl` it
+    /// for foreign `libc` POD (orphan rule blocks impl-ing the upstream trait
+    /// on `libc::sigaction` et al.). Once a type carries this marker,
+    /// [`zeroed`] is a *safe* call — the audit happens once at the `unsafe
+    /// impl`, not at every out-param init site.
+    ///
+    /// # Safety
+    /// `Self` must be inhabited at the all-zero bit pattern: no non-nullable
+    /// pointers (`&T`, `Box<T>`, `NonNull<T>`, fn ptrs), no `bool`/`char`
+    /// outside their valid range, no niche-optimised enums. `#[repr(C)]`
+    /// structs of integers, raw pointers, and nested `Zeroable` POD satisfy
+    /// this. Padding bytes are fine (zero is a valid padding value).
+    pub unsafe trait Zeroable: Sized {}
+
+    // ── Zeroable impls ──────────────────────────────────────────────────────
+    // Primitives, raw pointers, arrays — match `bytemuck::Zeroable` blankets.
+    macro_rules! zeroable_prim {
+        ($($t:ty),* $(,)?) => { $(
+            // SAFETY: primitive numeric/unit type — the all-zero bit pattern is
+            // a valid value (`0`, `0.0`, or `()`).
+            unsafe impl Zeroable for $t {}
+        )* };
+    }
+    zeroable_prim!(
+        (),
+        u8,
+        u16,
+        u32,
+        u64,
+        u128,
+        usize,
+        i8,
+        i16,
+        i32,
+        i64,
+        i128,
+        isize,
+        f32,
+        f64,
+    );
+    // SAFETY: null is a valid raw pointer.
+    unsafe impl<T: ?Sized> Zeroable for *const T {}
+    // SAFETY: null is a valid raw pointer.
+    unsafe impl<T: ?Sized> Zeroable for *mut T {}
+    // SAFETY: array of zero-valid elements is zero-valid.
+    unsafe impl<T: Zeroable, const N: usize> Zeroable for [T; N] {}
+
+    // libc POD — every field is an integer / raw pointer / nested C POD; the
+    // C API contract for each is "zero-init before the kernel/libc fills it".
+    // SAFETY: each `unsafe impl` below was audited against the libc crate's
+    // struct definition for that target; none contain `NonNull`/`NonZero`/
+    // references/fn-ptrs (bare `extern fn` fields in `sigaction` are stored as
+    // `usize` sighandler_t on every libc target).
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::sigaction {}
+    // `sigset_t` is a `u32` typedef on Darwin (covered by the primitive
+    // blanket → E0119 if re-impl'd) but a real struct on Linux/Android
+    // (`__val: [c_ulong; 16]`) and FreeBSD (`__bits: [u32; 4]`). Gate the
+    // explicit impl to everywhere it's NOT already a primitive.
+    // SAFETY: integer-array struct on the gated targets; all-zero is valid.
+    #[cfg(all(unix, not(target_vendor = "apple")))]
+    unsafe impl Zeroable for libc::sigset_t {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::utsname {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::winsize {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::rlimit {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::passwd {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::stat {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::rusage {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::timespec {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::timeval {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::pollfd {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::Dl_info {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::sockaddr {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::sockaddr_in {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::sockaddr_in6 {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::sockaddr_storage {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::addrinfo {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    unsafe impl Zeroable for libc::sysinfo {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    unsafe impl Zeroable for libc::epoll_event {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    unsafe impl Zeroable for libc::signalfd_siginfo {}
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "freebsd"
+    ))]
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    unsafe impl Zeroable for libc::statfs {}
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    ))]
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    unsafe impl Zeroable for libc::kevent {}
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    unsafe impl Zeroable for libc::kevent64_s {}
+    #[cfg(target_os = "freebsd")]
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    unsafe impl Zeroable for libc::_umtx_time {}
 }

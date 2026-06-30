@@ -4,7 +4,8 @@ use core::ptr::NonNull;
 
 use bun_sys::{self as sys, Fd};
 
-use crate::{EventLoopHandle, FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
+use crate::posix_event_loop::Flags;
+use crate::{EventLoopCtx, FilePollKind, FilePollRef, Owner};
 // `bun.Async.Loop` — on POSIX the uws `us_loop_t`, on Windows the embedded
 // `uv_loop_t` (`bun_io::Loop` is the cfg-aliased nominal that picks the
 // right one). `BufferedReaderParent::loop_` returns this so callers in T3+
@@ -15,25 +16,24 @@ use crate::{EventLoopHandle, FilePollFlag, FilePollKind, FilePollRef, Owner, Pol
 #[cfg(not(windows))]
 pub type Loop = bun_uws_sys::Loop;
 #[cfg(windows)]
-pub type Loop = bun_sys::windows::libuv::Loop;
+pub type Loop = bun_libuv_sys::Loop;
 
-/// `bun_io::poll_tag::BUFFERED_READER` — every `FilePoll` allocated by this
-/// module stores a `*mut BufferedReader` (erased) as its owner; the per-tag
-/// dispatch in `bun_runtime::dispatch::__bun_run_file_poll` recovers the type
-/// from this constant. T2 cannot name `bun_io`, so the value is mirrored.
+// Every `FilePoll` allocated by this module stores a `*mut BufferedReader`
+// (erased) as its owner together with `PosixBufferedReader::run_file_poll`,
+// the `Owner.on_update` handler that recovers the type.
 use crate::max_buf::MaxBuf;
 use crate::pipes::{FileType, PollOrFd, ReadState};
 #[cfg(windows)]
 use crate::source::Source;
 
 #[cfg(windows)]
-use bun_sys::ReturnCodeExt as _;
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
+use bun_libuv_sys as uv;
 #[cfg(windows)]
 // `close`/`set_data`/`is_closed` are default trait methods; bring traits into
 // scope so method resolution finds them on `Pipe`/`uv_tty_t`/`fs_t`.
-use bun_sys::windows::libuv::UvHandle as _;
+use bun_libuv_sys::UvHandle as _;
+#[cfg(windows)]
+use bun_sys::ReturnCodeExt as _;
 
 // All logging in this module goes through `bun.sys.syslog` (the `SYS` scope)
 // or `libuv::log!`.
@@ -44,7 +44,7 @@ use bun_sys::windows::libuv::UvHandle as _;
 
 pub struct BufferedReaderVTable {
     pub parent: *mut c_void,
-    pub kind: crate::BufferedReaderParentLinkKind,
+    pub pvtable: &'static BufferedReaderParentVTable,
 }
 
 /// Trait that parent types implement to receive buffered-reader callbacks.
@@ -67,9 +67,6 @@ pub struct BufferedReaderVTable {
 ///   `addr_of_mut!` or reborrow `&mut *this` only when the reader is known to
 ///   be done with `self` (e.g. tail-position `on_reader_done`).
 pub trait BufferedReaderParent {
-    /// `link_interface!` variant for this type. Each impl pairs this with a
-    /// `bun_io::buffered_reader_parent_link!(KIND for Self)` at module scope.
-    const KIND: crate::BufferedReaderParentLinkKind;
     /// Mirrors `@hasDecl(Type, "onReadChunk")`.
     const HAS_ON_READ_CHUNK: bool = true;
 
@@ -81,7 +78,7 @@ pub trait BufferedReaderParent {
     unsafe fn on_reader_done(this: *mut Self);
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error);
     unsafe fn loop_(this: *mut Self) -> *mut Loop;
-    unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
+    unsafe fn event_loop(this: *mut Self) -> EventLoopCtx;
     /// Fired when this reader's `MaxBuf` budget goes negative. Only
     /// `SubprocessPipeReader` overrides this; the default no-ops because no
     /// other parent type wires a `MaxBuf`.
@@ -90,31 +87,92 @@ pub trait BufferedReaderParent {
     }
 }
 
+/// Monomorphized method table for a `BufferedReaderParent` impl.
+pub struct BufferedReaderParentVTable {
+    pub has_on_read_chunk: bool,
+    pub on_read_chunk: unsafe fn(*mut c_void, chunk: &[u8], has_more: ReadState) -> bool,
+    pub on_reader_done: unsafe fn(*mut c_void),
+    pub on_reader_error: unsafe fn(*mut c_void, sys::Error),
+    pub loop_: unsafe fn(*mut c_void) -> *mut Loop,
+    pub event_loop: unsafe fn(*mut c_void) -> EventLoopCtx,
+    pub on_max_buffer_overflow: unsafe fn(*mut c_void, NonNull<MaxBuf>),
+}
+
+// SAFETY (all shims): raw-ptr passthrough to the trait method — `p` is the
+// `*mut T` registered via `set_parent`; no `&mut T` is materialized here.
+unsafe fn brp_on_read_chunk<T: BufferedReaderParent>(
+    p: *mut c_void,
+    chunk: &[u8],
+    has_more: ReadState,
+) -> bool {
+    // SAFETY: see the shim banner above.
+    unsafe { T::on_read_chunk(p.cast::<T>(), chunk, has_more) }
+}
+unsafe fn brp_on_reader_done<T: BufferedReaderParent>(p: *mut c_void) {
+    // SAFETY: see the shim banner above.
+    unsafe { T::on_reader_done(p.cast::<T>()) }
+}
+unsafe fn brp_on_reader_error<T: BufferedReaderParent>(p: *mut c_void, err: sys::Error) {
+    // SAFETY: see the shim banner above.
+    unsafe { T::on_reader_error(p.cast::<T>(), err) }
+}
+unsafe fn brp_loop<T: BufferedReaderParent>(p: *mut c_void) -> *mut Loop {
+    // SAFETY: see the shim banner above.
+    unsafe { T::loop_(p.cast::<T>()) }
+}
+unsafe fn brp_event_loop<T: BufferedReaderParent>(p: *mut c_void) -> EventLoopCtx {
+    // SAFETY: see the shim banner above.
+    unsafe { T::event_loop(p.cast::<T>()) }
+}
+unsafe fn brp_on_max_buffer_overflow<T: BufferedReaderParent>(
+    p: *mut c_void,
+    maxbuf: NonNull<MaxBuf>,
+) {
+    // SAFETY: see the shim banner above.
+    unsafe { T::on_max_buffer_overflow(p.cast::<T>(), maxbuf) }
+}
+
+impl BufferedReaderParentVTable {
+    pub const fn of<T: BufferedReaderParent>() -> &'static Self {
+        struct H<T>(core::marker::PhantomData<T>);
+        impl<T: BufferedReaderParent> H<T> {
+            const VT: BufferedReaderParentVTable = BufferedReaderParentVTable {
+                has_on_read_chunk: T::HAS_ON_READ_CHUNK,
+                on_read_chunk: brp_on_read_chunk::<T>,
+                on_reader_done: brp_on_reader_done::<T>,
+                on_reader_error: brp_on_reader_error::<T>,
+                loop_: brp_loop::<T>,
+                event_loop: brp_event_loop::<T>,
+                on_max_buffer_overflow: brp_on_max_buffer_overflow::<T>,
+            };
+        }
+        &H::<T>::VT
+    }
+}
+
 impl BufferedReaderVTable {
     pub(crate) fn init<T: BufferedReaderParent>() -> BufferedReaderVTable {
         BufferedReaderVTable {
             parent: core::ptr::null_mut(),
-            kind: T::KIND,
+            pvtable: BufferedReaderParentVTable::of::<T>(),
         }
     }
 
-    #[inline]
-    fn link(&self) -> crate::BufferedReaderParentLink {
-        // SAFETY: `parent` is a `*mut T` matching `kind` per `set_parent`'s
-        // contract; raw-ptr passthrough, no `&mut T` materialized.
-        unsafe { crate::BufferedReaderParentLink::new(self.kind, self.parent) }
-    }
-
-    pub(crate) fn event_loop(&self) -> EventLoopHandle {
-        self.link().event_loop()
+    // SAFETY (all forwarding methods below): `parent` is a `*mut T` matching
+    // the `T` that `pvtable` was built from, per `set_parent`'s contract;
+    // raw-ptr passthrough, no `&mut T` materialized.
+    pub(crate) fn event_loop(&self) -> EventLoopCtx {
+        // SAFETY: see the banner above.
+        unsafe { (self.pvtable.event_loop)(self.parent) }
     }
 
     pub(crate) fn loop_(&self) -> *mut Loop {
-        self.link().loop_ptr()
+        // SAFETY: see the banner above.
+        unsafe { (self.pvtable.loop_)(self.parent) }
     }
 
     pub(crate) fn is_streaming_enabled(&self) -> bool {
-        self.link().has_on_read_chunk()
+        self.pvtable.has_on_read_chunk
     }
 
     /// When the reader has read a chunk of data
@@ -122,19 +180,23 @@ impl BufferedReaderVTable {
     ///
     /// Returning false prevents the reader from reading more data.
     pub(crate) fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
-        self.link().on_read_chunk(chunk, has_more)
+        // SAFETY: see the banner above.
+        unsafe { (self.pvtable.on_read_chunk)(self.parent, chunk, has_more) }
     }
 
     pub(crate) fn on_reader_done(&self) {
-        self.link().on_reader_done()
+        // SAFETY: see the banner above.
+        unsafe { (self.pvtable.on_reader_done)(self.parent) }
     }
 
     pub(crate) fn on_reader_error(&self, err: sys::Error) {
-        self.link().on_reader_error(err)
+        // SAFETY: see the banner above.
+        unsafe { (self.pvtable.on_reader_error)(self.parent, err) }
     }
 
     pub(crate) fn on_max_buffer_overflow(&self, maxbuf: NonNull<MaxBuf>) {
-        self.link().on_max_buffer_overflow(maxbuf)
+        // SAFETY: see the banner above.
+        unsafe { (self.pvtable.on_max_buffer_overflow)(self.parent, maxbuf) }
     }
 }
 
@@ -208,13 +270,13 @@ impl PosixBufferedReader {
     }
 
     pub fn from(&mut self, other: &mut PosixBufferedReader, parent: *mut c_void) {
-        let kind = self.vtable.kind;
+        let pvtable = self.vtable.pvtable;
         *self = PosixBufferedReader {
             handle: mem::replace(&mut other.handle, PollOrFd::Closed),
             _buffer: mem::take(other.buffer()),
             _offset: other._offset,
             flags: other.flags,
-            vtable: BufferedReaderVTable { kind, parent },
+            vtable: BufferedReaderVTable { pvtable, parent },
             count: 0,
             maxbuf: None,
         };
@@ -225,7 +287,7 @@ impl PosixBufferedReader {
         // doesn't conflict with the field borrow.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle
-            .set_owner(Owner::new(PollTag::BufferedReader, owner.cast()));
+            .set_owner(Owner::new(owner.cast(), PosixBufferedReader::run_file_poll));
 
         // note: the caller is supposed to drain the buffer themselves
         // doing it here automatically makes it very easy to end up reading from the same buffer multiple times.
@@ -237,7 +299,7 @@ impl PosixBufferedReader {
         // doesn't conflict with the field borrow.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle
-            .set_owner(Owner::new(PollTag::BufferedReader, owner.cast()));
+            .set_owner(Owner::new(owner.cast(), PosixBufferedReader::run_file_poll));
     }
 
     pub fn start_memfd(&mut self, fd: Fd) {
@@ -416,15 +478,18 @@ impl PosixBufferedReader {
             self.handle = PollOrFd::Poll(FilePollRef::init(
                 ev,
                 fd,
-                Owner::new(PollTag::BufferedReader, owner_ptr.cast()),
+                Owner::new(owner_ptr.cast(), PosixBufferedReader::run_file_poll),
             ));
         }
         let Some(poll) = self.handle.get_poll_mut() else {
             return true;
         };
-        poll.set_owner(Owner::new(PollTag::BufferedReader, owner_ptr.cast()));
+        poll.set_owner(Owner::new(
+            owner_ptr.cast(),
+            PosixBufferedReader::run_file_poll,
+        ));
 
-        if !poll.has_flag(FilePollFlag::WasEverRegistered) {
+        if !poll.has_flag(Flags::WasEverRegistered) {
             poll.enable_keeping_process_alive(ev);
         }
 
@@ -483,7 +548,7 @@ impl PosixBufferedReader {
         self.vtable.loop_()
     }
 
-    pub fn event_loop(&self) -> EventLoopHandle {
+    pub fn event_loop(&self) -> EventLoopCtx {
         self.vtable.event_loop()
     }
 
@@ -517,6 +582,24 @@ impl PosixBufferedReader {
                 }
             },
         }
+    }
+
+    /// `Owner.on_update` entry for `BufferedReader` polls (was the
+    /// BUFFERED_READER arm of `__bun_run_file_poll`; the install lifecycle
+    /// reader used an identical arm under a separate tag).
+    pub(crate) unsafe fn run_file_poll(
+        owner: *mut (),
+        _poll: *mut crate::FilePoll,
+        size_or_offset: i64,
+        hup: bool,
+    ) {
+        // SAFETY: `owner` was registered as `*mut PosixBufferedReader`;
+        // exclusive for this dispatch (single-threaded event loop).
+        Self::on_poll(
+            unsafe { &mut *owner.cast::<PosixBufferedReader>() },
+            size_or_offset as isize,
+            hup,
+        )
     }
 
     pub fn on_poll(parent: &mut PosixBufferedReader, size_hint: isize, received_hup: bool) {
@@ -1710,10 +1793,7 @@ impl WindowsBufferedReader {
                 {
                     // Routed through `bun.windows.libuv.log` (the `uv` debug
                     // scope, toggled by `BUN_DEBUG_uv=1`), not `SYS`.
-                    bun_sys::windows::libuv::log!(
-                        "uv_read_start() = {}",
-                        bstr::BStr::new(err.name()),
-                    );
+                    bun_libuv_sys::log!("uv_read_start() = {}", bstr::BStr::new(err.name()),);
                     return sys::Result::Err(err);
                 }
             }

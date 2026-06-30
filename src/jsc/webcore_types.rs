@@ -1,11 +1,12 @@
 //! Core `webcore` data types — `Blob`, `Blob::Store`.
 //!
-//! LAYERING: these are the **single nominal definitions**. `bun_runtime::webcore`
-//! re-exports them (`pub use bun_jsc::webcore_types::*`) and layers behaviour
-//! (S3 I/O, streaming, JS host-fns, async readers) on top via the `BlobExt` /
-//! `StoreExt` / … extension traits in that crate. Defining the data shapes here
-//! lets lower-tier crates (`bun_http_jsc`, `bun_sql_jsc`) downcast a `JSValue`
-//! to `*mut Blob` and read its bytes without a `bun_runtime` forward-dep.
+//! LAYERING: this module is the **canonical definition** of `Blob` and the
+//! `Store` family. `bun_runtime::webcore` layers behaviour (file/S3 I/O,
+//! streaming, JS host-fns, async readers) on top via the `BlobExt` /
+//! `StoreExt` / … extension traits in that crate. Lower-tier crates
+//! (e.g. `bun_http_jsc`) may depend on the data shapes here
+//! directly — e.g. downcast a `JSValue` to `*mut Blob` and read its bytes —
+//! without a `bun_runtime` dependency.
 //!
 //! Everything that touches the
 //! event loop / fs / network stays in `bun_runtime`.
@@ -122,20 +123,13 @@ impl Default for Blob {
 const _: () = {
     use crate::generated::JSBlob;
 
-    // `JSValue::as(Blob)` special-case: a `BuildArtifact`
-    // wraps a `Blob`, so downcasting to `Blob` must also match it. The struct
-    // lives in `bun_runtime`, so resolve the fallback at link time.
-    //
-    // safe: by-value `JSValue` (tagged i64); the Rust-ABI body in `bun_runtime`
-    // only type-checks the encoded value and returns the stored payload pointer
-    // (or `None`) — no precondition beyond the link succeeding.
-    unsafe extern "Rust" {
-        safe fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob>;
-    }
-
     impl JsClass for Blob {
         fn from_js(value: JSValue) -> Option<*mut Self> {
-            JSBlob::from_js(value).or_else(|| __bun_blob_from_build_artifact(value))
+            // BuildArtifact (bun_runtime) wraps a Blob; the downcast must also
+            // match it. Dispatched through RuntimeHooks (cold fallback).
+            JSBlob::from_js(value).or_else(|| {
+                (crate::virtual_machine::runtime_hooks().blob_from_build_artifact)(value)
+            })
         }
         fn from_js_direct(value: JSValue) -> Option<*mut Self> {
             JSBlob::from_js_direct(value)
@@ -451,7 +445,7 @@ impl Drop for Blob {
 
 // SAFETY: `Blob__ref`/`Blob__deref` operate on the intrusive `ref_count` and
 // keep the heap-allocated `Blob` alive while the count is > 0.
-unsafe impl bun_ptr::ExternalSharedDescriptor for Blob {
+unsafe impl bun_core::ExternalSharedDescriptor for Blob {
     unsafe fn ext_ref(this: *mut Self) {
         // SAFETY: caller guarantees `this` points to a live heap-allocated Blob.
         unsafe { Blob__ref(&mut *this) }

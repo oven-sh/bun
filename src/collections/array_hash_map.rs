@@ -282,7 +282,7 @@ const fn spread_hash(h: u32) -> u64 {
 // an `ArrayHashMap`: bun_css, bun_dotenv, bun_md, bun_install each emitted
 // their own physically-distinct copy, ICF could not fold them (per-CGU codegen
 // differs in size), and the linker scattered those hot copies into cold 64 KB
-// code pages (encoding_rs / bun_css `process_doc` / bun_sql_jsc), pulling
+// code pages (encoding_rs / bun_css `process_doc` / `bun_runtime::sql_jsc`), pulling
 // ~320 KB of otherwise-cold code resident on startup.
 //
 // Hoisting the closure into one named return-position `impl Fn` and routing

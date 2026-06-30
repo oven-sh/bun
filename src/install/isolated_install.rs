@@ -32,28 +32,28 @@ use bun_collections::{
     ArrayHashMap, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, HashMap, LinearFifo,
     StringArrayHashMap,
 };
+use bun_core::PathBuffer;
 use bun_core::{Environment, Global, Output, fast_random, fmt as bun_fmt};
 use bun_paths::path_options::AssumeOk as _;
-use bun_paths::{self as paths, AutoAbsPath as AbsPath, AutoRelPath, PathBuffer};
+use bun_paths::{self as paths, AutoAbsPath as AbsPath, AutoRelPath};
 use bun_semver as semver;
 use bun_sys::{self as sys, Fd};
 use bun_wyhash::{Wyhash, Wyhash11};
 
-use crate::analytics;
-use crate::bun_bunfig::Arguments as Command;
-use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{self, Lockfile};
 use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_task as Task;
 use crate::{
-    self as install, DependencyID, PackageID, PackageInstall, PackageNameHash, Resolution,
-    invalid_dependency_id, invalid_package_id,
+    self as install, DependencyID, INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, PackageID,
+    PackageInstall, PackageNameHash, Resolution,
 };
+use bun_core::Progress::{Node as ProgressNode, Progress};
+use bun_options_types::context::Context;
 use store::{Entry as StoreEntry, EntryColumns as _, Node as StoreNode, NodeColumns as _};
 
-bun_output::define_scoped_log!(log, IsolatedInstall, visible);
+bun_core::define_scoped_log!(log, IsolatedInstall, visible);
 
 // ───────────────────────────────────────────────────────────────────────────
 // Inner helper types (hoisted from fn body — Rust does not allow local
@@ -216,12 +216,12 @@ impl<'a, 'b> Wait<'a, 'b> {
 /// Runs on main thread
 pub(crate) fn install_isolated_packages(
     manager: &mut PackageManager,
-    command_ctx: Command::Context,
+    command_ctx: Context,
     install_root_dependencies: bool,
     workspace_filters: &[WorkspaceFilter],
     packages_to_install: Option<&[PackageID]>,
 ) -> Result<crate::package_install::Summary, AllocError> {
-    analytics::features::isolated_bun_install.fetch_add(1, Ordering::Relaxed);
+    bun_analytics::features::isolated_bun_install.fetch_add(1, Ordering::Relaxed);
 
     // Take a raw pointer so column borrows below don't tie up `&mut manager`
     // (which owns the lockfile).
@@ -250,7 +250,7 @@ pub(crate) fn install_isolated_packages(
 
         node_queue.push(QueuedNode {
             parent_id: store::node::Id::INVALID,
-            dep_id: invalid_dependency_id,
+            dep_id: INVALID_DEPENDENCY_ID,
             pkg_id: 0,
         });
 
@@ -287,7 +287,7 @@ pub(crate) fn install_isolated_packages(
             let mut peer_targets: Vec<Vec<PackageID>> = vec![Vec::new(); peer_name_count as usize];
             debug_assert_eq!(dependencies.len(), resolutions.len());
             for (dep, &res) in dependencies.iter().zip(resolutions) {
-                if res == invalid_package_id {
+                if res == INVALID_PACKAGE_ID {
                     continue;
                 }
                 let Some(bit) = peer_name_idx.get_index(&dep.name_hash) else {
@@ -352,7 +352,7 @@ pub(crate) fn install_isolated_packages(
                             }
                         } else {
                             let res_pkg = resolutions[dep_id as usize];
-                            if res_pkg != invalid_package_id {
+                            if res_pkg != INVALID_PACKAGE_ID {
                                 scratch.set_union(&leaking_peers.at(res_pkg as usize));
                             }
                         }
@@ -380,7 +380,7 @@ pub(crate) fn install_isolated_packages(
                 continue;
             }
             let res = resolutions[dep_idx as usize];
-            if res == invalid_package_id {
+            if res == INVALID_PACKAGE_ID {
                 continue;
             }
             // Only mark workspaces that root will actually queue; an entry excluded
@@ -430,13 +430,13 @@ pub(crate) fn install_isolated_packages(
                         // 'node_modules/.bun/parent@version/node_modules'.
 
                         let dep_id = node_dep_ids[curr_id.get() as usize];
-                        if dep_id == invalid_dependency_id && entry.dep_id == invalid_dependency_id
+                        if dep_id == INVALID_DEPENDENCY_ID && entry.dep_id == INVALID_DEPENDENCY_ID
                         {
                             node_nodes[entry.parent_id.get() as usize].push(curr_id);
                             continue 'next_node;
                         }
 
-                        if dep_id == invalid_dependency_id || entry.dep_id == invalid_dependency_id
+                        if dep_id == INVALID_DEPENDENCY_ID || entry.dep_id == INVALID_DEPENDENCY_ID
                         {
                             // one is the root package, one is a dependency on the root package (it has a valid dep_id)
                             // create a new node for it.
@@ -468,9 +468,9 @@ pub(crate) fn install_isolated_packages(
             // for skipping dependnecies of workspace packages and the root package. the dependencies
             // of these packages should only be pulled in once, but we might need to create more than
             // one entry if there's multiple dependencies on the workspace or root package.
-            let mut skip_dependencies = entry.pkg_id == 0 && entry.dep_id != invalid_dependency_id;
+            let mut skip_dependencies = entry.pkg_id == 0 && entry.dep_id != INVALID_DEPENDENCY_ID;
 
-            if entry.dep_id != invalid_dependency_id {
+            if entry.dep_id != INVALID_DEPENDENCY_ID {
                 let entry_dep = &dependencies[entry.dep_id as usize];
 
                 // A `workspace:` protocol reference does not own the workspace's
@@ -531,12 +531,12 @@ pub(crate) fn install_isolated_packages(
                                             }
                                             curr_id = node_parent_ids[curr_id.get() as usize];
                                         }
-                                        break 'resolved invalid_package_id;
+                                        break 'resolved INVALID_PACKAGE_ID;
                                     };
                                     // Auto-install fallback is declarer-specific; let the
                                     // second pass handle this position rather than risk an
                                     // unsound key.
-                                    if resolved == invalid_package_id {
+                                    if resolved == INVALID_PACKAGE_ID {
                                         break 'dont_dedupe;
                                     }
                                     hasher.update(bun_core::bytes_of(&peer_name_hash));
@@ -554,7 +554,7 @@ pub(crate) fn install_isolated_packages(
                         let dedupe_node_id = *dedupe_entry.value_ptr;
 
                         let dedupe_dep_id = node_dep_ids[dedupe_node_id.get() as usize];
-                        if dedupe_dep_id == invalid_dependency_id {
+                        if dedupe_dep_id == INVALID_DEPENDENCY_ID {
                             break 'dont_dedupe;
                         }
                         let dedupe_dep = &dependencies[dedupe_dep_id as usize];
@@ -681,7 +681,7 @@ pub(crate) fn install_isolated_packages(
                         // TODO: print an error when scanner is actually a dependency of a workspace (we should not support this)
                         for &dep_id in &dep_ids_sort_buf {
                             let pkg_id = resolutions[dep_id as usize];
-                            if pkg_id == invalid_package_id {
+                            if pkg_id == INVALID_PACKAGE_ID {
                                 continue;
                             }
 
@@ -810,8 +810,8 @@ pub(crate) fn install_isolated_packages(
 
                             let best_version = resolutions[peer_dep_id as usize];
 
-                            if best_version == invalid_package_id {
-                                break 'resolved_pkg_id (invalid_package_id, true);
+                            if best_version == INVALID_PACKAGE_ID {
+                                break 'resolved_pkg_id (INVALID_PACKAGE_ID, true);
                             }
 
                             if best_version == ids.pkg_id {
@@ -839,7 +839,7 @@ pub(crate) fn install_isolated_packages(
                     break 'resolved_pkg_id (resolutions[peer_dep_id as usize], true);
                 };
 
-                if resolved_pkg_id == invalid_package_id {
+                if resolved_pkg_id == INVALID_PACKAGE_ID {
                     // these are optional peers that failed to find any dependency with a matching
                     // name. they are completely excluded
                     continue;
@@ -923,13 +923,13 @@ pub(crate) fn install_isolated_packages(
                 let curr_dep_id = node_dep_ids[entry.node_id.get() as usize];
 
                 for info in dedupe_entry.value_ptr.iter() {
-                    if info.dep_id == invalid_dependency_id || curr_dep_id == invalid_dependency_id
+                    if info.dep_id == INVALID_DEPENDENCY_ID || curr_dep_id == INVALID_DEPENDENCY_ID
                     {
                         if info.dep_id != curr_dep_id {
                             continue;
                         }
                     }
-                    if info.dep_id != invalid_dependency_id && curr_dep_id != invalid_dependency_id
+                    if info.dep_id != INVALID_DEPENDENCY_ID && curr_dep_id != INVALID_DEPENDENCY_ID
                     {
                         let curr_dep = &dependencies[curr_dep_id as usize];
                         let existing_dep = &dependencies[info.dep_id as usize];
@@ -963,7 +963,7 @@ pub(crate) fn install_isolated_packages(
 
                         let parents = &mut entry_parents[info.entry_id.get() as usize];
 
-                        if curr_dep_id != invalid_dependency_id
+                        if curr_dep_id != INVALID_DEPENDENCY_ID
                             && dependencies[curr_dep_id as usize].behavior.is_workspace()
                         {
                             parents.push(entry.entry_parent_id);
@@ -1012,7 +1012,7 @@ pub(crate) fn install_isolated_packages(
 
             let new_entry_dep_id = node_dep_ids[entry.node_id.get() as usize];
 
-            let new_entry_is_root = new_entry_dep_id == invalid_dependency_id;
+            let new_entry_is_root = new_entry_dep_id == INVALID_DEPENDENCY_ID;
             let new_entry_is_workspace = !new_entry_is_root
                 && dependencies[new_entry_dep_id as usize].version.tag == VersionTag::Workspace;
 
@@ -1028,7 +1028,7 @@ pub(crate) fn install_isolated_packages(
             let new_entry_parents: Vec<store::entry::Id> = vec![entry.entry_parent_id];
 
             let hoisted = 'hoisted: {
-                if new_entry_dep_id == invalid_dependency_id {
+                if new_entry_dep_id == INVALID_DEPENDENCY_ID {
                     break 'hoisted false;
                 }
 
@@ -1066,7 +1066,7 @@ pub(crate) fn install_isolated_packages(
 
             if let Some(entry_parent_id) = entry.entry_parent_id.try_get() {
                 'skip_adding_dependency: {
-                    if new_entry_dep_id != invalid_dependency_id
+                    if new_entry_dep_id != INVALID_DEPENDENCY_ID
                         && dependencies[new_entry_dep_id as usize]
                             .behavior
                             .is_workspace()
@@ -1089,7 +1089,7 @@ pub(crate) fn install_isolated_packages(
                         &ctx,
                     )?;
 
-                    if new_entry_dep_id != invalid_dependency_id {
+                    if new_entry_dep_id != INVALID_DEPENDENCY_ID {
                         if entry.entry_parent_id == store::entry::Id::ROOT {
                             // make sure direct dependencies are not replaced
                             let dep_name = dependencies[new_entry_dep_id as usize]
@@ -1265,7 +1265,7 @@ pub(crate) fn install_isolated_packages(
                                 // Over-excludes the rare "trusted but actually no
                                 // scripts" case in exchange for not needing a
                                 // lockfile-format change.
-                                let (dep_name, dep_name_hash) = if dep_id != invalid_dependency_id {
+                                let (dep_name, dep_name_hash) = if dep_id != INVALID_DEPENDENCY_ID {
                                     (
                                         dependencies[dep_id as usize].name.slice(string_buf),
                                         dependencies[dep_id as usize].name_hash,
@@ -2131,7 +2131,7 @@ pub(crate) fn install_isolated_packages(
 
             match pkg_res.tag {
                 ResolutionTag::Root => {
-                    if dep_id == invalid_dependency_id {
+                    if dep_id == INVALID_DEPENDENCY_ID {
                         // .monotonic is okay in this block because the task isn't running on another
                         // thread.
                         entry_steps[entry_id.get() as usize].store(
@@ -2639,5 +2639,5 @@ pub(crate) fn install_isolated_packages(
 // Helpers
 // ───────────────────────────────────────────────────────────────────────────
 
-use crate::dependency::VersionTag;
 use crate::resolution::Tag as ResolutionTag;
+use bun_install_types::dependency::Tag as VersionTag;

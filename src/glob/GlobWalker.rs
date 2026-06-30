@@ -28,9 +28,10 @@ use bun_core::ZStr;
 use bun_core::define_scoped_log;
 use bun_core::env::IS_WINDOWS;
 use bun_core::strings;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, resolve_path};
+use bun_core::{MAX_PATH_BYTES, PathBuffer};
+use bun_paths::resolve_path;
 use bun_sys::dir_iterator as DirIterator;
-use bun_sys::{self as Syscall, E, Error as SysError, Fd, FdExt, O, Result as Maybe, S, Stat};
+use bun_sys::{self as Syscall, E, Error as SysError, Fd, FdExt, O, S, Stat};
 
 // const Codepoint = u32;
 
@@ -43,7 +44,7 @@ fn dummy_filter_false(_val: &[u8]) -> bool {
 }
 
 #[cfg(windows)]
-pub fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
+pub fn statat_windows(fd: Fd, path: &ZStr) -> Syscall::Result<Stat> {
     use bun_paths::resolve_path::{self, platform};
     // Rust's `&mut`/`&` aliasing rules forbid
     // passing the same buffer as both `join_z_buf`'s output and an input part,
@@ -62,7 +63,7 @@ pub fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
 }
 
 #[cfg(not(windows))]
-pub fn statat_windows(_fd: Fd, _path: &ZStr) -> Maybe<Stat> {
+pub fn statat_windows(_fd: Fd, _path: &ZStr) -> Syscall::Result<Stat> {
     unreachable!("oi don't use this");
 }
 
@@ -85,19 +86,19 @@ pub trait Accessor {
     type Handle: AccessorHandle;
     type DirIter: AccessorDirIter<Handle = Self::Handle>;
 
-    fn open(path: &ZStr) -> Result<Maybe<Self::Handle>, Error>;
-    fn openat(handle: Self::Handle, path: &ZStr) -> Result<Maybe<Self::Handle>, Error>;
-    fn statat(handle: Self::Handle, path: &ZStr) -> Maybe<Stat>;
+    fn open(path: &ZStr) -> Result<Syscall::Result<Self::Handle>, Error>;
+    fn openat(handle: Self::Handle, path: &ZStr) -> Result<Syscall::Result<Self::Handle>, Error>;
+    fn statat(handle: Self::Handle, path: &ZStr) -> Syscall::Result<Stat>;
     /// Like statat but does not follow symlinks.
-    fn lstatat(handle: Self::Handle, path: &ZStr) -> Maybe<Stat>;
+    fn lstatat(handle: Self::Handle, path: &ZStr) -> Syscall::Result<Stat>;
     fn close(handle: Self::Handle) -> Option<SysError>;
-    fn getcwd(path_buf: &mut PathBuffer) -> Maybe<&[u8]>;
+    fn getcwd(path_buf: &mut PathBuffer) -> Syscall::Result<&[u8]>;
 }
 
 pub trait AccessorDirIter {
     type Handle;
     type Entry: AccessorDirEntry;
-    fn next(&mut self) -> Maybe<Option<Self::Entry>>;
+    fn next(&mut self) -> Syscall::Result<Option<Self::Entry>>;
     fn iterate(dir: Self::Handle) -> Self;
     fn set_name_filter(&mut self, _filter: Option<&[u16]>) {
         // default: no-op (only SyscallAccessor on Windows uses this)
@@ -150,7 +151,7 @@ impl AccessorDirIter for SyscallDirIter {
     type Entry = DirIterator::IteratorResult;
 
     #[inline]
-    fn next(&mut self) -> Maybe<Option<DirIterator::IteratorResult>> {
+    fn next(&mut self) -> Syscall::Result<Option<DirIterator::IteratorResult>> {
         self.value.next()
     }
 
@@ -175,11 +176,11 @@ impl Accessor for SyscallAccessor {
     type Handle = SyscallHandle;
     type DirIter = SyscallDirIter;
 
-    fn open(path: &ZStr) -> Result<Maybe<SyscallHandle>, Error> {
+    fn open(path: &ZStr) -> Result<Syscall::Result<SyscallHandle>, Error> {
         Ok(Syscall::open(path, O::DIRECTORY | O::RDONLY, 0).map(|fd| SyscallHandle { value: fd }))
     }
 
-    fn statat(handle: SyscallHandle, path: &ZStr) -> Maybe<Stat> {
+    fn statat(handle: SyscallHandle, path: &ZStr) -> Syscall::Result<Stat> {
         #[cfg(windows)]
         {
             return statat_windows(handle.value, path);
@@ -189,7 +190,7 @@ impl Accessor for SyscallAccessor {
     }
 
     /// Like statat but does not follow symlinks.
-    fn lstatat(handle: SyscallHandle, path: &ZStr) -> Maybe<Stat> {
+    fn lstatat(handle: SyscallHandle, path: &ZStr) -> Syscall::Result<Stat> {
         #[cfg(windows)]
         {
             return statat_windows(handle.value, path);
@@ -198,7 +199,7 @@ impl Accessor for SyscallAccessor {
         Syscall::lstatat(handle.value, path)
     }
 
-    fn openat(handle: SyscallHandle, path: &ZStr) -> Result<Maybe<SyscallHandle>, Error> {
+    fn openat(handle: SyscallHandle, path: &ZStr) -> Result<Syscall::Result<SyscallHandle>, Error> {
         Ok(
             Syscall::openat(handle.value, path, O::DIRECTORY | O::RDONLY, 0)
                 .map(|fd| SyscallHandle { value: fd }),
@@ -209,7 +210,7 @@ impl Accessor for SyscallAccessor {
         handle.value.close_allowing_bad_file_descriptor(None)
     }
 
-    fn getcwd(path_buf: &mut PathBuffer) -> Maybe<&[u8]> {
+    fn getcwd(path_buf: &mut PathBuffer) -> Syscall::Result<&[u8]> {
         let len = Syscall::getcwd(&mut path_buf[..])?;
         Ok(&path_buf[..len])
     }
@@ -284,7 +285,7 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     _accessor: core::marker::PhantomData<A>,
 }
 
-pub type Result_ = Maybe<()>;
+pub type Result_ = Syscall::Result<()>;
 
 /// Array hashmap used as a set (values are the keys)
 /// to store matched paths and prevent duplicates
@@ -401,7 +402,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         }
     }
 
-    pub fn init(&mut self) -> Result<Maybe<()>, Error> {
+    pub fn init(&mut self) -> Result<Syscall::Result<()>, Error> {
         log!(
             "Iterator init pattern={}",
             bstr::BStr::new(&self.walker.pattern)
@@ -585,7 +586,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
     fn transition_to_dir_iter_state<const ROOT: bool>(
         &mut self,
         work_item: WorkItem<A>,
-    ) -> Result<Maybe<()>, Error> {
+    ) -> Result<Syscall::Result<()>, Error> {
         // For SENTINEL=true, `MatchedPath`-derived WorkItem paths carry a trailing
         // NUL in their `.len()`; the logical path drops it (see `work_item_logical_path`).
         let work_item_path: &[u8] = work_item_logical_path(&work_item.path);
@@ -815,7 +816,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         Some(wide)
     }
 
-    pub fn next(&mut self) -> Result<Maybe<Option<MatchedPath>>, Error> {
+    pub fn next(&mut self) -> Result<Syscall::Result<Option<MatchedPath>>, Error> {
         'outer: loop {
             // Note: reshaped for borrowck — take/replace iter_state where needed.
             match &mut self.iter_state {
@@ -1432,7 +1433,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         error_on_broken_symlinks: bool,
         only_files: bool,
         ignore_filter_fn: Option<IgnoreFilterFn>,
-    ) -> Result<Maybe<Self>, Error> {
+    ) -> Result<Syscall::Result<Self>, Error> {
         // `bun_paths::fs::FileSystem` (singleton holds only the cwd string; the
         // DirEntry cache stays in `bun_resolver`).
         Self::init_with_cwd(
@@ -1479,7 +1480,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         error_on_broken_symlinks: bool,
         only_files: bool,
         ignore_filter_fn: Option<IgnoreFilterFn>,
-    ) -> Result<Maybe<Self>, Error> {
+    ) -> Result<Syscall::Result<Self>, Error> {
         log!("initWithCwd(cwd={})", bstr::BStr::new(cwd));
         let mut this = Self {
             cwd: Box::from(cwd),
@@ -1537,7 +1538,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         err.with_path(&self.path_buf[0..copy_len])
     }
 
-    pub fn walk(&mut self) -> Result<Maybe<()>, Error> {
+    pub fn walk(&mut self) -> Result<Syscall::Result<()>, Error> {
         if self.pattern_components.is_empty() {
             return Ok(Ok(()));
         }
@@ -1573,7 +1574,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         dir_path_len: &mut usize,
         path_buf: &mut PathBuffer,
         encountered_dot_dot: &mut bool,
-    ) -> Maybe<u32> {
+    ) -> Syscall::Result<u32> {
         let mut component_idx = idx;
         let mut len = *dir_path_len;
         while (component_idx as usize) < pattern_components.len() {
@@ -1644,7 +1645,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         dir_path_len: &mut usize,
         scratch_path_buf: &mut PathBuffer,
         encountered_dot_dot: &mut bool,
-    ) -> Maybe<u32> {
+    ) -> Syscall::Result<u32> {
         Self::skip_special_components_disjoint(
             &self.pattern_components,
             work_item_idx,
@@ -1664,7 +1665,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         dir_path_len: &mut usize,
         scratch_path_buf: &mut PathBuffer,
         encountered_dot_dot: &mut bool,
-    ) -> Maybe<u32> {
+    ) -> Syscall::Result<u32> {
         let mut component_idx = work_item_idx;
 
         if (component_idx as usize) < pattern_components.len() {

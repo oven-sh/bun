@@ -6,7 +6,7 @@ use core::fmt;
 use crate::SystemError;
 use bun_core::String as BunString;
 
-use crate::{E, Fd, SystemErrno, Tag, coreutils_error_map, libuv_error_map};
+use crate::{E, Fd, SystemErrno, Tag, libuv_error_map};
 
 // Local helper replacing the `errno_to_err` forward-ref.
 #[inline]
@@ -118,7 +118,7 @@ impl Error {
     /// discriminant, so `from_libuv` stays at its default `false`.
     #[cfg(windows)]
     #[inline]
-    pub fn from_uv_rc(rc: crate::windows::libuv::ReturnCode, syscall_tag: Tag) -> Option<Error> {
+    pub fn from_uv_rc(rc: bun_libuv_sys::ReturnCode, syscall_tag: Tag) -> Option<Error> {
         rc.errno().map(|e| Error {
             errno: e,
             syscall: syscall_tag,
@@ -130,10 +130,7 @@ impl Error {
     /// `from_libuv` left at default `false`.
     #[cfg(windows)]
     #[inline]
-    pub fn from_uv_rc64(
-        rc: crate::windows::libuv::ReturnCodeI64,
-        syscall_tag: Tag,
-    ) -> Option<Error> {
+    pub fn from_uv_rc64(rc: bun_libuv_sys::ReturnCodeI64, syscall_tag: Tag) -> Option<Error> {
         rc.errno().map(|e| Error {
             errno: e,
             syscall: syscall_tag,
@@ -340,7 +337,7 @@ impl Error {
         let (_code, system_errno) = self.get_error_code_tag_name()?;
         // Both error maps are total (`initFull("unknown error")`), so the
         // lookup always yields a label.
-        Some(coreutils_error_map::COREUTILS_ERROR_MAP[system_errno].as_bytes())
+        Some(bun_core::errno::coreutils_typed::COREUTILS_ERROR_MAP[system_errno].as_bytes())
     }
 
     /// Shared scaffolding for [`to_shell_system_error`] and [`to_system_error`].
@@ -390,7 +387,7 @@ impl Error {
     /// Simpler formatting which does not allocate a message
     pub fn to_shell_system_error(&self) -> SystemError {
         let (mut err, looked_up) =
-            self.fill_system_error_common(&coreutils_error_map::COREUTILS_ERROR_MAP);
+            self.fill_system_error_common(&bun_core::errno::coreutils_typed::COREUTILS_ERROR_MAP);
         if let Some((_, label)) = looked_up {
             err.message = BunString::static_(label.as_bytes());
         }
@@ -503,12 +500,11 @@ impl bun_core::output::ErrName for Error {
     fn name(&self) -> &[u8] {
         Error::name(self)
     }
-    fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo> {
-        Some(bun_core::output::SysErrInfo {
-            tag_name: Error::name(self),
-            errno: i32::from(self.errno),
-            syscall: <&'static str>::from(self.syscall),
-        })
+    fn errno(&self) -> Option<i32> {
+        Some(i32::from(self.errno))
+    }
+    fn syscall_name(&self) -> Option<&'static str> {
+        Some(<&'static str>::from(self.syscall))
     }
 }
 // `&Error` — lets callers print-then-propagate without a clone
@@ -517,8 +513,11 @@ impl bun_core::output::ErrName for &Error {
     fn name(&self) -> &[u8] {
         Error::name(self)
     }
-    fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo> {
-        (**self).as_sys_err_info()
+    fn errno(&self) -> Option<i32> {
+        (**self).errno()
+    }
+    fn syscall_name(&self) -> Option<&'static str> {
+        (**self).syscall_name()
     }
 }
 
@@ -546,40 +545,18 @@ pub trait ReturnCodeExt: Sized {
     fn as_err(self, syscall_tag: Tag) -> Option<Error> {
         self.to_error(syscall_tag)
     }
-    /// Translate the negative libuv errno to `bun.sys.E`.
-    /// `bun_libuv_sys::ReturnCode::err_enum()` only yields the raw `u16`
-    /// (layering: it can't name `E`); this overlay yields the typed enum.
-    fn err_enum_e(self) -> Option<crate::E>;
 }
 #[cfg(windows)]
-impl ReturnCodeExt for crate::windows::libuv::ReturnCode {
+impl ReturnCodeExt for bun_libuv_sys::ReturnCode {
     #[inline]
     fn to_error(self, syscall_tag: Tag) -> Option<Error> {
         Error::from_uv_rc(self, syscall_tag)
     }
-    #[inline]
-    fn err_enum_e(self) -> Option<crate::E> {
-        if self.int() < 0 {
-            Some(crate::windows::translate_uv_error_to_e(self.int()))
-        } else {
-            None
-        }
-    }
 }
 #[cfg(windows)]
-impl ReturnCodeExt for crate::windows::libuv::ReturnCodeI64 {
+impl ReturnCodeExt for bun_libuv_sys::ReturnCodeI64 {
     #[inline]
     fn to_error(self, syscall_tag: Tag) -> Option<Error> {
         Error::from_uv_rc64(self, syscall_tag)
-    }
-    #[inline]
-    fn err_enum_e(self) -> Option<crate::E> {
-        if self.int() < 0 {
-            Some(crate::windows::translate_uv_error_to_e(
-                self.int() as core::ffi::c_int
-            ))
-        } else {
-            None
-        }
     }
 }

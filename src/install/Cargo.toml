@@ -6,17 +6,11 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
-[features]
-# Never enabled for this crate. Declared so the `cfg(feature = "shim_standalone")`
-# gates inside `windows-shim/{bun_shim_impl,BinLinkingShim}.rs` (which this
-# crate compiles as `mod`s) pass `unexpected_cfgs`. The feature is *set* only
-# when those files are compiled by the separate `bun_shim_impl` crate.
-shim_standalone = []
-
 [lints]
 workspace = true
 
 [dependencies]
+bun_shim_impl = { workspace = true, features = ["host"] }
 bytemuck = "1"
 strum.workspace = true
 thiserror.workspace = true
@@ -33,8 +27,8 @@ bun_alloc.workspace = true
 bun_bunfig.workspace = true
 bun_clap.workspace = true
 bun_core.workspace = true
-# TODO(b1): bun_bundler dep gated — crate not green yet
-# bun_bundler.workspace = true
+bun_opaque.workspace = true
+bun_bundler.workspace = true
 bun_collections.workspace = true
 bun_crash_handler.workspace = true
 bun_dns.workspace = true
@@ -62,9 +56,9 @@ bun_semver.workspace = true
 bun_sha_hmac.workspace = true
 bun_simdutf_sys.workspace = true
 bun_spawn.workspace = true
+bun_libuv_sys.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true
-bun_transpiler.workspace = true
 bun_url.workspace = true
 bun_uws.workspace = true
 bun_which.workspace = true

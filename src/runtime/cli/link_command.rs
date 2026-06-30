@@ -1,17 +1,18 @@
 use bstr::BStr;
 
+use bun_core::PathBuffer;
 use bun_core::strings;
 use bun_core::{Global, Output, err};
-use bun_paths::{AbsPath, PathBuffer};
+use bun_paths::AbsPath;
 use bun_resolver::fs::FileSystem;
-use bun_sys::{Dir, Fd, FdDirExt};
+use bun_sys::Dir;
 
 use bun_install::Features;
-use bun_install::bin_real as bin;
-use bun_install::lockfile_real::{Lockfile, package::Package};
+use bun_install::bin;
+use bun_install::lockfile::{Lockfile, package::Package};
 use bun_install::package_manager_real::{
     self as pm, CommandLineArguments, Subcommand, attempt_to_create_package_json,
-    options::LogLevel, package_manager_options, setup_global_dir,
+    package_manager_options, package_manager_options::LogLevel, setup_global_dir,
     update_package_json_and_install_with_manager,
 };
 
@@ -183,7 +184,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                 match bun_sys::sys_uv::symlink_uv(
                     link_path,
                     dest_path,
-                    bun_sys::windows::libuv::UV_FS_SYMLINK_JUNCTION,
+                    bun_libuv_sys::UV_FS_SYMLINK_JUNCTION,
                 ) {
                     Err(e) => {
                         bun_core::pretty_errorln!(
@@ -224,26 +225,24 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
             // `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`)
             // cannot alias the same value, so resolve the fd path twice (cheap:
             // one `getFdPath` syscall) into two independent `AbsPath` buffers.
-            let mut node_modules_path =
-                match <AbsPath>::init_fd_path(Fd::from_std_dir(&node_modules)) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        if manager.options.log_level != LogLevel::Silent {
-                            Output::err(e, "failed to link binary", ());
-                        }
-                        Global::crash();
+            let mut node_modules_path = match <AbsPath>::init_fd_path(node_modules.fd()) {
+                Ok(p) => p,
+                Err(e) => {
+                    if manager.options.log_level != LogLevel::Silent {
+                        Output::err(e, "failed to link binary", ());
                     }
-                };
-            let target_node_modules_path =
-                match <AbsPath>::init_fd_path(Fd::from_std_dir(&node_modules)) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        if manager.options.log_level != LogLevel::Silent {
-                            Output::err(e, "failed to link binary", ());
-                        }
-                        Global::crash();
+                    Global::crash();
+                }
+            };
+            let target_node_modules_path = match <AbsPath>::init_fd_path(node_modules.fd()) {
+                Ok(p) => p,
+                Err(e) => {
+                    if manager.options.log_level != LogLevel::Silent {
+                        Output::err(e, "failed to link binary", ());
                     }
-                };
+                    Global::crash();
+                }
+            };
             // `defer node_modules_path.deinit()` — handled by Drop.
 
             let mut bin_linker = bin::Linker {

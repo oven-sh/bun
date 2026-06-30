@@ -21,8 +21,8 @@ pub struct Seq {
     increment: f32,
     /// Borrowed from argv (NUL-terminated arena strings) or `'static` literals;
     /// argv outlives the builtin — `RawSlice` invariant.
-    separator: bun_ptr::RawSlice<u8>,
-    terminator: bun_ptr::RawSlice<u8>,
+    separator: bun_core::RawSlice<u8>,
+    terminator: bun_core::RawSlice<u8>,
     fixed_width: bool,
 }
 
@@ -34,8 +34,8 @@ impl Default for Seq {
             start: 1.0,
             end: 1.0,
             increment: 1.0,
-            separator: bun_ptr::RawSlice::new(b"\n"),
-            terminator: bun_ptr::RawSlice::EMPTY,
+            separator: bun_core::RawSlice::new(b"\n"),
+            terminator: bun_core::RawSlice::EMPTY,
             fixed_width: false,
         }
     }
@@ -60,12 +60,12 @@ impl Seq {
                     return Self::fail(interp, cmd, b"seq: option requires an argument -- s\n");
                 }
                 let bytes = Builtin::of(interp, cmd).arg_bytes(idx);
-                Self::state_mut(interp, cmd).separator = bun_ptr::RawSlice::new(bytes);
+                Self::state_mut(interp, cmd).separator = bun_core::RawSlice::new(bytes);
                 idx += 1;
                 continue;
             }
             if arg.starts_with(b"-s") && arg.len() > 2 {
-                Self::state_mut(interp, cmd).separator = bun_ptr::RawSlice::new(&arg[2..]);
+                Self::state_mut(interp, cmd).separator = bun_core::RawSlice::new(&arg[2..]);
                 idx += 1;
                 continue;
             }
@@ -75,12 +75,12 @@ impl Seq {
                     return Self::fail(interp, cmd, b"seq: option requires an argument -- t\n");
                 }
                 let bytes = Builtin::of(interp, cmd).arg_bytes(idx);
-                Self::state_mut(interp, cmd).terminator = bun_ptr::RawSlice::new(bytes);
+                Self::state_mut(interp, cmd).terminator = bun_core::RawSlice::new(bytes);
                 idx += 1;
                 continue;
             }
             if arg.starts_with(b"-t") && arg.len() > 2 {
-                Self::state_mut(interp, cmd).terminator = bun_ptr::RawSlice::new(&arg[2..]);
+                Self::state_mut(interp, cmd).terminator = bun_core::RawSlice::new(&arg[2..]);
                 idx += 1;
                 continue;
             }

@@ -48,7 +48,6 @@ use bun_resolver::fs::FileSystem;
 use crate::Graph::Graph;
 use crate::chunk::{Content, Flags};
 use crate::options::{Loader, OutputKind};
-use crate::options_impl::LoaderExt as _;
 use crate::{BundleV2, Chunk, LinkerGraph};
 
 #[derive(Clone, Copy)]
@@ -117,7 +116,7 @@ fn write_entry_item<W: Write + ?Sized>(
     }
 
     // Valid mime types are valid headers, which do not need to be escaped in JSON.
-    let mime = loader.to_mime_type(&[path]);
+    let mime = bun_http_types::MimeType::MimeType::from_loader(loader, &[path]);
     writer.write_all(b"\"content-type\":\"")?;
     writer.write_all(&mime.value)?;
     writer.write_all(b"\"")?;

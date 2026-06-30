@@ -628,8 +628,8 @@ impl Worker {
         // SAFETY: caller contract.
         let worker = unsafe { &mut *this };
         if worker.has_created {
-            // `wire_after_move` boxed a `bun_js_parser_jsc::Macro::MacroContext`
-            // behind `macro_context.data` (raw `*mut`, no `Drop` glue);
+            // `wire_after_move` boxed a higher-tier `MacroContext` behind
+            // `macro_context.runner` (raw `NonNull`, no `Drop` glue);
             // `Transpiler` has no `Drop` impl, so `worker.data = None` below
             // would strand it. Free both transpilers' boxes explicitly — the
             // box only owns a `MacroMap` and a lazy `bun_alloc::Arena`, no JSC

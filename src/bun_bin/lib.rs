@@ -178,7 +178,7 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
         // SAFETY: mimalloc fns match the libuv allocator signatures; called
         // exactly once before any uv handle is created.
         unsafe {
-            let _ = bun_sys::windows::libuv::uv_replace_allocator(
+            let _ = bun_libuv_sys::uv_replace_allocator(
                 Some(bun_alloc::mimalloc::mi_malloc),
                 Some(bun_alloc::mimalloc::mi_realloc),
                 Some(bun_alloc::mimalloc::mi_calloc),
@@ -220,13 +220,7 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
     StackCheck::configure_thread();
     bun_io::ParentDeathWatchdog::install();
 
-    // 6. Push high-tier allocator vtable addresses into the
-    //    `bun_safety::alloc::has_ptr` registry so debug-only allocator-mismatch
-    //    checks can identify `LinuxMemFdAllocator`/`MimallocArena` instances.
-    //    Runs once; reads are lock-free Relaxed.
-    bun_runtime::allocators::register_safety_vtables();
-
-    // 7. CLI dispatch.
+    // 6. CLI dispatch.
     bun_runtime::cli::Cli::start();
     // `Global::exit` is `-> !`; it coerces to the `c_int` return type.
     Global::exit(0)

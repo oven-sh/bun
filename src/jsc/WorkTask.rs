@@ -1,6 +1,7 @@
+use bun_core::IntrusiveField as _;
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask, TaskTag, Taskable};
 use bun_io::{self as Async, KeepAlive};
-use bun_threading::{IntrusiveWorkTask as _, WorkPoolTask, work_pool::WorkPool};
+use bun_threading::{WorkPoolTask, work_pool::WorkPool};
 
 use crate::JSGlobalObject;
 use crate::debugger::AsyncTaskTracker;
@@ -22,7 +23,7 @@ use bun_ptr::BackRef;
 /// - Context receives a reference to the WorkTask itself in the `run` method
 pub trait WorkTaskContext: Sized {
     /// Tag this `WorkTask<Self>` carries when enqueued back onto the JS event
-    /// loop's concurrent queue (`task_tag::*`).
+    /// loop's concurrent queue (`TaskTag`).
     const TASK_TAG: TaskTag;
 
     /// Perform the work on the thread pool. `this`/`task` are raw pointers
@@ -94,15 +95,15 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
     }
 
     pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        crate::mark_binding();
+        bun_core::mark_binding!();
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
         // slot — safe-fn coerces) for the `task` field initialised in
         // `create_on_js_thread`; the WorkPool calls back with exactly that
-        // field, so `from_task_ptr` recovers the live heap `Self` parent,
+        // field, so `from_field_ptr` recovers the live heap `Self` parent,
         // exclusively owned by the work pool for this callback's duration.
         // `ctx` is read through the recovered backref in the same audited scope.
         let (this, ctx) = unsafe {
-            let this = Self::from_task_ptr(task);
+            let this = Self::from_field_ptr(task);
             (this, (*this).ctx)
         };
         Context::run(ctx, this);

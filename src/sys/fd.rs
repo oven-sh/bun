@@ -14,7 +14,8 @@ pub use bun_core::DecodeWindows;
 
 use crate as sys;
 
-bun_core::define_scoped_log!(log, SYS, visible);
+pub use bun_core::SYS;
+bun_core::define_scoped_log!(log, bun_core::SYS);
 
 /// Native fd backing int — `c_int` on POSIX, `HANDLE` on Windows. Same as `FdNative`.
 pub type FdT = FdNative;
@@ -69,7 +70,7 @@ pub trait FdExt: Copy + Sized {
         syscall_tag: sys::Tag,
         error_case: ErrorCase,
     ) -> sys::Result<Fd>;
-    fn make_path_u8(self, subpath: &[u8]) -> sys::Maybe<()>;
+    fn make_path_u8(self, subpath: &[u8]) -> sys::Result<()>;
     fn delete_tree(self, subpath: &[u8]) -> Result<(), bun_core::Error>;
     fn as_socket_fd(self) -> sys::SocketT;
 }
@@ -152,7 +153,8 @@ impl FdExt for Fd {
             }
             #[cfg(windows)]
             {
-                use sys::windows::{NTSTATUS, Win32Error, Win32ErrorExt as _, libuv as uv};
+                use bun_libuv_sys as uv;
+                use sys::windows::{NTSTATUS, Win32Error, Win32ErrorExt as _};
                 match self.decode_windows() {
                     DecodeWindows::Uv(file_number) => {
                         let mut req = uv::fs_t::uninitialized();
@@ -276,7 +278,7 @@ impl FdExt for Fd {
         }
     }
 
-    fn make_path_u8(self, subpath: &[u8]) -> sys::Maybe<()> {
+    fn make_path_u8(self, subpath: &[u8]) -> sys::Result<()> {
         // Port of `bun.makePath` — `mkdirat` walking up parents on ENOENT.
         sys::mkdir_recursive_at(self, subpath)
     }
@@ -509,5 +511,5 @@ pub(crate) fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwne
 
 // fd → path bodies moved down to `bun_core::fd_path_raw[_w]` (libc/kernel32-
 // only; PORTING.md "move storage down"). `bun_sys` keeps the richer
-// `get_fd_path[_w]` returning `Maybe<&mut [u8/u16]>` for callers that want
+// `get_fd_path[_w]` returning `Result<&mut [u8/u16]>` for callers that want
 // `bun_sys::Error` with a syscall tag.

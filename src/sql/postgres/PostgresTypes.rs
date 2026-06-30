@@ -1,5 +1,5 @@
-// `to_js`/`from_js` for these types live as extension-trait methods in the
-// `bun_sql_jsc` crate; this base crate intentionally has no jsc dependency.
+// `to_js`/`from_js` for these types live as extension-trait methods in
+// `bun_runtime::sql_jsc`; this base crate intentionally has no jsc dependency.
 
 pub use super::any_postgres_error::AnyPostgresError;
 pub use super::types::tag::Tag;

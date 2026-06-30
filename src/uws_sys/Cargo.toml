@@ -21,9 +21,12 @@ enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
 bun_boringssl_sys.workspace = true
+bun_collections.workspace = true
 bun_core.workspace = true
-bun_errno.workspace = true
 bun_http_types.workspace = true
+# bun_sync is tier-0 (futex/mutex primitives over libc + bun_windows_sys only)
+# — no cycle.
+bun_sync.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 bun_windows_sys.workspace = true

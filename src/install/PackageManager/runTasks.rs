@@ -13,24 +13,23 @@ use crate::network_task::Callback as NetworkTaskCallback;
 use crate::npm;
 use crate::patch_install::{Callback as PatchTaskCallback, PatchTask};
 use crate::tarball_stream::TarballStream;
-use bun_install::{
+use crate::{
     DependencyID, ExtractTarball, INVALID_PACKAGE_ID, NetworkTask, PackageID, PackageManifestError,
     Repository,
 };
 // Import the *module* under the `Task` name so `Task::Id` resolves as a path.
-use super::{
-    Command, PackageInstaller, PackageManager, ProgressStrings, Subcommand, TaskCallbackList,
-};
+use super::{PackageInstaller, PackageManager, ProgressStrings, Subcommand, TaskCallbackList};
 use super::{directories, enqueue};
-use crate::dependency::Behavior;
 use crate::isolated_install::installer as store_installer;
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _};
 use crate::lifecycle_script_runner::InstallCtx;
+use crate::lockfile::Package;
 use crate::network_task::{Authorization, ForTarballError};
+use crate::package_manager_task as Task;
 use crate::package_manifest_map::Value as ManifestEntry;
 use bun_core::fmt::PathSep;
-use bun_install::lockfile::Package;
-use bun_install::package_manager_task as Task;
+use bun_install_types::dependency::Behavior;
+use bun_options_types::context::Context;
 // Import the *module* under the `Options` name so `Options::LogLevel` resolves as a path
 // (matches the `Task` module-alias pattern above and `CommandLineArguments.rs`).
 use super::package_manager_options as Options;
@@ -84,7 +83,7 @@ pub trait RunTasksCallbacks {
         _ctx: &mut Self::Ctx,
         _task_id: Task::Id,
         _name: &[u8],
-        _resolution: &bun_install::Resolution,
+        _resolution: &crate::Resolution,
         _err: bun_core::Error,
         _url: &[u8],
     ) {
@@ -94,7 +93,7 @@ pub trait RunTasksCallbacks {
         _ctx: &mut Self::Ctx,
         _package_id: PackageID,
         _name: &[u8],
-        _resolution: &bun_install::Resolution,
+        _resolution: &crate::Resolution,
         _err: bun_core::Error,
         _url: &[u8],
     ) {
@@ -105,7 +104,7 @@ pub trait RunTasksCallbacks {
         _ctx: &mut Self::Ctx,
         _task_id: Task::Id,
         _dependency_id: DependencyID,
-        _data: &mut bun_install::ExtractData,
+        _data: &mut crate::ExtractData,
         _log_level: Options::LogLevel,
     ) {
         unreachable!()
@@ -284,10 +283,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // `store.entries.items_scripts()[entry_id]`; this Task is
                     // its sole consumer (see Installer.rs Yield::RunScripts).
                     let list_val = unsafe { (*list).clone() };
-                    // reshaped for borrowck — `Command::Context<'a>`
+                    // reshaped for borrowck — `Context<'a>`
                     // is `&'a mut ContextData`; reborrow instead of moving the
                     // field out of `*installer`.
-                    let command_ctx: Command::Context<'_> = &mut *installer.command_ctx;
+                    let command_ctx: Context<'_> = &mut *installer.command_ctx;
                     // `installer.manager == manager` (same allocation,
                     // see fn-signature note); call via the body shadow which is a
                     // reborrow of `manager_ptr` — no extra unsafe alias needed.
@@ -1191,19 +1190,19 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                         for dep in dependency_list.into_iter() {
                             match dep {
-                                bun_install::TaskCallbackContext::Dependency(id)
-                                | bun_install::TaskCallbackContext::RootDependency(id) => {
+                                crate::TaskCallbackContext::Dependency(id)
+                                | crate::TaskCallbackContext::RootDependency(id) => {
                                     let version = &mut manager.lockfile.buffers.dependencies
                                         [id as usize]
                                         .version;
                                     match version.tag {
-                                        bun_install::DependencyVersionTag::Git => {
+                                        bun_install_types::dependency::Tag::Git => {
                                             version.git_mut().package_name = pkg.name;
                                         }
-                                        bun_install::DependencyVersionTag::Github => {
+                                        bun_install_types::dependency::Tag::Github => {
                                             version.github_mut().package_name = pkg.name;
                                         }
-                                        bun_install::DependencyVersionTag::Tarball => {
+                                        bun_install_types::dependency::Tag::Tarball => {
                                             version.tarball_mut().package_name = pkg.name;
                                         }
 
@@ -1279,7 +1278,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             let pkg_resolutions = manager.lockfile.packages.items_resolution();
                             for waiter in waiters.iter() {
                                 let dep_id = match waiter {
-                                    bun_install::TaskCallbackContext::Dependency(id) => *id,
+                                    crate::TaskCallbackContext::Dependency(id) => *id,
                                     _ => continue,
                                 };
                                 let pkg_id = manager.lockfile.buffers.resolutions[dep_id as usize];
@@ -1287,7 +1286,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     continue;
                                 }
                                 let res = &pkg_resolutions[pkg_id as usize];
-                                if res.tag != bun_install::ResolutionTag::Git {
+                                if res.tag != crate::resolution::Tag::Git {
                                     continue;
                                 }
                                 // SAFETY: `res.tag == Git` checked just above —
@@ -1369,8 +1368,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let committish = git.committish.slice(string_buf);
                     let repo = git.repo.slice(string_buf);
 
-                    use crate::repository_real::RepositoryExt as _;
-                    let resolved = crate::repository_real::Repository::find_commit(
+                    use crate::repository::RepositoryExt as _;
+                    let resolved = bun_install_types::resolver_hooks::Repository::find_commit(
                         manager.env_mut(),
                         manager.log_mut(),
                         repo_fd,
@@ -1512,8 +1511,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                         for dep in dependency_list.into_iter() {
                             match dep {
-                                bun_install::TaskCallbackContext::Dependency(id)
-                                | bun_install::TaskCallbackContext::RootDependency(id) => {
+                                crate::TaskCallbackContext::Dependency(id)
+                                | crate::TaskCallbackContext::RootDependency(id) => {
                                     // SAFETY: this branch is only reached for
                                     // git dependencies — `version.tag == Git`.
                                     let repo = unsafe {

@@ -479,11 +479,11 @@ impl HttpThread {
             self.ensure_https_context_init();
         }
         // Note: borrowck — `slice()` borrows `client`; capture into a
-        // `bun_ptr::RawSlice` (encapsulated outlives-holder invariant) so the
+        // `bun_core::RawSlice` (encapsulated outlives-holder invariant) so the
         // borrow of `client` ends before we hand `&mut client` to
         // `connect_socket`. Backing storage is `client.unix_socket_path`, which
         // `connect_socket` does not touch.
-        let unix_path = bun_ptr::RawSlice::new(client.unix_socket_path.slice());
+        let unix_path = bun_core::RawSlice::new(client.unix_socket_path.slice());
         if !unix_path.is_empty() {
             return self
                 .context::<IS_SSL>()
@@ -659,7 +659,7 @@ impl HttpThread {
                                 session.abort_by_http_id(http.async_http_id);
                                 continue;
                             }
-                            socket.close(uws::CloseKind::Failure);
+                            socket.close(uws::CloseCode::failure);
                         }
                         uws::AnySocket::SocketTcp(socket) => {
                             let tagged = HTTPContext::<false>::get_tagged_from_socket(socket);
@@ -671,7 +671,7 @@ impl HttpThread {
                                 session.abort_by_http_id(http.async_http_id);
                                 continue;
                             }
-                            socket.close(uws::CloseKind::Failure);
+                            socket.close(uws::CloseCode::failure);
                         }
                     }
                 } else {
@@ -1208,181 +1208,178 @@ use core::cell::Cell;
 // wakeup path above still uses the raw `*mut uws::Loop` directly.
 // ═══════════════════════════════════════════════════════════════════════════
 
-mod _event_loop_draft {
-    use super::*;
-    use std::sync::Once;
+use std::sync::Once;
 
-    static INIT_ONCE: Once = Once::new();
-    // Note: `Builder::spawn` allocates an `Arc<thread::Inner>` (48 B)
-    // shared between the `JoinHandle` and the new thread's TLS `current()`.
-    // Dropping the handle leaves the only strong ref inside the spawned
-    // thread's TLS, which LSAN does not scan as a root — so when the main
-    // thread reaches `Global::exit` *before* the HTTP thread has installed
-    // that TLS slot, LSAN reports the Arc as a direct leak and (with CI's
-    // `abort_on_error=1`) the process SIGABRTs (exit 134). Park the handle in
-    // a process-lifetime static so the Arc is always reachable from a global
-    // root, keeping detach semantics without the false positive.
-    static HTTP_THREAD_HANDLE: std::sync::OnceLock<std::thread::JoinHandle<()>> =
-        std::sync::OnceLock::new();
+static INIT_ONCE: Once = Once::new();
+// Note: `Builder::spawn` allocates an `Arc<thread::Inner>` (48 B)
+// shared between the `JoinHandle` and the new thread's TLS `current()`.
+// Dropping the handle leaves the only strong ref inside the spawned
+// thread's TLS, which LSAN does not scan as a root — so when the main
+// thread reaches `Global::exit` *before* the HTTP thread has installed
+// that TLS slot, LSAN reports the Arc as a direct leak and (with CI's
+// `abort_on_error=1`) the process SIGABRTs (exit 134). Park the handle in
+// a process-lifetime static so the Arc is always reachable from a global
+// root, keeping detach semantics without the false positive.
+static HTTP_THREAD_HANDLE: std::sync::OnceLock<std::thread::JoinHandle<()>> =
+    std::sync::OnceLock::new();
 
-    pub(super) fn init(opts: &InitOpts) {
-        INIT_ONCE.call_once(|| init_once(opts));
+pub fn init(opts: &InitOpts) {
+    INIT_ONCE.call_once(|| init_once(opts));
+}
+
+fn init_once(opts: &InitOpts) {
+    // Initialize the global (with timer
+    // started on the calling thread) BEFORE spawning, so `on_start`'s
+    // `crate::http_thread_mut()` finds `Some(..)` and can fill in
+    // `loop_`/`uws_loop`/contexts.
+    // SAFETY: `init_once` runs under `Once`; no other thread reads
+    // `HTTP_THREAD` until `has_awoken` is set in `on_start`.
+    unsafe {
+        (*crate::HTTP_THREAD.get()).write(HttpThread::new());
+    }
+    crate::HTTP_THREAD_INIT.store(true, core::sync::atomic::Ordering::Release);
+    bun_libdeflate_sys::libdeflate::load();
+    let opts_copy = opts.clone();
+    let thread = std::thread::Builder::new()
+        .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
+        .spawn(move || on_start(opts_copy));
+    match thread {
+        // detach — see HTTP_THREAD_HANDLE note above re: LSAN reachability
+        Ok(t) => {
+            let _ = HTTP_THREAD_HANDLE.set(t);
+        }
+        Err(err) => Output::panic(format_args!("Failed to start HTTP Client thread: {}", err)),
+    }
+}
+
+fn on_start(opts: InitOpts) {
+    Output::Source::configure_named_thread(bun_core::zstr!("HTTP Client"));
+
+    // uSockets' long-timeout counter is `% 240` minutes (see
+    // `us_socket_long_timeout` in packages/bun-usockets/src/socket.c), so
+    // values above 239 min wrap around and fire early. Clamp here — it's the
+    // only assignment — so the underlying timer can't wrap, and round values
+    // above 240s up to a whole minute so `socket.set_timeout`'s floor-to-
+    // minute long-timer path never yields a timeout *shorter* than requested.
+    // Normalising once here keeps the h1 (`HTTPClient::set_timeout`) and h2
+    // (`ClientSession::rearm_timeout`) paths identical without duplicating the
+    // math at each call site.
+    let raw: u64 = bun_core::env_var::BUN_CONFIG_HTTP_IDLE_TIMEOUT
+        .get()
+        .unwrap_or(300)
+        .min(239 * 60);
+    crate::IDLE_TIMEOUT_SECONDS.store(
+        (if raw > 240 {
+            raw.div_ceil(60) * 60
+        } else {
+            raw
+        }) as core::ffi::c_uint,
+        core::sync::atomic::Ordering::Relaxed,
+    );
+
+    // Critical side effect: `init_global` calls
+    // `internal_loop_data.set_parent_raw(2 /* mini */, mini_ptr)` on this
+    // thread's uSockets loop. Without it, the macOS DNS cache-miss path
+    // (`dns::getaddrinfo` → `(*loop).internal_loop_data.get_parent()`)
+    // panics with `Parent loop not set - pointer is null`, which aborts
+    // the process — `bun install` SIGABRT on the first uncached lookup.
+    let loop_ = mini_event_loop::init_global(None, None);
+    // `init_global` returns the heap-allocated thread-local singleton (never
+    // null); this thread owns it for the thread lifetime. `loop_ptr()` reads
+    // a stable field via `&self`, so a `ParentRef` shared deref suffices.
+    let uws_loop = bun_ptr::ParentRef::from(
+        NonNull::new(loop_).expect("init_global returns the thread-local singleton"),
+    )
+    .loop_ptr();
+
+    #[cfg(windows)]
+    {
+        // `getenv_w` forwards `name.as_ptr()` directly to Win32
+        // `GetEnvironmentVariableW`, which expects a NUL-terminated LPCWSTR.
+        // `bun_core::w!` does NOT append a sentinel on its own (see
+        // src/sys/windows/mod.rs WATCHER_CHILD_ENV_Z note), so embed `\0`
+        // in the literal.
+        if bun_sys::windows::getenv_w(bun_core::w!("SystemRoot\0")).is_none() {
+            Output::err_generic(
+                "The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.",
+                (),
+            );
+            bun_core::Global::crash();
+        }
     }
 
-    fn init_once(opts: &InitOpts) {
-        // Initialize the global (with timer
-        // started on the calling thread) BEFORE spawning, so `on_start`'s
-        // `crate::http_thread_mut()` finds `Some(..)` and can fill in
-        // `loop_`/`uws_loop`/contexts.
-        // SAFETY: `init_once` runs under `Once`; no other thread reads
-        // `HTTP_THREAD` until `has_awoken` is set in `on_start`.
-        unsafe {
-            (*crate::HTTP_THREAD.get()).write(HttpThread::new());
+    let thread = crate::http_thread_mut();
+    thread.loop_ = loop_;
+    thread.uws_loop = uws_loop;
+    thread.http_context.init();
+    // `https_context.init_with_thread_opts` eagerly builds the BoringSSL
+    // `SSL_CTX` and parses the bundled root-CA store
+    // (`us_get_default_ca_store`, root_certs.cpp:210), costing ~0.7 ms CPU
+    // and ~400 KB heap whether or not an HTTPS request ever happens. When
+    // there is no user-supplied CA config we stash `opts` and let the first
+    // `connect::<true>` call run it (see `HttpThread::lazy_https_init`) — a
+    // fully-cached `bun install` (which makes zero network requests) then
+    // skips the cost entirely.
+    if !opts.abs_ca_file_name.is_empty() || !opts.ca.is_empty() {
+        // User passed --cafile / --ca: validate now so a bad CA file fails
+        // the process at thread start (test contract:
+        // bun-install-registry.test.ts "non-existent --cafile" /
+        // "invalid cafile"), even if the registry is plain HTTP and no SSL
+        // connect would ever happen.
+        if let Err(err) = thread.https_context.init_with_thread_opts(&opts) {
+            (opts.on_init_error)(err, &opts);
         }
-        crate::HTTP_THREAD_INIT.store(true, core::sync::atomic::Ordering::Release);
-        bun_libdeflate_sys::libdeflate::load();
-        let opts_copy = opts.clone();
-        let thread = std::thread::Builder::new()
-            .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
-            .spawn(move || on_start(opts_copy));
-        match thread {
-            // detach — see HTTP_THREAD_HANDLE note above re: LSAN reachability
-            Ok(t) => {
-                let _ = HTTP_THREAD_HANDLE.set(t);
-            }
-            Err(err) => Output::panic(format_args!("Failed to start HTTP Client thread: {}", err)),
-        }
+    } else {
+        // No CA config — safe to defer the ~0.7 ms / ~400 KB root-cert
+        // parse to the first SSL connect (warm-cache `bun install` makes
+        // none).
+        thread.lazy_https_init = Some(opts);
     }
+    // Release: publishes `uws_loop`/`loop_` to cross-thread `wakeup()`
+    // readers (which Acquire-load `has_awoken`).
+    thread.has_awoken.store(true, Ordering::Release);
+    thread.process_events();
+}
 
-    pub(super) fn on_start(opts: InitOpts) {
-        Output::Source::configure_named_thread(bun_core::zstr!("HTTP Client"));
-
-        // uSockets' long-timeout counter is `% 240` minutes (see
-        // `us_socket_long_timeout` in packages/bun-usockets/src/socket.c), so
-        // values above 239 min wrap around and fire early. Clamp here — it's the
-        // only assignment — so the underlying timer can't wrap, and round values
-        // above 240s up to a whole minute so `socket.set_timeout`'s floor-to-
-        // minute long-timer path never yields a timeout *shorter* than requested.
-        // Normalising once here keeps the h1 (`HTTPClient::set_timeout`) and h2
-        // (`ClientSession::rearm_timeout`) paths identical without duplicating the
-        // math at each call site.
-        let raw: u64 = bun_core::env_var::BUN_CONFIG_HTTP_IDLE_TIMEOUT
-            .get()
-            .unwrap_or(300)
-            .min(239 * 60);
-        crate::IDLE_TIMEOUT_SECONDS.store(
-            (if raw > 240 {
-                raw.div_ceil(60) * 60
-            } else {
-                raw
-            }) as core::ffi::c_uint,
-            core::sync::atomic::Ordering::Relaxed,
-        );
-
-        // Critical side effect: `init_global` calls
-        // `internal_loop_data.set_parent_raw(2 /* mini */, mini_ptr)` on this
-        // thread's uSockets loop. Without it, the macOS DNS cache-miss path
-        // (`dns::getaddrinfo` → `(*loop).internal_loop_data.get_parent()`)
-        // panics with `Parent loop not set - pointer is null`, which aborts
-        // the process — `bun install` SIGABRT on the first uncached lookup.
-        let loop_ = mini_event_loop::init_global(None, None);
-        // `init_global` returns the heap-allocated thread-local singleton (never
-        // null); this thread owns it for the thread lifetime. `loop_ptr()` reads
-        // a stable field via `&self`, so a `ParentRef` shared deref suffices.
-        let uws_loop = bun_ptr::ParentRef::from(
-            NonNull::new(loop_).expect("init_global returns the thread-local singleton"),
-        )
-        .loop_ptr();
-
+impl HttpThread {
+    fn process_events(&mut self) -> ! {
+        let uws_loop = self.uws_loop_mut();
+        #[cfg(unix)]
+        {
+            uws_loop.num_polls = uws_loop.num_polls.max(2);
+        }
         #[cfg(windows)]
         {
-            // `getenv_w` forwards `name.as_ptr()` directly to Win32
-            // `GetEnvironmentVariableW`, which expects a NUL-terminated LPCWSTR.
-            // `bun_core::w!` does NOT append a sentinel on its own (see
-            // src/sys/windows/mod.rs WATCHER_CHILD_ENV_Z note), so embed `\0`
-            // in the literal.
-            if bun_sys::windows::getenv_w(bun_core::w!("SystemRoot\0")).is_none() {
-                Output::err_generic(
-                    "The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.",
-                    (),
-                );
-                bun_core::Global::crash();
-            }
+            uws_loop.inc();
         }
 
-        let thread = crate::http_thread_mut();
-        thread.loop_ = loop_;
-        thread.uws_loop = uws_loop;
-        thread.http_context.init();
-        // `https_context.init_with_thread_opts` eagerly builds the BoringSSL
-        // `SSL_CTX` and parses the bundled root-CA store
-        // (`us_get_default_ca_store`, root_certs.cpp:210), costing ~0.7 ms CPU
-        // and ~400 KB heap whether or not an HTTPS request ever happens. When
-        // there is no user-supplied CA config we stash `opts` and let the first
-        // `connect::<true>` call run it (see `HttpThread::lazy_https_init`) — a
-        // fully-cached `bun install` (which makes zero network requests) then
-        // skips the cost entirely.
-        if !opts.abs_ca_file_name.is_empty() || !opts.ca.is_empty() {
-            // User passed --cafile / --ca: validate now so a bad CA file fails
-            // the process at thread start (test contract:
-            // bun-install-registry.test.ts "non-existent --cafile" /
-            // "invalid cafile"), even if the registry is plain HTTP and no SSL
-            // connect would ever happen.
-            if let Err(err) = thread.https_context.init_with_thread_opts(&opts) {
-                (opts.on_init_error)(err, &opts);
+        loop {
+            if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {
+                self.dealloc_in_flight_for_exit();
+                {
+                    let mut done = SHUTDOWN_DONE.0.lock();
+                    *done = true;
+                    SHUTDOWN_DONE.1.notify_all();
+                }
+                // The JS thread is in `global_exit()` and will call
+                // `Global::exit()` after we ack. Park forever so the loop
+                // never ticks the (now partially-freed) sockets again.
+                loop {
+                    std::thread::park();
+                }
             }
-        } else {
-            // No CA config — safe to defer the ~0.7 ms / ~400 KB root-cert
-            // parse to the first SSL connect (warm-cache `bun install` makes
-            // none).
-            thread.lazy_https_init = Some(opts);
-        }
-        // Release: publishes `uws_loop`/`loop_` to cross-thread `wakeup()`
-        // readers (which Acquire-load `has_awoken`).
-        thread.has_awoken.store(true, Ordering::Release);
-        thread.process_events();
-    }
+            self.drain_events();
+            assert_abort_tracker_sockets_alive();
+            Output::flush();
 
-    impl HttpThread {
-        fn process_events(&mut self) -> ! {
             let uws_loop = self.uws_loop_mut();
-            #[cfg(unix)]
-            {
-                uws_loop.num_polls = uws_loop.num_polls.max(2);
-            }
-            #[cfg(windows)]
-            {
-                uws_loop.inc();
-            }
+            uws_loop.inc();
+            uws_loop.tick();
+            uws_loop.dec();
+            assert_abort_tracker_sockets_alive();
 
-            loop {
-                if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {
-                    self.dealloc_in_flight_for_exit();
-                    {
-                        let mut done = SHUTDOWN_DONE.0.lock();
-                        *done = true;
-                        SHUTDOWN_DONE.1.notify_all();
-                    }
-                    // The JS thread is in `global_exit()` and will call
-                    // `Global::exit()` after we ack. Park forever so the loop
-                    // never ticks the (now partially-freed) sockets again.
-                    loop {
-                        std::thread::park();
-                    }
-                }
-                self.drain_events();
-                assert_abort_tracker_sockets_alive();
+            if cfg!(debug_assertions) {
                 Output::flush();
-
-                let uws_loop = self.uws_loop_mut();
-                uws_loop.inc();
-                uws_loop.tick();
-                uws_loop.dec();
-                assert_abort_tracker_sockets_alive();
-
-                if cfg!(debug_assertions) {
-                    Output::flush();
-                }
             }
         }
     }
@@ -1477,11 +1474,3 @@ pub fn shutdown_for_exit() {
 
 // dispatch_deps bridge removed — real impls now live in
 // h3_client/ClientContext.rs (abort_by_http_id / stream_body_by_http_id).
-
-/// Module-level bridge for `HTTPThread::init`. The real body lives in
-/// `_event_loop_draft` below (depends on `bun_event_loop::MiniEventLoop`,
-/// which is outside this crate's dep set). Call sites in AsyncHTTP.rs hit
-/// this until that tier boundary is resolved.
-pub fn init(opts: &InitOpts) {
-    _event_loop_draft::init(opts)
-}

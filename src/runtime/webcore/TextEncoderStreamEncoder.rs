@@ -5,7 +5,7 @@ use bun_core::strings;
 use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult};
 use bun_simdutf_sys::simdutf;
 
-bun_output::declare_scope!(TextEncoderStreamEncoder, visible);
+bun_core::declare_scope!(TextEncoderStreamEncoder, visible);
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; the single
 // mutable field is `Cell<Option<u16>>` (Copy).
@@ -48,7 +48,7 @@ impl TextEncoderStreamEncoder {
     }
 
     fn encode_latin1(&self, global: &JSGlobalObject, input: &[u8]) -> JSValue {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             TextEncoderStreamEncoder,
             "encodeLatin1: \"{}\"",
             bstr::BStr::new(input)
@@ -109,7 +109,7 @@ impl TextEncoderStreamEncoder {
     }
 
     fn encode_utf16(&self, global: &JSGlobalObject, input: &[u16]) -> JSValue {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             TextEncoderStreamEncoder,
             "encodeUTF16: \"{}\"",
             bun_core::fmt::utf16(input)

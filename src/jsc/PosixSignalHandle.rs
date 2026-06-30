@@ -1,8 +1,9 @@
 use core::sync::atomic::{AtomicU8, AtomicU16, Ordering};
 
 use crate::event_loop::EventLoop;
-use crate::{JSGlobalObject, Task, VirtualMachineRef as VirtualMachine};
-use bun_event_loop::{Taskable, task_tag};
+use crate::virtual_machine::VirtualMachine;
+use crate::{JSGlobalObject, Task};
+use bun_event_loop::{TaskTag, Taskable};
 
 bun_core::declare_scope!(PosixSignalHandle, hidden);
 
@@ -138,7 +139,7 @@ pub struct PosixSignalTask {
 }
 
 impl Taskable for PosixSignalTask {
-    const TAG: bun_event_loop::TaskTag = task_tag::PosixSignalTask;
+    const TAG: bun_event_loop::TaskTag = TaskTag::PosixSignalTask;
 }
 
 unsafe extern "C" {

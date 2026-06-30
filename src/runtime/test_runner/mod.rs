@@ -79,8 +79,8 @@ cfg_jsc! {
     }
 
     pub mod timers {
-        #[path = "FakeTimers.rs"] pub mod fake_timers;
-        pub use fake_timers::FakeTimers;
+        pub use bun_jsc::timer::fake_timers;
+        pub use bun_jsc::timer::fake_timers::FakeTimers;
     }
 }
 

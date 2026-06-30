@@ -5,11 +5,12 @@ use std::io::Write as _;
 
 #[cfg(not(windows))]
 use bun_core::StackCheck;
+use bun_core::errno::uv_e;
 use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
 use bun_core::{String as BunString, ZStr, strings};
-use bun_event_loop::SpawnSyncEventLoop::TickState;
 use bun_io::max_buf::MaxBuf;
-use bun_jsc::ipc as IPC;
+use bun_jsc::SpawnSyncEventLoop::TickState;
+use bun_jsc::SystemErrorJsc as _;
 use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError,
     JsResult, SystemError,
@@ -17,15 +18,15 @@ use bun_jsc::{
 use bun_jsc::{JsCell, SysErrorJsc as _};
 #[cfg(unix)]
 use bun_sys::Fd;
-use bun_sys::UV_E;
 use bun_sys::{self as sys, FdExt as _, SignalCode};
 
-// Process / spawn machinery is local to this crate (api/bun/process.rs).
+// Process / spawn machinery lives in the `bun_spawn` crate.
 #[cfg(unix)]
-use crate::api::bun_process::ExtraPipe;
+use ::bun_spawn::ExtraPipe;
 #[cfg(not(windows))]
-use crate::api::bun_process::SpawnResultExt as _;
-use crate::api::bun_process::{self as spawn, CStrPtr, Process, Rusage, SpawnOptions};
+use ::bun_spawn::process::SpawnResultExt as _;
+use ::bun_spawn::process::{self as spawn, Process, SpawnOptions};
+use ::bun_spawn::{CStrPtr, Rusage};
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
 use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::api::bun_subprocess::{
@@ -34,6 +35,7 @@ use crate::api::bun_subprocess::{
 use crate::api::bun_terminal_body::{
     self as terminal_body, InitError as TerminalInitError, Options as TerminalOptions, Terminal,
 };
+use crate::ipc as IPC;
 use crate::webcore as WebCore;
 
 // ── local extension shims (real-body wrappers, not stubs) ───────────────────
@@ -51,22 +53,6 @@ impl JSValueSpawnExt for JSValue {
 #[inline]
 fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<SignalCode> {
     bun_sys_jsc::signal_code_jsc::from_js(val, global)
-}
-
-/// Convert a `bun_sys::SystemError` (T1 stub shape) into the C-ABI
-/// `bun_jsc::SystemError` and materialize a JS Error instance.
-fn sys_system_error_to_js(err: &bun_sys::SystemError, global: &JSGlobalObject) -> JSValue {
-    let jsc_err = SystemError {
-        errno: err.errno,
-        code: err.code,
-        message: err.message,
-        path: err.path,
-        syscall: err.syscall,
-        hostname: err.hostname,
-        fd: err.fd,
-        dest: err.dest,
-    };
-    jsc_err.to_error_instance(global)
 }
 
 /// `Terminal.CreateResult` — local mirror that flattens `IntrusiveRc<Terminal>`
@@ -90,43 +76,34 @@ impl TerminalCreateResult {
     }
 }
 
-// ── IPC owner trait impl for Subprocess ─────────────────────────────────────
-// Mirrors the `IPCInstance` impl in `bun_jsc::VirtualMachine`; lives here
-// because `Subprocess` is a `bun_runtime` type and `bun_jsc::ipc` (tier-5)
-// sees only the `dyn SendQueueOwner` trait object.
-impl IPC::SendQueueOwner for SubprocessT<'static> {
-    fn global_this(&self) -> *const JSGlobalObject {
+// ── IPC owner dispatch for Subprocess ───────────────────────────────────────
+// Mirrors the `IPCInstance` arm of `crate::ipc::SendQueueOwner`; lives here
+// because the `Bun.spawn` bindings own the Subprocess construction.
+impl SubprocessT<'static> {
+    pub(crate) fn ipc_owner_global_this(&self) -> *const JSGlobalObject {
         self.global_this.as_ptr()
     }
-    fn handle_ipc_close(&mut self) {
+    pub(crate) fn ipc_owner_handle_ipc_close(&mut self) {
         SubprocessT::handle_ipc_close(self)
     }
-    fn handle_ipc_message(&mut self, msg: IPC::DecodedIPCMessage, handle: JSValue) {
-        SubprocessT::handle_ipc_message(self, &msg, handle)
+    pub(crate) fn ipc_owner_handle_ipc_message(
+        &mut self,
+        msg: &IPC::DecodedIPCMessage,
+        handle: JSValue,
+    ) {
+        SubprocessT::handle_ipc_message(self, msg, handle)
     }
-    fn this_jsvalue(&self) -> JSValue {
+    pub(crate) fn ipc_owner_this_jsvalue(&self) -> JSValue {
         self.this_value.get().try_get().unwrap_or(JSValue::ZERO)
     }
-    fn kind(&self) -> IPC::SendQueueOwnerKind {
-        IPC::SendQueueOwnerKind::Subprocess
-    }
 }
 
-#[inline]
-fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> *mut dyn IPC::SendQueueOwner {
-    // `SendQueue.owner` is a BACKREF — the SendQueue is stored inline in
-    // `Subprocess.ipc_data` and dropped before the Subprocess is freed.
-    // Erase the borrowed `'a` (raw-pointer lifetimes are not enforced) so the
-    // unsizing coercion to `dyn SendQueueOwner + 'static` is well-formed.
-    ptr.cast::<SubprocessT<'static>>() as *mut dyn IPC::SendQueueOwner
-}
+bun_core::declare_scope!(Subprocess, hidden);
 
-bun_output::declare_scope!(Subprocess, hidden);
-
-// Stdio is platform-dependent: process.rs defines `PosixStdio` / `WindowsStdio`
-// as siblings; alias the active one here so the body stays platform-neutral.
+// Stdio is platform-dependent: `bun_spawn::PosixStdio` / `process::WindowsStdio`;
+// alias the active one here so the body stays platform-neutral.
 #[cfg(not(windows))]
-type SpawnOptionsStdio = spawn::PosixStdio;
+type SpawnOptionsStdio = ::bun_spawn::PosixStdio;
 #[cfg(windows)]
 type SpawnOptionsStdio = spawn::WindowsStdio;
 
@@ -369,7 +346,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut env_array: Vec<CStrPtr> = Vec::new();
     // SAFETY: `bun_vm()` returns the live VirtualMachine for this thread; it
     // outlives this call frame.
-    let jsc_vm: &mut jsc::VirtualMachineRef = global_this.bun_vm().as_mut();
+    let jsc_vm: &mut jsc::virtual_machine::VirtualMachine = global_this.bun_vm().as_mut();
 
     let mut cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
 
@@ -676,7 +653,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     let uid_int = global_this.validate_integer_range::<i32>(
                         uid_value,
                         0,
-                        bun_sql_jsc::jsc::IntegerRange {
+                        crate::sql_jsc::jsc::IntegerRange {
                             min: i128::from(i32::MIN),
                             max: i128::from(i32::MAX),
                             field_name: b"uid",
@@ -692,7 +669,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     let gid_int = global_this.validate_integer_range::<i32>(
                         gid_value,
                         0,
-                        bun_sql_jsc::jsc::IntegerRange {
+                        crate::sql_jsc::jsc::IntegerRange {
                             min: i128::from(i32::MIN),
                             max: i128::from(i32::MAX),
                             field_name: b"gid",
@@ -731,7 +708,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                         let timeout_int = global_this.validate_integer_range::<u64>(
                             timeout_value,
                             0,
-                            bun_sql_jsc::jsc::IntegerRange {
+                            crate::sql_jsc::jsc::IntegerRange {
                                 min: 0,
                                 field_name: b"timeout",
                                 ..Default::default()
@@ -880,7 +857,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    bun_output::scoped_log!(Subprocess, "spawn maxBuffer: {:?}", max_buffer);
+    bun_core::scoped_log!(Subprocess, "spawn maxBuffer: {:?}", max_buffer);
 
     // Owns the `K=V\0` storage when inheriting the parent env; the struct
     // lives until spawn returns.
@@ -1040,8 +1017,8 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     // Note: borrowck — `rare_data()` borrows `jsc_vm` mutably and the
     // returned `&mut SpawnSyncEventLoop` keeps that borrow alive, so we cannot
     // also pass `jsc_vm` into `spawn_sync_event_loop`/`prepare`/`cleanup` while
-    // holding it. Route through a raw `*mut VirtualMachineRef` for the duration.
-    let jsc_vm_ptr: *mut jsc::VirtualMachineRef = jsc_vm;
+    // holding it. Route through a raw `*mut VirtualMachine` for the duration.
+    let jsc_vm_ptr: *mut jsc::virtual_machine::VirtualMachine = jsc_vm;
     // For IS_SYNC, use the isolated loop's `event_loop` (created by
     // `SpawnSyncEventLoop::init`) so stdio readers/writers register on it
     // instead of the main loop.
@@ -1052,14 +1029,10 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             let sync_loop = (*jsc_vm_ptr)
                 .rare_data()
                 .spawn_sync_event_loop(&mut *jsc_vm_ptr);
-            sync_loop.prepare(jsc_vm_ptr.cast());
-            // `SpawnSyncEventLoop.event_loop` is type-erased to `*mut ()`
-            // (bun_event_loop is below bun_jsc); the accessor returns the
-            // concrete `jsc::EventLoop` allocation created via the runtime
-            // vtable in `SpawnSyncEventLoop::init`.
-            sync_loop
-                .event_loop_ptr()
-                .cast::<jsc::event_loop::EventLoop>()
+            sync_loop.prepare(jsc_vm_ptr);
+            // The accessor returns the `jsc::EventLoop` allocation created in
+            // `SpawnSyncEventLoop::init`.
+            sync_loop.event_loop_ptr()
         }
     } else {
         jsc_vm.event_loop()
@@ -1078,7 +1051,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 (*jsc_vm_ptr_cleanup)
                     .rare_data()
                     .spawn_sync_event_loop(&mut *jsc_vm_ptr_cleanup)
-                    .cleanup(jsc_vm_ptr_cleanup.cast(), main_loop.cast());
+                    .cleanup(jsc_vm_ptr_cleanup, main_loop);
             }
         }
     }
@@ -1143,80 +1116,79 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     // SAFETY: `argv`/`env_array` are local null-terminated C-string arrays
     // with argv[0] non-null; valid for this call.
-    let mut spawned = match unsafe {
-        spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
-    } {
-        Err(err) if err == bun_core::err!("EMFILE") || err == bun_core::err!("ENFILE") => {
-            // Windows: close+free the heap `uv::Pipe` handles that
-            // `as_spawn_option` allocated and `spawn_process_windows` may have
-            // `uv_pipe_init`-registered on the spawn-sync loop. Skipping this
-            // leaks them and trips `assert(err == 0)` in `uv_loop_delete` at
-            // `SpawnSyncEventLoop::Drop`. POSIX: no-op.
-            spawn_options.deinit();
-            let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
-                // SAFETY: argv[0] is non-null and points at a NUL-terminated
-                // string we built above (lives in `arg0_backing`/`arg_backing`).
-                ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
-            } else {
-                ZStr::EMPTY
-            };
-            let mut systemerror = sys::Error::from_code(
-                if err == bun_core::err!("EMFILE") {
-                    sys::Errno::EMFILE
+    let mut spawned =
+        match unsafe { spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr()) } {
+            Err(err) if err == bun_core::err!("EMFILE") || err == bun_core::err!("ENFILE") => {
+                // Windows: close+free the heap `uv::Pipe` handles that
+                // `as_spawn_option` allocated and `spawn_process_windows` may have
+                // `uv_pipe_init`-registered on the spawn-sync loop. Skipping this
+                // leaks them and trips `assert(err == 0)` in `uv_loop_delete` at
+                // `SpawnSyncEventLoop::Drop`. POSIX: no-op.
+                spawn_options.deinit();
+                let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
+                    // SAFETY: argv[0] is non-null and points at a NUL-terminated
+                    // string we built above (lives in `arg0_backing`/`arg_backing`).
+                    ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
                 } else {
-                    sys::Errno::ENFILE
-                },
-                sys::Tag::posix_spawn,
-            )
-            .with_path(display_path)
-            .to_system_error();
-            systemerror.errno = if err == bun_core::err!("EMFILE") {
-                -UV_E::MFILE
-            } else {
-                -UV_E::NFILE
-            };
-            return Err(global_this.throw_value(sys_system_error_to_js(&systemerror, global_this)));
-        }
-        Err(err) => {
-            // See EMFILE arm above.
-            spawn_options.deinit();
-            let _ = global_this.throw_error(err, ": failed to spawn process");
-            return Ok(JSValue::ZERO);
-        }
-        Ok(maybe) => match maybe {
-            sys::Result::Err(err) => {
+                    ZStr::EMPTY
+                };
+                let mut systemerror = sys::Error::from_code(
+                    if err == bun_core::err!("EMFILE") {
+                        sys::Errno::EMFILE
+                    } else {
+                        sys::Errno::ENFILE
+                    },
+                    sys::Tag::posix_spawn,
+                )
+                .with_path(display_path)
+                .to_system_error();
+                systemerror.errno = if err == bun_core::err!("EMFILE") {
+                    -uv_e::MFILE
+                } else {
+                    -uv_e::NFILE
+                };
+                return Err(global_this.throw_value(systemerror.to_error_instance(global_this)));
+            }
+            Err(err) => {
                 // See EMFILE arm above.
                 spawn_options.deinit();
-                match err.get_errno() {
-                    errno @ (sys::Errno::EACCES
-                    | sys::Errno::ENOENT
-                    | sys::Errno::EPERM
-                    | sys::Errno::EISDIR
-                    | sys::Errno::ENOTDIR) => {
-                        let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
-                            // SAFETY: argv[0] is non-null and points at a NUL-terminated
-                            // string we built above (lives in `arg0_backing`/`arg_backing`).
-                            ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
-                        } else {
-                            ZStr::EMPTY
-                        };
-                        if !display_path.as_bytes().is_empty() {
-                            let mut systemerror = err.with_path(display_path).to_system_error();
-                            if errno == sys::Errno::ENOENT {
-                                systemerror.errno = -UV_E::NOENT;
-                            }
-                            return Err(global_this
-                                .throw_value(sys_system_error_to_js(&systemerror, global_this)));
-                        }
-                    }
-                    _ => {}
-                }
-
-                return Err(global_this.throw_value(err.to_js(global_this)));
+                let _ = global_this.throw_error(err, ": failed to spawn process");
+                return Ok(JSValue::ZERO);
             }
-            sys::Result::Ok(result) => result,
-        },
-    };
+            Ok(maybe) => match maybe {
+                sys::Result::Err(err) => {
+                    // See EMFILE arm above.
+                    spawn_options.deinit();
+                    match err.get_errno() {
+                        errno @ (sys::Errno::EACCES
+                        | sys::Errno::ENOENT
+                        | sys::Errno::EPERM
+                        | sys::Errno::EISDIR
+                        | sys::Errno::ENOTDIR) => {
+                            let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
+                                // SAFETY: argv[0] is non-null and points at a NUL-terminated
+                                // string we built above (lives in `arg0_backing`/`arg_backing`).
+                                ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
+                            } else {
+                                ZStr::EMPTY
+                            };
+                            if !display_path.as_bytes().is_empty() {
+                                let mut systemerror = err.with_path(display_path).to_system_error();
+                                if errno == sys::Errno::ENOENT {
+                                    systemerror.errno = -uv_e::NOENT;
+                                }
+                                return Err(global_this
+                                    .throw_value(systemerror.to_error_instance(global_this)));
+                            }
+                        }
+                        _ => {}
+                    }
+
+                    return Err(global_this.throw_value(err.to_js(global_this)));
+                }
+                sys::Result::Ok(result) => result,
+            },
+        };
 
     // Use the isolated loop for spawnSync operations
     //
@@ -1291,8 +1263,8 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         weak_file_sink_stdin_ptr: Cell::new(None),
         abort_signal: Cell::new(None),
         event_loop_timer_refd: Cell::new(false),
-        event_loop_timer: JsCell::new(crate::timer::EventLoopTimer::init_paused(
-            crate::timer::EventLoopTimerTag::SubprocessTimeout,
+        event_loop_timer: JsCell::new(bun_jsc::timer::EventLoopTimer::init_paused(
+            bun_jsc::timer::EventLoopTimerTag::SubprocessTimeout,
         )),
         exited_due_to_maxbuf: Cell::new(None),
     }));
@@ -1318,7 +1290,11 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         if let Some(ipc_mode) = maybe_ipc_mode {
             subprocess.ipc_data.set(Some(IPC::SendQueue::init(
                 ipc_mode,
-                subprocess_ipc_owner(subprocess_ptr),
+                // `SendQueue.owner` is a BACKREF — the SendQueue is stored
+                // inline in `Subprocess.ipc_data` and dropped before the
+                // Subprocess is freed. Erase the borrowed `'a` (raw-pointer
+                // lifetimes are not enforced).
+                IPC::SendQueueOwner::Subprocess(subprocess_ptr.cast::<SubprocessT<'static>>()),
                 IPC::SocketUnion::Uninitialized,
             )));
         }
@@ -1425,9 +1401,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     // SAFETY: `subprocess_ptr` is the live JSC-allocated Subprocess that owns
     // `process` and outlives it (handler ctx invariant).
-    subprocess.process_mut().set_exit_handler(unsafe {
-        bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Subprocess, subprocess_ptr)
-    });
+    subprocess
+        .process_mut()
+        .set_exit_handler(bun_spawn::ProcessExit::of(subprocess_ptr));
 
     promise_for_stream.ensure_still_alive();
     subprocess.update_flags(|f| {
@@ -1479,7 +1455,11 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 let socket = raw_socket;
                 subprocess.ipc_data.set(Some(IPC::SendQueue::init(
                     mode,
-                    subprocess_ipc_owner(subprocess_ptr),
+                    // `SendQueue.owner` is a BACKREF — the SendQueue is stored
+                    // inline in `Subprocess.ipc_data` and dropped before the
+                    // Subprocess is freed. Erase the borrowed `'a` (raw-pointer
+                    // lifetimes are not enforced).
+                    IPC::SendQueueOwner::Subprocess(subprocess_ptr.cast::<SubprocessT<'static>>()),
                     IPC::SocketUnion::Uninitialized,
                 )));
                 posix_ipc_info = Some(IPC::Socket::from(socket));
@@ -1596,25 +1576,16 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         if let Some(timeout_val) = timeout {
             let ts =
                 Timespec::ms_from_now(TimespecMockMode::AllowMockedTime, i64::from(timeout_val));
-            // Note: `EventLoopTimer.next` is a local-stub Timespec until
-            // `bun_event_loop` switches to `bun_core::Timespec`; copy fieldwise.
             subprocess.event_loop_timer.with_mut(|t| {
-                t.next = crate::timer::ElTimespec {
-                    sec: ts.sec,
-                    nsec: ts.nsec,
-                };
+                t.next = ts;
             });
-            // `Timer::All` lives in `bun_runtime`; reach it via the
-            // `RuntimeHooks` dispatch (`VirtualMachineRef::timer_insert`) which
-            // forwards to `crate::timer::All::insert`.
-            // SAFETY: `jsc_vm_ptr` is the live per-thread VM; the timer node is
-            // owned by the boxed `Subprocess` and stays at a stable address
-            // until `Subprocess::finalize` removes it from the heap.
+            // SAFETY: `jsc_vm_ptr` is the live per-thread VM and
+            // `(*jsc_vm_ptr).timer` is its live `All` heap (a separate
+            // allocation); the timer node is owned by the boxed `Subprocess`
+            // and stays at a stable address until `Subprocess::finalize`
+            // removes it from the heap.
             unsafe {
-                jsc::VirtualMachineRef::timer_insert(
-                    jsc_vm_ptr,
-                    subprocess.event_loop_timer.as_ptr(),
-                );
+                (*(*jsc_vm_ptr).timer).insert(subprocess.event_loop_timer.as_ptr());
             }
             subprocess.set_event_loop_timer_refd(true);
         }
@@ -1777,7 +1748,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             .mark(jsc::counters::Field::SpawnSyncBlocking);
         let debug_timer = Output::DebugTimer::start();
         subprocess.process_mut().wait(true);
-        bun_output::scoped_log!(Subprocess, "spawnSync fast path took {}", debug_timer);
+        bun_core::scoped_log!(Subprocess, "spawnSync fast path took {}", debug_timer);
 
         // watchOrReap will handle the already exited case for us.
     }
@@ -1828,16 +1799,10 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         // This does mean if an AbortSignal times out it will throw
         if let Some(signal) = subprocess.abort_signal_ref() {
             if let Some(abort_signal_timeout) = signal.get_timeout() {
-                // Note: `AbortSignal::Timeout.event_loop_timer` uses the
-                // bun_event_loop-local `Timespec` stub; convert fieldwise.
                 if abort_signal_timeout.event_loop_timer.state
-                    == crate::timer::EventLoopTimerState::ACTIVE
+                    == bun_jsc::timer::EventLoopTimerState::ACTIVE
                 {
-                    let next = &abort_signal_timeout.event_loop_timer.next;
-                    let next_ts = Timespec {
-                        sec: next.sec,
-                        nsec: next.nsec,
-                    };
+                    let next_ts = abort_signal_timeout.event_loop_timer.next;
                     if user_timespec.eql(&Timespec::EPOCH)
                         || next_ts.order(&user_timespec) == core::cmp::Ordering::Less
                     {
@@ -2020,7 +1985,7 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
             bstr::BStr::new(command)
         )),
         code: BunString::static_("ENOENT"),
-        errno: -UV_E::NOENT,
+        errno: -uv_e::NOENT,
         path: BunString::clone_utf8(command),
         syscall: BunString::EMPTY,
         hostname: BunString::EMPTY,

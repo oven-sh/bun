@@ -18,9 +18,10 @@ use bun_parsers::json as JSON;
 // the two T4 sinks (`js_printer::print_json`, `Publish::normalized_package`)
 // lift via `bun_ast::Expr::from(t2_expr)` at the call site.
 use bun_ast::{E, Expr, ExprData};
+use bun_core::PathBuffer;
 use bun_js_printer as js_printer;
 use bun_libarchive::lib::{Archive, Entry as ArchiveEntry, Result as ArchiveStatus};
-use bun_paths::{self as path, PathBuffer, SEP_STR};
+use bun_paths::{self as path, SEP_STR};
 // `bun.ptr.CowString = CowSlice(u8)` — the lifetime-free struct port (init_owned/
 // borrow_subslice/length live on `cow_slice::CowSliceZ`, not on the `std::borrow::Cow`
 // alias re-exported at `bun_ptr::CowString`).
@@ -33,9 +34,7 @@ use bun_glob::matcher::MatchResult as GlobMatchResult;
 use bun_paths::resolve_path;
 use bun_semver as Semver;
 use bun_sha_hmac::sha;
-use bun_sys::{
-    self, CloseOnDrop, Dir, Fd, FdDirExt as _, FdExt as _, File, dir_iterator as DirIterator,
-};
+use bun_sys::{self, CloseOnDrop, Dir, Fd, FdExt as _, File, dir_iterator as DirIterator};
 
 // ───────────────────────────────────────────────────────────────────────────
 // local shims for upstream-stub gaps
@@ -63,16 +62,6 @@ fn pack_bump() -> &'static bun_alloc::Arena {
     // pack`), and `Arena` is `!Sync` so no cross-thread aliasing, so the
     // borrow can be erased to `'static`.
     BUMP.with(|b| unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(b) })
-}
-
-/// `bun.sys.File.toSourceAt` re-homed here (T1→T2 layering split: `bun_sys`
-/// can't depend on `bun_logger`, but `bun_runtime` already does).
-fn file_to_source_at(dir: &Dir, path: &ZStr) -> bun_sys::Maybe<bun_ast::Source> {
-    let bytes = File::read_from(dir.fd, path)?;
-    Ok(bun_ast::Source::init_path_string_owned(
-        path.as_bytes(),
-        bytes,
-    ))
 }
 
 /// `manager.log` deref — set once at `init()`.
@@ -156,7 +145,7 @@ impl<'a> Context<'a> {
             if let Some(integrity) = maybe_integrity {
                 bun_core::prettyln!(
                     "<b><blue>Integrity<r>: {}",
-                    bun_fmt::integrity::<true>(*integrity),
+                    bun_install::integrity::fmt_sri::<true>(*integrity),
                 );
             }
             bun_core::prettyln!(
@@ -535,7 +524,7 @@ fn iterate_included_project_tree(
             }
         });
 
-        let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+        let mut dir_iter = DirIterator::iterate(dir.fd());
         'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
             // On iterator error, treat as end of iteration.
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
@@ -778,7 +767,7 @@ fn add_entire_tree(
             }
         }
 
-        let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+        let mut iter = DirIterator::iterate(dir.fd());
         'next_entry: while let Some(entry) = iter.next().ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
@@ -944,7 +933,7 @@ fn iterate_bundled_deps(
 
     let mut additional_bundled_deps: Vec<DirInfo> = Vec::new();
 
-    let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+    let mut iter = DirIterator::iterate(dir.fd());
     while let Some(entry) = iter.next().ok().flatten() {
         if entry.kind != bun_sys::FileKind::Directory {
             continue;
@@ -967,7 +956,7 @@ fn iterate_bundled_deps(
                 Err(_) => continue,
             };
 
-            let mut scoped_iter = DirIterator::iterate(Fd::from_std_dir(&scoped_dir));
+            let mut scoped_iter = DirIterator::iterate(scoped_dir.fd());
             while let Some(sub_entry) = scoped_iter.next().ok().flatten() {
                 let entry_name = entry_subpath(_entry_name, sub_entry.name.slice_u8())?;
 
@@ -1082,7 +1071,7 @@ fn add_bundled_dep(
     while let Some(dir_info) = dirs.pop() {
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
 
-        let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+        let mut iter = DirIterator::iterate(dir.fd());
         while let Some(entry) = iter.next().ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
@@ -1098,9 +1087,10 @@ fn add_bundled_dep(
                             break 'root_depth;
                         }
                         // find more dependencies to bundle
-                        let source = match file_to_source_at(
-                            &dir,
+                        let source = match bun_ast::source_from_file_at(
+                            dir.fd,
                             entry_name_z(entry_name, &entry_subpath_),
+                            bun_ast::ToSourceOptions::default(),
                         ) {
                             Ok(s) => s,
                             Err(err) => {
@@ -1348,7 +1338,7 @@ fn iterate_project_tree(
             }
         }
 
-        let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+        let mut dir_iter = DirIterator::iterate(dir.fd());
         'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
@@ -1920,7 +1910,10 @@ fn reset_buffered_file_reader(r: &mut BufferedFileReader, file: bun_sys::File) {
 /// `BufferedFileReader::read` shim — `bun_core::deprecated::BufferedReader`
 /// carries no read method, so route through `bun_sys::read` directly.
 #[inline]
-fn buffered_file_reader_read(r: &mut BufferedFileReader, dest: &mut [u8]) -> bun_sys::Maybe<usize> {
+fn buffered_file_reader_read(
+    r: &mut BufferedFileReader,
+    dest: &mut [u8],
+) -> bun_sys::Result<usize> {
     let current = &r.buf[r.start..r.end];
     if !current.is_empty() {
         let to_transfer = current.len().min(dest.len());
@@ -2049,7 +2042,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         .as_string_cloned(bump)?
         .ok_or(PackError::InvalidPackageName)?;
     if FOR_PUBLISH {
-        let is_scoped = bun_install::dependency::is_scoped_package_name(package_name)
+        let is_scoped = bun_install_types::dependency::is_scoped_package_name(package_name)
             .map_err(|_| PackError::InvalidPackageName)?;
         if let Some(access) = manager.options.publish_config.access {
             if access == bun_install::Access::Restricted && !is_scoped {
@@ -2687,12 +2680,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         }
 
         while let Some(item) = pack_queue.remove_or_null() {
-            let file = match bun_sys::openat(
-                Fd::from_std_dir(&root_dir),
-                &item.path,
-                bun_sys::O::RDONLY,
-                0,
-            ) {
+            let file = match bun_sys::openat(root_dir.fd(), &item.path, bun_sys::O::RDONLY, 0) {
                 Ok(f) => f,
                 Err(err) => {
                     if item.optional {
@@ -3235,7 +3223,7 @@ fn archive_package_json(
 ) -> Result<*mut ArchiveEntry, AllocError> {
     // `entry` is the same pointer after `.clear()`.
     let entry = ArchiveEntry::opaque_ref(entry);
-    let stat = match bun_sys::fstatat(Fd::from_std_dir(root_dir), bun_core::zstr!("package.json")) {
+    let stat = match bun_sys::fstatat(root_dir.fd(), bun_core::zstr!("package.json")) {
         Ok(s) => s,
         Err(err) => {
             Output::err(
@@ -3776,7 +3764,7 @@ impl IgnorePatterns {
         err: bun_core::Error,
     ) -> ! {
         let mut buf = PathBuffer::uninit();
-        let dir_path: &[u8] = match bun_sys::get_fd_path(Fd::from_std_dir(dir), &mut buf) {
+        let dir_path: &[u8] = match bun_sys::get_fd_path(dir.fd(), &mut buf) {
             Ok(p) => &*p,
             Err(_) => b"",
         };
@@ -3908,7 +3896,7 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
     pack_list: PackListOrQueue<'_>,
     package_json_len: usize,
 ) {
-    let root_dir = Fd::from_std_dir(root_dir_std);
+    let root_dir = root_dir_std.fd();
     if ctx.manager.options.log_level == LogLevel::Silent
         || ctx.manager.options.log_level == LogLevel::Quiet
     {

@@ -100,29 +100,6 @@ mod gated_shims {
     pub use crate::rules::container::{ContainerCondition, ContainerName};
     pub use crate::rules::keyframes::KeyframesName;
     pub use crate::rules::page::PageSelector;
-
-    // ── ast crate-tier shims ─────────────────────────────────────────────
-    /// `bun.ast.Ref` / `bun.ast.MangledProps` were re-exported via
-    /// `bun_js_parser`; css sits below that tier. The real types were
-    /// MOVE_DOWN'd into `bun_logger` (see logger/lib.rs:216).
-    pub mod ast {
-        pub use bun_ast::{Ref, RefTag};
-        // Value type MUST match `bun_js_printer::MangledProps` exactly so the
-        // bundler can pass `&LinkerContext.mangled_props` straight through —
-        // the previous `*const [u8]` shim forced a `repr(Rust)` generic
-        // type-pun (`ArrayHashMap<_, Box<[u8]>>` → `ArrayHashMap<_, *const [u8]>`)
-        // whose layout equivalence the language does not guarantee.
-        pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
-        /// `bun.fs.Path` — `ImportRecord.path` field type. The
-        /// real `bun.fs.Path` was MOVE_DOWN'd into `bun_paths::fs`.
-        pub mod fs {
-            pub use bun_paths::fs::Path;
-            #[inline]
-            pub fn path_init(text: &'static [u8]) -> Path<'static> {
-                Path::init(text)
-            }
-        }
-    }
 }
 
 pub use core::result::Result as Maybe;
@@ -901,7 +878,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         let import_record_index = u32::try_from(import_records.len()).unwrap();
         import_rule.import_record_idx = import_record_index;
         import_records.push(ImportRecord {
-            path: ast::fs::path_init(import_rule.url),
+            path: bun_paths::fs::Path::init(import_rule.url),
             kind: if import_rule.supports.is_some() {
                 ImportKind::AtConditional
             } else {
@@ -1072,7 +1049,7 @@ pub struct TopLevelRuleParser<'a, AtRuleParserT: CustomAtRuleParser> {
     // TODO: think about memory management
     pub rules: &'a mut CssRuleList<AtRuleParserT::AtRule>,
     pub composes: &'a mut ComposesMap,
-    pub composes_refs: SmallList<ast::Ref, 2>,
+    pub composes_refs: SmallList<bun_ast::Ref, 2>,
     pub local_properties: &'a mut LocalPropertyUsage,
 }
 
@@ -1161,7 +1138,7 @@ pub struct NestedRuleParser<'a, T: CustomAtRuleParser> {
     pub allow_declarations: bool,
 
     pub composes_state: ComposesState,
-    pub composes_refs: &'a mut SmallList<ast::Ref, 2>,
+    pub composes_refs: &'a mut SmallList<bun_ast::Ref, 2>,
     pub composes: &'a mut ComposesMap,
     pub local_properties: &'a mut LocalPropertyUsage,
 }
@@ -1277,7 +1254,7 @@ mod rule_parsers {
         state: ComposesState,
         arena: &'a Bump,
         composes: &'a mut ComposesMap,
-        composes_refs: &'a mut SmallList<ast::Ref, 2>,
+        composes_refs: &'a mut SmallList<bun_ast::Ref, 2>,
     }
     impl<'a> ComposesCtx for NestedComposesCtx<'a> {
         #[inline]
@@ -2118,7 +2095,7 @@ mod rule_parsers {
             // raw pointer instead — the guard fires at scope exit after all body
             // borrows of `this` are released, and the pointee (owned by the parent
             // `TopLevelRuleParser`) strictly outlives this frame.
-            let composes_refs_ptr: *mut SmallList<ast::Ref, 2> = &raw mut *this.composes_refs;
+            let composes_refs_ptr: *mut SmallList<bun_ast::Ref, 2> = &raw mut *this.composes_refs;
             scopeguard::defer! {
                 // SAFETY: see the note above — no aliasing borrow live at drop.
                 unsafe { (*composes_refs_ptr).clear_retaining_capacity(); }
@@ -2380,7 +2357,7 @@ pub struct LocalEntry {
 /// until print time.
 pub type LocalScope = ArrayHashMap<Box<[u8]>, LocalEntry>;
 /// Local symbol renaming results go here
-pub type LocalsResultsMap = ast::MangledProps;
+pub type LocalsResultsMap = bun_ast::MangledProps;
 /// Using `compose` and having conflicting properties is undefined behavior
 /// according to the css modules spec. We should warn the user about this.
 pub type LocalPropertyUsage = ArrayHashMap<bun_ast::Ref, PropertyUsage>;
@@ -2947,7 +2924,7 @@ mod stylesheet_impl {
                         let import_record_idx = u32::try_from(new_import_records.len()).unwrap();
                         import_rule.import_record_idx = import_record_idx;
                         new_import_records.push(ImportRecord {
-                            path: ast::fs::path_init(import_rule.url),
+                            path: bun_paths::fs::Path::init(import_rule.url),
                             kind: if import_rule.supports.is_some() {
                                 ImportKind::AtConditional
                             } else {
@@ -3463,7 +3440,7 @@ impl<'a> Parser<'a> {
             // is erased to 'static (see PORTING.md §Lifetimes).
             let url_static: &'static [u8] = unsafe { src_str(url) };
             import_records.push(ImportRecord {
-                path: ast::fs::path_init(url_static),
+                path: bun_paths::fs::Path::init(url_static),
                 kind,
                 range: bun_ast::Range {
                     loc: bun_ast::Loc {

@@ -1,5 +1,6 @@
 //! `Bun.build()` plugin host + `BuildArtifact` JS wrapper.
 
+use bun_options_types::ForceNodeEnv;
 use bun_options_types::LoaderExt as _;
 use core::ffi::c_void;
 
@@ -26,6 +27,7 @@ pub mod js_bundler {
     use super::*;
     use bun_core::ZigStringSlice;
 
+    use bun_bundler::bundle_v2::FileMap;
     use bun_sys::FdExt;
 
     type OwnedString = MutableString;
@@ -41,13 +43,11 @@ pub mod js_bundler {
         }
     }
 
-    /// A map of file paths to their in-memory contents.
     /// LAYERING: the data-only struct (`map: StringHashMap<Box<[u8]>>`) and
     /// `get`/`contains`/`resolve` live in `bun_bundler::bundle_v2` so the
     /// bundler thread can read it without depending on `bun_runtime`. Only
     /// the JS-aware `from_js` constructor lives here.
-    pub use bun_bundler::bundle_v2::api::JSBundler::FileMap;
-
+    ///
     /// Parse the `files` option from JavaScript.
     /// Expected format: `Record<string, string | Blob | File | TypedArray | ArrayBuffer>`.
     /// Uses async (`from_js_async`) parsing so the resulting bytes are owned —
@@ -130,7 +130,7 @@ pub mod js_bundler {
         pub rootdir: OwnedString,
         pub serve: Serve,
         pub jsx: api::Jsx,
-        pub force_node_env: options::ForceNodeEnv,
+        pub force_node_env: ForceNodeEnv,
         pub code_splitting: bool,
         pub minify: Minify,
         pub no_macros: bool,
@@ -157,7 +157,7 @@ pub mod js_bundler {
         pub features: StringSet,
         pub has_any_on_before_parse: bool,
         pub throw_on_error: bool,
-        pub env_behavior: api::DotEnvBehavior,
+        pub env_behavior: bun_dotenv::DotEnvBehavior,
         pub env_prefix: OwnedString,
         pub tsconfig_override: OwnedString,
         pub compile: Option<CompileOptions>,
@@ -196,7 +196,7 @@ pub mod js_bundler {
                     development: true, // Default to development mode like old Pragma
                     ..Default::default()
                 },
-                force_node_env: options::ForceNodeEnv::Unspecified,
+                force_node_env: ForceNodeEnv::Unspecified,
                 code_splitting: false,
                 minify: Minify::default(),
                 no_macros: false,
@@ -221,7 +221,7 @@ pub mod js_bundler {
                 features: StringSet::default(),
                 has_any_on_before_parse: false,
                 throw_on_error: true,
-                env_behavior: api::DotEnvBehavior::Disable,
+                env_behavior: bun_dotenv::DotEnvBehavior::Disable,
                 env_prefix: OwnedString::default(),
                 tsconfig_override: OwnedString::default(),
                 compile: None,
@@ -469,7 +469,7 @@ pub mod js_bundler {
                     this.target = Target::Bun;
                     did_set_target = true;
                 } else {
-                    this.target = match options::TARGET_MAP.get(slice.slice()) {
+                    this.target = match bun_ast::target::TARGET_MAP.get(slice.slice()) {
                         Some(t) => *t,
                         None => {
                             return Err(global_this.throw_invalid_arguments(
@@ -672,12 +672,12 @@ pub mod js_bundler {
                         || env == JSValue::FALSE
                         || (env.is_number() && env.as_number() == 0.0)
                     {
-                        this.env_behavior = api::DotEnvBehavior::Disable;
+                        this.env_behavior = bun_dotenv::DotEnvBehavior::Disable;
                     } else if env == JSValue::TRUE || (env.is_number() && env.as_number() == 1.0) {
-                        this.env_behavior = api::DotEnvBehavior::LoadAll;
+                        this.env_behavior = bun_dotenv::DotEnvBehavior::LoadAll;
                     } else if env.is_string() {
                         let slice = env.to_slice(global_this)?;
-                        match api::DotEnvBehavior::parse_str(slice.slice()) {
+                        match bun_dotenv::DotEnvBehavior::parse_str(slice.slice()) {
                             Ok((behavior, prefix)) => {
                                 this.env_behavior = behavior;
                                 if let Some(prefix) = prefix {
@@ -911,7 +911,7 @@ pub mod js_bundler {
                 };
                 let _close = scopeguard::guard(dir, |d| d.close());
 
-                let mut rootdir_buf = bun_paths::PathBuffer::uninit();
+                let mut rootdir_buf = bun_core::PathBuffer::uninit();
                 let rootdir = match bun_sys::get_fd_path(*_close, &mut rootdir_buf) {
                     Ok(p) => p,
                     Err(err) => {
@@ -1467,7 +1467,7 @@ pub mod js_bundler {
         bv2_mut(resolve.bv2).on_resolve_async(resolve);
     }
 
-    bun_output::declare_scope!(BUNDLER_DEFERRED, hidden);
+    bun_core::declare_scope!(BUNDLER_DEFERRED, hidden);
 
     /// JSC-aware plumbing for `Load` (upstream owns `init`/`dispatch`/
     /// `run_on_js_thread`/`bake_graph`). Only `on_defer` lives here because it
@@ -1485,7 +1485,7 @@ pub mod js_bundler {
             }
             self.called_defer = true;
 
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 BUNDLER_DEFERRED,
                 "JSBundlerPlugin__onDefer(0x{:x}, {})",
                 std::ptr::from_ref(self) as usize,
@@ -1531,7 +1531,7 @@ pub mod js_bundler {
         }
     }
 
-    fn on_notify_defer_raw(ctx: *mut BundleV2<'static>) -> bun_event_loop::JsResult<()> {
+    fn on_notify_defer_raw(ctx: *mut BundleV2<'static>) -> bun_core::JsResult<()> {
         bv2_mut(ctx).on_notify_defer();
         Ok(())
     }
@@ -1878,10 +1878,9 @@ pub struct BuildArtifact {
 /// callers stay unchanged.
 pub use bun_bundler::options::OutputKind;
 
-/// `JSValue::as(Blob)` BuildArtifact fallback — declared
-/// `extern "Rust"` in `bun_jsc::webcore_types`; link-time resolved.
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
+/// `JSValue::as(Blob)` BuildArtifact fallback — installed as
+/// `RuntimeHooks::blob_from_build_artifact`.
+pub(crate) fn blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
     <BuildArtifact as bun_jsc::JsClass>::from_js(value).map(|b| {
         // SAFETY: `from_js` returns the non-null `*mut BuildArtifact` kept alive by
         // the JS wrapper; `addr_of_mut!` only computes the field address (no deref).

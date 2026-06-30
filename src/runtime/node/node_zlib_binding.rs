@@ -17,7 +17,7 @@ use bun_jsc::{
 use bun_threading::work_pool::WorkPool;
 use bun_zlib;
 
-bun_output::declare_scope!(zlib, hidden);
+bun_core::declare_scope!(zlib, hidden);
 
 // ─── type defs ────────────────────────────────────────────────────────────
 
@@ -520,7 +520,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         // Clear the strong handle before we call any callbacks.
         let Some(this_value) = this.this_value().with_mut(|v| v.try_swap()) else {
-            bun_output::scoped_log!(zlib, "this_value is null in runFromJSThread");
+            bun_core::scoped_log!(zlib, "this_value is null in runFromJSThread");
             this.poll_ref().with_mut(|p| p.unref(vm));
             // SAFETY: matching `ref_()` in `write()`; `this_ptr` is the heap
             // payload and is not accessed after this call.
@@ -975,7 +975,7 @@ macro_rules! __impl_compression_stream {
     ($native:ident, $ctx:ty, $type_name:literal) => {
         // Tag for the event-loop dispatcher (bun_runtime::dispatch::run_task).
         impl ::bun_event_loop::Taskable for $native {
-            const TAG: ::bun_event_loop::TaskTag = ::bun_event_loop::task_tag::$native;
+            const TAG: ::bun_event_loop::TaskTag = ::bun_event_loop::TaskTag::$native;
         }
 
         /// `T.js.*` — cached-property accessors emitted by

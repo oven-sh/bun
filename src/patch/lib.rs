@@ -5,9 +5,10 @@
 use core::mem;
 
 use bun_collections::bit_set::ArrayBitSet;
+use bun_core::PathBuffer;
 use bun_core::strings;
 use bun_core::{ZBox, ZStr};
-use bun_paths::{self as paths, PathBuffer};
+use bun_paths::{self as paths};
 use bun_sys::{self as sys, Fd, FdExt};
 
 bun_core::declare_scope!(Patch, visible);

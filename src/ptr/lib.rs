@@ -37,21 +37,11 @@ pub type Owned<T> = Box<T>;
 pub type OwnedIn<T> = Box<T>;
 pub type DynamicOwned<T> = Box<T>;
 
-// FFI-crossing externally-ref-counted pointer (e.g., WTFStringImpl). Canonical
-// impl moved down to `bun_core::external_shared` (cycle-break for the
-// `bun_string → bun_core` merge); re-exported here unchanged.
-pub use bun_core::external_shared;
-pub use bun_core::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional, WTFString};
-// `cast_fn_ptr` and `RawSlice` likewise moved to `bun_core`; re-export.
-pub use bun_core::{RawSlice, cast_fn_ptr};
-
 pub mod raw_ref_count;
 pub mod weak_ptr;
 
 pub mod tagged_pointer;
-// Compat aliases — `tagged_pointer` exports short names; some downstream code
-// uses the long ones.
-pub use tagged_pointer::{TaggedPtr as TaggedPointer, TaggedPtrUnion as TaggedPointerUnion};
+pub use tagged_pointer::{TaggedPtr, TaggedPtrUnion};
 
 pub mod ref_count;
 pub use ref_count::{

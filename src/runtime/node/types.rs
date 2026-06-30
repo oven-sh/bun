@@ -1,12 +1,13 @@
 use bun_paths::strings;
 use core::ffi::c_int;
 
-use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{self, fmt as bun_fmt};
+use bun_core::{MAX_PATH_BYTES, PathBuffer, WPathBuffer};
 use bun_core::{WStr, ZStr, ZigString};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::{SliceWithUnderlyingStringJsc as _, StringJsc as _, ZigStringJsc as _};
-use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer, WPathBuffer};
+use bun_paths::{OSPathBuffer, OSPathSliceZ};
 use bun_sys::{self, Fd, Mode, O};
 
 use crate::node::util::validators;
@@ -19,11 +20,7 @@ pub use jsc::MarkedArrayBuffer as Buffer;
 // `jsc.ArgumentsSlice` — cursor over CallFrame args.
 pub use jsc::ArgumentsSlice;
 
-// LAYERING: `Fd::{from_js,from_js_validated,to_js}` are provided by the
-// canonical `bun_sys_jsc::FdJsc` extension trait (full range/type
-// validation). Re-exported so existing
-// `crate::node::types::FdJsc` import paths keep resolving.
-pub use bun_sys_jsc::FdJsc;
+use bun_sys_jsc::FdJsc;
 
 /// `bun_runtime`-tier required-argument helper layered on `FdJsc`. Collapses
 /// the `next_eat → from_js_validated → ok_or_else(throw_invalid_fd_error)`
@@ -50,10 +47,7 @@ pub(crate) trait FdArgExt: FdJsc {
 }
 impl FdArgExt for Fd {}
 
-// LAYERING: `bun_sys::SystemError → JSValue` bridge (reshapes the T1 data
-// struct into the `#[repr(C)]` FFI layout and forwards to C++). Re-exported so
-// `system_error.to_error_instance(ctx)` resolves via the canonical impl.
-pub use bun_sys_jsc::SystemErrorJsc;
+use bun_jsc::SystemErrorJsc as _;
 
 pub use bun_sys::PlatformIoVec;
 
@@ -635,110 +629,48 @@ impl StringOrBuffer {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-/// https://github.com/nodejs/node/blob/master/lib/buffer.js#L587
-/// See `webcore::encoding` for encoding and decoding functions.
-/// must match src/jsc/bindings/BufferEncodingType.h
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Hash, strum::IntoStaticStr)]
-pub enum Encoding {
-    Utf8,
-    Ucs2,
-    Utf16le,
-    Latin1,
-    Ascii,
-    Base64,
-    Base64url,
-    Hex,
+/// Node.js Buffer encoding tag. Canonical definition: `bun_core::NodeEncoding`
+/// (#[repr(u8)], must match src/jsc/bindings/BufferEncodingType.h).
+/// JS-facing behaviour lives on [`EncodingExt`].
+pub use bun_core::NodeEncoding as Encoding;
 
-    /// Refer to the buffer's encoding
-    Buffer,
+pub trait EncodingExt: Sized + Copy {
+    fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Encoding>>;
+    fn assert(
+        value: JSValue,
+        global_object: &JSGlobalObject,
+        default: Encoding,
+    ) -> JsResult<Encoding>;
+    fn from_js_with_default_on_empty(
+        value: JSValue,
+        global_object: &JSGlobalObject,
+        default: Encoding,
+    ) -> JsResult<Option<Encoding>>;
+    fn throw_encoding_error(global_object: &JSGlobalObject, value: JSValue) -> jsc::JsError;
+    fn encode_with_size(
+        self,
+        global_object: &JSGlobalObject,
+        size: usize,
+        input: &[u8],
+    ) -> JsResult<JSValue>;
+    fn encode_with_max_size(
+        self,
+        global_object: &JSGlobalObject,
+        max_size: usize,
+        input: &[u8],
+    ) -> JsResult<JSValue>;
+    fn to_js(self, global_object: &JSGlobalObject) -> JSValue;
 }
 
-bun_core::comptime_string_map! {
-    /// Buffer encoding names → [`Encoding`]. Looked up case-insensitively
-    /// ([`Encoding::from`]), so keys must stay lowercase.
-    static ENCODING_MAP: Encoding = {
-        b"hex" => Encoding::Hex,
-        b"utf8" => Encoding::Utf8,
-        b"ucs2" => Encoding::Utf16le,
-        b"utf-8" => Encoding::Utf8,
-        b"ucs-2" => Encoding::Utf16le,
-        b"ascii" => Encoding::Ascii,
-        b"base64" => Encoding::Base64,
-        b"binary" => Encoding::Latin1,
-        b"latin1" => Encoding::Latin1,
-        b"buffer" => Encoding::Buffer,
-        b"utf16le" => Encoding::Utf16le,
-        b"utf16-le" => Encoding::Utf16le,
-        b"base64url" => Encoding::Base64url,
-    };
-}
-
-impl From<Encoding> for bun_core::NodeEncoding {
-    fn from(e: Encoding) -> Self {
-        // Both enums are `#[repr(u8)]` with identical discriminant order
-        // (Utf8, Ucs2, Utf16le, Latin1, Ascii, Base64, Base64url, Hex, Buffer).
-        match e {
-            Encoding::Utf8 => Self::Utf8,
-            Encoding::Ucs2 => Self::Ucs2,
-            Encoding::Utf16le => Self::Utf16le,
-            Encoding::Latin1 => Self::Latin1,
-            Encoding::Ascii => Self::Ascii,
-            Encoding::Base64 => Self::Base64,
-            Encoding::Base64url => Self::Base64url,
-            Encoding::Hex => Self::Hex,
-            Encoding::Buffer => Self::Buffer,
-        }
-    }
-}
-
-impl From<bun_core::NodeEncoding> for Encoding {
-    fn from(e: bun_core::NodeEncoding) -> Self {
-        // Reverse of the impl above — both enums are `#[repr(u8)]` with identical
-        // discriminant order; required so `webcore::encoding::{to_string,to_bun_string}`'s
-        // `impl Into<Encoding>` bound accepts `bun_core::NodeEncoding` directly.
-        match e {
-            bun_core::NodeEncoding::Utf8 => Self::Utf8,
-            bun_core::NodeEncoding::Ucs2 => Self::Ucs2,
-            bun_core::NodeEncoding::Utf16le => Self::Utf16le,
-            bun_core::NodeEncoding::Latin1 => Self::Latin1,
-            bun_core::NodeEncoding::Ascii => Self::Ascii,
-            bun_core::NodeEncoding::Base64 => Self::Base64,
-            bun_core::NodeEncoding::Base64url => Self::Base64url,
-            bun_core::NodeEncoding::Hex => Self::Hex,
-            bun_core::NodeEncoding::Buffer => Self::Buffer,
-        }
-    }
-}
-
-impl Encoding {
-    pub fn is_binary_to_text(self) -> bool {
-        matches!(self, Self::Hex | Self::Base64 | Self::Base64url)
-    }
-
-    /// Caller must verify the value is a string
-    pub fn from(slice: &[u8]) -> Option<Encoding> {
-        ENCODING_MAP.get_ascii_case_insensitive(slice).copied()
-    }
-
-    /// Case-insensitive lookup against a `bun.String` without allocating
-    /// (`bun.String.inMapCaseInsensitive`): UTF-16 code units are narrowed
-    /// into a stack buffer (any non-ASCII unit ⇒ miss — no encoding name
-    /// contains one) before the map lookup.
-    pub fn from_bun_string(s: &bun_core::String) -> Option<Encoding> {
-        s.in_map_case_insensitive(&ENCODING_MAP)
-    }
-}
-
-impl Encoding {
-    pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Encoding>> {
+impl EncodingExt for Encoding {
+    fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Encoding>> {
         // `from_bun_string` narrows into a stack buffer — no `to_utf8()`
         // allocation needed for a short ASCII key.
         let str = bun_core::OwnedString::new(bun_core::String::from_js(value, global)?);
         Ok(Self::from_bun_string(&str))
     }
 
-    pub fn assert(
+    fn assert(
         value: JSValue,
         global_object: &JSGlobalObject,
         default: Encoding,
@@ -757,7 +689,7 @@ impl Encoding {
         }
     }
 
-    pub fn from_js_with_default_on_empty(
+    fn from_js_with_default_on_empty(
         value: JSValue,
         global_object: &JSGlobalObject,
         default: Encoding,
@@ -769,7 +701,7 @@ impl Encoding {
         Ok(Self::from(str.to_utf8().slice()))
     }
 
-    pub fn throw_encoding_error(global_object: &JSGlobalObject, value: JSValue) -> jsc::JsError {
+    fn throw_encoding_error(global_object: &JSGlobalObject, value: JSValue) -> jsc::JsError {
         global_object
             .err(
                 jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -784,7 +716,7 @@ impl Encoding {
     /// Thin assertion wrapper over `encode_with_max_size`; currently has no
     /// callers (CryptoHasher.rs uses `encode_with_max_size` directly).
     #[inline]
-    pub fn encode_with_size(
+    fn encode_with_size(
         self,
         global_object: &JSGlobalObject,
         size: usize,
@@ -796,7 +728,7 @@ impl Encoding {
 
     /// `max_size` is a runtime arg (see `encode_with_size`); callers pass
     /// `EVP_MAX_MD_SIZE` etc.
-    pub fn encode_with_max_size(
+    fn encode_with_max_size(
         self,
         global_object: &JSGlobalObject,
         max_size: usize,
@@ -824,7 +756,7 @@ impl Encoding {
             }
             Self::Base64url => {
                 let buf = bun_base64::simdutf_encode_url_safe_alloc(input);
-                Ok(jsc::zig_string::ZigString::init(&buf).to_js(global_object))
+                Ok(ZigString::init(&buf).to_js(global_object))
             }
             Self::Hex => {
                 // The byte-by-byte `write!` formatting machinery is pathologically
@@ -846,7 +778,7 @@ impl Encoding {
         }
     }
 
-    pub fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
+    fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
         // `Encoding` is `#[repr(u8)]` matching BufferEncodingType.h.
         WebCore_BufferEncodingType_toJS(global_object, self)
     }
@@ -919,12 +851,7 @@ where
 
 // ──────────────────────────────────────────────────────────────────────────
 
-// LAYERING: single nominal `PathLike`/`PathOrFileDescriptor` live in
-// `bun_jsc::node_path` so `bun_jsc::webcore_types::store::File::pathlike`
-// and the `Store`/`Blob` constructors here share one type. This module
-// re-exports them and layers the JS-argument-parsing helpers via the
-// `PathLikeExt` / `PathOrFdExt` extension traits.
-pub use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
+use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
 
 /// Returned by [`PathLikeExt::slice_w`] / [`PathLikeExt::os_path`] /
 /// [`PathLikeExt::os_path_kernel32`] when the path's UTF-16 form would not
@@ -1642,12 +1569,6 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-
-// LAYERING: `Clone for PathOrFileDescriptor` and the `SerializeTag` enum now
-// live alongside the type in `bun_jsc::node_path` (orphan rules forbid the
-// foreign-type impl here). Re-export the tag so downstream
-// `crate::node::types::PathOrFileDescriptorSerializeTag` paths keep resolving.
-pub use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
 
 // The path-owning variants have
 // `Drop`, so an explicit `dupe()` is provided for

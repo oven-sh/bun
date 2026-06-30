@@ -1,13 +1,14 @@
 use crate::node::fs::{MkdirCtx, NodeFS, args as fs_args};
-use crate::node::types::PathLike;
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
-    EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, parse_flags, unsupported_flag,
+    FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, ParseFlagResult,
+    ShellTask, parse_flags, unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
+use bun_event_loop::EventLoopHandle;
+use bun_jsc::node_path::PathLike;
 use core::ptr::NonNull;
 
 #[derive(Default)]
@@ -364,7 +365,7 @@ impl ShellMkdirTask {
 }
 
 impl bun_event_loop::Taskable for ShellMkdirTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMkdirTask;
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::TaskTag::ShellMkdirTask;
 }
 
 /// Collects each created directory into
@@ -387,7 +388,7 @@ impl MkdirCtx for MkdirVerboseVTable {
         let out = unsafe { &mut *self.inner };
         #[cfg(windows)]
         {
-            let mut buf = bun_paths::PathBuffer::uninit();
+            let mut buf = bun_core::PathBuffer::uninit();
             let str = bun_paths::strings::from_wpath(buf.as_mut(), dirpath.as_slice());
             out.extend_from_slice(str.as_bytes());
             out.push(b'\n');

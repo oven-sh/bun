@@ -6,17 +6,20 @@
 
 use bun_alloc::ArenaVecExt as _;
 use core::ptr::NonNull;
+use std::borrow::Cow;
 
 use bun_alloc::Arena; // = bumpalo::Bump
+use bun_bundler::bake_types::{ReactFastRefresh, ServerComponents};
 use bun_collections::ArrayHashMap;
 use bun_core::Output;
 use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
 // peechy batch 2 landed: `bun_options_types::schema::api` now provides
-// {StringMap, LoaderMap, DotEnvBehavior, SourceMapMode, TransformOptions}.
+// {StringMap, LoaderMap, SourceMapMode, TransformOptions}.
 // Alias as `bun_schema` so existing field paths resolve unchanged.
+use bun_core::PathBuffer;
 use bun_core::{ZStr, strings};
 use bun_options_types::schema as bun_schema;
-use bun_paths::{self as paths, PathBuffer};
+use bun_paths::{self as paths};
 
 // `jsc.API.JSBundler.Plugin` — opaque FFI handle for the C++ JSBundlerPlugin.
 // Re-exported from `crate::api::js_bundler` so `SplitBundlerOptions.plugin`
@@ -373,7 +376,7 @@ impl SplitBundlerOptions {
                 promise.set_handled(global.vm());
                 // TODO: remove this call, replace with a promise list that must
                 // be resolved before the first bundle task can begin.
-                // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachineRef`
+                // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine`
                 // live for the lifetime of the global object.
                 global.bun_vm().as_mut().wait_for_promise(promise);
                 match promise.unwrap(global.vm(), bun_jsc::PromiseUnwrapMode::MarkHandled) {
@@ -394,7 +397,7 @@ pub struct BuildConfigSubset {
     pub ignore_dce_annotations: Option<bool>,
     pub conditions: ArrayHashMap<&'static [u8], ()>,
     pub drop: ArrayHashMap<&'static [u8], ()>,
-    pub env: bun_schema::api::DotEnvBehavior,
+    pub env: bun_dotenv::DotEnvBehavior,
     pub env_prefix: Option<&'static [u8]>,
     pub define: bun_schema::api::StringMap,
     pub source_map: bun_schema::api::SourceMapMode,
@@ -460,7 +463,7 @@ impl Default for BuildConfigSubset {
             ignore_dce_annotations: None,
             conditions: ArrayHashMap::new(),
             drop: ArrayHashMap::new(),
-            env: bun_schema::api::DotEnvBehavior::_none,
+            env: bun_dotenv::DotEnvBehavior::_none,
             env_prefix: None,
             define: bun_schema::api::StringMap::EMPTY,
             source_map: bun_schema::api::SourceMapMode::External,
@@ -528,18 +531,24 @@ impl Framework {
             is_built_in_react: true,
             server_components: Some(ServerComponents {
                 separate_ssr_graph: true,
-                server_runtime_import: b"react-server-dom-bun/server",
+                server_runtime_import: Box::from(&b"react-server-dom-bun/server"[..]),
                 ..ServerComponents::default()
             }),
             react_fast_refresh: Some(ReactFastRefresh::default()),
             file_system_router_types: vec![FileSystemRouterType {
-                root: b"pages",
-                prefix: b"/",
-                entry_client: Some(b"bun-framework-react/client.tsx"),
-                entry_server: b"bun-framework-react/server.tsx",
+                root: Cow::Borrowed(b"pages"),
+                prefix: Cow::Borrowed(b"/"),
+                entry_client: Some(Cow::Borrowed(b"bun-framework-react/client.tsx")),
+                entry_server: Cow::Borrowed(b"bun-framework-react/server.tsx"),
                 ignore_underscores: true,
-                ignore_dirs: &[b"node_modules", b".git"],
-                extensions: &[b".tsx", b".jsx"],
+                ignore_dirs: vec![
+                    Cow::Borrowed(b"node_modules".as_slice()),
+                    Cow::Borrowed(b".git".as_slice()),
+                ],
+                extensions: vec![
+                    Cow::Borrowed(b".tsx".as_slice()),
+                    Cow::Borrowed(b".jsx".as_slice()),
+                ],
                 style: framework_router::Style::NextjsPages,
                 allow_layouts: true,
             }],
@@ -584,10 +593,12 @@ impl Framework {
         }
 
         if let Some(rfr) = resolve_or_null(resolver, b"react-refresh/runtime") {
-            fw.react_fast_refresh = Some(ReactFastRefresh { import_source: rfr });
+            fw.react_fast_refresh = Some(ReactFastRefresh {
+                import_source: Box::from(rfr),
+            });
         } else if resolve_or_null(resolver, b"react").is_some() {
             fw.react_fast_refresh = Some(ReactFastRefresh {
-                import_source: b"react-refresh/runtime/index.js",
+                import_source: Box::from(&b"react-refresh/runtime/index.js"[..]),
             });
             let react_refresh_code = BuiltInModule::Code(
                 bun_core::runtime_embed_file!(Codegen, "node-fallbacks/react-refresh.js")
@@ -621,8 +632,8 @@ impl Framework {
         Framework {
             is_built_in_react: self.is_built_in_react,
             file_system_router_types: self.file_system_router_types.clone(),
-            server_components: self.server_components,
-            react_fast_refresh: self.react_fast_refresh,
+            server_components: self.server_components.clone(),
+            react_fast_refresh: self.react_fast_refresh.clone(),
             built_in_modules: bun_core::handle_oom(self.built_in_modules.clone()),
         }
     }
@@ -666,43 +677,51 @@ impl Framework {
         let mut had_errors: bool = false;
 
         if let Some(react_fast_refresh) = &mut clone.react_fast_refresh {
-            self.resolve_helper(
+            if let Some(p) = self.resolve_to_static(
                 client,
-                &mut react_fast_refresh.import_source,
+                &react_fast_refresh.import_source,
                 &mut had_errors,
                 b"react refresh runtime",
-            );
+            ) {
+                react_fast_refresh.import_source = Box::from(p);
+            }
         }
 
         if let Some(sc) = &mut clone.server_components {
-            self.resolve_helper(
+            if let Some(p) = self.resolve_to_static(
                 server,
-                &mut sc.server_runtime_import,
+                &sc.server_runtime_import,
                 &mut had_errors,
                 b"server components runtime",
-            );
+            ) {
+                sc.server_runtime_import = Box::from(p);
+            }
             // self.resolve_helper(client, &mut sc.client_runtime_import, &mut had_errors);
         }
 
         for fsr in clone.file_system_router_types.iter_mut() {
             let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-            fsr.root = arena_erase(arena.alloc_slice_copy(paths::resolve_path::join_abs::<
-                paths::platform::Auto,
-            >(top_level_dir, fsr.root)));
+            fsr.root = Cow::Borrowed(arena_erase(arena.alloc_slice_copy(
+                paths::resolve_path::join_abs::<paths::platform::Auto>(top_level_dir, &fsr.root),
+            )));
             if let Some(entry_client) = &mut fsr.entry_client {
-                self.resolve_helper(
+                if let Some(p) = self.resolve_to_static(
                     client,
                     entry_client,
                     &mut had_errors,
                     b"client side entrypoint",
-                );
+                ) {
+                    *entry_client = Cow::Borrowed(p);
+                }
             }
-            self.resolve_helper(
+            if let Some(p) = self.resolve_to_static(
                 client,
-                &mut fsr.entry_server,
+                &fsr.entry_server,
                 &mut had_errors,
                 b"server side entrypoint",
-            );
+            ) {
+                fsr.entry_server = Cow::Borrowed(p);
+            }
         }
 
         if had_errors {
@@ -712,33 +731,38 @@ impl Framework {
         Ok(clone)
     }
 
+    /// Returns the replacement slice when `path` should be rewritten (built-in
+    /// `Import` redirect, or resolver hit); `None` = leave unchanged (built-in
+    /// `Code` hit, or resolution failure — which sets `had_errors`).
     #[inline]
-    fn resolve_helper(
+    fn resolve_to_static(
         &self,
         r: &mut bun_resolver::Resolver,
-        path: &mut &'static [u8],
+        path: &[u8],
         had_errors: &mut bool,
         desc: &[u8],
-    ) {
-        if let Some(module) = self.built_in_modules.get(path) {
-            match module {
-                BuiltInModule::Import(p) => *path = p,
-                BuiltInModule::Code(_) => {}
-            }
-            return;
+    ) -> Option<&'static [u8]> {
+        // `&'static [u8]`-keyed map; `ArrayHashMap` is covariant in `K`, so
+        // reborrow with the lookup key's (shorter) lifetime.
+        let built_in_modules: &ArrayHashMap<&[u8], BuiltInModule> = &self.built_in_modules;
+        if let Some(module) = built_in_modules.get(&path) {
+            return match *module {
+                BuiltInModule::Import(p) => Some(p),
+                BuiltInModule::Code(_) => None,
+            };
         }
 
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        let mut result = match r.resolve(top_level_dir, *path, bun_ast::ImportKind::Stmt) {
+        let mut result = match r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt) {
             Ok(res) => res,
             Err(err) => {
                 Output::err(
                     err,
                     "Failed to resolve '{}' for framework ({})",
-                    (bstr::BStr::new(path), bstr::BStr::new(desc)),
+                    (bstr::BStr::new(&path), bstr::BStr::new(desc)),
                 );
                 *had_errors = true;
-                return;
+                return None;
             }
         };
         // `resolver::Result::path().text` is `&'static [u8]` already (resolver's
@@ -747,7 +771,7 @@ impl Framework {
         // `arena_erase` here laundered an already-`'static` slice and falsely
         // implied arena ownership. See `bun_ptr::Interned` for the type that
         // `Path::text` should eventually become.
-        *path = result.path().unwrap().text;
+        Some(result.path().unwrap().text)
     }
 
     fn from_js(
@@ -818,7 +842,7 @@ impl Framework {
             let str = bun_core::OwnedString::new(prop.to_bun_string(global)?);
 
             Some(ReactFastRefresh {
-                import_source: refs.track(str.to_utf8()),
+                import_source: Box::from(refs.track(str.to_utf8())),
             })
         };
         let server_components: Option<ServerComponents> = 'sc: {
@@ -856,7 +880,7 @@ impl Framework {
                         "'framework.serverComponents.separateSSRGraph' must be a boolean"
                     )));
                 },
-                server_runtime_import: refs.track(
+                server_runtime_import: Box::from(refs.track(
                     match get_optional_slice(sc, global, b"serverRuntimeImportSource")? {
                         Some(s) => s,
                         None => {
@@ -865,13 +889,13 @@ impl Framework {
                             )));
                         }
                     },
-                ),
+                )),
                 server_register_client_reference: if let Some(slice) =
                     get_optional_slice(sc, global, b"serverRegisterClientReferenceExport")?
                 {
-                    refs.track(slice)
+                    Box::from(refs.track(slice))
                 } else {
-                    b"registerClientReference"
+                    Box::from(&b"registerClientReference"[..])
                 },
                 ..ServerComponents::default()
             })
@@ -1069,14 +1093,14 @@ impl Framework {
                 };
 
                 file_system_router_types.push(FileSystemRouterType {
-                    root,
-                    prefix,
+                    root: Cow::Borrowed(root),
+                    prefix: Cow::Borrowed(prefix),
                     style,
-                    entry_server: server_entry_point,
-                    entry_client: client_entry_point,
+                    entry_server: Cow::Borrowed(server_entry_point),
+                    entry_client: client_entry_point.map(Cow::Borrowed),
                     ignore_underscores,
-                    extensions,
-                    ignore_dirs,
+                    extensions: extensions.iter().map(|s| Cow::Borrowed(*s)).collect(),
+                    ignore_dirs: ignore_dirs.iter().map(|s| Cow::Borrowed(*s)).collect(),
                     allow_layouts: layouts,
                 });
                 i += 1;
@@ -1102,40 +1126,20 @@ impl Framework {
         Ok(framework)
     }
 
-    /// Project the fields the bundler reads into the lower-tier
-    /// `bun_bundler::bake_types::Framework` view. The bundler crate cannot
-    /// name `bun_runtime::bake::Framework`, so it carries a TYPE_ONLY subset
-    /// that we populate here.
+    /// Bundler-side view. ServerComponents/ReactFastRefresh are already the
+    /// canonical `bake_types` types; only the arena-backed built-in-module map
+    /// is copied into owned storage.
     pub(crate) fn as_bundler_view(&self) -> bun_bundler::bake_types::Framework {
-        use bun_bundler::bake_types as bt;
         let mut built_in_modules = bun_collections::StringArrayHashMap::new();
         for (k, v) in self.built_in_modules.iter() {
-            let bv = match *v {
-                BuiltInModule::Import(p) => bt::BuiltInModule::Import(p.into()),
-                BuiltInModule::Code(c) => bt::BuiltInModule::Code(c.into()),
-            };
-            bun_core::handle_oom(built_in_modules.put(k, bv));
+            bun_core::handle_oom(
+                built_in_modules.put(k, bun_bundler::bake_types::BuiltInModule::from(*v)),
+            );
         }
-        let server_components = self
-            .server_components
-            .as_ref()
-            .map(|sc| bt::ServerComponents {
-                separate_ssr_graph: sc.separate_ssr_graph,
-                server_runtime_import: sc.server_runtime_import.into(),
-                server_register_client_reference: sc.server_register_client_reference.into(),
-                server_register_server_reference: sc.server_register_server_reference.into(),
-                client_register_server_reference: sc.client_register_server_reference.into(),
-            });
-        let react_fast_refresh = self
-            .react_fast_refresh
-            .as_ref()
-            .map(|rfr| bt::ReactFastRefresh {
-                import_source: rfr.import_source.into(),
-            });
-        bt::Framework::new(
+        bun_bundler::bake_types::Framework::new(
             built_in_modules,
-            server_components,
-            react_fast_refresh,
+            self.server_components.clone(),
+            self.react_fast_refresh.clone(),
             self.is_built_in_react,
         )
     }
@@ -1267,7 +1271,7 @@ impl Framework {
         }
 
         out.options.source_map = source_map;
-        if bundler_options.env != bun_schema::api::DotEnvBehavior::_none {
+        if bundler_options.env != bun_dotenv::DotEnvBehavior::_none {
             out.options.env.behavior = bundler_options.env;
             out.options.env.prefix = bundler_options.env_prefix.unwrap_or(b"").into();
         }
@@ -1303,13 +1307,13 @@ impl Framework {
                 .zip(bundler_options.define.values.iter())
             {
                 let parsed =
-                    bun_bundler::defines::DefineData::parse(k, v, false, false, log, arena)?;
+                    bun_js_parser::defines::DefineData::parse(k, v, false, false, log, arena)?;
                 out.options.define.insert(k, parsed)?;
             }
 
             for drop_item in bundler_options.drop.keys() {
                 if !drop_item.is_empty() {
-                    let parsed = bun_bundler::defines::DefineData::parse(
+                    let parsed = bun_js_parser::defines::DefineData::parse(
                         drop_item, b"", true, true, log, arena,
                     )?;
                     out.options.define.insert(drop_item, parsed)?;
@@ -1331,58 +1335,10 @@ impl Framework {
     }
 }
 
-#[derive(Clone)]
-pub struct FileSystemRouterType {
-    pub root: &'static [u8],
-    pub prefix: &'static [u8],
-    pub entry_server: &'static [u8],
-    pub entry_client: Option<&'static [u8]>,
-    pub ignore_underscores: bool,
-    pub ignore_dirs: &'static [&'static [u8]],
-    pub extensions: &'static [&'static [u8]],
-    pub style: framework_router::Style,
-    pub allow_layouts: bool,
-}
-
 #[derive(Clone, Copy)]
 pub enum BuiltInModule {
     Import(&'static [u8]),
     Code(&'static [u8]),
-}
-
-#[derive(Copy, Clone)]
-pub struct ServerComponents {
-    pub separate_ssr_graph: bool,
-    pub server_runtime_import: &'static [u8],
-    // pub client_runtime_import: &'static [u8],
-    pub server_register_client_reference: &'static [u8],
-    pub server_register_server_reference: &'static [u8],
-    pub client_register_server_reference: &'static [u8],
-}
-
-impl Default for ServerComponents {
-    fn default() -> Self {
-        Self {
-            separate_ssr_graph: false,
-            server_runtime_import: b"",
-            server_register_client_reference: b"registerClientReference",
-            server_register_server_reference: b"registerServerReference",
-            client_register_server_reference: b"registerServerReference",
-        }
-    }
-}
-
-#[derive(Copy, Clone)]
-pub struct ReactFastRefresh {
-    pub import_source: &'static [u8],
-}
-
-impl Default for ReactFastRefresh {
-    fn default() -> Self {
-        Self {
-            import_source: b"react-refresh/runtime",
-        }
-    }
 }
 
 #[inline]
@@ -1390,7 +1346,7 @@ fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<&'stat
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
     match r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt) {
         // `path_const().text` is `&'static [u8]` already (`FilenameStore`-
-        // backed; see note in `resolve_helper` above and `bun_ptr::Interned`).
+        // backed; see note in `resolve_to_static` above and `bun_ptr::Interned`).
         Ok(res) => Some(res.path_const().unwrap().text),
         Err(_) => {
             r.log_mut().reset();
@@ -1427,46 +1383,38 @@ fn get_optional_string(
 // using `bake_body::HmrRuntime` see the same nominal type.
 pub(crate) use super::HmrRuntime;
 
-fn hmr_runtime_init(code: &'static ZStr) -> HmrRuntime {
-    HmrRuntime {
-        code,
-        line_count: u32::try_from(code.as_bytes().iter().filter(|&&b| b == b'\n').count()).unwrap(),
-    }
-}
+// `FileSystemRouterType` is defined canonically in the parent `bake/mod.rs`
+// (Cow-backed); re-export so callers using `bake_body::FileSystemRouterType`
+// see the same nominal type.
+pub(crate) use super::FileSystemRouterType;
 
+/// ZStr view over the bundler's single cached HMR runtime
+/// (`bun_bundler::bake_types::get_hmr_runtime` owns the embed + line count);
+/// this side only adds the NUL termination the JSC/C++ handoff needs.
+/// The per-side `OnceLock` holding the NUL-terminated copy is read once per
+/// process and never freed. PORTING.md §Forbidden bans leaking for `&'static`;
+/// this is the sanctioned process-lifetime-singleton pattern instead.
 #[inline(always)]
 pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
-    // `runtime_embed_file!` returns `&'static str` (no NUL). Use a per-side
-    // `OnceLock` holding the NUL-terminated copy — read once per process,
-    // never freed. PORTING.md §Forbidden bans leaking for `&'static`; this is the
-    // sanctioned process-lifetime-singleton pattern instead. (Under
-    // `cfg(bun_codegen_embed)` the macro expands to `include_str!`, so this
-    // costs one extra copy at first call; the cost is negligible vs. keeping
-    // a per-call-site `#[cfg]` pair in sync.)
     use std::sync::OnceLock;
-    fn nul_terminate(s: &'static str, cell: &'static OnceLock<Box<[u8]>>) -> &'static ZStr {
-        let buf = cell.get_or_init(|| {
-            let mut v = Vec::with_capacity(s.len() + 1);
-            v.extend_from_slice(s.as_bytes());
-            v.push(0);
-            v.into_boxed_slice()
-        });
-        // SAFETY: buf is process-lifetime (`OnceLock` static), buf[len-1] == 0.
-        ZStr::from_slice_with_nul(&buf[..])
-    }
     static CLIENT: OnceLock<Box<[u8]>> = OnceLock::new();
     static SERVER: OnceLock<Box<[u8]>> = OnceLock::new();
-    hmr_runtime_init(match side {
-        Side::Client => nul_terminate(
-            bun_core::runtime_embed_file!(CodegenEager, "bake.client.js"),
-            &CLIENT,
-        ),
-        // server runtime is loaded once, so it is pointless to make this eager.
-        Side::Server => nul_terminate(
-            bun_core::runtime_embed_file!(Codegen, "bake.server.js"),
-            &SERVER,
-        ),
-    })
+    let b = bun_bundler::bake_types::get_hmr_runtime(side);
+    let cell = match side {
+        Side::Client => &CLIENT,
+        Side::Server => &SERVER,
+    };
+    let buf = cell.get_or_init(|| {
+        let mut v = Vec::with_capacity(b.code.len() + 1);
+        v.extend_from_slice(b.code);
+        v.push(0);
+        v.into_boxed_slice()
+    });
+    HmrRuntime {
+        // SAFETY: buf is process-lifetime (`OnceLock` static), buf[len-1] == 0.
+        code: ZStr::from_slice_with_nul(&buf[..]),
+        line_count: b.line_count,
+    }
 }
 
 // Note: `Mode`/`Side`/`Graph` are defined canonically in the parent
@@ -1484,7 +1432,7 @@ pub(crate) fn add_import_meta_defines(
 ) -> Result<(), bun_core::Error> {
     use bun_ast::E::EString;
 
-    use bun_bundler::defines::DefineData;
+    use bun_js_parser::defines::DefineData;
 
     static MODE_DEVELOPMENT: EString = EString::from_static(b"development");
     static MODE_PRODUCTION: EString = EString::from_static(b"production");

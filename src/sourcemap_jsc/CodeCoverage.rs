@@ -45,7 +45,7 @@ impl Report {
         let mut intersected = self
             .executable_lines
             .clone()
-            .unwrap_or_else(|_| bun_alloc::out_of_memory());
+            .unwrap_or_else(|_| bun_core::out_of_memory());
         intersected.set_intersection(&self.lines_which_have_executed);
 
         let total_count: f64 = self.executable_lines.count() as f64;
@@ -81,7 +81,7 @@ impl Report {
         byte_range_mapping: &mut ByteRangeMapping,
         ignore_sourcemap_: bool,
     ) -> Option<Report> {
-        bun_jsc::mark_binding();
+        bun_core::mark_binding!();
         // Use the raw `*mut VM` accessor instead of narrowing through `&VM` and
         // casting back to `*mut` — C++ mutates the VM (controlFlowProfiler /
         // functionHasExecutedCache), so we must preserve write provenance.
@@ -223,7 +223,7 @@ pub mod text {
         let mut executable_lines_that_havent_been_executed = report
             .lines_which_have_executed
             .clone()
-            .unwrap_or_else(|_| bun_alloc::out_of_memory());
+            .unwrap_or_else(|_| bun_core::out_of_memory());
         executable_lines_that_havent_been_executed.toggle_all();
 
         // This sets statements in executed scopes
@@ -831,7 +831,7 @@ impl ByteRangeMapping {
     ) -> ByteRangeMapping {
         ByteRangeMapping {
             line_offset_table: LineOffsetTable::generate(source_contents, 0)
-                .unwrap_or_else(|_| bun_alloc::out_of_memory()),
+                .unwrap_or_else(|_| bun_core::out_of_memory()),
             source_id,
             source_url,
         }
@@ -939,11 +939,8 @@ pub(crate) extern "C" fn ByteRangeMapping__findExecutedLines(
     v
 }
 
-// move-out: TYPE_ONLY → bun_options_types::code_coverage_options::Fraction.
-// Lifted into options_types so the CLI tier can hold `CodeCoverageOptions.fractions`
-// without depending on tier-6 sourcemap_jsc; re-exported here so coverage report
-// writers and the test runner share one definition.
-pub use bun_options_types::code_coverage_options::Fraction;
+// Canonical Fraction lives in bun_options_types::code_coverage_options.
+use bun_options_types::code_coverage_options::Fraction;
 
 #[derive(Clone, Copy, Default)]
 pub struct Block {

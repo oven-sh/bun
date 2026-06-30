@@ -32,7 +32,8 @@ use bun_core::{FeatureFlags, ZBox};
 use bun_core::{String as BunString, ZigStringSlice as Utf8Slice};
 use bun_http::{HeaderValueIterator, Headers};
 use bun_io::KeepAlive;
-use bun_jsc::{JSGlobalObject, VirtualMachineRef};
+use bun_jsc::JSGlobalObject;
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_picohttp as picohttp;
 use bun_ptr::ThisPtr;
 use bun_uws::{self as uws, SocketHandler, SocketKind, SslCtx};
@@ -60,7 +61,7 @@ bun_core::declare_scope!(alloc, hidden);
 /// # Safety
 /// `vm` must be the live per-thread VM singleton.
 #[inline]
-unsafe fn vm_loop_ctx(vm: *mut VirtualMachineRef) -> bun_io::EventLoopCtx {
+unsafe fn vm_loop_ctx(vm: *mut VirtualMachine) -> bun_io::EventLoopCtx {
     // SAFETY: caller contract above.
     unsafe { bun_jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm) }
 }
@@ -103,7 +104,7 @@ impl SslCtxOwned {
 impl Drop for SslCtxOwned {
     fn drop(&mut self) {
         // SAFETY: `self.0` is an owned retained ref (returned with +1 by
-        // `ssl_ctx_cache_get_or_create`) that has not been transferred out.
+        // `SSLContextCache::get_or_create_opts`) that has not been transferred out.
         unsafe { boringssl::c::SSL_CTX_free(self.0) };
     }
 }
@@ -406,14 +407,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // Default-TLS shares the VM-wide client SSL_CTX; a custom CA
         // builds a per-connection one that the connected WebSocket
         // inherits so it isn't rebuilt on adopt.
-        //
-        // §Dispatch (cycle-break): `RareData.defaultClientSslCtx()` and
-        // `RareData.sslCtxCache().getOrCreateOpts()` reach
-        // `RuntimeState.ssl_ctx_cache` (high-tier `bun_runtime`); routed
-        // through `RuntimeHooks` so this crate stays below `bun_runtime`.
         let secure_ptr: Option<*mut uws::SslCtx> = if SSL {
-            let hooks =
-                bun_jsc::virtual_machine::runtime_hooks().expect("RuntimeHooks not installed");
             'brk: {
                 if let Some(config) = &client_ref.ssl_config {
                     if config.requires_custom_request_ctx {
@@ -424,8 +418,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         // SAFETY: `vm_ptr` is the live per-thread VM (caller
                         // contract); JS thread.
                         let ctx = unsafe {
-                            (hooks.ssl_ctx_cache_get_or_create)(
-                                vm_ptr,
+                            (*vm_ptr).rare_data().ssl_ctx_cache.get_or_create_opts(
                                 &config.as_usockets_for_client_verification(),
                                 &mut err,
                             )
@@ -450,7 +443,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     }
                 }
                 // SAFETY: `vm_ptr` is the live per-thread VM; JS thread.
-                Some(unsafe { (hooks.default_client_ssl_ctx)(vm_ptr) })
+                Some(unsafe { (*vm_ptr).rare_data().default_client_ssl_ctx_lazy() })
             }
         } else {
             None
@@ -569,7 +562,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     pub fn clear_data(&mut self) {
         // SAFETY: `get_mut_ptr()` is the live per-thread VM singleton.
         self.poll_ref
-            .unref(unsafe { vm_loop_ctx(VirtualMachineRef::get_mut_ptr()) });
+            .unref(unsafe { vm_loop_ctx(VirtualMachine::get_mut_ptr()) });
 
         self.subprotocols.clear_and_free();
         self.clear_input();
@@ -640,9 +633,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
             .is_some_and(|ext| unsafe { (*ext).take().is_some() });
         // no need to be .failure we still wanna to send pending SSL buffer + close_notify
         if SSL {
-            tcp.close(uws::CloseCode::Normal);
+            tcp.close(uws::CloseCode::normal);
         } else {
-            tcp.close(uws::CloseCode::Failure);
+            tcp.close(uws::CloseCode::failure);
         }
         if had_socket_ref {
             // SAFETY: short-lived `&mut` for the field detach.
@@ -660,7 +653,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// a `&mut self` argument.
     pub unsafe fn fail(this: *mut Self, code: ErrorCode) {
         log!("onFail: {}", <&'static str>::from(code));
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         // SAFETY: caller contract — `this` is a live `heap::alloc` pointer.
         let this = unsafe { ThisPtr::new(this) };
         // Copy `tcp` out before dispatch so nothing touches `*this` after the
@@ -674,7 +667,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // connection — close it gracefully (FIN) like Node's ws client does.
         // A Failure close arms SO_LINGER{1,0} and sends an RST, which the
         // server observes as ECONNRESET on a connection it served correctly.
-        tcp.close(uws::CloseCode::Normal);
+        tcp.close(uws::CloseCode::normal);
     }
 
     /// # Safety
@@ -699,7 +692,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// that makes deallocating its referent UB.
     pub unsafe fn handle_close(this: *mut Self, _: Socket<SSL>, _: c_int, _: *mut c_void) {
         log!("onClose");
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         // SAFETY: short-lived `&mut` borrows; each ends before the next call.
         unsafe { (*this).clear_data() };
         // SAFETY: short-lived `&mut` for the field detach; `this` is live per caller contract.
@@ -890,7 +883,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // SAFETY: short-lived `&mut` for clear_data; ends before `socket.close` below.
             unsafe { (*this.as_ptr()).clear_data() };
             // No `&mut Self` is live across this call (handle_close reenters).
-            socket.close(uws::CloseCode::Failure);
+            socket.close(uws::CloseCode::failure);
             return;
         }
         // Bumps the intrusive refcount and derefs on Drop at every return path
@@ -1596,7 +1589,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 // For tunnel mode, the upgrade client STAYS ALIVE to forward socket data to the tunnel.
                 // The socket continues to call handle_data on the upgrade client, which forwards to tunnel.
                 // The tunnel forwards decrypted data to the WebSocket client.
-                bun_jsc::mark_binding!();
+                bun_core::mark_binding!();
                 // SAFETY: short-lived reads.
                 let tcp = unsafe { (*this).tcp };
                 // SAFETY: short-lived read; `this` is live per caller contract.
@@ -1638,7 +1631,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     unsafe { Self::terminate(this, ErrorCode::Cancel) };
                 } else if !has_ws {
                     // No `&mut Self` spans this call (handle_close reenters).
-                    tcp.close(uws::CloseCode::Failure);
+                    tcp.close(uws::CloseCode::failure);
                 }
                 return;
             }
@@ -1654,7 +1647,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // release the ref it took out of `self` (SSL_CTX_free at fn end).
         // SAFETY: short-lived `&mut` for clear_data; ends before any reentrant call.
         unsafe { (*this).clear_data() };
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         // SAFETY: short-lived reads.
         let tcp = unsafe { (*this).tcp };
         // SAFETY: short-lived read; `this` is live per caller contract.
@@ -1706,7 +1699,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             unsafe { Self::terminate(this, ErrorCode::Cancel) };
         } else if !has_ws {
             // No `&mut Self` spans this call (handle_close reenters).
-            tcp.close(uws::CloseCode::Failure);
+            tcp.close(uws::CloseCode::failure);
         }
         // Any arm above that didn't transfer ownership to `did_connect` left
         // the retained ref in `saved_secure`; RAII drop releases it now.
@@ -1856,9 +1849,9 @@ impl<'a> Headers8Bit<'a> {
             };
         }
         // SAFETY: per fn contract.
-        let names_in = unsafe { bun_core::ffi::slice(names_ptr, len) };
+        let names_in = unsafe { bun_opaque::ffi::slice(names_ptr, len) };
         // SAFETY: per fn contract — `values_ptr` points to `len` live `BunString`s.
-        let values_in = unsafe { bun_core::ffi::slice(values_ptr, len) };
+        let values_in = unsafe { bun_opaque::ffi::slice(values_ptr, len) };
 
         let mut slices: Vec<Utf8Slice> = Vec::with_capacity(len * 2);
         for i in 0..len {
@@ -1966,7 +1959,7 @@ struct BuildRequestResult {
 
 #[allow(clippy::too_many_arguments)]
 fn build_request_body(
-    vm: &mut VirtualMachineRef,
+    vm: &mut VirtualMachine,
     pathname: &[u8],
     is_https: bool,
     host: &[u8],
@@ -2168,7 +2161,7 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
 
 // LAYERING: `Bun__WebSocket__parseSSLConfig` / `Bun__WebSocket__freeSSLConfig`
 // live in `bun_runtime::socket::ssl_config` (src/runtime/socket/SSLConfig.rs).
-// `SSLConfig::from_js` walks Blob/JSCArrayBuffer/node_fs values (tier-6) and
+// `ssl_config::from_js` walks Blob/JSCArrayBuffer/node_fs values (tier-6) and
 // `bun_runtime → bun_http_jsc`, so the C-ABI export is hosted upstream where
 // `from_js` is defined. The result is bridged to `bun_http::ssl_config::SSLConfig`
 // (the type `connect()` consumes) via `into_http()` before boxing. C++ links by

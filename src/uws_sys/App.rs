@@ -53,9 +53,6 @@ pub struct App<const SSL: bool> {
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
-/// Legacy name alias.
-pub type NewApp<const SSL: bool> = App<SSL>;
-
 /// Stamps one `pub fn $name(&mut self, pattern, handler, user_data)` per HTTP
 /// verb. Bodies are byte-identical modulo the C symbol — see `uws_app_get` &co
 /// in capi.rs. uWS copies `pattern` internally, so the slice need only live for

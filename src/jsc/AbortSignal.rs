@@ -2,14 +2,12 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use crate::{
-    CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject, JSValue,
-    VirtualMachineRef as VirtualMachine,
-};
+use crate::virtual_machine::VirtualMachine;
+use crate::{CommonAbortReasonExt as _, JSGlobalObject, JSValue};
 use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, InHeap, IntrusiveField, State as TimerState, Tag as TimerTag, TimerFlags,
-    Timespec as ElTimespec,
 };
+use bun_http_types::FetchRedirect::CommonAbortReason;
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle to WebCore::AbortSignal (C++ side owns layout & refcount).
@@ -190,7 +188,7 @@ impl AbortSignal {
     }
 
     pub fn new(global: &JSGlobalObject) -> *mut AbortSignal {
-        crate::mark_binding!();
+        bun_core::mark_binding!();
         WebCore__AbortSignal__new(global)
     }
 
@@ -217,7 +215,7 @@ impl AbortSignal {
 // `AbortSignal` is an `opaque_ffi!` type (`!Freeze` via `UnsafeCell`), so
 // `&AbortSignal` derived from the stored pointer carries no read-only
 // assumption that C++-side mutation could violate.
-unsafe impl bun_ptr::ExternalSharedDescriptor for AbortSignal {
+unsafe impl bun_core::ExternalSharedDescriptor for AbortSignal {
     #[inline]
     unsafe fn ext_ref(this: *mut Self) {
         // `opaque_ref` is the centralised ZST-handle deref proof; caller
@@ -238,7 +236,7 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for AbortSignal {
 /// Replaces the broken `Arc<AbortSignal>` pattern (an `Arc` of an opaque ZST
 /// cannot own a C++-allocated object — its payload address is not the C++
 /// object address).
-pub type AbortSignalRef = bun_ptr::ExternalShared<AbortSignal>;
+pub type AbortSignalRef = bun_core::ExternalShared<AbortSignal>;
 
 impl AbortSignal {
     /// Downcast a JS value, ref the underlying signal, and wrap. Returns
@@ -274,19 +272,19 @@ impl AbortReason {
 // ──────────────────────────────────────────────────────────────────────────
 // `AbortSignal.Timeout`.
 //
-// LAYERING: `EventLoopTimer` + `TimerFlags` live in `bun_event_loop` (lower
-// tier). The per-VM timer heap (`Timer::All`) lives in `bun_runtime` (higher
-// tier) and is reached through `RuntimeHooks::{timer_insert,timer_remove}` —
-// see `VirtualMachine::timer_insert/remove`. C++ only ever sees `*mut Timeout`
-// as an opaque token round-tripped through `create`/`run`/`deinit`, so the
-// concrete layout is private to Rust; `repr(C)` is here so `offset_of!` is
-// well-defined for the `container_of` recovery in `bun_runtime::dispatch`.
+// `EventLoopTimer` + `TimerFlags` live in `bun_event_loop` (lower tier). The
+// per-VM timer heap (`crate::timer::All`) is a separate heap allocation
+// reached via the typed `VirtualMachine.timer` field. C++ only ever sees
+// `*mut Timeout` as an opaque token round-tripped through
+// `create`/`run`/`deinit`, so the concrete layout is private to Rust;
+// `repr(C)` is here so `offset_of!` is well-defined for the `container_of`
+// recovery in `bun_runtime::dispatch`.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
 pub struct Timeout {
-    /// Intrusive heap node. `bun_runtime::dispatch::{fire_timer,js_timer_epoch}`
-    /// recover `*mut Timeout` from `*mut EventLoopTimer` via `container_of` on
+    /// Intrusive heap node. `bun_runtime::dispatch::fire_timer`
+    /// recovers `*mut Timeout` from `*mut EventLoopTimer` via `container_of` on
     /// this field, so it must stay at a fixed offset (hence `#[repr(C)]`).
     pub event_loop_timer: EventLoopTimer,
 
@@ -297,7 +295,6 @@ pub struct Timeout {
     // Arc here. Kept as raw `*mut` with manual unref.
     pub signal: *mut AbortSignal,
 
-    /// "epoch" is reused.
     pub flags: TimerFlags,
 
     /// See `swapGlobalForTestIsolation`: timers from a prior isolated test
@@ -305,7 +302,20 @@ pub struct Timeout {
     pub generation: u32,
 }
 
-bun_event_loop::impl_timer_owner!(Timeout; from_timer_ptr => event_loop_timer);
+impl Timeout {
+    /// Recover `*mut Self` from a pointer to its intrusive `event_loop_timer`
+    /// [`EventLoopTimer`] slot.
+    /// # Safety
+    /// `t` must point at the `event_loop_timer` field of a live `Self`.
+    #[inline]
+    pub unsafe fn from_timer_ptr(
+        t: *const bun_event_loop::EventLoopTimer::EventLoopTimer,
+    ) -> *mut Self {
+        // SAFETY: caller contract — `t` addresses `Self.event_loop_timer` with
+        // whole-`Self` provenance.
+        unsafe { ::bun_core::from_field_ptr!(Self, event_loop_timer, t) }
+    }
+}
 
 impl Timeout {
     fn init(vm: *mut VirtualMachine, signal_: *mut AbortSignal, milliseconds: u64) -> *mut Timeout {
@@ -314,14 +324,12 @@ impl Timeout {
 
         let this: *mut Timeout = bun_core::heap::into_raw(Box::new(Timeout {
             event_loop_timer: EventLoopTimer {
-                next: ElTimespec {
-                    sec: deadline.sec,
-                    nsec: deadline.nsec,
-                },
+                next: deadline,
                 tag: TimerTag::AbortSignalTimeout,
                 state: TimerState::CANCELLED,
                 heap: IntrusiveField::default(),
                 in_heap: InHeap::default(),
+                js_epoch: 0,
             },
             signal: signal_,
             flags: TimerFlags::default(),
@@ -337,9 +345,10 @@ impl Timeout {
 
         // We default to not keeping the event loop alive with this timeout.
         // SAFETY: `this` is freshly boxed and not yet shared; `event_loop_timer`
-        // is unlinked. `timer_insert` links it into the per-VM heap.
+        // is unlinked. `(*vm).timer` is the live per-VM `All` heap (a separate
+        // allocation, so the short-lived `&mut All` aliases nothing here).
         unsafe {
-            VirtualMachine::timer_insert(vm, core::ptr::addr_of_mut!((*this).event_loop_timer));
+            (*(*vm).timer).insert(core::ptr::addr_of_mut!((*this).event_loop_timer));
         }
 
         this
@@ -351,8 +360,9 @@ impl Timeout {
         if this.event_loop_timer.state == TimerState::ACTIVE {
             // SAFETY: state == ACTIVE ⇒ node is currently linked into the heap;
             // `vm` is the live per-thread VM (JS-thread-only call site).
+            // `(*vm).timer` is a separate allocation from `*this`.
             unsafe {
-                VirtualMachine::timer_remove(vm, &raw mut this.event_loop_timer);
+                (*(*vm).timer).remove(&raw mut this.event_loop_timer);
             }
         }
     }

@@ -13,7 +13,7 @@ use crate::{Dependency, DependencyID, INVALID_DEPENDENCY_ID, PackageID};
 
 pub use super::installer::Installer;
 
-bun_output::declare_scope!(Store, visible);
+bun_core::declare_scope!(Store, visible);
 
 #[derive(Copy, Clone)]
 pub struct Ids {
@@ -387,7 +387,7 @@ pub mod entry {
                             f,
                             "{}",
                             BStr::new(bun_paths::basename(
-                                crate::bun_fs::FileSystem::instance().top_level_dir()
+                                bun_resolver::fs::FileSystem::instance().top_level_dir()
                             ))
                         )?;
                     } else {
@@ -666,7 +666,7 @@ pub mod node {
                 deps[self.dep_id as usize].version.literal.slice(string_buf)
             };
 
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 Store,
                 "node({})\n  deps: {}@{}\n  res: {}@{}\n",
                 id.get(),

@@ -26,7 +26,7 @@ pub fn generate_symbol_for_function(
     value: JSValue,
     function: &mut Function,
 ) -> JsResult<Option<JSValue>> {
-    jsc::mark_binding!();
+    bun_core::mark_binding!();
 
     let mut abi_types: Vec<ABIType> = Vec::new();
 
@@ -161,7 +161,7 @@ pub fn generate_symbols(
     symbols: &mut StringArrayHashMap<Function>,
     object: impl jsc::IntoIterObject,
 ) -> JsResult<Option<JSValue>> {
-    jsc::mark_binding!();
+    bun_core::mark_binding!();
 
     // skip_empty_name = true, include_value = true, own_only = true
     let mut symbols_iter = JSPropertyIterator::init(

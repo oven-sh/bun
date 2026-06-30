@@ -1,26 +1,28 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use bun_collections::{ArrayHashMap, DynamicBitSet};
+use bun_core::FileKind;
+use bun_core::PathBuffer;
 use bun_core::Progress::Progress;
 use bun_core::{Global, Output};
 use bun_core::{MutableString, ZStr};
 use bun_paths::strings;
-use bun_paths::{self as path, OSPathChar, OSPathSlice, PathBuffer, SEP, SEP_STR};
+use bun_paths::{self as path, OSPathChar, OSPathSlice, SEP, SEP_STR};
 use bun_semver::String as SemverString;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
-use bun_sys::{self as sys, Dir, EntryKind, Fd, FdExt, walker_skippable};
+use bun_sys::{self as sys, Dir, Fd, FdExt, walker_skippable};
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode};
 use bun_threading::work_pool::Task as WorkPoolTask;
 use bun_threading::{ThreadPool, WaitGroup};
 
 use crate::package_installer::NodeModulesFolder;
 use crate::{
-    BuntagHashBuf, Lockfile, Npm, PackageID, PackageManager, Repository, Resolution,
-    TruncatedPackageNameHash, bun_fs, bun_json, buntaghashbuf_make, initialize_store, resolution,
+    BuntagHashBuf, Lockfile, PackageID, PackageManager, Repository, Resolution,
+    TruncatedPackageNameHash, buntaghashbuf_make, initialize_store, npm, resolution,
 };
 
-bun_output::declare_scope!(install, hidden);
+bun_core::declare_scope!(install, hidden);
 
 pub struct PackageInstall<'a> {
     /// Borrowed view of the cache directory fd. The owner is either
@@ -331,7 +333,7 @@ impl Default for InstallDirState {
 /// the FULL absolute path and on `ENOENT` walks back to the first existing ancestor,
 /// then forward — never touching the filesystem root.
 #[cfg(windows)]
-fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
+fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Result<()> {
     use sys::E;
     let path = fullpath.as_slice();
     let len = path.len() as u16;
@@ -444,7 +446,7 @@ fn open_dir_a(dir: Fd, subpath: &[u8]) -> Result<Dir, bun_core::Error> {
 }
 
 // macOS clonefileat(2) — routed through the safe `sys::clonefileat` wrapper
-// (takes `Fd`/`&ZStr`, returns `Maybe<()>`). The wrapper preserves the errno
+// (takes `Fd`/`&ZStr`, returns `Result<()>`). The wrapper preserves the errno
 // via `Error::get_errno()` for the per-errno branching below.
 
 // ───────────────────────────── NewTaskQueue ─────────────────────────────
@@ -641,7 +643,7 @@ impl HardLinkWindowsInstallTask {
             | windows::Win32Error::CANNOT_MAKE => {
                 // Race condition: this shouldn't happen
                 if cfg!(debug_assertions) {
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         install,
                         "CreateHardLinkW returned EEXIST, this shouldn't happen: {}",
                         bun_core::fmt::fmt_path_u16(&dest[..dest_len], Default::default())
@@ -753,7 +755,7 @@ impl UninstallTask {
 
         if cfg!(debug_assertions) {
             let _ = &mut debug_timer;
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 install,
                 "deleteTree({}, {}) = {}",
                 bstr::BStr::new(basename),
@@ -960,7 +962,7 @@ impl<'a> PackageInstall<'a> {
         root_node_modules_dir: &Dir,
         resolution_tag: resolution::Tag,
     ) -> bool {
-        let mut body_pool = Npm::Registry::BodyPool::get();
+        let mut body_pool = npm::Registry::BodyPool::get();
         let mutable: &mut MutableString = &mut body_pool;
 
         // Read the file
@@ -979,7 +981,8 @@ impl<'a> PackageInstall<'a> {
 
         initialize_store();
 
-        let mut package_json_checker = bun_json::PackageJSONVersionChecker::init(source, &mut log);
+        let mut package_json_checker =
+            bun_parsers::json::PackageJSONVersionChecker::init(source, &mut log);
         if package_json_checker.parse().is_err() {
             return false;
         }
@@ -1052,13 +1055,13 @@ impl<'a> PackageInstall<'a> {
 
         fn copy(destination_dir_: &Dir, walker: &mut Walker) -> Result<u32, bun_core::Error> {
             let mut real_file_count: u32 = 0;
-            let mut stackpath = [0u8; path::MAX_PATH_BYTES];
+            let mut stackpath = [0u8; bun_core::MAX_PATH_BYTES];
             while let Some(entry) = walker.next()? {
                 match entry.kind {
-                    EntryKind::Directory => {
+                    FileKind::Directory => {
                         let _ = sys::mkdirat(destination_dir_, entry.path, 0o755);
                     }
-                    EntryKind::File => {
+                    FileKind::File => {
                         let path_len = entry.path.len();
                         let base_len = entry.basename.len();
                         stackpath[..path_len].copy_from_slice(entry.path.as_bytes());
@@ -1358,7 +1361,7 @@ impl<'a> PackageInstall<'a> {
                 {
                     use bun_sys::windows::{self, Win32ErrorExt as _};
                     match entry.kind {
-                        EntryKind::Directory | EntryKind::File => {}
+                        FileKind::Directory | FileKind::File => {}
                         _ => continue,
                     }
 
@@ -1379,7 +1382,7 @@ impl<'a> PackageInstall<'a> {
                     let src = bun_core::WStr::from_buf(head2, src_len);
 
                     match entry.kind {
-                        EntryKind::Directory => {
+                        FileKind::Directory => {
                             // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers built
                             // into head1/head2 above.
                             if unsafe {
@@ -1390,19 +1393,19 @@ impl<'a> PackageInstall<'a> {
                                 )
                             } == 0
                             {
-                                let _ = bun_sys::MakePath::make_path_u16(
+                                let _ = bun_sys::make_path::make_path_u16(
                                     destination_dir_,
                                     entry.path.as_slice(),
                                 );
                             }
                         }
-                        EntryKind::File => {
+                        FileKind::File => {
                             // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
                             if unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 0) } == 0 {
                                 if let Some(entry_dirname) =
                                     bun_paths::Dirname::dirname_u16(entry.path.as_slice())
                                 {
-                                    let _ = bun_sys::MakePath::make_path_u16(
+                                    let _ = bun_sys::make_path::make_path_u16(
                                         destination_dir_,
                                         entry_dirname,
                                     );
@@ -1446,7 +1449,7 @@ impl<'a> PackageInstall<'a> {
                 }
                 #[cfg(not(windows))]
                 {
-                    if entry.kind != EntryKind::File {
+                    if entry.kind != FileKind::File {
                         continue;
                     }
                     real_file_count += 1;
@@ -1454,7 +1457,7 @@ impl<'a> PackageInstall<'a> {
                     let in_file = sys::openat(entry.dir, entry.basename, sys::O::RDONLY, 0)?;
                     let _close_in = sys::CloseOnDrop::new(in_file);
 
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         install,
                         "createFile {} {}\n",
                         destination_dir_.fd(),
@@ -1476,7 +1479,7 @@ impl<'a> PackageInstall<'a> {
                                 bun_paths::platform::Auto,
                             >(entry.path.as_bytes());
                             if !entry_dirname.is_empty() {
-                                let _ = bun_sys::MakePath::make_path::<OSPathChar>(
+                                let _ = bun_sys::make_path::make_path::<OSPathChar>(
                                     destination_dir_,
                                     entry_dirname,
                                 );
@@ -1627,13 +1630,13 @@ impl<'a> PackageInstall<'a> {
                 #[cfg(unix)]
                 {
                     match entry.kind {
-                        EntryKind::Directory => {
-                            let _ = bun_sys::MakePath::make_path::<OSPathChar>(
+                        FileKind::Directory => {
+                            let _ = bun_sys::make_path::make_path::<OSPathChar>(
                                 destination_dir,
                                 entry.path.as_bytes(),
                             );
                         }
-                        EntryKind::File => {
+                        FileKind::File => {
                             if let Err(err) = sys::linkat(
                                 entry.dir,
                                 entry.basename,
@@ -1671,7 +1674,7 @@ impl<'a> PackageInstall<'a> {
                 #[cfg(not(unix))]
                 {
                     match entry.kind {
-                        EntryKind::File => {}
+                        FileKind::File => {}
                         _ => continue,
                     }
 
@@ -1825,13 +1828,13 @@ impl<'a> PackageInstall<'a> {
                 #[cfg(unix)]
                 {
                     match entry.kind {
-                        EntryKind::Directory => {
-                            let _ = bun_sys::MakePath::make_path::<OSPathChar>(
+                        FileKind::Directory => {
+                            let _ = bun_sys::make_path::make_path::<OSPathChar>(
                                 destination_dir,
                                 entry.path.as_bytes(),
                             );
                         }
-                        EntryKind::File => {
+                        FileKind::File => {
                             let target_len = to_copy_into2_offset + entry.path.len();
                             head2[to_copy_into2_offset..target_len]
                                 .copy_from_slice(entry.path.as_bytes());
@@ -1859,7 +1862,7 @@ impl<'a> PackageInstall<'a> {
                 {
                     use bun_sys::windows;
                     match entry.kind {
-                        EntryKind::Directory | EntryKind::File => {}
+                        FileKind::Directory | FileKind::File => {}
                         _ => continue,
                     }
 
@@ -1880,7 +1883,7 @@ impl<'a> PackageInstall<'a> {
                     let src = bun_core::WStr::from_buf(head2, src_len);
 
                     match entry.kind {
-                        EntryKind::Directory => {
+                        FileKind::Directory => {
                             // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers built
                             // into head1/head2 above.
                             if unsafe {
@@ -1891,18 +1894,18 @@ impl<'a> PackageInstall<'a> {
                                 )
                             } == 0
                             {
-                                let _ = bun_sys::MakePath::make_path_u16(
+                                let _ = bun_sys::make_path::make_path_u16(
                                     destination_dir,
                                     entry.path.as_slice(),
                                 );
                             }
                         }
-                        EntryKind::File => match sys::symlink_w(dest, src, Default::default()) {
+                        FileKind::File => match sys::symlink_w(dest, src, Default::default()) {
                             Err(err) => {
                                 if let Some(entry_dirname) =
                                     bun_paths::Dirname::dirname_u16(entry.path.as_slice())
                                 {
-                                    let _ = bun_sys::MakePath::make_path_u16(
+                                    let _ = bun_sys::make_path::make_path_u16(
                                         destination_dir,
                                         entry_dirname,
                                     );
@@ -2026,7 +2029,7 @@ impl<'a> PackageInstall<'a> {
                 //     1.45 ± 0.02 times faster than bun-1.1.2 install --ignore-scripts
                 //
                 let absolute_path = path::resolve_path::join_abs_string::<path::platform::Auto>(
-                    bun_fs::FileSystem::instance().top_level_dir(),
+                    bun_resolver::fs::FileSystem::instance().top_level_dir(),
                     &[&self.node_modules.path, temp_path.as_bytes()],
                 );
                 let task = bun_core::heap::into_raw(Box::new(UninstallTask {
@@ -2104,7 +2107,8 @@ impl<'a> PackageInstall<'a> {
             let Ok(size) = file.read_all(temp_buffer) else {
                 return true;
             };
-            let Some(decoded) = crate::windows_shim::loose_decode(&temp_buffer[..size]) else {
+            let Some(decoded) = bun_shim_impl::bin_linking_shim::loose_decode(&temp_buffer[..size])
+            else {
                 return true;
             };
             debug_assert!(decoded.flags.is_valid()); // looseDecode ensures valid flags
@@ -2191,7 +2195,7 @@ impl<'a> PackageInstall<'a> {
         #[cfg(windows)]
         {
             use bun_sys::windows::{self, Win32ErrorExt as _};
-            let mut wbuf = bun_paths::WPathBuffer::uninit();
+            let mut wbuf = bun_core::WPathBuffer::uninit();
             // SAFETY: FFI — destination_dir.fd() is an open handle; wbuf is a valid writable
             // WPathBuffer of the passed length.
             let dest_path_length = unsafe {
@@ -2275,7 +2279,7 @@ impl<'a> PackageInstall<'a> {
         {
             let owned_dest_dir: Option<Dir> = if let Some(dir) = subdir {
                 Some(
-                    match bun_sys::MakePath::make_open_path(
+                    match bun_sys::make_path::make_open_path(
                         destination_dir,
                         dir,
                         OpenDirOptions::default(),

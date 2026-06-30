@@ -7,10 +7,9 @@
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 
-use crate::{
-    MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS, WPathBuffer,
-    resolve_path as path,
-};
+use bun_core::{MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, WPathBuffer};
+
+use crate::{SEP, SEP_POSIX, SEP_WINDOWS, resolve_path as path};
 use bun_core::{Fd, WStr, ZStr, strings};
 
 // ──────────────────────────────────────────────────────────────────────────

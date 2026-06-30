@@ -26,7 +26,6 @@ mod repl;
 use repl::Repl;
 
 use crate::Command;
-use crate::cli::Arguments;
 
 pub(crate) struct ReplCommand;
 
@@ -47,7 +46,7 @@ impl ReplCommand {
     ) -> Result<(), bun_core::Error> {
         // Load bunfig if not already loaded
         if !ctx.debug.loaded_bunfig {
-            Arguments::load_config_path(
+            bun_bunfig::arguments::load_config_path(
                 Command::Tag::RunCommand,
                 true,
                 bun_core::zstr!("bunfig.toml"),
@@ -90,9 +89,9 @@ impl ReplCommand {
         unsafe {
             (*vm).preload = core::mem::take(&mut ctx.preloads);
             (*vm).argv = core::mem::take(&mut ctx.passthrough);
-            // `vm.dns_result_order` is a `u8` (see VirtualMachine.rs); set
-            // post-init like run_command.rs since InitOptions doesn't carry it.
-            (*vm).dns_result_order = dns_order as u8;
+            // `vm.dns_result_order` is set post-init like run_command.rs since
+            // InitOptions doesn't carry it.
+            (*vm).dns_result_order = dns_order;
         }
         // There is no per-VM allocator handle; the `vm.arena` assignment itself happens below
         // ReplRunner construction to avoid a move-after-borrow.

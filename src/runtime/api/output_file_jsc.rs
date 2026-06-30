@@ -3,23 +3,22 @@
 //!
 //! LAYERING: this file lives in `bun_runtime` (not `bun_bundler_jsc`) because
 //! it constructs `webcore::Blob`, `webcore::blob::Store`, `api::BuildArtifact`
-//! and `node::types::{PathLike, PathOrFileDescriptor}` — all `bun_runtime`
+//! and `bun_jsc::node_path::{PathLike, PathOrFileDescriptor}` — all `bun_runtime`
 //! types. `bun_runtime` already depends on `bun_bundler`, so there is no cycle.
 
 use bun_jsc::{JSGlobalObject, JSValue, StrongOptional};
 
-use bun_bundler::options_impl::LoaderExt as _;
 use bun_bundler::output_file::{OutputFile, Value as OutputFileValue};
 use bun_core::Output;
 use bun_core::ZigStringSlice;
 use bun_http_types::MimeType::MimeType;
 
 use crate::api::js_bundler::BuildArtifact;
-use crate::node::types::{PathLike, PathOrFileDescriptor};
 use crate::webcore::Blob;
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::blob::store::StoreExt as _;
 use crate::webcore::blob::{SizeType as BlobSizeType, Store as BlobStore};
+use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
 
 /// Heap-dupe `path` into an owning `PathLike` so the resulting `Blob.Store`
 /// outlives the borrowed source.
@@ -119,7 +118,7 @@ impl OutputFileJsc for OutputFile {
         );
 
         let mime_hint: &[u8] = owned_pathname.unwrap_or(b"");
-        let mime = self.loader.to_mime_type(&[mime_hint]);
+        let mime = MimeType::from_loader(self.loader, &[mime_hint]);
 
         match value {
             OutputFileValue::Copy(copy) => {
@@ -234,9 +233,8 @@ impl OutputFileJsc for OutputFile {
             },
         );
 
-        let mime = self
-            .loader
-            .to_mime_type(&[self.dest_path.as_ref(), self.src_path.text]);
+        let mime =
+            MimeType::from_loader(self.loader, &[self.dest_path.as_ref(), self.src_path.text]);
 
         match value {
             OutputFileValue::Copy(copy) => {

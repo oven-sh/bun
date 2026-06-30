@@ -10,7 +10,7 @@ use crate::{BundleV2, Transpiler};
 
 /// Used to keep the bundle thread from spinning on Windows
 #[cfg(windows)]
-pub(crate) extern "C" fn timer_callback(_: *mut bun_sys::windows::libuv::Timer) {}
+pub(crate) extern "C" fn timer_callback(_: *mut bun_libuv_sys::Timer) {}
 
 /// Port of `std.Thread.ResetEvent` — single-shot manual-reset event used to
 /// block `spawn()` until the bundle thread has initialized its `Waker`.
@@ -42,7 +42,7 @@ pub enum BundleV2Result {
 /// - `completeOnBundleThread` is used to tell the task that it is done.
 // The trait bound lives on the `impl` (not the struct) so the
 // `singleton` static can name `BundleThread<JSBundleCompletionTask>` before T6
-// provides the `CompletionStruct` impl for the forward-decl.
+// provides the `CompletionStruct` impl.
 pub struct BundleThread<C: Node> {
     pub waker: Async::Waker,
     pub ready_event: ResetEvent,
@@ -56,7 +56,7 @@ pub struct BundleThread<C: Node> {
 ///
 /// The trait accessors keep the generic `BundleThread<C>`
 /// layout-agnostic. The concrete impl lives in T6 (`bun_bundler_jsc`).
-pub trait CompletionStruct: Node + Send + 'static {
+pub trait CompletionStruct: dispatch::JsCompletion + Node + Send + 'static {
     /// `bump` is the per-build mimalloc heap that backs `transpiler`, so the
     /// two share lifetime `'a` (option fields like `optimize_imports: &'a
     /// StringSet` borrow from `bump`).
@@ -73,11 +73,16 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// Returns the file map if non-empty; a single accessor so the opaque
     /// `FileMap` layout stays in T6.
     fn file_map(&mut self) -> Option<NonNull<FileMap>>;
-    /// Returns a §Dispatch handle (erased owner + `&'static` vtable) the impl
-    /// provides, so the bundler can read `result == .err` /
-    /// `jsc_event_loop.enqueueTaskConcurrent` without naming the concrete
-    /// struct.
-    fn as_js_bundle_completion_task(&mut self) -> dispatch::CompletionHandle;
+    /// Returns the typed completion handle the bundler stores in
+    /// `BundleV2.completion`.
+    fn as_js_bundle_completion_task(&mut self) -> dispatch::CompletionHandle
+    where
+        Self: Sized,
+    {
+        dispatch::CompletionHandle(core::ptr::NonNull::from(
+            &mut *self as &mut dyn dispatch::JsCompletion,
+        ))
+    }
 
     /// `Transpiler<'a>` has borrow-carrying fields (`arena: &'a Arena`,
     /// `resolver: Resolver<'a>`) that cannot be zero-init'd, so the allocate +
@@ -198,7 +203,7 @@ impl<C: CompletionStruct> BundleThread<C> {
         // into the uv loop's intrusive handle queue / timer min-heap, and `waker.wait()`
         // (→ `uv_run`) in the `loop {}` below dereferences that address.
         #[cfg(windows)]
-        let mut timer: bun_sys::windows::libuv::Timer = bun_core::ffi::zeroed();
+        let mut timer: bun_libuv_sys::Timer = bun_core::ffi::zeroed();
         #[cfg(windows)]
         {
             // SAFETY: raw place read of `waker.loop_.uv_loop` (Copy ptr); field is
@@ -326,82 +331,6 @@ impl<C: CompletionStruct> BundleThread<C> {
         }
 
         run
-    }
-}
-
-/// Lazily-initialized singleton. This is used for `Bun.build` since the
-/// bundle thread may not be needed.
-// Rust forbids generic statics, so the storage is
-// type-erased (`*mut ()`) and the accessor functions are generic over `C`.
-// In practice exactly one `C` (`JSBundleCompletionTask`) is ever used — see
-// `get`'s safety contract — so the
-// erased static is sound. T6 (`bun_bundler_jsc`) calls these with its concrete
-// completion-task type.
-pub mod singleton {
-    use super::*;
-
-    /// `Send + Sync` newtype around the leaked `BundleThread` allocation so it
-    /// can sit inside a `OnceLock`. Type-erased because Rust forbids generic
-    /// statics; see module comment. Stored as a raw pointer (not `&'static`)
-    /// because the bundle thread mutates `*self` concurrently — callers must
-    /// only ever project fields via raw-pointer access.
-    struct Instance(NonNull<()>);
-    // SAFETY: the allocation is a leaked `Box<BundleThread<C>>` valid for
-    // `'static`; cross-thread access is mediated entirely through
-    // `UnboundedQueue` / `ResetEvent` atomics inside `BundleThread::enqueue`.
-    unsafe impl Send for Instance {}
-    // SAFETY: `&Instance` only exposes the raw pointer; every dereference path
-    // goes through `BundleThread::enqueue`'s atomic queue/waker primitives, so
-    // sharing the pointer across threads is sound.
-    unsafe impl Sync for Instance {}
-
-    static INSTANCE: std::sync::OnceLock<Instance> = std::sync::OnceLock::new();
-
-    // Blocks the calling thread until the bun build thread is created.
-    // OnceLock also blocks other callers of this function until the first caller is done.
-    fn load_once_impl<C: CompletionStruct>() -> Instance {
-        let bundle_thread = bun_core::heap::into_raw(Box::new(BundleThread::<C>::uninitialized()));
-
-        // 2. Spawn the bun build thread.
-        // SAFETY: bundle_thread is a leaked Box, valid for 'static; `spawn` takes the
-        // raw pointer directly so no `&mut` is materialized that would alias the
-        // bundle thread's own access.
-        let os_thread = unsafe { BundleThread::spawn(bundle_thread) }
-            .unwrap_or_else(|_| Output::panic(format_args!("Failed to spawn bun build thread")));
-        // `std.Thread.detach()` — drop the JoinHandle without joining.
-        drop(os_thread);
-
-        // SAFETY: `into_raw` of a `Box` is never null.
-        Instance(unsafe { NonNull::new_unchecked(bundle_thread.cast::<()>()) })
-    }
-
-    /// Returns the raw singleton pointer. The bundle thread runs `thread_main`
-    /// against this allocation for the process lifetime, so callers MUST NOT
-    /// materialize `&mut BundleThread` from it.
-    /// Use `BundleThread::enqueue(get(), ...)` instead.
-    ///
-    /// # Safety
-    /// All calls (across the process) must use the same `C`; the static is
-    /// type-erased.
-    pub fn get<C: CompletionStruct>() -> *mut BundleThread<C> {
-        // INSTANCE is a leaked 'static Box of `BundleThread<C>` (same `C` per
-        // the safety contract).
-        INSTANCE
-            .get_or_init(load_once_impl::<C>)
-            .0
-            .as_ptr()
-            .cast::<BundleThread<C>>()
-    }
-
-    pub fn enqueue<C: CompletionStruct>(completion: *mut C) {
-        // Validate the caller's pointer at the public boundary so the unsafe
-        // path below never receives null.
-        let completion = NonNull::new(completion).unwrap_or_else(|| {
-            Output::panic(format_args!("BundleThread enqueue: null completion"))
-        });
-        // SAFETY: `get()` returns the leaked 'static singleton whose bundle thread is
-        // running; `BundleThread::enqueue` only performs raw-ptr field projections.
-        unsafe { BundleThread::enqueue(get::<C>(), completion.as_ptr()) };
     }
 }
 

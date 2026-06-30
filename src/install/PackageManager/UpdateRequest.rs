@@ -7,10 +7,8 @@ use bun_core::{Global, Output};
 use bun_js_parser as js_ast;
 use bun_semver::{SlicedString, String as SemverString, string::Builder as StringBuilder};
 
-use bun_install::dependency::{self, DependencyExt as _};
-use bun_install::{
-    Dependency, INVALID_PACKAGE_ID, Lockfile, PackageID, PackageManager, PackageNameHash,
-};
+use crate::{Dependency, INVALID_PACKAGE_ID, Lockfile, PackageID, PackageManager, PackageNameHash};
+use bun_install_types::dependency::{self};
 // `lockfile.packages.items_name()` is provided by an extension trait on
 // `MultiArrayList<Package>`.
 pub struct UpdateRequest {
@@ -29,7 +27,7 @@ pub struct UpdateRequest {
     /// type map: `[]const u8` struct-field, never freed, points into a buffer
     /// owned elsewhere → `RawSlice<u8>` (centralises the outlives-holder
     /// invariant; see `version_buf()`).
-    pub version_buf: bun_ptr::RawSlice<u8>,
+    pub version_buf: bun_core::RawSlice<u8>,
     pub package_id: PackageID,
     pub is_aliased: bool,
     pub failed: bool,
@@ -45,7 +43,7 @@ impl Default for UpdateRequest {
             name: b"",
             name_hash: 0,
             version: dependency::Version::default(),
-            version_buf: bun_ptr::RawSlice::EMPTY,
+            version_buf: bun_core::RawSlice::EMPTY,
             package_id: INVALID_PACKAGE_ID,
             is_aliased: false,
             failed: false,
@@ -104,7 +102,7 @@ impl UpdateRequest {
         }
     }
 
-    /// If `self.package_id` is not `invalid_package_id`, it must be less than `lockfile.packages.len`.
+    /// If `self.package_id` is not `INVALID_PACKAGE_ID`, it must be less than `lockfile.packages.len`.
     pub fn get_name_in_lockfile<'a>(&'a self, lockfile: &'a Lockfile) -> Option<&'a [u8]> {
         if self.package_id == INVALID_PACKAGE_ID {
             None
@@ -211,7 +209,8 @@ impl UpdateRequest {
                 None,
                 &SlicedString::init(input, value),
                 Some(&mut *log),
-                pm.as_deref_mut(),
+                pm.as_deref_mut()
+                    .map(|m| m as &mut dyn dependency::NpmAliasRegistry),
             ) else {
                 if fatal {
                     Output::err_generic(
@@ -231,7 +230,7 @@ impl UpdateRequest {
 
                 return Err(bun_core::err!("UnrecognizedDependencyFormat"));
             };
-            if alias.is_some() && version.tag == dependency::version::Tag::Git {
+            if alias.is_some() && version.tag == dependency::Tag::Git {
                 if let Some(ver) = Dependency::parse_with_optional_tag(
                     placeholder,
                     None,
@@ -239,17 +238,16 @@ impl UpdateRequest {
                     None,
                     &SlicedString::init(input, input),
                     Some(&mut *log),
-                    pm.as_deref_mut(),
+                    pm.as_deref_mut()
+                        .map(|m| m as &mut dyn dependency::NpmAliasRegistry),
                 ) {
                     alias = None;
                     version = ver;
                 }
             }
             if match version.tag {
-                dependency::version::Tag::DistTag => {
-                    version.dist_tag().name.eql(placeholder, input, input)
-                }
-                dependency::version::Tag::Npm => version.npm().name.eql(placeholder, input, input),
+                dependency::Tag::DistTag => version.dist_tag().name.eql(placeholder, input, input),
+                dependency::Tag::Npm => version.npm().name.eql(placeholder, input, input),
                 _ => false,
             } {
                 if fatal {
@@ -273,7 +271,7 @@ impl UpdateRequest {
 
             let mut request = UpdateRequest {
                 version,
-                version_buf: bun_ptr::RawSlice::new(input),
+                version_buf: bun_core::RawSlice::new(input),
                 ..UpdateRequest::default()
             };
             if let Some(name) = alias {
@@ -298,5 +296,5 @@ impl UpdateRequest {
 }
 
 pub use super::Subcommand;
-pub use bun_install::package_manager::Options;
-pub use bun_install::package_manager::command_line_arguments as CommandLineArguments;
+pub use crate::package_manager::Options;
+pub use crate::package_manager::command_line_arguments as CommandLineArguments;

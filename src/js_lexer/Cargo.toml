@@ -1,0 +1,20 @@
+[package]
+name = "bun_js_lexer"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bytemuck = "1"
+strum.workspace = true
+bstr.workspace = true
+bun_alloc.workspace = true
+bun_core.workspace = true
+bun_collections.workspace = true
+bun_highway.workspace = true
+bun_ast.workspace = true

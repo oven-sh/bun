@@ -3,8 +3,8 @@
 use core::alloc::Layout;
 use core::ptr::NonNull;
 
+use crate::Alignment;
 use crate::MAX_ALIGN_T as MAX_ALIGN;
-use crate::{Alignment, Allocator};
 
 /// The returned pointer must be aligned to `max_align_t`. Rust `Vec<u8>`
 /// allocates with align 1, which would violate the `alignment <= MAX_ALIGN`
@@ -73,18 +73,12 @@ impl MaxHeapAllocator {
         MaxHeapScope { inner: self }
     }
 
-    // The caller constructs `MaxHeapAllocator::init()` and obtains
-    // `&dyn Allocator` by borrowing the result.
     pub fn init() -> Self {
         Self {
             ptr: None,
             capacity: 0,
             len: 0,
         }
-    }
-
-    pub fn is_instance(alloc: &dyn Allocator) -> bool {
-        alloc.is::<Self>()
     }
 }
 
@@ -95,8 +89,8 @@ impl Default for MaxHeapAllocator {
 }
 
 /// RAII guard returned by [`MaxHeapAllocator::scope`]. Derefs to the underlying
-/// allocator so callers can hand out `&mut MaxHeapAllocator` (or a derived
-/// `&dyn Allocator`) for the duration of the scope, and resets it on drop.
+/// allocator so callers can hand out `&mut MaxHeapAllocator` for the duration
+/// of the scope, and resets it on drop.
 pub struct MaxHeapScope<'a> {
     inner: &'a mut MaxHeapAllocator,
 }
@@ -119,10 +113,6 @@ impl Drop for MaxHeapScope<'_> {
         self.inner.reset();
     }
 }
-
-// `Allocator` is a marker trait carrying `type_id()`; the vtable methods above
-// are inherent (no dynamic dispatch needed for a single-allocation arena).
-impl Allocator for MaxHeapAllocator {}
 
 impl Drop for MaxHeapAllocator {
     fn drop(&mut self) {

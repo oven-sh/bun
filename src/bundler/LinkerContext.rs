@@ -49,45 +49,9 @@ pub type EventLoop = Option<core::ptr::NonNull<bun_event_loop::AnyEventLoop<'sta
 bun_core::declare_scope!(LinkerCtx, visible);
 bun_core::declare_scope!(TreeShake, hidden);
 
-// ══════════════════════════════════════════════════════════════════════════
-// CYCLEBREAK(b0): vtable instance for `bun_crash_handler::BundleGenerateChunkVTable`
-// (cold-path §Dispatch — crash trace only). crash_handler (T1) holds erased
-// `(*const LinkerContext, *const Chunk, *const PartRange)`; bundler supplies
-// the formatter that knows their layout.
-// ══════════════════════════════════════════════════════════════════════════
-#[cfg(feature = "show_crash_trace")]
-bun_crash_handler::link_impl_BundleGenerateChunkCtx! {
-    Linker for LinkerContext => |this| {
-        fmt(chunk, part_range, writer) => {
-            let ctx = &*this;
-            let chunk = &*chunk.cast::<Chunk>();
-            let pr = &*part_range.cast::<PartRange>();
-            let parse_graph = ctx.parse_graph();
-            let sources = parse_graph.input_files.items_source();
-            let entry = if pr.source_index.is_valid() {
-                sources
-                    .get(chunk.entry_point.source_index() as usize)
-                    .map(|s| bstr::BStr::new(&s.path.text))
-            } else {
-                None
-            };
-            let source = if pr.source_index.is_valid() {
-                sources
-                    .get(pr.source_index.get() as usize)
-                    .map(|s| bstr::BStr::new(&s.path.text))
-            } else {
-                None
-            };
-            write!(
-                writer,
-                "generating bundler chunk\n  chunk entry point: {:?}\n  source: {:?}\n  part range: {}..{}",
-                entry, source, pr.part_index_begin, pr.part_index_end,
-            )
-        },
-    }
-}
-
 /// Helper for constructing a crash-trace `Action::BundleGenerateChunk`.
+/// Resolves the two display paths eagerly (two slice lookups) so the crash
+/// handler stores plain data instead of live bundler pointers.
 #[cfg(feature = "show_crash_trace")]
 #[inline]
 pub(crate) fn bundle_generate_chunk_action(
@@ -95,16 +59,25 @@ pub(crate) fn bundle_generate_chunk_action(
     chunk: &Chunk,
     part_range: &PartRange,
 ) -> bun_crash_handler::Action {
+    let parse_graph = ctx.parse_graph();
+    let sources = parse_graph.input_files.items_source();
+    let (entry_point_path, source_path) = if part_range.source_index.is_valid() {
+        (
+            sources
+                .get(chunk.entry_point.source_index() as usize)
+                .map(|s| s.path.text),
+            sources
+                .get(part_range.source_index.get() as usize)
+                .map(|s| s.path.text),
+        )
+    } else {
+        (None, None)
+    };
     bun_crash_handler::Action::BundleGenerateChunk(bun_crash_handler::BundleGenerateChunk {
-        // SAFETY: `ctx`/`chunk`/`part_range` outlive the crash-trace scope this is held for.
-        ctx: unsafe {
-            bun_crash_handler::BundleGenerateChunkCtx::new(
-                bun_crash_handler::BundleGenerateChunkCtxKind::Linker,
-                core::ptr::from_ref(ctx).cast_mut(),
-            )
-        },
-        chunk: core::ptr::from_ref::<Chunk>(chunk).cast::<()>(),
-        part_range: core::ptr::from_ref::<PartRange>(part_range).cast::<()>(),
+        entry_point_path,
+        source_path,
+        part_index_begin: part_range.part_index_begin,
+        part_index_end: part_range.part_index_end,
     })
 }
 
@@ -1302,6 +1275,9 @@ bun_core::named_error_set!(LinkError);
 
 pub struct LinkerOptions {
     pub generate_bytecode_cache: bool,
+    /// JSC bytecode generator injected by the runtime tier; set alongside
+    /// `generate_bytecode_cache` from `BundleOptions.generate_cached_bytecode`.
+    pub bytecode_generator: Option<crate::options::BytecodeGenerator>,
     pub output_format: Format,
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
@@ -1331,6 +1307,7 @@ impl Default for LinkerOptions {
     fn default() -> Self {
         Self {
             generate_bytecode_cache: false,
+            bytecode_generator: None,
             output_format: Format::Esm,
             ignore_dce_annotations: false,
             emit_dce_annotations: true,
@@ -2188,7 +2165,7 @@ impl<'a> LinkerContext<'a> {
         }];
 
         // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
-        // across `RequireOrImportMetaCallback::init(self)` (`&mut self`) below.
+        // across `self.require_or_import_meta_callback()` (`&mut self`) below.
         let parse_graph = unsafe { &*self.parse_graph };
 
         // Note: reshaped for borrowck — `Options` borrows `ts_enums` /
@@ -2243,8 +2220,7 @@ impl<'a> LinkerContext<'a> {
                 Format::Cjs => None, // use unbounded global
                 _ => runtime_require_ref,
             },
-            require_or_import_meta_for_source_callback:
-                js_printer::RequireOrImportMetaCallback::init(self),
+            require_or_import_meta_for_source_callback: self.require_or_import_meta_callback(),
             line_offset_tables: Some(line_offset_table),
             target: self.options.target,
 
@@ -2397,7 +2373,7 @@ impl<'a> LinkerContext<'a> {
                         let original_name: &[u8] = symbol.original_name.slice();
                         // The hash itself is short-lived; use a scratch bump.
                         let scratch = ::bun_alloc::Arena::new();
-                        let path_hash = ::bun_base64::wyhash_url_safe(
+                        let path_hash = ::bun_css::css_modules::hash(
                             &scratch,
                             // use path relative to cwd for determinism
                             format_args!("{}", bstr::BStr::new(&source.path.pretty)),
@@ -2575,16 +2551,27 @@ impl<'a> LinkerContext<'a> {
     }
 } // end — split: tree-shaking trio below
 
-/// `js_printer::RequireOrImportMetaSource` — manual-vtable shim so the printer
-/// can call back into `LinkerContext::require_or_import_meta_for_source`.
-impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
-    #[inline]
-    fn require_or_import_meta_for_source(
-        &mut self,
-        id: u32,
-        was_unwrapped_require: bool,
-    ) -> js_printer::RequireOrImportMeta {
-        LinkerContext::require_or_import_meta_for_source(self, id, was_unwrapped_require)
+impl<'a> LinkerContext<'a> {
+    /// Builds the printer's require/import-meta callback over `self`.
+    /// The print pass never outlives the `LinkerContext` it was built from.
+    pub fn require_or_import_meta_callback(&mut self) -> js_printer::RequireOrImportMetaCallback {
+        fn thunk(
+            p: *mut (),
+            id: u32,
+            was_unwrapped_require: bool,
+        ) -> js_printer::RequireOrImportMeta {
+            // SAFETY: `p` was derived from the `&mut LinkerContext` captured
+            // below; the context outlives every print pass holding the
+            // callback, and prints re-enter only through this thunk.
+            unsafe {
+                (*p.cast::<LinkerContext>())
+                    .require_or_import_meta_for_source(id, was_unwrapped_require)
+            }
+        }
+        js_printer::RequireOrImportMetaCallback {
+            ctx: Some(core::ptr::NonNull::from(self).cast::<()>()),
+            callback: thunk,
+        }
     }
 }
 
@@ -2734,7 +2721,6 @@ impl<'a> LinkerContext<'a> {
                         .path
                         .pretty
                 ),
-                // Note: `bake_graph()` lives in `bun_bake` (tier-6 — would back-edge).
                 // The debug log only needs a stable label, so print the `Target`
                 // tag directly via its `IntoStaticStr` derive.
                 <&'static str>::from(parse_graph.ast.items_target()[source_index as usize]),

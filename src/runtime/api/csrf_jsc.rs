@@ -9,6 +9,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use crate::api::crypto::evp::Algorithm as EvpAlgorithm;
 use crate::crypto::evp;
 use crate::node::Encoding as NodeEncoding;
+use crate::node::types::EncodingExt as _;
 
 // `bun_jsc::comptime_string_map_jsc` only exposes the case-sensitive `from_js`;
 // map keys are all lower-case ASCII, so lower the probe and do a direct lookup
@@ -178,14 +179,7 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
     };
 
     // Encode the token
-    // `csrf::TokenFormat::to_node_encoding()` returns the cycle-broken
-    // `bun_core::NodeEncoding`, not `crate::node::Encoding` (which owns
-    // `encode_with_max_size`). Map locally to the runtime enum instead.
-    let node_encoding = match encoding {
-        csrf::TokenFormat::Base64 => NodeEncoding::Base64,
-        csrf::TokenFormat::Base64Url => NodeEncoding::Base64url,
-        csrf::TokenFormat::Hex => NodeEncoding::Hex,
-    };
+    let node_encoding = encoding.to_node_encoding();
     node_encoding.encode_with_max_size(global, boring::EVP_MAX_MD_SIZE as usize + 32, token_bytes)
 }
 

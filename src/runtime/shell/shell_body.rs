@@ -6,6 +6,7 @@ use core::fmt;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
+use bun_jsc::SystemErrorJsc as _;
 use bun_jsc::{
     self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult,
     MarkedArgumentBuffer, PlatformEventLoop,
@@ -34,18 +35,12 @@ pub use yield_::Yield;
 
 // ─── lexer / parser / AST (moved down to bun_shell_parser) ──────────────────
 // The encoding-agnostic lex/parse/AST surface lives in the lower-tier
-// `bun_shell_parser` crate so `Interpreter::parse` can compile without the
-// (still-draft) JSC bridge below. This file keeps the JSC-coupled half
+// `bun_shell_parser` crate; these are this file's own imports of the names it
+// uses. This file keeps the JSC-coupled half
 // (ShellErr, GlobalJS/Mini, shell_cmd_from_js, ShellSrcBuilder, TestingAPIs).
-pub use bun_shell_parser::parse::ast as AST;
-pub use bun_shell_parser::parse::{
-    BACKSLASHABLE_CHARS, BacktrackSnapshot, CharState, EscapeUtf16Result, IfClauseTok, InputChar,
-    JSValueRaw, LEX_JS_OBJREF_PREFIX, LEX_JS_STRING_PREFIX, LexError, LexResult, Lexer, LexerAscii,
-    LexerError, LexerUnicode, ParseError, Parser, ParserError, SPECIAL_CHARS, SPECIAL_CHARS_TABLE,
-    ShellCharIter, SmolList, Src, SrcAscii, SrcUnicode, StringEncoding, SubShellKind, SubshellKind,
-    TextRange, Token, TokenTag, assert_special_char, ast, escape_8bit, escape_bun_str,
-    escape_utf16, has_eq_sign, is_if_clause_keyword_bunstr, is_valid_var_name, needs_escape_bunstr,
-    needs_escape_utf8_ascii_latin1, needs_escape_utf16,
+use bun_shell_parser::parse::{
+    IfClauseTok, LEX_JS_OBJREF_PREFIX, LEX_JS_STRING_PREFIX, LexerAscii, LexerUnicode, Token, ast,
+    is_if_clause_keyword_bunstr, needs_escape_bunstr, needs_escape_utf8_ascii_latin1,
 };
 
 // Glob walker configured for SyscallAccessor + sentinel (NUL-terminated) paths.
@@ -91,7 +86,7 @@ impl ShellErr {
             ShellErr::Sys(sys) => {
                 // `to_error_instance` decrements every string ref itself, so we
                 // must hand it the *owned* value (move) — no extra deref here.
-                let err = bun_jsc::SystemError::from(sys).to_error_instance(global);
+                let err = sys.to_error_instance(global);
                 global.throw_value(err)
             }
             ShellErr::Custom(custom) => {
@@ -1250,7 +1245,7 @@ pub mod testing_apis {
         let script_ast = match interpret::Interpreter::parse(
             &arena,
             &script[..],
-            &mut jsobjs[..],
+            &jsobjs[..],
             &mut jsstrings[..],
             &mut out_parser,
             &mut out_lex_result,

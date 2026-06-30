@@ -7,6 +7,7 @@ use bun_collections::HashMap;
 use bun_collections::VecExt;
 use bun_dotenv as dot_env;
 use bun_js_parser as js_ast;
+use bun_options_types::ForceNodeEnv;
 use bun_perf::system_timer::Timer as SystemTimer;
 use bun_resolver::fs as Fs;
 use bun_resolver::{self as resolver, Resolver};
@@ -40,14 +41,15 @@ pub enum BunPluginTarget {
 // is what matters at the ABI.
 bun_core::assert_ffi_discr!(BunPluginTarget, u8; Bun = 0, Node = 1, Browser = 2);
 
-/// The JSC-aware resolve hook.
+/// The JSC-aware resolve hook, injected per-VM (`virtual_machine_exports.rs`).
 ///
-/// The body calls `JSGlobalObject.runOnResolvePlugins`, so it cannot be
-/// defined at this tier (`bun_jsc` depends on this crate). `bun_jsc` provides
-/// the concrete `PluginRunner { global_object: *mut JSGlobalObject }` and
-/// implements this trait; `Linker.plugin_runner` holds it as
-/// `*mut dyn PluginResolver` so the linker stays JSC-free while the body lives
-/// in exactly one place (no fn-ptr field, no `*mut c_void` erasure).
+/// The body calls `JSGlobalObject.runOnResolvePlugins`, so it cannot live at
+/// this tier (`bun_jsc` depends on this crate); `bun_jsc::plugin_runner::
+/// PluginRunner` is the implementor. This trait is the sanctioned injection
+/// seam for the linker's mid-link plugin resolution — `Linker.plugin_runner`
+/// holds it as `Option<NonNull<dyn PluginResolver>>` so the linker stays
+/// JSC-free while the body lives in exactly one place. Do not add parallel
+/// fn-pointer/`extern` paths around it.
 pub trait PluginResolver {
     fn on_resolve(
         &self,
@@ -104,14 +106,7 @@ impl PluginRunner {
     }
 }
 
-/// The canonical newtype lives in `bun_ast::Macro` (the lowest tier that
-/// stores it, in `MacroContext.javascript_object`); re-exported here.
-pub use js_ast::Macro::MacroJSCtx;
-/// The default (zero) macro JS context value.
-#[inline]
-pub const fn default_macro_js_value() -> MacroJSCtx {
-    MacroJSCtx::ZERO
-}
+use js_ast::Macro::MacroJSCtx;
 
 /// This structure was the JavaScript transpiler before bundle_v2 was written. It
 /// now acts mostly as a configuration object, but it also contains stateful
@@ -408,7 +403,7 @@ impl<'a> Transpiler<'a> {
     #[inline]
     pub fn get_package_manager(
         &mut self,
-    ) -> Result<*mut dyn bun_resolver::install_types::AutoInstaller, bun_core::Error> {
+    ) -> Result<*mut dyn bun_install_types::resolver_hooks::AutoInstaller, bun_core::Error> {
         self.resolver.get_package_manager()
     }
 
@@ -484,7 +479,7 @@ impl<'a> Transpiler<'a> {
         match self._resolve_entry_point(entry_point) {
             Ok(r) => Ok(r),
             Err(err) => {
-                let mut cache_bust_buf = bun_paths::PathBuffer::uninit();
+                let mut cache_bust_buf = bun_core::PathBuffer::uninit();
 
                 // Bust directory cache and try again
                 // reshaped for borrowck — a single labelled block would
@@ -558,7 +553,7 @@ impl<'a> Transpiler<'a> {
         }
 
         if self.options.target == options::Target::BunMacro {
-            self.options.env.behavior = bun_options_types::schema::api::DotEnvBehavior::Prefix;
+            self.options.env.behavior = bun_dotenv::DotEnvBehavior::Prefix;
             self.options.env.prefix = Box::from(b"BUN_".as_slice());
         }
 
@@ -597,8 +592,8 @@ impl<'a> Transpiler<'a> {
         if is_development {
             self.options.set_production(false);
             self.resolver.opts.set_production(false);
-            self.options.force_node_env = options::ForceNodeEnv::Development;
-            self.resolver.opts.force_node_env = options::ForceNodeEnv::Development;
+            self.options.force_node_env = ForceNodeEnv::Development;
+            self.resolver.opts.force_node_env = ForceNodeEnv::Development;
         } else if is_production {
             self.options.set_production(true);
             self.resolver.opts.set_production(true);
@@ -655,16 +650,6 @@ impl<'a> Transpiler<'a> {
 
 use bun_resolver::tsconfig_json::TSConfigJSON;
 
-/// D042: resolver-side and bundler-side `jsx::Pragma` are now the SAME
-/// nominal type (`bun_options_types::jsx::Pragma`). Identity clone; kept so
-/// existing call sites compile unchanged.
-#[inline(always)]
-fn jsx_pragma_from_resolver(
-    src: &bun_resolver::tsconfig_json::options::jsx::Pragma,
-) -> crate::options_impl::jsx::Pragma {
-    src.clone()
-}
-
 /// D042: types unified — delegate to the resolver's own
 /// `TSConfigJSON::merge_jsx` (5-field conditional copy keyed on `jsx_flags`).
 #[inline]
@@ -703,7 +688,7 @@ impl<'a> Transpiler<'a> {
                 if let Some(tsconfig) = root_dir.tsconfig_json() {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig
                     if self.options.transform_options.jsx.is_none() {
-                        self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
+                        self.options.jsx = tsconfig.jsx.clone();
                     }
                     self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                     self.options.experimental_decorators = tsconfig.experimental_decorators;
@@ -721,7 +706,7 @@ impl<'a> Transpiler<'a> {
     /// Load `.env` files into the env loader according to
     /// `options.env.behavior`.
     pub fn run_env_loader(&mut self, skip_default_env: bool) -> Result<(), bun_core::Error> {
-        use bun_options_types::schema::api::DotEnvBehavior;
+        use bun_dotenv::DotEnvBehavior;
         // Derived once up front; no other live `&mut` to this `Loader` exists
         // for the duration of this call.
         let env: &mut dot_env::Loader<'_> = self.env_mut();
@@ -766,12 +751,12 @@ impl<'a> Transpiler<'a> {
                     return Ok(());
                 };
                 // `get_entries` returns `*mut bun_resolver::fs::DirEntry`
-                // (BSSMap-owned). `dot_env::Loader::load` takes
-                // `impl DirEntryProbe` (bun_dotenv sits below `bun_resolver`
-                // in the crate graph); `bun_resolver::fs::DirEntry` impls it.
+                // (BSSMap-owned). The caller probes the entry map here and
+                // passes the presence bits to `dot_env::Loader::load`
+                // (bun_dotenv sits below `bun_resolver` in the crate graph).
                 // SAFETY: BSSMap singleton owns `*dir`; single-threaded path —
-                // sole `&mut` for the call.
-                let dir: &mut bun_resolver::fs::DirEntry = unsafe { &mut *dir };
+                // sole borrow for the probe.
+                let dir: &bun_resolver::fs::DirEntry = unsafe { &*dir };
 
                 // `Env.files: Box<[Box<[u8]>]>` but `Loader::load`
                 // wants `&[&[u8]]`. Re-borrow into a small Vec; the explicit
@@ -785,7 +770,12 @@ impl<'a> Transpiler<'a> {
                 } else {
                     dot_env::DotEnvFileSuffix::Development
                 };
-                env.load(dir, &env_files, suffix, skip_default_env)?;
+                env.load(
+                    dot_env::DefaultEnvFiles::probe(|n| dir.has_comptime_query(n)),
+                    &env_files,
+                    suffix,
+                    skip_default_env,
+                )?;
             }
             DotEnvBehavior::disable => {
                 env.load_process()?;
@@ -987,34 +977,24 @@ use bun_options_types::schema::api;
 // `ModuleType`, `Define`, `RuntimeTranspilerCache` are single nominal types
 // shared between `bun_js_parser` and this crate (canonical defs live in the
 // lower-tier crate; bundler re-exports). There are no by-value conversion
-// shims — `to_parser_module_type` is an identity fn and `parse_maybe`
+// shims — `parse_maybe`
 // threads `self.options.define` / `runtime_transpiler_cache` directly.
 //
 // D042 UNIFIED: `crate::options_impl::jsx::Pragma` IS
-// `js_ast::parser::options::JSX::Pragma` (both re-export
-// `bun_options_types::jsx::Pragma`). Only the `_None → Automatic` fold is
+// `bun_options_types::jsx::Pragma` (the bundler's `options_impl::jsx`
+// re-exports it). Only the `_None → Automatic` fold is
 // applied so parser-side `== Automatic` checks in visitExpr/parseJSXElement
 // keep their pre-unification semantics (parser only ever sees a resolved
 // runtime).
 #[inline]
 pub(crate) fn to_parser_jsx_pragma(
     mut p: crate::options_impl::jsx::Pragma,
-) -> js_ast::parser::options::JSX::Pragma {
+) -> bun_options_types::jsx::Pragma {
     use crate::options_impl::jsx::Runtime;
     if p.runtime == Runtime::_None {
         p.runtime = Runtime::Automatic;
     }
     p
-}
-
-// `crate::options_impl::ModuleType` IS `js_ast::parser::options::ModuleType`
-// (both re-export `bun_options_types::bundle_enums::ModuleType`). Identity shim
-// kept so existing call sites compile unchanged; inlines to a move.
-#[inline(always)]
-fn to_parser_module_type(
-    m: crate::options_impl::ModuleType,
-) -> js_ast::parser::options::ModuleType {
-    m
 }
 
 /// The inline `bun_resolver::fs` module exposes the `FileSystem`
@@ -1038,10 +1018,10 @@ fn init_file_system(
     Fs::FileSystem::init(top_level_dir)
 }
 
-/// Project this crate's `options::BundleOptions<'a>` into the
-/// resolver-crate FORWARD_DECL subset (`bun_resolver::options::BundleOptions`).
-/// The two are nominally distinct until MOVE_DOWN to `bun_options_types`
-/// unifies them (resolver/lib.rs `mod options` note).
+/// Projects the flat CLI/config aggregate into the canonical
+/// `bun_options_types::resolve_options::BundleOptions` consumed by
+/// `Resolver::init1`. One nominal type family on both sides; this is a value
+/// copy, not a mirror conversion.
 ///
 /// `resolver.opts` must carry the same user-configured
 /// `--external`, `--conditions`, `--main-fields`, and the extension order.
@@ -1049,10 +1029,6 @@ fn init_file_system(
 /// `Box::leak`); the resolver-side FORWARD_DECL types were widened to owned
 /// `Box<[Box<[u8]>]>`/`StringSet`/`StringArrayHashMap` so this is a faithful
 /// value copy rather than a `Default` stub.
-///
-/// This projection can be dropped once `bun_options_types::BundleOptions` exists and both
-/// crates re-export it — `Resolver::init1` will then take the canonical type
-/// directly.
 ///
 /// `#[cold]`/`#[inline(never)]`: this is a ~100-line struct-construction blob
 /// run exactly once per `Transpiler::init` (i.e. once per VM bring-up). Keeping
@@ -1086,7 +1062,7 @@ pub(crate) fn resolver_bundle_options_subset(
                 default: src.extension_order.node_modules.default.clone(),
                 esm: src.extension_order.node_modules.esm.clone(),
             },
-            css: ropts::owned_string_list(ropts::bundle_options::defaults::CSS_EXTENSION_ORDER),
+            css: ropts::owned_string_list(bun_options_types::bundle_defaults::CSS_EXTENSION_ORDER),
         },
         conditions: ropts::Conditions {
             import: src.conditions.import.clone().expect("oom"),
@@ -1095,29 +1071,9 @@ pub(crate) fn resolver_bundle_options_subset(
         },
         external: src.external.clone(),
         extra_cjs_extensions: src.extra_cjs_extensions.clone(),
-        framework: src.framework.map(|f| {
-            // Bundler-local `bake_types::BuiltInModule` and
-            // `bun_options_types::BuiltInModule` are nominally distinct (the
-            // former predates the TYPE_ONLY move-down); convert variant-wise.
-            use crate::bake_types::BuiltInModule as B;
-            use bun_options_types::BuiltInModule as R;
-            let mut m = bun_collections::StringArrayHashMap::default();
-            for (k, v) in f
-                .built_in_modules
-                .keys()
-                .iter()
-                .zip(f.built_in_modules.values().iter())
-            {
-                let rv = match v {
-                    B::Import(p) => R::Import(p.clone()),
-                    B::Code(c) => R::Code(c.clone()),
-                };
-                m.put(k, rv).expect("oom");
-            }
-            ropts::Framework {
-                built_in_modules: m,
-            }
-        }),
+        framework: src
+            .framework
+            .map(bun_options_types::bake::Framework::deep_clone),
         global_cache: src.global_cache,
         // Both sides store
         // `Option<NonNull<api::BunInstall>>`, so this is a straight copy.
@@ -1149,6 +1105,67 @@ pub(crate) fn resolver_bundle_options_subset(
         supports_multiple_outputs: src.supports_multiple_outputs,
         tree_shaking: src.tree_shaking,
         allow_runtime: src.allow_runtime,
+    }
+}
+
+/// Process-lifetime arena for the script-runner `Transpiler` singletons
+/// (`bun run` dispatch in bun_runtime::cli and the install-tier lifecycle
+/// runner). `bun_alloc::Arena` is `!Sync`, so guard a raw `MaybeUninit`
+/// global with `Once`. Only ever touched from the single CLI dispatch /
+/// install main thread.
+pub fn runner_arena() -> &'static Arena {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    static ARENA: bun_core::RacyCell<core::mem::MaybeUninit<Arena>> =
+        bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
+    ONCE.call_once(|| {
+        // SAFETY: one-time init under `Once`; no concurrent writer.
+        unsafe { (*ARENA.get()).write(Arena::new()) };
+    });
+    // SAFETY: initialized exactly once above; single-threaded consumers.
+    unsafe { (*ARENA.get()).assume_init_ref() }
+}
+
+/// npm-compatible env seeding shared by `RunCommand::configure_env_for_run`
+/// (bun_runtime::cli) and the install-tier lifecycle-script runner:
+/// BUN_FEATURE_FLAG_NO_ORPHANS propagation, `npm_config_user_agent`,
+/// `npm_execpath`.
+pub fn seed_npm_runner_env(env_loader: &mut dot_env::Loader<'_>) {
+    // Propagate --no-orphans / [run] noOrphans to the script's env so any
+    // Bun process the script spawns enables its own watchdog. The env
+    // loader snapshots `environ` before flag parsing runs, so the
+    // `setenv()` in `enable()` isn't reflected here.
+    if bun_io::parent_death_watchdog::is_enabled() {
+        let _ = env_loader.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1");
+    }
+
+    // we have no way of knowing what version they're expecting without
+    // running the node executable; running the node executable is too
+    // slow, so we will just hardcode it to LTS
+    let _ = env_loader.map.put_default(
+        b"npm_config_user_agent",
+        // the use of npm/? is copying yarn
+        // e.g.
+        // > "yarn/1.22.4 npm/? node/v12.16.3 darwin x64",
+        const_format::concatcp!(
+            "bun/",
+            bun_core::Global::package_json_version,
+            " npm/? node/v",
+            bun_core::env::REPORTED_NODEJS_VERSION,
+            " ",
+            bun_core::Global::os_name,
+            " ",
+            bun_core::Global::arch_name,
+        )
+        .as_bytes(),
+    );
+
+    if env_loader.get(b"npm_execpath").is_none() {
+        // we don't care if this fails
+        if let Ok(self_exe) = bun_core::self_exe_path() {
+            let _ = env_loader
+                .map
+                .put_default(b"npm_execpath", self_exe.as_bytes());
+        }
     }
 }
 
@@ -1567,7 +1584,6 @@ impl<'a> Transpiler<'a> {
                 // directly (mirroring the body of `Options::init`,
                 // ast/Parser.rs:144-180) so `'x` is inferred from the borrows
                 // below instead of pinned to `'static`.
-                use js_ast::parser::options as p_opts;
                 let mut opts = js_ast::ParserOptions::<'_> {
                     ts: loader.is_typescript(),
                     jsx: to_parser_jsx_pragma(jsx),
@@ -1584,9 +1600,9 @@ impl<'a> Transpiler<'a> {
                     package_version: b"",
                     macro_context: None,
                     warn_about_unbundled_modules: !target.is_bun(),
-                    allow_unresolved: &p_opts::AllowUnresolved::DEFAULT,
-                    module_type: to_parser_module_type(this_parse.module_type),
-                    output_format: p_opts::Format::Esm,
+                    allow_unresolved: &js_ast::AllowUnresolved::DEFAULT,
+                    module_type: this_parse.module_type,
+                    output_format: bun_options_types::Format::Esm,
                     transform_only: self.options.transform_only,
                     import_meta_main_value: None,
                     lower_import_meta_main_for_node_js: false,
@@ -1675,9 +1691,9 @@ impl<'a> Transpiler<'a> {
                     self.macro_context.as_mut().unwrap().javascript_object =
                         this_parse.macro_js_ctx;
                 }
-                // `crate::defines::Define` IS
-                // `bun_js_parser::defines::Define`. Hand the parser the real
-                // table so user `--define` values apply at parse time.
+                // `options.define` is the canonical
+                // `bun_js_parser::defines::Define` table. Hand the parser the
+                // real table so user `--define` values apply at parse time.
                 let define: &'a js_ast::defines::Define;
                 // SAFETY: `self.options.define` / `self.macro_context` are
                 // owned by the long-lived `Transpiler`; the parser borrows
@@ -1694,13 +1710,10 @@ impl<'a> Transpiler<'a> {
                         .map(|m| &mut *core::ptr::from_mut(m));
                 }
 
-                // spec calls `transpiler.resolver.caches.js.parse`.
-                // The resolver-side `cache::JavaScript` is a fieldless
-                // shell with no `parse` body (resolver/lib.rs:1664);
-                // the real `parse` lives on `crate::cache::JavaScript`. Both
-                // are stateless unit structs, so calling the bundler-crate one
-                // directly is equivalent.
-                let parsed = match crate::cache::JavaScript::init()
+                let parsed = match self
+                    .resolver
+                    .caches
+                    .js
                     .parse(arena, opts, define, log, source)
                 {
                     Ok(Some(r)) => r,
@@ -1754,7 +1767,7 @@ impl<'a> Transpiler<'a> {
                                     // No shared const for the bytecode extension
                                     // in `bun_core` yet, so inline the literal.
                                     const BYTECODE_EXT: &[u8] = b".jsc";
-                                    let mut path_buf2 = bun_paths::PathBuffer::uninit();
+                                    let mut path_buf2 = bun_core::PathBuffer::uninit();
                                     let n = path.text.len();
                                     let total = n + BYTECODE_EXT.len();
                                     // `ZStr::from_buf` needs `buf[total] == 0`
@@ -2278,26 +2291,6 @@ use bun_js_printer as js_printer;
 // T6, so unify on the printer type here.
 use js_printer::analyze_transpiled_module;
 
-/// Map the bundler-local `Target` (options.rs:489) to the lower-tier
-/// `bun_ast::Target` consumed by `js_printer::Options`.
-/// The two enums are variant-for-variant identical but nominally distinct;
-/// they could be collapsed (see lib.rs `pub mod options` shadow note).
-#[inline]
-fn to_bundle_enums_target(t: crate::options_impl::Target) -> bun_ast::Target {
-    use bun_ast::Target as T;
-    match t {
-        crate::options_impl::Target::Browser => T::Browser,
-        crate::options_impl::Target::Bun => T::Bun,
-        crate::options_impl::Target::BunMacro => T::BunMacro,
-        crate::options_impl::Target::Node => T::Node,
-        crate::options_impl::Target::ServerComponentsSsr => T::ServerComponentsSsr,
-    }
-}
-
-/// Re-export so `bun_bundler::PrintFormat::EsmAscii` (AsyncModule.rs:1018)
-/// resolves once `lib.rs` `pub use transpiler::*` lands.
-pub use js_printer::Format as PrintFormat;
-
 // PERF: this whole `print*` chain was generic over `W: WriterTrait`, but every
 // call site in the tree (jsc_hooks.rs, RuntimeTranspilerStore.rs, AsyncModule.rs,
 // JSTranspiler.rs, and the in-crate `transform()` path) passes the same concrete
@@ -2346,7 +2339,7 @@ impl<'a> Transpiler<'a> {
         // is the real `parser::Runtime::Imports`, the same type
         // `js_printer::Options.runtime_imports` takes (via `js_ast::runtime`),
         // so the seam is gone.
-        // `target` is now forwarded via `to_bundle_enums_target` below — it
+        // `target` is now forwarded below — it
         // *does* affect the EsmAscii/bun-runtime path (js_printer/lib.rs:6872
         // gates the `var {require}=import.meta;` hoist on `target == Bun`;
         // regression of oven-sh/bun#15738 if left at the `Browser` default).
@@ -2600,7 +2593,7 @@ impl<'a> Transpiler<'a> {
             // js_printer/lib.rs:6872 to gate the `var {require}=import.meta;`
             // hoist on `Target::Bun` — defaulting to `Browser` here regressed
             // oven-sh/bun#15738.
-            target: to_bundle_enums_target(self.options.target),
+            target: self.options.target,
             ..Default::default()
         };
         js_printer::print_ast::<_, IS_BUN, ENABLE_SOURCE_MAP>(
@@ -2985,7 +2978,7 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Md => {
                 // borrowck — `parse` consumes `&mut self`, so capture
                 // the option fields needed for `ParseOptions` first.
-                let jsx = jsx_pragma_from_resolver(&resolve_result.jsx);
+                let jsx = resolve_result.jsx.clone();
                 let dirname_fd = resolve_result.dirname_fd;
                 let emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata();
                 let experimental_decorators = resolve_result.flags.experimental_decorators();
@@ -3012,7 +3005,7 @@ impl<'a> Transpiler<'a> {
                     file_hash: None,
                     file_fd_ptr: None,
                     macro_remappings,
-                    macro_js_ctx: default_macro_js_value(),
+                    macro_js_ctx: MacroJSCtx::ZERO,
                     jsx,
                     emit_decorator_metadata,
                     experimental_decorators,

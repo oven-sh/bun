@@ -1,9 +1,10 @@
-use bun_install::integrity::Integrity;
-use bun_install::npm::{Architecture, OperatingSystem};
-use bun_install::{INVALID_PACKAGE_ID, Origin, PackageID};
+use bun_install_types::resolver_hooks::{Architecture, OperatingSystem};
+
+use crate::integrity::Integrity;
+use crate::{INVALID_PACKAGE_ID, Origin, PackageID};
 use bun_semver::String;
 
-use crate::lockfile_real::StringBuilder as LockfileStringBuilder;
+use crate::lockfile::StringBuilder as LockfileStringBuilder;
 
 // TODO: when we bump the lockfile version, we should reorder this to:
 // id(32), arch(16), os(16), id(8), man_dir(8), has_install_script(8), integrity(72 align 8)

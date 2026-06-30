@@ -36,21 +36,26 @@ pub(crate) fn freemem() -> u64 {
 mod _impl {
     use super::*;
     use crate::node::ErrorCode;
+    #[cfg(windows)]
+    use bun_core::PathBuffer;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use bun_core::ZStr;
     use bun_core::ZigString;
     #[cfg(not(windows))]
     use bun_core::strings;
     use bun_core::{env_var, fmt as bun_fmt};
-    use bun_jsc::{CallFrame, JSArray, StringJsc as _, SysErrorJsc as _, SystemError};
+    use bun_jsc::ZigStringJsc as _;
+    use bun_jsc::{
+        CallFrame, JSArray, StringJsc as _, SysErrorJsc as _, SystemError, SystemErrorJsc as _,
+    };
     #[cfg(windows)]
-    use bun_paths::PathBuffer;
+    use bun_libuv_sys as libuv;
     #[cfg(windows)]
     use bun_sys::ReturnCodeExt as _;
     #[cfg(not(windows))]
     use bun_sys::c;
     #[cfg(windows)]
-    use bun_sys::windows::{self, libuv};
+    use bun_sys::windows;
     use std::io::Write as _;
 
     // ─── local shims for upstream API gaps (Phase D) ──────────────────────────
@@ -91,33 +96,6 @@ mod _impl {
             hostname: BunString::empty(),
             fd: c_int::MIN,
             dest: BunString::empty(),
-        }
-    }
-
-    /// `bun_core::ZigString` (the `bun_string` crate type) is `repr(C)`-identical
-    /// to the JSC-side `ZigString` but lacks `with_encoding`/`to_js`. Provide
-    /// them locally.
-    trait ZigStringJs {
-        fn with_encoding(self) -> ZigString;
-        fn to_js(&self, global: &JSGlobalObject) -> JSValue;
-    }
-    impl ZigStringJs for ZigString {
-        #[inline]
-        fn with_encoding(mut self) -> ZigString {
-            // If not already 16-bit, mark UTF-8.
-            if !self.is_16bit() {
-                self.mark_utf8();
-            }
-            self
-        }
-        #[inline]
-        fn to_js(&self, global: &JSGlobalObject) -> JSValue {
-            // Signature matches `bun_jsc`'s decl exactly (avoids
-            // `clashing_extern_declarations`); both params are non-null refs.
-            unsafe extern "C" {
-                safe fn ZigString__toValueGC(arg0: &ZigString, arg1: &JSGlobalObject) -> JSValue;
-            }
-            ZigString__toValueGC(self, global)
         }
     }
 
@@ -628,7 +606,7 @@ mod _impl {
         let values = JSValue::create_empty_array(global_this, num_cpus as usize)?;
         let mut cpu_index: u32 = 0;
         // SAFETY: info points to num_cpus entries per host_processor_info contract
-        let info_slice = unsafe { bun_core::ffi::slice(info, num_cpus as usize) };
+        let info_slice = unsafe { bun_opaque::ffi::slice(info, num_cpus as usize) };
         while cpu_index < num_cpus {
             let ticks = &info_slice[cpu_index as usize].cpu_ticks;
             let times = CPUTimes {
@@ -673,7 +651,7 @@ mod _impl {
 
         // SAFETY: cpu_infos points to `count` entries per uv_cpu_info contract
         let infos =
-            unsafe { bun_core::ffi::slice(cpu_infos, usize::try_from(count).expect("int cast")) };
+            unsafe { bun_opaque::ffi::slice(cpu_infos, usize::try_from(count).expect("int cast")) };
         for (i, cpu_info) in infos.iter().enumerate() {
             let times = CPUTimes {
                 user: cpu_info.cpu_times.user,
@@ -1258,7 +1236,7 @@ mod _impl {
 
         // SAFETY: ifaces points to `count` entries per uv_interface_addresses contract
         let iface_slice =
-            unsafe { bun_core::ffi::slice(ifaces, usize::try_from(count).expect("int cast")) };
+            unsafe { bun_opaque::ffi::slice(ifaces, usize::try_from(count).expect("int cast")) };
         for iface in iface_slice {
             let interface = JSValue::create_empty_object(global_this, 7);
 

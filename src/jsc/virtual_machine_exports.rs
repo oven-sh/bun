@@ -2,10 +2,8 @@ use core::ffi::c_void;
 
 use crate::event_loop::ConcurrentTask;
 use crate::plugin_runner::PluginRunner;
-use crate::{
-    CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task,
-    VirtualMachineRef as VirtualMachine,
-};
+use crate::virtual_machine::VirtualMachine;
+use crate::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task};
 use bun_bundler::transpiler::PluginResolver;
 use bun_core::String as BunString;
 use bun_event_loop::ManagedTask::ManagedTask;
@@ -53,25 +51,9 @@ pub fn read_origin_timer_start(vm: &VirtualMachine) -> f64 {
         / 1_000_000.0
 }
 
-// HOST_EXPORT(Bun__GlobalObject__connectedIPC, c)
-pub fn global_object_connected_ipc(global: &JSGlobalObject) -> bool {
-    use crate::virtual_machine::IPCInstanceUnion;
-    match &global.bun_vm().as_mut().ipc {
-        Some(IPCInstanceUnion::Initialized(inst)) => {
-            // SAFETY: `inst` was produced by `IPCInstance::new` (heap::alloc)
-            // and remains live until `handleIPCClose` swaps `vm.ipc` to `None`.
-            unsafe { (**inst).data.is_connected() }
-        }
-        Some(IPCInstanceUnion::Waiting { .. }) => true,
-        None => false,
-    }
-}
-
-// HOST_EXPORT(Bun__GlobalObject__hasIPC, c)
-pub fn global_object_has_ipc(global: &JSGlobalObject) -> bool {
-    // JSGlobalObject::bun_vm contract.
-    global.bun_vm().as_mut().ipc.is_some()
-}
+// `Bun__GlobalObject__connectedIPC` / `Bun__GlobalObject__hasIPC` live in
+// `bun_runtime::hw_exports` (LAYERING: the live `IPCInstance` is owned by
+// `bun_runtime::ipc`).
 
 // HOST_EXPORT(Bun__VirtualMachine__exitDuringUncaughtException, c)
 pub fn exit_during_uncaught_exception(this: &mut VirtualMachine) {
@@ -87,21 +69,14 @@ pub fn is_bun_main(global: &JSGlobalObject, str: &BunString) -> bool {
     str.eql_utf8(global.bun_vm().as_mut().main())
 }
 
-/// When IPC environment variables are passed, the socket is not immediately opened,
-/// but rather we wait for process.on('message') or process.send() to be called, THEN
-/// we open the socket. This is to avoid missing messages at the start of the program.
-// HOST_EXPORT(Bun__ensureProcessIPCInitialized, c)
-pub fn ensure_process_ipc_initialized(global: &JSGlobalObject) {
-    // getIPCInstance() will initialize a "waiting" ipc instance so this is enough.
-    // it will do nothing if IPC is not enabled.
-    let _ = global.bun_vm().as_mut().get_ipc_instance();
-}
+// `Bun__ensureProcessIPCInitialized` lives in `bun_runtime::hw_exports`
+// (LAYERING: `get_ipc_instance` is owned by `bun_runtime::ipc`).
 
 /// This function is called on the main thread
 /// The bunVM() call will assert this
 // HOST_EXPORT(Bun__queueTask, c)
 pub fn queue_task(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) {
-    crate::mark_binding!();
+    bun_core::mark_binding!();
     global
         .bun_vm()
         .event_loop_mut()
@@ -110,7 +85,7 @@ pub fn queue_task(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) 
 
 // HOST_EXPORT(Bun__reportUnhandledError, c)
 pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) -> JSValue {
-    crate::mark_binding!();
+    bun_core::mark_binding!();
 
     if !value.is_termination_exception() {
         let _ = global
@@ -126,7 +101,7 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) -> JSValu
 /// We can avoid that if we run it from the main thread.
 // HOST_EXPORT(Bun__queueTaskConcurrently, c)
 pub fn queue_task_concurrently(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) {
-    crate::mark_binding!();
+    bun_core::mark_binding!();
     // SAFETY: bun_vm_concurrently() yields the live VM; `event_loop()` never
     // returns null for a Bun-owned global. Called off-thread but the loop
     // wakeup is thread-safe.
@@ -138,7 +113,7 @@ pub fn queue_task_concurrently(global: &JSGlobalObject, task: *mut crate::cpp_ta
 
 // HOST_EXPORT(Bun__handleRejectedPromise, c)
 pub fn handle_rejected_promise(global: &JSGlobalObject, promise: &mut JSPromise) {
-    crate::mark_binding!();
+    bun_core::mark_binding!();
 
     let result = promise.result(global.vm());
     let jsc_vm = global.bun_vm().as_mut();
@@ -162,7 +137,7 @@ struct HandledPromiseContext {
 }
 
 impl HandledPromiseContext {
-    fn callback(context: *mut Self) -> bun_event_loop::JsResult<()> {
+    fn callback(context: *mut Self) -> bun_core::JsResult<()> {
         // SAFETY: `context` was produced by `heap::alloc` below; we are the
         // sole owner and reconstitute the Box to drop it at end of scope.
         let context = unsafe { bun_core::heap::take(context) };
@@ -180,7 +155,7 @@ impl HandledPromiseContext {
 
 // HOST_EXPORT(Bun__handleHandledPromise, c)
 pub fn handle_handled_promise(global: &JSGlobalObject, promise: &JSPromise) {
-    crate::mark_binding!();
+    bun_core::mark_binding!();
     let promise_js = promise.to_js();
     let context = bun_core::heap::into_raw(Box::new(HandledPromiseContext {
         global_this: global.into(),
@@ -205,7 +180,8 @@ pub fn on_did_append_plugin(jsc_vm: &mut VirtualMachine, global: &JSGlobalObject
     let runner = jsc_vm.plugin_runner.insert(PluginRunner {
         global_object: bun_ptr::BackRef::new(global),
     });
-    jsc_vm.transpiler.linker.plugin_runner = Some(std::ptr::from_mut::<dyn PluginResolver>(runner));
+    jsc_vm.transpiler.linker.plugin_runner =
+        Some(core::ptr::NonNull::from(runner as &mut dyn PluginResolver));
 }
 
 #[cfg(windows)]
@@ -246,13 +222,13 @@ pub unsafe fn is_no_proxy(
     let vm = VirtualMachine::get();
     let hostname: Option<&[u8]> = if hostname_len > 0 {
         // SAFETY: caller guarantees `hostname_ptr[..hostname_len]` is valid for reads.
-        Some(unsafe { bun_core::ffi::slice(hostname_ptr, hostname_len) })
+        Some(unsafe { bun_opaque::ffi::slice(hostname_ptr, hostname_len) })
     } else {
         None
     };
     let host: Option<&[u8]> = if host_len > 0 {
         // SAFETY: caller guarantees `host_ptr[..host_len]` is valid for reads.
-        Some(unsafe { bun_core::ffi::slice(host_ptr, host_len) })
+        Some(unsafe { bun_opaque::ffi::slice(host_ptr, host_len) })
     } else {
         None
     };
@@ -263,9 +239,9 @@ pub unsafe fn is_no_proxy(
 pub fn set_verbose_fetch_value(value: i32) {
     use bun_http::HTTPVerboseLevel;
     VirtualMachine::get().as_mut().default_verbose_fetch = Some(match value {
-        1 => HTTPVerboseLevel::Headers as u8,
-        2 => HTTPVerboseLevel::Curl as u8,
-        _ => HTTPVerboseLevel::None as u8,
+        1 => HTTPVerboseLevel::Headers,
+        2 => HTTPVerboseLevel::Curl,
+        _ => HTTPVerboseLevel::None,
     });
 }
 

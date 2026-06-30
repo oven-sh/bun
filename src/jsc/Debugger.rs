@@ -3,11 +3,7 @@
 //! Type surface (`Debugger`, `AsyncTaskTracker`, `DebuggerId`,
 //! `TestReporterAgent`, `LifecycleAgent`, `AsyncCallType`) is real and
 //! compiles against the `bun_jsc` crate's available dependency set.
-//! `retroactively_report_discovered_tests` reaches into the `bun:test` runner
-//! (`bun_runtime::test_runner`) — a forward-dep cycle — so it dispatches
-//! through [`RuntimeHooks::retroactively_report_discovered_tests`].
 
-use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -15,7 +11,7 @@ use bun_core::String as BunString;
 use bun_io::KeepAlive;
 use bun_io::posix_event_loop::{AllocatorType, get_vm_ctx};
 
-use crate::virtual_machine::{VirtualMachine, runtime_hooks};
+use crate::virtual_machine::VirtualMachine;
 use crate::{self as jsc, CallFrame, JSGlobalObject, ZigException};
 
 bun_core::declare_scope!(debugger, visible);
@@ -24,61 +20,12 @@ bun_core::declare_scope!(LifecycleAgent, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Agent types. `HTTPServerAgent` is the real sibling definition (re-exported
-// so `Debugger.http_server_agent` carries `next_server_id` state). Agents
-// implemented in higher-tier crates store their per-VM state in the
-// type-erased [`ErasedAgentSlot`] below.
+// so `Debugger.http_server_agent` carries `next_server_id` state). The
+// frontend dev-server agent is
+// `crate::frontend_dev_server_agent::BunFrontendDevServerAgent`.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use crate::http_server_agent::HTTPServerAgent;
-
-/// Type-erased per-`Debugger` slot for an inspector agent implemented in a
-/// higher-tier crate (a forward dep this crate cannot name).
-///
-/// `agent` is the opaque C++ inspector-agent pointer the backend pushes on
-/// domain enable (null while disabled) through a `HOST_EXPORT` defined next
-/// to the slot's owner; `sequence` is a free-running counter for the owner's
-/// use. `Debugger` only stores the slot — it never interprets either field.
-/// The fields are private so every outside access flows through the named
-/// accessors below, keeping the owning module's interpretation the only one.
-///
-/// Both fields are `Copy`, so `Cell<T>` gives interior mutability with zero
-/// `unsafe`.
-pub struct ErasedAgentSlot {
-    agent: Cell<*mut c_void>,
-    sequence: Cell<i32>,
-}
-
-impl ErasedAgentSlot {
-    /// The opaque agent pointer (null while the inspector domain is disabled).
-    #[inline]
-    pub fn agent_ptr(&self) -> *mut c_void {
-        self.agent.get()
-    }
-
-    /// Set the opaque agent pointer. Called by the slot owner's `HOST_EXPORT`
-    /// on domain enable/disable.
-    #[inline]
-    pub fn set_agent_ptr(&self, ptr: *mut c_void) {
-        self.agent.set(ptr);
-    }
-
-    /// Wrapping post-increment of the owner's free-running counter.
-    #[inline]
-    pub fn post_increment_sequence(&self) -> i32 {
-        let id = self.sequence.get();
-        self.sequence.set(id.wrapping_add(1));
-        id
-    }
-}
-
-impl Default for ErasedAgentSlot {
-    fn default() -> Self {
-        Self {
-            agent: Cell::new(core::ptr::null_mut()),
-            sequence: Cell::new(0),
-        }
-    }
-}
 
 /// `bun.GenericIndex(i32, Debugger)`
 pub enum DebuggerMarker {}
@@ -118,7 +65,7 @@ pub struct Debugger {
     pub lifecycle_reporter_agent: LifecycleAgent,
     /// Reached through a shared `&Debugger` borrow; the slot's `Cell` fields
     /// provide the interior mutability. JS-thread only.
-    pub extension_agent: ErasedAgentSlot,
+    pub extension_agent: crate::frontend_dev_server_agent::BunFrontendDevServerAgent,
     pub http_server_agent: HTTPServerAgent,
     pub must_block_until_connected: bool,
 }
@@ -136,7 +83,7 @@ impl Default for Debugger {
             mode: Mode::Listen,
             test_reporter_agent: TestReporterAgent::default(),
             lifecycle_reporter_agent: LifecycleAgent::default(),
-            extension_agent: ErasedAgentSlot::default(),
+            extension_agent: Default::default(),
             http_server_agent: HTTPServerAgent::default(),
             must_block_until_connected: false,
         }
@@ -234,8 +181,8 @@ impl Debugger {
             // Arm a one-shot libuv timer that unrefs `poll_ref` after the
             // delay (Windows lacks a working `tickWithTimeout`). TODO: remove
             // this when tickWithTimeout actually works properly on Windows.
-            use bun_sys::windows::libuv as uv;
-            use bun_sys::windows::libuv::UvHandle as _;
+            use bun_libuv_sys as uv;
+            use bun_libuv_sys::UvHandle as _;
             if wait == Wait::Shortly {
                 let uv_loop = this.uv_loop();
                 // SAFETY: `uv_loop` is a live initialized `uv_loop_t`.
@@ -779,29 +726,6 @@ impl TestReporterHandle {
 
     pub fn report_test_end(&mut self, test_id: c_int, bun_test_status: TestStatus, elapsed: f64) {
         Bun__TestReporterAgentReportTestEnd(self, test_id, bun_test_status, elapsed);
-    }
-}
-
-// HOST_EXPORT(Bun__TestReporterAgentEnable, c)
-pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
-    // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
-    // on the JS thread.
-    if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
-        bun_core::scoped_log!(TestReporterAgent, "enable");
-        dbg.test_reporter_agent.handle = agent;
-
-        // Retroactively report any tests that were already discovered before
-        // the debugger connected.
-        //
-        // LAYERING: `retroactivelyReportDiscoveredTests` reaches into
-        // the test runner (`bun_test.DescribeScope`), which lives in `bun_runtime::test_runner`
-        // — a forward-dep cycle. Dispatched through [`RuntimeHooks`].
-        if let Some(hooks) = runtime_hooks() {
-            // SAFETY: `handle` is the live C++ agent just stored above.
-            unsafe {
-                (hooks.retroactively_report_discovered_tests)(dbg.test_reporter_agent.handle)
-            };
-        }
     }
 }
 

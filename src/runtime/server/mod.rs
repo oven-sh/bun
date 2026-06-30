@@ -32,10 +32,11 @@ use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 use bun_uws_sys::app::c as uws_app_c;
 
+use bun_jsc::SystemErrorJsc as _;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 // ─── httplog ─────────────────────────────────────────────────────────────────
-// Output.scoped(.Server, .visible) — debug-build no-op until bun_output wires.
+// Output.scoped(.Server, .visible) — debug-build no-op until bun_core::output wires.
 macro_rules! httplog {
     ($($arg:tt)*) => {{
         #[cfg(debug_assertions)]
@@ -47,9 +48,9 @@ macro_rules! httplog {
 // `bun_jsc` is now a dep; forward to it. `AsyncTaskTracker` lives under
 // `bun_jsc::debugger`, surfaced flat here for the server drafts that import it.
 pub mod jsc {
-    pub use crate::jsc::*;
     pub use bun_jsc::debugger::{AsyncTaskTracker, DebuggerId};
     pub use bun_jsc::virtual_machine::{ExceptionList, VirtualMachine};
+    pub use bun_jsc::*;
 }
 
 // ─── compiling submodules ────────────────────────────────────────────────────
@@ -101,6 +102,9 @@ pub use request_context::RequestContext as NewRequestContext;
 pub mod any_request_context;
 pub use any_request_context::AnyRequestContext;
 
+#[path = "fallback.rs"]
+pub mod fallback;
+
 // `server_body.rs` holds the large method bodies (`on_request`, `on_upgrade`,
 // route setup, …) split out to keep this module declaration file readable.
 
@@ -112,7 +116,7 @@ pub use server_body::{
 };
 
 // ─── write_status ────────────────────────────────────────────────────────────
-pub fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>, status: u16) {
+pub fn write_status<const SSL: bool>(resp: *mut uws_sys::Response<SSL>, status: u16) {
     // The route handlers (`StaticRoute`/`FileRoute`) call here from completion
     // paths where the request may already be aborted/detached, so no-op on null.
     if resp.is_null() {
@@ -229,7 +233,7 @@ bitflags::bitflags! {
 const N_HTTP_METHODS: usize = 36;
 
 pub struct NewServer<const SSL: bool, const DEBUG: bool> {
-    pub app: Option<*mut uws_sys::NewApp<SSL>>,
+    pub app: Option<*mut uws_sys::App<SSL>>,
     pub listener: Option<*mut uws_sys::app::ListenSocket<SSL>>,
     // Never set when !SSL.
     pub h3_app: Option<*mut uws_sys::h3::App>,
@@ -317,7 +321,7 @@ impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
 /// implemented for the two concrete `SSL` values (overlap rules forbid a
 /// blanket impl alongside them), so dispatch at the call boundary.
 #[inline]
-fn any_response_from<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>) -> uws::AnyResponse {
+fn any_response_from<const SSL: bool>(resp: *mut uws_sys::Response<SSL>) -> uws::AnyResponse {
     // `*mut Response<SSL>` and `*mut Response<true|false>` are
     // distinct types to rustc; route through `.cast()` (the underlying handle
     // is opaque and layout-identical for both instantiations).
@@ -357,7 +361,7 @@ impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
         self,
         global: &jsc::JSGlobalObject,
         req: &mut uws_sys::Request,
-        resp: *mut uws_sys::NewAppResponse<SSL>,
+        resp: *mut uws_sys::Response<SSL>,
     ) -> SavedRequest {
         // By saving a request, all information from `req` must be
         // copied since the provided uws.Request will be re-used for
@@ -573,7 +577,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// The body ignores both arguments so a single non-generic shim suffices.
-    fn on_timeout_for_idle_warn(_: *mut c_void, _: &mut uws_sys::NewAppResponse<SSL>) {
+    fn on_timeout_for_idle_warn(_: *mut c_void, _: &mut uws_sys::Response<SSL>) {
         if DEBUG && !Self::did_send_idletimeout_warning_once().load(Ordering::Relaxed) {
             if !crate::cli::Command::get().debug.silent {
                 Self::did_send_idletimeout_warning_once().store(true, Ordering::Relaxed);
@@ -610,12 +614,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(crate) fn prepare_js_request_context(
         this: *mut Self,
         req: &mut uws_sys::Request,
-        resp: *mut uws_sys::NewAppResponse<SSL>,
+        resp: *mut uws_sys::Response<SSL>,
         should_deinit_context: Option<request_context::DeferDeinitFlag>,
         create_js_request: CreateJsRequest,
         method: Option<bun_http_types::Method::Method>,
     ) -> Option<PreparedRequest<SSL, DEBUG>> {
-        jsc::mark_binding!();
+        bun_core::mark_binding!();
         // SAFETY: `this`/`resp` are live for the duration of the uWS callback;
         // re-borrowed disjointly below to avoid stacking `&mut` across the
         // `ctx.create()` call (which stores `this` as a backref).
@@ -788,7 +792,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
                 resp_ref.on_data(
                     |u: *mut ServerRequestContext<SSL, DEBUG>,
-                     _: &mut uws_sys::NewAppResponse<SSL>,
+                     _: &mut uws_sys::Response<SSL>,
                      chunk: &[u8],
                      last: bool| {
                         ServerRequestContext::<SSL, DEBUG>::on_buffered_body_chunk(u, chunk, last)
@@ -828,7 +832,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(crate) fn on_saved_request<const ARG_COUNT: usize>(
         this: *mut Self,
         req: SavedRequestUnion<'_>,
-        resp: *mut uws_sys::NewAppResponse<SSL>,
+        resp: *mut uws_sys::Response<SSL>,
         callback: JSValue,
         extra_args: [JSValue; ARG_COUNT],
     ) {
@@ -1010,7 +1014,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(crate) fn on_request(
         this: *mut Self,
         req: &mut uws_sys::Request,
-        resp: *mut uws_sys::NewAppResponse<SSL>,
+        resp: *mut uws_sys::Response<SSL>,
     ) {
         let should_deinit_context = core::cell::Cell::new(false);
         let Some(prepared) = Self::prepare_js_request_context(
@@ -1055,7 +1059,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(crate) fn on_user_route_request(
         user_route: *const UserRoute<SSL, DEBUG>,
         req: &mut uws_sys::Request,
-        resp: *mut uws_sys::NewAppResponse<SSL>,
+        resp: *mut uws_sys::Response<SSL>,
     ) {
         // SAFETY: `user_route` is the live entry in `server.user_routes` whose
         // address was registered as the uws callback userdata.
@@ -1115,9 +1119,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn on_node_http_request(
         this: *mut Self,
         req: &mut uws_sys::Request,
-        resp: &mut uws_sys::NewAppResponse<SSL>,
+        resp: &mut uws_sys::Response<SSL>,
     ) {
-        jsc::mark_binding!();
+        bun_core::mark_binding!();
         // `upgrade_ctx` null is valid (no upgrade).
         Self::on_node_http_request_with_upgrade_ctx(this, req, resp, core::ptr::null_mut());
     }
@@ -1140,7 +1144,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(crate) fn on_node_http_request_with_upgrade_ctx(
         this: *mut Self,
         req: &mut uws_sys::Request,
-        resp: &mut uws_sys::NewAppResponse<SSL>,
+        resp: &mut uws_sys::Response<SSL>,
         upgrade_ctx: *mut uws_sys::WebSocketUpgradeContext,
     ) {
         use bun_http_jsc::method_jsc::MethodJsc as _;
@@ -1214,7 +1218,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 callback,
                 method_string,
                 req,
-                std::ptr::from_mut::<uws_sys::NewAppResponse<SSL>>(resp).cast(),
+                std::ptr::from_mut::<uws_sys::Response<SSL>>(resp).cast(),
                 upgrade_ctx.cast(),
                 &mut node_http_response,
             )
@@ -1462,7 +1466,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     pub fn set_flags(&mut self, require_host_header: bool, use_strict_method_validation: bool) {
         if let Some(app) = self.app {
-            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+            // S012: `App<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
             bun_opaque::opaque_deref_mut(app)
                 .set_flags(require_host_header, use_strict_method_validation);
         }
@@ -1470,7 +1474,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     pub fn set_max_http_header_size(&mut self, max_header_size: u64) {
         if let Some(app) = self.app {
-            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+            // S012: `App<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
             bun_opaque::opaque_deref_mut(app).set_max_http_header_size(max_header_size);
         }
     }
@@ -1557,7 +1561,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 ws.handler.app = None;
             }
             self.flags.insert(ServerFlags::TERMINATED);
-            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+            // S012: `App<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
             bun_opaque::opaque_deref_mut(self.app.unwrap()).close();
         }
     }
@@ -1572,7 +1576,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // `&self.config.id` borrow.
             // SAFETY: `vm_mut()` is the non-null process-static VM pointer.
             unsafe {
-                if let Some(hot) = (*self.vm_mut()).hot_map() {
+                if let Some(hot) = crate::jsc_hooks::hot_map(&*self.vm_mut()) {
                     hot.remove(&self.config.id);
                 }
             }
@@ -1654,7 +1658,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // binding alive should not pin `dev.memory_cost()` bytes.
             if let Some(dev) = self.dev_server.take() {
                 if let Some(app) = self.app {
-                    // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                    // S012: `App<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                     bun_opaque::opaque_deref_mut(app).clear_routes();
                 }
                 drop(dev); // dev.deinit()
@@ -1686,7 +1690,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.flags.insert(ServerFlags::TERMINATED);
             let app = self.app.unwrap();
             vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(app, |app| {
-                // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                // S008: `App<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                 bun_opaque::opaque_deref_mut(app).close();
                 Ok(())
             }));
@@ -1761,10 +1765,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // on other platforms errno is not reliably preserved through
                     // the C++/callback chain to here; see PR #30364.
                     if errno != bun_sys::E::SUCCESS && errno != bun_sys::E::EADDRINUSE {
-                        let err = jsc::SystemError::from(
-                            bun_sys::Error::from_code(errno, bun_sys::Tag::listen)
-                                .to_system_error(),
-                        );
+                        let err = bun_sys::Error::from_code(errno, bun_sys::Tag::listen)
+                            .to_system_error();
                         let _ = global.throw_value(err.to_error_instance(global));
                         return;
                     }
@@ -1793,12 +1795,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         ..Default::default()
                     }
                     .to_error_instance(global),
-                    e => jsc::SystemError::from(
-                        bun_sys::Error::from_code(e, bun_sys::Tag::listen)
-                            .with_path(unix)
-                            .to_system_error(),
-                    )
-                    .to_error_instance(global),
+                    e => bun_sys::Error::from_code(e, bun_sys::Tag::listen)
+                        .with_path(unix)
+                        .to_system_error()
+                        .to_error_instance(global),
                 }
             }
         };
@@ -1857,7 +1857,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
         if let Some(app) = this_ref.app.take() {
             // SAFETY: live uws App handle owned by this server.
-            unsafe { uws_sys::NewApp::<SSL>::destroy(app) };
+            unsafe { uws_sys::App::<SSL>::destroy(app) };
         }
 
         // SAFETY: paired with heap::alloc in `init()`.
@@ -1982,7 +1982,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     fn set_routes(&mut self) -> JSValue {
         use bun_http_types::Method as http_method;
         let mut route_list_value = JSValue::ZERO;
-        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+        // S008: `App<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         // set_routes is only called after `self.app = Some(..)` in listen().
         let app = bun_opaque::opaque_deref_mut(self.app.unwrap());
         let self_ptr: *mut Self = self;
@@ -2482,7 +2482,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // not `*this`.
         let global = this_ref.global_this();
 
-        let app: *mut uws_sys::NewApp<SSL>;
+        let app: *mut uws_sys::App<SSL>;
         let route_list_value;
 
         if SSL {
@@ -2498,7 +2498,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 return JSValue::ZERO;
             };
 
-            app = match uws_sys::NewApp::<SSL>::create(&ssl_options) {
+            app = match uws_sys::App::<SSL>::create(&ssl_options) {
                 Some(a) => a,
                 None => {
                     if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
@@ -2554,7 +2554,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // SAFETY: name_ptr/name_len were just extracted from the live
                 // `config.ssl_config.server_name` CString; valid + NUL-terminated.
                 let server_name = unsafe { bun_core::ffi::cstr(name_ptr) };
-                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                // S012: `App<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                 if bun_opaque::opaque_deref_mut(app)
                     .add_server_name_with_options(server_name, &ssl_options)
                     .is_err()
@@ -2577,7 +2577,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
                 // SAFETY: server_name is a CStr; ZStr::from_raw upholds the NUL invariant.
                 let z = unsafe { bun_core::ZStr::from_raw(name_ptr.cast(), name_len) };
-                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                // S012: `App<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                 bun_opaque::opaque_deref_mut(app).domain(z);
                 if throw_ssl_error_if_necessary(global) {
                     // SAFETY: caller contract — `this` is the live boxed server from `init()`.
@@ -2636,7 +2636,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         }
                     }
                 }
-                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                // S012: `App<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                 if bun_opaque::opaque_deref_mut(app)
                     .add_server_name_with_options(sni_name, &sni_opts)
                     .is_err()
@@ -2651,7 +2651,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     Self::deinit(this);
                     return JSValue::ZERO;
                 }
-                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                // S012: `App<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                 bun_opaque::opaque_deref_mut(app).domain(z);
                 if throw_ssl_error_if_necessary(global) {
                     // SAFETY: caller contract — `this` is the live boxed server from `init()`.
@@ -2662,8 +2662,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let _ = unsafe { &mut *this }.set_routes();
             }
         } else {
-            app = match uws_sys::NewApp::<SSL>::create(&uws_sys::BunSocketContextOptions::default())
-            {
+            app = match uws_sys::App::<SSL>::create(&uws_sys::BunSocketContextOptions::default()) {
                 Some(a) => a,
                 None => {
                     if !global.has_exception() {
@@ -2928,7 +2927,7 @@ mod trampoline {
         _user_data: *mut c_void,
     ) {
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-        let resp = bun_opaque::opaque_deref_mut(res.cast::<uws_sys::NewAppResponse<SSL>>());
+        let resp = bun_opaque::opaque_deref_mut(res.cast::<uws_sys::Response<SSL>>());
         resp.write_status(b"404 Not Found");
         resp.end(b"", false);
     }
@@ -2971,7 +2970,7 @@ mod trampoline {
         NewServer::<SSL, DEBUG>::on_node_http_request(
             user_data.cast(),
             bun_opaque::opaque_deref_mut(req),
-            bun_opaque::opaque_deref_mut(res.cast::<uws_sys::NewAppResponse<SSL>>()),
+            bun_opaque::opaque_deref_mut(res.cast::<uws_sys::Response<SSL>>()),
         );
     }
 
@@ -2985,7 +2984,7 @@ mod trampoline {
         unsafe {
             (*user_data.cast::<NewServer<SSL, DEBUG>>()).on_bun_info_request(
                 bun_opaque::opaque_deref_mut(req),
-                bun_opaque::opaque_deref_mut(res.cast::<uws_sys::NewAppResponse<SSL>>()),
+                bun_opaque::opaque_deref_mut(res.cast::<uws_sys::Response<SSL>>()),
             )
         };
     }
@@ -3000,7 +2999,7 @@ mod trampoline {
         unsafe {
             (*user_data.cast::<NewServer<SSL, DEBUG>>()).on_chrome_dev_tools_json_request(
                 bun_opaque::opaque_deref_mut(req),
-                bun_opaque::opaque_deref_mut(res.cast::<uws_sys::NewAppResponse<SSL>>()),
+                bun_opaque::opaque_deref_mut(res.cast::<uws_sys::Response<SSL>>()),
             )
         };
     }
@@ -3096,7 +3095,7 @@ mod ffi {
             callback: jsc::JSValue,
             method_string: jsc::JSValue,
             request: *mut uws_sys::Request,
-            response: *mut c_void, // *uws.NewApp(false).Response
+            response: *mut c_void, // *uws.App(false).Response
             upgrade_ctx: *mut c_void,
             node_response_ptr: &mut *mut NodeHTTPResponse,
         ) -> jsc::JSValue;
@@ -3108,7 +3107,7 @@ mod ffi {
             callback: jsc::JSValue,
             method_string: jsc::JSValue,
             request: *mut uws_sys::Request,
-            response: *mut c_void, // *uws.NewApp(true).Response
+            response: *mut c_void, // *uws.App(true).Response
             upgrade_ctx: *mut c_void,
             node_response_ptr: &mut *mut NodeHTTPResponse,
         ) -> jsc::JSValue;
@@ -3246,6 +3245,44 @@ pub enum AnyServerTag {
 pub struct AnyServer {
     pub tag: AnyServerTag,
     pub ptr: *mut (),
+}
+
+/// `--hot` server registry (`config.id` → live server). Stored on the per-VM
+/// `crate::jsc_hooks::RuntimeState`.
+pub struct HotMap {
+    map: bun_collections::StringArrayHashMap<AnyServer>,
+}
+
+impl HotMap {
+    pub fn new() -> Self {
+        Self {
+            map: bun_collections::StringArrayHashMap::new(),
+        }
+    }
+
+    pub fn get(&self, key: &[u8]) -> Option<AnyServer> {
+        self.map.get(key).copied()
+    }
+
+    pub fn insert(&mut self, key: &[u8], server: AnyServer) {
+        // `insert` boxes the key; the map owns its keys.
+        if self.map.insert(key, server).is_some() {
+            panic!("HotMap already contains key");
+        }
+    }
+
+    pub fn remove(&mut self, key: &[u8]) {
+        // The map owns the Box<[u8]> key and `swap_remove` drops it. The
+        // aliasing assert below means the caller must not pass the map's own
+        // key storage. Ordering doesn't matter for HotMap consumers.
+        let Some(i) = self.map.get_index(key) else {
+            return;
+        };
+        let stored = &self.map.keys()[i];
+        let is_same_slice = stored.as_ptr() == key.as_ptr() && stored.len() == key.len();
+        debug_assert!(!is_same_slice);
+        self.map.swap_remove(key);
+    }
 }
 
 impl AnyServer {
@@ -3424,7 +3461,7 @@ impl AnyServer {
             AnyServerTag::DebugHTTPSServer => 1021,
         };
         // `TaggedPtr::to()` bit-casts the full packed word through `*mut c_void`.
-        bun_ptr::TaggedPointer::init(self.ptr, tag).to() as u64
+        bun_ptr::TaggedPtr::init(self.ptr, tag).to() as u64
     }
 
     /// Shared borrow of the process-static VM. Routes through
@@ -3490,7 +3527,7 @@ impl AnyServer {
 
     /// Dispatch the user `fetch` handler:
     /// un-erase the SSL bool from the tag and downcast
-    /// `AnyResponse` to the matching `NewAppResponse<SSL>` variant.
+    /// `AnyResponse` to the matching `Response<SSL>` variant.
     pub fn on_request(&self, req: &mut uws_sys::Request, resp: uws::AnyResponse) {
         // `s` is the live `*mut NewServer` carried in `self.ptr`,
         // tagged at construction in `AnyServer::from`.
@@ -3515,7 +3552,7 @@ impl AnyServer {
 
     pub fn num_subscribers(&self, topic: &[u8]) -> u32 {
         any_server_dispatch!(self, |s| match s.app {
-            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` via
+            // S012: `App<SSL>` is a ZST opaque — safe `*mut → &mut` via
             // `bun_opaque::opaque_deref_mut` (const-asserted ZST/align-1).
             Some(app) => bun_opaque::opaque_deref_mut(app).num_subscribers(topic),
             // Defensive 0
@@ -3535,7 +3572,7 @@ impl AnyServer {
         compress: bool,
     ) -> uws::SendStatus {
         any_server_dispatch!(self, |s| match s.app {
-            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` via
+            // S012: `App<SSL>` is a ZST opaque — safe `*mut → &mut` via
             // `bun_opaque::opaque_deref_mut` (const-asserted ZST/align-1).
             Some(app) =>
                 bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress),
@@ -3779,7 +3816,7 @@ pub struct ServerAllConnectionsClosedTask {
 }
 
 impl bun_event_loop::Taskable for ServerAllConnectionsClosedTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ServerAllConnectionsClosedTask;
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::TaskTag::ServerAllConnectionsClosedTask;
 }
 
 impl Drop for ServerAllConnectionsClosedTask {
@@ -3805,7 +3842,7 @@ impl ServerAllConnectionsClosedTask {
     /// that races `process.exit()`. The custom `Drop` impl above keeps the
     /// late free from UAFing the freed `HandleSet`.
     pub fn schedule(this: Self, vm: &mut jsc::VirtualMachine) {
-        fn call_erased(this: *mut ServerAllConnectionsClosedTask) -> bun_event_loop::JsResult<()> {
+        fn call_erased(this: *mut ServerAllConnectionsClosedTask) -> bun_core::JsResult<()> {
             // `this` is the unique owning pointer heap-allocated below
             // in `schedule()`; `ManagedTask::new_owned` invokes this exactly once.
             ServerAllConnectionsClosedTask::run_from_js_thread(this, jsc::VirtualMachine::get_mut())

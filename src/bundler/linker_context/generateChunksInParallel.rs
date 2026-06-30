@@ -383,7 +383,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // use resolvePosix since we asserted above all seps are '/'
             #[cfg(windows)]
             if strings::index_of(&rel_path, b"/./").is_some() {
-                let mut buf = bun_paths::PathBuffer::uninit();
+                let mut buf = bun_core::PathBuffer::uninit();
                 let rel_path_fixed: Box<[u8]> = Box::from(&*path::resolve_path::normalize_buf::<
                     path::platform::Posix,
                 >(&rel_path, &mut buf));
@@ -1022,7 +1022,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     if matches!(chunk.content, crate::chunk::Content::Javascript(_))
                         && loader.is_javascript_like()
                     {
-                        let mut fdpath = bun_paths::PathBuffer::uninit();
+                        let mut fdpath = bun_core::PathBuffer::uninit();
                         // For --compile builds, the bytecode URL must match the module name
                         // that will be used at runtime. The module name is:
                         //   public_path + final_rel_path (e.g., "/$bunfs/root/app.js")
@@ -1052,64 +1052,73 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         let mut source_provider_url =
                             bun_core::OwnedString::new(source_provider_url);
 
-                        if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
-                            c.options.output_format,
-                            &code_result.buffer,
-                            &mut source_provider_url,
-                        ) {
-                            let source_provider_url_str = source_provider_url.to_utf8();
-                            debug!(
-                                "Bytecode cache generated {}: {}",
-                                bstr::BStr::new(source_provider_url_str.slice()),
-                                bun_core::fmt::size(
-                                    bytecode.len(),
-                                    bun_core::fmt::SizeFormatterOptions {
-                                        space_between_number_and_unit: true
-                                    }
-                                )
-                            );
-                            fdpath[..chunk.final_rel_path.len()]
-                                .copy_from_slice(&chunk.final_rel_path);
-                            fdpath[chunk.final_rel_path.len()..][..BYTECODE_EXTENSION.len()]
-                                .copy_from_slice(BYTECODE_EXTENSION.as_bytes());
+                        if let Some(generate) = c.options.bytecode_generator {
+                            if let Some(bytecode) = generate(
+                                c.options.output_format,
+                                &code_result.buffer,
+                                &mut source_provider_url,
+                            ) {
+                                let source_provider_url_str = source_provider_url.to_utf8();
+                                debug!(
+                                    "Bytecode cache generated {}: {}",
+                                    bstr::BStr::new(source_provider_url_str.slice()),
+                                    bun_core::fmt::size(
+                                        bytecode.len(),
+                                        bun_core::fmt::SizeFormatterOptions {
+                                            space_between_number_and_unit: true
+                                        }
+                                    )
+                                );
+                                fdpath[..chunk.final_rel_path.len()]
+                                    .copy_from_slice(&chunk.final_rel_path);
+                                fdpath[chunk.final_rel_path.len()..][..BYTECODE_EXTENSION.len()]
+                                    .copy_from_slice(BYTECODE_EXTENSION.as_bytes());
 
-                            let mut input_path_buf: Vec<u8> = Vec::new();
-                            input_path_buf.extend_from_slice(&chunk.final_rel_path);
-                            input_path_buf.extend_from_slice(BYTECODE_EXTENSION.as_bytes());
+                                let mut input_path_buf: Vec<u8> = Vec::new();
+                                input_path_buf.extend_from_slice(&chunk.final_rel_path);
+                                input_path_buf.extend_from_slice(BYTECODE_EXTENSION.as_bytes());
 
-                            break 'brk Some(options::OutputFile::init(options::OutputFileInit {
-                                output_path: Box::from(source_provider_url_str.slice()),
-                                input_path: input_path_buf.into_boxed_slice(),
-                                input_loader: Loader::Js,
-                                hash: if chunk.template.placeholder.hash.is_some() {
-                                    Some(bun_wyhash::hash(&bytecode))
-                                } else {
-                                    None
-                                },
-                                output_kind: options::OutputKind::Bytecode,
-                                loader: Loader::File,
-                                size: Some(bytecode.len()),
-                                display_size: bytecode.len() as u32,
-                                data: options::OutputFileData::Buffer { data: bytecode },
-                                side: Some(side),
-                                entry_point_index: None,
-                                is_executable: false,
-                                ..Default::default()
-                            }));
+                                break 'brk Some(options::OutputFile::init(
+                                    options::OutputFileInit {
+                                        output_path: Box::from(source_provider_url_str.slice()),
+                                        input_path: input_path_buf.into_boxed_slice(),
+                                        input_loader: Loader::Js,
+                                        hash: if chunk.template.placeholder.hash.is_some() {
+                                            Some(bun_wyhash::hash(&bytecode))
+                                        } else {
+                                            None
+                                        },
+                                        output_kind: options::OutputKind::Bytecode,
+                                        loader: Loader::File,
+                                        size: Some(bytecode.len()),
+                                        display_size: bytecode.len() as u32,
+                                        data: options::OutputFileData::Buffer { data: bytecode },
+                                        side: Some(side),
+                                        entry_point_index: None,
+                                        is_executable: false,
+                                        ..Default::default()
+                                    },
+                                ));
+                            } else {
+                                // an error
+                                // logger OOM-only
+                                // Split-borrow — `static_route_visitor.c` holds a
+                                // detached `&LinkerContext`; `log_disjoint` returns the
+                                // disjoint `Transpiler.log` backref so no `&mut c` is
+                                // materialized.
+                                let _ = c.log_disjoint().add_error_fmt(
+                                    None,
+                                    bun_ast::Loc::EMPTY,
+                                    format_args!(
+                                        "Failed to generate bytecode for {}",
+                                        bstr::BStr::new(&chunk.final_rel_path)
+                                    ),
+                                );
+                            }
                         } else {
-                            // an error
-                            // logger OOM-only
-                            // Split-borrow — `static_route_visitor.c` holds a
-                            // detached `&LinkerContext`; `log_disjoint` returns the
-                            // disjoint `Transpiler.log` backref so no `&mut c` is
-                            // materialized.
-                            let _ = c.log_disjoint().add_error_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "Failed to generate bytecode for {}",
-                                    bstr::BStr::new(&chunk.final_rel_path)
-                                ),
+                            debug_assert!(
+                                false,
+                                "generate_bytecode_cache set without a bytecode generator"
                             );
                         }
                     }

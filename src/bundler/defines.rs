@@ -4,25 +4,16 @@ use bun_collections::StringHashMap;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
 
-use crate::defines_table::{
+use bun_js_parser::defines_table::{
     GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING as global_no_side_effect_function_calls_safe_for_to_string,
     GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES as global_no_side_effect_property_accesses,
 };
 
-// ══════════════════════════════════════════════════════════════════════════
-// B-3 UNIFIED: `Define` / `DefineData` / `DotDefine` / `Flags` / `Options` /
-// `RawDefines` / `UserDefines` / `UserDefinesArray` are canonical in
-// `bun_js_parser::defines` (lower tier) so the parser's `P.define: &'a Define`
-// and `BundleOptions.define: Box<Define>` are the *same* nominal type. This
-// crate adds the json-parse / dotenv-vtable bodies that need
-// `bun_interchange` / `bun_dotenv` (tiered above js_parser) via the
-// `DefineExt` / `DefineDataExt` extension traits below. The pure-global table
-// moved down to `bun_js_parser::defines_table`, so `for_identifier` reads it
-// directly with no cross-crate hook.
-// ══════════════════════════════════════════════════════════════════════════
-pub use bun_js_parser::defines::{
-    Define, DefineData, DotDefine, Flags, IdentifierDefine, Options, RawDefines, UserDefines,
-    UserDefinesArray, are_parts_equal,
+// The canonical define types live in `bun_js_parser::defines` (lower tier);
+// this module holds only the higher-tier extension bodies (`DefineExt` /
+// `DefineDataExt`) that need `bun_interchange` / `bun_dotenv`.
+use bun_js_parser::defines::{
+    Define, DefineData, DotDefine, Flags, Options, RawDefines, UserDefines, UserDefinesArray,
 };
 
 /// Alias for `Options` so `options.rs` can write `DefineData::init(DefineDataInit { .. })`.

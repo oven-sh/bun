@@ -248,7 +248,7 @@ pub(crate) const MAX_FIELDS: usize = 32;
 
 // ──────────────────────── const-eval reflection helpers ───────────────────
 
-use crate::const_str_eq;
+use bun_core::strings::const_str_eq;
 
 /// `TypeId` of `F` without the `'static` bound `TypeId::of` imposes — needed
 /// because reflected `Field::ty` ids are not `'static`-restricted, and column

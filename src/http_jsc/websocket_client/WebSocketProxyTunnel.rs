@@ -11,8 +11,8 @@
 //!
 //! ## Aliasing model
 //!
-//! Every public entry that drives the `SslWrapper` (`start`, `receive`, `on_writable`,
-//! `write`, `shutdown`) forms a `&mut SslWrapper` over the `wrapper` field and then
+//! Every public entry that drives the `SSLWrapper` (`start`, `receive`, `on_writable`,
+//! `write`, `shutdown`) forms a `&mut SSLWrapper` over the `wrapper` field and then
 //! synchronously re-enters this struct through the `ctx` backref via
 //! `on_open`/`on_data`/`on_handshake`/`on_close`/`write_encrypted`.
 //!
@@ -21,7 +21,7 @@
 //!   `ptr::addr_of_mut!` so the `&mut` covers only that field's bytes.
 //! - Callbacks **never** form `&Self`/`&mut Self` (whole-struct) and **never** read
 //!   `(*ctx).wrapper` — either would touch `wrapper`'s bytes through the
-//!   Box-provenance `ctx` and pop the caller's `&mut SslWrapper` Unique tag.
+//!   Box-provenance `ctx` and pop the caller's `&mut SSLWrapper` Unique tag.
 //!   They access only disjoint fields (`ref_count`, `ssl`, `sni_hostname`,
 //!   `write_buffer`, `socket`, `upgrade_client`, `connected_websocket`) via
 //!   `(*ctx).field` raw projections.
@@ -37,7 +37,7 @@ use core::ptr::NonNull;
 use bun_boringssl as boringssl;
 use bun_core::strings;
 use bun_io::StreamBuffer;
-use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
+use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SSLWrapper};
 use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
 
 use super::websocket_upgrade_client::{
@@ -126,8 +126,8 @@ pub struct WebSocketProxyTunnel {
     write_buffer: StreamBuffer,
     /// Snapshot of `wrapper.ssl` taken in `start()`.
     ///
-    /// Callbacks fired from inside `SslWrapper::{start,receive_data,...}` run while
-    /// the caller holds a live `&mut SslWrapper`; under Stacked Borrows, *any* read
+    /// Callbacks fired from inside `SSLWrapper::{start,receive_data,...}` run while
+    /// the caller holds a live `&mut SSLWrapper`; under Stacked Borrows, *any* read
     /// of `(*ctx).wrapper` bytes through the Box-provenance `ctx` pops that Unique
     /// tag. Snapshotting the `*mut SSL` here lets `on_handshake` read it without
     /// touching `wrapper`'s bytes.
@@ -140,7 +140,7 @@ pub struct WebSocketProxyTunnel {
 
 use bun_uws::MaybeAnySocket as SocketUnion;
 
-type SslWrapperType = SslWrapper<*mut WebSocketProxyTunnel>;
+type SslWrapperType = SSLWrapper<*mut WebSocketProxyTunnel>;
 
 impl WebSocketProxyTunnel {
     /// Initialize a new proxy tunnel with all required parameters
@@ -224,7 +224,7 @@ impl WebSocketProxyTunnel {
         .map_err(|_| bun_core::err!("InvalidOptions"))?;
 
         // Snapshot the `*mut SSL` *before* moving `wrapper` into `*this` and before
-        // forming any `&mut SslWrapper`, so callbacks can read it from a tunnel
+        // forming any `&mut SSLWrapper`, so callbacks can read it from a tunnel
         // field disjoint from `wrapper` (see `self.ssl` doc).
         let ssl = wrapper.ssl;
 
@@ -237,9 +237,9 @@ impl WebSocketProxyTunnel {
 
         // Configure SNI with hostname.
         //
-        // This could live inside `onOpen`, which `SslWrapper::start()`
+        // This could live inside `onOpen`, which `SSLWrapper::start()`
         // invokes immediately before `handle_traffic()`. We hoist it here because
-        // `start()` holds `&mut SslWrapper` across the `on_open` dispatch, and any
+        // `start()` holds `&mut SSLWrapper` across the `on_open` dispatch, and any
         // read of `(*ctx).wrapper` from inside the callback would invalidate that
         // borrow under Stacked Borrows. The observable order vs BoringSSL is
         // identical: SNI is set on the `SSL*` before the handshake is driven.
@@ -268,7 +268,7 @@ impl WebSocketProxyTunnel {
         // SAFETY: raw field projection; `start*()` synchronously fires `on_open(ctx)`
         // / `write_encrypted(ctx)` / etc. Those callbacks touch only fields disjoint
         // from `wrapper` (`ref_count`, `ssl`, `sni_hostname`, `write_buffer`,
-        // `socket`, …), so the `&mut SslWrapper` formed here — which covers only
+        // `socket`, …), so the `&mut SSLWrapper` formed here — which covers only
         // the `wrapper` field bytes — is never aliased.
         let wrapper_ptr = unsafe { ptr::addr_of_mut!((*this).wrapper) };
         if !initial_data.is_empty() {
@@ -293,7 +293,7 @@ impl WebSocketProxyTunnel {
         bun_core::scoped_log!(WebSocketProxyTunnel, "onOpen");
         // SNI configuration is done in `start()` before the wrapper is driven;
         // see the note there. This callback intentionally does not touch
-        // `(*this).wrapper` — the caller (`SslWrapper::start`) holds `&mut self`
+        // `(*this).wrapper` — the caller (`SSLWrapper::start`) holds `&mut self`
         // over those bytes.
         let _ = this;
     }
@@ -367,7 +367,7 @@ impl WebSocketProxyTunnel {
 
             // Verify server identity. Read the `ssl` snapshot + `sni_hostname` via
             // raw field projections — never bind `&*this` (whole-struct), which
-            // would overlap `wrapper` and pop the `&mut SslWrapper` held by the
+            // would overlap `wrapper` and pop the `&mut SSLWrapper` held by the
             // `receive_data()` frame that fired us.
             // SAFETY: ScopedRef guard holds a ref; `this` is live. `ssl` is `Copy`;
             // `sni_hostname` autoref covers only that field's bytes.
@@ -452,7 +452,7 @@ impl WebSocketProxyTunnel {
     fn write_encrypted(this: *mut WebSocketProxyTunnel, encrypted_data: &[u8]) {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during
         // callbacks. The driving frame (`receive`/`on_writable`/`write`/`shutdown`/
-        // `start`) holds a live `&mut SslWrapper` derived from `(*this).wrapper`, so
+        // `start`) holds a live `&mut SSLWrapper` derived from `(*this).wrapper`, so
         // a whole-struct `&mut *this` here would alias it (Stacked Borrows UB).
         // Project to the disjoint `write_buffer`/`socket` fields only.
         let (write_buffer, socket) = unsafe {
@@ -555,7 +555,7 @@ impl WebSocketProxyTunnel {
         // SAFETY: caller contract — `this` is live.
         let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
 
-        // SAFETY: raw field projection; the `&mut Option<SslWrapper>` covers only
+        // SAFETY: raw field projection; the `&mut Option<SSLWrapper>` covers only
         // `wrapper`, and the re-entrant callbacks access tunnel fields via the
         // Box-provenance `ctx`, not through this borrow.
         let wrapper_ptr = unsafe { ptr::addr_of_mut!((*this).wrapper) };
@@ -606,7 +606,7 @@ impl WebSocketProxyTunnel {
 
 impl Drop for WebSocketProxyTunnel {
     fn drop(&mut self) {
-        // Field cleanup is automatic: wrapper (Option<SslWrapper>), write_buffer (StreamBuffer),
+        // Field cleanup is automatic: wrapper (Option<SSLWrapper>), write_buffer (StreamBuffer),
         // sni_hostname (Option<Box<[u8]>>) all impl Drop. Deallocation
         // is handled by IntrusiveRc / `deref()` via heap::take.
     }

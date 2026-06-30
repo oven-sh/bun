@@ -3,6 +3,7 @@
 
 use core::ffi::{c_uint, c_void};
 
+use bun_http_types::FetchRedirect::CommonAbortReason;
 use bun_uws as uws;
 
 use crate::webcore::CookieMap;
@@ -204,7 +205,7 @@ impl AnyRequestContext {
         dispatch!(self, (), |_T, ctx| ctx.ref_())
     }
 
-    pub fn set_signal_aborted(self, reason: crate::server::jsc::CommonAbortReason) {
+    pub fn set_signal_aborted(self, reason: CommonAbortReason) {
         dispatch!(self, (), |_T, ctx| ctx.set_signal_aborted(reason))
     }
 

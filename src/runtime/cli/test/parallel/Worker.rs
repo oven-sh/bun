@@ -6,12 +6,13 @@
 use core::ffi::c_void;
 
 #[cfg(unix)]
-use crate::api::bun::process::PosixStdio as Stdio;
+use crate::api::bun::PosixStdio as Stdio;
+use crate::api::bun::Rusage;
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
 #[cfg(not(unix))]
 use crate::api::bun::process::WindowsStdio as Stdio;
-use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
+use crate::api::bun::process::{self as spawn, Process, SpawnOptions, Status};
 use bun_core::{self, Output};
 use bun_io as r#async;
 use bun_io;
@@ -194,7 +195,7 @@ impl Worker {
             // CRT fd 3 with uv_pipe_init(ipc=1) + uv_pipe_open in Channel.adopt.
             // Both ends agreeing on the libuv IPC framing is what matters; our
             // own [u32 len][u8 kind] frames ride inside it unchanged.
-            use bun_sys::windows::libuv as uv;
+            use bun_libuv_sys as uv;
 
             let ipc_pipe = bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));
             // The guard owns the raw Box ptr; `close_and_destroy` handles both
@@ -313,12 +314,7 @@ impl Worker {
         unsafe { (*coord_ptr.cast_mut()).live_workers += 1 };
         // SAFETY: `this` is the live `Box<Worker>` slot in
         // `Coordinator.workers`; it outlives `process`.
-        process.set_exit_handler(unsafe {
-            bun_spawn::ProcessExit::new(
-                bun_spawn::ProcessExitKind::TestParallelWorker,
-                &raw mut **this,
-            )
-        });
+        process.set_exit_handler(bun_spawn::ProcessExit::of(&raw mut **this));
         match process.watch_or_reap() {
             Ok(_) => {}
             Err(e) => {
@@ -408,10 +404,16 @@ impl Worker {
     }
 }
 
-bun_spawn::link_impl_ProcessExit! {
-    TestParallelWorker for Worker => |this| {
-        on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(&*process, status, rusage),
+impl bun_spawn::ProcessExitOps for Worker {
+    unsafe fn on_process_exit(
+        this: *mut Self,
+        process: &mut Process,
+        status: Status,
+        rusage: &Rusage,
+    ) {
+        // SAFETY: `this` is the live owner pointer registered via
+        // `Process::set_exit_handler` (see `ProcessExitOps`).
+        unsafe { (*this).on_process_exit(&*process, status, rusage) }
     }
 }
 

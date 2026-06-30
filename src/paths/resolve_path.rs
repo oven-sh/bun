@@ -1,7 +1,8 @@
 use core::cell::UnsafeCell;
 
 use crate::fs as Fs;
-use crate::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS};
+use crate::{SEP, SEP_POSIX, SEP_WINDOWS};
+use bun_core::{MAX_PATH_BYTES, PathBuffer};
 use bun_core::{WStr, ZStr, strings};
 
 // Thread-local scratch buffers. Stored in `UnsafeCell` (not `RefCell`)

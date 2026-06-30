@@ -350,7 +350,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline(never)]
     fn e_jsx_element(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
-        use crate::parser::{JSXImport, JSXTransformType, options};
+        use crate::parser::{JSXImport, JSXTransformType};
+        use bun_options_types::jsx;
         let _ = in_;
         let mut e_ = expr
             .data
@@ -365,7 +366,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.visit_expr(&mut _tag);
                         break 'tagger _tag;
                     }
-                    if p.options.jsx.runtime == options::JSX::Runtime::Classic {
+                    if p.options.jsx.runtime == jsx::Runtime::Classic {
                         // `jsx_strings_to_member_expression` wants `&[&'a [u8]]`.
                         // `options.jsx.fragment: Box<[Box<[u8]>]>` is OWNED by
                         // `P` and dropped when `Parser::parse` returns — but the parts are
@@ -403,17 +404,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                let runtime = if p.options.jsx.runtime == options::JSX::Runtime::Automatic {
-                    options::JSX::Runtime::Automatic
+                let runtime = if p.options.jsx.runtime == jsx::Runtime::Automatic {
+                    jsx::Runtime::Automatic
                 } else {
-                    options::JSX::Runtime::Classic
+                    jsx::Runtime::Classic
                 };
                 let is_key_after_spread = e_.flags.contains(Flags::JSXElement::IsKeyAfterSpread);
                 let children_count = e_.children.len_u32();
 
                 // TODO: maybe we should split these into two different AST Nodes
                 // That would reduce the amount of allocations a little
-                if runtime == options::JSX::Runtime::Classic || is_key_after_spread {
+                if runtime == jsx::Runtime::Classic || is_key_after_spread {
                     // Arguments to createElement()
                     let mut args = ExprNodeList::init_capacity(2 + children_count as usize);
                     VecExt::append(&mut args, tag);
@@ -445,7 +446,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
 
-                    let target: Expr = if runtime == options::JSX::Runtime::Classic {
+                    let target: Expr = if runtime == jsx::Runtime::Classic {
                         // see fragment note above — `options.jsx.factory` is
                         // owned by `P` and freed when the parser drops; dupe each part
                         // into the arena so the symbol/E::Dot names outlive the printer.
@@ -495,7 +496,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return;
                 }
                 // function jsxDEV(type, config, maybeKey, source, self) {
-                else if runtime == options::JSX::Runtime::Automatic {
+                else if runtime == jsx::Runtime::Automatic {
                     // --- These must be done in all cases --
                     let maybe_key_value: Option<ExprNodeIndex> = if e_.key_prop_index > -1 {
                         let idx = e_.key_prop_index as u32 as usize;

@@ -661,7 +661,7 @@ impl Map {
 
     pub fn follow_all(&mut self) {
         // The returned `Ctx` is RAII and ends the span on drop.
-        let _trace = bun_perf::trace(bun_perf::PerfEvent::SymbolsFollowAll);
+        let _trace = bun_perf::trace(bun_core::PerfEvent::SymbolsFollowAll);
         // `link` is `Cell<Ref>`, so we can iterate the table by shared ref and
         // mutate `link` in place; `follow()` only takes `&self` and only touches
         // `link`, so the nested shared borrows coexist.

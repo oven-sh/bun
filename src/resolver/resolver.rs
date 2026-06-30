@@ -14,54 +14,32 @@ use std::io::Write as _;
 // Higher-tier symbols are reached through lower-tier crates:
 //   • install value types + AutoInstaller trait — bun_install_types (MOVE_DOWN)
 //   • HardcodedModule alias table              — bun_resolve_builtins
-//   • StandaloneModuleGraph                    — trait below; impl in bun_standalone_graph
+//   • StandaloneModuleGraph                    — concrete graph type re-exported
+//     from bun_standalone_graph_core
 //   • perf / crash_handler                     — real bun_perf / bun_crash_handler
 use ::bun_install_types::resolver_hooks as Install;
 use ::bun_install_types::resolver_hooks::{AutoInstaller, Resolution};
 use ::bun_semver as Semver;
-// Re-exported so downstream (bun_bundler) can name the trait in
-// `Transpiler::get_package_manager`'s return type without a direct
-// `bun_install_types` dep (LAYERING: pass-through, no new edge).
-pub use ::bun_install_types::resolver_hooks::AutoInstaller as PackageManagerTrait;
 
-// LAYERING: `PackageManager.initWithRuntime` lives in
-// `bun_install`, which depends on this crate. The lazy-init body is defined
-// `#[no_mangle]` in `bun_install::auto_installer` and resolved at link time
-// (same pattern as `__bun_regex_*` / `__BUN_RUNTIME_HOOKS`). `install` is the
-// `?*Api.BunInstall` (`self.opts.install`); `env` is the `*DotEnv.Loader`
-// (lifetime-erased to `'static` — the install crate stores it as a raw
-// `NonNull<Loader<'static>>`).
-unsafe extern "Rust" {
-    /// SAFETY (genuine FFI precondition — NOT a `safe fn` candidate): impl
-    /// reborrows `&mut *log` / `&mut *env` and reads `*install` if non-null.
-    /// All three must point at process-lifetime Transpiler-owned storage; the
-    /// returned `NonNull` names the `'static` `PackageManager` singleton.
-    /// Errs when the one-time init fails (e.g. the top-level directory is
-    /// unreadable); the failure is sticky across calls.
-    fn __bun_resolver_init_package_manager(
+/// Lazily constructs (or returns) the process-static `PackageManager`
+/// singleton as a `dyn AutoInstaller`. Wired by `bun_runtime::jsc_hooks`
+/// at Transpiler init (`bun_install::auto_installer::init_package_manager`),
+/// alongside `on_wake_package_manager`.
+///
+/// # Safety
+/// Same contract as the former link-time extern: `log` / `install` / `env`
+/// must point at process-lifetime Transpiler-owned storage; the returned
+/// `NonNull` names the `'static` `PackageManager` singleton. Init failure is
+/// sticky inside the factory.
+pub type PackageManagerFactory =
+    unsafe fn(
         log: NonNull<bun_ast::Log>,
         install: Option<NonNull<bun_options_types::schema::api::BunInstall>>,
         env: NonNull<bun_dotenv::Loader<'static>>,
     ) -> core::result::Result<NonNull<dyn AutoInstaller>, bun_core::Error>;
-}
 use crate::cache::Set as CacheSet;
 use ::bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 
-/// `Dependency` namespace as the body spells it (`Dependency::Version` /
-/// `Dependency::Behavior`). Re-exports the canonical `bun_install_types` items.
-pub mod Dependency {
-    pub use ::bun_install_types::resolver_hooks::{
-        Behavior, Dependency, DependencyVersion as Version, DependencyVersionTag,
-    };
-    pub mod version {
-        pub use ::bun_install_types::resolver_hooks::DependencyVersionTag as Tag;
-    }
-}
-
-/// Transitional re-export module: `package_json.rs` and a few external crates
-/// still spell these paths via `__forward_decls`; the items are now real
-/// re-exports of `bun_install_types` (no local stubs).
-pub(crate) mod __forward_decls {}
 // bun_paths shim — value-dispatched join helpers over `resolve_path::Platform`.
 // `dirname` (`Option`-returning) and
 // `PosixToWinNormalizer` are the real `::bun_paths` items — brought in by the
@@ -233,7 +211,7 @@ trait FdExt: Sized {
     fn close(self);
     fn get_fd_path<'b>(
         self,
-        buf: &'b mut ::bun_paths::PathBuffer,
+        buf: &'b mut ::bun_core::PathBuffer,
     ) -> core::result::Result<&'b [u8], ::bun_core::Error>;
 }
 impl FdExt for ::bun_sys::Fd {
@@ -244,7 +222,7 @@ impl FdExt for ::bun_sys::Fd {
     #[inline]
     fn get_fd_path<'b>(
         self,
-        buf: &'b mut ::bun_paths::PathBuffer,
+        buf: &'b mut ::bun_core::PathBuffer,
     ) -> core::result::Result<&'b [u8], ::bun_core::Error> {
         ::bun_sys::get_fd_path(self, buf)
             .map(|s| &*s)
@@ -259,12 +237,12 @@ impl FdZero for ::bun_sys::Fd {
 }
 
 use self::bun_paths as ResolvePath;
-use ::bun_ast::import_record as ast;
 use ::bun_core::{FeatureFlags, Generation};
-use bun_ast::Msg;
-use bun_collections::BoundedArray;
+use bun_ast::{ImportKind, Msg};
+use bun_core::bounded_array::BoundedArray;
+use bun_core::{MAX_PATH_BYTES, PathBuffer};
 use bun_dotenv::env_loader as DotEnv;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
+use bun_paths::{SEP, SEP_STR};
 use bun_perf::system_timer::Timer;
 use bun_ptr::Interned;
 use bun_sys::Fd as FD;
@@ -283,12 +261,12 @@ pub use ::bun_options_types::global_cache::GlobalCache;
 
 // Sibling resolver modules. They retain the same item names so cross-references
 // inside `impl Resolver` resolve unchanged.
+use crate::StandaloneModuleGraph;
 use crate::options;
 use crate::result::{
     DebugLogs, DirEntryResolveQueueItem, FlushMode, LoadResult, MatchResult, MatchStatus, PathPair,
     PendingResolution, PendingResolutionTag, Result, ResultFlags, ResultUnion,
 };
-use crate::standalone_module_graph::StandaloneModuleGraph;
 use bun_alloc as allocators;
 // `bun.resolver.SideEffects` — same type as `Result.primary_side_effects_data`
 // (re-exported from `bun_ast`; see `result.rs`).
@@ -471,42 +449,6 @@ static BIN_FOLDERS_LOCK: Mutex = Mutex::new();
 static BIN_FOLDERS_LOADED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-// LAYERING: `AnyResolveWatcher` is the erased vtable the resolver calls to
-// register directory watches. The concrete callback lives in `bun_watcher`
-// (lower tier); defining the vtable shape there and re-exporting here keeps a
-// single type so `Watcher::get_resolve_watcher()` flows directly into
-// `Resolver.watcher` without a seam converter.
-pub use bun_watcher::AnyResolveWatcher;
-
-// NOTE: const fn-pointer generics (`adt_const_params` for fn ptrs) and
-// const params depending on type params are both forbidden. Carry a
-// runtime fn-pointer alongside the context — `init` produces the
-// `AnyResolveWatcher` erased shim.
-
-pub struct ResolveWatcher<C> {
-    on_watch: fn(*mut C, &[u8], FD),
-    _marker: core::marker::PhantomData<*mut C>,
-}
-impl<C> ResolveWatcher<C> {
-    pub const fn new(on_watch: fn(*mut C, &[u8], FD)) -> Self {
-        Self {
-            on_watch,
-            _marker: core::marker::PhantomData,
-        }
-    }
-    pub fn init(self, ctx: *mut C) -> AnyResolveWatcher {
-        AnyResolveWatcher {
-            context: ctx.cast(),
-            // SAFETY: `fn(*mut C, ..)` and `fn(*mut (), ..)` are ABI-identical
-            // (Rust-ABI, thin-ptr first arg). The callback body discharges its
-            // own type-recovery.
-            callback: unsafe {
-                bun_ptr::cast_fn_ptr::<fn(*mut C, &[u8], FD), fn(*mut (), &[u8], FD)>(self.on_watch)
-            },
-        }
-    }
-}
-
 pub struct Resolver<'a> {
     pub opts: options::BundleOptions,
     // NOTE: `fs` / `log` are raw aliasing
@@ -534,7 +476,9 @@ pub struct Resolver<'a> {
     pub debug_logs: Option<DebugLogs>,
     pub elapsed: u64, // tracing
 
-    pub watcher: Option<AnyResolveWatcher>,
+    /// Directory-watch sink. Installed by hot_reloader / bake::DevServer; the
+    /// Watcher outlives the resolver (process/dev-server lifetime).
+    pub watcher: Option<bun_watcher::AnyResolveWatcher>,
 
     pub caches: CacheSet,
     pub generation: Generation,
@@ -543,11 +487,12 @@ pub struct Resolver<'a> {
     /// [`AutoInstaller`]; the resolver only sees the trait object so it stays
     /// below `bun_install` in the dep graph. `None` until the auto-install
     /// path is first reached: [`get_package_manager`] then initializes the
-    /// singleton through the link-time `__bun_resolver_init_package_manager`
+    /// singleton through the wired `package_manager_factory`
     /// factory and caches the pointer here. A failed init (e.g. unreadable
     /// top-level directory) is returned as an error and leaves this `None`.
     pub package_manager: Option<NonNull<dyn AutoInstaller>>,
     pub on_wake_package_manager: Install::WakeHandler,
+    pub package_manager_factory: Option<PackageManagerFactory>,
     // Stored as `NonNull` (not `&'a Loader`) because the same allocation is
     // mutably reborrowed via `Transpiler.env: *mut Loader` after this field is
     // set (e.g. bake/production.rs assigns this then calls `configure_defines()`
@@ -557,7 +502,7 @@ pub struct Resolver<'a> {
     pub env_loader: Option<NonNull<DotEnv::Loader<'a>>>,
     pub store_fd: bool,
 
-    pub standalone_module_graph: Option<&'a dyn StandaloneModuleGraph>,
+    pub standalone_module_graph: Option<&'a StandaloneModuleGraph>,
 
     // These are sets that represent various conditions for the "exports" field
     // in package.json.
@@ -676,17 +621,16 @@ impl<'a> Resolver<'a> {
             generation: from.generation,
             package_manager: from.package_manager,
             on_wake_package_manager: from.on_wake_package_manager,
+            package_manager_factory: from.package_manager_factory,
             // SAFETY: see fn doc — pointee outlives `'a`.
             env_loader: from.env_loader.map(|p| p.cast::<DotEnv::Loader<'a>>()),
             store_fd: from.store_fd,
-            // SAFETY: see fn doc — lifetime-widen the trait-object borrow. The
-            // vtable layout is identical (only the borrow-checker tag differs);
-            // a raw-pointer `as`-cast cannot change the `+ 'b` bound, so widen
-            // via a layout-preserving transmute on the `Option<&dyn>`.
+            // SAFETY: see fn doc — lifetime-widen the graph borrow via a
+            // layout-preserving transmute on the `Option<&_>`.
             standalone_module_graph: unsafe {
                 core::mem::transmute::<
-                    Option<&'_ dyn StandaloneModuleGraph>,
-                    Option<&'a dyn StandaloneModuleGraph>,
+                    Option<&'_ StandaloneModuleGraph>,
+                    Option<&'a StandaloneModuleGraph>,
                 >(from.standalone_module_graph)
             },
             mutex: from.mutex,
@@ -866,9 +810,8 @@ impl<'a> Resolver<'a> {
     /// Lazily initializing
     /// `PackageManager.initWithRuntime` here directly would
     /// be a `bun_resolver → bun_install` cycle, so the lazy init is
-    /// dispatched through the link-time `extern "Rust"` factory
-    /// [`__bun_resolver_init_package_manager`] (defined `#[no_mangle]` in
-    /// `bun_install::auto_installer`). The factory performs
+    /// dispatched through the [`PackageManagerFactory`] wired by
+    /// `bun_runtime::jsc_hooks` at Transpiler init. The factory performs
     /// `HTTPThread.init` + `PackageManager.initWithRuntime` and returns the
     /// process-static singleton as a `dyn AutoInstaller`. We then wire
     /// `on_wake` and cache the pointer. Reached from
@@ -890,13 +833,12 @@ impl<'a> Resolver<'a> {
             .env_loader
             .expect("Resolver.env_loader must be set before auto-install")
             .cast::<DotEnv::Loader<'static>>();
-        // SAFETY: `__bun_resolver_init_package_manager` is defined
-        // `#[no_mangle]` in `bun_install::auto_installer` and linked into the
-        // final binary; `self.log` / `self.opts.install` / `env` point at
-        // process-lifetime storage (Transpiler-owned). The returned pointer
-        // names the `PackageManager` singleton (`'static`).
-        let pm: NonNull<dyn AutoInstaller> =
-            unsafe { __bun_resolver_init_package_manager(self.log, self.opts.install, env) }?;
+        let factory = self
+            .package_manager_factory
+            .expect("package_manager_factory must be wired (jsc_hooks) before auto-install");
+        // SAFETY: factory contract — `self.log` / `self.opts.install` / `env`
+        // point at process-lifetime Transpiler-owned storage.
+        let pm: NonNull<dyn AutoInstaller> = unsafe { factory(self.log, self.opts.install, env) }?;
         // SAFETY: `pm` is the just-initialized singleton; sole `&mut` here.
         unsafe { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager) };
         self.package_manager = Some(pm);
@@ -909,7 +851,7 @@ impl<'a> Resolver<'a> {
     /// Option<NonNull<dyn AutoInstaller>>` field. The pointee is the
     /// process-static `PackageManager` singleton (set via
     /// [`get_package_manager`](Self::get_package_manager) /
-    /// `__bun_resolver_init_package_manager`), so it strictly outlives the
+    /// the wired `package_manager_factory`), so it strictly outlives the
     /// resolver. `&mut self` ensures the returned `&mut dyn AutoInstaller` is
     /// the only live reference for its lifetime.
     #[inline]
@@ -989,6 +931,7 @@ impl<'a> Resolver<'a> {
             generation: 0,
             package_manager: None,
             on_wake_package_manager: Default::default(),
+            package_manager_factory: None,
             env_loader: None,
             store_fd: false,
             standalone_module_graph: None,
@@ -1028,7 +971,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         source_dir: &[u8],
         import_path: &[u8],
-        kind: ast::ImportKind,
+        kind: ImportKind,
         out: &mut MatchResult,
     ) -> MatchStatus {
         // SAFETY: `import_path` is caller-interned (DirnameStore/source text)
@@ -1118,14 +1061,14 @@ impl<'a> Resolver<'a> {
         &mut self,
         source_dir: &[u8],
         import_path: &[u8],
-        kind: ast::ImportKind,
+        kind: ImportKind,
         global_cache: GlobalCache,
     ) -> ResultUnion {
         // SAFETY: `import_path` is caller-interned (source text / DirnameStore)
         // and outlives the returned Result.
         // TODO: thread an explicit lifetime through Result instead.
         let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };
-        let _tracer = ::bun_perf::trace(::bun_perf::PerfEvent::ModuleResolverResolve);
+        let _tracer = ::bun_perf::trace(::bun_core::PerfEvent::ModuleResolverResolve);
 
         // Only setting 'current_action' in debug mode because module resolution
         // is done very often, and has a very low crash rate.
@@ -1160,13 +1103,11 @@ impl<'a> Resolver<'a> {
         let original_order = self.extension_order;
         // NOTE: the restore happens explicitly at every return point below.
         self.extension_order = match kind {
-            ast::ImportKind::Url | ast::ImportKind::AtConditional | ast::ImportKind::At => {
-                options::ExtOrder::Css
-            }
-            ast::ImportKind::EntryPointBuild
-            | ast::ImportKind::EntryPointRun
-            | ast::ImportKind::Stmt
-            | ast::ImportKind::Dynamic => options::ExtOrder::DefaultEsm,
+            ImportKind::Url | ImportKind::AtConditional | ImportKind::At => options::ExtOrder::Css,
+            ImportKind::EntryPointBuild
+            | ImportKind::EntryPointRun
+            | ImportKind::Stmt
+            | ImportKind::Dynamic => options::ExtOrder::DefaultEsm,
             _ => options::ExtOrder::DefaultDefault,
         };
 
@@ -1231,8 +1172,8 @@ impl<'a> Resolver<'a> {
         // the alias first, but only follow it when it actually resolves to
         // a file on disk — a catch-all `"*": ["./types/*"]` for ambient
         // .d.ts stubs must still let real bare imports stay external.
-        if kind != ast::ImportKind::EntryPointBuild
-            && kind != ast::ImportKind::EntryPointRun
+        if kind != ImportKind::EntryPointBuild
+            && kind != ImportKind::EntryPointRun
             && self.opts.packages == options::Packages::External
             && is_package_path(import_path)
             && !self.matches_user_external_pattern(import_path)
@@ -1265,8 +1206,8 @@ impl<'a> Resolver<'a> {
 
         // Certain types of URLs default to being external for convenience,
         // while these rules should not be applied to the entrypoint as it is never external (#12734)
-        if kind != ast::ImportKind::EntryPointBuild
-            && kind != ast::ImportKind::EntryPointRun
+        if kind != ImportKind::EntryPointBuild
+            && kind != ImportKind::EntryPointRun
             && (self.is_external_pattern(import_path)
             // "fill: url(#filter);"
             || (kind.is_from_css() && import_path.starts_with(b"#"))
@@ -1357,7 +1298,10 @@ impl<'a> Resolver<'a> {
         let source_dir_normalized: &[u8] = 'brk: {
             if let Some(graph) = self.standalone_module_graph {
                 if ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path) {
-                    if graph.find_assume_standalone_path(import_path).is_some() {
+                    if graph
+                        .find_assume_standalone_path_shared(import_path)
+                        .is_some()
+                    {
                         self.extension_order = original_order;
                         return ResultUnion::Success(Result {
                             import_kind: kind,
@@ -1386,7 +1330,7 @@ impl<'a> Resolver<'a> {
                         );
 
                         // Support relative paths in the graph
-                        if let Some(file_name) = graph.find_assume_standalone_path(joined) {
+                        if let Some(file_name) = graph.find_assume_standalone_path_shared(joined) {
                             // Intern: trait borrows into the graph; `Path::init`
                             // needs `'static` (DirnameStore-backed).
                             let file_name = Fs::file_system::DirnameStore::instance()
@@ -1551,7 +1495,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         source_dir: &[u8],
         import_path: &[u8],
-        kind: ast::ImportKind,
+        kind: ImportKind,
     ) -> core::result::Result<Result, bun_core::Error> {
         match self.resolve_and_auto_install(source_dir, import_path, kind, GlobalCache::disable) {
             ResultUnion::Success(result) => Ok(result),
@@ -1568,7 +1512,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         source_dir: &[u8],
         import_path: &[u8],
-        kind: ast::ImportKind,
+        kind: ImportKind,
     ) -> core::result::Result<Result, bun_core::Error> {
         // SAFETY: `import_path` is caller-interned (source text / DirnameStore)
         // and outlives the returned Result. TODO: thread an explicit lifetime.
@@ -1598,7 +1542,7 @@ impl<'a> Resolver<'a> {
                         let path: &'static [u8] =
                             unsafe { &*std::ptr::from_ref::<[u8]>(path.as_ref()) };
                         let top = self.fs_ref().top_level_dir;
-                        return self.resolve(top, path, ast::ImportKind::EntryPointBuild);
+                        return self.resolve(top, path, ImportKind::EntryPointBuild);
                     }
                 }
             }
@@ -1609,7 +1553,7 @@ impl<'a> Resolver<'a> {
     pub fn finalize_result(
         &mut self,
         result: &mut Result,
-        kind: ast::ImportKind,
+        kind: ImportKind,
     ) -> core::result::Result<(), bun_core::Error> {
         if result.flags.is_external() {
             return Ok(());
@@ -1745,7 +1689,7 @@ impl<'a> Resolver<'a> {
                     } else if !dir.abs_real_path.is_empty() {
                         // When the directory is a symlink, we don't need to call getFdPath.
                         let parts = [dir.abs_real_path, query.entry().base()];
-                        let mut buf = bun_paths::PathBuffer::uninit();
+                        let mut buf = bun_core::PathBuffer::uninit();
 
                         // NOTE: `abs_buf` returns a borrow of `buf`; capture only the
                         // length so `buf` can be re-borrowed for null-termination below.
@@ -1834,7 +1778,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         source_dir: &[u8],
         input_import_path: &'static [u8],
-        kind: ast::ImportKind,
+        kind: ImportKind,
         global_cache: GlobalCache,
     ) -> ResultUnion {
         debug_assert!(bun_paths::is_absolute(source_dir));
@@ -1968,7 +1912,7 @@ impl<'a> Resolver<'a> {
         // Check both relative and package paths for CSS URL tokens, with relative
         // paths taking precedence over package paths to match Webpack behavior.
         let is_package_path_ =
-            kind != ast::ImportKind::EntryPointRun && is_package_path_not_absolute(import_path);
+            kind != ImportKind::EntryPointRun && is_package_path_not_absolute(import_path);
         let check_relative = !is_package_path_ || kind.is_from_css();
         let check_package = is_package_path_;
 
@@ -2126,7 +2070,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         source_dir: &[u8],
         import_path: &[u8],
-        kind: ast::ImportKind,
+        kind: ImportKind,
         global_cache: GlobalCache,
     ) -> ResultUnion {
         let Some(abs_path) = self
@@ -2254,7 +2198,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         source_dir: &[u8],
         unremapped_import_path: &'static [u8],
-        kind: ast::ImportKind,
+        kind: ImportKind,
         global_cache: GlobalCache,
     ) -> ResultUnion {
         let mut import_path = unremapped_import_path;
@@ -2628,7 +2572,7 @@ impl<'a> Resolver<'a> {
     pub fn load_node_modules(
         &mut self,
         import_path: &[u8],
-        kind: ast::ImportKind,
+        kind: ImportKind,
         // NOTE: `DirInfoRef` (not `&mut`) — body re-enters `dir_cache` via
         // `dir_info_cached()` which, in the self-reference branch, returns the
         // SAME BSSMap slot. A `&mut` param carries an FnEntry protector under
@@ -2778,9 +2722,9 @@ impl<'a> Resolver<'a> {
 
                         if let Ok(Some(pkg_dir_info)) = self.dir_info_cached(abs_package_path) {
                             self.extension_order = match kind {
-                                ast::ImportKind::Url
-                                | ast::ImportKind::AtConditional
-                                | ast::ImportKind::At => options::ExtOrder::Css,
+                                ImportKind::Url | ImportKind::AtConditional | ImportKind::At => {
+                                    options::ExtOrder::Css
+                                }
                                 _ => self.opts.extension_order.kind(kind, true),
                             };
 
@@ -2802,12 +2746,11 @@ impl<'a> Resolver<'a> {
                                     {
                                         let esm_resolution = ESModule {
                                             conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
+                                                ImportKind::Require
+                                                | ImportKind::RequireResolve => {
                                                     &self.opts.conditions.require
                                                 }
-                                                ast::ImportKind::At
-                                                | ast::ImportKind::AtConditional => {
+                                                ImportKind::At | ImportKind::AtConditional => {
                                                     &self.opts.conditions.style
                                                 }
                                                 _ => &self.opts.conditions.import,
@@ -2859,12 +2802,11 @@ impl<'a> Resolver<'a> {
                                     if extname == b".js" && esm.subpath.len() > 3 {
                                         let esm_resolution = ESModule {
                                             conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
+                                                ImportKind::Require
+                                                | ImportKind::RequireResolve => {
                                                     &self.opts.conditions.require
                                                 }
-                                                ast::ImportKind::At
-                                                | ast::ImportKind::AtConditional => {
+                                                ImportKind::At | ImportKind::AtConditional => {
                                                     &self.opts.conditions.style
                                                 }
                                                 _ => &self.opts.conditions.import,
@@ -3046,8 +2988,8 @@ impl<'a> Resolver<'a> {
                         unsafe { &mut *manager_ptr }
                     };
                 }
-                let mut dependency_version = Dependency::Version::default();
-                let mut dependency_behavior = Dependency::Behavior::PROD;
+                let mut dependency_version = Install::DependencyVersion::default();
+                let mut dependency_behavior = Install::Behavior::PROD;
                 let mut string_buf: &[u8] = esm.version;
 
                 // const initial_pending_tasks = manager.pending_tasks;
@@ -3055,7 +2997,7 @@ impl<'a> Resolver<'a> {
                     // check if the package.json in the source directory was already added to the lockfile
                     // and try to look up the dependency from there
                     if let Some(package_json) = dir_info.package_json_for_dependencies() {
-                        let mut dependencies_list: &[Dependency::Dependency] = &[];
+                        let mut dependencies_list: &[Install::Dependency] = &[];
                         let resolve_from_lockfile =
                             package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID;
 
@@ -3118,7 +3060,7 @@ impl<'a> Resolver<'a> {
                 // There are two steps here! Two steps!
                 let resolution: Resolution = 'brk: {
                     if resolved_package_id == Install::INVALID_PACKAGE_ID {
-                        if dependency_version.tag == Dependency::version::Tag::Uninitialized {
+                        if dependency_version.tag == Install::DependencyVersionTag::Uninitialized {
                             let sliced_string =
                                 Semver::SlicedString::init(esm.version, esm.version);
                             if !esm_ref.version.is_empty()
@@ -3300,8 +3242,8 @@ impl<'a> Resolver<'a> {
                                     {
                                         let esm_resolution = ESModule {
                                             conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
+                                                ImportKind::Require
+                                                | ImportKind::RequireResolve => {
                                                     &self.opts.conditions.require
                                                 }
                                                 _ => &self.opts.conditions.import,
@@ -3339,8 +3281,8 @@ impl<'a> Resolver<'a> {
                                     if extname == b".js" && esm.subpath.len() > 3 {
                                         let esm_resolution = ESModule {
                                             conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
+                                                ImportKind::Require
+                                                | ImportKind::RequireResolve => {
                                                     &self.opts.conditions.require
                                                 }
                                                 _ => &self.opts.conditions.import,
@@ -3637,9 +3579,9 @@ impl<'a> Resolver<'a> {
         // `*const` and casting back to `*mut` would be UB under Stacked Borrows.
         package_json_: Option<core::ptr::NonNull<PackageJSON>>,
         esm: &crate::package_json::Package<'_>,
-        behavior: Dependency::Behavior,
+        behavior: Install::Behavior,
         input_package_id_: &mut Install::PackageID,
-        version: Dependency::Version,
+        version: Install::DependencyVersion,
         version_buf: &[u8],
     ) -> DependencyToResolve {
         if let Some(debug) = self.debug_logs.as_mut() {
@@ -3684,7 +3626,7 @@ impl<'a> Resolver<'a> {
                 // `AutoInstaller` impl performs the from-package-json /
                 // setHasInstallScript / appendPackage steps.
                 let id = match pm!().lockfile_append_from_package_json(
-                    package_json,
+                    package_json.as_install_ref(),
                     Install::Features {
                         dev_dependencies: true,
                         is_main: true,
@@ -3755,7 +3697,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         esm_resolution_: crate::package_json::Resolution,
         abs_package_path: &[u8],
-        kind: ast::ImportKind,
+        kind: ImportKind,
         package_json: &PackageJSON,
         package_subpath: &[u8],
         out: &mut MatchResult,
@@ -3806,7 +3748,7 @@ impl<'a> Resolver<'a> {
                     }
                 };
                 let extension_order: options::ExtOrder =
-                    if kind == ast::ImportKind::At || kind == ast::ImportKind::AtConditional {
+                    if kind == ImportKind::At || kind == ImportKind::AtConditional {
                         self.extension_order
                     } else {
                         self.opts
@@ -3970,7 +3912,7 @@ impl<'a> Resolver<'a> {
         // which re-enters `dir_cache` and may re-derive the same DirInfo slot.
         source_dir_info: DirInfoRef,
         import_path: &[u8],
-        kind: ast::ImportKind,
+        kind: ImportKind,
         global_cache: GlobalCache,
         out: &mut MatchResult,
     ) -> MatchStatus {
@@ -4246,8 +4188,8 @@ impl<'a> Resolver<'a> {
 
         queue[0].write(DirEntryResolveQueueItem {
             result: top_result,
-            unsafe_path: bun_ptr::RawSlice::new(&path[..input_path_len]),
-            safe_path: bun_ptr::RawSlice::EMPTY,
+            unsafe_path: bun_core::RawSlice::new(&path[..input_path_len]),
+            safe_path: bun_core::RawSlice::EMPTY,
             fd: FD::INVALID,
         });
         let mut top = Dirname::dirname(&path[..input_path_len]);
@@ -4300,9 +4242,9 @@ impl<'a> Resolver<'a> {
                 return Ok(None);
             }
             queue[i].write(DirEntryResolveQueueItem {
-                unsafe_path: bun_ptr::RawSlice::new(top),
+                unsafe_path: bun_core::RawSlice::new(top),
                 result,
-                safe_path: bun_ptr::RawSlice::EMPTY,
+                safe_path: bun_core::RawSlice::EMPTY,
                 fd: FD::INVALID,
             });
 
@@ -4311,7 +4253,7 @@ impl<'a> Resolver<'a> {
                     Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                         // SAFETY: slot was written immediately above.
                         let slot = unsafe { queue[i].assume_init_mut() };
-                        slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
+                        slot.safe_path = bun_core::RawSlice::new(entries.dir);
                         slot.fd = entries.fd;
                     }
                     Fs::file_system::real_fs::EntriesOption::Err(err) => {
@@ -4335,9 +4277,9 @@ impl<'a> Resolver<'a> {
                 top_parent = result;
             } else {
                 queue[i].write(DirEntryResolveQueueItem {
-                    unsafe_path: bun_ptr::RawSlice::new(root_path),
+                    unsafe_path: bun_core::RawSlice::new(root_path),
                     result,
-                    safe_path: bun_ptr::RawSlice::EMPTY,
+                    safe_path: bun_core::RawSlice::EMPTY,
                     fd: FD::INVALID,
                 });
                 if let Some(top_entry) = rfs!().entries.get(top) {
@@ -4345,7 +4287,7 @@ impl<'a> Resolver<'a> {
                         Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                             // SAFETY: slot was written immediately above.
                             let slot = unsafe { queue[i].assume_init_mut() };
-                            slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
+                            slot.safe_path = bun_core::RawSlice::new(entries.dir);
                             slot.fd = entries.fd;
                         }
                         Fs::file_system::real_fs::EntriesOption::Err(err) => {
@@ -4724,7 +4666,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         tsconfig: &TSConfigJSON,
         path: &[u8],
-        kind: ast::ImportKind,
+        kind: ImportKind,
         out: &mut MatchResult,
     ) -> MatchStatus {
         if let Some(debug) = self.debug_logs.as_mut() {
@@ -4916,7 +4858,7 @@ impl<'a> Resolver<'a> {
         // `dir_info.abs_path`, re-deriving `&mut` to the SAME slot while a
         // `&mut` param's FnEntry protector is live is aliased-&mut UB.
         dir_info: DirInfoRef,
-        kind: ast::ImportKind,
+        kind: ImportKind,
         global_cache: GlobalCache,
         out: &mut MatchResult,
     ) -> MatchStatus {
@@ -4949,9 +4891,7 @@ impl<'a> Resolver<'a> {
         // borrow of `self.debug_logs` ends as soon as `resolve_imports` returns.
         let esm_resolution = ESModule {
             conditions: match kind {
-                ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
-                    &self.opts.conditions.require
-                }
+                ImportKind::Require | ImportKind::RequireResolve => &self.opts.conditions.require,
                 _ => &self.opts.conditions.import,
             },
             debug_logs: self.debug_logs.as_mut(),
@@ -5237,7 +5177,7 @@ impl<'a> Resolver<'a> {
             // BACKREF: `RawSlice` detaches the `&self.opts` borrow so the loop
             // body can take `&mut self`. Backing `Box<[u8]>` is owned by
             // `self.opts` and never mutated while the resolver runs.
-            let ext = bun_ptr::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
+            let ext = bun_core::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
             if self
                 .load_index_with_extension(dir_info, &ext, out)
                 .is_success()
@@ -5252,7 +5192,7 @@ impl<'a> Resolver<'a> {
         for i in 0..n {
             // BACKREF: see `RawSlice` note above — backing `Box<[u8]>` in
             // `extra_cjs_extensions` is heap-stable for the resolver's life.
-            let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
+            let ext = bun_core::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
             if self
                 .load_index_with_extension(dir_info, &ext, out)
                 .is_success()
@@ -5440,7 +5380,7 @@ impl<'a> Resolver<'a> {
     pub fn load_as_file_or_directory(
         &mut self,
         path: &[u8],
-        kind: ast::ImportKind,
+        kind: ImportKind,
         out: &mut MatchResult,
     ) -> MatchStatus {
         let extension_order = self.extension_order;
@@ -5538,7 +5478,7 @@ impl<'a> Resolver<'a> {
                 // borrow so the loop body can take `&mut self`. Backing
                 // `Box<[Box<[u8]>]>` heap buffer is owned by `self.opts` and
                 // never mutated during resolve.
-                let main_field_keys = bun_ptr::RawSlice::<Box<[u8]>>::new(&self.opts.main_fields);
+                let main_field_keys = bun_core::RawSlice::<Box<[u8]>>::new(&self.opts.main_fields);
                 let mf_ext_order = options::ExtOrder::MainField;
                 // The bundler projects "user did not pass --main-fields" as an
                 // explicit bool because the owned `Box<[Box<[u8]>]>` can never
@@ -5631,7 +5571,7 @@ impl<'a> Resolver<'a> {
                             //
                             // Additionally, if this is for the runtime, use the "main" field.
                             // If it doesn't exist, the "module" field will be used.
-                            if self.prefer_module_field && kind != ast::ImportKind::Require {
+                            if self.prefer_module_field && kind != ImportKind::Require {
                                 if let Some(debug) = self.debug_logs.as_mut() {
                                     debug.add_note_fmt(format_args!(
                                         "Resolved to \"{}\" using the \"module\" field in \"{}\"",
@@ -5822,7 +5762,7 @@ impl<'a> Resolver<'a> {
             // BACKREF: `RawSlice` detaches the `&self.opts` borrow so the loop
             // body can take `&mut self`. Backing `Box<[u8]>` is owned by
             // `self.opts` and never mutated while the resolver runs.
-            let ext = bun_ptr::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
+            let ext = bun_core::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
             if let Some(result) = self.load_extension(base, path, &ext, entries!()) {
                 dec_ret!(Some(result));
             }
@@ -5835,7 +5775,7 @@ impl<'a> Resolver<'a> {
         for i in 0..n {
             // BACKREF: see `RawSlice` note above — backing `Box<[u8]>` in
             // `extra_cjs_extensions` is heap-stable for the resolver's life.
-            let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
+            let ext = bun_core::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
             if let Some(result) = self.load_extension(base, path, &ext, entries!()) {
                 dec_ret!(Some(result));
             }

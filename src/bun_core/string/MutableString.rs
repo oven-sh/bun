@@ -2,16 +2,6 @@ use crate::string::ZStr;
 use crate::strings;
 use bun_alloc::AllocError;
 
-/// VTable surface for `bun.ast.E.String` (CYCLEBREAK b0: GENUINE upward dep on
-/// `bun_ast::E::String`). Low tier defines the interface; high tier
-/// (`bun_js_parser`) provides `impl EStringRef for E::String`.
-/// Dyn dispatch is acceptable: cold path (formatter/writer).
-pub trait EStringRef {
-    fn is_utf8(&self) -> bool;
-    fn slice(&mut self) -> &[u8];
-    fn slice16(&mut self) -> &[u16];
-}
-
 /// Layout-identical to POSIX `struct iovec` with a const base
 /// (`{ base: *const u8, len: usize }`), used unconditionally on every target —
 /// it does NOT alias `uv_buf_t`/`WSABUF` on Windows (those have reversed field
@@ -494,18 +484,6 @@ impl<'a> BufferedWriter<'a> {
         Ok(pending.len())
     }
 
-    /// Write a E.String to the buffer.
-    /// This automatically encodes UTF-16 into UTF-8 using
-    /// the same code path as TextEncoder
-    pub fn write_string(&mut self, bytes: &mut dyn EStringRef) -> Result<usize, AllocError> {
-        // was `&mut bun_ast::E::String`; now vtable dispatch.
-        if bytes.is_utf8() {
-            return self.write_all(bytes.slice());
-        }
-
-        self.write_all16(bytes.slice16())
-    }
-
     /// Write a UTF-16 string to the (UTF-8) buffer
     /// This automatically encodes UTF-16 into UTF-8 using
     /// the same code path as TextEncoder
@@ -535,19 +513,6 @@ impl<'a> BufferedWriter<'a> {
         }
 
         Ok(pending.len())
-    }
-
-    pub fn write_html_attribute_value_string(
-        &mut self,
-        str: &mut dyn EStringRef,
-    ) -> Result<(), AllocError> {
-        // was `&mut bun_ast::E::String`; now vtable dispatch.
-        if str.is_utf8() {
-            self.write_html_attribute_value(str.slice())?;
-            return Ok(());
-        }
-
-        self.write_html_attribute_value16(str.slice16())
     }
 
     pub fn write_html_attribute_value(&mut self, bytes: &[u8]) -> Result<(), AllocError> {

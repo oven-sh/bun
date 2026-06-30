@@ -16,16 +16,6 @@ use bun_core::{String as BunString, strings};
 // `strings::Cursor` aliased as `CodepointCursor` for readability.
 type CodepointCursor = strings::Cursor;
 
-/// Opaque stand-in for `bun_jsc::JSValue` — the parser only *stores* the
-/// jsobjs slice (never inspects it), so the lower-tier crate can stay
-/// JSC-free. `bun_jsc::JSValue` is `#[repr(transparent)] usize`, so callers
-/// in `bun_runtime` may safely reinterpret `&mut [JSValue]` ↔ `&mut [JSValueRaw]`
-/// via a typed pointer cast.
-#[repr(transparent)]
-#[derive(Clone, Copy)]
-pub struct JSValueRaw(pub usize);
-type JSValue = JSValueRaw;
-
 bun_core::define_scoped_log!(log, SHELL, hidden);
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr, Clone, Copy, PartialEq, Eq)]
@@ -648,49 +638,6 @@ pub mod ast {
             }
         }
 
-        pub fn to_flags(self) -> i32 {
-            // `bun_shell_parser` is sys-tier-free so it cannot depend on
-            // `bun_sys::O`; mirror those constants here. On POSIX `bun.O.*` is
-            // `libc::O_*`. On Windows `bun.O.*` is the *Linux-shaped octal*
-            // values — NOT MSVCRT `_O_*` — because
-            // `bun_sys::open` → `sys_uv::open` → `uv::O::from_bun_o` bit-tests
-            // against those exact values. Using `libc::O_CREAT` (0x100) /
-            // `libc::O_APPEND` (0x8) on Windows silently dropped CREAT/APPEND
-            // through `from_bun_o`, so `> file` failed to create the target.
-            #[cfg(not(windows))]
-            const O_RDONLY: i32 = libc::O_RDONLY;
-            #[cfg(not(windows))]
-            const O_WRONLY: i32 = libc::O_WRONLY;
-            #[cfg(not(windows))]
-            const O_CREAT: i32 = libc::O_CREAT;
-            #[cfg(not(windows))]
-            const O_TRUNC: i32 = libc::O_TRUNC;
-            #[cfg(not(windows))]
-            const O_APPEND: i32 = libc::O_APPEND;
-            #[cfg(windows)]
-            const O_RDONLY: i32 = 0o0;
-            #[cfg(windows)]
-            const O_WRONLY: i32 = 0o1;
-            #[cfg(windows)]
-            const O_CREAT: i32 = 0o100;
-            #[cfg(windows)]
-            const O_TRUNC: i32 = 0o1000;
-            #[cfg(windows)]
-            const O_APPEND: i32 = 0o2000;
-
-            let read_write_flags: i32 = if self.stdin() {
-                O_RDONLY
-            } else {
-                O_WRONLY | O_CREAT
-            };
-            let extra: i32 = if self.append() { O_APPEND } else { O_TRUNC };
-            if self.stdin() {
-                read_write_flags
-            } else {
-                extra | read_write_flags
-            }
-        }
-
         pub fn lt() -> RedirectFlags {
             Self::STDIN
         }
@@ -935,7 +882,6 @@ pub struct Parser<'bump> {
     /// refs). See `Lexer::js_string_ranges`.
     pub js_string_ranges: &'bump [TextRange],
     pub alloc: &'bump Bump,
-    pub jsobjs: &'bump mut [JSValue],
     pub current: u32,
     pub errors: bun_alloc::ArenaVec<'bump, ParserError<'bump>>,
     pub inside_subshell: Option<SubshellKind>,
@@ -964,17 +910,12 @@ pub struct ParserError<'bump> {
 type ParseResult<T> = Result<T, bun_core::Error>;
 
 impl<'bump> Parser<'bump> {
-    pub fn new(
-        bump: &'bump Bump,
-        lex_result: LexResult<'bump>,
-        jsobjs: &'bump mut [JSValue],
-    ) -> ParseResult<Parser<'bump>> {
+    pub fn new(bump: &'bump Bump, lex_result: LexResult<'bump>) -> ParseResult<Parser<'bump>> {
         Ok(Parser {
             strpool: lex_result.strpool,
             tokens: lex_result.tokens,
             js_string_ranges: lex_result.js_string_ranges,
             alloc: bump,
-            jsobjs,
             current: 0,
             errors: bun_alloc::ArenaVec::new_in(bump),
             inside_subshell: None,
@@ -992,9 +933,6 @@ impl<'bump> Parser<'bump> {
             tokens: self.tokens,
             js_string_ranges: self.js_string_ranges,
             alloc: self.alloc,
-            // reshaped for borrowck — move the
-            // exclusive borrow into the subparser and restore it in continue_from_subparser.
-            jsobjs: core::mem::take(&mut self.jsobjs),
             current: self.current,
             errors: core::mem::replace(&mut self.errors, bun_alloc::ArenaVec::new_in(self.alloc)),
             inside_subshell: Some(kind),
@@ -1011,7 +949,6 @@ impl<'bump> Parser<'bump> {
             &mut subparser.errors,
             bun_alloc::ArenaVec::new_in(self.alloc),
         );
-        self.jsobjs = core::mem::take(&mut subparser.jsobjs);
     }
 
     /// Main parse function

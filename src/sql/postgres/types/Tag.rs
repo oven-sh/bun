@@ -207,7 +207,7 @@ impl Tag {
     }
 
     // `toJSTypedArrayType` / `toJS` / `fromJS` are extension-trait methods in
-    // `bun_sql_jsc`.
+    // `bun_runtime::sql_jsc`.
 
     // There is deliberately no in-place overlay of a struct of i32 fields onto
     // the `&[u8]` wire buffer here. That would be UB on two axes: (1) the recv
@@ -215,7 +215,7 @@ impl Tag {
     // pointer derived from `&[u8]` violates Stacked Borrows / lets LLVM elide
     // the writes via the `readonly` parameter attribute (observed:
     // release-asan left `len` un-swapped → 192MB OOB memcpy in SQLClient.cpp).
-    // Instead, `bun_sql_jsc::postgres::DataCell::from_bytes_typed_array` does
+    // Instead, `bun_runtime::sql_jsc::postgres::DataCell::from_bytes_typed_array` does
     // explicit unaligned field reads + copies into an owned buffer. See that
     // function for the wire layout and the `.int4_array => i32` /
     // `.float4_array => f32` element-type mapping.
@@ -234,7 +234,7 @@ impl Tag {
 //   };
 
 /// Wire-order byte swap for the binary-array element types (`i32` / `f32`).
-/// Used by `bun_sql_jsc::postgres::DataCell::from_bytes_typed_array`. Uses safe
+/// Used by `bun_runtime::sql_jsc::postgres::DataCell::from_bytes_typed_array`. Uses safe
 /// `to_bits`/`from_bits` instead of a `transmute_copy` shim, and safe
 /// `from_ne_bytes`/`to_ne_bytes` slice round-trips instead of per-element
 /// `ptr::{read,write}_unaligned` casts.

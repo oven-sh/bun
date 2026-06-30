@@ -12,7 +12,7 @@ use core::cell::RefCell;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 
-use crate::{PathBuffer, WPathBuffer};
+use bun_core::{PathBuffer, WPathBuffer};
 
 const POOL_CAP: usize = 4;
 

@@ -1,6 +1,6 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::FormatterTestExt;
 use bun_jsc::console_object::Formatter;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::DiffFormatter;
 use super::Expect;
@@ -10,7 +10,7 @@ pub(crate) fn to_have_last_returned_with(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    bun_jsc::mark_binding!();
+    bun_core::mark_binding!();
     let expected = callframe.arguments_as_array::<1>()[0];
     let (this, returns, _value) = this.mock_prologue(
         global_this,
@@ -30,21 +30,25 @@ pub(crate) fn to_have_last_returned_with(
         let last_result = returns.get_direct_index(global_this, calls_count - 1);
 
         if last_result.is_object() {
-            let result_type = last_result.get(global_this, "type")?.unwrap_or(JSValue::UNDEFINED);
+            let result_type = last_result
+                .get(global_this, "type")?
+                .unwrap_or(JSValue::UNDEFINED);
             if result_type.is_string() {
                 let type_str = bun_core::OwnedString::new(result_type.to_bun_string(global_this)?);
 
                 if type_str.eql_comptime("return") {
-                    last_return_value =
-                        last_result.get(global_this, "value")?.unwrap_or(JSValue::UNDEFINED);
+                    last_return_value = last_result
+                        .get(global_this, "value")?
+                        .unwrap_or(JSValue::UNDEFINED);
 
                     if last_return_value.jest_deep_equals(expected, global_this)? {
                         pass = true;
                     }
                 } else if type_str.eql_comptime("throw") {
                     last_call_threw = true;
-                    last_error_value =
-                        last_result.get(global_this, "value")?.unwrap_or(JSValue::UNDEFINED);
+                    last_error_value = last_result
+                        .get(global_this, "value")?
+                        .unwrap_or(JSValue::UNDEFINED);
                 }
             }
         }
@@ -57,7 +61,8 @@ pub(crate) fn to_have_last_returned_with(
     // Handle failure
     let mut formatter = Formatter::new(global_this).with_quote_strings(true);
 
-    let signature = Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", false);
+    let signature =
+        Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", false);
 
     if this.flags.get().not() {
         return this.throw(
@@ -103,7 +108,11 @@ pub(crate) fn to_have_last_returned_with(
             global_this: Some(global_this),
             not: false,
         };
-        return this.throw(global_this, signature, format_args!("\n\n{}\n", diff_format));
+        return this.throw(
+            global_this,
+            signature,
+            format_args!("\n\n{}\n", diff_format),
+        );
     }
 
     // The `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias

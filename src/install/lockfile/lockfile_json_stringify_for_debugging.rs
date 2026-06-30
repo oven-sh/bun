@@ -1,15 +1,17 @@
 use crate::lockfile::package::PackageColumns as _;
+use bun_core::PathBuffer;
 use bun_core::fmt as bun_fmt;
-use bun_paths::PathBuffer;
 use bun_semver::ExternalString;
 use bun_semver::string::JsonFormatterOptions;
 
 use crate::bin::Tag as BinTag;
-use crate::dependency::Tag as DependencyVersionTag;
-use crate::dependency::{Behavior, NpmInfo, TagInfo, TarballInfo, URI};
 use crate::integrity::Tag as IntegrityTag;
-use crate::repository::Repository;
-use crate::{Dependency, DependencyID, Npm, Origin, PackageID, invalid_package_id};
+use bun_install_types::dependency::Tag as DependencyVersionTag;
+use bun_install_types::dependency::{Behavior, NpmInfo, TagInfo, TarballInfo, URI};
+use bun_install_types::resolver_hooks::Repository;
+use bun_install_types::resolver_hooks::{Architecture, OperatingSystem};
+
+use crate::{Dependency, DependencyID, INVALID_PACKAGE_ID, Origin, PackageID};
 
 use super::package::scripts::Scripts as PackageScripts;
 use super::tree::{DepthBuf, IteratorPathStyle, MAX_DEPTH};
@@ -153,7 +155,7 @@ where
     }
 
     w.object_field(b"package_id")?;
-    if res == invalid_package_id {
+    if res == INVALID_PACKAGE_ID {
         w.write_null()?;
     } else {
         w.write(res)?;
@@ -359,11 +361,11 @@ where
                 let _ = w.end_array();
             }
 
-            if pkg.meta.arch.0 != Npm::Architecture::ALL_VALUE {
+            if pkg.meta.arch.0 != Architecture::ALL_VALUE {
                 w.object_field(b"arch")?;
                 w.begin_array()?;
 
-                for (key, value) in Npm::Architecture::NAME_MAP_KVS {
+                for (key, value) in Architecture::NAME_MAP_KVS {
                     if pkg.meta.arch.has(*value) {
                         w.write(*key)?;
                     }
@@ -372,11 +374,11 @@ where
                 let _ = w.end_array();
             }
 
-            if pkg.meta.os.0 != Npm::OperatingSystem::ALL_VALUE {
+            if pkg.meta.os.0 != OperatingSystem::ALL_VALUE {
                 w.object_field(b"os")?;
                 w.begin_array()?;
 
-                for (key, value) in Npm::OperatingSystem::NAME_MAP_KVS {
+                for (key, value) in OperatingSystem::NAME_MAP_KVS {
                     if pkg.meta.os.has(*value) {
                         w.write(*key)?;
                     }

@@ -1,6 +1,7 @@
+use crate::virtual_machine::VirtualMachine;
 use crate::{
     self as jsc, ErrorableString, JSArray, JSGlobalObject, JSValue, JsError, JsResult, StringJsc,
-    Strong, VirtualMachineRef as VirtualMachine,
+    Strong,
 };
 use bun_ast::Loader;
 use bun_bundler::options::DEFAULT_LOADERS;

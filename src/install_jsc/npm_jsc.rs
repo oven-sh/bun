@@ -1,12 +1,12 @@
 //! JSC host fns for `bun_install::npm`, kept here so that `install/` has
 //! no `JSValue`/`JSGlobalObject`/`CallFrame` references.
 
+use bun_install_types::resolver_hooks::{Architecture, OperatingSystem};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    use bun_install::npm;
     let args = frame.arguments_old::<1>();
-    let mut operating_system = npm::OperatingSystem::NONE.negatable();
+    let mut operating_system = OperatingSystem::NONE.negatable();
     let mut iter = args.ptr[0].array_iterator(global)?;
     while let Some(item) = iter.next()? {
         let slice = item.to_slice(global)?;
@@ -21,14 +21,13 @@ pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> 
     Ok(JSValue::js_boolean(
         operating_system
             .combine()
-            .is_match(npm::OperatingSystem::CURRENT),
+            .is_match(OperatingSystem::CURRENT),
     ))
 }
 
 pub fn architecture_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    use bun_install::npm;
     let args = frame.arguments_old::<1>();
-    let mut architecture = npm::Architecture::NONE.negatable();
+    let mut architecture = Architecture::NONE.negatable();
     let mut iter = args.ptr[0].array_iterator(global)?;
     while let Some(item) = iter.next()? {
         let slice = item.to_slice(global)?;
@@ -41,12 +40,12 @@ pub fn architecture_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
         return Ok(JSValue::ZERO);
     }
     Ok(JSValue::js_boolean(
-        architecture.combine().is_match(npm::Architecture::CURRENT),
+        architecture.combine().is_match(Architecture::CURRENT),
     ))
 }
 
-/// Free-fn alias of [`ManifestBindings::generate`] so `bun_runtime::dispatch::js2native`
-/// can `pub use` it (associated fns aren't importable items).
+/// Free-fn alias of [`ManifestBindings::generate`] so `bun_runtime`'s generated
+/// js2native thunks can name it by a plain fn path.
 #[inline]
 pub fn package_manifest_bindings_generate(global: &JSGlobalObject) -> JSValue {
     ManifestBindings::generate(global)

@@ -6,25 +6,26 @@ use std::borrow::Cow;
 use bstr::BStr;
 
 use crate::ShellCompletions;
-use crate::bun_fs::FileSystem;
-use crate::bun_json as json;
+use bun_core::PathBuffer;
 use bun_core::{Error, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_js_printer as js_printer;
-use bun_paths::{self, PathBuffer};
+use bun_parsers::json;
+use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
 
 use super::command_line_arguments::CommandLineArguments;
 use super::package_json_editor as PackageJSONEditor;
 use super::update_request::Array as UpdateRequestArray;
 use super::{
-    Command, PackageManager, PatchCommitResult, Subcommand, UpdateRequest,
-    attempt_to_create_package_json, install_with_manager, patch_package,
+    PackageManager, PatchCommitResult, Subcommand, UpdateRequest, attempt_to_create_package_json,
+    install_with_manager, patch_package,
 };
+use bun_options_types::context::Context;
 
 pub fn update_package_json_and_install_with_manager(
     manager: &mut PackageManager,
-    ctx: Command::Context,
+    ctx: Context,
     original_cwd: &[u8],
 ) -> Result<(), Error> {
     let mut update_requests = UpdateRequestArray::with_capacity(64);
@@ -65,7 +66,7 @@ pub fn update_package_json_and_install_with_manager(
 
 fn update_package_json_and_install_with_manager_with_updates_and_update_requests(
     manager: &mut PackageManager,
-    ctx: Command::Context,
+    ctx: Context,
     original_cwd: &[u8],
     positionals: &[&[u8]],
     update_requests: &mut UpdateRequestArray,
@@ -102,7 +103,7 @@ fn update_package_json_and_install_with_manager_with_updates_and_update_requests
 
 fn update_package_json_and_install_with_manager_with_updates(
     manager: &mut PackageManager,
-    ctx: Command::Context,
+    ctx: Context,
     // reshaped for borrowck — taking by
     // value lets us hand ownership to `manager.update_requests` (typed
     // `Box<[UpdateRequest]>`) and re-borrow afterwards without
@@ -697,7 +698,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                     'iterator: loop {
                         let Ok(Some(entry)) = iter.next() else { break };
                         match entry.kind {
-                            bun_sys::EntryKind::SymLink => {
+                            bun_core::FileKind::SymLink => {
                                 // any symlinks which we are unable to open are assumed to be dangling
                                 // note that using access won't work here, because access doesn't resolve symlinks
                                 let name = entry.name.slice_u8();
@@ -742,8 +743,8 @@ fn update_package_json_and_install_with_manager_with_updates(
     Ok(())
 }
 
-pub fn update_package_json_and_install_and_cli(
-    ctx: Command::Context,
+pub fn update_package_json_and_install(
+    ctx: Context,
     subcommand: Subcommand,
     cli: CommandLineArguments,
 ) -> Result<(), Error> {
@@ -974,6 +975,6 @@ impl fmt::Display for MoreInstructions<'_> {
 }
 
 use super::TrackInstalledBin;
-use super::options::{Do, LogLevel, PatchFeatures};
 use super::package_json_editor::EditOptions;
+use super::package_manager_options::{Do, LogLevel, PatchFeatures};
 use super::workspace_package_json_cache::{GetJSONOptions, GetResult, MapEntry};

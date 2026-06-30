@@ -26,12 +26,11 @@
 #[path = "CPUFeatures.rs"]
 pub mod cpu_features;
 
-#[path = "handle_oom.rs"]
-pub mod handle_oom;
-
-/// Link-time target for `bun_alloc::out_of_memory()` — declared
-/// `extern "Rust"` in `bun_alloc` (which is below this crate in the dep graph)
-/// and defined here.
+/// Target for `bun_alloc::out_of_memory()` — registered as `bun_alloc`'s
+/// write-once OOM hook by `init()` (`bun_alloc` is below this crate in the
+/// dep graph).
+/// The single Rust-side OOM seam: `bun_alloc::out_of_memory()` (T0,
+/// re-exported as `bun_core::out_of_memory`) resolves here.
 /// `pub(crate)` so external callers route through the T0 `bun_alloc` entry
 /// rather than bypassing it.
 #[cold]
@@ -41,25 +40,6 @@ pub(crate) fn out_of_memory() -> ! {
         draft::CrashReason::OutOfMemory,
         draft::TraceSeed::BeginAddr(bun_core::return_address()),
     )
-}
-
-/// `extern "Rust"` symbol resolved by `bun_alloc::out_of_memory()` at link
-/// time. Lives in `.text` (read-only) so memory corruption cannot redirect it.
-#[doc(hidden)]
-#[unsafe(no_mangle)]
-pub(crate) extern "Rust" fn __bun_crash_handler_out_of_memory() -> ! {
-    out_of_memory()
-}
-
-/// `extern "Rust"` symbol resolved by `bun_core::dump_current_stack_trace()`
-/// at link time. Lives in `.text` (read-only).
-#[doc(hidden)]
-#[unsafe(no_mangle)]
-pub(crate) extern "Rust" fn __bun_crash_handler_dump_stack_trace(
-    first_address: Option<usize>,
-    limits: bun_core::DumpStackTraceOptions,
-) {
-    draft::dump_current_stack_trace_from_core(first_address, limits)
 }
 
 pub use draft::*;
@@ -471,7 +451,7 @@ mod draft {
     use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
     use bun_base64::VLQ;
-    use bun_collections::BoundedArray;
+    use bun_core::bounded_array::BoundedArray;
     use bun_core::strings;
     use bun_core::{Environment, Global, Output, env_var, fmt as bun_fmt};
 
@@ -572,13 +552,6 @@ mod draft {
     /// The counter is incremented/decremented atomically.
     /// Shared with bun_core::PANICKING so T0 callers see the same state.
     use bun_core::PANICKING;
-    // D131: dedup — these read the shared `PANICKING` atomic and were byte-identical
-    // to the bun_core (T0) copies. Re-export so `bun_crash_handler::{is_panicking,
-    // sleep_forever_if_another_thread_is_crashing}` keeps resolving for any
-    // out-of-tree callers. `dump_current_stack_trace` is intentionally NOT deduped:
-    // the bun_core version is an `extern "Rust"` dispatch shim, this crate's is the
-    // real impl (linked via `__bun_crash_handler_dump_stack_trace`).
-    pub use bun_core::{is_panicking, sleep_forever_if_another_thread_is_crashing};
 
     // Locked to avoid interleaving panic messages from multiple threads.
     // TODO: I don't think it's safe to lock/unlock a mutex inside a signal handler.
@@ -693,26 +666,18 @@ mod draft {
         }
     }
 
-    /// bun.bundle_v2.LinkerContext.generateCompileResultForJSChunk
-    ///
-    /// The bundler types (`LinkerContext` / `Chunk` / `PartRange`) live in a
-    /// higher-tier crate; `chunk`/`part_range` stay erased and are reinterpreted by
-    /// the `Linker` impl in `bun_bundler::LinkerContext`.
+    /// Crash-trace payload for "generating bundler chunk". Plain data — the
+    /// bundler resolves the two paths at scope entry, so this crate needs no
+    /// knowledge of LinkerContext/Chunk/PartRange. The slices carry the same
+    /// lifetime-erasure contract as `Action::Print` (valid while the
+    /// `scoped_action` guard is live).
     #[cfg(feature = "show_crash_trace")]
     #[derive(Clone, Copy)]
     pub struct BundleGenerateChunk {
-        pub ctx: BundleGenerateChunkCtx,
-        /// SAFETY: erased `&bun_bundler::Chunk`
-        pub chunk: *const (),
-        /// SAFETY: erased `&bun_bundler::PartRange`
-        pub part_range: *const (),
-    }
-
-    #[cfg(feature = "show_crash_trace")]
-    bun_dispatch::link_interface! {
-        pub BundleGenerateChunkCtx[Linker] {
-            fn fmt(chunk: *const (), part_range: *const (), writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result;
-        }
+        pub entry_point_path: Option<&'static [u8]>,
+        pub source_path: Option<&'static [u8]>,
+        pub part_index_begin: u32,
+        pub part_index_end: u32,
     }
 
     #[cfg(feature = "show_crash_trace")]
@@ -755,9 +720,14 @@ mod draft {
                 Action::Visit(path) => write!(writer, "visiting {}", bstr::BStr::new(path)),
                 Action::Print(path) => write!(writer, "printing {}", bstr::BStr::new(path)),
                 #[cfg(feature = "show_crash_trace")]
-                Action::BundleGenerateChunk(data) => {
-                    data.ctx.fmt(data.chunk, data.part_range, writer)
-                }
+                Action::BundleGenerateChunk(data) => write!(
+                    writer,
+                    "generating bundler chunk\n  chunk entry point: {:?}\n  source: {:?}\n  part range: {}..{}",
+                    data.entry_point_path.map(bstr::BStr::new),
+                    data.source_path.map(bstr::BStr::new),
+                    data.part_index_begin,
+                    data.part_index_end,
+                ),
                 #[cfg(not(feature = "show_crash_trace"))]
                 Action::BundleGenerateChunk(()) => Ok(()),
                 #[cfg(feature = "show_crash_trace")]
@@ -1054,7 +1024,7 @@ mod draft {
                                     {
                                         // SAFETY: `name` is a valid NUL-terminated wide string
                                         // (PWSTR out-param from GetThreadDescription).
-                                        let span = unsafe { bun_core::ffi::wstr_units(name) };
+                                        let span = unsafe { bun_opaque::ffi::wstr_units(name) };
                                         if write!(writer, "({})", bun_fmt::utf16(span)).is_err() {
                                             abort();
                                         }
@@ -1140,7 +1110,7 @@ mod draft {
                         // SAFETY: single-threaded mutation under panic_mutex
                         HAS_PRINTED_MESSAGE.store(true, Ordering::Relaxed);
 
-                        dump_stack_trace(trace, WriteStackTraceLimits::default());
+                        dump_stack_trace(trace, bun_core::DumpStackTraceOptions::default());
 
                         if write!(
                             trace_str_buf.writer(),
@@ -1747,6 +1717,7 @@ mod draft {
     }
 
     pub fn init() {
+        bun_alloc::set_oom_handler(crate::out_of_memory);
         if !ENABLE {
             return;
         }
@@ -1759,7 +1730,7 @@ mod draft {
                 // the kernel32 binding, `c_long` == `i32` on Win64.
                 let handle = bun_sys::windows::kernel32::AddVectoredExceptionHandler(
                     0,
-                    bun_ptr::cast_fn_ptr::<
+                    bun_core::cast_fn_ptr::<
                         extern "system" fn(*mut bun_sys::windows::EXCEPTION_POINTERS) -> c_long,
                         unsafe extern "system" fn(*mut core::ffi::c_void) -> i32,
                     >(handle_segfault_windows),
@@ -1788,10 +1759,8 @@ mod draft {
     /// `raise_ignoring_panic_handler` does the SIG_DFL reset itself with libc.
     pub(crate) fn install_hooks() {
         bun_core::CRASH_HANDLER_INSTALLED.store(true, Ordering::Relaxed);
-        // T0 `bun_alloc::out_of_memory()` and `bun_core::dump_current_stack_trace()`
-        // reach this crate via link-time `extern "Rust"` symbols
-        // (`__bun_crash_handler_out_of_memory` / `__bun_crash_handler_dump_stack_trace`)
-        // — no runtime registration needed.
+        // T0 `bun_alloc::out_of_memory()` reaches this crate via the write-once
+        // OOM hook registered at the top of `init()`.
         //
         // Route Rust `panic!()` through the trace-string + report path. Without
         // this hook, a bare `panic!` would print the std
@@ -1887,7 +1856,7 @@ mod draft {
             };
 
             if debug_trace {
-                dump_stack_trace(&trace, WriteStackTraceLimits::default());
+                dump_stack_trace(&trace, bun_core::DumpStackTraceOptions::default());
                 let _ = write!(
                     trace_str_buf.writer(),
                     "{}",
@@ -1937,53 +1906,6 @@ mod draft {
         // `panic = "abort"` no unwind starts, so `catch_unwind` boundaries are
         // unreachable for Rust panics.
         crash(reason);
-    }
-
-    /// Adapter for non-fatal `bun_core::dump_current_stack_trace` callers
-    /// (fd.rs EBADF debug-warn, ref_count leak reports). The
-    /// debug binary's .debug_info is large enough that an llvm-symbolizer parse
-    /// alone costs ~5s, which is unacceptable on a hot non-fatal path
-    /// (`closeSync(EBADF)` was timing out fs.test.ts at the 5s budget). For these
-    /// advisory dumps we honour `frame_count` and use WTF's dladdr-based printer
-    /// (sub-ms, function names only). The full `dump_stack_trace` (with
-    /// llvm-symbolizer source lines) is kept for actual crash/panic paths, which
-    /// call it directly.
-    pub(crate) fn dump_current_stack_trace_from_core(
-        first_address: Option<usize>,
-        limits: bun_core::DumpStackTraceOptions,
-    ) {
-        Output::flush();
-        // Not `unwrap_or_else`: the default trim anchor must be read from this
-        // frame, not from a closure's popped frame (see `panic_impl`).
-        let first_address = match first_address {
-            Some(addr) => addr,
-            None => debug::return_address(),
-        };
-        let mut addrs: [usize; 32] = [0; 32];
-        let n = debug::capture_stack_trace(first_address, &mut addrs);
-        let n = n.min(limits.frame_count);
-        if !Environment::SHOW_CRASH_TRACE {
-            // debug symbols aren't available, lets print a tracestring
-            let stderr = &mut stderr_writer();
-            let stack = StackTrace {
-                index: n,
-                instruction_addresses: &addrs,
-            };
-            let _ = writeln!(
-                stderr,
-                "View Debug Trace: {}",
-                TraceString {
-                    action: TraceStringAction::ViewTrace,
-                    reason: CrashReason::ZigError(bun_core::err!("DumpStackTrace")),
-                    trace: &stack,
-                }
-            );
-            return;
-        }
-        // SAFETY: `addrs[..n]` is a valid slice of captured return addresses.
-        unsafe {
-            WTF__DumpStackTrace(addrs.as_ptr(), n);
-        }
     }
 
     pub(crate) fn reset_segfault_handler() {
@@ -3022,7 +2944,7 @@ mod draft {
                 );
             }
             Output::flush();
-            dump_stack_trace(trace, WriteStackTraceLimits::default());
+            dump_stack_trace(trace, bun_core::DumpStackTraceOptions::default());
         } else {
             let ts = TraceString {
                 trace,
@@ -3076,13 +2998,15 @@ mod draft {
         handle_error_return_trace_extra::<false>(err, maybe_trace);
     }
 
+    // Only the Linux/Android release fast path and the Windows fallback call it.
+    #[cfg(any(windows, target_os = "linux", target_os = "android"))]
     unsafe extern "C" {
         fn WTF__DumpStackTrace(ptr: *const usize, count: usize);
     }
 
     /// Version of the standard library dumpStackTrace that has some fallbacks for
     /// cases where such logic fails to run.
-    pub fn dump_stack_trace(trace: &StackTrace, limits: WriteStackTraceLimits) {
+    pub fn dump_stack_trace(trace: &StackTrace, limits: bun_core::DumpStackTraceOptions) {
         Output::flush();
         let stderr = &mut stderr_writer();
         if !Environment::SHOW_CRASH_TRACE {
@@ -3266,7 +3190,10 @@ mod draft {
         Ok(())
     }
 
-    pub fn dump_current_stack_trace(first_address: Option<usize>, limits: WriteStackTraceLimits) {
+    pub fn dump_current_stack_trace(
+        first_address: Option<usize>,
+        limits: bun_core::DumpStackTraceOptions,
+    ) {
         // Not `unwrap_or_else`: the default trim anchor must be read from this
         // frame, not from a closure's popped frame (see `panic_impl`).
         let first_address = match first_address {
@@ -3316,12 +3243,6 @@ mod draft {
         SUPPRESS_REPORTING.store(true, Ordering::Relaxed);
     }
 
-    // src/ptr/ref_count.rs:16). Re-export so `bun_crash_handler::StoredTrace` paths
-    // keep compiling. NOTE: if `debug::return_address()` is ever wired to a real
-    // `@returnAddress()` intrinsic, apply that improvement in bun_core's
-    // `StoredTrace::capture()` instead — this crate no longer owns the type.
-    pub use bun_core::StoredTrace;
-
     /// For large codebases such as bun.bake.DevServer, it may be helpful
     /// to dump a large amount of state to a file to aid debugging a crash.
     ///
@@ -3366,11 +3287,6 @@ mod draft {
 
     // `Option<SourceLocation>` owns its file name as `Box<[u8]>` so Drop handles it — no explicit deinit.
 
-    // D130: deduped — canonical def lives in bun_core (T0). Re-export under the
-    // old name so internal use-sites and any downstream
-    // `bun_crash_handler::WriteStackTraceLimits` importers keep compiling.
-    pub use bun_core::DumpStackTraceOptions as WriteStackTraceLimits;
-
     /// Clone of `debug.writeStackTrace`, but can be configured to stop at either a
     /// frame count, or when hitting jsc LLInt Additionally, the printing function
     /// does not print the `^`, instead it highlights the word at the column. This
@@ -3380,7 +3296,7 @@ mod draft {
         out_stream: &mut impl Write,
         debug_info: &mut SelfInfo,
         tty_config: TtyConfig,
-        limits: &WriteStackTraceLimits,
+        limits: &bun_core::DumpStackTraceOptions,
     ) -> Result<(), bun_core::Error> {
         if debug::STRIP_DEBUG_INFO {
             return Err(bun_core::err!("MissingDebugInfo"));
@@ -3528,7 +3444,7 @@ mod draft {
         // `Environment::BASE_PATH` is `&[u8]`, which `const_format::concatcp!` cannot
         // ingest. The constant is tiny and this path is debug-only — build it once
         // at runtime in a stack BoundedArray (no heap, async-signal-safe).
-        let mut base_path_buf = BoundedArray::<u8, { bun_paths::MAX_PATH_BYTES }>::default();
+        let mut base_path_buf = BoundedArray::<u8, { bun_core::MAX_PATH_BYTES }>::default();
         let _ = base_path_buf.append_slice(Environment::BASE_PATH);
         let _ = base_path_buf.append_slice(bun_paths::SEP_STR.as_bytes());
         let base_path: &[u8] = base_path_buf.const_slice();

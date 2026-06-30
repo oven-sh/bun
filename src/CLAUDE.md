@@ -16,7 +16,7 @@ Conventions:
 
 - `cargo check -p <crate>` for fast iteration; `bun bd` builds and links everything.
 - Don't `.unwrap()` a fallible path that user input or the OS can hit at runtime — return the error. `.unwrap()` is for invariants you can prove.
-- The C ABI / syscall boundary uses `bun_sys::Maybe<T>` (= `Result<T, bun_sys::Error>`); ordinary Rust code uses `Result<T, E>` with `?`.
+- The C ABI / syscall boundary uses `bun_sys::Result<T>` (= `Result<T, bun_sys::Error>`); ordinary Rust code uses `Result<T, E>` with `?`.
 - `bun_core::Error` is a lightweight interned `NonZeroU16` error code; `bun_sys::Error` is the rich syscall error (errno + syscall tag + path). `From<bun_sys::Error> for bun_core::Error` exists.
 - NEVER add comments to deleted code blocks.
 - Do not add comments that reference context from the transcript.
@@ -42,7 +42,7 @@ or don't match the cross-platform behavior the runtime needs.
 
 ## `bun_sys` — System Calls (`src/sys/`)
 
-Syscall wrappers preserve errno via `Maybe<T> = Result<T, bun_sys::Error>`.
+Syscall wrappers preserve errno via `bun_sys::Result<T>` (= `Result<T, bun_sys::Error>`).
 
 ```rust
 use bun_sys::{File, Fd, O};

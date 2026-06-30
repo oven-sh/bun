@@ -2,6 +2,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_alloc::Arena;
 use bun_core::String as BunString;
+use bun_core::{MAX_PATH_BYTES, PathBuffer};
 use bun_glob::BunGlobWalker as GlobWalker;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
@@ -10,7 +11,7 @@ use bun_jsc::{
     StringJsc as _, SysErrorJsc as _,
 };
 use bun_paths::resolve_path::join_string_buf;
-use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, platform};
+use bun_paths::{self as resolve_path, platform};
 use bun_sys as syscall;
 
 // Codegen hooks (JSGlob): toJS / fromJS / fromJSDirect are provided by the
@@ -235,7 +236,7 @@ impl<'a> WalkTask<'a> {
 }
 
 impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
-    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncGlobWalkTask;
+    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::TaskTag::AsyncGlobWalkTask;
     fn run(&mut self) {
         let guard = scopeguard::guard(self.has_pending_activity, |hpa| {
             decr_pending_activity_flag(hpa);

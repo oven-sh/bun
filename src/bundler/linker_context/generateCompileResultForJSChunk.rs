@@ -6,7 +6,7 @@ use bun_js_printer::{self as js_printer, PrintResult};
 use bun_threading::thread_pool as ThreadPoolLib;
 
 use crate::linker_context_mod::LinkerContext;
-use crate::options::OutputFormat;
+use crate::options::Format as OutputFormat;
 use crate::thread_pool::Worker;
 use crate::{Chunk, CompileResult, Index, PartRange};
 

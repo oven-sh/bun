@@ -4,211 +4,11 @@
 //! against lower-tier crates. `Command::start()` (full dispatch) and
 //! per-command exec bodies live in the sibling `*_command.rs` modules.
 
-use core::cell::Cell;
-
 use bun_core::strings;
 use bun_core::{self as bun, Global, Output};
 use bun_core::{pretty, pretty_error, pretty_errorln};
 
 // ─── compiling submodules ────────────────────────────────────────────────────
-#[path = "ci_info.rs"]
-pub mod ci_info;
-/// CI-provider detection table, copied from watson/ci-info@4.0.0; maintained by
-/// hand. Keep in sync with the vendors.json upstream.
-pub(crate) mod ci_info_generated {
-    use bun_core::{getenv_z, zstr};
-
-    macro_rules! env_set {
-        ($k:literal) => {
-            getenv_z(zstr!($k)).is_some()
-        };
-    }
-    macro_rules! env_eq {
-        ($k:literal, $v:literal) => {
-            getenv_z(zstr!($k)).map_or(false, |v| v == $v.as_bytes())
-        };
-    }
-    macro_rules! env_contains {
-        ($k:literal, $needle:literal) => {
-            getenv_z(zstr!($k)).map_or(false, |v| {
-                bun_core::strings::index_of(v, $needle.as_bytes()).is_some()
-            })
-        };
-    }
-
-    pub(crate) fn is_ci_uncached_generated() -> bool {
-        env_set!("BUILD_ID")
-            || env_set!("BUILD_NUMBER")
-            || env_set!("CI")
-            || env_set!("CI_APP_ID")
-            || env_set!("CI_BUILD_ID")
-            || env_set!("CI_BUILD_NUMBER")
-            || env_set!("CI_NAME")
-            || env_set!("CONTINUOUS_INTEGRATION")
-            || env_set!("RUN_ID")
-    }
-
-    pub(crate) fn detect_uncached_generated() -> Option<&'static [u8]> {
-        if env_set!("AGOLA_GIT_REF") {
-            return Some(b"agola-ci");
-        }
-        if env_set!("AC_APPCIRCLE") {
-            return Some(b"appcircle");
-        }
-        if env_set!("APPVEYOR") {
-            return Some(b"appveyor");
-        }
-        if env_set!("CODEBUILD_BUILD_ARN") {
-            return Some(b"aws-codebuild");
-        }
-        if env_set!("TF_BUILD") {
-            return Some(b"azure-pipelines");
-        }
-        if env_set!("bamboo_planKey") {
-            return Some(b"bamboo");
-        }
-        if env_set!("BITBUCKET_COMMIT") {
-            return Some(b"bitbucket-pipelines");
-        }
-        if env_set!("BITRISE_IO") {
-            return Some(b"bitrise");
-        }
-        if env_set!("BUDDY_WORKSPACE_ID") {
-            return Some(b"buddy");
-        }
-        if env_set!("BUILDKITE") {
-            return Some(b"buildkite");
-        }
-        if env_set!("CIRCLECI") {
-            return Some(b"circleci");
-        }
-        if env_set!("CIRRUS_CI") {
-            return Some(b"cirrus-ci");
-        }
-        if env_set!("CF_PAGES") {
-            return Some(b"cloudflare-pages");
-        }
-        if env_set!("WORKERS_CI") {
-            return Some(b"cloudflare-workers");
-        }
-        if env_set!("CF_BUILD_ID") {
-            return Some(b"codefresh");
-        }
-        if env_set!("CM_BUILD_ID") {
-            return Some(b"codemagic");
-        }
-        if env_eq!("CI_NAME", "codeship") {
-            return Some(b"codeship");
-        }
-        if env_set!("DRONE") {
-            return Some(b"drone");
-        }
-        if env_set!("DSARI") {
-            return Some(b"dsari");
-        }
-        if env_set!("EARTHLY_CI") {
-            return Some(b"earthly");
-        }
-        if env_set!("EAS_BUILD") {
-            return Some(b"expo-application-services");
-        }
-        if env_set!("GERRIT_PROJECT") {
-            return Some(b"gerrit");
-        }
-        if env_set!("GITEA_ACTIONS") {
-            return Some(b"gitea-actions");
-        }
-        if env_set!("GITHUB_ACTIONS") {
-            return Some(b"github-actions");
-        }
-        if env_set!("GITLAB_CI") {
-            return Some(b"gitlab-ci");
-        }
-        if env_set!("GO_PIPELINE_LABEL") {
-            return Some(b"gocd");
-        }
-        if env_set!("BUILDER_OUTPUT") {
-            return Some(b"google-cloud-build");
-        }
-        if env_set!("HARNESS_BUILD_ID") {
-            return Some(b"harness-ci");
-        }
-        if env_contains!("NODE", "/app/.heroku/node/bin/node") {
-            return Some(b"heroku");
-        }
-        if env_set!("HUDSON_URL") {
-            return Some(b"hudson");
-        }
-        if env_set!("JENKINS_URL") && env_set!("BUILD_ID") {
-            return Some(b"jenkins");
-        }
-        if env_set!("LAYERCI") {
-            return Some(b"layerci");
-        }
-        if env_set!("MAGNUM") {
-            return Some(b"magnum-ci");
-        }
-        if env_set!("NETLIFY") {
-            return Some(b"netlify-ci");
-        }
-        if env_set!("NEVERCODE") {
-            return Some(b"nevercode");
-        }
-        if env_set!("PROW_JOB_ID") {
-            return Some(b"prow");
-        }
-        if env_set!("RELEASE_BUILD_ID") {
-            return Some(b"releasehub");
-        }
-        if env_set!("RENDER") {
-            return Some(b"render");
-        }
-        if env_set!("SAILCI") {
-            return Some(b"sail-ci");
-        }
-        if env_set!("SCREWDRIVER") {
-            return Some(b"screwdriver");
-        }
-        if env_set!("SEMAPHORE") {
-            return Some(b"semaphore");
-        }
-        if env_eq!("CI_NAME", "sourcehut") {
-            return Some(b"sourcehut");
-        }
-        if env_set!("STRIDER") {
-            return Some(b"strider-cd");
-        }
-        if env_set!("TASK_ID") && env_set!("RUN_ID") {
-            return Some(b"taskcluster");
-        }
-        if env_set!("TEAMCITY_VERSION") {
-            return Some(b"teamcity");
-        }
-        if env_set!("TRAVIS") {
-            return Some(b"travis-ci");
-        }
-        if env_set!("VELA") {
-            return Some(b"vela");
-        }
-        if env_set!("NOW_BUILDER") || env_set!("VERCEL") {
-            return Some(b"vercel");
-        }
-        if env_set!("APPCENTER_BUILD_ID") {
-            return Some(b"visual-studio-app-center");
-        }
-        if env_eq!("CI", "woodpecker") {
-            return Some(b"woodpecker");
-        }
-        if env_set!("CI_XCODE_PROJECT") {
-            return Some(b"xcode-cloud");
-        }
-        if env_set!("XCS") {
-            return Some(b"xcode-server");
-        }
-        None
-    }
-}
-
 #[path = "add_completions.rs"]
 pub mod add_completions;
 #[path = "colon_list_type.rs"]
@@ -313,10 +113,6 @@ pub mod test {
 #[path = "Arguments.rs"]
 pub mod arguments;
 pub use arguments as Arguments;
-// bunfig.toml without a tier-6 dependency. Re-export under the original path so
-// existing `crate::cli::bunfig` / `crate::cli::Bunfig` callers are unaffected.
-pub use bun_bunfig::Bunfig;
-pub use bun_bunfig::bunfig;
 #[path = "run_command.rs"]
 pub mod run_command;
 
@@ -395,21 +191,19 @@ pub use multi_run as MultiRun;
 pub use ::bun_clap::concat_params;
 
 // ─── process-lifetime globals ────────────────────────────────────────────────
-/// Written once in `Cli::start`
-/// during single-threaded startup, read freely after init. The backing
-/// `OnceLock` lives in `bun_core` (single source of truth); this accessor
-/// remains so existing `crate::cli::start_time()` callers don't churn.
-#[inline]
-pub(crate) fn start_time() -> i128 {
-    bun_core::start_time()
-}
-
 #[allow(non_upper_case_globals)]
 // Owned `Box<[u8]>` so
 // `process.title = "..."` (set_title) drops the previous value instead of
 // leaking. The mutex provides exclusion between `get_title`/`set_title`.
 pub(crate) static Bun__Node__ProcessTitle: bun_threading::Guarded<Option<Box<[u8]>>> =
     bun_threading::Guarded::new(None);
+
+/// `--test-name-pattern` compiled regex. Written once during CLI argument
+/// parsing (`Arguments.rs`), read once by `test_command::exec`. Lives here —
+/// not on `bun_options_types::TestOptions` — so the T3 options crate never
+/// stores an erased `bun_jsc` pointer. Never freed (process lifetime).
+pub(crate) static TEST_FILTER_REGEX: core::sync::atomic::AtomicPtr<bun_jsc::RegularExpression> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
 /// Backing storage for [`cli_arena`]. Written exactly once in [`Cli::start`]
 /// during single-threaded process startup (before `Command::start`, hence
@@ -478,10 +272,6 @@ pub(crate) fn cli_dupe_z(s: &[u8]) -> *const core::ffi::c_char {
     buf.as_ptr().cast::<core::ffi::c_char>()
 }
 
-thread_local! {
-    pub(crate) static IS_MAIN_THREAD: Cell<bool> = const { Cell::new(false) };
-}
-
 /// `Cli.cmd` — set in `create_context_data` so crash reports / debug logging
 /// can ask "which subcommand are we in". Set once during single-threaded
 /// startup; read freely thereafter.
@@ -496,9 +286,8 @@ pub(crate) static CMD: bun_core::RacyCell<Option<command::Tag>> = bun_core::Racy
 /// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
 /// to pretend to be node.js by always choosing RunCommand with a relative filepath.
 ///
-/// Canonical static lives in `bun_install` so both crates read/write the SAME
-/// flag (`RunCommand::create_fake_temporary_node_executable` lives there).
-pub use bun_install::PRETEND_TO_BE_NODE;
+/// Canonical static lives in `bun_options_types::context`.
+pub use bun_options_types::context::PRETEND_TO_BE_NODE;
 
 /// This is set `true` during `Command.which()` if argv0 is "bunx"
 pub(crate) static IS_BUNX_EXE: core::sync::atomic::AtomicBool =
@@ -539,6 +328,15 @@ pub mod cli {
     pub(crate) static LOG_: bun_core::RacyCell<core::mem::MaybeUninit<bun_ast::Log>> =
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
+    /// The one `MacroClient` instance; installed into `bun_js_parser` by
+    /// [`start`]. The runner bodies live in `crate::macro_runner` (they name
+    /// `Transpiler`/`Resolver`/JSC types `bun_js_parser` cannot).
+    static MACRO_CLIENT_IMPL: bun_js_parser::Macro::MacroClient =
+        bun_js_parser::Macro::MacroClient {
+            init: crate::macro_runner::macro_context_init,
+            collect_vm_garbage: crate::macro_runner::macro_collect_vm_garbage,
+        };
+
     /// `#[inline(never)]`: this is the first Rust call after `main()` (see
     /// `src/bun_bin/lib.rs`) and the head of the `bun <file>` / `bun run`
     /// startup chain. It must stay a concrete symbol so lld's
@@ -550,12 +348,12 @@ pub mod cli {
     /// shared with bundler/install/css/panic-format bodies.
     #[inline(never)]
     pub fn start() {
-        IS_MAIN_THREAD.with(|c| c.set(true));
-        // Mirror the threadlocal into the crash-handler crate's global so
-        // `bun_crash_handler::cli_state::is_main_thread()` (used to print the
-        // `panic(main thread): …` header) returns true on this thread. The
-        // crash handler lives in a lower tier and can't read `IS_MAIN_THREAD`
-        // directly, so it compares against a stored OS tid instead.
+        // Macro runner injection — must precede any Transpiler construction
+        // (vm.transpiler creates a MacroContext via the installed client).
+        bun_js_parser::Macro::install_macro_client(&MACRO_CLIENT_IMPL);
+        // Record the main thread's OS tid so
+        // `bun_crash_handler::cli_state::is_main_thread()` (used for the
+        // `panic(main thread): …` header) returns true on this thread.
         bun_crash_handler::cli_state::set_main_thread_id(bun_threading::current_thread_id());
         bun_core::set_start_time(bun_core::time::nano_timestamp());
         // SAFETY: single-threaded process startup
@@ -584,17 +382,6 @@ pub mod cli {
     }
 }
 pub use cli as Cli;
-
-// ─── debug_flags (resolve/print breakpoints) ─────────────────────────────────
-pub mod debug_flags {
-    // `Vec<&'static [u8]>` (not `&'static [&[u8]]`) so `parse()` can
-    // hand off ownership of the argv-borrowed list without leaking the backing
-    // storage. Each `&'static [u8]` element is a process-lifetime argv slice.
-    pub(crate) static RESOLVE_BREAKPOINTS: std::sync::OnceLock<Vec<&'static [u8]>> =
-        std::sync::OnceLock::new();
-    pub(crate) static PRINT_BREAKPOINTS: std::sync::OnceLock<Vec<&'static [u8]>> =
-        std::sync::OnceLock::new();
-}
 
 // ─── HelpCommand ─────────────────────────────────────────────────────────────
 pub mod help_command {
@@ -816,13 +603,6 @@ pub mod command {
     pub use bun_options_types::context::{
         Context, ContextData, DebugOptions, HotReload, RuntimeOptions, TestOptions,
     };
-
-    // Process-lifetime
-    // storage, written exactly once in `create_context_data` during
-    // single-threaded startup. The pointer to it is published via
-    // `bun_options_types::context::set_global` (single source of truth).
-    static CONTEXT_DATA: bun_core::RacyCell<core::mem::MaybeUninit<ContextData>> =
-        bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
     /// Process-global CLI context handle.
     #[inline]
@@ -1095,26 +875,18 @@ pub mod command {
         Tag::AutoCommand
     }
 
-    /// Initialize the process-global `CONTEXT_DATA` and publish it via
-    /// `Context::set_global`. Shared by `create_context_data` and the
-    /// standalone-graph fast path in `start()`.
+    /// Initialize the process-global context via
+    /// `bun_options_types::context::init_global`. Shared by
+    /// `create_context_data` and the standalone-graph fast path in `start()`.
     fn write_context_no_parse(log: &mut bun_ast::Log) -> &'static mut ContextData {
-        // SAFETY: single-threaded CLI startup; first and only write to
-        // `CONTEXT_DATA` for the process lifetime. `log` is the `&'static mut`
-        // borrow of `Cli::LOG_` taken in `Cli::start()`, so storing its raw
-        // address is sound for the process lifetime.
-        //
-        // One `ContextData::default()` is constructed and written in place,
-        // then the two non-default fields are patched on the live storage —
-        // avoids the second `Default` temporary (and its drop) that the
-        // `..Default::default()` struct-update form would build on the stack.
-        unsafe {
-            let ctx = (*CONTEXT_DATA.get()).write(ContextData::default());
-            ctx.log = std::ptr::from_mut::<bun_ast::Log>(log);
-            ctx.start_time = bun_core::start_time();
-            bun_options_types::context::set_global(ctx);
-            ctx
-        }
+        // SAFETY: single-threaded CLI startup; first and only initialization
+        // of the process-global context. `log` is the `&'static mut` borrow
+        // of `Cli::LOG_` taken in `Cli::start()`, so storing its raw address
+        // is sound for the process lifetime.
+        let ctx = unsafe { bun_options_types::context::init_global() };
+        ctx.log = std::ptr::from_mut::<bun_ast::Log>(log);
+        ctx.start_time = bun_core::start_time();
+        ctx
     }
 
     /// `ContextData.create` — populates the global ctx and runs `Arguments::parse`.
@@ -1888,7 +1660,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
 
         for arg in bun::argv() {
             if arg == b"--hash" {
-                let mut path_buf = bun_paths::PathBuffer::uninit();
+                let mut path_buf = bun_core::PathBuffer::uninit();
                 let entry = &ctx.args.entry_points[0];
                 path_buf[..entry.len()].copy_from_slice(entry);
                 path_buf[entry.len()] = 0;

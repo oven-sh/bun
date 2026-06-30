@@ -15,33 +15,32 @@ use super::cron_parser::{self, CronExpression};
 use core::ffi::c_char;
 use std::cell::Cell;
 
+#[cfg(not(target_os = "macos"))]
+use bun_core::PathBuffer;
 #[cfg(not(windows))]
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
 use bun_io::{KeepAlive, Loop as AsyncLoop};
-use bun_jsc::virtual_machine::{HOT_RELOAD_HOT, VirtualMachine};
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, GlobalRef, JSFunction, JSGlobalObject, JSObject,
     JSValue, JsCell, JsRef, JsResult,
 };
-#[cfg(not(target_os = "macos"))]
-use bun_paths::PathBuffer;
 use bun_paths::{self as path};
 use bun_resolver::fs::FileSystem;
 #[cfg(not(target_os = "macos"))]
 use bun_resolver::fs::RealFS;
-// `Process`/`Rusage`/`SpawnOptions`/`Status`/`spawn_process` live in
+// `Process`/`SpawnOptions`/`Status`/`spawn_process` live in
 // `api::bun::process` (re-exported under `api::bun::spawn::posix_spawn`, but
 // not at the `spawn` module root). Alias `process` as `spawn` so the
 // `spawn::spawn_process(...)` call site below resolves.
+use crate::api::bun::Rusage;
 #[cfg(not(windows))]
 use crate::api::bun::process::SpawnResultExt as _;
-use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::api::bun::process::{self as spawn, Process, SpawnOptions, Status};
 use bun_core::ZStr;
 use bun_io::pipe_reader::BufferedReaderParent;
-#[cfg(target_os = "macos")]
-use bun_sys::FdDirExt as _;
+use bun_jsc::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 // Owned NUL-terminated string — `bun_str` exposes the
 // borrowed `ZStr` only; the heap-backed counterpart is `bun_core::ZBox`.
 use bun_core::ZBox as ZString;
@@ -58,7 +57,7 @@ fn vm_mut<'a>() -> &'a mut VirtualMachine {
     VirtualMachine::get_mut()
 }
 
-use crate::jsc_hooks::timer_all_mut as timer_all;
+use bun_jsc::timer::timer_all_mut as timer_all;
 
 // ============================================================================
 // CronJobBase — shared base for CronRegisterJob and CronRemoveJob
@@ -155,7 +154,7 @@ pub struct CronRegisterJob {
     exit_status: Option<Status>,
     err_msg: Option<Vec<u8>>,
     tmp_path: Option<ZString>,
-    /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
+    /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopCtx`
     /// wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
 }
@@ -512,7 +511,7 @@ impl CronRegisterJob {
             "{}/Library/LaunchAgents",
             bstr::BStr::new(home)
         );
-        if Fd::cwd().make_path(&launch_agents_dir).is_err() {
+        if sys::Dir::cwd().make_path(&launch_agents_dir).is_err() {
             s.set_err(format_args!(
                 "Failed to create ~/Library/LaunchAgents directory"
             ));
@@ -961,7 +960,7 @@ pub struct CronRemoveJob {
     exit_status: Option<Status>,
     err_msg: Option<Vec<u8>>,
     tmp_path: Option<ZString>,
-    /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
+    /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopCtx`
     /// wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
 }
@@ -1433,7 +1432,20 @@ pub struct CronJob {
     in_fire: Cell<bool>,
 }
 
-bun_event_loop::impl_timer_owner!(CronJob; from_timer_ptr => event_loop_timer);
+impl CronJob {
+    /// Recover `*mut Self` from a pointer to its intrusive `event_loop_timer`
+    /// [`EventLoopTimer`] slot.
+    /// # Safety
+    /// `t` must point at the `event_loop_timer` field of a live `Self`.
+    #[inline]
+    pub unsafe fn from_timer_ptr(
+        t: *const bun_event_loop::EventLoopTimer::EventLoopTimer,
+    ) -> *mut Self {
+        // SAFETY: caller contract — `t` addresses `Self.event_loop_timer` with
+        // whole-`Self` provenance.
+        unsafe { ::bun_core::from_field_ptr!(Self, event_loop_timer, t) }
+    }
+}
 
 pub mod js {
     // `jsc.Codegen.JSCronJob` cached-slot accessors. The C++ side is emitted by
@@ -1576,26 +1588,17 @@ impl CronJob {
         Self::remove_from_list(this, vm);
     }
 
-    fn remove_from_list(this: *mut Self, vm: &VirtualMachine) {
-        // Note: `RareData::cron_jobs` stores the opaque
-        // `rare_data::high_tier::CronJob`; cast through `*mut ()` for compare.
-        // SAFETY: address-equality only.
-        let needle = this.cast::<()>();
-        // SAFETY: single JS thread; mutation of the per-VM Vec. Route through the
-        // thread-local raw pointer (`VirtualMachine::get`) instead of upcasting
-        // `&VirtualMachine` so the `invalid_reference_casting` lint stays clean.
-        let _ = vm;
-        let rare = VirtualMachine::get().as_mut().rare_data.as_mut();
-        if let Some(rare) = rare {
-            if let Some(i) = rare
-                .cron_jobs
-                .iter()
-                .position(|&j| j.cast::<()>() == needle)
-            {
-                rare.cron_jobs.swap_remove(i);
-                // SAFETY: `this` is a live Box-allocated CronJob; this releases one ref.
-                unsafe { Self::deref(this) };
-            }
+    fn remove_from_list(this: *mut Self, _vm: &VirtualMachine) {
+        let state = crate::jsc_hooks::runtime_state();
+        if state.is_null() {
+            return;
+        }
+        // SAFETY: single JS thread; mutation of the per-VM `RuntimeState` Vec.
+        let jobs = unsafe { &mut (*state).cron_jobs };
+        if let Some(i) = jobs.iter().position(|&j| core::ptr::eq(j.as_ptr(), this)) {
+            jobs.swap_remove(i);
+            // SAFETY: `this` is a live Box-allocated CronJob; this releases one ref.
+            unsafe { Self::deref(this) };
         }
     }
 
@@ -1605,18 +1608,16 @@ impl CronJob {
     /// happens, so release the pending ref here to avoid leaking the struct.
     pub fn clear_all_for_vm<const MODE: ClearMode>(vm: &mut VirtualMachine) {
         // Drain the list first so `stop_internal` (which re-enters the VM)
-        // doesn't alias the `rare` borrow.
-        let jobs: Vec<*mut ()> = match vm.rare_data.as_mut() {
-            Some(rare) => core::mem::take(&mut rare.cron_jobs)
-                .into_iter()
-                .map(|j| j.cast::<()>())
-                .collect(),
-            None => return,
-        };
+        // doesn't alias the `RuntimeState` borrow.
+        let state = crate::jsc_hooks::runtime_state();
+        if state.is_null() {
+            return;
+        }
+        // SAFETY: single JS thread; per-VM `RuntimeState` is live here.
+        let jobs: Vec<core::ptr::NonNull<CronJob>> =
+            unsafe { core::mem::take(&mut (*state).cron_jobs) };
         for job in jobs {
-            // Note: stored as opaque `rare_data::high_tier::CronJob`; the
-            // concrete type is this `CronJob` (see `register` push site).
-            let job = job.cast::<CronJob>();
+            let job = job.as_ptr();
             // List holds a ref for each entry.
             Self::from_ctx_ptr(job).stop_internal(vm);
             if MODE == ClearMode::Teardown {
@@ -1885,12 +1886,14 @@ impl CronJob {
         // The cron_jobs list exists so --hot reload and worker teardown can
         // stop/release jobs. Main-thread VMs without --hot never enumerate it,
         // so skip the list ref + append entirely.
-        if vm.hot_reload == HOT_RELOAD_HOT || vm.worker.is_some() {
+        if vm.hot_reload == bun_options_types::context::HotReload::Hot || vm.worker.is_some() {
             job_ref.ref_(); // owned by cron_jobs entry
-            // Note: `RareData::cron_jobs` stores the opaque high-tier
-            // placeholder type; cast through `*mut ()` and let inference pick
-            // the element type.
-            vm.rare_data().cron_jobs.push(job.cast::<()>().cast());
+            // SAFETY: registration runs on the JS thread after `init_runtime_state`.
+            unsafe {
+                (*crate::jsc_hooks::runtime_state())
+                    .cron_jobs
+                    .push(core::ptr::NonNull::new(job).unwrap())
+            };
         }
 
         // SAFETY: `job` is a fresh `heap::alloc` pointer; ownership of one
@@ -2062,8 +2065,7 @@ pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
 // ============================================================================
 
 /// Trait abstracting over CronRegisterJob/CronRemoveJob for `spawn_cmd_generic`.
-trait SpawnCmdTarget: CronJobBase + BufferedReaderParent {
-    const EXIT_KIND: bun_spawn::ProcessExitKind;
+trait SpawnCmdTarget: CronJobBase + BufferedReaderParent + bun_spawn::ProcessExitOps {
     fn set_err(&mut self, args: core::fmt::Arguments<'_>);
     /// Consumes and frees `this`.
     unsafe fn finish(this: *mut Self);
@@ -2075,22 +2077,37 @@ trait SpawnCmdTarget: CronJobBase + BufferedReaderParent {
     fn remaining_fds(&mut self) -> &mut i8;
 }
 
-bun_spawn::link_impl_ProcessExit! {
-    CronRegister for CronRegisterJob => |this| {
-        // Forward `this` raw — `on_process_exit` → `maybe_finished` may free it.
-        on_process_exit(process, status, rusage) =>
-            <CronRegisterJob as CronJobBase>::on_process_exit(this, &*process, status, rusage),
+impl bun_spawn::ProcessExitOps for CronRegisterJob {
+    // Forward `this` raw — `on_process_exit` → `maybe_finished` may free it.
+    unsafe fn on_process_exit(
+        this: *mut Self,
+        process: &mut Process,
+        status: Status,
+        rusage: &Rusage,
+    ) {
+        // SAFETY: same contract as the trait method — `this` is the live owner
+        // registered for this process's exit hook; `&*process` only narrows
+        // the caller's `&mut`.
+        unsafe {
+            <CronRegisterJob as CronJobBase>::on_process_exit(this, &*process, status, rusage)
+        }
     }
 }
-bun_spawn::link_impl_ProcessExit! {
-    CronRemove for CronRemoveJob => |this| {
-        on_process_exit(process, status, rusage) =>
-            <CronRemoveJob as CronJobBase>::on_process_exit(this, &*process, status, rusage),
+impl bun_spawn::ProcessExitOps for CronRemoveJob {
+    unsafe fn on_process_exit(
+        this: *mut Self,
+        process: &mut Process,
+        status: Status,
+        rusage: &Rusage,
+    ) {
+        // SAFETY: same contract as the trait method — `this` is the live owner
+        // registered for this process's exit hook; `&*process` only narrows
+        // the caller's `&mut`.
+        unsafe { <CronRemoveJob as CronJobBase>::on_process_exit(this, &*process, status, rusage) }
     }
 }
 
 impl SpawnCmdTarget for CronRegisterJob {
-    const EXIT_KIND: bun_spawn::ProcessExitKind = bun_spawn::ProcessExitKind::CronRegister;
     fn set_err(&mut self, args: core::fmt::Arguments<'_>) {
         CronRegisterJob::set_err(self, args)
     }
@@ -2114,7 +2131,6 @@ impl SpawnCmdTarget for CronRegisterJob {
     }
 }
 impl SpawnCmdTarget for CronRemoveJob {
-    const EXIT_KIND: bun_spawn::ProcessExitKind = bun_spawn::ProcessExitKind::CronRemove;
     fn set_err(&mut self, args: core::fmt::Arguments<'_>) {
         CronRemoveJob::set_err(self, args)
     }
@@ -2226,10 +2242,8 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     // pattern. On spawn error, `WindowsStdio` has no `Drop`; reclaim
     // explicitly via `spawn_options.stderr.deinit()`.
     #[cfg(windows)]
-    let stderr_pipe_ptr: *mut bun_sys::windows::libuv::Pipe =
-        bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
-            bun_sys::windows::libuv::Pipe,
-        >()));
+    let stderr_pipe_ptr: *mut bun_libuv_sys::Pipe =
+        bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<bun_libuv_sys::Pipe>()));
     let cwd = FileSystem::get().top_level_dir;
     let spawn_options = SpawnOptions {
         stdin: stdin_opt,
@@ -2305,7 +2319,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
                     return unsafe { T::finish(this) };
                 }
                 if let Some(p) = s.stdout_reader().handle.get_poll() {
-                    p.set_flag(bun_io::FilePollFlag::Socket);
+                    p.set_flag(bun_io::posix_event_loop::Flags::Socket);
                 }
             } else {
                 s.stdout_reader().set_parent(this_ptr);
@@ -2344,7 +2358,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     // SAFETY: `process` was just allocated by `to_process`; we hold the only
     // ref. `this` is the owning `Box<T>` (only freed in `T::finish`, gated on
     // `has_called_process_exit`), so it outlives `process`.
-    unsafe { (*process).set_exit_handler(bun_spawn::ProcessExit::new(T::EXIT_KIND, this)) };
+    unsafe { (*process).set_exit_handler(bun_spawn::ProcessExit::of::<T>(this)) };
     // `s` not used past this point — `watch_or_reap` may synchronously invoke
     // the exit handler, which can free `this`.
     // SAFETY: `process` is live; `watch_or_reap` may synchronously invoke the

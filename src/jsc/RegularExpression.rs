@@ -95,35 +95,3 @@ impl RegularExpression {
         unsafe { Yarr__RegularExpression__deinit(this) }
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// `bun_install_types::NodeLinker` / `bun_install::PnpmMatcher` extern impls.
-//
-// Those lower-tier crates cannot name `jsc::RegularExpression`.
-// The bodies live here as `#[no_mangle]` Rust-ABI
-// fns, declared `extern "Rust"` on the low-tier side; link-time resolved.
-// ──────────────────────────────────────────────────────────────────────────
-
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_regex_compile(pattern: BunString) -> Option<core::ptr::NonNull<()>> {
-    // Initialize JSC before first compile (idempotent).
-    crate::initialize(false);
-    match RegularExpression::init(pattern, Flags::None) {
-        Ok(r) => core::ptr::NonNull::new(r.cast()),
-        Err(_) => None,
-    }
-}
-
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_regex_matches(regex: core::ptr::NonNull<()>, input: &BunString) -> bool {
-    // `RegularExpression` is an `opaque_ffi!` ZST handle; `opaque_mut` is the
-    // centralised non-null deref proof. `regex` was produced by
-    // `__bun_regex_compile` and remains live until `__bun_regex_drop`.
-    RegularExpression::opaque_mut(regex.as_ptr().cast()).matches(*input)
-}
-
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_regex_drop(regex: core::ptr::NonNull<()>) {
-    // SAFETY: `regex` was produced by `__bun_regex_compile`; consumed here.
-    unsafe { RegularExpression::destroy(regex.as_ptr().cast()) }
-}

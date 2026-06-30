@@ -181,7 +181,11 @@ pub mod layout_asserts {
     pin!(crate::ExternalSlice<u8>, size = 8, align = 4); // u32 off + u32 len
     pin!(crate::ExternalStringMap, size = 16, align = 4);
     pin!(crate::integrity::Integrity, size = 65, align = 1); // u8 tag + [64]u8
-    pin!(crate::repository::Repository, size = 40, align = 1); // 5 × String
+    pin!(
+        bun_install_types::resolver_hooks::Repository,
+        size = 40,
+        align = 1
+    ); // 5 × String
     pin!(crate::bin::Value, size = 16, align = 4); // union: [String;2] | ExternalSlice
     pin!(crate::bin::Bin, size = 20, align = 4);
     pin!(bun_semver::Version, size = 56, align = 8); // 3×u64 + Tag(2×ExternalString)
@@ -190,7 +194,11 @@ pub mod layout_asserts {
     // Iterated in declaration order by `MultiArrayList::Slice::column_bytes_mut`;
     // each column is written as a raw byte slab, so per-column `size_of` is the
     // load-bearing contract — see `lockfile/Package.rs::serializer::sizes()`.
-    pin!(crate::resolution::Value<u64>, size = 64, align = 8); // union: VersionedURL | Repository | String
+    pin!(
+        bun_install_types::resolver_hooks::ResolutionValue<u64>,
+        size = 64,
+        align = 8
+    ); // union: VersionedURL | Repository | String
     pin!(crate::resolution::Resolution, size = 72, align = 8); // u8 tag + [7]u8 + Value
     pin!(crate::lockfile::package::Meta, size = 88, align = 4);
     pin!(crate::lockfile::package::Scripts, size = 49, align = 1);

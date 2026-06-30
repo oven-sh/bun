@@ -13,7 +13,8 @@
 //! types; `bun_runtime` already depends on both `bun_collections` and
 //! `bun_jsc`. Registered via `$newRustFunction("collections/linear_fifo.rs",
 //! "TestingAPIs.orderedRemoveProbe", 1)` — the path is only the codegen key;
-//! the implementation is this Rust function (see `dispatch_js2native.rs`).
+//! the implementation is this Rust function (generate-js2native.ts emits its
+//! crate path directly into `generated_js2native.rs`).
 
 use bun_collections::linear_fifo::{LinearFifo, StaticBuffer};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};

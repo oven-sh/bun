@@ -25,7 +25,7 @@ impl Callback {
             // SAFETY: fn(*mut T) and fn(*mut c_void) have identical ABI;
             // `context` is only ever passed back to this callback, which
             // knows its real type.
-            callback: unsafe { bun_ptr::cast_fn_ptr::<fn(*mut T), fn(*mut c_void)>(callback) },
+            callback: unsafe { bun_core::cast_fn_ptr::<fn(*mut T), fn(*mut c_void)>(callback) },
             context: context.cast::<c_void>(),
         }
     }

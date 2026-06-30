@@ -11,13 +11,14 @@
 //!
 //! See `bun_shim_impl.rs` for more details on how this file is consumed.
 //!
-//! ## `shim_standalone` feature
+//! ## `host` / `shim_standalone` features
 //!
-//! This file is compiled by *two* crates: `bun_install` (the encoder/host —
-//! feature unset) and `bun_shim_impl` (the standalone PE — feature set). The
-//! standalone bin only needs `Flags`/`VersionFlag` for decoding, and must NOT
-//! see `EMBEDDED_EXECUTABLE_DATA` (it would `include_bytes!` its own output).
-//! Everything host-side is gated `#[cfg(not(feature = "shim_standalone"))]`.
+//! This module serves two configurations of the `bun_shim_impl` crate: the
+//! library consumed by `bun_install` (feature `host`) and the standalone PE
+//! (feature `shim_standalone`). The standalone bin only needs
+//! `Flags`/`VersionFlag` for decoding, and must NOT see
+//! `EMBEDDED_EXECUTABLE_DATA` (it would `include_bytes!` its own output).
+//! Everything host-side is gated `#[cfg(feature = "host")]`.
 
 /// Random numbers are chosen for validation purposes
 /// These arbitrary numbers will probably not show up in the other fields.
@@ -114,10 +115,10 @@ impl Flags {
 // shim crate `include_bytes!` its own output. Gate via inner module +
 // `pub use` so one `#[cfg]` covers the lot and visibility is preserved.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(not(feature = "shim_standalone"))]
+#[cfg(feature = "host")]
 pub use host::*;
 
-#[cfg(not(feature = "shim_standalone"))]
+#[cfg(feature = "host")]
 mod host {
     use super::{Flags, VersionFlag};
 

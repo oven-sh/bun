@@ -51,10 +51,7 @@ use bun_sourcemap as SourceMap;
 
 pub use bun_options_types::schema::api::CssInJsBehavior;
 
-/// The resolver crate is a sibling
-/// tier-4 crate; the canonical struct was MOVED DOWN to `bun_paths::fs::Path`
-/// so both the resolver and the printer can name it without a dep cycle.
-pub use bun_paths::fs::Path as FsPath;
+use bun_paths::fs::Path as FsPath;
 
 // ──────────────────────────────────────────────────────────────────────────
 // renamer — defined in `renamer.rs`. The five former leak sites
@@ -67,10 +64,7 @@ pub use bun_paths::fs::Path as FsPath;
 pub mod renamer;
 use renamer as rename;
 
-/// Map of mangled property `Ref` → final mangled name bytes.
-// PERF: `Box<[u8]>` values own their bytes —
-// revisit if profiling shows allocation pressure during link.
-pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
+pub use bun_ast::MangledProps;
 
 /// js_printer is the sole producer of ModuleInfo records; the bundler/runtime
 /// only consume the serialized form.
@@ -769,9 +763,9 @@ pub mod analyze_transpiled_module {
     }
 }
 
-/// Cold path — called at most once per print to persist output. Dispatch lives
-/// on the parser-tier `RuntimeTranspilerCache` (`TranspilerCacheImpl`
-/// link-interface); the printer just holds the raw pointer.
+/// Cold path — called at most once per print to persist output. `put()` is now
+/// an inherent method on the canonical `bun_ast::RuntimeTranspilerCache` (disk
+/// I/O lives in `bun_ast`); the printer just holds the raw pointer.
 pub type RuntimeTranspilerCacheRef = core::ptr::NonNull<bun_ast::RuntimeTranspilerCache>;
 
 use bun_core::fmt::hex2_upper; // remaining `\xHH` site below
@@ -1426,37 +1420,11 @@ impl Default for RequireOrImportMetaCallback {
     }
 }
 
-/// PORTING.md §Dispatch — manual vtable. The erased thunk is monomorphized
-/// over `T: RequireOrImportMetaSource`, so `callback` stays a captureless `fn`.
-pub trait RequireOrImportMetaSource {
-    fn require_or_import_meta_for_source(
-        &mut self,
-        id: u32,
-        was_unwrapped_require: bool,
-    ) -> RequireOrImportMeta;
-}
-
+/// PORTING.md §Dispatch — manual vtable — bundler-side builder constructs
+/// ctx+fn directly; see `LinkerContext::require_or_import_meta_callback`.
 impl RequireOrImportMetaCallback {
     pub fn call(&self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
         (self.callback)(self.ctx.unwrap().as_ptr(), id, was_unwrapped_require)
-    }
-
-    pub fn init<T: RequireOrImportMetaSource>(ctx: &mut T) -> Self {
-        fn thunk<T: RequireOrImportMetaSource>(
-            p: *mut (),
-            id: u32,
-            was_unwrapped_require: bool,
-        ) -> RequireOrImportMeta {
-            // SAFETY: `p` was constructed from `&mut T` in `init` below; caller guarantees
-            // `ctx` outlives this `RequireOrImportMetaCallback`, so the cast-back
-            // deref is valid and exclusive.
-            unsafe { (*p.cast::<T>()).require_or_import_meta_for_source(id, was_unwrapped_require) }
-        }
-        Self {
-            // Type-erased to `*mut ()` and cast back to `*mut T` inside the thunk before dereference.
-            ctx: Some(NonNull::from(ctx).cast::<()>()),
-            callback: thunk::<T>,
-        }
     }
 }
 

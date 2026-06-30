@@ -107,10 +107,8 @@ pub fn if_none_match(
 //   - `to_fetch_headers`         — extension-trait in bun_http_jsc
 // ═══════════════════════════════════════════════════════════════════════
 
-/// `bun.schema.api.StringPointer` — canonical definition lives in `bun_core`
-/// (T0, already a dep). Re-exported so `HeaderEntry`'s field type and
-/// `bun_http::headers::api::StringPointer` keep resolving.
-pub use bun_core::StringPointer;
+/// Canonical definition lives in bun_core.
+use bun_core::StringPointer;
 
 #[derive(Copy, Clone, Default)]
 pub struct HeaderEntry {
@@ -163,7 +161,7 @@ impl Clone for Headers {
             entries: self
                 .entries
                 .clone()
-                .unwrap_or_else(|_| bun_alloc::out_of_memory()),
+                .unwrap_or_else(|_| bun_core::out_of_memory()),
             buf: self.buf.clone(),
         }
     }
@@ -207,7 +205,7 @@ impl Headers {
                 name: name_ptr,
                 value: value_ptr,
             })
-            .unwrap_or_else(|_| bun_alloc::out_of_memory());
+            .unwrap_or_else(|_| bun_core::out_of_memory());
     }
 
     pub fn get_content_disposition(&self) -> Option<&[u8]> {

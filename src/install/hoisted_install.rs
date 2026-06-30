@@ -8,17 +8,16 @@ use bun_core::{Global, Output};
 use bun_paths::SEP;
 use bun_sys::{self as sys, Dir, Fd};
 
-use crate::analytics;
-use crate::bun_bunfig::Arguments as Command;
-use crate::bun_fs::FileSystem;
-use crate::bun_progress::{Node as ProgressNode, Progress};
+use bun_core::Progress::{Node as ProgressNode, Progress};
+use bun_options_types::context::Context;
+use bun_resolver::fs::FileSystem;
 
 use crate::lockfile::tree;
 use crate::{DependencyID, ExtractData, PackageID};
 // Bring the `items_<field>{,_mut}()` column accessors for
 // `MultiArrayList::Slice<Package>` into scope.
 use crate::PackageManager;
-use crate::bin_real as bin;
+use crate::bin;
 use crate::package_install;
 use crate::package_installer::{NodeModulesFolder, PackageInstaller, TreeContext};
 use crate::package_manager::{self, WorkspaceFilter};
@@ -57,13 +56,13 @@ impl<'a> run_tasks::RunTasksCallbacks for HoistedRunTasksCallbacks<'a> {
 
 pub(crate) fn install_hoisted_packages(
     this: &mut PackageManager,
-    ctx: Command::Context,
+    ctx: Context,
     workspace_filters: &[WorkspaceFilter],
     install_root_dependencies: bool,
     log_level: package_manager::Options::LogLevel,
     packages_to_install: Option<&[PackageID]>,
 ) -> Result<package_install::Summary, bun_core::Error> {
-    analytics::features::hoisted_bun_install.fetch_add(1, Ordering::Relaxed);
+    bun_analytics::features::hoisted_bun_install.fetch_add(1, Ordering::Relaxed);
 
     // Restore-buffers guard — side-effecting rollback,
     // not a free. Captures `*mut PackageManager` so the guard can write back
@@ -340,7 +339,7 @@ pub(crate) fn install_hoisted_packages(
             // to make mistakes harder
             //
             // BACKREF — the `PackageInstaller` slice fields are
-            // `bun_ptr::RawSlice<T>` (raw `*const [T]`, no lifetime), so
+            // `bun_core::RawSlice<T>` (raw `*const [T]`, no lifetime), so
             // wrapping each column with `RawSlice::new` stores the (ptr, len)
             // without keeping a borrow live — no `&'a → &'a` detach
             // round-trip needed. Derive through `lockfile_ptr` so the
@@ -351,12 +350,12 @@ pub(crate) fn install_hoisted_packages(
             // `fix_cached_lockfile_package_slices` re-snapshots). Read-only
             // projection via the safe `BackRef::Deref`.
             let parts = lockfile_ref.packages.slice();
-            let metas = bun_ptr::RawSlice::new(parts.items_meta());
-            let bins = bun_ptr::RawSlice::new(parts.items_bin());
-            let names = bun_ptr::RawSlice::new(parts.items_name());
-            let pkg_name_hashes = bun_ptr::RawSlice::new(parts.items_name_hash());
-            let resolutions = bun_ptr::RawSlice::new(parts.items_resolution());
-            let pkg_dependencies = bun_ptr::RawSlice::new(parts.items_dependencies());
+            let metas = bun_core::RawSlice::new(parts.items_meta());
+            let bins = bun_core::RawSlice::new(parts.items_bin());
+            let names = bun_core::RawSlice::new(parts.items_name());
+            let pkg_name_hashes = bun_core::RawSlice::new(parts.items_name_hash());
+            let resolutions = bun_core::RawSlice::new(parts.items_resolution());
+            let pkg_dependencies = bun_core::RawSlice::new(parts.items_dependencies());
 
             // Hoist the by-value reads out of the struct literal so they
             // finish before the long-lived `&mut *mgr_ptr` borrow for
@@ -413,8 +412,8 @@ pub(crate) fn install_hoisted_packages(
                 },
                 trusted_dependencies_from_update_requests: trusted_deps,
                 seen_bin_links: StringHashMap::<()>::default(),
-                destination_dir_subpath_buf: bun_paths::PathBuffer::uninit(),
-                folder_path_buf: bun_paths::PathBuffer::uninit(),
+                destination_dir_subpath_buf: bun_core::PathBuffer::uninit(),
+                folder_path_buf: bun_core::PathBuffer::uninit(),
                 current_tree_id: tree::INVALID_ID,
                 pending_lifecycle_scripts: Vec::new(),
             };

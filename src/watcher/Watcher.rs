@@ -41,30 +41,17 @@ pub const WATCH_OPEN_FLAGS: i32 = libc::O_EVTONLY;
 pub const WATCH_OPEN_FLAGS: i32 = bun_sys::O::RDONLY;
 
 pub type Event = WatchEvent;
-pub type Item = WatchItem;
-pub type ItemList = WatchList;
-pub type WatchList = MultiArrayList<WatchItem>;
+pub type Item<P = ()> = WatchItem<P>;
+pub type ItemList<P = ()> = WatchList<P>;
+pub type WatchList<P = ()> = MultiArrayList<WatchItem<P>>;
 pub type HashType = u32;
 pub type WatchItemIndex = u16;
 pub const MAX_EVICTION_COUNT: usize = 8096;
 
 const NO_WATCH_ITEM: WatchItemIndex = WatchItemIndex::MAX;
 
-// ─── erased upward types (CYCLEBREAK) ─────────────────────────────────────
-
-/// Opaque forward-decl of `bun_resolver::package_json::PackageJSON` (T5).
-/// Watcher only stores `Option<&PackageJSON>` and passes it through; never
-/// dereferenced here. Real layout lives in `bun_resolver`.
-// SAFETY: erased PackageJSON — only ever held by reference / raw ptr.
-#[repr(C)]
-pub struct PackageJSON {
-    _opaque: [u8; 0],
-    _pinned: core::marker::PhantomPinned,
-}
-
-/// Manual vtable for resolver→watcher directory-watch callbacks.
-/// Was `bun_resolver::AnyResolveWatcher` (T5); defined here so the low-tier
-/// crate owns the shape and `bun_resolver` re-imports it (move-in pass).
+/// Manual vtable for resolver→watcher directory-watch callbacks; erases the
+/// watcher's payload type `P` so `Resolver` can hold one concrete field.
 #[derive(Clone, Copy)]
 pub struct AnyResolveWatcher {
     pub context: *mut (),
@@ -95,7 +82,9 @@ pub type ChangedFilePath = Option<&'static ZStr>;
 
 // ─── Watcher ──────────────────────────────────────────────────────────────
 
-pub struct Watcher {
+/// `P` is the embedder-owned payload stored alongside each watched file
+/// (`WatchItem.package_json`); the watcher itself never reads it.
+pub struct Watcher<P: 'static = ()> {
     // This will always be [MAX_COUNT]WatchEvent,
     // We avoid statically allocating because it increases the binary size.
     pub watch_events: Box<[WatchEvent]>,
@@ -104,7 +93,7 @@ pub struct Watcher {
     /// The platform-specific implementation of the watcher
     pub platform: Platform,
 
-    pub watchlist: WatchList,
+    pub watchlist: WatchList<P>,
     pub watched_count: usize,
     pub mutex: Mutex,
 
@@ -128,7 +117,7 @@ pub struct Watcher {
     pub evict_list_i: WatchItemIndex,
 
     pub ctx: *mut (),
-    pub on_file_update: fn(*mut (), &mut [WatchEvent], &[ChangedFilePath], &WatchList),
+    pub on_file_update: fn(*mut (), &mut [WatchEvent], &[ChangedFilePath], &WatchList<P>),
     pub on_error: fn(*mut (), sys::Error),
 
     pub thread_lock: ThreadLock,
@@ -136,12 +125,12 @@ pub struct Watcher {
 
 /// Context types passed to `Watcher::init` implement this trait.
 /// The default `on_watch_error` forwards to `on_error`.
-pub trait WatcherContext {
+pub trait WatcherContext<P: 'static = ()> {
     fn on_file_update(
         &mut self,
         events: &mut [WatchEvent],
         changed_files: &[ChangedFilePath],
-        watchlist: &WatchList,
+        watchlist: &WatchList<P>,
     );
     fn on_error(&mut self, err: sys::Error);
     fn on_watch_error(&mut self, err: sys::Error) {
@@ -150,6 +139,12 @@ pub trait WatcherContext {
 }
 
 impl Watcher {
+    pub fn get_hash(filepath: &[u8]) -> HashType {
+        bun_wyhash::hash(filepath) as HashType
+    }
+}
+
+impl<P: 'static> Watcher<P> {
     /// Initializes a watcher. Each watcher is tied to some context type, which
     /// receives watch callbacks on the watcher thread. This function does not
     /// actually start the watcher thread.
@@ -165,21 +160,24 @@ impl Watcher {
     /// To integrate a started watcher into bundle_v2:
     ///
     ///     bundle_v2.bun_watcher = watcher;
-    pub fn init<T: WatcherContext>(
+    pub fn init<T: WatcherContext<P>>(
         ctx: *mut T,
         top_level_dir: &'static [u8],
-    ) -> Result<Box<Watcher>, bun_core::Error> {
-        fn on_file_update_wrapped<T: WatcherContext>(
+    ) -> Result<Box<Watcher<P>>, bun_core::Error> {
+        fn on_file_update_wrapped<P: 'static, T: WatcherContext<P>>(
             ctx_opaque: *mut (),
             events: &mut [WatchEvent],
             changed_files: &[ChangedFilePath],
-            watchlist: &WatchList,
+            watchlist: &WatchList<P>,
         ) {
             // SAFETY: ctx_opaque was stored from *mut T in init()
             let ctx = unsafe { &mut *ctx_opaque.cast::<T>() };
             ctx.on_file_update(events, changed_files, watchlist);
         }
-        fn on_error_wrapped<T: WatcherContext>(ctx_opaque: *mut (), err: sys::Error) {
+        fn on_error_wrapped<P: 'static, T: WatcherContext<P>>(
+            ctx_opaque: *mut (),
+            err: sys::Error,
+        ) {
             // SAFETY: ctx_opaque was stored from *mut T in init()
             let ctx = unsafe { &mut *ctx_opaque.cast::<T>() };
             ctx.on_watch_error(err);
@@ -191,8 +189,8 @@ impl Watcher {
             mutex: Mutex::default(),
             cwd: top_level_dir,
             ctx: ctx.cast::<()>(),
-            on_file_update: on_file_update_wrapped::<T>,
-            on_error: on_error_wrapped::<T>,
+            on_file_update: on_file_update_wrapped::<P, T>,
+            on_error: on_error_wrapped::<P, T>,
             platform: Platform::default(),
             watch_events: vec![WatchEvent::default(); MAX_COUNT].into_boxed_slice(),
             changed_filepaths: [const { None }; MAX_COUNT],
@@ -223,14 +221,14 @@ impl Watcher {
         debug_assert!(!self.watchloop_handle.load());
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.
-        let this = std::ptr::from_mut::<Watcher>(self) as usize;
+        let this = std::ptr::from_mut::<Self>(self) as usize;
         // SAFETY: Watcher outlives the thread; shutdown() coordinates teardown
         // via `running`/`close_descriptors` and the thread frees the Box.
         self.thread = Some(
             std::thread::Builder::new()
                 .name("FileWatcher".into())
                 .spawn(move || unsafe {
-                    let _ = Watcher::thread_main(this as *mut Watcher);
+                    let _ = Self::thread_main(this as *mut Self);
                 })
                 .expect("spawn FileWatcher thread"),
         );
@@ -265,10 +263,6 @@ impl Watcher {
             // SAFETY: this was heap-allocated by caller of init()
             drop(unsafe { bun_core::heap::take(this) });
         }
-    }
-
-    pub fn get_hash(filepath: &[u8]) -> HashType {
-        bun_wyhash::hash(filepath) as HashType
     }
 
     /// # Safety
@@ -485,7 +479,7 @@ impl Watcher {
         hash: HashType,
         loader: Loader,
         parent_hash: HashType,
-        package_json: Option<&'static PackageJSON>,
+        package_json: Option<&'static P>,
     ) -> sys::Result<()> {
         #[cfg(windows)]
         {
@@ -589,7 +583,7 @@ impl Watcher {
         };
 
         let parent_hash =
-            Self::get_hash(bun_paths::fs::PathName::init(file_path).dir_with_trailing_slash());
+            Watcher::get_hash(bun_paths::fs::PathName::init(file_path).dir_with_trailing_slash());
 
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         let watchlist_id = self.watchlist.len();
@@ -646,7 +640,7 @@ impl Watcher {
         hash: HashType,
         loader: Loader,
         dir_fd: Fd,
-        package_json: Option<&'static PackageJSON>,
+        package_json: Option<&'static P>,
     ) -> sys::Result<()> {
         // RAII guard: `lock_guard()` holds the
         // mutex by `BackRef`, not a borrow of `self`, so the `&mut self` calls
@@ -657,7 +651,7 @@ impl Watcher {
         let pathname = bun_paths::fs::PathName::init(file_path);
 
         let parent_dir = pathname.dir_with_trailing_slash();
-        let parent_dir_hash: HashType = Self::get_hash(parent_dir);
+        let parent_dir_hash: HashType = Watcher::get_hash(parent_dir);
 
         let mut parent_watch_item: Option<WatchItemIndex> = None;
         let autowatch_parent_dir =
@@ -756,7 +750,7 @@ impl Watcher {
         hash: HashType,
         loader: Loader,
         dir_fd: Fd,
-        package_json: Option<&'static PackageJSON>,
+        package_json: Option<&'static P>,
     ) -> sys::Result<()> {
         self.append_file_maybe_lock::<CLONE_FILE_PATH, true>(
             fd,
@@ -800,7 +794,7 @@ impl Watcher {
         if file_path.is_empty() {
             return false;
         }
-        let hash = Self::get_hash(file_path);
+        let hash = Watcher::get_hash(file_path);
 
         // Check if already watched (with lock to avoid race with removal)
         {
@@ -816,7 +810,7 @@ impl Watcher {
         // Only open fd if we might need it
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         let fd: Fd = {
-            let mut path_z = bun_paths::PathBuffer::uninit();
+            let mut path_z = bun_core::PathBuffer::uninit();
             if file_path.len() >= path_z.len() {
                 return false;
             }
@@ -868,7 +862,7 @@ impl Watcher {
         hash: HashType,
         loader: Loader,
         dir_fd: Fd,
-        package_json: Option<&'static PackageJSON>,
+        package_json: Option<&'static P>,
     ) -> sys::Result<()> {
         // This must lock due to concurrent transpiler
         self.mutex.lock();
@@ -940,16 +934,16 @@ impl Watcher {
     }
 
     pub fn get_resolve_watcher(&mut self) -> AnyResolveWatcher {
-        fn wrap(ctx: *mut (), dir_path: &[u8], dir_fd: Fd) {
+        fn wrap<P: 'static>(ctx: *mut (), dir_path: &[u8], dir_fd: Fd) {
             // SAFETY: ctx was stored from *mut Watcher in get_resolve_watcher()
             // and `AnyResolveWatcher::watch` only ever feeds back the paired
             // `context`; the resolver holds it for the Watcher's lifetime.
-            let this = unsafe { &mut *ctx.cast::<Watcher>() };
+            let this = unsafe { &mut *ctx.cast::<Watcher<P>>() };
             Watcher::on_maybe_watch_directory(this, dir_path, dir_fd);
         }
         AnyResolveWatcher {
             context: std::ptr::from_mut::<Self>(self).cast::<()>(),
-            callback: wrap,
+            callback: wrap::<P>,
         }
     }
 
@@ -960,7 +954,7 @@ impl Watcher {
         if !strings::contains(file_path, b"node_modules")
             && strings::contains(file_path, watch.top_level_dir())
         {
-            let _ = watch.add_directory::<false>(dir_fd, file_path, Self::get_hash(file_path));
+            let _ = watch.add_directory::<false>(dir_fd, file_path, Watcher::get_hash(file_path));
         }
     }
 }
@@ -1041,7 +1035,7 @@ impl fmt::Display for Op {
 
 // ─── WatchItem ────────────────────────────────────────────────────────────
 
-pub struct WatchItem {
+pub struct WatchItem<P: 'static = ()> {
     pub file_path: Cow<'static, [u8]>,
     // filepath hash for quick comparison
     pub hash: u32,
@@ -1050,7 +1044,7 @@ pub struct WatchItem {
     pub count: u32,
     pub parent_hash: u32,
     pub kind: WatchItemKind,
-    pub package_json: Option<&'static PackageJSON>,
+    pub package_json: Option<&'static P>,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub eventlist_index: platform::EventListIndex,
 }
@@ -1076,7 +1070,7 @@ pub trait WatchItemColumns {
     fn items_eventlist_index(&self) -> &[platform::EventListIndex];
 }
 
-impl WatchItemColumns for WatchList {
+impl<P: 'static> WatchItemColumns for WatchList<P> {
     fn items_file_path(&self) -> &[Cow<'static, [u8]>] {
         self.items::<"file_path", Cow<'static, [u8]>>()
     }
@@ -1101,7 +1095,7 @@ impl WatchItemColumns for WatchList {
     }
 }
 
-impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
+impl<P: 'static> WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem<P>> {
     fn items_file_path(&self) -> &[Cow<'static, [u8]>] {
         self.items::<"file_path", Cow<'static, [u8]>>()
     }

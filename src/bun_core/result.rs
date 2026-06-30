@@ -28,8 +28,8 @@ pub struct Error(NonZeroU16);
 // `pub const` Errors below have stable values without touching the lock.
 
 /// Pre-seeded names. **Append only** — existing indices are load-bearing for
-/// the `pub const` Errors below. (The errno→name map lives in bun_errno via the
-/// `ErrnoNames` hook; entries here are only fast-path intern hits.)
+/// the `pub const` Errors below. (The errno→name map is the per-OS `SystemErrno`
+/// strum table in `crate::errno`; entries here are only fast-path intern hits.)
 const SEED: &[&str] = &[
     // — well-known error names the runtime matches on by value —
     "Unexpected",      // 1  (catch-all; also `errno_map` default)
@@ -44,7 +44,7 @@ const SEED: &[&str] = &[
     "Aborted",         // 10
     "WouldBlock",      // 11
     // — POSIX errno tag names (intern fast-path only; the actual errno→name
-    //   mapping is the per-platform table in bun_errno, via ErrnoNames hook) —
+    //   mapping is the per-platform table in `crate::errno`) —
     "EPERM",   // 12
     "ENOENT",  // 13
     "ESRCH",   // 14
@@ -82,11 +82,10 @@ const SEED: &[&str] = &[
 ];
 
 /// Platform errno integer → its `SystemErrno` tag name. `None` for 0/out-of-range.
-/// The per-platform table lives in `bun_errno` (strum derive on `SystemErrno`);
-/// reached through the `ErrnoNames` link-interface so this crate stays leaf.
+/// The per-platform table lives in `crate::errno` (strum derive on `SystemErrno`).
 #[inline]
 pub(crate) fn system_errno_name(errno: i32) -> Option<&'static str> {
-    crate::ErrnoNames::SYS.name(errno)
+    crate::errno::system_errno_name(errno)
 }
 
 /// Dynamically interned names (codes `> SEED.len()`). Append-only; never
@@ -209,7 +208,7 @@ impl Error {
         static ERRNO_MAP: crate::Once<Box<[Error]>> = crate::Once::new();
         let map = ERRNO_MAP.get_or_init(|| {
             // Index 0 ("SUCCESS") is the no-error hole → Unexpected.
-            (0..crate::ErrnoNames::SYS.max_dense())
+            (0..crate::errno::system_errno_max_dense())
                 .map(|i| match system_errno_name(i as i32) {
                     Some(name) => Error::intern(name),
                     None => Error::UNEXPECTED,
@@ -258,14 +257,13 @@ impl From<std::io::Error> for Error {
             Some(code) => Self::from_errno(code),
             // Windows: `raw_os_error()` returns the raw Win32 `GetLastError()`
             // code (ERROR_ACCESS_DENIED=5, ERROR_SHARING_VIOLATION=32, …),
-            // NOT a `SystemErrno`. Routing it through `ErrnoNames::SYS.name()` would
+            // NOT a `SystemErrno`. Routing it through `system_errno_name()` would
             // alias garbage (5→EIO, 32→EPIPE). Translate Win32 → SystemErrno
-            // first; that table lives in `bun_errno`
-            // (tier-above `bun_core`, dep cycle), reached via the `win32_name`
-            // method on the `ErrnoNames` link-interface. Unknown codes still
+            // first via the `Win32Error` mapping table in `crate::errno`.
+            // Unknown codes still
             // collapse to `Unexpected` rather than aliasing a wrong name.
             #[cfg(windows)]
-            Some(code) => match crate::ErrnoNames::SYS.win32_name(code as u32) {
+            Some(code) => match crate::errno::win32_errno_name(code as u32) {
                 Some(name) => Self::intern(name),
                 None => Self::UNEXPECTED,
             },
@@ -355,12 +353,11 @@ macro_rules! impl_tag_error {
 }
 
 // ─── coreutils_error_map ─────────────────────────────────────────────────
-// The full typed EnumMap lives in `bun_sys::coreutils_error_map`; that crate
-// is tier-above `bun_core`, so for `output.rs`'s integer-errno hot path we
-// keep a parallel table here, keyed by `SystemErrno` *name* and resolved
-// through the per-OS `ErrnoNames` hook — the same
-// `errno → SystemErrno → message` composition, just without the
-// cross-crate enum.
+// One comptime *name → message* source (the `BASE`/`DELTA` tables below) plus
+// one typed projection onto the per-OS `SystemErrno` enum
+// (`crate::errno::coreutils_typed`). `get(errno: i32)` composes the two:
+// `errno → SystemErrno → message`. No link hook — the enum and the string
+// tables live in the same crate.
 //
 // Layout: one shared BASE table (the glibc/coreutils strings — used as-is on
 // linux/android/windows/wasm) plus a small per-OS DELTA on macOS/FreeBSD that
@@ -372,11 +369,11 @@ pub mod coreutils_error_map {
     /// Returns the GNU-coreutils-style short label for an errno, if known.
     #[inline]
     pub fn get(errno: i32) -> Option<&'static str> {
-        super::system_errno_name(errno).and_then(get_by_name)
+        crate::errno::system_errno_from_i32(errno).and_then(crate::errno::coreutils_typed::get)
     }
 
     /// Look up by `SystemErrno` variant name (e.g. `"ENOENT"`). Used by
-    /// `bun_sys::coreutils_error_map` to populate its typed `EnumMap` without
+    /// `crate::errno::coreutils_typed` to populate its typed `EnumMap` without
     /// duplicating the per-OS string tables.
     #[inline]
     pub fn get_by_name(name: &str) -> Option<&'static str> {
@@ -666,9 +663,8 @@ mod tests {
         );
     }
 
-    // `errno_mapping`, `errno_table_full_range`, `coreutils_map` moved to
-    // `bun_errno::errno_name_tests` — they link through the `ErrnoNames` hook
-    // and would fail `cargo test -p bun_core` (no provider in this crate).
+    // `errno_mapping`, `errno_table_full_range`, `coreutils_map` live in
+    // `crate::errno::errno_name_tests`.
 
     #[test]
     fn err_macro_distinct() {

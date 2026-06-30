@@ -35,7 +35,7 @@ pub struct WalkerEntry<'a> {
     pub dir: Fd,
     pub basename: &'a OSPathSliceZ,
     pub path: &'a OSPathSliceZ,
-    pub kind: sys::EntryKind,
+    pub kind: sys::FileKind,
 }
 
 struct StackItem {
@@ -62,7 +62,7 @@ impl Walker {
                         // fstatat so callers get accurate types for recursion.
                         // This only affects POSIX; Windows always provides types.
                         #[cfg(not(windows))]
-                        let kind: sys::EntryKind = if base.kind == sys::EntryKind::Unknown
+                        let kind: sys::FileKind = if base.kind == sys::FileKind::Unknown
                             && self.resolve_unknown_entry_types
                         {
                             let dir_fd = self.stack[top_idx].iter.dir();
@@ -74,10 +74,10 @@ impl Walker {
                             base.kind
                         };
                         #[cfg(windows)]
-                        let kind: sys::EntryKind = base.kind;
+                        let kind: sys::FileKind = base.kind;
 
                         match kind {
-                            sys::EntryKind::Directory => {
+                            sys::FileKind::Directory => {
                                 let skip = &self.skip_all[self.skip_dirnames.clone()];
                                 if skip.contains(
                                     // avoid hashing if there will be 0 results
@@ -93,7 +93,7 @@ impl Walker {
                                     continue;
                                 }
                             }
-                            sys::EntryKind::File => {
+                            sys::FileKind::File => {
                                 let skip = &self.skip_all[self.skip_filenames.clone()];
                                 if skip.contains(
                                     // avoid hashing if there will be 0 results
@@ -111,7 +111,7 @@ impl Walker {
                             }
 
                             // we don't know what it is for a symlink
-                            sys::EntryKind::SymLink => {
+                            sys::FileKind::SymLink => {
                                 let skip = &self.skip_all[..];
                                 if skip.contains(
                                     // avoid hashing if there will be 0 results
@@ -141,7 +141,7 @@ impl Walker {
                         self.name_buffer.push(0);
 
                         let mut top_idx = top_idx;
-                        if kind == sys::EntryKind::Directory {
+                        if kind == sys::FileKind::Directory {
                             let new_dir = sys::open_dir_for_iteration_os_path(
                                 self.stack[top_idx].iter.dir(),
                                 base.name.as_slice(),

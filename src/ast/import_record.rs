@@ -5,12 +5,8 @@
 //! `ImportKind::to_api()` lives in `bun_ast::ImportKindExt` (would
 //! back-edge into the schema crate).
 
-use crate::Range;
+use crate::{ImportKind, Index, Loader, Range};
 use bun_paths::fs::Path;
-
-// Re-exported here (canonical at crate root) so callers that path through
-// `bun_ast::import_record::{ImportKind, Index, Loader}` keep resolving.
-pub use crate::{ImportKind, Index, Loader};
 
 pub struct ImportRecord {
     pub range: Range,

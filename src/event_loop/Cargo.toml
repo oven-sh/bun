@@ -10,7 +10,6 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-bun_dispatch.workspace = true
 strum.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
@@ -25,6 +24,7 @@ bun_dotenv.workspace = true
 bun_io.workspace = true
 bun_paths.workspace = true
 bun_ptr.workspace = true
+bun_libuv_sys.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true
 bun_uws.workspace = true

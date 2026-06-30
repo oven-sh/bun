@@ -11,9 +11,10 @@ use super::{
     DependencyIDList, DependencyList, ExternalStringBuffer, Lockfile, PackageIDList, Stream,
     StringBuffer, Tree, assert_no_uninitialized_padding, tree,
 };
-use crate::lockfile_real as lockfile;
+use crate::lockfile;
 use crate::package_manager_real::package_manager_options::Options as PackageManagerOptions;
-use crate::{Aligner, DependencyID, PackageID, PackageManager, dependency, invalid_package_id};
+use crate::{Aligner, DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager};
+use bun_install_types::dependency;
 
 #[derive(Default)]
 pub struct Buffers {
@@ -142,7 +143,7 @@ pub fn read_array<T: Copy>(stream: &mut Stream) -> Result<Vec<T>, bun_core::Erro
     // SAFETY: `start_pos..end_pos` is in-bounds (checked above) and the lockfile
     // writer aligned the payload to `align_of::<T>()` via `Aligner::write`.
     let misaligned: &[T] = unsafe {
-        bun_core::ffi::slice(
+        bun_opaque::ffi::slice(
             stream.buffer.as_ptr().add(start_pos).cast::<T>(),
             (end_pos - start_pos) / size_of::<T>(),
         )
@@ -171,8 +172,9 @@ where
 
     // SAFETY: `T` has no uninitialized padding (audited via the per-type layout
     // asserts in padding_checker.rs); reading its bytes is sound.
-    let bytes: &[u8] =
-        unsafe { bun_core::ffi::slice(array.as_ptr().cast::<u8>(), core::mem::size_of_val(array)) };
+    let bytes: &[u8] = unsafe {
+        bun_opaque::ffi::slice(array.as_ptr().cast::<u8>(), core::mem::size_of_val(array))
+    };
 
     let start_pos = stream.get_pos()?;
     stream.write_int_le::<u64>(0xDEAD_BEEF)?;
@@ -298,7 +300,7 @@ where
 
         #[cfg(debug_assertions)]
         {
-            use bun_install::dependency::version::Tag;
+            use bun_install_types::dependency::Tag;
             const SEP_WINDOWS: u8 = b'\\';
             for dep in remaining {
                 // SAFETY: `dep.version.value` is a tag-discriminated union; each
@@ -311,7 +313,9 @@ where
                         }
                     }
                     Tag::Tarball => {
-                        if let crate::dependency::URI::Local(local) = dep.version.tarball().uri {
+                        if let bun_install_types::dependency::URI::Local(local) =
+                            dep.version.tarball().uri
+                        {
                             let tarball = lockfile.str(&local);
                             if strings::contains_char(tarball, SEP_WINDOWS) {
                                 panic!("tarball windows separator: {}", bstr::BStr::new(tarball));
@@ -383,7 +387,7 @@ impl Buffers {
     ) -> Result<DependencyID, bun_core::Error> {
         match package_id {
             0 => return Ok(tree::ROOT_DEP_ID),
-            id if id == invalid_package_id => return Ok(invalid_package_id),
+            id if id == INVALID_PACKAGE_ID => return Ok(INVALID_PACKAGE_ID),
             _ => {
                 // `dependency_visited` is captured once outside the loop
                 // instead of re-matched per iteration (borrowck).
@@ -485,7 +489,7 @@ pub(crate) fn load(
         log,
         // allocator dropped — global mimalloc
         buffer: string_buf,
-        package_manager: pm_,
+        package_manager: pm_.map(|m| m as &mut dyn bun_install_types::dependency::NpmAliasRegistry),
     };
     // `set_len` then `as_mut_slice()` would form `&mut Dependency` to
     // uninitialized memory (UB even when write-only), so we push into the

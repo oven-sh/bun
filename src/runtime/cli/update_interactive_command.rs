@@ -9,7 +9,6 @@ use bun_alloc::Arena as Bump;
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_glob as glob;
-use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::{
@@ -21,6 +20,7 @@ use bun_install::{
     PackageManager, WorkspacePackageJsonCacheEntry, resolution,
 };
 use bun_install_types::DependencyGroup;
+use bun_install_types::dependency::{self, Behavior};
 use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter, PrintJsonOptions};
 use bun_resolver::fs::FileSystem;
 // Layering: `Expr`/`E` here are the *lower-tier* `bun_ast::js_ast`
@@ -31,8 +31,9 @@ use bun_resolver::fs::FileSystem;
 // with `MapEntry.root`.
 use bun_ast::Loc;
 use bun_ast::{self, E, Expr, expr as js_expr};
+use bun_core::PathBuffer;
 use bun_core::strings;
-use bun_paths::{self as path, PathBuffer};
+use bun_paths::{self as path};
 use bun_semver::{self as semver, SlicedString};
 
 use crate::Command;

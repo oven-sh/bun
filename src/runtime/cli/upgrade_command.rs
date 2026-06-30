@@ -6,6 +6,7 @@ use std::io::Write as _;
 use bun_alloc::Arena as Bump;
 use bun_core::Global::SyncCStr;
 use bun_core::MutableString;
+use bun_core::PathBuffer;
 use bun_core::{self, Environment, Global, Output, Progress, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
 use bun_dotenv as DotEnv;
@@ -13,7 +14,7 @@ use bun_http::{self as HTTP, headers};
 use bun_install::integrity::{Integrity, Tag as IntegrityTag};
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_parsers::json as JSON;
-use bun_paths::{self, PathBuffer, SEP_STR};
+use bun_paths::{self, SEP_STR};
 use bun_resolver::fs;
 use bun_sys as sys;
 use bun_url::URL;
@@ -77,9 +78,8 @@ impl Version {
     pub fn name(&self) -> Option<Vec<u8>> {
         if self.tag.len() <= b"bun-v".len() || !self.tag.starts_with(b"bun-v") {
             if &*self.tag == b"canary" {
-                use crate::cli as Cli;
                 let mut out = Vec::new();
-                let start_time = Cli::start_time();
+                let start_time = bun_core::start_time();
                 let bytes = &start_time.to_ne_bytes()[..];
                 write!(
                     &mut out,
@@ -213,11 +213,11 @@ impl UpgradeCommand {
 
         let mut header_entries: headers::EntryList = headers::EntryList::default();
         let accept = headers::Entry {
-            name: HTTP::ETag::StringPointer {
+            name: bun_core::StringPointer {
                 offset: 0,
                 length: u32::try_from(b"Accept".len()).expect("int cast"),
             },
-            value: HTTP::ETag::StringPointer {
+            value: bun_core::StringPointer {
                 offset: u32::try_from(b"Accept".len()).expect("int cast"),
                 length: u32::try_from(b"application/vnd.github.v3+json".len()).expect("int cast"),
             },
@@ -260,11 +260,11 @@ impl UpgradeCommand {
                 .expect("oom");
                 header_entries
                     .append(headers::Entry {
-                        name: HTTP::ETag::StringPointer {
+                        name: bun_core::StringPointer {
                             offset: accept.value.offset + accept.value.length,
                             length: u32::try_from(b"Authorization".len()).expect("int cast"),
                         },
-                        value: HTTP::ETag::StringPointer {
+                        value: bun_core::StringPointer {
                             offset: u32::try_from(
                                 (accept.value.offset + accept.value.length) as usize
                                     + b"Authorization".len(),
@@ -1466,9 +1466,9 @@ pub mod upgrade_js_bindings {
         {
             use sys::windows as w;
 
-            let mut buf = bun_paths::WPathBuffer::uninit();
+            let mut buf = bun_core::WPathBuffer::uninit();
             let tmpdir_path = fs::RealFS::get_default_temp_dir();
-            let mut wtmp = bun_paths::WPathBuffer::uninit();
+            let mut wtmp = bun_core::WPathBuffer::uninit();
             let tmpdir_w = bun_core::convert_utf8_to_utf16_in_buffer(&mut wtmp[..], tmpdir_path);
             let path = match sys::normalize_path_windows(sys::Fd::INVALID, tmpdir_w, &mut buf[..]) {
                 sys::Result::Err(_) => return Ok(JSValue::UNDEFINED),

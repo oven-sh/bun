@@ -5,24 +5,24 @@ use bun_collections::HashMap;
 use bun_core::strings;
 use bun_semver::String as SemverString;
 
-use crate::lockfile_real::package::Alphabetizer;
-use bun_install::Dependency;
-use bun_install::PackageID;
-use bun_install::Resolution;
-use bun_install::dependency::{self, Behavior, VersionExt as _};
-use bun_install::lockfile::package;
+use crate::Dependency;
+use crate::PackageID;
+use crate::Resolution;
+use crate::lockfile::package;
+use crate::lockfile::package::Alphabetizer;
+use bun_install_types::dependency::{self, Behavior};
 // `lockfile.packages.slice()` returns
 // `bun_collections::multi_array_list::Slice<Package<_>>`; the `items_<field>()`
 // column accessors are an extension trait (hand-expanded per Package.rs).
 use crate::integrity;
-use crate::lockfile_real::Printer;
+use crate::lockfile::Printer;
 
 pub fn print(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
     // internal for debugging, print the lockfile as custom json
     // limited to debug because we don't want people to rely on this format.
     #[cfg(debug_assertions)]
     if bun_core::getenv_z(bun_core::zstr!("JSON")).is_some() {
-        use crate::lockfile_real::lockfile_json_stringify_for_debugging::{
+        use crate::lockfile::lockfile_json_stringify_for_debugging::{
             WriteStream, WriteStreamOptions,
         };
         let mut stream = WriteStream::new(WriteStreamOptions {
@@ -30,7 +30,7 @@ pub fn print(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), 
             emit_null_optional_fields: true,
             emit_nonportable_numbers_as_strings: true,
         });
-        crate::lockfile_real::json_stringify(this.lockfile, &mut stream)?;
+        crate::lockfile::json_stringify(this.lockfile, &mut stream)?;
         writer.write_all(&stream.into_bytes())?;
         writer.write_all(b"\n")?;
         return Ok(());

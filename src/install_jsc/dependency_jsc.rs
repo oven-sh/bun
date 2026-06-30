@@ -2,27 +2,15 @@
 //! lives here as extension-trait methods on the base type.
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
-
-/// Local helper: `bun_semver::String` → JS string. Mirrors
-/// `bun_semver_jsc::SemverStringJsc::to_js`, but that crate stubs its own JSC
-/// types, so its `JSGlobalObject`/`JSValue` are not the
-/// `bun_jsc` ones. Inline the body here against the real `bun_jsc` types.
-#[inline]
-fn semver_string_to_js(
-    s: bun_semver::String,
-    buf: &[u8],
-    global: &JSGlobalObject,
-) -> JsResult<JSValue> {
-    bun_jsc::bun_string_jsc::create_utf8_for_js(global, s.slice(buf))
-}
+use bun_semver_jsc::SemverStringJsc as _;
 
 pub(crate) fn version_to_js(
-    dep: &bun_install::dependency::Version,
+    dep: &bun_install_types::dependency::Version,
     buf: &[u8],
     global: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     use bun_core::String as BunString;
-    use bun_install::dependency::{self, version::Tag};
+    use bun_install_types::dependency::{self, Tag};
 
     let object = JSValue::create_empty_object(global, 0);
     object.put(
@@ -37,61 +25,49 @@ pub(crate) fn version_to_js(
     match dep.tag {
         Tag::DistTag => {
             let v = dep.dist_tag();
-            object.put(global, b"name", semver_string_to_js(v.name, buf, global)?);
-            object.put(global, b"tag", semver_string_to_js(v.tag, buf, global)?);
+            object.put(global, b"name", v.name.to_js(buf, global)?);
+            object.put(global, b"tag", v.tag.to_js(buf, global)?);
         }
         Tag::Folder => {
             let v = dep.folder();
-            object.put(global, b"folder", semver_string_to_js(*v, buf, global)?);
+            object.put(global, b"folder", v.to_js(buf, global)?);
         }
         Tag::Git => {
             let v = dep.git();
-            object.put(global, b"owner", semver_string_to_js(v.owner, buf, global)?);
-            object.put(global, b"repo", semver_string_to_js(v.repo, buf, global)?);
-            object.put(
-                global,
-                b"ref",
-                semver_string_to_js(v.committish, buf, global)?,
-            );
+            object.put(global, b"owner", v.owner.to_js(buf, global)?);
+            object.put(global, b"repo", v.repo.to_js(buf, global)?);
+            object.put(global, b"ref", v.committish.to_js(buf, global)?);
         }
         Tag::Github => {
             let v = dep.github();
-            object.put(global, b"owner", semver_string_to_js(v.owner, buf, global)?);
-            object.put(global, b"repo", semver_string_to_js(v.repo, buf, global)?);
-            object.put(
-                global,
-                b"ref",
-                semver_string_to_js(v.committish, buf, global)?,
-            );
+            object.put(global, b"owner", v.owner.to_js(buf, global)?);
+            object.put(global, b"repo", v.repo.to_js(buf, global)?);
+            object.put(global, b"ref", v.committish.to_js(buf, global)?);
         }
         Tag::Npm => {
             let v = dep.npm();
-            object.put(global, b"name", semver_string_to_js(v.name, buf, global)?);
+            object.put(global, b"name", v.name.to_js(buf, global)?);
             let mut version_str = BunString::create_format(format_args!("{}", v.version.fmt(buf)));
             object.put(global, b"version", version_str.transfer_to_js(global)?);
             object.put(global, b"alias", JSValue::js_boolean(v.is_alias));
         }
         Tag::Symlink => {
             let v = dep.symlink();
-            object.put(global, b"path", semver_string_to_js(*v, buf, global)?);
+            object.put(global, b"path", v.to_js(buf, global)?);
         }
         Tag::Workspace => {
             let v = dep.workspace();
-            object.put(global, b"name", semver_string_to_js(*v, buf, global)?);
+            object.put(global, b"name", v.to_js(buf, global)?);
         }
         Tag::Tarball => {
             let v = dep.tarball();
-            object.put(
-                global,
-                b"name",
-                semver_string_to_js(v.package_name, buf, global)?,
-            );
+            object.put(global, b"name", v.package_name.to_js(buf, global)?);
             match &v.uri {
-                dependency::tarball::Uri::Local(local) => {
-                    object.put(global, b"path", semver_string_to_js(*local, buf, global)?);
+                dependency::URI::Local(local) => {
+                    object.put(global, b"path", local.to_js(buf, global)?);
                 }
-                dependency::tarball::Uri::Remote(remote) => {
-                    object.put(global, b"url", semver_string_to_js(*remote, buf, global)?);
+                dependency::URI::Remote(remote) => {
+                    object.put(global, b"url", remote.to_js(buf, global)?);
                 }
             }
         }
@@ -105,7 +81,7 @@ pub(crate) fn version_to_js(
 
 pub fn tag_infer_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_core::String as BunString;
-    use bun_install::dependency::{TagExt, version::Tag};
+    use bun_install_types::dependency::Tag;
 
     let arguments = frame.arguments_old::<1>();
     let arguments = arguments.slice();
@@ -120,20 +96,9 @@ pub fn tag_infer_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     BunString::static_(<&'static str>::from(tag)).to_js(global)
 }
 
-/// Local helper for `log.toJS(global, msg)` — thin re-export now that
-/// `bun_logger_jsc` is typed against the real `bun_jsc` surface.
-#[inline]
-pub(crate) fn log_to_js(
-    log: &bun_ast::Log,
-    global: &JSGlobalObject,
-    msg: &[u8],
-) -> JsResult<JSValue> {
-    bun_ast_jsc::log_to_js(log, global, msg)
-}
-
 pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_ast::Log;
-    use bun_install::dependency;
+    use bun_install_types::dependency;
     use bun_semver::SlicedString;
 
     let arguments = frame.arguments_old::<2>();
@@ -196,7 +161,7 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
         Some(d) => d,
         None => {
             if !log.msgs.is_empty() {
-                return Err(global.throw_value(log_to_js(
+                return Err(global.throw_value(bun_ast_jsc::log_to_js(
                     &log,
                     global,
                     b"Failed to parse dependency",
@@ -208,7 +173,11 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     };
 
     if !log.msgs.is_empty() {
-        return Err(global.throw_value(log_to_js(&log, global, b"Failed to parse dependency")?));
+        return Err(global.throw_value(bun_ast_jsc::log_to_js(
+            &log,
+            global,
+            b"Failed to parse dependency",
+        )?));
     }
     drop(log);
 

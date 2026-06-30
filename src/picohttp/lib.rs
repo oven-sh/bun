@@ -137,7 +137,7 @@ impl Header {
         // continuation headers. `ffi::slice` tolerates the (null, 0) shape.
         // SAFETY: ptr/len originate from picohttpparser pointing into the
         // caller-provided buffer, or from StringBuilder::append.
-        unsafe { bun_core::ffi::slice(self.name_ptr, self.name_len) }
+        unsafe { bun_opaque::ffi::slice(self.name_ptr, self.name_len) }
     }
 
     #[inline]
@@ -145,7 +145,7 @@ impl Header {
         // Defensive: picohttpparser always points `value` into `buf` on
         // success; `ffi::slice` tolerates the (null, 0) shape.
         // SAFETY: same as name()
-        unsafe { bun_core::ffi::slice(self.value_ptr, self.value_len) }
+        unsafe { bun_opaque::ffi::slice(self.value_ptr, self.value_len) }
     }
 
     pub fn is_multiline(&self) -> bool {
@@ -381,9 +381,9 @@ impl<'a> Request<'a> {
             -2 => Err(ParseRequestError::ShortRead),
             _ => Ok(Request {
                 // SAFETY: on success, ptr/len point into `buf`.
-                method: unsafe { bun_core::ffi::slice(method_ptr, method_len) },
+                method: unsafe { bun_opaque::ffi::slice(method_ptr, method_len) },
                 // SAFETY: on success, ptr/len point into `buf`.
-                path: unsafe { bun_core::ffi::slice(path_ptr, path_len) },
+                path: unsafe { bun_opaque::ffi::slice(path_ptr, path_len) },
                 minor_version: usize::try_from(minor_version).expect("int cast"),
                 headers: &src[0..num_headers],
                 bytes_read: u32::try_from(rc).expect("int cast"),
@@ -645,7 +645,7 @@ impl<'a> Response<'a> {
                     minor_version: usize::try_from(minor_version).expect("int cast"),
                     status_code: u32::try_from(status_code).expect("int cast"),
                     // SAFETY: on success, ptr/len point into `buf`.
-                    status: unsafe { bun_core::ffi::slice(status_ptr, status_len) },
+                    status: unsafe { bun_opaque::ffi::slice(status_ptr, status_len) },
                     headers: HeaderList {
                         list: &src[0..num_headers.min(src.len())],
                     },

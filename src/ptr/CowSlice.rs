@@ -405,16 +405,16 @@ impl<const Z: bool> core::fmt::Display for CowSliceZ<u8, Z> {
 #[cfg(debug_assertions)]
 struct DebugData {
     /// Guards `borrows` (number of active borrows).
-    // `bun_core::Mutex` (poison-free `std::sync` wrapper) is used because
+    // `bun_core::Guarded` (futex-backed) is used because
     // `bun_ptr` sits below `bun_threading`.
-    mutex: bun_core::Mutex<usize>,
+    mutex: bun_core::Guarded<usize>,
 }
 
 #[cfg(debug_assertions)]
 impl DebugData {
     fn new_boxed() -> NonNull<Self> {
         bun_core::heap::into_raw_nn(Box::new(Self {
-            mutex: bun_core::Mutex::new(0),
+            mutex: bun_core::Guarded::new(0),
         }))
     }
 }

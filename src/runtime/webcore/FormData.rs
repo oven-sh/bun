@@ -1,6 +1,7 @@
 //! HTML `FormData` parsing + JS bridge.
 
 use bun_collections::ArrayHashMap;
+use bun_core::form_data::{AsyncFormData, Encoding};
 use bun_core::{self, declare_scope, err, scoped_log};
 use bun_core::{ZigString, ZigStringSlice, strings};
 use bun_jsc::{
@@ -8,7 +9,6 @@ use bun_jsc::{
     ZigStringJsc as _,
 };
 use bun_semver::{self, SlicedString};
-use core::ffi::c_void;
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
@@ -22,12 +22,6 @@ pub struct FormData<'a> {
 }
 
 pub type Map<'a> = ArrayHashMap<bun_semver::String, FieldEntry<'a>>;
-
-// `Encoding`, `get_boundary`, and `AsyncFormData` are JSC-free and live in the
-// lower-tier `bun_core::form_data` so `Body`/`Request`/`Response` can name them
-// without depending on `bun_runtime`. Re-exported here so `crate::webcore::
-// form_data::*` callers see the same nominal types.
-pub use bun_core::form_data::{AsyncFormData, Encoding, get_boundary};
 
 /// JSC-touching extension on `AsyncFormData` (lives in this crate because it
 /// needs `JSGlobalObject` + `AnyPromise`).
@@ -269,12 +263,8 @@ pub fn to_js_from_multipart_data(
                     }
                 }
 
-                wrap.form.append_blob(
-                    wrap.global,
-                    &key,
-                    (&raw mut blob).cast::<c_void>(),
-                    &filename,
-                );
+                wrap.form
+                    .append_blob(wrap.global, &key, &mut blob, &filename);
                 // `append_blob` dupes the content type, so the copy boxed above
                 // is solely owned by this stack-local and must be released here.
                 blob.detach();

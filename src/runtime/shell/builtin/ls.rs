@@ -3,13 +3,13 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
 
 use bun_core::ZBox;
+use bun_event_loop::EventLoopHandle;
 use bun_sys::{E, FdExt, O, S, dir_iterator};
 
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, IoKind, Kind};
 use crate::shell::interpreter::{
-    EventLoopHandle, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, ShellTask,
-    shell_openat,
+    Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, ShellTask, shell_openat,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -524,7 +524,7 @@ impl ShellLsTask {
                     Ok(Some(current)) => {
                         let name = current.name.slice_u8();
                         this.add_entry(name, fd);
-                        if matches!(current.kind, bun_sys::EntryKind::Directory)
+                        if matches!(current.kind, bun_core::FileKind::Directory)
                             && this.opts.recursive
                         {
                             this.enqueue(name);
@@ -773,7 +773,7 @@ fn civil_from_days(z: i64) -> (i32, u8, u8) {
 }
 
 impl bun_event_loop::Taskable for ShellLsTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellLsTask;
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::TaskTag::ShellLsTask;
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {

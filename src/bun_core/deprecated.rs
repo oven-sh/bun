@@ -252,14 +252,6 @@ impl<T> DoublyLinkedList<T> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// RapidHash
-// ──────────────────────────────────────────────────────────────────────────
-
-// Canonical impl lives in the leaf `bun_hash` crate; re-export so the
-// historical `crate::deprecated::RapidHash` path keeps resolving.
-pub use bun_hash::RapidHash;
-
-// ──────────────────────────────────────────────────────────────────────────
 // tests
 // ──────────────────────────────────────────────────────────────────────────
 

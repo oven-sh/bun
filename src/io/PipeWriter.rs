@@ -1,20 +1,18 @@
 use core::ffi::c_void;
 use core::mem;
 
-use bun_collections::ByteVecExt;
-use bun_core::OOM;
-use bun_ptr::LaunderedSelf; // brings `Self::r` into scope for all 4 writers
 #[cfg(windows)]
-use bun_sys::ReturnCodeExt as _;
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
+use bun_libuv_sys as uv;
 #[cfg(windows)]
 // `close`/`set_data`/`ref_` are default trait methods; bring traits into scope
 // so method resolution finds them on `Pipe`/`uv_tty_t`/`fs_t`.
-use bun_sys::windows::libuv::UvHandle as _;
+use bun_libuv_sys::UvHandle as _;
+use bun_ptr::LaunderedSelf; // brings `Self::r` into scope for all 4 writers
+#[cfg(windows)]
+use bun_sys::ReturnCodeExt as _;
 use bun_sys::{self as sys, Fd};
 
-use crate::{EventLoopHandle, FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
+use crate::{EventLoopCtx, FilePollKind, FilePollRef, Owner};
 
 use crate::pipes::{FileType, PollOrFd};
 #[cfg(windows)]
@@ -254,10 +252,10 @@ fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
 /// Stacked Borrows, so we use raw
 /// pointers and never form a `&mut Parent` inside the writer.
 pub trait PosixBufferedWriterParent {
-    /// `bun_io::poll_tag` constant for this writer's `FilePoll` owner. The
-    /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll`
-    /// recovers `*mut PosixBufferedWriter<Self>` from this.
-    const POLL_OWNER_TAG: PollTag;
+    /// `Owner.on_update` for this writer's FilePoll. Usually
+    /// [`buffered_writer_run_file_poll::<Self>`]; override for custom
+    /// keepalive wrappers (see shell IOWriter).
+    const ON_POLL: crate::posix_event_loop::OnPoll;
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
@@ -277,7 +275,7 @@ pub trait PosixBufferedWriterParent {
     unsafe fn on_writable(_this: *mut Self) {}
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
+    unsafe fn event_loop(this: *mut Self) -> EventLoopCtx;
 }
 
 pub struct PosixBufferedWriter<Parent: PosixBufferedWriterParent> {
@@ -357,7 +355,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     /// pointee strictly outlives `self`. Collapses N identical
     /// `unsafe { Parent::event_loop(self.parent()) }` blocks into one.
     #[inline]
-    fn parent_event_loop(&self) -> EventLoopHandle {
+    fn parent_event_loop(&self) -> EventLoopCtx {
         // SAFETY: type invariant — see doc comment above.
         unsafe { Parent::event_loop(self.parent()) }
     }
@@ -380,7 +378,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         FilePollRef::init(
             self.parent_event_loop(),
             fd,
-            Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast()),
+            Owner::new(std::ptr::from_mut(self).cast(), Parent::ON_POLL),
         )
     }
 
@@ -474,11 +472,11 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         poll.can_enable_keeping_process_alive()
     }
 
-    pub fn enable_keeping_process_alive(&self, event_loop: EventLoopHandle) {
+    pub fn enable_keeping_process_alive(&self, event_loop: EventLoopCtx) {
         self.update_ref(event_loop, true);
     }
 
-    pub fn disable_keeping_process_alive(&self, event_loop: EventLoopHandle) {
+    pub fn disable_keeping_process_alive(&self, event_loop: EventLoopCtx) {
         self.update_ref(event_loop, false);
     }
 
@@ -525,7 +523,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         }
     }
 
-    pub fn update_ref(&self, event_loop: EventLoopHandle, value: bool) {
+    pub fn update_ref(&self, event_loop: EventLoopCtx, value: bool) {
         let Some(poll) = self.get_poll() else { return };
         poll.set_keeping_process_alive(event_loop, value);
     }
@@ -539,7 +537,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         // reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle
-            .set_owner(Owner::new(Parent::POLL_OWNER_TAG, owner.cast()));
+            .set_owner(Owner::new(owner.cast(), Parent::ON_POLL));
     }
 
     pub fn write(&mut self) {
@@ -591,6 +589,36 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 }
 
+/// Default `Owner.on_update` for a `PosixBufferedWriter<Parent>` poll (the
+/// plain `poll_arm!` body of the old `__bun_run_file_poll` dispatch).
+/// # Safety
+/// `owner` must be the `*mut PosixBufferedWriter<Parent>` stored at
+/// registration; exclusive for this dispatch.
+pub unsafe fn buffered_writer_run_file_poll<Parent: PosixBufferedWriterParent>(
+    owner: *mut (),
+    _poll: *mut crate::FilePoll,
+    size_or_offset: i64,
+    hup: bool,
+) {
+    // SAFETY: caller contract above.
+    unsafe { (*owner.cast::<PosixBufferedWriter<Parent>>()).on_poll(size_or_offset as isize, hup) }
+}
+
+/// Default `Owner.on_update` for a `PosixStreamingWriter<Parent>` poll (the
+/// plain `poll_arm!` body of the old `__bun_run_file_poll` dispatch).
+/// # Safety
+/// `owner` must be the `*mut PosixStreamingWriter<Parent>` stored at
+/// registration; exclusive for this dispatch.
+pub unsafe fn streaming_writer_run_file_poll<Parent: PosixStreamingWriterParent>(
+    owner: *mut (),
+    _poll: *mut crate::FilePoll,
+    size_or_offset: i64,
+    hup: bool,
+) {
+    // SAFETY: caller contract above.
+    unsafe { (*owner.cast::<PosixStreamingWriter<Parent>>()).on_poll(size_or_offset as isize, hup) }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PosixStreamingWriter
 // ──────────────────────────────────────────────────────────────────────────
@@ -602,10 +630,10 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 /// Stacked Borrows, so we use raw
 /// pointers and never form a `&mut Parent` inside the writer.
 pub trait PosixStreamingWriterParent {
-    /// `bun_io::poll_tag` constant for this writer's `FilePoll` owner. The
-    /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll`
-    /// recovers `*mut PosixStreamingWriter<Self>` from this.
-    const POLL_OWNER_TAG: PollTag;
+    /// `Owner.on_update` for this writer's FilePoll. Usually
+    /// [`streaming_writer_run_file_poll::<Self>`]; override for custom
+    /// keepalive wrappers (see shell IOWriter).
+    const ON_POLL: crate::posix_event_loop::OnPoll;
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
@@ -621,7 +649,7 @@ pub trait PosixStreamingWriterParent {
     unsafe fn on_close(this: *mut Self);
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
+    unsafe fn event_loop(this: *mut Self) -> EventLoopCtx;
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop;
@@ -788,7 +816,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         // reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle
-            .set_owner(Owner::new(Parent::POLL_OWNER_TAG, owner.cast()));
+            .set_owner(Owner::new(owner.cast(), Parent::ON_POLL));
     }
 
     fn _on_writable(&mut self) {
@@ -1001,7 +1029,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
         let received_hup = 'brk: {
             if let Some(poll) = self.get_poll() {
-                break 'brk poll.has_flag(FilePollFlag::Hup);
+                break 'brk poll.has_flag(crate::posix_event_loop::Flags::Hup);
             }
             false
         };
@@ -1035,7 +1063,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         !self.is_done && poll.can_enable_keeping_process_alive()
     }
 
-    pub fn enable_keeping_process_alive(&self, event_loop: EventLoopHandle) {
+    pub fn enable_keeping_process_alive(&self, event_loop: EventLoopCtx) {
         if self.is_done {
             return;
         }
@@ -1043,12 +1071,12 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         poll.enable_keeping_process_alive(event_loop);
     }
 
-    pub fn disable_keeping_process_alive(&self, event_loop: EventLoopHandle) {
+    pub fn disable_keeping_process_alive(&self, event_loop: EventLoopCtx) {
         let Some(poll) = self.get_poll() else { return };
         poll.disable_keeping_process_alive(event_loop);
     }
 
-    pub fn update_ref(&self, event_loop: EventLoopHandle, value: bool) {
+    pub fn update_ref(&self, event_loop: EventLoopCtx, value: bool) {
         if value {
             self.enable_keeping_process_alive(event_loop);
         } else {
@@ -1097,7 +1125,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 let p = FilePollRef::init(
                     loop_,
                     fd,
-                    Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast()),
+                    Owner::new(std::ptr::from_mut(self).cast(), Parent::ON_POLL),
                 );
                 self.handle = PollOrFd::Poll(p);
                 p
@@ -1165,11 +1193,11 @@ pub trait BaseWindowsPipeWriter {
         false
     }
 
-    fn enable_keeping_process_alive(&mut self, event_loop: EventLoopHandle) {
+    fn enable_keeping_process_alive(&mut self, event_loop: EventLoopCtx) {
         self.update_ref(event_loop, true);
     }
 
-    fn disable_keeping_process_alive(&mut self, event_loop: EventLoopHandle) {
+    fn disable_keeping_process_alive(&mut self, event_loop: EventLoopCtx) {
         self.update_ref(event_loop, false);
     }
 
@@ -1252,7 +1280,7 @@ pub trait BaseWindowsPipeWriter {
         }
     }
 
-    fn update_ref(&mut self, _event_loop: EventLoopHandle, value: bool) {
+    fn update_ref(&mut self, _event_loop: EventLoopCtx, value: bool) {
         if let Some(pipe) = self.source_mut().as_mut() {
             if value {
                 pipe.ref_();
@@ -1780,137 +1808,10 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// StreamBuffer
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Basic Vec<u8> + usize cursor wrapper
-#[derive(Default)]
-pub struct StreamBuffer {
-    pub list: Vec<u8>,
-    pub cursor: usize,
-}
-
-impl StreamBuffer {
-    pub fn reset(&mut self) {
-        self.cursor = 0;
-        self.maybe_shrink();
-        self.list.clear();
-    }
-
-    pub fn maybe_shrink(&mut self) {
-        // Runtime page size of the host.
-        let page = bun_core::page_size();
-        if self.list.capacity() > page {
-            // Truncate the buffer's content to `page` bytes AND release the
-            // excess capacity.
-            // Vec::shrink_to never goes below current len, so truncate first.
-            self.list.truncate(page);
-            self.list.shrink_to(page);
-        }
-    }
-
-    pub fn memory_cost(&self) -> usize {
-        self.list.capacity()
-    }
-
-    pub fn size(&self) -> usize {
-        self.list.len() - self.cursor
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.size() == 0
-    }
-
-    pub fn is_not_empty(&self) -> bool {
-        self.size() > 0
-    }
-
-    pub fn write(&mut self, buffer: &[u8]) -> Result<(), OOM> {
-        self.list.extend_from_slice(buffer);
-        Ok(())
-    }
-
-    pub fn wrote(&mut self, amount: usize) {
-        self.cursor += amount;
-    }
-
-    pub fn write_assume_capacity(&mut self, buffer: &[u8]) {
-        self.list.extend_from_slice(buffer);
-    }
-
-    pub fn ensure_unused_capacity(&mut self, capacity: usize) -> Result<(), OOM> {
-        self.list.reserve(capacity);
-        Ok(())
-    }
-
-    pub fn write_type_as_bytes<T: bun_core::NoUninit>(&mut self, data: &T) -> Result<(), OOM> {
-        self.write(bun_core::bytes_of(data))
-    }
-
-    pub fn write_type_as_bytes_assume_capacity<T: bun_core::NoUninit>(&mut self, data: T) {
-        self.list.extend_from_slice(bun_core::bytes_of(&data));
-    }
-
-    /// Dispatched on the `WriteKind` enum tag.
-    pub fn write_or_fallback<'a>(
-        &'a mut self,
-        buffer_u8: Option<&'a [u8]>,
-        buffer_u16: Option<&[u16]>,
-        kind: WriteKind,
-    ) -> Result<&'a [u8], OOM> {
-        match kind {
-            WriteKind::Latin1 => {
-                let buffer = buffer_u8.unwrap();
-                if bun_core::strings::is_all_ascii(buffer) {
-                    return Ok(buffer);
-                }
-                self.write_latin1::<false>(buffer)?;
-                Ok(&self.list[self.cursor..])
-            }
-            WriteKind::Utf16 => {
-                let buffer = buffer_u16.unwrap();
-                self.write_utf16(buffer)?;
-                Ok(&self.list[self.cursor..])
-            }
-            WriteKind::Bytes => Ok(buffer_u8.unwrap()),
-        }
-    }
-
-    pub fn write_latin1<const CHECK_ASCII: bool>(&mut self, buffer: &[u8]) -> Result<(), OOM> {
-        if CHECK_ASCII {
-            if bun_core::strings::is_all_ascii(buffer) {
-                return self.write(buffer);
-            }
-        }
-
-        let len = self.list.len();
-        let list = mem::take(&mut self.list);
-        self.list = bun_core::strings::allocate_latin1_into_utf8_with_list(list, len, buffer);
-        Ok(())
-    }
-
-    pub fn write_utf16(&mut self, buffer: &[u16]) -> Result<(), OOM> {
-        // `ByteVecExt::write_utf16` sizes the spare capacity via
-        // `simdutf.length.utf8.from.utf16.le` *before* the simdutf write;
-        // calling
-        // `convert_utf16_to_utf8_append` directly (its old shortcut) handed
-        // simdutf a `Vec::new()` dangling pointer (`0x1`) and segfaulted.
-        ByteVecExt::write_utf16(&mut self.list, buffer)?;
-        Ok(())
-    }
-
-    pub fn slice(&self) -> &[u8] {
-        &self.list[self.cursor..]
-    }
-}
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum WriteKind {
-    Bytes,
-    Latin1,
-    Utf16,
-}
+// Canonical definition lives in bun_collections (shared with bun_uws_sys's
+// us_socket_stream_buffer_t interop); re-exported so `bun_io::StreamBuffer`
+// remains the path runtime/http callers use.
+pub use bun_collections::{StreamBuffer, WriteKind};
 
 // ──────────────────────────────────────────────────────────────────────────
 // WindowsStreamingWriter
@@ -2602,9 +2503,9 @@ pub type StreamingWriter<P> = WindowsStreamingWriter<P>;
 #[doc(hidden)]
 pub mod __parent_macro {
     pub use ::bun_sys::Error as SysError;
-    #[cfg(windows)]
-    pub use ::bun_sys::windows::libuv::Loop as UvLoop;
     pub use ::bun_uws_sys::Loop as UwsLoop;
+    #[cfg(windows)]
+    pub use bun_libuv_sys::Loop as UvLoop;
 }
 
 /// Stamp `PosixStreamingWriterParent` + `WindowsWriterParent` +
@@ -2619,7 +2520,7 @@ macro_rules! impl_streaming_writer_parent {
     // Internal: expand the three impls once generics are normalized.
     (@emit
         [$($gen:tt)*] $Ty:ty;
-        poll_tag   = $poll_tag:expr,
+        on_poll    = $on_poll:expr,
         borrow     = $borrow:tt,
         on_write   = $on_write:ident,
         on_error   = $on_error:ident,
@@ -2633,7 +2534,7 @@ macro_rules! impl_streaming_writer_parent {
     ) => {
         #[cfg(unix)]
         impl $($gen)* $crate::pipe_writer::PosixStreamingWriterParent for $Ty {
-            const POLL_OWNER_TAG: $crate::PollTag = $poll_tag;
+            const ON_POLL: $crate::posix_event_loop::OnPoll = $on_poll;
             const HAS_ON_READY: bool = true;
             #[inline]
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
@@ -2660,7 +2561,7 @@ macro_rules! impl_streaming_writer_parent {
                 unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_close()) }
             }
             #[inline]
-            unsafe fn event_loop(this: *mut Self) -> $crate::EventLoopHandle {
+            unsafe fn event_loop(this: *mut Self) -> $crate::EventLoopCtx {
                 // SAFETY: see on_write. Shared-only read.
                 let $el_this = this;
                 #[allow(unused_unsafe)]
@@ -2755,7 +2656,7 @@ macro_rules! impl_buffered_writer_parent {
 
     (@emit
         [$($gen:tt)*] $Ty:ty;
-        poll_tag   = $poll_tag:expr,
+        on_poll    = $on_poll:expr,
         borrow     = $borrow:tt,
         on_write   = $on_write:ident,
         on_error   = $on_error:ident,
@@ -2768,7 +2669,7 @@ macro_rules! impl_buffered_writer_parent {
     ) => {
         #[cfg(not(windows))]
         impl $($gen)* $crate::pipe_writer::PosixBufferedWriterParent for $Ty {
-            const POLL_OWNER_TAG: $crate::PollTag = $poll_tag;
+            const ON_POLL: $crate::posix_event_loop::OnPoll = $on_poll;
             #[inline]
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: `this` is the BACKREF set via `set_parent`; the
@@ -2796,7 +2697,7 @@ macro_rules! impl_buffered_writer_parent {
             }
             const HAS_ON_WRITABLE: bool = false;
             #[inline]
-            unsafe fn event_loop(this: *mut Self) -> $crate::EventLoopHandle {
+            unsafe fn event_loop(this: *mut Self) -> $crate::EventLoopCtx {
                 // SAFETY: see on_write.
                 let $el_this = this;
                 #[allow(unused_unsafe)]

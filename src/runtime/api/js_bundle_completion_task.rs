@@ -3,23 +3,23 @@
 //! LAYERING: this type lives in `bun_runtime` (not `bun_bundler_jsc`) because
 //! its fields name `bun_runtime` types (`JSBundler::Config`, `Plugin`,
 //! `HTMLBundle::Route`). `bun_bundler_jsc` is a lower-tier crate and cannot
-//! depend on `bun_runtime`; keeping the struct there forces an opaque stub at
-//! every use site. The struct is defined here and `bun_bundler_jsc` consumes it
-//! through the `bun_bundler::bundle_v2::CompletionStruct` trait
-//! (layout-agnostic).
+//! depend on `bun_runtime`. Lower tiers consume the struct through the
+//! `bun_bundler::BundleThread::CompletionStruct` and
+//! `bundle_v2::dispatch::JsCompletion` traits (typed trait objects, no opaque
+//! alias).
 
+use bun_options_types::ForceNodeEnv;
 use bun_options_types::TargetExt as _;
 use core::ptr::{self, NonNull};
 use std::io::Write as _;
 
 use bun_alloc::Arena;
-use bun_bundler::bundle_v2::{
-    BundleV2, BundleV2Result, CompletionStruct, FileMap as Bv2FileMap,
-    JSBundleCompletionTask as Bv2OpaqueCompletion, JSBundlerPlugin, dispatch,
-};
+use bun_bundler::BundleThread::{BundleV2Result, CompletionStruct};
+use bun_bundler::bundle_v2::{BundleV2, FileMap as Bv2FileMap, JSBundlerPlugin, dispatch};
 use bun_bundler::options::{self, OutputFile, OutputKind, Side};
 use bun_bundler::output_file::Value as OutputFileValue;
 use bun_bundler::transpiler::Transpiler;
+use bun_core::PathBuffer;
 use bun_core::String as BunString;
 use bun_core::env::OperatingSystem;
 use bun_io::KeepAlive;
@@ -30,7 +30,7 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
 use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
-use bun_paths::{self as paths, PathBuffer, SEP};
+use bun_paths::{self as paths, SEP};
 use bun_ptr::BackRef;
 use bun_ptr::RefCount;
 use bun_standalone_graph::StandaloneModuleGraph::{
@@ -45,10 +45,60 @@ use crate::api::js_bundler::BuildArtifact;
 use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt};
 use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::node::fs::{self as node_fs, NodeFS, args as fs_args};
-use crate::node::types::{
-    Encoding, FileSystemFlags, PathLike, PathOrFileDescriptor, StringOrBuffer,
-};
+use crate::node::types::{Encoding, FileSystemFlags, StringOrBuffer};
 use crate::server::html_bundle;
+use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
+
+/// Lazily-initialized bundle-thread singleton, typed to the one completion
+/// struct that exists. Lives HERE (not in bun_bundler) because Rust forbids
+/// generic statics and bun_bundler cannot name `JSBundleCompletionTask` —
+/// the erased `OnceLock<NonNull<()>>` this replaces existed only for that.
+mod bundle_thread_singleton {
+    use super::JSBundleCompletionTask;
+    use bun_bundler::BundleThread::BundleThread;
+    use bun_core::Output;
+
+    struct Instance(core::ptr::NonNull<BundleThread<JSBundleCompletionTask>>);
+    // SAFETY: the allocation is a leaked `Box<BundleThread<_>>` valid for
+    // `'static`; cross-thread access is mediated entirely through
+    // `UnboundedQueue` / `ResetEvent` atomics inside `BundleThread::enqueue`.
+    unsafe impl Send for Instance {}
+    // SAFETY: `&Instance` only exposes the raw pointer; every dereference path
+    // goes through `BundleThread::enqueue`'s atomic queue/waker primitives.
+    unsafe impl Sync for Instance {}
+
+    static INSTANCE: std::sync::OnceLock<Instance> = std::sync::OnceLock::new();
+
+    // Blocks the calling thread until the bun build thread is created.
+    // OnceLock also blocks other callers of this function until the first caller is done.
+    fn load_once_impl() -> Instance {
+        let bundle_thread = bun_core::heap::into_raw(Box::new(BundleThread::<
+            JSBundleCompletionTask,
+        >::uninitialized()));
+        // SAFETY: bundle_thread is a leaked Box, valid for 'static; `spawn`
+        // takes the raw pointer directly so no `&mut` is materialized that
+        // would alias the bundle thread's own access.
+        let os_thread = unsafe { BundleThread::spawn(bundle_thread) }
+            .unwrap_or_else(|_| Output::panic(format_args!("Failed to spawn bun build thread")));
+        // `std.Thread.detach()` — drop the JoinHandle without joining.
+        drop(os_thread);
+        // SAFETY: `into_raw` of a `Box` is never null.
+        Instance(unsafe { core::ptr::NonNull::new_unchecked(bundle_thread) })
+    }
+
+    pub(super) fn enqueue(completion: *mut JSBundleCompletionTask) {
+        // Validate the caller's pointer at the public boundary so the unsafe
+        // path below never receives null.
+        let completion = core::ptr::NonNull::new(completion).unwrap_or_else(|| {
+            Output::panic(format_args!("BundleThread enqueue: null completion"))
+        });
+        let instance = INSTANCE.get_or_init(load_once_impl).0.as_ptr();
+        // SAFETY: `instance` is the leaked 'static singleton whose bundle
+        // thread is running; `BundleThread::enqueue` only performs raw-ptr
+        // field projections.
+        unsafe { BundleThread::enqueue(instance, completion.as_ptr()) };
+    }
+}
 
 /// See module doc for the layering rationale.
 #[derive(bun_ptr::RefCounted)]
@@ -153,7 +203,7 @@ pub(crate) fn create_and_schedule_completion_task(
     // conditions from creating two
     let _ = WorkPool::get();
 
-    bun_bundler::bundle_v2::singleton::enqueue::<JSBundleCompletionTask>(completion);
+    bundle_thread_singleton::enqueue(completion);
 
     // SAFETY: `completion` is live (refcount==1); `vm` outlives this call.
     unsafe {
@@ -539,7 +589,7 @@ impl JSBundleCompletionTask {
 
     /// AnyTask trampoline: `onComplete` runs on the JS thread once the bundle
     /// thread posts back via `complete_on_bundle_thread`.
-    fn on_complete_anytask(ctx: *mut Self) -> bun_event_loop::JsResult<()> {
+    fn on_complete_anytask(ctx: *mut Self) -> bun_core::JsResult<()> {
         // SAFETY: `ctx` is the heap::alloc allocation registered in `task`.
         let this = unsafe { &mut *ctx };
         // For the +1 taken by `complete_on_bundle_thread` enqueue.
@@ -762,38 +812,19 @@ bun_jsc::jsc_abi_extern! {
     );
 }
 
-// ─── CompletionDispatch vtable ───────────────────────────────────────────────
-// §Dispatch — the bundler holds `JSBundleCompletionTask` as a
-// `dispatch::CompletionHandle` (erased owner + this `&'static` vtable) so the
-// struct layout stays in `bun_runtime`.
-
-/// Recover `&JSBundleCompletionTask` from the opaque vtable owner pointer.
-///
-/// Centralises the `NonNull<Bv2OpaqueCompletion> → &JSBundleCompletionTask`
-/// cast+deref so the two `CompletionDispatch` thunks below stay safe at the
-/// call site (one accessor, N safe callers).
-#[inline]
-fn from_completion_handle<'a>(c: NonNull<Bv2OpaqueCompletion>) -> &'a JSBundleCompletionTask {
-    // SAFETY: `c` is the live backref the bundler stashed in
-    // `CompletionHandle.owner` (set from a `Box<JSBundleCompletionTask>` that
-    // outlives every dispatch call). The opaque marker and the concrete struct
-    // are the same allocation; only shared field reads follow.
-    unsafe { &*c.as_ptr().cast::<JSBundleCompletionTask>() }
+impl dispatch::JsCompletion for JSBundleCompletionTask {
+    fn result_is_err(&self) -> bool {
+        matches!(self.result, BundleV2Result::Err(_))
+    }
+    fn enqueue_task_concurrent(
+        &self,
+        task: core::ptr::NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
+    ) {
+        // `jsc_event_loop` is a BackRef<EventLoop> — safe Deref; the queue
+        // takes ownership of `task`.
+        self.jsc_event_loop.enqueue_task_concurrent(task);
+    }
 }
-
-static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDispatch {
-    result_is_err: |c| matches!(from_completion_handle(c).result, BundleV2Result::Err(_)),
-    enqueue_task_concurrent: |c, task| {
-        // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
-        // SAFETY: `task` is a fresh heap-allocated non-null `ConcurrentTaskItem`
-        // passed through from the bundler vtable; the queue takes ownership.
-        unsafe {
-            from_completion_handle(c)
-                .jsc_event_loop
-                .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(task))
-        }
-    },
-};
 
 // ─── CompletionStruct impl ───────────────────────────────────────────────────
 // Hands BundleThread the field accessors it needs without exposing the layout.
@@ -823,7 +854,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         // `BundleOptions.bundler_feature_flags: Option<Box<StringSet>>` owns
         // its set, so clone rather than alias `config.features`.
         transpiler.options.bundler_feature_flags = Some(Box::new(config.features.clone()?));
-        if config.force_node_env != options::ForceNodeEnv::Unspecified {
+        if config.force_node_env != ForceNodeEnv::Unspecified {
             transpiler.options.force_node_env = config.force_node_env;
         }
 
@@ -896,6 +927,8 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         transpiler.options.output_format = config.format;
         transpiler.options.bytecode = config.bytecode;
+        transpiler.options.generate_cached_bytecode =
+            Some(bun_jsc::cached_bytecode::generate_cached_bytecode_for_bundler);
         transpiler.options.compile = config.compile.is_some();
 
         // For compile mode, set the public_path to the target-specific base path
@@ -918,10 +951,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.source_map = config.source_map;
         transpiler.options.packages = config.packages;
         transpiler.options.allow_unresolved = match &config.allow_unresolved {
-            Some(a) => options::AllowUnresolved::from_strings(
-                a.keys().to_vec().into_boxed_slice(),
-                |p, s| bun_glob::r#match(p, s).matches(),
-            ),
+            Some(a) => options::AllowUnresolved::from_strings(a.keys().to_vec().into_boxed_slice()),
             None => options::AllowUnresolved::All,
         };
         transpiler.options.code_splitting = config.code_splitting;
@@ -1030,13 +1060,6 @@ impl CompletionStruct for JSBundleCompletionTask {
             Some(NonNull::from(&mut self.config.files))
         }
     }
-    fn as_js_bundle_completion_task(&mut self) -> dispatch::CompletionHandle {
-        dispatch::CompletionHandle {
-            owner: NonNull::from(self).cast::<Bv2OpaqueCompletion>(),
-            vtable: &COMPLETION_VTABLE,
-        }
-    }
-
     fn create_and_configure_transpiler<'a>(
         &mut self,
         bump: &'a Arena,
@@ -1114,7 +1137,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         let worker_pool = NonNull::new(thread_pool);
 
         // `Graph.heap` is a borrow, so reuse the caller-owned `bump`.
-        let mut bv2 = BundleV2::init(transpiler, None, bump, event_loop, false, worker_pool, bump)?;
+        let mut bv2 = BundleV2::init(transpiler, None, bump, event_loop, None, worker_pool, bump)?;
 
         bv2.plugins = self.plugins();
         bv2.completion = Some(self.as_js_bundle_completion_task());

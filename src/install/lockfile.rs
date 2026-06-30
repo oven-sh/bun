@@ -11,15 +11,18 @@ use bun_collections::{
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Error as BunError, Global, Output, err};
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, platform, resolve_path};
+use bun_core::{MAX_PATH_BYTES, PathBuffer};
+use bun_paths::{SEP, SEP_STR, platform, resolve_path};
 // `bun_install` sits above `bun_resolver` in the crate graph (no cycle), so use
 // the real resolver `FileSystem` directly — same as `PackageManager.rs`.
-use crate::bun_json as JSON;
 use bun_core::zstr;
 use bun_core::{ZStr, strings};
 use bun_dotenv as DotEnv;
+use bun_install_types::resolver_hooks::{Architecture, OperatingSystem};
+use bun_parsers::json as JSON;
 use bun_perf::system_timer::Timer;
 use bun_resolver::fs::{self as Fs, FileSystem};
+use bun_semver::semver_string::BuilderStringType;
 use bun_semver::{self as Semver, ExternalString, String as SemverString};
 use bun_sha_hmac as Crypto;
 use bun_sys::{self as sys, Fd, File};
@@ -28,17 +31,17 @@ use crate::config_version::ConfigVersion;
 use crate::migration;
 use crate::package_manager::WorkspaceFilter;
 use crate::package_manager_real::{
-    Options as PackageManagerOptions, options::LogLevel, populate_manifest_cache,
+    Options as PackageManagerOptions, package_manager_options::LogLevel, populate_manifest_cache,
 };
-use crate::resolution_real::{self as resolution, Resolution};
+use crate::resolution::{self, Resolution};
 use crate::string_builder;
 use crate::update_request::UpdateRequest;
 use crate::{
-    self as Install, DependencyID, ExternalSlice, Features, PackageID, PackageManager,
-    PackageNameAndVersionHash, PackageNameHash, TruncatedPackageNameHash, dependency,
-    dependency::Dependency, initialize_store, invalid_dependency_id, invalid_package_id,
-    npm as Npm,
+    self as Install, DependencyID, ExternalSlice, Features, INVALID_DEPENDENCY_ID,
+    INVALID_PACKAGE_ID, PackageID, PackageManager, PackageNameAndVersionHash, PackageNameHash,
+    TruncatedPackageNameHash, initialize_store,
 };
+use bun_install_types::dependency::{self, Dependency};
 
 // ────────────────────────────────────────────────────────────────────────────
 // Sub-module declarations — explicit #[path] attrs for PascalCase / dotted
@@ -198,7 +201,7 @@ pub struct Lockfile {
     /// `id >= this` were appended by manifest fetches in the current
     /// resolve session. `get_package_id` uses this to keep its
     /// order-independence guard from overriding lockfile pins. Set by
-    /// `mark_loaded_packages`; defaults to `invalid_package_id` (no lockfile
+    /// `mark_loaded_packages`; defaults to `INVALID_PACKAGE_ID` (no lockfile
     /// loaded → guard applies to nothing, equivalent to "all entries are
     /// session-appended").
     ///
@@ -537,7 +540,7 @@ impl Lockfile {
             }
         };
 
-        // `bun_sys::File::read_to_end` returns `Maybe<Vec<u8>>`
+        // `bun_sys::File::read_to_end` returns `Result<Vec<u8>>`
         // (fstat-presized, pread-from-0); map the error arm to `.read_file`.
         let buf = match file.read_to_end() {
             Ok(bytes) => bytes,
@@ -707,8 +710,8 @@ impl Lockfile {
         dep_id: DependencyID,
         features: Features,
         meta: &package::Meta,
-        cpu: Npm::Architecture,
-        os: Npm::OperatingSystem,
+        cpu: Architecture,
+        os: OperatingSystem,
     ) -> bool {
         if meta.is_disabled(cpu, os) {
             return true;
@@ -741,7 +744,7 @@ impl Lockfile {
         let mut any_changes = false;
         let end: PackageID = old.packages.len() as PackageID;
 
-        // set all disabled dependencies of workspaces to `invalid_package_id`
+        // set all disabled dependencies of workspaces to `INVALID_PACKAGE_ID`
         for package_id in 0..end as usize {
             if package_id != 0 && old_resolutions[package_id].tag != ResolutionTag::Workspace {
                 continue;
@@ -764,7 +767,7 @@ impl Lockfile {
                 .zip(old_workspace_resolutions.iter_mut())
             {
                 if !dependency.behavior.is_enabled(features) && *resolution < end {
-                    *resolution = invalid_package_id;
+                    *resolution = INVALID_PACKAGE_ID;
                     any_changes = true;
                 }
             }
@@ -807,7 +810,7 @@ impl Lockfile {
                 let packages_len = old.packages.len();
 
                 for update in updates.iter() {
-                    if update.package_id == invalid_package_id {
+                    if update.package_id == INVALID_PACKAGE_ID {
                         debug_assert_eq!(root_deps.len(), old_resolutions.len());
                         for (dep, &old_resolution) in root_deps.iter().zip(old_resolutions.iter()) {
                             if dep.name_hash == SemverStringBuilder::string_hash(update.name) {
@@ -860,7 +863,7 @@ impl Lockfile {
                 let packages_len = old.packages.len();
 
                 for update in updates.iter_mut() {
-                    if update.package_id == invalid_package_id {
+                    if update.package_id == INVALID_PACKAGE_ID {
                         debug_assert_eq!(root_deps.len(), old_resolutions.len());
                         for (dep, &old_resolution) in
                             root_deps.iter_mut().zip(old_resolutions.iter())
@@ -906,7 +909,7 @@ impl Lockfile {
                                     sliced.slice,
                                     &sliced,
                                     None,
-                                    &mut *manager,
+                                    Some(&mut *manager),
                                 )
                                 .unwrap_or_default();
                             }
@@ -964,7 +967,7 @@ impl Lockfile {
     /// Is this a direct dependency of any workspace (including workspace root)?
     /// TODO make this faster by caching the workspace package ids
     pub fn is_workspace_dependency(&self, id: DependencyID) -> bool {
-        self.get_workspace_pkg_if_workspace_dep(id) != invalid_package_id
+        self.get_workspace_pkg_if_workspace_dep(id) != INVALID_PACKAGE_ID
     }
 
     pub fn get_workspace_pkg_if_workspace_dep(&self, id: DependencyID) -> PackageID {
@@ -984,7 +987,7 @@ impl Lockfile {
             }
         }
 
-        invalid_package_id
+        INVALID_PACKAGE_ID
     }
 
     /// Does this tree id belong to a workspace (including workspace root)?
@@ -1005,7 +1008,7 @@ impl Lockfile {
         }
         let dependency_id = self.buffers.trees[id as usize].dependency_id;
         let package_id = self.buffers.resolutions[dependency_id as usize];
-        package_id != invalid_package_id
+        package_id != INVALID_PACKAGE_ID
             && self.packages.slice().items_resolution()[package_id as usize].tag
                 == ResolutionTag::Folder
     }
@@ -1109,7 +1112,7 @@ impl Lockfile {
         // Step 1. Recreate the lockfile with only the packages that are still alive
         let root = old.root_package().ok_or_else(|| err!("NoPackage"))?;
 
-        let mut package_id_mapping = vec![invalid_package_id; old.packages.len()];
+        let mut package_id_mapping = vec![INVALID_PACKAGE_ID; old.packages.len()];
         let clone_queue_ = PendingResolutions::new();
         // Explicit `&mut *` reborrows so `old`/`manager`/`new` are
         // released back to this scope once `cloner` is dropped.
@@ -1249,7 +1252,7 @@ impl Lockfile {
             // (ptr, len) and let `UpdateRequest::version_buf()` reborrow at
             // each read site.
             let string_buf = new.buffers.string_bytes.as_slice();
-            let string_buf_ptr = bun_ptr::RawSlice::new(string_buf);
+            let string_buf_ptr = bun_core::RawSlice::new(string_buf);
             let slice = new.packages.slice();
 
             // updates might be applied to the root package.json or one
@@ -1264,7 +1267,7 @@ impl Lockfile {
             let resolved_ids: &[PackageID] = res_list.get(new.buffers.resolutions.as_slice());
 
             'request_updated: for update in updates.iter_mut() {
-                if update.package_id == invalid_package_id {
+                if update.package_id == INVALID_PACKAGE_ID {
                     debug_assert_eq!(resolved_ids.len(), workspace_deps.len());
                     for (&package_id, dep) in resolved_ids.iter().zip(workspace_deps.iter()) {
                         if update.matches(dep, string_buf) {
@@ -1662,10 +1665,10 @@ impl Lockfile {
                     if UPDATE_OS_CPU {
                         let pkg_meta = &mut pkg_metas[i];
                         // Update os/cpu metadata if not already set
-                        if pkg_meta.os == Npm::OperatingSystem::ALL {
+                        if pkg_meta.os == OperatingSystem::ALL {
                             pkg_meta.os = pkg.package.os;
                         }
-                        if pkg_meta.arch == Npm::Architecture::ALL {
+                        if pkg_meta.arch == Architecture::ALL {
                             pkg_meta.arch = pkg.package.cpu;
                         }
                     }
@@ -1850,10 +1853,8 @@ impl<'a> Printer<'a> {
         env_loader.quiet = true;
 
         env_loader.load_process()?;
-        // `DotEnv::Loader::load` takes `impl DirEntryProbe` (bun_dotenv sits
-        // below `bun_resolver` in the crate graph); `Fs::DirEntry` impls it.
         env_loader.load(
-            &*entries,
+            DotEnv::DefaultEnvFiles::probe(|n| entries.has_comptime_query(n)),
             &[] as &[&[u8]],
             DotEnv::DotEnvFileSuffix::Production,
             false,
@@ -2051,8 +2052,6 @@ impl Lockfile {
         }
 
         if let Err(e) = file.close_and_move_to(tmpname, save_format.filename()) {
-            bun_core::handle_error_return_trace(e);
-
             // note: file is already closed here.
             let _ = sys::unlink(tmpname);
 
@@ -2582,7 +2581,7 @@ pub struct StringBuilder<'a> {
 #[macro_export]
 macro_rules! string_builder {
     ($lockfile:expr) => {
-        $crate::lockfile_real::StringBuilder {
+        $crate::lockfile::StringBuilder {
             len: 0,
             cap: 0,
             off: 0,
@@ -2592,12 +2591,6 @@ macro_rules! string_builder {
         }
     };
 }
-
-/// Trait implemented by `String` and `ExternalString` to support generic `append*`.
-/// Canonical def lives in
-/// `bun_semver::semver_string`; re-exported under the local name so generic
-/// bounds in this module (`append<T: StringBuilderType>`) are unchanged.
-pub use bun_semver::semver_string::BuilderStringType as StringBuilderType;
 
 impl<'a> StringBuilder<'a> {
     #[inline]
@@ -2683,12 +2676,12 @@ impl<'a> StringBuilder<'a> {
     }
 
     #[inline]
-    pub fn append<T: StringBuilderType>(&mut self, slice: &[u8]) -> T {
+    pub fn append<T: BuilderStringType>(&mut self, slice: &[u8]) -> T {
         self.append_with_hash::<T>(slice, SemverStringBuilder::string_hash(slice))
     }
 
     /// SlicedString is not supported due to inline strings.
-    pub fn append_without_pool<T: StringBuilderType>(&mut self, slice: &[u8], hash: u64) -> T {
+    pub fn append_without_pool<T: BuilderStringType>(&mut self, slice: &[u8], hash: u64) -> T {
         if SemverString::can_inline(slice) {
             return T::from_init(self.string_bytes.as_slice(), slice, hash);
         }
@@ -2712,7 +2705,7 @@ impl<'a> StringBuilder<'a> {
         T::from_init(self.string_bytes.as_slice(), final_slice, hash)
     }
 
-    pub fn append_with_hash<T: StringBuilderType>(&mut self, slice: &[u8], hash: u64) -> T {
+    pub fn append_with_hash<T: BuilderStringType>(&mut self, slice: &[u8], hash: u64) -> T {
         if SemverString::can_inline(slice) {
             return T::from_init(self.string_bytes.as_slice(), slice, hash);
         }
@@ -2764,7 +2757,7 @@ impl<'a> bun_semver::StringBuilder for StringBuilder<'a> {
 
 // `crate::dependency::StringBuilderLike` impl lives in `dependency.rs` next to
 // the trait definition (it needs `string_bytes()` access to the lockfile
-// buffers). `bin_real::StringBuilder` is now a re-export of
+// buffers). `bin::StringBuilder` is now a re-export of
 // `bun_semver::StringBuilder`, so the impl above covers it; `package::scripts`
 // takes `&mut StringBuilder<'_>` concretely, so no adapter trait is needed
 // there either.
@@ -2855,7 +2848,7 @@ pub(crate) struct PathToId {
     pub pkg_id: PackageID,
     /// Borrows a `Box<[u8]>` parked in `tree_paths` for the duration of
     /// `Lockfile::eql` — `RawSlice` carries the outlives-holder invariant.
-    pub tree_path: bun_ptr::RawSlice<u8>,
+    pub tree_path: bun_core::RawSlice<u8>,
 }
 
 impl<'a> EqlSorter<'a> {
@@ -2905,14 +2898,14 @@ impl Lockfile {
                 &mut depth_buf,
             );
             let tree_path: Box<[u8]> = Box::<[u8]>::from(rel_path.as_bytes());
-            let tree_path_ptr = bun_ptr::RawSlice::new(&tree_path[..]);
+            let tree_path_ptr = bun_core::RawSlice::new(&tree_path[..]);
             tree_paths.push(tree_path);
             for &l_dep_id in l_tree.dependencies.get(l_hoisted_deps) {
-                if l_dep_id == invalid_dependency_id {
+                if l_dep_id == INVALID_DEPENDENCY_ID {
                     continue;
                 }
                 let l_pkg_id = l.buffers.resolutions[l_dep_id as usize];
-                if l_pkg_id == invalid_package_id || l_pkg_id as usize >= cut_off_pkg_id {
+                if l_pkg_id == INVALID_PACKAGE_ID || l_pkg_id as usize >= cut_off_pkg_id {
                     continue;
                 }
                 sort_buf.push(PathToId {
@@ -2933,14 +2926,14 @@ impl Lockfile {
                 &mut depth_buf,
             );
             let tree_path: Box<[u8]> = Box::<[u8]>::from(rel_path.as_bytes());
-            let tree_path_ptr = bun_ptr::RawSlice::new(&tree_path[..]);
+            let tree_path_ptr = bun_core::RawSlice::new(&tree_path[..]);
             tree_paths.push(tree_path);
             for &r_dep_id in r_tree.dependencies.get(r_hoisted_deps) {
-                if r_dep_id == invalid_dependency_id {
+                if r_dep_id == INVALID_DEPENDENCY_ID {
                     continue;
                 }
                 let r_pkg_id = r.buffers.resolutions[r_dep_id as usize];
-                if r_pkg_id == invalid_package_id || r_pkg_id as usize >= cut_off_pkg_id {
+                if r_pkg_id == INVALID_PACKAGE_ID || r_pkg_id as usize >= cut_off_pkg_id {
                     continue;
                 }
                 sort_buf.push(PathToId {
@@ -3414,7 +3407,7 @@ impl Lockfile {
                     continue;
                 }
                 let package_id = self.buffers.resolutions[dep_id as usize];
-                if package_id == invalid_package_id || package_id as usize >= resolutions.len() {
+                if package_id == INVALID_PACKAGE_ID || package_id as usize >= resolutions.len() {
                     continue;
                 }
                 if resolutions[package_id as usize].eql(resolution, buf, buf) {

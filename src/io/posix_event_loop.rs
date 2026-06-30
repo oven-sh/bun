@@ -86,14 +86,6 @@ fn deregistration_already_gone(errno: sys::E) -> bool {
 
 pub use crate::{EventLoopCtx, EventLoopCtxKind, EventLoopKind, OpaqueCallback};
 
-unsafe extern "Rust" {
-    /// Defined `#[no_mangle]` in `bun_runtime::jsc_hooks`.
-    // safe: by-value enum arg only; the `#[no_mangle] pub fn` body in
-    // `bun_runtime::jsc_hooks` is itself a safe fn (reads process globals) —
-    // no memory-safety preconditions.
-    safe fn __bun_get_vm_ctx(kind: AllocatorType) -> EventLoopCtx;
-}
-
 /// Kind of fd a `FilePoll` (or pipe reader/writer) is wrapping. Lives here so
 /// `bun_io` (which now depends on this crate) and `FilePoll::file_type` share
 /// one definition; `bun_io::pipes` re-exports it for downstream callers.
@@ -122,16 +114,24 @@ impl FileType {
 
 #[inline]
 pub fn get_vm_ctx(kind: AllocatorType) -> EventLoopCtx {
-    // Link-time-resolved Rust-ABI fn; `kind` selects between the
-    // process-global JS VM and Mini loop, both initialised before any
-    // `KeepAlive`/`FilePoll` caller reaches this.
-    __bun_get_vm_ctx(kind)
+    // `kind` selects between the per-thread JS VM and Mini loop handles, both
+    // installed (`bun_io::set_current_ctx`) before any `KeepAlive`/`FilePoll`
+    // caller reaches this: the Js cell in `VirtualMachine::init`, the Mini
+    // cell in `MiniEventLoop::init_global`.
+    match kind {
+        AllocatorType::Js => crate::CURRENT_JS_CTX
+            .with(|c| c.get())
+            .expect("no JS VM on this thread"),
+        AllocatorType::Mini => crate::CURRENT_MINI_CTX
+            .with(|c| c.get())
+            .expect("no MiniEventLoop on this thread"),
+    }
 }
 
 /// JS-thread [`EventLoopCtx`] for `KeepAlive::{ref_,unref}` / `FilePoll`.
 ///
-/// The crate split routes through the
-/// link-time `__bun_get_vm_ctx` hook installed by `bun_runtime::init()`.
+/// The crate split routes through the per-thread handle installed by
+/// `VirtualMachine::init` via `bun_io::set_current_ctx`.
 /// Every `Js`-tier caller (i.e. everything outside the install/Mini loop)
 /// wants exactly `get_vm_ctx(AllocatorType::Js)`, so this shorthand replaces
 /// the ~21 byte-identical local wrappers each ported file grew independently.
@@ -193,75 +193,43 @@ fn make_kevent(
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 const EV_EOF: u16 = 0x8000;
 
-// ──────────────────────────────────────────────────────────────────────────
-// FilePoll Owner — hot-path tag+ptr (CYCLEBREAK §Hot dispatch list).
-// Low tier (here) stores `(tag: u8, ptr: *mut ())`; `bun_runtime::dispatch::on_poll`
-// owns the per-tag `match` so the variant types are never named in this crate.
-// ──────────────────────────────────────────────────────────────────────────
+// FilePoll Owner — pointer + readiness callback. Each owner registers its
+// handler at poll-creation time, so this crate never names the owner types
+// living in higher tiers (no link-time dispatch, no closed tag set).
 
-/// Closed set of `FilePoll` owner kinds. Variant types live in higher-tier
-/// crates; `__bun_run_file_poll` (link-time, in `bun_runtime::dispatch`)
-/// matches on this and calls the per-kind handler directly — same enum-dispatch
-/// shape as `EventLoopCtx`, with the match on the runtime side because there
-/// are 13 variants × 1 dispatch fn (vs 2 × 9 for `EventLoopCtx`).
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum PollTag {
-    Null = 0,
-    FileSink,
-    StaticPipeWriter,
-    ShellStaticPipeWriter,
-    SecurityScanStaticPipeWriter,
-    BufferedReader,
-    DnsResolver,
-    GetAddrInfoRequest,
-    Request,
-    Process,
-    ShellBufferedWriter,
-    TerminalPoll,
-    ParentDeathWatchdog,
-    LifecycleScriptSubprocessOutputReader,
-    MemoryPressure,
-}
+/// Readiness handler registered by a FilePoll owner. `owner` is the pointer
+/// stored in [`Owner::ptr`]; `poll` is the firing poll; `hup` mirrors
+/// `Flags::Hup` at dispatch time.
+///
+/// # Safety
+/// `owner` must point at the live value the handler was registered for;
+/// `poll` must be live for the call.
+pub type OnPoll =
+    unsafe fn(owner: *mut (), poll: *mut crate::FilePoll, size_or_offset: i64, hup: bool);
 
-/// Compatibility module — call sites in `bun_runtime`/`bun_install` still spell
-/// `poll_tag::FILE_SINK`. Re-export the enum variants under the old constant
-/// names; the literal values are unchanged. New code should use
-/// `PollTag::FileSink` directly.
-pub mod poll_tag {
-    use super::PollTag;
-    pub const NULL: PollTag = PollTag::Null;
-    pub const FILE_SINK: PollTag = PollTag::FileSink;
-    pub const STATIC_PIPE_WRITER: PollTag = PollTag::StaticPipeWriter;
-    pub const SHELL_STATIC_PIPE_WRITER: PollTag = PollTag::ShellStaticPipeWriter;
-    pub const SECURITY_SCAN_STATIC_PIPE_WRITER: PollTag = PollTag::SecurityScanStaticPipeWriter;
-    pub const BUFFERED_READER: PollTag = PollTag::BufferedReader;
-    pub const DNS_RESOLVER: PollTag = PollTag::DnsResolver;
-    pub const GET_ADDR_INFO_REQUEST: PollTag = PollTag::GetAddrInfoRequest;
-    pub const REQUEST: PollTag = PollTag::Request;
-    pub const PROCESS: PollTag = PollTag::Process;
-    pub const SHELL_BUFFERED_WRITER: PollTag = PollTag::ShellBufferedWriter;
-    pub const TERMINAL_POLL: PollTag = PollTag::TerminalPoll;
-    pub const PARENT_DEATH_WATCHDOG: PollTag = PollTag::ParentDeathWatchdog;
-    pub const LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER: PollTag =
-        PollTag::LifecycleScriptSubprocessOutputReader;
-    pub const MEMORY_PRESSURE: PollTag = PollTag::MemoryPressure;
+/// No-op handler for [`Owner::NULL`] and never-registered placeholder owners.
+pub fn noop_on_poll(
+    _owner: *mut (),
+    _poll: *mut crate::FilePoll,
+    _size_or_offset: i64,
+    _hup: bool,
+) {
 }
 
 #[derive(Copy, Clone)]
 pub struct Owner {
-    pub tag: PollTag,
     pub ptr: *mut (),
+    pub on_update: OnPoll,
 }
 
 impl Owner {
     pub const NULL: Owner = Owner {
-        tag: PollTag::Null,
         ptr: core::ptr::null_mut(),
+        on_update: noop_on_poll,
     };
     #[inline]
-    pub const fn new(tag: PollTag, ptr: *mut ()) -> Owner {
-        Owner { tag, ptr }
+    pub const fn new(ptr: *mut (), on_update: OnPoll) -> Owner {
+        Owner { ptr, on_update }
     }
     #[inline]
     pub fn is_null(&self) -> bool {
@@ -271,14 +239,6 @@ impl Owner {
     pub fn clear(&mut self) {
         *self = Self::NULL;
     }
-    #[inline]
-    pub fn tag(&self) -> PollTag {
-        self.tag
-    }
-}
-
-unsafe extern "Rust" {
-    fn __bun_run_file_poll(poll: *mut crate::FilePoll, size_or_offset: i64);
 }
 
 #[repr(u8)]
@@ -353,7 +313,7 @@ impl FilePoll {
 
     // Note: these handlers take no loop parameter: holding a
     // protected `&mut Loop` across `on_update` would alias the fresh `&mut Loop`
-    // that downstream `__bun_run_file_poll` handlers conjure via
+    // that downstream `Owner.on_update` handlers conjure via
     // `EventLoopCtx::platform_event_loop()` when they re-enter the loop
     // (`register_with_fd`/`unregister`/`deinit`).
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
@@ -463,12 +423,11 @@ impl FilePoll {
 
         debug_assert!(!self.owner.is_null());
 
-        // Hot-path hoisted-match: the per-tag `switch` lives in
-        // `bun_runtime::dispatch::__bun_run_file_poll` (link-time extern) so
-        // this T3 crate names no variant types.
-        // SAFETY: `self` is a live FilePoll for the duration of the call
-        // (guaranteed by the uws loop callback contract).
-        unsafe { __bun_run_file_poll(self, size_or_offset) };
+        let owner = self.owner;
+        let hup = self.flags.contains(Flags::Hup);
+        // SAFETY: `self` is a live FilePoll (uws loop callback contract);
+        // `owner.ptr` is the pointee registered together with `on_update`.
+        unsafe { (owner.on_update)(owner.ptr, self, size_or_offset, hup) };
     }
 
     #[inline]
@@ -1521,7 +1480,7 @@ impl Store {
 #[derive(Copy, Clone)]
 #[allow(dead_code)]
 pub(crate) struct Pollable {
-    repr: bun_collections::TaggedPointer,
+    repr: bun_collections::TaggedPtr,
 }
 
 impl Pollable {
@@ -1533,7 +1492,7 @@ impl Pollable {
     #[allow(dead_code)]
     pub(crate) fn init(ptr: *const crate::FilePoll) -> Self {
         Self {
-            repr: bun_collections::TaggedPointer::init(ptr, Self::FILE_POLL_TAG),
+            repr: bun_collections::TaggedPtr::init(ptr, Self::FILE_POLL_TAG),
         }
     }
 
@@ -1541,7 +1500,7 @@ impl Pollable {
     #[allow(dead_code)]
     pub(crate) fn from(val: *mut c_void) -> Self {
         Self {
-            repr: bun_collections::TaggedPointer::from(val),
+            repr: bun_collections::TaggedPtr::from(val),
         }
     }
 
@@ -1594,7 +1553,7 @@ pub(crate) unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
     }
 
     // SAFETY: `loop_` is the live uws loop. Do *not* materialize `&mut *loop_`
-    // here — `on_update` (via `__bun_run_file_poll`) re-enters the loop and conjures
+    // here — `on_update` (via the owner's registered handler) re-enters the loop and conjures
     // a fresh `&mut Loop` through `EventLoopCtx::platform_event_loop()`; a
     // protected `&mut Loop` spanning that call would be SB-UB. Take a short-lived
     // `&*loop_` only to copy the POD event onto the stack (the `BackRef`-style
@@ -1624,21 +1583,6 @@ pub enum OneShotFlag {
 
 #[cfg(not(windows))]
 const INVALID_FD: Fd = Fd::INVALID;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Waker / Closer — canonical impls live in this crate's `mod waker` /
-// `mod closer` (lib.rs). Before the bun_io→bun_io merge each crate had its
-// own copy (this file was bun_io's, lib.rs was bun_io's, kept apart so
-// `Loop::load` had no aio→io edge). With the merge there is one definition;
-// re-export here so `posix_event_loop::Waker` / `::Closer` (and therefore
-// the `bun_io::*` shim) keep resolving for downstream callers.
-// ──────────────────────────────────────────────────────────────────────────
-
-pub use crate::closer::Closer;
-#[cfg(target_os = "macos")]
-pub use crate::waker::KEventWaker;
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-pub use crate::waker::Waker;
 
 #[cfg(test)]
 mod tests {

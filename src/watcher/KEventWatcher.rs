@@ -57,7 +57,7 @@ pub(crate) fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
     }
 }
 
-pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
+pub(crate) fn watch_loop_cycle<P: 'static>(this: &mut Watcher<P>) -> bun_sys::Result<()> {
     use bun_sys::c;
     let fd: Fd = this
         .platform

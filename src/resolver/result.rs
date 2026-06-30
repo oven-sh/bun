@@ -6,9 +6,9 @@
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use ::bun_ast::import_record as ast;
 use ::bun_install_types::resolver_hooks as Install;
 use bun_alloc as allocators;
+use bun_ast::ImportKind;
 use bun_ast::Msg;
 use bun_core::MutableString;
 use bun_paths::SEP_STR;
@@ -19,7 +19,6 @@ use crate::dir_info::DirInfoRef;
 use crate::fs as Fs;
 use crate::options;
 use crate::package_json::PackageJSON;
-use crate::resolver::Dependency;
 
 // NOTE: `Path` in the body is the `'static`-interned variant (paths borrow
 // DirnameStore/FilenameStore). Alias here so the bare-`Path` use sites resolve
@@ -122,7 +121,7 @@ pub struct Result {
 
     pub dirname_fd: FD,
     pub file_fd: FD,
-    pub import_kind: ast::ImportKind,
+    pub import_kind: ImportKind,
 
     /// Pack boolean flags to reduce padding overhead.
     /// Previously 6 separate bool fields caused ~42+ bytes of padding waste.
@@ -141,7 +140,7 @@ impl Default for Result {
             debug_meta: None,
             dirname_fd: FD::INVALID,
             file_fd: FD::INVALID,
-            import_kind: ast::ImportKind::Stmt,
+            import_kind: ImportKind::Stmt,
             flags: ResultFlags::default(),
         }
     }
@@ -285,12 +284,12 @@ impl Result {
     // Most NPM modules are CommonJS
     // If unspecified, assume CommonJS.
     // If internal app code, assume ESM.
-    pub fn should_assume_common_js(&self, kind: ast::ImportKind) -> bool {
+    pub fn should_assume_common_js(&self, kind: ImportKind) -> bool {
         match self.module_type {
             options::ModuleType::Esm => false,
             options::ModuleType::Cjs => true,
             _ => {
-                if kind == ast::ImportKind::Require || kind == ast::ImportKind::RequireResolve {
+                if kind == ImportKind::Require || kind == ImportKind::RequireResolve {
                     return true;
                 }
 
@@ -382,8 +381,8 @@ pub struct DirEntryResolveQueueItem {
     // over `*const [u8]` so the bit-level zero-init invariant for `Bufs` is
     // unchanged (the array slot is `MaybeUninit`-wrapped), and read sites use
     // safe `.slice()` instead of an open-coded raw-ptr deref.
-    pub unsafe_path: bun_ptr::RawSlice<u8>,
-    pub safe_path: bun_ptr::RawSlice<u8>,
+    pub unsafe_path: bun_core::RawSlice<u8>,
+    pub safe_path: bun_core::RawSlice<u8>,
     pub fd: FD,
 }
 
@@ -395,8 +394,8 @@ impl Default for DirEntryResolveQueueItem {
                 index: allocators::NOT_FOUND,
                 status: allocators::ItemStatus::Unknown,
             },
-            unsafe_path: bun_ptr::RawSlice::EMPTY,
-            safe_path: bun_ptr::RawSlice::EMPTY,
+            unsafe_path: bun_core::RawSlice::EMPTY,
+            safe_path: bun_core::RawSlice::EMPTY,
             fd: FD::INVALID,
         }
     }
@@ -529,7 +528,7 @@ impl MatchStatus {
 
 pub struct PendingResolution {
     pub esm: crate::package_json::PackageExternal,
-    pub dependency: Dependency::Version,
+    pub dependency: Install::DependencyVersion,
     pub resolution_id: Install::PackageID,
     pub root_dependency_id: Install::DependencyID,
     pub import_record_id: u32,
@@ -559,7 +558,7 @@ impl PendingResolution {
 
     pub fn init(
         esm: crate::package_json::Package<'_>,
-        dependency: Dependency::Version,
+        dependency: Install::DependencyVersion,
         resolution_id: Install::PackageID,
     ) -> core::result::Result<PendingResolution, bun_core::Error> {
         // NOTE: `Package::copy` is the count→allocate→clone Builder dance the live

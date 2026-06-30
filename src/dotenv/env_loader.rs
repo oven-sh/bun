@@ -5,8 +5,9 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMapExt, GetOrPutResult, StringArrayHashMap};
 use bun_core::{self, Output};
+use bun_core::{MAX_PATH_BYTES, PathBuffer};
 use bun_core::{ZStr, strings};
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
+use bun_s3_types::S3CredentialsValue;
 use bun_sys;
 use bun_url::URL;
 use bun_which::which;
@@ -20,27 +21,39 @@ pub enum DotEnvFileSuffix {
     Test,
 }
 
-/// Downstream callers (transpiler, install, lockfile) variously spell the load-mode
-/// discriminant `Kind` or `Mode`; both alias the same `DotEnvFileSuffix` enum so the
-/// crate exports a single canonical type without forcing a tree-wide rename.
-pub type Kind = DotEnvFileSuffix;
-pub type Mode = DotEnvFileSuffix;
+/// The eight default `.env*` filenames `load_default_files` probes, in load
+/// order. Callers (which own the concrete directory-entry map) map their
+/// lookup over this list to build [`DefaultEnvFiles`].
+pub const DEFAULT_ENV_FILE_NAMES: [&[u8]; 8] = [
+    b".env.development.local",
+    b".env.production.local",
+    b".env.test.local",
+    b".env.local",
+    b".env.development",
+    b".env.production",
+    b".env.test",
+    b".env",
+];
 
-/// Directory-entry probe used by `Loader::load`. `bun_dotenv` sits below
-/// `bun_resolver` in the crate graph, so the concrete
-/// `bun_resolver::fs::DirEntry` is taken generically; the only operation
-/// `load_default_files` performs is a fast O(1) lookup of a
-/// known-at-compile-time filename in the directory's entry map. Implemented
-/// for `bun_resolver::fs::DirEntry`.
-pub trait DirEntryProbe {
-    /// The argument MUST already be ASCII-lowercase.
-    fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool;
+/// Presence set for [`DEFAULT_ENV_FILE_NAMES`], computed by the caller.
+#[derive(Copy, Clone, Default)]
+pub struct DefaultEnvFiles([bool; 8]);
+
+impl DefaultEnvFiles {
+    pub fn probe(mut has: impl FnMut(&'static [u8]) -> bool) -> Self {
+        let mut bits = [false; 8];
+        for (i, name) in DEFAULT_ENV_FILE_NAMES.iter().enumerate() {
+            bits[i] = has(name);
+        }
+        Self(bits)
+    }
+    fn has(self, name: &'static [u8]) -> bool {
+        DEFAULT_ENV_FILE_NAMES
+            .iter()
+            .position(|n| *n == name)
+            .is_some_and(|i| self.0[i])
+    }
 }
-
-// LAYERING: the concrete `DirEntry` lives in `bun_resolver::fs` (higher tier,
-// depends on this crate). `impl DirEntryProbe for bun_resolver::fs::DirEntry`
-// is provided there — see src/resolver/lib.rs. No impl here; that would be a
-// dep-cycle.
 
 /// schema.peechy — `enum(u32)`. Canonical definition; re-exported as
 /// `bun_options_types::schema::api::DotEnvBehavior` for higher tiers.
@@ -93,22 +106,6 @@ impl DotEnvBehavior {
     }
 }
 
-/// Mirrors the value fields of `bun_s3_signing::S3Credentials` (T5). Defined locally so
-/// this T2 crate names no `bun_s3_signing` types — see PORTING.md §Dispatch (cold-path,
-/// upward dep). The high-tier caller constructs the real refcounted `S3Credentials` from
-/// this POD at the call site.
-#[derive(Clone, Default)]
-pub struct S3Credentials {
-    pub access_key_id: Box<[u8]>,
-    pub secret_access_key: Box<[u8]>,
-    pub region: Box<[u8]>,
-    pub endpoint: Box<[u8]>,
-    pub bucket: Box<[u8]>,
-    pub session_token: Box<[u8]>,
-    /// Important for MinIO support.
-    pub insecure_http: bool,
-}
-
 pub struct Loader<'a> {
     pub map: &'a mut Map,
     // allocator dropped — global mimalloc (see PORTING.md §Allocators)
@@ -129,8 +126,7 @@ pub struct Loader<'a> {
     pub did_load_process: bool,
     pub reject_unauthorized: Option<bool>,
 
-    // Local POD mirror of `bun_s3_signing::S3Credentials` — see type doc above.
-    aws_credentials: Option<S3Credentials>,
+    aws_credentials: Option<S3CredentialsValue>,
 }
 
 static DID_LOAD_CCACHE_PATH: AtomicBool = AtomicBool::new(false);
@@ -232,7 +228,7 @@ impl<'a> Loader<'a> {
 
     pub fn load_tracy(&self) {}
 
-    pub fn get_s3_credentials(&mut self) -> &S3Credentials {
+    pub fn get_s3_credentials(&mut self) -> &S3CredentialsValue {
         if self.aws_credentials.is_none() {
             // Copy to `Box<[u8]>` so the cached struct owns its bytes and we
             // can release the `&self` borrow before writing `&mut self.aws_credentials`.
@@ -275,7 +271,7 @@ impl<'a> Loader<'a> {
                 .map(Box::from)
                 .unwrap_or_default();
 
-            self.aws_credentials = Some(S3Credentials {
+            self.aws_credentials = Some(S3CredentialsValue {
                 access_key_id,
                 secret_access_key,
                 region,
@@ -644,9 +640,9 @@ impl<'a> Loader<'a> {
         Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, self.map, &mut value_buffer)
     }
 
-    pub fn load<D: DirEntryProbe + ?Sized>(
+    pub fn load(
         &mut self,
-        dir: &D,
+        dir: DefaultEnvFiles,
         env_files: &[&[u8]],
         suffix: DotEnvFileSuffix,
         skip_default_env: bool,
@@ -705,17 +701,14 @@ impl<'a> Loader<'a> {
     // Load .env.development if development
     // Load .env.production if !development
     // .env goes last
-    fn load_default_files<D: DirEntryProbe + ?Sized>(
+    fn load_default_files(
         &mut self,
         suffix: DotEnvFileSuffix,
-        dir: &D,
+        dir: DefaultEnvFiles,
         value_buffer: &mut Vec<u8>,
     ) -> Result<(), bun_core::Error> {
         let dir_handle = bun_sys::Fd::cwd();
 
-        // `bun_dotenv` sits below `bun_resolver` in the crate graph, so the
-        // directory entry is taken generically — `bun_resolver::fs::DirEntry`
-        // impls `DirEntryProbe`.
         match suffix {
             DotEnvFileSuffix::Development => {
                 self.try_load_default(dir, dir_handle, b".env.development.local", value_buffer)?
@@ -751,14 +744,14 @@ impl<'a> Loader<'a> {
     /// its dedicated slot and bump the analytics counter. Shared body for the
     /// eight call sites in `load_default_files`.
     #[inline]
-    fn try_load_default<D: DirEntryProbe + ?Sized>(
+    fn try_load_default(
         &mut self,
-        dir: &D,
+        dir: DefaultEnvFiles,
         dir_handle: bun_sys::Fd,
         name: &'static [u8],
         value_buffer: &mut Vec<u8>,
     ) -> Result<(), bun_core::Error> {
-        if dir.has_comptime_query(name) {
+        if dir.has(name) {
             self.load_env_file::<false>(dir_handle, name, value_buffer)?;
             analytics::Features::dotenv_inc();
         }
@@ -781,16 +774,6 @@ impl<'a> Loader<'a> {
         }
         let elapsed = (bun_core::time::nano_timestamp() - start) as f64 / 1_000_000.0;
 
-        const ALL: [&[u8]; 8] = [
-            b".env.development.local",
-            b".env.production.local",
-            b".env.test.local",
-            b".env.local",
-            b".env.development",
-            b".env.production",
-            b".env.test",
-            b".env",
-        ];
         let loaded: [bool; 8] = [
             self.env_development_local.is_some(),
             self.env_production_local.is_some(),
@@ -810,9 +793,9 @@ impl<'a> Loader<'a> {
             if yes {
                 loaded_i += 1;
                 if count == 1 || (loaded_i >= count && count > 1) {
-                    bun_core::pretty_error!("\"{}\"", bstr::BStr::new(ALL[i]));
+                    bun_core::pretty_error!("\"{}\"", bstr::BStr::new(DEFAULT_ENV_FILE_NAMES[i]));
                 } else {
-                    bun_core::pretty_error!("\"{}\", ", bstr::BStr::new(ALL[i]));
+                    bun_core::pretty_error!("\"{}\", ", bstr::BStr::new(DEFAULT_ENV_FILE_NAMES[i]));
                 }
             }
         }

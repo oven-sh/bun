@@ -17,7 +17,7 @@ use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::io::Write as _;
 use std::time::Instant;
 
-use crate::Mutex;
+use crate::Guarded as Mutex;
 #[cfg(windows)]
 use crate::windows_sys as windows;
 
@@ -58,12 +58,9 @@ unsafe extern "system" {
     ) -> windows::BOOL;
 }
 
-// Progress's terminal handle is the canonical `output::File` (vtable-backed
-// stderr/File from `OutputSinkVTable`). The duplicate `ProgressTerminalVTable`
-// from B-0 round 1 is removed; tty/ansi/winsize route through the new
-// `OutputSinkVTable` slots so `bun_core` stays T0 (no `bun_sys` dep).
+// Progress's terminal handle is the canonical `output::File`; tty/ansi/winsize
+// route through `crate::fdio` so `bun_core` stays T0 (no `bun_sys` dep).
 pub use crate::output::File;
-use crate::output::output_sink;
 
 impl File {
     /// Whether ANSI escape codes are supported — on unix this is `isatty()`;
@@ -88,12 +85,12 @@ impl File {
         }
         #[cfg(not(windows))]
         {
-            output_sink().is_terminal(self.fd())
+            crate::fdio::is_terminal(self.fd())
         }
     }
     #[inline]
     pub fn is_tty(self) -> bool {
-        output_sink().is_terminal(self.fd())
+        crate::fdio::is_terminal(self.fd())
     }
     /// Windows console HANDLE for the legacy `SetConsoleCursorPosition` path.
     #[cfg(windows)]
@@ -103,7 +100,7 @@ impl File {
     }
     #[inline]
     pub fn winsize(self) -> Option<crate::Winsize> {
-        output_sink().tty_winsize(self.fd())
+        crate::fdio::tty_winsize(self.fd())
     }
 }
 
@@ -685,13 +682,13 @@ impl Progress {
     /// called. During the lock, the progress information is cleared from the
     /// terminal.
     ///
-    /// `crate::Mutex` (std::sync wrapper) has no
+    /// `crate::Guarded` has no
     /// raw `unlock()`, and storing a guard on `self` is self-referential. There
     /// are currently **no callers** of `lock_stderr`/`unlock_stderr`,
     /// so this clears the terminal under a scoped lock
     /// and `unlock_stderr` is a no-op. If a caller materializes, refactor to
-    /// return the guard (or move `update_mutex` to a raw `bun_threading::Mutex`
-    /// once layering allows) and route stderr through a shared global mutex.
+    /// return the guard (or move `update_mutex` to a raw `bun_sync::Mutex`)
+    /// and route stderr through a shared global mutex.
     pub fn lock_stderr(&mut self) {
         let ctx_ptr = std::ptr::from_mut::<Self>(self);
         let _g = self.update_mutex.lock();

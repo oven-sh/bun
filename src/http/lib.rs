@@ -8,9 +8,9 @@ pub mod certificate_info;
 pub mod compress_body;
 #[path = "Decompressor.rs"]
 pub mod decompressor;
+pub mod dns_cache;
 #[path = "H2Client.rs"]
 pub mod h2_client;
-pub use bun_http_types::h2 as h2_frame_parser;
 #[path = "H3Client.rs"]
 pub mod h3_client;
 #[path = "HeaderBuilder.rs"]
@@ -53,7 +53,7 @@ pub use async_http::AsyncHTTP;
 pub use certificate_info::CertificateInfo;
 pub use decompressor::Decompressor;
 pub use header_builder::HeaderBuilder;
-pub use headers::{Headers, HeadersExt};
+pub use headers::Headers;
 pub use http_cert_error::HTTPCertError;
 pub use http_context::{HTTPContext, HTTPSocket};
 pub use http_request_body::HTTPRequestBody;
@@ -67,10 +67,6 @@ pub use thread_safe_stream_buffer::ThreadSafeStreamBuffer;
 #[path = "ssl_config.rs"]
 pub mod ssl_config;
 pub use ssl_config::SSLConfig;
-// SSLWrapper was MOVE_DOWN to bun_uws (tier 4); re-export here so
-// `crate::ssl_wrapper::SSLWrapper` resolves for ProxyTunnel/HTTPContext.
-pub use bun_uws::ssl_wrapper;
-pub use bun_uws::ssl_wrapper::SSLWrapper;
 
 // ── naming aliases ──
 // Submodules use both `HTTPClient`/`HttpClient` and the older name
@@ -126,7 +122,7 @@ pub const EXTREMELY_VERBOSE: bool = false;
 pub struct HTTPResponseMetadata {
     // Borrows `owned_buf` (sibling field) — `RawSlice` carries the
     // outlives-holder invariant for the self-referential borrow.
-    pub url: bun_ptr::RawSlice<u8>,
+    pub url: bun_core::RawSlice<u8>,
     pub owned_buf: Box<[u8]>,
     pub response: bun_picohttp::Response<'static>,
 }
@@ -134,7 +130,7 @@ pub struct HTTPResponseMetadata {
 impl Default for HTTPResponseMetadata {
     fn default() -> Self {
         Self {
-            url: bun_ptr::RawSlice::EMPTY,
+            url: bun_core::RawSlice::EMPTY,
             owned_buf: Box::default(),
             response: bun_picohttp::Response::default(),
         }
@@ -529,7 +525,7 @@ impl HTTPClientResultCallback {
             // SAFETY: fn-pointer cast over *mut T → *mut () first arg; same
             // calling convention, the receiver casts `ctx` back before use.
             function: unsafe {
-                bun_ptr::cast_fn_ptr::<
+                bun_core::cast_fn_ptr::<
                     fn(*mut T, *mut AsyncHTTP<'static>, HTTPClientResult<'_>),
                     HTTPClientResultCallbackFunction,
                 >(callback)
@@ -793,9 +789,9 @@ use bstr::BStr;
 use bun_boringssl as boringssl;
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::StringBuilder;
+use bun_core::StringPointer;
 use bun_core::{FeatureFlags, Global, Output, err};
 use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, strings};
-use bun_http_types::ETag::StringPointer;
 use bun_uws as uws;
 // the std Wyhash algorithm, not Wyhash11.
 use bun_wyhash::Wyhash;
@@ -1824,7 +1820,7 @@ impl<'a> HTTPClient<'a> {
             // (borrowed from the SSL session, valid while ssl_ptr is).
             let alpn = unsafe {
                 boringssl::c::SSL_get0_alpn_selected(ssl_ptr, &raw mut proto, &raw mut proto_len);
-                bun_core::ffi::slice(proto, proto_len as usize)
+                bun_opaque::ffi::slice(proto, proto_len as usize)
             };
             if alpn == b"h2" {
                 bun_core::scoped_log!(fetch, "ALPN negotiated h2 {}", BStr::new(self.url.href));
@@ -2742,7 +2738,7 @@ impl<'a> HTTPClient<'a> {
         // `RawSlice` cursor; this is the same erasure pattern
         // `InternalState::init` uses for `original_request_body`.
         self.state.request_body =
-            bun_ptr::RawSlice::new(unsafe { &*core::ptr::from_ref::<[u8]>(slice) });
+            bun_core::RawSlice::new(unsafe { &*core::ptr::from_ref::<[u8]>(slice) });
         self.state.flags.body_compressed = true;
         Ok(())
     }
@@ -2761,7 +2757,7 @@ impl<'a> HTTPClient<'a> {
             .extend_from_slice(self.state.request_body.slice());
         // SAFETY: `compressed_request_body` lives on `self`; same erasure as
         // `compress_body_for_send`.
-        self.state.request_body = bun_ptr::RawSlice::new(unsafe {
+        self.state.request_body = bun_core::RawSlice::new(unsafe {
             &*core::ptr::from_ref::<[u8]>(self.compressed_request_body.as_slice())
         });
     }
@@ -2862,7 +2858,7 @@ impl<'a> HTTPClient<'a> {
         }
 
         if has_sent_headers && !self.request_body().is_empty() {
-            self.state.request_body = bun_ptr::RawSlice::new(
+            self.state.request_body = bun_core::RawSlice::new(
                 &self.state.request_body.slice()[self.state.request_sent_len - headers_len..],
             );
         }
@@ -3184,7 +3180,7 @@ impl<'a> HTTPClient<'a> {
 
                             self.state.request_sent_len += sent;
                             self.state.request_body =
-                                bun_ptr::RawSlice::new(&self.state.request_body.slice()[sent..]);
+                                bun_core::RawSlice::new(&self.state.request_body.slice()[sent..]);
                         }
 
                         if self.request_body().is_empty() {
@@ -3242,7 +3238,7 @@ impl<'a> HTTPClient<'a> {
 
                             self.state.request_sent_len += sent;
                             self.state.request_body =
-                                bun_ptr::RawSlice::new(&self.state.request_body.slice()[sent..]);
+                                bun_core::RawSlice::new(&self.state.request_body.slice()[sent..]);
 
                             if self.request_body().is_empty() {
                                 self.state.request_stage = RequestStage::Done;
@@ -3321,7 +3317,7 @@ impl<'a> HTTPClient<'a> {
                     let has_sent_headers = self.state.request_sent_len >= headers_len;
 
                     if has_sent_headers && !self.request_body().is_empty() {
-                        self.state.request_body = bun_ptr::RawSlice::new(
+                        self.state.request_body = bun_core::RawSlice::new(
                             &self.state.request_body.slice()
                                 [self.state.request_sent_len - headers_len..],
                         );
@@ -3475,7 +3471,7 @@ impl<'a> HTTPClient<'a> {
         // `incoming_data` or `self.state.response_message_buffer`; hold it as a
         // `RawSlice` (encapsulated outlives-holder backref, safe `.slice()`)
         // so subsequent `&mut self` calls don't trip the checker.
-        let mut to_read = bun_ptr::RawSlice::new(incoming_data);
+        let mut to_read = bun_core::RawSlice::new(incoming_data);
         macro_rules! to_read {
             () => {
                 to_read.slice()
@@ -3488,7 +3484,7 @@ impl<'a> HTTPClient<'a> {
                 .state
                 .response_message_buffer
                 .append_slice_exact(incoming_data);
-            to_read = bun_ptr::RawSlice::new(self.state.response_message_buffer.list.as_slice());
+            to_read = bun_core::RawSlice::new(self.state.response_message_buffer.list.as_slice());
             needs_move = false;
         }
 
@@ -3506,7 +3502,7 @@ impl<'a> HTTPClient<'a> {
                     let remaining = to_read!().len();
                     let buffer = &mut self.state.response_message_buffer.list;
                     buffer.drain_front(buffer.len().saturating_sub(remaining));
-                    to_read = bun_ptr::RawSlice::new(buffer.as_slice());
+                    to_read = bun_core::RawSlice::new(buffer.as_slice());
                 }
                 self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
                 return;
@@ -3535,7 +3531,7 @@ impl<'a> HTTPClient<'a> {
                         let remaining = to_read!().len();
                         let buffer = &mut self.state.response_message_buffer.list;
                         buffer.drain_front(buffer.len().saturating_sub(remaining));
-                        to_read = bun_ptr::RawSlice::new(buffer.as_slice());
+                        to_read = bun_core::RawSlice::new(buffer.as_slice());
                     }
                     self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
                     return;
@@ -3557,7 +3553,7 @@ impl<'a> HTTPClient<'a> {
 
             let bytes_read =
                 (usize::try_from(response.bytes_read).expect("int cast")).min(to_read.len());
-            to_read = bun_ptr::RawSlice::new(&to_read.slice()[bytes_read..]);
+            to_read = bun_core::RawSlice::new(&to_read.slice()[bytes_read..]);
 
             if response.status_code == 101 {
                 if self.flags.upgrade_state == HTTPUpgradeState::None
@@ -3877,7 +3873,7 @@ impl<'a> HTTPClient<'a> {
             // SAFETY: `href` aliases `builder`'s heap buffer; ownership of that
             // buffer is transferred to `owned_buf` immediately below and stored
             // alongside `href` in `HTTPResponseMetadata`.
-            let href = bun_ptr::RawSlice::new(unsafe { builder.append_raw(self.url.href) });
+            let href = bun_core::RawSlice::new(unsafe { builder.append_raw(self.url.href) });
             // Transfer the single backing allocation out of the builder
             // (`builder.ptr.?[0..builder.cap]`) so its Drop becomes a no-op.
             let owned_buf = builder.move_to_slice();
@@ -4688,7 +4684,7 @@ impl<'a> HTTPClient<'a> {
             let off = incoming_data.as_ptr() as usize - base as usize;
             // SAFETY: `owns()` proved `[base+off, base+off+in_len)` lies within
             // `response_message_buffer.list`; `base` carries Unique provenance.
-            unsafe { bun_core::ffi::slice_mut(base.add(off), in_len) }
+            unsafe { bun_opaque::ffi::slice_mut(base.add(off), in_len) }
         } else {
             small[0..in_len].copy_from_slice(incoming_data);
             &mut small[0..in_len]

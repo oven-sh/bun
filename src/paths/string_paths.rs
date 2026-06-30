@@ -51,19 +51,6 @@ fn has_prefix_ascii_t<T: Ch>(s: &[T], prefix: &[u8]) -> bool {
     true
 }
 
-/// Checks if a path is missing a windows drive letter. For windows APIs,
-/// this is used for an assertion, and PosixToWinNormalizer can help make
-/// an absolute path contain a drive letter.
-///
-/// Thin wrapper over the canonical [`crate::strings`] impl that additionally
-/// debug-asserts the precondition `Platform.windows.isAbsoluteT(chars)`
-/// (bun_core can't, as `bun_paths` would be a tier-0 cycle there).
-#[inline]
-pub fn is_windows_absolute_path_missing_drive_letter<T: Ch + From<u8>>(chars: &[T]) -> bool {
-    debug_assert!(crate::Platform::Windows.is_absolute_t(chars));
-    bun_core::strings::is_windows_absolute_path_missing_drive_letter(chars)
-}
-
 pub fn from_w_path<'a>(buf: &'a mut [u8], utf16: &[u16]) -> &'a ZStr {
     debug_assert!(!buf.is_empty());
     let to_copy = strings::trim_prefix_comptime::<u16>(utf16, &windows::LONG_PATH_PREFIX);
@@ -337,7 +324,7 @@ pub fn to_w_dir_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
 /// instead of the precise `ENAMETOOLONG`.
 pub fn fits_in_wide_path_buffer(utf8: &[u8]) -> bool {
     const OVERHEAD: usize = windows::NT_UNC_OBJECT_PREFIX.len() + 2;
-    const MAX_UNITS: usize = crate::PATH_MAX_WIDE - OVERHEAD;
+    const MAX_UNITS: usize = bun_core::PATH_MAX_WIDE - OVERHEAD;
     utf8.len() <= MAX_UNITS
         || (utf8.len() <= 3 * MAX_UNITS
             && strings::element_length_utf8_into_utf16(utf8) <= MAX_UNITS)
@@ -477,7 +464,8 @@ pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
 
     if cfg!(debug_assertions) {
         debug_assert!(
-            !crate::is_absolute(path) || !is_windows_absolute_path_missing_drive_letter::<u8>(path)
+            !crate::is_absolute(path)
+                || !bun_core::strings::is_windows_absolute_path_missing_drive_letter::<u8>(path)
         );
     }
 
@@ -621,7 +609,7 @@ mod tests {
     /// The u16 length of the buffer `PathLike::os_path_kernel32` uses on
     /// Windows: the 98302-byte (3 × PATH_MAX_WIDE + 1) `PathBuffer`
     /// reinterpreted as `[u16]`.
-    const KERNEL32_WIDE_LEN: usize = (3 * crate::PATH_MAX_WIDE + 1) / 2;
+    const KERNEL32_WIDE_LEN: usize = (3 * bun_core::PATH_MAX_WIDE + 1) / 2;
 
     #[test]
     fn to_w_path_fills_to_capacity() {

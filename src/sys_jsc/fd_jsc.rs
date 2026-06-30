@@ -2,6 +2,7 @@
 
 use core::ffi::c_int;
 
+use bun_jsc::SystemErrorJsc as _;
 #[cfg(windows)]
 use bun_sys::FdKind;
 use bun_sys::{Fd, FdExt};

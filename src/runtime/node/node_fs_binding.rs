@@ -47,7 +47,7 @@ where
     }
 
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
-    // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned
+    // syscall; `dispatch` never re-enters JS, and `Result<R>` is fully owned
     // (`sys::Error.path` is `Box<[u8]>`, not a borrow into `sync_error_buf`).
     let mut result = this
         .node_fs
@@ -138,8 +138,12 @@ where
 // projected through interior mutability instead of `&mut Binding`. The
 // codegen shim still emits `this: &mut NodeJSFS` — `&mut T` auto-coerces to
 // `&T` so the impls below compile against either.
+// `repr(transparent)`: `Blob.rs` views the per-VM `NodeFS`
+// (`crate::jsc_hooks::node_fs`) as a `*const Binding`, which is only sound if
+// `Binding` is layout-identical to its single `JsCell<NodeFS>` field.
 #[bun_jsc::JsClass(name = "NodeJSFS", no_constructor)]
 #[derive(Default)]
+#[repr(transparent)]
 pub struct Binding {
     pub node_fs: JsCell<NodeFS>,
 }
@@ -155,12 +159,18 @@ impl Binding {
 
     pub fn finalize(self: Box<Self>) {
         if self.node_fs.get().vm.is_some() {
-            // `node_fs.vm` is always the per-thread VM when set; route the
-            // read through the safe singleton accessor.
-            let vm_node_fs = VirtualMachine::get().node_fs;
+            // `node_fs.vm` is always the per-thread VM when set; read the
+            // per-VM `RuntimeState` slot it was stored into at init time.
+            let state = crate::jsc_hooks::runtime_state();
+            let vm_node_fs = if state.is_null() {
+                None
+            } else {
+                // SAFETY: live boxed per-thread `RuntimeState`.
+                unsafe { (*state).node_fs }
+            };
             // `JsCell` is `repr(transparent)` over `UnsafeCell<NodeFS>`, so
             // `as_ptr()` yields the same address the VM stored at init time.
-            if vm_node_fs == Some(self.node_fs.as_ptr().cast()) {
+            if vm_node_fs.map(|p| p.as_ptr()) == Some(self.node_fs.as_ptr().cast()) {
                 // VM-owned singleton — keep alive.
                 let _ = bun_core::heap::release(self);
                 return;

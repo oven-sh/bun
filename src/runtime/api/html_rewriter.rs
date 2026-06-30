@@ -5,6 +5,7 @@ use core::ptr::NonNull;
 use std::rc::Rc;
 
 use bun_core::MutableString;
+use bun_jsc::SystemErrorJsc as _;
 use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, ProtectedJSValue,
     StrongOptional, SystemError, bun_string_jsc,
@@ -21,9 +22,9 @@ use crate::webcore::{self, Response};
 use bun_core::String as BunString;
 // `ZigString` re-exports `bun_core::ZigString`; JSC-side methods
 // (`to_js`, `with_encoding`, …) come from the `ZigStringJsc` extension trait.
+use bun_core::ZigString;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::call_frame::ArgumentsSlice;
-use bun_jsc::zig_string::ZigString;
 
 // lol-html rewritable units, lifetime-erased to `'static` so a `*mut RawX`
 // can be parked in a JsClass `Cell` for the duration of the synchronous
@@ -406,11 +407,7 @@ impl HTMLRewriter {
         global: &JSGlobalObject,
         response_value: JSValue,
     ) -> JsResult<JSValue> {
-        // Note: `Response` doesn't yet impl `JsClass`, so use the
-        // codegen `from_js` directly instead of `JSValue::as_::<Response>()`.
-        if let Some(response) =
-            webcore::response::js::from_js(response_value).map(|p| p.cast::<Response>())
-        {
+        if let Some(response) = webcore::response::from_js(response_value) {
             // SAFETY: response is the m_ctx of a live JS Response (response_value
             // is on the stack, conservatively scanned).
             let body_value = unsafe { (*response).get_body_value() };
@@ -467,9 +464,7 @@ impl HTMLRewriter {
                 return Err(global.throw_value(err));
             }
             out_response_value.ensure_still_alive();
-            let Some(out_response) =
-                webcore::response::js::from_js(out_response_value).map(|p| p.cast::<Response>())
-            else {
+            let Some(out_response) = webcore::response::from_js(out_response_value) else {
                 return Ok(out_response_value);
             };
             // SAFETY: out_response is the m_ctx of out_response_value (kept alive
@@ -488,10 +483,7 @@ impl HTMLRewriter {
                 // ensure_still_alive); `r` is its `m_ctx` pointer, detached here
                 // and finalized exactly once.
                 unsafe {
-                    let _ = bun_jsc::generated::JSResponse::dangerously_set_ptr(
-                        v,
-                        core::ptr::null_mut(),
-                    );
+                    let _ = webcore::response::js::dangerously_set_ptr(v, core::ptr::null_mut());
                     // Manually invoke the finalizer to ensure it does what we want.
                     // SAFETY: `r` is the detached `m_ctx` pointer, sole owner here.
                     Response::finalize(Box::from_raw(r));

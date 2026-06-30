@@ -23,28 +23,27 @@ use core::mem::ManuallyDrop;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_collections::VecExt;
+use bun_core::PathBuffer;
 #[cfg(windows)]
 use bun_core::strings;
 use bun_core::{self, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_libarchive::lib;
 use bun_paths::resolve_path::{self, platform};
-use bun_paths::{self, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
-#[cfg(not(windows))]
-use bun_sys::FdDirExt;
+use bun_paths::{self, OSPathBuffer, OSPathChar, OSPathSliceZ};
 use bun_sys::{self, Dir, Fd, FdExt, FileKind, Mode, O};
 use bun_threading::{Mutex, thread_pool};
 
 use crate::NetworkTask;
-use crate::bun_fs::FileSystem;
 use crate::integrity::{self, Integrity};
 use crate::package_manager_real::PackageManager;
+use bun_resolver::fs::FileSystem;
 
 // `crate::Task` is a `()` stub; the real Task lives in `package_manager_task`.
 // `'static` is sound here because we only ever hold raw `*mut Task` and never
 // materialise a `&'static` borrow of the inner `Request` lifetime.
 type Task = crate::package_manager_task::Task<'static>;
 
-bun_output::declare_scope!(TarballStream, hidden);
+bun_core::declare_scope!(TarballStream, hidden);
 
 type OSPathZ<'a> = &'a OSPathSliceZ;
 type OSPathZMut<'a> = &'a mut OSPathSliceZ;
@@ -535,7 +534,7 @@ impl TarballStream {
                                 // SAFETY: `(*this).archive` is the live `read_new()` handle
                                 // opened in `init` and held until `finish` frees it.
                                 let msg = (*(*this).archive.unwrap()).error_string();
-                                bun_output::scoped_log!(
+                                bun_core::scoped_log!(
                                     TarballStream,
                                     "readNextHeader: {}",
                                     bstr::BStr::new(msg)
@@ -563,7 +562,7 @@ impl TarballStream {
                                 // SAFETY: `(*this).archive` is the live `read_new()` handle
                                 // opened in `init` and held until `finish` frees it.
                                 let msg = (*(*this).archive.unwrap()).error_string();
-                                bun_output::scoped_log!(
+                                bun_core::scoped_log!(
                                     TarballStream,
                                     "read_data_block: {}",
                                     bstr::BStr::new(msg)
@@ -641,7 +640,7 @@ impl TarballStream {
                 return Ok(());
             }
             _ => {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     TarballStream,
                     "archive_read_open: {}",
                     // SAFETY: archive is a valid handle (guard not yet dropped).
@@ -663,7 +662,7 @@ impl TarballStream {
         let (_, basename) = tarball.name_and_basename();
         let truncated_basename = &basename[0..basename.len().min(32)];
         let tmpname_suffix: &[u8] =
-            if crate::dependency::is_safe_install_folder_name(truncated_basename) {
+            if bun_install_types::dependency::is_safe_install_folder_name(truncated_basename) {
                 truncated_basename
             } else if tarball.resolution.tag.is_git()
                 || tarball.resolution.tag == ResolutionTag::LocalTarball
@@ -1353,7 +1352,7 @@ fn open_output_file(
                     let Some(dir) = bun_paths::dirname(path_slice) else {
                         return Err(e.to_zig_err());
                     };
-                    let _ = dest_fd.make_path(dir);
+                    let _ = Dir::borrow(&dest_fd).make_path(dir);
                     break 'brk bun_sys::openat(dest_fd, path, flags, mode)
                         .map_err(|e| e.to_zig_err());
                 }
@@ -1391,7 +1390,7 @@ fn make_directory(entry: &mut lib::Entry, dest_fd: Fd, path: OSPathZ, path_slice
                     let Some(dir) = bun_paths::dirname(path_slice) else {
                         return;
                     };
-                    let _ = dest_fd.make_path(dir);
+                    let _ = Dir::borrow(&dest_fd).make_path(dir);
                     let _ = bun_sys::mkdirat_z(dest_fd, path, 0o777);
                 }
             },
@@ -1469,7 +1468,7 @@ fn make_symlink(
             let Some(dir) = bun_paths::dirname(path_slice) else {
                 return false;
             };
-            let _ = dest_fd.make_path(dir);
+            let _ = Dir::borrow(&dest_fd).make_path(dir);
             bun_sys::symlinkat(target, dest_fd, path).is_ok()
         }
         Err(_) => false,

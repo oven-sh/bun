@@ -10,15 +10,16 @@ use bstr::BStr;
 
 use crate::napi;
 use bun_collections::StringArrayHashMap;
+use bun_core::PathBuffer;
 use bun_core::{ZBox, env_var, fmt as bun_fmt, zstr};
 use bun_core::{ZStr, ZigString};
+use bun_jsc::SystemErrorJsc as _;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsCell, JsClass,
     JsError, JsResult, SystemError, ZigStringJsc,
 };
 #[cfg(target_os = "macos")]
 use bun_paths as path;
-use bun_paths::PathBuffer;
 use bun_resolver::fs as Fs;
 use bun_sys;
 
@@ -68,7 +69,7 @@ fn strings_to_js_array(global: &JSGlobalObject, strs: &[bun_core::String]) -> Js
 // via the early-return guards in the host-fns below.
 use bun_tcc_sys as TCC;
 
-bun_output::declare_scope!(TCC, visible);
+bun_core::declare_scope!(TCC, visible);
 
 unsafe extern "C" {
     fn pthread_jit_write_protect_np(enable: c_int);
@@ -125,6 +126,12 @@ unsafe extern "C" {
         add_ptr_property: bool,
         input_function_ptr: *mut c_void,
     ) -> JSValue;
+}
+
+unsafe extern "C" {
+    // C++ ZigGlobalObject.cpp; returns a fresh heap-allocated NapiEnv owned by
+    // the VM for the process lifetime (never null).
+    safe fn ZigGlobalObject__makeNapiEnvForFFI(this: &JSGlobalObject) -> *mut napi::NapiEnv;
 }
 
 /// Raw extern fn pointers fed to the TCC-JIT'd C trampolines via `add_symbol`.
@@ -639,7 +646,7 @@ impl CompileC {
 
         if let Some(compiler_rt_dir) = CompilerRT::dir() {
             if state.add_sys_include_path(compiler_rt_dir).is_err() {
-                bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
+                bun_core::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
             }
         }
 
@@ -688,13 +695,13 @@ impl CompileC {
                         .add_sys_include_path(zstr!("/opt/homebrew/include"))
                         .is_err()
                     {
-                        bun_output::scoped_log!(TCC, "TinyCC failed to add library path");
+                        bun_core::scoped_log!(TCC, "TinyCC failed to add library path");
                     }
                 }
 
                 if dir_exists(b"/opt/homebrew/lib") {
                     if state.add_library_path(zstr!("/opt/homebrew/lib")).is_err() {
-                        bun_output::scoped_log!(TCC, "TinyCC failed to add library path");
+                        bun_core::scoped_log!(TCC, "TinyCC failed to add library path");
                     }
                 }
             }
@@ -703,13 +710,13 @@ impl CompileC {
         {
             if let Some(include_dir) = Self::get_system_include_dir() {
                 if state.add_sys_include_path(include_dir).is_err() {
-                    bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
+                    bun_core::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
                 }
             }
 
             if let Some(library_dir) = Self::get_system_library_dir() {
                 if state.add_library_path(library_dir).is_err() {
-                    bun_output::scoped_log!(TCC, "TinyCC failed to add library path");
+                    bun_core::scoped_log!(TCC, "TinyCC failed to add library path");
                 }
             }
         }
@@ -721,13 +728,13 @@ impl CompileC {
                     .add_sys_include_path(zstr!("/usr/local/include"))
                     .is_err()
                 {
-                    bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
+                    bun_core::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
                 }
             }
 
             if dir_exists(b"/usr/local/lib") {
                 if state.add_library_path(zstr!("/usr/local/lib")).is_err() {
-                    bun_output::scoped_log!(TCC, "TinyCC failed to add library path");
+                    bun_core::scoped_log!(TCC, "TinyCC failed to add library path");
                 }
             }
 
@@ -738,7 +745,7 @@ impl CompileC {
                     if !path.is_empty() {
                         let path_z = ZBox::from_bytes(path);
                         if state.add_sys_include_path(&path_z).is_err() {
-                            bun_output::scoped_log!(
+                            bun_core::scoped_log!(
                                 TCC,
                                 "TinyCC failed to add C_INCLUDE_PATH: {}",
                                 BStr::new(path)
@@ -754,7 +761,7 @@ impl CompileC {
                     if !path.is_empty() {
                         let path_z = ZBox::from_bytes(path);
                         if state.add_library_path(&path_z).is_err() {
-                            bun_output::scoped_log!(
+                            bun_core::scoped_log!(
                                 TCC,
                                 "TinyCC failed to add LIBRARY_PATH: {}",
                                 BStr::new(path)
@@ -789,7 +796,9 @@ impl CompileC {
                 state
                     .add_symbol(
                         zstr!("Bun__thisFFIModuleNapiEnv"),
-                        global_this.make_napi_env_for_ffi().cast_const(),
+                        ZigGlobalObject__makeNapiEnvForFFI(global_this)
+                            .cast_const()
+                            .cast::<core::ffi::c_void>(),
                     )
                     .map_err(|_| bun_core::err!("DeferredErrors"))?;
                 break;
@@ -826,7 +835,7 @@ impl CompileC {
         for library_dir in self.library_dirs.items.iter() {
             // register all, even if some fail. Only fail after all have been registered.
             if state.add_library_path(library_dir).is_err() {
-                bun_output::scoped_log!(TCC, "TinyCC failed to add library path");
+                bun_core::scoped_log!(TCC, "TinyCC failed to add library path");
             }
         }
         self.error_check()
@@ -1432,7 +1441,7 @@ impl FFI {
             return JSValue::ZERO;
         }
         jsc::mark_binding();
-        let vm = jsc::VirtualMachineRef::get();
+        let vm = jsc::virtual_machine::VirtualMachine::get();
         let name_slice = name_str.to_slice();
 
         if object_value.is_empty_or_undefined_or_null() {
@@ -2158,7 +2167,9 @@ impl Function {
             if state
                 .add_symbol(
                     zstr!("Bun__thisFFIModuleNapiEnv"),
-                    js_context.make_napi_env_for_ffi().cast_const(),
+                    ZigGlobalObject__makeNapiEnvForFFI(js_context)
+                        .cast_const()
+                        .cast::<core::ffi::c_void>(),
                 )
                 .is_err()
             {
@@ -2637,8 +2648,8 @@ impl CompilerRT {
     extern "C" fn memcpy(dest: *mut u8, source: *const u8, byte_count: usize) {
         // SAFETY: caller (TCC-compiled code) guarantees non-overlapping valid ranges
         unsafe {
-            bun_core::ffi::slice_mut(dest, byte_count)
-                .copy_from_slice(bun_core::ffi::slice(source, byte_count));
+            bun_opaque::ffi::slice_mut(dest, byte_count)
+                .copy_from_slice(bun_opaque::ffi::slice(source, byte_count));
         }
     }
 
@@ -2778,9 +2789,7 @@ fn make_napi_env_if_needed<'a>(
     for function in functions {
         if function.needs_napi_env() {
             // SAFETY: C++ returns a non-null fresh NapiEnv; we hand back a shared `&` only.
-            // `bun_jsc` exposes `*mut c_void` to avoid an upward dep on
-            // `bun_runtime::napi`; the concrete type lives here, so cast at the boundary.
-            return Some(unsafe { &*global_this.make_napi_env_for_ffi().cast::<napi::NapiEnv>() });
+            return Some(unsafe { &*ZigGlobalObject__makeNapiEnvForFFI(global_this) });
         }
     }
     None

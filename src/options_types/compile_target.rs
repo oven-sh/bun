@@ -7,10 +7,11 @@
 use core::fmt;
 use std::io::Write as _;
 
+use bun_core::PathBuffer;
 use bun_core::env::{ARCHITECTURE_NAMES, Architecture, OPERATING_SYSTEM_NAMES, OperatingSystem};
 use bun_core::{Environment, Global, env_var, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
-use bun_paths::{self as path, PathBuffer};
+use bun_paths::{self as path};
 use bun_semver::{SlicedString, Version};
 use bun_sys::Fd;
 
@@ -185,7 +186,6 @@ impl CompileTarget {
         &self,
         buf: &'a mut PathBuffer,
         version_str: &'a ZStr,
-        _env: &mut bun_dotenv::Loader<'_>,
         needs_download: &mut bool,
     ) -> &'a ZStr {
         if self.is_default() {
@@ -206,7 +206,8 @@ impl CompileTarget {
             return version_str;
         }
 
-        // T1 fallback ignores `_env` (full env-override chain lives in bun_install).
+        // process-env resolution of the shared override chain (see
+        // bun_sys::resolve_cache_directory)
         let cache_dir = bun_sys::fetch_cache_directory_path();
         let dest = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
             path::fs::FileSystem::instance().top_level_dir(),

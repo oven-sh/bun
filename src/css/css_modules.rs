@@ -465,12 +465,40 @@ impl<'a> CssModuleReference<'a> {
     }
 }
 
-/// LAYERING: canonical implementation lives in `bun_base64::wyhash_url_safe`
-/// (a leaf crate) so `bun_bundler::LinkerContext::mangle_local_css` can call
-/// the *same* hasher without depending on `bun_css`. Re-export here so
-/// in-crate callers (`dependencies.rs`, `rules/import.rs`) keep the
-/// `css_modules::hash` path.
-#[inline]
+/// wyhash(u64) of the formatted args, truncated to u32, url-safe-base64-encoded
+/// into a bump-allocated slice. If `at_start` and the first encoded byte is a
+/// digit, prefix `_` (CSS idents can't start with a digit).
 pub fn hash<'a>(bump: &'a Bump, args: Arguments<'_>, at_start: bool) -> &'a [u8] {
-    bun_base64::wyhash_url_safe(bump, args, at_start)
+    use std::io::Write as _;
+
+    let mut hasher = bun_wyhash::Wyhash11::init(0);
+    // Write into a scratch Vec then hash; freed immediately.
+    let mut fmt_str: Vec<u8> = Vec::with_capacity(128);
+    write!(&mut fmt_str, "{}", args).expect("unreachable");
+    hasher.update(&fmt_str);
+
+    let h: u32 = hasher.final_() as u32; // @truncate
+    let h_bytes: [u8; 4] = h.to_le_bytes();
+
+    let encode_len = bun_base64::simdutf_encode_len_url_safe(h_bytes.len());
+
+    let slice_to_write: &mut [u8] =
+        bump.alloc_slice_fill_default(encode_len + usize::from(at_start));
+
+    let base64_encoded_hash_len = bun_base64::encode_url_safe(slice_to_write, &h_bytes);
+
+    let base64_encoded_hash = &slice_to_write[0..base64_encoded_hash_len];
+
+    if at_start
+        && !base64_encoded_hash.is_empty()
+        && base64_encoded_hash[0] >= b'0'
+        && base64_encoded_hash[0] <= b'9'
+    {
+        // Overlapping copy, dest > src → copy_within.
+        slice_to_write.copy_within(0..base64_encoded_hash_len, 1);
+        slice_to_write[0] = b'_';
+        return &slice_to_write[0..base64_encoded_hash_len + 1];
+    }
+
+    &slice_to_write[0..base64_encoded_hash_len]
 }

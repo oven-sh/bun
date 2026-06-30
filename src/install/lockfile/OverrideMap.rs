@@ -1,11 +1,11 @@
 use core::cmp::Ordering;
 
+use crate::{PackageManager, PackageNameHash};
 use bun_collections::ArrayHashMap;
 use bun_core::Error;
 use bun_core::strings;
-use bun_install::dependency::{self, Behavior, Dependency, DependencyExt as _};
-use bun_install::{PackageManager, PackageNameHash};
-use bun_output::{declare_scope, scoped_log};
+use bun_core::{declare_scope, scoped_log};
+use bun_install_types::dependency::{self, Behavior, Dependency};
 use bun_semver::String as SemverString;
 use bun_semver::string::Builder as SemverBuilder;
 
@@ -13,9 +13,9 @@ use super::package::value_loc_of;
 use super::{StringBuilder, package::Package};
 // LAYERING NOTE: package.json is parsed by `bun_parsers::json` which
 // produces the T2 value-shaped `bun_ast::Expr` (aliased as
-// `crate::bun_json::Expr`), NOT the full T4 `bun_ast::Expr`. JSON parse
+// `bun_parsers::json::Expr`), NOT the full T4 `bun_ast::Expr`. JSON parse
 // is always UTF-8, so `as_utf8_string_literal()` needs no allocator.
-use crate::bun_json::Expr;
+use bun_ast::Expr;
 
 declare_scope!(OverrideMap, visible);
 
@@ -79,7 +79,7 @@ impl OverrideMap {
     /// `pm` is generic over `NpmAliasRegistry` (not `&mut PackageManager`) so a
     /// caller already holding `&mut manager.lockfile` can pass
     /// `&mut manager.known_npm_aliases` instead of the whole manager.
-    pub(crate) fn clone<PM: crate::dependency::NpmAliasRegistry>(
+    pub(crate) fn clone<PM: bun_install_types::dependency::NpmAliasRegistry>(
         &self,
         pm: &mut PM,
         old_string_bytes: &[u8],
@@ -196,7 +196,7 @@ impl OverrideMap {
             let name_hash = SemverBuilder::string_hash(k);
 
             let value_expr_loc =
-                crate::bun_json::value_loc_of_property(&source.contents, key_loc, &value_expr);
+                bun_parsers::json::value_loc_of_property(&source.contents, key_loc, &value_expr);
             let (value, value_loc): (Expr, _) = 'value: {
                 // for one level deep, we will only support a string and  { ".": value }
                 if value_expr.data.is_e_string() {
@@ -215,7 +215,7 @@ impl OverrideMap {
                             }
                             break 'value (
                                 dot.expr,
-                                crate::bun_json::value_loc_of_property(
+                                bun_parsers::json::value_loc_of_property(
                                     &source.contents,
                                     dot.loc,
                                     &dot.expr,
@@ -370,7 +370,7 @@ impl OverrideMap {
                 pm,
                 root_package,
                 source,
-                crate::bun_json::value_loc_of_property(&source.contents, key_loc, &value),
+                bun_parsers::json::value_loc_of_property(&source.contents, key_loc, &value),
                 log,
                 k,
                 version_str,
@@ -452,7 +452,7 @@ pub fn parse_override_value(
         literal_sliced.slice,
         &literal_sliced,
         &mut *log,
-        package_manager,
+        Some(package_manager),
     ) {
         Some(v) => v,
         None => {

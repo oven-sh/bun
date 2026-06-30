@@ -1,16 +1,14 @@
 use crate::webcore::EncodingLabel;
-use crate::webcore::jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult,
-};
 use bun_core::AllocError;
 use bun_core::{OwnedString, strings};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult};
 use core::cell::Cell;
 use core::ptr::NonNull;
 
+use bun_core::ZigString;
 use jsc::StringJsc as _;
 use jsc::ZigStringJsc as _;
 use jsc::text_codec::TextCodec;
-use jsc::zig_string::ZigString;
 
 use strings::{u16_is_lead, u16_is_trail};
 const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;

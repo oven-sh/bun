@@ -18,27 +18,6 @@ use core::ffi::c_char;
 // Module layout
 // ──────────────────────────────────────────────────────────────────────────
 
-/// posix_spawn(2) FFI wrappers (Actions / Attr / spawn_z / wait4).
-/// MOVE_DOWN: implementation now lives in `bun_spawn_sys`; re-exported here
-/// with the higher-tier `process::*` glue (`Process`/`Status`/`spawn_process`/
-/// `sync`) restored so existing `bun_spawn::posix_spawn::bun_spawn::*` paths
-/// keep resolving.
-pub mod posix_spawn {
-    pub use bun_spawn_sys::posix_spawn::*;
-
-    pub mod bun_spawn {
-        pub use crate::process;
-        pub use crate::process::{
-            Process, SpawnOptions, SpawnProcessResult, Status, spawn_process, sync,
-        };
-        #[cfg(windows)]
-        pub use crate::process::{WindowsSpawnOptions, WindowsSpawnResult};
-        pub use bun_spawn_sys::posix_spawn::bun_spawn::*;
-    }
-    pub use bun_spawn as BunSpawn;
-    pub use bun_spawn_sys::posix_spawn::posix_spawn as PosixSpawn;
-}
-
 /// `Process` / `Poller` / `WaiterThread` / `spawn_process` / `sync` /
 /// `Status` / `SpawnOptions` / `SpawnResult`.
 #[path = "process.rs"]
@@ -58,67 +37,88 @@ pub use bun_event_loop::EventLoopHandle;
 pub use bun_spawn_sys::{Argv, CStrPtr, Envp, ffi};
 
 pub use bun_spawn_sys::RusageFields;
+pub use bun_spawn_sys::spawn_process::rusage_zeroed;
+#[cfg(windows)]
+pub use bun_spawn_sys::uv_getrusage;
+pub use bun_spawn_sys::{Dup2, ExtraPipe, PidT, Rusage, StdioKind};
 pub use process::{
-    Dup2, Exited, ExtraPipe, PidT, Poller, Process, Rusage, SignalCodeExt, SpawnOptions,
-    SpawnProcessResult, SpawnResultExt, Status, StdioKind, WaiterThread, spawn_process,
+    Exited, Poller, Process, SignalCodeExt, SpawnOptions, SpawnProcessResult, SpawnResultExt,
+    Status, WaiterThread, spawn_process,
 };
 
-// Variant types live in `bun_runtime`/`bun_install`; each provides its body
-// via `bun_spawn::link_impl_ProcessExit!`. Adding a handler kind = add a
-// variant here + one `link_impl_ProcessExit!` in the owning crate.
-bun_dispatch::link_interface! {
-    pub ProcessExit[
-        Subprocess,
-        LifecycleScript,
-        SecurityScan,
-        Shell,
-        FilterRunHandle,
-        MultiRunHandle,
-        TestParallelWorker,
-        CronRegister,
-        CronRemove,
-        ChromeProcess,
-        HostProcess,
-        SyncWindows,
-    ] {
-        fn on_process_exit(process: &mut Process, status: Status, rusage: &Rusage);
+/// Per-owner exit hook; `this` is the owner pointer registered via
+/// `Process::set_exit_handler`.
+pub trait ProcessExitOps {
+    unsafe fn on_process_exit(
+        this: *mut Self,
+        process: &mut Process,
+        status: Status,
+        rusage: &Rusage,
+    );
+}
+pub struct ProcessExitVTable {
+    pub on_process_exit: unsafe fn(*mut (), &mut Process, Status, &Rusage),
+}
+unsafe fn pe_shim<T: ProcessExitOps>(
+    p: *mut (),
+    process: &mut Process,
+    status: Status,
+    rusage: &Rusage,
+) {
+    // SAFETY: `p` is the `*mut T` the `ProcessExit` handle was built from.
+    unsafe { T::on_process_exit(p.cast::<T>(), process, status, rusage) }
+}
+#[derive(Copy, Clone)]
+pub struct ProcessExit {
+    pub owner: *mut (),
+    pub vtable: &'static ProcessExitVTable,
+}
+impl ProcessExit {
+    pub fn of<T: ProcessExitOps>(owner: *mut T) -> ProcessExit {
+        struct H<T>(core::marker::PhantomData<T>);
+        impl<T: ProcessExitOps> H<T> {
+            const VT: ProcessExitVTable = ProcessExitVTable {
+                on_process_exit: pe_shim::<T>,
+            };
+        }
+        ProcessExit {
+            owner: owner.cast(),
+            vtable: &H::<T>::VT,
+        }
+    }
+    #[inline]
+    pub fn on_process_exit(&self, process: &mut Process, status: Status, rusage: &Rusage) {
+        // SAFETY: owner liveness is the set_exit_handler caller contract (unchanged).
+        unsafe { (self.vtable.on_process_exit)(self.owner, process, status, rusage) }
     }
 }
 
 /// `None` = no handler set (the default for `Process::exit_handler`).
 pub type ProcessExitHandler = Option<ProcessExit>;
 
-// In-crate `link_impl_*!` calls must be textually after the `link_interface!`
-// that emits the macro (`#[macro_export]` is path-addressable from *other*
-// crates only; same-crate use is textual-scope). POSIX `spawn_sync` waits
-// inline and never installs a handler, so the `SyncWindows` arm is genuinely
-// unreachable there — but every variant needs a body or the link fails.
+// The SyncWindows exit handler is cfg(windows); POSIX `spawn_sync` waits
+// inline and never installs a handler, so POSIX builds have no impl and no stub.
 #[cfg(windows)]
-link_impl_ProcessExit! {
-    SyncWindows for process::sync::SyncWindowsProcess => |this| {
-        on_process_exit(process, status, rusage) =>
-            process::sync::SyncWindowsProcess::on_process_exit(this, process, status, &*rusage),
+impl ProcessExitOps for process::sync::SyncWindowsProcess {
+    unsafe fn on_process_exit(
+        this: *mut Self,
+        process: &mut Process,
+        status: Status,
+        rusage: &Rusage,
+    ) {
+        process::sync::SyncWindowsProcess::on_process_exit(this, process, status, rusage)
     }
 }
-#[cfg(not(windows))]
-link_impl_ProcessExit! {
-    SyncWindows for process::SyncProcessPosix => |_this| {
-        on_process_exit(_process, _status, _rusage) =>
-            unreachable!("SyncWindows exit handler is Windows-only"),
-    }
-}
-/// Compat re-export: the `process::spawn_sys` shim module was dissolved into
-/// `bun_sys` (LAYERING — moved down so non-spawn callers don't depend on
-/// `bun_spawn`). Downstream `runtime/api/bun/*` still spells the old path.
-pub use bun_sys as spawn_sys;
-
 #[cfg(unix)]
-pub use process::{PosixSpawnOptions, PosixSpawnResult, PosixStdio as Stdio, WaitPidResult};
+pub use bun_spawn_sys::PosixStdio as Stdio;
+pub use bun_spawn_sys::{PidFdType, PosixSpawnOptions, PosixSpawnResult, PosixStdio};
 #[cfg(unix)]
-pub type SpawnResult = process::PosixSpawnResult;
+pub use process::WaitPidResult;
+#[cfg(unix)]
+pub type SpawnResult = bun_spawn_sys::PosixSpawnResult;
 /// Alias for the per-extra-fd Stdio entry passed in `SpawnOptions::extra_fds`.
 #[cfg(unix)]
-pub type ExtraFd = process::PosixStdio;
+pub type ExtraFd = bun_spawn_sys::PosixStdio;
 
 #[cfg(windows)]
 pub use process::{
@@ -134,7 +134,7 @@ pub mod windows {
     /// `bun.windows.libuv.Pipe` raw pointer payload of `Stdio::Buffer` /
     /// `Stdio::Ipc`. Erased so this crate stays libuv-agnostic at the type
     /// surface; `bun_runtime` casts it back on consumption.
-    pub type UvPipePtr = *mut bun_sys::windows::libuv::Pipe;
+    pub type UvPipePtr = *mut bun_libuv_sys::Pipe;
 }
 
 /// Blocking (synchronous) spawn helpers.
@@ -152,16 +152,15 @@ pub mod sync {
 //
 // MOVE_DOWN from `bun_runtime::api::bun::subprocess`: `bun_install::
 // security_scanner` constructs a `StaticPipeWriter<SecurityScanSubprocess>` to
-// stream a JSON blob to the scanner's stdin. The `Source` enum here carries a
-// `Box<dyn SourceData>` arm (§Dispatch cold path — vtable travels with the
-// value) so the JSC tier can wrap `Blob`/`ArrayBuffer` payloads without this
-// crate naming `bun_jsc`/`bun_runtime`.
+// stream a JSON blob to the scanner's stdin. The `Source` enum here is generic
+// over a `SourcePayload` so the JSC tier can carry `Blob`/`ArrayBuffer`
+// payloads without this crate naming `bun_jsc`/`bun_runtime`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod subprocess {
     use bun_sys::Fd;
 
-    pub use crate::process::StdioKind;
     pub use crate::static_pipe_writer::{StaticPipeWriter, StaticPipeWriterProcess};
+    pub use bun_spawn_sys::StdioKind;
 
     /// On POSIX this is `Option<Fd>`; on Windows it is the `WindowsStdioResult` union.
     #[cfg(not(windows))]
@@ -184,20 +183,17 @@ pub mod subprocess {
     /// `StaticPipeWriter` drains into the child's stdin/extra-fd.
     ///
     /// `Blob`/`ArrayBuffer` payloads are JSC-owned and unreachable at this
-    /// tier, so the high-tier
-    /// variants are carried via a `Box<dyn SourceData>` (per-object vtable —
-    /// §Dispatch cold path). `bun_install` uses [`Source::from_owned_bytes`].
-    pub enum Source {
+    /// tier, so the high-tier variants are carried via the `S: SourcePayload`
+    /// type parameter. `bun_install` uses [`Source::from_owned_bytes`].
+    pub enum Source<S: SourcePayload = NoPayload> {
         OwnedBytes(Box<[u8]>),
-        Any(Box<dyn SourceData>),
+        Any(S),
         Detached,
     }
 
-    /// Type-erased payload for [`Source::Any`]. JSC-tier callers wrap
-    /// `webcore::AnyBlob` / `jsc::ArrayBufferStrong` in a thin adaptor that
-    /// implements this trait. The vtable travels with the value, so no global
-    /// hook registration is needed.
-    pub trait SourceData {
+    /// Payload type for [`Source::Any`]. JSC-tier callers provide a concrete
+    /// enum that implements this trait.
+    pub trait SourcePayload {
         fn slice(&self) -> &[u8];
         fn detach(&mut self);
         fn memory_cost(&self) -> usize {
@@ -205,7 +201,21 @@ pub mod subprocess {
         }
     }
 
-    impl Source {
+    /// Payload for processes whose stdin source is always plain bytes.
+    pub enum NoPayload {}
+    impl SourcePayload for NoPayload {
+        fn slice(&self) -> &[u8] {
+            match *self {}
+        }
+        fn detach(&mut self) {
+            match *self {}
+        }
+        fn memory_cost(&self) -> usize {
+            match *self {}
+        }
+    }
+
+    impl<S: SourcePayload> Source<S> {
         #[inline]
         pub fn from_owned_bytes(bytes: Box<[u8]>) -> Self {
             Self::OwnedBytes(bytes)

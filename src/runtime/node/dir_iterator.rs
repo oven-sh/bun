@@ -12,8 +12,8 @@ use bun_core::{RawSlice, WStr};
 use bun_sys::{self as sys, Fd, Tag};
 
 // `Entry.Kind` is `bun_core::FileKind`, re-exported here as
-// `bun_sys::EntryKind` (and as `crate::node::types::DirentKind`).
-use bun_sys::EntryKind;
+// `bun_core::FileKind` (and as `crate::node::types::DirentKind`).
+use bun_core::FileKind;
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IteratorError {
@@ -37,7 +37,7 @@ pub struct IteratorResult {
     /// The kernel writes `d_name` NUL-terminated, so the backing has a NUL at
     /// `[name.len()]` (see `name_assume_z`).
     pub name: RawSlice<u8>,
-    pub kind: EntryKind,
+    pub kind: FileKind,
 }
 
 impl IteratorResult {
@@ -75,7 +75,7 @@ impl IteratorResultWName {
 
 pub struct IteratorResultW {
     pub name: IteratorResultWName,
-    pub kind: EntryKind,
+    pub kind: FileKind,
 }
 pub type ResultW = sys::Result<Option<IteratorResultW>>;
 
@@ -223,16 +223,16 @@ mod platform {
                 }
 
                 let entry_kind = match d_type {
-                    libc::DT_BLK => EntryKind::BlockDevice,
-                    libc::DT_CHR => EntryKind::CharacterDevice,
-                    libc::DT_DIR => EntryKind::Directory,
-                    libc::DT_FIFO => EntryKind::NamedPipe,
-                    libc::DT_LNK => EntryKind::SymLink,
-                    libc::DT_REG => EntryKind::File,
-                    libc::DT_SOCK => EntryKind::UnixDomainSocket,
+                    libc::DT_BLK => FileKind::BlockDevice,
+                    libc::DT_CHR => FileKind::CharacterDevice,
+                    libc::DT_DIR => FileKind::Directory,
+                    libc::DT_FIFO => FileKind::NamedPipe,
+                    libc::DT_LNK => FileKind::SymLink,
+                    libc::DT_REG => FileKind::File,
+                    libc::DT_SOCK => FileKind::UnixDomainSocket,
                     // DT_WHT (14) — Darwin/BSD whiteout; libc crate omits the const on Apple.
-                    14 /* DT_WHT */ => EntryKind::Whiteout,
-                    _ => EntryKind::Unknown,
+                    14 /* DT_WHT */ => FileKind::Whiteout,
+                    _ => FileKind::Unknown,
                 };
                 return Ok(Some(IteratorResult {
                     name: RawSlice::new(name),
@@ -319,18 +319,18 @@ mod platform {
                     continue 'start_over;
                 }
 
-                let entry_kind: EntryKind = match d_type {
-                    libc::DT_BLK => EntryKind::BlockDevice,
-                    libc::DT_CHR => EntryKind::CharacterDevice,
-                    libc::DT_DIR => EntryKind::Directory,
-                    libc::DT_FIFO => EntryKind::NamedPipe,
-                    libc::DT_LNK => EntryKind::SymLink,
-                    libc::DT_REG => EntryKind::File,
-                    libc::DT_SOCK => EntryKind::UnixDomainSocket,
+                let entry_kind: FileKind = match d_type {
+                    libc::DT_BLK => FileKind::BlockDevice,
+                    libc::DT_CHR => FileKind::CharacterDevice,
+                    libc::DT_DIR => FileKind::Directory,
+                    libc::DT_FIFO => FileKind::NamedPipe,
+                    libc::DT_LNK => FileKind::SymLink,
+                    libc::DT_REG => FileKind::File,
+                    libc::DT_SOCK => FileKind::UnixDomainSocket,
                     // DT_WHT (14) — Darwin/BSD whiteout; the libc crate omits
                     // the constant on Apple and FreeBSD targets.
-                    14 /* DT_WHT */ => EntryKind::Whiteout,
-                    _ => EntryKind::Unknown,
+                    14 /* DT_WHT */ => FileKind::Whiteout,
+                    _ => FileKind::Unknown,
                 };
                 return Ok(Some(IteratorResult {
                     name: RawSlice::new(name),
@@ -424,18 +424,18 @@ mod platform {
                     continue 'start_over;
                 }
 
-                let entry_kind: EntryKind = match d_type {
-                    libc::DT_BLK => EntryKind::BlockDevice,
-                    libc::DT_CHR => EntryKind::CharacterDevice,
-                    libc::DT_DIR => EntryKind::Directory,
-                    libc::DT_FIFO => EntryKind::NamedPipe,
-                    libc::DT_LNK => EntryKind::SymLink,
-                    libc::DT_REG => EntryKind::File,
-                    libc::DT_SOCK => EntryKind::UnixDomainSocket,
+                let entry_kind: FileKind = match d_type {
+                    libc::DT_BLK => FileKind::BlockDevice,
+                    libc::DT_CHR => FileKind::CharacterDevice,
+                    libc::DT_DIR => FileKind::Directory,
+                    libc::DT_FIFO => FileKind::NamedPipe,
+                    libc::DT_LNK => FileKind::SymLink,
+                    libc::DT_REG => FileKind::File,
+                    libc::DT_SOCK => FileKind::UnixDomainSocket,
                     // DT_UNKNOWN: Some filesystems (e.g., bind mounts, FUSE, NFS)
                     // don't provide d_type. Callers should use lstatat() to determine
                     // the type when needed (lazy stat pattern for performance).
-                    _ => EntryKind::Unknown,
+                    _ => FileKind::Unknown,
                 };
                 return Ok(Some(IteratorResult {
                     name: RawSlice::new(name),
@@ -481,7 +481,7 @@ mod platform {
         fn make_entry(
             name_data: &mut Self::NameData,
             dir_info_name: &[u16],
-            kind: EntryKind,
+            kind: FileKind,
         ) -> Self::Entry;
     }
     pub struct OsPathFalse;
@@ -497,7 +497,7 @@ mod platform {
         fn make_entry(
             name_data: &mut [u8; 513],
             dir_info_name: &[u16],
-            kind: EntryKind,
+            kind: FileKind,
         ) -> IteratorResult {
             // Trust that Windows gives us valid UTF-16LE
             let name_utf8 = strings::paths::from_w_path(&mut name_data[..], dir_info_name);
@@ -518,7 +518,7 @@ mod platform {
         fn make_entry(
             name_data: &mut [u16; 257],
             dir_info_name: &[u16],
-            kind: EntryKind,
+            kind: FileKind,
         ) -> IteratorResultW {
             let len = dir_info_name.len();
             name_data[..len].copy_from_slice(dir_info_name);
@@ -741,11 +741,11 @@ mod platform {
                     // this will coerce into either .file or .directory later
                     // once the symlink is read
                     if islink {
-                        EntryKind::SymLink
+                        FileKind::SymLink
                     } else if isdir {
-                        EntryKind::Directory
+                        FileKind::Directory
                     } else {
-                        EntryKind::File
+                        FileKind::File
                     }
                 };
 
@@ -843,15 +843,15 @@ mod platform {
                 }
 
                 let entry_kind = match entry.d_type {
-                    w::Filetype::BLOCK_DEVICE => EntryKind::BlockDevice,
-                    w::Filetype::CHARACTER_DEVICE => EntryKind::CharacterDevice,
-                    w::Filetype::DIRECTORY => EntryKind::Directory,
-                    w::Filetype::SYMBOLIC_LINK => EntryKind::SymLink,
-                    w::Filetype::REGULAR_FILE => EntryKind::File,
+                    w::Filetype::BLOCK_DEVICE => FileKind::BlockDevice,
+                    w::Filetype::CHARACTER_DEVICE => FileKind::CharacterDevice,
+                    w::Filetype::DIRECTORY => FileKind::Directory,
+                    w::Filetype::SYMBOLIC_LINK => FileKind::SymLink,
+                    w::Filetype::REGULAR_FILE => FileKind::File,
                     w::Filetype::SOCKET_STREAM | w::Filetype::SOCKET_DGRAM => {
-                        EntryKind::UnixDomainSocket
+                        FileKind::UnixDomainSocket
                     }
-                    _ => EntryKind::Unknown,
+                    _ => FileKind::Unknown,
                 };
                 return Ok(Some(IteratorResult {
                     name: RawSlice::new(name),

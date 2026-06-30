@@ -24,7 +24,7 @@ use bun_core::{ZStr, strings};
 use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsClass as _,
-    JsRef, JsResult, StringJsc as _, Strong, SysErrorJsc as _,
+    JsRef, JsResult, StringJsc as _, Strong, SysErrorJsc as _, SystemErrorJsc as _,
 };
 use bun_sys as sys;
 
@@ -124,19 +124,19 @@ pub enum Source {
 // `Vec<u8>`, `ZString`, and
 // `Strong` all implement `Drop`, so no explicit `Drop` body is needed.
 
-// These C++ helpers are
-// Image-specific (they pin/adopt typed-array storage for the off-thread
-// pipeline) and have no `bun_jsc` wrapper.
+// This C++ helper is Image-specific (it pins/adopts typed-array storage for
+// the off-thread pipeline); unpinning goes through
+// `JSValue::unpin_array_buffer`.
 unsafe extern "C" {
-    fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
     /// 0 = detached/null, 1 = FastTypedArray (≤~1 KB, GC-movable — dupe),
     /// 2 = pinned ArrayBuffer (caller must unpin). For OversizeTypedArray the
     /// helper adopts the storage in-place (createAdopted — no byte copy) and
     /// pins; once adopted it's detachable, so it MUST be pinned, not borrowed.
-    fn JSC__JSValue__borrowBytesForOffThread(
+    /// By-value `JSValue`; out-params are `&mut` locals → `safe fn`.
+    safe fn JSC__JSValue__borrowBytesForOffThread(
         v: JSValue,
-        out_ptr: *mut *const u8,
-        out_len: *mut usize,
+        out_ptr: &mut *const u8,
+        out_len: &mut usize,
     ) -> i32;
 }
 
@@ -723,10 +723,7 @@ impl Image {
                 // tells us whether anything actually needs pinning.
                 let mut ptr: *const u8 = core::ptr::null();
                 let mut len: usize = 0;
-                // SAFETY: FFI call; out-params are valid pointers to locals.
-                match unsafe {
-                    JSC__JSValue__borrowBytesForOffThread(v, &raw mut ptr, &raw mut len)
-                } {
+                match JSC__JSValue__borrowBytesForOffThread(v, &mut ptr, &mut len) {
                     0 => Err(PinError::Detached),
                     // FastTypedArray (≤ fastSizeLimit elements, GC-movable): tiny
                     // by definition — dupe instead of forcing JSC to copy via
@@ -737,7 +734,7 @@ impl Image {
                         } else {
                             // SAFETY: classifier guarantees `ptr[0..len]` is
                             // valid for the duration of this call (JS thread).
-                            let copied = unsafe { bun_core::ffi::slice(ptr, len) }.to_vec();
+                            let copied = unsafe { bun_opaque::ffi::slice(ptr, len) }.to_vec();
                             Ok(Input {
                                 copied: Some(copied),
                                 ..Default::default()
@@ -751,15 +748,15 @@ impl Image {
                     // `transfer()` while the worker reads.
                     2 => {
                         if len == 0 {
-                            // SAFETY: helper pinned `v`; unpin before erroring.
-                            unsafe { JSC__JSValue__unpinArrayBuffer(v) };
+                            // Helper pinned `v`; unpin before erroring.
+                            v.unpin_array_buffer();
                             Err(PinError::Detached)
                         } else {
                             // SAFETY: pinned for the lifetime of the task;
                             // unpinned in `then()` via `Input::release()`.
-                            let bytes = unsafe { bun_core::ffi::slice(ptr, len) };
+                            let bytes = unsafe { bun_opaque::ffi::slice(ptr, len) };
                             Ok(Input {
-                                bytes: bun_ptr::RawSlice::new(bytes),
+                                bytes: bun_core::RawSlice::new(bytes),
                                 pinned: v,
                                 ..Default::default()
                             })
@@ -771,7 +768,7 @@ impl Image {
             // SAFETY: `Owned` bytes outlive the task because `this_ref` is held
             // Strong while pending_tasks > 0 (see `schedule()`).
             Source::Owned(b) => Ok(Input {
-                bytes: bun_ptr::RawSlice::new(b.as_slice()),
+                bytes: bun_core::RawSlice::new(b.as_slice()),
                 ..Default::default()
             }),
             Source::Path(p) => Ok(Input {
@@ -1123,7 +1120,7 @@ impl Image {
         let task = ConcurrentPromiseTask::<PipelineTask<'_>>::create_on_js_thread(global, job);
         let promise_value = task.promise.value();
         // Ownership transfers to the WorkPool / event-loop dispatch
-        // (`task_tag::AsyncImageTask` → `run_from_js` → `destroy`).
+        // (`TaskTag::AsyncImageTask` → `run_from_js` → `destroy`).
         let raw = bun_core::heap::into_raw(task);
         // SAFETY: `raw` is freshly leaked; `schedule()` only writes the
         // intrusive `task` field into the work-pool queue. The worker thread
@@ -1372,11 +1369,11 @@ impl<'a> ReadBytesHandler for BlobReadChain<'a> {
 }
 
 /// `jsc.ConcurrentPromiseTask(PipelineTask)` — the heap object the event-loop
-/// dispatch sees (`task_tag::AsyncImageTask`).
+/// dispatch sees (`TaskTag::AsyncImageTask`).
 pub type AsyncImageTask<'a> = ConcurrentPromiseTask<'a, PipelineTask<'a>>;
 
 impl<'a> ConcurrentPromiseTaskContext for PipelineTask<'a> {
-    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncImageTask;
+    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::TaskTag::AsyncImageTask;
     #[inline]
     fn run(&mut self) {
         PipelineTask::run(self)
@@ -1404,7 +1401,7 @@ pub struct PipelineTask<'a> {
 pub struct Input {
     // Borrows pinned ArrayBuffer or `image.source.owned`; the owning `Image`
     // is held via BACKREF for the task's lifetime — `RawSlice` invariant.
-    bytes: bun_ptr::RawSlice<u8>,
+    bytes: bun_core::RawSlice<u8>,
     // Borrows `image.source.path` (NUL-terminated); the owning `Image` is
     // held via BACKREF for the task's lifetime, same as `bytes` above.
     path: Option<*const ZStr>,
@@ -1418,7 +1415,7 @@ pub struct Input {
 impl Default for Input {
     fn default() -> Self {
         Self {
-            bytes: bun_ptr::RawSlice::EMPTY,
+            bytes: bun_core::RawSlice::EMPTY,
             path: None,
             pinned: JSValue::ZERO,
             copied: None,
@@ -1435,9 +1432,9 @@ impl Input {
     }
     fn release(mut self) {
         if !self.pinned.is_empty() {
-            // SAFETY: JS thread; `pinned` was returned by
+            // JS thread; `pinned` was returned by
             // `JSC__JSValue__borrowBytesForOffThread` with mode 2.
-            unsafe { JSC__JSValue__unpinArrayBuffer(self.pinned) };
+            self.pinned.unpin_array_buffer();
         }
         self.copied = None;
     }

@@ -3,15 +3,15 @@ use core::ffi::c_void;
 use core::mem::size_of;
 
 use bun_core::String as BunString;
+use bun_core::StringPointer;
 use bun_http::{Headers, Method};
-use bun_http_types::ETag::StringPointer;
 use bun_io::Closer;
 use bun_io::FileType;
+use bun_jsc::node_path::PathOrFileDescriptor;
 use bun_resolver::fs::StatHash;
 use bun_sys::{self, Fd};
 use bun_uws::{AnyRequest, AnyResponse};
 
-use crate::node::types::PathOrFileDescriptor;
 use crate::server::file_response_stream::StartOptions as FileResponseStreamOptions;
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 
@@ -345,7 +345,7 @@ impl FileRoute {
         let fd_result: bun_sys::Result<Fd> = {
             #[cfg(windows)]
             {
-                let mut path_buffer = bun_paths::PathBuffer::uninit();
+                let mut path_buffer = bun_core::PathBuffer::uninit();
                 path_buffer[..path.len()].copy_from_slice(path);
                 path_buffer[path.len()] = 0;
                 bun_sys::open(
@@ -378,7 +378,7 @@ impl FileRoute {
         let mut fd_guard = scopeguard::guard(true, move |owned| {
             if owned {
                 #[cfg(windows)]
-                Closer::close(fd, bun_sys::windows::libuv::Loop::get());
+                Closer::close(fd, bun_libuv_sys::Loop::get());
                 #[cfg(not(windows))]
                 Closer::close(fd, ());
                 // SAFETY: this_ptr is valid; ref taken above keeps FileRoute alive until on_response_complete

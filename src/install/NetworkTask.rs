@@ -4,7 +4,6 @@ use core::sync::atomic::Ordering;
 
 use bstr::ByteSlice;
 
-use crate::bun_fs::{FileSystem, FilenameStore};
 use bun_collections::HashMap;
 use bun_core::{self, fmt::quote};
 use bun_core::{MutableString, StringBuilder, strings};
@@ -19,24 +18,10 @@ use crate::extract_tarball;
 use crate::npm::{self as npm, PackageManifest};
 use crate::{ExtractTarball, PackageManager, PatchTask, TarballStream, Task};
 
-// Adapter so `StringOrTinyString::init_append_if_needed` can intern overflow
-// names into the resolver's filename arena. The bun_sys-level `FilenameStore` exposes `append` /
-// `append_lower_case` but doesn't itself implement `strings::Appender` (that
-// impl lives in `bun_resolver`, which this crate can't reach without a cycle).
-pub struct FilenameStoreAppender<'a>(pub &'a FilenameStore);
-impl strings::Appender for FilenameStoreAppender<'_> {
-    fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
-        self.0.append(s)
-    }
-    fn append_lower_case(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
-        self.0.append_lower_case(s)
-    }
-}
-
-/// Convenience: returns an `Appender` over the global filename store.
+/// Appender over the global resolver filename store.
 #[inline]
-pub(crate) fn filename_store_appender() -> FilenameStoreAppender<'static> {
-    FilenameStoreAppender(FileSystem::instance().filename_store())
+pub(crate) fn filename_store_appender() -> bun_resolver::fs::FilenameStoreAppender {
+    bun_resolver::fs::FilenameStoreAppender::new()
 }
 
 pub struct NetworkTask {
@@ -590,11 +575,11 @@ impl NetworkTask {
                 DEFAULT_HEADERS_BUF
             };
             header_builder.entries.append(http::headers::Entry {
-                name: http::headers::api::StringPointer {
+                name: bun_core::StringPointer {
                     offset: 0,
                     length: "Accept".len() as u32,
                 },
-                value: http::headers::api::StringPointer {
+                value: bun_core::StringPointer {
                     offset: "Accept".len() as u32,
                     length: (header_buf.len() - "Accept".len()) as u32,
                 },

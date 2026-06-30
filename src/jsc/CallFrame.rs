@@ -349,7 +349,7 @@ impl<'a> ArgumentsSlice<'a> {
     pub fn from(vm: &'a VirtualMachine, slice: &'a [JSValueRef]) -> ArgumentsSlice<'a> {
         // SAFETY: JSValueRef and JSValue have identical layout (both are encoded i64).
         let as_values =
-            unsafe { bun_core::ffi::slice(slice.as_ptr().cast::<JSValue>(), slice.len()) };
+            unsafe { bun_opaque::ffi::slice(slice.as_ptr().cast::<JSValue>(), slice.len()) };
         Self::init(vm, as_values)
     }
 

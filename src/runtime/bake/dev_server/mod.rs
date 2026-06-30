@@ -4,7 +4,8 @@
 //! Request handling, hot-update tracing, and `finalize_bundle` live in
 //! `../DevServer.rs` (`dev_server_body`). This file holds:
 //!   - the `DevServer` struct definition
-//!   - leaf enums/newtypes (`FileKind`, `ChunkKind`, `Magic`, `MessageId`, …)
+//!   - leaf enums/newtypes (`ChunkKind`, `Magic`, `MessageId`, …) and the
+//!     `FileKind` alias of `bun_bundler::bake_types::CacheKind`
 //!   - submodule struct types (`Assets`, `RouteBundle`, `SourceMapStore`, …)
 //!   - `bun_bundler::dispatch::DevServerVTable` wiring (`DEV_SERVER_VTABLE`)
 //!   - `is_file_cached`
@@ -42,7 +43,7 @@ pub(crate) mod memory_cost_body;
 pub(crate) mod watcher_atomics_body;
 
 // NOTE: the `DevServer` scoped-log static (`ScopedLogger`) is declared in
-// `dev_server_body` (`bun_output::declare_scope!(DevServer, visible)`) and
+// `dev_server_body` (`bun_core::declare_scope!(DevServer, visible)`) and
 // re-exported via the `pub use` block below alongside the `struct DevServer`
 // type. Declaring it again here would collide in the value namespace.
 
@@ -61,25 +62,12 @@ pub type DebuggerId = jsc::DebuggerId;
 pub use super::dev_server_body::{
     CacheEntry, CurrentBundle, DeferredPromise, DeferredRequest, DevServer, EntryPointList,
     HTMLRouter, Magic, NextBundle, Options, PluginState, RouteIndexAndRecurseFlag, TestingBatch,
-    TestingBatchEvents, deferred_request, entry_point_list,
+    TestingBatchEvents, deferred_request,
 };
 
-/// `DevServer.FileKind` — kept in lockstep with `bun_bundler::bake_types::CacheKind`
-/// (the vtable boundary maps between them via an exhaustive match).
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum FileKind {
-    Unknown = 0,
-    Js = 1,
-    Asset = 2,
-    Css = 3,
-}
-impl FileKind {
-    #[inline]
-    pub fn has_inline_js_code_chunk(self) -> bool {
-        matches!(self, FileKind::Js | FileKind::Asset)
-    }
-}
+/// Canonical definition: `bun_bundler::bake_types::CacheKind`; aliased so
+/// dev-server code keeps the `FileKind` spelling.
+pub use bun_bundler::bake_types::CacheKind as FileKind;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -300,7 +288,6 @@ pub use super::dev_server_body::init;
 
 pub mod assets;
 pub mod incremental_graph;
-pub mod inspector_agent;
 mod lifecycle;
 pub mod packed_map;
 pub mod route_bundle;
@@ -428,7 +415,7 @@ pub struct HotReloadEvent {
 }
 
 impl bun_event_loop::Taskable for HotReloadEvent {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BakeHotReloadEvent;
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::TaskTag::BakeHotReloadEvent;
 }
 
 impl HotReloadEvent {
@@ -1108,7 +1095,7 @@ pub mod directory_watch_store {
         /// key storage; compared by *pointer identity*. The graph calls
         /// `removeDependenciesForFile` before freeing the key, so the slice
         /// outlives every read — `RawSlice` invariant.
-        pub source_file_path: bun_ptr::RawSlice<u8>,
+        pub source_file_path: bun_core::RawSlice<u8>,
         /// The specifier that failed. Allocated memory.
         pub specifier: Box<[u8]>,
     }
@@ -1116,7 +1103,7 @@ pub mod directory_watch_store {
         fn default() -> Self {
             Dep {
                 next: None,
-                source_file_path: bun_ptr::RawSlice::EMPTY,
+                source_file_path: bun_core::RawSlice::EMPTY,
                 specifier: Box::default(),
             }
         }
@@ -1127,78 +1114,167 @@ pub mod directory_watch_store {
 // CYCLEBREAK §Dispatch — DevServerVTable impl (high tier provides static)
 // ══════════════════════════════════════════════════════════════════════════
 
-bun_bundler::link_impl_DevServerHandle! {
-    Bake for DevServer => |this| {
-        barrel_needed_exports() => &raw mut (*this).barrel_needed_exports,
-        log_for_resolution_failures(abs_path, graph) => {
-            match (*this).get_log_for_resolution_failures(abs_path, graph) {
-                Ok(log) => log,
-                Err(_) => bun_alloc::out_of_memory(),
-            }
-        },
-        finalize_bundle(bv2, result) => {
-            // `bv2` borrows the three `Transpiler`s stored inline in `DevServer`
-            // (stable heap address); the `'static` is a stand-in for the
-            // DevServer-self lifetime — see the comment on `CurrentBundle.bv2`.
-            super::dev_server_body::finalize_bundle(&mut *this, &mut *bv2.cast(), &mut *result)
-                .map_err(Into::into)
-        },
-        handle_parse_task_failure(err, graph, abs_path, log, bv2) => {
-            (*this)
-                .handle_parse_task_failure(err, graph, abs_path, &*log, &mut *bv2)
-                .map_err(Into::into)
-        },
-        put_or_overwrite_asset(path, contents, content_hash) => {
-            // `path` was erased from `&bun_resolver::fs::Path<'_>` at the
-            // `DevServerHandle::put_or_overwrite_asset_erased` call site. Re-wrap
-            // bytes as an owned blob (ownership is transferred).
-            let path = &*path.cast::<bun_resolver::fs::Path<'_>>();
-            let blob = crate::webcore::blob::Any::from_owned_slice(contents.to_vec());
-            (*this).put_or_overwrite_asset(path, blob, content_hash)
-        },
-        track_resolution_failure(import_source, specifier, renderer, loader) => {
-            (*this)
-                .directory_watchers
-                .track_resolution_failure(import_source, specifier, renderer, loader)
-                .map_err(Into::into)
-        },
-        is_file_cached(abs_path, side) => {
-            (*this).is_file_cached(abs_path, side).map(|e| {
-                use bun_bundler::bake_types::CacheKind;
-                bun_bundler::bake_types::CacheEntry {
-                    kind: match e.kind {
-                        FileKind::Unknown => CacheKind::Unknown,
-                        FileKind::Js => CacheKind::Js,
-                        FileKind::Asset => CacheKind::Asset,
-                        FileKind::Css => CacheKind::Css,
-                    },
-                }
-            })
-        },
-        asset_hash(abs_path) => (*this).assets.get_hash(abs_path),
-        current_bundle_start_data() => {
-            (*this)
-                .current_bundle
-                .as_mut()
-                .map(|c| (&raw mut c.start_data).cast::<()>())
-                .unwrap_or(core::ptr::null_mut())
-        },
-        register_barrel_with_deferrals(path) => {
-            let _ = (*this)
-                .barrel_files_with_deferrals
-                .get_or_put(path)
-                .map_err(|_| bun_alloc::out_of_memory());
-            Ok(())
-        },
-        register_barrel_export(barrel_path, alias) => {
-            // Silently drop on alloc failure.
-            let Ok(gop) = (*this).barrel_needed_exports.get_or_put(barrel_path) else {
-                return;
-            };
-            let _ = gop.value_ptr.get_or_put(alias);
-        },
+unsafe fn bake_barrel_needed_exports(
+    this: *mut (),
+) -> *mut bun_collections::StringArrayHashMap<bun_collections::StringHashMap<()>> {
+    let this: *mut DevServer = this.cast();
+    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+    unsafe { &raw mut (*this).barrel_needed_exports }
+}
+
+unsafe fn bake_log_for_resolution_failures(
+    this: *mut (),
+    abs_path: &[u8],
+    graph: bun_bundler::bake_types::Graph,
+) -> *mut bun_ast::Log {
+    let this: *mut DevServer = this.cast();
+    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+    unsafe {
+        match (*this).get_log_for_resolution_failures(abs_path, graph) {
+            Ok(log) => log,
+            Err(_) => bun_alloc::out_of_memory(),
+        }
     }
 }
+
+unsafe fn bake_finalize_bundle(
+    this: *mut (),
+    bv2: *mut bun_bundler::bundle_v2::BundleV2<'_>,
+    result: *mut bun_bundler::bundle_v2::DevServerOutput<'_>,
+) -> Result<(), bun_core::Error> {
+    let this: *mut DevServer = this.cast();
+    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+    unsafe {
+        // `bv2` borrows the three `Transpiler`s stored inline in `DevServer`
+        // (stable heap address); the `'static` is a stand-in for the
+        // DevServer-self lifetime — see the comment on `CurrentBundle.bv2`.
+        super::dev_server_body::finalize_bundle(&mut *this, &mut *bv2.cast(), &mut *result)
+            .map_err(Into::into)
+    }
+}
+
+unsafe fn bake_handle_parse_task_failure(
+    this: *mut (),
+    err: bun_core::Error,
+    graph: bun_bundler::bake_types::Graph,
+    abs_path: &[u8],
+    log: *const bun_ast::Log,
+    bv2: *mut bun_bundler::bundle_v2::BundleV2<'_>,
+) -> Result<(), bun_core::Error> {
+    let this: *mut DevServer = this.cast();
+    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+    unsafe {
+        (*this)
+            .handle_parse_task_failure(err, graph, abs_path, &*log, &mut *bv2)
+            .map_err(Into::into)
+    }
+}
+
+unsafe fn bake_put_or_overwrite_asset(
+    this: *mut (),
+    path: *const (),
+    contents: &[u8],
+    content_hash: u64,
+) -> Result<(), bun_core::Error> {
+    let this: *mut DevServer = this.cast();
+    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+    unsafe {
+        // `path` was erased from `&bun_resolver::fs::Path<'_>` at the
+        // `DevServerHandle::put_or_overwrite_asset_erased` call site. Re-wrap
+        // bytes as an owned blob (ownership is transferred).
+        let path = &*path.cast::<bun_resolver::fs::Path<'_>>();
+        let blob = crate::webcore::blob::Any::from_owned_slice(contents.to_vec());
+        (*this).put_or_overwrite_asset(path, blob, content_hash)
+    }
+}
+
+unsafe fn bake_track_resolution_failure(
+    this: *mut (),
+    import_source: &[u8],
+    specifier: &[u8],
+    renderer: bun_bundler::bake_types::Graph,
+    loader: bun_ast::Loader,
+) -> Result<(), bun_core::Error> {
+    let this: *mut DevServer = this.cast();
+    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+    unsafe {
+        (*this)
+            .directory_watchers
+            .track_resolution_failure(import_source, specifier, renderer, loader)
+            .map_err(Into::into)
+    }
+}
+
+unsafe fn bake_is_file_cached(
+    this: *mut (),
+    abs_path: &[u8],
+    side: bun_bundler::bake_types::Graph,
+) -> Option<bun_bundler::bake_types::CacheEntry> {
+    let this: *mut DevServer = this.cast();
+    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+    unsafe { (*this).is_file_cached(abs_path, side) }
+}
+
+unsafe fn bake_asset_hash(this: *mut (), abs_path: &[u8]) -> Option<u64> {
+    let this: *mut DevServer = this.cast();
+    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+    unsafe { (*this).assets.get_hash(abs_path) }
+}
+
+unsafe fn bake_current_bundle_start_data(this: *mut ()) -> *mut () {
+    let this: *mut DevServer = this.cast();
+    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+    unsafe {
+        (*this)
+            .current_bundle
+            .as_mut()
+            .map(|c| (&raw mut c.start_data).cast::<()>())
+            .unwrap_or(core::ptr::null_mut())
+    }
+}
+
+unsafe fn bake_register_barrel_with_deferrals(
+    this: *mut (),
+    path: &[u8],
+) -> Result<(), bun_core::Error> {
+    let this: *mut DevServer = this.cast();
+    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+    unsafe {
+        let _ = (*this)
+            .barrel_files_with_deferrals
+            .get_or_put(path)
+            .map_err(|_| bun_alloc::out_of_memory());
+        Ok(())
+    }
+}
+
+unsafe fn bake_register_barrel_export(this: *mut (), barrel_path: &[u8], alias: &[u8]) {
+    let this: *mut DevServer = this.cast();
+    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+    unsafe {
+        // Silently drop on alloc failure.
+        let Ok(gop) = (*this).barrel_needed_exports.get_or_put(barrel_path) else {
+            return;
+        };
+        let _ = gop.value_ptr.get_or_put(alias);
+    }
+}
+
+/// CYCLEBREAK §Dispatch successor — concrete vtable instance handed to the
+/// bundler by `bundler_handle()` (no link-time symbols).
+static DEV_SERVER_VTABLE: bun_bundler::DevServerVTable = bun_bundler::DevServerVTable {
+    barrel_needed_exports: bake_barrel_needed_exports,
+    log_for_resolution_failures: bake_log_for_resolution_failures,
+    finalize_bundle: bake_finalize_bundle,
+    handle_parse_task_failure: bake_handle_parse_task_failure,
+    put_or_overwrite_asset: bake_put_or_overwrite_asset,
+    track_resolution_failure: bake_track_resolution_failure,
+    is_file_cached: bake_is_file_cached,
+    asset_hash: bake_asset_hash,
+    current_bundle_start_data: bake_current_bundle_start_data,
+    register_barrel_with_deferrals: bake_register_barrel_with_deferrals,
+    register_barrel_export: bake_register_barrel_export,
+};
 
 impl DevServer {
     /// Length of `configuration_hash_key`.
@@ -1209,12 +1285,7 @@ impl DevServer {
     #[inline]
     pub fn bundler_handle(&mut self) -> bun_bundler::dispatch::DevServerHandle {
         // SAFETY: `self` is the single per-process DevServer; outlives all dispatch.
-        unsafe {
-            bun_bundler::dispatch::DevServerHandle::new(
-                bun_bundler::dispatch::DevServerHandleKind::Bake,
-                self,
-            )
-        }
+        unsafe { bun_bundler::dispatch::DevServerHandle::new(self, &DEV_SERVER_VTABLE) }
     }
 }
 
@@ -1280,7 +1351,7 @@ impl DirectoryWatchStore {
         // SAFETY: `dev` is the heap-allocated DevServer; `graph_safety_lock` is
         // disjoint from `directory_watchers`. RAII guard unlocks on drop.
         let _g = unsafe { (*dev).graph_safety_lock.guard() };
-        let owned_file_path: bun_ptr::RawSlice<u8> = match renderer {
+        let owned_file_path: bun_core::RawSlice<u8> = match renderer {
             Graph::Client => {
                 // SAFETY: `dev` is the live DevServer owning this store;
                 // `client_graph` is disjoint from `directory_watchers` so this
@@ -1311,7 +1382,7 @@ impl DirectoryWatchStore {
     fn insert(
         &mut self,
         dir_name_to_watch: &[u8],
-        file_path: bun_ptr::RawSlice<u8>,
+        file_path: bun_core::RawSlice<u8>,
         specifier: &[u8],
     ) -> Result<(), DirectoryWatchInsertError> {
         debug_assert!(!specifier.is_empty());
@@ -1392,7 +1463,7 @@ impl DirectoryWatchStore {
                 (fd, false)
             } else {
                 // Build a NUL-terminated path buffer.
-                if dir_name_to_watch.len() >= bun_paths::MAX_PATH_BYTES {
+                if dir_name_to_watch.len() >= bun_core::MAX_PATH_BYTES {
                     return Err(DirectoryWatchInsertError::Ignore); // NameTooLong
                 }
                 let mut zbuf = bun_paths::path_buffer_pool::get();

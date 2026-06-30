@@ -109,6 +109,8 @@ static C_ALLOCATOR_VTABLE: &AllocatorVTable = &AllocatorVTable {
     resize: MimallocAllocator::resize_with_default_allocator,
     remap: MimallocAllocator::remap_with_default_allocator,
     free: MimallocAllocator::FREE_WITH_DEFAULT_ALLOCATOR,
+    ptr_is_identity: false,
+    wtf_string_refcount: false,
 };
 
 pub(crate) struct ZAllocator;
@@ -190,6 +192,8 @@ static Z_ALLOCATOR_VTABLE: AllocatorVTable = AllocatorVTable {
     resize: ZAllocator::resize_with_z_allocator,
     remap: AllocatorVTable::NO_REMAP,
     free: ZAllocator::FREE_WITH_Z_ALLOCATOR,
+    ptr_is_identity: false,
+    wtf_string_refcount: false,
 };
 
 /// mimalloc can free allocations without being given their size.

@@ -177,17 +177,17 @@ impl CppWebSocket {
 
 impl CppWebSocket {
     pub(crate) fn r#ref(&self) {
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         WebSocket__incrementPendingActivity(self);
     }
 
     pub(crate) fn unref(&self) {
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         WebSocket__decrementPendingActivity(self);
     }
 
     pub(crate) fn set_protocol(&self, protocol: &mut BunString) {
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         // SAFETY: self is a valid C++ WebCore::WebSocket; protocol outlives the call.
         unsafe { WebSocket__setProtocol(self, protocol) };
     }

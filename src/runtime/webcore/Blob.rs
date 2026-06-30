@@ -10,21 +10,19 @@ use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
 
-use crate::webcore::jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
-};
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core as bun;
 use bun_core::Output;
-use bun_core::{
-    OwnedString, String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice, strings,
-};
+use bun_core::{OwnedString, String as BunString, ZigString, ZigStringSlice, strings};
 use bun_http_types::MimeType::MimeType;
 use bun_jsc::StringJsc as _;
+use bun_jsc::ZigStringJsc as _;
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_sys::{self, Fd};
 
 use crate::webcore::node_types::{PathOrBlob, PathOrFileDescriptor};
-use crate::webcore::s3_stub as S3;
+use crate::webcore::s3::MultiPartUploadOptions;
 use crate::webcore::{self, Lifetime, ReadableStream, Request, Response, streams};
 
 bun_core::define_scoped_log!(debug, Blob, visible);
@@ -100,13 +98,13 @@ pub trait ReadBytesHandler {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Blob — single nominal definition lives in `bun_jsc::webcore_types`.
-// This crate layers behaviour via the `BlobExt` extension trait below.
+// Blob — data definition: `bun_jsc::webcore_types` (canonical).
+// This module owns the runtime behaviour layer (`BlobExt`).
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_jsc::webcore_types::{Blob, Blob__deref, Blob__ref, ClosingState, MAX_SIZE, SizeType};
+pub use bun_jsc::webcore_types::{Blob, ClosingState, MAX_SIZE, SizeType};
 
-pub type Ref = bun_ptr::ExternalShared<Blob>;
+pub type Ref = bun_core::ExternalShared<Blob>;
 
 /// 1: Initial
 /// 2: Added byte for whether it's a dom file, length and bytes for `stored_name`,
@@ -827,8 +825,9 @@ impl BlobExt for Blob {
         let total_length: usize = (end as usize) - (*cursor as usize);
         // SAFETY: `[*cursor, end)` spans `total_length` bytes owned by the
         // SerializedScriptValue for the duration of this call (see fn contract).
-        let mut buffer_stream =
-            bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*cursor, total_length) });
+        let mut buffer_stream = bun_io::FixedBufferStream::new(unsafe {
+            bun_opaque::ffi::slice(*cursor, total_length)
+        });
 
         let result = match _on_structured_clone_deserialize(global_this, &mut buffer_stream) {
             Ok(v) => v,
@@ -901,66 +900,7 @@ impl BlobExt for Blob {
         // string entry 8, plus 3 for the closing boundary.
         context.joiner.reserve(form_data.count() * 13 + 3);
 
-        // `bun_jsc::DOMFormData::for_each` yields the
-        // lower-tier `bun_jsc::dom_form_data::FormDataEntry`, whose `blob`
-        // field is `&bun_jsc::WebCore::Blob` (the forward-decl). The native
-        // pointer the C++ hands us is the `m_ctx` `*mut Blob`; reinterpret it
-        // as the runtime `&mut Blob` here. Driving the FFI directly (rather
-        // than going through `for_each`'s immutable wrapper) avoids a
-        // `&T → &mut T` cast. Every raw deref is wrapped locally; the safe fn
-        // item coerces to the callback-pointer type at `DOMFormData__forEach`.
-        extern "C" fn for_each_thunk(
-            ctx_ptr: *mut c_void,
-            name_: *mut ZigString,
-            value_ptr: *mut c_void,
-            filename: *mut ZigString,
-            is_blob: u8,
-        ) {
-            // SAFETY: `ctx_ptr` is the `&mut FormDataContext` passed below; the
-            // erased lifetime is the caller's stack frame in `from_dom_form_data`.
-            let ctx = unsafe { bun_ptr::callback_ctx::<FormDataContext<'_>>(ctx_ptr) };
-            let entry = if is_blob == 0 {
-                // SAFETY: when `is_blob == 0`, `value_ptr` points to a `ZigString`.
-                FormDataEntry::String(unsafe { *value_ptr.cast::<ZigString>() })
-            } else {
-                FormDataEntry::File {
-                    // SAFETY: `value_ptr` is the C++ `JSBlob::m_ctx` (`*mut Blob`);
-                    // valid for the synchronous callback scope.
-                    blob: unsafe { &mut *value_ptr.cast::<Blob>() },
-                    filename: if filename.is_null() {
-                        ZigString::EMPTY
-                    } else {
-                        // SAFETY: non-null `filename` is a valid `*ZigString` for this call.
-                        unsafe { *filename }
-                    },
-                }
-            };
-            // SAFETY: `name_` is always a valid non-null `*ZigString` for this callback.
-            ctx.on_entry(unsafe { *name_ }, entry);
-        }
-        unsafe extern "C" {
-            // `this` is the `&mut DOMFormData` param (coerced); `ctx`/`cb` are
-            // stored opaquely and only used synchronously. Module-private with
-            // one call site below — no caller-side precondition remains. Kept
-            // `*mut` (not `&mut`) to match the `bun_jsc` decl and avoid
-            // `clashing_extern_declarations`.
-            safe fn DOMFormData__forEach(
-                this: *mut jsc::DOMFormData,
-                ctx: *mut c_void,
-                // Safe fn-ptr: `for_each_thunk` is a safe `extern "C" fn` (its
-                // body localises every raw deref individually), so the callback
-                // type carries no caller-side precondition. ABI-identical to
-                // `bun_jsc`'s `ForEachFunction` alias.
-                cb: extern "C" fn(*mut c_void, *mut ZigString, *mut c_void, *mut ZigString, u8),
-            );
-        }
-        // C++ invokes the callback synchronously and does not retain `ctx`/`cb`
-        // past this call.
-        DOMFormData__forEach(
-            form_data,
-            (&raw mut context).cast::<c_void>(),
-            for_each_thunk,
-        );
+        form_data.for_each(&mut |name, entry| context.on_entry(name, entry));
         if context.failed {
             // Drop the joiner (Drop runs StringJoiner::deinit) so every
             // heap-owned slice already pushed — escaped names, non-ASCII
@@ -1515,7 +1455,7 @@ impl BlobExt for Blob {
                 let fd: Fd = if let PathOrFileDescriptor::Fd(fd) = pathlike {
                     *fd
                 } else {
-                    let mut file_path = bun_paths::PathBuffer::uninit();
+                    let mut file_path = bun_core::PathBuffer::uninit();
                     let path = pathlike.path().slice_z(&mut file_path);
                     match bun_sys::open(
                         path,
@@ -1537,17 +1477,12 @@ impl BlobExt for Blob {
                         break 'brk false;
                     }
 
-                    if let Some(rare) = global_this.bun_vm().rare_data.as_ref() {
-                        // `RareData::std{out,err}_store` is `Option<NonNull<c_void>>`
-                        // (type-erased `*Blob.Store`); compare on raw pointer
-                        // identity exactly like the POSIX arm below.
-                        let store_ptr = store.as_ptr().cast::<c_void>();
-                        if rare.stdout_store.map(|p| p.as_ptr()) == Some(store_ptr) {
-                            break 'brk true;
-                        }
-                        if rare.stderr_store.map(|p| p.as_ptr()) == Some(store_ptr) {
-                            break 'brk true;
-                        }
+                    let store_ptr = store.as_ptr();
+                    if crate::jsc_hooks::stdio_store_if_cached(1) == Some(store_ptr) {
+                        break 'brk true;
+                    }
+                    if crate::jsc_hooks::stdio_store_if_cached(2) == Some(store_ptr) {
+                        break 'brk true;
                     }
 
                     if let Some(tag) = fd.stdio_tag() {
@@ -1878,12 +1813,10 @@ impl BlobExt for Blob {
             use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
             let pathlike = &store.data.as_file().pathlike;
-            // SAFETY: bun_vm() never returns null for a Bun-owned global.
-            let vm = global_this.bun_vm().as_mut();
             let fd: Fd = match pathlike {
                 PathOrFileDescriptor::Fd(fd) => *fd,
                 PathOrFileDescriptor::Path(p) => {
-                    let mut file_path = bun_paths::PathBuffer::uninit();
+                    let mut file_path = bun_core::PathBuffer::uninit();
                     match bun_sys::open(
                         p.slice_z(&mut file_path),
                         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
@@ -1902,14 +1835,12 @@ impl BlobExt for Blob {
                 if !matches!(pathlike, PathOrFileDescriptor::Fd(_)) {
                     break 'brk false;
                 }
-                if let Some(rare) = vm.rare_data.as_ref() {
-                    let store_ptr = store.as_ptr().cast::<c_void>();
-                    if rare.stdout_store.map(|p| p.as_ptr()) == Some(store_ptr) {
-                        break 'brk true;
-                    }
-                    if rare.stderr_store.map(|p| p.as_ptr()) == Some(store_ptr) {
-                        break 'brk true;
-                    }
+                let store_ptr = store.as_ptr();
+                if crate::jsc_hooks::stdio_store_if_cached(1) == Some(store_ptr) {
+                    break 'brk true;
+                }
+                if crate::jsc_hooks::stdio_store_if_cached(2) == Some(store_ptr) {
+                    break 'brk true;
                 }
                 matches!(
                     fd.stdio_tag(),
@@ -2229,7 +2160,7 @@ impl BlobExt for Blob {
                     .unwrap_or(bun_ast::Loader::Tsx),
             );
         } else if let Some(mime_type) = self.get_mime_type_or_content_type() {
-            return Some(bun_ast::Loader::from_mime_type(mime_type));
+            return Some(mime_type.to_loader());
         } else {
             // Be maximally permissive.
             return Some(bun_ast::Loader::Tsx);
@@ -2301,17 +2232,20 @@ impl BlobExt for Blob {
                     PathOrFileDescriptor::Path(path_like) => {
                         // SAFETY: bun_vm() returns the live VM for this global.
                         let vm = global_this.bun_vm().as_mut();
-                        // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
+                        // SAFETY: `Binding` is a `repr(transparent)` single-field struct over
+                        // `JsCell<NodeFS>` (itself `repr(transparent)` over `UnsafeCell`), so
+                        // the per-VM `NodeFS` pointer is also a valid `Binding` pointer.
                         let binding = unsafe {
-                            &*vm.node_fs().cast::<crate::node::node_fs_binding::Binding>()
+                            &*crate::jsc_hooks::node_fs(core::ptr::from_mut(vm))
+                                .cast::<crate::node::node_fs_binding::Binding>()
                         };
                         Ok(crate::node::fs::async_::Stat::create(
                             global_this,
                             binding,
                             crate::node::fs::args::Stat {
-                                path: crate::node::types::PathLike::EncodedSlice(match path_like {
+                                path: bun_jsc::node_path::PathLike::EncodedSlice(match path_like {
                                     // Already UTF-8 — take an owned copy.
-                                    crate::node::types::PathLike::EncodedSlice(slice) => {
+                                    bun_jsc::node_path::PathLike::EncodedSlice(slice) => {
                                         ZigStringSlice::init_owned(slice.slice().to_vec())
                                     }
                                     other => ZigStringSlice::init_owned(other.slice().to_vec()),
@@ -2325,9 +2259,12 @@ impl BlobExt for Blob {
                     PathOrFileDescriptor::Fd(fd) => {
                         // SAFETY: bun_vm() returns the live VM for this global.
                         let vm = global_this.bun_vm().as_mut();
-                        // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
+                        // SAFETY: `Binding` is a `repr(transparent)` single-field struct over
+                        // `JsCell<NodeFS>` (itself `repr(transparent)` over `UnsafeCell`), so
+                        // the per-VM `NodeFS` pointer is also a valid `Binding` pointer.
                         let binding = unsafe {
-                            &*vm.node_fs().cast::<crate::node::node_fs_binding::Binding>()
+                            &*crate::jsc_hooks::node_fs(core::ptr::from_mut(vm))
+                                .cast::<crate::node::node_fs_binding::Binding>()
                         };
                         Ok(crate::node::fs::async_::Fstat::create(
                             global_this,
@@ -3802,12 +3739,8 @@ impl BlobExt for Blob {
                 if p.slice().starts_with(b"s3://") {
                     // SAFETY: bun_vm() is live for the duration of a host call.
                     let vm = global_this.bun_vm().as_mut();
-                    // `bun_dotenv::Loader` (T2) returns its local POD mirror by
-                    // reference; lift it into the refcounted
-                    // `bun_s3_signing::S3Credentials` here at the T6 call site
-                    // (dotenv cannot name the s3_signing type — upward dep).
                     let env_creds = vm.transpiler.env_mut().get_s3_credentials();
-                    let credentials = crate::webcore::fetch::s3_credentials_from_env(env_creds);
+                    let credentials = bun_s3_signing::S3Credentials::from(env_creds);
                     let copy = core::mem::replace(
                         path_or_fd,
                         PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(
@@ -3882,23 +3815,14 @@ impl BlobExt for Blob {
             }
             PathOrFileDescriptor::Fd(fd) => {
                 if let Some(tag) = fd.stdio_tag() {
-                    // SAFETY: bun_vm() is live for the duration of a host call.
-                    let vm = global_this.bun_vm().as_mut();
-                    // `RareData::{stdin,stdout,stderr}()` return the cached
-                    // `webcore::blob::Store` erased to `*mut c_void` (the
-                    // low-tier crate cannot name the high-tier type — see
-                    // `STDIO_BLOB_STORE_CTOR`). Cast back and take a counted ref.
-                    let erased = match tag {
-                        bun_sys::Stdio::StdIn => vm.rare_data().stdin(),
-                        bun_sys::Stdio::StdErr => vm.rare_data().stderr(),
-                        bun_sys::Stdio::StdOut => vm.rare_data().stdout(),
-                    };
-                    // SAFETY: the ctor hook (`webcore::blob::store::stdio_store_ctor`)
-                    // returns `Box::<Store>::into_raw` — non-null, live for the
-                    // process lifetime, and laid out as `Store`.
-                    let store = unsafe {
-                        StoreRef::retained(NonNull::new_unchecked(erased.cast::<Store>()))
-                    };
+                    let store_ptr = crate::jsc_hooks::stdio_store_cached(match tag {
+                        bun_sys::Stdio::StdIn => 0,
+                        bun_sys::Stdio::StdOut => 1,
+                        bun_sys::Stdio::StdErr => 2,
+                    });
+                    // SAFETY: the per-thread cache owns +1 on a live `Store`;
+                    // take a counted ref.
+                    let store = unsafe { StoreRef::retained(NonNull::new_unchecked(store_ptr)) };
                     return Blob::init_with_store(store, global_this);
                 }
                 PathOrFileDescriptor::Fd(*fd)
@@ -3934,36 +3858,23 @@ impl BlobExt for Blob {
 // JSC-integration methods (host fns, to_js/from_js, S3/file I/O state machines)
 // ──────────────────────────────────────────────────────────────────────────
 
+use crate::api::archive::Archive;
 use crate::image::Image;
 use crate::node;
-use bun_core::string_joiner::StringJoiner;
-use bun_jsc::SysErrorJsc as _;
-// `crate::webcore::jsc` glob-reexports `bun_jsc::*` but the double-glob loses
-// `JsTerminatedResult`; alias it locally (same shape as bun_jsc::event_loop).
-type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
-use crate::api::archive::Archive;
 use crate::webcore::s3::client as s3_client;
 use crate::webcore::s3::simple_request::S3UploadResult;
 use crate::webcore::s3_file as S3File;
+use bun_core::string_joiner::StringJoiner;
+use bun_jsc::JsTerminatedResult;
+use bun_jsc::SysErrorJsc as _;
 // The `write_file` module name coexists with `pub fn write_file` below (module
 // vs value namespace); alias the module so the call sites read unambiguously.
 use self::write_file as write_file_mod;
 use self::write_file::{WriteFilePromise, WriteFileWaitFromLockedValueTask};
-use bun_bundler::options_impl::LoaderExt as _;
+use bun_core::ZigString as JscZigString;
 use bun_jsc::JsClass as _;
-use bun_jsc::zig_string::ZigString as JscZigString;
 
-/// Local mirror of `jsc.DOMFormData.FormDataEntry` (`union(enum) { string, file }`).
-/// `bun_jsc::dom_form_data::FormDataEntry` carries `&Blob` (immutable) but
-/// `FormDataContext::on_entry` needs `&mut Blob` to call `resolve_size()`, so
-/// we drive the C++ `DOMFormData__forEach` directly with this mutable variant.
-pub enum FormDataEntry<'a> {
-    String(ZigString),
-    File {
-        blob: &'a mut Blob,
-        filename: ZigString,
-    },
-}
+use bun_jsc::dom_form_data::FormDataEntry;
 
 /// Carries `Function(ctx, bytes)` at the type level —
 /// a trait impl so `run` can be taken as a
@@ -4312,7 +4223,7 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
             break 'bytes Blob::new(blob);
         }
         store::SerializeTag::File => 'file: {
-            use crate::node::types::PathOrFileDescriptorSerializeTag;
+            use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
             let pathlike_tag =
                 PathOrFileDescriptorSerializeTag::from_raw(reader.read_int_le::<u8>()?)
                     .ok_or_else(|| bun_core::err!("InvalidValue"))?;
@@ -4603,10 +4514,9 @@ fn write_file_with_empty_source_to_destination(
     match &destination_store.data {
         store::Data::File(file) => {
             // TODO: make this async
-            // `VirtualMachine::node_fs()` currently returns `*mut c_void`; the
-            // typed `&mut NodeFS` accessor isn't wired yet, so use a fresh
-            // `NodeFS` (it carries no per-call state for
-            // `truncate`/`mkdir_recursive`).
+            // A fresh `NodeFS` is sufficient here (it carries no per-call
+            // state for `truncate`/`mkdir_recursive`), so the shared per-VM
+            // `crate::jsc_hooks::node_fs` instance is not needed.
             let mut node_fs = node::fs::NodeFS::default();
             let mut result = node_fs.truncate(
                 &node::fs::args::Truncate {
@@ -4669,7 +4579,7 @@ fn write_file_with_empty_source_to_destination(
                                 }
 
                                 // SAFETY: we check if `file.pathlike` is an fd above, returning if it is.
-                                let mut buf = bun_paths::PathBuffer::uninit();
+                                let mut buf = bun_core::PathBuffer::uninit();
                                 let mode: bun_sys::Mode =
                                     options.mode.unwrap_or(node::fs::DEFAULT_PERMISSION);
                                 match bun_sys::File::open(
@@ -4959,7 +4869,7 @@ pub fn write_file_with_source_destination(
         let proxy_url = proxy_owned.as_deref();
         match &source_store.data {
             store::Data::Bytes(bytes) => {
-                if bytes.len() as usize > S3::MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE {
+                if bytes.len() as usize > MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE {
                     if let Some(stream) = ReadableStream::from_js(
                         ReadableStream::from_blob_copy_ref(
                             ctx,
@@ -5512,7 +5422,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
     } else {
-        let mut file_path = bun_paths::PathBuffer::uninit();
+        let mut file_path = bun_core::PathBuffer::uninit();
         match bun_sys::open(
             pathlike.path().slice_z(&mut file_path),
             // we deliberately don't use O_TRUNC here
@@ -5596,7 +5506,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
     } else {
-        let mut file_path = bun_paths::PathBuffer::uninit();
+        let mut file_path = bun_core::PathBuffer::uninit();
         let flags = if cfg!(not(windows)) {
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK
         } else {
@@ -5835,8 +5745,8 @@ pub fn construct_bun_file(
 
     if let PathOrFileDescriptor::Path(ref p) = path {
         if p.slice().starts_with(b"s3://") {
-            // `webcore::node_types::PathLike` re-exports
-            // `crate::node::types::PathLike`, so no conversion is needed —
+            // `webcore::node_types::PathLike` is `bun_jsc::node_path::PathLike`,
+            // so no conversion is needed —
             // clone the path (`path` drops at scope exit).
             return S3File::construct_internal_js(global_object, p.clone(), options);
         }
@@ -6224,7 +6134,7 @@ pub unsafe extern "C" fn Blob__fromBytes(
         return Blob::new(Blob::init_empty(global_this));
     }
     // SAFETY: caller guarantees [ptr, ptr+len) is valid.
-    let bytes = unsafe { bun_core::ffi::slice(ptr, len) }.to_vec();
+    let bytes = unsafe { bun_opaque::ffi::slice(ptr, len) }.to_vec();
     let store = Store::init(bytes);
     Blob::new(Blob::init_with_store(store, global_this))
 }
@@ -6327,7 +6237,7 @@ fn resolve_file_stat(store: &StoreRef) {
     let file = store.data_mut().as_file_mut();
     match &file.pathlike {
         PathOrFileDescriptor::Path(path) => {
-            let mut buffer = bun_paths::PathBuffer::uninit();
+            let mut buffer = bun_core::PathBuffer::uninit();
             match bun_sys::stat(path.slice_z(&mut buffer)) {
                 bun_sys::Result::Ok(stat) => {
                     file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
@@ -6927,9 +6837,7 @@ impl Any {
 
 // `to_js` / `to_external_value` / `with_encoding` / `to_json_object` /
 // `external` on `bun_core::ZigString` are provided by `bun_jsc::ZigStringJsc`
-// (imported above). The legacy `ZigStringBlobExt` name is re-exported for
-// sibling modules (`Request.rs`) that still import it under that name.
-pub(crate) use bun_jsc::ZigStringJsc as ZigStringBlobExt;
+// (imported above).
 
 /// A single-use Blob backed by an allocation of memory.
 #[derive(Default)]
@@ -7194,7 +7102,7 @@ pub trait FileOpener: Sized {
     fn open_callback(&self) -> fn(&mut Self, Fd);
 
     fn get_fd_by_opening(&mut self, callback: fn(&mut Self, Fd)) {
-        let mut buf = bun_paths::PathBuffer::uninit();
+        let mut buf = bun_core::PathBuffer::uninit();
         let path_string = match self.pathlike() {
             PathOrFileDescriptor::Path(p) => p.clone(),
             PathOrFileDescriptor::Fd(_) => unreachable!(),
@@ -7203,11 +7111,9 @@ pub trait FileOpener: Sized {
 
         #[cfg(windows)]
         {
-            use bun_sys::ReturnCodeExt as _;
             // Monomorphic libuv completion thunk — recovers `*mut Self` from
             // `req.data`.
             extern "C" fn wrapped_callback<S: FileOpener>(req: *mut bun_libuv_sys::uv_fs_t) {
-                use bun_sys::ReturnCodeExt as _;
                 // SAFETY: `req.data` was set to `self as *mut Self` below before
                 // `uv_fs_open` was queued; libuv guarantees `req` is valid here.
                 let self_: &mut S = unsafe { bun_ptr::callback_ctx::<S>((*req).data) };
@@ -7216,7 +7122,7 @@ pub trait FileOpener: Sized {
                     scopeguard::defer! { unsafe { bun_libuv_sys::uv_fs_req_cleanup(req); } }
                     // SAFETY: req is the live uv_fs_t from the open request.
                     let result = unsafe { (*req).result };
-                    if let Some(err_enum) = result.err_enum_e() {
+                    if let Some(err_enum) = result.err_enum_or_unknown() {
                         let path_string_2 = match self_.pathlike() {
                             PathOrFileDescriptor::Path(p) => p.clone(),
                             PathOrFileDescriptor::Fd(_) => unreachable!(),
@@ -7265,7 +7171,7 @@ pub trait FileOpener: Sized {
                     Some(wrapped_callback::<Self>),
                 )
             };
-            if let Some(errno) = rc.err_enum_e() {
+            if let Some(errno) = rc.err_enum_or_unknown() {
                 self.set_errno(bun_core::errno_to_zig_err(errno as i32));
                 self.set_system_error(
                     bun_sys::Error::from_code(errno, bun_sys::Tag::open)
@@ -7419,15 +7325,9 @@ pub trait FileCloser: Sized {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// isAllASCII / takeOwnership / heap-alloc helpers / external_shared_descriptor
+// isAllASCII / takeOwnership / heap-alloc helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-pub mod external_shared_descriptor {
-    pub use bun_jsc::webcore_types::Blob__deref as deref;
-    pub use bun_jsc::webcore_types::Blob__ref as ref_;
-}
-
-/// Bindgen adapter for `Blob`. The cycle was broken by hoisting the `Blob`
-/// struct into `bun_jsc::webcore_types`, so the canonical alias lives in
+/// Bindgen adapter for `Blob`. The canonical alias lives in
 /// `bun_jsc::bindgen`; re-export it here for `bun_runtime` callers.
 pub use bun_jsc::bindgen::BindgenBlob;

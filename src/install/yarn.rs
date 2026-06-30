@@ -2,33 +2,31 @@ use bun_collections::VecExt;
 use std::borrow::Cow;
 use std::io::Write as _;
 
+use crate::bin::Bin;
+use crate::integrity::Integrity;
+use crate::{DependencyID, PackageID, PackageManager};
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::Error;
-use bun_install::bin::Bin;
-use bun_install::dependency::{self, Dependency, DependencyExt as _};
-use bun_install::install::{self, DependencyID, PackageID, PackageManager};
-use bun_install::integrity::Integrity;
-// `bun_install::lockfile` is the column-accessor stub used by the
+use bun_install_types::dependency::{self, Dependency};
+// `crate::lockfile` is the column-accessor stub used by the
 // audit/why CLI walkers; the yarn migrator needs the real Lockfile/Tree/
-// LoadResult enum, so import from `lockfile_real` and alias it back to
+// LoadResult enum, so import from `lockfile` and alias it back to
 // `lockfile` so the qualified `lockfile::DependencySlice` etc. paths below
 // resolve against the ported types.
 use crate::Origin;
-use crate::lockfile_real::package::meta::HasInstallScript;
-use crate::lockfile_real::package::{
+use crate::lockfile::package::meta::HasInstallScript;
+use crate::lockfile::package::{
     Meta as PackageMeta, Package as LockfilePackage, PackageColumns as _,
 };
-use crate::lockfile_real::{self as lockfile, LoadResult, Lockfile, tree, tree::Tree};
-use bun_install::npm;
-// `Package.resolution` is the file-backed `resolution_real::ResolutionType<u64>`
+use crate::lockfile::{self, LoadResult, Lockfile, tree, tree::Tree};
+use bun_install_types::resolver_hooks::{Architecture, OperatingSystem, VersionedURL};
+// `Package.resolution` is the file-backed `resolution::ResolutionType<u64>`
 // (tag + zero-padded `Value` union), constructed via `init(TaggedValue::*)`; the
-// `bun_install::resolution` stub keeps `Value` as a struct-of-fields and has no `init`.
-use crate::bun_json;
-use crate::repository::Repository;
-use crate::resolution_real::{Resolution, Tag as ResolutionTag, TaggedValue as ResolutionValue};
-use crate::versioned_url::VersionedURL;
+// `crate::resolution` stub keeps `Value` as a struct-of-fields and has no `init`.
+use crate::resolution::{Resolution, Tag as ResolutionTag, TaggedValue as ResolutionValue};
+use bun_core::PathBuffer;
 use bun_core::strings;
-use bun_paths::PathBuffer;
+use bun_install_types::resolver_hooks::Repository;
 use bun_semver::{self as Semver, SlicedString, String as SemverString};
 use bun_sys::Fd;
 
@@ -628,7 +626,7 @@ fn process_deps(
             let dep = Dependency {
                 name: dep_name_str,
                 name_hash: dep_name_hash,
-                version: Dependency::parse(
+                version: dependency::parse(
                     dep_name_str,
                     Some(dep_name_hash),
                     parsed_version,
@@ -691,7 +689,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     yarn_lock.parse(data)?;
 
     this.init_empty();
-    install::initialize_store();
+    crate::initialize_store();
     bun_core::analytics::Features::yarn_migration_inc(1);
 
     // A single `Buf` for the whole function would hold
@@ -740,11 +738,11 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         drop(package_json_fd); // close now; fd no longer needed past path resolution
 
         let json_bump = bun_alloc::Arena::new();
-        let Ok(package_json_expr) = bun_json::parse_package_json_utf8_with_opts(
-            bun_json::JSONOptions {
+        let Ok(package_json_expr) = bun_parsers::json::parse_package_json_utf8_with_opts(
+            bun_parsers::json::JSONOptions {
                 json_warn_duplicate_keys: false,
                 guess_indentation: true,
-                ..bun_json::PACKAGE_JSON_OPTS
+                ..bun_parsers::json::PACKAGE_JSON_OPTS
             },
             &package_json_source,
             log,
@@ -864,8 +862,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             meta: PackageMeta {
                 id: 0,
                 origin: Origin::Local,
-                arch: npm::Architecture::ALL,
-                os: npm::OperatingSystem::ALL,
+                arch: Architecture::ALL,
+                os: OperatingSystem::ALL,
                 man_dir: SemverString::default(),
                 has_install_script: HasInstallScript::False,
                 integrity: Integrity::default(),
@@ -904,11 +902,11 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     let resolutions_base_ptr = this.buffers.resolutions.as_mut_ptr();
     let mut dependencies_buf: &mut [Dependency] = unsafe {
         // SAFETY: capacity >= num_deps reserved above
-        bun_core::ffi::slice_mut(dependencies_base_ptr, num_deps as usize)
+        bun_opaque::ffi::slice_mut(dependencies_base_ptr, num_deps as usize)
     };
     let mut resolutions_buf: &mut [PackageID] = unsafe {
         // SAFETY: capacity >= num_deps reserved above
-        bun_core::ffi::slice_mut(resolutions_base_ptr, num_deps as usize)
+        bun_opaque::ffi::slice_mut(resolutions_base_ptr, num_deps as usize)
     };
 
     let mut yarn_entry_to_package_id: Vec<PackageID> = vec![0; yarn_lock.entries.len()];
@@ -1193,22 +1191,22 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 id: package_id,
                 origin: Origin::Npm,
                 arch: if let Some(cpu_list) = &entry.cpu {
-                    let mut arch = npm::Architecture::NONE.negatable();
+                    let mut arch = Architecture::NONE.negatable();
                     for cpu in cpu_list.iter() {
                         arch.apply(cpu);
                     }
                     arch.combine()
                 } else {
-                    npm::Architecture::ALL
+                    Architecture::ALL
                 },
                 os: if let Some(os_list) = &entry.os {
-                    let mut os = npm::OperatingSystem::NONE.negatable();
+                    let mut os = OperatingSystem::NONE.negatable();
                     for os_str in os_list.iter() {
                         os.apply(os_str);
                     }
                     os.combine()
                 } else {
-                    npm::OperatingSystem::ALL
+                    OperatingSystem::ALL
                 },
                 man_dir: SemverString::default(),
                 has_install_script: HasInstallScript::False,
@@ -1268,7 +1266,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                         Dependency {
                             name: dep_name_string,
                             name_hash,
-                            version: Dependency::parse(
+                            version: dependency::parse(
                                 dep_name_string,
                                 Some(name_hash),
                                 version_string.slice(this.buffers.string_bytes.as_slice()),
@@ -1298,7 +1296,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
     for yarn_idx in 0..yarn_lock.entries.len() {
         let package_id = yarn_entry_to_package_id[yarn_idx];
-        if package_id == install::INVALID_PACKAGE_ID {
+        if package_id == crate::INVALID_PACKAGE_ID {
             continue;
         }
 
@@ -1570,7 +1568,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     let mut usage_count: StringHashMap<u32> = StringHashMap::new();
     for entry_idx in 0..yarn_lock.entries.len() {
         let package_id = yarn_entry_to_package_id[entry_idx];
-        if package_id == install::INVALID_PACKAGE_ID {
+        if package_id == crate::INVALID_PACKAGE_ID {
             continue;
         }
         let base_name = package_names[package_id as usize];
@@ -1589,7 +1587,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
     for entry_idx in 0..yarn_lock.entries.len() {
         let package_id = yarn_entry_to_package_id[entry_idx];
-        if package_id == install::INVALID_PACKAGE_ID {
+        if package_id == crate::INVALID_PACKAGE_ID {
             continue;
         }
         let base_name = package_names[package_id as usize];
@@ -1605,7 +1603,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     let mut scoped_count: u32 = 0;
     for entry_idx in 0..yarn_lock.entries.len() {
         let package_id = yarn_entry_to_package_id[entry_idx];
-        if package_id == install::INVALID_PACKAGE_ID {
+        if package_id == crate::INVALID_PACKAGE_ID {
             continue;
         }
         let base_name = package_names[package_id as usize];
@@ -1621,7 +1619,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         let mut scoped_name: Option<Vec<u8>> = None;
         for (dep_entry_idx, dep_entry) in yarn_lock.entries.iter().enumerate() {
             let dep_package_id = yarn_entry_to_package_id[dep_entry_idx];
-            if dep_package_id == install::INVALID_PACKAGE_ID {
+            if dep_package_id == crate::INVALID_PACKAGE_ID {
                 continue;
             }
 
@@ -1701,7 +1699,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         let package_id = yarn_entry_to_package_id[yarn_idx];
-        if package_id == install::INVALID_PACKAGE_ID {
+        if package_id == crate::INVALID_PACKAGE_ID {
             continue;
         }
 
@@ -1725,7 +1723,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         let package_id = yarn_entry_to_package_id[yarn_idx];
-        if package_id == install::INVALID_PACKAGE_ID {
+        if package_id == crate::INVALID_PACKAGE_ID {
             continue;
         }
 
@@ -1749,7 +1747,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 dep_version_string.slice(this.buffers.string_bytes.as_slice()),
             );
 
-            let mut parsed_version = Dependency::parse(
+            let mut parsed_version = dependency::parse(
                 dep_name_string,
                 Some(name_hash),
                 dep_version_string.slice(this.buffers.string_bytes.as_slice()),
@@ -1782,7 +1780,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             if let Some(pkg_id) = spec_to_package_id.get(dep_spec.as_slice()).copied() {
                 this.buffers.resolutions.push(pkg_id);
             } else {
-                this.buffers.resolutions.push(install::INVALID_PACKAGE_ID);
+                this.buffers.resolutions.push(crate::INVALID_PACKAGE_ID);
             }
         }
     }
@@ -1798,7 +1796,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         let package_id = yarn_entry_to_package_id[yarn_idx];
-        if package_id == install::INVALID_PACKAGE_ID {
+        if package_id == crate::INVALID_PACKAGE_ID {
             continue;
         }
 
@@ -1819,7 +1817,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                 );
 
-                let mut parsed_version = Dependency::parse(
+                let mut parsed_version = dependency::parse(
                     dep_name_string,
                     Some(name_hash),
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
@@ -1850,7 +1848,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 if let Some(res_pkg_id) = spec_to_package_id.get(dep_spec.as_slice()).copied() {
                     this.buffers.resolutions.push(res_pkg_id);
                 } else {
-                    this.buffers.resolutions.push(install::INVALID_PACKAGE_ID);
+                    this.buffers.resolutions.push(crate::INVALID_PACKAGE_ID);
                 }
 
                 dep_count += 1;
@@ -1871,7 +1869,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                 );
 
-                let mut parsed_version = Dependency::parse(
+                let mut parsed_version = dependency::parse(
                     dep_name_string,
                     Some(name_hash),
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
@@ -1902,7 +1900,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 if let Some(res_pkg_id) = spec_to_package_id.get(dep_spec.as_slice()).copied() {
                     this.buffers.resolutions.push(res_pkg_id);
                 } else {
-                    this.buffers.resolutions.push(install::INVALID_PACKAGE_ID);
+                    this.buffers.resolutions.push(crate::INVALID_PACKAGE_ID);
                 }
 
                 dep_count += 1;
@@ -1923,7 +1921,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                 );
 
-                let mut parsed_version = Dependency::parse(
+                let mut parsed_version = dependency::parse(
                     dep_name_string,
                     Some(name_hash),
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
@@ -1954,7 +1952,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 if let Some(res_pkg_id) = spec_to_package_id.get(dep_spec.as_slice()).copied() {
                     this.buffers.resolutions.push(res_pkg_id);
                 } else {
-                    this.buffers.resolutions.push(install::INVALID_PACKAGE_ID);
+                    this.buffers.resolutions.push(crate::INVALID_PACKAGE_ID);
                 }
 
                 dep_count += 1;
@@ -1975,7 +1973,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                 );
 
-                let mut parsed_version = Dependency::parse(
+                let mut parsed_version = dependency::parse(
                     dep_name_string,
                     Some(name_hash),
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
@@ -2006,7 +2004,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 if let Some(res_pkg_id) = spec_to_package_id.get(dep_spec.as_slice()).copied() {
                     this.buffers.resolutions.push(res_pkg_id);
                 } else {
-                    this.buffers.resolutions.push(install::INVALID_PACKAGE_ID);
+                    this.buffers.resolutions.push(crate::INVALID_PACKAGE_ID);
                 }
 
                 dep_count += 1;

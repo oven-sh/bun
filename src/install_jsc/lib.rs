@@ -5,7 +5,8 @@
 //!
 //! Host-fn bodies for hosted_git_info / dependency / update_request / npm /
 //! install_binding compile against the `bun_jsc` + `bun_install` surface and
-//! are wired into the runtime via the `dispatch_js2native` re-exports.
+//! are wired into the runtime by `generate-js2native.ts`, which emits their
+//! crate paths directly into `generated_js2native.rs`.
 
 pub mod dependency_jsc;
 pub mod hosted_git_info_jsc;

@@ -9,10 +9,15 @@ path = "lib.rs"
 [lints]
 workspace = true
 
-# No dependencies. This is a tier-0 `#![no_std]` leaf crate of raw Win32
-# typedefs / consts / `extern "system"` blocks over `core::ffi` only. Keeping
-# the dep graph empty is load-bearing: `bun_shim_impl.exe` (the freestanding
-# Windows .bin/ shim PE) depends on this crate alone, and any `std`-using
-# transitive dep would defeat its `#![no_std]` build and bloat the embedded
-# binary that gets copied into every `node_modules/.bin/`.
+# Near-zero dependencies. This is a tier-0 `#![no_std]` leaf crate of raw
+# Win32 typedefs / consts / `extern "system"` blocks over `core::ffi` only.
+# Keeping the dep graph tiny is load-bearing: `bun_shim_impl.exe` (the
+# freestanding Windows .bin/ shim PE) depends on this crate, and any
+# `std`-using transitive dep would defeat its `#![no_std]` build and bloat the
+# embedded binary that gets copied into every `node_modules/.bin/`.
+#
+# `bun_opaque` (`#![no_std]`, zero deps on Windows, zero `#[no_mangle]`) is the
+# sole exception: the orphan rule requires this crate's `Zeroable` impls to
+# live next to the type definitions, and the trait lives in `bun_opaque::ffi`.
 [dependencies]
+bun_opaque.workspace = true

@@ -67,7 +67,7 @@ macro_rules! new_store {
             // Allocation goes through the global mimalloc allocator
             // (#[global_allocator]); Box/alloc use it.
             // The log scope is declared once at crate level:
-            // `bun_output::declare_scope!(Store, hidden);`
+            // `bun_core::declare_scope!(Store, hidden);`
 
             pub struct Store {
                 /// Lazily-allocated head of the block chain — `None` until the

@@ -2,7 +2,6 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl as boringssl;
 use bun_core::{String as BunString, strings};
 use bun_event_loop::EventLoopTimer as Timer;
@@ -72,7 +71,7 @@ fn deref_guard(
     scopeguard::guard(this, drop_fn as fn(*const JSValkeyClient))
 }
 
-bun_output::define_scoped_log!(debug, RedisJS, visible);
+bun_core::define_scoped_log!(debug, RedisJS, visible);
 
 type Socket = uws::AnySocket;
 
@@ -384,10 +383,32 @@ pub struct JSValkeyClient {
     pub ref_count: bun_ptr::RefCount<JSValkeyClient>,
 }
 
-bun_event_loop::impl_timer_owner!(JSValkeyClient;
-    from_timer_ptr => timer,
-    from_reconnect_timer_ptr => reconnect_timer,
-);
+impl JSValkeyClient {
+    /// Recover `*mut Self` from a pointer to its intrusive `timer` [`EventLoopTimer`] slot.
+    /// # Safety
+    /// `t` must point at the `timer` field of a live `Self`.
+    #[inline]
+    pub unsafe fn from_timer_ptr(
+        t: *const bun_event_loop::EventLoopTimer::EventLoopTimer,
+    ) -> *mut Self {
+        // SAFETY: caller contract — `t` addresses `Self.timer` with whole-`Self`
+        // provenance.
+        unsafe { ::bun_core::from_field_ptr!(Self, timer, t) }
+    }
+
+    /// Recover `*mut Self` from a pointer to its intrusive `reconnect_timer`
+    /// [`EventLoopTimer`] slot.
+    /// # Safety
+    /// `t` must point at the `reconnect_timer` field of a live `Self`.
+    #[inline]
+    pub unsafe fn from_reconnect_timer_ptr(
+        t: *const bun_event_loop::EventLoopTimer::EventLoopTimer,
+    ) -> *mut Self {
+        // SAFETY: caller contract — `t` addresses `Self.reconnect_timer` with
+        // whole-`Self` provenance.
+        unsafe { ::bun_core::from_field_ptr!(Self, reconnect_timer, t) }
+    }
+}
 
 // `Js` (= `jsc.Codegen.JSRedisClient`) is re-exported above; `to_js`/`from_js`
 // live in that generated module.
@@ -1078,21 +1099,10 @@ impl JSValkeyClient {
             bun_core::TimespecMockMode::AllowMockedTime,
             i64::from(next_timeout_ms),
         );
-        // `bun_event_loop::Timespec` is a local stub distinct from
-        // `bun_core::Timespec`; convert by fields until they are unified.
-        timer.with_mut(|t| {
-            t.next = Timer::Timespec {
-                sec: now.sec,
-                nsec: now.nsec,
-            }
-        });
-        // `vm.timer.insert(timer)` — `Timer::All` lives in `bun_runtime`;
-        // dispatched through `RuntimeHooks` (see VirtualMachine::timer_insert).
-        let vm = std::ptr::from_ref::<VirtualMachine>(self.client.get().vm).cast_mut();
-        // SAFETY: `vm` is the live per-thread VM; `timer` is an unlinked
-        // `EventLoopTimer` field of the boxed `JSValkeyClient` (stable address
-        // until `remove_timer`/`stop_timers` unlinks it).
-        unsafe { VirtualMachine::timer_insert(vm, timer.as_ptr()) };
+        timer.with_mut(|t| t.next = now);
+        // SAFETY: single JS thread; `timer` is an unlinked `EventLoopTimer` field of
+        // the boxed `JSValkeyClient` (stable address until `remove_timer`/`stop_timers`).
+        unsafe { (*bun_jsc::timer::timer_all()).insert(timer.as_ptr()) };
         self.ref_();
     }
 
@@ -1100,10 +1110,9 @@ impl JSValkeyClient {
     fn remove_timer(&self, timer: &JsCell<Timer::EventLoopTimer>) {
         if timer.get().state == Timer::State::ACTIVE {
             // Remove the timer from the event loop
-            let vm = std::ptr::from_ref::<VirtualMachine>(self.client.get().vm).cast_mut();
-            // SAFETY: `vm` is the live per-thread VM; `timer` is currently
-            // linked into the heap (state == ACTIVE checked above).
-            unsafe { VirtualMachine::timer_remove(vm, timer.as_ptr()) };
+            // SAFETY: single JS thread; `timer` is currently linked into the
+            // heap (state == ACTIVE checked above).
+            unsafe { (*bun_jsc::timer::timer_all()).remove(timer.as_ptr()) };
 
             // self.add_timer() adds a reference to 'self' when the timer is
             // alive which is balanced here.
@@ -1597,12 +1606,11 @@ impl JSValkeyClient {
                 // Per-VM weak cache: a `duplicate()`'d client (or any
                 // other client with the same config) hits the same
                 // `SSL_CTX*` instead of rebuilding.
-                let state = crate::jsc_hooks::runtime_state();
-                debug_assert!(!state.is_null(), "RuntimeState not installed");
-                // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a
-                // stable address for the VM's lifetime, JS-thread-only.
-                let cache = unsafe { &mut (*state).ssl_ctx_cache };
-                self._secure.set(cache.get_or_create(custom, &mut err));
+                // SAFETY: per-thread VM; `ssl_ctx_cache` has a stable
+                // address for the VM's lifetime, JS-thread-only.
+                let cache = unsafe { &mut (*vm_ptr).rare_data().ssl_ctx_cache };
+                self._secure
+                    .set(cache.get_or_create_opts(&custom.as_usockets(), &mut err));
             }
             self._secure.get().is_none()
         } else {
@@ -1622,7 +1630,7 @@ impl JSValkeyClient {
             valkey::TLS::None => None,
             valkey::TLS::Enabled => {
                 // SAFETY: `vm_ptr` is the live per-thread VM (see above).
-                Some(unsafe { crate::jsc_hooks::default_client_ssl_ctx(vm_ptr) })
+                Some(unsafe { (*vm_ptr).rare_data().default_client_ssl_ctx_lazy() })
             }
             valkey::TLS::Custom(_) => Some(self._secure.get().unwrap()),
         };
@@ -1963,7 +1971,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         ssl_error: &uws::us_bun_verify_error_t,
     ) -> JsTerminatedResult<()> {
         let ssl_js_value =
-            match crate::socket::uws_jsc::verify_error_to_js(ssl_error, &this.global_object) {
+            match bun_jsc::system_error::verify_error_to_js(ssl_error, &this.global_object) {
                 Ok(v) => v,
                 Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),
                 Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
@@ -2157,7 +2165,7 @@ impl Options {
             } else if tls.is_object() {
                 // SAFETY: `bun_vm()` returns the live per-global VM pointer.
                 if let Some(ssl_config) =
-                    SSLConfig::from_js(global_object.bun_vm(), global_object, tls)?
+                    crate::socket::ssl_config::from_js(global_object.bun_vm(), global_object, tls)?
                 {
                     this.tls = valkey::TLS::Custom(Box::new(ssl_config));
                 } else {

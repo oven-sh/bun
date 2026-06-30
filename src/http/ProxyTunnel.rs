@@ -10,8 +10,8 @@ use crate::http_cert_error::HTTPCertError;
 use crate::http_context::HTTPSocket;
 use crate::internal_state::{HTTPStage, Stage};
 use crate::ssl_config::SSLConfig;
-use crate::ssl_wrapper::{Handlers as SSLWrapperHandlers, InitError, SSLWrapper, WriteDataError};
 use crate::{AlpnOffer, HTTPClient};
+use bun_uws::ssl_wrapper::{Handlers as SSLWrapperHandlers, InitError, SSLWrapper, WriteDataError};
 
 bun_core::declare_scope!(http_proxy_tunnel, visible);
 
@@ -38,9 +38,7 @@ pub(crate) fn raw_as_mut<'a>(ptr: *mut ProxyTunnel) -> &'a mut ProxyTunnel {
 type ProxyTunnelWrapper = SSLWrapper<*mut HTTPClient<'static>>;
 
 /// active socket is the socket that is currently being used
-// `HTTPSocket<B>` = `uws::SocketHandler<B>` = `NewSocketHandler<B>`, so the
-// canonical 3-arm enum lives in `bun_uws` next to its payload type.
-pub use bun_uws::MaybeAnySocket as Socket;
+use bun_uws::MaybeAnySocket as Socket;
 
 #[derive(bun_ptr::CellRefCounted)]
 pub struct ProxyTunnel {

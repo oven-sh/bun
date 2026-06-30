@@ -56,7 +56,7 @@ pub struct Linker {
     pub import_counter: usize,
     pub tagged_resolutions: TaggedResolution,
 
-    pub plugin_runner: Option<*mut dyn PluginResolver>,
+    pub plugin_runner: Option<core::ptr::NonNull<dyn PluginResolver>>,
 }
 
 pub(crate) const RUNTIME_SOURCE_PATH: &[u8] = b"bun:wrap";
@@ -516,11 +516,12 @@ impl Linker {
                         let import_record = &mut result.ast.import_records.as_mut_slice()[record_i];
                         if PluginRunner::could_be_plugin(import_record.path.text) {
                             // SAFETY: `plugin_runner` is `Some` only when set
-                            // by the owning `Transpiler` to a live JSC-heap
-                            // `PluginRunner`; the transpiler is single-threaded
-                            // and holds no other borrow of it for the duration
-                            // of `on_resolve`, so shared access is sound.
-                            let runner = unsafe { &*runner };
+                            // by the owning `Transpiler` to a `NonNull` of a
+                            // live JSC-heap `PluginRunner`; the transpiler is
+                            // single-threaded and holds no other borrow of it
+                            // for the duration of `on_resolve`, so shared
+                            // access is sound.
+                            let runner = unsafe { runner.as_ref() };
                             if let Some(path) = runner.on_resolve(
                                 import_record.path.text,
                                 file_path.text,

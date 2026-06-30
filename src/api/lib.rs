@@ -7,27 +7,9 @@
 //! downstream crates name today (`bun_ini`, `bun_install`, `bun_runtime`
 //! bunfig parser).
 //!
-//! LAYERING: the actual data shapes (`NpmRegistry`, `NpmRegistryMap`, `Ca`,
-//! `BunInstall`) were originally hand-written in two places — here *and* in
-//! `bun_options_types::schema::api`. Downstream crates ended up holding values
-//! of one and passing them to functions typed against the other (e.g.
-//! `bun_options_types::context::install` vs. `bun_ini::load_npmrc_config`),
-//! which type-errors despite identical field layout. The canonical definitions
-//! now live in `bun_options_types::schema::api` (the lower / shared crate);
-//! this crate re-exports them so existing `bun_api::*` paths keep compiling and
-//! there is exactly one `BunInstall` in the type graph.
-//!
 //! When the peechy `.rs` codegen lands it should overwrite/append to
 //! `bun_options_types::schema::api` wholesale — keep additions append-only and
 //! field-order-faithful so the diff stays reviewable.
-
-// ──────────────────────────────────────────────────────────────────────────
-// Re-exports — canonical definitions live in `bun_options_types::schema::api`.
-// ──────────────────────────────────────────────────────────────────────────
-
-pub use bun_options_types::schema::api::{
-    BunInstall, Ca, NodeLinker, NpmRegistry, NpmRegistryMap, PnpmMatcher,
-};
 
 // ──────────────────────────────────────────────────────────────────────────
 // npm_registry  — module path for the nested `NpmRegistry::Parser`
@@ -38,7 +20,7 @@ pub use bun_options_types::schema::api::{
 pub mod npm_registry {
     use bun_url::URL;
 
-    pub use super::NpmRegistry;
+    pub use bun_options_types::schema::api::NpmRegistry;
 
     // `Parser` stays generic over `L` (Log) / `S` (Source) so this leaf
     // schema crate doesn't need to name `bun_logger`. The lone live body

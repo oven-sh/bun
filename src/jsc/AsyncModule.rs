@@ -4,8 +4,7 @@ use core::sync::atomic::AtomicU32;
 use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::transpiler::ParseResult;
 use bun_core::{OwnedString, String as BunString, ZigString};
-use bun_install::dependency::Dependency;
-use bun_install::{DependencyID, Resolution};
+use bun_install::{Dependency, DependencyID, Resolution};
 use bun_io::KeepAlive;
 use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
@@ -15,8 +14,8 @@ use bun_sys::Fd;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    self as jsc, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue, JsError,
-    JsResult, ResolvedSource, StrongOptional, ZigStringJsc as _,
+    self as jsc, ErrorableResolvedSource, JSGlobalObject, JSPromise, JSValue, JsError, JsResult,
+    ResolvedSource, StrongOptional, ZigStringJsc as _,
 };
 
 bun_core::declare_scope!(AsyncModule, hidden);
@@ -26,7 +25,7 @@ pub struct InitOpts<'a> {
     pub referrer: &'a [u8],
     pub specifier: &'a [u8],
     pub path: Fs::Path<'a>,
-    pub promise_ptr: Option<*mut *mut JSInternalPromise>,
+    pub promise_ptr: Option<*mut *mut JSPromise>,
     pub fd: Option<Fd>,
     pub package_json: Option<&'a PackageJSON>,
     pub loader: bun_ast::Loader,
@@ -79,7 +78,7 @@ pub(crate) struct PackageResolveError<'a> {
     pub name: &'a [u8],
     pub err: bun_core::Error,
     pub url: &'a [u8],
-    pub version: bun_install::dependency::Version,
+    pub version: bun_install_types::dependency::Version,
 }
 
 pub type Map = Vec<AsyncModule>;
@@ -117,7 +116,7 @@ impl Queue {
 // `vm.modules.on_poll()`. The pointer is a
 // borrow into `VirtualMachine.modules`, never freed by the dispatcher.
 impl bun_event_loop::Taskable for Queue {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::PollPendingModulesTask;
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::TaskTag::PollPendingModulesTask;
 }
 
 impl AsyncModule {
@@ -310,7 +309,7 @@ impl Queue {
     /// # Safety
     /// `ctx` must point to a live [`Queue`] (the `WakeHandler::context`
     /// registered in `runtime::jsc_hooks`).
-    pub unsafe fn on_dependency_error(
+    unsafe fn on_dependency_error_impl(
         ctx: *mut c_void,
         dependency: &Dependency,
         root_dependency_id: DependencyID,
@@ -341,7 +340,7 @@ impl Queue {
                 // stable across `resolve_error` (no realloc on the error
                 // path); detach the borrow via raw ptr.
                 let name =
-                    bun_ptr::RawSlice::new(vm.package_manager().lockfile.str(&dependency.name));
+                    bun_core::RawSlice::new(vm.package_manager().lockfile.str(&dependency.name));
                 module
                     .resolve_error(
                         vm,
@@ -360,7 +359,7 @@ impl Queue {
         });
     }
 
-    pub fn on_wake_handler(ctx: *mut c_void, _: *mut c_void) {
+    fn on_wake_handler(ctx: *mut c_void, _: *mut c_void) {
         bun_core::scoped_log!(AsyncModule, "onWake");
         let queue = ctx.cast::<Queue>();
         let task = ConcurrentTaskItem::create_from(queue);
@@ -464,7 +463,7 @@ impl Queue {
         // lockfile (separate heap allocation, never reallocated on the
         // download-error path); detach via `RawSlice` so the closure can fetch
         // a fresh `&mut VirtualMachine` without borrowck tying it to this read.
-        let resolution_ids = bun_ptr::RawSlice::new(
+        let resolution_ids = bun_core::RawSlice::new(
             VirtualMachine::get()
                 .as_mut()
                 .package_manager()
@@ -604,6 +603,22 @@ impl Queue {
             // ensure we always end the progress bar
             self.vm().package_manager().end_progress_bar();
         }
+    }
+}
+
+impl bun_install_types::resolver_hooks::WakeHandlerOps for Queue {
+    unsafe fn wake(this: *mut Self, package_manager: *mut c_void) {
+        Queue::on_wake_handler(this.cast::<c_void>(), package_manager)
+    }
+
+    unsafe fn on_dependency_error(
+        this: *mut Self,
+        dep: &Dependency,
+        id: DependencyID,
+        err: bun_core::Error,
+    ) {
+        // SAFETY: caller passes the live `Queue` registered as `WakeHandler` context.
+        unsafe { Queue::on_dependency_error_impl(this.cast::<c_void>(), dep, id, err) }
     }
 }
 
@@ -958,8 +973,7 @@ impl AsyncModule {
         // element, running Drop.
         // `JSInternalPromise` is an `opaque_ffi!` ZST handle; `opaque_mut` is
         // the centralised non-null deref proof.
-        let _ =
-            JSInternalPromise::opaque_mut(promise).reject_as_handled(global_this, error_instance);
+        let _ = JSPromise::opaque_mut(promise).reject_as_handled(global_this, error_instance);
         Ok(())
     }
 
@@ -979,7 +993,7 @@ impl AsyncModule {
         // stack frame; capture as `RawSlice` so `Resolution::fmt` doesn't
         // extend the `&mut vm` borrow across the `match e` body (the `else`
         // arm calls `vm.package_manager()` again).
-        let string_bytes = bun_ptr::RawSlice::new(
+        let string_bytes = bun_core::RawSlice::new(
             vm.package_manager()
                 .lockfile
                 .buffers
@@ -1177,8 +1191,7 @@ impl AsyncModule {
         // Caller drops via retain_mut → false.
         // `JSInternalPromise` is an `opaque_ffi!` ZST handle; `opaque_mut` is
         // the centralised non-null deref proof.
-        let _ =
-            JSInternalPromise::opaque_mut(promise).reject_as_handled(global_this, error_instance);
+        let _ = JSPromise::opaque_mut(promise).reject_as_handled(global_this, error_instance);
         Ok(())
     }
 
@@ -1350,14 +1363,11 @@ impl AsyncModule {
                             .bun_watcher
                             .cast::<crate::hot_reloader::ImportWatcher>()
                     };
-                    // `bun_watcher::PackageJSON` is an opaque
-                    // forward-decl of `bun_resolver::PackageJSON`;
-                    // the watcher only stores the pointer, so cast through.
                     // SAFETY: `package_json` (when set) is a VM-lifetime
                     // backref — outlives the watcher entry.
                     let package_json = self
                         .package_json
-                        .map(|p| unsafe { &*p.as_ptr().cast::<bun_watcher::PackageJSON>() });
+                        .map(|p| unsafe { &*p.as_ptr().cast_const() });
                     let _ = watcher.add_file::<true>(
                         fd_,
                         path.text,

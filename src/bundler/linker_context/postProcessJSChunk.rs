@@ -5,7 +5,6 @@ use crate::bundle_v2::bake_types::{HmrRuntimeSide, get_hmr_runtime};
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::mal_prelude::*;
 use crate::options;
-use crate::options_impl::TargetExt as _;
 use crate::{
     Chunk, CompileResult, CompileResultForSourceMap, Index, RefImportData, ResolvedExports,
     ThreadPool,
@@ -86,7 +85,7 @@ pub fn post_process_js_chunk(
         .graph
         .symbols
         .follow(runtime_members.get(&b"__toESM"[..]).unwrap().ref_);
-    let runtime_require_ref = if c.options.output_format == options::OutputFormat::Cjs {
+    let runtime_require_ref = if c.options.output_format == options::Format::Cjs {
         None
     } else {
         Some(
@@ -98,7 +97,7 @@ pub fn post_process_js_chunk(
 
     // Create ModuleInfo for ESM bytecode in --compile builds
     let generate_module_info = c.options.generate_bytecode_cache
-        && c.options.output_format == options::OutputFormat::Esm
+        && c.options.output_format == options::Format::Esm
         && c.options.compile;
     let loader =
         c.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize];
@@ -517,7 +516,7 @@ pub fn post_process_js_chunk(
     // Add @bun comments and CJS wrapper start for each chunk when targeting Bun.
     let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun();
     if is_bun {
-        if c.options.generate_bytecode_cache && output_format == options::OutputFormat::Cjs {
+        if c.options.generate_bytecode_cache && output_format == options::Format::Cjs {
             const INPUT: &[u8] =
                 b"// @bun @bytecode @bun-cjs\n(function(exports, require, module, __filename, __dirname) {";
             j.push_static(INPUT);
@@ -525,7 +524,7 @@ pub fn post_process_js_chunk(
         } else if c.options.generate_bytecode_cache {
             j.push_static(b"// @bun @bytecode\n");
             line_offset.advance(b"// @bun @bytecode\n");
-        } else if output_format == options::OutputFormat::Cjs {
+        } else if output_format == options::Format::Cjs {
             const INPUT: &[u8] =
                 b"// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {";
             j.push_static(INPUT);
@@ -561,7 +560,7 @@ pub fn post_process_js_chunk(
 
     // For Kit, hoist runtime.js outside of the IIFE
     let compile_results = &chunk.compile_results_for_chunk;
-    if c.options.output_format == options::OutputFormat::InternalBakeDev {
+    if c.options.output_format == options::Format::InternalBakeDev {
         for compile_result in compile_results.iter() {
             let source_index = compile_result.source_index();
             if source_index != Index::RUNTIME.value() {
@@ -573,7 +572,7 @@ pub fn post_process_js_chunk(
     }
 
     match c.options.output_format {
-        options::OutputFormat::InternalBakeDev => {
+        options::Format::InternalBakeDev => {
             let start = get_hmr_runtime(if c.options.target.is_server_side() {
                 HmrRuntimeSide::Server
             } else {
@@ -582,7 +581,7 @@ pub fn post_process_js_chunk(
             j.push_static(start.code);
             line_offset.advance(start.code);
         }
-        options::OutputFormat::Iife => {
+        options::Format::Iife => {
             // Bun does not do arrow function lowering. So the wrapper can be an arrow.
             let start: &[u8] = if c.options.minify_whitespace {
                 b"(()=>{"
@@ -655,8 +654,8 @@ pub fn post_process_js_chunk(
             };
 
             if !c.options.minify_whitespace
-                && (output_format == options::OutputFormat::Iife
-                    || output_format == options::OutputFormat::InternalBakeDev)
+                && (output_format == options::Format::Iife
+                    || output_format == options::Format::InternalBakeDev)
             {
                 j.push_static(b"  ");
                 line_offset.advance(b"  ");
@@ -711,7 +710,7 @@ pub fn post_process_js_chunk(
         }
 
         if is_runtime {
-            if c.options.output_format != options::OutputFormat::InternalBakeDev {
+            if c.options.output_format != options::Format::InternalBakeDev {
                 line_offset.advance(compile_result.code());
                 j.push(compile_result.code());
             }
@@ -771,7 +770,7 @@ pub fn post_process_js_chunk(
     }
 
     match output_format {
-        options::OutputFormat::Iife => {
+        options::Format::Iife => {
             const WITHOUT_NEWLINE: &[u8] = b"})();";
 
             let with_newline: &[u8] = if newline_before_comment {
@@ -782,7 +781,7 @@ pub fn post_process_js_chunk(
 
             j.push_static(with_newline);
         }
-        options::OutputFormat::InternalBakeDev => {
+        options::Format::InternalBakeDev => {
             {
                 let str = b"}, {\n  main: ";
                 j.push_static(str);
@@ -809,7 +808,7 @@ pub fn post_process_js_chunk(
                 line_offset.advance(str);
             }
         }
-        options::OutputFormat::Cjs => {
+        options::Format::Cjs => {
             if is_bun {
                 j.push_static(b"})\n");
                 line_offset.advance(b"})\n");
@@ -930,7 +929,7 @@ pub fn generate_entry_point_tail_js<'a>(
     let ast = c.graph.ast.get(source_index as usize);
 
     match c.options.output_format {
-        options::OutputFormat::Esm => {
+        options::Format::Esm => {
             match flags.wrap {
                 crate::WrapKind::Cjs => {
                     stmts.push(Stmt::alloc(
@@ -1242,14 +1241,14 @@ pub fn generate_entry_point_tail_js<'a>(
         }
 
         // TODO: iife
-        options::OutputFormat::Iife => {}
+        options::Format::Iife => {}
 
-        options::OutputFormat::InternalBakeDev => {
+        options::Format::InternalBakeDev => {
             // nothing needs to be done here, as the exports are already
             // forwarded in the module closure.
         }
 
-        options::OutputFormat::Cjs => {
+        options::Format::Cjs => {
             match flags.wrap {
                 crate::WrapKind::Cjs => {
                     // "module.exports = require_foo();"
@@ -1346,6 +1345,7 @@ pub fn generate_entry_point_tail_js<'a>(
         };
     }
 
+    let require_or_import_meta_cb = c.require_or_import_meta_callback();
     let print_options = js_printer::Options {
         // TODO: IIFE indent
         indent: Default::default(),
@@ -1353,9 +1353,7 @@ pub fn generate_entry_point_tail_js<'a>(
 
         to_esm_ref,
         to_commonjs_ref: to_common_js_ref,
-        require_or_import_meta_for_source_callback: js_printer::RequireOrImportMetaCallback::init::<
-            LinkerContext,
-        >(c),
+        require_or_import_meta_for_source_callback: require_or_import_meta_cb,
 
         minify_whitespace: c.options.minify_whitespace,
         print_dce_annotations: c.options.emit_dce_annotations,

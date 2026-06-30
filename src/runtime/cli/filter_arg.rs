@@ -2,10 +2,11 @@ use core::mem::MaybeUninit;
 
 use bun_ast::{self, ExprData, Log};
 use bun_core::Global;
+use bun_core::PathBuffer;
 use bun_core::{ZStr, strings};
 use bun_glob as glob;
 use bun_parsers::json;
-use bun_paths::{self, PathBuffer, platform, resolve_path};
+use bun_paths::{self, platform, resolve_path};
 use bun_sys;
 
 const SKIP_LIST: &[&[u8]] = &[
@@ -249,9 +250,9 @@ impl FilterSet {
 pub(crate) struct PackageFilterIterator {
     // `patterns` and `root_dir` borrow from the caller.
     // Callers keep them alive for the iterator's lifetime — `RawSlice` invariant.
-    patterns: bun_ptr::RawSlice<Box<[u8]>>,
+    patterns: bun_core::RawSlice<Box<[u8]>>,
     pattern_idx: usize,
-    root_dir: bun_ptr::RawSlice<u8>,
+    root_dir: bun_core::RawSlice<u8>,
 
     // Heap-allocated via `Box::into_raw` so the `iter` borrow stays valid if `self` moves.
     // Null iff `valid == false` (`init_walker` tears down on failure to keep this).
@@ -268,9 +269,9 @@ impl PackageFilterIterator {
     ) -> Result<PackageFilterIterator, bun_core::Error> {
         Ok(PackageFilterIterator {
             // Caller keeps `patterns`/`root_dir` alive for the iterator's lifetime — `RawSlice` invariant.
-            patterns: bun_ptr::RawSlice::new(patterns),
+            patterns: bun_core::RawSlice::new(patterns),
             pattern_idx: 0,
-            root_dir: bun_ptr::RawSlice::new(root_dir),
+            root_dir: bun_core::RawSlice::new(root_dir),
             walker: core::ptr::null_mut(),
             iter: MaybeUninit::uninit(),
             valid: false,

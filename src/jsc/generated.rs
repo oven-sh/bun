@@ -17,7 +17,7 @@
 //! Until both generators grow a `.rs` backend, this file ports their output by
 //! hand for the handful of shapes downstream crates name directly
 //! (`bun_jsc::generated::{SocketConfig*, SSLConfig*, JSTimeout, JSImmediate,
-//! JSBlob, JSResponse, JSRequest}`).
+//! JSBlob, JSRequest}`).
 //!
 //! Symbol-naming contract (kept in sync with generate-classes.ts):
 //!   `${T}Prototype__${name}GetCachedValue(JSValue) -> JSValue`
@@ -97,12 +97,8 @@ pub type GenString = bun_core::String;
 pub type GenArrayBuffer = *mut JSCArrayBuffer;
 
 /// `bun.bun_js.webcore.Blob.Ref` — adopted `*mut Blob` (the codegen `m_ctx`
-/// payload). LAYERING: `webcore::Blob` lives in `bun_runtime` (a dependent of
-/// this crate); the bindgen extern struct only ever stores the raw pointer
-/// (filled by C++ `bindgenConvertJSTo*`), so it stays erased as `*mut c_void`
-/// here and is cast to `*mut bun_runtime::webcore::Blob` by the consumer in
-/// `bun_runtime::api::bun::spawn::stdio::convert_from_extern`.
-pub type GenBlob = *mut core::ffi::c_void;
+/// payload, filled by C++ `bindgenConvertJSTo*`).
+pub type GenBlob = *mut crate::webcore_types::Blob;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Extern-ABI helper layouts.
@@ -351,7 +347,7 @@ fn release_gen_val_array_buffer(b: &GenVal<GenArrayBuffer>) {
     if !b.0.is_null() {
         // SAFETY: `b.0` is the `RefPtr<JSC::ArrayBuffer>::leakRef()` result from
         // C++ `ExternTraits` — a live `JSC::ArrayBuffer*` carrying +1.
-        unsafe { <JSCArrayBuffer as bun_ptr::ExternalSharedDescriptor>::ext_deref(b.0) };
+        unsafe { <JSCArrayBuffer as bun_core::ExternalSharedDescriptor>::ext_deref(b.0) };
     }
 }
 
@@ -361,7 +357,7 @@ fn release_gen_val_blob(b: &GenVal<GenBlob>) {
         // SAFETY: `b.0` is the `RefPtr<BlobImpl>::leakRef()` result from C++
         // `ExternTraits` — a live heap-allocated `Blob*` carrying +1.
         unsafe {
-            <crate::webcore_types::Blob as bun_ptr::ExternalSharedDescriptor>::ext_deref(
+            <crate::webcore_types::Blob as bun_core::ExternalSharedDescriptor>::ext_deref(
                 b.0.cast::<crate::webcore_types::Blob>(),
             )
         };
@@ -563,7 +559,9 @@ struct ExternSSLConfig {
 }
 
 // safe: same handle/out-param contract as
-// `bindgenConvertJSToSocketConfigHandlers` above.
+// `bindgenConvertJSToSocketConfigHandlers` above. `improper_ctypes`: the
+// `Blob` payload's `Store` never crosses this boundary by value.
+#[allow(improper_ctypes)]
 unsafe extern "C" {
     safe fn bindgenConvertJSToSSLConfig(
         global: &JSGlobalObject,
@@ -691,7 +689,9 @@ struct ExternSocketConfig {
 }
 
 // safe: same handle/out-param contract as
-// `bindgenConvertJSToSocketConfigHandlers` above.
+// `bindgenConvertJSToSocketConfigHandlers` above; `improper_ctypes`: see the
+// `bindgenConvertJSToSSLConfig` block above.
+#[allow(improper_ctypes)]
 unsafe extern "C" {
     safe fn bindgenConvertJSToSocketConfig(
         global: &JSGlobalObject,
@@ -859,7 +859,7 @@ macro_rules! poll_ref_hostfns {
 // to a per-type generated accessor module (any module exposing the standard
 // `from_js` / `from_js_direct` / `to_js` [/ `get_constructor`] free-fn surface:
 // `crate::generated_classes::js_$T` from generate-classes.ts, the
-// `js_class_module!` expansions in this file, or `bun_sql_jsc::jsc::codegen`).
+// `js_class_module!` expansions in this file, or `bun_runtime::sql_jsc::jsc::codegen`).
 //
 // The three generators disagree on `from_js`'s return shape
 // (`Option<NonNull<T>>` vs `Option<*mut T>` vs `Option<*mut ()>`); the
@@ -1035,10 +1035,16 @@ macro_rules! js_class_module {
                     safe fn __from_js_direct(value: JSValue) -> *mut Payload;
                     #[link_name = concat!($TypeName, "__create")]
                     safe fn __create(global: *mut JSGlobalObject, ptr: *mut Payload) -> JSValue;
+                    // `*mut` (not `&`) to byte-match the `#[bun_jsc::JsClass]`
+                    // and `generated_classes.rs` declarations of the same symbol
+                    // (`clashing_extern_declarations` compares signatures).
                     #[link_name = concat!($TypeName, "__getConstructor")]
-                    safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
+                    safe fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
                     #[link_name = concat!($TypeName, "__dangerouslySetPtr")]
-                    fn __dangerously_set_ptr(value: JSValue, ptr: *mut Payload) -> bool;
+                    // `safe fn` to byte-match the `generated_classes.rs`
+                    // declaration of the same symbol; the public wrapper below
+                    // stays `unsafe` (deferred-deref ownership precondition).
+                    safe fn __dangerously_set_ptr(value: JSValue, ptr: *mut Payload) -> bool;
                 }
             }
 
@@ -1089,7 +1095,7 @@ macro_rules! js_class_module {
             /// Lazily fetch the constructor `JSFunction` from `globalObject`.
             #[inline]
             pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
-                __get_constructor(global)
+                __get_constructor(global.as_ptr())
             }
 
             /// Detach (`ptr = null`) or replace the wrapped native pointer on
@@ -1101,20 +1107,19 @@ macro_rules! js_class_module {
             /// once elsewhere — the C++ side overwrites without freeing.
             #[inline]
             pub unsafe fn dangerously_set_ptr(value: JSValue, ptr: *mut Payload) -> bool {
-                // SAFETY: `value` is a valid encoded JSValue; the C++ side
+                // `value` is a valid encoded JSValue; the C++ side
                 // type-checks before writing `m_ctx`.
-                unsafe { __dangerously_set_ptr(value, ptr) }
+                __dangerously_set_ptr(value, ptr)
             }
         }
     };
 }
 
-js_class_module!(JSTimeout   = "Timeout"   { callback, arguments, idleTimeout, repeat, idleStart });
-js_class_module!(JSImmediate = "Immediate" { callback, arguments });
+js_class_module!(JSTimeout   = "Timeout"   as crate::timer::timeout_object::TimeoutObject { callback, arguments, idleTimeout, repeat, idleStart });
+js_class_module!(JSImmediate = "Immediate" as crate::timer::immediate_object::ImmediateObject { callback, arguments });
 // Payload `Blob` lives in this crate (`webcore_types`) — pass it so the extern
 // signatures unify with the typed declarations there.
 js_class_module!(JSBlob      = "Blob"      as crate::webcore_types::Blob { name, stream });
-js_class_module!(JSResponse  = "Response"  { body, headers, url, statusText, stream });
 js_class_module!(JSRequest   = "Request"   { body, headers, url, signal, stream });
 // `values: ["ondrain", "oncancel", "stream"]` in src/runtime/api/ResumableSink.classes.ts.
 js_class_module!(JSResumableFetchSink    = "ResumableFetchSink"    { ondrain, oncancel, stream });

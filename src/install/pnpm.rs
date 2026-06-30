@@ -7,18 +7,19 @@ use bun_collections::StringArrayHashMap;
 
 use bun_ast::{self, self as js_ast, E, Expr, ExprData, G};
 use bun_core::strings;
+use bun_install_types::resolver_hooks::{Architecture, OperatingSystem};
 use bun_semver as semver;
 use bun_semver::{ExternalString, String};
 use bun_sys::{self as sys, Fd};
 
+use crate::ExternalSlice;
 use crate::bin::Bin;
-use crate::dependency::{self, Dependency, DependencyExt as _};
-use crate::external_slice::ExternalSlice;
 use crate::integrity::Integrity;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
 use crate::npm::{self};
 use crate::resolution::{self, Resolution, TaggedValue};
 use crate::{DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager};
+use bun_install_types::dependency::{self, Dependency};
 
 // A single long-lived `Buf` for the whole function would lock out every other
 // `lockfile.*` access. Construct a fresh `Buf` per append so the mutable
@@ -154,9 +155,9 @@ impl From<bun_core::Error> for MigratePnpmLockfileError {
     }
 }
 
-impl From<crate::lockfile_real::tree::SubtreeError> for MigratePnpmLockfileError {
-    fn from(e: crate::lockfile_real::tree::SubtreeError) -> Self {
-        use crate::lockfile_real::tree::SubtreeError as E;
+impl From<crate::lockfile::tree::SubtreeError> for MigratePnpmLockfileError {
+    fn from(e: crate::lockfile::tree::SubtreeError) -> Self {
+        use crate::lockfile::tree::SubtreeError as E;
         match e {
             E::OutOfMemory => Self::OutOfMemory,
             E::DependencyLoop => Self::DependencyLoop,
@@ -173,9 +174,9 @@ impl From<resolution::FromPnpmLockfileError> for MigratePnpmLockfileError {
     }
 }
 
-impl From<crate::lockfile_real::catalog_map::FromPnpmLockfileError> for MigratePnpmLockfileError {
-    fn from(e: crate::lockfile_real::catalog_map::FromPnpmLockfileError) -> Self {
-        use crate::lockfile_real::catalog_map::FromPnpmLockfileError as E;
+impl From<crate::lockfile::catalog_map::FromPnpmLockfileError> for MigratePnpmLockfileError {
+    fn from(e: crate::lockfile::catalog_map::FromPnpmLockfileError) -> Self {
+        use crate::lockfile::catalog_map::FromPnpmLockfileError as E;
         match e {
             E::OutOfMemory => Self::OutOfMemory,
             E::InvalidPnpmLockfile => Self::InvalidPnpmLockfile,
@@ -318,7 +319,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         if let Some(mut catalogs_expr) = root.get_object(b"catalogs") {
             // Borrowck: split `lockfile` into disjoint fields — `catalogs`
             // vs. the `string_bytes`/`string_pool` pair that `sbuf!` borrows.
-            crate::lockfile_real::CatalogMap::from_pnpm_lockfile(
+            crate::lockfile::CatalogMap::from_pnpm_lockfile(
                 &mut lockfile.catalogs,
                 log,
                 e_object_mut(&mut catalogs_expr),
@@ -349,7 +350,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 let dep = Dependency {
                     name,
                     name_hash,
-                    version: match Dependency::parse(
+                    version: match dependency::parse(
                         name,
                         name_hash,
                         version_sliced.slice,
@@ -537,7 +538,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
         let mut pkg_map: StringArrayHashMap<PackageID> = StringArrayHashMap::new();
 
-        pkg_map.put(crate::bun_fs::FileSystem::instance().top_level_dir(), 0)?;
+        pkg_map.put(bun_resolver::fs::FileSystem::instance().top_level_dir(), 0)?;
 
         let workspace_pkgs_off = lockfile.packages.len();
 
@@ -666,7 +667,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 }
 
                 match dep.version.tag {
-                    dependency::VersionTag::Folder | dependency::VersionTag::Workspace => {
+                    dependency::Tag::Folder | dependency::Tag::Workspace => {
                         let Some(version_str) =
                             importer_versions.get(dep.name.slice(string_bytes!(lockfile)))
                         else {
@@ -679,7 +680,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                             b"link:",
                         ) {
                             // create a link package for the workspace dependency only if it doesn't already exist
-                            if dep.version.tag == dependency::VersionTag::Workspace {
+                            if dep.version.tag == dependency::Tag::Workspace {
                                 let mut link_path_buf =
                                     bun_paths::AutoAbsPath::init_top_level_dir();
                                 let _ = link_path_buf.append(workspace_path); // OOM/capacity error is non-actionable here
@@ -728,7 +729,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                             *pkg_entry.value_ptr = lockfile.append_package_dedupe(&mut pkg)?;
                         }
                     }
-                    dependency::VersionTag::Symlink => {
+                    dependency::Tag::Symlink => {
                         if !strings::is_npm_package_name(
                             dep.version.symlink().slice(string_bytes!(lockfile)),
                         ) {
@@ -831,7 +832,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     let patch_hash = semver::string::Builder::string_hash(&patch_join_buf);
                     lockfile.patched_dependencies.put(
                         patch_hash,
-                        crate::lockfile_real::PatchedDep::with_path(patch.value.path),
+                        crate::lockfile::PatchedDep::with_path(patch.value.path),
                     )?;
                 }
 
@@ -915,10 +916,10 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 }
 
                 if let Some(os_expr) = package_obj.get(b"os") {
-                    pkg.meta.os = npm::negatable_from_json::<npm::OperatingSystem>(&os_expr)?;
+                    pkg.meta.os = npm::negatable_from_json::<OperatingSystem>(&os_expr)?;
                 }
                 if let Some(cpu_expr) = package_obj.get(b"cpu") {
-                    pkg.meta.arch = npm::negatable_from_json::<npm::Architecture>(&cpu_expr)?;
+                    pkg.meta.arch = npm::negatable_from_json::<Architecture>(&cpu_expr)?;
                 }
                 // TODO: libc
 
@@ -1114,9 +1115,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             let version_without_suffix = remove_suffix(version);
 
             match dep.version.tag {
-                dependency::VersionTag::Folder
-                | dependency::VersionTag::Symlink
-                | dependency::VersionTag::Workspace => {
+                dependency::Tag::Folder | dependency::Tag::Symlink | dependency::Tag::Workspace => {
                     let maybe_symlink_or_folder_or_workspace_path =
                         strings::without_prefix(version_without_suffix, b"link:");
                     let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
@@ -1161,7 +1160,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         loaded_from_binary_lockfile: false,
         migrated: lockfile::Migrated::Pnpm,
         serializer_result: Default::default(),
-        format: lockfile::Format::Text,
+        format: lockfile::LockfileFormat::Text,
     }))
 }
 
@@ -1252,7 +1251,7 @@ fn parse_append_package_dependencies(
                     name: name.value,
                     name_hash,
                     behavior,
-                    version: match Dependency::parse(
+                    version: match dependency::parse(
                         name.value,
                         name.hash,
                         version_sliced.slice,
@@ -1367,7 +1366,7 @@ fn parse_append_package_dependencies(
                             name: name.value,
                             name_hash: name.hash,
                             behavior,
-                            version: match Dependency::parse(
+                            version: match dependency::parse(
                                 alias.map(|a| a.value).unwrap_or(name.value),
                                 alias.map(|a| a.hash).unwrap_or(name.hash),
                                 version_sliced.slice,
@@ -1392,7 +1391,7 @@ fn parse_append_package_dependencies(
                 name: name.value,
                 name_hash: name.hash,
                 behavior: dependency::Behavior::PROD,
-                version: match Dependency::parse(
+                version: match dependency::parse(
                     alias.map(|a| a.value).unwrap_or(name.value),
                     alias.map(|a| a.hash).unwrap_or(name.hash),
                     version_sliced.slice,
@@ -1533,7 +1532,7 @@ fn parse_append_importer_dependencies(
                     name: name.value,
                     name_hash: name.hash,
                     behavior,
-                    version: match Dependency::parse(
+                    version: match dependency::parse(
                         name.value,
                         name.hash,
                         specifier_sliced.slice,
@@ -1584,7 +1583,7 @@ fn parse_append_importer_dependencies(
                     name_hash,
                     behavior: dependency::Behavior::WORKSPACE,
                     version: dependency::Version {
-                        tag: dependency::VersionTag::Workspace,
+                        tag: dependency::Tag::Workspace,
                         value: dependency::Value {
                             workspace: sbuf!(lockfile).append(path)?,
                         },

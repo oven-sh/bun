@@ -256,7 +256,7 @@ pub(crate) fn get_credentials_with_options(
                         "contentDisposition must not contain newline characters (CR/LF)"
                     )));
                 }
-                new_credentials.content_disposition = Some(bun_ptr::RawSlice::new(utf8.slice()));
+                new_credentials.content_disposition = Some(bun_core::RawSlice::new(utf8.slice()));
                 new_credentials._content_disposition_slice = Some(utf8);
             }
 
@@ -266,7 +266,7 @@ pub(crate) fn get_credentials_with_options(
                         "type must not contain newline characters (CR/LF)"
                     )));
                 }
-                new_credentials.content_type = Some(bun_ptr::RawSlice::new(utf8.slice()));
+                new_credentials.content_type = Some(bun_core::RawSlice::new(utf8.slice()));
                 new_credentials._content_type_slice = Some(utf8);
             }
 
@@ -278,7 +278,7 @@ pub(crate) fn get_credentials_with_options(
                         "contentEncoding must not contain newline characters (CR/LF)"
                     )));
                 }
-                new_credentials.content_encoding = Some(bun_ptr::RawSlice::new(utf8.slice()));
+                new_credentials.content_encoding = Some(bun_core::RawSlice::new(utf8.slice()));
                 new_credentials._content_encoding_slice = Some(utf8);
             }
 

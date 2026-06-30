@@ -2,16 +2,16 @@ use std::sync::LazyLock;
 
 use bun_collections::{ArrayHashMap, ArrayIdentityContextU64};
 // `Expr` here is the T2 `bun_ast::Expr` (re-exported via
-// `crate::bun_json`), not the T4 `bun_ast::Expr`. The sole caller
-// (`lockfile::Package::parse_with_json`) holds a JSON-parsed `bun_json::Expr`,
+// `bun_parsers::json`), not the T4 `bun_ast::Expr`. The sole caller
+// (`lockfile::Package::parse_with_json`) holds a JSON-parsed `bun_parsers::json::Expr`,
 // so binding to the lower-tier type avoids a cross-tier mismatch.
 use bun_ast as js_ast;
 use bun_semver as semver;
 
 use crate::lockfile::package::Meta;
 use crate::lockfile::tree::Id as TreeId;
-use crate::npm;
 use crate::{PackageID, PackageNameHash};
+use bun_install_types::resolver_hooks::{Architecture, OperatingSystem};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PostinstallOptimizer {
@@ -93,13 +93,13 @@ impl PostinstallOptimizer {
     pub fn get_native_binlink_replacement_package_id(
         resolutions: &[PackageID],
         metas: &[Meta],
-        target_cpu: npm::Architecture,
-        target_os: npm::OperatingSystem,
+        target_cpu: Architecture,
+        target_os: OperatingSystem,
     ) -> Option<PackageID> {
         // Windows needs file extensions.
         // Wrap the raw bit in the newtype since `WIN32` is exported as the
         // underlying `u16` repr, not `Self`.
-        if target_os.is_match(npm::OperatingSystem(npm::OperatingSystem::WIN32)) {
+        if target_os.is_match(OperatingSystem(OperatingSystem::WIN32)) {
             return None;
         }
 
@@ -110,7 +110,7 @@ impl PostinstallOptimizer {
                 continue;
             }
             let meta: &Meta = &metas[resolution as usize];
-            if meta.arch == npm::Architecture::ALL || meta.os == npm::OperatingSystem::ALL {
+            if meta.arch == Architecture::ALL || meta.os == OperatingSystem::ALL {
                 continue;
             }
             if meta.arch.is_match(target_cpu) && meta.os.is_match(target_os) {
@@ -177,8 +177,8 @@ impl List {
         pkg_info: &PkgInfo<'_>,
         resolutions: &[PackageID],
         metas: &[Meta],
-        target_cpu: npm::Architecture,
-        target_os: npm::OperatingSystem,
+        target_cpu: Architecture,
+        target_os: OperatingSystem,
         tree_id: Option<TreeId>,
     ) -> bool {
         // The feature flag defaults to false; see note on the binlinker flag above.

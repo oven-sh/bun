@@ -1,13 +1,13 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 pub(crate) fn to_have_been_called_once(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    bun_jsc::mark_binding!();
+    bun_core::mark_binding!();
     let (this, calls, _value) = this.mock_prologue(
         global,
         frame.this(),

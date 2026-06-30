@@ -4,6 +4,7 @@
 //! → resolve to builtin or spawn subprocess → await exit.
 
 use crate::shell::ExitCode;
+use crate::shell::RedirectFlagsExt as _;
 use crate::shell::ast;
 use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
 use crate::shell::interpreter::{CowFd, Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
@@ -663,7 +664,7 @@ impl Cmd {
             let process = subproc.proc();
             if process.has_exited() {
                 let status = process.status.clone();
-                process.on_exit(status, &crate::api::bun::process::rusage_zeroed());
+                process.on_exit(status, &crate::api::bun::rusage_zeroed());
             } else {
                 process.wait(false);
             }
@@ -692,7 +693,7 @@ impl Cmd {
         interp: &Interpreter,
         this: NodeId,
         stdio: &mut [Stdio; 3],
-    ) -> crate::jsc::JsResult<Option<Yield>> {
+    ) -> bun_jsc::JsResult<Option<Yield>> {
         const STDIN_NO: usize = 0;
         const STDOUT_NO: usize = 1;
         const STDERR_NO: usize = 2;
@@ -734,9 +735,9 @@ impl Cmd {
                 if let Some(buf) = jsval.as_array_buffer(global) {
                     let mk_out = || {
                         let pinned = jsval.as_pinned_arraybuffer(global);
-                        Stdio::ArrayBuffer(crate::jsc::array_buffer::ArrayBufferStrong {
+                        Stdio::ArrayBuffer(bun_jsc::array_buffer::ArrayBufferStrong {
                             array_buffer: pinned.unwrap_or(buf),
-                            held: crate::jsc::StrongOptional::create(buf.value, global),
+                            held: bun_jsc::StrongOptional::create(buf.value, global),
                         })
                     };
                     if flags.stdin() {

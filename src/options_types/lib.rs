@@ -1,6 +1,7 @@
 #![feature(adt_const_params)]
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
+pub mod bake;
 pub mod bundle_enums;
 pub mod code_coverage_options;
 pub mod command_tag;
@@ -9,6 +10,7 @@ pub mod context;
 pub mod global_cache;
 pub mod jsx;
 pub mod offline_mode;
+pub mod resolve_options;
 pub mod schema;
 
 pub use jsx as JSX;
@@ -20,7 +22,7 @@ pub use jsx as JSX;
 // (`Format`, `ModuleType`, …) are surfaced from this crate.
 pub use bundle_enums::{
     BuiltInModule, BundlePackage, ForceNodeEnv, Format, ImportKindExt, LOADER_API_NAMES, LoaderExt,
-    LoaderOptionalExt, ModuleType, TargetExt, WindowsOptions,
+    LoaderOptionalExt, ModuleType, TargetExt, WindowsOptions, bundle_defaults, owned_string_list,
 };
 
 /// Compiled-standalone-binary virtual filesystem path prefix + predicate.

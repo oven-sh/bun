@@ -1355,44 +1355,86 @@ pub struct TaskCallbackContext {
     pub root_request_id: u32,
 }
 
-/// Opaque
-/// (ctx-ptr + 2 fn-ptrs) handle the runtime installs to nudge the JS event
-/// loop when a network task completes. The resolver only stores and forwards
-/// it; the fields are `Option` so `Default` is all-None.
-///
-/// `handler`'s second parameter (`*PackageManager`) is erased to
-/// `*mut c_void` because that concrete type lives in `bun_install` (a higher
-/// tier); `bun_install::PackageManager::wake` casts at the call site.
-/// `on_dependency_error`'s `Dependency` parameter is *not* erased — the type
-/// lives in this crate — so callers pass the borrow directly.
-// Clone: bitwise OK — `context` is a non-owning opaque backref the runtime
-// installed; the handler fn-ptrs are POD.
-#[derive(Default, Copy, Clone)]
-pub struct WakeHandler {
-    pub context: Option<NonNull<c_void>>,
-    pub handler: Option<fn(*mut c_void, *mut c_void)>,
-    pub on_dependency_error:
-        Option<unsafe fn(*mut c_void, &Dependency, DependencyID, bun_core::Error)>,
+/// Trait the runtime's module-queue implements so resolver network tasks can
+/// nudge the JS event loop. `package_manager` stays erased: the carrier crate
+/// sits below both bun_install (PackageManager) and bun_jsc (Queue).
+pub trait WakeHandlerOps {
+    unsafe fn wake(this: *mut Self, package_manager: *mut c_void);
+    unsafe fn on_dependency_error(
+        this: *mut Self,
+        dep: &Dependency,
+        id: DependencyID,
+        err: bun_core::Error,
+    );
 }
 
+pub struct WakeHandlerVTable {
+    pub wake: unsafe fn(*mut c_void, *mut c_void),
+    pub on_dependency_error: unsafe fn(*mut c_void, &Dependency, DependencyID, bun_core::Error),
+}
+
+unsafe fn wh_wake<T: WakeHandlerOps>(p: *mut c_void, pm: *mut c_void) {
+    // SAFETY: `p` is the `*mut T` captured by `WakeHandler::of::<T>`.
+    unsafe { T::wake(p.cast::<T>(), pm) }
+}
+
+unsafe fn wh_dep_err<T: WakeHandlerOps>(
+    p: *mut c_void,
+    dep: &Dependency,
+    id: DependencyID,
+    err: bun_core::Error,
+) {
+    // SAFETY: `p` is the `*mut T` captured by `WakeHandler::of::<T>`.
+    unsafe { T::on_dependency_error(p.cast::<T>(), dep, id, err) }
+}
+
+#[derive(Copy, Clone)]
+pub struct WakeHandlerRef {
+    pub context: NonNull<c_void>,
+    pub vtable: &'static WakeHandlerVTable,
+}
+
+#[derive(Default, Copy, Clone)]
+pub struct WakeHandler(pub Option<WakeHandlerRef>);
+
 impl WakeHandler {
-    #[inline]
-    pub fn get_handler(&self) -> fn(*mut c_void, *mut c_void) {
-        // `handler` is Some whenever `context` is Some: the sole installer
-        // (runtime::jsc_hooks) sets `context`, `handler`, and
-        // `on_dependency_error` together in one struct literal, and callers
-        // gate on `context.is_some()` before invoking — so this unwrap cannot
-        // fire.
-        self.handler.unwrap()
+    pub fn of<T: WakeHandlerOps>(context: NonNull<T>) -> WakeHandler {
+        struct H<T>(core::marker::PhantomData<T>);
+        impl<T: WakeHandlerOps> H<T> {
+            const VT: WakeHandlerVTable = WakeHandlerVTable {
+                wake: wh_wake::<T>,
+                on_dependency_error: wh_dep_err::<T>,
+            };
+        }
+        WakeHandler(Some(WakeHandlerRef {
+            context: context.cast(),
+            vtable: &H::<T>::VT,
+        }))
     }
 
     #[inline]
-    pub fn get_on_dependency_error(
-        &self,
-    ) -> unsafe fn(*mut c_void, &Dependency, DependencyID, bun_core::Error) {
-        // Same invariant as `get_handler`: set together with `context` by the
-        // sole installer; callers gate on `context.is_some()`.
-        self.on_dependency_error.unwrap()
+    pub fn is_set(&self) -> bool {
+        self.0.is_some()
+    }
+
+    /// `package_manager` is forwarded to the registered handler verbatim and
+    /// never dereferenced here.
+    #[inline]
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn wake(&self, package_manager: *mut c_void) {
+        if let Some(h) = self.0 {
+            // SAFETY: `h.context` is the live `*mut T` captured by `of::<T>`
+            // (owner outlives the handler registration).
+            unsafe { (h.vtable.wake)(h.context.as_ptr(), package_manager) }
+        }
+    }
+
+    #[inline]
+    pub fn on_dependency_error(&self, dep: &Dependency, id: DependencyID, err: bun_core::Error) {
+        if let Some(h) = self.0 {
+            // SAFETY: same context-liveness contract as `wake`.
+            unsafe { (h.vtable.on_dependency_error)(h.context.as_ptr(), dep, id, err) }
+        }
     }
 }
 
@@ -1521,7 +1563,7 @@ pub trait AutoInstaller {
     /// id assigned to the appended package.
     fn lockfile_append_from_package_json(
         &mut self,
-        package_json: &dyn PackageJsonView,
+        package_json: PackageJsonRef<'_>,
         features: Features,
     ) -> core::result::Result<PackageID, bun_core::Error>;
     fn lockfile_append_root_stub(&mut self) -> core::result::Result<PackageID, bun_core::Error>;
@@ -1583,17 +1625,15 @@ pub trait AutoInstaller {
     fn infer_dependency_tag(&self, dependency: &[u8]) -> DependencyVersionTag;
 }
 
-/// Read-only view of `bun_resolver::PackageJSON` that
-/// [`AutoInstaller::lockfile_append_from_package_json`] needs. Defined here
-/// (not in `bun_resolver`) so `bun_install` can name it without depending on
-/// the resolver crate at the trait-definition layer.
-pub trait PackageJsonView {
-    fn name(&self) -> &[u8];
-    fn version(&self) -> &[u8];
-    fn source_path(&self) -> &[u8];
+/// Borrowed install-side view of `bun_resolver::package_json::PackageJSON`,
+/// built by `PackageJSON::as_install_ref()` at the auto-install call site.
+#[derive(Clone, Copy)]
+pub struct PackageJsonRef<'a> {
+    pub name: &'a [u8],
+    pub version: &'a [u8],
+    pub arch: Architecture,
+    pub os: OperatingSystem,
     /// Backing string-bytes buffer the dependency `SemverString`s slice into.
-    fn dependency_source_buf(&self) -> &[u8];
-    fn arch(&self) -> Architecture;
-    fn os(&self) -> OperatingSystem;
-    fn dependency_iter(&self) -> Box<dyn Iterator<Item = (&[u8], &Dependency)> + '_>;
+    pub dependency_source_buf: &'a [u8],
+    pub dependencies: &'a bun_collections::ArrayHashMap<SemverString, Dependency>,
 }

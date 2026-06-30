@@ -4,14 +4,17 @@ use std::sync::OnceLock;
 use bstr::BStr;
 
 use bun_alloc::AllocError;
+use bun_core::PathBuffer;
 use bun_core::strings;
 use bun_core::{self, Error, Output, err};
-use bun_paths::{self as Path, PathBuffer};
+use bun_paths::{self as Path};
 use bun_semver::string::Buf as StringBuf;
 
-use crate::dependency as Dependency;
+use bun_install_types::dependency as Dependency;
+use bun_install_types::resolver_hooks::Repository;
+
 use crate::hosted_git_info;
-use crate::install::{self as Install, ExtractData, PackageManager};
+use crate::{ExtractData, PackageManager};
 
 // Thread-local scratch buffers. Callers return slices that outlive the access
 // (`try_ssh`/`try_https` hand a slice straight to `download`). `thread_local!`
@@ -215,15 +218,6 @@ impl SloppyGlobalGitConfig {
     }
 }
 
-// MOVE_DOWN: data struct + Default + buffer-relative `order`/`count`/`clone`/
-// `eql` now live in `bun_install_types::resolver_hooks` so the resolver and
-// `Resolution.Value`/`Dependency.Version.Value` can name a real type. The
-// install-tier behaviour below (parsing, formatting, git CLI, download/
-// checkout) is provided as an extension trait so existing
-// `repo.method(...)` / `Repository::method(...)` call sites keep resolving
-// once `RepositoryExt` is in scope.
-pub use bun_install_types::resolver_hooks::Repository;
-
 pub(crate) struct SharedEnv {
     env: Option<bun_dotenv::Map>,
 }
@@ -315,7 +309,7 @@ pub(crate) fn is_safe_resolved_tag(resolved: &[u8]) -> bool {
 /// Install-tier `Repository` behaviour (parsing, formatting, git CLI exec,
 /// download/checkout). Data struct + buffer-relative `order`/`count`/`clone`/
 /// `eql` are inherent on [`Repository`] (defined in `bun_install_types`).
-/// Re-exported from `bun_install::repository` so existing
+/// Re-exported from `crate::repository` so existing
 /// `Repository::method(...)` / `repo.method(...)` call sites resolve via UFCS.
 pub trait RepositoryExt: Sized {
     fn parse_append_git(input: &[u8], buf: &mut StringBuf<'_>) -> Result<Repository, AllocError>;
@@ -324,7 +318,7 @@ pub trait RepositoryExt: Sized {
     fn create_dependency_name_from_version_literal(
         repository: &Repository,
         string_buf: &[u8],
-        dep: &Install::Dependency,
+        dep: &crate::Dependency,
     ) -> Vec<u8>;
     fn format_as(&self, label: &str, buf: &[u8], writer: &mut impl fmt::Write) -> fmt::Result;
     fn fmt_store_path<'a>(&'a self, label: &'a str, string_buf: &'a [u8])
@@ -480,7 +474,7 @@ impl RepositoryExt for Repository {
     fn create_dependency_name_from_version_literal(
         repository: &Repository,
         string_buf: &[u8],
-        dep: &Install::Dependency,
+        dep: &crate::Dependency,
     ) -> Vec<u8> {
         // Callers (`parse_with_json`) hold a split `StringBuilder`
         // borrow on `string_bytes`, so accept the two pieces directly.
@@ -508,8 +502,8 @@ impl RepositoryExt for Repository {
 
         if name.is_empty() {
             let version_literal = dep.version.literal.slice(buf);
-            let mut name_buf = [0u8; bun_sha::SHA1::DIGEST];
-            let mut sha1 = bun_sha::SHA1::init();
+            let mut name_buf = [0u8; bun_sha_hmac::SHA1::DIGEST];
+            let mut sha1 = bun_sha_hmac::SHA1::init();
             sha1.update(version_literal);
             sha1.r#final(&mut name_buf);
             return name_buf.to_vec();
@@ -1003,7 +997,7 @@ impl RepositoryExt for Repository {
         Ok(ExtractData {
             url: url.into(),
             resolved: resolved.into(),
-            json: Some(Install::ExtractDataJson {
+            json: Some(crate::ExtractDataJson {
                 path: ret_json_path.into(),
                 buf: json_buf,
             }),
@@ -1020,7 +1014,7 @@ pub struct StorePathFormatter<'a> {
 
 impl<'a> fmt::Display for StorePathFormatter<'a> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(writer, "{}", Install::fmt_store_path(self.label.as_bytes()))?;
+        write!(writer, "{}", crate::fmt_store_path(self.label.as_bytes()))?;
 
         if !self.repo.owner.is_empty() {
             write!(
@@ -1043,7 +1037,7 @@ impl<'a> fmt::Display for StorePathFormatter<'a> {
             if let Some(i) = strings::last_index_of_char(resolved, b'-') {
                 resolved = &resolved[i + 1..];
             }
-            write!(writer, "{}", Install::fmt_store_path(resolved))?;
+            write!(writer, "{}", crate::fmt_store_path(resolved))?;
         } else if !self.repo.committish.is_empty() {
             writer.write_str("+")?; // this would be '#' but it's not valid on windows
             write!(

@@ -134,13 +134,6 @@ pub mod dispatch_tasks;
 #[path = "subproc.rs"]
 pub mod subproc;
 
-// ─── shell escaping (canonical impl lives in bun_shell_parser) ───────────────
-// Re-export so `crate::shell::*` callers resolve without duplicating the table.
-pub use bun_shell_parser::{
-    BACKSLASHABLE_CHARS, SPECIAL_CHARS, SPECIAL_CHARS_TABLE, assert_special_char, escape_8bit,
-    needs_escape_utf8_ascii_latin1, needs_escape_utf16,
-};
-
 // ─── AST surface (lifetime-erased aliases over `bun_shell_parser::ast`) ──────
 // State nodes hold `*const ast::*` raw pointers into the bumpalo-allocated AST
 // (`ShellArgs::__arena`). The arena outlives every state node, so the `'arena`
@@ -171,6 +164,29 @@ pub mod ast {
     pub type SimpleAtom = p::SimpleAtom<'static>;
     pub type CompoundAtom = p::CompoundAtom<'static>;
     pub type CmdOrAssigns = p::CmdOrAssigns<'static>;
+}
+
+/// `RedirectFlags → bun.O` open-flag conversion. Lives at this tier (not in the
+/// sys-free parser crate) so the flag values come from `bun_sys::O` — the
+/// duplicated constant table in the parser once drifted and broke `>` on Windows.
+pub trait RedirectFlagsExt {
+    fn to_flags(self) -> i32;
+}
+impl RedirectFlagsExt for ast::RedirectFlags {
+    fn to_flags(self) -> i32 {
+        use bun_sys::O;
+        let read_write_flags: i32 = if self.stdin() {
+            O::RDONLY
+        } else {
+            O::WRONLY | O::CREAT
+        };
+        let extra: i32 = if self.append() { O::APPEND } else { O::TRUNC };
+        if self.stdin() {
+            read_write_flags
+        } else {
+            extra | read_write_flags
+        }
+    }
 }
 
 // Canonical 4-variant shell error enum. Defined in

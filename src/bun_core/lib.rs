@@ -1,3 +1,4 @@
+#![feature(arbitrary_self_types_pointers)]
 #![feature(allocator_api)]
 #![feature(adt_const_params)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
@@ -15,13 +16,19 @@
 
 pub mod Global;
 pub mod atomic_cell;
+pub mod ci_info;
 pub mod comptime_string_map;
+pub mod generated_perf_trace_events;
+pub mod guarded;
+pub mod handle_oom;
 pub mod hint;
+pub mod loader;
 pub mod result;
 pub mod thread_id;
 pub mod tty;
 pub mod util;
 pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
+pub use generated_perf_trace_events::PerfEvent;
 
 /// Shared state-machine tag for the streaming (de)compressors in
 /// `bun_brotli` / `bun_zlib` / `bun_zstd`.
@@ -57,8 +64,8 @@ pub use string::{
 };
 pub use string::{
     HashedString, MutableString, NodeEncoding, OwnedString, OwnedStringCell,
-    SliceWithUnderlyingString, SmolStr, String, StringBuilder, WTFStringImpl, WTFStringImplExt,
-    WTFStringImplStruct, ZigString, ZigStringSlice,
+    SliceWithUnderlyingString, SmolStr, String, StringBuilder, WTFStringImpl, WTFStringImplStruct,
+    ZigString, ZigStringSlice,
 };
 pub use string::{StringPointer, Tag, slice_to_nul, slice_to_nul_mut};
 
@@ -260,7 +267,7 @@ pub mod feature_flags;
 /// these as the canonical `is_sep_*` set.
 pub mod path_sep {
     use crate::strings_impl::PathByte;
-    pub use bun_alloc::{SEP, SEP_STR};
+    pub use bun_ascii::{SEP, SEP_STR};
 
     // ─── u8 const fns (kept const for match-guard / const-eval callers) ─────
 
@@ -574,54 +581,15 @@ pub mod vec {
 
 #[path = "Progress.rs"]
 pub mod Progress;
+pub(crate) mod fdio;
 pub mod fmt;
 #[path = "output.rs"]
 pub mod output;
 
-// `bun_core` (T0) cannot name `bun_sys` I/O primitives. Single-variant
-// link-interface (owner is unused / null); `bun_sys` provides the `Sys` arm.
-bun_dispatch::link_interface! {
-    pub OutputSink[Sys] {
-        fn stderr() -> output::File;
-        fn make_path(cwd: Fd, dir: &[u8]) -> core::result::Result<(), Error>;
-        fn create_file(cwd: Fd, path: &[u8]) -> core::result::Result<Fd, Error>;
-        fn quiet_writer_from_fd(fd: Fd) -> output::QuietWriter;
-        fn quiet_writer_adapt(qw: output::QuietWriter, buf: *mut u8, len: usize) -> output::QuietWriterAdapter;
-        fn quiet_writer_flush(qw: &mut output::QuietWriter);
-        fn quiet_writer_write_all(qw: &mut output::QuietWriter, bytes: &[u8]) -> bool;
-        fn quiet_writer_fd(qw: &output::QuietWriter) -> Fd;
-        fn tty_winsize(fd: Fd) -> Option<Winsize>;
-        fn is_terminal(fd: Fd) -> bool;
-        fn read(fd: Fd, buf: &mut [u8]) -> core::result::Result<usize, Error>;
-    }
-}
-
-impl OutputSink {
-    pub const SYS: Self = Self {
-        kind: OutputSinkKind::Sys,
-        owner: core::ptr::null_mut(),
-    };
-}
-
-// `bun_core` (T0) cannot name `bun_errno` (cycle). Single-variant link-interface
-// (owner is unused / null); `bun_errno` provides the `Sys` arm. Gives `result.rs`
-// access to the per-OS `SystemErrno` strum table without duplicating it here.
-bun_dispatch::link_interface! {
-    pub ErrnoNames[Sys] {
-        fn name(errno: i32) -> Option<&'static str>;
-        fn max_dense() -> u32;
-        // Raw Win32 `GetLastError()` code → `SystemErrno` tag name.
-        // Always `None` on non-Windows.
-        fn win32_name(code: u32) -> Option<&'static str>;
-    }
-}
-
-impl ErrnoNames {
-    pub const SYS: Self = Self {
-        kind: ErrnoNamesKind::Sys,
-        owner: core::ptr::null_mut(),
-    };
-}
+/// Per-OS errno enums (`SystemErrno`, `E`), the `GetErrno` trait, and the
+/// typed coreutils message map.
+pub mod errno;
+pub use errno::{E, GetErrno, SystemErrno, e_from_negated, get_errno};
 
 /// Compile-time `<tag>` → ANSI rewrite (proc-macro). Re-exported at crate root
 /// so `$crate::pretty_fmt!` resolves from the wrapper macros in `output.rs`.
@@ -638,8 +606,8 @@ pub mod build_options {
 // ── re-exports (the tier-0 surface downstream crates need) ────────────────
 pub use bun_alloc::oom_from_alloc;
 pub use bun_alloc::{
-    Alignment, AllocError, Allocator, is_slice_in_buffer, is_slice_in_buffer_t, out_of_memory,
-    page_size, range_of_slice_in_buffer,
+    Alignment, AllocError, is_slice_in_buffer, is_slice_in_buffer_t, out_of_memory, page_size,
+    range_of_slice_in_buffer,
 };
 // FFI ABI-safety primitives — `bun_opaque` is the zero-dep `#![no_std]` crate
 // that hosts both the opaque-handle macro and the layout-assert macro, so all
@@ -647,10 +615,27 @@ pub use bun_alloc::{
 // can write `bun_core::assert_ffi_layout!(...)` without naming `bun_opaque`.
 pub use Global::*;
 pub use bun_opaque::{FfiLayout, assert_ffi_discr, assert_ffi_layout};
+// `w!` is `#[macro_export]`ed from `bun_opaque` (canonical def, shared with
+// the freestanding windows shim). Re-exported at this crate root so the
+// historical `bun_core::w!` spelling — and `$crate::w!` inside
+// `to_utf16_literal!` / `literal!` — keep resolving.
+pub use bun_opaque::w;
 pub use ffi::{Zeroable, boxed_zeroed, boxed_zeroed_unchecked};
 pub use result::*;
 pub use tty::Winsize;
 pub use util::*;
+
+// ─── locks (futex family from `bun_sync` + the data-owning `Guarded`) ─────
+//
+// `bun_sync` (tier-0, below this crate) owns the raw futex `Mutex`; the
+// data-owning wrapper lives in [`guarded`]. `Mutex<T>` / `MutexGuard<'_, T>`
+// keep the historical `bun_core::Mutex<T>` spelling pointing at the
+// futex-backed `Guarded<T>` so existing call sites don't change.
+pub use bun_sync::futex as Futex;
+pub use bun_sync::{futex, mutex};
+pub use guarded::{Guarded, GuardedBy, GuardedLock, RawMutex};
+pub type Mutex<T> = Guarded<T>;
+pub type MutexGuard<'a, T> = guarded::MutexGuard<'a, T>;
 
 // ── intrusive-container parent recovery ───────────────────────────────────
 //
@@ -914,8 +899,7 @@ pub type OOM = AllocError;
 
 /// `bun.JSError` — the canonical JS error union. Tier-0 so every layer of
 /// the runtime can name it directly; `bun_jsc` re-exports
-/// it as `bun_jsc::JsError` and `bun_event_loop` re-exports it as `ErasedJsError` for
-/// historical call sites.
+/// it as `bun_jsc::JsError`.
 ///
 /// `#[repr(u8)]` with explicit discriminants: `AnyTask` stores
 /// `fn(*mut c_void) -> Result<(), JsError>` and the dispatcher relies on the 1-byte layout
@@ -932,6 +916,10 @@ pub enum JsError {
 }
 
 bun_alloc::oom_from_alloc!(JsError);
+
+/// `bun.JSError!T` at tier-0. Same shape as `bun_jsc::JsResult`; this is the
+/// alias low-tier crates (`bun_event_loop`, `bun_io`) name directly.
+pub type JsResult<T> = core::result::Result<T, JsError>;
 
 impl From<crate::Error> for JsError {
     fn from(_: crate::Error) -> Self {
@@ -954,6 +942,12 @@ impl From<JsError> for crate::Error {
             // collapse into `JSError` like every other thrown JS exception.
             JsError::Thrown | JsError::Terminated => crate::err!("JSError"),
         }
+    }
+}
+
+impl From<bun_sync::futex::TimeoutError> for crate::Error {
+    fn from(_: bun_sync::futex::TimeoutError) -> Self {
+        crate::err!("Timeout")
     }
 }
 
@@ -1054,12 +1048,14 @@ macro_rules! enum_unwrap {
     };
 }
 
+pub use handle_oom::{HandleOom, handle_oom_strict};
+
 /// Unwrap a `Result`, calling `outOfMemory()` on
-/// `Err`. The full multi-arm version (which narrows mixed error sets) lives in
-/// `bun_crash_handler::handle_oom`; that crate sits *above* `bun_core` in the
-/// dep graph, so this tier-0 alias is the OOM-only arm — sufficient for the
-/// `Result<T, AllocError>` / `Result<T, Error>` callers in `js_parser`,
-/// `bake/DevServer`, etc. that spell it `bun_core::handle_oom`.
+/// `Err`. This is the *loose* arm: any `Err` aborts. The full multi-arm
+/// version (which narrows mixed error sets so only `error.OutOfMemory`
+/// aborts) is [`handle_oom_strict`] in this same crate. This alias is
+/// sufficient for the `Result<T, AllocError>` / `Result<T, Error>` callers in
+/// `js_parser`, `bake/DevServer`, etc. that spell it `bun_core::handle_oom`.
 #[inline]
 #[track_caller]
 pub fn handle_oom<T, E>(r: core::result::Result<T, E>) -> T {
@@ -1072,12 +1068,12 @@ pub fn handle_oom<T, E>(r: core::result::Result<T, E>) -> T {
 /// Extension-method form of [`handle_oom`]: `.unwrap_or_oom()` on any
 /// `Result<T, E>`. The *loose* idiom
 /// that panics on **any** `Err`, not just OOM-only error sets. For the
-/// narrowing version see `bun_crash_handler::HandleOom`.
+/// narrowing version see [`crate::HandleOom`].
 ///
 /// This is intentionally a blanket `impl<T, E>` — it matches the
 /// existing `bun_core::handle_oom` free fn and the two pre-existing local
 /// blanket impls in `run_command.rs` / `valkey.rs`. Callers that want a strict
-/// `error{OutOfMemory}`-only whitelist should use `bun_crash_handler::HandleOom`
+/// `error{OutOfMemory}`-only whitelist should use [`crate::HandleOom`]
 /// instead.
 pub trait UnwrapOrOom {
     type Output;
@@ -1091,12 +1087,6 @@ impl<T, E> UnwrapOrOom for core::result::Result<T, E> {
         handle_oom(self)
     }
 }
-
-/// No-op tier-0 shim that keeps call-site shape (panics already carry a
-/// backtrace); the real reporter lives above in
-/// `bun_crash_handler::handle_error_return_trace`.
-#[inline(always)]
-pub fn handle_error_return_trace<E>(_err: E) {}
 
 // Real `declare_scope!`/`scoped_log!`/`pretty*!`/`warn!`/`note!` are
 // `#[macro_export]`ed from output.rs.
@@ -1197,19 +1187,11 @@ pub mod time {
     }
 }
 
-/// `bun.schema`. The full generated API types live in `bun_api` (tier-2);
-/// tier-0 cannot depend on that, so expose the one type tier-0 itself owns.
-pub mod schema {
-    pub mod api {
-        pub use crate::util::StringPointer;
-    }
-}
-
 pub use output as Output;
 
-// `crate::js_lexer` / `crate::js_printer` resolve to fmt.rs's local subsets.
+// `crate::js_printer` resolves to fmt.rs's local subset.
 pub use fmt::{
-    InvalidCharacter, ParseIntError, js_lexer, js_printer, parse_decimal, parse_int, parse_unsigned,
+    InvalidCharacter, ParseIntError, js_printer, parse_decimal, parse_int, parse_unsigned,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1297,7 +1279,7 @@ pub(crate) mod strings_impl {
         }
     }
 
-    pub use ::bun_alloc::{ascii_lowercase_buf, copy_lowercase, trim, trim_left, trim_right};
+    pub use ::bun_ascii::{ascii_lowercase_buf, copy_lowercase, trim, trim_left, trim_right};
 
     /// Byte length of `input` after replacing every
     /// occurrence of `needle` with `replacement`. Empty `needle` ⇒ `input.len()`
@@ -2075,7 +2057,7 @@ pub(crate) mod strings_impl {
         if offset == text.len() {
             return None;
         }
-        let cont = crate::js_lexer::is_identifier_continue(text[offset] as i32);
+        let cont = crate::string::identifier::is_identifier_part(text[offset] as i32);
 
         // must be another identifier
         if !whitespace && cont {
@@ -2451,12 +2433,11 @@ pub fn linux_kernel_version() -> Version {
 /// unwind to catch either. Macro-generated `extern "C"` thunks now call the
 /// user body directly.
 pub mod ffi {
-    // `core`-only primitives shared with the freestanding `bun_shim_impl` PE
-    // (which cannot link `bun_core`'s `#[no_mangle]` C-ABI surface). Single
-    // audited copy lives in `bun_opaque::ffi`; re-exported here so existing
-    // `bun_core::ffi::{wcslen,wstr_units,slice,slice_mut}` call paths are
-    // unchanged.
-    pub use bun_opaque::ffi::{slice, slice_mut, wcslen, wstr_units};
+    // `Zeroable`/`zeroed` — the canonical trait, the primitive/raw-pointer/
+    // array blankets, and the libc-POD impls all live in `bun_opaque::ffi`
+    // (the orphan rule pins each foreign-type impl to the trait's or the
+    // type's defining crate).
+    pub use bun_opaque::ffi::{Zeroable, zeroed};
 
     /// Borrow a NUL-terminated C string from an FFI pointer.
     ///
@@ -2552,42 +2533,6 @@ pub mod ffi {
         &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]
     }
 
-    /// All-bits-zero value of `T` for `#[repr(C)]` FFI structs.
-    ///
-    /// Single audited wrapper over `core::mem::zeroed()` so libc/uv/c-ares
-    /// out-param init sites (`let mut x: libc::sigaction = zeroed();`) don't
-    /// each open-code an `unsafe` block.
-    ///
-    /// The `T: Zeroable` bound discharges the `mem::zeroed` safety obligation
-    /// once per type (at the `unsafe impl`), so callers need no `unsafe`
-    /// block. Prefer `T::default()` when `T` implements (or can derive)
-    /// `Default` — reserve this for foreign POD where the orphan rule blocks a
-    /// `Default` impl (libc, bindgen output) or where `Default` would be wrong
-    /// but zero-init matches the C API contract.
-    #[inline(always)]
-    pub const fn zeroed<T: Zeroable>() -> T {
-        // SAFETY: `T: Zeroable` is exactly the assertion that the all-zero bit
-        // pattern is a valid `T` (no `NonNull`/`NonZero`/ref/fn-ptr fields, no
-        // niche enums). `core::mem::zeroed` is therefore sound for `T`.
-        unsafe { core::mem::zeroed() }
-    }
-
-    /// Marker: the all-zero bit pattern is a valid value of `Self`.
-    ///
-    /// Local re-spelling of `bytemuck::Zeroable` so we can blanket-`impl` it
-    /// for foreign `libc` POD (orphan rule blocks impl-ing the upstream trait
-    /// on `libc::sigaction` et al.). Once a type carries this marker,
-    /// [`zeroed`] is a *safe* call — the audit happens once at the `unsafe
-    /// impl`, not at every out-param init site.
-    ///
-    /// # Safety
-    /// `Self` must be inhabited at the all-zero bit pattern: no non-nullable
-    /// pointers (`&T`, `Box<T>`, `NonNull<T>`, fn ptrs), no `bool`/`char`
-    /// outside their valid range, no niche-optimised enums. `#[repr(C)]`
-    /// structs of integers, raw pointers, and nested `Zeroable` POD satisfy
-    /// this. Padding bytes are fine (zero is a valid padding value).
-    pub unsafe trait Zeroable: Sized {}
-
     /// Unchecked all-bits-zero — escape hatch for types not yet proven
     /// [`Zeroable`] (libuv handles, bindgen structs in `_sys` crates that
     /// don't depend on `bun_core`, generic `T` where the bound can't be
@@ -2602,172 +2547,6 @@ pub mod ffi {
         // SAFETY: caller guarantees T is valid at the all-zero bit pattern.
         unsafe { core::mem::zeroed() }
     }
-
-    // ── Zeroable impls ──────────────────────────────────────────────────────
-    // Primitives, raw pointers, arrays — match `bytemuck::Zeroable` blankets.
-    macro_rules! zeroable_prim {
-        ($($t:ty),* $(,)?) => { $(
-            // SAFETY: primitive numeric/unit type — the all-zero bit pattern is
-            // a valid value (`0`, `0.0`, or `()`).
-            unsafe impl Zeroable for $t {}
-        )* };
-    }
-    zeroable_prim!(
-        (),
-        u8,
-        u16,
-        u32,
-        u64,
-        u128,
-        usize,
-        i8,
-        i16,
-        i32,
-        i64,
-        i128,
-        isize,
-        f32,
-        f64,
-    );
-    // SAFETY: null is a valid raw pointer.
-    unsafe impl<T: ?Sized> Zeroable for *const T {}
-    // SAFETY: null is a valid raw pointer.
-    unsafe impl<T: ?Sized> Zeroable for *mut T {}
-    // SAFETY: array of zero-valid elements is zero-valid.
-    unsafe impl<T: Zeroable, const N: usize> Zeroable for [T; N] {}
-
-    // libc POD — every field is an integer / raw pointer / nested C POD; the
-    // C API contract for each is "zero-init before the kernel/libc fills it".
-    // SAFETY: each `unsafe impl` below was audited against the libc crate's
-    // struct definition for that target; none contain `NonNull`/`NonZero`/
-    // references/fn-ptrs (bare `extern fn` fields in `sigaction` are stored as
-    // `usize` sighandler_t on every libc target).
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::sigaction {}
-    // `sigset_t` is a `u32` typedef on Darwin (covered by the primitive
-    // blanket → E0119 if re-impl'd) but a real struct on Linux/Android
-    // (`__val: [c_ulong; 16]`) and FreeBSD (`__bits: [u32; 4]`). Gate the
-    // explicit impl to everywhere it's NOT already a primitive.
-    // SAFETY: integer-array struct on the gated targets; all-zero is valid.
-    #[cfg(all(unix, not(target_vendor = "apple")))]
-    unsafe impl Zeroable for libc::sigset_t {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::utsname {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::winsize {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::rlimit {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::passwd {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::stat {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::rusage {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::timespec {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::timeval {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::pollfd {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::Dl_info {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::sockaddr {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::sockaddr_in {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::sockaddr_in6 {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::sockaddr_storage {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(unix)]
-    unsafe impl Zeroable for libc::addrinfo {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    unsafe impl Zeroable for libc::sysinfo {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    unsafe impl Zeroable for libc::epoll_event {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    unsafe impl Zeroable for libc::signalfd_siginfo {}
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "freebsd"
-    ))]
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    unsafe impl Zeroable for libc::statfs {}
-    #[cfg(any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "netbsd"
-    ))]
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    unsafe impl Zeroable for libc::kevent {}
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    unsafe impl Zeroable for libc::kevent64_s {}
-    #[cfg(target_os = "freebsd")]
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
-    unsafe impl Zeroable for libc::_umtx_time {}
-
-    // Windows POD — `bun_windows_sys` `#[repr(C)]` out-param structs that are
-    // zero-init before the kernel fills them. All fields are integers / raw
-    // pointers / nested POD; audited against the Win32 SDK headers (S016).
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::IO_STATUS_BLOCK {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::FILE_BASIC_INFORMATION {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::BY_HANDLE_FILE_INFORMATION {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::WIN32_FILE_ATTRIBUTE_DATA {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::OBJECT_ATTRIBUTES {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::UNICODE_STRING {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::SECURITY_ATTRIBUTES {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::FILETIME {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::WSADATA {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_storage {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_in {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_in6 {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::addrinfo {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::IO_COUNTERS {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::JOBOBJECT_BASIC_LIMIT_INFORMATION {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::JOBOBJECT_EXTENDED_LIMIT_INFORMATION {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::OVERLAPPED {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::PROCESS_INFORMATION {}
 
     /// Conjure a value of a zero-sized type without `unsafe` at the call site.
     ///
@@ -2802,7 +2581,7 @@ pub mod ffi {
     /// tree has ONE place that knows glibc/musl spell it `__errno_location()`,
     /// bionic spells it `__errno()`, Darwin/BSD spell it `__error()`, and the
     /// Windows CRT spells it `_errno()`. Every higher-tier crate routes through
-    /// this — `bun_errno::posix::errno`, `bun_sys::last_errno`,
+    /// this — `bun_core::errno::posix::errno`, `bun_sys::last_errno`,
     /// `bun_sys::c::errno_location`, `bun_platform::linux` — instead of each
     /// re-deriving the same target_os→symbol mapping.
     ///

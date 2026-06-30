@@ -367,7 +367,7 @@ impl PackageManager {
             let add_node_gyp_rebuild_script = Syscall::exists(binding_dot_gyp_path.as_bytes())
                 && (root_package.scripts.install.is_empty()
                     && root_package.scripts.preinstall.is_empty()
-                    || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_FORCE_BUILD_FROM_SOURCE);
+                    || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_FORCE_BUILD_FROM_SOURCE.get().unwrap_or(false));
 
             self.root_lifecycle_scripts = root_package.scripts.create_list(
                 &self.lockfile,
@@ -494,7 +494,7 @@ impl PackageManager {
             let cwd_path: &[u8] = list.cwd.as_bytes();
             // Sign any .node files produced by lifecycle scripts (e.g. node-gyp rebuild).
             if !cwd_path.is_empty() {
-                crate::PackageInstaller::ohos_sign_native_binaries(cwd_path);
+                crate::package_installer::ohos_sign_native_binaries(cwd_path);
             }
         }
 

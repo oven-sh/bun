@@ -384,7 +384,7 @@ impl Scripts {
 
         let add_node_gyp_rebuild_script = if has_binding_gyp && (
             (self.install.is_empty() && self.preinstall.is_empty())
-            || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_FORCE_BUILD_FROM_SOURCE
+            || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_FORCE_BUILD_FROM_SOURCE.get().unwrap_or(false)
         ) {
             true
         } else {

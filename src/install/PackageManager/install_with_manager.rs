@@ -679,7 +679,7 @@ pub fn install_with_manager(
             }
             let scripts = packages.items_scripts()[pkg_i];
             let add_node_gyp = !scripts.has_any()
-                || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_FORCE_BUILD_FROM_SOURCE;
+                || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_FORCE_BUILD_FROM_SOURCE.get().unwrap_or(false);
             let (first_index, _, entries) =
                 scripts.get_script_entries(string_bytes, ResolutionTag::Workspace, add_node_gyp);
 

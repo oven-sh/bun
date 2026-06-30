@@ -1,5 +1,15 @@
 import { pathToFileURL } from "bun";
-import { bunEnv, bunExe, bunRun, bunRunAsScript, isMacOS, isWindows, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  bunRunAsScript,
+  isLinux,
+  isMacOS,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { EventEmitter } from "node:events";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
@@ -529,6 +539,57 @@ describe("fs.watch", () => {
       expect(err.code).toBe("EACCES");
       expect(err.syscall).toBe("watch");
     }
+  });
+
+  // Self-events (the watched path itself is deleted or renamed) carry no name,
+  // and node (libuv) reports basename(watched path) for them. Deleting the
+  // watched path also retires its inotify watch: the kernel queues
+  // IN_DELETE_SELF followed by IN_IGNORED and node reports both as "rename".
+  // The exact sequences are inotify-specific, so Linux only.
+  // https://github.com/oven-sh/bun/issues/23306
+  async function collectWatchEvents(target: string, renames: number, act: () => void) {
+    const events: [string, string | null][] = [];
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const watcher = fs.watch(target, (eventType, filename) => {
+      events.push([eventType, filename]);
+      if (events.filter(([type]) => type === "rename").length === renames) resolve();
+    });
+    watcher.once("error", reject);
+    try {
+      act();
+      await promise;
+    } finally {
+      watcher.close();
+    }
+    return events;
+  }
+
+  test.skipIf(!isLinux)("unlinking the watched file delivers both rename self-events", async () => {
+    using dir = tempDir("fs-watch-unlink-self", { "f.txt": "x" });
+    const target = path.join(String(dir), "f.txt");
+    // unlink(2) emits IN_ATTRIB (link count drop), IN_DELETE_SELF, IN_IGNORED.
+    expect(await collectWatchEvents(target, 2, () => fs.unlinkSync(target))).toEqual([
+      ["change", "f.txt"],
+      ["rename", "f.txt"],
+      ["rename", "f.txt"],
+    ]);
+  });
+
+  test.skipIf(!isLinux)("removing the watched directory delivers both rename self-events named after it", async () => {
+    using dir = tempDir("fs-watch-rmdir-self", { "sub": {} });
+    const target = path.join(String(dir), "sub");
+    expect(await collectWatchEvents(target, 2, () => fs.rmdirSync(target))).toEqual([
+      ["rename", "sub"],
+      ["rename", "sub"],
+    ]);
+  });
+
+  test.skipIf(!isLinux)("renaming the watched directory away reports its basename", async () => {
+    using dir = tempDir("fs-watch-mv-self", { "sub": {} });
+    const target = path.join(String(dir), "sub");
+    expect(await collectWatchEvents(target, 1, () => fs.renameSync(target, path.join(String(dir), "moved")))).toEqual([
+      ["rename", "sub"],
+    ]);
   });
 });
 

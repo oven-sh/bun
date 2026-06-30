@@ -14,7 +14,7 @@ use bun_core::{FeatureFlags, Output};
 // flavor because its sole producer (`findImportedFilesInCSSOrder`) constructs
 // it from parser-side indices; all consumers only call `.get()`.
 use bun_ast::Index;
-use bun_core::{immutable as strings, string_joiner::StringJoiner};
+use bun_core::{string_joiner::StringJoiner, strings};
 use bun_sourcemap as source_map;
 
 use crate::analyze_transpiled_module;

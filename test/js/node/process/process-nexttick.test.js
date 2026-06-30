@@ -1,7 +1,8 @@
 // Running this file in jest/vitest does not work as expected. Jest & Vitest
 // mess with timers, producing unreliable results. You must manually test this
 // in Node.
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 const isBun = !!process.versions.bun;
 
 it("process.nextTick", async () => {
@@ -1035,4 +1036,160 @@ it("process.nextTick and AsyncLocalStorage.enterWith don't conflict", async () =
 
   expect(call1).toBe(true);
   expect(call2).toBe(true);
+});
+
+// The entry module's top-level code runs inside a microtask checkpoint. The
+// first time process.nextTick is used, the onEachMicrotaskTick hook fires from
+// inside that checkpoint and hands control to processTicksAndRejections, whose
+// do/while back-edge re-enters vm.drainMicrotasks(). That re-entrant drain is
+// load-bearing: suppressing it (for example with a "checkpoint already
+// running" guard) drops the nextTick callbacks enqueued by the microtasks it
+// would have run. These cases pin the observable interleaving through that
+// transition. Each needs its own process because the hook is a one-shot per VM.
+//
+// Cases A, E, F, and G currently diverge from Node, which drains all
+// already-queued microtasks before running a tick one of them scheduled. That
+// is pre-existing behavior and is pinned here as-is: changing it should be a
+// deliberate decision, not a side effect.
+describe.concurrent("nextTick/microtask interleaving across the onEachMicrotaskTick transition", () => {
+  const FIXTURE = `
+const CASE = process.argv[2];
+const out = [];
+const L = s => out.push(s);
+
+process.on("uncaughtException", e => L("uncaught:" + e.message));
+process.on("unhandledRejection", e => L("rej:" + e.message));
+process.on("exit", () => console.log(CASE + " " + JSON.stringify(out)));
+
+switch (CASE) {
+  // Queue created BY a microtask; a tick enqueues a microtask that enqueues
+  // another tick. Covers the re-entrant drainMicrotasks() call inside the JS
+  // processTicksAndRejections loop.
+  case "A":
+    queueMicrotask(() => {
+      L("m1");
+      process.nextTick(() => {
+        L("t1");
+        Promise.resolve().then(() => {
+          L("mt1");
+          process.nextTick(() => L("t2"));
+        });
+      });
+    });
+    queueMicrotask(() => L("m2"));
+    Promise.resolve().then(() => L("p1"));
+    break;
+
+  // Queue created by ACCESSING process.nextTick without enqueueing, so the
+  // hook fires with an empty tick queue. Covers the re-entrant C++
+  // vm.drainMicrotasks() call in JSNextTickQueue::drain.
+  case "B":
+    queueMicrotask(() => {
+      L("m1");
+      void process.nextTick;
+    });
+    queueMicrotask(() => {
+      L("m2");
+      process.nextTick(() => L("t1"));
+    });
+    queueMicrotask(() => L("m3"));
+    break;
+
+  // Deep alternating microtask <-> tick chain.
+  case "C": {
+    let n = 0;
+    const micro = () => {
+      L("m" + n);
+      if (n < 6) {
+        n++;
+        process.nextTick(tick);
+      }
+    };
+    const tick = () => {
+      L("t" + n);
+      if (n < 6) {
+        n++;
+        queueMicrotask(micro);
+      }
+    };
+    queueMicrotask(micro);
+    break;
+  }
+
+  // Queue created at the module top level. The module itself runs inside a
+  // checkpoint, so the hook still fires and the re-entry still happens.
+  case "D":
+    process.nextTick(() => {
+      L("t1");
+      queueMicrotask(() => L("mt1"));
+    });
+    queueMicrotask(() => {
+      L("m1");
+      process.nextTick(() => L("t2"));
+    });
+    break;
+
+  // A tick throws; processTicksAndRejections must keep going.
+  case "E":
+    queueMicrotask(() => {
+      process.nextTick(() => {
+        L("t1");
+        throw new Error("boom");
+      });
+      process.nextTick(() => L("t2"));
+    });
+    queueMicrotask(() => L("m1"));
+    break;
+
+  // A tick leaves an unhandled rejection; the rejection job must still run.
+  case "F":
+    queueMicrotask(() => {
+      L("m1");
+      process.nextTick(() => {
+        L("t1");
+        Promise.reject(new Error("r"));
+      });
+    });
+    queueMicrotask(() => L("m2"));
+    break;
+
+  // A microtask throws right after creating the queue, immediately before
+  // the hook fires.
+  case "G":
+    queueMicrotask(() => {
+      L("m1");
+      process.nextTick(() => L("t1"));
+      throw new Error("mboom");
+    });
+    queueMicrotask(() => L("m2"));
+    break;
+}
+`;
+
+  const CASES = [
+    ["A", ["m1", "t1", "m2", "p1", "mt1", "t2"]],
+    ["B", ["m1", "m2", "m3", "t1"]],
+    ["C", ["m0", "t1", "m2", "t3", "m4", "t5", "m6"]],
+    ["D", ["t1", "m1", "mt1", "t2"]],
+    ["E", ["t1", "uncaught:boom", "t2", "m1"]],
+    ["F", ["m1", "t1", "m2", "rej:r"]],
+    ["G", ["m1", "uncaught:mboom", "t1", "m2"]],
+  ];
+
+  for (const [name, expected] of CASES) {
+    it(`case ${name}`, async () => {
+      using dir = tempDir("nexttick-interleave", { "case.js": FIXTURE });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "case.js", name],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), exitCode }).toEqual({
+        stdout: `${name} ${JSON.stringify(expected)}`,
+        exitCode: 0,
+      });
+    });
+  }
 });

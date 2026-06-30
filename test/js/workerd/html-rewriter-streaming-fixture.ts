@@ -1,15 +1,6 @@
-// Fixture for html-rewriter.test.js. Exercises one consumer of the Response
-// returned by `HTMLRewriter.transform(<streaming body>)` and prints a single
-// JSON line describing what that consumer observed. On a runtime with the
-// output-streaming bug the consumer never completes, so this process never
-// prints and/or never exits, which the parent test observes as a failure (the
-// spawned child is killed when the test ends).
-//
-// argv[2] = "serve"          Bun.serve returning transform(Bun.file(argv[3]))
-//         | "serve-throw"    same, but the element handler throws
-//         | "serve-upstream" Bun.serve returning transform(fetch(<streaming server>))
-//         | "body"           transform(Bun.file(argv[3])).body.text()
-// argv[3] = path to the HTML file ("serve" also uses it for a missing path)
+// Runs one consumer of `HTMLRewriter.transform(<streaming body>)` and prints
+// what it observed as one JSON line; on a buggy runtime it never completes.
+// argv[2]: "serve" | "serve-throw" | "serve-upstream" | "body". argv[3]: HTML path.
 const mode = process.argv[2];
 const htmlFile = process.argv[3];
 
@@ -32,10 +23,11 @@ if (mode === "body") {
   console.log(JSON.stringify(result));
 } else {
   let upstream: Bun.Server | undefined;
+  // Holds the upstream's second chunk until transform() has run, so the
+  // proxied Response is provably still streaming at that point.
+  const releaseRest = Promise.withResolvers<void>();
   if (mode === "serve-upstream") {
     const inputHTML = await Bun.file(htmlFile).text();
-    // A ReadableStream body that yields between chunks guarantees the proxied
-    // Response is still streaming when transform() runs on it.
     upstream = Bun.serve({
       port: 0,
       fetch() {
@@ -44,7 +36,7 @@ if (mode === "body") {
           new ReadableStream({
             async pull(controller) {
               controller.enqueue(encoder.encode(inputHTML.slice(0, 24)));
-              await Bun.sleep(10);
+              await releaseRest.promise;
               controller.enqueue(encoder.encode(inputHTML.slice(24)));
               controller.close();
             },
@@ -59,7 +51,11 @@ if (mode === "body") {
     port: 0,
     fetch:
       mode === "serve-upstream"
-        ? async () => rewrite().transform(await fetch(upstream!.url))
+        ? async () => {
+            const transformed = rewrite().transform(await fetch(upstream!.url));
+            releaseRest.resolve();
+            return transformed;
+          }
         : () => rewrite().transform(new Response(Bun.file(htmlFile))),
   });
 

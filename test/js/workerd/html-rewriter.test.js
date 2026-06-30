@@ -1262,14 +1262,10 @@ describe("tagName, endTag.name, and comment.text setters", () => {
   });
 });
 
-// `transform()` returns a Response whose body stays pending until the input
-// finishes buffering. Consumers that convert that pending body into a
-// ReadableStream before then (Bun.serve returning the transformed response,
-// `response.body`) previously never received the rewritten bytes, so the
-// request / read hung forever. Pre-buffered inputs (strings, buffers) resolve
-// synchronously inside transform() and never hit this path.
+// Consumers that convert transform()'s pending output body into a
+// ReadableStream before the input finishes buffering (Bun.serve, `.body`)
+// used to never receive the rewritten bytes, so the request hung forever.
 // https://github.com/oven-sh/bun/issues/6068
-// https://github.com/oven-sh/bun/issues/19305
 describe("HTMLRewriter output of a streaming input body", () => {
   const inputHTML = "<!doctype html><html><head><title>a</title></head><body><h1>hi</h1></body></html>";
   const expectedHTML = inputHTML.replace("<title>a</title>", "<title>rewritten</title>");
@@ -1277,11 +1273,9 @@ describe("HTMLRewriter output of a streaming input body", () => {
   const htmlFile = join(dir, "streaming-input.html");
   const missingFile = join(dir, "does-not-exist.html");
 
-  // Every case runs in a child process (see the fixture): the broken behavior
-  // is a fetch / body read that never completes, and a never-settling
-  // in-process await would wedge this test process. On a timeout the test
-  // runner reaps the dangling child; `await using` never runs for a
-  // timed-out test, which is also why this is not `it.concurrent.each`.
+  // Each case spawns the fixture: the broken behavior is a read that never
+  // completes, and a never-settling in-process await wedges bun test. Only a
+  // sequential test's timeout reaps the dangling child, so no `.concurrent`.
   it.each([
     ["Bun.serve a transform of a Bun.file() body", "serve", htmlFile, { status: 200, text: expectedHTML }],
     [

@@ -794,128 +794,55 @@ impl Lockfile {
         let root_deps_list: DependencySlice =
             old.packages.items_dependencies()[workspace_package_id as usize];
 
+        let mut rewrites: Vec<(usize, Vec<u8>)> = Vec::new();
         if (root_deps_list.off as usize) < old.buffers.dependencies.len() {
-            // Split-borrow: `string_builder!` only takes
-            // `old.buffers.string_bytes` + `old.string_pool`, leaving
-            // `old.packages` / `old.buffers.{dependencies,resolutions}` free.
-            let mut string_builder = string_builder!(old);
+            let string_buf = old.buffers.string_bytes.as_slice();
+            let root_deps: &[Dependency] = root_deps_list.get(old.buffers.dependencies.as_slice());
+            let old_resolutions: &[PackageID] = old.packages.items_resolutions()
+                [workspace_package_id as usize]
+                .get(old.buffers.resolutions.as_slice());
+            let resolutions_of_yore: &[Resolution] = old.packages.items_resolution();
+            let packages_len = old.packages.len();
+            debug_assert_eq!(root_deps.len(), old_resolutions.len());
 
-            {
-                let root_deps: &[Dependency] =
-                    root_deps_list.get(old.buffers.dependencies.as_slice());
-                let old_resolutions_list =
-                    old.packages.items_resolutions()[workspace_package_id as usize];
-                let old_resolutions: &[PackageID] =
-                    old_resolutions_list.get(old.buffers.resolutions.as_slice());
-                let resolutions_of_yore: &[Resolution] = old.packages.items_resolution();
-                let packages_len = old.packages.len();
-
-                for update in updates.iter() {
-                    if update.package_id == invalid_package_id {
-                        debug_assert_eq!(root_deps.len(), old_resolutions.len());
-                        for (dep, &old_resolution) in root_deps.iter().zip(old_resolutions.iter()) {
-                            if dep.name_hash == SemverStringBuilder::string_hash(update.name) {
-                                if old_resolution as usize >= packages_len {
-                                    continue;
-                                }
-                                let res = resolutions_of_yore[old_resolution as usize];
-                                if res.tag != ResolutionTag::Npm
-                                    || update.version.tag != dependency::Tag::DistTag
-                                {
-                                    continue;
-                                }
-
-                                let npm_version = res.npm().version;
-                                let Some(new_literal) = positional_update_literal(
-                                    &manager.updating_packages,
-                                    dep,
-                                    &npm_version,
-                                    string_builder.string_bytes.as_slice(),
-                                    exact_versions,
-                                ) else {
-                                    continue;
-                                };
-
-                                if new_literal.len() >= SemverString::MAX_INLINE_LEN {
-                                    string_builder.cap += new_literal.len();
-                                }
-                            }
+            for update in updates.iter_mut() {
+                if update.package_id == invalid_package_id {
+                    let name_hash = SemverStringBuilder::string_hash(update.name);
+                    for (index, (dep, &old_resolution)) in
+                        root_deps.iter().zip(old_resolutions.iter()).enumerate()
+                    {
+                        if dep.name_hash != name_hash {
+                            continue;
                         }
-                    }
-                }
-            }
-
-            string_builder.allocate()?;
-            // `string_builder.clamp()` must run once after the entire second
-            // loop completes. A scopeguard would mutably capture
-            // `string_builder`, conflicting with the `append` calls below. Call `clamp()`
-            // explicitly at the end of this block instead (the inner loop has no `?` exits;
-            // the only fallible call above is `allocate()`, which precedes this point).
-
-            {
-                let root_deps: &mut [Dependency] =
-                    root_deps_list.mut_(old.buffers.dependencies.as_mut_slice());
-                let old_resolutions_list_lists = old.packages.items_resolutions();
-                let old_resolutions_list =
-                    old_resolutions_list_lists[workspace_package_id as usize];
-                let old_resolutions: &[PackageID] =
-                    old_resolutions_list.get(old.buffers.resolutions.as_slice());
-                let resolutions_of_yore: &[Resolution] = old.packages.items_resolution();
-                let packages_len = old.packages.len();
-
-                for update in updates.iter_mut() {
-                    if update.package_id == invalid_package_id {
-                        debug_assert_eq!(root_deps.len(), old_resolutions.len());
-                        for (dep, &old_resolution) in
-                            root_deps.iter_mut().zip(old_resolutions.iter())
+                        if old_resolution as usize >= packages_len {
+                            continue;
+                        }
+                        let res = resolutions_of_yore[old_resolution as usize];
+                        if res.tag != ResolutionTag::Npm
+                            || update.version.tag != dependency::Tag::DistTag
                         {
-                            if dep.name_hash == SemverStringBuilder::string_hash(update.name) {
-                                if old_resolution as usize >= packages_len {
-                                    continue;
-                                }
-                                let res = resolutions_of_yore[old_resolution as usize];
-                                if res.tag != ResolutionTag::Npm
-                                    || update.version.tag != dependency::Tag::DistTag
-                                {
-                                    continue;
-                                }
-
-                                let npm_version = res.npm().version;
-                                let Some(new_literal) = positional_update_literal(
-                                    &manager.updating_packages,
-                                    dep,
-                                    &npm_version,
-                                    string_builder.string_bytes.as_slice(),
-                                    exact_versions,
-                                ) else {
-                                    continue;
-                                };
-
-                                let external_version =
-                                    string_builder.append::<ExternalString>(&new_literal);
-                                let sliced = external_version
-                                    .value
-                                    .sliced(string_builder.string_bytes.as_slice());
-                                dep.version = dependency::parse(
-                                    dep.name,
-                                    dep.name_hash,
-                                    sliced.slice,
-                                    &sliced,
-                                    None,
-                                    &mut *manager,
-                                )
-                                .unwrap_or_default();
-                            }
+                            continue;
                         }
+
+                        let npm_version = res.npm().version;
+                        let Some(new_literal) = positional_update_literal(
+                            &manager.updating_packages,
+                            dep,
+                            &npm_version,
+                            string_buf,
+                            exact_versions,
+                        ) else {
+                            continue;
+                        };
+                        rewrites.push((index, new_literal));
                     }
-
-                    update.e_string = None;
                 }
-            }
 
-            string_builder.clamp();
+                update.e_string = None;
+            }
         }
-        Ok(())
+
+        Self::apply_root_dependency_literals(old, manager, workspace_package_id, &rewrites)
     }
 
     /// `bun update` with no package names tracks its targets through
@@ -932,31 +859,22 @@ impl Lockfile {
         let root_deps_list: DependencySlice =
             old.packages.items_dependencies()[workspace_package_id as usize];
 
-        if (root_deps_list.off as usize) >= old.buffers.dependencies.len() {
-            return Ok(());
-        }
-
         let update_to_latest = manager.options.do_.contains(Do::UPDATE_TO_LATEST);
 
-        // Split-borrow: `string_builder!` only takes
-        // `old.buffers.string_bytes` + `old.string_pool`, leaving
-        // `old.packages` / `old.buffers.{dependencies,resolutions}` free.
-        let mut string_builder = string_builder!(old);
-
-        // First pass: decide the new literal for every root dependency that
-        // `bun update` touched, stash it on the `updating_packages` entry, and
-        // size the string builder.
-        {
+        let mut rewrites: Vec<(usize, Vec<u8>)> = Vec::new();
+        if (root_deps_list.off as usize) < old.buffers.dependencies.len() {
+            let string_buf = old.buffers.string_bytes.as_slice();
             let root_deps: &[Dependency] = root_deps_list.get(old.buffers.dependencies.as_slice());
-            let old_resolutions_list =
-                old.packages.items_resolutions()[workspace_package_id as usize];
-            let old_resolutions: &[PackageID] =
-                old_resolutions_list.get(old.buffers.resolutions.as_slice());
+            let old_resolutions: &[PackageID] = old.packages.items_resolutions()
+                [workspace_package_id as usize]
+                .get(old.buffers.resolutions.as_slice());
             let resolutions_of_yore: &[Resolution] = old.packages.items_resolution();
             let packages_len = old.packages.len();
-
             debug_assert_eq!(root_deps.len(), old_resolutions.len());
-            for (dep, &old_resolution) in root_deps.iter().zip(old_resolutions.iter()) {
+
+            for (index, (dep, &old_resolution)) in
+                root_deps.iter().zip(old_resolutions.iter()).enumerate()
+            {
                 if old_resolution as usize >= packages_len {
                     continue;
                 }
@@ -974,8 +892,6 @@ impl Lockfile {
                 if !update_to_latest && dep.version.is_exact_npm() {
                     continue;
                 }
-
-                let string_buf = string_builder.string_bytes.as_slice();
                 let Some(entry) = manager
                     .updating_packages
                     .get_mut(dep.name.slice(string_buf))
@@ -994,51 +910,61 @@ impl Lockfile {
                     dep.version.literal.slice(string_buf),
                     exact_versions,
                 );
-                if new_literal.len() >= SemverString::MAX_INLINE_LEN {
-                    string_builder.cap += new_literal.len();
-                }
-                entry.updated_version_literal = Some(new_literal.into_boxed_slice());
+                // The post-install package.json edit applies this literal,
+                // so the two files cannot disagree.
+                entry.updated_version_literal = Some(new_literal.clone().into_boxed_slice());
+                rewrites.push((index, new_literal));
             }
         }
 
+        Self::apply_root_dependency_literals(old, manager, workspace_package_id, &rewrites)
+    }
+
+    /// Appends each `(root dependency index, version literal)` into the
+    /// lockfile's string buffer and re-parses it into that dependency's
+    /// `version`, so `bun.lock` serializes the new literal.
+    fn apply_root_dependency_literals(
+        old: &mut Lockfile,
+        manager: &mut PackageManager,
+        workspace_package_id: PackageID,
+        rewrites: &[(usize, Vec<u8>)],
+    ) -> Result<(), BunError> {
+        if rewrites.is_empty() {
+            return Ok(());
+        }
+
+        let root_deps_list: DependencySlice =
+            old.packages.items_dependencies()[workspace_package_id as usize];
+
+        // Split-borrow: `string_builder!` only takes `old.buffers.string_bytes`
+        // + `old.string_pool`, leaving `old.buffers.dependencies` free.
+        let mut string_builder = string_builder!(old);
+        for (_, new_literal) in rewrites {
+            if new_literal.len() >= SemverString::MAX_INLINE_LEN {
+                string_builder.cap += new_literal.len();
+            }
+        }
         string_builder.allocate()?;
 
-        // Second pass: commit the literals decided above into the root
-        // dependency list that `clean` clones into the saved lockfile.
-        {
-            let root_deps: &mut [Dependency] =
-                root_deps_list.mut_(old.buffers.dependencies.as_mut_slice());
-            for dep in root_deps.iter_mut() {
-                let Some(entry) = manager
-                    .updating_packages
-                    .get(dep.name.slice(string_builder.string_bytes.as_slice()))
-                else {
-                    continue;
-                };
-                if !dep.behavior.intersects(entry.group_behavior) {
-                    continue;
-                }
-                let Some(new_literal) = &entry.updated_version_literal else {
-                    continue;
-                };
-
-                let external_version = string_builder.append::<ExternalString>(new_literal);
-                let sliced = external_version
-                    .value
-                    .sliced(string_builder.string_bytes.as_slice());
-                if let Some(version) = dependency::parse(
-                    dep.name,
-                    dep.name_hash,
-                    sliced.slice,
-                    &sliced,
-                    None,
-                    &mut *manager,
-                ) {
-                    dep.version = version;
-                }
+        let root_deps: &mut [Dependency] =
+            root_deps_list.mut_(old.buffers.dependencies.as_mut_slice());
+        for (index, new_literal) in rewrites {
+            let dep = &mut root_deps[*index];
+            let external_version = string_builder.append::<ExternalString>(new_literal);
+            let sliced = external_version
+                .value
+                .sliced(string_builder.string_bytes.as_slice());
+            if let Some(version) = dependency::parse(
+                dep.name,
+                dep.name_hash,
+                sliced.slice,
+                &sliced,
+                None,
+                &mut *manager,
+            ) {
+                dep.version = version;
             }
         }
-
         string_builder.clamp();
         Ok(())
     }
@@ -1177,13 +1103,8 @@ impl Lockfile {
         let old_preinstall_state = preinstall_state.clone();
         preinstall_state.fill(Install::PreinstallState::Unknown);
 
-        if !updates.is_empty() {
-            clean_preprocess_update_requests_cold(old, manager, updates, exact_versions)?;
-        } else if !manager.updating_packages.is_empty() {
-            // `bun update` with no package names has no `UpdateRequest`s; its
-            // targets are in `updating_packages`. The positional path reads
-            // those same entries above, so this must stay `else if`.
-            clean_preprocess_updating_packages_cold(old, manager, exact_versions)?;
+        if !updates.is_empty() || !manager.updating_packages.is_empty() {
+            clean_preprocess_updates_cold(old, manager, updates, exact_versions)?;
         }
 
         // Caller owns the new lockfile; return `Box<Lockfile>` so Drop reclaims
@@ -1411,23 +1332,20 @@ impl Lockfile {
 
 #[cold]
 #[inline(never)]
-fn clean_preprocess_update_requests_cold(
+fn clean_preprocess_updates_cold(
     old: &mut Lockfile,
     manager: &mut PackageManager,
     updates: &mut [UpdateRequest],
     exact_versions: bool,
 ) -> Result<(), BunError> {
-    Lockfile::preprocess_update_requests(old, manager, updates, exact_versions)
-}
-
-#[cold]
-#[inline(never)]
-fn clean_preprocess_updating_packages_cold(
-    old: &mut Lockfile,
-    manager: &mut PackageManager,
-    exact_versions: bool,
-) -> Result<(), BunError> {
-    Lockfile::preprocess_updating_packages(old, manager, exact_versions)
+    if !updates.is_empty() {
+        Lockfile::preprocess_update_requests(old, manager, updates, exact_versions)
+    } else {
+        // `bun update` with no package names has no `UpdateRequest`s; its
+        // targets are in `updating_packages`, which the positional branch
+        // above also reads, so the two stay exclusive.
+        Lockfile::preprocess_updating_packages(old, manager, exact_versions)
+    }
 }
 
 /// Root dependency literal for a positional `bun update <name>` / `bun add`

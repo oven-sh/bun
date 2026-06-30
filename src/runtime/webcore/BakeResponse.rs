@@ -188,8 +188,8 @@ pub(crate) fn construct_render(
             .throw_invalid_arguments(format_args!("Response.render() path must be a string")));
     }
 
-    // The path string in its native encoding, same as `Headers.prototype.set`.
-    let path = path_arg.get_zig_string(global_this)?;
+    // Get the path string
+    let path_str = bun_core::OwnedString::new(path_arg.to_bun_string(global_this)?);
 
     // Create a Response with Render body
     let response = Box::new(Response::init(
@@ -197,7 +197,7 @@ pub(crate) fn construct_render(
             status_code: 200,
             headers: {
                 let mut headers = HeadersRef::create_empty();
-                headers.put(HTTPHeaderName::Location, &path, global_this)?;
+                headers.put(HTTPHeaderName::Location, &path_str, global_this)?;
                 Some(headers)
             },
             ..Default::default()

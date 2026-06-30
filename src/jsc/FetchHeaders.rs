@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, JsResult, VM, host_fn};
-use bun_core::{StringPointer, ZigString};
+use bun_core::{String as BunString, StringPointer, ZigString};
 use bun_uws::ResponseKind;
 
 bun_opaque::opaque_ffi! {
@@ -14,8 +14,9 @@ bun_opaque::opaque_ffi! {
 // `FetchHeaders`/`JSGlobalObject`/`VM` are opaque `UnsafeCell`-backed ZST
 // handles, so `&T` is ABI-identical to a non-null `*const T` and C++ mutating
 // header storage / VM state through them is interior mutation invisible to
-// Rust. `ZigString` is a plain `#[repr(C)]` POD; `&ZigString`/`&mut ZigString`
-// at the FFI boundary are sound (C++ reads/writes only the named struct).
+// Rust. `ZigString` and `String` (`BunString`) are plain `#[repr(C)]` PODs;
+// `&`/`&mut` refs to them at the FFI boundary are sound (C++ reads/writes
+// only the named struct).
 // Shims that traffic only in such refs + scalars are declared `safe fn`; those
 // that take raw `*mut c_void` / unsized `*mut StringPointer` arrays / `deref`
 // (which may free) keep their `unsafe fn` body.
@@ -102,7 +103,7 @@ unsafe extern "C" {
     safe fn WebCore__FetchHeaders__put(
         this: &FetchHeaders,
         name_: HTTPHeaderName,
-        value: &ZigString,
+        value: &BunString,
         global: &JSGlobalObject,
     );
 }
@@ -151,7 +152,7 @@ impl FetchHeaders {
     pub fn put_default(
         &mut self,
         name_: HTTPHeaderName,
-        value: &ZigString,
+        value: &BunString,
         global: &JSGlobalObject,
     ) -> JsResult<()> {
         if self.fast_has(name_) {
@@ -231,12 +232,12 @@ impl FetchHeaders {
         WebCore__FetchHeaders__append(self, name_, value, global)
     }
 
-    /// `value`'s pointer tag carries its encoding (Latin-1 / UTF-16 / UTF-8); a
-    /// raw `&[u8]` parameter would force every caller into a Latin-1 read.
+    /// `value`'s tag carries its encoding, and a `WTFStringImpl`-tagged value
+    /// is ref'd by the C++ side instead of copied character-by-character.
     pub fn put(
         &mut self,
         name_: HTTPHeaderName,
-        value: &ZigString,
+        value: &BunString,
         global: &JSGlobalObject,
     ) -> JsResult<()> {
         host_fn::from_js_host_call_generic(global, || {

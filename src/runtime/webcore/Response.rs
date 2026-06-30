@@ -631,7 +631,7 @@ impl Response {
                 if !content_type.is_empty() {
                     init.headers.as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
-                        &ZigString::init(content_type),
+                        &BunString::ascii(content_type),
                         global_this,
                     )?;
                 }
@@ -1027,7 +1027,7 @@ impl Response {
         let json_mime = bun_http_types::MimeType::JSON;
         headers_ref.put_default(
             HTTPHeaderName::ContentType,
-            &ZigString::init(json_mime.value.as_ref()),
+            &BunString::ascii(json_mime.value.as_ref()),
             global_this,
         )?;
         // Disarm the body-reset guard: all fallible ops have succeeded.
@@ -1074,9 +1074,8 @@ impl Response {
         let mut args =
             bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), &args_list.ptr[0..args_list.len]);
 
-        let url_string;
-        let url_string_slice;
-        // url_string_slice drops at scope exit
+        // url_string drops (derefs the WTF string) at scope exit
+        let url_string: OwnedString;
         let response: Response = 'brk: {
             let response = Response {
                 init: JsCell::new(Init {
@@ -1088,12 +1087,11 @@ impl Response {
             };
 
             let url_string_value = args.next_eat().unwrap_or(JSValue::ZERO);
-            url_string = if url_string_value.is_empty() {
-                ZigString::init(b"")
+            url_string = OwnedString::new(if url_string_value.is_empty() {
+                BunString::empty()
             } else {
-                url_string_value.get_zig_string(global_this)?
-            };
-            url_string_slice = url_string.to_slice();
+                url_string_value.to_bun_string(global_this)?
+            });
             // `Init`'s drop glue (HeadersRef + OwnedString)
             // handles cleanup on `?`.
 
@@ -1128,18 +1126,10 @@ impl Response {
         // https://fetch.spec.whatwg.org/#dom-response-redirect steps 1 & 6: `Location`
         // gets the serialization of the parsed url, not the raw input. Non-absolute
         // input keeps the raw string: relative redirects are documented Bun behavior.
-        let href = OwnedString::new(bun_url::href_from_string(&BunString::from_bytes(
-            url_string_slice.slice(),
-        )));
-        let href_slice;
-        let location: ZigString = if href.is_empty() {
-            // The JS string in its native encoding, same as `Headers.prototype.set`.
-            url_string
-        } else {
-            href_slice = href.to_utf8();
-            ZigString::init(href_slice.slice())
-        };
-        headers.put(HTTPHeaderName::Location, &location, global_this)?;
+        let href = OwnedString::new(bun_url::href_from_string(&url_string));
+        // The JS string's own WTF string (no re-encode), same as `Headers.prototype.set`.
+        let location = if href.is_empty() { &url_string } else { &href };
+        headers.put(HTTPHeaderName::Location, location, global_this)?;
         Ok(response)
     }
 
@@ -1226,7 +1216,7 @@ impl Response {
                     let headers = response.get_or_create_headers(global_this)?;
                     headers.put(
                         HTTPHeaderName::Location,
-                        &ZigString::init(&result.url),
+                        &BunString::ascii(&result.url),
                         global_this,
                     )?;
                     return Ok(bun_core::heap::into_raw(Box::new(response)));
@@ -1282,7 +1272,7 @@ impl Response {
                 if !content_type.is_empty() && !headers.fast_has(HTTPHeaderName::ContentType) {
                     headers.put(
                         HTTPHeaderName::ContentType,
-                        &ZigString::init(content_type),
+                        &BunString::ascii(content_type),
                         global_this,
                     )?;
                 }

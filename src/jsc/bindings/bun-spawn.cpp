@@ -175,13 +175,10 @@ extern "C" ssize_t posix_spawn_bun(
     }
 #else
     child = fork();
-    // OHOS: vfork blocked by seccomp, use fork() directly
-#else
-    child = fork();
+    // OHOS: vfork blocked by seccomp, use fork() directly.
+    // With fork(), child has its own memory — the volatile child_errno
+    // mechanism (used for vfork shared-memory semantics) is unreliable.
 #if defined(__OHOS__)
-    // OHOS uses fork() (vfork is blocked by seccomp). With fork(), child has
-    // its own memory — the volatile child_errno mechanism (used for vfork
-    // shared-memory semantics) is unreliable. Skip child_errno checks.
     use_fork_fallback = true;
 #endif
 #endif

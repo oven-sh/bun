@@ -269,6 +269,69 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("exists after exit: false");
 });
 
+test.skipIf(isWindows)("SCHED_NONE pipe listen applies readableAll/writableAll to the socket file", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+const fs = require("node:fs");
+const path = require("node:path");
+
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+const SOCK = path.join(__dirname, "perm.sock");
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork({ BUN_CLUSTER_SOCK: SOCK });
+  cluster.on("listening", () => {
+    // node: the worker fchmods the shared pipe handle after listen, so the
+    // group/other read+write bits must be set by the time it is listening.
+    const mode = fs.statSync(SOCK).mode;
+    console.log("perm bits:", (mode & 0o066).toString(8));
+    worker.kill();
+    process.exit(0);
+  });
+} else {
+  net.createServer(() => {}).listen({ path: process.env.BUN_CLUSTER_SOCK, readableAll: true, writableAll: true });
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("perm bits: 66");
+});
+
+test("round-robin accepted sockets honor the server's highWaterMark", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", m => {
+    console.log("accepted hwm:", m.hwm);
+    worker.kill();
+    process.exit(0);
+  });
+  cluster.on("listening", (w, address) => {
+    const c = net.connect({ host: "127.0.0.1", port: address.port });
+    c.on("error", () => {});
+  });
+} else {
+  // 1234 is far from the default highWaterMark, so a dropped option is
+  // visible. The RR path must propagate it like ServerHandlers.open().
+  net
+    .createServer({ highWaterMark: 1234 }, socket => {
+      process.send({ hwm: socket.readableHighWaterMark });
+      socket.end();
+    })
+    .listen(0, "127.0.0.1");
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("accepted hwm: 1234");
+});
+
 test.skipIf(!isIPv6())("SCHED_NONE listen with no host binds the IPv6 wildcard (dual-stack)", () => {
   const dir = tempDirWithFiles("bun-test", {
     "main.ts": `

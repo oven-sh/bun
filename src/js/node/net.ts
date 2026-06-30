@@ -3760,6 +3760,25 @@ function listenInCluster(
         // The listener owns the fd only once the listen succeeded; until
         // then handle.close() must close the duplicated fd itself.
         handle.adopted = true;
+        // The fd adoption skips kRealListen's `path` branch, so apply the
+        // unix-socket permission bits here (node fchmods a shared pipe in
+        // the worker too).
+        if (path && (readableAll || writableAll) && process.platform !== "win32" && path.charCodeAt(0) !== 0) {
+          let desired = 0;
+          if (readableAll) desired |= 0o44; // S_IRGRP | S_IROTH
+          if (writableAll) desired |= 0o22; // S_IWGRP | S_IWOTH
+          const fs = require("node:fs");
+          try {
+            const cur = fs.statSync(path).mode;
+            if ((cur & desired) !== desired) fs.chmodSync(path, cur | desired);
+          } catch (e) {
+            // Same teardown as kRealListen's chmod failure: the listener
+            // (which owns the adopted fd now) must not stay up.
+            server._handle?.stop?.(true);
+            server._handle = null;
+            throw e;
+          }
+        }
       } catch (err) {
         server[kClusterHandle] = null;
         handle[kClusterOwner] = null;
@@ -3816,8 +3835,17 @@ function onClusterConnection(err, clientHandle) {
   }
   const socket = new Socket({
     allowHalfOpen: self.allowHalfOpen,
+    highWaterMark: self.highWaterMark,
   });
   socket.isServer = true;
+  // The IPC-delivered handle is a bare {fd, close} with no setNoDelay /
+  // setKeepAlive: arm the kSet* symbols (like onconnection) so the fd
+  // connect path applies the server's options to the adopted socket.
+  if (self.noDelay) socket[kSetNoDelay] = true;
+  if (self.keepAlive) {
+    socket[kSetKeepAlive] = true;
+    socket[kSetKeepAliveInitialDelay] = self.keepAliveInitialDelay;
+  }
   // Socket.prototype._destroy decrements self._connections and calls
   // _emitCloseIfDrained because socket.server is set; no close listener
   // needed here.

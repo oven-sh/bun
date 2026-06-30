@@ -505,6 +505,16 @@ test("err.stack should invoke prepareStackTrace", () => {
   var lineNumber = -1;
   var functionName = "";
   var parentLineNumber = -1;
+  var referenceStack = "";
+  // Line numbers of the first two frames of a default-formatted stack string.
+  function defaultStackLineNumbers(stack) {
+    return String(stack)
+      .split("\n")
+      .map(line => /:(\d+):\d+\)?\s*$/.exec(line))
+      .filter(Boolean)
+      .slice(0, 2)
+      .map(match => Number(match[1]));
+  }
   function functionWithAName() {
     // This is V8's behavior.
     let prevPrepareStackTrace = Error.prepareStackTrace;
@@ -516,16 +526,23 @@ test("err.stack should invoke prepareStackTrace", () => {
       expect(s[0].getFileName().includes("capture-stack-trace.test.js")).toBe(true);
       expect(s[1].getFileName().includes("capture-stack-trace.test.js")).toBe(true);
     };
-    const e = new Error();
+    // `reference` shares `e`'s line so the default formatter (consulted after the
+    // hook is removed) must report the same call-site lines prepareStackTrace saw.
+    const [reference, e] = [new Error(), new Error()];
     e.stack;
     Error.prepareStackTrace = prevPrepareStackTrace;
+    referenceStack = reference.stack;
   }
 
   functionWithAName();
 
+  const [expectedLineNumber, expectedParentLineNumber] = defaultStackLineNumbers(referenceStack);
+  expect(referenceStack).toContain("at functionWithAName");
+  expect(expectedLineNumber).toBeGreaterThan(0);
+  expect(expectedParentLineNumber).toBeGreaterThan(expectedLineNumber);
   expect(functionName).toBe("functionWithAName");
-  expect(lineNumber).toBe(520);
-  expect(parentLineNumber).toBe(525);
+  expect(lineNumber).toBe(expectedLineNumber);
+  expect(parentLineNumber).toBe(expectedParentLineNumber);
 });
 
 test("Error.prepareStackTrace inside a node:vm works", () => {

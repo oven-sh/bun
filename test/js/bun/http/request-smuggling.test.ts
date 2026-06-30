@@ -1518,16 +1518,32 @@ describe("Host header field value validation", () => {
     }
   });
 
+  // Windows refuses connections under accept-backlog/TIME_WAIT churn even while the
+  // server is listening, so a refused connect (before anything was read) is retried.
+  const maxRefusedConnects = 20;
   async function sendRawRequestUntilClose(server: { port: number }, payload: string): Promise<string> {
-    const client = net.connect(server.port, "127.0.0.1");
-    return await new Promise<string>((resolve, reject) => {
-      const chunks: Buffer[] = [];
-      client.on("error", reject);
-      client.on("data", chunk => chunks.push(chunk));
-      client.on("end", () => resolve(Buffer.concat(chunks).toString()));
-      // latin1 keeps bytes >= 0x80 as single bytes on the wire (a string write would UTF-8-encode them).
-      client.write(Buffer.from(payload, "latin1"));
-    });
+    for (let attempt = 0; ; attempt++) {
+      const outcome = await new Promise<{ response: string } | { refused: true }>((resolve, reject) => {
+        const client = net.connect(server.port, "127.0.0.1");
+        const chunks: Buffer[] = [];
+        client.on("error", error => {
+          if (
+            chunks.length === 0 &&
+            (error as NodeJS.ErrnoException).code === "ECONNREFUSED" &&
+            attempt < maxRefusedConnects
+          ) {
+            resolve({ refused: true });
+          } else {
+            reject(error);
+          }
+        });
+        client.on("data", chunk => chunks.push(chunk));
+        client.on("end", () => resolve({ response: Buffer.concat(chunks).toString() }));
+        // latin1 keeps bytes >= 0x80 as single bytes on the wire (a string write would UTF-8-encode them).
+        client.write(Buffer.from(payload, "latin1"));
+      });
+      if ("response" in outcome) return outcome.response;
+    }
   }
 
   test("accepts an empty Host header field value on HTTP/1.1, serving a request URL with no host", async () => {
@@ -1571,10 +1587,12 @@ describe("Host header field value validation", () => {
         // HTTP/1.1: the parser (HttpParser.h isHostFieldValueByte) decides with a 400.
         // HTTP/1.0: the parser check is skipped; Request::is_valid_host_header decides
         // whether the Host header becomes the request URL's authority.
-        const [http11, http10] = await Promise.all([
-          sendRawRequestUntilClose(server, `GET /p HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`),
-          sendRawRequestUntilClose(server, `GET /p HTTP/1.0\r\nHost: ${host}\r\n\r\n`),
-        ]);
+        // The two probes run sequentially so each batch keeps at most one socket per byte open.
+        const http11 = await sendRawRequestUntilClose(
+          server,
+          `GET /p HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`,
+        );
+        const http10 = await sendRawRequestUntilClose(server, `GET /p HTTP/1.0\r\nHost: ${host}\r\n\r\n`);
         return {
           char,
           http11Accepted: http11.startsWith("HTTP/1.1 200"),
@@ -1583,7 +1601,13 @@ describe("Host header field value validation", () => {
       }
 
       const bytes = Array.from({ length: lastByte - firstByte + 1 }, (_, i) => firstByte + i);
-      const results = await Promise.all(bytes.map(checkByte));
+      // Connect in small batches: opening every connection at once can overflow the
+      // listen backlog (Windows answers with ECONNREFUSED instead of queueing).
+      const results: Awaited<ReturnType<typeof checkByte>>[] = [];
+      const batchSize = 8;
+      for (let i = 0; i < bytes.length; i += batchSize) {
+        results.push(...(await Promise.all(bytes.slice(i, i + batchSize).map(checkByte))));
+      }
       expect(results).toEqual(
         bytes.map(byte => {
           const char = String.fromCharCode(byte);

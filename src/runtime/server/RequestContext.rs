@@ -3033,6 +3033,24 @@ where
                 this.run_error_handler(js_err);
                 return;
             }
+            // The handler returned a Response whose body was already used,
+            // usually the same Response object returned for a second request.
+            // A disturbed body is an error, not a silent empty 200.
+            Body::Value::Used => {
+                if this.is_aborted_or_ended() {
+                    return;
+                }
+                let js_err = global_this
+                    .err(
+                        jsc::ErrorCode::BODY_ALREADY_USED,
+                        format_args!(
+                            "Response body already used. A Response body can only be sent once; create a new Response for each request."
+                        ),
+                    )
+                    .to_js();
+                this.run_error_handler(js_err);
+                return;
+            }
             // .InlineBlob,
             Body::Value::WTFStringImpl(_) | Body::Value::InternalBlob(_) | Body::Value::Blob(_) => {
                 // toBlobIfPossible checks for WTFString needing a conversion.

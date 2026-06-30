@@ -139,6 +139,9 @@ describe("ClipboardItem", () => {
     expect(() => new ClipboardItem({})).toThrow(TypeError);
     expect(() => new ClipboardItem({ "not a mime": "x" })).toThrow(TypeError);
     expect(() => new ClipboardItem({ "text/plain": "x" }, { presentationStyle: "nope" as never })).toThrow(TypeError);
+    // WebIDL: a non-null, non-undefined, non-object options dictionary throws.
+    expect(() => new ClipboardItem({ "text/plain": "x" }, 42 as never)).toThrow(TypeError);
+    expect(new ClipboardItem({ "text/plain": "x" }, null as never).presentationStyle).toBe("unspecified");
   });
 
   test("types is frozen and preserves insertion order; presentationStyle defaults", () => {

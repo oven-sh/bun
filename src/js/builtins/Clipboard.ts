@@ -138,8 +138,14 @@ export function createClipboard(EventTargetConstructor, EventConstructor) {
       }
       // Spec: an empty items record is a TypeError.
       if (types.length === 0) throw new TypeError("ClipboardItem requires at least one MIME type");
-      const style =
-        options === undefined || options === null ? "unspecified" : (options.presentationStyle ?? "unspecified");
+      let style = "unspecified";
+      if (options !== undefined && options !== null) {
+        // WebIDL: a dictionary argument must be undefined, null, or an object.
+        if (typeof options !== "object" && typeof options !== "function") {
+          throw new TypeError("ClipboardItem options must be an object");
+        }
+        style = options.presentationStyle ?? "unspecified";
+      }
       if (style !== "unspecified" && style !== "inline" && style !== "attachment") {
         throw new TypeError(`"${style}" is not a valid value for presentationStyle`);
       }

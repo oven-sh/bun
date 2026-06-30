@@ -295,3 +295,24 @@ test("factory argument prefers CJS exports when a module was both imported and r
   const stubbedFn: any = require("./mock-module-callable-cjs-mixed-fixture.cjs");
   expect(stubbedFn()).toBe("wrapped: callable-mixed-real");
 });
+
+test("factory argument snapshots CJS exports with integer-index keys (`module.exports = [...]`)", () => {
+  // The snapshot copies own enumerable properties; getOwnPropertyNames yields
+  // integer indices as numeric strings ("0", "1", ...). Those must route
+  // through putDirectIndex, not putDirect (which asserts !parseIndex in debug).
+  const realArr: any = require("./mock-module-array-cjs-fixture.cjs");
+  expect(realArr).toEqual(["a", "b", "c"]);
+
+  let receivedOriginal: any;
+  mock.module("./mock-module-array-cjs-fixture.cjs", original => {
+    receivedOriginal = original;
+    return { first: original[0], all: [original[0], original[1], original[2]] };
+  });
+
+  expect(receivedOriginal[0]).toBe("a");
+  expect(receivedOriginal[1]).toBe("b");
+  expect(receivedOriginal[2]).toBe("c");
+  const stubbed: any = require("./mock-module-array-cjs-fixture.cjs");
+  expect(stubbed.first).toBe("a");
+  expect(stubbed.all).toEqual(["a", "b", "c"]);
+});

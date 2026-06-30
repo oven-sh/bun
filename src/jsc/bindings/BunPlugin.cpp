@@ -669,7 +669,15 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                 (void)innerScope.tryClearException();
                 value = jsUndefined();
             }
-            snapshot->putDirect(vm, name, value, 0);
+            // getOwnPropertyNames yields integer indices as canonical numeric
+            // strings ("0", "1", ...); putDirect asserts !parseIndex(name), so
+            // route those through putDirectIndex (e.g. `module.exports = [...]`).
+            if (auto index = parseIndex(name)) {
+                snapshot->putDirectIndex(globalObject, *index, value);
+                RETURN_IF_EXCEPTION(innerScope, {});
+            } else {
+                snapshot->putDirect(vm, name, value, 0);
+            }
         }
         return snapshot;
     };

@@ -2710,7 +2710,8 @@ declare module "bun" {
      *
      * Subscribing moves the channel to a dedicated subscription state which
      * prevents most other commands from being executed until unsubscribed. Only
-     * {@link ping `.ping()`}, {@link subscribe `.subscribe()`}, and
+     * {@link ping `.ping()`}, {@link subscribe `.subscribe()`},
+     * {@link subscribeBuffer `.subscribeBuffer()`}, and
      * {@link unsubscribe `.unsubscribe()`} can be called while subscribed.
      *
      * @param channel The channel to subscribe to.

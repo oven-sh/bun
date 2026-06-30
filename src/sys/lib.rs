@@ -8895,8 +8895,8 @@ mod win_symlink_impl {
                 {
                     result = value != 0;
                 }
-                result = result
-                    || bun_windows_sys::externs::advapi32::IsTokenRestricted(token) != 0;
+                result =
+                    result || bun_windows_sys::externs::advapi32::IsTokenRestricted(token) != 0;
                 let _ = bun_windows_sys::externs::CloseHandle(token);
             }
         }
@@ -8952,7 +8952,9 @@ mod win_symlink_impl {
         // reports success; probe and report ELOOP instead of leaving a dead
         // link. Self-calibrating: one traversable junction proves this
         // process's junctions are trusted, so later creates skip the probe.
-        if sandboxed_token() || JUNCTION_PROBE_STATE.load(core::sync::atomic::Ordering::Relaxed) != 1 {
+        if sandboxed_token()
+            || JUNCTION_PROBE_STATE.load(core::sync::atomic::Ordering::Relaxed) != 1
+        {
             use bun_windows_sys::externs as k32;
             let mut w16 = bun_paths::w_path_buffer_pool::get();
             let wdest = bun_paths::string_paths::to_w_path_normalize_auto_extend(

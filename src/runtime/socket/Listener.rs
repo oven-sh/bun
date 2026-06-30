@@ -288,7 +288,9 @@ impl Listener {
                         if let Ok(se) = <bun_sys::SystemErrno as core::str::FromStr>::from_str(name)
                         {
                             let err = jsc::SystemError {
-                                errno: se as c_int,
+                                // Node-shaped errors carry the negated errno
+                                // (matches fill_system_error_common).
+                                errno: -(se as c_int),
                                 code: bun_core::String::static_(name),
                                 message: bun_core::String::clone_utf8(
                                     format!(

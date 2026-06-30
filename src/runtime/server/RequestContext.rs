@@ -3348,7 +3348,14 @@ where
                         self.flags.set_has_written_status(true);
                     }
 
-                    self.end(b"Something went wrong!", self.should_close_connection());
+                    if self.method == Method::HEAD {
+                        // HEAD must not carry a body (RFC 9110 §9.3.2); a stray
+                        // body desyncs the keep-alive connection. Mirror the 404
+                        // arm above and let uWS frame the empty body.
+                        self.end_without_body(self.should_close_connection());
+                    } else {
+                        self.end(b"Something went wrong!", self.should_close_connection());
+                    }
                 }
             }
         }

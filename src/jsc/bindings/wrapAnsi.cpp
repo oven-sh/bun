@@ -80,6 +80,17 @@ static inline bool wordStartsNewCluster(const Char* wordStart, const Char* wordE
     return Bun__graphemeBreak(' ', cp, &state);
 }
 
+// Without a separator space the row's trailing content is the word's real
+// predecessor, and a trailing escape can hide a cluster-fusing codepoint
+// (e.g. a Prepend): only an ASCII/ASCII seam keeps row widths additive.
+template<typename Char>
+static inline bool wordSeamIsAscii(Char rowTail, const Char* wordStart, const Char* wordEnd)
+{
+    if (wordStart >= wordEnd)
+        return true;
+    return static_cast<char32_t>(rowTail) < 0x80 && static_cast<char32_t>(*wordStart) < 0x80;
+}
+
 // ============================================================================
 // Row Management (using WTF::Vector)
 // ============================================================================
@@ -570,6 +581,8 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
         }
 
         size_t rowLength = lastRowWidth;
+        bool spacePrecedesWord = true;
+        Char rowTail = static_cast<Char>(' ');
 
         if (wordIndex != 0) {
             if (rowLength >= columns && (!options.wordWrap || !options.trim)) {
@@ -580,6 +593,9 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
             if (rowLength > 0 || !options.trim) {
                 rows.last().append(static_cast<Char>(' '));
                 rowLength++;
+            } else if (!rows.last().m_data.isEmpty()) {
+                spacePrecedesWord = false;
+                rowTail = rows.last().m_data.last();
             }
         }
 
@@ -622,7 +638,7 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
         }
 
         rows.last().append(wordStart, wordEnd);
-        if (wordStartsNewCluster(wordStart, wordEnd))
+        if (spacePrecedesWord ? wordStartsNewCluster(wordStart, wordEnd) : wordSeamIsAscii(rowTail, wordStart, wordEnd))
             lastRowWidth = rowLength + wordLen;
         else
             lastRowWidthDirty = true;

@@ -201,6 +201,31 @@ bool JSNodeHTTPServerSocket::isClosed() const
 }
 
 template<bool SSL>
+static bool deferShutdownUntilResponseDrains(us_socket_t* socket)
+{
+    if (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() == 0) {
+        return false;
+    }
+    /* HttpContext<SSL>::onWritable shuts the socket down once the buffered
+     * response data has flushed and HTTP_CONNECTION_CLOSE is set, so the FIN
+     * is sequenced after the response bytes (like Node's destroySoon). */
+    auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
+    httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+    return true;
+}
+
+bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains()
+{
+    if (!socket || upgraded || us_socket_is_closed(socket) || us_socket_is_shut_down(socket)) {
+        return false;
+    }
+    if (is_ssl) {
+        return deferShutdownUntilResponseDrains<true>(socket);
+    }
+    return deferShutdownUntilResponseDrains<false>(socket);
+}
+
+template<bool SSL>
 static bool isRequestTimedOutImpl(us_socket_t* socket, uint64_t headersTimeoutMs, uint64_t requestTimeoutMs)
 {
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));

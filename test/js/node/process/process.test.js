@@ -1031,6 +1031,59 @@ describe.concurrent("process.addUncaughtExceptionCaptureCallback", () => {
     expect(stderr).toContain("inner-outer");
     expect(exitCode).toBe(1);
   });
+
+  // In a Worker, Bun__Process__exit returns after requesting termination instead of
+  // exiting the process, so this also pins that the dispatch loop bails out after a
+  // throwing callback instead of re-entering the terminating VM, which fired a
+  // spurious null 'error' event on the parent Worker handle.
+  it("a callback that throws in a Worker terminates the worker like the primary callback", async () => {
+    // Error messages are concatenated so the contiguous strings never appear in
+    // the script source that bun echoes back into error reports.
+    const thrower = `err => {
+        console.log("thrower-ran:" + err.message);
+        throw new Error("inner" + "-oops");
+      }`;
+    using dir = tempDir("add-capture-worker", {
+      "parent.js": `
+        const { Worker } = require("node:worker_threads");
+        const { join } = require("node:path");
+        const w = new Worker(join(__dirname, process.argv[2]));
+        w.on("error", e => console.log("parent-error:" + (e && e.message)));
+        w.on("exit", code => console.log("parent-exit:" + code));
+      `,
+      "set-child.js": `
+        process.setUncaughtExceptionCaptureCallback(${thrower});
+        throw new Error("original" + "-oops");
+      `,
+      "add-child.js": `
+        // registered first -> would run last, but the throw above it stops the chain
+        process.addUncaughtExceptionCaptureCallback(() => console.log("older-ran"));
+        process.addUncaughtExceptionCaptureCallback(${thrower});
+        throw new Error("original" + "-oops");
+      `,
+    });
+
+    async function runVariant(child) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js", child],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // The worker and the parent interleave on the shared stdout, so compare as a set.
+      return { lines: stdout.trim().split("\n").sort(), innerReported: stderr.includes("inner-oops"), exitCode };
+    }
+
+    const [set, add] = await Promise.all([runVariant("set-child.js"), runVariant("add-child.js")]);
+    expect(set).toEqual({
+      lines: ["parent-exit:1", "thrower-ran:original-oops"],
+      innerReported: true,
+      exitCode: 0,
+    });
+    expect(add).toEqual(set);
+  });
 });
 
 it("process.execArgv", async () => {

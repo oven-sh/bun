@@ -1217,14 +1217,17 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
 extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
 
 // An exception thrown from an exception-capture callback cannot be handled; log it and exit.
-static void abortOnCaptureCallbackException(JSC::JSGlobalObject* globalObject, JSC::TopExceptionScope& scope)
+// Returns true if an exception was present. In a Worker, Bun__Process__exit returns after
+// requesting termination, so callers must bail out instead of re-entering the terminating VM.
+static bool abortOnCaptureCallbackException(JSC::JSGlobalObject* globalObject, JSC::TopExceptionScope& scope)
 {
     auto ex = scope.exception();
     if (!ex)
-        return;
+        return false;
     (void)scope.tryClearException();
     Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
     Bun__Process__exit(globalObject, 1);
+    return true;
 }
 
 extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, int isRejection)
@@ -1273,7 +1276,9 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
             for (size_t i = callbacks.size(); i-- > 0;) {
                 auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
                 JSValue handled = call(lexicalGlobalObject, callbacks.at(i), args, "uncaughtExceptionCaptureCallback"_s);
-                abortOnCaptureCallbackException(lexicalGlobalObject, scope);
+                if (abortOnCaptureCallbackException(lexicalGlobalObject, scope)) {
+                    return true;
+                }
                 if (handled.isTrue()) {
                     return true;
                 }

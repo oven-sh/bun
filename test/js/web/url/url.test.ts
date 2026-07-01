@@ -25,9 +25,7 @@ describe("url", () => {
     expect(() => new URL("http://example.com/", "")).toThrow(
       '"http://example.com/" cannot be parsed as a URL against ""',
     );
-    expect(() => new URL("http://example.com/", "")).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_URL" }),
-    );
+    expect(() => new URL("http://example.com/", "")).toThrow(expect.objectContaining({ code: "ERR_INVALID_URL" }));
     // The constructor must agree with the static validators.
     expect(URL.canParse("http://example.com/", "")).toBe(false);
     expect(URL.parse("http://example.com/", "")).toBeNull();

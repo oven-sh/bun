@@ -550,15 +550,25 @@ void readableStreamDefaultControllerEnqueue(JSGlobalObject* globalObject, JSRead
                     return;
                 }
             }
-            // A non-Number size fails IsNonNegativeNumber; NaN routes it to the same RangeError.
-            chunkSize = chunkSizeValue.isNumber() ? chunkSizeValue.asNumber() : std::numeric_limits<double>::quiet_NaN();
+            // Web IDL: the size callback returns an `unrestricted double` — a full ToNumber
+            // (can run user JS); a throw from it is the same abrupt completion as size() throwing.
+            {
+                auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+                chunkSize = chunkSizeValue.toNumber(globalObject);
+                if (catchScope.exception()) [[unlikely]] {
+                    JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
+                    if (thrown.isEmpty()) [[unlikely]]
+                        return;
+                    readableStreamDefaultControllerError(globalObject, controller, thrown);
+                    RETURN_IF_EXCEPTION(scope, void());
+                    throwException(globalObject, scope, thrown);
+                    return;
+                }
+            }
         }
         // EnqueueValueWithSize is interpreted as a completion record: same recovery.
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        {
-            WTF::Locker locker { controller->cellLock() };
-            controller->m_queue.enqueueValueWithSize(locker, globalObject, controller, chunk, chunkSize);
-        }
+        controller->m_queue.enqueueValueWithSize(globalObject, controller, chunk, chunkSize);
         if (catchScope.exception()) [[unlikely]] {
             JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
             if (thrown.isEmpty()) [[unlikely]]

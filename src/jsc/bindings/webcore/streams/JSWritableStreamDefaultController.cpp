@@ -494,11 +494,8 @@ void writableStreamDefaultControllerClose(JSGlobalObject* globalObject, JSWritab
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    {
-        WTF::Locker locker { controller->cellLock() };
-        // The close sentinel: an EMPTY value with size 0 (never throws).
-        controller->m_queue.enqueueValueWithSize(locker, globalObject, controller, JSValue(), 0);
-    }
+    // The close sentinel: an EMPTY value with size 0 (never throws).
+    controller->m_queue.enqueueValueWithSize(globalObject, controller, JSValue(), 0);
     scope.assertNoException();
     RELEASE_AND_RETURN(scope, writableStreamDefaultControllerAdvanceQueueIfNeeded(globalObject, controller));
 }
@@ -613,10 +610,7 @@ void writableStreamDefaultControllerWrite(JSGlobalObject* globalObject, JSWritab
     bool abrupt = false;
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        {
-            WTF::Locker locker { controller->cellLock() };
-            controller->m_queue.enqueueValueWithSize(locker, globalObject, controller, chunk, chunkSize);
-        }
+        controller->m_queue.enqueueValueWithSize(globalObject, controller, chunk, chunkSize);
         if (catchScope.exception()) [[unlikely]] {
             abrupt = true;
             enqueueError = takeAbruptCompletion(globalObject, catchScope);

@@ -1,7 +1,8 @@
 // Web Streams memory: (1) retained RSS per live instance, (2) peak/settled RSS for
 // streaming workloads. Run with any JS runtime; extra heap counts print under Bun.
 const N = 100_000;
-const gc = globalThis.Bun?.gc ?? globalThis.gc ?? (() => {});
+const gc = globalThis.Bun?.gc ?? globalThis.gc;
+if (!gc) throw new Error("This benchmark needs a GC hook: run with Bun, or node --expose-gc.");
 const rss = () => process.memoryUsage.rss();
 const MB = 1024 * 1024;
 const fmt = n => (n / MB).toFixed(1).padStart(8) + " MB";

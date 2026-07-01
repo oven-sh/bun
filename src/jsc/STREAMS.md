@@ -67,10 +67,9 @@ Blob,JSON,Array,ArrayBuffer,FormData}` and the `Request`/`Response` body consume
 ## Working on this code
 
 - Edit the `.cpp`/`.h` directly and rebuild with `bun bd`. There is no codegen step for the
-  stream classes themselves (only the JSSink classes are generated).
-- `python3 specs/check-streams.py <file.cpp>` is a ~10 second per-TU syntax/convention
-  check; it must print `CLEAN` before you commit. It works on any TU, including
-  `ZigGlobalObject.cpp`.
+  stream classes themselves (only the JSSink classes are generated). For a fast per-TU
+  syntax check without a full build, compile one TU against `compile_commands.json`
+  (`clang++ -fsyntax-only @<flags from build/debug/compile_commands.json> <file.cpp>`).
 - Each TU compiles standalone (see `noUnifyDirs` in `scripts/build/unified.ts`): file-local
   `static` helpers are written assuming TU isolation, so don't move them into headers
   without renaming.
@@ -83,10 +82,8 @@ Blob,JSON,Array,ArrayBuffer,FormData}` and the `Request`/`Response` body consume
 
 ## References
 
-- `specs/` (this branch) — the WHATWG Streams spec digest (`specs/digest/`,
-  `specs/streams-spec.*`), the architecture and design docs (`specs/ARCHITECTURE.md`,
-  `specs/BUN-LAYER-DESIGN.md`, `specs/CPP-SURFACE.md`, `specs/SLOT-TABLES.md`, …), and
-  `specs/check-streams.py`.
-- `specs/review-cpp/` — the per-file review record for the C++ implementation.
-- Tests: `test/js/web/streams/`, `test/js/web/fetch/`, and the WPT subset tracked in
-  `specs/WPT-BASELINE.md`.
+- The WHATWG Streams spec (https://streams.spec.whatwg.org/) is the algorithm source of
+  truth; function-level comments in the implementation cite its operation names.
+- Tests: `test/js/web/streams/`, `test/js/web/fetch/`, and the vendored WPT subset in
+  `test/js/third_party/wpt-streams/` (its `expectations.json` records the expected result
+  of every subtest).

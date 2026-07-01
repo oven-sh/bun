@@ -301,3 +301,32 @@ test("stdin should not allow process to exit when not paused", async () => {
   expect(await proc.stdout.text()).toMatchInlineSnapshot(`""`);
   expect(await proc.stderr.text()).toMatchInlineSnapshot(`""`);
 });
+
+test("pause() and resume() churn while data is in flight never destroys stdin", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      let total = 0;
+      process.stdin.on("data", d => { total += d.length; });
+      process.stdin.on("error", err => { console.log("ERROR " + (err?.code || err?.message)); process.exit(1); });
+      process.stdin.on("end", () => { console.log("TOTAL " + total); });
+      const churn = setInterval(() => { process.stdin.pause(); process.stdin.resume(); }, 5);
+      churn.unref();
+      `,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  for (let i = 0; i < 20; i++) {
+    proc.stdin.write("x".repeat(1024));
+    await Bun.sleep(10);
+  }
+  await proc.stdin.end();
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe(`TOTAL ${20 * 1024}`);
+  expect(exitCode).toBe(0);
+});

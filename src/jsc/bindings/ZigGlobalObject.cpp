@@ -2813,7 +2813,8 @@ EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue result = Bun::WebStreams::assignToStream(this, readableStream, controller);
     if (auto* exception = scope.exception()) [[unlikely]] {
-        scope.clearException();
+        // Hand the Exception cell back to the native caller; a termination stays pending by design.
+        scope.clearExceptionExceptTermination();
         return JSC::JSValue::encode(exception);
     }
     return JSC::JSValue::encode(result);

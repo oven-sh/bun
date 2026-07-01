@@ -4,7 +4,8 @@
 const RUNS = 3;
 const MB = 1024 * 1024;
 const CHUNK = new Uint8Array(64 * 1024).fill(120);
-const gc = globalThis.Bun?.gc ?? globalThis.gc ?? (() => {});
+const gc = globalThis.Bun?.gc ?? globalThis.gc;
+if (!gc) throw new Error("This benchmark needs a GC hook: run with Bun, or node --expose-gc.");
 const rss = () => process.memoryUsage.rss();
 const fmt = n => (n / MB).toFixed(1).padStart(7) + " MB";
 

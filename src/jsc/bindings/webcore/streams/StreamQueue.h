@@ -115,10 +115,9 @@ public:
 
     // spec: EnqueueValueWithSize(container, value, size). Throws RangeError if `size` is not
     // a non-negative finite number. The size was computed by the CALLER's size algorithm —
-    // this op runs no user JS. (ValueWithSize instantiation only.)
-    // The size check runs first and the throw path never touches the queue; the caller holds
-    // cellLock() for this call ONLY (never around any surrounding user-JS / heavy work).
-    void enqueueValueWithSize(const WTF::AbstractLocker&, JSC::JSGlobalObject* globalObject, JSC::JSCell* owner, JSC::JSValue value, double size)
+    // this op runs no user JS. The throw (a GC allocation) happens BEFORE this takes the
+    // owner's cell lock; only the queue mutation runs under it. (ValueWithSize only.)
+    void enqueueValueWithSize(JSC::JSGlobalObject* globalObject, JSC::JSCell* owner, JSC::JSValue value, double size)
     {
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -127,6 +126,7 @@ public:
             JSC::throwRangeError(globalObject, scope, "The queuing strategy's chunk size must be a non-negative, finite number"_s);
             return;
         }
+        WTF::Locker locker { owner->cellLock() };
         m_queue.append(Entry { JSC::WriteBarrier<JSC::Unknown>(vm, owner, value), size });
         m_totalSize += size;
     }

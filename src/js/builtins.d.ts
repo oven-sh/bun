@@ -64,40 +64,8 @@ declare var $alwaysInline;
  * Overrides **
  */
 
-class ReadableStreamDefaultController<R = any> extends _ReadableStreamDefaultController<R> {
-  constructor(
-    stream: unknown,
-    underlyingSource: unknown,
-    size: unknown,
-    highWaterMark: unknown,
-    $isReadableStream: typeof $isReadableStream,
-  );
 
-  $controlledReadableStream: ReadableStream<R>;
-  $underlyingSource: UnderlyingSource;
-  $queue: any;
-  $started: number;
-  $closeRequested: boolean;
-  $pullAgain: boolean;
-  $pulling: boolean;
-  $strategy: any;
-
-  $pullAlgorithm(): void;
-  $pull: typeof ReadableStreamDefaultController.prototype.pull;
-  $cancel: typeof ReadableStreamDefaultController.prototype.cancel;
-  $cancelAlgorithm: (reason?: any) => void;
-  $close: typeof ReadableStreamDefaultController.prototype.close;
-  $enqueue: typeof ReadableStreamDefaultController.prototype.enqueue;
-  $error: typeof ReadableStreamDefaultController.prototype.error;
-}
-
-interface ReadableStream<R = any> extends _ReadableStream<R> {
-  $highWaterMark: number;
-  $bunNativePtr: undefined | TODO;
-  $asyncContext?: {};
-  $disturbed: boolean;
-  $state: $streamClosed | $streamErrored | $streamReadable | $streamWritable | $streamClosedAndErrored;
-}
+interface ReadableStream<R = any> extends _ReadableStream<R> {}
 
 declare var ReadableStream: {
   prototype: ReadableStream;
@@ -494,19 +462,15 @@ declare class OutOfMemoryError {
   constructor();
 }
 
+// Provided by the C++ Web Streams implementation.
 declare class ReadableByteStreamController {
-  constructor(
-    stream: unknown,
-    underlyingSource: unknown,
-    strategy: unknown,
-    $isReadableStream: typeof $isReadableStream,
-  );
+  private constructor();
 }
 declare class ReadableStreamBYOBRequest {
-  constructor(stream: unknown, view: unknown, $isReadableStream: typeof $isReadableStream);
+  private constructor();
 }
 declare class ReadableStreamBYOBReader {
-  constructor(stream: unknown);
+  constructor(stream: ReadableStream);
 }
 
 // Inlining our enum types

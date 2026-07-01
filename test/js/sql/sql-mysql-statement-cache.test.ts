@@ -123,23 +123,18 @@ test("MySQL: the prepared-statement cache is capped and evicted statements are c
   try {
     await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
 
-    // More distinct parameterized query texts than the cache cap (distinct
-    // texts are what an ORM interpolating table/column names produces), all
-    // in flight at once on the single pooled connection. While a query still
-    // references its statement nothing may be evicted or closed: the mock
-    // rejects any execute of a closed id, which would reject the Promise.all.
+    // More distinct query texts than the cap, all in flight at once on one
+    // connection: none may be evicted or closed while a query references it
+    // (the mock rejects executes of closed ids, failing the Promise.all).
     const DISTINCT = MAX_CACHED_PREPARED_STATEMENTS + 8;
     const results = await Promise.all(Array.from({ length: DISTINCT }, (_, i) => sql.unsafe(`select ? as c${i}`, [i])));
     expect(results).toHaveLength(DISTINCT);
     expect(counters.prepares).toBe(DISTINCT);
     expect(counters.closed.size).toBe(0);
 
-    // A cached statement only becomes evictable once no query object
-    // references it anymore, and a query releases its statement when its
-    // wrapper is collected. Collect, then keep issuing new distinct texts:
-    // every insert past the cap must now evict + COM_STMT_CLOSE
-    // least-recently-used statements. Poll the condition (GC decides how many
-    // rounds the finalizers take) instead of assuming a fixed iteration count.
+    // Statements become evictable once their (collected) query wrappers stop
+    // referencing them. Collect, then keep inserting distinct texts: each one
+    // past the cap must evict + COM_STMT_CLOSE. Poll, since GC sets the pace.
     let extra = 0;
     while (counters.prepares - counters.closed.size > MAX_CACHED_PREPARED_STATEMENTS && extra < 64) {
       Bun.gc(true);

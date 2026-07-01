@@ -145,7 +145,9 @@ fn parse_impl_in(
             .filter_map(|m| m.data.location.as_ref())
             .any(|l| l.offset + l.length.max(1) <= pos);
         if !earlier_stage2_err {
-            drop_stage2_msgs(log);
+            if log.errors > log_mark.0 {
+                drop_stage2_msgs(log);
+            }
             return Err(report_index_error(e, source, log));
         }
         return Err(bun_core::err!("SyntaxError"));
@@ -154,7 +156,9 @@ fn parse_impl_in(
         && let Some(range) = sidx.first_comment
         && min_stage2_err(log).is_none_or(|first_err| first_err as i32 >= range.loc.start)
     {
-        drop_stage2_msgs(log);
+        if log.errors > log_mark.0 {
+            drop_stage2_msgs(log);
+        }
         log.add_error_fmt_opts(
             format_args!("JSON does not support comments"),
             bun_ast::AddErrorOptions {
@@ -242,6 +246,13 @@ fn report_index_error(
 fn guess_indentation(s: &[u8]) -> Indentation {
     let mut i = 0;
     while i < s.len() {
+        if s[i] == b'/' && s.get(i + 1) == Some(&b'*') {
+            let Some(close) = bun_core::strings::index_of(&s[i + 2..], b"*/") else {
+                return Indentation::default();
+            };
+            i += 2 + close + 2;
+            continue;
+        }
         if s[i] == b'\n' {
             i += 1;
             while i < s.len() && (s[i] == b'\n' || s[i] == b'\r') {
@@ -1458,6 +1469,22 @@ mod tests {
         let many: String = (0..200).map(|i| format!("\"k{i}\":{i},")).collect();
         let p = run(format!("{{{many}\"k7\":1}}").as_bytes(), Which::Utf8);
         assert_eq!(p.warnings, 1);
+        for doc in ["{\"a\":1,\"a\":2} // x", "{\"a\":1,\"a\":2} /* x"] {
+            let p = run(doc.as_bytes(), Which::Utf8);
+            assert!(p.errors > 0, "{doc}");
+            assert_eq!(p.warnings, 1, "{doc}");
+            assert!(p.first_msg.contains("Duplicate key"), "{}", p.first_msg);
+        }
+    }
+
+    #[test]
+    fn indentation_skips_block_comments() {
+        let i = guess_indentation(b"/* c\n   x */\n{\n\t\"a\": 1\n}");
+        assert!(matches!(
+            i.character,
+            bun_ast::IndentationCharacter::Tab
+        ));
+        assert_eq!(i.scalar, 1);
     }
 
     #[test]

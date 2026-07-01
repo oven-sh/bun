@@ -6,8 +6,8 @@ use std::rc::Rc;
 
 use bun_core::MutableString;
 use bun_jsc::{
-    self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, ProtectedJSValue,
-    StrongOptional, SystemError, bun_string_jsc,
+    self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
+    ProtectedJSValue, SystemError, bun_string_jsc,
 };
 // Note: `bun_jsc::VirtualMachine` is a *module* re-export
 // (`pub use self::virtual_machine as VirtualMachine;`). The struct lives at
@@ -557,21 +557,22 @@ pub struct BufferOutputSink {
     // output sink re-enters `&mut *sink` while the rewriter runs.
     pub rewriter: *mut lol_html::HtmlRewriter<'static, SinkRef>, // null when unset
     pub context: Rc<RefCell<LOLHTMLContext>>,
-    pub response: *mut Response, // BORROW_FIELD: kept alive by response_value Strong
-    pub response_value: StrongOptional,
+    pub response: *mut Response, // BORROW_FIELD: wrapper held alive by `response_ref`
+    /// The output `Response`'s JS wrapper, held strong for this sink's
+    /// lifetime: the sink delivers into `response` from source callbacks
+    /// long after `transform()` returned, so the wrapper (whose
+    /// `visitChildrenImpl` in turn owns the body's stream and cached
+    /// values) must outlive it. This is the sink's only GC reference; the
+    /// stream a consumer attaches and any error are reached through, and
+    /// owned by, the `Response` object graph.
+    pub response_ref: JsRef,
     pub body_value_bufferer: Option<webcore::body::ValueBufferer<'static>>,
-    /// Set by `on_readable_stream_available` once a consumer streams the
-    /// output (`.body` / `Bun.serve`). While set, rewritten bytes are
-    /// pushed into its `ByteStream` instead of accumulating in `bytes`,
-    /// and `done()` closes that stream instead of swapping in a blob.
-    pub output_stream: webcore::readable_stream::Strong,
-    /// Set when a `write` on a source chunk fails (a parse error or a
-    /// thrown handler). The typed `RewritingError` exists only on the
-    /// failing call's frame, so the JS error is built there, once, and
-    /// shared by every later report. The rewriter is poisoned once this is
-    /// set: later chunks are dropped and completion reports this error
-    /// instead of calling `end()`.
-    pub write_error: StrongOptional,
+    /// `true` once lol-html fails (a `write` on a source chunk, or
+    /// `end()`). The rewriter is poisoned: later source chunks are
+    /// dropped, and `end()` must never run on it again. The JS error
+    /// itself is built and fully reported on the failing frame, never
+    /// stored here.
+    pub failed: bool,
     /// `true` while `drive_rewriter` is on the stack. `HtmlRewriter::write`
     /// runs user JS handlers, and an async handler blocks it by spinning
     /// the full event loop (`wait_for_promise`), during which the source
@@ -629,10 +630,9 @@ impl BufferOutputSink {
             rewriter: core::ptr::null_mut(),
             context,
             response: core::ptr::null_mut(),
-            response_value: StrongOptional::empty(),
+            response_ref: JsRef::empty(),
             body_value_bufferer: None,
-            output_stream: webcore::readable_stream::Strong::default(),
-            write_error: StrongOptional::empty(),
+            failed: false,
             writing: false,
             drain_scheduled: false,
             pending_input: MutableString::init_empty(),
@@ -759,8 +759,10 @@ impl BufferOutputSink {
         // Hold off on cloning until we're actually done.
         // SAFETY: (*sink).response == result (set above), live heap allocation.
         let response_js_value = unsafe { (*(*sink).response).to_js(&(*sink).global) };
+        // Strong for the sink's lifetime: source callbacks deliver into
+        // `response` long after `transform()` returned (see the field doc).
         // SAFETY: sink is a live heap allocation (refcount >= 1).
-        unsafe { (*sink).response_value.set(global, response_js_value) };
+        unsafe { (*sink).response_ref = JsRef::init_strong(response_js_value, global) };
 
         // SAFETY: result/original are live *Response (see SAFETY note above).
         // `url()` is +0 borrowed-bits; `set_url` takes +1 — `.clone()` to bump.
@@ -846,8 +848,8 @@ impl BufferOutputSink {
 
     /// `PendingValue::on_start_streaming`: seed the consumer's new
     /// `ByteStream` with whatever rewritten output already accumulated.
-    /// Always `Owned`: `Empty` would null the body and skip
-    /// `on_readable_stream_available`, orphaning the transform.
+    /// Always `Owned`: `Empty` would null the body and never build the
+    /// stream, orphaning the transform.
     fn on_start_streaming(ctx: *mut core::ffi::c_void) -> webcore::DrainResult {
         let sink = ctx.cast::<BufferOutputSink>();
         // SAFETY: `ctx` is a live sink (see block comment). The `&mut` is
@@ -858,23 +860,27 @@ impl BufferOutputSink {
         webcore::DrainResult::Owned { list, size_hint }
     }
 
-    /// `PendingValue::on_readable_stream_available`: remember the stream the
-    /// consumer will read so `SinkRef::handle_chunk` pushes into it. First
-    /// stream wins; a second materialization (the first consumer took
-    /// `locked.readable`, then `.body` ran again) is left empty rather than
-    /// swapping the active push target mid-transform.
+    /// `PendingValue::on_readable_stream_available`: stash the consumer's
+    /// new stream in the `Response` cell's `stream` WriteBarrier slot
+    /// (visited by its generated `visitChildrenImpl`), where
+    /// `consumer_stream` reads it back. `Bun.serve` moves the stream out
+    /// of the body `Value` and replaces it with `Used`
+    /// (`do_render_with_body`), so the body is not a stable path to it;
+    /// the JS cell's slot is. First stream wins. The sink itself holds no
+    /// reference.
     fn on_readable_stream_available(
         ctx: *mut core::ffi::c_void,
         global: &JSGlobalObject,
         readable: webcore::ReadableStream,
     ) {
         let sink = ctx.cast::<BufferOutputSink>();
-        // SAFETY: `ctx` is a live sink (see block comment).
-        unsafe {
-            if (*sink).output_stream.get(global).is_some() {
-                return;
-            }
-            (*sink).output_stream = webcore::readable_stream::Strong::init(readable, global);
+        // SAFETY: `ctx` is a live sink (see block comment); `response_ref`
+        // is set in `init()` before the source can deliver anything.
+        let Some(response_js) = (unsafe { &(*sink).response_ref }).try_get() else {
+            return;
+        };
+        if webcore::response::js::stream_get_cached(response_js).is_none() {
+            webcore::response::js::stream_set_cached(response_js, global, readable.value);
         }
     }
 
@@ -916,7 +922,7 @@ impl BufferOutputSink {
     /// refcount > 0 and `(*sink).rewriter` set.
     unsafe fn on_input_chunk(sink: *mut Self, bytes: &[u8], is_async: bool) {
         // SAFETY: sink is live (fn contract); raw field reads only.
-        let (failed, writing) = unsafe { ((*sink).write_error.has(), (*sink).writing) };
+        let (failed, writing) = unsafe { ((*sink).failed, (*sink).writing) };
         if failed || bytes.is_empty() {
             return;
         }
@@ -992,14 +998,16 @@ impl BufferOutputSink {
     /// so `writing` is set for the duration and the loop drains whatever
     /// accumulated once each `write` returns.
     ///
+    /// A fresh `write` failure is reported from this frame's tail, before
+    /// any deferred terminal signal is delivered. The error must not wait
+    /// for the source to end: on the asynchronous path every later chunk
+    /// is dropped and the terminal may be arbitrarily far away (or never
+    /// come), which would strand `.text()` / `.body` / `Bun.serve` for as
+    /// long as the upstream stays open.
+    ///
     /// `source_is_async` is whether the source is a still-open stream (the
-    /// microtask drain path) rather than the synchronous `init()` path. On
-    /// the stream path, a fresh `write` failure with no pending terminal is
-    /// reported to consumers immediately: every later chunk is dropped and
-    /// the terminal may be arbitrarily far away (or never come), so waiting
-    /// for it would strand `.text()` / `.body` / `Bun.serve` for as long as
-    /// the upstream stays open. The synchronous path needs no such report;
-    /// its `on_finished_buffering` runs on the same call chain.
+    /// microtask drain path) rather than the synchronous `init()` path; it
+    /// selects the error channel (the body vs. `transform()`'s throw slot).
     ///
     /// # Safety
     /// `sink` must be a live `BufferOutputSink` heap allocation with
@@ -1009,14 +1017,18 @@ impl BufferOutputSink {
         let (global, rewriter) = unsafe { ((*sink).global, (*sink).rewriter) };
         // SAFETY: sink live; caller guarantees `writing` is false.
         unsafe { (*sink).writing = true };
+        // The JS error from a failed `write`, built on that frame. It
+        // lives on this stack (conservatively scanned) until the tail
+        // reports it; it is never stored on the sink.
+        let mut failure: Option<JSValue> = None;
         // SAFETY: sink live (fn contract).
-        let was_already_failed = unsafe { (*sink).write_error.has() };
-        let mut failed = was_already_failed;
-        if !failed && !first.is_empty() {
+        let mut poisoned = unsafe { (*sink).failed };
+        if !poisoned && !first.is_empty() {
             // SAFETY: sink live; rewriter is (*sink).rewriter.
-            failed = unsafe { Self::write_chunk(sink, &global, rewriter, first) };
+            failure = unsafe { Self::write_chunk(sink, &global, rewriter, first) };
+            poisoned = failure.is_some();
         }
-        while !failed {
+        while !poisoned {
             // Each drained batch can itself suspend and queue more, so
             // loop until the queue stays empty.
             // SAFETY: sink live; the re-entrant call above has returned.
@@ -1028,10 +1040,18 @@ impl BufferOutputSink {
                 break;
             }
             // SAFETY: sink live; rewriter is (*sink).rewriter.
-            failed = unsafe { Self::write_chunk(sink, &global, rewriter, &queued) };
+            failure = unsafe { Self::write_chunk(sink, &global, rewriter, &queued) };
+            poisoned = failure.is_some();
         }
         // SAFETY: sink live.
         unsafe { (*sink).writing = false };
+        // Report a `write` failure from THIS frame before delivering any
+        // deferred terminal: the failure happened first, and `finish` on a
+        // poisoned sink has nothing left to report (see the fn doc).
+        if let Some(err) = failure {
+            // SAFETY: sink live (fn contract).
+            unsafe { Self::report_rewriter_failure(sink, &global, err, source_is_async) };
+        }
         // The source finished (or errored) on the asynchronous path; its
         // callback deferred here and kept its +1 ref, which `finish`
         // consumes.
@@ -1041,20 +1061,15 @@ impl BufferOutputSink {
             // consumes it). `is_async` is true because every deferral came
             // from the asynchronous path, whose error channel this is.
             unsafe { Self::finish(sink, terminal, true) };
-        } else if failed && !was_already_failed && source_is_async {
-            // A `write` failed on THIS frame and the source is still open:
-            // report to every consumer channel now instead of stranding
-            // them until the source ends (see the fn doc). The eventual
-            // source end re-enters `report_rewriter_failure`, which is
-            // idempotent (see its doc).
-            // SAFETY: sink live (fn contract).
-            unsafe { Self::report_rewriter_failure(sink, &global, true) };
         }
     }
 
-    /// One `HtmlRewriter::write`. On failure, capture the error on this
-    /// frame and poison the sink (see `write_error`). Returns whether the
-    /// write failed.
+    /// One `HtmlRewriter::write`. On failure, poison the sink and return
+    /// the JS error, built NOW on the failing frame: the typed
+    /// `RewritingError` exists only here, and a throwing handler's
+    /// captured JS exception (which it wraps) is consume-once. The caller
+    /// reports it before returning to JS. lol-html is poisoned after a
+    /// failed `write`, so `end()` must never run on this rewriter again.
     ///
     /// # Safety
     /// `sink` must be a live `BufferOutputSink` heap allocation with
@@ -1064,26 +1079,17 @@ impl BufferOutputSink {
         global: &JSGlobalObject,
         rewriter: *mut lol_html::HtmlRewriter<'static, SinkRef>,
         chunk: &[u8],
-    ) -> bool {
+    ) -> Option<JSValue> {
         // SAFETY: rewriter heap-allocated by init() and not yet freed: a
         // poisoned rewriter never reaches `end()` (which is what consumes
         // it), so it is still owned by the field until `Drop`.
         let Err(e) = (unsafe { (*rewriter).write(chunk) }) else {
-            return false;
+            return None;
         };
-        // Build the JS error NOW, on the same frame as the failing `write`:
-        // the typed `RewritingError` exists only here, and a throwing
-        // handler's captured JS exception (which it wraps) is consume-once.
-        // lol-html is poisoned after a failed `write`, so `end()` must
-        // never run on this rewriter again.
         // SAFETY: sink still live; the call above has returned so no other
         // `&mut *sink` exists.
-        unsafe {
-            (*sink)
-                .write_error
-                .set(global, create_lolhtml_error(global, &e))
-        };
-        true
+        unsafe { (*sink).failed = true };
+        Some(create_lolhtml_error(global, &e))
     }
 
     fn on_finished_buffering_trampoline(
@@ -1114,7 +1120,7 @@ impl BufferOutputSink {
         is_async: bool,
     ) {
         // Two situations must not drive the rewriter here, because both of
-        // its terminal paths (`end()` or reporting a `write_error`) can
+        // its terminal paths (`end()`, or reporting the source error) can
         // run user JS or must not run at all mid-write:
         // - `writing`: a `drive_rewriter` is suspended on this stack (an
         //   async handler is spinning the event loop); its own tail
@@ -1152,7 +1158,7 @@ impl BufferOutputSink {
     /// # Safety
     /// `sink` must be a live `BufferOutputSink` heap allocation with
     /// refcount > 0 and `(*sink).writing` false; `(*sink).response` must
-    /// be rooted by `response_value`.
+    /// be held alive by `response_ref`.
     unsafe fn finish(
         sink: *mut BufferOutputSink,
         js_err: Option<webcore::body::ValueError>,
@@ -1172,15 +1178,15 @@ impl BufferOutputSink {
         let global = unsafe { (*sink).global };
 
         if let Some(mut err) = js_err {
-            // A consumer already streaming the rewritten output must observe
-            // the failure: reject its stream before the body is rewritten
-            // below (which may have dropped `locked.readable` by then).
+            // Reject the stream a consumer is already reading. After
+            // `Bun.serve` takes it the body `Value` is `Used`, so the
+            // `to_error_instance` below never reaches that stream.
             // SAFETY: sink live (fn contract).
             unsafe {
-                Self::fail_output_stream(sink, &global, err.dupe(&global).to_stream_error(&global));
+                Self::fail_output_stream(sink, err.dupe(&global).to_stream_error(&global));
             }
             // SAFETY: (*sink).response is the heap Response allocated in init()
-            // and kept alive by (*sink).response_value (Strong root).
+            // and kept alive by (*sink).response_ref for the sink's lifetime.
             let sink_body_value = unsafe { (*(*sink).response).get_body_value() };
             let sink_ptr_usize = sink as usize;
             // If a `.body` readable is already attached, stay `Locked` so
@@ -1220,12 +1226,12 @@ impl BufferOutputSink {
             return;
         }
 
-        // A `write` on some earlier source chunk failed. `end()` would
-        // panic on the poisoned rewriter; report the failure directly.
+        // A `write` on an earlier source chunk failed. `end()` would panic
+        // on the poisoned rewriter, and nothing is left to report: the
+        // failing `drive_rewriter` already delivered the error from its
+        // own tail (to the body, or to `transform()`'s throw slot).
         // SAFETY: sink live (fn contract).
-        if unsafe { (*sink).write_error.has() } {
-            // SAFETY: sink live (fn contract).
-            unsafe { Self::report_rewriter_failure(sink, &global, is_async) };
+        if unsafe { (*sink).failed } {
             return;
         }
 
@@ -1239,79 +1245,71 @@ impl BufferOutputSink {
         unsafe { (*sink).rewriter = core::ptr::null_mut() };
         // SAFETY: `rewriter` was heap-allocated by init(); sole owner now.
         if let Err(e) = unsafe { bun_core::heap::take(rewriter) }.end() {
-            // Build the error once from the typed `RewritingError` and
-            // report it through every channel (the output stream, the body,
-            // and the synchronous `transform()` throw).
             // SAFETY: sink live; the call above has returned.
-            unsafe {
-                (*sink)
-                    .write_error
-                    .set(&global, create_lolhtml_error(&global, &e))
-            };
+            unsafe { (*sink).failed = true };
+            // Build the error from the typed `RewritingError`, which exists
+            // only on this frame, and report it now.
             // SAFETY: sink live (fn contract).
-            unsafe { Self::report_rewriter_failure(sink, &global, is_async) };
+            unsafe {
+                Self::report_rewriter_failure(
+                    sink,
+                    &global,
+                    create_lolhtml_error(&global, &e),
+                    is_async,
+                )
+            };
         }
     }
 
-    /// Reject a consumer streaming the rewritten output (if any) with `err`
-    /// and drop the sink's ref on that stream so a subsequent `done()`
-    /// takes the buffered path. `err` is consumed either way.
+    /// Reject a consumer streaming the rewritten output (if any) with
+    /// `err`. No-op once the stream is already closed or errored.
     ///
     /// # Safety
-    /// `sink` must be a live `BufferOutputSink` heap allocation
-    /// (refcount > 0).
-    unsafe fn fail_output_stream(
-        sink: *mut Self,
-        global: &JSGlobalObject,
-        err: streams::StreamError,
-    ) {
-        // SAFETY: sink live (fn contract); short shared reborrow of one
-        // field, nothing re-entrant runs while it is live.
-        let Some(out) = (unsafe { &(*sink).output_stream }).get(global) else {
+    /// `sink` must be a live `BufferOutputSink` heap allocation with
+    /// refcount > 0 and `(*sink).response` held alive by `response_ref`.
+    unsafe fn fail_output_stream(sink: *mut Self, err: streams::StreamError) {
+        // SAFETY: sink live (fn contract); `consumer_stream` forms a short
+        // `&Self` and nothing re-entrant runs while it is live.
+        let Some(out) = (unsafe { &*sink }).consumer_stream() else {
             return;
         };
         if let Some(byte_stream) = out.ptr.bytes() {
             let _ = byte_stream.on_data(StreamResult::Err(err));
         }
-        // SAFETY: sink live (fn contract).
-        unsafe { (*sink).output_stream.deinit() };
     }
 
     /// lol-html itself failed (a `write` on a source chunk, or `end()`):
-    /// surface the error through every channel a consumer may be waiting on.
+    /// deliver `err_value` to whoever is waiting. Called exactly once per
+    /// failure, on the failing frame, with the JS error built there.
     ///
-    /// `write_error` is set by the failing call (`write_chunk`, or the
-    /// `end()` arm in `finish`) from the typed error on that frame; the
-    /// fallback below is unreachable in practice and exists only so a
-    /// future caller cannot report an empty error.
-    ///
-    /// Idempotent. A fresh `write` failure is reported immediately from
-    /// `drive_rewriter`, and the real source end then reports again through
-    /// `finish`. Every channel tolerates the second delivery:
-    /// `fail_output_stream` no-ops once the stream is dropped,
-    /// `write_error.get()` is a peek (not a take), and `to_error_instance`
-    /// on an already-`Error` body is a same-`err` overwrite.
+    /// Asynchronous source: error the consumer's stream directly (after
+    /// `Bun.serve` takes it, the body `Value` is `Used` and no longer
+    /// reaches it), then put the body into `Error`, which also rejects a
+    /// pending `.text()` / `.json()` promise. Synchronous source:
+    /// `transform()` is still on the stack and the error becomes its
+    /// throw; nothing can be attached to a `Response` the caller has
+    /// never seen.
     ///
     /// # Safety
     /// `sink` must be a live `BufferOutputSink` heap allocation with
-    /// refcount > 0 and `(*sink).response` rooted by `response_value`.
-    unsafe fn report_rewriter_failure(sink: *mut Self, global: &JSGlobalObject, is_async: bool) {
-        // SAFETY: sink live (fn contract); short shared reborrow of one field.
-        let err_value = (unsafe { &(*sink).write_error })
-            .get()
-            .unwrap_or_else(|| create_lolhtml_error(global, &"The HTMLRewriter failed"));
-        // SAFETY: sink live (fn contract).
-        unsafe {
-            Self::fail_output_stream(
-                sink,
-                global,
-                streams::StreamError::JSValue(jsc::strong::Optional::create(err_value, global)),
-            );
-        }
+    /// refcount > 0 and `(*sink).response` held alive by `response_ref`.
+    unsafe fn report_rewriter_failure(
+        sink: *mut Self,
+        global: &JSGlobalObject,
+        err_value: JSValue,
+        is_async: bool,
+    ) {
         if is_async {
+            // SAFETY: sink live (fn contract).
+            unsafe {
+                Self::fail_output_stream(
+                    sink,
+                    streams::StreamError::JSValue(jsc::strong::Optional::create(err_value, global)),
+                );
+            }
             // `to_error_instance` only fails when the VM is terminating;
             // there is nowhere left to report to (same as `done()`).
-            // SAFETY: response kept alive by response_value Strong.
+            // SAFETY: response kept alive by `response_ref` (fn contract).
             let _ = unsafe { (*(*sink).response).get_body_value() }.to_error_instance(
                 webcore::body::ValueError::JSValue(jsc::strong::Optional::create(
                     err_value, global,
@@ -1333,13 +1331,13 @@ impl BufferOutputSink {
     /// completion path (done, rewriter failure, source error, early bail).
     fn detach_from_output_body(&mut self) {
         // The builder-failure path in `init()` frees `response` before
-        // `response_value` is ever set; only a rooted wrapper guarantees
+        // `response_ref` is ever set; only a held wrapper guarantees
         // `self.response` is still live.
-        if self.response_value.get().is_none() {
+        if self.response_ref.try_get().is_none() {
             return;
         }
-        // SAFETY: `response_value` (Strong) roots the JS Response wrapper,
-        // which owns `response` as its m_ctx; both outlive this call.
+        // SAFETY: `response_ref` holds the JS Response wrapper, which owns
+        // `response` as its m_ctx; both outlive this call.
         let body_value = unsafe { (*self.response).get_body_value() };
         let self_usize = std::ptr::from_mut(self) as usize;
         if let webcore::body::Value::Locked(l) = body_value {
@@ -1351,20 +1349,31 @@ impl BufferOutputSink {
         }
     }
 
+    /// The `ReadableStream` a consumer attached to the output `Response`,
+    /// if any. The `Response` owns it: `on_readable_stream_available`
+    /// put it in the cell's `stream` WriteBarrier slot, which the
+    /// generated `visitChildrenImpl` visits and which
+    /// `get_body_readable_stream` reads first. The sink never takes a
+    /// reference of its own.
+    fn consumer_stream(&self) -> Option<webcore::ReadableStream> {
+        // SAFETY: `self.response` is the live m_ctx of the `Response`
+        // wrapper `self.response_ref` holds for this sink's lifetime.
+        unsafe { (*self.response).get_body_readable_stream(&self.global) }
+    }
+
     pub fn done(&mut self) {
-        // A consumer is streaming the output: close its `ByteStream`. The
-        // body `Value` stays `Locked { readable }`; the data already went
-        // through the stream, exactly like a completed `fetch()` body.
-        if let Some(out) = self.output_stream.get(&self.global) {
+        // A consumer is streaming the output: close its `ByteStream`.
+        // Whoever took the stream (the reader, or `Bun.serve`) owns it;
+        // the data already went through it, like a completed `fetch()`.
+        if let Some(out) = self.consumer_stream() {
             if let Some(byte_stream) = out.ptr.bytes() {
                 let _ = byte_stream.on_data(StreamResult::Done);
             }
-            self.output_stream.deinit();
             return;
         }
 
-        // SAFETY: self.response is kept alive by self.response_value (Strong
-        // root) for the lifetime of this sink.
+        // SAFETY: self.response is kept alive by self.response_ref for the
+        // lifetime of this sink.
         let body_value = unsafe { (*self.response).get_body_value() };
         // An earlier source/handler error already put the body into the
         // `Error` state; the buffered output is incomplete, so don't
@@ -1388,7 +1397,7 @@ impl BufferOutputSink {
         // A consumer is streaming: hand the rewritten bytes straight to its
         // `ByteStream`. `on_data` copies `Temporary` slices synchronously
         // and runs no user JS, so the enclosing `&mut self` stays unique.
-        if let Some(out) = self.output_stream.get(&self.global) {
+        if let Some(out) = self.consumer_stream() {
             if let Some(byte_stream) = out.ptr.bytes() {
                 let _ = byte_stream.on_data(StreamResult::Temporary(bun_ptr::RawSlice::new(bytes)));
                 return;
@@ -1427,12 +1436,12 @@ pub enum BufferOutputSinkSync {
 
 impl Drop for BufferOutputSink {
     fn drop(&mut self) {
-        // Must run before `response_value` (a struct field) drops: after
-        // that, nothing roots the output Response and its `Locked` body's
+        // Must run before `response_ref` (a struct field) drops: after
+        // that, nothing holds the output Response and its `Locked` body's
         // callback pointers into this about-to-be-freed sink.
         self.detach_from_output_body();
-        // bytes, output_stream (Strong), body_value_bufferer, context (Rc),
-        // response_value (Strong) drop automatically.
+        // bytes, body_value_bufferer, context (Rc), response_ref drop
+        // automatically.
         if !self.rewriter.is_null() {
             // SAFETY: rewriter heap-allocated by init() and not yet freed
             // (`finish` nulls the field before consuming it in `end`).

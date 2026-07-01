@@ -163,7 +163,6 @@ export async function render(
 export async function prerender(meta: Bake.RouteMetadata) {
   const page = getPage(meta, meta.styles);
 
-  // TODO: write a lightweight version of PassThrough
   const rscPayload = new PassThrough();
 
   // Mirror `render`: a render error must abort both the flight and HTML

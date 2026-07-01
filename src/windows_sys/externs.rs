@@ -1016,6 +1016,25 @@ pub mod advapi32 {
     }
 }
 
+/// `normaliz` namespace — IDN conversions.
+pub mod normaliz {
+    use super::*;
+
+    #[link(name = "normaliz")]
+    unsafe extern "system" {
+        /// `IdnToAscii` (`winnls.h`) — Unicode host label(s) → Punycode
+        /// ASCII (RFC 3490). Returns the written length, 0 on failure
+        /// (GetLastError). Flags 0 = default IDNA mapping.
+        pub fn IdnToAscii(
+            dwFlags: DWORD,
+            lpUnicodeCharStr: *const u16,
+            cchUnicodeChar: c_int,
+            lpASCIICharStr: *mut u16,
+            cchASCIIChar: c_int,
+        ) -> c_int;
+    }
+}
+
 /// `userenv` namespace.
 pub mod userenv {
     use super::*;

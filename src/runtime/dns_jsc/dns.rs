@@ -1169,7 +1169,47 @@ pub mod get_addr_info_request {
             // can never exceed the buffer even if the upstream length guard in
             // `doLookup` is bypassed.
             let cap = hostname.len() - 1;
-            let copied_len = strings::copy(&mut hostname[..cap], &query_name).len();
+            let mut copied_len = strings::copy(&mut hostname[..cap], &query_name).len();
+            if !query_name.is_ascii() {
+                // ANSI getaddrinfo does no IDN mapping (libuv used
+                // uv__idna_toascii); IdnToAscii is the platform equivalent.
+                // Failure falls through with the raw name.
+                let mut wide = [0u16; 256];
+                let mut punycode = [0u16; 256];
+                let n = core::str::from_utf8(&query_name).ok().and_then(|s| {
+                    let mut i = 0;
+                    for u in s.encode_utf16() {
+                        if i >= wide.len() {
+                            return None;
+                        }
+                        wide[i] = u;
+                        i += 1;
+                    }
+                    Some(i)
+                });
+                if let Some(n) = n {
+                    // SAFETY: both buffers are owned locals; lengths are
+                    // their element counts.
+                    let m = unsafe {
+                        bun_windows_sys::normaliz::IdnToAscii(
+                            0,
+                            wide.as_ptr(),
+                            n as i32,
+                            punycode.as_mut_ptr(),
+                            punycode.len() as i32,
+                        )
+                    };
+                    if m > 0 {
+                        let m = m as usize;
+                        if m <= cap && punycode[..m].iter().all(|&c| c < 128) {
+                            for (dst, &src) in hostname[..m].iter_mut().zip(&punycode[..m]) {
+                                *dst = src as u8;
+                            }
+                            copied_len = m;
+                        }
+                    }
+                }
+            }
             hostname[copied_len] = 0;
             let mut addrinfo: *mut AddrInfo = ptr::null_mut();
             // SAFETY: hostname[copied_len] == 0

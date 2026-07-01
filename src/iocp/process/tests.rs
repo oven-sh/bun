@@ -570,7 +570,7 @@ fn creation_flags_matrix() {
         (PROCESS_DETACHED | PROCESS_HIDE, false),
     ];
     for &(flags, any_inherit) in cases {
-        let (pf, show) = creation_flags(flags, any_inherit);
+        let (pf, show) = creation_flags(flags, any_inherit, false);
         assert_ne!(pf & CREATE_UNICODE_ENVIRONMENT, 0, "flags={flags:#x}");
         assert_eq!(pf & CREATE_BREAKAWAY_FROM_JOB, 0, "never breakaway");
         let wants_no_window = flags & (PROCESS_HIDE | PROCESS_HIDE_CONSOLE) != 0 && !any_inherit;

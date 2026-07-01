@@ -491,6 +491,27 @@ impl FdTable {
         Ok(())
     }
 
+    /// The fd's kernel object is about to be shared with a child (spawn
+    /// stdio): sync the kernel pointer to `pos` and flip to ADOPTED so
+    /// parent sequential I/O follows the shared pointer. // quirk: FSIO-21
+    pub fn mark_shared_with_child(&self, fd: u32) -> Result<(), Win32Error> {
+        let mut inner = self.lock();
+        let slot = slot_of_mut(&mut inner, fd)?;
+        if slot.kind != FdKind::File || slot.flags.contains(FdFlags::ADOPTED) {
+            return Ok(());
+        }
+        let handle = ptr::with_exposed_provenance_mut::<c_void>(slot.handle);
+        // SAFETY: live handle per the slot; null out-param is allowed.
+        let ok = unsafe {
+            SetFilePointerEx(handle, slot.pos as i64, ptr::null_mut(), 0 /* FILE_BEGIN */)
+        };
+        if ok == 0 {
+            return Err(Win32Error::get());
+        }
+        slot.flags.0 |= FdFlags::ADOPTED.0;
+        Ok(())
+    }
+
     /// `lseek(2)` over the table. Minted `File`/`Directory` fds reposition
     /// the LOGICAL `pos` (their kernel pointer is not the sequential state —
     /// `sequential_io` issues positioned ops at `pos`); `ADOPTED` fds seek

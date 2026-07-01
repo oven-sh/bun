@@ -683,6 +683,12 @@ describe.concurrent(() => {
       expect(process.kill(0, 0)).toBe(true);
     });
 
+    it("process.kill with an out-of-range signal number throws EINVAL", () => {
+      expect(() => process.kill(process.pid, 99)).toThrow(
+        expect.objectContaining({ code: "EINVAL" }),
+      );
+    });
+
     // Windows-only: on POSIX process.kill(0) signals the whole process group,
     // which would take the test runner down with it.
     it.if(isWindows)("process.kill(0) terminates the current process on Windows", async () => {

@@ -2052,6 +2052,7 @@ mod spawn_process_body {
                         }
                     }
                     WindowsStdio::Pipe(fd) => {
+                        bun_sys::windows::mark_fd_shared_with_child(*fd);
                         engine_stdio.push(EngineStdio::InheritFd(fd.native()));
                         parent_ends.push(WindowsStdioResult::Unavailable);
                     }
@@ -2062,9 +2063,9 @@ mod spawn_process_body {
                 match extra {
                     WindowsStdio::Dup2(_) => panic!("TODO dup2 extra fd"),
                     WindowsStdio::Inherit => {
-                        engine_stdio.push(EngineStdio::InheritFd(
-                            Fd::from_js_fd(i32::try_from(3 + j).expect("int cast")).native(),
-                        ));
+                        let fd = Fd::from_js_fd(i32::try_from(3 + j).expect("int cast"));
+                        bun_sys::windows::mark_fd_shared_with_child(fd);
+                        engine_stdio.push(EngineStdio::InheritFd(fd.native()));
                         parent_ends.push(WindowsStdioResult::Unavailable);
                     }
                     WindowsStdio::Ignore => {
@@ -2139,6 +2140,7 @@ mod spawn_process_body {
                         }
                     }
                     WindowsStdio::Pipe(fd) => {
+                        bun_sys::windows::mark_fd_shared_with_child(*fd);
                         engine_stdio.push(EngineStdio::InheritFd(fd.native()));
                         parent_ends.push(WindowsStdioResult::Unavailable);
                     }

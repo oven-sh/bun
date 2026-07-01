@@ -55,7 +55,7 @@ struct us_poll_t {
 };
 
 /* ── frozen layout (twin asserts in src/iocp/usockets.rs) ─────────────── */
-BUN_IOCP_STATIC_ASSERT(sizeof(struct us_internal_loop_data_t) == 192,
+BUN_IOCP_STATIC_ASSERT(sizeof(struct us_internal_loop_data_t) == 200,
                        "us_internal_loop_data_t layout drifted — update "
                        "src/iocp/usockets.rs::LoopData and "
                        "src/uws_sys/InternalLoopData.rs together");
@@ -65,14 +65,16 @@ BUN_IOCP_STATIC_ASSERT(offsetof(struct us_internal_loop_data_t, quic_head) == 32
                        "quic_head offset");
 BUN_IOCP_STATIC_ASSERT(offsetof(struct us_internal_loop_data_t, quic_next_tick_us) == 40,
                        "quic_next_tick_us offset");
-BUN_IOCP_STATIC_ASSERT(offsetof(struct us_internal_loop_data_t, iteration_nr) == 168,
+BUN_IOCP_STATIC_ASSERT(offsetof(struct us_internal_loop_data_t, quic_timer) == 48,
+                       "quic_timer offset");
+BUN_IOCP_STATIC_ASSERT(offsetof(struct us_internal_loop_data_t, iteration_nr) == 176,
                        "iteration_nr offset");
-BUN_IOCP_STATIC_ASSERT(offsetof(struct us_internal_loop_data_t, jsc_vm) == 176,
+BUN_IOCP_STATIC_ASSERT(offsetof(struct us_internal_loop_data_t, jsc_vm) == 184,
                        "jsc_vm offset");
-BUN_IOCP_STATIC_ASSERT(offsetof(struct us_internal_loop_data_t, tick_depth) == 184,
+BUN_IOCP_STATIC_ASSERT(offsetof(struct us_internal_loop_data_t, tick_depth) == 192,
                        "tick_depth offset");
 BUN_IOCP_STATIC_ASSERT(offsetof(struct us_loop_t, data) == 0, "data must sit at offset 0");
-BUN_IOCP_STATIC_ASSERT(offsetof(struct us_loop_t, pending_wakeups) == 192,
+BUN_IOCP_STATIC_ASSERT(offsetof(struct us_loop_t, pending_wakeups) == 200,
                        "pending_wakeups offset");
 BUN_IOCP_STATIC_ASSERT(sizeof(struct us_loop_t) == 240,
                        "us_loop_t size is ABI (us_loop_ext = loop + 1)");

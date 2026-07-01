@@ -7164,7 +7164,15 @@ impl NodeFS {
         #[cfg(windows)]
         {
             return match Syscall::rmdir(args.path.slice_z(&mut self.sync_error_buf)) {
-                Err(err) => Err(err.with_path(args.path.slice())),
+                Err(mut err) => {
+                    // rmdir on a non-directory is ENOENT on Windows (frozen
+                    // libuv behavior; same remap as the recursive arm).
+                    // // quirk: FSLNK-21
+                    if err.get_errno() == E::ENOTDIR {
+                        err.errno = E::ENOENT as _;
+                    }
+                    Err(err.with_path(args.path.slice()))
+                }
                 Ok(result) => Ok(result),
             };
         }

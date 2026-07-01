@@ -1066,9 +1066,11 @@ impl Drop for AttrList {
 /// console); SW_HIDE is the independent GUI axis. Non-detached children are
 /// CREATE_SUSPENDED for the job-assign window. // quirk: PROC-39, PROC-40,
 /// PROC-41
-fn creation_flags(flags: u32, any_inherit_fd: bool) -> (DWORD, WORD) {
+fn creation_flags(flags: u32, any_inherit_fd: bool, pseudoconsole: bool) -> (DWORD, WORD) {
     let mut pf: DWORD = CREATE_UNICODE_ENVIRONMENT; // quirk: PROC-07
-    if flags & (PROCESS_HIDE | PROCESS_HIDE_CONSOLE) != 0 && !any_inherit_fd {
+    // CREATE_NO_WINDOW detaches the child from a pseudoconsole — libuv makes
+    // the combination structurally impossible; hide flags defer to ConPTY.
+    if flags & (PROCESS_HIDE | PROCESS_HIDE_CONSOLE) != 0 && !any_inherit_fd && !pseudoconsole {
         pf |= CREATE_NO_WINDOW;
     }
     let show: WORD = if flags & (PROCESS_HIDE | PROCESS_HIDE_GUI) != 0 {
@@ -1377,7 +1379,7 @@ impl ProcessHandle {
             .stdio
             .iter()
             .any(|s| matches!(s, Stdio::InheritFd(_)));
-        let (mut process_flags, show) = creation_flags(options.flags, any_inherit_fd);
+        let (mut process_flags, show) = creation_flags(options.flags, any_inherit_fd, options.pseudoconsole.is_some());
         if attrs.is_some() {
             process_flags |= EXTENDED_STARTUPINFO_PRESENT;
         }

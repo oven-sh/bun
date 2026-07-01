@@ -812,7 +812,9 @@ mod _impl {
                     1024,
                 )
             } as usize;
-            if n > 0 && n < 1024 {
+            // libuv treats a set-but-shorter-than-"C:\" USERPROFILE as
+            // invalid (uv_os_homedir's `*size < 3` check).
+            if n >= 3 && n < 1024 {
                 return Ok(BunString::clone_utf16(&wide[..n]));
             }
             let mut token: bun_windows_sys::HANDLE = core::ptr::null_mut();

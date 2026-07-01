@@ -707,8 +707,8 @@ status = "implemented"
 covered_by = "LOOP-13"
 
 [LOOP-19]
-status = "skipped"
-reason = "uv_backend_timeout dies; timeout folding lives in Loop::tick + us_loop_run_bun_tick"
+status = "implemented"
+reason = "uv_backend_timeout dies; its zero-timeout conditions fold into Loop::tick's wait (pending reqs, queued endgames, stop flag, timer deadline) + us_loop_run_bun_tick"
 
 [LOOP-20]
 status = "implemented"

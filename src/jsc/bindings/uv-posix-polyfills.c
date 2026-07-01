@@ -318,22 +318,36 @@ UV_EXTERN void uv_mutex_unlock(uv_mutex_t* mutex)
     LeaveCriticalSection(mutex);
 }
 
+/* A process that exited with code 259 (STILL_ACTIVE) makes GetExitCodeProcess
+ * ambiguous; libuv disambiguates with a zero-timeout wait (process.c). */
+static int uv__kill_process_is_dead(HANDLE h)
+{
+    DWORD status;
+    if (GetExitCodeProcess(h, &status) && status != STILL_ACTIVE)
+        return 1;
+    return WaitForSingleObject(h, 0) == WAIT_OBJECT_0;
+}
+
+static int bun__uv_translate_sys_error(DWORD err);
+
 UV_EXTERN int uv_kill(int pid, int signum)
 {
-    /* Port of libuv win/process.c uv_kill semantics: 0 probes liveness,
-     * the fatal signals terminate with code 1, everything else ENOSYS.
-     * pid 0 targets the current process via the GetCurrentProcess pseudo-
-     * handle, as in libuv (CloseHandle on it is a documented no-op). */
+    /* Port of libuv win/process.c uv_kill semantics: out-of-range signals are
+     * EINVAL, 0 probes liveness, the fatal signals terminate with code 1,
+     * everything else ENOSYS. A dead-but-still-open target is ESRCH, never
+     * EPERM. pid 0 targets the current process via the GetCurrentProcess
+     * pseudo-handle, as in libuv (CloseHandle on it is a documented no-op). */
     HANDLE h;
-    DWORD status;
+    if (signum < 0 || signum >= 32 /* NSIG */)
+        return UV_EINVAL;
     if (signum == 0) {
         h = pid == 0 ? GetCurrentProcess()
-                     : OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
+                     : OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
         if (h == NULL)
             return GetLastError() == ERROR_INVALID_PARAMETER ? UV_ESRCH : UV_EPERM;
-        int alive = GetExitCodeProcess(h, &status) && status == STILL_ACTIVE;
+        int dead = uv__kill_process_is_dead(h);
         CloseHandle(h);
-        return alive ? 0 : UV_ESRCH;
+        return dead ? UV_ESRCH : 0;
     }
     switch (signum) {
     case 2 /* SIGINT */:
@@ -341,14 +355,23 @@ UV_EXTERN int uv_kill(int pid, int signum)
     case 9 /* SIGKILL */:
     case 15 /* SIGTERM */: {
         h = pid == 0 ? GetCurrentProcess()
-                     : OpenProcess(PROCESS_TERMINATE, FALSE, (DWORD)pid);
+                     : OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
+                                   FALSE, (DWORD)pid);
         if (h == NULL)
             return GetLastError() == ERROR_INVALID_PARAMETER ? UV_ESRCH : UV_EPERM;
         int ok = TerminateProcess(h, 1);
-        CloseHandle(h);
-        if (ok)
+        if (ok) {
+            CloseHandle(h);
             return 0;
-        return GetLastError() == ERROR_ACCESS_DENIED ? UV_EPERM : UV_ESRCH;
+        }
+        DWORD err = GetLastError();
+        /* ACCESS_DENIED on an already-exited target means "dead", not
+         * "forbidden" (libuv/libuv#4301). */
+        int dead = err == ERROR_ACCESS_DENIED && uv__kill_process_is_dead(h);
+        CloseHandle(h);
+        if (dead)
+            return UV_ESRCH;
+        return err == ERROR_ACCESS_DENIED ? UV_EPERM : bun__uv_translate_sys_error(err);
     }
     default:
         return UV_ENOSYS;
@@ -364,14 +387,19 @@ UV_EXTERN int uv_os_getpriority(uv_pid_t pid, int* priority)
         return UV_EINVAL;
     h = pid == 0 ? GetCurrentProcess()
                  : OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
-    if (h == NULL)
-        return UV_ESRCH;
+    if (h == NULL) {
+        /* libuv uv__get_handle: only INVALID_PARAMETER is "no such
+         * process"; access-denied etc. translate through the table. */
+        DWORD e = GetLastError();
+        return e == ERROR_INVALID_PARAMETER ? UV_ESRCH : bun__uv_translate_sys_error(e);
+    }
     cls = GetPriorityClass(h);
+    DWORD cls_err = cls == 0 ? GetLastError() : 0;
     if (pid != 0)
         CloseHandle(h);
     switch (cls) {
     case 0:
-        return UV_ESRCH;
+        return bun__uv_translate_sys_error(cls_err);
     case REALTIME_PRIORITY_CLASS:
         *priority = -20; /* UV_PRIORITY_HIGHEST */
         break;
@@ -413,12 +441,15 @@ UV_EXTERN int uv_os_setpriority(uv_pid_t pid, int priority)
         cls = IDLE_PRIORITY_CLASS;
     h = pid == 0 ? GetCurrentProcess()
                  : OpenProcess(PROCESS_SET_INFORMATION, FALSE, (DWORD)pid);
-    if (h == NULL)
-        return UV_ESRCH;
+    if (h == NULL) {
+        DWORD e = GetLastError();
+        return e == ERROR_INVALID_PARAMETER ? UV_ESRCH : bun__uv_translate_sys_error(e);
+    }
     int ok = SetPriorityClass(h, cls);
+    DWORD e = ok ? 0 : GetLastError();
     if (pid != 0)
         CloseHandle(h);
-    return ok ? 0 : UV_EPERM;
+    return ok ? 0 : bun__uv_translate_sys_error(e);
 }
 
 /* JS-visible fd numbers are Bun fd-table indices now — the table, not the
@@ -461,8 +492,12 @@ UV_EXTERN uv_handle_type uv_guess_handle(uv_file file)
 static int bun__uv_translate_sys_error(DWORD err)
 {
     switch (err) {
+    /* Rows match libuv error.c: ACCESS_DENIED is EPERM (not EACCES) and
+     * NOACCESS is EFAULT (a bad-pointer fault, not a permission failure). */
     case ERROR_ACCESS_DENIED:
+        return UV_EPERM;
     case ERROR_NOACCESS:
+        return UV_EFAULT;
     case ERROR_ELEVATION_REQUIRED:
         return UV_EACCES;
     case ERROR_NOT_ENOUGH_MEMORY:

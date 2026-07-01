@@ -74,6 +74,7 @@ pub struct LoopData {
     pub head: *mut c_void,
     pub quic_head: *mut c_void,
     pub quic_next_tick_us: i64,
+    pub quic_timer: *mut c_void,
     pub iterator: *mut c_void,
     pub recv_buf: *mut u8,
     pub send_buf: *mut u8,
@@ -210,7 +211,7 @@ pub struct Timespec {
 
 // Layout constants shared with the C header's static_asserts. A mismatch on
 // either side is a compile error there and here.
-const LOOP_DATA_SIZE: usize = 192;
+const LOOP_DATA_SIZE: usize = 200;
 const US_LOOP_SIZE: usize = 240;
 const US_POLL_SIZE: usize = 24;
 const US_CALLBACK_SIZE: usize = 64;
@@ -220,10 +221,11 @@ const _: () = {
     assert!(offset_of!(LoopData, sweep_timer) == 0);
     assert!(offset_of!(LoopData, quic_head) == 32);
     assert!(offset_of!(LoopData, quic_next_tick_us) == 40);
-    assert!(offset_of!(LoopData, pre_cb) == 80);
-    assert!(offset_of!(LoopData, iteration_nr) == 168);
-    assert!(offset_of!(LoopData, jsc_vm) == 176);
-    assert!(offset_of!(LoopData, tick_depth) == 184);
+    assert!(offset_of!(LoopData, quic_timer) == 48);
+    assert!(offset_of!(LoopData, pre_cb) == 88);
+    assert!(offset_of!(LoopData, iteration_nr) == 176);
+    assert!(offset_of!(LoopData, jsc_vm) == 184);
+    assert!(offset_of!(LoopData, tick_depth) == 192);
 
     assert!(offset_of!(UsLoop, data) == 0); // hazard 1
     assert!(offset_of!(UsLoop, pending_wakeups) == LOOP_DATA_SIZE);
@@ -839,6 +841,21 @@ pub unsafe extern "C" fn us_poll_start_rc(
                 }
                 Err(err) => {
                     WSASetLastError(c_int::from(err.0));
+                    // Consumers (context.c listen/connect) read CRT errno;
+                    // values are SystemErrno (Linux-numbered) — the space the
+                    // Rust error path interprets. Inline per SOCK-58.
+                    let crt_errno: c_int = match err.0 {
+                        10038 /* WSAENOTSOCK */ => 88,   // ENOTSOCK
+                        10022 /* WSAEINVAL */ => 22,     // EINVAL
+                        8 /* NOT_ENOUGH_MEMORY */ | 14 /* OUTOFMEMORY */ => 12, // ENOMEM
+                        6 /* INVALID_HANDLE */ => 9,     // EBADF
+                        _ => 22,                         // EINVAL
+                    };
+                    unsafe extern "C" {
+                        fn _errno() -> *mut c_int;
+                    }
+                    // MSVCRT thread-local errno slot (enclosing unsafe fn).
+                    *_errno() = crt_errno;
                     return c_int::from(err.0);
                 }
             }
@@ -1603,17 +1620,17 @@ mod tests {
     #[test]
     fn abi_layout_is_frozen() {
         let _guard = serial();
-        assert_eq!(size_of::<LoopData>(), 192);
+        assert_eq!(size_of::<LoopData>(), 200);
         assert_eq!(offset_of!(UsLoop, data), 0);
-        assert_eq!(offset_of!(UsLoop, pending_wakeups), 192);
+        assert_eq!(offset_of!(UsLoop, pending_wakeups), 200);
         assert_eq!(size_of::<UsLoop>(), 240);
         assert_eq!(size_of::<UsPoll>(), 24);
         assert_eq!(offset_of!(UsPoll, fd), 8);
         assert_eq!(offset_of!(UsPoll, poll_type), 16);
         assert_eq!(size_of::<UsInternalCallback>(), 64);
         assert_eq!(offset_of!(UsInternalCallback, loop_), 24);
-        assert_eq!(offset_of!(LoopData, tick_depth), 184);
-        assert_eq!(offset_of!(LoopData, jsc_vm), 176);
+        assert_eq!(offset_of!(LoopData, tick_depth), 192);
+        assert_eq!(offset_of!(LoopData, jsc_vm), 184);
 
         fresh_state();
         // ext area = loop + 1: calloc'd (zeroed) and writable.

@@ -77,6 +77,7 @@ impl EAI {
     pub const NODATA: Self = Self(WinsockError::WSANO_DATA.0 as c_int);
     pub const NONAME: Self = Self(WinsockError::WSAHOST_NOT_FOUND.0 as c_int);
     pub const SERVICE: Self = Self(WinsockError::WSATYPE_NOT_FOUND.0 as c_int);
+    pub const TRY_AGAIN: Self = Self(WinsockError::WSATRY_AGAIN.0 as c_int);
     pub const SOCKTYPE: Self = Self(WinsockError::WSAESOCKTNOSUPPORT.0 as c_int);
 }
 
@@ -1908,7 +1909,8 @@ impl Error {
                 EAI::MEMORY => Some(Error::ENOMEM),
                 EAI::SERVICE => Some(Error::ESERVICE),
                 EAI::SOCKTYPE => Some(Error::ECONNREFUSED),
-                // WSATRY_AGAIN and any other WSA code: same wildcard as POSIX.
+                // Transient resolver failure — retryable (libuv: EAI_AGAIN).
+                EAI::TRY_AGAIN => Some(Error::ETIMEOUT),
                 _ => Some(Error::ENOTIMP),
             };
         }

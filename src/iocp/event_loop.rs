@@ -569,14 +569,17 @@ impl Loop {
             (None, Some(d)) => Some(d),
             (None, None) => None,
         };
-        if self.has_pending() || self.stop_flag {
+        // Queued endgames are a zero-timeout condition like pending reqs
+        // (uv_backend_timeout parity — a blocking wait must never start
+        // while a close is waiting to finish). // quirk: LOOP-19
+        if self.has_pending() || self.has_endgames() || self.stop_flag {
             wait = Some(0);
         }
 
         if wait != Some(0) {
             self.run_hook(self.before_wait_hook);
             // The hook may have produced work or stopped the loop.
-            if self.has_pending() || self.stop_flag {
+            if self.has_pending() || self.has_endgames() || self.stop_flag {
                 wait = Some(0);
             }
         }

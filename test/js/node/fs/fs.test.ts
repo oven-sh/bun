@@ -621,6 +621,12 @@ describe("mkdirSync", () => {
     expect(existsSync(tempdir)).toBe(true);
   });
 
+  it.if(isWindows)("throws EINVAL for a malformed device-style name", () => {
+    // libuv fs__mkdir remaps both ERROR_INVALID_NAME and ERROR_DIRECTORY
+    // to EINVAL; Node-on-Windows throws EINVAL for "con:".
+    expect(() => mkdirSync("con:")).toThrow(expect.objectContaining({ code: "EINVAL" }));
+  });
+
   it("should throw ENOENT for empty string", () => {
     expect(() => mkdirSync("", { recursive: true })).toThrow("no such file or directory");
     expect(() => mkdirSync("")).toThrow("no such file or directory");
@@ -2412,7 +2418,11 @@ describe("rmdirSync", () => {
     expect(existsSync(path)).toBe(true);
     expect(() => {
       rmdirSync(path);
-    }).toThrow();
+    }).toThrow(
+      // Windows is ENOENT (libuv froze this after a POSIX-correct ENOTDIR
+      // attempt broke Node tests); POSIX is ENOTDIR.
+      expect.objectContaining({ code: process.platform === "win32" ? "ENOENT" : "ENOTDIR" }),
+    );
     expect(existsSync(path)).toBe(true);
   });
   it("removes a dir", () => {

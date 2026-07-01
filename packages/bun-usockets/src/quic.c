@@ -141,6 +141,12 @@ struct us_quic_stream_s {
  * free the stream while a method is still touching it.
  */
 
+#ifdef LIBUS_USE_BUN_IOCP
+static void us_quic_on_timer(struct us_timer_t *t) {
+    us_quic_loop_process(us_timer_loop(t));
+}
+#endif
+
 void us_quic_loop_process(struct us_loop_t *loop) {
     int min_diff = 0, have_tick = 0;
     for (us_quic_socket_context_t *ctx = loop->data.quic_head; ctx; ctx = ctx->next) {
@@ -159,6 +165,17 @@ void us_quic_loop_process(struct us_loop_t *loop) {
      * src/runtime/timer/mod.rs folds this into the poll timeout on every
      * backend (epoll_pwait2 / kevent / GetQueuedCompletionStatus). */
     loop->data.quic_next_tick_us = have_tick ? (min_diff < 0 ? 0 : min_diff) : -1;
+#ifdef LIBUS_USE_BUN_IOCP
+    /* Armed after the computation, so the deadline the loop sleeps on is
+     * the one this iteration produced — entry-time folds read the previous
+     * iteration's value, stale right after a pre-hook send. */
+    if (have_tick) {
+        if (!loop->data.quic_timer)
+            loop->data.quic_timer = us_create_timer(loop, 1, 0);
+        int ms = min_diff <= 0 ? 1 : (min_diff + 999) / 1000;
+        us_timer_set(loop->data.quic_timer, us_quic_on_timer, ms, 0);
+    }
+#endif
 }
 
 /* Called after the deferred-task queue drains. Only does work when a

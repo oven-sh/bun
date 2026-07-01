@@ -3753,6 +3753,15 @@ const FILE_DISPOSITION_POSIX_SEMANTICS: ULONG = 0x00000002;
 const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: ULONG = 0x00000010;
 
 // Copy-paste of the standard library function except without unreachable.
+/// A table fd's kernel object is being handed to a child (spawn stdio):
+/// switch the parent side to shared-kernel-pointer semantics. No-op for
+/// system fds and non-File kinds. // quirk: FSIO-21
+pub fn mark_fd_shared_with_child(fd: bun_core::Fd) {
+    if let bun_core::DecodeWindows::Table(idx) = fd.decode_windows() {
+        let _ = bun_fdtable::the().mark_shared_with_child(idx);
+    }
+}
+
 pub fn DeleteFileBun(sub_path_w: &[u16], options: &DeleteFileOptions) -> bun_sys::Result<()> {
     let create_options_flags: ULONG = if options.remove_dir {
         FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT

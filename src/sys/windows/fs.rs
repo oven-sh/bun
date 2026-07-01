@@ -457,7 +457,7 @@ pub fn mkdir(file_path: &ZStr, _mode: Mode) -> Result<()> {
     r.map_err(|w| {
         // mkdir-local shapes: malformed names are EINVAL here, ENOENT
         // everywhere else (the general table's mapping). // quirk: FSLNK-26
-        let errno = if w == Win32Error::INVALID_NAME {
+        let errno = if w == Win32Error::INVALID_NAME || w == Win32Error::DIRECTORY {
             E::INVAL
         } else {
             win_error::translate(w)

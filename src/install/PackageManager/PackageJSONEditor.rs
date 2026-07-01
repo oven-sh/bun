@@ -290,11 +290,16 @@ pub(crate) fn edit_update_no_args(
                             .unwrap_or_else(|| bun_core::out_of_memory());
                         let mut tag = dependency::Tag::infer(version_literal);
 
-                        // only updating dependencies with npm versions, dist-tags if `--latest`, and catalog versions.
+                        // `catalog:` references resolve through the root catalog;
+                        // updating must not rewrite them to a concrete version.
+                        if tag == dependency::Tag::Catalog {
+                            continue;
+                        }
+
+                        // only updating dependencies with npm versions and dist-tags if `--latest`.
                         if tag != dependency::Tag::Npm
                             && (tag != dependency::Tag::DistTag
                                 || !manager.options.do_.contains(Do::UPDATE_TO_LATEST))
-                            && tag != dependency::Tag::Catalog
                         {
                             continue;
                         }
@@ -312,7 +317,6 @@ pub(crate) fn edit_update_no_args(
                                 if tag != dependency::Tag::Npm
                                     && (tag != dependency::Tag::DistTag
                                         || !manager.options.do_.contains(Do::UPDATE_TO_LATEST))
-                                    && tag != dependency::Tag::Catalog
                                 {
                                     continue;
                                 }

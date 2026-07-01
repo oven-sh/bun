@@ -352,26 +352,29 @@ fn dep_sort_cmp(buf: &[u8], a: &Dependency, b: &Dependency) -> core::cmp::Orderi
 }
 
 /// The workspace member registered at `folder_path` (relative to the top-level dir),
-/// if any. Matched by path (not dependency name) so `"alias": "file:../member"` is
-/// found too. Workspace paths are stored posix, `folder_path` is platform-separated.
+/// matched by path so `"alias": "file:../member"` is found too. Declined when a
+/// different member owns the alias as its name: the `Tag::Workspace` resolver
+/// (`enqueue_dependency`) looks the path up by name first and would link that member.
 fn find_workspace_by_path(
     workspace_paths: &lockfile::NameHashMap,
     buf: &[u8],
+    alias_hash: PackageNameHash,
     folder_path: &[u8],
 ) -> Option<String> {
     if folder_path.is_empty() {
         return None;
     }
-    workspace_paths
-        .values()
-        .iter()
-        .find(|workspace_path| {
-            let workspace_path = workspace_path.slice(buf);
-            workspace_path.len() == folder_path.len()
-                && core::iter::zip(workspace_path, folder_path)
-                    .all(|(&a, &b)| a == b || (path::is_sep_any(a) && path::is_sep_any(b)))
-        })
-        .copied()
+    let (&name_hash, workspace_path) = workspace_paths.iter().find(|(_, workspace_path)| {
+        // workspace paths are stored posix; `folder_path` uses the platform separator
+        let workspace_path = workspace_path.slice(buf);
+        workspace_path.len() == folder_path.len()
+            && core::iter::zip(workspace_path, folder_path)
+                .all(|(&a, &b)| a == b || (path::is_sep_any(a) && path::is_sep_any(b)))
+    })?;
+    if name_hash != alias_hash && workspace_paths.get(&alias_hash).is_some() {
+        return None;
+    }
+    Some(*workspace_path)
 }
 
 /// Field tags for the binary lockfile serializer (`bun.lockb`). The
@@ -1896,7 +1899,9 @@ impl Package<u64> {
                 // The bun.lock parser rewrites a dependency that resolved to a workspace
                 // package to `Tag::Workspace` (`map_dep_to_pkg`). Do the same here so a
                 // freshly parsed package.json compares equal to its loaded lockfile entry.
-                if let Some(workspace) = find_workspace_by_path(workspace_paths, buf, relative) {
+                if let Some(workspace) =
+                    find_workspace_by_path(workspace_paths, buf, external_alias.hash, relative)
+                {
                     let path = workspace.sliced(buf);
                     if let Some(mut dep) = dependency::parse_with_tag(
                         external_alias.value,

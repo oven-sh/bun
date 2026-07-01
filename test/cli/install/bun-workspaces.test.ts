@@ -271,6 +271,34 @@ describe("file: dependency on a workspace member", () => {
     expect(err).not.toContain("Saved lockfile");
     expect(await file(join(packageDir, "bun.lock")).text()).toBe(first);
   });
+
+  // Negative contract: the rewrite must not fire for an alias owned by a DIFFERENT
+  // member as its name, because the workspace resolver looks the path up by name
+  // first and would link that member instead of the folder the `file:` path names.
+  test("an alias colliding with another member's name still links the folder it names", async () => {
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "root", version: "1.0.0", workspaces: ["packages/*"] })),
+      write(join(packageDir, "packages", "utils", "package.json"), JSON.stringify({ name: "utils", version: "1.0.0" })),
+      write(
+        join(packageDir, "packages", "legacy-utils", "package.json"),
+        JSON.stringify({ name: "legacy", version: "1.0.0" }),
+      ),
+      write(
+        join(packageDir, "packages", "app", "package.json"),
+        JSON.stringify({ name: "app", version: "1.0.0", dependencies: { utils: "file:../legacy-utils" } }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir, { saveTextLockfile: true });
+    // `app` named the contents of packages/legacy-utils; the `utils` member it
+    // happens to be aliased as must not win.
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).toContain('"app/utils": ["legacy@workspace:packages/legacy-utils"]');
+    expect(await file(join(packageDir, "packages", "app", "node_modules", "utils", "package.json")).json()).toEqual({
+      name: "legacy",
+      version: "1.0.0",
+    });
+  });
 });
 
 test.concurrent("allowing negative workspace patterns", async () => {

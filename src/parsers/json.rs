@@ -1628,7 +1628,10 @@ mod tests {
         assert_eq!(got, "[true,false,null]");
         // Escaped keywords after exotic whitespace (which shares their
         // index run).
-        let p = run("[\u{a0}\\u0074rue, \u{feff}\\u006eull]".as_bytes(), Which::Utf8);
+        let p = run(
+            "[\u{a0}\\u0074rue, \u{feff}\\u006eull]".as_bytes(),
+            Which::Utf8,
+        );
         assert_eq!(p.errors, 0, "{}", p.first_msg);
         let mut got = String::new();
         to_json_string(p.root.as_ref().unwrap(), &mut got);

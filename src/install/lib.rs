@@ -24,7 +24,7 @@ pub(crate) mod bun_schema {
 /// `bun_json` → JSON parser lives in `bun_parsers::json`; AST nodes
 /// (`Expr`, `ExprData`, `E*` variants) live in `bun_ast::js_ast`.
 pub(crate) mod bun_json {
-    pub(crate) use bun_ast::{Expr, ExprData, G::Property, e as E};
+    pub(crate) use bun_ast::{Expr, ExprData, e as E};
     pub(crate) use bun_parsers::json::*;
 }
 

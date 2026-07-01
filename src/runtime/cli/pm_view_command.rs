@@ -56,7 +56,7 @@ pub(crate) fn view(
                 let str: &[u8] = bump.alloc_slice_copy(&str);
                 let source = &bun_ast::Source::init_path_string(b"package.json", str);
                 let mut pkg_log = bun_ast::Log::init();
-                let Ok(pkg_json) = JSON::parse::<false>(source, &mut pkg_log, &bump) else {
+                let Ok(pkg_json) = JSON::parse_utf8(source, &mut pkg_log, &bump) else {
                     break 'from_package_json;
                 };
                 if let Some(name) = pkg_json.get_string_cloned(&bump, b"name").ok().flatten() {

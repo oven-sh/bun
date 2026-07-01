@@ -1657,15 +1657,14 @@ pub fn init(
                     let json_source =
                         bun_ast::Source::init_path_string(&*json_path, &json_buf[..json_len]);
                     initialize_store();
-                    let json_arena = bun_alloc::Arena::new();
                     // SAFETY: `ctx.log` is a borrow of the CLI's `Log`; valid for the
                     // duration of `init()` (set by `Command::create()` before any install
                     // entry point runs).
-                    let json = crate::bun_json::parse_package_json_utf8(
-                        &json_source,
-                        unsafe { &mut *ctx.log },
-                        &json_arena,
-                    )?;
+                    let parsed =
+                        crate::bun_json::ParsedJson::parse_package_json(&json_source, unsafe {
+                            &mut *ctx.log
+                        })?;
+                    let json = parsed.root;
                     if subcommand == Subcommand::Pm {
                         if let Some(name) = json.get(b"name").and_then(|e| {
                             if let bun_ast::ExprData::EString(s) = &e.data {
@@ -1678,27 +1677,43 @@ pub fn init(
                         }
                     }
 
-                    use crate::bun_json::ExprData;
                     if let Some(prop) = json.as_property(b"workspaces") {
-                        let json_array = match prop.expr.data {
-                            ExprData::EArray(arr) => arr,
-                            ExprData::EObject(obj) => {
-                                if let Some(packages) = obj.get().get(b"packages") {
-                                    match packages.data {
-                                        ExprData::EArray(arr) => arr,
-                                        _ => break,
+                        let value_loc =
+                            crate::bun_json::property_value_loc(&json_source.contents, prop.loc)
+                                .unwrap_or(prop.loc);
+                        let names = match &prop.expr.data {
+                            bun_ast::ExprData::EArrayJSON(arr) => Some(
+                                Package::WorkspaceMap::NamesArray::Immutable(arr.get(), value_loc),
+                            ),
+                            bun_ast::ExprData::EObjectJSON(obj) => obj
+                                .get()
+                                .properties()
+                                .iter()
+                                .find(|row| row.key.slice() == b"packages")
+                                .and_then(|row| match &row.value {
+                                    bun_ast::E::JsonValue::Array(arr) => {
+                                        let packages_loc = crate::bun_json::property_value_loc(
+                                            &json_source.contents,
+                                            row.key_loc,
+                                        )
+                                        .unwrap_or(row.key_loc);
+                                        Some(Package::WorkspaceMap::NamesArray::Immutable(
+                                            arr.get(),
+                                            packages_loc,
+                                        ))
                                     }
-                                } else {
-                                    break;
-                                }
-                            }
-                            _ => break,
+                                    _ => None,
+                                }),
+                            _ => None,
+                        };
+                        let Some(names) = names else {
+                            break;
                         };
                         let mut log = bun_ast::Log::init();
                         let _ = match workspace_names.process_names_array(
                             &mut workspace_package_json_cache,
                             &mut log,
-                            &*json_array,
+                            names,
                             &json_source,
                             prop.loc,
                             None,

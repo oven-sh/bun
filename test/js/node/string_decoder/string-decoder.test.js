@@ -242,6 +242,28 @@ for (const StringDecoder of [FakeStringDecoderCall, RealStringDecoder]) {
   });
 }
 
+// Node's normalizeEncoding() maps every UTF-16LE alias (including the legacy
+// ucs2/ucs-2 spellings) to the canonical name "utf16le", and
+// StringDecoder#encoding exposes the normalized name.
+it("normalizes the encoding name like Node", () => {
+  const inputs = ["utf16le", "utf-16le", "ucs2", "ucs-2", "UTF-16LE", "UCS-2", "utf8", "utf-8", "latin1", "binary"];
+  const normalized = Object.fromEntries(inputs.map(name => [name, new RealStringDecoder(name).encoding]));
+  normalized.default = new RealStringDecoder().encoding;
+  expect(normalized).toEqual({
+    "utf16le": "utf16le",
+    "utf-16le": "utf16le",
+    "ucs2": "utf16le",
+    "ucs-2": "utf16le",
+    "UTF-16LE": "utf16le",
+    "UCS-2": "utf16le",
+    "utf8": "utf8",
+    "utf-8": "utf8",
+    "latin1": "latin1",
+    "binary": "latin1",
+    "default": "utf8",
+  });
+});
+
 it("invalid utf-8 input, pr #3562", () => {
   const decoder = new RealStringDecoder("utf-8");
   let output = "";

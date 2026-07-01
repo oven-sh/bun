@@ -6579,11 +6579,16 @@ impl Notation {
     }
 }
 
-/// Writes float with precision. Returns `None` notation if value was infinite.
+/// Writes float with precision. Returns `None` notation if value was not finite.
 pub fn dtoa_short(buf: &mut [u8; 129], value: f32, precision: u8) -> (&[u8], Option<Notation>) {
-    // We can't give Infinity/-Infinity to dtoa_short_impl. We need to print a
-    // valid finite number otherwise browsers like Safari will render certain
-    // things wrong (https://github.com/oven-sh/bun/issues/18064).
+    // Only calc() yields non-finite values. CSS Values 4 #calc-ieee: a NaN
+    // escaping a top-level calculation is censored to zero; infinities clamp to
+    // the largest finite value (https://github.com/oven-sh/bun/issues/18064).
+    if value.is_nan() {
+        const S: &[u8] = b"0";
+        buf[..S.len()].copy_from_slice(S);
+        return (&buf[..S.len()], None);
+    }
     if value.is_infinite() && value.is_sign_positive() {
         const S: &[u8] = b"3.40282e38";
         buf[..S.len()].copy_from_slice(S);
@@ -6593,8 +6598,6 @@ pub fn dtoa_short(buf: &mut [u8; 129], value: f32, precision: u8) -> (&[u8], Opt
         buf[..S.len()].copy_from_slice(S);
         return (&buf[..S.len()], None);
     }
-    // We shouldn't receive NaN here.
-    debug_assert!(!value.is_nan());
     let (str, notation) = dtoa_short_impl(buf, value, precision);
     (str, Some(notation))
 }

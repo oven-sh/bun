@@ -1,6 +1,5 @@
 //! Text lockfile (bun.lock) stringifier and parser.
 
-use bun_collections::VecExt;
 use core::fmt::Write as _;
 
 use crate::bun_json as JSON;
@@ -40,7 +39,7 @@ use bun_install_types::DependencyVersionTag;
 // this file is `crate::lockfile_real::bun_lock`; `super` is the
 // real `Lockfile` module, distinct from the `crate::lockfile` stub.
 use super::PackageIDSlice;
-use super::package::{Meta, PackageColumns as _};
+use super::package::{Meta, PackageColumns as _, value_loc_of};
 use super::{
     DependencySlice, LoadResult, Lockfile as BinaryLockfile, Package, PatchedDep,
     TrustedDependenciesSet, VersionHashMap, tree,
@@ -1586,6 +1585,28 @@ impl<T> PkgMap<T> {
 
 // const PkgMap = struct {};
 
+fn object_rows(expr: &Expr) -> &[JSON::E::PropertyJSON] {
+    match &expr.data {
+        ExprData::EObjectJSON(o) => o.get().properties(),
+        _ => {
+            debug_assert!(!expr.is_object(), "object_rows on a mutable object");
+            &[]
+        }
+    }
+}
+
+fn array_items(expr: &Expr) -> &[JSON::E::JsonValue] {
+    match &expr.data {
+        ExprData::EArrayJSON(a) => a.get().items(),
+        _ => &[],
+    }
+}
+
+fn item_loc(source: &bun_ast::Source, key_loc: bun_ast::Loc, index: usize) -> bun_ast::Loc {
+    let array_loc = value_loc_of(source, key_loc);
+    JSON::array_item_loc(&source.contents, array_loc, index).unwrap_or(array_loc)
+}
+
 pub fn parse_into_binary_lockfile(
     lockfile: &mut BinaryLockfile,
     root: JSON::Expr,
@@ -1619,7 +1640,7 @@ pub fn parse_into_binary_lockfile(
 
         log.add_error(
             Some(source),
-            lockfile_version_expr.loc,
+            value_loc_of(source, lockfile_version_expr.loc),
             b"Invalid lockfile version",
         );
         return Err(ParseError::InvalidLockfileVersion);
@@ -1629,7 +1650,7 @@ pub fn parse_into_binary_lockfile(
         log.add_range_error_fmt_with_notes(
             Some(source),
             bun_ast::Range {
-                loc: lockfile_version_expr.loc,
+                loc: value_loc_of(source, lockfile_version_expr.loc),
                 ..Default::default()
             },
             Box::new([bun_ast::range_data(
@@ -1656,7 +1677,7 @@ pub fn parse_into_binary_lockfile(
             None => {
                 log.add_error(
                     Some(source),
-                    config_version_expr.loc,
+                    value_loc_of(source, config_version_expr.loc),
                     b"Invalid \"configVersion\". Expected a number",
                 );
                 return Err(ParseError::InvalidConfigVersion);
@@ -1669,34 +1690,22 @@ pub fn parse_into_binary_lockfile(
         if !trusted_dependencies_expr.is_array() {
             log.add_error(
                 Some(source),
-                trusted_dependencies_expr.loc,
+                value_loc_of(source, trusted_dependencies_expr.loc),
                 b"Expected an array",
             );
             return Err(ParseError::InvalidTrustedDependenciesSet);
         }
 
-        for dep in trusted_dependencies_expr
-            .data
-            .e_array()
-            .expect("infallible: variant checked")
-            .items
-            .slice()
-        {
-            let ExprData::EString(s) = &dep.data else {
-                log.add_error(Some(source), dep.loc, b"Expected a string");
+        for (i, dep) in array_items(&trusted_dependencies_expr).iter().enumerate() {
+            let Some(name_str) = dep.as_str() else {
+                log.add_error(
+                    Some(source),
+                    item_loc(source, trusted_dependencies_expr.loc, i),
+                    b"Expected a string",
+                );
                 return Err(ParseError::InvalidTrustedDependenciesSet);
             };
-            // JSON-parsed strings are always UTF-8; the UTF-16 arm is kept for
-            // the unreachable branch so the stored name and the hash agree.
-            let name: Box<[u8]> = if s.is_utf8() {
-                Box::from(s.slice8())
-            } else {
-                debug_assert!(
-                    false,
-                    "trustedDependencies: UTF-16 EString from JSON parser"
-                );
-                strings::to_utf8_alloc(s.slice16()).into_boxed_slice()
-            };
+            let name: Box<[u8]> = Box::from(name_str);
             let name_hash: TruncatedPackageNameHash =
                 StringBuilder::string_hash(&name) as TruncatedPackageNameHash;
             trusted_dependencies.insert(name_hash, name);
@@ -1709,42 +1718,27 @@ pub fn parse_into_binary_lockfile(
         if !patched_dependencies_expr.is_object() {
             log.add_error(
                 Some(source),
-                patched_dependencies_expr.loc,
+                value_loc_of(source, patched_dependencies_expr.loc),
                 b"Expected an object",
             );
             return Err(ParseError::InvalidPatchedDependencies);
         }
 
-        for prop in patched_dependencies_expr
-            .data
-            .e_object()
-            .expect("infallible: variant checked")
-            .properties
-            .slice()
-        {
-            let key = prop.key.expect("infallible: prop has key");
-            let value = prop.value.expect("infallible: prop has value");
-            if !key.is_string() {
-                log.add_error(Some(source), key.loc, b"Expected a string");
+        for row in object_rows(&patched_dependencies_expr) {
+            let Some(path_str) = row.value.as_str() else {
+                log.add_error(
+                    Some(source),
+                    value_loc_of(source, row.key_loc),
+                    b"Expected a string",
+                );
                 return Err(ParseError::InvalidPatchedDependencies);
-            }
+            };
 
-            if !value.is_string() {
-                log.add_error(Some(source), value.loc, b"Expected a string");
-                return Err(ParseError::InvalidPatchedDependencies);
-            }
-
-            let key_hash = key
-                .as_string_hash_utf8(StringBuilder::string_hash)?
-                .unwrap();
+            let key_hash = StringBuilder::string_hash(row.key.slice());
             lockfile.patched_dependencies.insert(
                 key_hash,
                 PatchedDep {
-                    path: sbuf!(lockfile).append(
-                        value
-                            .as_utf8_string_literal()
-                            .expect("infallible: is_string checked"),
-                    )?,
+                    path: sbuf!(lockfile).append(path_str)?,
                     ..Default::default()
                 },
             );
@@ -1753,47 +1747,34 @@ pub fn parse_into_binary_lockfile(
 
     if let Some(overrides_expr) = root.get(b"overrides") {
         if !overrides_expr.is_object() {
-            log.add_error(Some(source), overrides_expr.loc, b"Expected an object");
+            log.add_error(
+                Some(source),
+                value_loc_of(source, overrides_expr.loc),
+                b"Expected an object",
+            );
             return Err(ParseError::InvalidOverridesObject);
         }
 
-        for prop in overrides_expr
-            .data
-            .e_object()
-            .expect("infallible: variant checked")
-            .properties
-            .slice()
-        {
-            let key = prop.key.expect("infallible: prop has key");
-            let value = prop.value.expect("infallible: prop has value");
-
-            if !key.is_string()
-                || key
-                    .data
-                    .e_string()
-                    .expect("infallible: variant checked")
-                    .len()
-                    == 0
-            {
-                log.add_error(Some(source), key.loc, b"Expected a non-empty string");
+        for row in object_rows(&overrides_expr) {
+            let name_str = row.key.slice();
+            if name_str.is_empty() {
+                log.add_error(Some(source), row.key_loc, b"Expected a non-empty string");
                 return Err(ParseError::InvalidOverridesObject);
             }
 
-            let name_str = key
-                .as_utf8_string_literal()
-                .expect("infallible: is_string checked");
             let name_hash = StringBuilder::string_hash(name_str);
             let name = sbuf!(lockfile).append_with_hash(name_str, name_hash)?;
 
             // TODO(dylan-conway) also accept object when supported
-            if !value.is_string() {
-                log.add_error(Some(source), value.loc, b"Expected a string");
+            let Some(version_str) = row.value.as_str() else {
+                log.add_error(
+                    Some(source),
+                    value_loc_of(source, row.key_loc),
+                    b"Expected a string",
+                );
                 return Err(ParseError::InvalidOverridesObject);
-            }
+            };
 
-            let version_str = value
-                .as_utf8_string_literal()
-                .expect("infallible: is_string checked");
             let version_hash = StringBuilder::string_hash(version_str);
             let version = sbuf!(lockfile).append_with_hash(version_str, version_hash)?;
             let version_sliced = version.sliced(lockfile.buffers.string_bytes.as_slice());
@@ -1811,7 +1792,11 @@ pub fn parse_into_binary_lockfile(
                 ) {
                     Some(v) => v,
                     None => {
-                        log.add_error(Some(source), value.loc, b"Invalid override version");
+                        log.add_error(
+                            Some(source),
+                            value_loc_of(source, row.key_loc),
+                            b"Invalid override version",
+                        );
                         return Err(ParseError::InvalidOverridesObject);
                     }
                 },
@@ -1824,46 +1809,33 @@ pub fn parse_into_binary_lockfile(
 
     if let Some(catalog_expr) = root.get(b"catalog") {
         if !catalog_expr.is_object() {
-            log.add_error(Some(source), catalog_expr.loc, b"Expected an object");
+            log.add_error(
+                Some(source),
+                value_loc_of(source, catalog_expr.loc),
+                b"Expected an object",
+            );
             return Err(ParseError::InvalidCatalogObject);
         }
 
-        for prop in catalog_expr
-            .data
-            .e_object()
-            .expect("infallible: variant checked")
-            .properties
-            .slice()
-        {
-            let key = prop.key.expect("infallible: prop has key");
-            let value = prop.value.expect("infallible: prop has value");
-
-            if !key.is_string()
-                || key
-                    .data
-                    .e_string()
-                    .expect("infallible: variant checked")
-                    .len()
-                    == 0
-            {
-                log.add_error(Some(source), key.loc, b"Expected a non-empty string");
+        for row in object_rows(&catalog_expr) {
+            let dep_name_str = row.key.slice();
+            if dep_name_str.is_empty() {
+                log.add_error(Some(source), row.key_loc, b"Expected a non-empty string");
                 return Err(ParseError::InvalidCatalogObject);
             }
 
-            let dep_name_str = key
-                .as_utf8_string_literal()
-                .expect("infallible: is_string checked");
             let dep_name_hash = StringBuilder::string_hash(dep_name_str);
             let dep_name = sbuf!(lockfile).append_with_hash(dep_name_str, dep_name_hash)?;
 
-            if !value.is_string() {
-                log.add_error(Some(source), value.loc, b"Expected a string");
+            let Some(version_str) = row.value.as_str() else {
+                log.add_error(
+                    Some(source),
+                    value_loc_of(source, row.key_loc),
+                    b"Expected a string",
+                );
                 return Err(ParseError::InvalidCatalogObject);
-            }
+            };
 
-            let version_str = value
-                .as_utf8_string_literal()
-                .expect("infallible: is_string checked");
             let version_hash = StringBuilder::string_hash(version_str);
             let version = sbuf!(lockfile).append_with_hash(version_str, version_hash)?;
             let version_sliced = version.sliced(lockfile.buffers.string_bytes.as_slice());
@@ -1881,7 +1853,11 @@ pub fn parse_into_binary_lockfile(
                 ) {
                     Some(v) => v,
                     None => {
-                        log.add_error(Some(source), value.loc, b"Invalid catalog version");
+                        log.add_error(
+                            Some(source),
+                            value_loc_of(source, row.key_loc),
+                            b"Invalid catalog version",
+                        );
                         return Err(ParseError::InvalidCatalogObject);
                     }
                 },
@@ -1894,7 +1870,7 @@ pub fn parse_into_binary_lockfile(
             )?;
 
             if entry.found_existing {
-                log.add_error(Some(source), key.loc, b"Duplicate catalog entry");
+                log.add_error(Some(source), row.key_loc, b"Duplicate catalog entry");
                 return Err(ParseError::InvalidCatalogObject);
             }
 
@@ -1905,86 +1881,59 @@ pub fn parse_into_binary_lockfile(
 
     if let Some(catalogs_expr) = root.get(b"catalogs") {
         if !catalogs_expr.is_object() {
-            log.add_error(Some(source), catalogs_expr.loc, b"Expected an object");
+            log.add_error(
+                Some(source),
+                value_loc_of(source, catalogs_expr.loc),
+                b"Expected an object",
+            );
             return Err(ParseError::InvalidCatalogsObject);
         }
 
-        for catalog_prop in catalogs_expr
-            .data
-            .e_object()
-            .expect("infallible: variant checked")
-            .properties
-            .slice()
-        {
-            let catalog_key = catalog_prop.key.expect("infallible: prop has key");
-            let catalog_value = catalog_prop.value.expect("infallible: prop has value");
-
-            if !catalog_key.is_string()
-                || catalog_key
-                    .data
-                    .e_string()
-                    .expect("infallible: variant checked")
-                    .len()
-                    == 0
-            {
+        for catalog_row in object_rows(&catalogs_expr) {
+            let catalog_name_str = catalog_row.key.slice();
+            if catalog_name_str.is_empty() {
                 log.add_error(
                     Some(source),
-                    catalog_key.loc,
+                    catalog_row.key_loc,
                     b"Expected a non-empty string",
                 );
                 return Err(ParseError::InvalidCatalogsObject);
             }
 
-            if !catalog_value.is_object() {
-                log.add_error(Some(source), catalog_value.loc, b"Expected an object");
+            let Some(catalog_obj) = catalog_row.value.as_object() else {
+                log.add_error(
+                    Some(source),
+                    value_loc_of(source, catalog_row.key_loc),
+                    b"Expected an object",
+                );
                 return Err(ParseError::InvalidCatalogsObject);
-            }
+            };
 
-            let catalog_name_str = catalog_key
-                .as_utf8_string_literal()
-                .expect("infallible: is_string checked");
             let catalog_name = sbuf!(lockfile).append(catalog_name_str)?;
 
             let group = lockfile
                 .catalogs
                 .get_or_put_group(lockfile.buffers.string_bytes.as_slice(), catalog_name)?;
 
-            for prop in catalog_value
-                .data
-                .e_object()
-                .expect("infallible: variant checked")
-                .properties
-                .slice()
-            {
-                let key = prop.key.expect("infallible: prop has key");
-                let value = prop.value.expect("infallible: prop has value");
-
-                if !key.is_string()
-                    || key
-                        .data
-                        .e_string()
-                        .expect("infallible: variant checked")
-                        .len()
-                        == 0
-                {
-                    log.add_error(Some(source), key.loc, b"Expected a non-empty string");
+            for row in catalog_obj.properties() {
+                let dep_name_str = row.key.slice();
+                if dep_name_str.is_empty() {
+                    log.add_error(Some(source), row.key_loc, b"Expected a non-empty string");
                     return Err(ParseError::InvalidCatalogsObject);
                 }
 
-                let dep_name_str = key
-                    .as_utf8_string_literal()
-                    .expect("infallible: is_string checked");
                 let dep_name_hash = StringBuilder::string_hash(dep_name_str);
                 let dep_name = sbuf!(lockfile).append_with_hash(dep_name_str, dep_name_hash)?;
 
-                if !value.is_string() {
-                    log.add_error(Some(source), value.loc, b"Expected a string");
+                let Some(version_str) = row.value.as_str() else {
+                    log.add_error(
+                        Some(source),
+                        value_loc_of(source, row.key_loc),
+                        b"Expected a string",
+                    );
                     return Err(ParseError::InvalidCatalogsObject);
-                }
+                };
 
-                let version_str = value
-                    .as_utf8_string_literal()
-                    .expect("infallible: is_string checked");
                 let version_hash = StringBuilder::string_hash(version_str);
                 let version = sbuf!(lockfile).append_with_hash(version_str, version_hash)?;
                 let version_sliced = version.sliced(lockfile.buffers.string_bytes.as_slice());
@@ -2002,7 +1951,11 @@ pub fn parse_into_binary_lockfile(
                     ) {
                         Some(v) => v,
                         None => {
-                            log.add_error(Some(source), value.loc, b"Invalid catalog version");
+                            log.add_error(
+                                Some(source),
+                                value_loc_of(source, row.key_loc),
+                                b"Invalid catalog version",
+                            );
                             return Err(ParseError::InvalidCatalogsObject);
                         }
                     },
@@ -2015,7 +1968,7 @@ pub fn parse_into_binary_lockfile(
                 )?;
 
                 if entry.found_existing {
-                    log.add_error(Some(source), key.loc, b"Duplicate catalog entry");
+                    log.add_error(Some(source), row.key_loc, b"Duplicate catalog entry");
                     return Err(ParseError::InvalidCatalogsObject);
                 }
 
@@ -2036,31 +1989,22 @@ pub fn parse_into_binary_lockfile(
 
     let mut maybe_root_pkg: Option<Expr> = None;
 
-    for prop in workspaces_obj
-        .data
-        .e_object()
-        .expect("infallible: variant checked")
-        .properties
-        .slice()
-    {
-        let key = prop.key.expect("infallible: prop has key");
-        let value: Expr = prop.value.expect("infallible: prop has value");
-        if !key.is_string() {
-            log.add_error(Some(source), key.loc, b"Expected a string");
+    for row in object_rows(&workspaces_obj) {
+        if row.value.as_object().is_none() {
+            log.add_error(
+                Some(source),
+                value_loc_of(source, row.key_loc),
+                b"Expected an object",
+            );
             return Err(ParseError::InvalidWorkspaceObject);
         }
-        if !value.is_object() {
-            log.add_error(Some(source), value.loc, b"Expected an object");
-            return Err(ParseError::InvalidWorkspaceObject);
-        }
+        let value = Expr::from_json_value(&row.value, row.key_loc);
 
-        let path = key
-            .as_utf8_string_literal()
-            .expect("infallible: is_string checked");
+        let path = row.key.slice();
 
         if path.is_empty() {
             if maybe_root_pkg.is_some() {
-                log.add_error(Some(source), key.loc, b"Duplicate root package");
+                log.add_error(Some(source), row.key_loc, b"Duplicate root package");
                 return Err(ParseError::InvalidWorkspaceObject);
             }
 
@@ -2069,14 +2013,18 @@ pub fn parse_into_binary_lockfile(
         }
 
         let Some(name_expr) = value.get(b"name") else {
-            log.add_error(Some(source), value.loc, b"Expected a string name property");
+            log.add_error(
+                Some(source),
+                value_loc_of(source, row.key_loc),
+                b"Expected a string name property",
+            );
             return Err(ParseError::InvalidWorkspaceObject);
         };
 
         let Some(name_hash) = name_expr.as_string_hash_utf8(StringBuilder::string_hash)? else {
             log.add_error(
                 Some(source),
-                name_expr.loc,
+                value_loc_of(source, name_expr.loc),
                 b"Expected a string name property",
             );
             return Err(ParseError::InvalidWorkspaceObject);
@@ -2091,7 +2039,7 @@ pub fn parse_into_binary_lockfile(
             if !version_expr.is_string() {
                 log.add_error(
                     Some(source),
-                    version_expr.loc,
+                    value_loc_of(source, version_expr.loc),
                     b"Expected a string version property",
                 );
                 return Err(ParseError::InvalidWorkspaceObject);
@@ -2107,7 +2055,11 @@ pub fn parse_into_binary_lockfile(
                 version_str.sliced(lockfile.buffers.string_bytes.as_slice()),
             );
             if !parsed.valid {
-                log.add_error(Some(source), version_expr.loc, b"Invalid semver version");
+                log.add_error(
+                    Some(source),
+                    value_loc_of(source, version_expr.loc),
+                    b"Invalid semver version",
+                );
                 return Err(ParseError::InvalidSemver);
             }
 
@@ -2122,7 +2074,11 @@ pub fn parse_into_binary_lockfile(
     let mut bundled_pkgs = PkgPathSet::init();
 
     let Some(root_pkg_exr) = maybe_root_pkg else {
-        log.add_error(Some(source), workspaces_obj.loc, b"Expected root package");
+        log.add_error(
+            Some(source),
+            value_loc_of(source, workspaces_obj.loc),
+            b"Expected root package",
+        );
         return Err(ParseError::InvalidWorkspaceObject);
     };
 
@@ -2135,7 +2091,11 @@ pub fn parse_into_binary_lockfile(
             match name.as_utf8_string_literal() {
                 Some(s) => Some(s),
                 None => {
-                    log.add_error(Some(source), name.loc, b"Expected a string");
+                    log.add_error(
+                        Some(source),
+                        value_loc_of(source, name.loc),
+                        b"Expected a string",
+                    );
                     return Err(ParseError::InvalidWorkspaceObject);
                 }
             }
@@ -2184,18 +2144,8 @@ pub fn parse_into_binary_lockfile(
         // `workspace_paths.values()` iterator borrow. `String` is `Copy`.
         let workspace_path_snapshot: Vec<String> = lockfile.workspace_paths.values().to_vec();
         'workspaces: for workspace_path in &workspace_path_snapshot {
-            for prop in workspaces_obj
-                .data
-                .e_object()
-                .expect("infallible: variant checked")
-                .properties
-                .slice()
-            {
-                let key = prop.key.expect("infallible: prop has key");
-                let value = prop.value.expect("infallible: prop has value");
-                let path = key
-                    .as_utf8_string_literal()
-                    .expect("infallible: is_string checked");
+            for row in object_rows(&workspaces_obj) {
+                let path = row.key.slice();
                 if !strings::eql_long(
                     path,
                     workspace_path.slice(lockfile.buffers.string_bytes.as_slice()),
@@ -2203,6 +2153,7 @@ pub fn parse_into_binary_lockfile(
                 ) {
                     continue;
                 }
+                let value = Expr::from_json_value(&row.value, row.key_loc);
 
                 let mut pkg = Package {
                     resolution: Resolution::init(crate::resolution::TaggedValue::Workspace(
@@ -2252,7 +2203,7 @@ pub fn parse_into_binary_lockfile(
                 if entry.found_existing {
                     log.add_error_fmt(
                         source,
-                        key.loc,
+                        row.key_loc,
                         format_args!("Duplicate workspace name: '{}'", bstr::BStr::new(name)),
                     );
                     return Err(ParseError::InvalidWorkspaceObject);
@@ -2276,7 +2227,11 @@ pub fn parse_into_binary_lockfile(
 
     {
         if !pkgs_expr.is_object() {
-            log.add_error(Some(source), pkgs_expr.loc, b"Expected an object");
+            log.add_error(
+                Some(source),
+                value_loc_of(source, pkgs_expr.loc),
+                b"Expected an object",
+            );
             return Err(ParseError::InvalidPackagesObject);
         }
 
@@ -2292,39 +2247,26 @@ pub fn parse_into_binary_lockfile(
         // the bundled map, and mark the dependency bundled if it exists. This works
         // because package's direct bundled dependencies can only exist at the top
         // level of it's node_modules.
-        for prop in pkgs_expr
-            .data
-            .e_object()
-            .expect("infallible: variant checked")
-            .properties
-            .slice()
-        {
-            let key = prop.key.expect("infallible: prop has key");
-            let value = prop.value.expect("infallible: prop has value");
+        for row in object_rows(&pkgs_expr) {
+            let pkg_path = row.key.slice();
 
-            let Some(pkg_path) = key.as_utf8_string_literal() else {
-                log.add_error(Some(source), key.loc, b"Expected a string");
-                return Err(ParseError::InvalidPackageKey);
-            };
-
-            if !value.is_array() {
-                log.add_error(Some(source), value.loc, b"Expected an array");
+            let Some(pkg_info) = row.value.as_array() else {
+                log.add_error(
+                    Some(source),
+                    value_loc_of(source, row.key_loc),
+                    b"Expected an array",
+                );
                 return Err(ParseError::InvalidPackageInfo);
-            }
+            };
 
-            let pkg_info = &value
-                .data
-                .e_array()
-                .expect("infallible: variant checked")
-                .items;
-            if (pkg_info.len_u32() as usize) < 3 {
+            let pkg_info = pkg_info.items();
+            if pkg_info.len() < 3 {
                 continue;
             }
-            let maybe_info_obj = pkg_info.at(2);
-            let Some(bundled_expr) = maybe_info_obj.get(b"bundled") else {
+            let Some(maybe_info_obj) = pkg_info[2].as_object() else {
                 continue;
             };
-            let Some(bundled) = bundled_expr.as_bool() else {
+            let Some(&JSON::E::JsonValue::Boolean(bundled)) = maybe_info_obj.get(b"bundled") else {
                 continue;
             };
             if !bundled {
@@ -2333,43 +2275,41 @@ pub fn parse_into_binary_lockfile(
             bundled_pkgs.put(pkg_path, ());
         }
 
-        'next_pkg_key: for prop in pkgs_expr
-            .data
-            .e_object()
-            .expect("infallible: variant checked")
-            .properties
-            .slice()
-        {
-            let key = prop.key.expect("infallible: prop has key");
-            let value = prop.value.expect("infallible: prop has value");
+        'next_pkg_key: for row in object_rows(&pkgs_expr) {
+            let key_loc = row.key_loc;
+            let pkg_path = row.key.slice();
 
-            let Some(pkg_path) = key.as_utf8_string_literal() else {
-                log.add_error(Some(source), key.loc, b"Expected a string");
-                return Err(ParseError::InvalidPackageKey);
-            };
-
-            if !value.is_array() {
-                log.add_error(Some(source), value.loc, b"Expected an array");
+            let Some(pkg_info) = row.value.as_array() else {
+                log.add_error(
+                    Some(source),
+                    value_loc_of(source, key_loc),
+                    b"Expected an array",
+                );
                 return Err(ParseError::InvalidPackageInfo);
-            }
+            };
+            let pkg_info = pkg_info.items();
 
             let mut i: usize = 0;
-            let pkg_info = &value
-                .data
-                .e_array()
-                .expect("infallible: variant checked")
-                .items;
 
-            if (pkg_info.len_u32() as usize) == 0 {
-                log.add_error(Some(source), value.loc, b"Missing package info");
+            if pkg_info.is_empty() {
+                log.add_error(
+                    Some(source),
+                    value_loc_of(source, key_loc),
+                    b"Missing package info",
+                );
                 return Err(ParseError::InvalidPackageInfo);
             }
 
-            let res_info = pkg_info.at(i);
+            let res_info = &pkg_info[i];
+            let res_info_idx = i;
             i += 1;
 
-            let Some(res_info_str) = res_info.as_utf8_string_literal() else {
-                log.add_error(Some(source), res_info.loc, b"Expected a string");
+            let Some(res_info_str) = res_info.as_str() else {
+                log.add_error(
+                    Some(source),
+                    item_loc(source, key_loc, res_info_idx),
+                    b"Expected a string",
+                );
                 return Err(ParseError::InvalidPackageResolution);
             };
 
@@ -2381,14 +2321,22 @@ pub fn parse_into_binary_lockfile(
                 match dependency::split_name_and_version(res_info_str) {
                     Ok(pair) => break 'name_and_res pair,
                     Err(_) => {
-                        log.add_error(Some(source), res_info.loc, b"Invalid package resolution");
+                        log.add_error(
+                            Some(source),
+                            item_loc(source, key_loc, res_info_idx),
+                            b"Invalid package resolution",
+                        );
                         return Err(ParseError::InvalidPackageResolution);
                     }
                 }
             };
 
             if !name_str.is_empty() && !dependency::is_safe_install_folder_name(name_str) {
-                log.add_error(Some(source), res_info.loc, b"Invalid package name");
+                log.add_error(
+                    Some(source),
+                    item_loc(source, key_loc, res_info_idx),
+                    b"Invalid package name",
+                );
                 return Err(ParseError::InvalidPackageResolution);
             }
 
@@ -2403,7 +2351,7 @@ pub fn parse_into_binary_lockfile(
                 Err(crate::resolution::FromTextLockfileError::UnexpectedResolution) => {
                     log.add_error_fmt(
                         source,
-                        res_info.loc,
+                        item_loc(source, key_loc, res_info_idx),
                         format_args!("Unexpected resolution: {}", bstr::BStr::new(res_str)),
                     );
                     return Err(ParseError::UnexpectedResolution);
@@ -2411,7 +2359,7 @@ pub fn parse_into_binary_lockfile(
                 Err(crate::resolution::FromTextLockfileError::InvalidSemver) => {
                     log.add_error_fmt(
                         source,
-                        res_info.loc,
+                        item_loc(source, key_loc, res_info_idx),
                         format_args!("Invalid package version: {}", bstr::BStr::new(res_str)),
                     );
                     return Err(ParseError::InvalidSemver);
@@ -2420,15 +2368,24 @@ pub fn parse_into_binary_lockfile(
 
             let mut npm_url_needs_integrity = false;
             if res.tag == ResolutionTag::Npm {
-                if i >= (pkg_info.len_u32() as usize) {
-                    log.add_error(Some(source), value.loc, b"Missing npm registry");
+                if i >= pkg_info.len() {
+                    log.add_error(
+                        Some(source),
+                        value_loc_of(source, key_loc),
+                        b"Missing npm registry",
+                    );
                     return Err(ParseError::InvalidPackageInfo);
                 }
-                let registry_expr = pkg_info.at(i);
+                let registry_expr = &pkg_info[i];
+                let registry_idx = i;
                 i += 1;
 
-                let Some(registry_str) = registry_expr.as_utf8_string_literal() else {
-                    log.add_error(Some(source), registry_expr.loc, b"Expected a string");
+                let Some(registry_str) = registry_expr.as_str() else {
+                    log.add_error(
+                        Some(source),
+                        item_loc(source, key_loc, registry_idx),
+                        b"Expected a string",
+                    );
                     return Err(ParseError::InvalidPackageInfo);
                 };
 
@@ -2523,7 +2480,7 @@ pub fn parse_into_binary_lockfile(
 
                     log.add_error_fmt(
                         source,
-                        res_info.loc,
+                        item_loc(source, key_loc, res_info_idx),
                         format_args!(
                             "Unknown workspace: '{}'",
                             bstr::BStr::new(
@@ -2553,25 +2510,31 @@ pub fn parse_into_binary_lockfile(
                             break 'workspace_and_not_v0;
                         }
 
-                        if i >= (pkg_info.len_u32() as usize) {
-                            log.add_error(Some(source), value.loc, b"Missing dependencies object");
-                            return Err(ParseError::InvalidPackageInfo);
-                        }
-
-                        let deps_os_cpu_libc_bin_bundle_obj = pkg_info.at(i);
-                        i += 1;
-                        if !deps_os_cpu_libc_bin_bundle_obj.is_object() {
+                        if i >= pkg_info.len() {
                             log.add_error(
                                 Some(source),
-                                deps_os_cpu_libc_bin_bundle_obj.loc,
-                                b"Expected an object",
+                                value_loc_of(source, key_loc),
+                                b"Missing dependencies object",
                             );
                             return Err(ParseError::InvalidPackageInfo);
                         }
 
+                        let deps_idx = i;
+                        i += 1;
+                        let Some(deps_os_cpu_libc_bin_bundle_obj) = pkg_info[deps_idx].as_object()
+                        else {
+                            log.add_error(
+                                Some(source),
+                                item_loc(source, key_loc, deps_idx),
+                                b"Expected an object",
+                            );
+                            return Err(ParseError::InvalidPackageInfo);
+                        };
+                        let deps_expr = Expr::from_json_value(&pkg_info[deps_idx], key_loc);
+
                         let (off, len) = parse_append_dependencies::<true, false>(
                             lockfile,
-                            deps_os_cpu_libc_bin_bundle_obj,
+                            &deps_expr,
                             &mut *log,
                             source,
                             &mut optional_peers_buf,
@@ -2583,14 +2546,13 @@ pub fn parse_into_binary_lockfile(
                         pkg.dependencies = DependencySlice::new(off, len);
                         pkg.resolutions = PackageIDSlice::new(off, len);
 
-                        if let Some(bin) = deps_os_cpu_libc_bin_bundle_obj.get(b"bin") {
+                        if let Some(bin) = deps_expr.get(b"bin") {
                             pkg.bin = Bin::parse_append(
                                 &bin,
                                 &mut sbuf!(lockfile),
                                 &mut lockfile.buffers.extern_strings,
                             )?;
-                        } else if let Some(bin_dir) = deps_os_cpu_libc_bin_bundle_obj.get(b"binDir")
-                        {
+                        } else if let Some(bin_dir) = deps_expr.get(b"binDir") {
                             pkg.bin =
                                 Bin::parse_append_from_directories(&bin_dir, &mut sbuf!(lockfile))?;
                         }
@@ -2598,11 +2560,11 @@ pub fn parse_into_binary_lockfile(
                         if res.tag != ResolutionTag::Workspace {
                             if let Some(os) = deps_os_cpu_libc_bin_bundle_obj.get(b"os") {
                                 pkg.meta.os =
-                                    Npm::negatable_from_json::<Npm::OperatingSystem>(&os)?;
+                                    Npm::negatable_from_json_value::<Npm::OperatingSystem>(os);
                             }
                             if let Some(arch) = deps_os_cpu_libc_bin_bundle_obj.get(b"cpu") {
                                 pkg.meta.arch =
-                                    Npm::negatable_from_json::<Npm::Architecture>(&arch)?;
+                                    Npm::negatable_from_json_value::<Npm::Architecture>(arch);
                             }
                             // TODO(dylan-conway)
                             // if (os_cpu_libc_obj.get("libc")) |libc| {
@@ -2611,20 +2573,25 @@ pub fn parse_into_binary_lockfile(
                         }
                     }
                     ResolutionTag::Root => {
-                        if i >= (pkg_info.len_u32() as usize) {
+                        if i >= pkg_info.len() {
                             log.add_error(
                                 Some(source),
-                                value.loc,
+                                value_loc_of(source, key_loc),
                                 b"Missing package binaries object",
                             );
                             return Err(ParseError::InvalidPackageInfo);
                         }
-                        let bin_obj = pkg_info.at(i);
+                        let bin_obj_idx = i;
                         i += 1;
-                        if !bin_obj.is_object() {
-                            log.add_error(Some(source), bin_obj.loc, b"Expected an object");
+                        if pkg_info[bin_obj_idx].as_object().is_none() {
+                            log.add_error(
+                                Some(source),
+                                item_loc(source, key_loc, bin_obj_idx),
+                                b"Expected an object",
+                            );
                             return Err(ParseError::InvalidPackageInfo);
                         }
+                        let bin_obj = Expr::from_json_value(&pkg_info[bin_obj_idx], key_loc);
 
                         if let Some(bin) = bin_obj.get(b"bin") {
                             pkg.bin = Bin::parse_append(
@@ -2644,13 +2611,20 @@ pub fn parse_into_binary_lockfile(
             // integrity
             match res.tag {
                 ResolutionTag::Npm => {
-                    if i >= (pkg_info.len_u32() as usize) {
-                        log.add_error(Some(source), value.loc, b"Missing integrity");
+                    if i >= pkg_info.len() {
+                        log.add_error(
+                            Some(source),
+                            value_loc_of(source, key_loc),
+                            b"Missing integrity",
+                        );
                         return Err(ParseError::InvalidPackageInfo);
                     }
-                    let integrity_expr = pkg_info.at(i);
-                    let Some(integrity_str) = integrity_expr.as_utf8_string_literal() else {
-                        log.add_error(Some(source), integrity_expr.loc, b"Expected a string");
+                    let Some(integrity_str) = pkg_info[i].as_str() else {
+                        log.add_error(
+                            Some(source),
+                            item_loc(source, key_loc, i),
+                            b"Expected a string",
+                        );
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
@@ -2663,7 +2637,7 @@ pub fn parse_into_binary_lockfile(
                         // *lockfile* pin.
                         log.add_warning(
                             Some(source),
-                            integrity_expr.loc,
+                            item_loc(source, key_loc, i),
                             b"Unsupported or malformed integrity hash; ignoring",
                         );
                         pkg.meta.integrity = Integrity::default();
@@ -2682,7 +2656,7 @@ pub fn parse_into_binary_lockfile(
                     {
                         log.add_error(
                             Some(source),
-                            integrity_expr.loc,
+                            item_loc(source, key_loc, i),
                             b"Missing integrity hash for npm package resolved to a tarball URL outside the configured registry",
                         );
                         return Err(ParseError::InvalidPackageInfo);
@@ -2690,14 +2664,13 @@ pub fn parse_into_binary_lockfile(
                 }
                 ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                     // integrity is optional for tarball deps (backward compat)
-                    if i < (pkg_info.len_u32() as usize) {
-                        let integrity_expr = pkg_info.at(i);
-                        if let Some(integrity_str) = integrity_expr.as_utf8_string_literal() {
+                    if i < pkg_info.len() {
+                        if let Some(integrity_str) = pkg_info[i].as_str() {
                             pkg.meta.integrity = Integrity::parse(integrity_str);
                             if !integrity_str.is_empty() && !pkg.meta.integrity.tag.is_supported() {
                                 log.add_warning(
                                     Some(source),
-                                    integrity_expr.loc,
+                                    item_loc(source, key_loc, i),
                                     b"Unsupported or malformed integrity hash; ignoring",
                                 );
                                 pkg.meta.integrity = Integrity::default();
@@ -2707,16 +2680,24 @@ pub fn parse_into_binary_lockfile(
                 }
                 tag @ (ResolutionTag::Git | ResolutionTag::Github) => {
                     // .bun-tag
-                    if i >= (pkg_info.len_u32() as usize) {
-                        log.add_error(Some(source), value.loc, b"Missing git dependency tag");
+                    if i >= pkg_info.len() {
+                        log.add_error(
+                            Some(source),
+                            value_loc_of(source, key_loc),
+                            b"Missing git dependency tag",
+                        );
                         return Err(ParseError::InvalidPackageInfo);
                     }
 
-                    let bun_tag = pkg_info.at(i);
+                    let bun_tag_idx = i;
                     i += 1;
 
-                    let Some(bun_tag_str) = bun_tag.as_utf8_string_literal() else {
-                        log.add_error(Some(source), bun_tag.loc, b"Expected a string");
+                    let Some(bun_tag_str) = pkg_info[bun_tag_idx].as_str() else {
+                        log.add_error(
+                            Some(source),
+                            item_loc(source, key_loc, bun_tag_idx),
+                            b"Expected a string",
+                        );
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
@@ -2731,7 +2712,11 @@ pub fn parse_into_binary_lockfile(
                     let enforce_safe_tag =
                         tag == ResolutionTag::Github || lockfile_version.at_least(Version::V2);
                     if enforce_safe_tag && !crate::repository::is_safe_resolved_tag(bun_tag_str) {
-                        log.add_error(Some(source), bun_tag.loc, b"Invalid git dependency tag");
+                        log.add_error(
+                            Some(source),
+                            item_loc(source, key_loc, bun_tag_idx),
+                            b"Invalid git dependency tag",
+                        );
                         return Err(ParseError::InvalidPackageInfo);
                     }
 
@@ -2743,14 +2728,13 @@ pub fn parse_into_binary_lockfile(
                     }
 
                     // Optional integrity hash (added to pin tarball content)
-                    if i < (pkg_info.len_u32() as usize) {
-                        let integrity_expr = pkg_info.at(i);
-                        if let Some(integrity_str) = integrity_expr.as_utf8_string_literal() {
+                    if i < pkg_info.len() {
+                        if let Some(integrity_str) = pkg_info[i].as_str() {
                             pkg.meta.integrity = Integrity::parse(integrity_str);
                             if !integrity_str.is_empty() && !pkg.meta.integrity.tag.is_supported() {
                                 log.add_warning(
                                     Some(source),
-                                    integrity_expr.loc,
+                                    item_loc(source, key_loc, i),
                                     b"Unsupported or malformed integrity hash; ignoring",
                                 );
                                 pkg.meta.integrity = Integrity::default();
@@ -2769,7 +2753,7 @@ pub fn parse_into_binary_lockfile(
 
             let entry = pkg_map.get_or_put(pkg_path)?;
             if entry.found_existing {
-                log.add_error(Some(source), key.loc, b"Duplicate package path");
+                log.add_error(Some(source), key_loc, b"Duplicate package path");
                 return Err(ParseError::InvalidPackageKey);
             }
 
@@ -2829,7 +2813,7 @@ pub fn parse_into_binary_lockfile(
                         string_buf,
                         source,
                         log,
-                        root_pkg_exr.loc,
+                        value_loc_of(source, root_pkg_exr.loc),
                     )?;
                     return Err(ParseError::InvalidPackageInfo);
                 };
@@ -2876,7 +2860,7 @@ pub fn parse_into_binary_lockfile(
                         if needed > buf_slice.len() {
                             log.add_error_fmt(
                                 source,
-                                root_pkg_exr.loc,
+                                value_loc_of(source, root_pkg_exr.loc),
                                 format_args!(
                                     "Workspace and dependency name too long: '{}/{}'",
                                     bstr::BStr::new(workspace_name),
@@ -2904,7 +2888,7 @@ pub fn parse_into_binary_lockfile(
                             string_buf,
                             source,
                             log,
-                            root_pkg_exr.loc,
+                            value_loc_of(source, root_pkg_exr.loc),
                         )?;
                         return Err(ParseError::InvalidPackageInfo);
                     };
@@ -2927,18 +2911,8 @@ pub fn parse_into_binary_lockfile(
         }
 
         // then each package dependency
-        for prop in pkgs_expr
-            .data
-            .e_object()
-            .expect("infallible: variant checked")
-            .properties
-            .slice()
-        {
-            let key = prop.key.expect("infallible: prop has key");
-
-            let pkg_path = key
-                .as_utf8_string_literal()
-                .expect("infallible: is_string checked");
+        for row in object_rows(&pkgs_expr) {
+            let pkg_path = row.key.slice();
 
             let Some(&pkg_id) = pkg_map.get(pkg_path) else {
                 return Err(ParseError::InvalidPackagesObject);
@@ -2961,7 +2935,7 @@ pub fn parse_into_binary_lockfile(
                     match pkg_map.find_resolution(pkg_path, dep, string_buf, &mut path_buf[..]) {
                         Ok(&id) => id,
                         Err(ResolveError::InvalidPackageKey) => {
-                            log.add_error(Some(source), key.loc, b"Invalid package path");
+                            log.add_error(Some(source), row.key_loc, b"Invalid package path");
                             return Err(ParseError::InvalidPackageKey);
                         }
                         Err(ResolveError::Unresolvable) => {
@@ -2974,7 +2948,7 @@ pub fn parse_into_binary_lockfile(
                                 string_buf,
                                 source,
                                 log,
-                                key.loc,
+                                row.key_loc,
                             )?;
                             return Err(ParseError::InvalidPackageInfo);
                         }
@@ -3101,23 +3075,25 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
 
     if let Some(optional_peers) = obj.get(b"optionalPeers") {
         if !optional_peers.is_array() {
-            log.add_error(Some(source), optional_peers.loc, b"Expected an array");
+            log.add_error(
+                Some(source),
+                value_loc_of(source, optional_peers.loc),
+                b"Expected an array",
+            );
             return Err(ParseError::InvalidPackageInfo);
         }
 
-        for item in optional_peers
-            .data
-            .e_array()
-            .expect("infallible: variant checked")
-            .items
-            .slice()
-        {
-            let Some(name_hash) = item.as_string_hash_utf8(StringBuilder::string_hash)? else {
-                log.add_error(Some(source), item.loc, b"Expected a string");
+        for (i, item) in array_items(&optional_peers).iter().enumerate() {
+            let Some(name_str) = item.as_str() else {
+                log.add_error(
+                    Some(source),
+                    item_loc(source, optional_peers.loc, i),
+                    b"Expected a string",
+                );
                 return Err(ParseError::InvalidPackageInfo);
             };
 
-            optional_peers_buf.insert(name_hash, ());
+            optional_peers_buf.insert(StringBuilder::string_hash(name_str), ());
         }
     }
 
@@ -3131,30 +3107,26 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     for &(group_name, group_behavior) in WORKSPACE_DEPENDENCY_GROUPS.iter() {
         if let Some(deps) = obj.get(group_name.as_bytes()) {
             if !deps.is_object() {
-                log.add_error(Some(source), deps.loc, b"Expected an object");
+                log.add_error(
+                    Some(source),
+                    value_loc_of(source, deps.loc),
+                    b"Expected an object",
+                );
                 return Err(ParseError::InvalidPackagesTree);
             }
 
-            for prop in deps
-                .data
-                .e_object()
-                .expect("infallible: variant checked")
-                .properties
-                .slice()
-            {
-                let key = prop.key.expect("infallible: prop has key");
-                let value = prop.value.expect("infallible: prop has value");
-
-                let Some(name_str) = key.as_utf8_string_literal() else {
-                    log.add_error(Some(source), key.loc, b"Expected a string");
-                    return Err(ParseError::InvalidDependencyName);
-                };
+            for row in object_rows(&deps) {
+                let name_str = row.key.slice();
 
                 let name_hash = StringBuilder::string_hash(name_str);
                 let name = sbuf!(lockfile).append_external_with_hash(name_str, name_hash)?;
 
-                let Some(version_str) = value.as_utf8_string_literal() else {
-                    log.add_error(Some(source), value.loc, b"Expected a string");
+                let Some(version_str) = row.value.as_str() else {
+                    log.add_error(
+                        Some(source),
+                        value_loc_of(source, row.key_loc),
+                        b"Expected a string",
+                    );
                     return Err(ParseError::InvalidDependencyVersion);
                 };
 
@@ -3181,7 +3153,11 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                     ) {
                         Some(v) => v,
                         None => {
-                            log.add_error(Some(source), value.loc, b"Invalid dependency version");
+                            log.add_error(
+                                Some(source),
+                                value_loc_of(source, row.key_loc),
+                                b"Invalid dependency version",
+                            );
                             return Err(ParseError::InvalidDependencyVersion);
                         }
                     },
@@ -3200,7 +3176,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                     if bundled_location_len > path_buf.len() {
                         log.add_error(
                             Some(source),
-                            key.loc,
+                            row.key_loc,
                             b"Package path and dependency name too long",
                         );
                         return Err(ParseError::InvalidPackageKey);
@@ -3224,18 +3200,8 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     if IS_ROOT {
         let workspaces_obj = workspaces_obj.expect("workspaces_obj required when IS_ROOT");
         'workspaces: for workspace_path in lockfile.workspace_paths.values() {
-            for prop in workspaces_obj
-                .data
-                .e_object()
-                .expect("infallible: variant checked")
-                .properties
-                .slice()
-            {
-                let key = prop.key.expect("infallible: prop has key");
-                let value = prop.value.expect("infallible: prop has value");
-                let path = key
-                    .as_utf8_string_literal()
-                    .expect("infallible: is_string checked");
+            for row in object_rows(workspaces_obj) {
+                let path = row.key.slice();
                 if !strings::eql_long(
                     path,
                     workspace_path.slice(lockfile.buffers.string_bytes.as_slice()),
@@ -3243,6 +3209,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                 ) {
                     continue;
                 }
+                let value = Expr::from_json_value(&row.value, row.key_loc);
 
                 let name_expr = value.get(b"name").unwrap();
                 let name = name_expr

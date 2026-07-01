@@ -5,9 +5,10 @@
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SVE/SVE2 targets. Gate: hwy::SupportedTargets via getauxval(AT_HWCAP).
-# (132 symbols)
+# (133 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_SVE2_12810MemMemImplEPKhmS2_m                                      [SVE]
+_ZN3bun10N_SVE2_12813JsonIndexImplEPKhmmPjPmS4_S3_                            [SVE]
 _ZN3bun10N_SVE2_12814DecodeHex8ImplEPKhPhm                                    [SVE]
 _ZN3bun10N_SVE2_12814LowerAsciiImplEPKhmPh                                    [SVE]
 _ZN3bun10N_SVE2_12815CopyU16ToU8ImplEPKtmPh                                   [SVE]

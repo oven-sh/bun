@@ -13,6 +13,43 @@ pub use externs::*;
 // externs crate and must stay leaf. The `bun.windows.libuv` alias lives in the
 // higher-tier `bun_sys::windows` module (`pub use bun_libuv_sys as libuv`).
 
+/// A `&'static str` pipe name (or name prefix) proven at compile time to
+/// start with `\\.\pipe\LOCAL\` — the only namespace an AppContainer may
+/// create server pipes in; outside one the prefix is just part of the name.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct LocalPipeStr(&'static str);
+
+impl LocalPipeStr {
+    /// Const-panics on a missing prefix; build through [`local_pipe!`] so
+    /// evaluation cannot slip to runtime.
+    pub const fn new(s: &'static str) -> Self {
+        const P: &[u8] = br"\\.\pipe\LOCAL\";
+        let b = s.as_bytes();
+        assert!(b.len() >= P.len(), "pipe name must start with \\\\.\\pipe\\LOCAL\\");
+        let mut i = 0;
+        while i < P.len() {
+            assert!(b[i] == P[i], "pipe name must start with \\\\.\\pipe\\LOCAL\\");
+            i += 1;
+        }
+        Self(s)
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+/// Builds a [`LocalPipeStr`] in const context, so a name outside
+/// `\\.\pipe\LOCAL\` is a compile error, never a runtime panic.
+#[macro_export]
+macro_rules! local_pipe {
+    ($lit:expr) => {{
+        const PIPE: $crate::LocalPipeStr = $crate::LocalPipeStr::new($lit);
+        PIPE
+    }};
+}
+
 /// `NTSTATUS` value namespace (`ntstatus.h`). The `NTSTATUS` newtype carries
 /// these as associated consts, but `bun_sys::windows` glob-imports them as
 /// bare match patterns (`use bun_windows_sys::ntstatus::*`); associated consts

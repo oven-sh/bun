@@ -1031,7 +1031,9 @@ fn create_overlapped_pipe_pair(
         let mut cursor = &mut name_utf8_buf[..];
         // `LOCAL\` because an AppContainer may only create pipes under
         // `\\.\pipe\LOCAL\`; outside one the prefix is just part of the name.
-        if write!(cursor, "\\\\.\\pipe\\LOCAL\\bun-conpty-{}-{}", pid, counter).is_err() {
+        const CONPTY_PIPE_PREFIX: windows::LocalPipeStr =
+            windows::local_pipe!(r"\\.\pipe\LOCAL\bun-conpty-");
+        if write!(cursor, "{}{}-{}", CONPTY_PIPE_PREFIX.as_str(), pid, counter).is_err() {
             return Err(CreatePtyError::OpenPtyFailed);
         }
         let written = 96 - cursor.len();

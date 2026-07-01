@@ -200,7 +200,7 @@ void CryptoAlgorithmHMAC::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& key
     callback(format, WTF::move(result));
 }
 
-ExceptionOr<size_t> CryptoAlgorithmHMAC::getKeyLength(const CryptoAlgorithmParameters& parameters)
+ExceptionOr<std::optional<size_t>> CryptoAlgorithmHMAC::getKeyLength(const CryptoAlgorithmParameters& parameters)
 {
     return CryptoKeyHMAC::getKeyLength(parameters);
 }

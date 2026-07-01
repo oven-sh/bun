@@ -84,7 +84,7 @@ pub(crate) extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
 // Bun__NODE_NO_WARNINGS
 
 // REAL: `Bun__getTLSRejectUnauthorizedValue` / `Bun__isNoProxy` now exported
-// directly from `bun_jsc::virtual_machine_exports` (un-gated in phase-d).
+// directly from `bun_jsc::virtual_machine_exports`.
 
 // REAL: now provided by bun_runtime (src/runtime/napi/napi_body.rs).
 // napi_internal_suppress_crash_on_abort_if_desired

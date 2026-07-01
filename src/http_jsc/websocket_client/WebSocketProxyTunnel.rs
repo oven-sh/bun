@@ -215,6 +215,10 @@ impl WebSocketProxyTunnel {
                 on_handshake: Self::on_handshake,
                 on_close: Self::on_close,
                 write: Self::write_encrypted,
+                // No JS TLSSocket fronts the tunnel; opting out keeps the
+                // SSL off the parked session/keylog queues entirely.
+                on_session: None,
+                on_keylog: None,
             },
         )
         .map_err(|_| bun_core::err!("InvalidOptions"))?;

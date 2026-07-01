@@ -138,6 +138,19 @@ describe("css tests", () => {
 }`,
       indoc`.rounded-full{height:infinity;border-radius:3.40282e38px;width:-3.40282e38px}`,
     );
+
+    // NaN is valid inside calc() (CSS Values 4 "Infinities, NaN, and Signed Zero").
+    // A NaN escaping a top-level calculation is censored to zero; it must never be
+    // serialized as the literal `NaNpx`, which browsers reject.
+    minify_test(`a { width: calc(NaN * 1px) }`, `a{width:0px}`);
+    minify_test(`a { width: calc(infinity * 0px) }`, `a{width:0px}`);
+    minify_test(`a { width: calc(infinity * 1px - infinity * 1px) }`, `a{width:0px}`);
+    minify_test(`a { width: min(NaN * 1px, 2px) }`, `a{width:min(0px,2px)}`);
+    minify_test(`a { width: max(NaN * 1px, 2px) }`, `a{width:max(0px,2px)}`);
+    minify_test(`a { width: calc(NaN * 1%) }`, `a{width:0%}`);
+    minify_test(`a { opacity: calc(NaN) }`, `a{opacity:0}`);
+    minify_test(`a { rotate: calc(NaN * 1deg) }`, `a{rotate:0deg}`);
+    minify_test(`a { transition-duration: calc(NaN * 1s) }`, `a{transition-duration:0s}`);
   });
   describe("calc stack overflow", () => {
     // https://github.com/oven-sh/bun/issues/20128

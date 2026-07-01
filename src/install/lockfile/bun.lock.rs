@@ -1604,14 +1604,14 @@ pub fn parse_into_binary_lockfile(
         'err: {
             match &lockfile_version_expr.data {
                 ExprData::ENumber(num) => {
-                    if num.value < 0.0 || num.value > u32::MAX as f64 {
+                    if num.value() < 0.0 || num.value() > u32::MAX as f64 {
                         break 'err;
                     }
 
-                    if num.value.fract() != 0.0 {
+                    if num.value().fract() != 0.0 {
                         break 'err;
                     }
-                    break 'lockfile_version num.value as u32;
+                    break 'lockfile_version num.value() as u32;
                 }
                 _ => {}
             }
@@ -1626,10 +1626,23 @@ pub fn parse_into_binary_lockfile(
     };
 
     let Some(lockfile_version) = Version::from_int(lockfile_version_num) else {
-        log.add_error(
+        log.add_range_error_fmt_with_notes(
             Some(source),
-            lockfile_version_expr.loc,
-            b"Unknown lockfile version",
+            bun_ast::Range {
+                loc: lockfile_version_expr.loc,
+                ..Default::default()
+            },
+            Box::new([bun_ast::range_data(
+                None,
+                bun_ast::Range::NONE,
+                b"Run 'bun upgrade' to update to the latest version of Bun",
+            )]),
+            format_args!(
+                "Unsupported lockfile version {}. This lockfile was likely created by a newer version of Bun. (This is Bun v{}, which supports lockfile versions up to {}.)",
+                lockfile_version_num,
+                bun_core::Global::package_json_version,
+                Version::CURRENT as u32,
+            ),
         );
         return Err(ParseError::UnknownLockfileVersion);
     };

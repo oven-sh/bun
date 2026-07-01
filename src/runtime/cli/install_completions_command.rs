@@ -16,7 +16,7 @@ pub struct InstallCompletionsCommand;
 
 impl InstallCompletionsCommand {
     #[cfg(not(windows))]
-    const BUNX_NAME: &'static str = if cfg!(debug_assertions) {
+    const BUNX_NAME: &'static str = if bun_core::env::IS_DEBUG {
         "bunx-debug"
     } else {
         "bunx"
@@ -119,12 +119,12 @@ impl InstallCompletionsCommand {
 
         let mut bunx_path_buf = WPathBuffer::uninit();
 
-        let cmd_suffix: &[u16] = if cfg!(debug_assertions) {
+        let cmd_suffix: &[u16] = if bun_core::env::IS_DEBUG {
             w!("bunx-debug.cmd")
         } else {
             w!("bunx.cmd")
         };
-        let exe_suffix_z: &[u16] = if cfg!(debug_assertions) {
+        let exe_suffix_z: &[u16] = if bun_core::env::IS_DEBUG {
             w!("bunx-debug.exe\0")
         } else {
             w!("bunx.exe\0")

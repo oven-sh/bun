@@ -263,9 +263,32 @@ pub fn chown(file_path: &ZStr, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<(
     }
 }
 
-pub fn lchown(_file_path: &ZStr, _uid: uv::uv_uid_t, _gid: uv::uv_uid_t) -> Result<()> {
-    // libuv's Windows `uv_fs_lchown` is a no-op success (no ownership model).
-    Result::Ok(())
+pub fn lchown(file_path: &ZStr, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<()> {
+    let mut req = FsReq::new();
+    // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
+    let rc = unsafe {
+        uv::uv_fs_lchown(
+            uv::Loop::get(),
+            &mut *req,
+            file_path.as_ptr(),
+            uid,
+            gid,
+            None,
+        )
+    };
+
+    log!(
+        "uv lchown({}, {}, {}) = {}",
+        BStr::new(file_path.as_bytes()),
+        uid,
+        gid,
+        rc.int()
+    );
+    if let Some(errno) = rc.err_enum_e() {
+        Result::Err(Error::new(errno, Tag::lchown).with_path(file_path.as_bytes()))
+    } else {
+        Result::Ok(())
+    }
 }
 
 pub fn fchown(fd: Fd, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<()> {

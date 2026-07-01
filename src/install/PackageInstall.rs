@@ -175,11 +175,16 @@ impl Method {
 pub struct Failure {
     pub err: bun_core::Error,
     pub step: Step,
-    #[cfg(debug_assertions)]
+    #[cfg(bun_debug)]
     pub debug_trace: bun_core::StoredTrace,
 }
 
 impl Failure {
+    // `Failure` is `Copy` and tiny without the `#[cfg(bun_debug)]` trace
+    // field; clippy's trivially_copy_pass_by_ref fires in that config but
+    // `&self` is correct when the trace field is present. Allow it rather
+    // than vary the signature per-config.
+    #[allow(clippy::trivially_copy_pass_by_ref)]
     #[inline]
     pub(crate) fn is_package_missing_from_cache(&self) -> bool {
         (self.err == bun_core::err!("FileNotFound") || self.err == bun_core::err!("ENOENT"))
@@ -203,7 +208,7 @@ impl InstallResult {
         InstallResult::Failure(Box::new(Failure {
             err,
             step,
-            #[cfg(debug_assertions)]
+            #[cfg(bun_debug)]
             debug_trace: match _trace {
                 Some(t) => bun_core::StoredTrace::from(Some(t)),
                 None => bun_core::StoredTrace::capture(None /* @returnAddress() */),

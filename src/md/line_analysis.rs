@@ -1,7 +1,12 @@
 use super::helpers;
-use super::parser::Parser;
+use super::parser::{self, Parser};
 use super::types;
 use super::types::{Align, Container, OFF};
+
+/// `<![CDATA[` without the `<` the caller already matched. The longest
+/// OFF-typed fixed lookahead the parser performs; `parser::MAX_LOOKAHEAD`
+/// (and with it the accepted input length) is derived from its length.
+pub(crate) const CDATA_OPEN: &[u8] = b"![CDATA[";
 
 // ──────────────────────────────────────────────────────────────────────────
 // Result types, kept as named structs (not tuples) for readable field access.
@@ -250,8 +255,12 @@ impl Parser<'_> {
             return 4;
         }
 
-        // Type 5: <![CDATA[
-        if off + 9 <= self.size && &self.text[(off + 1) as usize..(off + 9) as usize] == b"![CDATA["
+        // Type 5: <![CDATA[. This is the longest OFF-typed fixed lookahead
+        // in the parser; `parser::MAX_LOOKAHEAD` (which bounds the accepted
+        // input length) is derived from `CDATA_OPEN`, so extending it cannot
+        // silently reintroduce `off + k` overflow.
+        if off + parser::MAX_LOOKAHEAD <= self.size
+            && &self.text[(off + 1) as usize..(off + 1) as usize + CDATA_OPEN.len()] == CDATA_OPEN
         {
             return 5;
         }

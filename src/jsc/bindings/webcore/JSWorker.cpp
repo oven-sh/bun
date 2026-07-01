@@ -216,19 +216,12 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
 
         auto transferListValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "transferList"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
-        if (transferListValue) {
-            if (transferListValue.isObject()) {
-                JSC::JSObject* transferListObject = transferListValue.getObject();
-                if (auto* transferListArray = dynamicDowncast<JSC::JSArray>(transferListObject)) {
-                    JSC::forEachInArrayLike(globalObject, transferListArray, [&](JSValue transferValue) -> bool {
-                        if (auto* transferObject = transferValue.getObject()) {
-                            transferList.append({ vm, transferObject });
-                        }
-                        return true;
-                    });
-                    RETURN_IF_EXCEPTION(throwScope, {});
-                }
-            }
+        // Convert the whole sequence before serializing workerData: an entry that
+        // is not an object must throw instead of being skipped, otherwise the
+        // remaining entries are detached even though the call failed.
+        if (transferListValue && !transferListValue.isUndefinedOrNull()) {
+            transferList = convert<IDLSequence<IDLObject>>(*lexicalGlobalObject, transferListValue);
+            RETURN_IF_EXCEPTION(throwScope, {});
         }
 
         auto envValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "env"_s));
@@ -674,7 +667,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
 
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     if (!worker.isOnline()) {
-        promise->reject(vm, globalObject,
+        promise->reject(vm,
             Bun::createError(globalObject,
                 Bun::ErrorCode::ERR_WORKER_NOT_RUNNING,
                 "Worker instance not running"_s));
@@ -718,7 +711,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
         // Worker raced to Closing/Closed between isOnline() and the post.
         // Still on the parent thread — safe to destroy the handle here.
         delete promiseHandle;
-        promise->reject(vm, globalObject,
+        promise->reject(vm,
             Bun::createError(globalObject,
                 Bun::ErrorCode::ERR_WORKER_NOT_RUNNING,
                 "Worker instance not running"_s));

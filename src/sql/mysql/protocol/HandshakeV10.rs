@@ -97,5 +97,3 @@ impl HandshakeV10 {
         Ok(())
     }
 }
-
-pub use self::HandshakeV10 as _DecoderWrapTarget;

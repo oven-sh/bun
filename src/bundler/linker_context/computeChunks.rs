@@ -632,7 +632,7 @@ pub fn compute_chunks(
                 Target::Bun => b"bun".to_vec().into_boxed_slice(),
                 Target::Node => b"node".to_vec().into_boxed_slice(),
                 Target::BunMacro => b"macro".to_vec().into_boxed_slice(),
-                Target::BakeServerComponentsSsr => b"ssr".to_vec().into_boxed_slice(),
+                Target::ServerComponentsSsr => b"ssr".to_vec().into_boxed_slice(),
             };
         }
 

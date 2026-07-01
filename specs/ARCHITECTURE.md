@@ -190,9 +190,16 @@ For each internal-slot table in `specs/digest/*`, apply:
   (an errored stream's stored error can legitimately BE `undefined`).
 
 ### 3.2 JS-value slots → `WriteBarrier<T>` members + `visitChildrenImpl`
-`[[storedError]]` → `WriteBarrier<Unknown>`. Back-pointers (`[[controller]]`, `[[reader]]`,
-`[[stream]]`, `[[readable]]`, `[[writable]]`, `[[writer]]`) → `WriteBarrier<JSFoo>` of the exact
-class. Every promise slot the spec keeps (`[[closedPromise]]`, `[[readyPromise]]`,
+`[[storedError]]` → `WriteBarrier<Unknown>`. Back-pointers (`[[reader]]`, `[[stream]]`,
+`[[readable]]`, `[[writable]]`, `[[writer]]`) → `WriteBarrier<JSFoo>` of the exact class.
+**ONE mandatory exception: `JSReadableStream::m_controller` is the ERASED
+`WriteBarrier<JSC::JSObject>` plus a `ControllerKind : uint8_t { None, Default, Byte, Direct,
+NativeSink }` tag member** — because a readable stream's controller slot can hold a
+`JSDirectStreamController` or (native-sink path) a generated `JSReadable*Controller` JSSink
+cell, neither of which is a spec controller class. Every read of the controller dispatches on
+the tag; every switch over `ControllerKind` is total. (`JSWritableStream::m_controller` and
+`JSTransformStream::m_controller` stay exact-typed; only the readable side is polymorphic.)
+See `specs/BUN-LAYER-DESIGN.md` §1/§4.7. Every promise slot the spec keeps (`[[closedPromise]]`, `[[readyPromise]]`,
 `[[backpressureChangePromise]]`, `[[inFlightWriteRequest]]`, `[[inFlightCloseRequest]]`,
 `[[closeRequest]]`, `[[abortRequest]]`'s promise, ...) → `WriteBarrier<JSPromise>`.
 **Every** WriteBarrier member appears in `visitChildrenImpl` (`DEFINE_VISIT_CHILDREN`); a
@@ -262,7 +269,21 @@ enum class SourceKind : uint8_t {
 // WritableStreamDefaultController:
 enum class SinkKind : uint8_t { JavaScript, Nothing, Transform, CrossRealm, /* Bun: TBD(bun-ext) */ };
 // TransformStreamDefaultController:
-enum class TransformerKind : uint8_t { JavaScript, Identity /* no transformer given */ };
+enum class TransformerKind : uint8_t {
+    JavaScript,   // new TransformStream({...}) — user transformer
+    Identity,     // new TransformStream() with no transformer
+    TextEncoder,  // TextEncoderStream  (native transform/flush; context = the JSTextEncoderStream)
+    TextDecoder,  // TextDecoderStream  (native transform/flush; context = the JSTextDecoderStream)
+};
+// CompressionStream / DecompressionStream do NOT get an arm: verified — they never touch
+// TransformStream internals (they are node:zlib Duplex adapters over the PUBLIC constructors)
+// and are unaffected by this rewrite. Their .ts builtins survive unchanged.
+```
+For internal (non-user) TransformStream creation the parallel of `createReadableStream` is:
+```cpp
+JSTransformStream* createTransformStream(JSGlobalObject*, TransformerKind, JSC::JSCell* algorithmContext,
+    double writableHighWaterMark = 1, JSC::JSObject* writableSizeAlgorithm = nullptr,
+    double readableHighWaterMark = 0, JSC::JSObject* readableSizeAlgorithm = nullptr);
 ```
 
 Controller members for the algorithm machinery — this is the **complete** list:
@@ -369,8 +390,28 @@ When the reaction fires, the handler is called as `handler(resolutionValue, cont
    "promise" is elided when start returns a non-thenable. When start/pull/write return a real
    promise/thenable, we react to *their* promise; we do not wrap it in another.
 
-`WebStreamsInternals.h` declares, and `JSStreamsRuntime` owns, the closed list of handler
-functions. Phase-B authors may not add reaction sites outside this mechanism.
+**Bound callables (Bun layer only) — the SECOND and LAST sanctioned callable form.** Where a
+callable must be *stored on and later invoked by an object we do not control* (the Rust
+native-source handle's `onClose`/`onDrain`, the JSSink controller's `start(onPull, onClose)`,
+the ResumableSink's `setHandlers`), a per-reaction closure is still banned; the ONE sanctioned
+form is `JSC::JSBoundFunction::create(vm, global, sharedHandler, jsUndefined(),
+ArgList{contextCell}, ...)` binding a **shared, stateless, per-global native `JSFunction` owned
+by `JSStreamsRuntime`** to exactly one context cell. Verified against
+`runtime/JSBoundFunction.h`: `m_boundThis` and the (≤3 embedded) `m_boundArgs` are
+`WriteBarrier<Unknown>` and are appended by `JSBoundFunction::visitChildrenImpl`, so the
+context is GC-reachable from whatever roots the callable — this is why it satisfies the intent
+of the `JSNativeStdFunction` ban (nothing lives outside the GC's view). Cost: one 96-byte cell
+in JSC's existing `boundFunctionSpace`; it is already used from Bun's bindings
+(`JSCommonJSModule.cpp:129`). **Convention trap:** `boundFunctionCall` PREPENDS the bound
+args, so a bound-callable handler receives `(contextCell, ...callArgs)` — the OPPOSITE order
+from `performPromiseThenWithContext`'s `(resolutionValue, contextCell)`. The two handler
+families are DISJOINT closed lists on `JSStreamsRuntime`; a handler belongs to exactly one and
+must never be shared between them. Every other callable in the subsystem is a shared reaction
+handler; anything else (a fresh `JSFunction` per stream, any capturing `JSNativeStdFunction`)
+stays FORBIDDEN.
+
+`WebStreamsInternals.h` declares, and `JSStreamsRuntime` owns, both closed handler lists.
+Phase-B authors may not add reaction sites or callables outside these two mechanisms.
 
 ---
 
@@ -567,6 +608,15 @@ self-keepalive `Strong`, armed at creation and provably released on every termin
 it must come with a comment naming the exact object-graph hole it plugs. Nothing else, ever.
 Every capturing `JSNativeStdFunction` is banned (§4.1).
 
+`JSC::Weak<T>` is NOT `Strong` (it roots nothing) and is permitted at EXACTLY ONE site: the
+native source adapter's controller back-edge (`specs/BUN-LAYER-DESIGN.md` §2.2), where it
+does the same job the current implementation's `WeakRef` does — preventing Rust's *external*
+Strong root on the native handle from transitively pinning the entire abandoned JS consumer
+graph (stream, controller, queue, up to a 2 MiB pending buffer) for the lifetime of a
+long-lived `updateRef(true)`'d source. Every read of it null-checks (null ⇒ the JS consumer
+is gone ⇒ drop the data). A `Weak` anywhere else needs the same standard of proof this one
+has, in a comment, before a reviewer will accept it.
+
 **7.7** Numbers crossing from JS (`size()` returns, `desiredSize`, `respond(n)`,
 `autoAllocateChunkSize`, `highWaterMark`): validate exactly as the digest does
 (`IsNonNegativeNumber`, `RangeError`/`TypeError` on the exact inputs it names) BEFORE any
@@ -625,10 +675,14 @@ Agents in Phases A/B and in Phase C's fix step are **banned from**: `git`, `carg
   the `type:"direct"` stream mode + `JSDirectStreamController`, JSSink glue, `readableStreamTo*`
   fast paths, and the full `extern "C"` surface Rust binds — those symbol names and the
   `ReadableStreamTag` numeric values are FROZEN by `assert_ffi_discr!` on the Rust side).
-- `TextEncoderStream`, `TextDecoderStream`, `CompressionStream`, `DecompressionStream` — these
-  are JS builtins layered on the TransformStream internals being deleted, so they come along
-  to C++: each is a `TransformStream` whose transform/flush algorithm is a native
-  `TransformerKind` arm (feasibility confirmed per class in `specs/BUN-LAYER-DESIGN.md`).
+- `TextEncoderStream` and `TextDecoderStream` — JS builtins layered on exactly two
+  TransformStream internals being deleted (`CreateTransformStream`,
+  `TransformStreamDefaultControllerEnqueue`), so they come along to C++: each is one native
+  `TransformerKind` arm (feasibility + the exact transform/flush algorithms confirmed in
+  `specs/BUN-LAYER-DESIGN.md` §9.2). **`CompressionStream` / `DecompressionStream` are NOT
+  affected and need NO work** — verified: they never touch TransformStream internals (they are
+  `node:zlib` Duplex adapters over the PUBLIC constructors). An earlier draft of this document
+  wrongly included them; corrected.
 - **Vendoring the WPT streams test suite.** There is NO streams WPT in this repo today
   (verified), so nothing enforces spec compliance before or after the rewrite. The repo
   already has the pattern (`test/js/third_party/wpt-h2/`: vendored `.any.js` + a

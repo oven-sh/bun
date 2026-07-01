@@ -144,10 +144,8 @@ export class BunTestController implements vscode.Disposable {
     );
   }
 
-  // The open-document listener is workspace-global, so in a multi-root
-  // workspace every folder's controller sees every opened file. Only adopt a
-  // document that belongs to this controller's folder, matching the
-  // RelativePattern scoping used by findTestFiles and the file watcher.
+  // Open-document events are workspace-global; only adopt documents inside
+  // this controller's folder, matching findTestFiles and the file watcher.
   private documentBelongsToFolder(uri: vscode.Uri): boolean {
     return vscode.workspace.getWorkspaceFolder(uri)?.uri.toString() === this.workspaceFolder.uri.toString();
   }
@@ -283,11 +281,9 @@ export class BunTestController implements vscode.Disposable {
 
   private getBunExecutionConfig() {
     const scope = this.workspaceFolder.uri;
-    const customFlag = vscode.workspace.getConfiguration("bun.test", scope).get("customFlag", "").trim();
-    const customScriptSetting = vscode.workspace
-      .getConfiguration("bun.test", scope)
-      .get("customScript", "bun test")
-      .trim();
+    const testConfig = vscode.workspace.getConfiguration("bun.test", scope);
+    const customFlag = testConfig.get("customFlag", "").trim();
+    const customScriptSetting = testConfig.get("customScript", "bun test").trim();
     const customScript = customScriptSetting.length ? customScriptSetting : "bun test";
 
     const [cmd, ...args] = customScript.split(/\s+/);

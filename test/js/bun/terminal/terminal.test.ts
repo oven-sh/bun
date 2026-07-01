@@ -995,37 +995,77 @@ describe("Bun.Terminal", () => {
 });
 
 describe.concurrent("Bun.spawn with terminal option", () => {
-  test("creates subprocess with terminal attached", async () => {
-    const dataChunks: Uint8Array[] = [];
-    const gotMarker = Promise.withResolvers<void>();
+  // Instrumented while investigating a timeout on the darwin x64 CI runner:
+  // dumps where the test is stuck (child state, received bytes) every 15s.
+  const spawnWithTerminalAttached = (label: string) =>
+    test(label, async () => {
+      const dataChunks: Uint8Array[] = [];
+      const gotMarker = Promise.withResolvers<void>();
+      let stage = "spawning";
+      const events: string[] = [];
+      const t0 = Date.now();
+      const mark = (e: string) => events.push(`${Date.now() - t0}ms ${e}`);
 
-    const proc = Bun.spawn([bunExe(), "-e", "console.log('hello from terminal')"], {
-      env: bunEnv,
-      terminal: {
-        cols: 80,
-        rows: 24,
-        data: (terminal: Bun.Terminal, data: Uint8Array) => {
-          dataChunks.push(data);
-          if (Buffer.concat(dataChunks).toString().includes("hello from terminal")) gotMarker.resolve();
+      const proc = Bun.spawn([bunExe(), "-e", "console.log('hello from terminal')"], {
+        env: bunEnv,
+        terminal: {
+          cols: 80,
+          rows: 24,
+          data: (terminal: Bun.Terminal, data: Uint8Array) => {
+            dataChunks.push(data);
+            mark(`data +${data.length}b`);
+            if (Buffer.concat(dataChunks).toString().includes("hello from terminal")) gotMarker.resolve();
+          },
+          exit: () => mark("terminal exit cb"),
         },
-      },
+      });
+      mark(`spawned pid=${proc.pid}`);
+      proc.exited.then(code => mark(`proc.exited resolved code=${code}`));
+
+      const watchdog = setInterval(() => {
+        let ps = "";
+        try {
+          ps = require("node:child_process")
+            .execSync(`ps -o pid,stat,command -p ${proc.pid} || true`, { shell: "/bin/sh" })
+            .toString()
+            .trim();
+        } catch (e: any) {
+          ps = `ps failed: ${e?.message ?? e}`;
+        }
+        console.error(
+          `[${label}] WATCHDOG stage=${stage} pid=${proc.pid} exitCode=${proc.exitCode} signalCode=${proc.signalCode} ` +
+            `killed=${proc.killed} terminalClosed=${proc.terminal?.closed} bytes=${Buffer.concat(dataChunks).length} ` +
+            `out=${JSON.stringify(Buffer.concat(dataChunks).toString())}\n  events: ${events.join(" | ")}\n  ps: ${ps}`,
+        );
+      }, 15_000);
+
+      try {
+        expect(proc.terminal).toBeDefined();
+        expect(proc.terminal).toBeInstanceOf(Object);
+
+        stage = "awaiting-marker";
+        await gotMarker.promise;
+        stage = "awaiting-exited";
+        await proc.exited;
+        stage = "done-awaiting";
+
+        // Should have received data through the terminal
+        const combinedOutput = Buffer.concat(dataChunks).toString();
+        expect(combinedOutput).toContain("hello from terminal");
+
+        // Terminal should still be accessible after process exit
+        expect(proc.terminal!.closed).toBe(false);
+        proc.terminal!.close();
+        expect(proc.terminal!.closed).toBe(true);
+      } finally {
+        clearInterval(watchdog);
+      }
     });
 
-    expect(proc.terminal).toBeDefined();
-    expect(proc.terminal).toBeInstanceOf(Object);
-
-    await gotMarker.promise;
-    await proc.exited;
-
-    // Should have received data through the terminal
-    const combinedOutput = Buffer.concat(dataChunks).toString();
-    expect(combinedOutput).toContain("hello from terminal");
-
-    // Terminal should still be accessible after process exit
-    expect(proc.terminal!.closed).toBe(false);
-    proc.terminal!.close();
-    expect(proc.terminal!.closed).toBe(true);
-  });
+  spawnWithTerminalAttached("creates subprocess with terminal attached");
+  spawnWithTerminalAttached("creates subprocess with terminal attached (copy 2)");
+  spawnWithTerminalAttached("creates subprocess with terminal attached (copy 3)");
+  spawnWithTerminalAttached("creates subprocess with terminal attached (copy 4)");
 
   test("terminal option creates proper PTY for interactive programs", async () => {
     const dataChunks: Uint8Array[] = [];

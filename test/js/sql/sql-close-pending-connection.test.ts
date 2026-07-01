@@ -18,7 +18,15 @@
 
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
-import { neverAnsweringServer } from "./wire-frames";
+import {
+  listeningServer,
+  mysqlHandshakeV10,
+  mysqlOkPacket,
+  mysqlReadPackets,
+  neverAnsweringServer,
+  pgAuthenticationOk,
+  pgReadyForQuery,
+} from "./wire-frames";
 
 const drivers = [
   ["postgres", "postgres://postgres@", "ERR_POSTGRES_CONNECTION_CLOSED"],
@@ -50,6 +58,113 @@ for (const [name, scheme, closedCode] of drivers) {
       // has not been assigned yet
       await sql.close({ timeout: "0" });
       expect((await connectError).code).toBe(closedCode);
+    } finally {
+      server.close();
+    }
+  });
+
+  // Same scenario as above but with the *number* 0, the documented spelling
+  // of "force-close now". `close({ timeout })` used to gate on `if (timeout)`,
+  // and 0 is falsy, so a numeric 0 fell into the graceful "wait for every
+  // pending query" branch and the `timeout === 0` force-close check below it
+  // was unreachable. The two tests above dodge that gate by passing the
+  // truthy string "0".
+  test(`${name}: close({ timeout: 0 }) force-closes a mid-handshake connection`, async () => {
+    const { port, server, accepted } = await neverAnsweringServer();
+    try {
+      const sql = new SQL({ url: `${scheme}127.0.0.1:${port}/db`, max: 1, connectionTimeout: 0 });
+      const queryError = sql`SELECT 1`.catch(e => e);
+      await accepted;
+      await sql.close({ timeout: 0 });
+      expect((await queryError).code).toBe(closedCode);
+    } finally {
+      server.close();
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// A connection that is fully connected with a query in flight when the server
+// stops responding mid-packet. The connection is busy, so no idle timer is
+// armed, and idleTimeout / maxLifetime default to 0 (disabled): nothing on
+// the client side can ever complete the query. close({ timeout: 0 }) is the
+// escape hatch for exactly this, so it must destroy the socket, resolve, and
+// reject the in-flight query instead of waiting forever on the peer.
+// ---------------------------------------------------------------------------
+
+/**
+ * Completes the MySQL handshake, then answers the first post-auth command
+ * (the query) with 2 of the 4 bytes of a packet header and never writes
+ * again. `wedged` resolves once those bytes are on the wire.
+ */
+async function mysqlServerStoppingMidPacket() {
+  const wedged = Promise.withResolvers<void>();
+  const { port, server } = await listeningServer(socket => {
+    let buffered = Buffer.alloc(0);
+    let authed = false;
+    let stopped = false;
+    socket.write(mysqlHandshakeV10());
+    socket.on("data", chunk => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), seq => {
+        if (!authed) {
+          authed = true;
+          socket.write(mysqlOkPacket(seq + 1));
+        } else if (!stopped) {
+          stopped = true;
+          socket.write(Buffer.from([0x07, 0x00]));
+          wedged.resolve();
+        }
+        // later packets: stay silent (the peer holds the connection open)
+      });
+    });
+    socket.on("error", () => {});
+  });
+  return { port, server, wedged: wedged.promise };
+}
+
+/**
+ * Completes the Postgres startup (AuthenticationOk + ReadyForQuery), then
+ * answers the query's extended-protocol messages with 1 of the 5 bytes of a
+ * backend message header and never writes again.
+ */
+async function postgresServerStoppingMidPacket() {
+  const wedged = Promise.withResolvers<void>();
+  const { port, server } = await listeningServer(socket => {
+    let startup = true;
+    let stopped = false;
+    socket.on("data", () => {
+      if (startup) {
+        startup = false;
+        socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+      } else if (!stopped) {
+        stopped = true;
+        socket.write(Buffer.from("T"));
+        wedged.resolve();
+      }
+      // later chunks: stay silent (the peer holds the connection open)
+    });
+    socket.on("error", () => {});
+  });
+  return { port, server, wedged: wedged.promise };
+}
+
+const serverStoppingMidPacket = {
+  postgres: postgresServerStoppingMidPacket,
+  mysql: mysqlServerStoppingMidPacket,
+} as const;
+
+for (const [name, scheme, closedCode] of drivers) {
+  test(`${name}: close({ timeout: 0 }) force-closes a connected connection whose server stopped mid-packet`, async () => {
+    const { port, server, wedged } = await serverStoppingMidPacket[name]();
+    try {
+      const sql = new SQL({ url: `${scheme}127.0.0.1:${port}/db`, max: 1 });
+      const queryError = sql`SELECT 1`.catch(e => e);
+      // the server has received the query and replied with a truncated
+      // message header: the connection is established, the query is in
+      // flight, and nothing the peer will ever do can complete either
+      await wedged;
+      await sql.close({ timeout: 0 });
+      expect((await queryError).code).toBe(closedCode);
     } finally {
       server.close();
     }

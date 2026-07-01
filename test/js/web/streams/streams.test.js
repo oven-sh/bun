@@ -842,16 +842,20 @@ it("ReadableStream rejects pending reads when the lock is released", async () =>
 
   let read = reader.read();
   reader.releaseLock();
-  expect(read).rejects.toThrow(
+  // Released locks reject pending reads and `closed` with a TypeError (WHATWG),
+  // carrying Node's ERR_INVALID_STATE code and messages (node compatibility).
+  await expect(read).rejects.toThrow(
     expect.objectContaining({
-      name: "AbortError",
-      code: "ERR_STREAM_RELEASE_LOCK",
+      name: "TypeError",
+      code: "ERR_INVALID_STATE",
+      message: "Invalid state: Releasing reader",
     }),
   );
-  expect(reader.closed).rejects.toThrow(
+  await expect(reader.closed).rejects.toThrow(
     expect.objectContaining({
-      name: "AbortError",
-      code: "ERR_STREAM_RELEASE_LOCK",
+      name: "TypeError",
+      code: "ERR_INVALID_STATE",
+      message: "Invalid state: Reader released",
     }),
   );
 
@@ -1371,4 +1375,105 @@ it("ReadableStream BYOB read pending at cancel() resolves with undefined", async
   expect(done).toBe(true);
   expect(value).toBeUndefined();
   await reader.closed;
+});
+
+describe("pipeTo from a byte source", () => {
+  it("delivers the enqueued chunks and resolves", async () => {
+    const rs = new ReadableStream({
+      type: "bytes",
+      start(c) {
+        c.enqueue(new Uint8Array([1, 2, 3]));
+        c.enqueue(new Uint8Array([4, 5]));
+        c.close();
+      },
+    });
+    const chunks = [];
+    await rs.pipeTo(
+      new WritableStream({
+        write(chunk) {
+          chunks.push(Array.from(chunk));
+        },
+      }),
+    );
+    expect(chunks).toEqual([
+      [1, 2, 3],
+      [4, 5],
+    ]);
+  });
+
+  it("pipeThrough an identity TransformStream forwards the chunks", async () => {
+    const rs = new ReadableStream({
+      type: "bytes",
+      start(c) {
+        c.enqueue(new Uint8Array([1, 2, 3]));
+        c.enqueue(new Uint8Array([4, 5]));
+        c.close();
+      },
+    });
+    const reader = rs.pipeThrough(new TransformStream()).getReader();
+    const chunks = [];
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      chunks.push(Array.from(value));
+    }
+    expect(chunks).toEqual([
+      [1, 2, 3],
+      [4, 5],
+    ]);
+  });
+
+  it("a pull-based byte source responding via byobRequest delivers its bytes", async () => {
+    let written = 0;
+    const rs = new ReadableStream({
+      type: "bytes",
+      autoAllocateChunkSize: 4,
+      pull(controller) {
+        if (written >= 8) {
+          controller.close();
+          return;
+        }
+        const view = controller.byobRequest.view;
+        for (let i = 0; i < view.byteLength; i++) {
+          view[i] = written + i;
+        }
+        controller.byobRequest?.respond(view.byteLength);
+        written += view.byteLength;
+      },
+    });
+    const received = [];
+    await rs.pipeTo(
+      new WritableStream({
+        write(chunk) {
+          received.push(...chunk);
+        },
+      }),
+    );
+    expect(received).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  it("preventClose: false closes the destination when the byte source closes", async () => {
+    const rs = new ReadableStream({
+      type: "bytes",
+      start(c) {
+        c.enqueue(new Uint8Array([9]));
+        c.close();
+      },
+    });
+    const chunks = [];
+    let closed = false;
+    await rs.pipeTo(
+      new WritableStream({
+        write(chunk) {
+          chunks.push(Array.from(chunk));
+        },
+        close() {
+          closed = true;
+        },
+      }),
+      { preventClose: false },
+    );
+    expect(chunks).toEqual([[9]]);
+    expect(closed).toBe(true);
+  });
 });

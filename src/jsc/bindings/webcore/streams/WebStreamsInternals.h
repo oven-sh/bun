@@ -220,8 +220,7 @@ JSC::JSPromise* fromIterableCancelAlgorithm(JSC::JSGlobalObject*, JSReadableStre
 // below; the Native arm's are nativeSource{Start,Pull,Cancel} in the BunStreamSource.cpp
 // section; the CrossRealm arms are with the rest of CrossRealmTransform.cpp.)
 // `signal` is the JSAbortSignal WRAPPER cell (nullptr = no signal); the pipe op roots it.
-// Bun: a byte-source `source` returns a promise rejected with the bare STRING
-// "Piping to a readable bytestream is not supported" as its FIRST step.
+// Byte sources are supported: per spec, the pipe always acquires a DEFAULT reader.
 JSC::JSPromise* readableStreamPipeTo(JSC::JSGlobalObject*, JSReadableStream* source, JSWritableStream* destination, bool preventClose, bool preventAbort, bool preventCancel, JSC::JSObject* signal = nullptr); // userJS: yes — ReadableStreamOperations.cpp (allocates + populates the op cell, then hands it to startPipeToOperation; the state machine lives in JSStreamPipeToOperation.cpp)
 
 // Controller set-up. Each takes the START RESULT, not a start method — the caller (the

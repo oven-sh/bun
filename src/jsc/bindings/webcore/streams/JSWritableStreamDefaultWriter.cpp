@@ -117,7 +117,7 @@ void writableStreamDefaultWriterRelease(JSGlobalObject* globalObject, JSWritable
     auto* stream = writer->m_stream.get();
     ASSERT(stream);
     ASSERT(stream->m_writer.get() == writer);
-    JSValue releasedError = createTypeError(globalObject, "This WritableStreamDefaultWriter has been released and can no longer be used"_s);
+    JSValue releasedError = Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Writer has been released"_s);
     writableStreamDefaultWriterEnsureReadyPromiseRejected(globalObject, writer, releasedError);
     RETURN_IF_EXCEPTION(scope, );
     writableStreamDefaultWriterEnsureClosedPromiseRejected(globalObject, writer, releasedError);
@@ -403,7 +403,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultWriterPrototypeGetter_desiredSiz
     if (!writer) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, scope, "WritableStreamDefaultWriter"_s, "desiredSize"_s);
     if (!writer->m_stream)
-        return throwVMTypeError(lexicalGlobalObject, scope, "Cannot read desiredSize: this WritableStreamDefaultWriter has been released"_s);
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Writer is not bound to a WritableStream"_s);
     auto desiredSize = writableStreamDefaultWriterGetDesiredSize(writer);
     if (!desiredSize)
         return JSValue::encode(jsNull());
@@ -426,7 +426,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultWriterPrototypeFunction_abort, (
     if (!writer) [[unlikely]]
         return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "WritableStreamDefaultWriter.prototype.abort can only be called on a WritableStreamDefaultWriter"_s)));
     if (!writer->m_stream)
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot abort: this WritableStreamDefaultWriter has been released"_s)));
+        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Writer is not bound to a WritableStream"_s)));
     auto* promise = writableStreamDefaultWriterAbort(lexicalGlobalObject, writer, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(promise);
@@ -441,7 +441,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultWriterPrototypeFunction_close, (
         return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "WritableStreamDefaultWriter.prototype.close can only be called on a WritableStreamDefaultWriter"_s)));
     auto* stream = writer->m_stream.get();
     if (!stream)
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot close: this WritableStreamDefaultWriter has been released"_s)));
+        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Writer is not bound to a WritableStream"_s)));
     if (writableStreamCloseQueuedOrInFlight(stream))
         return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot close a WritableStream that is already closing"_s)));
     auto* promise = writableStreamDefaultWriterClose(lexicalGlobalObject, writer);
@@ -473,7 +473,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultWriterPrototypeFunction_write, (
     if (!writer) [[unlikely]]
         return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "WritableStreamDefaultWriter.prototype.write can only be called on a WritableStreamDefaultWriter"_s)));
     if (!writer->m_stream)
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot write: this WritableStreamDefaultWriter has been released"_s)));
+        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Writer is not bound to a WritableStream"_s)));
     auto* promise = writableStreamDefaultWriterWrite(lexicalGlobalObject, writer, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(promise);

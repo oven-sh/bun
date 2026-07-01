@@ -436,6 +436,25 @@ WEB_STREAMS_DEFINE_PIPE_REACTION_TRAMPOLINE(onPipeWritesFinishedForShutdown, onW
 #undef WEB_STREAMS_DEFINE_PIPE_REACTION_TRAMPOLINE
 #undef WEB_STREAMS_DEFINE_PIPE_REACTION_TRAMPOLINE_WITH_VALUE
 
+// [reaction-convention] the deferred sink write. context = InternalFieldTuple{op, chunk};
+// the result promise it was registered with (op->m_currentWrite) adopts the write promise.
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onPipeChunkDeferredWrite, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* context = dynamicDowncast<InternalFieldTuple>(callFrame->argument(1));
+    if (!context) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    auto* op = dynamicDowncast<JSStreamPipeToOperation>(context->getInternalField(0));
+    if (!op) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    if (op->m_finalized)
+        return JSValue::encode(jsUndefined());
+    auto* writePromise = writableStreamDefaultWriterWrite(globalObject, op->m_writer.get(), context->getInternalField(1));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(writePromise);
+}
+
 // [reaction-convention] shutdown-action settlement. The context is either the op cell (a
 // single action) or the AbortBoth wait-for-all latch InternalFieldTuple{op, remaining}.
 static JSStreamPipeToOperation* pipeOpFromShutdownActionContext(JSValue contextValue)
@@ -547,10 +566,16 @@ void pipeToReadRequestChunkSteps(JSGlobalObject* globalObject, JSStreamPipeToOpe
     if (op->m_finalized)
         return;
     auto* writer = op->m_writer.get();
-    auto* writePromise = writableStreamDefaultWriterWrite(globalObject, writer, chunk);
-    RETURN_IF_EXCEPTION(scope, );
-    op->m_currentWrite.set(vm, op, writePromise);
     auto* runtime = JSStreamsRuntime::from(globalObject);
+    // The sink write is deferred by one reaction so an enqueue() inside the source never
+    // synchronously reenters the destination's write algorithm. m_currentWrite is the deferred
+    // write's promise, so a shutdown that must drain the pending writes still waits for it.
+    auto* deferred = promiseResolvedWith(globalObject, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, );
+    auto* writePromise = JSPromise::create(vm, globalObject->promiseStructure());
+    auto* context = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), op, chunk);
+    deferred->performPromiseThenWithContext(vm, globalObject, runtime->onPipeChunkDeferredWrite(), jsUndefined(), writePromise, context);
+    op->m_currentWrite.set(vm, op, writePromise);
     auto* settledHandler = runtime->onPipeWriteSettled();
     WebCore::registerPipeReaction(globalObject, writePromise, settledHandler, settledHandler, op);
     // A shutdown that is waiting on m_currentWrite re-checks it when its reaction fires.

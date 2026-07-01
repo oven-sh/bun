@@ -104,8 +104,8 @@ public:
     // The piped streams & their acquired lock holders.
     JSC::WriteBarrier<JSReadableStream> m_source; // `source`
     JSC::WriteBarrier<JSWritableStream> m_destination; // `dest`
-    // The acquired reader (the reference pipe always uses a default reader; Bun rejects
-    // byte-source pipeTo). Its m_pipeOperation points back here.
+    // The acquired reader (the reference pipe always uses a default reader, even for a
+    // byte source). Its m_pipeOperation points back here.
     JSC::WriteBarrier<JSReadableStreamDefaultReader> m_reader;
     // The acquired writer. Its m_pipeOperation points back here.
     JSC::WriteBarrier<JSWritableStreamDefaultWriter> m_writer;

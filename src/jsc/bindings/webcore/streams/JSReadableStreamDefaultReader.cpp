@@ -150,7 +150,7 @@ void readableStreamDefaultReaderRelease(JSGlobalObject* globalObject, JSReadable
     auto scope = DECLARE_THROW_SCOPE(vm);
     readableStreamReaderGenericRelease(globalObject, reader);
     RETURN_IF_EXCEPTION(scope, void());
-    JSObject* error = createTypeError(globalObject, "This ReadableStream reader has been released"_s);
+    JSObject* error = Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Releasing reader"_s);
     RETURN_IF_EXCEPTION(scope, void());
     RELEASE_AND_RETURN(scope, readableStreamDefaultReaderErrorReadRequests(globalObject, reader, error));
 }

@@ -77,16 +77,21 @@ namespace WebCore {
     V(onByteTeeReadIntoChunkMicrotask)                         \
     V(onByteTeeReaderClosedRejected)
 
-// owner: JSReadableStreamAsyncIterator.cpp. context = the JSReadableStreamAsyncIterator.
+// owner: JSReadableStreamAsyncIterator.cpp. context = the JSReadableStreamAsyncIterator,
+// EXCEPT onAsyncIteratorReturnAfterOngoingSettled and onAsyncIteratorCancelFulfilled, whose
+// context is an InternalFieldTuple{iterator, value} (the return()/cancel value may be null/undefined).
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_ASYNC_ITERATOR(V) \
     V(onAsyncIteratorNextAfterOngoingSettled)                   \
     V(onAsyncIteratorReturnAfterOngoingSettled)                 \
     V(onAsyncIteratorCancelFulfilled)
 
-// owner: JSStreamPipeToOperation.cpp. context = the JSStreamPipeToOperation.
+// owner: JSStreamPipeToOperation.cpp. context = the JSStreamPipeToOperation, EXCEPT
+// onPipeChunkDeferredWrite, whose context is an InternalFieldTuple{op, chunk} (the pipe's
+// read-request chunk steps defer the sink write by one reaction).
 // onPipeWriteSettled is registered as BOTH the fulfillment and the rejection handler of
 // every write-request promise (the pipe must react to every one).
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_PIPE(V) \
+    V(onPipeChunkDeferredWrite)                       \
     V(onPipeSourceClosedFulfilled)                    \
     V(onPipeSourceClosedRejected)                     \
     V(onPipeDestClosedFulfilled)                      \

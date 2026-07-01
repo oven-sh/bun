@@ -1,4 +1,5 @@
 #include "root.h"
+#include "ErrorCode.h"
 
 #include "WebStreamsInternals.h"
 
@@ -387,7 +388,7 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
     ASSERT(stream);
     ASSERT(stream->m_reader.get() == reader);
 
-    JSObject* releaseError = createTypeError(globalObject, "This ReadableStream reader has been released"_s);
+    JSObject* releaseError = Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Reader released"_s);
     RETURN_IF_EXCEPTION(scope, void());
     if (stream->m_state == ReadableStreamState::Readable) {
         rejectPromise(globalObject, reader->m_closedPromise.get(), releaseError);
@@ -1263,8 +1264,6 @@ JSPromise* readableStreamPipeTo(JSGlobalObject* globalObject, JSReadableStream* 
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* domGlobalObject = defaultGlobalObject(globalObject);
 
-    if (source->m_controllerKind == ControllerKind::Byte)
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, jsString(vm, WTF::String("Piping to a readable bytestream is not supported"_s))));
     source->materializeIfNeeded(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
     ASSERT(!isReadableStreamLocked(source));

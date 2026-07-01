@@ -160,17 +160,21 @@ static JSPromise* runAsyncIteratorNextSteps(JSGlobalObject* globalObject, JSRead
     auto* readRequest = JSReadRequest::create(vm, runtime->readRequestStructure(domGlobalObject), ReadRequestKind::AsyncIterator, context);
     readableStreamDefaultReaderRead(globalObject, reader, readRequest);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    return promise;
+    // Web IDL's next() transforms the "get the next iteration result" promise, so the value the
+    // caller observes settles one reaction after the read request does (undefined = identity).
+    auto* result = JSPromise::create(vm, globalObject->promiseStructure());
+    promise->performPromiseThenWithContext(vm, globalObject, jsUndefined(), jsUndefined(), result, jsUndefined());
+    return result;
 }
 
-// "Asynchronous iterator return", wrapped: the result fulfills with { undefined, done: true }.
+// "Asynchronous iterator return", wrapped per Web IDL: the result fulfills with { value, done: true }.
 static JSPromise* runAsyncIteratorReturnSteps(JSGlobalObject* globalObject, JSReadableStreamAsyncIterator* iterator, JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (iterator->m_isFinished) {
-        auto* result = createIteratorResultObject(globalObject, jsUndefined(), true);
+        auto* result = createIteratorResultObject(globalObject, value, true);
         RETURN_IF_EXCEPTION(scope, nullptr);
         RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
     }
@@ -193,9 +197,12 @@ static JSPromise* runAsyncIteratorReturnSteps(JSGlobalObject* globalObject, JSRe
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
+    auto* domGlobalObject = defaultGlobalObject(globalObject);
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* result = JSPromise::create(vm, globalObject->promiseStructure());
-    innerPromise->performPromiseThenWithContext(vm, globalObject, runtime->onAsyncIteratorCancelFulfilled(), jsUndefined(), result, iterator);
+    // A tuple, not `value` directly: the context channel drops null/undefined contexts.
+    auto* context = InternalFieldTuple::create(vm, domGlobalObject->internalFieldTupleStructure(), iterator, value);
+    innerPromise->performPromiseThenWithContext(vm, globalObject, runtime->onAsyncIteratorCancelFulfilled(), jsUndefined(), result, context);
     return result;
 }
 
@@ -278,11 +285,15 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIteratorReturnAfterOngoingSe
     return JSValue::encode(promise);
 }
 
+// Fulfillment steps for the cancel promise: the return() result carries the caller's argument.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIteratorCancelFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* result = createIteratorResultObject(globalObject, jsUndefined(), true);
+    auto* context = dynamicDowncast<InternalFieldTuple>(callFrame->argument(1));
+    if (!context)
+        return JSValue::encode(jsUndefined());
+    auto* result = createIteratorResultObject(globalObject, context->getInternalField(1), true);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(result);
 }

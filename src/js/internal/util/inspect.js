@@ -1660,12 +1660,12 @@ function getStackString(ctx, error) {
     if (typeof stack === "string") {
       return stack;
     }
-    // Restore `ctx` even if formatting the non-string stack throws. Otherwise a
-    // later occurrence of `error` is misreported as circular, and a `<ref *N>`
-    // emitted into the discarded result leaves `ctx.seenRefs` dangling.
+    // Restore `ctx` even if formatting the non-string stack throws. Otherwise a later
+    // occurrence of `error` is misreported as circular, and a `<ref *N>` emitted into
+    // the discarded result dangles. `seenRefs` is copied: the render mutates it in place.
     const seenLength = ctx.seen.length;
     const indentationLvl = ctx.indentationLvl;
-    const seenRefs = ctx.seenRefs;
+    const seenRefs = ctx.seenRefs && new Set(ctx.seenRefs);
     ctx.seen.push(error);
     ctx.indentationLvl += 4;
     let result;

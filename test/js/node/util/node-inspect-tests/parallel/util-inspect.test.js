@@ -1957,6 +1957,28 @@ test("util.inspect does not throw on values with throwing getters", () => {
     assert.strictEqual(util.inspect([err, shared]), "[ [object Error], <ref *1> { self: [Circular *1] } ]");
   }
 
+  // Same, when `ctx.seenRefs` already holds an index from an earlier value: the
+  // restore must not alias the set that the discarded render then mutates in place.
+  {
+    const a = {};
+    a.self = a;
+    const b = {};
+    b.self = b;
+    const err = new Error("x");
+    err.stack = [
+      b,
+      {
+        [Symbol.for("nodejs.util.inspect.custom")]() {
+          throw new Error("boom");
+        },
+      },
+    ];
+    assert.strictEqual(
+      util.inspect([a, err, b]),
+      "[\n  <ref *1> { self: [Circular *1] },\n  [object Error],\n  <ref *2> { self: [Circular *2] }\n]",
+    );
+  }
+
   // An enumerable unformattable `stack` must be hidden from `keys` before it is
   // read, or the early `[object Error]` return leaves it to be formatted a second
   // time as a plain property, which rethrows. (Node throws on this input.)

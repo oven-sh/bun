@@ -109,7 +109,7 @@ extern "C" fn select_alpn_callback(
     // same contract as Node's ALPNCallback.
     {
         let handlers = this.get_handlers();
-        let callback = handlers.on_alpn_callback;
+        let callback = handlers.on_alpn_callback();
         if !callback.is_empty() && !handlers.vm.is_shutting_down() && !in_.is_null() && inlen > 0 {
             let scope = Handlers::enter_ref(handlers);
             let global = handlers.global_object;
@@ -809,7 +809,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
         let handlers = this.get_handlers();
-        let callback = handlers.on_writable;
+        let callback = handlers.on_writable();
         if callback.is_empty() {
             return;
         }
@@ -879,7 +879,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 "C"
             }
         );
-        let callback = handlers.on_timeout;
+        let callback = handlers.on_timeout();
         if callback.is_empty() || this.flags.get().contains(Flags::FINALIZING) {
             return;
         }
@@ -1034,7 +1034,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
 
-        let callback = handlers.on_connect_error;
+        let callback = handlers.on_connect_error();
         let global = handlers.global_object;
         // A failed name lookup is reported as the resolver error
         // (`getaddrinfo ENOTFOUND <hostname>`, `syscall`/`hostname` set),
@@ -1423,7 +1423,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     // never returns null for a live SSL.
                     if this.is_server()
                         && (this.protos.get().is_some()
-                            || !this.get_handlers().on_alpn_callback.is_empty())
+                            || !this.get_handlers().on_alpn_callback().is_empty())
                     {
                         let ssl_ref = boringssl_sys::SSL::opaque_ref(ssl_ptr);
                         tls_socket_functions::ffi::SSL_set_ex_data(
@@ -1468,8 +1468,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let handlers = this.get_handlers();
-        let callback = handlers.on_open;
-        let handshake_callback = handlers.on_handshake;
+        let callback = handlers.on_open();
+        let handshake_callback = handlers.on_handshake();
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
@@ -1532,7 +1532,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // subscription.
             let _ = this.internal_flush();
             if this.buffered_data_for_node_net.get().len() == 0 {
-                let drain_callback = handlers.on_writable;
+                let drain_callback = handlers.on_writable();
                 if !drain_callback.is_empty() {
                     if let Err(err) = drain_callback.call(&global, this_value, &[this_value]) {
                         let _ = handlers
@@ -1591,7 +1591,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Ensure the socket remains alive until this is finished
         this.ref_();
 
-        let callback = handlers.on_end;
+        let callback = handlers.on_end();
         let vm = handlers.vm;
         if callback.is_empty() || vm.is_shutting_down() {
             this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
@@ -1682,7 +1682,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             f.set(Flags::HOSTNAME_MISMATCH, hostname_mismatch);
         });
 
-        let mut callback = handlers.on_handshake;
+        let mut callback = handlers.on_handshake();
         let mut is_open = false;
 
         if handlers.vm.is_shutting_down() {
@@ -1691,7 +1691,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // Use open callback when handshake is not provided
         if callback.is_empty() {
-            callback = handlers.on_open;
+            callback = handlers.on_open();
             if callback.is_empty() {
                 return Ok(());
             }
@@ -1719,12 +1719,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // clean onOpen callback so only called in the first handshake and not in every renegotiation
                 // on servers this would require a different approach but it's not needed because our servers will not call handshake multiple times
                 // servers don't support renegotiation
-                // SAFETY: short-lived `&mut` write; raw-ptr access is the
-                // ONLY way to mutate the freely-aliased `Handlers` here.
-                unsafe {
-                    (*handlers.as_ptr()).on_open.unprotect();
-                    (*handlers.as_ptr()).on_open = JSValue::ZERO;
-                }
+                handlers.clear_callback(super::handlers::CallbackField::Open);
             }
         } else {
             // call handhsake callback with authorized and authorization error if has one
@@ -1783,7 +1778,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if handlers.vm.is_shutting_down() {
             return Ok(());
         }
-        let callback = handlers.on_session;
+        let callback = handlers.on_session();
         if callback.is_empty() {
             return Ok(());
         }
@@ -1835,7 +1830,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if handlers.vm.is_shutting_down() {
             return Ok(());
         }
-        let callback = handlers.on_keylog;
+        let callback = handlers.on_keylog();
         if callback.is_empty() {
             return Ok(());
         }
@@ -1973,7 +1968,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let vm = handlers.vm;
         this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
 
-        let callback = handlers.on_close;
+        let callback = handlers.on_close();
 
         if callback.is_empty() {
             drop(cleanup);
@@ -2058,7 +2053,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
 
-        let callback = handlers.on_data;
+        let callback = handlers.on_data();
         if callback.is_empty() || this.flags.get().contains(Flags::FINALIZING) {
             return;
         }

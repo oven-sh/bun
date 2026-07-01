@@ -21,24 +21,35 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         callback: JSValue,
     ) -> JSValue;
+    /// Allocates the GC-visited `Bun::JSSocketHandlers` internal-fields cell
+    /// (`src/jsc/bindings/JSSocketHandlers.cpp`). Fields start as `undefined`.
+    safe fn Bun__SocketHandlers__create(global: &JSGlobalObject) -> JSValue;
+    /// `cell` must be a value returned by [`Bun__SocketHandlers__create`];
+    /// `index` must be < [`CALLBACK_FIELD_COUNT`] (asserted in debug C++).
+    safe fn Bun__SocketHandlers__getField(cell: JSValue, index: u32) -> JSValue;
+    safe fn Bun__SocketHandlers__setField(
+        global: &JSGlobalObject,
+        cell: JSValue,
+        index: u32,
+        value: JSValue,
+    );
 }
 
 bun_output::declare_scope!(Listener, visible);
 
 pub struct Handlers {
-    pub on_open: JSValue,
-    pub on_close: JSValue,
-    pub on_data: JSValue,
-    pub on_writable: JSValue,
-    pub on_timeout: JSValue,
-    pub on_connect_error: JSValue,
-    pub on_end: JSValue,
-    pub on_error: JSValue,
-    pub on_handshake: JSValue,
-    pub on_session: JSValue,
-    pub on_keylog: JSValue,
-    pub on_server_name: JSValue,
-    pub on_alpn_callback: JSValue,
+    /// The `JSSocketHandlers` internal-fields cell
+    /// (`src/jsc/bindings/JSSocketHandlers.cpp`) holding every callback as a
+    /// GC-visited field, shared by the listener and all of its sockets. Read
+    /// via the named accessors ([`on_data`](Self::on_data), ...); written by
+    /// [`store_callbacks`](Self::store_callbacks), which `reload` also uses to
+    /// update live sockets in place.
+    cell: JSValue,
+    /// Roots [`cell`](Self::cell) for this struct's lifetime. The listener /
+    /// socket JS wrappers also hold the cell in a visited slot, but they may
+    /// not exist yet (outgoing connect before `open`, upgraded duplex, named
+    /// pipe), so the native owner keeps one RAII handle of its own.
+    cell_root: Strong,
 
     pub binary_type: BinaryType,
 
@@ -55,77 +66,119 @@ pub struct Handlers {
     /// shared `&Handlers` (BackRef Deref). Single-JS-thread; the inner
     /// `Strong` is never borrowed across a reentrant call.
     pub promise: JsCell<Strong>, // Strong.Optional → bun_jsc::Strong (Drop deallocates the slot)
-
-    /// Set by [`protect`](Self::protect), cleared by
-    /// [`unprotect`](Self::unprotect). Gates `unprotect()` so dropping a
-    /// `Handlers` that never reached `protect()` cannot issue unbalanced
-    /// `gcUnprotect` calls that steal another socket's protection of a shared
-    /// callback (node:net reuses one handler table across all connections).
-    protected: bool,
 }
 
-// Bare JSValue fields are heap-stored here, but they are kept alive via JSC
-// protect()/unprotect() (GC roots), not stack scanning — so this is sound.
-
-/// Expands `$body` once per callback field with `$f` bound to the field ident.
-macro_rules! for_each_callback_field {
-    ($self:expr, |$f:ident| $body:block) => {{
-        {
-            let $f = &mut $self.on_open;
-            $body
-        }
-        {
-            let $f = &mut $self.on_close;
-            $body
-        }
-        {
-            let $f = &mut $self.on_data;
-            $body
-        }
-        {
-            let $f = &mut $self.on_writable;
-            $body
-        }
-        {
-            let $f = &mut $self.on_timeout;
-            $body
-        }
-        {
-            let $f = &mut $self.on_connect_error;
-            $body
-        }
-        {
-            let $f = &mut $self.on_end;
-            $body
-        }
-        {
-            let $f = &mut $self.on_error;
-            $body
-        }
-        {
-            let $f = &mut $self.on_handshake;
-            $body
-        }
-        {
-            let $f = &mut $self.on_session;
-            $body
-        }
-        {
-            let $f = &mut $self.on_keylog;
-            $body
-        }
-        {
-            let $f = &mut $self.on_server_name;
-            $body
-        }
-        {
-            let $f = &mut $self.on_alpn_callback;
-            $body
-        }
-    }};
+/// Index of a callback in the `JSSocketHandlers` cell. The discriminants are
+/// ABI shared with `Bun::JSSocketHandlers::Field` in
+/// `src/jsc/bindings/JSSocketHandlers.h`.
+#[repr(u32)]
+#[derive(Clone, Copy)]
+pub enum CallbackField {
+    Open = 0,
+    Close,
+    Data,
+    Writable,
+    Timeout,
+    ConnectError,
+    End,
+    Error,
+    Handshake,
+    Session,
+    Keylog,
+    ServerName,
+    AlpnCallback,
 }
+
+pub const CALLBACK_FIELD_COUNT: usize = 13;
+
+/// Validated callback values in [`CallbackField`] order; `JSValue::ZERO` for
+/// callbacks the user did not provide.
+type ValidatedCallbacks = [JSValue; CALLBACK_FIELD_COUNT];
 
 impl Handlers {
+    /// The `JSSocketHandlers` cell. Also stored into the listener / socket JS
+    /// wrappers' visited `handlers` slot so the callbacks stay reachable from
+    /// every object that can still invoke them.
+    #[inline]
+    pub fn cell(&self) -> JSValue {
+        self.cell
+    }
+
+    /// Reads one callback out of the cell. Unset callbacks (stored as
+    /// `undefined`) read back as `JSValue::ZERO` so call sites keep their
+    /// `is_empty()` checks.
+    #[inline]
+    fn callback(&self, field: CallbackField) -> JSValue {
+        let value = Bun__SocketHandlers__getField(self.cell, field as u32);
+        if value.is_undefined() { JSValue::ZERO } else { value }
+    }
+
+    pub fn on_open(&self) -> JSValue {
+        self.callback(CallbackField::Open)
+    }
+    pub fn on_close(&self) -> JSValue {
+        self.callback(CallbackField::Close)
+    }
+    pub fn on_data(&self) -> JSValue {
+        self.callback(CallbackField::Data)
+    }
+    pub fn on_writable(&self) -> JSValue {
+        self.callback(CallbackField::Writable)
+    }
+    pub fn on_timeout(&self) -> JSValue {
+        self.callback(CallbackField::Timeout)
+    }
+    pub fn on_connect_error(&self) -> JSValue {
+        self.callback(CallbackField::ConnectError)
+    }
+    pub fn on_end(&self) -> JSValue {
+        self.callback(CallbackField::End)
+    }
+    pub fn on_error(&self) -> JSValue {
+        self.callback(CallbackField::Error)
+    }
+    pub fn on_handshake(&self) -> JSValue {
+        self.callback(CallbackField::Handshake)
+    }
+    pub fn on_session(&self) -> JSValue {
+        self.callback(CallbackField::Session)
+    }
+    pub fn on_keylog(&self) -> JSValue {
+        self.callback(CallbackField::Keylog)
+    }
+    pub fn on_server_name(&self) -> JSValue {
+        self.callback(CallbackField::ServerName)
+    }
+    pub fn on_alpn_callback(&self) -> JSValue {
+        self.callback(CallbackField::AlpnCallback)
+    }
+
+    /// Clears one callback in place for every holder of this `Handlers`
+    /// (e.g. a client socket clears `open` after its first TLS handshake so
+    /// renegotiations do not fire it again).
+    pub fn clear_callback(&self, field: CallbackField) {
+        Bun__SocketHandlers__setField(
+            &self.global_object,
+            self.cell,
+            field as u32,
+            JSValue::UNDEFINED,
+        );
+    }
+
+    /// Writes `values` into the cell, wrapping each provided callback with the
+    /// current async context. Unset entries clear their field, so `reload`
+    /// also drops callbacks the new options omit.
+    fn store_callbacks(&self, global_object: &JSGlobalObject, values: &ValidatedCallbacks) {
+        for (index, value) in values.iter().enumerate() {
+            let stored = if value.is_empty() {
+                JSValue::UNDEFINED
+            } else {
+                AsyncContextFrame__withAsyncContextIfNeeded(global_object, *value)
+            };
+            Bun__SocketHandlers__setField(global_object, self.cell, index as u32, stored);
+        }
+    }
+
     pub fn mark_active(&self) {
         bun_output::scoped_log!(Listener, "markActive");
         self.active_connections
@@ -273,7 +326,7 @@ impl Handlers {
         }
 
         let global_object = self.global_object;
-        let on_error = self.on_error;
+        let on_error = self.on_error();
 
         if on_error.is_empty() {
             // SAFETY: `bun_vm()` is non-null for a Bun-owned global; single JS thread.
@@ -306,9 +359,45 @@ impl Handlers {
         generated: &GeneratedSocketConfigHandlers,
         is_server: bool,
     ) -> JsResult<Handlers> {
-        // inline for (callback_fields) |field| { ... @field(generated, field) ... }
-        // Validated before `Handlers` is constructed so an error return
-        // never drops a partially-assigned struct.
+        let callbacks = Self::validate_callbacks(global_object, generated)?;
+
+        // Everything fallible is done; the cell and its root are infallible,
+        // so a constructed `Handlers` is always fully initialized.
+        let cell = Bun__SocketHandlers__create(global_object);
+        let mut cell_root = Strong::empty();
+        cell_root.set(global_object, cell);
+
+        let result = Handlers {
+            cell,
+            cell_root,
+            binary_type: match generated.binary_type {
+                GeneratedBinaryType::Arraybuffer => BinaryType::ArrayBuffer,
+                GeneratedBinaryType::Buffer => BinaryType::Buffer,
+                GeneratedBinaryType::Uint8array => BinaryType::Uint8Array,
+            },
+            // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the
+            // VM outlives every `Handlers` (process-lifetime singleton).
+            vm: global_object.bun_vm(),
+            global_object: GlobalRef::from(global_object),
+            active_connections: Cell::new(0),
+            mode: if is_server {
+                SocketMode::Server
+            } else {
+                SocketMode::Client
+            },
+            promise: JsCell::new(Strong::empty()),
+        };
+        result.store_callbacks(global_object, &callbacks);
+        Ok(result)
+    }
+
+    /// Validates the user-supplied callbacks without constructing or storing
+    /// anything. Callbacks the user did not provide come back as
+    /// `JSValue::ZERO`.
+    fn validate_callbacks(
+        global_object: &JSGlobalObject,
+        generated: &GeneratedSocketConfigHandlers,
+    ) -> JsResult<ValidatedCallbacks> {
         macro_rules! validated_callback {
             ($field:ident, $name:literal) => {{
                 let value = generated.$field;
@@ -344,7 +433,8 @@ impl Handlers {
             )));
         }
 
-        let mut result = Handlers {
+        // [`CallbackField`] order.
+        Ok([
             on_open,
             on_close,
             on_data,
@@ -358,68 +448,39 @@ impl Handlers {
             on_keylog,
             on_server_name,
             on_alpn_callback,
-            binary_type: match generated.binary_type {
-                GeneratedBinaryType::Arraybuffer => BinaryType::ArrayBuffer,
-                GeneratedBinaryType::Buffer => BinaryType::Buffer,
-                GeneratedBinaryType::Uint8array => BinaryType::Uint8Array,
-            },
-            // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the
-            // VM outlives every `Handlers` (process-lifetime singleton).
-            vm: global_object.bun_vm(),
-            global_object: GlobalRef::from(global_object),
-            active_connections: Cell::new(0),
-            mode: if is_server {
-                SocketMode::Server
-            } else {
-                SocketMode::Client
-            },
-            promise: JsCell::new(Strong::empty()),
-            protected: false,
-        };
-        result.with_async_context_if_needed(global_object);
-        result.protect();
-        Ok(result)
+        ])
     }
 
-    fn unprotect(&mut self) {
-        if self.vm.is_shutting_down() {
-            return;
-        }
-        if !self.protected {
-            return;
-        }
-        self.protected = false;
-        for_each_callback_field!(self, |f| {
-            core::mem::replace(f, JSValue::ZERO).unprotect();
-        });
-    }
-
-    fn with_async_context_if_needed(&mut self, global_object: &JSGlobalObject) {
-        for_each_callback_field!(self, |f| {
-            if !f.is_empty() {
-                // SAFETY: FFI — `global_object` is a live JSGlobalObject*, `*f` is a
-                // protect()-rooted callable JSValue; returns the (possibly wrapped) value.
-                *f = AsyncContextFrame__withAsyncContextIfNeeded(global_object, *f);
-            }
-        });
-    }
-
-    fn protect(&mut self) {
-        debug_assert!(!self.protected);
-        self.protected = true;
-        for_each_callback_field!(self, |f| {
-            f.protect();
-        });
+    /// Validates `opts` exactly like construction does and, on success, writes
+    /// the new callbacks into the existing cell, so every live socket sharing
+    /// it picks them up in place (`Listener::reload`). On error nothing is
+    /// modified. Returns the new `binaryType` for the caller to apply.
+    pub fn reload_from_js(
+        &self,
+        global_object: &JSGlobalObject,
+        opts: JSValue,
+    ) -> JsResult<BinaryType> {
+        let generated = GeneratedSocketConfigHandlers::from_js(global_object, opts)?;
+        let callbacks = Self::validate_callbacks(global_object, &generated)?;
+        self.store_callbacks(global_object, &callbacks);
+        Ok(match generated.binary_type {
+            GeneratedBinaryType::Arraybuffer => BinaryType::ArrayBuffer,
+            GeneratedBinaryType::Buffer => BinaryType::Buffer,
+            GeneratedBinaryType::Uint8array => BinaryType::Uint8Array,
+        })
     }
 }
 
 impl Drop for Handlers {
     fn drop(&mut self) {
-        self.unprotect();
         if self.vm.is_shutting_down() {
             // `~VM` may have already torn down the HandleSet that
-            // `Strong::drop` writes back into; the slot is bulk-freed by the
-            // VM destructor, so leaking it here is correct.
+            // `Strong::drop` writes back into; the slots are bulk-freed by the
+            // VM destructor, so leaking them here is correct.
+            let _ = core::mem::ManuallyDrop::new(core::mem::replace(
+                &mut self.cell_root,
+                Strong::empty(),
+            ));
             let _ = core::mem::ManuallyDrop::new(self.promise.replace(Strong::empty()));
         }
     }
@@ -454,7 +515,6 @@ impl Scope {
 
 use bun_jsc::generated::SocketConfigHandlersBinaryType as GeneratedBinaryType;
 
-/// `handlers` is always `protect`ed in this struct.
 pub struct SocketConfig {
     pub hostname_or_unix: ZigStringSlice,
     pub port: Option<u16>,
@@ -541,8 +601,8 @@ impl SocketConfig {
                 ipv6_only: false,
             };
         };
-        // On any `?` below, `result` drops and `Handlers::Drop` unprotects its
-        // JSValues — no manual error-path cleanup needed.
+        // On any `?` below, `result` drops and releases what it owns — no
+        // manual error-path cleanup needed.
 
         if result.fd.is_some() {
             // If a user passes a file descriptor then prefer it over hostname or unix

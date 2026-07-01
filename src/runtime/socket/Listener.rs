@@ -152,21 +152,11 @@ impl Listener {
             None => return Err(global.throw(format_args!("Expected \"socket\" object"))),
         };
 
-        let handlers = Handlers::from_js(
-            global,
-            socket_obj,
-            this.handlers.get().mode == SocketMode::Server,
-        )?;
-        // Preserve the live connection count across the struct assignment. `Handlers.fromJS`
-        // returns `active_connections = 0`, but existing accepted sockets each hold a +1 via
-        // `markActive`. Without this, closing any of them after reload would underflow the
-        // counter (panic in safe builds, wrap in release).
-        // Note: Drop handles unprotect; assignment below drops old.
-        this.handlers.with_mut(|h| {
-            let active_connections = h.active_connections.get();
-            *h = handlers;
-            h.active_connections.set(active_connections);
-        });
+        // Validates like construction, then updates the callbacks of the
+        // existing cell in place, so the listener and every live socket
+        // sharing it pick them up with no swap of the `Handlers` itself.
+        let binary_type = this.handlers.get().reload_from_js(global, socket_obj)?;
+        this.handlers.with_mut(|h| h.binary_type = binary_type);
 
         Ok(JSValue::UNDEFINED)
     }
@@ -527,7 +517,7 @@ impl Listener {
             // resolution suspends the handshake until resumeSNI.
             // SAFETY: `handlers` is embedded in the live Listener.
             if !unsafe { &*this_ref.handlers.as_ptr() }
-                .on_server_name
+                .on_server_name()
                 .is_empty()
             {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST - safe deref.
@@ -1895,7 +1885,7 @@ pub(crate) extern "C" fn us_dispatch_server_name(
     if handlers.vm.is_shutting_down() {
         return core::ptr::null_mut();
     }
-    let callback = handlers.on_server_name;
+    let callback = handlers.on_server_name();
     if callback.is_empty() {
         return core::ptr::null_mut();
     }

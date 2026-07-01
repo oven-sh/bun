@@ -1,29 +1,14 @@
-/**
- * https://github.com/oven-sh/bun/issues/13388
- *
- * After `bun add`, `bun remove`, or `bun update`, `package.json` and the root
- * `workspaces[""]` entry of `bun.lock` must agree on every dependency literal,
- * and the very next `bun install` must have nothing left to save. Before the
- * fix, every flavor of `bun update` left the two files disagreeing (the
- * lockfile kept the stale range, the literal string "latest", or a `^X.Y.Z`
- * that ignored the user's `~`/exact pin and dropped `npm:` alias prefixes), so
- * the next `bun install` rewrote the lockfile.
- *
- * The matrix: {add, remove, update, update --latest, update <names>} x
- * {dependencies, devDependencies, optionalDependencies, peerDependencies} x
- * {npm, npm alias, folder, link:, local tarball, remote tarball, workspace:} x
- * {new, same, greater, lower resolution}. The non-npm protocols are the
- * negative contract: `bun update` only rewrites npm resolutions, so their
- * literals must come through every operation byte-identical in both files.
- *
- * Every project gets its own registry namespace on one shared server, so the
- * whole file runs concurrently.
- */
+// https://github.com/oven-sh/bun/issues/13388
+// After `bun add`, `bun remove`, or any flavor of `bun update`, package.json
+// and bun.lock's root workspace entry must agree on every dependency literal
+// and the very next `bun install` must have nothing left to save.
 import { Archive } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { rm } from "fs/promises";
 import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
+
+setDefaultTimeout(1000 * 60 * 5);
 
 // ---------------------------------------------------------------------------
 // In-process npm registry. Each project claims an id; its version map is

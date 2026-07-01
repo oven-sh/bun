@@ -316,7 +316,7 @@ describe.concurrent.each(["bun run", "bun"])("%s: CLI flags take precedence over
       env: bunEnv,
       cwd,
       stdin: "ignore",
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

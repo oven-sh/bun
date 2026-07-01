@@ -397,4 +397,32 @@ describe("bundler", () => {
       stdout: "Before!\nThe dispose function was called\n",
     },
   });
+
+  itBundled("browser/NodeUrlFormatAuthColons#28751", {
+    files: {
+      "/entry.js": /* js */ `
+        import { parse, format } from "node:url";
+        const user = encodeURIComponent("us:er");
+        const pass = encodeURIComponent("pass:word");
+        console.log(format(parse("http://" + user + ":" + pass + "@localhost/")));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "http://us:er:pass:word@localhost/",
+    },
+  });
+
+  itBundled("browser/NodeUrlFormatSearchHash", {
+    files: {
+      "/entry.js": /* js */ `
+        import { format } from "node:url";
+        console.log(format({ protocol: "http:", host: "localhost", pathname: "/", search: "?a#b#c" }));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "http://localhost/?a%23b%23c",
+    },
+  });
 });

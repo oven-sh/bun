@@ -406,7 +406,7 @@ Url.prototype.format = function () {
   var auth = this.auth || "";
   if (auth) {
     auth = encodeURIComponent(auth);
-    auth = auth.replace(/%3A/i, ":");
+    auth = auth.replace(/%3A/gi, ":");
     auth += "@";
   }
 
@@ -448,7 +448,7 @@ Url.prototype.format = function () {
   pathname = pathname.replace(/[?#]/g, function (match) {
     return encodeURIComponent(match);
   });
-  search = search.replace("#", "%23");
+  search = search.replace(/#/g, "%23");
 
   return protocol + host + pathname + search + hash;
 };

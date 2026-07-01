@@ -863,8 +863,10 @@ it.skipIf(!isLinux)(
     }
     const after = countEntrypointFds();
 
+    // `kill()` can abort the stream readers; the teardown must never mask
+    // the assertion below, so settle instead of propagating.
     runner.kill();
-    await Promise.all([pump, stderrText, runner.exited]);
+    await Promise.allSettled([pump, stderrText, runner.exited]);
 
     // Every rebuild re-opens the entrypoint; the watcher must close the
     // descriptor it replaces instead of accumulating one per reload.

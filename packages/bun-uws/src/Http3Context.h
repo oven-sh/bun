@@ -98,6 +98,7 @@ struct Http3Context {
     }
 
     void shutdown() { us_quic_socket_context_shutdown((us_quic_socket_context_t *) this); }
+    void closeListeners() { us_quic_socket_context_close_listeners((us_quic_socket_context_t *) this); }
 
     bool addServerName(const char *hostname, us_bun_socket_context_options_t options) {
         return us_quic_socket_context_add_server_name((us_quic_socket_context_t *) this, hostname, options) == 0;

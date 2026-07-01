@@ -52,6 +52,7 @@ uws_h3_app_t* uws_h3_create_app(struct us_bun_socket_context_options_t options, 
 void uws_h3_app_destroy(uws_h3_app_t* app) { delete (H3App*)app; }
 bool uws_h3_constructor_failed(uws_h3_app_t* app) { return !app || ((H3App*)app)->constructorFailed(); }
 void uws_h3_app_close(uws_h3_app_t* app) { ((H3App*)app)->close(); }
+void uws_h3_app_close_listeners(uws_h3_app_t* app) { ((H3App*)app)->closeListeners(); }
 void uws_h3_app_clear_routes(uws_h3_app_t* app) { ((H3App*)app)->clearRoutes(); }
 void* uws_h3_get_native_handle(uws_h3_app_t* app) { return ((H3App*)app)->getNativeHandle(); }
 

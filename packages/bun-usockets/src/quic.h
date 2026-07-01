@@ -53,6 +53,9 @@ us_quic_socket_context_t *us_create_quic_socket_context(
 /* Send GOAWAY on every connection and stop accepting new ones; the engine and
  * timer keep running so in-flight streams drain. */
 void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx);
+/* Force-close every listen socket: conns get CONNECTION_CLOSE, are aborted,
+ * and reaped. For an abrupt stop after a graceful shutdown already began. */
+void us_quic_socket_context_close_listeners(us_quic_socket_context_t *ctx);
 void us_quic_socket_context_free(us_quic_socket_context_t *ctx);
 
 /* Register an additional SSL_CTX for the given SNI hostname (exact or `*.`). */

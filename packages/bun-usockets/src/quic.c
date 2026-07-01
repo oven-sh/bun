@@ -763,6 +763,13 @@ void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx) {
     }
 }
 
+void us_quic_socket_context_close_listeners(us_quic_socket_context_t *ctx) {
+    if (!ctx) return;
+    /* us_quic_listen_socket_close unlinks the head synchronously (fd close
+     * runs udp_on_close inline), so this terminates. */
+    while (ctx->listeners) us_quic_listen_socket_close(ctx->listeners);
+}
+
 void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
     if (!ctx) return;
     ctx->closing = 1;

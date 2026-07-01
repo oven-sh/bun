@@ -1224,6 +1224,8 @@ const [users, orders, products] = await Promise.all([
 ]);
 ```
 
+Each connection caches up to 256 prepared statements. Past that, the least recently used statement that no query still references is deallocated on the server (`COM_STMT_CLOSE`) to make room, so long-lived pooled connections running many distinct query strings don't exhaust the server-wide `max_prepared_stmt_count` limit.
+
 #### Multiple Result Sets
 
 MySQL can return multiple result sets from multi-statement queries:

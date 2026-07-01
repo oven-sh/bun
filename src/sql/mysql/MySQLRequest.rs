@@ -34,3 +34,21 @@ pub fn prepare_request<Context: WriterContext>(
     packet.end()?;
     Ok(())
 }
+
+/// COM_STMT_CLOSE deallocates a prepared statement on the server. The server
+/// never replies to it, so it is not queued as a request and does not shift
+/// response ordering for the commands around it.
+/// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_stmt_close.html
+pub fn close_request<Context: WriterContext>(
+    statement_id: u32,
+    writer: NewWriter<Context>,
+) -> Result<(), bun_core::Error> {
+    bun_core::scoped_log!(MySQLRequest, "closeRequest {}", statement_id);
+    // resets the sequence id to zero every time we send a command
+    let mut packet = writer.start(0)?;
+    writer.int1(CommandType::COM_STMT_CLOSE as u8)?;
+    writer.int4(statement_id)?;
+
+    packet.end()?;
+    Ok(())
+}

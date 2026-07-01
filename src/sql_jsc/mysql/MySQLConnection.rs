@@ -6,6 +6,7 @@ use bun_sql::mysql::Capabilities;
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::auth_method::AuthMethod;
 use bun_sql::mysql::connection_state::ConnectionState;
+use bun_sql::mysql::mysql_request;
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::any_mysql_error::{self as any_mysql_error, Error as AnyMySQLError};
 use bun_sql::mysql::protocol::auth as Auth;
@@ -61,6 +62,9 @@ pub struct MySQLConnection {
     pub queue: MySQLRequestQueue,
     // TODO: move it to JSMySQLConnection
     pub statements: PreparedStatementsMap,
+    /// Monotonic clock for the statement cache's LRU order; bumped on every
+    /// cache lookup and stamped into `MySQLStatement::last_used` on reuse.
+    statement_lru_clock: u64,
 
     server_version: Vec<u8>,
     connection_id: u32,
@@ -101,6 +105,7 @@ impl Default for MySQLConnection {
             sequence_id: 0,
             queue: MySQLRequestQueue::init(),
             statements: PreparedStatementsMap::default(),
+            statement_lru_clock: 0,
             server_version: Vec::<u8>::default(),
             connection_id: 0,
             capabilities: Capabilities::default(),
@@ -315,6 +320,76 @@ impl MySQLConnection {
             unsafe { bun_boringssl_sys::SSL_CTX_free(s) };
         }
         // _options_buf dropped at scope exit (Box<[u8]> frees via Drop)
+    }
+
+    /// Cache lookup for a prepared-statement signature name. Inserting a new
+    /// entry first evicts LRU idle statements so the cache never exceeds
+    /// [`MAX_CACHED_PREPARED_STATEMENTS`]; a hit re-stamps the entry's LRU clock.
+    pub(crate) fn get_or_put_statement(
+        &mut self,
+        signature_name: &[u8],
+    ) -> Result<PreparedStatementsMapGetOrPutResult<'_>, bun_core::AllocError> {
+        if !self.statements.contains_key(signature_name) {
+            self.evict_lru_statements();
+        }
+        self.statement_lru_clock += 1;
+        let lru_tick = self.statement_lru_clock;
+        let entry = self.statements.get_or_put(signature_name)?;
+        if entry.found_existing {
+            // Shared borrow through `ParentRef`: map values are live boxed
+            // statements (the map owns one intrusive ref on each) and
+            // `last_used` is a `Cell`.
+            let stmt = bun_ptr::ParentRef::from(
+                core::ptr::NonNull::new(*entry.value_ptr)
+                    .expect("found_existing ⇒ non-null map entry"),
+            );
+            stmt.last_used.set(lru_tick);
+        }
+        Ok(entry)
+    }
+
+    /// Evict idle least-recently-used cached statements until the cache is
+    /// under [`MAX_CACHED_PREPARED_STATEMENTS`], writing a COM_STMT_CLOSE for
+    /// each so the server frees its side of the statement.
+    fn evict_lru_statements(&mut self) {
+        while self.statements.count() >= MAX_CACHED_PREPARED_STATEMENTS {
+            let mut victim: Option<core::ptr::NonNull<MySQLStatement>> = None;
+            let mut oldest = u64::MAX;
+            for value in self.statements.values() {
+                let ptr = core::ptr::NonNull::new(*value).expect("map entries are non-null");
+                // Shared borrow; every field read below is `Cell`/`Copy`.
+                let stmt = bun_ptr::ParentRef::from(ptr);
+                // A `MySQLQuery` still holds this statement (pending, running,
+                // or not yet finalized): its statement_id must stay valid.
+                if !stmt.has_one_ref() {
+                    continue;
+                }
+                if victim.is_none() || stmt.last_used.get() < oldest {
+                    oldest = stmt.last_used.get();
+                    victim = Some(ptr);
+                }
+            }
+            // Every cached statement is still referenced by a query; nothing
+            // can be released right now. The next insert tries again.
+            let Some(ptr) = victim else { return };
+            let stmt = bun_ptr::ParentRef::from(ptr);
+            // Statements that never finished preparing (or failed to) own no
+            // server-side handle; there is nothing to close for id 0.
+            if stmt.statement_id != 0
+                && mysql_request::close_request(stmt.statement_id, self.writer()).is_err()
+            {
+                // The close packet could not be written (OOM): keep the cache
+                // entry so the server-side statement is not orphaned.
+                return;
+            }
+            // The statement owns the signature whose name keyed this entry
+            // (`get_or_put_statement`); the map's key is a separate copy, so
+            // removing it leaves these bytes live for the deref below.
+            self.statements.remove(&*stmt.signature.name);
+            // SAFETY: `has_one_ref` above ⇒ the map owned the last ref;
+            // removing the entry transfers it to us to release here.
+            unsafe { MySQLStatement::deref(ptr.as_ptr()) };
+        }
     }
 
     pub fn upgrade_to_tls(&mut self) -> Result<(), FlushQueueError> {
@@ -1730,3 +1805,12 @@ pub(crate) type PreparedStatementsMapGetOrPutResult<'a> =
     bun_collections::hash_map::GetOrPutResult<'a, *mut MySQLStatement>;
 
 const MAX_PIPELINE_SIZE: usize = u16::MAX as usize; // about 64KB per connection
+
+/// Upper bound on server-side prepared statements a connection keeps cached.
+/// They are allocated on the server until COM_STMT_CLOSE or disconnect, and
+/// the server-wide budget (`max_prepared_stmt_count`, default 16382) is shared
+/// by every connection of every client, so an uncapped cache on a long-lived
+/// pooled connection running distinct query texts eventually makes the whole
+/// server reject prepares. Statements still referenced by a query are never
+/// evicted, so the cache can temporarily exceed this while queries are alive.
+const MAX_CACHED_PREPARED_STATEMENTS: usize = 256;

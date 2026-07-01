@@ -936,7 +936,9 @@ impl JSMySQLConnection {
         signature_name: &[u8],
     ) -> Result<my_sql_connection::PreparedStatementsMapGetOrPutResult<'_>, bun_core::AllocError>
     {
-        self.connection_mut().statements.get_or_put(signature_name)
+        // `get_or_put_statement` enforces the statement-cache cap (evicting +
+        // closing LRU idle statements) and stamps the LRU clock on a hit.
+        self.connection_mut().get_or_put_statement(signature_name)
     }
 }
 

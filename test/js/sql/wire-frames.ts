@@ -285,6 +285,17 @@ export function mysqlAuthMoreData(seq: number, data: Buffer): Buffer {
 // page_caching_sha2_authentication_exchanges.html (its sibling, 0x04, is perform_full_authentication).
 export const MYSQL_FAST_AUTH_SUCCESS = 0x03;
 
+// MySQL Protocol::ERR_Packet — page_protocol_basic_err_packet.html (CLIENT_PROTOCOL_41):
+//   Int<1>(0xff) Int<2>(error_code) String<1>("#") String<5>(sql_state) String<EOF>(message)
+export function mysqlErrPacket(seq: number, code: number, message: string, sqlState = "HY000"): Buffer {
+  const head = Buffer.alloc(9);
+  head[0] = 0xff;
+  head.writeUInt16LE(code, 1);
+  head.write("#", 3);
+  head.write(sqlState, 4);
+  return mysqlRawPacket(seq, Buffer.concat([head, Buffer.from(message, "utf-8")]));
+}
+
 // MySQL Protocol::AuthSwitchRequest — page_protocol_connection_phase_packets_protocol_auth_switch_request.html:
 //   Int<1>(0xfe) NulString(plugin_name) String<EOF>(plugin_provided_data)
 export function mysqlAuthSwitchRequest(seq: number, pluginName: string, pluginData: Buffer): Buffer {

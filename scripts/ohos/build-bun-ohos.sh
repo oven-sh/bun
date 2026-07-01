@@ -120,15 +120,40 @@ sync_webkit() {
     fi
 
     info "同步 WebKit: ${current:-(none)} → ${webkit_commit:0:12}"
-    (cd "$wk_dir"
-     git fetch --depth=1 origin "$webkit_commit" 2>&1 | while IFS= read -r line; do
-         echo "  [fetch] $line"
-     done
-     # 丢弃本地修改（如之前手动覆盖的 JSType.h），确保 checkout 到目标版本
-     git stash --include-untracked 2>/dev/null || true
-     git checkout "$webkit_commit" 2>&1 | while IFS= read -r line; do
-         echo "  [checkout] $line"
-     done)
+    local fetch_ok=false
+    local wk_remote=""
+    # 尝试从 fork (origin=springmin/WebKit) 获取
+    if git fetch --depth=1 origin "$webkit_commit" 2>/dev/null; then
+        fetch_ok=true
+        wk_remote="origin"
+    # 回退：尝试从 upstream (oven-sh/WebKit) 获取
+    else
+        warn "origin 中未找到 ${webkit_commit:0:12}，尝试 upstream..."
+        git remote add upstream https://github.com/oven-sh/WebKit.git 2>/dev/null || true
+        if git fetch --depth=1 upstream "$webkit_commit" 2>/dev/null; then
+            fetch_ok=true
+            wk_remote="upstream"
+            # 自动同步到 springmin/WebKit fork，确保下次 CI 也能命中缓存
+            if git remote get-url origin &>/dev/null; then
+                info "推送到 springmin/WebKit fork..."
+                git push origin "$webkit_commit":refs/heads/ohos-aarch64 2>/dev/null || \
+                    warn "推送失败（可能无权限），下次 CI 会从 upstream 拉取"
+            fi
+        fi
+    fi
+
+    if [ "$fetch_ok" = false ]; then
+        err "WebKit commit ${webkit_commit:0:12} 在 origin 和 upstream 中均未找到"
+        err "请检查 WEBKIT_VERSION 是否正确，或手动更新 springmin/WebKit fork"
+        return 1
+    fi
+
+    echo "  [fetch] from $wk_remote: $webkit_commit"
+    # 丢弃本地修改（如之前手动覆盖的 JSType.h），确保 checkout 到目标版本
+    git stash --include-untracked 2>/dev/null || true
+    git checkout "$webkit_commit" 2>&1 | while IFS= read -r line; do
+        echo "  [checkout] $line"
+    done
     ok "WebKit 同步完成 ($(echo "$webkit_commit" | head -c 12))"
 }
 

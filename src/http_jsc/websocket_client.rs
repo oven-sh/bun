@@ -1502,8 +1502,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         secure: Option<*mut SslCtx>,
         proxy_tunnel: Option<NonNull<WebSocketProxyTunnel>>,
     ) -> *mut Self {
-        // outlives this call.
-        let vm = global_this.bun_vm().as_mut();
         let ws = bun_core::heap::into_raw(Box::new(WebSocket::<SSL> {
             ref_count: Cell::new(1),
             tcp: Cell::new(Socket::<SSL>::detached()),
@@ -1525,7 +1523,6 @@ impl<const SSL: bool> WebSocket<SSL> {
             payload_length_frame_bytes: Cell::new([0u8; 8]),
             payload_length_frame_len: Cell::new(0),
             initial_data_handler: Cell::new(None),
-            // re-derived from `global_this` so `vm` stays usable below
             // SAFETY: bun_vm() never returns null; event_loop ptr is live for VM lifetime.
             event_loop: global_this.bun_vm().event_loop_mut(),
             deflate: RefCell::new(None),
@@ -1539,7 +1536,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let ws_ref = unsafe { &mut *ws };
 
         if let Some(params) = deflate_params {
-            *ws_ref.deflate.get_mut() = WebSocketDeflate::init(*params, vm.rare_data()).ok();
+            *ws_ref.deflate.get_mut() = WebSocketDeflate::init(*params).ok();
         }
 
         ws

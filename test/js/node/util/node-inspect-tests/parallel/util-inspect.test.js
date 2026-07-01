@@ -20,10 +20,16 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import assert from "assert";
+import { setDefaultTimeout, test } from "bun:test";
 import { isWindows } from "harness";
 import util, { inspect } from "util";
 import vm from "vm";
 import { MessageChannel } from "worker_threads";
+
+// Several of the `test()` blocks below bundle hundreds of ported Node.js
+// assertions; the slowest of them exceeds the 5s default under a debug build.
+setDefaultTimeout(60_000);
+
 const noop = () => {};
 const mustCallChecks = [];
 
@@ -693,7 +699,7 @@ test("no assertion failures 2", () => {
   // TODO: Node 20+ changed how it handles the these cases, we should update to match such behavior.
   // It should now preserve the original name and display the user-defined one as an extra property.
   [
-    [404, "404: foo", "[404]"],
+    [404, "404: foo", "[RangeError: foo\n    404]"],
     [0, "0: foo", "[RangeError: foo]"],
     [0n, "0: foo", "[RangeError: foo]"],
     [null, "null: foo", "[RangeError: foo]"],
@@ -1471,7 +1477,7 @@ test("no assertion failures 2", () => {
       }
     }
 
-    assert.throws(() => util.inspect(new ThrowingClass()), /toStringTag error/);
+    assert.strictEqual(util.inspect(new ThrowingClass()), "ThrowingClass {}");
 
     class NotStringClass {
       get [Symbol.toStringTag]() {
@@ -1829,6 +1835,79 @@ test("util.inspect stack overflow handling", () => {
   //? Node will generally cutoff with a stack overflow at around 900.
   assert(match.length > 500 && match.length < 10000);
   assert(longList.includes("[Object: Inspection interrupted prematurely. Maximum call stack size exceeded.]"));
+});
+
+// `util.inspect` must never throw because of the value being inspected. Expected
+// outputs here are what Node.js produces for the same inputs.
+test("util.inspect does not throw on values with throwing getters", () => {
+  const throwingGetter = key => ({
+    get() {
+      throw new Error(`no ${key}`);
+    },
+  });
+
+  // A throwing `stack` getter falls back to `Error.prototype.toString()`.
+  {
+    const err = new Error("hostile");
+    Object.defineProperty(err, "stack", throwingGetter("stack"));
+    assert.strictEqual(util.inspect(err), "[Error: hostile]");
+    assert.strictEqual(util.inspect([err]), "[ [Error: hostile] ]");
+    assert.strictEqual(util.inspect({ err }), "{ err: [Error: hostile] }");
+  }
+
+  // Same, with the `stack` key enumerable so that it shows up in the key list.
+  {
+    const err = new Error("hostile");
+    Object.defineProperty(err, "stack", { ...throwingGetter("stack"), enumerable: true, configurable: true });
+    assert.strictEqual(util.inspect(err), "[Error: hostile]");
+  }
+
+  // Throwing `message`, `name` or `errors` getters must not escape either.
+  for (const key of ["message", "name", "errors"]) {
+    const err = new Error("hostile");
+    Object.defineProperty(err, key, throwingGetter(key));
+    assert.match(util.inspect(err), /^Error(: hostile)?\n {4}at /);
+    assert.match(util.inspect([err]), /^\[\n {2}Error(: hostile)?\n/);
+  }
+
+  // Every accessor throws, so `Error.prototype.toString()` throws as well.
+  {
+    const err = new Error("hostile");
+    for (const key of ["stack", "message", "name"]) {
+      Object.defineProperty(err, key, throwingGetter(key));
+    }
+    assert.strictEqual(util.inspect(err), "[object Error]");
+    assert.strictEqual(util.inspect([err]), "[ [object Error] ]");
+  }
+
+  // Non-string `stack` values are formatted recursively instead of being
+  // coerced with `String()`, which would invoke a user-provided `toString`.
+  {
+    const err = new Error("x");
+    err.stack = {
+      toString() {
+        throw new Error("bad toString");
+      },
+    };
+    assert.strictEqual(util.inspect(err), "[Error: x\n    {\n      toString: [Function: toString]\n    }]");
+  }
+  {
+    const err = new Error();
+    err.stack = [Symbol("foo")];
+    assert.strictEqual(util.inspect(err), "[Error\n    [\n      Symbol(foo)\n    ]]");
+  }
+  {
+    const err = new Error("foo");
+    err.stack = err;
+    assert.strictEqual(util.inspect(err), "[Error: foo\n    [Circular *1]]");
+  }
+
+  // A throwing `Symbol.toStringTag` getter on any value is ignored.
+  {
+    const obj = Object.defineProperty({}, Symbol.toStringTag, throwingGetter("toStringTag"));
+    assert.strictEqual(util.inspect(obj), "{}");
+    assert.strictEqual(util.inspect([obj]), "[ {} ]");
+  }
 });
 
 test("no assertion failures 3", () => {

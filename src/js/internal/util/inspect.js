@@ -1253,7 +1253,12 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
     protoProps = undefined;
   }
 
-  let tag = value[SymbolToStringTag];
+  let tag = "";
+  try {
+    tag = value[SymbolToStringTag];
+  } catch {
+    // If `Symbol.toStringTag` is a getter that throws, ignore it.
+  }
   // Only list the tag in case it's non-enumerable / not an own property.
   // Otherwise we'd print this twice.
   if (
@@ -1445,16 +1450,14 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       ArrayPrototypePush.$apply(output, protoProps);
     }
   } catch (err) {
-    if (err instanceof RangeError && err.message === ERROR_STACK_OVERFLOW_MSG) {
-      const constructorName = StringPrototypeSlice(getCtxStyle(value, constructor, tag), 0, -1);
-      ctx.seen.pop();
-      ctx.indentationLvl = indentationLvl;
-      return ctx.stylize(
-        `[${constructorName}: Inspection interrupted prematurely. Maximum call stack size exceeded.]`,
-        "special",
-      );
-    }
-    throw new AssertionError("handleMaxCallStackSize assertion failed: " + String(err), true);
+    if (!(err instanceof RangeError && err.message === ERROR_STACK_OVERFLOW_MSG)) throw err;
+    const constructorName = StringPrototypeSlice(getCtxStyle(value, constructor, tag), 0, -1);
+    ctx.seen.pop();
+    ctx.indentationLvl = indentationLvl;
+    return ctx.stylize(
+      `[${constructorName}: Inspection interrupted prematurely. Maximum call stack size exceeded.]`,
+      "special",
+    );
   }
   const circular = ctx.circular;
   if (circular !== undefined) {
@@ -1646,8 +1649,25 @@ function identicalSequenceRange(a, b) {
   return { len: 0, offset: 0 };
 }
 
-function getStackString(error) {
-  return error.stack ? String(error.stack) : ErrorPrototypeToString(error);
+function getStackString(ctx, error) {
+  let stack;
+  try {
+    stack = error.stack;
+  } catch {
+    // If `stack` is a getter that throws, ignore it.
+  }
+  if (stack) {
+    if (typeof stack === "string") {
+      return stack;
+    }
+    ctx.seen.push(error);
+    ctx.indentationLvl += 4;
+    const result = formatValue(ctx, stack);
+    ctx.indentationLvl -= 4;
+    ctx.seen.pop();
+    return `${ErrorPrototypeToString(error)}\n    ${result}`;
+  }
+  return ErrorPrototypeToString(error);
 }
 
 function getStackFrames(ctx, err, stack) {
@@ -1662,7 +1682,7 @@ function getStackFrames(ctx, err, stack) {
 
   // Remove stack frames identical to frames in cause.
   if (cause != null && cause instanceof Error) {
-    const causeStack = getStackString(cause);
+    const causeStack = getStackString(ctx, cause);
     const causeStackStart = StringPrototypeIndexOf(causeStack, "\n    at");
     if (causeStackStart !== -1) {
       const causeFrames = StringPrototypeSplit(StringPrototypeSlice(causeStack, causeStackStart + 1), "\n");
@@ -1711,18 +1731,6 @@ function improveStack(stack, constructor, name, tag) {
     }
   }
   return stack;
-}
-
-function removeDuplicateErrorKeys(ctx, keys, err, stack) {
-  if (!ctx.showHidden && keys.length !== 0) {
-    for (const name of ["name", "message", "stack"]) {
-      const index = ArrayPrototypeIndexOf(keys, name);
-      // Only hide the property in case it's part of the original stack
-      if (index !== -1 && StringPrototypeIncludes(stack, err[name])) {
-        ArrayPrototypeSplice(keys, index, 1);
-      }
-    }
-  }
 }
 
 function markNodeModules(ctx, line) {
@@ -1778,28 +1786,73 @@ function safeGetCWD() {
 }
 
 function formatError(err, constructor, tag, ctx, keys) {
-  const name = err.name != null ? String(err.name) : "Error";
-  let stack = getStackString(err);
+  let message, name, stack;
+  try {
+    stack = getStackString(ctx, err);
+  } catch {
+    // The `stack` getter threw and `Error.prototype.toString()` threw as well,
+    // e.g. because the `name` or `message` getters also throw.
+    return ObjectPrototypeToString(err);
+  }
+
+  let messageIsGetterThatThrows = false;
+  try {
+    message = err.message;
+  } catch {
+    messageIsGetterThatThrows = true;
+  }
+  let nameIsGetterThatThrows = false;
+  try {
+    name = err.name;
+  } catch {
+    nameIsGetterThatThrows = true;
+  }
+  name = name != null ? String(name) : "Error";
 
   //! temp fix for Bun losing the error name from inherited errors + extraneous ": " with no message
-  stack = stack.replace(/^Error: /, `${name}${err.message ? ": " : ""}`);
+  stack = stack.replace(/^Error: /, `${name}${message ? ": " : ""}`);
 
-  removeDuplicateErrorKeys(ctx, keys, err, stack);
+  if (!ctx.showHidden && keys.length !== 0) {
+    const index = ArrayPrototypeIndexOf(keys, "stack");
+    if (index !== -1) {
+      ArrayPrototypeSplice(keys, index, 1);
+    }
+
+    if (!messageIsGetterThatThrows) {
+      const index = ArrayPrototypeIndexOf(keys, "message");
+      // Only hide the property if it's a string and if it's part of the original stack
+      if (index !== -1 && (typeof message !== "string" || StringPrototypeIncludes(stack, message))) {
+        ArrayPrototypeSplice(keys, index, 1);
+      }
+    }
+
+    if (!nameIsGetterThatThrows) {
+      const index = ArrayPrototypeIndexOf(keys, "name");
+      // Only hide the property in case it's part of the original stack
+      if (index !== -1 && StringPrototypeIncludes(stack, name)) {
+        ArrayPrototypeSplice(keys, index, 1);
+      }
+    }
+  }
 
   if ("cause" in err && (keys.length === 0 || !ArrayPrototypeIncludes(keys, "cause"))) {
     ArrayPrototypePush.$call(keys, "cause");
   }
 
   // Print errors aggregated into AggregateError
-  if ($isJSArray(err.errors) && (keys.length === 0 || !ArrayPrototypeIncludes(keys, "errors"))) {
-    ArrayPrototypePush.$call(keys, "errors");
+  try {
+    if ($isJSArray(err.errors) && (keys.length === 0 || !ArrayPrototypeIncludes(keys, "errors"))) {
+      ArrayPrototypePush.$call(keys, "errors");
+    }
+  } catch {
+    // If `errors` is a getter that throws, ignore it.
   }
 
   stack = improveStack(stack, constructor, name, tag);
 
   // Ignore the error message if it's contained in the stack.
-  let pos = (err.message && StringPrototypeIndexOf(stack, err.message)) || -1;
-  if (pos !== -1) pos += err.message.length;
+  let pos = (message && StringPrototypeIndexOf(stack, message)) || -1;
+  if (pos !== -1) pos += message.length;
   // Wrap the error in brackets in case it has no stack trace.
   const stackStart = StringPrototypeIndexOf(stack, "\n    at", pos);
   if (stackStart === -1) {

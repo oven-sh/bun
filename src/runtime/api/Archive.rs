@@ -24,6 +24,10 @@ use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
 /// does not yet expose `FileType`, so mirror the constant locally.
 const FILETYPE_REGULAR: u32 = 0o100000;
 
+/// Default Unix permission for a created entry, matching the fallback the
+/// extraction path uses when an entry carries no perm bits.
+const DEFAULT_ENTRY_PERM: u32 = 0o644;
+
 /// Compression options for the archive
 #[derive(Clone, Copy, Default)]
 pub(crate) enum Compression {
@@ -353,8 +357,9 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         let key_str = ZBox::from_vec_with_nul(key_slice.slice().to_vec());
         // defer free(key_str)/key_slice.deinit() — handled by Drop
 
-        // Get data - use view for Blob/ArrayBuffer, convert for strings
-        let data_slice = get_entry_data(global, value)?;
+        // Resolve bytes and Unix perm. A plain object is the `{ data, mode }`
+        // descriptor form; Blob/ArrayBuffer/TypedArray/string keep the default perm.
+        let (data_slice, perm) = get_entry_data_and_perm(global, value)?;
         // defer data_slice.deinit() — handled by Drop
 
         // Write entry to archive
@@ -369,7 +374,7 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         entry_ref.set_pathname(key_str.as_zstr());
         entry_ref.set_size(i64::try_from(data.len()).expect("int cast"));
         entry_ref.set_filetype(FILETYPE_REGULAR);
-        entry_ref.set_perm(0o644);
+        entry_ref.set_perm(perm);
         entry_ref.set_mtime(now_secs, 0);
 
         // `Warn` means the header was still written (libarchive fell back to a
@@ -421,6 +426,52 @@ fn get_entry_data(global: &JSGlobalObject, value: JSValue) -> JsResult<ZigString
 
     // For strings, convert (allocates)
     value.to_slice(global)
+}
+
+/// Resolves an object-property value to `(bytes, unix_perm)` for one tarball
+/// entry. A plain object is the `{ data, mode? }` descriptor; a
+/// Blob/ArrayBuffer/TypedArray/string keeps the default perm. Blob and
+/// ArrayBuffer/TypedArray are themselves objects, so they are matched before
+/// the descriptor branch.
+fn get_entry_data_and_perm(
+    global: &JSGlobalObject,
+    value: JSValue,
+) -> JsResult<(ZigStringSlice, u32)> {
+    if value.is_object() && blob_from_js(value).is_none() && value.as_array_buffer(global).is_none()
+    {
+        let Some(data_val) = value.get(global, "data")? else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Archive: entry object must have a \"data\" property"
+            )));
+        };
+        // Read and validate the perm (a fully-owned u32) before resolving the
+        // bytes, so no borrowed data view is held across the property reads.
+        let perm = resolve_entry_perm(global, value)?;
+        return Ok((get_entry_data(global, data_val)?, perm));
+    }
+
+    Ok((get_entry_data(global, value)?, DEFAULT_ENTRY_PERM))
+}
+
+/// Reads the optional `mode` of a `{ data, mode }` entry descriptor. Missing or
+/// undefined → default perm; present must be a non-negative integer and is
+/// masked to `0o777`, matching the bits the extraction path preserves.
+fn resolve_entry_perm(global: &JSGlobalObject, descriptor: JSValue) -> JsResult<u32> {
+    let Some(mode_val) = descriptor.get(global, "mode")? else {
+        return Ok(DEFAULT_ENTRY_PERM);
+    };
+    if !mode_val.is_number() {
+        return Err(
+            global.throw_invalid_arguments(format_args!("Archive: entry mode must be a number"))
+        );
+    }
+    let mode = mode_val.as_number();
+    if !mode.is_finite() || mode < 0.0 || mode.fract() != 0.0 {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Archive: entry mode must be a non-negative integer"
+        )));
+    }
+    Ok((mode as u32) & 0o777)
 }
 
 /// Static method: Archive.write(path, data, options?)

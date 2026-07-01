@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
@@ -61,6 +61,30 @@ function buildPaxTarball(entries: Array<{ name: string; data: Buffer | string }>
   const parts = entries.map((e, i) => paxEntry(e.name, e.data, i));
   parts.push(Buffer.alloc(1024));
   return new Uint8Array(Buffer.concat(parts));
+}
+
+// Reads the permission bits (masked to 0o777) of every regular-file header in a
+// tar stream, keyed by entry name. Octal mode lives at offset 100 (8 bytes),
+// size at 124 (12 bytes), typeflag at 156; each entry is a 512-byte header plus
+// size rounded up to 512-byte data blocks.
+function parseTarModes(bytes: Uint8Array): Map<string, number> {
+  const modes = new Map<string, number>();
+  const td = new TextDecoder("latin1");
+  const octal = (field: Uint8Array) => parseInt(td.decode(field).replace(/[\0 ]/g, ""), 8) || 0;
+  let off = 0;
+  while (off + 512 <= bytes.length) {
+    const block = bytes.subarray(off, off + 512);
+    if (block.every(b => b === 0)) break; // end-of-archive marker
+    const nameField = block.subarray(0, 100);
+    const nul = nameField.indexOf(0);
+    const name = td.decode(nameField.subarray(0, nul === -1 ? 100 : nul));
+    const typeflag = block[156];
+    if (name && (typeflag === 0x30 || typeflag === 0x00)) {
+      modes.set(name, octal(block.subarray(100, 108)) & 0o777);
+    }
+    off += 512 + Math.ceil(octal(block.subarray(124, 136)) / 512) * 512;
+  }
+  return modes;
 }
 
 describe("Bun.Archive", () => {
@@ -200,6 +224,100 @@ describe("Bun.Archive", () => {
       const bytes = await archive.bytes();
       // Should contain "123" somewhere in the tarball (use {} to get uncompressed tar)
       expect(new TextDecoder().decode(bytes)).toContain("123");
+    });
+  });
+
+  describe("per-entry file mode", () => {
+    test("{ data, mode } sets the stored Unix mode; plain values default to 0o644", async () => {
+      const archive = new Bun.Archive({
+        "bin/tool": { data: "#!/bin/sh\necho hi\n", mode: 0o755 },
+        "README.md": "hello",
+      });
+
+      const modes = parseTarModes(await archive.bytes());
+      expect(modes.get("bin/tool")).toBe(0o755);
+      expect(modes.get("README.md")).toBe(0o644);
+    });
+
+    test("descriptor data accepts string, Blob, Uint8Array, and ArrayBuffer", async () => {
+      const archive = new Bun.Archive({
+        "a": { data: "from-string", mode: 0o755 },
+        "b": { data: new Blob(["from-blob"]), mode: 0o700 },
+        "c": { data: new TextEncoder().encode("from-u8"), mode: 0o644 },
+        "d": { data: new TextEncoder().encode("from-ab").buffer, mode: 0o600 },
+      });
+
+      const modes = parseTarModes(await archive.bytes());
+      expect(modes.get("a")).toBe(0o755);
+      expect(modes.get("b")).toBe(0o700);
+      expect(modes.get("c")).toBe(0o644);
+      expect(modes.get("d")).toBe(0o600);
+
+      using dir = tempDir("archive-mode-data", {});
+      await archive.extract(String(dir));
+      expect(await Bun.file(join(String(dir), "a")).text()).toBe("from-string");
+      expect(await Bun.file(join(String(dir), "b")).text()).toBe("from-blob");
+      expect(await Bun.file(join(String(dir), "c")).text()).toBe("from-u8");
+      expect(await Bun.file(join(String(dir), "d")).text()).toBe("from-ab");
+    });
+
+    test("mode defaults to 0o644 when the descriptor omits it", async () => {
+      const archive = new Bun.Archive({
+        "no-mode": { data: "content" },
+      });
+      expect(parseTarModes(await archive.bytes()).get("no-mode")).toBe(0o644);
+    });
+
+    test("high mode bits (e.g. a full stat() mode) are masked to 0o777", async () => {
+      const archive = new Bun.Archive({
+        // 0o100755 is S_IFREG | 0o755, the shape fs.stat() returns.
+        "bin/tool": { data: "x", mode: 0o100755 },
+      });
+      expect(parseTarModes(await archive.bytes()).get("bin/tool")).toBe(0o755);
+    });
+
+    test("Archive.write preserves per-entry modes on disk", async () => {
+      using dir = tempDir("archive-write-mode", {});
+      const archivePath = join(String(dir), "out.tar");
+
+      await Bun.Archive.write(archivePath, {
+        "bin/tool": { data: "x", mode: 0o755 },
+        "plain.txt": "y",
+      });
+
+      const modes = parseTarModes(await Bun.file(archivePath).bytes());
+      expect(modes.get("bin/tool")).toBe(0o755);
+      expect(modes.get("plain.txt")).toBe(0o644);
+    });
+
+    test.skipIf(isWindows)("extracted file carries the executable bit", async () => {
+      using dir = tempDir("archive-extract-mode", {});
+      const archive = new Bun.Archive({
+        "bin/tool": { data: "#!/bin/sh\n", mode: 0o755 },
+        "plain.txt": "hi",
+      });
+
+      await archive.extract(String(dir));
+
+      // Owner-exec bit is set for 0o755 and clear for 0o644; owner bits survive
+      // the usual process umask.
+      expect(statSync(join(String(dir), "bin/tool")).mode & 0o100).toBe(0o100);
+      expect(statSync(join(String(dir), "plain.txt")).mode & 0o100).toBe(0);
+    });
+
+    test.each([
+      ["a string", "0755"],
+      ["a negative number", -1],
+      ["a non-integer", 0o755 + 0.5],
+      ["NaN", NaN],
+      ["Infinity", Infinity],
+    ])("rejects mode that is %s", (_label, mode) => {
+      expect(() => new Bun.Archive({ "bin/tool": { data: "x", mode: mode as number } })).toThrow();
+    });
+
+    test("rejects a descriptor object with no data property", () => {
+      // @ts-expect-error - data is required on the descriptor form
+      expect(() => new Bun.Archive({ "bin/tool": { mode: 0o755 } })).toThrow();
     });
   });
 

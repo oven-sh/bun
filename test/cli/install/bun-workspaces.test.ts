@@ -193,6 +193,89 @@ test("dependency on workspace without version in package.json", async () => {
   }
 });
 
+// A `file:` dependency that points at a workspace member's folder must resolve
+// to the workspace package, including when the lockfile is loaded rather than
+// resolved fresh; otherwise every install re-registers the folder and rewrites bun.lock.
+describe("file: dependency on a workspace member", () => {
+  async function writeWorkspace(
+    appDependencies: Record<string, string>,
+    rootDependencies?: Record<string, string>,
+  ) {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          ...(rootDependencies ? { dependencies: rootDependencies } : {}),
+        }),
+      ),
+      write(join(packageDir, "packages", "lib", "package.json"), JSON.stringify({ name: "lib", version: "1.0.0" })),
+      write(
+        join(packageDir, "packages", "app", "package.json"),
+        JSON.stringify({ name: "app", version: "1.0.0", dependencies: appDependencies }),
+      ),
+    ]);
+  }
+
+  async function expectStableLockfile() {
+    await runBunInstall(env, packageDir, { saveTextLockfile: true });
+    const first = await file(join(packageDir, "bun.lock")).text();
+
+    // the member folder resolves to the workspace package exactly once
+    expect([...new Set(first.match(/"lib@[^"]*"/g))]).toEqual(['"lib@workspace:packages/lib"']);
+
+    // nothing changed, so the second install (which loads bun.lock rather than
+    // resolving from scratch) must be a no-op
+    const { err } = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(err).not.toContain("Saved lockfile");
+    const second = await file(join(packageDir, "bun.lock")).text();
+    const packagePaths = [...second.matchAll(/^    ("[^"]*"): \[/gm)].map(m => m[1]);
+    expect(packagePaths).toEqual([...new Set(packagePaths)]);
+    expect(second).toBe(first);
+
+    // the lockfile the first install produced satisfies --frozen-lockfile
+    await write(join(packageDir, "bun.lock"), first);
+    await runBunInstall(env, packageDir, { frozenLockfile: true, savesLockfile: false });
+  }
+
+  test("declared by a sibling member", async () => {
+    await writeWorkspace({ lib: "file:../lib" });
+    await expectStableLockfile();
+  });
+
+  test("declared by a sibling member under an alias", async () => {
+    await writeWorkspace({ "lib-alias": "file:../lib" });
+    await expectStableLockfile();
+  });
+
+  test("declared by the root next to the workspaces array", async () => {
+    await writeWorkspace({}, { lib: "file:./packages/lib" });
+    await expectStableLockfile();
+  });
+
+  // Negative contract: the rewrite keys on the folder path, not the dependency
+  // name. A `file:` path outside the workspaces stays a plain folder dependency
+  // even when its alias collides with a workspace member's name.
+  test("a colliding name pointing at a non-workspace folder stays a folder dependency", async () => {
+    await writeWorkspace({ lib: "file:../../vendor/other" });
+    await write(
+      join(packageDir, "vendor", "other", "package.json"),
+      JSON.stringify({ name: "other", version: "2.0.0" }),
+    );
+
+    await runBunInstall(env, packageDir, { saveTextLockfile: true });
+    const first = await file(join(packageDir, "bun.lock")).text();
+    expect([...new Set(first.match(/"lib@[^"]*"/g))]).toEqual(['"lib@workspace:packages/lib"']);
+    expect(first).toContain('"other@file:vendor/other"');
+
+    const { err } = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(err).not.toContain("Saved lockfile");
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(first);
+  });
+});
+
 test.concurrent("allowing negative workspace patterns", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;

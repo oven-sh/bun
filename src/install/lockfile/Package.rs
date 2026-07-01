@@ -351,6 +351,30 @@ fn dep_sort_cmp(buf: &[u8], a: &Dependency, b: &Dependency) -> core::cmp::Orderi
     }
 }
 
+/// The workspace member registered at `folder_path` (relative to the top-level dir),
+/// if any. Matched by path (not dependency name) so `"alias": "file:../member"` is
+/// found too. Workspace paths are stored posix, `folder_path` is platform-separated.
+fn find_workspace_by_path(
+    workspace_paths: &lockfile::NameHashMap,
+    buf: &[u8],
+    folder_path: &[u8],
+) -> Option<String> {
+    if folder_path.is_empty() {
+        return None;
+    }
+    workspace_paths
+        .values()
+        .iter()
+        .find(|workspace_path| {
+            let workspace_path = workspace_path.slice(buf);
+            workspace_path.len() == folder_path.len()
+                && core::iter::zip(workspace_path, folder_path).all(|(&a, &b)| {
+                    a == b || (path::is_sep_any(a) && path::is_sep_any(b))
+                })
+        })
+        .copied()
+}
+
 /// Field tags for the binary lockfile serializer (`bun.lockb`). The
 /// reflection-backed `MultiArrayList` no longer needs an enum, but the
 /// serializer iterates fields by tag to write column blobs in a fixed order.
@@ -1870,9 +1894,30 @@ impl Package<u64> {
                 };
                 let relative =
                     resolve_path::relative(FileSystem::instance().top_level_dir(), joined);
-                // if relative is empty, we are linking the package to itself
-                dependency_version.value.folder = string_builder
-                    .append::<String>(if relative.is_empty() { b"." } else { relative });
+                // The bun.lock parser rewrites a dependency that resolved to a workspace
+                // package to `Tag::Workspace` (`map_dep_to_pkg`). Do the same here so a
+                // freshly parsed package.json compares equal to its loaded lockfile entry.
+                if let Some(workspace) = find_workspace_by_path(workspace_paths, buf, relative) {
+                    let path = workspace.sliced(buf);
+                    if let Some(mut dep) = dependency::parse_with_tag(
+                        external_alias.value,
+                        Some(external_alias.hash),
+                        path.slice,
+                        dependency::version::Tag::Workspace,
+                        &path,
+                        Some(&mut *log),
+                        Some(&mut *pm),
+                    ) {
+                        // Whole-struct move so `Drop` frees the old value;
+                        // keep the user's `file:` literal.
+                        dep.literal = dependency_version.literal;
+                        dependency_version = dep;
+                    }
+                } else {
+                    // if relative is empty, we are linking the package to itself
+                    dependency_version.value.folder = string_builder
+                        .append::<String>(if relative.is_empty() { b"." } else { relative });
+                }
             }
             dependency::version::Tag::Npm => {
                 if let Some(workspace_version) = workspace_version {

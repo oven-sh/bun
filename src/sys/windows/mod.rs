@@ -20,8 +20,8 @@ use crate::{E, Fd, MaybeExt, SystemErrno};
 pub use bun_windows_sys::externs::SetFilePointerEx;
 pub use bun_windows_sys::kernel32::GetLastError;
 pub use bun_windows_sys::ntdll;
-pub use bun_windows_sys::{local_pipe, LocalPipeStr};
 pub use bun_windows_sys::ws2_32;
+pub use bun_windows_sys::{LocalPipeStr, local_pipe};
 
 /// Re-exports the tier-0 `bun_windows_sys::kernel32`
 /// surface and layers the additional externs higher-tier crates reach for

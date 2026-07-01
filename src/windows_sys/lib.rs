@@ -26,10 +26,16 @@ impl LocalPipeStr {
     pub const fn new(s: &'static str) -> Self {
         const P: &[u8] = br"\\.\pipe\LOCAL\";
         let b = s.as_bytes();
-        assert!(b.len() >= P.len(), "pipe name must start with \\\\.\\pipe\\LOCAL\\");
+        assert!(
+            b.len() >= P.len(),
+            "pipe name must start with \\\\.\\pipe\\LOCAL\\"
+        );
         let mut i = 0;
         while i < P.len() {
-            assert!(b[i] == P[i], "pipe name must start with \\\\.\\pipe\\LOCAL\\");
+            assert!(
+                b[i] == P[i],
+                "pipe name must start with \\\\.\\pipe\\LOCAL\\"
+            );
             i += 1;
         }
         Self(s)

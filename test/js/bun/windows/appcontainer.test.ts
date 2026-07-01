@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { bunExe, isWindows, tempDirWithFiles } from "harness";
@@ -38,8 +38,16 @@ if (isWindows) {
       },
       CreateProcessW: {
         args: [
-          FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.i32,
-          FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr,
+          FFIType.ptr,
+          FFIType.ptr,
+          FFIType.ptr,
+          FFIType.ptr,
+          FFIType.i32,
+          FFIType.u32,
+          FFIType.ptr,
+          FFIType.ptr,
+          FFIType.ptr,
+          FFIType.ptr,
         ],
         returns: FFIType.i32,
       },
@@ -89,7 +97,8 @@ if (isWindows) {
     const name = wstr(PROFILE);
     const hr = userenv.CreateAppContainerProfile(ptr(name), ptr(name), ptr(name), null, 0, ptr(sidOut)) >>> 0;
     if (hr !== 0) {
-      if (hr !== 0x800700b7 /* HRESULT(ERROR_ALREADY_EXISTS) */) throw new Error(`CreateAppContainerProfile 0x${hr.toString(16)}`);
+      if (hr !== 0x800700b7 /* HRESULT(ERROR_ALREADY_EXISTS) */)
+        throw new Error(`CreateAppContainerProfile 0x${hr.toString(16)}`);
       const hr2 = userenv.DeriveAppContainerSidFromAppContainerName(ptr(name), ptr(sidOut)) >>> 0;
       if (hr2 !== 0) throw new Error(`DeriveAppContainerSid 0x${hr2.toString(16)}`);
     }
@@ -119,7 +128,9 @@ if (isWindows) {
     if (kernel32.InitializeProcThreadAttributeList(ptr(attrList), 1, 0, ptr(sizeOut)) === 0)
       throw new Error("InitializeProcThreadAttributeList");
     // PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES = 0x20009
-    if (kernel32.UpdateProcThreadAttribute(ptr(attrList), 0, 0x20009n as any, ptr(secCaps), 24n as any, null, null) === 0)
+    if (
+      kernel32.UpdateProcThreadAttribute(ptr(attrList), 0, 0x20009n as any, ptr(secCaps), 24n as any, null, null) === 0
+    )
       throw new Error("UpdateProcThreadAttribute");
 
     launchInContainer = (cmdline: string, cwd: string, timeoutMs: number): number => {
@@ -131,8 +142,16 @@ if (isWindows) {
       const cmd = wstr(cmdline);
       const cwdW = wstr(cwd);
       const ok = kernel32.CreateProcessW(
-        null, ptr(cmd), null, null, 0,
-        0x80000 /* EXTENDED_STARTUPINFO_PRESENT */, null, ptr(cwdW), ptr(siex), ptr(pi),
+        null,
+        ptr(cmd),
+        null,
+        null,
+        0,
+        0x80000 /* EXTENDED_STARTUPINFO_PRESENT */,
+        null,
+        ptr(cwdW),
+        ptr(siex),
+        ptr(pi),
       );
       if (ok === 0) throw new Error(`CreateProcessW gle=${kernel32.GetLastError()}`);
       const hProcess = pi.readBigUInt64LE(0);

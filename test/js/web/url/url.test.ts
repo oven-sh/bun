@@ -38,6 +38,19 @@ describe("url", () => {
     expect(URL.parse("http://example.com/", undefined)?.href).toBe("http://example.com/");
   });
 
+  // An explicit null base is coerced to the string "null" by WebIDL, which is not a
+  // valid URL, so it is a real (and invalid) base rather than no base.
+  it("treats an explicit null base as an invalid base, not as no base", () => {
+    // @ts-expect-error
+    expect(() => new URL("http://example.com/", null)).toThrow(
+      '"http://example.com/" cannot be parsed as a URL against "null"',
+    );
+    // @ts-expect-error
+    expect(URL.canParse("http://example.com/", null)).toBe(false);
+    // @ts-expect-error
+    expect(URL.parse("http://example.com/", null)).toBeNull();
+  });
+
   it("should have correct origin and protocol", () => {
     var url = new URL("https://example.com");
     expect(url.protocol).toBe("https:");

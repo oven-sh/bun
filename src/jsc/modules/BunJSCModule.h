@@ -619,10 +619,16 @@ JSC_DEFINE_HOST_FUNCTION(functionGetProtectedObjects,
 {
     auto& vm = globalObject->vm();
     MarkedArgumentBuffer list;
-    vm.heap.forEachProtectedCell(
-        [&](JSCell* cell) { list.append(cell); });
+    // The protected cell set also contains internal cells (unlinked code blocks,
+    // private symbols, structures). Those are not valid JavaScript values, so
+    // handing them to JS as-is causes type confusion the first time one is touched.
+    auto appendObject = [&](JSCell* cell) {
+        if (cell->isObject())
+            list.append(cell);
+    };
+    vm.heap.forEachProtectedCell(appendObject);
     for (auto* block = WebCore::clientData(vm)->m_strongRootBlockHead; block; block = block->next())
-        block->forEachOccupiedCell([&](JSCell* cell) { list.append(cell); });
+        block->forEachOccupiedCell(appendObject);
     RELEASE_ASSERT(!list.hasOverflowed());
     return JSC::JSValue::encode(constructArray(
         globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), list));

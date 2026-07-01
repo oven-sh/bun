@@ -4645,4 +4645,34 @@ describe("server headersTimeout/requestTimeout enforcement", () => {
       siblingServer.close();
     }
   }, 30_000);
+
+  it("https: a stalled TLS handshake is not reported as an HTTP request timeout", async () => {
+    // Node only attaches the HTTP parser (and starts headersTimeout) after the
+    // TLS handshake completes. A raw TCP client that never sends a ClientHello
+    // must not get 'clientError' (ERR_HTTP_REQUEST_TIMEOUT) or any 408 bytes;
+    // the socket is just closed.
+    const server = createHttpsServer({ ...timeoutOptions, key: tlsCert.key, cert: tlsCert.cert }, () => {});
+    const clientError = jest.fn();
+    server.on("clientError", (err, socket) => {
+      clientError(err);
+      socket.destroy();
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      // Plain TCP: connect and never start the TLS handshake.
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const received: Buffer[] = [];
+      socket.on("data", chunk => received.push(chunk));
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      await closed;
+      expect(Buffer.concat(received).length).toBe(0);
+      expect(clientError).not.toHaveBeenCalled();
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
 });

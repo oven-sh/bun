@@ -688,8 +688,12 @@ private:
          * (Node: socketOnError's bytesWritten check). No 'timeout' events are
          * emitted for these deadlines. The write-state bits are only meaningful
          * for the dispatched (Body phase) message; in the Headers phase they
-         * are leftovers from the previous keep-alive response. */
-        auto nodePhase = httpResponseData->hasNodeReceiveTimeouts
+         * are leftovers from the previous keep-alive response.
+         * For SSL, Node's HTTP layer only attaches after the handshake: a stalled
+         * handshake (isAuthorized still false, set only by onHandshake) must not be
+         * reported as an HTTP request timeout — it falls through to a plain close,
+         * still bounded by the deadline onOpen armed. */
+        auto nodePhase = httpResponseData->hasNodeReceiveTimeouts && (!SSL || httpResponseData->isAuthorized)
             ? nodeReceivePhase(s, httpResponseData) : NodeReceivePhase::None;
         if (nodePhase != NodeReceivePhase::None) {
             if (httpContextData->onClientError) {

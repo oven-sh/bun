@@ -149,7 +149,7 @@ fn count_files_in_archive(data: &[u8]) -> u32 {
 
     let mut count: u32 = 0;
     let mut entry: *mut lib::Entry = core::ptr::null_mut();
-    while archive.read_next_header(&mut entry) == lib::Result::Ok {
+    while archive.read_next_header(&mut entry).succeeded() {
         if lib::Entry::opaque_ref(entry).filetype() == FILETYPE_REGULAR {
             count += 1;
         }
@@ -352,13 +352,22 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         // Write entry to archive
         let data = data_slice.slice();
         let _ = entry_ref.clear();
+        // Same platform split as `pack_command::add_archive_entry`: the process
+        // locale is always "C", so libarchive's locale-keyed pax writer is only
+        // lossless with raw bytes on POSIX and with the UTF-8 form on Windows.
+        #[cfg(windows)]
         entry_ref.set_pathname_utf8(key_str.as_zstr());
+        #[cfg(not(windows))]
+        entry_ref.set_pathname(key_str.as_zstr());
         entry_ref.set_size(i64::try_from(data.len()).expect("int cast"));
         entry_ref.set_filetype(FILETYPE_REGULAR);
         entry_ref.set_perm(0o644);
         entry_ref.set_mtime(now_secs, 0);
 
-        if archive_ref.write_header(entry_ref) != lib::Result::Ok {
+        // `Warn` means the header was still written (libarchive fell back to a
+        // per-entry binary hdrcharset for a name its locale machinery could not
+        // convert); only `Failed`/`Fatal` mean no header was produced.
+        if !archive_ref.write_header(entry_ref).succeeded() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Failed to create tarball: ArchiveHeaderError"
             )));
@@ -1154,13 +1163,16 @@ impl FilesContext {
         // errdefer freeEntries(&entries) — handled by Drop on `entries`
 
         let mut entry: *mut lib::Entry = core::ptr::null_mut();
-        while archive.read_next_header(&mut entry) == lib::Result::Ok {
+        while archive.read_next_header(&mut entry).succeeded() {
             let entry_ref = lib::Entry::opaque_ref(entry);
             if entry_ref.filetype() != FILETYPE_REGULAR {
                 continue;
             }
 
-            let pathname = entry_ref.pathname_utf8().as_bytes();
+            // Raw header/pax bytes. `archive_entry_pathname_utf8` converts via
+            // the process locale (always "C"/ASCII here) and returns NULL for
+            // every non-ASCII name, which would key the Map by "".
+            let pathname = entry_ref.pathname().as_bytes();
             // Apply glob pattern filtering (supports both positive and negative patterns)
             if let Some(patterns) = &self.glob_patterns {
                 if !match_glob_patterns(patterns, pathname) {
@@ -1443,9 +1455,11 @@ fn extract_to_disk_filtered(
     let mut count: u32 = 0;
     let mut entry: *mut lib::Entry = core::ptr::null_mut();
 
-    while archive.read_next_header(&mut entry) == lib::Result::Ok {
+    while archive.read_next_header(&mut entry).succeeded() {
         let entry_ref = lib::Entry::opaque_ref(entry);
-        let pathname_z = entry_ref.pathname_utf8();
+        // Raw header/pax bytes, same as `libarchive::extract_to_disk`; see the
+        // note in `FilesContext::do_run`.
+        let pathname_z = entry_ref.pathname();
         let pathname = pathname_z.as_bytes();
 
         // Validate path safety (reject absolute paths, path traversal)

@@ -3547,7 +3547,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     (*tls_ptr).handlers.set(None);
                     (*tls_ptr).deref();
                 }
-                // `Handlers` has a `Drop` impl that runs `deinit` (unprotect).
+                // `Handlers`' Drop releases the roots it owns.
                 // SAFETY: `handlers_ptr` is the `heap::alloc` allocation
                 // created above; sole owner here.
                 drop(unsafe { bun_core::heap::take(handlers_ptr.as_ptr()) });

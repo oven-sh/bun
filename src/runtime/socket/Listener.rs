@@ -180,7 +180,7 @@ impl Listener {
         let mut socket_config = socket_config;
         // Teardown handled by Drop on SocketConfig
         // (excluding handlers, which are moved out below). Verified: on early-error
-        // paths the whole SocketConfig drops (Handlers::drop unprotects);
+        // paths the whole SocketConfig drops (Handlers::drop releases what it owns);
         // on success both arms move `handlers` out via `ptr::read` and suppress
         // the source's drop (`mem::forget` / `ManuallyDrop`) after extracting the
         // other owned fields, so handlers are dropped exactly once.
@@ -263,11 +263,10 @@ impl Listener {
                     }
                     Err(_) => {
                         // On error, clean up everything `this` owns *except* `this.handlers`:
-                        // those JSValues must only be unprotected once, so calling
-                        // `this.deinit()` here would unprotect the same callbacks a second
-                        // time. `handlers` was *moved* into the box, so we
-                        // recover it from the box before freeing and let it drop here for a
-                        // single-unprotect effect.
+                        // `handlers` was *moved* into the box, and the roots it owns (the
+                        // callback cell `Strong`, the promise slot) must drop exactly once,
+                        // so `this.deinit()` here would drop a second bitwise copy of them.
+                        // Recover the box and let the moved `Handlers` drop here instead.
                         this_ref.strong_data.with_mut(|s| s.deinit());
                         // SAFETY: reclaim the Box we leaked via into_raw; drops connection,
                         // protos, and (the moved) handlers exactly once.
@@ -864,7 +863,7 @@ impl Listener {
         }
 
         // connection / protos: dropped by heap::take below
-        // Drop on Handlers handles unprotect.
+        // Drop on Handlers releases the roots it owns.
         // SAFETY: reclaim the Box allocated in listen()
         drop(unsafe { bun_core::heap::take(this) });
     }

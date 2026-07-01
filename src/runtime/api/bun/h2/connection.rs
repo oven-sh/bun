@@ -1161,7 +1161,9 @@ impl Connection {
         // CONNECT, which must omit :scheme/:path and carry :authority; extended CONNECT
         // (:protocol, RFC 8441) additionally requires :method CONNECT. Without this a block
         // with no pseudo-headers reaches JS as a request whose method and url are undefined.
-        if self.is_server && is_request && !rejected && !malformed {
+        // A request block is a server-received HEADERS or a client-received PUSH_PROMISE:
+        // nghttp2 finalizes both through nghttp2_http_on_request_headers.
+        if is_request && !rejected && !malformed {
             use pseudo::{AUTHORITY, METHOD, PATH, PROTOCOL, SCHEME};
             let extended_connect = (seen_pseudo & PROTOCOL) != 0;
             malformed = if saw_connect && !extended_connect {
@@ -1173,6 +1175,16 @@ impl Connection {
             };
         }
         if malformed && !rejected {
+            // node (nghttp2): a malformed promised request is a connection error — the client
+            // answers the PUSH_PROMISE with GOAWAY(PROTOCOL_ERROR), never a push event.
+            if push_parent != 0 {
+                self.send_go_away(
+                    sink,
+                    ErrorCode::ProtocolError,
+                    b"Invalid PUSH_PROMISE frame",
+                );
+                return true;
+            }
             // node (Http2Session::OnInvalidFrame): every locally-rejected invalid frame counts
             // against maxSessionInvalidFrames; exceeding it tears the session down with
             // ERR_HTTP2_TOO_MANY_INVALID_FRAMES (same post-increment comparison as node).

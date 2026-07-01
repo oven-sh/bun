@@ -2777,6 +2777,110 @@ it("http2 client delivers a response carrying an empty or repeated host header",
   }
 });
 
+// A received PUSH_PROMISE is a request block: nghttp2 finalizes it with
+// nghttp2_http_on_request_headers, so a promised request missing its mandatory pseudo-headers
+// is a connection error — node answers with GOAWAY(PROTOCOL_ERROR) and never emits 'stream'.
+it("http2 client rejects a PUSH_PROMISE missing mandatory pseudo-headers", async () => {
+  const literal = str => {
+    const bytes = Buffer.from(str, "latin1");
+    return Buffer.concat([Buffer.from([bytes.length]), bytes]);
+  };
+  const cases = {
+    valid: Buffer.concat([
+      Buffer.from([0x82]), // :method: GET (static table index 2)
+      Buffer.from([0x86]), // :scheme: http (static table index 6)
+      Buffer.from([0x01]), // :authority (literal without indexing, name index 1)
+      literal("localhost"),
+      Buffer.from([0x04]), // :path (literal without indexing, name index 4)
+      literal("/pushed"),
+    ]),
+    "missing :scheme and :authority": Buffer.concat([
+      Buffer.from([0x82]), // :method: GET
+      Buffer.from([0x04]), // :path
+      literal("/pushed"),
+    ]),
+  };
+  for (const [caseName, pushBlock] of Object.entries(cases)) {
+    const clientFrames = [];
+    const { promise: listening, resolve: onListening } = Promise.withResolvers();
+    const { promise: sawErrorGoAway, resolve: onErrorGoAway } = Promise.withResolvers();
+    const server = net.createServer(socket => {
+      let received = Buffer.alloc(0);
+      let sawPreface = false;
+      let responded = false;
+      socket.write(new http2utils.SettingsFrame(false).data);
+      socket.on("data", chunk => {
+        received = Buffer.concat([received, chunk]);
+        if (!sawPreface) {
+          if (received.length < http2utils.kClientMagic.length) return;
+          received = received.subarray(http2utils.kClientMagic.length);
+          sawPreface = true;
+        }
+        while (received.length >= 9) {
+          const length = received.readUIntBE(0, 3);
+          if (received.length < 9 + length) break;
+          const type = received[3];
+          const flags = received[4];
+          const streamId = received.readUInt32BE(5) & 0x7fffffff;
+          const payload = Buffer.from(received.subarray(9, 9 + length));
+          received = received.subarray(9 + length);
+          clientFrames.push({ type, streamId, payload });
+          if (type === 7 && payload.readUInt32BE(4) !== 0) onErrorGoAway();
+          if (type === 4 && (flags & 1) === 0) socket.write(new http2utils.SettingsFrame(true).data);
+          if (type === 1 && !responded) {
+            responded = true;
+            // PUSH_PROMISE reserving stream 2 for the client's stream, then the stream response.
+            const promised = Buffer.alloc(4);
+            promised.writeUInt32BE(2, 0);
+            const pp = Buffer.concat([promised, pushBlock]);
+            socket.write(Buffer.concat([new http2utils.Frame(pp.length, 5, 0x4, streamId).data, pp]));
+            socket.write(new http2utils.HeadersFrame(streamId, Buffer.from([0x88]), 0, true, true).data);
+          }
+        }
+      });
+    });
+    server.listen(0, "127.0.0.1", () => onListening());
+    await listening;
+
+    let client;
+    try {
+      const pushed = [];
+      const { promise: responded, resolve: onResponse } = Promise.withResolvers();
+      client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      client.on("error", () => {});
+      client.on("stream", (pushStream, headers) => {
+        pushed.push(headers);
+        pushStream.on("error", () => {});
+      });
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.on("response", () => onResponse("response"));
+      req.resume();
+      req.end();
+      // A conforming client either delivers the response (valid push) or kills the connection
+      // with an error GOAWAY before the response (malformed push) — whichever happens first.
+      const outcome = await Promise.race([responded, sawErrorGoAway.then(() => "error-goaway")]);
+      if (caseName === "valid") {
+        expect({ caseName, outcome, pushed: pushed.length }).toEqual({ caseName, outcome: "response", pushed: 1 });
+        expect(pushed[0][":path"]).toBe("/pushed");
+      } else {
+        expect({ caseName, outcome, pushed: pushed.length }).toEqual({
+          caseName,
+          outcome: "error-goaway",
+          pushed: 0,
+        });
+        // The first GOAWAY must carry the protocol error (the JS session teardown follows the
+        // engine's GOAWAY with its own; node sends only the first).
+        const goawayCodes = clientFrames.filter(f => f.type === 7).map(f => f.payload.readUInt32BE(4));
+        expect(goawayCodes[0]).toBe(http2.constants.NGHTTP2_PROTOCOL_ERROR);
+      }
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  }
+});
+
 it("allowHTTP1 fallback validates the status line like the native handle", async () => {
   // The HTTP/1.1 fallback serializes `HTTP/1.1 ${statusCode} ${statusMessage}` itself, so it
   // must enforce the same invariants node does on the implicit-header path (no writeHead()):

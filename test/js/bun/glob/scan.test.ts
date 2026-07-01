@@ -1125,3 +1125,49 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     expect(norm(result)).toEqual(["linkdir/file.txt"]);
   });
 });
+
+// The cwd and the pattern's literal prefix both reach the OS as C strings,
+// which stop at the first NUL: "<dir>/safe\0/../secret" would scan "<dir>/safe"
+// while JS-level validation saw a path resolving to "<dir>/secret".
+describe("glob scan rejects interior null bytes", () => {
+  const nulError = expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" });
+
+  function makeNulTree(prefix: string) {
+    return tempDir(prefix, {
+      "safe/inside.ts": "x",
+      "secret/leaked.ts": "x",
+    });
+  }
+
+  test("scanSync rejects a cwd option containing a null byte", () => {
+    using dir = makeNulTree("glob-nul-cwd-sync");
+    const evil = `${dir}/safe\0/../secret`;
+    expect(() => Array.from(new Glob("*.ts").scanSync({ cwd: evil }))).toThrow(nulError);
+    expect(() => Array.from(new Glob("*.ts").scanSync(evil))).toThrow(nulError);
+  });
+
+  // `scan` runs the same argument validation as `scanSync` before scheduling
+  // any work, so a bad cwd/pattern throws from the `scan()` call itself.
+  test("scan rejects a cwd option containing a null byte", () => {
+    using dir = makeNulTree("glob-nul-cwd-async");
+    const evil = `${dir}/safe\0/../secret`;
+    expect(() => new Glob("*.ts").scan({ cwd: evil })).toThrow(nulError);
+    expect(() => new Glob("*.ts").scan(evil)).toThrow(nulError);
+  });
+
+  test("scanSync rejects a pattern containing a null byte", () => {
+    using dir = makeNulTree("glob-nul-pattern-sync");
+    expect(() => Array.from(new Glob(`${dir}/secret\0trailer/*.ts`).scanSync())).toThrow(nulError);
+  });
+
+  test("scan rejects a pattern containing a null byte", () => {
+    using dir = makeNulTree("glob-nul-pattern-async");
+    expect(() => new Glob(`${dir}/secret\0trailer/*.ts`).scan()).toThrow(nulError);
+  });
+
+  test("match never touches the filesystem so null bytes stay plain characters", () => {
+    expect(new Glob("a\0b").match("a\0b")).toBe(true);
+    expect(new Glob("a\0b").match("ab")).toBe(false);
+    expect(new Glob("*.ts").match("a\0b.ts")).toBe(true);
+  });
+});

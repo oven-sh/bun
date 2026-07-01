@@ -13,6 +13,8 @@ use bun_paths::resolve_path::join_string_buf;
 use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, platform};
 use bun_sys as syscall;
 
+use crate::node::Valid;
+
 // Codegen hooks (JSGlob): toJS / fromJS / fromJSDirect are provided by the
 // generated C++ wrapper. See PORTING.md §JSC ".classes.ts-backed types".
 #[bun_jsc::JsClass]
@@ -52,6 +54,7 @@ impl ScanOpts {
                     fn_name, MAX_PATH_BYTES
                 )));
             }
+            Valid::no_null_bytes(cwd_utf8.slice(), "cwd", "a string", global_this)?;
 
             // If its absolute return as is
             if resolve_path::Platform::AUTO.is_absolute(cwd_utf8.slice()) {
@@ -301,6 +304,9 @@ impl Glob {
         fn_name: &'static str,
         arena: &mut Arena,
     ) -> JsResult<Option<Box<GlobWalker>>> {
+        // The pattern's literal prefix is opened as a C path; `match()` never
+        // touches the filesystem, so only scan/scanSync reject interior NULs.
+        Valid::no_null_bytes(&self.pattern, "pattern", "a string", global_this)?;
         let Some(match_opts) = ScanOpts::from_js(global_this, arguments, fn_name, arena)? else {
             return Ok(None);
         };

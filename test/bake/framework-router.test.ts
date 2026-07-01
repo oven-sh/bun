@@ -163,6 +163,36 @@ describe("router root outside of the project root", () => {
     expect(stdout, `stderr: ${stderr}`).toBe("/ 200 parent index\n/blog/hello-world 200 slug:hello-world\n");
     expect(exitCode).toBe(0);
   });
+
+  // Route errors are non-fatal and labeled: an invalid pattern is reported
+  // against the path it was parsed from (relative to the router root), and a
+  // collision lists both files relative to the project root.
+  test.concurrent("route errors in a sibling directory root", async () => {
+    using dir = tempDir("fsr-sibling-root-errors", {
+      ...serveFixture("../web/pages"),
+      "apps/web/pages/index.ts": `
+        export default function (req, meta) {
+          return new Response("sibling index");
+        }
+      `,
+      "apps/web/pages/blog/[slug].ts": `
+        export default function (req, meta) {
+          return new Response("slug:" + meta.params.slug);
+        }
+      `,
+      "apps/web/pages/[oops.ts": `export default function () {}`,
+      "apps/web/pages/about.ts": `export default function () {}`,
+      "apps/web/pages/about/index.ts": `export default function () {}`,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir));
+    expect(stdout, `stderr: ${stderr}`).toBe("/ 200 sibling index\n/blog/hello-world 200 slug:hello-world\n");
+    expect(stderr).toContain('"/[oops.ts" is not a valid route');
+    expect(stderr).toContain('Missing "]" to match this route parameter');
+    expect(stderr).toContain("Multiple pages matching the same route pattern is ambiguous");
+    expect(stderr).toContain("  - ../web/pages/about.ts");
+    expect(stderr).toContain("  - ../web/pages/about/index.ts");
+    expect(exitCode).toBe(0);
+  });
 });
 
 test("discovers from filesystem paths", () => {

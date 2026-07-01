@@ -333,9 +333,8 @@ export function mysqlTextResultSetRow(seq: number, cols: (string | Buffer)[]): B
 }
 
 // MySQL Textual Resultset — page_protocol_com_query_response_text_resultset.html, in the
-// CLIENT_DEPRECATE_EOF framing mysqlHandshakeV10's default capabilities negotiate:
-//   lenenc(column_count) packet, one ColumnDefinition41 per column, one row packet per row,
-//   then an OK packet with the 0xFE header as the terminator (no intermediate EOF).
+// CLIENT_DEPRECATE_EOF framing: lenenc(column_count) packet, one ColumnDefinition41 per
+// column, one row packet per row, then an OK packet with the 0xFE header as the terminator.
 export function mysqlTextResultSet(
   startSeq: number,
   columns: { name: string; type: number }[],

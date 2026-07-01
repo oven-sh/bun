@@ -69,14 +69,9 @@ describeWithContainer(
       await sql.end();
     });
 
-    // MySQL 8's steady state for a passworded caching_sha2_password user: any
-    // successful full authentication warms the server's per-user auth cache, and
-    // every later connection takes the fast path (AuthMoreData 0x03
-    // fast_auth_success followed by the OK packet that concludes authentication).
-    // The client used to enter the command phase on the 0x03 marker alone, so the
-    // trailing OK was handed to the command handler and the second connection
-    // failed with ERR_MYSQL_UNEXPECTED_PACKET (or, if a query was already in
-    // flight, silently became that query's empty result).
+    // A passworded caching_sha2_password user's second and later connections take
+    // the fast path: AuthMoreData(0x03 fast_auth_success) followed by the OK packet
+    // that concludes authentication. Any prior full auth warms the server's cache.
     test("caching_sha2_password fast auth (warm server-side auth cache)", async () => {
       {
         await using admin = new SQL({ url: getUrl(), max: 1 });
@@ -93,33 +88,18 @@ describeWithContainer(
         expect(await cold`select 1 as x`).toEqual([{ x: 1 }]);
       }
 
-      // Connection #2: warm cache -> the server takes the fast path.
-      // allowPublicKeyRetrieval stays enabled only so that a concurrent test's
-      // FLUSH PRIVILEGES (which drops the whole auth cache) degrades this to
-      // full auth instead of flaking; the fast path is the overwhelmingly
-      // common outcome and is what the unfixed client fails on.
+      // Connection #2: warm cache -> the server takes the fast path. Keep
+      // allowPublicKeyRetrieval on so a concurrent test's FLUSH PRIVILEGES (which
+      // drops the whole auth cache) degrades this to full auth instead of flaking.
       await using fast = new SQL({ url: userUrl, max: 1, allowPublicKeyRetrieval: true });
       expect(await fast`select 'REAL-ROW' as v`).toEqual([{ v: "REAL-ROW" }]);
     });
   },
 );
 
-// ---------------------------------------------------------------------------
-// caching_sha2_password fast authentication, byte-scripted.
-//
-// Covers the same exchange as the container test above, but against a scripted
-// server so that (a) it runs without Docker and (b) both TCP framings of the
-// AuthMoreData(0x03) + OK pair can be forced: a real server coalesces or splits
-// them at its own discretion. All frames come from wire-frames.ts.
-//
+// The caching_sha2_password "Fast path succeeds" exchange, byte-scripted (rather
+// than containerized) so both TCP framings of the AuthMoreData(0x03) + OK pair can be forced:
 // https://dev.mysql.com/doc/dev/mysql-server/latest/page_caching_sha2_authentication_exchanges.html
-// "Fast path succeeds": the server responds to HandshakeResponse41 with an
-// AuthMoreData containing fast_auth_success (0x03), then sends an OK_Packet to
-// conclude authentication. Bun used to enter the command phase on the 0x03
-// marker alone; the trailing OK then either killed the connection
-// (ERR_MYSQL_UNEXPECTED_PACKET, no query in flight yet) or was mis-attributed
-// to the first query, which resolved with [] instead of its real rows.
-// ---------------------------------------------------------------------------
 
 const COM_QUERY = 0x03;
 const MYSQL_TYPE_VAR_STRING = 0xfd;
@@ -168,8 +148,8 @@ test.each(["split", "coalesced"] as const)(
         rows => ({ rows }),
         (e: { code?: string }) => ({ code: e?.code ?? String(e) }),
       );
-      // `commands` proves the client did not send COM_QUERY until authentication
-      // actually completed (before the fix it never got to send one at all).
+      // `commands` proves the client only sends COM_QUERY once authentication
+      // has actually completed.
       expect({ result, commands }).toEqual({
         result: { rows: [{ v: "REAL-ROW" }] },
         commands: [COM_QUERY],

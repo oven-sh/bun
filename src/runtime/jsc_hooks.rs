@@ -3500,7 +3500,7 @@ fn get_hardcoded_module(
             // same as `bun:internal-for-testing`. The tag key uses the
             // generated `internal:`-prefixed canonical specifier (see
             // `generated_resolved_source_tag.rs`).
-            if !cfg!(debug_assertions) {
+            if !bun_core::env::IS_DEBUG {
                 let allowed = bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
                     .load(core::sync::atomic::Ordering::Relaxed);
                 if !allowed {

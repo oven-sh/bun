@@ -361,7 +361,8 @@ function emitMetadata(target: object[] = events) {
   meta("thread_name", { name: "PlatformWorkerThread" }, kPlatformWorkerTid);
   meta("version", { node: process.versions.node });
   const release: Record<string, unknown> = { name: process.release.name };
-  if (process.release.lts) release.lts = process.release.lts;
+  const { lts } = process.release;
+  if (lts) release.lts = lts;
   meta("node", {
     process: {
       versions: process.versions,
@@ -371,8 +372,9 @@ function emitMetadata(target: object[] = events) {
     },
   });
   meta("process_name", { name: initialTitle });
-  if (process.title !== initialTitle) {
-    meta("process_name", { name: process.title });
+  const { title } = process;
+  if (title !== initialTitle) {
+    meta("process_name", { name: title });
   }
 }
 

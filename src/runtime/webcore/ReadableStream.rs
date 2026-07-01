@@ -108,6 +108,7 @@ unsafe extern "C" {
     ) -> bool;
     safe fn ReadableStream__empty(global: &JSGlobalObject) -> JSValue;
     safe fn ReadableStream__used(global: &JSGlobalObject) -> JSValue;
+    safe fn ReadableStream__errored(global: &JSGlobalObject, reason: JSValue) -> JSValue;
     safe fn ReadableStream__cancel(stream: JSValue, global: &JSGlobalObject);
     safe fn ReadableStream__cancelWithReason(
         stream: JSValue,
@@ -457,6 +458,15 @@ impl ReadableStream {
         bun_jsc::from_js_host_call(global_this, || {
             // SAFETY: FFI call into JSC bindings; global_this is a valid &JSGlobalObject.
             ReadableStream__used(global_this)
+        })
+    }
+
+    /// A stream already in the `errored` state, so every read rejects with
+    /// `reason` instead of closing cleanly.
+    pub fn errored(global_this: &JSGlobalObject, reason: JSValue) -> JsResult<JSValue> {
+        bun_jsc::from_js_host_call(global_this, || {
+            // SAFETY: FFI call into JSC bindings; global_this is a valid &JSGlobalObject.
+            ReadableStream__errored(global_this, reason)
         })
     }
 }

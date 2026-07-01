@@ -1227,3 +1227,31 @@ describe("option combinations", () => {
     expect(await proc.exited).toBe(0);
   });
 });
+
+describe("uid/gid", () => {
+  const isRoot = process.getuid?.() === 0;
+
+  it.if(isPosix && isRoot)("applies uid and gid to the child", async () => {
+    await using proc = spawn({ cmd: ["id", "-u"], uid: 65534, gid: 65534, stdout: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("65534");
+    expect(exitCode).toBe(0);
+  });
+
+  it.if(isPosix && isRoot)("omitting uid/gid leaves the child's ids unchanged", async () => {
+    await using proc = spawn({ cmd: ["id", "-u"], stdout: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("0");
+    expect(exitCode).toBe(0);
+  });
+
+  it.if(isPosix && !isRoot)("throws EPERM for a uid the process cannot set", () => {
+    let thrown: any;
+    try {
+      spawn({ cmd: ["id"], uid: 0 });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown?.code).toBe("EPERM");
+  });
+});

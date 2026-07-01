@@ -903,14 +903,17 @@ impl JsonValue {
             JsonValue::Object(o) => {
                 let o = o.get();
                 hasher.update(&[4]);
+                hasher.update(&(o.properties().len() as u32).to_le_bytes());
                 for p in o.properties().iter() {
                     hasher.update(p.key.slice());
                     p.value.write_to_hasher(hasher);
                 }
             }
             JsonValue::Array(a) => {
+                let a = a.get();
                 hasher.update(&[5]);
-                for item in a.get().items().iter() {
+                hasher.update(&(a.items().len() as u32).to_le_bytes());
+                for item in a.items().iter() {
                     item.write_to_hasher(hasher);
                 }
             }

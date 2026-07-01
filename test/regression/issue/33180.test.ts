@@ -31,10 +31,11 @@ const files = {
   `,
 };
 
-// Repeat as independent tests; without the fix the race throws the false
-// "async module" error on essentially every debug run, so any attempt suffices.
+// Independent attempts (separate temp dirs + child processes, nothing shared);
+// without the fix the race throws the false "async module" error on essentially
+// every debug run, so any attempt suffices.
 for (let attempt = 0; attempt < 4; attempt++) {
-  test(`require(esm) racing a concurrent static import loads synchronously (attempt ${attempt})`, async () => {
+  test.concurrent(`require(esm) racing a concurrent static import loads synchronously (attempt ${attempt})`, async () => {
     using dir = tempDir("issue-33180", files);
     await using proc = Bun.spawn({
       cmd: [bunExe(), "entry.mjs"],

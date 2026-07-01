@@ -28,7 +28,6 @@ use self::cpp_websocket::{CppWebSocket, CppWebSocketRef};
 use self::websocket_deflate::WebSocketDeflate;
 use self::websocket_proxy_tunnel::WebSocketProxyTunnel;
 
-// ─── Submodules ──────────────────────────────────────────────────────────
 #[path = "websocket_client/CppWebSocket.rs"]
 pub mod cpp_websocket;
 #[path = "websocket_client/WebSocketDeflate.rs"]
@@ -57,10 +56,16 @@ const MIN_COMPRESS_SIZE: usize = 860;
 /// the connection with close code 1009 instead of growing `receive_buffer`
 /// without bound.
 const MAX_RECEIVE_MESSAGE_LENGTH: usize = 128 * 1024 * 1024;
+/// RFC 6455 §5.5: a control frame's payload is at most 125 bytes.
+const MAX_CONTROL_PAYLOAD: usize = 125;
+/// RFC 6455 §5.5.1: a Close payload is the 2-byte status code + the reason.
+const MAX_CLOSE_REASON: usize = MAX_CONTROL_PAYLOAD - 2;
+/// Outgoing control frame prefix: 2-byte header + 4-byte masking key.
+const CONTROL_HEADER_SIZE: usize = 6;
+
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct WebSocket<const SSL: bool> {
-    // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) → intrusive refcount
     pub ref_count: Cell<u32>,
 
     pub tcp: Cell<Socket<SSL>>,
@@ -71,19 +76,18 @@ pub struct WebSocket<const SSL: bool> {
     // we need to start with final so we validate the first frame
     pub receiving_is_final: Cell<bool>,
 
-    pub ping_frame_bytes: Cell<[u8; 128 + 6]>,
+    /// Staging area for outgoing control frames and incoming control payloads.
+    pub ping_frame_bytes: Cell<[u8; CONTROL_HEADER_SIZE + 128]>,
     pub ping_len: Cell<u8>,
-    pub ping_received: Cell<bool>,
-    pub pong_received: Cell<bool>,
+    /// A Ping/Pong/Close payload is mid-accumulation in `ping_frame_bytes`.
+    pub control_frame_started: Cell<bool>,
     pub close_received: Cell<bool>,
-    pub close_frame_buffering: Cell<bool>,
     /// `Some` once `send_close_with_body` has enqueued the close frame: blocks
     /// further outbound writes and drives `clear_data` + `dispatch_close` once
     /// the frame is fully flushed (or the socket dies).
     pub close_dispatch_pending: RefCell<Option<(u16, bun_core::String)>>,
 
     pub receive_body_remain: Cell<usize>,
-    pub receive_pending_chunk_len: Cell<usize>,
     pub receive_buffer: RefCell<LinearFifo<u8, DynamicBuffer<u8>>>,
 
     pub send_buffer: RefCell<LinearFifo<u8, DynamicBuffer<u8>>>,
@@ -145,35 +149,10 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn should_compress(&self, data_len: usize, opcode: Opcode) -> bool {
-        // Check if compression is available
-        if self.deflate.borrow().is_none() {
-            return false;
-        }
-
-        // Only compress Text and Binary messages
-        if opcode != Opcode::Text && opcode != Opcode::Binary {
-            return false;
-        }
-
-        // Don't compress small messages where overhead exceeds benefit
-        if data_len < MIN_COMPRESS_SIZE {
-            return false;
-        }
-
-        true
+        self.deflate.borrow().is_some()
+            && matches!(opcode, Opcode::Text | Opcode::Binary)
+            && data_len >= MIN_COMPRESS_SIZE
     }
-
-    // Handler set referenced by the socket dispatch table (kind = `.ws_client[_tls]`).
-    // Replaces the C++→`register()`→`us_socket_context_on_*` round-trip.
-    // In Rust: these are aliased via the dispatch table; expose the handle_* fns directly.
-    // pub const onClose = handleClose; → see handle_close
-    // pub const onData = handleData; → see handle_data
-    // pub const onWritable = handleWritable; → see handle_writable
-    // pub const onTimeout = handleTimeout; → see handle_timeout
-    // pub const onLongTimeout = handleTimeout; → see handle_timeout
-    // pub const onConnectError = handleConnectError; → see handle_connect_error
-    // pub const onEnd = handleEnd; → see handle_end
-    // pub const onHandshake = handleHandshake; → see handle_handshake
 
     fn unref_keep_alive(&self) {
         let mut poll_ref = self.poll_ref.take();
@@ -186,29 +165,20 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.unref_keep_alive();
         self.clear_receive_buffers(true);
         self.clear_send_buffers(true);
-        self.ping_received.set(false);
-        self.pong_received.set(false);
+        self.control_frame_started.set(false);
         self.ping_len.set(0);
-        self.close_frame_buffering.set(false);
-        let pending_close = self.close_dispatch_pending.borrow_mut().take();
-        if let Some((_, reason)) = pending_close {
+        if let Some((_, reason)) = self.close_dispatch_pending.take() {
             reason.deref();
         }
-        self.receive_pending_chunk_len.set(0);
         self.receiving_compressed.set(false);
         self.message_is_compressed.set(false);
-        // deflate is Option<Box<_>>; dropping it runs Drop
         self.deflate.replace(None);
         if let Some(s) = self.secure.take() {
             // SAFETY: s is a valid SSL_CTX* owned by us per field invariant
             unsafe { boringssl::c::SSL_CTX_free(s) };
         }
-        // Clean up proxy tunnel if we own one
-        // Set to None FIRST to prevent re-entrancy (shutdown can trigger callbacks)
+        // Detach the tunnel first so its shutdown callbacks cannot re-enter this path.
         if let Some(tunnel) = self.proxy_tunnel.take() {
-            // Detach the websocket from the tunnel before shutdown so the
-            // tunnel's onClose callback doesn't dispatch a spurious 1006
-            // after we've already handled a clean close.
             let tunnel_ptr = tunnel.as_ptr();
             // SAFETY: `tunnel` holds a live ref. `clear_connected_web_socket`
             // is a single non-reentrant field write; the brief auto-ref `&mut`
@@ -294,56 +264,42 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         log!("onHandshake({})", success);
 
-        if let Some(ws) = self.outgoing_websocket.get() {
-            let ws_ref = CppWebSocket::opaque_ref(ws.as_ptr());
-            let reject_unauthorized = ws_ref.reject_unauthorized();
+        let Some(ws) = self.outgoing_websocket.get() else {
+            return;
+        };
+        if !CppWebSocket::opaque_ref(ws.as_ptr()).reject_unauthorized() {
+            // We accept the connection regardless of SSL errors.
+            return;
+        }
 
-            // Only reject the connection if reject_unauthorized is true
-            if reject_unauthorized {
-                // Check for SSL errors
-                if ssl_error.error_no != 0 {
-                    self.fail(ErrorCode::FailedToConnect);
-                    return;
-                }
+        if ssl_error.error_no != 0 || !authorized {
+            self.fail(ErrorCode::FailedToConnect);
+            return;
+        }
 
-                // Check authorization status
-                if !authorized {
-                    self.fail(ErrorCode::FailedToConnect);
-                    return;
-                }
-
-                // Check server identity
-                // SAFETY: native handle of an SSL socket is an SSL*
-                let ssl_ptr: *mut boringssl::c::SSL = socket
-                    .get_native_handle()
-                    .map_or(core::ptr::null_mut(), |p| p.cast());
-                // Fail closed: with reject_unauthorized=true we cannot verify
-                // the peer without the SSL handle, so a missing handle is a
-                // connection failure rather than a silent skip.
-                if ssl_ptr.is_null() {
-                    self.fail(ErrorCode::FailedToConnect);
-                    return;
-                }
-                // `TLSEXT_NAMETYPE_host_name` is 0 per RFC 6066 / `<openssl/tls1.h>`.
-                const TLSEXT_NAMETYPE_HOST_NAME: c_int = 0;
-                // SAFETY: ssl_ptr is non-null (checked above) and is the live
-                // `SSL*` native handle of the connected socket; the socket
-                // outlives this call.
-                let servername =
-                    unsafe { boringssl::c::SSL_get_servername(ssl_ptr, TLSEXT_NAMETYPE_HOST_NAME) };
-                if !servername.is_null() {
-                    // SAFETY: servername is a NUL-terminated C string owned by the SSL session.
-                    let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-                    // SAFETY: `ssl_ptr` is non-null (checked above) and no other
-                    // Rust borrow of the `SSL` object exists.
-                    let ssl = unsafe { &mut *ssl_ptr };
-                    if !boringssl::check_server_identity(ssl, hostname) {
-                        self.fail(ErrorCode::FailedToConnect);
-                        return;
-                    }
-                }
-            }
-            // If reject_unauthorized is false, we accept the connection regardless of SSL errors
+        // SAFETY: native handle of an SSL socket is an SSL*
+        let ssl_ptr: *mut boringssl::c::SSL = socket
+            .get_native_handle()
+            .map_or(core::ptr::null_mut(), <*mut c_void>::cast);
+        // Fail closed: without the SSL handle we cannot verify the peer.
+        if ssl_ptr.is_null() {
+            self.fail(ErrorCode::FailedToConnect);
+            return;
+        }
+        // `TLSEXT_NAMETYPE_host_name` is 0 per RFC 6066 / `<openssl/tls1.h>`.
+        const TLSEXT_NAMETYPE_HOST_NAME: c_int = 0;
+        // SAFETY: ssl_ptr is non-null (checked above) and outlived by the socket.
+        let servername =
+            unsafe { boringssl::c::SSL_get_servername(ssl_ptr, TLSEXT_NAMETYPE_HOST_NAME) };
+        if servername.is_null() {
+            return;
+        }
+        // SAFETY: servername is a NUL-terminated C string owned by the SSL session.
+        let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
+        // SAFETY: `ssl_ptr` is non-null and no other Rust borrow of the `SSL` exists.
+        let ssl = unsafe { &mut *ssl_ptr };
+        if !boringssl::check_server_identity(ssl, hostname) {
+            self.fail(ErrorCode::FailedToConnect);
         }
     }
 
@@ -356,8 +312,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub fn handle_close(&self, _socket: Socket<SSL>, _code: c_int, _reason: *mut c_void) {
         log!("onClose");
         jsc::mark_binding!();
-        let pending_close = self.close_dispatch_pending.borrow_mut().take();
-        if let Some((code, mut reason)) = pending_close {
+        if let Some((code, mut reason)) = self.close_dispatch_pending.take() {
             // The socket closed while our close frame was mid-flush; the peer
             // either got it or didn't, but JS should still see the
             // user-initiated code/reason (not an abrupt 1006).
@@ -387,13 +342,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn clear_receive_buffers(&self, free: bool) {
-        // LinearFifo's fields are private. `discard` only advances
-        // `head` (it does not rewind it), so pair it with
-        // `reset_head_if_empty` to match the Zig `head = 0; count = 0`
-        // semantics. Without the rewind, `head` would walk forward across
-        // messages and eventually wrap the ring, and `readable_slice(0)`
-        // (used to dispatch buffered messages) returns only the first
-        // contiguous segment.
+        // `discard` never rewinds `head`; `reset_head_if_empty` keeps `readable_slice(0)` contiguous.
         {
             let mut receive_buffer = self.receive_buffer.borrow_mut();
             let len = receive_buffer.readable_length();
@@ -406,7 +355,6 @@ impl<const SSL: bool> WebSocket<SSL> {
                 .replace(LinearFifo::<u8, DynamicBuffer<u8>>::init());
         }
 
-        self.receive_pending_chunk_len.set(0);
         self.receive_body_remain.set(0);
     }
 
@@ -432,10 +380,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         };
 
-        // Decompress the data
         let mut decompressed = deflate.rare_data.array_list();
-        // `defer decompressed.deinit()` → Drop on Vec
-
         if let Err(err) = deflate.decompress(data, &mut decompressed) {
             let error_code = match err {
                 websocket_deflate::Error::InflateFailed => ErrorCode::InvalidCompressedData,
@@ -447,7 +392,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
 
-        // reshaped for borrowck — drop deflate borrow before re-borrowing self
+        // Drop the deflate borrow: `dispatch_data` can re-enter `clear_data`.
         drop(deflate_slot);
         let items = decompressed.as_slice();
         self.dispatch_data(items, kind);
@@ -506,6 +451,14 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
+    fn buffer_payload(&self, data: &[u8]) -> Result<(), bun_alloc::AllocError> {
+        let mut receive_buffer = self.receive_buffer.borrow_mut();
+        let writable = receive_buffer.writable_with_size(data.len())?;
+        writable[..data.len()].copy_from_slice(data);
+        receive_buffer.update(data.len());
+        Ok(())
+    }
+
     pub fn consume(
         &self,
         data: &[u8],
@@ -515,16 +468,15 @@ impl<const SSL: bool> WebSocket<SSL> {
     ) -> usize {
         debug_assert!(data.len() <= left_in_fragment);
 
-        // For compressed messages, we must buffer all fragments until the message is complete
+        // Compressed fragments are always buffered: only the complete message can be inflated.
         if self.receiving_compressed.get() {
             return self.consume_compressed(data, left_in_fragment, kind, is_final);
         }
+        let frame_complete = data.len() == left_in_fragment;
 
-        // did all the data fit in the buffer?
-        // we can avoid copying & allocating a temporary buffer
-        if is_final && data.len() == left_in_fragment && self.receive_pending_chunk_len.get() == 0 {
-            let buffered_len = self.receive_buffer.borrow().readable_length();
-            if buffered_len == 0 {
+        if is_final && frame_complete {
+            // Whole message in one read: dispatch it without copying into `receive_buffer`.
+            if self.receive_buffer.borrow().readable_length() == 0 {
                 self.dispatch_data(data, kind);
                 self.message_is_compressed.set(false);
                 return data.len();
@@ -540,23 +492,12 @@ impl<const SSL: bool> WebSocket<SSL> {
             return 0;
         }
 
-        {
-            let mut receive_buffer = self.receive_buffer.borrow_mut();
-            let writable = receive_buffer
-                .writable_with_size(data.len())
-                .expect("unreachable");
-            writable[..data.len()].copy_from_slice(data);
-            receive_buffer.update(data.len());
-        }
-
-        if self.completes_fragment(data.len(), left_in_fragment) {
-            self.receive_pending_chunk_len.set(0);
+        self.buffer_payload(data).expect("unreachable");
+        if frame_complete {
             self.receive_body_remain.set(0);
             if is_final {
                 self.dispatch_buffered_message(kind, false);
             }
-        } else {
-            self.deduct_pending_chunk(left_in_fragment);
         }
         data.len()
     }
@@ -568,56 +509,23 @@ impl<const SSL: bool> WebSocket<SSL> {
         kind: Opcode,
         is_final: bool,
     ) -> usize {
-        // Always buffer compressed data
-        if !data.is_empty() {
-            let mut receive_buffer = self.receive_buffer.borrow_mut();
-            match receive_buffer.writable_with_size(data.len()) {
-                Ok(writable) => {
-                    writable[..data.len()].copy_from_slice(data);
-                    receive_buffer.update(data.len());
-                }
-                Err(_) => {
-                    drop(receive_buffer);
-                    self.terminate(ErrorCode::Closed);
-                    return 0;
-                }
-            }
+        if !data.is_empty() && self.buffer_payload(data).is_err() {
+            self.terminate(ErrorCode::Closed);
+            return 0;
         }
 
-        if self.completes_fragment(data.len(), left_in_fragment) {
-            self.receive_pending_chunk_len.set(0);
+        if data.len() == left_in_fragment {
             self.receive_body_remain.set(0);
             if is_final {
-                // Decompress the complete message
                 self.dispatch_buffered_message(kind, true);
             }
-        } else {
-            self.deduct_pending_chunk(left_in_fragment);
         }
         data.len()
     }
 
-    /// True when `consumed` bytes finish the current fragment and no earlier
-    /// chunk of it is still pending.
-    fn completes_fragment(&self, consumed: usize, left_in_fragment: usize) -> bool {
-        left_in_fragment >= consumed
-            && left_in_fragment - consumed - self.receive_pending_chunk_len.get() == 0
-    }
-
-    fn deduct_pending_chunk(&self, left_in_fragment: usize) {
-        self.receive_pending_chunk_len.set(
-            self.receive_pending_chunk_len
-                .get()
-                .saturating_sub(left_in_fragment),
-        );
-    }
-
-    /// Dispatch the complete message buffered in `receive_buffer` (its raw
-    /// deflate stream when `compressed`), then reset the per-message state.
+    /// Dispatch the message accumulated in `receive_buffer`, then reset the per-message state.
     fn dispatch_buffered_message(&self, kind: Opcode, compressed: bool) {
-        // take ownership of the fifo before dispatching: `dispatch_*` may
-        // call `terminate → clear_data → clear_receive_buffers(true)`
-        // which would drop the Vec backing the readable slice.
+        // Take the fifo first: `dispatch_*` can reach `clear_receive_buffers(true)` and free the readable slice.
         let buf = self
             .receive_buffer
             .replace(LinearFifo::<u8, DynamicBuffer<u8>>::init());
@@ -626,9 +534,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         } else {
             self.dispatch_data(buf.readable_slice(0), kind);
         }
-        // Restore the taken fifo so `clear_receive_buffers(false)`
-        // can keep its capacity for the next message instead of
-        // starting from a fresh zero-capacity `init()`.
+        // Restore the taken fifo so its capacity is kept for the next message.
         self.receive_buffer.replace(buf);
         self.clear_receive_buffers(false);
         if compressed {
@@ -690,15 +596,12 @@ impl<const SSL: bool> WebSocket<SSL> {
         // However, the frame parser should handle fragmented control frames nonetheless.
         // Whether or not the frame parser is given a set of fragmented bytes to parse is subject
         // to the strategy in which the client buffers and coalesces received bytes.
-        let receiving_type = self.receiving_type.get();
         let mut cursor = RecvCursor {
             data,
             state: self.receive_state.get(),
-            receiving_type,
             body_remain: self.receive_body_remain.get(),
             is_final: self.receiving_is_final.get(),
-            is_fragmented: false,
-            last_data_type: receiving_type,
+            last_data_type: self.receiving_type.get(),
         };
 
         let terminated = loop {
@@ -706,24 +609,18 @@ impl<const SSL: bool> WebSocket<SSL> {
 
             let step = match cursor.state {
                 ReceiveState::NeedHeader => self.recv_frame_header(&mut cursor),
-                ReceiveState::NeedMask => {
-                    self.terminate(ErrorCode::UnexpectedMaskFromServer);
-                    Step::Terminated
+                ReceiveState::NeedMask => self.recv_failed(ErrorCode::UnexpectedMaskFromServer),
+                ReceiveState::ExtendedPayloadLength16 => {
+                    self.recv_extended_payload_length(&mut cursor, 2)
                 }
                 ReceiveState::ExtendedPayloadLength64 => {
                     self.recv_extended_payload_length(&mut cursor, 8)
-                }
-                ReceiveState::ExtendedPayloadLength16 => {
-                    self.recv_extended_payload_length(&mut cursor, 2)
                 }
                 ReceiveState::Ping => self.recv_ping_or_pong(&mut cursor, Opcode::Ping),
                 ReceiveState::Pong => self.recv_ping_or_pong(&mut cursor, Opcode::Pong),
                 ReceiveState::NeedBody => self.recv_body(&mut cursor),
                 ReceiveState::Close => self.recv_close(&mut cursor),
-                ReceiveState::Fail => {
-                    self.terminate(ErrorCode::UnsupportedControlFrame);
-                    Step::Terminated
-                }
+                ReceiveState::Fail => self.recv_failed(ErrorCode::UnsupportedControlFrame),
             };
             match step {
                 Step::Continue => {}
@@ -732,7 +629,6 @@ impl<const SSL: bool> WebSocket<SSL> {
             }
         };
 
-        // epilogue
         if terminated {
             self.close_received.set(true);
         } else {
@@ -740,6 +636,11 @@ impl<const SSL: bool> WebSocket<SSL> {
             self.receiving_type.set(cursor.last_data_type);
             self.receive_body_remain.set(cursor.body_remain);
         }
+    }
+
+    fn recv_failed(&self, code: ErrorCode) -> Step {
+        self.terminate(code);
+        Step::Terminated
     }
 
     /// Parse the 2-byte frame header (see the diagram on
@@ -764,111 +665,74 @@ impl<const SSL: bool> WebSocket<SSL> {
             bytes
         };
 
-        cursor.body_remain = 0;
-        let mut need_compression = false;
-        cursor.is_final = false;
+        let header = parse_websocket_header(header_bytes);
+        cursor.state = header.next;
+        cursor.body_remain = header.payload_len;
+        cursor.is_final = header.is_final;
 
-        cursor.state = parse_websocket_header(
-            header_bytes,
-            &mut cursor.receiving_type,
-            &mut cursor.body_remain,
-            &mut cursor.is_fragmented,
-            &mut cursor.is_final,
-            &mut need_compression,
-        );
-        match cursor.receiving_type {
+        match header.opcode {
             Opcode::Continue => {
                 // if is final is true continue is invalid
                 if self.receiving_is_final.get() {
                     // nothing to continue here
                     // Per Autobahn test case 5.9: "The connection is failed immediately, since there is no message to continue."
-                    self.terminate(ErrorCode::UnexpectedOpcode);
-                    return Step::Terminated;
+                    return self.recv_failed(ErrorCode::UnexpectedOpcode);
                 }
                 // only update final if is a valid continue
-                self.receiving_is_final.set(cursor.is_final);
+                self.receiving_is_final.set(header.is_final);
             }
             Opcode::Text | Opcode::Binary => {
                 // if the last one is not final this is invalid because we are waiting a continue
                 if !self.receiving_is_final.get() {
-                    self.terminate(ErrorCode::UnexpectedOpcode);
-                    return Step::Terminated;
+                    return self.recv_failed(ErrorCode::UnexpectedOpcode);
                 }
                 // for text and binary frames we need to keep track of final and type
-                self.receiving_is_final.set(cursor.is_final);
-                cursor.last_data_type = cursor.receiving_type;
+                self.receiving_is_final.set(header.is_final);
+                cursor.last_data_type = header.opcode;
             }
             // Control frames must not be fragmented.
-            kind if kind.is_control() && cursor.is_fragmented => {
-                self.terminate(ErrorCode::ControlFrameIsFragmented);
-                return Step::Terminated;
+            op if op.is_control() && header.is_fragmented => {
+                return self.recv_failed(ErrorCode::ControlFrameIsFragmented);
             }
             _ => {}
         }
 
-        match cursor.receiving_type {
+        if !matches!(
+            header.opcode,
             Opcode::Continue
-            | Opcode::Text
-            | Opcode::Binary
-            | Opcode::Ping
-            | Opcode::Pong
-            | Opcode::Close => {}
-            _ => {
-                self.terminate(ErrorCode::UnsupportedControlFrame);
-                return Step::Terminated;
-            }
+                | Opcode::Text
+                | Opcode::Binary
+                | Opcode::Ping
+                | Opcode::Pong
+                | Opcode::Close
+        ) {
+            return self.recv_failed(ErrorCode::UnsupportedControlFrame);
         }
 
-        if need_compression {
-            if self.deflate.borrow().is_none() {
-                self.terminate(ErrorCode::CompressionUnsupported);
-                return Step::Terminated;
-            }
-            // Control frames must not be compressed
-            if cursor.receiving_type.is_control() {
-                self.terminate(ErrorCode::InvalidControlFrame);
-                return Step::Terminated;
-            }
+        if header.compressed && self.deflate.borrow().is_none() {
+            return self.recv_failed(ErrorCode::CompressionUnsupported);
         }
 
-        // Track compression state for this message
-        match cursor.receiving_type {
-            // New message starts - set both compression states
+        // A new message records its own RSV1 bit; a continuation inherits the message's.
+        match header.opcode {
             Opcode::Text | Opcode::Binary => {
-                self.message_is_compressed.set(need_compression);
-                self.receiving_compressed.set(need_compression);
+                self.message_is_compressed.set(header.compressed);
+                self.receiving_compressed.set(header.compressed);
             }
-            // Continuation frame - use the compression state from the message start
-            Opcode::Continue => {
-                self.receiving_compressed
-                    .set(self.message_is_compressed.get());
-            }
+            Opcode::Continue => self
+                .receiving_compressed
+                .set(self.message_is_compressed.get()),
             _ => {}
         }
 
-        // Handle when the payload length is 0, but it is a message
-        //
-        // This should become
-        //
-        // - ArrayBuffer(0)
-        // - ""
-        // - Buffer(0) (etc)
-        //
+        // An empty final message still dispatches ("", ArrayBuffer(0), ...).
         if cursor.body_remain == 0 && cursor.state == ReceiveState::NeedBody && cursor.is_final {
-            let _ = self.consume(
-                b"",
-                cursor.body_remain,
-                cursor.last_data_type,
-                cursor.is_final,
-            );
+            let _ = self.consume(b"", 0, cursor.last_data_type, true);
 
-            // Return to the header state to read the next frame
             cursor.state = ReceiveState::NeedHeader;
-            cursor.is_fragmented = false;
             self.receiving_compressed.set(false);
             self.message_is_compressed.set(false);
 
-            // Bail out if there's nothing left to read
             if cursor.data.is_empty() {
                 return Step::NeedMoreData;
             }
@@ -918,61 +782,58 @@ impl<const SSL: bool> WebSocket<SSL> {
         if cursor.body_remain == 0 {
             // this is an error
             // the server should've set length to zero
-            self.terminate(ErrorCode::InvalidControlFrame);
-            return Step::Terminated;
+            return self.recv_failed(ErrorCode::InvalidControlFrame);
         }
         Step::Continue
     }
 
-    /// Ping and Pong share the ≤125-byte control payload assembly in
-    /// `ping_frame_bytes`; the only differences are which "header seen" flag
-    /// tracks the in-progress frame and that a Ping is answered with a Pong.
-    fn recv_ping_or_pong(&self, cursor: &mut RecvCursor<'_>, opcode: Opcode) -> Step {
-        let received = if opcode == Opcode::Ping {
-            &self.ping_received
-        } else {
-            &self.pong_received
-        };
-        if !received.get() {
-            if cursor.body_remain > 125 {
-                self.terminate(ErrorCode::InvalidControlFrame);
-                return Step::Terminated;
-            }
+    /// While `control_frame_started`, `cursor.body_remain` counts bytes buffered so far, not bytes left.
+    fn buffer_control_payload(
+        &self,
+        cursor: &mut RecvCursor<'_>,
+    ) -> Option<([u8; MAX_CONTROL_PAYLOAD], usize)> {
+        if !self.control_frame_started.get() {
             self.ping_len.set(cursor.body_remain as u8);
             cursor.body_remain = 0;
-            received.set(true);
+            self.control_frame_started.set(true);
         }
         let payload_len = self.ping_len.get() as usize;
 
         if !cursor.data.is_empty() {
-            // copy the data to the ping frame
             let total_received = payload_len.min(cursor.body_remain + cursor.data.len());
             let mut ping_frame_bytes = self.ping_frame_bytes.get();
-            let slice = &mut ping_frame_bytes[6..][cursor.body_remain..total_received];
-            let slice_len = slice.len();
-            slice.copy_from_slice(&cursor.data[..slice_len]);
+            let dst =
+                &mut ping_frame_bytes[CONTROL_HEADER_SIZE..][cursor.body_remain..total_received];
+            let copied = dst.len();
+            dst.copy_from_slice(&cursor.data[..copied]);
             self.ping_frame_bytes.set(ping_frame_bytes);
             cursor.body_remain = total_received;
-            cursor.data = &cursor.data[slice_len..];
+            cursor.data = &cursor.data[copied..];
         }
-        if payload_len - cursor.body_remain > 0 {
+        if payload_len > cursor.body_remain {
             // wait for more data - the control payload is fragmented across TCP segments
-            return Step::NeedMoreData;
+            return None;
         }
 
-        // copy the ≤125-byte payload to a stack array:
-        // `dispatch_data` may
-        // call `terminate → clear_data` which mutates `ping_frame_bytes`'
-        // bookkeeping while the readable `&[u8]` would still be live.
-        let mut payload_buf = [0u8; 125];
-        payload_buf[..payload_len]
-            .copy_from_slice(&self.ping_frame_bytes.get()[6..][..payload_len]);
-        self.dispatch_data(&payload_buf[..payload_len], opcode);
+        // Stack copy: the caller's dispatch/close path can reach `clear_data`, which mutates `ping_frame_bytes`.
+        let mut payload = [0u8; MAX_CONTROL_PAYLOAD];
+        payload[..payload_len]
+            .copy_from_slice(&self.ping_frame_bytes.get()[CONTROL_HEADER_SIZE..][..payload_len]);
+        self.control_frame_started.set(false);
+        Some((payload, payload_len))
+    }
+
+    fn recv_ping_or_pong(&self, cursor: &mut RecvCursor<'_>, opcode: Opcode) -> Step {
+        if !self.control_frame_started.get() && cursor.body_remain > MAX_CONTROL_PAYLOAD {
+            return self.recv_failed(ErrorCode::InvalidControlFrame);
+        }
+        let Some((payload, payload_len)) = self.buffer_control_payload(cursor) else {
+            return Step::NeedMoreData;
+        };
+        self.dispatch_data(&payload[..payload_len], opcode);
 
         cursor.state = ReceiveState::NeedHeader;
         cursor.body_remain = 0;
-        cursor.receiving_type = cursor.last_data_type;
-        received.set(false);
 
         if opcode == Opcode::Ping {
             // we need to send all pongs to pass autobahn tests
@@ -987,23 +848,23 @@ impl<const SSL: bool> WebSocket<SSL> {
     fn recv_body(&self, cursor: &mut RecvCursor<'_>) -> Step {
         let buffered_len = self.receive_buffer.borrow().readable_length();
         if buffered_len.saturating_add(cursor.body_remain) > MAX_RECEIVE_MESSAGE_LENGTH {
-            self.terminate(ErrorCode::MessageTooBig);
-            return Step::Terminated;
+            return self.recv_failed(ErrorCode::MessageTooBig);
         }
-        let to_consume = cursor.body_remain.min(cursor.data.len());
 
+        let (chunk, rest) = cursor
+            .data
+            .split_at(cursor.body_remain.min(cursor.data.len()));
         let consumed = self.consume(
-            &cursor.data[..to_consume],
+            chunk,
             cursor.body_remain,
             cursor.last_data_type,
             cursor.is_final,
         );
 
         cursor.body_remain -= consumed;
-        cursor.data = &cursor.data[to_consume..];
+        cursor.data = rest;
         if cursor.body_remain == 0 {
             cursor.state = ReceiveState::NeedHeader;
-            cursor.is_fragmented = false;
         }
 
         if cursor.data.is_empty() {
@@ -1015,9 +876,8 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// Assemble the (optional) close payload, echo a close frame back, and
     /// stop reading: a received Close always terminates the parse loop.
     fn recv_close(&self, cursor: &mut RecvCursor<'_>) -> Step {
-        if cursor.body_remain == 1 || cursor.body_remain > 125 {
-            self.terminate(ErrorCode::InvalidControlFrame);
-            return Step::Terminated;
+        if cursor.body_remain == 1 || cursor.body_remain > MAX_CONTROL_PAYLOAD {
+            return self.recv_failed(ErrorCode::InvalidControlFrame);
         }
 
         if cursor.body_remain == 0 {
@@ -1026,52 +886,25 @@ impl<const SSL: bool> WebSocket<SSL> {
             return Step::Terminated;
         }
 
-        if !self.close_frame_buffering.get() {
-            self.ping_len.set(cursor.body_remain as u8);
-            cursor.body_remain = 0;
-            self.close_frame_buffering.set(true);
-        }
-        let to_copy = cursor
-            .data
-            .len()
-            .min(self.ping_len.get() as usize - cursor.body_remain);
-        let mut ping_frame_bytes = self.ping_frame_bytes.get();
-        ping_frame_bytes[6 + cursor.body_remain..][..to_copy]
-            .copy_from_slice(&cursor.data[..to_copy]);
-        self.ping_frame_bytes.set(ping_frame_bytes);
-        cursor.body_remain += to_copy;
-        if cursor.body_remain < self.ping_len.get() as usize {
+        let Some((payload, payload_len)) = self.buffer_control_payload(cursor) else {
             return Step::NeedMoreData;
-        }
+        };
 
         self.close_received.set(true);
-        let payload_len = self.ping_len.get() as usize;
-        let mut close_data_buf = [0u8; 125];
-        close_data_buf[..payload_len]
-            .copy_from_slice(&self.ping_frame_bytes.get()[6..][..payload_len]);
-        let close_data = &close_data_buf[..payload_len];
         if payload_len >= 2 {
-            let received_code = u16::from_be_bytes([close_data[0], close_data[1]]);
+            let received_code = u16::from_be_bytes([payload[0], payload[1]]);
             let (echo_code, dispatch_code) = received_close_codes(received_code);
-            let mut buf: [u8; 125] = [0; 125];
-            buf[..payload_len - 2].copy_from_slice(&close_data[2..payload_len]);
-            self.send_close_with_body(
-                echo_code,
-                Some(dispatch_code),
-                Some(&mut buf),
-                payload_len - 2,
-            );
+            self.send_close_with_body(echo_code, Some(dispatch_code), &payload[2..payload_len]);
         } else {
             self.send_close();
         }
-        self.close_frame_buffering.set(false);
         Step::Terminated
     }
 
     pub fn send_close(&self) {
         // Received a bodyless Close: echo a normal-closure frame on the wire,
         // but report 1005 ("no status received") to JS per RFC 6455 §7.1.5.
-        self.send_close_with_body(1000, Some(1005), None, 0);
+        self.send_close_with_body(1000, Some(1005), &[]);
     }
 
     fn enqueue_encoded_bytes(&self, bytes: &[u8]) -> bool {
@@ -1122,19 +955,17 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn send_data(&self, bytes: Copy<'_>, do_write: bool, opcode: Opcode) -> bool {
-        let should_compress = self.deflate.borrow().is_some()
-            && (opcode == Opcode::Text || opcode == Opcode::Binary)
+        let may_compress = self.deflate.borrow().is_some()
+            && matches!(opcode, Opcode::Text | Opcode::Binary)
             && !matches!(bytes, Copy::Raw(_));
-        if !should_compress {
+        if !may_compress {
             return self.send_data_uncompressed(bytes, do_write, opcode);
         }
 
-        // For compressed messages, we need to compress the content first.
-        // Uses global mimalloc rather than a pooled arena (potential perf gap).
+        // The compressor consumes UTF-8/raw bytes, so transcode first.
         let utf8_storage: Vec<u8>;
         let content_to_compress: &[u8] = match bytes {
             Copy::Utf16(utf16) => {
-                // Convert UTF16 to UTF8 for compression
                 let content_byte_len: usize = strings::element_length_utf16_into_utf8(utf16);
                 let mut buf = vec![0u8; content_byte_len];
                 let encode_result = strings::copy_utf16_into_utf8(&mut buf, utf16);
@@ -1143,7 +974,6 @@ impl<const SSL: bool> WebSocket<SSL> {
                 &utf8_storage
             }
             Copy::Latin1(latin1) => {
-                // Convert Latin1 to UTF8 for compression
                 let content_byte_len: usize = strings::element_length_latin1_into_utf8(latin1);
                 if content_byte_len == latin1.len() {
                     // It's all ascii, we don't need to copy it an extra time.
@@ -1160,13 +990,11 @@ impl<const SSL: bool> WebSocket<SSL> {
             Copy::Raw(_) => unreachable!(),
         };
 
-        // Check if compression is worth it
+        // Small messages aren't worth the deflate overhead.
         if !self.should_compress(content_to_compress.len(), opcode) {
             return self.send_data_uncompressed(bytes, do_write, opcode);
         }
 
-        // Allocated from the global allocator rather than a pooled
-        // arena (potential perf gap).
         let mut compressed: Vec<u8> = Vec::new();
         let compressed_ok = self.deflate.borrow_mut().as_mut().is_some_and(|deflate| {
             deflate
@@ -1178,7 +1006,6 @@ impl<const SSL: bool> WebSocket<SSL> {
             return self.send_data_uncompressed(bytes, do_write, opcode);
         }
 
-        // Create the compressed frame
         let frame_size = WebsocketHeader::frame_size_including_mask(compressed.len());
         {
             let mut send_buffer = self.send_buffer.borrow_mut();
@@ -1297,56 +1124,34 @@ impl<const SSL: bool> WebSocket<SSL> {
             return false;
         }
 
-        // WebsocketHeader has no public
-        // raw-bits ctor, so build the all-zero header via from_slice.
-        let mut header = WebsocketHeader::from_slice([0, 0]);
-        header.set_final(true);
-        header.set_opcode(Opcode::Pong);
-
-        header.set_mask(true);
-        header.set_len(self.ping_len.get() & 0x7F); // @truncate to u7
-        let header_slice = header.slice();
-        let mut ping_frame_bytes = self.ping_frame_bytes.get();
-        ping_frame_bytes[0] = header_slice[0];
-        ping_frame_bytes[1] = header_slice[1];
-
         let ping_len = self.ping_len.get() as usize;
+        let header = WebsocketHeader::new(self.ping_len.get() & 0x7F, true, Opcode::Pong);
+        let mut ping_frame_bytes = self.ping_frame_bytes.get();
+        ping_frame_bytes[..2].copy_from_slice(&header.slice());
+
         if ping_len > 0 {
-            // reshaped for borrowck — Mask::fill needs disjoint borrows of ping_frame_bytes
-            let (head, tail) = ping_frame_bytes.split_at_mut(6);
-            let mask_buf: &mut [u8; 4] = (&mut head[2..6])
+            // Mask::fill_in_place needs disjoint borrows of the masking key and the payload.
+            let (head, payload) = ping_frame_bytes.split_at_mut(CONTROL_HEADER_SIZE);
+            let mask_buf: &mut [u8; 4] = (&mut head[2..CONTROL_HEADER_SIZE])
                 .try_into()
                 .expect("infallible: size matches");
-            let to_mask = &mut tail[..ping_len];
-            // SAFETY: input and output point to the same memory; Mask::fill supports in-place
-            Mask::fill_in_place(&self.global_this, mask_buf, to_mask);
-            self.ping_frame_bytes.set(ping_frame_bytes);
-            // `enqueue_encoded_bytes` may call `terminate → clear_data`, which
-            // mutates `ping_frame_bytes`' bookkeeping; send the local copy.
-            let frame_len = 6 + ping_len;
-            self.enqueue_encoded_bytes(&ping_frame_bytes[..frame_len])
+            Mask::fill_in_place(&self.global_this, mask_buf, &mut payload[..ping_len]);
         } else {
-            ping_frame_bytes[2..6].fill(0); // autobahn tests require that we mask empty pongs
-            self.ping_frame_bytes.set(ping_frame_bytes);
-            self.enqueue_encoded_bytes(&ping_frame_bytes[..6])
+            // autobahn tests require that we mask empty pongs
+            ping_frame_bytes[2..CONTROL_HEADER_SIZE].fill(0);
         }
+        self.ping_frame_bytes.set(ping_frame_bytes);
+        // `enqueue_encoded_bytes` may call `terminate → clear_data`, which
+        // mutates `ping_frame_bytes`' bookkeeping; send the local copy.
+        self.enqueue_encoded_bytes(&ping_frame_bytes[..CONTROL_HEADER_SIZE + ping_len])
     }
 
     /// `code` is the status code written to the wire frame. `dispatch_code`
     /// overrides the code reported to JS (`CloseEvent.code`) when it differs
     /// from the wire code — e.g. a received bodyless Close echoes 1000 but
     /// reports 1005; when `None`, JS sees `code`.
-    fn send_close_with_body(
-        &self,
-        code: u16,
-        dispatch_code: Option<u16>,
-        body: Option<&mut [u8; 125]>,
-        body_len: usize,
-    ) {
-        // RFC 6455 §5.5: control-frame payloads are capped at 125 bytes total,
-        // and a close-frame payload starts with the 2-byte status code, so the
-        // reason text is limited to 123 bytes.
-        let body_len = body_len.min(123);
+    fn send_close_with_body(&self, code: u16, dispatch_code: Option<u16>, body: &[u8]) {
+        let body_len = body.len().min(MAX_CLOSE_REASON);
         log!("Sending close with code {}", code);
         if self.has_pending_close_dispatch() {
             // A close is already mid-flush (user-initiated ws.close() under
@@ -1363,50 +1168,37 @@ impl<const SSL: bool> WebSocket<SSL> {
         // the socket immediately readable (recv → 0), and the resulting on_end
         // → terminate → cancel(Failure) would RST and discard the buffered
         // frame.
-        let mut final_body_bytes = [0u8; 128 + 8];
-        // WebsocketHeader has no public
-        // raw-bits ctor, so build the all-zero header via from_slice.
-        let mut header = WebsocketHeader::from_slice([0, 0]);
-        header.set_final(true);
-        header.set_opcode(Opcode::Close);
-        header.set_mask(true);
-        header.set_len(((body_len + 2) & 0x7F) as u8); // @truncate to u7
-        let header_slice = header.slice();
-        final_body_bytes[0] = header_slice[0];
-        final_body_bytes[1] = header_slice[1];
-        // mask_buf at [2..6]
-        final_body_bytes[6..8].copy_from_slice(&code.to_be_bytes());
+        let mut frame = [0u8; CONTROL_HEADER_SIZE + 2 + MAX_CLOSE_REASON];
+        let header = WebsocketHeader::new(((body_len + 2) & 0x7F) as u8, true, Opcode::Close);
+        frame[..2].copy_from_slice(&header.slice());
+        // the 4-byte masking key lives at frame[2..6]
+        frame[CONTROL_HEADER_SIZE..][..2].copy_from_slice(&code.to_be_bytes());
 
         let mut reason = bun_core::String::empty();
-        if let Some(data) = body {
-            if body_len > 0 {
-                let body_slice = &data[..body_len];
-                // close is always utf8
-                if !strings::is_valid_utf8(body_slice) {
-                    self.terminate(ErrorCode::InvalidUtf8);
-                    return;
-                }
-                reason = bun_core::String::clone_utf8(body_slice);
-                final_body_bytes[8..][..body_len].copy_from_slice(body_slice);
+        if body_len > 0 {
+            let body = &body[..body_len];
+            // close is always utf8
+            if !strings::is_valid_utf8(body) {
+                self.terminate(ErrorCode::InvalidUtf8);
+                return;
             }
+            reason = bun_core::String::clone_utf8(body);
+            frame[CONTROL_HEADER_SIZE + 2..][..body_len].copy_from_slice(body);
         }
 
-        // we must mask the code
-        let slice_len = 8 + body_len;
+        // we must mask the code (and the reason, if any)
+        let frame_len = CONTROL_HEADER_SIZE + 2 + body_len;
         {
-            let (head, tail) = final_body_bytes.split_at_mut(6);
-            let mask_buf: &mut [u8; 4] = (&mut head[2..6])
+            let (head, payload) = frame.split_at_mut(CONTROL_HEADER_SIZE);
+            let mask_buf: &mut [u8; 4] = (&mut head[2..CONTROL_HEADER_SIZE])
                 .try_into()
                 .expect("infallible: size matches");
-            let payload = &mut tail[..slice_len - 6];
-            Mask::fill_in_place(&self.global_this, mask_buf, payload);
+            Mask::fill_in_place(&self.global_this, mask_buf, &mut payload[..2 + body_len]);
         }
-        let slice = &final_body_bytes[..slice_len];
 
-        if self.enqueue_encoded_bytes(slice) {
+        if self.enqueue_encoded_bytes(&frame[..frame_len]) {
             let dispatch_code = dispatch_code.unwrap_or(code);
-            let pending_len = self.send_buffer.borrow().readable_length();
-            if pending_len == 0 {
+            if self.send_buffer.borrow().readable_length() == 0 {
                 self.shutdown_after_close_frame();
                 self.clear_data();
                 self.dispatch_close(dispatch_code, &mut reason);
@@ -1415,7 +1207,8 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // in send_buffer. clear_data() would discard it (and the
                 // proxy_tunnel needed to flush it), so defer teardown until
                 // handle_writable drains the buffer or the socket dies.
-                *self.close_dispatch_pending.borrow_mut() = Some((dispatch_code, reason));
+                self.close_dispatch_pending
+                    .replace(Some((dispatch_code, reason)));
             }
         }
     }
@@ -1434,8 +1227,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn finish_pending_close(&self) {
-        let pending_close = self.close_dispatch_pending.borrow_mut().take();
-        if let Some((code, mut reason)) = pending_close {
+        if let Some((code, mut reason)) = self.close_dispatch_pending.take() {
             self.shutdown_after_close_frame();
             self.clear_data();
             self.dispatch_close(code, &mut reason);
@@ -1501,6 +1293,17 @@ impl<const SSL: bool> WebSocket<SSL> {
         false
     }
 
+    /// Frame small unbackpressured sends on the stack; else fall back to [`Self::send_data`].
+    fn send_frame(&self, bytes: Copy<'_>, payload_byte_len: usize, opcode: Opcode) {
+        let frame_size = WebsocketHeader::frame_size_including_mask(payload_byte_len);
+        if !self.has_backpressure() && frame_size < STACK_FRAME_SIZE {
+            self.send_inline_frame(bytes, payload_byte_len, frame_size, opcode);
+            return;
+        }
+
+        let _ = self.send_data(bytes, !self.has_backpressure(), opcode);
+    }
+
     // `extern "C"` entrypoint; pointers are valid by C++ contract (see SAFETY comments below).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub extern "C" fn write_binary_data(this_ptr: *mut Self, ptr: *const u8, len: usize, op: u8) {
@@ -1519,19 +1322,10 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
 
-        let opcode = Opcode::from_raw(op);
         // SAFETY: ptr/len from C++; caller guarantees valid slice. Empty Blob
         // sends (null, 0); `ffi::slice` tolerates that shape.
         let slice: &[u8] = unsafe { bun_core::ffi::slice(ptr, len) };
-        let bytes = Copy::Bytes(slice);
-        // fast path: small frame, no backpressure, attempt to send without allocating
-        let frame_size = WebsocketHeader::frame_size_including_mask(len);
-        if !this.has_backpressure() && frame_size < STACK_FRAME_SIZE {
-            this.send_inline_frame(bytes, slice.len(), frame_size, opcode);
-            return;
-        }
-
-        let _ = this.send_data(bytes, !this.has_backpressure(), opcode);
+        this.send_frame(Copy::Bytes(slice), slice.len(), Opcode::from_raw(op));
     }
 
     /// Encode a frame small enough for a stack buffer and hand it straight to
@@ -1579,40 +1373,25 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
 
-        let opcode = Opcode::from_raw(op);
-
         // Cast the JSValue to a Blob.
         // `bun_jsc::webcore::Blob` is an opaque C-ABI shim (real
         // layout lives in `bun_runtime::webcore::Blob`, a higher-tier crate).
         // `from_js`/`shared_view` trampoline through extern fns to avoid the
         // dep cycle — see `bun_jsc::webcore::Blob` impl block.
-        if let Some(blob) = blob_value.as_::<bun_jsc::webcore::Blob>() {
-            // Get the shared view of the blob data
-            // SAFETY: `as_` returned a live `*mut Blob` owned by the JS heap;
-            // the JSValue is rooted by the caller for the duration of this call.
-            let data = unsafe { (*blob).shared_view() };
-            if data.is_empty() {
-                // Empty blob, send empty frame
-                let bytes = Copy::Bytes(&[]);
-                let _ = this.send_data(bytes, !this.has_backpressure(), opcode);
-                return;
-            }
-
-            // Send the blob data similar to write_binary_data
-            let bytes = Copy::Bytes(data);
-
-            // Fast path for small blobs
-            let frame_size = WebsocketHeader::frame_size_including_mask(data.len());
-            if !this.has_backpressure() && frame_size < STACK_FRAME_SIZE {
-                this.send_inline_frame(bytes, data.len(), frame_size, opcode);
-                return;
-            }
-
-            let _ = this.send_data(bytes, !this.has_backpressure(), opcode);
-        } else {
-            // Invalid blob, close connection
+        let Some(blob) = blob_value.as_::<bun_jsc::webcore::Blob>() else {
             this.dispatch_abrupt_close(ErrorCode::Ended);
+            return;
+        };
+        let opcode = Opcode::from_raw(op);
+        // SAFETY: `as_` returned a live `*mut Blob` owned by the JS heap;
+        // the JSValue is rooted by the caller for the duration of this call.
+        let data = unsafe { (*blob).shared_view() };
+        if data.is_empty() {
+            let _ = this.send_data(Copy::Bytes(&[]), !this.has_backpressure(), opcode);
+            return;
         }
+
+        this.send_frame(Copy::Bytes(data), data.len(), opcode);
     }
 
     // `extern "C"` entrypoint; pointers are valid by C++ contract (see SAFETY comments below).
@@ -1704,58 +1483,13 @@ impl<const SSL: bool> WebSocket<SSL> {
         if !this.has_tcp() {
             return;
         }
-        let mut close_reason_buf = [0u8; 128];
+        let mut reason_buf = [0u8; MAX_CONTROL_PAYLOAD];
         // SAFETY: reason is null or a valid *const ZigString from C++
-        if let Some(str) = unsafe { reason.as_ref() } {
-            'inner: {
-                // The reason must be written in UTF-8 regardless of
-                // backing encoding. `ZigString` has no `Display` impl yet, so
-                // handle the encoding switch directly: 8-bit copies bytes,
-                // 16-bit transcodes via `to_owned_slice()` (UTF-16 → UTF-8).
-                use std::io::Write;
-                let mut cursor = std::io::Cursor::new(&mut close_reason_buf[..]);
-                if str.is_16bit() {
-                    // Allocates; close-reason is bounded ≤125 bytes and this
-                    // path is cold (close handshake).
-                    let utf8 = str.to_owned_slice();
-                    if cursor.write_all(&utf8).is_err() {
-                        break 'inner;
-                    }
-                } else if str.is_utf8() {
-                    // Already UTF-8-tagged: bytes are valid UTF-8 verbatim.
-                    if cursor.write_all(str.slice()).is_err() {
-                        break 'inner;
-                    }
-                } else {
-                    // 8-bit Latin-1: transcode Latin-1 → UTF-8.
-                    // Writing raw Latin-1 bytes
-                    // here would fail the UTF-8 check in `send_close_with_body`
-                    // and terminate(InvalidUtf8) instead of sending the frame.
-                    let pos = cursor.position() as usize;
-                    let dst = &mut cursor.get_mut()[pos..];
-                    let result = strings::copy_latin1_into_utf8(dst, str.slice());
-                    if (result.read as usize) < str.slice().len() {
-                        // Out of buffer space.
-                        break 'inner;
-                    }
-                    cursor.set_position((pos + result.written as usize) as u64);
-                }
-                let wrote_len = cursor.position() as usize;
-                // 125-byte close-frame payload budget minus the 2-byte status code.
-                if wrote_len > 123 {
-                    break 'inner;
-                }
-                // SAFETY: `close_reason_buf` is a 128-byte stack array, so its
-                // first 125 bytes form a valid `[u8; 125]` (align 1); `cursor`
-                // (the only other borrow) ended at `wrote_len` above, so this
-                // `&mut` is unique.
-                let buf = unsafe { &mut *close_reason_buf.as_mut_ptr().cast::<[u8; 125]>() };
-                this.send_close_with_body(code, None, Some(buf), wrote_len);
-                return;
-            }
-        }
+        let reason_len = unsafe { reason.as_ref() }
+            .and_then(|str| encode_close_reason(str, &mut reason_buf))
+            .unwrap_or(0);
 
-        this.send_close_with_body(code, None, None, 0);
+        this.send_close_with_body(code, None, &reason_buf[..reason_len]);
     }
 
     /// Allocate a client with `ref_count == 1` (the I/O-layer ref, released by
@@ -1777,15 +1511,12 @@ impl<const SSL: bool> WebSocket<SSL> {
             receive_state: Cell::new(ReceiveState::NeedHeader),
             receiving_type: Cell::new(Opcode::ResB),
             receiving_is_final: Cell::new(true),
-            ping_frame_bytes: Cell::new([0u8; 128 + 6]),
+            ping_frame_bytes: Cell::new([0u8; CONTROL_HEADER_SIZE + 128]),
             ping_len: Cell::new(0),
-            ping_received: Cell::new(false),
-            pong_received: Cell::new(false),
+            control_frame_started: Cell::new(false),
             close_received: Cell::new(false),
-            close_frame_buffering: Cell::new(false),
             close_dispatch_pending: RefCell::new(None),
             receive_body_remain: Cell::new(0),
-            receive_pending_chunk_len: Cell::new(0),
             receive_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
             send_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
             global_this: GlobalRef::from(global_this),
@@ -1794,9 +1525,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             payload_length_frame_bytes: Cell::new([0u8; 8]),
             payload_length_frame_len: Cell::new(0),
             initial_data_handler: Cell::new(None),
-            // reshaped for borrowck — `vm.event_loop()` returns a
-            // `&'static`-tied borrow that would lock `vm` for the rest of the
-            // fn; re-derive from `global_this` so `vm` stays usable below.
+            // re-derived from `global_this` so `vm` stays usable below
             // SAFETY: bun_vm() never returns null; event_loop ptr is live for VM lifetime.
             event_loop: global_this.bun_vm().event_loop_mut(),
             deflate: RefCell::new(None),
@@ -1806,14 +1535,11 @@ impl<const SSL: bool> WebSocket<SSL> {
             proxy_tunnel: Cell::new(proxy_tunnel),
         }));
         bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::ALLOC_TYPE_NAME, ws);
-        // SAFETY: ws was just allocated via heap::alloc
+        // SAFETY: ws was just allocated via heap::alloc; no other reference exists.
         let ws_ref = unsafe { &mut *ws };
 
         if let Some(params) = deflate_params {
-            match WebSocketDeflate::init(*params, vm.rare_data()) {
-                Ok(deflate) => *ws_ref.deflate.get_mut() = Some(deflate),
-                Err(_) => *ws_ref.deflate.get_mut() = None,
-            }
+            *ws_ref.deflate.get_mut() = WebSocketDeflate::init(*params, vm.rare_data()).ok();
         }
 
         ws
@@ -1890,11 +1616,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         secure_ptr: *mut c_void,
     ) -> *mut c_void {
         let tcp = input_socket.cast::<us_socket_t>();
-        let secure = if secure_ptr.is_null() {
-            None
-        } else {
-            Some(secure_ptr.cast::<SslCtx>())
-        };
+        let secure = (!secure_ptr.is_null()).then(|| secure_ptr.cast::<SslCtx>());
         let ws = Self::new_raw(outgoing, global_this, deflate_params, secure, None);
 
         // `adopt_group` takes a closure to write the new socket.
@@ -2081,6 +1803,28 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 }
 
+/// Transcode a close reason to UTF-8 into `buf`; `None` when it exceeds `MAX_CLOSE_REASON`.
+fn encode_close_reason(reason: &ZigString, buf: &mut [u8; MAX_CONTROL_PAYLOAD]) -> Option<usize> {
+    use std::io::Write;
+    let mut cursor = std::io::Cursor::new(&mut buf[..]);
+    if reason.is_16bit() {
+        // Allocates; close-reason is bounded ≤125 bytes and this path is cold.
+        let utf8 = reason.to_owned_slice();
+        cursor.write_all(&utf8).ok()?;
+    } else if reason.is_utf8() {
+        cursor.write_all(reason.slice()).ok()?;
+    } else {
+        // Latin-1 → UTF-8: raw Latin-1 bytes would fail `send_close_with_body`'s UTF-8 check.
+        let result = strings::copy_latin1_into_utf8(cursor.get_mut(), reason.slice());
+        if (result.read as usize) < reason.slice().len() {
+            return None;
+        }
+        cursor.set_position(result.written as u64);
+    }
+    let len = cursor.position() as usize;
+    (len <= MAX_CLOSE_REASON).then_some(len)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // exportAll()
 // ──────────────────────────────────────────────────────────────────────────
@@ -2208,15 +1952,12 @@ export_websocket_client!(
 
 pub struct InitialDataHandler<const SSL: bool> {
     pub adopted: Option<NonNull<WebSocket<SSL>>>,
-    /// Pending-activity ref taken in `init()`/`init_with_tunnel()`; released
-    /// (via `Drop`) when [`handle_without_deinit`] consumes `adopted`.
+    /// Pending-activity ref, dropped when [`Self::handle_without_deinit`] consumes `adopted`.
     pub ws: Option<CppWebSocketRef>,
     pub slice: Box<[u8]>,
 }
 
 impl<const SSL: bool> InitialDataHandler<SSL> {
-    // pub const Handle = jsc.AnyTask.New(@This(), handle);
-
     pub(crate) fn handle_without_deinit(&mut self) {
         let Some(this_socket_ptr) = self.adopted.take() else {
             return;
@@ -2314,46 +2055,40 @@ pub enum ErrorCode {
 pub(crate) struct Mask;
 
 impl Mask {
+    fn generate(global_this: &JSGlobalObject) -> [u8; 4] {
+        let entropy = global_this.bun_vm().as_mut().rare_data().entropy_slice(4);
+        entropy[..4].try_into().expect("infallible: size matches")
+    }
+
     pub(crate) fn fill(
         global_this: &JSGlobalObject,
         mask_buf: &mut [u8; 4],
         output: &mut [u8],
         input: &[u8],
     ) {
-        let entropy = global_this.bun_vm().as_mut().rare_data().entropy_slice(4);
-        mask_buf.copy_from_slice(&entropy[..4]);
-        let mask = *mask_buf;
-
-        let skip_mask = u32::from_ne_bytes(mask) == 0;
-        Self::fill_with_skip_mask(mask, output, input, skip_mask);
+        *mask_buf = Self::generate(global_this);
+        let skip_mask = u32::from_ne_bytes(*mask_buf) == 0;
+        if input.is_empty() {
+            bun_core::hint::cold();
+            return;
+        }
+        bun_highway::fill_with_skip_mask(*mask_buf, &mut output[..input.len()], input, skip_mask);
     }
 
     /// In-place variant for when output and input alias the same buffer
     /// (borrowck forbids `&mut [u8]` + `&[u8]` aliasing in `fill`).
-    /// Callers that mask in-place use this.
     pub(crate) fn fill_in_place(
         global_this: &JSGlobalObject,
         mask_buf: &mut [u8; 4],
         buf: &mut [u8],
     ) {
-        let entropy = global_this.bun_vm().as_mut().rare_data().entropy_slice(4);
-        mask_buf.copy_from_slice(&entropy[..4]);
-        let mask = *mask_buf;
-
-        let skip_mask = u32::from_ne_bytes(mask) == 0;
+        *mask_buf = Self::generate(global_this);
+        let skip_mask = u32::from_ne_bytes(*mask_buf) == 0;
         if buf.is_empty() {
             bun_core::hint::cold();
             return;
         }
-        bun_highway::fill_with_skip_mask_inplace(mask, buf, skip_mask);
-    }
-
-    fn fill_with_skip_mask(mask: [u8; 4], output: &mut [u8], input: &[u8], skip_mask: bool) {
-        if input.is_empty() {
-            bun_core::hint::cold();
-            return;
-        }
-        bun_highway::fill_with_skip_mask(mask, &mut output[..input.len()], input, skip_mask);
+        bun_highway::fill_with_skip_mask_inplace(*mask_buf, buf, skip_mask);
     }
 }
 
@@ -2375,30 +2110,20 @@ pub enum ReceiveState {
     Fail,
 }
 
-/// The receive-loop state carried across the `ReceiveState` handlers of one
-/// `handle_data_loop` call. Loaded from the persisted `Cell` fields on entry
-/// and written back by the epilogue unless the connection was terminated.
+/// Per-`handle_data_loop` parse cursor; the epilogue persists it across socket reads.
 struct RecvCursor<'a> {
-    /// Bytes from the socket not yet consumed by a handler.
     data: &'a [u8],
     state: ReceiveState,
-    receiving_type: Opcode,
-    /// Payload bytes of the current frame still expected from the wire.
     body_remain: usize,
     is_final: bool,
-    is_fragmented: bool,
-    /// Opcode of the data (Text/Binary) message being assembled; control
-    /// frames interleaved between its fragments must not overwrite it.
+    /// Opcode of the message being assembled; interleaved control frames do not change it.
     last_data_type: Opcode,
 }
 
-/// What a `ReceiveState` handler decided about the parse loop.
+/// Outcome of one frame-loop step.
 enum Step {
-    /// Keep parsing the bytes left in the cursor.
     Continue,
-    /// Mid-frame with nothing left to read; resume on the next socket read.
     NeedMoreData,
-    /// The connection was failed/closed; stop and mark the receive side closed.
     Terminated,
 }
 
@@ -2422,14 +2147,18 @@ fn received_close_codes(received: u16) -> (u16, u16) {
 // parseWebSocketHeader
 // ──────────────────────────────────────────────────────────────────────────
 
-fn parse_websocket_header(
-    bytes: [u8; 2],
-    receiving_type: &mut Opcode,
-    payload_length: &mut usize,
-    is_fragmented: &mut bool,
-    is_final: &mut bool,
-    need_compression: &mut bool,
-) -> ReceiveState {
+/// The decoded first two bytes of a frame, plus the receive state that follows them.
+struct ParsedHeader {
+    opcode: Opcode,
+    payload_len: usize,
+    is_fragmented: bool,
+    is_final: bool,
+    /// RSV1 on a data frame (RFC 7692 per-message deflate).
+    compressed: bool,
+    next: ReceiveState,
+}
+
+fn parse_websocket_header(bytes: [u8; 2]) -> ParsedHeader {
     // 0                   1                   2                   3
     // 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
     // +-+-+-+-+-------+-+-------------+-------------------------------+
@@ -2449,63 +2178,55 @@ fn parse_websocket_header(
     // |                     Payload Data continued ...                |
     // +---------------------------------------------------------------+
     let header = WebsocketHeader::from_slice(bytes);
-    let payload = header.len() as usize;
-    *payload_length = payload;
-    *receiving_type = header.opcode();
-    *is_fragmented = matches!(header.opcode(), Opcode::Continue) || !header.final_();
-    *is_final = header.final_();
+    let opcode = header.opcode();
+    let payload_len = header.len() as usize;
+    let is_data_frame = matches!(opcode, Opcode::Text | Opcode::Binary);
+    let mut parsed = ParsedHeader {
+        opcode,
+        payload_len,
+        is_fragmented: opcode == Opcode::Continue || !header.final_(),
+        is_final: header.final_(),
+        compressed: is_data_frame && header.compressed(),
+        next: ReceiveState::Fail,
+    };
 
-    // Per RFC 7692, RSV1 bit indicates compression for the first fragment of a message
-    // For continuation frames, compression state is inherited from the first fragment
-    if header.opcode() == Opcode::Text || header.opcode() == Opcode::Binary {
-        *need_compression = header.compressed();
-    } else if header.opcode() == Opcode::Continue {
-        // Compression state for continuation frames should be inherited from the message start
-        // This needs to be tracked at a higher level, not determined by the continuation frame's RSV1
-        // For now, we don't set it here - it should be maintained by the WebSocket state
-        *need_compression = false;
-    } else {
-        // Control frames cannot be compressed
-        if header.compressed() {
-            return ReceiveState::Fail; // Control frames with RSV1 set should fail
-        }
-        *need_compression = false;
+    // RFC 7692: only the first fragment of a data message may set RSV1.
+    if !is_data_frame && opcode != Opcode::Continue && header.compressed() {
+        return parsed;
     }
 
-    if header.mask() && (header.opcode() == Opcode::Text || header.opcode() == Opcode::Binary) {
-        return ReceiveState::NeedMask;
+    // A server must not mask data frames it sends to a client.
+    if header.mask() && is_data_frame {
+        parsed.next = ReceiveState::NeedMask;
+        return parsed;
     }
 
-    // Check RSV bits (rsv2 and rsv3 must always be 0 per RFC 6455)
-    // rsv1 (compressed bit) is handled separately above
+    // rsv2 and rsv3 must always be 0 per RFC 6455 (rsv1 is handled above).
     if header.rsv() != 0 {
-        // RSV2 and RSV3 bits must always be 0
-        return ReceiveState::Fail;
+        return parsed;
     }
 
-    match header.opcode() {
-        Opcode::Text | Opcode::Continue | Opcode::Binary => {
-            if payload <= 125 {
-                ReceiveState::NeedBody
-            } else if payload == 126 {
-                ReceiveState::ExtendedPayloadLength16
-            } else if payload == 127 {
-                ReceiveState::ExtendedPayloadLength64
-            } else {
-                ReceiveState::Fail
-            }
-        }
+    parsed.next = match opcode {
+        Opcode::Text | Opcode::Continue | Opcode::Binary => match payload_len {
+            0..=125 => ReceiveState::NeedBody,
+            126 => ReceiveState::ExtendedPayloadLength16,
+            127 => ReceiveState::ExtendedPayloadLength64,
+            _ => ReceiveState::Fail,
+        },
         Opcode::Close => ReceiveState::Close,
         Opcode::Ping => ReceiveState::Ping,
         Opcode::Pong => ReceiveState::Pong,
         _ => ReceiveState::Fail,
-    }
+    };
+    parsed
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // Copy
 // ──────────────────────────────────────────────────────────────────────────
 
+/// An outgoing payload in its source encoding; `Raw` is already framed, the
+/// rest are framed and masked by [`Copy::copy`].
 #[derive(Copy, Clone)]
 enum Copy<'a> {
     Utf16(&'a [u16]),
@@ -2514,7 +2235,37 @@ enum Copy<'a> {
     Raw(&'a [u8]),
 }
 
-impl<'a> Copy<'a> {
+/// Disjoint header / masking-key / payload views of one outbound frame.
+struct FrameParts<'a> {
+    header: &'a mut [u8],
+    mask: &'a mut [u8; 4],
+    payload: &'a mut [u8],
+}
+
+/// Split a frame-sized `buf` into its [`FrameParts`], writing the extended length bytes.
+fn split_frame(buf: &mut [u8], content_byte_len: usize) -> FrameParts<'_> {
+    let length_byte_count = WebsocketHeader::length_byte_count(content_byte_len);
+    debug_assert_eq!(
+        WebsocketHeader::frame_size_including_mask(content_byte_len),
+        buf.len()
+    );
+    match length_byte_count {
+        0 => {}
+        2 => buf[2..4].copy_from_slice(&(content_byte_len as u16).to_be_bytes()),
+        8 => buf[2..10].copy_from_slice(&(content_byte_len as u64).to_be_bytes()),
+        _ => unreachable!(),
+    }
+    let mask_offset = 2 + length_byte_count;
+    let (head, payload) = buf.split_at_mut(mask_offset + 4);
+    let (header, mask) = head.split_at_mut(mask_offset);
+    FrameParts {
+        header,
+        mask: mask.try_into().expect("infallible: size matches"),
+        payload: &mut payload[..content_byte_len],
+    }
+}
+
+impl Copy<'_> {
     /// Returns `(frame_len, content_byte_len)`: the size of the full masked
     /// frame to write out and the UTF-8/byte length of the payload it carries
     /// (`Raw` is already a frame, so both are the raw length).
@@ -2538,101 +2289,10 @@ impl<'a> Copy<'a> {
         content_byte_len: usize,
         opcode: Opcode,
     ) {
-        if let Copy::Raw(raw) = self {
-            debug_assert!(buf.len() >= raw.len());
-            debug_assert!(buf.as_ptr() != raw.as_ptr());
-            buf[..raw.len()].copy_from_slice(raw);
-            return;
-        }
-
-        let how_big_is_the_length_integer = WebsocketHeader::length_byte_count(content_byte_len);
-        let how_big_is_the_mask = 4;
-        let mask_offset = 2 + how_big_is_the_length_integer;
-        let content_offset = mask_offset + how_big_is_the_mask;
-
-        // 2 byte header
-        // 4 byte mask
-        // 0, 2, 8 byte length
-
-        // WebsocketHeader has no public
-        // raw-bits ctor, so build the all-zero header via from_slice.
-        let mut header = WebsocketHeader::from_slice([0, 0]);
-
-        // Write extended length if needed
-        match how_big_is_the_length_integer {
-            0 => {}
-            2 => buf[2..4].copy_from_slice(&(content_byte_len as u16).to_be_bytes()),
-            8 => buf[2..10].copy_from_slice(&(content_byte_len as u64).to_be_bytes()),
-            _ => unreachable!(),
-        }
-
-        header.set_mask(true);
-        header.set_compressed(false);
-        header.set_final(true);
-        header.set_opcode(opcode);
-
-        debug_assert_eq!(
-            WebsocketHeader::frame_size_including_mask(content_byte_len),
-            buf.len()
-        );
-
-        // reshaped for borrowck — split `buf` into three disjoint
-        // regions (header bytes / 4-byte mask / payload) so `write_header` and
-        // `Mask::fill*` don't alias.
-        let (head, to_mask_full) = buf.split_at_mut(content_offset);
-        let (header_part, mask_part) = head.split_at_mut(mask_offset);
-        let mask_buf: &mut [u8; 4] = (&mut mask_part[..4])
-            .try_into()
-            .expect("infallible: size matches");
-        let to_mask = &mut to_mask_full[..content_byte_len];
-
-        match self {
-            Copy::Utf16(utf16) => {
-                header.set_len(WebsocketHeader::pack_length(content_byte_len));
-                let encode_into_result = strings::copy_utf16_into_utf8_impl::<true>(to_mask, utf16);
-                debug_assert_eq!(encode_into_result.written as usize, content_byte_len);
-                debug_assert_eq!(encode_into_result.read as usize, utf16.len());
-                header.set_len(WebsocketHeader::pack_length(
-                    encode_into_result.written as usize,
-                ));
-                header
-                    .write_header(
-                        &mut &mut header_part[..],
-                        encode_into_result.written as usize,
-                    )
-                    .expect("unreachable");
-
-                Mask::fill_in_place(global_this, mask_buf, to_mask);
-            }
-            Copy::Latin1(latin1) => {
-                let encode_into_result = strings::copy_latin1_into_utf8(to_mask, latin1);
-                debug_assert_eq!(encode_into_result.written as usize, content_byte_len);
-
-                // latin1 can contain non-ascii
-                debug_assert_eq!(encode_into_result.read as usize, latin1.len());
-
-                header.set_len(WebsocketHeader::pack_length(
-                    encode_into_result.written as usize,
-                ));
-                header
-                    .write_header(
-                        &mut &mut header_part[..],
-                        encode_into_result.written as usize,
-                    )
-                    .expect("unreachable");
-                Mask::fill_in_place(global_this, mask_buf, to_mask);
-            }
-            Copy::Bytes(bytes) => {
-                header.set_len(WebsocketHeader::pack_length(bytes.len()));
-                header
-                    .write_header(&mut &mut header_part[..], bytes.len())
-                    .expect("unreachable");
-                Mask::fill(global_this, mask_buf, to_mask, bytes);
-            }
-            Copy::Raw(_) => unreachable!(),
-        }
+        self.copy_with_compressed_flag(global_this, buf, content_byte_len, opcode, false);
     }
 
+    /// Frame an already-deflated payload; `is_first_fragment` controls RSV1.
     pub(crate) fn copy_compressed(
         global_this: &JSGlobalObject,
         buf: &mut [u8],
@@ -2640,51 +2300,63 @@ impl<'a> Copy<'a> {
         opcode: Opcode,
         is_first_fragment: bool,
     ) {
-        let content_byte_len = compressed_data.len();
-        let how_big_is_the_length_integer = WebsocketHeader::length_byte_count(content_byte_len);
-        let how_big_is_the_mask = 4;
-        let mask_offset = 2 + how_big_is_the_length_integer;
-        let content_offset = mask_offset + how_big_is_the_mask;
+        Copy::Bytes(compressed_data).copy_with_compressed_flag(
+            global_this,
+            buf,
+            compressed_data.len(),
+            opcode,
+            is_first_fragment,
+        );
+    }
 
-        // 2 byte header
-        // 4 byte mask
-        // 0, 2, 8 byte length
-
-        // Write extended length if needed
-        match how_big_is_the_length_integer {
-            0 => {}
-            2 => buf[2..4].copy_from_slice(&(content_byte_len as u16).to_be_bytes()),
-            8 => buf[2..10].copy_from_slice(&(content_byte_len as u64).to_be_bytes()),
-            _ => unreachable!(),
+    fn copy_with_compressed_flag(
+        &self,
+        global_this: &JSGlobalObject,
+        buf: &mut [u8],
+        content_byte_len: usize,
+        opcode: Opcode,
+        compressed: bool,
+    ) {
+        if let Copy::Raw(raw) = self {
+            debug_assert!(buf.len() >= raw.len());
+            debug_assert!(buf.as_ptr() != raw.as_ptr());
+            buf[..raw.len()].copy_from_slice(raw);
+            return;
         }
 
-        // WebsocketHeader has no public
-        // raw-bits ctor, so build the all-zero header via from_slice.
-        let mut header = WebsocketHeader::from_slice([0, 0]);
+        let mut header =
+            WebsocketHeader::new(WebsocketHeader::pack_length(content_byte_len), true, opcode);
+        header.set_compressed(compressed);
 
-        header.set_mask(true);
-        header.set_compressed(is_first_fragment); // Only set compressed flag for first fragment
-        header.set_final(true);
-        header.set_opcode(opcode);
-        header.set_len(WebsocketHeader::pack_length(content_byte_len));
+        let mut parts = split_frame(buf, content_byte_len);
 
-        debug_assert_eq!(
-            WebsocketHeader::frame_size_including_mask(content_byte_len),
-            buf.len()
-        );
-
-        // reshaped for borrowck — three disjoint regions (see `copy`).
-        let (head, to_mask_full) = buf.split_at_mut(content_offset);
-        let (header_part, mask_part) = head.split_at_mut(mask_offset);
-        let mask_buf: &mut [u8; 4] = (&mut mask_part[..4])
-            .try_into()
-            .expect("infallible: size matches");
-        let to_mask = &mut to_mask_full[..content_byte_len];
-
-        header
-            .write_header(&mut &mut header_part[..], content_byte_len)
-            .expect("unreachable");
-
-        Mask::fill(global_this, mask_buf, to_mask, compressed_data);
+        match self {
+            Copy::Utf16(utf16) => {
+                let encoded = strings::copy_utf16_into_utf8_impl::<true>(parts.payload, utf16);
+                debug_assert_eq!(encoded.written as usize, content_byte_len);
+                debug_assert_eq!(encoded.read as usize, utf16.len());
+                header
+                    .write_header(&mut parts.header, encoded.written as usize)
+                    .expect("unreachable");
+                Mask::fill_in_place(global_this, parts.mask, parts.payload);
+            }
+            Copy::Latin1(latin1) => {
+                let encoded = strings::copy_latin1_into_utf8(parts.payload, latin1);
+                debug_assert_eq!(encoded.written as usize, content_byte_len);
+                // latin1 can contain non-ascii
+                debug_assert_eq!(encoded.read as usize, latin1.len());
+                header
+                    .write_header(&mut parts.header, encoded.written as usize)
+                    .expect("unreachable");
+                Mask::fill_in_place(global_this, parts.mask, parts.payload);
+            }
+            Copy::Bytes(bytes) => {
+                header
+                    .write_header(&mut parts.header, bytes.len())
+                    .expect("unreachable");
+                Mask::fill(global_this, parts.mask, parts.payload, bytes);
+            }
+            Copy::Raw(_) => unreachable!(),
+        }
     }
 }

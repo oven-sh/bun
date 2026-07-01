@@ -579,21 +579,12 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
 {
     UNUSED_PARAM(bunErrorData);
 
-    // ErrorInstance::finalizeUnconditionally reaches this callback from
-    // Heap::runEndPhase when GC collects stack frames of an error whose
-    // .stack was never accessed. runEndPhase deliberately nulls out the
-    // current thread's atom string table around
-    // finalizeUnconditionalFinalizers() — and when the end phase runs on the
-    // concurrent collector thread, the VM's atom table was never installed
-    // there in the first place. Formatting and source-mapping the stack trace
-    // copies and destroys WTF::Strings that can be atoms (source URLs,
-    // function names, the error's sourceURL slot): dropping the last
-    // reference to an atom calls AtomStringImpl::remove(), which dereferences
-    // the current thread's atom table — null (or the wrong thread's table)
-    // crashes. The mutator is suspended for the entire end phase, so
-    // temporarily installing the VM's own atom table is race-free; this is
-    // the same thing JSLock::didAcquireLock() does when a thread enters the
-    // VM. https://github.com/oven-sh/bun/issues/17087
+    // ErrorInstance::finalizeUnconditionally calls this from Heap::runEndPhase, which
+    // nulls the current thread's atom string table (and may run on the collector thread).
+    // Releasing the last ref of an atom string there crashes in AtomStringImpl::remove(),
+    // so install the VM's table for the duration; the mutator is suspended for the whole
+    // end phase, so this is race-free (same as JSLock::didAcquireLock).
+    // https://github.com/oven-sh/bun/issues/17087
     auto& thread = WTF::Thread::currentSingleton();
     WTF::AtomStringTable* previousAtomStringTable = thread.atomStringTable();
     bool needsVMAtomStringTable = previousAtomStringTable != vm.atomStringTable();

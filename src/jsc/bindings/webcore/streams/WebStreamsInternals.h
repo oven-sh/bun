@@ -240,6 +240,21 @@ void readableStreamDefaultReaderRelease(JSC::JSGlobalObject*, JSReadableStreamDe
 void readableStreamDefaultReaderErrorReadRequests(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*, JSC::JSValue error); // userJS: yes — JSReadableStreamDefaultReader.cpp
 // Bun public `reader.readMany()`: returns the `{value,size,done}` object synchronously OR
 // a promise of one.
+// Restores the stream's construction-time async-context snapshot around a user
+// source callback (pull/cancel and the direct pull). Defined in WebStreamsMisc.cpp.
+class StreamAsyncContextScope {
+    WTF_MAKE_NONCOPYABLE(StreamAsyncContextScope);
+
+public:
+    StreamAsyncContextScope(JSC::JSGlobalObject*, JSReadableStream*);
+    ~StreamAsyncContextScope();
+
+private:
+    JSC::VM& m_vm;
+    JSC::InternalFieldTuple* m_asyncContextData { nullptr };
+    JSC::JSValue m_previous;
+};
+
 enum class ConsumerFillStep : uint8_t { Done,
     Pending };
 // The buffered-consumer pump step (BunStreamConsumers.cpp): bulk queue drain into `chunks`,

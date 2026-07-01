@@ -1,6 +1,8 @@
 #include "config.h"
 #include "WebStreamsInternals.h"
 
+#include "JSReadableStream.h"
+
 #include "BunClientData.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSStreamsRuntime.h"
@@ -285,6 +287,23 @@ QueuingStrategyDict convertQueuingStrategyDict(JSGlobalObject* globalObject, JSV
 // delay is observable (WPT transform abort/cancel-during-start races), so never use identity here.
 // For values that are provably not thenables (undefined, internal arrays/objects we
 // created): fulfill directly instead of running the observable resolve machinery.
+StreamAsyncContextScope::StreamAsyncContextScope(JSGlobalObject* globalObject, JSReadableStream* stream)
+    : m_vm(globalObject->vm())
+{
+    JSValue snapshot = stream->m_asyncContext.get();
+    if (!snapshot || snapshot.isUndefinedOrNull())
+        return;
+    m_asyncContextData = globalObject->m_asyncContextData.get();
+    m_previous = m_asyncContextData->getInternalField(0);
+    m_asyncContextData->putInternalField(m_vm, 0, snapshot);
+}
+
+StreamAsyncContextScope::~StreamAsyncContextScope()
+{
+    if (m_asyncContextData)
+        m_asyncContextData->putInternalField(m_vm, 0, m_previous);
+}
+
 JSPromise* promiseFulfilledWith(JSGlobalObject* globalObject, JSValue value)
 {
     auto& vm = getVM(globalObject);

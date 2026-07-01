@@ -97,33 +97,6 @@ void JSDirectStreamController::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_textAccumulator.visit(locker, visitor);
 }
 
-// Restores the stream's construction-time async-context snapshot around the direct pull.
-class DirectPullAsyncContextScope {
-    WTF_MAKE_NONCOPYABLE(DirectPullAsyncContextScope);
-
-public:
-    DirectPullAsyncContextScope(JSGlobalObject* globalObject, JSReadableStream* stream)
-        : m_vm(globalObject->vm())
-    {
-        JSValue snapshot = stream->m_asyncContext.get();
-        if (!snapshot || snapshot.isUndefinedOrNull())
-            return;
-        m_asyncContextData = globalObject->m_asyncContextData.get();
-        m_previous = m_asyncContextData->getInternalField(0);
-        m_asyncContextData->putInternalField(m_vm, 0, snapshot);
-    }
-    ~DirectPullAsyncContextScope()
-    {
-        if (m_asyncContextData)
-            m_asyncContextData->putInternalField(m_vm, 0, m_previous);
-    }
-
-private:
-    VM& m_vm;
-    InternalFieldTuple* m_asyncContextData { nullptr };
-    JSValue m_previous;
-};
-
 static size_t byteLengthOf(JSValue value)
 {
     if (auto* view = dynamicDowncast<JSArrayBufferView>(value))
@@ -462,7 +435,7 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject)
     JSValue abrupt;
     bool threw = false;
     {
-        DirectPullAsyncContextScope asyncContextScope(globalObject, stream);
+        StreamAsyncContextScope asyncContextScope(globalObject, stream);
         JSObject* underlyingSource = m_underlyingSource.get();
         JSValue result;
         {

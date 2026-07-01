@@ -144,6 +144,7 @@ static JSC::JSPromise* performByteControllerPullAlgorithm(JSC::JSGlobalObject* g
             JSC::throwOutOfMemoryError(globalObject, scope);
             return nullptr;
         }
+        StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
         RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, pullMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SourceKind::Nothing:
@@ -177,6 +178,7 @@ static JSC::JSPromise* performByteControllerCancelAlgorithm(JSC::JSGlobalObject*
             JSC::throwOutOfMemoryError(globalObject, scope);
             return nullptr;
         }
+        StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
         RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, cancelMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SourceKind::Nothing:

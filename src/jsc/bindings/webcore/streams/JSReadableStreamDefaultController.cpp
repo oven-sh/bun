@@ -68,6 +68,7 @@ static JSC::JSPromise* performDefaultControllerPullAlgorithm(JSC::JSGlobalObject
             JSC::throwOutOfMemoryError(globalObject, scope);
             return nullptr;
         }
+        StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
         RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, pullMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SourceKind::Nothing:
@@ -104,6 +105,7 @@ static JSC::JSPromise* performDefaultControllerCancelAlgorithm(JSC::JSGlobalObje
             JSC::throwOutOfMemoryError(globalObject, scope);
             return nullptr;
         }
+        StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
         RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, cancelMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SourceKind::Nothing:
@@ -417,7 +419,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototypeFunction_clos
     if (!thisObject) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, globalObject, "ReadableStreamDefaultController"_s);
     if (!readableStreamDefaultControllerCanCloseOrEnqueue(thisObject))
-        return throwVMTypeError(globalObject, scope, "Cannot close a ReadableStreamDefaultController whose stream is not readable or that has already requested close"_s);
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Controller is already closed"_s);
     readableStreamDefaultControllerClose(globalObject, thisObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
@@ -431,7 +433,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototypeFunction_enqu
     if (!thisObject) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, globalObject, "ReadableStreamDefaultController"_s);
     if (!readableStreamDefaultControllerCanCloseOrEnqueue(thisObject))
-        return throwVMTypeError(globalObject, scope, "Cannot enqueue on a ReadableStreamDefaultController whose stream is not readable or that has already requested close"_s);
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Controller is already closed"_s);
     readableStreamDefaultControllerEnqueue(globalObject, thisObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());

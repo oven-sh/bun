@@ -196,11 +196,8 @@ UV_EXTERN void uv_free_interface_addresses(uv_interface_address_t* addresses,
     __builtin_unreachable();
 }
 
-extern void Bun__ensure_winsock(void);
-
 UV_EXTERN int uv_inet_ntop(int af, const void* src, char* dst, size_t size)
 {
-    Bun__ensure_winsock();
     __bun_throw_not_implemented("uv_inet_ntop");
     __builtin_unreachable();
 }
@@ -826,6 +823,8 @@ UV_EXTERN void uv_free_interface_addresses(uv_interface_address_t* addresses,
     free(addresses);
 }
 
+extern void Bun__ensure_winsock(void);
+
 UV_EXTERN int uv_inet_ntop(int af, const void* src, char* dst, size_t size)
 {
     /* InetNtopA over libuv's hand-rolled formatter; same contract: 0 on
@@ -833,6 +832,7 @@ UV_EXTERN int uv_inet_ntop(int af, const void* src, char* dst, size_t size)
      * small (InetNtopA's only failure mode for a valid family). */
     if (af != AF_INET && af != AF_INET6)
         return UV_EAFNOSUPPORT;
+    Bun__ensure_winsock();
     if (InetNtopA(af, src, dst, size) == NULL)
         return WSAGetLastError() == ERROR_INVALID_PARAMETER ? UV_ENOSPC : UV_EINVAL;
     return 0;

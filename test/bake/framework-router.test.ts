@@ -1,6 +1,6 @@
 import { frameworkRouterInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 const { parseRoutePattern, FrameworkRouter } = frameworkRouterInternals;
@@ -76,6 +76,93 @@ describe("pattern parse", () => {
   testApp("/route/(group)/page.tsx", "/route/(group)", "page");
   testApp("/route/[param]/not-found.tsx", "/route/:param", "extra");
   testApp.isNull("/route/_layout.tsx");
+});
+
+// A `fileSystemRouterTypes[].root` may resolve outside of the project root,
+// e.g. `../web/pages` from a sibling package in a monorepo. Route patterns are
+// derived from the path relative to that root, so this must not depend on the
+// router root being inside the project root.
+describe("router root outside of the project root", () => {
+  const serveFixture = (root: string) => ({
+    "apps/api/server-entry.ts": `
+      export function render(req, meta) {
+        return meta.pageModule.default(req, meta);
+      }
+    `,
+    "apps/api/serve.ts": `
+      const server = Bun.serve({
+        port: 0,
+        development: true,
+        app: {
+          framework: {
+            fileSystemRouterTypes: [
+              {
+                root: ${JSON.stringify(root)},
+                style: "nextjs-pages",
+                serverEntryPoint: "./server-entry.ts",
+              },
+            ],
+          },
+        },
+      });
+      for (const pathname of ["/", "/blog/hello-world"]) {
+        const res = await fetch(new URL(pathname, server.url));
+        console.log(pathname, res.status, (await res.text()).trim());
+      }
+      server.stop(true);
+      process.exit(0);
+    `,
+  });
+
+  const run = async (dir: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "serve.ts"],
+      env: bunEnv,
+      cwd: path.join(dir, "apps", "api"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+
+  test.concurrent("sibling directory", async () => {
+    using dir = tempDir("fsr-sibling-root", {
+      ...serveFixture("../web/pages"),
+      "apps/web/pages/index.ts": `
+        export default function (req, meta) {
+          return new Response("sibling index");
+        }
+      `,
+      "apps/web/pages/blog/[slug].ts": `
+        export default function (req, meta) {
+          return new Response("slug:" + meta.params.slug);
+        }
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir));
+    expect(stdout, `stderr: ${stderr}`).toBe("/ 200 sibling index\n/blog/hello-world 200 slug:hello-world\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("parent directory", async () => {
+    using dir = tempDir("fsr-parent-root", {
+      ...serveFixture(".."),
+      "apps/index.ts": `
+        export default function (req, meta) {
+          return new Response("parent index");
+        }
+      `,
+      "apps/blog/[slug].ts": `
+        export default function (req, meta) {
+          return new Response("slug:" + meta.params.slug);
+        }
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir));
+    expect(stdout, `stderr: ${stderr}`).toBe("/ 200 parent index\n/blog/hello-world 200 slug:hello-world\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 test("discovers from filesystem paths", () => {

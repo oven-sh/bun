@@ -634,6 +634,25 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     });
   }
 
+  it("releasing a direct stream's reader during an async pull does not crash close", async () => {
+    const rs = new ReadableStream({
+      type: "direct",
+      async pull(c) {
+        await Promise.resolve();
+        c.write(new Uint8Array(10));
+        c.end();
+      },
+    });
+    const reader = rs.getReader();
+    const read = reader.read().catch(e => e);
+    reader.releaseLock();
+    await read;
+    await Bun.sleep(0);
+    // The flushed final chunk is delivered to the NEXT reader.
+    const { value } = await rs.getReader().read();
+    expect(value.byteLength).toBe(10);
+  });
+
   it("a queuing strategy size() result is coerced like Node (valueOf)", async () => {
     let calls = 0;
     const rs = new ReadableStream(

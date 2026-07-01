@@ -610,7 +610,8 @@ void JSDirectStreamController::onClose(JSGlobalObject* globalObject, JSValue rea
     }
 
     if (flushedByteLength) {
-        if (readableStreamGetNumReadRequests(stream) > 0) {
+        // The reader can have been released while the (async) pull was still running.
+        if (readableStreamHasDefaultReader(stream) && readableStreamGetNumReadRequests(stream) > 0) {
             readableStreamFulfillReadRequest(globalObject, stream, flushed, false);
             RETURN_IF_EXCEPTION(scope, );
             RELEASE_AND_RETURN(scope, readableStreamCloseIfPossible(globalObject, stream));

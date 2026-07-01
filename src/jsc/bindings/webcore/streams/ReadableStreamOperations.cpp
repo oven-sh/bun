@@ -399,9 +399,21 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
 
     switch (stream->m_controllerKind) {
     case ControllerKind::None:
-    case ControllerKind::Direct:
     case ControllerKind::NativeSink:
         break;
+    case ControllerKind::Direct: {
+        // A direct stream's in-flight read lives on the controller (not in the reader's
+        // read-request queue), so releasing the reader must settle it here.
+        auto* controller = uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get());
+        if (auto* pendingRead = controller->m_pendingRead.get()) {
+            controller->m_pendingRead.clear();
+            JSObject* pendingReadError = Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Releasing reader"_s);
+            RETURN_IF_EXCEPTION(scope, void());
+            pendingRead->reject(vm, pendingReadError);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        break;
+    }
     case ControllerKind::Default: {
         auto* controller = defaultControllerOf(stream);
         controller->releaseSteps();

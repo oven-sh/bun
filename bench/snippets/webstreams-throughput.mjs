@@ -113,6 +113,8 @@ console.log(
   `# webstreams throughput — ${version} — ${CHUNKS} x ${CHUNK / 1024} KiB = ${BYTES / 1024 / 1024} MiB per pass, best of ${RUNS}`,
 );
 for (const [name, fn] of Object.entries(scenarios)) {
+  // Collect between scenarios so no scenario pays the previous one's GC debt.
+  globalThis.Bun?.gc(true);
   // warmup
   if ((await fn()) !== BYTES) throw new Error(`${name}: wrong byte count`);
   let best = Infinity;

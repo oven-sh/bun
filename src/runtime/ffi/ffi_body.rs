@@ -1275,11 +1275,7 @@ impl FFI {
         let mut function = Function::default();
         let func = &mut function;
 
-        if let Some(val) = generate_symbol_for_function(global_this, interface, func)
-            .unwrap_or_else(|_| {
-                Some(ZigString::init(b"Out of memory").to_error_instance(global_this))
-            })
-        {
+        if let Some(val) = generate_symbol_for_function(global_this, interface, func)? {
             return Ok(val);
         }
 
@@ -1384,9 +1380,7 @@ impl FFI {
         let mut symbols = StringArrayHashMap::<Function>::default();
         // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object` keeps it alive.
         let obj = unsafe { &*obj };
-        if let Some(val) =
-            generate_symbols(global, &mut symbols, obj).unwrap_or(Some(JSValue::ZERO))
-        {
+        if let Some(val) = generate_symbols(global, &mut symbols, obj)? {
             // an error while validating symbols
             // keys/arg_types freed by Drop
             return Ok(val);

@@ -28,9 +28,12 @@ let denied = "";
 let fixtureDir = "";
 
 if (isWindows) {
-  const dir = tempDirWithFiles("realpath-denied", {
-    "target/secret.txt": "out-of-root",
-  });
+  // Everything here must not throw: a module-scope failure exits the whole
+  // file with code 1 instead of reporting a skip.
+  try {
+    const dir = tempDirWithFiles("realpath-denied", {
+      "target/secret.txt": "out-of-root",
+    });
   fixtureDir = dir;
   const root = join(dir, "root");
   const target = join(dir, "target");
@@ -56,6 +59,9 @@ if (isWindows) {
     } catch (e: any) {
       preconditionHolds = e.code === "EPERM" || e.code === "EACCES";
     }
+  }
+  } catch {
+    preconditionHolds = false;
   }
 }
 

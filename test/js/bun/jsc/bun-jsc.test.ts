@@ -361,6 +361,30 @@ it("deserialize rejects a RegExp record whose pattern does not parse", async () 
   expect(exitCode).toBe(0);
 });
 
+it("getProtectedObjects returns only objects", async () => {
+  // The protected cell set also contains internal JSC cells (unlinked code
+  // blocks, private symbols, structures). Those are not JavaScript values, so
+  // generic operations on them (Object(), Object.prototype.toString.call,
+  // String(list)) crashed the process instead of behaving like objects.
+  const script = `
+    import { getProtectedObjects } from "bun:jsc";
+    const list = getProtectedObjects();
+    for (const value of list) {
+      if (Object(value) !== value) throw new Error("getProtectedObjects returned a non-object: " + typeof value);
+      Object.prototype.toString.call(value);
+    }
+    console.log("ok", list.length > 0);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok true\n", stderr: "", exitCode: 0 });
+});
+
 it("serialize rejects a CryptoKey created with extractable set to false", async () => {
   // bun:jsc serialize() (and node:v8 serialize(), which wraps it) hands the raw
   // structured-clone buffer to the caller, so a key imported with

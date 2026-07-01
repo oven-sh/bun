@@ -9546,6 +9546,100 @@ for (const field of ["resolutions", "overrides"]) {
   });
 }
 
+it("installs the transitive file: dependency of a file: dependency", async () => {
+  using dir = tempDir("transitive-file-dep", {
+    "package.json": JSON.stringify({
+      name: "my-app",
+      version: "1.0.0",
+      dependencies: {
+        lib: "file:./vendor/lib",
+      },
+    }),
+    "vendor/lib/package.json": JSON.stringify({
+      name: "lib",
+      version: "1.0.0",
+      main: "index.js",
+      dependencies: {
+        nested: "file:../nested",
+      },
+    }),
+    "vendor/lib/index.js": `module.exports = require("nested");`,
+    "vendor/nested/package.json": JSON.stringify({
+      name: "nested",
+      version: "1.0.0",
+      main: "index.js",
+    }),
+    "vendor/nested/index.js": `module.exports = "it worked";`,
+  });
+
+  // The first pass resolves from package.json; the second installs from the
+  // lockfile the first pass wrote.
+  for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+    await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+    expect(err).not.toContain("error:");
+    expect(out).toContain("2 packages installed");
+    expect(exitCode).toBe(0);
+
+    expect(await exists(join(String(dir), "node_modules", "lib", "node_modules", "nested", "package.json"))).toBe(true);
+
+    await using runProc = spawn({
+      cmd: [bunExe(), "-e", `console.log(require("lib"))`],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [runOut, runErr, runExit] = await Promise.all([runProc.stdout.text(), runProc.stderr.text(), runProc.exited]);
+    expect(runErr).toBe("");
+    expect(runOut.trim()).toBe("it worked");
+    expect(runExit).toBe(0);
+  }
+});
+
+it("fails when a transitive file: dependency's folder does not exist", async () => {
+  using dir = tempDir("transitive-file-dep-missing", {
+    "package.json": JSON.stringify({
+      name: "my-app",
+      version: "1.0.0",
+      dependencies: {
+        lib: "file:./vendor/lib",
+      },
+    }),
+    "vendor/lib/package.json": JSON.stringify({
+      name: "lib",
+      version: "1.0.0",
+      dependencies: {
+        nested: "file:../nested",
+      },
+    }),
+    "vendor/lib/index.js": `module.exports = require("nested");`,
+  });
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+  expect(err).toContain('Could not find folder "file:vendor/nested" for dependency "nested"');
+  expect(await exists(join(String(dir), "node_modules", "lib", "node_modules", "nested"))).toBe(false);
+  expect(out).not.toContain("2 packages installed");
+  expect(exitCode).toBe(1);
+});
+
 it("does not extract a local file: tarball outside the temp dir for a dependency alias containing '..' path segments", async () => {
   // For `file:` tarball dependencies, the dependency alias (the key in
   // `dependencies`) is used to derive the temporary extraction folder name.

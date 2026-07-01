@@ -958,7 +958,10 @@ impl Connection {
         self.header_flags = hdr.flags;
         self.header_target = hdr.stream_id;
         self.header_push_parent = 0;
-        self.header_is_request = is_new;
+        // Only a server receives request blocks via HEADERS; on a client every response block
+        // looks "new" (the engine only tracks inbound-created streams), so without this gate it
+        // would be misclassified as a request. PUSH_PROMISE sets the flag itself.
+        self.header_is_request = self.is_server && is_new;
         self.header_stream_closed = stream_closed;
         self.header_refused = refused;
         if !end_headers {
@@ -1104,10 +1107,11 @@ impl Connection {
                             match name_b {
                                 b"connection" | b"keep-alive" | b"proxy-connection"
                                 | b"transfer-encoding" | b"upgrade" => malformed = true,
-                                b"host" => {
-                                    // nghttp2 routes Host through the same check as :authority:
-                                    // an empty value never satisfies the authority requirement
-                                    // and a repeated Host field makes the block malformed.
+                                // nghttp2 routes Host through the same check as :authority (empty or
+                                // repeated => malformed), but only for request blocks — a server-received
+                                // block or a client-received PUSH_PROMISE (http_request_on_header). In a
+                                // response, `host` is an ordinary field and node delivers it.
+                                b"host" if self.is_server || is_request => {
                                     if value_b.is_empty() || saw_host {
                                         malformed = true;
                                     }

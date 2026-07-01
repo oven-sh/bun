@@ -2705,6 +2705,78 @@ it("http2 server rejects requests carrying connection-specific or repeated pseud
   }
 });
 
+// The Host rules above only apply to request blocks: nghttp2's http_response_on_header has
+// no `host` case, so a response carrying an empty or repeated Host header is delivered to
+// the client (node keeps the first value) instead of being answered with RST_STREAM.
+it("http2 client delivers a response carrying an empty or repeated host header", async () => {
+  const literal = str => {
+    const bytes = Buffer.from(str, "latin1");
+    return Buffer.concat([Buffer.from([bytes.length]), bytes]);
+  };
+  const responseBlock = Buffer.concat([
+    Buffer.from([0x88]), // :status: 200 (static table index 8)
+    Buffer.from([0x00]), // literal header field without indexing, new name
+    literal("host"),
+    literal(""),
+    Buffer.from([0x00]),
+    literal("host"),
+    literal("dup"),
+  ]);
+  const { promise: serverListening, resolve: onListening } = Promise.withResolvers();
+  const server = net.createServer(socket => {
+    let received = Buffer.alloc(0);
+    let sawPreface = false;
+    let responded = false;
+    socket.write(new http2utils.SettingsFrame(false).data);
+    socket.on("data", chunk => {
+      received = Buffer.concat([received, chunk]);
+      if (!sawPreface) {
+        if (received.length < http2utils.kClientMagic.length) return;
+        received = received.subarray(http2utils.kClientMagic.length);
+        sawPreface = true;
+      }
+      while (received.length >= 9) {
+        const length = received.readUIntBE(0, 3);
+        if (received.length < 9 + length) break;
+        const type = received[3];
+        const flags = received[4];
+        const streamId = received.readUInt32BE(5) & 0x7fffffff;
+        received = received.subarray(9 + length);
+        if (type === 4 && (flags & 1) === 0) socket.write(new http2utils.SettingsFrame(true).data);
+        // Answer the client's HEADERS with END_HEADERS | END_STREAM response headers.
+        if (type === 1 && !responded) {
+          responded = true;
+          socket.write(new http2utils.HeadersFrame(streamId, responseBlock, 0, true, true).data);
+        }
+      }
+    });
+  });
+  server.listen(0, "127.0.0.1", () => onListening());
+  await serverListening;
+
+  let client;
+  try {
+    const { promise: closed, resolve: onClose, reject: onError } = Promise.withResolvers();
+    const { promise: responded, resolve: onResponse } = Promise.withResolvers();
+    client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", onError);
+    const req = client.request({ ":path": "/" });
+    req.on("response", onResponse);
+    req.on("error", onError);
+    req.on("close", onClose);
+    req.resume();
+    req.end();
+    const headers = await responded;
+    await closed;
+    expect(headers[":status"]).toBe(200);
+    expect(headers.host).toBe("");
+    expect(req.rstCode).toBe(http2.constants.NGHTTP2_NO_ERROR);
+  } finally {
+    client?.close();
+    server.close();
+  }
+});
+
 it("allowHTTP1 fallback validates the status line like the native handle", async () => {
   // The HTTP/1.1 fallback serializes `HTTP/1.1 ${statusCode} ${statusMessage}` itself, so it
   // must enforce the same invariants node does on the implicit-header path (no writeHead()):

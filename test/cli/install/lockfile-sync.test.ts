@@ -21,8 +21,8 @@
  */
 import { Archive } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import { rm } from "fs/promises";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 // ---------------------------------------------------------------------------

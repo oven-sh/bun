@@ -1295,29 +1295,6 @@ describe("Bun.Archive", () => {
       }
     });
 
-    // The next two tests put raw non-ASCII bytes in a plain-ustar name field.
-    // Every modern tar emits a pax `path=` record for such names instead, and
-    // on Windows only that (wide-string) form is recoverable byte-exact.
-    test.skipIf(isWindows)("files() keys distinct non-ASCII ustar entry names without colliding them", async () => {
-      // A lossy pathname conversion collapses both names onto the same key
-      // (the empty string) and one entry silently overwrites the other.
-      const tar = buildTarball([
-        { name: "日本.txt", data: "nihon" },
-        { name: "café.txt", data: "cafe" },
-      ]);
-
-      const files = await new Bun.Archive(tar).files();
-      expect([...files.keys()].sort()).toEqual(["café.txt", "日本.txt"].sort());
-      expect(await files.get("日本.txt")!.text()).toBe("nihon");
-      expect(await files.get("café.txt")!.text()).toBe("cafe");
-
-      using dir = tempDir("archive-nonascii-ustar-glob", {});
-      // The glob option routes through a separate extraction loop.
-      expect(await new Bun.Archive(tar).extract(String(dir), { glob: "**" })).toBe(2);
-      expect(await Bun.file(join(String(dir), "日本.txt")).text()).toBe("nihon");
-      expect(await Bun.file(join(String(dir), "café.txt")).text()).toBe("cafe");
-    });
-
     test("a pax extended header with a non-ASCII path does not truncate the listing", async () => {
       // `tar` emits pax (POSIX.1-2001) by default, putting non-ASCII names in
       // a UTF-8 `path=` extended-header record. One such member must neither
@@ -1339,6 +1316,29 @@ describe("Bun.Archive", () => {
       expect(await new Bun.Archive(tar).extract(String(dir), { glob: "**" })).toBe(2);
       expect(await Bun.file(join(String(dir), "日本.txt")).text()).toBe("nihon");
       expect(await Bun.file(join(String(dir), "after.txt")).text()).toBe("after");
+    });
+
+    // The next two tests put raw non-ASCII bytes in a plain-ustar name field.
+    // Every modern tar emits a pax `path=` record for such names instead, and
+    // on Windows only that (wide-string) form is recoverable byte-exact.
+    test.skipIf(isWindows)("files() keys distinct non-ASCII ustar entry names without colliding them", async () => {
+      // A lossy pathname conversion collapses both names onto the same key
+      // (the empty string) and one entry silently overwrites the other.
+      const tar = buildTarball([
+        { name: "日本.txt", data: "nihon" },
+        { name: "café.txt", data: "cafe" },
+      ]);
+
+      const files = await new Bun.Archive(tar).files();
+      expect([...files.keys()].sort()).toEqual(["café.txt", "日本.txt"].sort());
+      expect(await files.get("日本.txt")!.text()).toBe("nihon");
+      expect(await files.get("café.txt")!.text()).toBe("cafe");
+
+      using dir = tempDir("archive-nonascii-ustar-glob", {});
+      // The glob option routes through a separate extraction loop.
+      expect(await new Bun.Archive(tar).extract(String(dir), { glob: "**" })).toBe(2);
+      expect(await Bun.file(join(String(dir), "日本.txt")).text()).toBe("nihon");
+      expect(await Bun.file(join(String(dir), "café.txt")).text()).toBe("cafe");
     });
 
     test.skipIf(isWindows)("files() keys an entry whose name is not even valid UTF-8", async () => {

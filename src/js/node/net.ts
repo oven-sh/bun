@@ -155,15 +155,15 @@ const kPausedUnref = Symbol("kPausedUnref");
 const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
 
-// A completed write whose status is a negative errno: Node hands it to the write
-// callback as errnoException(status, 'write') and destroys the stream when no
-// callback is pending. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L81-L92
 // Node's rule for every rejectUnauthorized ingestion (_tls_wrap.js): only an explicit
 // `false` disables certificate verification — null, 0, "" and every other value keep it on.
 function normalizeRejectUnauthorized(value) {
   return value !== false;
 }
 
+// A completed write whose status is a negative errno: Node hands it to the write
+// callback as errnoException(status, 'write') and destroys the stream when no
+// callback is pending. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L81-L92
 function failWrite(self, negErrno, callback) {
   const er = new ErrnoException(negErrno, "write");
   self._pendingData = null;
@@ -448,13 +448,14 @@ const SocketHandlers: SocketHandler = {
         verifyError = checkServerIdentity(hostname, cert);
       }
     }
-    if (self._requestCert || self._rejectUnauthorized) {
+    const rejectUnauthorized = self._rejectUnauthorized;
+    if (self._requestCert || rejectUnauthorized) {
       if (verifyError) {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
         // Node's onConnectSecure gate: anything but an explicit `false` rejects a
         // failed verification (never a truthiness test on the raw option).
-        if (self._rejectUnauthorized !== false) {
+        if (rejectUnauthorized !== false) {
           self.destroy(verifyError);
           return;
         }
@@ -1202,13 +1203,14 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
         verifyError = checkServerIdentity(hostname, cert);
       }
     }
-    if (self._requestCert || self._rejectUnauthorized) {
+    const rejectUnauthorized = self._rejectUnauthorized;
+    if (self._requestCert || rejectUnauthorized) {
       if (verifyError) {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
         // Node's onConnectSecure gate: anything but an explicit `false` rejects a
         // failed verification (never a truthiness test on the raw option).
-        if (self._rejectUnauthorized !== false) {
+        if (rejectUnauthorized !== false) {
           self.destroy(verifyError);
           return;
         }

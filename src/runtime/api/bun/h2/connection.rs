@@ -2002,7 +2002,12 @@ mod tests {
         let sink = CaptureSink::default();
         let mut c = Connection::new(true, Settings::default());
         c.preface_received = wire::CONNECTION_PREFACE.len();
-        let block = encode_block(&[(b":method", b"GET"), (b":path", b"/")]);
+        let block = encode_block(&[
+            (b":method", b"GET"),
+            (b":scheme", b"http"),
+            (b":path", b"/"),
+            (b":authority", b"localhost"),
+        ]);
         let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
         let f = frame(FrameType::Headers, flags, 1, &block);
         let fed = c.receive(&sink, &f);
@@ -2034,7 +2039,12 @@ mod tests {
         let sink = CaptureSink::default();
         let mut c = Connection::new(true, Settings::default());
         c.preface_received = wire::CONNECTION_PREFACE.len();
-        let block = encode_block(&[(b":method", b"POST"), (b":path", b"/")]);
+        let block = encode_block(&[
+            (b":method", b"POST"),
+            (b":scheme", b"http"),
+            (b":path", b"/"),
+            (b":authority", b"localhost"),
+        ]);
         // HEADERS without END_STREAM -> stream stays open for DATA.
         let h = frame(FrameType::Headers, wire::flags::END_HEADERS, 1, &block);
         c.receive(&sink, &h);
@@ -2074,7 +2084,9 @@ mod tests {
         let mut client = Connection::new(false, Settings::default());
         client.begin_header_block();
         assert!(client.encode_header(b":method", b"GET", false));
+        assert!(client.encode_header(b":scheme", b"http", false));
         assert!(client.encode_header(b":path", b"/x", false));
+        assert!(client.encode_header(b":authority", b"localhost", false));
         client.send_header_block(&csink, 1, true);
         let wire_bytes = csink.out.borrow().clone();
         assert_eq!(

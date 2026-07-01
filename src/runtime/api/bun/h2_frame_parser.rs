@@ -5462,7 +5462,6 @@ impl H2FrameParser {
         });
     }
 
-    /// Feed inbound bytes through the rewrite engine, buffering the unconsumed tail (design B).
     /// Free streams whose legacy lifecycle finished (queued by `free_resources`). Only runs at
     /// a quiescent point: no dispatch into JS on the stack (a native frame below such a
     /// dispatch may still hold `&mut Stream`) and no in-progress receive() borrowing the
@@ -5493,6 +5492,7 @@ impl H2FrameParser {
         });
     }
 
+    /// Feed inbound bytes through the rewrite engine, buffering the unconsumed tail (design B).
     fn rewrite_read(&self, bytes: &[u8]) {
         bun_output::scoped_log!(H2FrameParser, "rewriteRead {}", bytes.len());
         // Re-entrancy guard: receive() dispatches into JS between frames, and user code can feed

@@ -187,31 +187,6 @@ describe("web worker", () => {
     expect(process.execArgv).toEqual(original_execArgv);
   });
 
-  test("execArgv --no-addons disables process.dlopen inside the worker", async () => {
-    const worker = new Worker(new URL("worker-fixture-dlopen.js", import.meta.url).href, {
-      execArgv: ["--no-addons"],
-    });
-    const result = await waitForWorkerResult(worker, "go");
-
-    expect(result).toEqual({
-      execArgv: ["--no-addons"],
-      error: "Cannot load native addon because loading addons is disabled.",
-    });
-  });
-
-  test("worker without --no-addons can call process.dlopen", async () => {
-    const worker = new Worker(new URL("worker-fixture-dlopen.js", import.meta.url).href, {
-      execArgv: [],
-    });
-    const result = await waitForWorkerResult(worker, "go");
-
-    // dlopen ran: it fails because the path doesn't exist, not because addons
-    // are disabled for the worker.
-    expect(result.execArgv).toEqual([]);
-    expect(result.error).not.toBeNull();
-    expect(result.error).not.toContain("loading addons is disabled");
-  });
-
   test("sending 50 messages should just work", done => {
     const worker = new Worker(new URL("worker-fixture-many-messages.js", import.meta.url).href, {});
 

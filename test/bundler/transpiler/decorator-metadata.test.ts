@@ -543,4 +543,26 @@ describe("decorator metadata", () => {
     expect(Reflect.getMetadata("design:type", A.prototype, "method4")).toBe(Function);
     expect(Reflect.getMetadata("design:returntype", A.prototype, "method4")).toBeUndefined();
   });
+
+  test("design:type for a legacy-decorated accessor field", () => {
+    function d(target: any, key: string, desc?: PropertyDescriptor) {}
+
+    class Ref {}
+
+    class A {
+      @d accessor n: number = 1;
+      @d accessor s: string = "";
+      @d accessor r: Ref = new Ref();
+      @d static accessor b: boolean = false;
+    }
+
+    // tsc lowers `@d accessor n` to a getter/setter pair and emits the
+    // accessor's annotated type as `design:type`, same as a decorated getter.
+    expect({
+      n: Reflect.getMetadata("design:type", A.prototype, "n"),
+      s: Reflect.getMetadata("design:type", A.prototype, "s"),
+      r: Reflect.getMetadata("design:type", A.prototype, "r"),
+      b: Reflect.getMetadata("design:type", A, "b"),
+    }).toEqual({ n: Number, s: String, r: Ref, b: Boolean });
+  });
 });

@@ -1,5 +1,7 @@
 // @ts-nocheck
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 import DecoratedClass from "./decorator-export-default-class-fixture";
 import DecoratedAnonClass from "./decorator-export-default-class-fixture-anon";
 
@@ -1053,4 +1055,229 @@ test("decorator and declare", () => {
 
   new A();
   expect(counter).toBe(1);
+});
+
+// `accessor` is part of the class grammar regardless of which decorator
+// semantics tsconfig selects. This file already runs with both
+// experimentalDecorators and emitDecoratorMetadata enabled (test/tsconfig.json),
+// so every inline class here exercises the legacy-decorator lowering path.
+describe("auto-accessor fields with experimentalDecorators", () => {
+  test("accessor field lowers to a per-instance getter/setter pair", () => {
+    const order: string[] = [];
+    class A {
+      accessor a = (order.push("a"), 1);
+      b = (order.push("b"), this.a + 1);
+      accessor c: number = (order.push("c"), this.b + 1);
+    }
+    const x = new A();
+    const y = new A();
+    x.a = 100;
+    const desc = Object.getOwnPropertyDescriptor(A.prototype, "a");
+    expect({
+      order,
+      x: { a: x.a, b: x.b, c: x.c },
+      // the backing storage is per-instance, not shared through the prototype
+      y: { a: y.a, b: y.b, c: y.c },
+      desc: { get: typeof desc.get, set: typeof desc.set, value: desc.value },
+      ownKeys: Object.getOwnPropertyNames(x),
+    }).toEqual({
+      order: ["a", "b", "c", "a", "b", "c"],
+      x: { a: 100, b: 2, c: 3 },
+      y: { a: 1, b: 2, c: 3 },
+      desc: { get: "function", set: "function", value: undefined },
+      ownKeys: ["b"],
+    });
+  });
+
+  test("static accessor field", () => {
+    class A {
+      static accessor s = "x";
+    }
+    const desc = Object.getOwnPropertyDescriptor(A, "s");
+    A.s = "y";
+    expect({ value: A.s, get: typeof desc.get, set: typeof desc.set }).toEqual({
+      value: "y",
+      get: "function",
+      set: "function",
+    });
+  });
+
+  test("private-named accessor", () => {
+    class A {
+      accessor #p = 1;
+      read() {
+        return this.#p;
+      }
+      write(v: number) {
+        this.#p = v;
+      }
+    }
+    const a = new A();
+    a.write(7);
+    expect(a.read()).toBe(7);
+  });
+
+  test("computed-key accessor", () => {
+    const k = Symbol("k");
+    class A {
+      accessor [k] = "v";
+    }
+    const a = new A();
+    a[k] = "w";
+    const desc = Object.getOwnPropertyDescriptor(A.prototype, k);
+    expect({ value: a[k], get: typeof desc.get, set: typeof desc.set }).toEqual({
+      value: "w",
+      get: "function",
+      set: "function",
+    });
+  });
+
+  test("backing field does not collide with an existing private name", () => {
+    class A {
+      #a_accessor_storage = "user";
+      accessor a = "accessor";
+      user() {
+        return this.#a_accessor_storage;
+      }
+    }
+    const a = new A();
+    a.a = "changed";
+    expect({ user: a.user(), accessor: a.a }).toEqual({ user: "user", accessor: "changed" });
+  });
+
+  test("accessor in a class expression", () => {
+    const A = class {
+      accessor a = 1;
+    };
+    const a = new A();
+    a.a = 2;
+    expect(a.a).toBe(2);
+  });
+
+  test("accessor alongside legacy-decorated members in the same class", () => {
+    const seen: string[] = [];
+    function dec(target: any, key: string) {
+      seen.push(key);
+    }
+    class A {
+      @dec x: number = 1;
+      accessor a = 2;
+      @dec m() {
+        return this.a;
+      }
+    }
+    const inst = new A();
+    inst.a = 3;
+    expect({ seen, x: inst.x, a: inst.a, m: inst.m() }).toEqual({ seen: ["x", "m"], x: 1, a: 3, m: 3 });
+  });
+
+  test("legacy decorator on an accessor receives the getter/setter descriptor", () => {
+    // TypeScript treats a legacy decorator on an auto-accessor field like an
+    // accessor decorator: __decorate([...], proto, key, null), so the decorator
+    // sees {get, set} and its returned descriptor replaces the pair.
+    // Matches tsc 4.9 through 5.x.
+    const seen: any[] = [];
+    function dec(target: any, key: string, desc: PropertyDescriptor): any {
+      seen.push([key, typeof desc.get, typeof desc.set]);
+      const get = desc.get;
+      return {
+        ...desc,
+        get() {
+          return get.call(this) * 10;
+        },
+      };
+    }
+    class A {
+      @dec accessor n: number = 4;
+    }
+    const a = new A();
+    a.n = 6;
+    expect({ seen, value: a.n }).toEqual({ seen: [["n", "function", "function"]], value: 60 });
+  });
+
+  test("Bun.Transpiler accepts accessor with either legacy-decorator flag", () => {
+    const source = "class A { accessor a = 1 }";
+    for (const compilerOptions of [{ experimentalDecorators: true }, { emitDecoratorMetadata: true }]) {
+      const transpiler = new Bun.Transpiler({ loader: "ts", tsconfig: JSON.stringify({ compilerOptions }) });
+      const output = transpiler.transformSync(source);
+      // the accessor must be lowered; no engine supports the keyword natively
+      expect(output).not.toContain("accessor a");
+      expect(output).toContain("get a");
+      expect(output).toContain("set a");
+    }
+  });
+
+  test("newline after `accessor` is ASI, not the modifier keyword", () => {
+    // The grammar is `accessor [no LineTerminator here] ClassElementName`.
+    // With a newline, `accessor` is an ordinary field terminated by ASI and
+    // `y` is a second, separate field. There must be no auto-accessor.
+    const transpiler = new Bun.Transpiler({
+      loader: "ts",
+      tsconfig: JSON.stringify({ compilerOptions: { experimentalDecorators: true } }),
+    });
+    const output = transpiler.transformSync("class C {\n  accessor\n  y = 1\n}");
+    expect(output).not.toContain("get y");
+    expect(output).toContain("y = 1");
+  });
+
+  test.concurrent.each(["experimentalDecorators", "emitDecoratorMetadata"])(
+    "bun run accepts accessor with only %s in tsconfig",
+    async flag => {
+      using dir = tempDir(`legacy-accessor-${flag}`, {
+        "tsconfig.json": JSON.stringify({ compilerOptions: { [flag]: true } }),
+        "entry.ts": `
+          class A {
+            accessor a = 1;
+          }
+          const a = new A();
+          a.a = 5;
+          const desc = Object.getOwnPropertyDescriptor(A.prototype, "a");
+          console.log(a.a, typeof desc.get, typeof desc.set);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("5 function function\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent("bun build output with experimentalDecorators runs", async () => {
+    using dir = tempDir("legacy-accessor-build", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true } }),
+      "entry.ts": `
+        function dec(target: any, key: string) {}
+        class A {
+          @dec x: number = 1;
+          accessor a = 2;
+        }
+        const a = new A();
+        a.a = 3;
+        console.log(a.x, a.a);
+      `,
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.ts", "--target=bun", "--outdir=out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [buildStderr, buildExit] = await Promise.all([build.stderr.text(), build.exited]);
+    expect(buildExit).toBe(0);
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), join("out", "entry.js")],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect(stdout).toBe("1 3\n");
+    expect(exitCode).toBe(0);
+  });
 });

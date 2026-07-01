@@ -462,11 +462,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                     }
                                     PropertyModifierKeyword::PAccessor => {
-                                        // "accessor" keyword for auto-accessor fields (TC39 standard decorators)
+                                        // The `accessor` keyword for auto-accessor fields is part
+                                        // of the class grammar regardless of which decorator
+                                        // semantics are configured, so it is not gated on
+                                        // `standard_decorators`: TypeScript accepts `accessor`
+                                        // fields with `experimentalDecorators` enabled too.
+                                        //
+                                        // The grammar is `accessor [no LineTerminator here]
+                                        // ClassElementName`, so a newline before the next token
+                                        // makes `accessor` an ordinary field name terminated by
+                                        // ASI instead (same as `.PAsync` above).
                                         if opts.is_class
-                                            && p.options.features.standard_decorators
                                             && PropertyModifierKeyword::find(raw)
                                                 == Some(PropertyModifierKeyword::PAccessor)
+                                            && !p.lexer.has_newline_before
                                         {
                                             kind = PropertyKind::AutoAccessor;
                                             errors = None;

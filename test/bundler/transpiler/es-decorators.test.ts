@@ -1062,4 +1062,27 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  describe("accessor grammar", () => {
+    test("newline after `accessor` is ASI, not the modifier keyword", async () => {
+      // The grammar is `accessor [no LineTerminator here] ClassElementName`.
+      // With a newline, `accessor` is an ordinary public field terminated by
+      // ASI and `y` is a second, separate field. There must be no auto-accessor.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class C {
+          accessor
+          y = 1
+        }
+        const c = new C();
+        console.log(JSON.stringify({
+          own: Object.getOwnPropertyNames(c),
+          proto: Object.getOwnPropertyNames(C.prototype),
+          y: c.y,
+        }));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('{"own":["accessor","y"],"proto":["constructor"],"y":1}\n');
+      expect(exitCode).toBe(0);
+    });
+  });
 });

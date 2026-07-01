@@ -1,5 +1,5 @@
 #![allow(clippy::too_many_arguments, clippy::needless_late_init)]
-//! Lowering for TC39 standard ES decorators.
+//! Lowering for TC39 standard ES decorators and auto-accessor fields.
 
 use bun_alloc::ArenaVecExt as _;
 
@@ -1093,6 +1093,206 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::StmtData::SExpr(s) => s.value,
             _ => unreachable!(),
         }
+    }
+
+    /// `this.#storage` for a synthesized private backing field.
+    fn private_storage_access(&mut self, storage_ref: Ref, loc: bun_ast::Loc) -> Expr {
+        let target = self.new_expr(E::This {}, loc);
+        let index = self.new_expr(E::PrivateIdentifier { ref_: storage_ref }, loc);
+        self.new_expr(
+            E::Index {
+                target,
+                index,
+                optional_chain: None,
+            },
+            loc,
+        )
+    }
+
+    /// Rewrite auto-accessor elements (`accessor x = v`) into a private backing
+    /// field plus a getter/setter pair, the same shape `tsc` emits:
+    ///
+    ///   #x_accessor_storage = v;
+    ///   get x() { return this.#x_accessor_storage; }
+    ///   set x(v) { this.#x_accessor_storage = v; }
+    ///
+    /// This runs only for classes that do NOT go through the TC39 standard
+    /// decorator lowering above (which handles auto-accessors itself), i.e.
+    /// TypeScript sources with `experimentalDecorators`/`emitDecoratorMetadata`
+    /// enabled. `accessor` is part of the class grammar in both decorator
+    /// modes, so it still has to be lowered here. Legacy decorators on the
+    /// accessor move to the getter: `lower_class` then emits the same
+    /// `__legacyDecorateClassTS(decorators, proto, key, null)` call `tsc`
+    /// produces for a legacy-decorated auto-accessor.
+    ///
+    /// Must run inside the class body's visit scope (so the storage symbol is
+    /// registered in the scope that owns it) and after the class properties
+    /// have been visited (nothing synthesized here gets visited).
+    pub fn lower_auto_accessors_to_get_set(&mut self, class: &mut G::Class) {
+        let p = self;
+        let bump = p.arena;
+        // `StoreSlice` is a Copy arena handle, so holding it does not borrow
+        // `class` across the `&mut self` helper calls below.
+        let old_props: bun_ast::StoreSlice<Property> = class.properties;
+        let accessor_count = old_props
+            .iter()
+            .filter(|prop| prop.kind == PropertyKind::AutoAccessor)
+            .count();
+        if accessor_count == 0 {
+            return;
+        }
+
+        // Private names are printed verbatim (the non-minifying renamer never
+        // renames them), so the synthesized backing-field names must not
+        // collide with any private name already declared in this class body.
+        let mut taken_private_names = BumpVec::<&'a [u8]>::new_in(bump);
+        for prop in old_props.iter() {
+            if let Some(key) = prop.key
+                && let js_ast::ExprData::EPrivateIdentifier(pi) = key.data
+            {
+                // SAFETY: arena-owned.
+                let name: &'a [u8] = p.symbols[pi.ref_.inner_index() as usize]
+                    .original_name
+                    .slice();
+                taken_private_names.push(name);
+            }
+        }
+
+        let mut new_props =
+            BumpVec::<Property>::with_capacity_in(old_props.len() + 2 * accessor_count, bump);
+        for prop in old_props.slice_mut().iter_mut() {
+            if prop.kind != PropertyKind::AutoAccessor {
+                new_props.push(core::mem::take(prop));
+                continue;
+            }
+            let accessor = core::mem::take(prop);
+            let key = accessor.key.expect("infallible: auto-accessor has a key");
+            let loc = key.loc;
+
+            // Backing-field name: `#<hint>_accessor_storage`, suffixed with
+            // `_N` until it is unique among the class's private names.
+            let hint: &[u8] = 'hint: {
+                if !accessor.flags.contains(Flags::Property::IsComputed) {
+                    if let js_ast::ExprData::EString(s) = &key.data
+                        && s.is_utf8()
+                        && js_lexer::is_identifier(&s.data)
+                    {
+                        break 'hint &s.data;
+                    }
+                    if let js_ast::ExprData::EPrivateIdentifier(pi) = &key.data {
+                        // SAFETY: arena-owned.
+                        let name: &'a [u8] = p.symbols[pi.ref_.inner_index() as usize]
+                            .original_name
+                            .slice();
+                        break 'hint &name[1..];
+                    }
+                }
+                b""
+            };
+            let storage_name: &'a [u8] = {
+                let mut n: usize = 0;
+                loop {
+                    let mut v = BumpVec::<u8>::new_in(bump);
+                    v.push(b'#');
+                    v.extend_from_slice(hint);
+                    v.extend_from_slice(b"_accessor_storage");
+                    if n > 0 {
+                        let s = bun_alloc::arena_format!(in bump, "_{}", n);
+                        v.extend_from_slice(s.as_bytes());
+                    }
+                    let candidate = v.into_bump_slice();
+                    if !taken_private_names.iter().any(|t| *t == candidate) {
+                        break candidate;
+                    }
+                    n += 1;
+                }
+            };
+            taken_private_names.push(storage_name);
+            let storage_kind = if accessor.flags.contains(Flags::Property::IsStatic) {
+                js_ast::symbol::Kind::PrivateStaticField
+            } else {
+                js_ast::symbol::Kind::PrivateField
+            };
+            let storage_ref = p.new_sym(storage_kind, storage_name);
+
+            // #storage = <init>;
+            let mut storage_flags = accessor.flags;
+            storage_flags.remove(Flags::Property::IsComputed);
+            new_props.push(Property {
+                flags: storage_flags,
+                key: Some(p.new_expr(E::PrivateIdentifier { ref_: storage_ref }, loc)),
+                initializer: accessor.initializer,
+                ..Default::default()
+            });
+
+            let mut method_flags = accessor.flags;
+            method_flags.insert(Flags::Property::IsMethod);
+
+            // get <key>() { return this.#storage; }
+            let get_ret = p.private_storage_access(storage_ref, loc);
+            let get_body = bump.alloc_slice_copy(&[p.s(
+                S::Return {
+                    value: Some(get_ret),
+                },
+                loc,
+            )]);
+            let get_fn = G::Fn {
+                body: G::FnBody {
+                    stmts: bun_ast::StoreSlice::new_mut(get_body),
+                    loc,
+                },
+                // `design:type` for a legacy-decorated accessor is the getter's
+                // return type, which is the accessor's annotated type.
+                return_ts_metadata: accessor.ts_metadata,
+                ..Default::default()
+            };
+            new_props.push(Property {
+                kind: PropertyKind::Get,
+                flags: method_flags,
+                key: Some(key),
+                value: Some(p.new_expr(E::Function { func: get_fn }, loc)),
+                ts_decorators: accessor.ts_decorators,
+                ..Default::default()
+            });
+
+            // set <key>(v) { this.#storage = v; }
+            let setter_param_ref = p.new_sym(js_ast::symbol::Kind::Other, b"v");
+            let lhs = p.private_storage_access(storage_ref, loc);
+            let rhs = p.use_ref(setter_param_ref, loc);
+            let set_body = bump.alloc_slice_copy(&[p.s(
+                S::SExpr {
+                    value: Expr::assign(lhs, rhs),
+                    ..Default::default()
+                },
+                loc,
+            )]);
+            let setter_binding = p.b(
+                B::Identifier {
+                    r#ref: setter_param_ref,
+                },
+                loc,
+            );
+            let setter_fn_args = bump.alloc(G::Arg {
+                binding: setter_binding,
+                ..Default::default()
+            });
+            let set_fn = G::Fn {
+                args: bun_ast::StoreSlice::new_mut(core::slice::from_mut(setter_fn_args)),
+                body: G::FnBody {
+                    stmts: bun_ast::StoreSlice::new_mut(set_body),
+                    loc,
+                },
+                ..Default::default()
+            };
+            new_props.push(Property {
+                kind: PropertyKind::Set,
+                flags: method_flags,
+                key: Some(key),
+                value: Some(p.new_expr(E::Function { func: set_fn }, loc)),
+                ..Default::default()
+            });
+        }
+        class.properties = bun_ast::StoreSlice::new_mut(new_props.into_bump_slice_mut());
     }
 
     // ── Core lowering ────────────────────────────────────

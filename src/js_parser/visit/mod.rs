@@ -1169,6 +1169,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
+            // Auto-accessor fields are normally lowered by the standard
+            // decorator lowering. When that lowering is skipped (TypeScript
+            // with legacy/experimental decorators enabled), rewrite them into a
+            // private backing field plus a getter/setter pair here, while the
+            // class body scope is still current.
+            if !class.should_lower_standard_decorators {
+                self.lower_auto_accessors_to_get_set(class);
+            }
+
             // manual restore for the block-level `defer`
             self.pop_scope();
             self.enclosing_class_keyword = old_enclosing_class_keyword;

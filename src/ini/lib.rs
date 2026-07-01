@@ -1351,9 +1351,10 @@ mod draft {
 
         if let Some(query) = out.as_property(b"registry") {
             if let Some(str_) = query.expr.as_utf8_string_literal() {
-                install.default_registry = Some(npm_registry::parse_registry_url_string(
-                    &Box::<[u8]>::from(str_),
-                )?);
+                install.default_registry =
+                    Some(npm_registry::parse_registry_url_string(
+                        &Box::<[u8]>::from(str_),
+                    )?);
             }
         }
 

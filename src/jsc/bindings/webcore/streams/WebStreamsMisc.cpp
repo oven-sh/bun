@@ -152,7 +152,6 @@ static JSValue getCallbackMember(JSGlobalObject* globalObject, JSObject* object,
     return value;
 }
 
-
 UnderlyingSinkDict convertUnderlyingSinkDict(JSGlobalObject* globalObject, JSValue underlyingSink)
 {
     auto& vm = getVM(globalObject);

@@ -608,6 +608,30 @@ describe("DiffieHellman", () => {
     expect(dh.setPublicKey.name).toBe("setPublicKey");
     expect(dh.setPrivateKey.name).toBe("setPrivateKey");
   });
+
+  it("accepts a buffer generator wider than a BIGNUM word", () => {
+    // A 72-bit generator overflows BN_get_word (which reports the overflow as
+    // ULONG_MAX). The generator-below-2 check must not misread that as a
+    // small value, nor reject it outright: any generator too wide for a word
+    // is necessarily >= 2.
+    const p = crypto.getDiffieHellman("modp5").getPrime();
+    const g = Buffer.from("020000000000000001", "hex");
+
+    const alice = crypto.createDiffieHellman(p, g);
+    const bob = crypto.createDiffieHellman(p, g);
+    alice.generateKeys();
+    bob.generateKeys();
+
+    expect(alice.getGenerator()).toEqual(g);
+    expect(alice.computeSecret(bob.getPublicKey())).toEqual(bob.computeSecret(alice.getPublicKey()));
+  });
+
+  it("rejects a buffer generator below 2 and accepts exactly 2", () => {
+    const p = crypto.getDiffieHellman("modp5").getPrime();
+    expect(() => crypto.createDiffieHellman(p, Buffer.from([0x00]))).toThrow(/bad.generator/i);
+    expect(() => crypto.createDiffieHellman(p, Buffer.from([0x01]))).toThrow(/bad.generator/i);
+    expect(() => crypto.createDiffieHellman(p, Buffer.from([0x02]))).not.toThrow();
+  });
 });
 
 describe("ECDH", () => {

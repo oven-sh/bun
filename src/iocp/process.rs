@@ -1384,7 +1384,11 @@ impl ProcessHandle {
             .stdio
             .iter()
             .any(|s| matches!(s, Stdio::InheritFd(_)));
-        let (mut process_flags, show) = creation_flags(options.flags, any_inherit_fd, options.pseudoconsole.is_some());
+        let (mut process_flags, show) = creation_flags(
+            options.flags,
+            any_inherit_fd,
+            options.pseudoconsole.is_some(),
+        );
         if attrs.is_some() {
             process_flags |= EXTENDED_STARTUPINFO_PRESENT;
         }

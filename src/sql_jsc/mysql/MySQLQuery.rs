@@ -342,19 +342,14 @@ impl MySQLQuery {
                 let stmt: *mut MySQLStatement = *entry.value_ptr;
                 // `found_existing` ⇒ the map already holds a live, ref-counted
                 // `*mut MySQLStatement` (separate heap allocation, never aliases
-                // `*self`); this thread is the only mutator. Every access in this
-                // branch is a shared read (`status`, `error_response.to_js`,
-                // `ref_()` are `&self`), so a single `ParentRef` deref covers all
-                // three former per-site raw `(*stmt).…` derefs.
+                // `*self`); this thread is the only mutator. `ref_()` is `&self`,
+                // so a `ParentRef` deref covers the former raw `(*stmt).…` deref.
+                // A cached entry is never `Failed`: handle_prepared_statement
+                // evicts the statement from the map when its prepare errors, and
+                // the `match` below rejects on any `Failed` status regardless.
                 let stmt_ref = bun_ptr::ParentRef::from(
                     core::ptr::NonNull::new(stmt).expect("found_existing ⇒ non-null map entry"),
                 );
-                if stmt_ref.status == my_sql_statement::Status::Failed {
-                    let error_response = stmt_ref.error_response.to_js(global_object);
-                    // If the statement failed, we need to throw the error
-                    let _ = global_object.throw_value(error_response);
-                    return Err(bun_core::err!("JSError"));
-                }
                 self.statement = stmt;
                 stmt_ref.ref_();
                 drop(signature);

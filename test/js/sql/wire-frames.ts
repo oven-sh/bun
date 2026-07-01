@@ -256,6 +256,18 @@ export function mysqlAuthSwitchRequest(seq: number, pluginName: string, pluginDa
   return mysqlRawPacket(seq, Buffer.concat([Buffer.from([0xfe]), Buffer.from(pluginName + "\0"), pluginData]));
 }
 
+// MySQL ERR_Packet (CLIENT_PROTOCOL_41) — page_protocol_basic_err_packet.html:
+//   Int<1>(0xff) Int<2>(error_code) Byte1('#') String<5>(sql_state) String<EOF>(error_message)
+export function mysqlErrorPacket(seq: number, errorCode: number, sqlState: string, message: string): Buffer {
+  const fixed = Buffer.alloc(3);
+  fixed[0] = 0xff;
+  fixed.writeUInt16LE(errorCode, 1);
+  return mysqlRawPacket(
+    seq,
+    Buffer.concat([fixed, Buffer.from("#"), Buffer.from(sqlState, "latin1"), Buffer.from(message, "utf-8")]),
+  );
+}
+
 // MySQL length-encoded integer — page_protocol_basic_dt_integers.html#sect_protocol_basic_dt_int_le:
 //   <0xfb 1B; 0xfc + Int<2>; 0xfd + Int<3>; 0xfe + Int<8>.
 export function mysqlLenencInt(n: number | bigint): Buffer {

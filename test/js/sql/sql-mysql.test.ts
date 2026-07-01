@@ -763,13 +763,15 @@ if (isDockerEnabled()) {
           expect(err.code).toBe("ERR_MYSQL_SYNTAX_ERROR");
         });
 
-        // Regression: the error_message stored on a cached failed prepared statement
-        // was a .temporary slice into the socket read buffer. Re-running the same
-        // failing query after other queries overwrote the buffer would read garbage
-        // (or crash under ASAN) when constructing the error from the cached statement.
-        test("Cached failed prepared statement returns stable error message", async () => {
+        // Regression: the error_message held on a failed prepared statement was a
+        // .temporary slice into the socket read buffer, so re-running the same
+        // failing query after other traffic overwrote the buffer returned garbage
+        // (or crashed under ASAN). A failed prepare is now also evicted from the
+        // statement cache, so the second attempt re-prepares; the server must
+        // answer with the same error either way.
+        test("Re-running a failing prepared statement returns a stable error message", async () => {
           await using sql = new SQL({ ...getOptions(), max: 1 });
-          // Need a parameter so it goes through the prepared-statement cache path.
+          // Need a parameter so it goes through the prepared-statement path.
           const err1 = await sql`wat ${1}`.catch(x => x);
           expect(err1.code).toBe("ERR_MYSQL_SYNTAX_ERROR");
           expect(typeof err1.message).toBe("string");
@@ -783,7 +785,7 @@ if (isDockerEnabled()) {
             expect(rows[0].x).toBe(filler);
           }
 
-          // Hitting the cached .failed statement must reproduce the same error.
+          // The re-prepare of the same text must reproduce the same error.
           const err2 = await sql`wat ${1}`.catch(x => x);
           expect({
             code: err2.code,

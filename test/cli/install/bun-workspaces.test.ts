@@ -272,10 +272,10 @@ describe("file: dependency on a workspace member", () => {
     expect(await file(join(packageDir, "bun.lock")).text()).toBe(first);
   });
 
-  // Negative contract: the rewrite must not fire for an alias owned by a DIFFERENT
-  // member as its name, because the workspace resolver looks the path up by name
-  // first and would link that member instead of the folder the `file:` path names.
-  test("an alias colliding with another member's name still links the folder it names", async () => {
+  // `app` aliases the contents of packages/legacy-utils under the name of the
+  // unrelated `utils` member, so the rewrite must decline (see
+  // `find_workspace_by_path`) and the alias must link the folder it names.
+  async function writeAliasCollision() {
     await Promise.all([
       write(packageJson, JSON.stringify({ name: "root", version: "1.0.0", workspaces: ["packages/*"] })),
       write(join(packageDir, "packages", "utils", "package.json"), JSON.stringify({ name: "utils", version: "1.0.0" })),
@@ -288,16 +288,32 @@ describe("file: dependency on a workspace member", () => {
         JSON.stringify({ name: "app", version: "1.0.0", dependencies: { utils: "file:../legacy-utils" } }),
       ),
     ]);
+  }
 
+  test("an alias colliding with another member's name still links the folder it names", async () => {
+    await writeAliasCollision();
     await runBunInstall(env, packageDir, { saveTextLockfile: true });
-    // `app` named the contents of packages/legacy-utils; the `utils` member it
-    // happens to be aliased as must not win.
     const lockfile = await file(join(packageDir, "bun.lock")).text();
     expect(lockfile).toContain('"app/utils": ["legacy@workspace:packages/legacy-utils"]');
     expect(await file(join(packageDir, "packages", "app", "node_modules", "utils", "package.json")).json()).toEqual({
       name: "legacy",
       version: "1.0.0",
     });
+  });
+
+  // Because the rewrite declines for the colliding alias, that shape keeps the
+  // pre-existing second-install lockfile rewrite. It needs the `Tag::Workspace`
+  // resolver to prefer a dependency's stored path over its name-keyed lookup.
+  test.todo("an alias colliding with another member's name also produces a stable lockfile", async () => {
+    await writeAliasCollision();
+    await runBunInstall(env, packageDir, { saveTextLockfile: true });
+    const first = await file(join(packageDir, "bun.lock")).text();
+
+    const { err } = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(err).not.toContain("Saved lockfile");
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(first);
+    await write(join(packageDir, "bun.lock"), first);
+    await runBunInstall(env, packageDir, { frozenLockfile: true, savesLockfile: false });
   });
 });
 

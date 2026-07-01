@@ -5,11 +5,9 @@ import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
-// setupIOBeforeRun()'s first syscall is a dup of stdout/stderr, which on Linux
-// is fcntl(fd, F_DUPFD_CLOEXEC, 0). The shim makes exactly that fail with
-// EMFILE for fd 1 and 2 while the SHELL_FAIL_DUP_ARM file exists, so the
-// fixture can leave Bun's own startup alone and arm the fault right before
-// the $ calls. Nothing else in the fixture dups stdio.
+// setupIOBeforeRun()'s first syscall is a dup of stdout/stderr: on Linux,
+// fcntl(fd, F_DUPFD_CLOEXEC, 0). Fail exactly that with EMFILE for fd 1/2
+// while the SHELL_FAIL_DUP_ARM file exists, leaving Bun's own startup alone.
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -39,19 +37,20 @@ int fcntl(int fd, int cmd, ...) {
     errno = EMFILE;
     return -1;
   }
+  // glibc's own fcntl reads its optional third argument as a void * for every
+  // command (sysdeps/unix/sysv/linux/fcntl64.c); mirror that so commands this
+  // shim does not recognize still forward their argument.
   va_list ap;
   va_start(ap, cmd);
-  long arg = va_arg(ap, long);
+  void *arg = va_arg(ap, void *);
   va_end(ap);
   return real_fcntl(fd, cmd, arg);
 }
 `;
 
-// Every armed $ call takes the runFromJS error path: the Interpreter is
-// created, setupIOBeforeRun() fails, and only the GC finalizer may free the
-// native object. Forcing the ShellInterpreter count to 0 proves those
-// finalizers actually ran on this process, so under the ASAN debug build a
-// reintroduced free on the error path aborts the fixture.
+// Every armed $ call takes the runFromJS error path, where only the GC
+// finalizer may free the native Interpreter. Draining the ShellInterpreter
+// count proves those finalizers ran, so under ASAN a reintroduced free aborts.
 const FIXTURE = /* js */ `
 import { heapStats } from "bun:jsc";
 import { unlinkSync, writeFileSync } from "node:fs";

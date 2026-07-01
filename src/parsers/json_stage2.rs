@@ -625,12 +625,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                         Data::ENumber(n) => E::JsonValue::Number(n),
                         Data::EBoolean(b) => E::JsonValue::Boolean(b.value),
                         Data::ENull(_) => E::JsonValue::Null,
-                        // `.env` auto-quoting and `\uXXXX`-escaped identifiers
-                        // can produce a string from the scalar path.
-                        Data::EString(r) => E::JsonValue::String(r.get().data),
                         // Exotic whitespace before the value re-dispatches
-                        // through `parse_value::<true>`, which can return a
-                        // container.
+                        // through `parse_value`, which can return a string
+                        // or a container.
+                        Data::EString(r) => E::JsonValue::String(r.get().data),
                         Data::EObjectJSON(r) => E::JsonValue::Object(r),
                         Data::EArrayJSON(r) => E::JsonValue::Array(r),
                         _ => unreachable!("not a JSON leaf"),

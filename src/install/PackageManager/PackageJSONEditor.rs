@@ -1012,14 +1012,13 @@ pub(crate) fn edit(
                             if let Some(entry) =
                                 manager.updating_packages.fetch_swap_remove(request.name)
                             {
-                                // `Lockfile::preprocess_update_requests` wrote the same
-                                // literal into the lockfile's root dependency via
-                                // `positional_update_literal`.
+                                // For the root dependencies it rewrites,
+                                // `Lockfile::preprocess_update_requests` wrote the
+                                // same literal via `positional_update_literal`.
                                 let new_version = format_updated_version_literal(
                                     &resolutions[request.package_id as usize].npm().version,
                                     manager.lockfile.buffers.string_bytes.as_slice(),
                                     &entry.value,
-                                    &entry.value.original_version_literal,
                                     options.exact_versions,
                                 );
                                 break 'npm arena_str(arena, &new_version);

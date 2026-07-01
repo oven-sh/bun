@@ -388,8 +388,9 @@ it("update <name> of a versionless scoped alias keeps the files in agreement, is
 
 // https://github.com/oven-sh/bun/issues/13388
 // A positional request with an explicit version. `bun update` of a recorded
-// dependency re-pins from its original literal, of an unrecorded one it saves
-// `^<resolved>`, and `bun add <name>@<range>` keeps the requested range.
+// dependency re-pins from its original literal (keeping any `npm:` alias
+// prefix), of an unrecorded one it saves `^<resolved>`, and
+// `bun add <name>@<range>` keeps the requested range.
 for (const { label, init, args, expected } of [
   {
     label: "update existing@range",
@@ -410,6 +411,24 @@ for (const { label, init, args, expected } of [
     init: { "baz-alias": "npm:baz@~0.0.3" },
     args: ["update", "baz@~0.0.3"],
     expected: { "baz-alias": "npm:baz@~0.0.3", baz: "^0.0.3" },
+  },
+  {
+    // The requested `npm:` spec replaces the in-memory package.json literal
+    // the lockfile is built from, so the alias prefix must come from the
+    // recorded original, not from that literal.
+    label: "update alias@npm:target@range",
+    init: { "baz-alias": "npm:baz@~0.0.3" },
+    args: ["update", "baz-alias@npm:baz@~0.0.4"],
+    expected: { "baz-alias": "npm:baz@~0.0.5" },
+  },
+  {
+    // A bare positional range on an alias only resolves when the alias name
+    // is itself a registry package, so this uses a self-alias. Here the
+    // replaced in-memory literal (`~0.0.4`) has no prefix at all.
+    label: "update self-alias@range",
+    init: { baz: "npm:baz@~0.0.3" },
+    args: ["update", "baz@~0.0.4"],
+    expected: { baz: "npm:baz@~0.0.5" },
   },
   { label: "add existing@range", init: { baz: "~0.0.3" }, args: ["add", "baz@~0.0.4"], expected: { baz: "~0.0.4" } },
 ]) {

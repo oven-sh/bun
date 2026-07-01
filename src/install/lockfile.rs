@@ -916,13 +916,8 @@ impl Lockfile {
                 }
 
                 let npm_version = res.npm().version;
-                let new_literal = format_updated_version_literal(
-                    &npm_version,
-                    string_buf,
-                    entry,
-                    dep.version.literal.slice(string_buf),
-                    exact_versions,
-                );
+                let new_literal =
+                    format_updated_version_literal(&npm_version, string_buf, entry, exact_versions);
                 // The post-install package.json edit applies this literal,
                 // so the two files cannot disagree.
                 entry.updated_version_literal = Some(new_literal.clone().into_boxed_slice());
@@ -1397,7 +1392,6 @@ fn positional_update_literal(
                 resolved_version,
                 string_buf,
                 entry,
-                dep.version.literal.slice(string_buf),
                 exact_versions,
             ));
         }
@@ -1416,22 +1410,24 @@ fn positional_update_literal(
 
 /// Formats the version literal `bun update` writes for a root dependency:
 /// `resolved_version` at the user's original pin level (`^`, `~`, exact),
-/// preserving the `npm:<name>@` prefix of aliases (taken from `dep_literal`).
+/// preserving the `npm:<name>@` prefix of aliases. Both are derived from
+/// `entry.original_version_literal`, so every caller formats identically.
 pub(crate) fn format_updated_version_literal(
     resolved_version: &Semver::Version,
     string_buf: &[u8],
     entry: &PackageUpdateInfo,
-    dep_literal: &[u8],
     exact_versions: bool,
 ) -> Vec<u8> {
     let mut out: Vec<u8> = Vec::new();
 
-    // Split at the LAST `@` because the alias target may be scoped,
+    // For an alias, `original_version_literal` is `npm:<target>@<range>`.
+    // Split at the LAST `@` because the target may be scoped,
     // e.g. "dep": "npm:@foo/bar@1.2.3".
+    let mut original: &[u8] = &entry.original_version_literal;
     if entry.is_alias {
-        if let Some(at_index) = strings::last_index_of_char(dep_literal, b'@') {
-            out.extend_from_slice(&dep_literal[..at_index]);
-            out.push(b'@');
+        if let Some(at_index) = strings::last_index_of_char(original, b'@') {
+            out.extend_from_slice(&original[..=at_index]);
+            original = &original[at_index + 1..];
         }
         // otherwise fall through and replace the entire version.
     }
@@ -1441,16 +1437,6 @@ pub(crate) fn format_updated_version_literal(
         write!(&mut out, "{}", version_fmt).expect("infallible: in-memory write");
         return out;
     }
-
-    let original: &[u8] = 'original: {
-        if !entry.is_alias {
-            break 'original &entry.original_version_literal;
-        }
-        if let Some(at_index) = strings::last_index_of_char(&entry.original_version_literal, b'@') {
-            break 'original &entry.original_version_literal[at_index + 1..];
-        }
-        &entry.original_version_literal
-    };
 
     match Semver::Version::which_version_is_pinned(original) {
         Semver::PinnedVersion::Patch => write!(&mut out, "{}", version_fmt),

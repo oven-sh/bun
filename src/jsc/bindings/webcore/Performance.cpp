@@ -50,10 +50,11 @@
 #include "PerformanceTiming.h"
 #include "PerformanceUserTiming.h"
 // #include "ResourceResponse.h"
+#include "JSPerformance.h"
 #include "ScriptExecutionContext.h"
+#include "ZigGlobalObject.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSGlobalObject.h>
-#include <JavaScriptCore/StrongInlines.h>
 #include <wtf/TZoneMallocInlines.h>
 #include "BunClientData.h"
 
@@ -466,23 +467,27 @@ void Performance::scheduleTaskIfNeeded()
 
     // Observer callbacks run in the async context of the entry that scheduled
     // the delivery task (the first one queued in this batch), matching Node.
-    auto* schedulingGlobalObject = context->jsGlobalObject();
+    // The capture lives in a WriteBarrier on the JSPerformance wrapper, which
+    // the global keeps alive for exactly as long as this Performance.
+    auto* schedulingGlobalObject = defaultGlobalObject(context->jsGlobalObject());
+    auto* jsPerformance = uncheckedDowncast<JSPerformance>(schedulingGlobalObject->performanceObject());
     JSC::JSValue asyncContext = schedulingGlobalObject->m_asyncContextData.get()->getInternalField(0);
     if (!asyncContext.isUndefined())
-        m_timingBufferDeliveryAsyncContext.set(schedulingGlobalObject->vm(), asyncContext);
+        jsPerformance->setTimingBufferDeliveryAsyncContext(schedulingGlobalObject->vm(), asyncContext);
 
     m_hasScheduledTimingBufferDeliveryTask = true;
     context->postTask([protectedThis = Ref { *this }, this](ScriptExecutionContext& context) {
         m_hasScheduledTimingBufferDeliveryTask = false;
 
-        auto* globalObject = context.jsGlobalObject();
+        auto* globalObject = defaultGlobalObject(context.jsGlobalObject());
+        auto* jsPerformance = uncheckedDowncast<JSPerformance>(globalObject->performanceObject());
         JSC::JSValue restoreAsyncContext {};
         JSC::InternalFieldTuple* asyncContextData = nullptr;
-        if (m_timingBufferDeliveryAsyncContext) {
+        if (JSC::JSValue asyncContext = jsPerformance->timingBufferDeliveryAsyncContext()) {
             asyncContextData = globalObject->m_asyncContextData.get();
             restoreAsyncContext = asyncContextData->getInternalField(0);
-            asyncContextData->putInternalField(globalObject->vm(), 0, m_timingBufferDeliveryAsyncContext.get());
-            m_timingBufferDeliveryAsyncContext.clear();
+            asyncContextData->putInternalField(globalObject->vm(), 0, asyncContext);
+            jsPerformance->clearTimingBufferDeliveryAsyncContext();
         }
 
         for (auto& observer : copyToVector(m_observers))

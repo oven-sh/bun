@@ -262,6 +262,17 @@ size_t JSPerformance::estimatedSize(JSCell* cell, VM& vm)
     return Base::estimatedSize(cell, vm) + thisObject->wrapped().memoryCost();
 }
 
+template<typename Visitor>
+void JSPerformance::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSPerformance* thisObject = uncheckedDowncast<JSPerformance>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_timingBufferDeliveryAsyncContext);
+}
+
+DEFINE_VISIT_CHILDREN(JSPerformance);
+
 // static_assert(!std::is_base_of<ActiveDOMObject, Performance>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 
 void JSPerformance::finishCreation(VM& vm)

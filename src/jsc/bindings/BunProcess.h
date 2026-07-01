@@ -33,7 +33,33 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<Unknown> m_argv;
     WriteBarrier<Unknown> m_execArgv;
 
+    // Highest OS signal number process.on(<signal>) can install a handler for.
+    static constexpr int maxTrackedSignalNumber = 64;
+    // Per-signal async context captured when the first listener is added.
+    // Node's Signal handle is an async resource, so all the signal's
+    // listeners run in the context that was active at that point.
+    WriteBarrier<Unknown> m_signalAsyncContexts[maxTrackedSignalNumber + 1];
+
 public:
+    JSValue signalAsyncContext(int signalNumber) const
+    {
+        if (signalNumber <= 0 || signalNumber > maxTrackedSignalNumber)
+            return {};
+        return m_signalAsyncContexts[signalNumber].get();
+    }
+    void setSignalAsyncContext(JSC::VM& vm, int signalNumber, JSValue value)
+    {
+        if (signalNumber <= 0 || signalNumber > maxTrackedSignalNumber)
+            return;
+        m_signalAsyncContexts[signalNumber].set(vm, this, value);
+    }
+    void clearSignalAsyncContext(int signalNumber)
+    {
+        if (signalNumber <= 0 || signalNumber > maxTrackedSignalNumber)
+            return;
+        m_signalAsyncContexts[signalNumber].clear();
+    }
+
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
         : Base(structure, globalObject, WTF::move(impl))
     {

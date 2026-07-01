@@ -376,6 +376,7 @@ pub struct Bufs {
     pub dir_info_uncached_path: PathBuffer,
     pub tsconfig_base_url: PathBuffer,
     pub relative_abs_path: PathBuffer,
+    pub custom_dir_path_abs: PathBuffer,
     pub load_as_file_or_directory_via_tsconfig_base_path: PathBuffer,
     pub node_modules_check: PathBuffer,
     pub field_abs_path: PathBuffer,
@@ -2097,12 +2098,16 @@ impl<'a> Resolver<'a> {
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8_without_ref();
-                    match self.check_package_path(
-                        custom_utf8.slice(),
-                        import_path,
-                        kind,
-                        global_cache,
-                    ) {
+                    // `require.resolve` `paths` entries are user-provided and may be
+                    // relative; Node resolves them against the current directory.
+                    let Some(abs_custom_path) = self
+                        .fs_ref()
+                        .abs_buf_checked(&[custom_utf8.slice()], bufs!(custom_dir_path_abs))
+                    else {
+                        continue;
+                    };
+                    match self.check_package_path(abs_custom_path, import_path, kind, global_cache)
+                    {
                         ResultUnion::Success(res) => return ResultUnion::Success(res),
                         ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                         ResultUnion::Failure(p) => return ResultUnion::Failure(p),

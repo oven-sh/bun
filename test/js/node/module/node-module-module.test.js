@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import { bunEnv, bunExe, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -231,6 +231,26 @@ describe.concurrent("node-module-module", () => {
   });
   test("require a cjs file uses the 'module.exports' export", () => {
     expect(require("./esm_to_cjs_interop.mjs")).toEqual(Symbol.for("meow"));
+  });
+
+  test("require.resolve options.paths resolves relative entries against the working directory", async () => {
+    using dir = tempDir("resolve-paths-relative", {
+      "sub/node_modules/paths-rel-pkg/package.json": JSON.stringify({ name: "paths-rel-pkg", main: "index.js" }),
+      "sub/node_modules/paths-rel-pkg/index.js": `module.exports = "from-sub";`,
+      "main.cjs": `console.log(require(require.resolve("paths-rel-pkg", { paths: ["sub"] })));`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("from-sub");
+    expect(exitCode).toBe(0);
   });
 
   test("Module.runMain", async () => {

@@ -41,10 +41,10 @@ bun audit --audit-level=high
 bun audit --prod
 ```
 
-**`--ignore <CVE>`** - Ignore specific CVEs (repeat the flag to ignore several):
+**`--ignore <id>`** - Ignore specific advisories, matched against the advisory ID or a substring of the advisory URL such as a GHSA ID (repeat the flag to ignore several):
 
 ```bash terminal icon="terminal"
-bun audit --ignore CVE-2022-25883 --ignore CVE-2023-26136
+bun audit --ignore GHSA-gwg9-rgvj-4h5j --ignore GHSA-qwcr-r2fm-qrc7
 ```
 
 ### `--json`

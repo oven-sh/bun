@@ -117,4 +117,9 @@ describe("url.domainToASCII and invalid Punycode (xn--) labels", () => {
   test("a label that merely contains 'xn--' is not an ACE label", () => {
     expect(url.domainToASCII("axn--a-ecp.example")).toBe("axn--a-ecp.example");
   });
+  test("a domain with an ACE label longer than ICU's stack buffer still round-trips", () => {
+    // 3017 code units forces the U_BUFFER_OVERFLOW_ERROR retry in Bun::domainToASCII.
+    const domain = "xn--bcher-kva." + Buffer.alloc(3000, "a").toString() + ".de";
+    expect(url.domainToASCII(domain)).toBe(domain);
+  });
 });

@@ -4,6 +4,7 @@
 #include <unicode/uidna.h>
 #include <wtf/URL.h>
 #include <wtf/URLParser.h>
+#include <wtf/Vector.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
 
@@ -24,13 +25,23 @@ bool domainHasACELabel(WTF::StringView domain)
 
 WTF::String domainToASCII(WTF::StringView domain)
 {
-    std::array<char16_t, WTF::URLParser::hostnameBufferLength> buffer;
-    UErrorCode error = U_ZERO_ERROR;
-    UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
-    int32_t length = uidna_nameToASCII(&WTF::URLParser::internationalDomainNameTranscoder(), domain.upconvertedCharacters(), domain.length(), buffer.data(), WTF::URLParser::hostnameBufferLength, &processingDetails, &error);
-    if (U_SUCCESS(error) && !(processingDetails.errors & ~WTF::URLParser::allowedNameToASCIIErrors) && length > 0)
-        return WTF::String { std::span { buffer }.first(static_cast<size_t>(length)) };
-    return {};
+    std::array<char16_t, WTF::URLParser::hostnameBufferLength> stackBuffer;
+    WTF::Vector<char16_t> heapBuffer;
+    std::span<char16_t> buffer { stackBuffer };
+    while (true) {
+        UErrorCode error = U_ZERO_ERROR;
+        UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
+        int32_t length = uidna_nameToASCII(&WTF::URLParser::internationalDomainNameTranscoder(), domain.upconvertedCharacters(), domain.length(), buffer.data(), static_cast<int32_t>(buffer.size()), &processingDetails, &error);
+        if (U_SUCCESS(error) && !(processingDetails.errors & ~WTF::URLParser::allowedNameToASCIIErrors) && length > 0)
+            return WTF::String { buffer.first(static_cast<size_t>(length)) };
+        // ICU's preflight convention: on overflow, `length` is the required
+        // size. Retry once so a domain longer than the stack buffer (a host
+        // the spec places no length limit on) is not treated as invalid.
+        if (error != U_BUFFER_OVERFLOW_ERROR || length <= 0 || !heapBuffer.isEmpty())
+            return {};
+        heapBuffer.grow(static_cast<size_t>(length));
+        buffer = heapBuffer.mutableSpan();
+    }
 }
 
 bool urlHostIsValidIDNA(const WTF::URL& url)

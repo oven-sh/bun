@@ -47,8 +47,8 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use bun_windows_sys::kernel32::{
-    CreateNamedPipeW, DuplicateHandle, FlushFileBuffers,
-    QueueUserWorkItem, ReadFile, WT_EXECUTELONGFUNCTION, WriteFile,
+    CreateNamedPipeW, DuplicateHandle, FlushFileBuffers, QueueUserWorkItem, ReadFile,
+    WT_EXECUTELONGFUNCTION, WriteFile,
 };
 use bun_windows_sys::ntdll::NtQueryInformationFile;
 use bun_windows_sys::{

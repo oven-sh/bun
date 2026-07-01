@@ -1844,30 +1844,31 @@ mod spawn_process_body {
         // (every error exit closes it via `close_on_error`).
         let mut dup_server: Option<Box<bun_iocp::PipeHandle>> = None;
 
-        let close_on_error = |parent_ends: &mut Vec<WindowsStdioResult>,
-                              client_ends: &[HANDLE],
-                              files: &[Fd],
-                              dup_server: &mut Option<Box<bun_iocp::PipeHandle>>| {
-            // The dup2 pair's server end is a local until the target slot
-            // consumes it — release it here so no error exit leaks it.
-            if let Some(pipe) = dup_server.take() {
-                close_engine_pipe(pipe);
-            }
-            for slot in parent_ends.drain(..) {
-                match slot {
-                    // Already adopted: async engine close (the caller's loop
-                    // ticks it; sync paths drain explicitly).
-                    WindowsStdioResult::Buffer(pipe) => close_engine_pipe(pipe),
-                    WindowsStdioResult::Unavailable => {}
+        let close_on_error =
+            |parent_ends: &mut Vec<WindowsStdioResult>,
+             client_ends: &[HANDLE],
+             files: &[Fd],
+             dup_server: &mut Option<Box<bun_iocp::PipeHandle>>| {
+                // The dup2 pair's server end is a local until the target slot
+                // consumes it — release it here so no error exit leaks it.
+                if let Some(pipe) = dup_server.take() {
+                    close_engine_pipe(pipe);
                 }
-            }
-            for &c in client_ends {
-                Fd::from_system(c).close();
-            }
-            for &f in files {
-                f.close();
-            }
-        };
+                for slot in parent_ends.drain(..) {
+                    match slot {
+                        // Already adopted: async engine close (the caller's loop
+                        // ticks it; sync paths drain explicitly).
+                        WindowsStdioResult::Buffer(pipe) => close_engine_pipe(pipe),
+                        WindowsStdioResult::Unavailable => {}
+                    }
+                }
+                for &c in client_ends {
+                    Fd::from_system(c).close();
+                }
+                for &f in files {
+                    f.close();
+                }
+            };
 
         // Adopt a fresh pair's server end onto `lp`; on failure both ends die
         // here and the caller unwinds via `close_on_error`.

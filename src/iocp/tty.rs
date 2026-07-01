@@ -48,8 +48,8 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Mutex, Once};
 
 use bun_windows_sys::kernel32::{
-    CreateEventW, DuplicateHandle, GetConsoleScreenBufferInfo, GetModuleHandleW, QueueUserWorkItem, SetConsoleCursorPosition,
-    WT_EXECUTELONGFUNCTION,
+    CreateEventW, DuplicateHandle, GetConsoleScreenBufferInfo, GetModuleHandleW, QueueUserWorkItem,
+    SetConsoleCursorPosition, WT_EXECUTELONGFUNCTION,
 };
 use bun_windows_sys::{
     BOOLEAN, CONSOLE_SCREEN_BUFFER_INFO, CloseHandle, CreateFileW, CreateSemaphoreW,
@@ -1375,7 +1375,6 @@ unsafe fn new_box(lp: *mut Loop, handle: HANDLE, readable: bool) -> Box<TtyHandl
 }
 
 impl TtyHandle {
-
     /// Adopt a console handle. Probes console-ness via `GetConsoleMode`
     /// (NUL, pipes and files are rejected with the probe's raw error,
     /// typically `INVALID_HANDLE`), duplicates the handle so close/cancel
@@ -1975,7 +1974,13 @@ unsafe extern "system" fn tty_raw_wait_cb(context: *mut c_void, _timed_out: BOOL
     // raw_wait_iocp was written before the registration call.
     unsafe {
         (*h).read_req.set_success(0);
-        crate::event_loop::post_or_die((*h).raw_wait_iocp, 0, 0, (*h).read_req.overlapped_ptr(), "tty read");
+        crate::event_loop::post_or_die(
+            (*h).raw_wait_iocp,
+            0,
+            0,
+            (*h).read_req.overlapped_ptr(),
+            "tty read",
+        );
     }
 }
 

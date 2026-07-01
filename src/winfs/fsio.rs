@@ -37,7 +37,7 @@
 use core::mem::size_of;
 use core::ptr;
 
-use bun_windows_sys::kernel32::{GetOverlappedResult, FlushFileBuffers, ReadFile, WriteFile};
+use bun_windows_sys::kernel32::{FlushFileBuffers, GetOverlappedResult, ReadFile, WriteFile};
 use bun_windows_sys::ntdll::NtSetInformationFile;
 use bun_windows_sys::{
     ACCESS_MASK, CREATE_ALWAYS, CREATE_NEW, CloseHandle, CreateFileW, DELETE, DWORD,

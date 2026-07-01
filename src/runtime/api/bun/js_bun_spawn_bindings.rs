@@ -17,10 +17,10 @@ use bun_jsc::{
 use bun_jsc::{JsCell, SysErrorJsc as _};
 #[cfg(unix)]
 use bun_sys::Fd;
-use bun_sys::UV_E;
-use bun_sys::{self as sys, SignalCode};
 #[cfg(not(windows))]
 use bun_sys::FdExt as _;
+use bun_sys::UV_E;
+use bun_sys::{self as sys, SignalCode};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
 #[cfg(unix)]

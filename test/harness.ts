@@ -1828,7 +1828,11 @@ export class VerdaccioRegistry {
 
   async start(silent: boolean = true) {
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `${this.port}`], {
+    // Bind the IPv4 loopback explicitly: a bare port makes verdaccio listen on
+    // whatever `localhost` resolves to, which is `::1` on hosts that list it first,
+    // while the clients connect to 127.0.0.1. That mismatch refuses every request.
+    const listen = `127.0.0.1:${this.port}`;
+    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", listen], {
       silent,
       // Prefer using a release build of Bun since it's faster
       execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),

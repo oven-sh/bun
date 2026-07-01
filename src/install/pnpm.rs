@@ -1146,6 +1146,10 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         }
     }
 
+    // pnpm records `os`/`cpu` for every `packages:` entry whose manifest
+    // declares them, including `file:` folders, tarballs, and git packages.
+    crate::migration::clear_non_registry_platform_constraints(lockfile);
+
     lockfile.resolve(log)?;
 
     lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<false>(manager)?;

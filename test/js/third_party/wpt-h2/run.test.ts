@@ -12,8 +12,8 @@
 import { afterAll, test as bunTest } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { startServer } from "./server";
 import { setRegistrar, wptTest } from "../wpt-testharness-shim";
+import { startServer } from "./server";
 
 // WPT subtests that do not pass on the current implementation. Tests whose
 // names appear here are registered via test.todo so the suite stays green

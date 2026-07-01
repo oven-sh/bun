@@ -70,10 +70,10 @@ void JSStreamsRuntime::finishCreation(VM& vm, Zig::GlobalObject*)
 
     using HandlerProperty = JSC::LazyProperty<JSStreamsRuntime, JSC::JSFunction>;
 
-#define WEB_STREAMS_INIT_HANDLER(name)                                                             \
-    m_##name.initLater([](const HandlerProperty::Initializer& init) {                              \
-        init.set(JSFunction::create(init.vm, init.owner->globalObject(), 2, #name ""_s,            \
-            jsWebStreamsHandler_##name, ImplementationVisibility::Private));                       \
+#define WEB_STREAMS_INIT_HANDLER(name)                                                  \
+    m_##name.initLater([](const HandlerProperty::Initializer& init) {                   \
+        init.set(JSFunction::create(init.vm, init.owner->globalObject(), 2, #name ""_s, \
+            jsWebStreamsHandler_##name, ImplementationVisibility::Private));            \
     });
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER(WEB_STREAMS_INIT_HANDLER)
     FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET(WEB_STREAMS_INIT_HANDLER)
@@ -89,9 +89,9 @@ void JSStreamsRuntime::finishCreation(VM& vm, Zig::GlobalObject*)
             jsWebStreamsCountQueuingStrategySize, ImplementationVisibility::Public));
     });
 
-#define WEB_STREAMS_INIT_STRUCTURE(memberName, ClassName)                                                 \
+#define WEB_STREAMS_INIT_STRUCTURE(memberName, ClassName)                                                  \
     m_##memberName.initLater([](const JSC::LazyProperty<JSStreamsRuntime, Structure>::Initializer& init) { \
-        init.set(ClassName::createStructure(init.vm, init.owner->globalObject(), jsNull()));              \
+        init.set(ClassName::createStructure(init.vm, init.owner->globalObject(), jsNull()));               \
     });
     FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_INIT_STRUCTURE)
 #undef WEB_STREAMS_INIT_STRUCTURE
@@ -129,10 +129,10 @@ JSFunction* JSStreamsRuntime::countQueuingStrategySizeFunction(const Zig::Global
     return m_countQueuingStrategySizeFunction.get(this);
 }
 
-#define WEB_STREAMS_DEFINE_STRUCTURE_ACCESSOR(memberName, ClassName)      \
-    Structure* JSStreamsRuntime::memberName(const Zig::GlobalObject*)     \
-    {                                                                     \
-        return m_##memberName.get(this);                                  \
+#define WEB_STREAMS_DEFINE_STRUCTURE_ACCESSOR(memberName, ClassName)  \
+    Structure* JSStreamsRuntime::memberName(const Zig::GlobalObject*) \
+    {                                                                 \
+        return m_##memberName.get(this);                              \
     }
 FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_DEFINE_STRUCTURE_ACCESSOR)
 #undef WEB_STREAMS_DEFINE_STRUCTURE_ACCESSOR

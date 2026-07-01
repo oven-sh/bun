@@ -398,31 +398,31 @@ void JSStreamPipeToOperation::onSignalAbort(JSGlobalObject* globalObject, JSValu
     shutdownWithAction(globalObject, ShutdownAction::AbortBoth, reason, true);
 }
 
-#define WEB_STREAMS_DEFINE_PIPE_REACTION_TRAMPOLINE(name, method)                                          \
-    JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_##name, (JSGlobalObject * globalObject, CallFrame* callFrame)) \
-    {                                                                                                      \
-        auto& vm = getVM(globalObject);                                                                    \
-        auto scope = DECLARE_THROW_SCOPE(vm);                                                              \
-        JSValue contextValue = callFrame->argument(1);                                                     \
-        auto* op = dynamicDowncast<JSStreamPipeToOperation>(contextValue);                                 \
-        if (!op) [[unlikely]]                                                                              \
-            return JSValue::encode(jsUndefined());                                                         \
-        op->method(globalObject);                                                                          \
-        RETURN_IF_EXCEPTION(scope, {});                                                                    \
-        return JSValue::encode(jsUndefined());                                                             \
+#define WEB_STREAMS_DEFINE_PIPE_REACTION_TRAMPOLINE(name, method)                                                \
+    JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_##name, (JSGlobalObject * globalObject, CallFrame * callFrame)) \
+    {                                                                                                            \
+        auto& vm = getVM(globalObject);                                                                          \
+        auto scope = DECLARE_THROW_SCOPE(vm);                                                                    \
+        JSValue contextValue = callFrame->argument(1);                                                           \
+        auto* op = dynamicDowncast<JSStreamPipeToOperation>(contextValue);                                       \
+        if (!op) [[unlikely]]                                                                                    \
+            return JSValue::encode(jsUndefined());                                                               \
+        op->method(globalObject);                                                                                \
+        RETURN_IF_EXCEPTION(scope, {});                                                                          \
+        return JSValue::encode(jsUndefined());                                                                   \
     }
-#define WEB_STREAMS_DEFINE_PIPE_REACTION_TRAMPOLINE_WITH_VALUE(name, method)                               \
-    JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_##name, (JSGlobalObject * globalObject, CallFrame* callFrame)) \
-    {                                                                                                      \
-        auto& vm = getVM(globalObject);                                                                    \
-        auto scope = DECLARE_THROW_SCOPE(vm);                                                              \
-        JSValue contextValue = callFrame->argument(1);                                                     \
-        auto* op = dynamicDowncast<JSStreamPipeToOperation>(contextValue);                                 \
-        if (!op) [[unlikely]]                                                                              \
-            return JSValue::encode(jsUndefined());                                                         \
-        op->method(globalObject, callFrame->argument(0));                                                  \
-        RETURN_IF_EXCEPTION(scope, {});                                                                    \
-        return JSValue::encode(jsUndefined());                                                             \
+#define WEB_STREAMS_DEFINE_PIPE_REACTION_TRAMPOLINE_WITH_VALUE(name, method)                                     \
+    JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_##name, (JSGlobalObject * globalObject, CallFrame * callFrame)) \
+    {                                                                                                            \
+        auto& vm = getVM(globalObject);                                                                          \
+        auto scope = DECLARE_THROW_SCOPE(vm);                                                                    \
+        JSValue contextValue = callFrame->argument(1);                                                           \
+        auto* op = dynamicDowncast<JSStreamPipeToOperation>(contextValue);                                       \
+        if (!op) [[unlikely]]                                                                                    \
+            return JSValue::encode(jsUndefined());                                                               \
+        op->method(globalObject, callFrame->argument(0));                                                        \
+        RETURN_IF_EXCEPTION(scope, {});                                                                          \
+        return JSValue::encode(jsUndefined());                                                                   \
     }
 
 WEB_STREAMS_DEFINE_PIPE_REACTION_TRAMPOLINE(onPipeSourceClosedFulfilled, onSourceClosedFulfilled)

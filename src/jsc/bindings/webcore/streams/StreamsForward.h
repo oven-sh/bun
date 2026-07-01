@@ -196,7 +196,10 @@ enum class ReadableStreamType : uint8_t { Bytes };
 enum class ReadableStreamReaderMode : uint8_t { Byob };
 
 // Cross-realm transform protocol message `type`: "chunk" | "pull" | "error" | "close".
-enum class CrossRealmMessageType : uint8_t { Chunk, Pull, Error, Close };
+enum class CrossRealmMessageType : uint8_t { Chunk,
+    Pull,
+    Error,
+    Close };
 
 } // namespace WebStreams
 } // namespace Bun

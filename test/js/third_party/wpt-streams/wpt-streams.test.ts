@@ -33,7 +33,7 @@
 // the sweep completes, rebuild expectations.json + RESULTS.md from the
 // journal and update EXPECTED_FILES / EXPECTED_SUBTESTS below.
 
-import { afterAll, describe, expect, test as bunTest } from "bun:test";
+import { afterAll, test as bunTest, describe, expect } from "bun:test";
 import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { setRegistrar, wptTest } from "../wpt-testharness-shim";

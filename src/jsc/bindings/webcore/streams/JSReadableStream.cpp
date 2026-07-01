@@ -133,7 +133,9 @@ static ConvertedQueuingStrategy convertQueuingStrategy(JSGlobalObject* globalObj
 }
 
 // Bun extends the WebIDL `ReadableStreamType` enum with "direct".
-enum class BunUnderlyingSourceType : uint8_t { None, Bytes, Direct };
+enum class BunUnderlyingSourceType : uint8_t { None,
+    Bytes,
+    Direct };
 
 struct ConvertedUnderlyingSource {
     UnderlyingSourceDict dict {};

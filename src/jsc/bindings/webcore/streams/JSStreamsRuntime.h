@@ -178,37 +178,37 @@ namespace WebCore {
 //   onConsumeDirectToArrayBufferPull*: the one-shot pull's settlement; context = the
 //     JSOneShotDirectSink cell (it roots the stream, the ArrayBufferSink, the capability
 //     promise, and the closed flag — see JSOneShotDirectSink.h).
-#define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_BUN_CONSUMERS(V) \
-    V(onBufferedFastPathRejected)                              \
-    V(onBufferedFastPathSettled)                               \
-    V(onReadableStreamToArrayBufferFulfilled)                  \
-    V(onReadableStreamToBytesFulfilled)                        \
-    V(onReadableStreamToJSONFulfilled)                         \
-    V(onReadableStreamToBlobFulfilled)                         \
-    V(onReadableStreamToFormDataFulfilled)                     \
+#define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_BUN_CONSUMERS(V)                                               \
+    V(onBufferedFastPathRejected)                                                                            \
+    V(onBufferedFastPathSettled)                                                                             \
+    V(onReadableStreamToArrayBufferFulfilled)                                                                \
+    V(onReadableStreamToBytesFulfilled)                                                                      \
+    V(onReadableStreamToJSONFulfilled)                                                                       \
+    V(onReadableStreamToBlobFulfilled)                                                                       \
+    V(onReadableStreamToFormDataFulfilled)                                                                   \
     V(onIntoArrayReadManyFulfilled) /* append value; !done => readMany() again; done => release + resolve */ \
-    V(onIntoArrayReadManyRejected) /* release the reader, reject the result promise */ \
-    V(onDirectConsumeLoopReadFulfilled)                        \
-    V(onDirectConsumeLoopReadRejected)                         \
-    V(onConsumeDirectToArrayBufferPullFulfilled)               \
+    V(onIntoArrayReadManyRejected) /* release the reader, reject the result promise */                       \
+    V(onDirectConsumeLoopReadFulfilled)                                                                      \
+    V(onDirectConsumeLoopReadRejected)                                                                       \
+    V(onConsumeDirectToArrayBufferPullFulfilled)                                                             \
     V(onConsumeDirectToArrayBufferPullRejected)
 
 // THE closed [reaction-convention] list.
-#define FOR_EACH_WEB_STREAMS_REACTION_HANDLER(V)                \
-    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_MISC(V)               \
+#define FOR_EACH_WEB_STREAMS_REACTION_HANDLER(V)                   \
+    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_MISC(V)                  \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_DEFAULT_CONTROLLER(V) \
-    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_BYTE_CONTROLLER(V) \
-    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_OPERATIONS(V)      \
-    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_ASYNC_ITERATOR(V)     \
-    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_PIPE(V)               \
-    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_WS_OPERATIONS(V)      \
-    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_WS_CONTROLLER(V)      \
-    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_TS_OPERATIONS(V)      \
-    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_TS_CONTROLLER(V)      \
-    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_CROSS_REALM(V)        \
-    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_BUN_SOURCE(V)         \
-    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_DIRECT_CONTROLLER(V)  \
-    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_READER(V)             \
+    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_BYTE_CONTROLLER(V)    \
+    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_OPERATIONS(V)         \
+    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_ASYNC_ITERATOR(V)        \
+    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_PIPE(V)                  \
+    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_WS_OPERATIONS(V)         \
+    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_WS_CONTROLLER(V)         \
+    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_TS_OPERATIONS(V)         \
+    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_TS_CONTROLLER(V)         \
+    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_CROSS_REALM(V)           \
+    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_BUN_SOURCE(V)            \
+    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_DIRECT_CONTROLLER(V)     \
+    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_READER(V)                \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_BUN_CONSUMERS(V)
 
 // [bound-convention] targets, grouped by the .cpp that OWNS the body.
@@ -242,9 +242,9 @@ namespace WebCore {
 // (consumeDirectStreamToArrayBuffer). Its {start, write, end, close, flush} are OWN
 // JSBoundFunctions over these; context (argument 0) = the JSOneShotDirectSink cell. This
 // path deliberately does NOT reuse boundDirect* / JSDirectStreamController.
-#define FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_ONE_SHOT(V) \
-    V(boundOneShotStart) /* `start` is bound to this no-op target that returns undefined */ \
-    V(boundOneShotDirectWrite)                                \
+#define FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_ONE_SHOT(V)                                   \
+    V(boundOneShotStart) /* `start` is bound to this no-op target that returns undefined */     \
+    V(boundOneShotDirectWrite)                                                                  \
     V(boundOneShotDirectClose) /* `end` and `close` are two bound cells over this one target */ \
     V(boundOneShotDirectFlush)
 
@@ -277,20 +277,20 @@ JSC_DECLARE_HOST_FUNCTION(jsWebStreamsCountQueuingStrategySize);
 
 // The internal (prototype-less) cell classes whose per-global Structure is cached here.
 // V(memberName, ClassName)
-#define FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(V)                    \
-    V(readRequestStructure, JSReadRequest)                            \
-    V(readIntoRequestStructure, JSReadIntoRequest)                    \
-    V(pullIntoDescriptorStructure, JSPullIntoDescriptor)              \
-    V(pipeToOperationStructure, JSStreamPipeToOperation)              \
-    V(teeStateStructure, JSStreamTeeState)                            \
-    V(crossRealmTransformStateStructure, JSCrossRealmTransformState)  \
-    V(fromIterableContextStructure, JSStreamFromIterableContext)      \
-    V(directStreamControllerStructure, JSDirectStreamController)      \
-    V(nativeStreamSourceAdapterStructure, JSNativeStreamSourceAdapter) \
-    V(directSinkCloseStateStructure, JSDirectSinkCloseState)          \
+#define FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(V)                         \
+    V(readRequestStructure, JSReadRequest)                                 \
+    V(readIntoRequestStructure, JSReadIntoRequest)                         \
+    V(pullIntoDescriptorStructure, JSPullIntoDescriptor)                   \
+    V(pipeToOperationStructure, JSStreamPipeToOperation)                   \
+    V(teeStateStructure, JSStreamTeeState)                                 \
+    V(crossRealmTransformStateStructure, JSCrossRealmTransformState)       \
+    V(fromIterableContextStructure, JSStreamFromIterableContext)           \
+    V(directStreamControllerStructure, JSDirectStreamController)           \
+    V(nativeStreamSourceAdapterStructure, JSNativeStreamSourceAdapter)     \
+    V(directSinkCloseStateStructure, JSDirectSinkCloseState)               \
     V(readStreamIntoSinkOperationStructure, JSReadStreamIntoSinkOperation) \
-    V(resumableSinkPumpOperationStructure, JSResumableSinkPumpOperation) \
-    V(standaloneTextSinkStructure, JSBunStandaloneTextSink)           \
+    V(resumableSinkPumpOperationStructure, JSResumableSinkPumpOperation)   \
+    V(standaloneTextSinkStructure, JSBunStandaloneTextSink)                \
     V(oneShotDirectSinkStructure, JSOneShotDirectSink)
 
 // Non-destructible: LazyProperty members only.
@@ -325,7 +325,7 @@ public:
 
     // The shared handler functions. Each LazyProperty gets its initializer in finishCreation
     // and materializes the JSFunction on the FIRST get(this) — never eagerly.
-#define WEB_STREAMS_DECLARE_HANDLER_ACCESSOR(name)                       \
+#define WEB_STREAMS_DECLARE_HANDLER_ACCESSOR(name) \
     JSC::JSFunction* name() const { return m_##name.get(this); }
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER(WEB_STREAMS_DECLARE_HANDLER_ACCESSOR)
     FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET(WEB_STREAMS_DECLARE_HANDLER_ACCESSOR)

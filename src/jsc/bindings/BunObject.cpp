@@ -1089,7 +1089,6 @@ static JSC_DEFINE_CUSTOM_SETTER(setBunObjectMain, (JSC::JSGlobalObject * globalO
     return BunObject_setter_main(globalObject, encodedValue);
 }
 
-
 // LazyProperty wrappers for stdin/stderr/stdout
 static JSValue BunObject_lazyPropCb_wrap_stdin(VM& vm, JSObject* bunObject)
 {
@@ -1110,7 +1109,6 @@ static JSValue BunObject_lazyPropCb_wrap_stdout(VM& vm, JSObject* bunObject)
 }
 
 #include "BunObject.lut.h"
-
 
 const JSC::ClassInfo JSBunObject::s_info = { "Bun"_s, &Base::s_info, &bunObjectTable, nullptr, CREATE_METHOD_TABLE(JSBunObject) };
 

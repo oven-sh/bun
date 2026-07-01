@@ -300,14 +300,14 @@ static void startJSSinkController(JSGlobalObject* globalObject, JSObject* sink, 
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-#define BUN_START_JSSINK_CONTROLLER(ControllerType)                                             \
-    if (auto* controller = dynamicDowncast<WebCore::ControllerType>(sink)) {                    \
-        if (!controller->wrapped()) [[unlikely]] {                                              \
+#define BUN_START_JSSINK_CONTROLLER(ControllerType)                                              \
+    if (auto* controller = dynamicDowncast<WebCore::ControllerType>(sink)) {                     \
+        if (!controller->wrapped()) [[unlikely]] {                                               \
             throwTypeError(globalObject, scope, "Cannot start stream with closed controller"_s); \
-            return;                                                                             \
-        }                                                                                       \
-        controller->start(globalObject, streamValue, onPull, onClose);                          \
-        return;                                                                                 \
+            return;                                                                              \
+        }                                                                                        \
+        controller->start(globalObject, streamValue, onPull, onClose);                           \
+        return;                                                                                  \
     }
     BUN_START_JSSINK_CONTROLLER(JSReadableArrayBufferSinkController)
     BUN_START_JSSINK_CONTROLLER(JSReadableFileSinkController)

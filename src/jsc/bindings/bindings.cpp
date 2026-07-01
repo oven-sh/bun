@@ -3170,7 +3170,6 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
     }
 }
 
-
 JSC::EncodedJSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigString* arg1,
     JSC::JSGlobalObject* globalObject)
 {

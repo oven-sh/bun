@@ -56,7 +56,7 @@ Everything Bun adds beyond the spec lives beside the spec code and is tagged, no
   onto a default controller as `SourceKind::Native`, including the pull/backpressure
   handshake and BYOB-style chunk-size negotiation.
 - **Consumer fast paths** (`BunStreamConsumers.{h,cpp}`). `Bun.readableStreamTo{Text,Bytes,
-  Blob,JSON,Array,ArrayBuffer,FormData}` and the `Request`/`Response` body consumers. Fully
+Blob,JSON,Array,ArrayBuffer,FormData}` and the `Request`/`Response` body consumers. Fully
   buffered or native-backed bodies short-circuit; only genuinely streaming JS sources pay
   for a read loop.
 - **The extern "C" surface** (`WebStreamsExports.cpp`). Every function the Rust runtime

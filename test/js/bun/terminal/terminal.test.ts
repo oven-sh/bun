@@ -998,6 +998,7 @@ describe.concurrent("Bun.spawn with terminal option", () => {
   test("creates subprocess with terminal attached", async () => {
     const dataChunks: Uint8Array[] = [];
     const gotMarker = Promise.withResolvers<void>();
+    const gotEof = Promise.withResolvers<void>();
 
     const proc = Bun.spawn([bunExe(), "-e", "console.log('hello from terminal')"], {
       env: bunEnv,
@@ -1008,13 +1009,17 @@ describe.concurrent("Bun.spawn with terminal option", () => {
           dataChunks.push(data);
           if (Buffer.concat(dataChunks).toString().includes("hello from terminal")) gotMarker.resolve();
         },
+        exit: () => gotEof.resolve(),
       },
     });
 
     expect(proc.terminal).toBeDefined();
     expect(proc.terminal).toBeInstanceOf(Object);
 
-    await gotMarker.promise;
+    // The child's output must reach the data callback before the PTY reaches
+    // EOF. Racing against EOF makes a dropped-output regression fail fast
+    // (https://github.com/oven-sh/bun/issues/33187) instead of hanging 90s.
+    await Promise.race([gotMarker.promise, gotEof.promise]);
     await proc.exited;
 
     // Should have received data through the terminal

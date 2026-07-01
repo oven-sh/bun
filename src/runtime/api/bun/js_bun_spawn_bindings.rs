@@ -1413,15 +1413,17 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         IS_SYNC,
     ));
 
-    // For inline terminal options: close parent's slave_fd so EOF is received when child exits
-    // For existing terminal: keep slave_fd open so terminal can be reused for more spawns
+    // Inline terminal: keep the parent's slave fd open for the child's lifetime
+    // so its exit doesn't make the master return EIO (on macOS that can discard
+    // unread output). The slave is drained and closed from the subprocess exit
+    // handler instead (Subprocess::on_process_exit).
+    // Existing terminal: leave it alone - the user manages lifecycle and reuse.
     if let Some(info) = terminal_info.take() {
         terminal_js_value = info.js_value;
         // Spawn succeeded so the child holds its own copy of the slave fd.
-        info.term().close_slave_fd();
+        info.term().mark_inline_spawned();
         subprocess.update_flags(|f| f.insert(Subprocess::Flags::OWNS_TERMINAL));
     }
-    // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse
 
     // SAFETY: `subprocess_ptr` is the live JSC-allocated Subprocess that owns
     // `process` and outlives it (handler ctx invariant).

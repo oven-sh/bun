@@ -662,11 +662,40 @@ impl Terminal {
         self.hpcon.get()
     }
 
-    /// Close the parent's copy of slave_fd after fork
-    /// The child process has its own copy - closing the parent's ensures
-    /// EOF is received on the master side when the child exits
-    pub(crate) fn close_slave_fd(&self) {
+    /// Mark an inline-created terminal as attached to a subprocess, so it can't
+    /// be reused for a second spawn. The parent keeps its slave fd (POSIX) /
+    /// pseudoconsole (Windows) open for the child's lifetime; the read side is
+    /// released from the subprocess's exit handler (`on_owning_subprocess_exit`
+    /// on POSIX, `close_pseudoconsole` on Windows).
+    pub(crate) fn mark_inline_spawned(&self) {
         self.update_flags(|f| f.insert(Flags::INLINE_SPAWNED));
+    }
+
+    /// POSIX: called from the owning subprocess's exit handler. The parent kept
+    /// its copy of the slave fd open across the child's lifetime, so the child
+    /// exiting did not make the master return EIO. That matters on macOS, where
+    /// reading the master after the last slave closes returns EIO and can
+    /// discard buffered output that was never read. While a slave is still open
+    /// the master returns buffered data then EAGAIN (never EIO), so drain it
+    /// now, then close the parent's slave so the next read observes EOF and the
+    /// exit callback fires.
+    #[cfg(not(windows))]
+    pub(crate) fn on_owning_subprocess_exit(&self) {
+        if self
+            .flags
+            .get()
+            .intersects(Flags::CLOSED | Flags::READER_DONE | Flags::FINALIZED)
+        {
+            return;
+        }
+        if self.slave_fd.get() == Fd::INVALID {
+            return;
+        }
+        if self.flags.get().contains(Flags::READER_STARTED) {
+            self.reader.with_mut(|r| r.read());
+        }
+        // Re-read: a reentrant close() from the drain's data callback may have
+        // already invalidated the slave fd.
         let fd = self.slave_fd.get();
         if fd != Fd::INVALID {
             fd.close();

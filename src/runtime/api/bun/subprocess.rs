@@ -909,8 +909,7 @@ impl Subprocess<'_> {
 
         #[cfg(windows)]
         if self.flags.get().contains(Flags::OWNS_TERMINAL) {
-            // POSIX gets EOF on the master when the child (last slave_fd holder)
-            // exits. ConPTY's conhost stays alive after the child exits, so close
+            // ConPTY's conhost stays alive after the child exits, so close
             // the pseudoconsole now to deliver EOF and fire the terminal's exit
             // callback. Leaves the Terminal itself open to match POSIX.
             if let Some(terminal) = self.terminal.get() {
@@ -918,6 +917,22 @@ impl Subprocess<'_> {
                 // borrowed from a JS wrapper kept live by) this subprocess and
                 // outlives this scope; single JS thread.
                 bun_ptr::BackRef::from(terminal).close_pseudoconsole();
+            }
+        }
+
+        #[cfg(not(windows))]
+        if self.flags.get().contains(Flags::OWNS_TERMINAL) {
+            // The parent kept its slave fd open for the child's lifetime, so the
+            // child's exit did not make the master return EIO (which on macOS
+            // can discard unread output). Drain the master while a slave is
+            // still open, then close the parent's slave so the master observes
+            // EOF and the terminal's exit callback fires. Mirrors the Windows
+            // pseudoconsole close above.
+            if let Some(terminal) = self.terminal.get() {
+                // `BackRef` invariant holds: the terminal is owned by (or
+                // borrowed from a JS wrapper kept live by) this subprocess and
+                // outlives this scope; single JS thread.
+                bun_ptr::BackRef::from(terminal).on_owning_subprocess_exit();
             }
         }
 

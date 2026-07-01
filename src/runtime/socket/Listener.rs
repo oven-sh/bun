@@ -158,7 +158,8 @@ impl Listener {
         // of the `Handlers` itself.
         let reloaded = Handlers::prepare_reload(global, socket_obj)?;
         this.handlers.get().apply_reload(global, &reloaded);
-        this.handlers.with_mut(|h| h.binary_type = reloaded.binary_type);
+        this.handlers
+            .with_mut(|h| h.binary_type = reloaded.binary_type);
 
         Ok(JSValue::UNDEFINED)
     }

@@ -10019,3 +10019,179 @@ it.each([
     expect(exitCode).not.toBe(0);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/33192
+describe("override to a tarball whose internal name differs from the key", () => {
+  // A dependency or `overrides` entry that points a name at an HTTP(S) or local
+  // tarball must install that tarball under the dependency key even when the
+  // tarball's own `package.json` `name` differs, matching npm and pnpm. Bun keyed
+  // the override's resolution on the tarball's internal name, so the extracted
+  // package (indexed under its own name) could not be found for the overridden
+  // key and `node_modules/<key>` was never created:
+  //   error: vite@^5.0.0 failed to resolve
+
+  // Minimal npm-style .tgz: a single gzipped `package/package.json` entry.
+  function npmTarball(pkg: Record<string, unknown>): Buffer {
+    const body = Buffer.from(JSON.stringify(pkg) + "\n", "utf8");
+    const block = Buffer.alloc(Math.ceil((body.length + 512) / 512) * 512);
+    block.write("package/package.json", 0, 100, "utf8");
+    block.write("0000644\0", 100); // mode
+    block.write("0000000\0", 108); // uid
+    block.write("0000000\0", 116); // gid
+    block.write(body.length.toString(8).padStart(11, "0") + "\0", 124); // size
+    block.write("00000000000\0", 136); // mtime
+    block.write("        ", 148, 8); // checksum placeholder
+    block.write("0", 156); // typeflag: regular file
+    block.write("ustar\0", 257);
+    block.write("00", 263);
+    body.copy(block, 512);
+    let checksum = 0;
+    for (let i = 0; i < 512; i++) checksum += i >= 148 && i < 156 ? 32 : block[i];
+    block.write(checksum.toString(8).padStart(6, "0") + "\0 ", 148, 8);
+    // trailing 1024 zero bytes = end-of-archive marker
+    return Bun.gzipSync(Buffer.concat([block, Buffer.alloc(1024)]));
+  }
+
+  function serveTarballs(tgz: Record<string, Buffer>) {
+    return Bun.serve({
+      port: 0,
+      fetch(req) {
+        const body = tgz[new URL(req.url).pathname];
+        return body ? new Response(body) : new Response("not found", { status: 404 });
+      },
+    });
+  }
+
+  test("direct dependency resolved through a remote-tarball override with a mismatched name", async () => {
+    await using server = serveTarballs({
+      "/vite-core.tgz": npmTarball({ name: "@scope/vite-core", version: "0.2.1" }),
+    });
+    const base = `http://localhost:${server.port}`;
+    using dir = tempDir("issue-33192-remote", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        devDependencies: { vite: "^5.0.0" },
+        overrides: { vite: `${base}/vite-core.tgz` },
+      }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"), npm_config_registry: `${base}/` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("failed to resolve");
+    expect(exitCode).toBe(0);
+    expect(await file(join(String(dir), "node_modules", "vite", "package.json")).json()).toEqual({
+      name: "@scope/vite-core",
+      version: "0.2.1",
+    });
+  });
+
+  test("transitive peer satisfied by a remote-tarball override with a mismatched name", async () => {
+    // The real-world shape from the issue: a dependency (testrunner) declares a
+    // transitive peer on `vite`, and `overrides` points `vite` at a tarball whose
+    // internal name is `@scope/vite-core`.
+    const tgz: Record<string, Buffer> = {};
+    await using server = serveTarballs(tgz);
+    const base = `http://localhost:${server.port}`;
+    tgz["/vite-core.tgz"] = npmTarball({ name: "@scope/vite-core", version: "0.2.1" });
+    tgz["/mocker.tgz"] = npmTarball({
+      name: "mocker",
+      version: "1.0.0",
+      peerDependencies: { vite: "^5.0.0 || ^6.0.0 || ^7.0.0-0" },
+    });
+    tgz["/testrunner.tgz"] = npmTarball({
+      name: "testrunner",
+      version: "3.2.4",
+      dependencies: { mocker: `${base}/mocker.tgz` },
+    });
+    using dir = tempDir("issue-33192-peer", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        devDependencies: { testrunner: `${base}/testrunner.tgz` },
+        overrides: { vite: `${base}/vite-core.tgz` },
+      }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"), npm_config_registry: `${base}/` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("failed to resolve");
+    expect(exitCode).toBe(0);
+    expect(await file(join(String(dir), "node_modules", "vite", "package.json")).json()).toEqual({
+      name: "@scope/vite-core",
+      version: "0.2.1",
+    });
+  });
+
+  test("direct dependency resolved through a local-tarball override with a mismatched name", async () => {
+    using dir = tempDir("issue-33192-local", {
+      "package.json": "{}",
+    });
+    const tarballPath = join(String(dir), "vite-core.tgz");
+    await write(tarballPath, npmTarball({ name: "@scope/vite-core", version: "0.2.1" }));
+    await write(
+      join(String(dir), "package.json"),
+      JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        devDependencies: { vite: "^5.0.0" },
+        overrides: { vite: tarballPath },
+      }),
+    );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("failed to resolve");
+    expect(exitCode).toBe(0);
+    expect(await file(join(String(dir), "node_modules", "vite", "package.json")).json()).toEqual({
+      name: "@scope/vite-core",
+      version: "0.2.1",
+    });
+  });
+
+  test("override tarball whose internal name matches the key still installs", async () => {
+    // Guard against over-correcting: when the tarball's internal name equals the
+    // overridden key, resolution must keep working exactly as before.
+    await using server = serveTarballs({
+      "/vite.tgz": npmTarball({ name: "vite", version: "5.4.0" }),
+    });
+    const base = `http://localhost:${server.port}`;
+    using dir = tempDir("issue-33192-match", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        devDependencies: { vite: "^5.0.0" },
+        overrides: { vite: `${base}/vite.tgz` },
+      }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"), npm_config_registry: `${base}/` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("failed to resolve");
+    expect(exitCode).toBe(0);
+    expect(await file(join(String(dir), "node_modules", "vite", "package.json")).json()).toEqual({
+      name: "vite",
+      version: "5.4.0",
+    });
+  });
+});

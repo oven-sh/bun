@@ -249,8 +249,6 @@ impl Bin {
         Ok(Bin::default())
     }
 
-    /// The object form of `"bin"`: one `(name, path)` is a named file, more
-    /// are a map. Any non-string name or path degrades to no bin at all.
     fn parse_append_object<'a>(
         len: usize,
         mut pairs: impl Iterator<Item = (Option<&'a [u8]>, Option<&'a [u8]>)>,
@@ -279,7 +277,6 @@ impl Bin {
                         (current_len + num_props).saturating_sub(extern_strings.len()),
                     )
                     .map_err(|_| AllocError)?;
-                // Push incrementally so a bailout leaves only the slots actually written.
                 let mut i: usize = 0;
                 for (key_str, value_str) in pairs {
                     let (Some(key_str), Some(value_str)) = (key_str, value_str) else {

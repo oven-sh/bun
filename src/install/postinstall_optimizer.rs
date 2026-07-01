@@ -56,8 +56,6 @@ impl PostinstallOptimizer {
             let js_ast::ExprData::EString(s) = &entry.data else {
                 continue;
             };
-            // JSON parsing never folds strings into ropes, and JSON-parsed
-            // strings are always UTF-8.
             debug_assert!(s.next.is_none());
             debug_assert!(s.is_utf8());
             let str = s.slice8();

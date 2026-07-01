@@ -1,29 +1,21 @@
-/**
- * Generates `${codegenDir}/json_byte_class.h` (nibble LUTs for the Highway
- * SIMD kernel) and `json_byte_class.rs` (the derived 256-entry table for the
- * Rust scalar indexer). The two producers must agree byte for byte, so both
- * artifacts come from this one definition. No byte >= 0x80 classifies.
- */
+// Generates `json_byte_class.h` (nibble LUTs, Highway SIMD kernel) and `json_byte_class.rs` (the
+// derived 256-entry table, Rust scalar indexer): both come from this one table so they agree.
 
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Config } from "./config.ts";
 import { writeIfChanged } from "./fs.ts";
 
-// Class bits (`cls = LUT_LO[b & 0xF] & LUT_HI[b >> 4]`).
-const STRUCTURAL = 0x07; // { } [ ] : ,
-const WHITESPACE = 0x18; // space \t \n \r
-const ODDITY = 0x20; // / '   (comment / single-quoted string: kernel bails)
-const CONTROL = 0x40; // < 0x20
+const STRUCTURAL = 0x07;
+const WHITESPACE = 0x18;
+const ODDITY = 0x20;
+const CONTROL = 0x40;
 
-// Derived from simdjson's structural/whitespace tables with the oddity and
-// control classes folded in.
 const LUT_LO = [0x50, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x60, 0x40, 0x48, 0x4c, 0x41, 0x42, 0x49, 0x40, 0x60];
 const LUT_HI = [0x48, 0x40, 0x32, 0x04, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
 const classOf = (b: number): number => LUT_LO[b & 0xf] & LUT_HI[b >> 4];
 
-/** The classification must be exact for every ASCII byte. */
 function check() {
   const classesOf = (b: number): number[] => {
     const ch = String.fromCharCode(b);
@@ -45,8 +37,6 @@ function check() {
       );
     }
   }
-  // No byte >= 0x80 may classify: a multi-byte UTF-8 codepoint between two
-  // tokens must remain a single scalar run for stage 2 to decode it.
   for (let b = 0x80; b < 0x100; b++) {
     if (classOf(b) !== 0) {
       throw new Error(`json_byte_class: non-ASCII byte 0x${b.toString(16)} must not classify`);
@@ -91,8 +81,6 @@ export function generateJsonByteClass(cfg: Config): { h: string; rs: string } {
     for (let b = row; b < row + 16; b++) cells.push(hex(classOf(b)));
     table.push(`    ${cells.join(", ")},`);
   }
-  // Only the classes the scalar indexer reads are emitted for Rust: every
-  // generated item must be live (`test/internal/dead-code-escapes.test.ts`).
   const rs = [
     ...banner("//"),
     `pub const CLASS_STRUCTURAL: u8 = ${hex(STRUCTURAL)};`,

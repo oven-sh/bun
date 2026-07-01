@@ -189,7 +189,6 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
     let mut log = bun_ast::Log::init();
     let source = bun_ast::Source::init_path_string("???", response_buf.list.as_slice());
-    // `parsed` owns the row tape `json` borrows; both must outlive `username`.
     let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
         Ok(j) => j,
         Err(e) if e == err!("OutOfMemory") => return Err(WhoamiError::OutOfMemory),
@@ -225,8 +224,6 @@ pub fn response_error<const OTP_RESPONSE: bool>(
     let message: Option<Vec<u8>> = 'message: {
         let mut log = bun_ast::Log::init();
         let source = bun_ast::Source::init_path_string("???", response_body.list.as_slice());
-        // `parsed` owns the row tape its root borrows; `error` is copied out
-        // below while both are still alive.
         let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
             Ok(j) => j,
             Err(e) if e == err!("OutOfMemory") => return Err(AllocError),
@@ -650,7 +647,6 @@ pub(crate) fn negatable_from_json<T: NegatableEnum>(expr: &JSON::Expr) -> Result
     Ok(this.combine())
 }
 
-/// `negatable_from_json` for the immutable JSON AST (`E::JsonValue`).
 pub(crate) fn negatable_from_json_value<T: NegatableEnum>(value: &JSON::E::JsonValue) -> T {
     let mut this = T::NONE.negatable();
     match value {
@@ -1988,8 +1984,6 @@ impl PackageManifest {
         // across calls (the AstAlloc state stays installed for the re-arm) and
         // bulk-frees via `reset_retain_with_limit` on the next call — see
         // `initialize_mini_store` in lib.rs for why.
-        // `parsed` owns the row tape `json` (and every `Expr` reached through
-        // it) borrows; it must outlive them.
         let parsed = match JSON::ParsedJson::parse_npm_manifest(&source, log) {
             Ok(j) => j,
             Err(_) => {
@@ -2769,8 +2763,6 @@ impl PackageManifest {
                                         string_builder.append::<ExternalString>(meta_key);
                                     version_extern_strings[values_base + i] =
                                         string_builder.append::<ExternalString>(b"*");
-                                    // Swap to the optional-peer prefix the rest
-                                    // of the loop body would have produced.
                                     if non_optional_peer_dependency_offset != i {
                                         all_extern_strings.swap(
                                             names_base + i,

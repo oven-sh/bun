@@ -164,8 +164,6 @@ pub fn do_patch_commit(
 
                 initialize_store();
                 let log = manager.log_mut();
-                // `parsed` owns the tape `json` (and the `version` slice)
-                // borrow; keep it alive across `parse_with_json`.
                 let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
                     Ok(p) => p,
                     Err(err) => {
@@ -777,8 +775,6 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
 
                 initialize_store();
                 let log = manager.log_mut();
-                // `parsed` owns the tape `json` (and the `version` slice)
-                // borrow; keep it alive across `parse_with_json`.
                 let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
                     Ok(p) => p,
                     Err(err) => {

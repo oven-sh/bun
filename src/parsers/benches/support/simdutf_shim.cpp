@@ -1,6 +1,5 @@
-// Bench-only implementations of the `simdutf__*` C symbols Bun's Rust side
-// calls (`src/simdutf_sys`), wrapping the upstream simdutf amalgamation
-// fetched by scripts/bench-json-rust.sh.
+// Bench-only implementations of the `simdutf__*` C symbols Bun's Rust side calls
+// (`src/simdutf_sys`), wrapping the upstream simdutf amalgamation.
 #include "simdutf.h"
 
 typedef struct SIMDUTFResult {
@@ -82,4 +81,4 @@ size_t simdutf__count_utf8(const char* input, size_t length) {
   return simdutf::count_utf8(input, length);
 }
 
-} // extern "C"
+}

@@ -1555,8 +1555,6 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let mut temp_log = bun_ast::Log::init();
 
-        // `parsed` owns the row tape `json_expr` borrows; advisory strings
-        // are copied out before either dies.
         let parsed = match crate::bun_json::ParsedJson::parse_json(&json_source, &mut temp_log) {
             Ok(e) => e,
             Err(e) => {
@@ -1805,8 +1803,6 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 }
 
-/// The immutable JSON containers report their classic tag names
-/// (`e_object`, `e_array`) in diagnostics.
 fn json_type_name(data: &ExprData) -> &'static str {
     match data {
         ExprData::EObjectJSON(_) => bun_ast::expr::Tag::EObject.into(),
@@ -1861,13 +1857,11 @@ fn parse_security_advisories_from_expr(
             );
             return Err(err!("EmptyPackageField"));
         }
-        // Copy out of the JSON tape, which dies before the advisories
         let name_str: Box<[u8]> = Box::from(name_str_temp);
 
         let desc_str: Option<Box<[u8]>> = if let Some(desc_expr) = item.get(b"description") {
             'blk: {
                 if let Some(str) = desc_expr.as_utf8_string_literal() {
-                    // Copy out of the JSON tape, which dies before the advisories
                     break 'blk Some(Box::from(str));
                 }
                 if matches!(desc_expr.data, ExprData::ENull(_)) {
@@ -1886,7 +1880,6 @@ fn parse_security_advisories_from_expr(
         let url_str: Option<Box<[u8]>> = if let Some(url_expr) = item.get(b"url") {
             'blk: {
                 if let Some(str) = url_expr.as_utf8_string_literal() {
-                    // Copy out of the JSON tape, which dies before the advisories
                     break 'blk Some(Box::from(str));
                 }
                 if matches!(url_expr.data, ExprData::ENull(_)) {

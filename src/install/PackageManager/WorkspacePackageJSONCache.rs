@@ -73,8 +73,6 @@ impl MapEntry {
 
 pub type Map = StringHashMap<MapEntry>;
 
-// package.json, parsed for editing/printing (no duplicate-key warnings); the
-// only option this module varies is `guess_indentation`.
 fn parse_package_json(
     source: &Source,
     log: &mut Log,

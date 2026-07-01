@@ -2,7 +2,7 @@
 // failure with BUN_JSON_FUZZ_SEED=<seed> (and BUN_JSON_FUZZ_ITERS for a soak).
 import { expect, test } from "bun:test";
 
-const DEFAULT_SEED = 0x6a736f6e; // "json"
+const DEFAULT_SEED = 0x6a736f6e;
 const SEED = process.env.BUN_JSON_FUZZ_SEED !== undefined ? Number(process.env.BUN_JSON_FUZZ_SEED) >>> 0 : DEFAULT_SEED;
 
 function envIters(name: string, fallback: number): number {
@@ -12,11 +12,9 @@ function envIters(name: string, fallback: number): number {
   return n > 0 ? n : fallback;
 }
 
-// Sized to stay under bun:test's 5s default timeout in a debug build.
 const DOC_ITERS = envIters("BUN_JSON_FUZZ_ITERS", 400);
 const MUTATION_ITERS = envIters("BUN_JSON_FUZZ_ITERS", 1500);
 
-// Deterministic PRNG (mulberry32).
 class Rng {
   private a: number;
   constructor(seed: number) {
@@ -28,11 +26,9 @@ class Rng {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
-  /** integer in [0, n) */
   int(n: number): number {
     return Math.floor(this.next() * n);
   }
-  /** integer in [lo, hi] inclusive */
   range(lo: number, hi: number): number {
     return lo + this.int(hi - lo + 1);
   }
@@ -44,8 +40,6 @@ class Rng {
   }
 }
 
-// Generator emits a flat token list so the decorated oracle can re-join the
-// same document with JSONC decorations at token boundaries.
 const PLAIN_STRING_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _-./:'<>!@#$%^&*()=~|;?";
 const STRING_ESCAPES = ["\\n", "\\t", "\\r", "\\b", "\\f", "\\\\", '\\"', "\\/", "\\u0000", "\\u001f", "\\uffff"];
 const RAW_NON_ASCII = ["é", "ß", "ÿ", "日", "中文", "Ω≈ç√", "ࠀ", "🚀", "😀", "𝟘"];
@@ -102,7 +96,6 @@ function genNumberToken(rng: Rng): string {
         "-123456789012345678901234567890",
       ]);
     case 3: {
-      // 17 significant digits = the round-trip boundary for doubles
       let s = String(rng.range(1, 9));
       s += ".";
       for (let i = 0; i < 16; i++) s += String(rng.int(10));
@@ -143,11 +136,10 @@ function genNumberToken(rng: Rng): string {
 
 function genKeyToken(rng: Rng): string {
   if (rng.chance(0.08)) return '"__proto__"';
-  if (rng.chance(0.05)) return '"\\u005f_proto__"'; // decodes to "__proto__" too
+  if (rng.chance(0.05)) return '"\\u005f_proto__"';
   return genStringToken(rng);
 }
 
-/** Emits the tokens for one JSON value into `out`. `budget.n` caps total size. */
 function genValueTokens(rng: Rng, out: string[], depth: number, budget: { n: number }): void {
   budget.n--;
   const allowContainer = depth > 0 && budget.n > 0;
@@ -158,7 +150,6 @@ function genValueTokens(rng: Rng, out: string[], depth: number, budget: { n: num
     const keys: string[] = [];
     for (let i = 0; i < n; i++) {
       if (i > 0) out.push(",");
-      // sometimes reuse an earlier key token so duplicate keys are covered
       const key = keys.length > 0 && rng.chance(0.15) ? rng.pick(keys) : genKeyToken(rng);
       keys.push(key);
       out.push(key, ":");
@@ -194,7 +185,6 @@ function genWs(rng: Rng): string {
   return rng.chance(0.35) ? rng.pick(WHITESPACE) : "";
 }
 
-/** Joins tokens with random *insignificant* whitespace (still strict JSON). */
 function joinTokens(tokens: string[], rng: Rng): string {
   let s = genWs(rng);
   for (const tok of tokens) s += tok + genWs(rng);
@@ -213,20 +203,16 @@ function genComment(rng: Rng, atEof: boolean): string {
   let body = "";
   const n = rng.int(12);
   for (let i = 0; i < n; i++) body += rng.pick(COMMENT_FILLER);
-  // A line comment must be terminated by a newline unless it ends the document.
   return "//" + body + (atEof && rng.chance(0.5) ? "" : "\n");
 }
 
-/** Only called for bodies with no raw `'` (the `\'` escape is not JSON). */
 function toSingleQuoted(token: string): string {
   return "'" + token.slice(1, -1) + "'";
 }
 
-/** Re-serializes a valid JSON token stream with JSONC-only decorations that must not change its value. */
 function decorate(tokens: string[], rng: Rng): string {
   let s = "";
   const gap = (atEof: boolean) => {
-    // A `//` comment may only omit its newline when it is the last thing emitted.
     const c1 = rng.chance(0.25);
     const ws = rng.chance(0.4);
     const c2 = rng.chance(0.1);
@@ -280,13 +266,9 @@ function mutate(text: string, rng: Rng): string {
         break;
     }
   }
-  // Raw unpaired surrogates in the source text become U+FFFD at the JS-string
-  // -> UTF-8 API boundary, so JSON.parse and Bun.JSONC.parse must disagree.
   return s.isWellFormed() ? s : s.toWellFormed();
 }
 
-// Comparator: distinguishes -0, compares own-key order, and reads values via
-// getOwnPropertyDescriptor so an own "__proto__" data property is comparable.
 function show(v: unknown): string {
   if (typeof v === "number") return Object.is(v, -0) ? "-0" : String(v);
   if (typeof v === "string") return JSON.stringify(v);
@@ -375,7 +357,6 @@ test(`differential fuzz: generated JSON and JSONC decorations agree with JSON.pa
       throw new Error(`Bun.JSONC.parse disagrees with JSON.parse: ${diff}. ${reproInfo(i, text)}`);
     }
 
-    // The JSONC-decorated form must parse to the same value as the undecorated original.
     const decorated = decorate(tokens, rng);
     let bunDecorated: unknown;
     try {
@@ -431,7 +412,6 @@ test(`differential fuzz: mutated documents (seed=${SEED}, iters=${MUTATION_ITERS
     if (jscOk && bunOk) bothAccepted++;
 
     if (jscOk) {
-      // JSONC is a superset of JSON: any mutant JSON.parse accepts, Bun.JSONC.parse must accept and agree on.
       if (!bunOk) {
         throw new Error(
           `mutant accepted by JSON.parse but rejected by Bun.JSONC.parse (${bunErr}). ${reproInfo(i, text)}`,
@@ -481,7 +461,6 @@ test("lone surrogates from \\uXXXX escapes are preserved code-unit-for-code-unit
   const jsc = JSON.parse(text) as string[];
   const bun = Bun.JSONC.parse(text) as string[];
   expect(deepCompare(jsc, bun, "$")).toBeNull();
-  // Exact code units: cannot pass via lossy replacement on both sides at once.
   expect(Array.from(bun[0], c => c.charCodeAt(0))).toEqual([0x61, 0xd800, 0x62]);
   expect(bun[2]).toBe("\u{1F600}");
 });

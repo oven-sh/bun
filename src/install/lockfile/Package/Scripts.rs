@@ -336,9 +336,6 @@ impl Scripts {
         log: &mut bun_ast::Log,
         folder_path: &mut bun_paths::AutoAbsPath,
     ) -> Result<(), bun_core::Error> {
-        // `json_buf` and `parsed` are hoisted so the source bytes and the
-        // document's tape outlive every `Expr` reached from `json` (which
-        // borrows both).
         let json_buf;
         let parsed;
         let json: Expr = {

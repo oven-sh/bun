@@ -1,8 +1,5 @@
 // JSONTestSuite (https://github.com/nst/JSONTestSuite @ 1ef36fa01286573e846ac449e8683f8833c5b26a,
 // MIT, (c) Nicolas Seriot) test_parsing/ corpus, vendored inline as UTF-8.
-// y_ = valid (must agree with JSON.parse); n_ = invalid (must throw, except the
-// N_VALID_JSONC cases that are valid JSONC, whose value is pinned exactly);
-// i_ = implementation-defined (must agree with JSON.parse whenever it accepts).
 import { describe, expect, test } from "bun:test";
 
 type Case = [name: string, source: string];
@@ -114,7 +111,6 @@ const Y_VALID: Case[] = [
   ["y_structure_whitespace_array.json", " [] "],
 ];
 
-// Invalid JSON that is also invalid JSONC: Bun.JSONC.parse must throw.
 const N_INVALID: Case[] = [
   ["n_array_1_true_without_comma.json", "[1 true]"],
   ["n_array_a_invalid_utf8.json", "[a�]"],
@@ -268,7 +264,6 @@ const N_INVALID: Case[] = [
   ["n_structure_whitespace_U+2060_word_joiner.json", "[⁠]"],
 ];
 
-// Invalid JSON that IS valid JSONC; the parsed value is pinned exactly.
 const N_VALID_JSONC: Array<[name: string, source: string, expected: unknown]> = [
   ["n_array_comma_after_close.json", '[""],', [""]],
   ["n_array_extra_close.json", '["x"]]', ["x"]],
@@ -310,7 +305,6 @@ const N_VALID_JSONC: Array<[name: string, source: string, expected: unknown]> = 
   ["n_structure_whitespace_formfeed.json", "[\f]", []],
 ];
 
-// Implementation-defined: JSON.parse acceptance varies by engine.
 const I_IMPLEMENTATION_DEFINED: Case[] = [
   ["i_number_double_huge_neg_exp.json", "[123.456e-789]"],
   [
@@ -396,7 +390,6 @@ describe("JSONTestSuite", () => {
       } catch {
         bunAccepted = false;
       }
-      // JSONC is a superset of JSON: anything JSC accepts, Bun must accept and agree on.
       if (jscAccepted) {
         expect(bunAccepted).toBe(true);
         expect(bun).toStrictEqual(jsc);

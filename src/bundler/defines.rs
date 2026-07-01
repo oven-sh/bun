@@ -501,9 +501,6 @@ impl DefineDataExt for DefineData {
             });
         }
 
-        // We dupe `value_str` into `bump` first so every string slice the JSON
-        // parser hands back already points into the long-lived arena.
-        //
         // `parse_env_json` builds `E::String`/`E::Object` nodes in the
         // thread-local AST `Expr`/`Stmt` stores, so create them now — done
         // lazily here (idempotent no-ops once created) instead of eagerly in

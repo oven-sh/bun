@@ -729,8 +729,6 @@ fn print_enhanced_audit_report(
     let source = bun_ast::Source::init_path_string(b"audit-response.json", response_text);
     let mut log = bun_ast::Log::init();
 
-    // `parsed` owns the row tape every slice below borrows; everything kept
-    // past this function is copied into `Box<[u8]>` by `parse_vulnerability`.
     let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
         Ok(e) => e,
         Err(_) => {

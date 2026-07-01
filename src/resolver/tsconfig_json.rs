@@ -23,12 +23,6 @@ pub enum JsonMode {
 /// directly — `bun_parsers::json_parser` is lower-tier than the resolver, so no
 /// cycle exists.
 ///
-/// tsconfig.json and package.json parse into the immutable row AST
-/// ([`json_parser::ParsedJson`]); the caller owns the returned document and
-/// its row tape. `parse_json` still produces the classic `E::Object` tree in
-/// this struct's arena, which is **never reset** (those ASTs are cached
-/// process-long).
-///
 /// The arena is lazy-initialized on first `parse()`. `Resolver::for_worker`
 /// creates one `CacheSet` (and thus one `JsonCache`) per bundler worker thread,
 /// but those workers share the global `DirInfo` cache and almost never call
@@ -61,8 +55,6 @@ impl JsonCache {
         Ok(result)
     }
 
-    /// The returned [`json_parser::ParsedJson`] owns the document's row tape;
-    /// everything reachable from its `root` borrows that tape and `source`.
     #[inline]
     fn parse_rows(
         &mut self,
@@ -79,8 +71,7 @@ impl JsonCache {
         Ok(result)
     }
 
-    /// Parses tsconfig.json/jsconfig.json source as JSONC into the immutable row
-    /// AST. The caller owns the returned document (root + tape).
+    /// Parses tsconfig.json/jsconfig.json source as JSONC into the immutable row AST.
     #[inline]
     pub fn parse_tsconfig(
         &mut self,
@@ -90,9 +81,7 @@ impl JsonCache {
         self.parse_rows(log, source, json_parser::ParsedJson::parse_jsonc)
     }
 
-    /// Parses package.json source (comments and trailing commas allowed,
-    /// strings always UTF-8) into the immutable row AST. The caller owns the
-    /// returned document (root + tape).
+    /// Parses package.json source into the immutable row AST.
     #[inline]
     pub fn parse_package_json(
         &mut self,
@@ -332,8 +321,6 @@ impl TSConfigJSON {
         // emulation of what the TypeScript compiler does (e.g. string escape
         // behavior may also be different).
 
-        // `parsed` owns the row tape everything below borrows; it must stay
-        // alive for the rest of this function.
         let parsed = match json_cache.parse_tsconfig(log, source).ok().flatten() {
             Some(p) => p,
             None => return Ok(None),
@@ -615,8 +602,6 @@ impl TSConfigJSON {
                                 if !array.is_empty() {
                                     let mut values: Vec<Box<[u8]>> =
                                         Vec::with_capacity(array.len());
-                                    // Items carry no `Loc`; recover each one from
-                                    // the source in one forward sweep.
                                     let array_loc =
                                         json_parser::property_value_loc(&source.contents, key_loc)
                                             .unwrap_or(key_loc);

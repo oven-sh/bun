@@ -82,8 +82,6 @@ pub(crate) fn get_candidate_package_patterns<'a>(
             // `defer allocator.free(json_source.contents)` — deleted; `json_source` owns its
             // contents and drops at end of scope.
 
-            // `parsed` owns the row tape everything below borrows; it must stay
-            // alive until the patterns are copied into `out_patterns`.
             let parsed = json::ParsedJson::parse_package_json(&json_source, log)?;
             let json = parsed.root;
 
@@ -94,8 +92,6 @@ pub(crate) fn get_candidate_package_patterns<'a>(
             let json_array = match prop.expr.data {
                 ExprData::EArrayJSON(arr) => arr,
                 ExprData::EObjectJSON(obj) => {
-                    // `StoreRef::get` (0-arg) shadows `E::ObjectJSON::get` under autoderef;
-                    // force `Deref` to reach the keyed lookup.
                     match (*obj).get(b"packages") {
                         Some(bun_ast::e::JsonValue::Array(arr)) => *arr,
                         _ => break 'walk,

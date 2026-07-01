@@ -1,6 +1,5 @@
-//! Stage 2 of the JSON parser: recursive descent over the structural index
-//! built by [`crate::json_index`] (stage 1). Builds the immutable JSON AST
-//! ([`E::JsonTape`] rows); see `json.rs` for the entry points.
+//! Stage 2 of the JSON parser: recursive descent over the structural index built by
+//! [`crate::json_index`] (stage 1) into the immutable JSON AST (`E::JsonTape` rows).
 use bun_alloc::Arena as Bump;
 use bun_ast::LexerLog;
 use bun_ast::expr::Data;
@@ -31,11 +30,7 @@ pub(crate) struct Parser<'a, 's, 'i> {
     scratch_prop_value_locs: Vec<Loc>,
     scratch_item_locs: Vec<Loc>,
     scratch_str: Vec<u8>,
-    /// The document's [`E::JsonTape`]. Owned by the parser (`Box::leak`) until
-    /// [`Self::take_tape`] with `TapeAlloc::Global`; owned by the caller's
-    /// arena with `TapeAlloc::Arena`. `None` only after `take_tape`.
     tape: Option<core::ptr::NonNull<E::JsonTape>>,
-    /// Whether `tape` is the parser's to free (`TapeAlloc::Global`).
     tape_owned: bool,
     dup_hashes: Vec<u64>,
     dup_maps: Vec<DupMap>,
@@ -69,7 +64,6 @@ impl<'s> LexerLog<'s> for Parser<'_, 's, '_> {
     }
 }
 
-/// Reclaims the tape on error paths that never reach `take_tape`.
 impl Drop for Parser<'_, '_, '_> {
     fn drop(&mut self) {
         drop(self.take_tape());
@@ -85,8 +79,6 @@ fn is_identifier_continue(c: u8) -> bool {
     is_identifier_start(c) || c.is_ascii_digit()
 }
 
-/// Non-ASCII whitespace accepted between tokens (the JavaScript
-/// `WhiteSpace` / `LineTerminator` set beyond space/tab/newline).
 #[inline]
 pub(crate) fn is_exotic_whitespace(cp: CodePoint) -> bool {
     matches!(cp, 0x000B | 0x000C | 0x2028 | 0x2029 | 0xFEFF)
@@ -107,8 +99,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 true,
             ),
             E::TapeAlloc::Arena(arena) => {
-                // SAFETY: the caller's arena (lifetime-erased) outlives the
-                // parse and the AST.
+                // SAFETY: the caller's arena (lifetime-erased) outlives the parse and the AST.
                 let arena: &Bump = unsafe { arena.as_ref() };
                 (
                     core::ptr::NonNull::from(&*arena.alloc(E::JsonTape::empty_in(tape_alloc))),
@@ -139,15 +130,12 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    /// Hand the document's [`E::JsonTape`] (and ownership, when the parser
-    /// owns it) to the caller; it must outlive every use of the root `Expr`.
     pub(crate) fn take_tape(&mut self) -> Option<Box<E::JsonTape>> {
         let tape = self.tape.take()?;
         if !self.tape_owned {
             return None;
         }
-        // SAFETY: `tape` came from `Box::leak` in `new` (`tape_owned`) and
-        // is given out exactly once (`take`); nothing else frees it.
+        // SAFETY: `tape` came from `Box::leak` in `new` (`tape_owned`) and is taken exactly once.
         Some(unsafe { Box::from_raw(tape.as_ptr()) })
     }
 
@@ -156,21 +144,17 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         self.idx.flags & (jidx::FLAG_HAS_BACKSLASH_IN_STRING | jidx::FLAG_HAS_CTRL_IN_STRING) != 0
     }
 
-    // ── token cursor ─────────────────────────────────────────────────────
-
     #[inline(always)]
     fn pos_at(&mut self, cursor: usize) -> usize {
         self.idx.at(cursor)
     }
 
-    /// The bytes of the run `[idx[cursor], idx[cursor+1])`.
     #[inline(always)]
     fn run(&mut self, cursor: usize) -> &'s [u8] {
         let (a, b) = (self.pos_at(cursor), self.pos_at(cursor + 1));
         &self.contents[a..b]
     }
 
-    /// Range of the token at `cursor` for error reporting.
     fn token_range(&mut self, cursor: usize) -> Range {
         let p = self.pos_at(cursor);
         if p >= self.contents.len() {
@@ -204,8 +188,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    /// "Unexpected X" + `ParserError` (the JS lexer's `unexpected()` shape,
-    /// which callers' error matchers depend on).
     #[cold]
     fn unexpected(&mut self, cursor: usize) -> bun_core::Error {
         let r = self.token_range(cursor);
@@ -219,7 +201,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         bun_core::err!("ParserError")
     }
 
-    /// Log "Expected X but found Y".
     #[cold]
     fn expected(&mut self, cursor: usize, what: &str) {
         let r = self.token_range(cursor);
@@ -257,9 +238,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         self.unexpected(cursor)
     }
 
-    /// Skip exotic unicode whitespace (and comments) forward from the current
-    /// token position, resync the cursor, and return the first
-    /// non-whitespace byte position (`None` at end of input).
     #[cold]
     fn skip_unicode_ws(&mut self) -> Option<usize> {
         let start = self.pos_at(self.cursor);
@@ -305,7 +283,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             }
             return None;
         }
-        // Advance past every index that is entirely behind `p`.
         while self.pos_at(self.cursor) < p && self.pos_at(self.cursor + 1) <= p {
             self.cursor += 1;
         }
@@ -317,8 +294,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         self.peek().0
     }
 
-    /// Token byte at the cursor (0xFF at end of input) and its byte
-    /// position, skipping exotic whitespace first.
     #[inline(always)]
     fn peek(&mut self) -> (u8, usize) {
         let p = self.pos_at(self.cursor);
@@ -336,8 +311,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         (b, p)
     }
 
-    /// Is there a newline in the whitespace gap immediately before byte `p`?
-    /// Drives `is_single_line`.
     #[inline(always)]
     fn newline_before(&mut self, p: usize) -> bool {
         if p == 0 {
@@ -349,12 +322,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    /// See [`Self::newline_before`]: the rest of a non-empty whitespace gap.
-    /// No token but a string body can contain a raw newline (and one there is
-    /// a syntax error), so scanning back to the previous token index is exact.
     fn newline_in_gap_before(&mut self, p: usize) -> bool {
-        // The walk is bounded by the index window's look-behind; layouts with
-        // that many whitespace runs before one token give up (cosmetic).
         let mut hi = p;
         for step in 1..=(jidx::LOOKBEHIND - 2) {
             if self.cursor < step {
@@ -381,9 +349,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         false
     }
 
-    // ── values ───────────────────────────────────────────────────────────
-
-    /// After the root value, only whitespace may remain.
     pub(crate) fn at_trailing_end(&mut self) -> bool {
         loop {
             let p = self.pos_at(self.cursor);
@@ -400,13 +365,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    /// "Unexpected X" at the cursor + `ParserError`.
     pub(crate) fn unexpected_here(&mut self) -> bun_core::Error {
         self.unexpected(self.cursor)
     }
 
-    /// A value as an `Expr` (the document root); nested containers are
-    /// [`E::JsonValue`] rows (see [`Self::parse_json_value`]).
     pub(crate) fn parse_value(&mut self) -> PResult<Expr> {
         let cursor = self.cursor;
         let start = self.pos_at(cursor);
@@ -429,8 +391,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     #[inline]
     fn tape_ref(&self) -> &'a E::JsonTape {
-        // SAFETY: allocated in `Parser::new`; the lifetime-erased contract is
-        // that the caller keeps it alive for the AST's lifetime.
+        // SAFETY: allocated in `Parser::new`; the caller keeps it alive for the AST's lifetime.
         unsafe { self.tape.expect("the tape was already taken").as_ref() }
     }
 
@@ -440,11 +401,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         unsafe { self.tape.expect("the tape was already taken").as_mut() }
     }
 
-    /// Append `scratch_props[mark..]` (one closing object's direct children)
-    /// as a block to the property tape and return its `(first, count)` span.
     fn push_props_block(&mut self, mark: usize) -> (u32, u32) {
-        // SAFETY: see `tape_mut`. The raw-derived `&mut` is not a borrow of
-        // `self`, so the disjoint scratch stack can be read alongside it.
+        // SAFETY: see `tape_mut`; the raw-derived `&mut` is not a borrow of `self`.
         let tape = unsafe { self.tape.expect("the tape was already taken").as_mut() };
         let locs: &[Loc] = if self.opts.record_value_locs {
             &self.scratch_prop_value_locs[mark..]
@@ -458,7 +416,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         span
     }
 
-    /// See [`Self::push_props_block`]; the array-item tape.
     fn push_items_block(&mut self, mark: usize) -> (u32, u32) {
         // SAFETY: see `push_props_block`.
         let tape = unsafe { self.tape.expect("the tape was already taken").as_mut() };
@@ -474,8 +431,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         span
     }
 
-    /// A container's child value as an inline [`E::JsonValue`], plus its
-    /// location (recorded in the tape for [`crate::json::materialize`]).
     #[inline(always)]
     fn parse_json_value(&mut self) -> PResult<(E::JsonValue, Loc)> {
         let cursor = self.cursor;
@@ -521,10 +476,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    // ── strings ──────────────────────────────────────────────────────────
-
-    /// Locate the body of the string whose opening quote is at `open` and
-    /// whether it needs a body scan. Advances the cursor past both quotes.
     #[inline(always)]
     fn string_body_at(&mut self, open: usize) -> PResult<(&'s [u8], bool)> {
         let i = self.cursor;
@@ -548,7 +499,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         Ok(E::EString::init(self.parse_string_utf8_at(open)?.slice()))
     }
 
-    /// [`Self::parse_string`] for callers that only keep the string's bytes.
     #[inline(always)]
     fn parse_string_utf8_at(&mut self, open: usize) -> PResult<E::Str> {
         let (body, dirty) = self.string_body_at(open)?;
@@ -562,8 +512,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         self.tape_mut().alloc_str(bytes)
     }
 
-    /// Dirty-block path: decode escapes, error on raw control characters,
-    /// zero-copy otherwise.
     #[cold]
     fn parse_string_slow(&mut self, body: &'s [u8]) -> PResult<E::EString> {
         let mut first_special = None;
@@ -602,13 +550,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    /// See [`decode_string_escapes`].
     #[inline]
     fn decode_escapes(&mut self, body: &[u8], buf: &mut Vec<u8>) -> PResult {
         decode_string_escapes::<false, _>(self, body, buf)
     }
-
-    // ── scalars (numbers, keywords, junk) ────────────────────────────────
 
     fn parse_scalar(&mut self, loc: Loc) -> PResult<Expr> {
         let cursor = self.cursor;
@@ -632,16 +577,12 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    /// After a keyword/number of `n` bytes, the rest of its run must be
-    /// whitespace (it is almost always empty).
     #[inline]
     fn run_rest_is_ws(&mut self, cursor: usize, n: usize) -> bool {
         let run = self.run(cursor);
         run.len() == n || self.rest_is_ws_cold(&run[n..])
     }
 
-    /// Is `rest` (a scalar run's tail) nothing but whitespace, exotic
-    /// unicode whitespace, and comments?
     #[cold]
     fn rest_is_ws_cold(&self, rest: &[u8]) -> bool {
         if rest
@@ -682,13 +623,11 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         true
     }
 
-    // ── containers ───────────────────────────────────────────────────────
-
     fn parse_array(&mut self, loc: Loc) -> PResult<Expr> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(self.too_deeply_nested(loc));
         }
-        self.cursor += 1; // [
+        self.cursor += 1;
         let mark = self.scratch_json_items.len();
         let (_, here) = self.peek();
         let mut is_single_line = !self.newline_before(here);
@@ -721,7 +660,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 if is_single_line && self.newline_before(p) {
                     is_single_line = false;
                 }
-                self.cursor += 1; // ,
+                self.cursor += 1;
                 let (after_b, after) = self.peek();
                 if after_b == b']' {
                     if !self.opts.allow_trailing_commas {
@@ -738,7 +677,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                         is_single_line = false;
                     }
                     close_loc = usize2loc(after);
-                    self.cursor += 1; // ]
+                    self.cursor += 1;
                     break Ok(());
                 }
                 if is_single_line && self.newline_before(after) {
@@ -772,7 +711,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(self.too_deeply_nested(loc));
         }
-        self.cursor += 1; // {
+        self.cursor += 1;
         let mark = self.scratch_props.len();
         let hmark = self.dup_hashes.len();
         let (_, here) = self.peek();
@@ -808,7 +747,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 if is_single_line && self.newline_before(p) {
                     is_single_line = false;
                 }
-                self.cursor += 1; // ,
+                self.cursor += 1;
                 let (after_b, after) = self.peek();
                 if after_b == b'}' {
                     if !self.opts.allow_trailing_commas {
@@ -825,7 +764,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                         is_single_line = false;
                     }
                     close_loc = usize2loc(after);
-                    self.cursor += 1; // }
+                    self.cursor += 1;
                     break Ok(());
                 }
                 if is_single_line && self.newline_before(after) {
@@ -835,7 +774,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 p = after;
             }
 
-            // ── key ──
             let key_cursor = self.cursor;
             let key_start = p;
             debug_assert_eq!(key_start, self.pos_at(key_cursor));
@@ -856,7 +794,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 self.warn_duplicate_key(key.slice(), key_range);
             }
 
-            // ── : ──
             let colon_b = self.peek_byte();
             let colon_cursor = self.cursor;
             if colon_b == b':' {
@@ -866,7 +803,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 break Err(bun_core::err!("ParserError"));
             }
 
-            // ── value ──
             let (value, value_loc) = match self.parse_json_value() {
                 Ok(v) => v,
                 Err(e) => break Err(e),
@@ -899,19 +835,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         ))
     }
 
-    /// Number of keys an object can have before duplicate detection switches
-    /// from a linear scan of the object's key hashes to the spill map.
     const DUP_LINEAR_MAX: usize = 32;
 
-    /// Is `key` a duplicate of an earlier key of the object whose properties
-    /// start at `scratch_props[mark]` / `dup_hashes[hmark]`? Records the key.
     fn check_duplicate_key(&mut self, mark: usize, hmark: usize, key: &[u8]) -> bool {
         let h = bun_wyhash::hash(key);
         let n_prior = self.dup_hashes.len() - hmark;
         let dup = if n_prior <= Self::DUP_LINEAR_MAX {
             if n_prior == Self::DUP_LINEAR_MAX {
-                // Take this nesting level's map (left cleared by whichever
-                // object used it last) and seed it with everything so far.
                 if self.dup_maps.len() == self.spill_depth {
                     self.dup_maps.push(DupMap::default());
                 }
@@ -956,16 +886,11 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         );
     }
 
-    // ── numbers ──────────────────────────────────────────────────────────
-
-    /// Numeric literal at the cursor's run; matches the JS lexer's
-    /// `parse_numeric_literal_or_dot`.
     fn parse_number(&mut self, loc: Loc) -> PResult<Expr> {
         let cursor = self.cursor;
         let full_run = self.run(cursor);
         let start = self.pos_at(cursor);
 
-        // `-` is its own token: whitespace and comments may follow it.
         if full_run[0] == b'-' {
             return self.parse_negative_number_at(start, loc);
         }
@@ -978,8 +903,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         Ok(Expr::init(E::Number::new(value), loc))
     }
 
-    /// A `-` at `minus_pos`: find its digits (possibly after whitespace or
-    /// comments), parse them, and return the negated number.
     #[cold]
     fn parse_negative_number_at(&mut self, minus_pos: usize, loc: Loc) -> PResult<Expr> {
         self.token_start = minus_pos;
@@ -991,8 +914,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             self.expected(self.cursor, "number");
             return Err(self.unexpected(self.cursor));
         };
-        // Advance onto the index whose run contains `q` first, so "Expected
-        // number" names the token that was found, not the `-`.
         while self.pos_at(self.cursor) < q && self.pos_at(self.cursor + 1) <= q {
             self.cursor += 1;
         }
@@ -1014,7 +935,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     fn number_trailing_junk(&mut self, pos: usize) -> bun_core::Error {
         let c = self.contents[pos];
         if is_identifier_start(c) || c == b'\\' {
-            // "An identifier can't immediately follow a number."
             self.token_start = pos;
             match self.syntax_error() {
                 Err(e) => e,
@@ -1025,8 +945,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    /// Parses one numeric literal at the start of `t` (no sign), returning
-    /// (value, bytes consumed). `pos` is its absolute offset (for errors).
     fn parse_number_text(&mut self, t: &[u8], pos: usize) -> PResult<(f64, usize)> {
         self.token_start = pos;
         let n = t.len();
@@ -1110,7 +1028,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
         let text = &t[..i];
         let value: f64 = if !has_dot_or_exp && !underscores && text.len() < 10 {
-            // Fast path: short integers.
             let mut v: u32 = 0;
             for &c in text {
                 v = v * 10 + (c - b'0') as u32;
@@ -1208,7 +1125,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             return Err(self.syntax_err_at(pos));
         }
         if is_invalid_legacy_octal {
-            // Re-parse as decimal (e.g. `018` is 18).
             let text = &t[..i];
             let s = core::str::from_utf8(text).expect("ascii");
             match s.parse::<f64>() {
@@ -1234,11 +1150,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    // ── cold scalar path ─────────────────────────────────────────────────
-
-    /// Scalar runs that are not `true`/`false`/`null` or a number: exotic
-    /// unicode whitespace, `\uXXXX`-escaped identifiers, identifiers, and
-    /// garbage. Never taken by well-formed JSON.
     #[cold]
     fn parse_scalar_cold(&mut self, loc: Loc) -> PResult<Expr> {
         let cursor = self.cursor;
@@ -1258,7 +1169,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             }
         }
 
-        // An escaped keyword (`true`) is still that keyword.
         if run[0] == b'\\' {
             return self.parse_escaped_identifier(start, loc);
         }
@@ -1272,8 +1182,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         Err(self.junk_byte_error(cursor, start, run[0]))
     }
 
-    /// Re-dispatch a value that starts mid-run (after leading exotic
-    /// whitespace).
     #[cold]
     fn parse_scalar_tail(&mut self, pos: usize) -> PResult<Expr> {
         let end = self.pos_at(self.cursor + 1);
@@ -1317,14 +1225,11 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    /// A `\uXXXX`-escaped spelling of `true` / `false` / `null` starting at
-    /// `start` (the `\`).
     #[cold]
     fn parse_escaped_identifier(&mut self, start: usize, loc: Loc) -> PResult<Expr> {
         let cursor = self.cursor;
         let run = &self.contents[start..self.pos_at(cursor + 1)];
         self.token_start = start;
-        // First pass: validate the escape syntax and find the extent.
         let mut i = 0;
         while i < run.len() {
             let c = run[i];
@@ -1351,7 +1256,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             let pos = start + i;
             return Err(self.junk_byte_error(self.cursor, pos, self.contents[pos]));
         }
-        // Second pass: decode and match keywords.
         let mut buf: Vec<u8> = Vec::with_capacity(text.len());
         self.decode_escapes(text, &mut buf)?;
         self.cursor += 1;
@@ -1375,7 +1279,6 @@ fn ident_len(t: &[u8]) -> usize {
         .max(1)
 }
 
-/// Append `cp` to `buf` as WTF-8.
 #[inline]
 fn push_codepoint(buf: &mut Vec<u8>, cp: CodePoint) {
     if cp < 0 {
@@ -1386,8 +1289,6 @@ fn push_codepoint(buf: &mut Vec<u8>, cp: CodePoint) {
     buf.extend_from_slice(&tmp[..n]);
 }
 
-/// After a high-surrogate `\uXXXX`, consume an immediately following
-/// low-surrogate `\uXXXX` and return its value. Advances only on a match.
 fn read_trail_surrogate_escape(
     iterator: &strings::CodepointIterator<'_>,
     iter: &mut strings::Cursor,
@@ -1413,9 +1314,6 @@ fn read_trail_surrogate_escape(
     Some(value as u16)
 }
 
-/// Decode the escapes of a string body into WTF-8 bytes (lone surrogates keep
-/// their 3-byte encoding). `ALLOW_RAW_CONTROL` (the `.env`/`--define`
-/// auto-quote path) passes raw control characters through instead of erroring.
 fn decode_string_escapes<
     's,
     const ALLOW_RAW_CONTROL: bool,
@@ -1441,21 +1339,19 @@ fn decode_string_escapes<
             push_codepoint(buf, c);
             continue;
         }
-        // A trailing backslash is silently accepted.
         if !iterator.next(&mut iter) {
             return Ok(());
         }
         let c2 = iter.c;
         match c2 as u32 {
-            0x62 => buf.push(0x08),                 // \b
-            0x66 => buf.push(0x0c),                 // \f
-            0x6E => buf.push(0x0a),                 // \n
-            0x72 => buf.push(0x0d),                 // \r
-            0x74 => buf.push(0x09),                 // \t
-            0x76 => buf.push(0x0b),                 // \v (accepted, technically invalid)
-            0x38 | 0x39 => push_codepoint(buf, c2), // \8 \9
+            0x62 => buf.push(0x08),
+            0x66 => buf.push(0x0c),
+            0x6E => buf.push(0x0a),
+            0x72 => buf.push(0x0d),
+            0x74 => buf.push(0x09),
+            0x76 => buf.push(0x0b),
+            0x38 | 0x39 => push_codepoint(buf, c2),
             0x78 => {
-                // \xNN
                 let mut value: CodePoint = 0;
                 for _ in 0..2 {
                     if !iterator.next(&mut iter) {
@@ -1468,9 +1364,8 @@ fn decode_string_escapes<
                 }
                 push_codepoint(buf, value);
             }
-            0x22 | 0x5C | 0x2F => buf.push(c2 as u8), // " \ /
+            0x22 | 0x5C | 0x2F => buf.push(c2 as u8),
             0x75 => {
-                // \uXXXX
                 let mut value: u32 = 0;
                 for _ in 0..4 {
                     if !iterator.next(&mut iter) {
@@ -1494,8 +1389,6 @@ fn decode_string_escapes<
     Ok(())
 }
 
-/// Minimal [`LexerLog`] for paths that have no parser (the `.env` auto-quote
-/// string decoder).
 struct MiniLog<'a, 's> {
     log: &'a mut Log,
     source: &'s Source,
@@ -1521,8 +1414,6 @@ impl<'s> LexerLog<'s> for MiniLog<'_, 's> {
     }
 }
 
-/// Decode the body of an implicitly-quoted `.env`/`--define` value into a
-/// UTF-8 `E::String` in `bump`.
 pub(crate) fn decode_auto_quoted(
     source: &Source,
     log: &mut Log,

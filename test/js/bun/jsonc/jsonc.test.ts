@@ -25,7 +25,6 @@ test("Bun.JSONC.parse handles comments", () => {
 });
 
 test("Bun.JSONC.parse handles a comment after a scalar on the same line", () => {
-  // tsconfig.json's documented style: `"declaration": true /* note */,`.
   const jsonc = `{
     "a": 1 /* one */,
     "b": true /* yes */ ,
@@ -137,7 +136,6 @@ test("Bun.JSONC.parse handles empty array", () => {
 });
 
 test("Bun.JSONC.parse throws on deeply nested arrays instead of crashing", () => {
-  // 200_000 exhausts the 18 MB main-thread stack at ~100 B per recursion frame.
   const depth = 200_000;
   const deepJson = Buffer.alloc(depth, "[").toString() + Buffer.alloc(depth, "]").toString();
   expect(() => Bun.JSONC.parse(deepJson)).toThrow(RangeError);
@@ -149,15 +147,12 @@ test("Bun.JSONC.parse throws on deeply nested objects instead of crashing", () =
   expect(() => Bun.JSONC.parse(deepJson)).toThrow(RangeError);
 });
 
-// Diagnostic line/column positions must be computed incrementally: rescanning
-// from byte 0 per diagnostic made error reporting on these inputs quadratic.
 test("Bun.JSONC.parse handles pathological inputs in linear time", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
-        // A number in object-key position is a parse error.
         {
           const input = "[{" + "-1" + Buffer.alloc(5 * 50_000, '"":[{').toString();
           let threw;
@@ -169,7 +164,6 @@ test("Bun.JSONC.parse handles pathological inputs in linear time", async () => {
           if (!threw) throw new Error("expected Bun.JSONC.parse to throw");
           console.log("OK malformed flood");
         }
-        // Each duplicate-key warning computes a position too.
         {
           const input = "{" + Buffer.alloc(6 * 40_000, '"a":1,').toString() + '"a":1}';
           const result = Bun.JSONC.parse(input);
@@ -193,7 +187,6 @@ test("Bun.JSONC.parse handles pathological inputs in linear time", async () => {
   expect(exitCode).toBe(0);
 }, 90_000);
 
-// Deterministic xorshift so failures reproduce.
 function makeRng(seed: number) {
   let s0 = BigInt(seed) | 1n;
   return () => {
@@ -261,7 +254,6 @@ test("Bun.JSONC.parse matches JSON.parse on generated documents", () => {
 });
 
 test("Bun.JSONC.parse matches JSON.parse across 64-byte block boundaries", () => {
-  // Strings/escapes straddling the SIMD block size and the buffer end.
   for (let pad = 40; pad <= 96; pad++) {
     const a = "a".repeat(pad);
     for (const doc of [
@@ -290,7 +282,6 @@ test("Bun.JSONC.parse matches JSON.parse on escape-heavy strings", () => {
 });
 
 test("Bun.JSONC.parse matches JSON.parse on lone and paired surrogate escapes", () => {
-  // Unpaired \uD800-style escapes decode to the lone code unit, not U+FFFD.
   for (const doc of [
     '"\\ud800"',
     '"a\\udfffz"',
@@ -316,7 +307,6 @@ test("Bun.JSONC.parse matches JSON.parse on lone and paired surrogate escapes", 
 });
 
 test("Bun.JSONC.parse accepts a BOM adjacent to any token", () => {
-  // The 3-byte U+FEFF codepoint must stay inside one index run to decode.
   expect(Bun.JSONC.parse("[1\uFEFF,2]")).toEqual([1, 2]);
   expect(Bun.JSONC.parse("[\uFEFF1]")).toEqual([1]);
   expect(Bun.JSONC.parse("[\uFEFFnull\uFEFF]")).toEqual([null]);
@@ -327,7 +317,6 @@ test("Bun.JSONC.parse accepts a BOM adjacent to any token", () => {
 });
 
 test("Bun.JSONC.parse accepts a comment immediately after exotic whitespace", () => {
-  // The whitespace codepoint's bytes share one index run with the comment.
   expect(Bun.JSONC.parse('\uFEFF// see https://aka.ms/tsconfig\n{"a": 1}')).toEqual({ a: 1 });
   expect(Bun.JSONC.parse('{\u00A0/* x */ "a": 1\u00A0// t\n}')).toEqual({ a: 1 });
   expect(Bun.JSONC.parse("[1,\u00A0// c\n2]")).toEqual([1, 2]);
@@ -364,14 +353,11 @@ test("Bun.JSONC.parse handles huge documents with every value type", () => {
   }
   const minified = JSON.stringify(big);
   const pretty = JSON.stringify(big, null, 2);
-  // Both shapes must be large enough to force many 8 KiB index-window refills.
   expect(minified.length).toBeGreaterThan(16 * 8192);
   expect(Bun.JSONC.parse(minified)).toEqual(big as any);
   expect(Bun.JSONC.parse(pretty)).toEqual(big as any);
 });
 
-// A recoverable diagnostic (missing comma/colon) must surface as a thrown
-// error, not a silently truncated container.
 test("Bun.JSONC.parse throws on documents that only parse with error recovery", () => {
   for (const doc of ['{"a":1 "b":2}', '{"a" "b"}', "[1 true]", '["": 1]', '{"a":{"b":1 "c":2}}', '[{"a":1} {"b":2}]']) {
     expect(() => Bun.JSONC.parse(doc), doc).toThrow();
@@ -379,11 +365,9 @@ test("Bun.JSONC.parse throws on documents that only parse with error recovery", 
   }
 });
 
-// Every document here is pure ASCII (JS index == byte offset) and places the
-// interesting construct at, or straddling, an index window / SIMD block boundary.
 describe("structural index window seams", () => {
-  const WINDOW = 8192; // REFILL_INPUT in src/parsers/json_index.rs
-  const BLOCK = 64; // SIMD block size
+  const WINDOW = 8192;
+  const BLOCK = 64;
 
   const SEAMS = [
     BLOCK - 1,
@@ -403,7 +387,6 @@ describe("structural index window seams", () => {
 
   const sp = (n: number) => Buffer.alloc(n, " ").toString();
 
-  // Builds `<head><spaces><lead><needle><rest>` such that `needle` begins at exactly byte `offset`.
   function docAt(offset: number, head: string, lead: string, needle: string, rest: string): string {
     const pad = offset - head.length - lead.length;
     expect(pad).toBeGreaterThanOrEqual(1);
@@ -429,7 +412,6 @@ describe("structural index window seams", () => {
   test("string starting at a window seam and spanning 3+ windows", () => {
     const body = Buffer.alloc(2 * WINDOW + 7, "z").toString();
     for (const offset of [WINDOW - 1, WINDOW, WINDOW + 1]) {
-      // The opening quote sits at `offset`; the closing quote lands two windows later.
       const doc = docAt(offset, '{"k":', "", '"S0S1S2S3', body + '"}');
       expect(doc.length).toBeGreaterThan(3 * WINDOW);
       expectAgree(doc);
@@ -450,7 +432,6 @@ describe("structural index window seams", () => {
   test("\\uXXXX escape straddling a window seam at every internal byte", () => {
     const needle = "\\u00e9";
     for (const boundary of [2 * BLOCK, ...WINDOW_STARTS]) {
-      // Slide the escape so each of its bytes starts the new window exactly once.
       for (let d = -needle.length; d <= 1; d++) {
         expectAgree(docAt(boundary + d, '{"k":', '"ab', needle, 'cd"}'));
       }
@@ -475,7 +456,6 @@ describe("structural index window seams", () => {
       const doc = docAt(offset, '{"k":', '"ab', "\\uD800", 'cd"}');
       const actual = (Bun.JSONC.parse(doc) as { k: string }).k;
       const expected = (JSON.parse(doc) as { k: string }).k;
-      // Compare WTF-16 code units so a U+FFFD replacement is caught.
       expect(actual.split("").map(c => c.charCodeAt(0))).toEqual(expected.split("").map(c => c.charCodeAt(0)));
       expect(actual.charCodeAt(2)).toBe(0xd800);
       expect(actual.length).toBe(5);
@@ -485,7 +465,6 @@ describe("structural index window seams", () => {
   test("keyword literals and numbers split by a window seam", () => {
     for (const token of ["true", "false", "null", "-1.25e+10", "98765.4321e-12", "1e3"]) {
       for (const boundary of [2 * BLOCK, ...WINDOW_STARTS]) {
-        // The seam falls between every adjacent pair of the token's bytes.
         for (let start = boundary - token.length; start <= boundary + 1; start++) {
           expectAgree(docAt(start, '{"k":', "", token, "}"));
         }
@@ -500,7 +479,6 @@ describe("structural index window seams", () => {
       for (const boundary of WINDOW_STARTS) {
         for (const start of [boundary - 1, boundary + 1 - comment.length]) {
           const jsonc = docAt(start, '{"k":', "", comment, " 42}");
-          // Oracle: the same bytes with the comment blanked out by spaces is plain JSON.
           const json = jsonc.replace(comment, sp(comment.length));
           expect(json.length).toBe(jsonc.length);
           expect(Bun.JSONC.parse(jsonc)).toEqual(JSON.parse(json));
@@ -528,7 +506,6 @@ describe("structural index window seams", () => {
   });
 
   test("single-quoted string opening at a window seam (scalar fallback path)", () => {
-    // A single quote outside a string makes the indexer fall back to the scalar path.
     for (const offset of SEAMS) {
       expect(Bun.JSONC.parse(docAt(offset, "{'k':", "", "'seam'", "}"))).toEqual({ k: "seam" });
     }
@@ -545,7 +522,6 @@ describe("structural index window seams", () => {
       const full = '{"' + Buffer.alloc(boundary + 100, "k").toString() + '":1}';
       const doc = full.slice(0, boundary);
       expect(doc.length).toBe(boundary);
-      // The cut lands inside the (unterminated) key.
       expect(doc[doc.length - 1]).toBe("k");
       expectBothThrow(doc);
     }
@@ -557,8 +533,6 @@ describe("structural index window seams", () => {
     }
   });
 
-  // Trailing content is accepted, so the invariant is only that a window seam
-  // before the trailing bytes does not change the result.
   test("closing brace at a window boundary followed by trailing garbage", () => {
     for (const offset of [WINDOW - 1, WINDOW, 2 * WINDOW - 1, 2 * WINDOW]) {
       const doc = docAt(offset, '{"k":1', "", "}", "@@@@");
@@ -567,10 +541,9 @@ describe("structural index window seams", () => {
     }
   });
 
-  // A minified JSON object of exactly `n` bytes.
   function minifiedDocOfLength(n: number): string {
     const parts: string[] = [];
-    let len = 1; // "{"
+    let len = 1;
     let i = 0;
     while (len + 40 < n) {
       const piece = `"k${String(i).padStart(6, "0")}":${i % 997},`;
@@ -591,8 +564,6 @@ describe("structural index window seams", () => {
     }
   });
 
-  // The comment past the first window makes the SIMD kernel bail; the scalar
-  // indexer restarting from byte 0 must re-derive the same index stream, BOM included.
   test("BOM-prefixed document with a comment past the first window", () => {
     let body = "";
     let i = 0;

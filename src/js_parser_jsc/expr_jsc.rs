@@ -196,12 +196,8 @@ fn json_value_to_js(
     })
 }
 
-/// Serialize parser string bytes to a JS string, transcoding to UTF-16 only
-/// when the bytes are not pure ASCII. The bytes are WTF-8, not UTF-8: a lone
-/// surrogate must round-trip to its code unit rather than U+FFFD.
 fn utf8_bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
     if bytes.is_empty() {
-        // `create_uninitialized_latin1` requires a non-zero length.
         let empty = BunString::EMPTY;
         return bun_string_jsc::to_js(&empty, global).map_err(js_err);
     }

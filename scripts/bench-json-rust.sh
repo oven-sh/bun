@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
-# Build + run the JSON parser criterion bench (src/parsers/benches/json_parse.rs).
-# Compiles the few native pieces the parser reaches (mimalloc, simdutf, the
-# highway JSON kernel) into one small archive and points RUSTFLAGS at it.
-# Requires `vendor/` and `build/debug/codegen` to exist (run `bun bd` once).
-#
-#   scripts/bench-json-rust.sh                 # whole corpus
-#   scripts/bench-json-rust.sh -- 'drizzle'    # criterion filter
+# Build + run the JSON parser criterion bench (src/parsers/benches/json_parse.rs): compiles the
+# native pieces the parser reaches into one archive and points RUSTFLAGS at it. Needs `bun bd` once.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -23,8 +18,6 @@ if [ ! -f "$BUN_CODEGEN_DIR/json_byte_class.h" ]; then
 fi
 CC=${CC:-cc}
 CXX=${CXX:-c++}
-# Pinned simdutf amalgamation for Bun's simdutf__* C wrapper; the download
-# and its .o are keyed on the version so bumping it rebuilds.
 SIMDUTF_VERSION=v7.3.6
 SIMDUTF_STAMP="$SUP/.simdutf-$SIMDUTF_VERSION"
 if [ ! -f "$SIMDUTF_STAMP" ] || [ ! -f "$SUP/simdutf.cpp" ]; then
@@ -35,8 +28,6 @@ if [ ! -f "$SIMDUTF_STAMP" ] || [ ! -f "$SUP/simdutf.cpp" ]; then
 fi
 printf '#pragma once\n#include "simdutf.h"\n' > "$SUP/wtf/SIMDUTF.h"
 
-# build <out.o> <cmd... source>: compile if the object is missing or older
-# than its source (the last argument).
 build() {
   local out=$1
   shift
@@ -51,23 +42,18 @@ for f in abort targets per_target print timer nanobenchmark aligned_allocator; d
   build "$SUP/hwy_$f.o" $CXX -O3 -fPIC -std=c++17 -Ivendor/highway -c "vendor/highway/hwy/$f.cc"
 done
 if [ -f src/jsc/bindings/highway_json.cpp ]; then
-  # Always rebuild the kernel: it includes the generated json_byte_class.h,
-  # which build()'s source-mtime cache would not see change.
   $CXX -O3 -fPIC -std=c++17 -Ivendor/highway -Isrc/jsc/bindings -I"$BUN_CODEGEN_DIR" -c src/jsc/bindings/highway_json.cpp -o "$SUP/highway_json.o"
 fi
 rm -f "$SUP/libbun_bench_cdeps.a"
 ar rcs "$SUP/libbun_bench_cdeps.a" "$SUP"/*.o
 ranlib "$SUP/libbun_bench_cdeps.a"
 
-# Keep mimalloc pages resident between (slow) criterion iterations, like a
-# busy install process; the default 10ms purge delay is a page-fault storm.
 export MIMALLOC_PURGE_DELAY=${MIMALLOC_PURGE_DELAY:-2000}
 export BUN_JSON_BENCH_FIXTURES=${BUN_JSON_BENCH_FIXTURES:-$PWD/bench/json-corpus}
 CXXLIB=stdc++
 [ "$(uname -s)" = Darwin ] && CXXLIB=c++
 export RUSTFLAGS="${RUSTFLAGS:-} -Clink-arg=$PWD/$SUP/libbun_bench_cdeps.a -Clink-arg=-l$CXXLIB -Clink-arg=-lm -Clink-arg=-ldl -Clink-arg=-lpthread -Clink-arg=-lc"
 
-# `--test`: run the crate's unit tests (they need the same native archive).
 if [ "${1:-}" = "--test" ]; then
   shift
   exec cargo test -p bun_parsers --lib --release "$@"

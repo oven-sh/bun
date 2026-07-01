@@ -2729,7 +2729,6 @@ pub fn is_hex_code_point<T: TryInto<u8>>(cp: T) -> bool {
 /// Unicode `Zs` (Space_Separator) general category — the exact 17-codepoint
 /// set, stable since Unicode 4.0. Shared core of:
 ///   - ECMAScript `WhiteSpace` (js_parser::lexer)
-///   - the JSON parser's exotic whitespace (parsers::json_stage2)
 ///   - CommonMark §2.1 "Unicode whitespace" (md::helpers)
 /// Callers compose with their own ASCII / U+FEFF / line-terminator extras —
 /// those differ per spec and MUST NOT be folded in here (FEFF is Cf, not Zs;
@@ -3137,16 +3136,13 @@ pub fn to_utf16_alloc(
     Ok(Some(out))
 }
 
-/// WTF-8 → UTF-16LE **iff** `bytes` contains any non-ASCII byte; pure-ASCII
-/// inputs return `None`. Unlike [`to_utf16_alloc`], a WTF-8-encoded lone
-/// surrogate round-trips to its UTF-16 code unit instead of becoming U+FFFD.
+/// WTF-8 → UTF-16LE iff `bytes` contains any non-ASCII byte; pure-ASCII inputs return `None`.
 pub fn wtf8_to_utf16_alloc(bytes: &[u8]) -> Option<Vec<u16>> {
     first_non_ascii(bytes)?;
 
     let out_length = simdutf::length::utf16::from::utf8(bytes);
     let mut out: Vec<u16> = Vec::with_capacity(out_length.max(1));
-    // SAFETY: `out` has ≥ `out_length` u16 of capacity; simdutf never reads the
-    // output buffer and writes at most `out_length` code units.
+    // SAFETY: `out` has ≥ `out_length` u16 of capacity; simdutf writes at most that many.
     let res = unsafe {
         simdutf::simdutf__convert_utf8_to_utf16le_with_errors(
             bytes.as_ptr(),
@@ -3160,7 +3156,6 @@ pub fn wtf8_to_utf16_alloc(bytes: &[u8]) -> Option<Vec<u16>> {
         return Some(out);
     }
 
-    // Slow path: scalar WTF-8 decode. `out` is still len 0; reuse its capacity.
     out.reserve(bytes.len());
     let mut i = 0usize;
     while i < bytes.len() {
@@ -3181,8 +3176,6 @@ pub fn wtf8_to_utf16_alloc(bytes: &[u8]) -> Option<Vec<u16>> {
         buf[..take].copy_from_slice(&bytes[i..i + take]);
         let cp = decode_wtf8_rune_t::<i32>(buf, width, -1);
         if cp < 0 {
-            // Malformed sequence: emit one U+FFFD and resync at the next byte,
-            // so a stray lead byte cannot swallow the characters after it.
             out.push(UNICODE_REPLACEMENT as u16);
             i += 1;
             continue;

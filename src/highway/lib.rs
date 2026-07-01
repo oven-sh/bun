@@ -599,13 +599,7 @@ pub fn count_mapping_delims(bytes: &[u8]) -> usize {
     unsafe { highway_count_mapping_delims(bytes.as_ptr(), bytes.len()) }
 }
 
-/// JSON structural index, simdjson-style stage 1, for one chunk of a document
-/// (the kernel is `src/jsc/bindings/highway_json.cpp`). `chunk` must start at
-/// `base_offset`, every chunk's length except the last must be a multiple of
-/// 4096, and `state` carries the kernel's state across calls (zeroed before
-/// the first chunk). The kernel initializes exactly the `n` `out` entries it
-/// reports; `flags & ODDITY` means no output was produced and the caller must
-/// re-index without the kernel.
+/// JSON structural index (simdjson-style stage 1) for one chunk of a document.
 #[inline(always)]
 pub fn json_structural_index_chunk(
     chunk: &[u8],
@@ -618,8 +612,7 @@ pub fn json_structural_index_chunk(
     assert!(dirty.len() >= (chunk.len().div_ceil(64)).div_ceil(64));
     assert!(base_offset.is_multiple_of(4096));
     let mut flags: u32 = 0;
-    // SAFETY: the slices satisfy the kernel's size requirements (asserted
-    // above); `MaybeUninit<u32>` has the same layout as `u32`.
+    // SAFETY: the slices satisfy the kernel's size requirements (asserted above).
     let n = unsafe {
         highway_json_index_chunk(
             chunk.as_ptr(),

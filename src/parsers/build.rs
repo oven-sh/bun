@@ -1,11 +1,9 @@
-// Build scripts run on the host before bun_* crates are compiled; std is the only option.
 #![allow(
     clippy::disallowed_methods,
     clippy::disallowed_types,
     clippy::disallowed_macros
 )]
-//! Export `BUN_CODEGEN_DIR` for
-//! `include!(concat!(env!("BUN_CODEGEN_DIR"), "/json_byte_class.rs"))`,
+//! Export `BUN_CODEGEN_DIR` for `include!(concat!(env!("BUN_CODEGEN_DIR"), "/json_byte_class.rs"))`,
 //! written at configure time by `scripts/build/jsonByteClass.ts`.
 
 use std::env;

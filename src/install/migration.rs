@@ -240,8 +240,6 @@ pub(crate) fn migrate_npm_lockfile<'a>(
     Install::initialize_store();
 
     let json_src = bun_ast::Source::init_path_string(abs_path, data);
-    // `parsed_json` owns the tape every row/slice below borrows; it must
-    // outlive every use of `packages_properties` and the strings within.
     let parsed_json = bun_parsers::json::ParsedJson::parse_json(&json_src, log)
         .map_err(|_| err!("InvalidNPMLockfile"))?;
     let json = &parsed_json.root;

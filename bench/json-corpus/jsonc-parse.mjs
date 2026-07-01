@@ -1,13 +1,5 @@
-// End-to-end benchmark of Bun's JSON parser through its JS-visible entry
-// point, `Bun.JSONC.parse` (src/parsers/json.rs -> Expr -> JSValue), over the
-// corpus in this directory, with `JSON.parse` (JavaScriptCore) as a reference.
-//
-//   bun bench/json-corpus/jsonc-parse.mjs            # all fixtures
-//   bun bench/json-corpus/jsonc-parse.mjs drizzle    # filter by name
-//
-// `Bun.JSONC.parse` does strictly more work than `JSON.parse` here: it parses
-// to Bun's AST and then converts that AST to JS values, so it measures the
-// whole pipeline a `.json`/`.jsonc`/tsconfig import or `bun pm` command sees.
+// End-to-end benchmark of `Bun.JSONC.parse` over the corpus in this directory, with `JSON.parse`
+// as a reference. Usage: `bun bench/json-corpus/jsonc-parse.mjs [name-filter]`.
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 
@@ -19,7 +11,7 @@ const files = readdirSync(dir)
 
 const runs = +(process.env.RUNS ?? 30);
 function bench(label, fn) {
-  fn(); // warmup
+  fn();
   fn();
   const times = [];
   for (let i = 0; i < runs; i++) {
@@ -44,7 +36,7 @@ for (const f of files) {
   const bytes = Buffer.byteLength(text);
   const jsonc = bench("jsonc", () => Bun.JSONC.parse(text));
   const jsonp = bench("json", () => JSON.parse(text));
-  const mbs = bytes / (jsonc.median / 1e9) / (1 << 20); // bytes/sec -> MiB/s
+  const mbs = bytes / (jsonc.median / 1e9) / (1 << 20);
   console.log(
     f.padEnd(40),
     String(bytes).padStart(10),

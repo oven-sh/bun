@@ -193,8 +193,6 @@ impl Expr {
     }
 
     /// Materialize an immutable JSON leaf/container value as an `Expr`.
-    /// A string leaf allocates one `Store` node per call, so iterate
-    /// `E::ObjectJSON::properties()` / `E::ArrayJSON::items()` on hot paths.
     pub fn from_json_value(value: &E::JsonValue, loc: Loc) -> Expr {
         match value {
             E::JsonValue::Null => Expr::init(E::Null, loc),
@@ -218,9 +216,7 @@ impl Expr {
         }
     }
 
-    /// Visit every `"key": value` property of an object expression in source
-    /// order, in either representation (`E::Object` or `E::ObjectJSON`).
-    /// Does nothing for a non-object expression.
+    /// Visit every property of an object expression (`E::Object` or `E::ObjectJSON`) in source order.
     pub fn for_each_property(&self, mut f: impl FnMut(&[u8], Loc, Expr)) {
         let _: Result<(), core::convert::Infallible> =
             self.try_for_each_property(|key, loc, value| {
@@ -229,8 +225,7 @@ impl Expr {
             });
     }
 
-    /// [`Expr::for_each_property`] with a fallible callback: iteration stops
-    /// at the first `Err`, which is returned.
+    /// [`Expr::for_each_property`] with a fallible callback; stops at the first `Err`.
     pub fn try_for_each_property<Error>(
         &self,
         mut f: impl FnMut(&[u8], Loc, Expr) -> Result<(), Error>,
@@ -263,8 +258,7 @@ impl Expr {
         Ok(())
     }
 
-    /// Number of `"key": value` properties of an object expression in
-    /// either representation; 0 when it isn't an object.
+    /// Number of properties of an object expression in either representation; 0 otherwise.
     pub fn property_count(&self) -> usize {
         match &self.data {
             Data::EObject(obj) => obj.properties.len_u32() as usize,
@@ -544,7 +538,6 @@ impl Expr {
     /// Don't use this if you care about performance.
     ///
     /// Sets the value of a property, creating it if it doesn't exist.
-    /// `self` must be an `EObject`; the immutable JSON containers are read-only.
     pub fn set(&mut self, _bump: &Bump, name: &[u8], value: Expr) -> Result<(), AllocError> {
         debug_assert!(matches!(self.data, Data::EObject(_)));
         let Data::EObject(obj) = &mut self.data else {
@@ -582,7 +575,6 @@ impl Expr {
     /// Don't use this if you care about performance.
     ///
     /// Sets the value of a property to a string, creating it if it doesn't exist.
-    /// `expr` must be an `EObject`; the immutable JSON containers are read-only.
     pub fn set_string(
         expr: &mut Expr,
         _bump: &Bump,
@@ -746,7 +738,6 @@ pub enum ArrayIterator {
         array: StoreRef<E::Array>,
         index: u32,
     },
-    /// Immutable JSON array: each `next()` materializes one item as an `Expr`.
     Json {
         array: StoreRef<E::ArrayJSON>,
         index: u32,
@@ -1782,7 +1773,6 @@ pub enum Data {
 
     EJsxElement(StoreRef<E::JSXElement>),
     EObject(StoreRef<E::Object>),
-    // JSON-only compact containers (see `E::ObjectJSON`).
     EObjectJSON(StoreRef<E::ObjectJSON>),
     EArrayJSON(StoreRef<E::ArrayJSON>),
     ESpread(StoreRef<E::Spread>),
@@ -2342,7 +2332,6 @@ impl Data {
     }
 }
 
-/// One immutable-JSON row value, deep-cloned into `bump` as a classic node.
 fn json_value_deep_clone(
     value: &E::JsonValue,
     loc: Loc,
@@ -2474,8 +2463,6 @@ impl Data {
                 });
                 Ok(Data::EArray(StoreRef::from_bump(item)))
             }
-            // The immutable JSON containers deep-clone into the classic
-            // mutable tree so the result outlives the parse's row tape.
             Data::EObjectJSON(el) => {
                 let el = el.get();
                 let rows = el.properties();

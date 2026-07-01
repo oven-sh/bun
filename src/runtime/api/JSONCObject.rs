@@ -18,8 +18,6 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         false,
         true,
         |_arena, log, source| {
-            // `parsed` owns the document's row tape; the root borrows it (and
-            // `source`), so it must stay alive across `to_js`.
             let parsed = match json::ParsedJson::parse_jsonc(source, log) {
                 Ok(v) => v,
                 Err(e) => {

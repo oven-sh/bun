@@ -3979,8 +3979,6 @@ pub mod __gated_printer {
                         self.print(b")");
                     }
                 }
-                // JSON-only compact containers: children are inline
-                // `JsonValue`s, not `Expr`s, so they are printed here.
                 ExprData::EObjectJSON(e) => {
                     let e = e.get();
                     let n = self.writer.written();

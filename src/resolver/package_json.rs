@@ -92,9 +92,6 @@ pub struct PackageJSON {
     /// (`bun_ast::Source::contents` is `&'static [u8]`, so this separate owner
     /// field is what keeps that borrow — and the map values above — alive.)
     pub source_contents: Box<[u8]>,
-    /// Owns the parsed document's escape-decoded string bytes. Lifetime-erased
-    /// `&'static [u8]` values in `scripts`/`config`/`dependencies` borrow
-    /// either `source_contents` or this tape, so both owners live on the struct.
     pub(crate) json_tape: Option<Box<js_ast::E::JsonTape>>,
     pub main_fields: MainFieldMap,
     pub module_type: ModuleType,
@@ -509,8 +506,6 @@ impl PackageJSON {
         let contents_static: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&entry_contents) };
         let json_source = bun_ast::Source::init_path_string(package_json_path, contents_static);
 
-        // `parsed_json` owns the row tape everything below borrows; it must
-        // outlive this function (it moves into the returned `PackageJSON`).
         let parsed_json = match r.caches.json.parse_package_json(r_log, &json_source) {
             Ok(Some(v)) => v,
             Ok(None) => return None,
@@ -931,8 +926,6 @@ impl PackageJSON {
                             if let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data {
                                 for prop in group_obj.get().properties() {
                                     let name_str = prop.key.slice();
-                                    // `SemverString` indexes into `source_buf`; an escape-decoded
-                                    // key lives in the tape instead, so skip it.
                                     if !bun_alloc::is_slice_in_buffer(
                                         name_str,
                                         package_json.dependencies.source_buf,
@@ -1020,8 +1013,7 @@ impl PackageJSON {
                         if key.is_empty() || value.is_empty() {
                             continue;
                         }
-                        // SAFETY: `value` borrows `contents_static` or the document's
-                        // tape; both are owned by the returned PackageJSON.
+                        // SAFETY: `value` borrows `contents_static` or the tape; the returned PackageJSON owns both.
                         let value: &'static [u8] = unsafe { bun_ptr::detach_lifetime(value) };
                         map.put_assume_capacity(key, value);
                     }
@@ -1054,7 +1046,6 @@ impl PackageJSON {
         // backing buffer into the returned struct (replaces the prior
         // `mem::forget`, forbidden per docs/PORTING.md §Forbidden patterns).
         package_json.source_contents = entry_contents;
-        // The tape owns every escape-decoded string `scripts`/`config` may borrow.
         package_json.json_tape = parsed_json.tape;
         Some(package_json)
     }
@@ -1065,8 +1056,6 @@ pub struct ExportsMap {
 }
 
 impl ExportsMap {
-    /// `json` is the "exports"/"imports" property's value from
-    /// `Expr::as_property`; its `.loc` is the property's KEY location.
     pub fn parse(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
@@ -1090,8 +1079,6 @@ pub struct Visitor<'a> {
 }
 
 impl<'a> Visitor<'a> {
-    /// Visit the root of an exports/imports map. `expr.loc` must be the
-    /// owning property's KEY location (see [`ExportsMap::parse`]).
     pub fn visit(&mut self, expr: js_ast::Expr) -> Entry {
         let vloc = json_parser::ValueLocation::Property(expr.loc);
         match &expr.data {
@@ -1099,7 +1086,6 @@ impl<'a> Visitor<'a> {
                 data: EntryData::Null,
             },
             js_ast::ExprData::EString(str) => {
-                // JSON-parsed strings are always UTF-8; no transcode needed.
                 debug_assert!(!str.is_utf16);
                 Entry {
                     data: EntryData::String(Box::from(str.data.slice())),
@@ -1111,7 +1097,6 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    /// One value row: an object property's value or an array item.
     fn visit_value(
         &mut self,
         value: &js_ast::E::JsonValue,
@@ -1131,7 +1116,6 @@ impl<'a> Visitor<'a> {
                 self.invalid(js_lexer::range_of_identifier(self.source, loc))
             }
             js_ast::E::JsonValue::Number(_) => {
-                // TODO: range of number
                 let loc = vloc.resolve(&self.source.contents);
                 self.invalid(bun_ast::Range { loc, len: 1 })
             }

@@ -1,22 +1,15 @@
-// SIMD structural indexer for JSON (simdjson-style "stage 1"), runtime-
-// dispatched via Google Highway. Per 64-byte block: nibble-LUT byte
-// classification, odd-backslash-run escape resolution, prefix-XOR in-string
-// mask, then CompressStore of the emit bitmask into indices.
-//
-// It handles plain JSON only: the first `/` or `'` seen outside a string
-// sets BUN_JSON_IDX_ODDITY and the kernel returns immediately; the Rust side
-// (`bun_parsers::json_index`) re-indexes with its scalar indexer.
+// SIMD structural indexer for JSON (simdjson-style "stage 1"), runtime-dispatched via Google
+// Highway. Plain JSON only: a `/` or `'` outside a string sets BUN_JSON_IDX_ODDITY and returns.
 
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "highway_json.cpp"
-#include <hwy/foreach_target.h> // Must come before highway.h
+#include <hwy/foreach_target.h>
 #include <hwy/highway.h>
 
 #include <string.h>
 
 #include "json_byte_class.h"
 
-// Output flag bits (mirrored in Rust: `bun_parsers::json_index::FLAG_*`).
 #define BUN_JSON_IDX_HAS_BACKSLASH_IN_STRING (1u << 0)
 #define BUN_JSON_IDX_HAS_CTRL_IN_STRING (1u << 1)
 #define BUN_JSON_IDX_ODDITY (1u << 3)
@@ -27,8 +20,6 @@ namespace HWY_NAMESPACE {
 
 namespace hn = hwy::HWY_NAMESPACE;
 
-// Process 64 input bytes per step regardless of the native vector width.
-// CappedTag keeps lane count <= 64 on very wide targets (SVE/RVV).
 using D8 = hn::CappedTag<uint8_t, 64>;
 
 static HWY_INLINE uint64_t PrefixXor(uint64_t x)
@@ -42,10 +33,6 @@ static HWY_INLINE uint64_t PrefixXor(uint64_t x)
     return x;
 }
 
-// `base_offset` is added to every emitted index. `inout_state[0..3]` carries
-// the escape / in-string / scalar-run state across chunks (zeros for the
-// first chunk); `len` must be a multiple of 4096 for every chunk but the
-// last so 64-block groups (dirty-bitmap words) never straddle a call.
 size_t JsonIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, size_t base_offset,
     uint32_t* HWY_RESTRICT out, uint64_t* HWY_RESTRICT out_dirty,
     uint64_t* HWY_RESTRICT inout_state, uint32_t* HWY_RESTRICT out_flags)
@@ -68,8 +55,8 @@ size_t JsonIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, size_t base_
     const auto iota32 = hn::Iota(d32, 0);
 
     uint64_t prev_escaped = inout_state[0];
-    uint64_t prev_in_string = inout_state[1]; // ~0 if still inside a string
-    uint64_t prev_scalar = inout_state[2]; // bit 0: prev byte was a scalar char
+    uint64_t prev_in_string = inout_state[1];
+    uint64_t prev_scalar = inout_state[2];
     uint64_t acc_bs_in_str = 0;
     uint64_t acc_ctrl_in_str = 0;
     uint64_t dirty_acc = 0;
@@ -103,7 +90,6 @@ size_t JsonIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, size_t base_
             m_ctrl |= hn::BitsFromMask(d, hn::Ne(hn::And(cls, v_ctrl_bits), v_zero)) << sh;
         }
 
-        // --- escaped characters (simdjson's find_escaped) ---
         uint64_t escaped;
         if (m_bs == 0) {
             escaped = prev_escaped;
@@ -121,9 +107,7 @@ size_t JsonIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, size_t base_
             escaped = (even_bits ^ invert_mask) & follows_escape;
         }
 
-        // --- strings ---
         const uint64_t rq = m_quote & ~escaped;
-        // in_str covers the opening quote through the byte before the closing quote.
         const uint64_t in_str = PrefixXor(rq) ^ prev_in_string;
         prev_in_string = (uint64_t)((int64_t)in_str >> 63);
 
@@ -137,20 +121,17 @@ size_t JsonIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, size_t base_
             dirty_acc = 0;
         }
 
-        // A '/' or '\'' outside a string: the quote parity can't be trusted.
         if (m_odd & ~in_str & valid) {
             *out_flags = flags | BUN_JSON_IDX_ODDITY;
             return 0;
         }
 
-        // --- emit set ---
         const uint64_t op_out = m_op & ~in_str;
         const uint64_t scalar = ~m_opws & ~in_str & ~rq;
         const uint64_t scalar_start = scalar & ~((scalar << 1) | prev_scalar);
         prev_scalar = scalar >> 63;
         const uint64_t emit = (op_out | rq | scalar_start) & valid;
 
-        // --- flatten: CompressStore of iota+base, L bits at a time ---
         const uint32_t base = (uint32_t)(base_offset + pos);
         for (size_t k = 0; k < 64; k += L) {
             uint64_t slice = (emit >> k) & (L >= 64 ? ~(uint64_t)0 : (((uint64_t)1 << L) - 1));
@@ -164,7 +145,6 @@ size_t JsonIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, size_t base_
         pos += 64;
     }
 
-    // Flush the final partial dirty word.
     const size_t nblocks = (len + 63) >> 6;
     if (nblocks != 0 && (nblocks & 63) != 0) {
         out_dirty[(nblocks - 1) >> 6] = dirty_acc;
@@ -202,7 +182,7 @@ extern "C" size_t highway_json_index(const uint8_t* input, size_t len, uint32_t*
 {
     uint64_t state[3] = { 0, 0, 0 };
     size_t n = HWY_DYNAMIC_DISPATCH(JsonIndexImpl)(
-        input, len, /*base_offset=*/0, out_indices, out_dirty, state, out_flags);
+        input, len, 0, out_indices, out_dirty, state, out_flags);
     out_indices[n] = (uint32_t)len;
     out_indices[n + 1] = (uint32_t)len;
     return n;

@@ -1585,7 +1585,6 @@ impl<T> PkgMap<T> {
 
 // const PkgMap = struct {};
 
-/// Property rows of an immutable-AST object `Expr`.
 fn object_rows(expr: &Expr) -> &[JSON::E::PropertyJSON] {
     match &expr.data {
         ExprData::EObjectJSON(o) => o.get().properties(),
@@ -1596,7 +1595,6 @@ fn object_rows(expr: &Expr) -> &[JSON::E::PropertyJSON] {
     }
 }
 
-/// Items of an immutable-AST array `Expr`.
 fn array_items(expr: &Expr) -> &[JSON::E::JsonValue] {
     match &expr.data {
         ExprData::EArrayJSON(a) => a.get().items(),
@@ -1604,8 +1602,6 @@ fn array_items(expr: &Expr) -> &[JSON::E::JsonValue] {
     }
 }
 
-/// Cold path: location of item `index` of the array that is the value of the
-/// property whose key starts at `key_loc`.
 fn item_loc(source: &bun_ast::Source, key_loc: bun_ast::Loc, index: usize) -> bun_ast::Loc {
     let array_loc = value_loc_of(source, key_loc);
     JSON::array_item_loc(&source.contents, array_loc, index).unwrap_or(array_loc)

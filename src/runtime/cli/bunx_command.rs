@@ -300,7 +300,6 @@ impl BunxCommand {
         bun_ast::initialize_store();
 
         let log = transpiler.log_mut();
-        // Everything we keep is cloned into `Box<[u8]>` before returning.
         let parsed = json::ParsedJson::parse_package_json(&source, log)?;
         let expr = parsed.root;
 

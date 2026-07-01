@@ -1652,8 +1652,6 @@ pub fn init(
                     // SAFETY: `ctx.log` is a borrow of the CLI's `Log`; valid for the
                     // duration of `init()` (set by `Command::create()` before any install
                     // entry point runs).
-                    // `parsed` owns the row tape `json` borrows; it lives to
-                    // the end of this loop body, past `process_names_array`.
                     let parsed =
                         crate::bun_json::ParsedJson::parse_package_json(&json_source, unsafe {
                             &mut *ctx.log
@@ -1675,7 +1673,6 @@ pub fn init(
                         let value_loc =
                             crate::bun_json::property_value_loc(&json_source.contents, prop.loc)
                                 .unwrap_or(prop.loc);
-                        // `"workspaces"` is either the names array or `{ "packages": [...] }`.
                         let names = match &prop.expr.data {
                             bun_ast::ExprData::EArrayJSON(arr) => Some(
                                 Package::WorkspaceMap::NamesArray::Immutable(arr.get(), value_loc),

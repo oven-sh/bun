@@ -75,20 +75,13 @@ impl WorkspaceMap {
 // Drop: all fields are owned (Box<[u8]> keys, Entry { Box<[u8]>, Option<Box<[u8]>> })
 // — Rust drops them automatically; no explicit `deinit` body needed.
 
-/// The `"workspaces"` names array in either JSON AST representation:
-/// the mutable `E::Array` of an edited tree (the workspace package.json
-/// cache) or the immutable rows the JSON parser produces.
 #[derive(Clone, Copy)]
 pub(crate) enum NamesArray<'a> {
     Mutable(&'a js_ast::E::Array),
-    /// The rows plus the array's own `[` location (the rows store no
-    /// per-item location; diagnostics recover one from the source).
     Immutable(&'a js_ast::E::ArrayJSON, bun_ast::Loc),
 }
 
 impl<'a> NamesArray<'a> {
-    /// `expr` must be an array in either representation (`Expr::is_array`);
-    /// `value_loc` is the array's own location.
     pub(crate) fn from_expr(expr: &'a js_ast::Expr, value_loc: bun_ast::Loc) -> Option<Self> {
         match &expr.data {
             js_ast::ExprData::EArray(arr) => Some(NamesArray::Mutable(arr.get())),
@@ -104,7 +97,6 @@ impl<'a> NamesArray<'a> {
         }
     }
 
-    /// Item `i`'s decoded string bytes, `None` when it isn't a string.
     fn item_str<'s>(&'s self, i: usize, scratch: &'s Arena) -> Option<&'s [u8]> {
         match self {
             NamesArray::Mutable(arr) => arr.slice()[i].as_string(scratch),
@@ -112,7 +104,6 @@ impl<'a> NamesArray<'a> {
         }
     }
 
-    /// Item `i`'s source location (cold: the immutable form re-scans the source).
     fn item_loc(&self, source: &bun_ast::Source, i: usize) -> bun_ast::Loc {
         match self {
             NamesArray::Mutable(arr) => arr.slice()[i].loc,

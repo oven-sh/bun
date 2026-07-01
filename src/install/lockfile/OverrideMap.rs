@@ -15,8 +15,6 @@ use super::{StringBuilder, package::Package};
 // produces the T2 value-shaped `bun_ast::Expr` (aliased as
 // `crate::bun_json::Expr`), NOT the full T4 `bun_ast::Expr`. JSON parse
 // is always UTF-8, so `as_utf8_string_literal()` needs no allocator.
-// The root `expr` may be the classic `EObject` tree or the immutable
-// `EObjectJSON` document; both are handled below.
 use crate::bun_json::Expr;
 
 declare_scope!(OverrideMap, visible);

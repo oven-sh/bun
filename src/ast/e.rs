@@ -863,13 +863,8 @@ impl BigInt {
 }
 
 // ── immutable JSON nodes ───────────────────────────────────────────────────
-//
 // Compact, read-only object/array nodes: the JSON parser's native output.
-// The containers are ordinary `Expr` nodes in the Store; their children are
-// not: a property is a 32-byte `PropertyJSON` row and a leaf value is an
-// inline 16-byte [`JsonValue`], both stored in the document's [`JsonTape`].
-// String leaves are always UTF-8 (WTF-8 for the lone surrogates JSON
-// escapes can produce), never UTF-16.
+// Children are `PropertyJSON` rows / inline `JsonValue`s in the document's `JsonTape`.
 
 /// A JSON value inside an `ObjectJSON` / `ArrayJSON`.
 #[derive(Clone, Copy)]
@@ -877,8 +872,6 @@ pub enum JsonValue {
     Null,
     Boolean(bool),
     Number(Number),
-    /// Decoded UTF-8 bytes: borrows the source when the literal has no
-    /// escapes, otherwise points into the document's [`JsonTape`].
     String(Str),
     Object(StoreRef<ObjectJSON>),
     Array(StoreRef<ArrayJSON>),
@@ -948,7 +941,6 @@ impl JsonValue {
 /// One `"key": value` row of an [`ObjectJSON`].
 #[derive(Clone, Copy)]
 pub struct PropertyJSON {
-    /// Decoded UTF-8 key (zero-copy unless the literal had escapes).
     pub key: Str,
     pub key_loc: crate::Loc,
     pub value: JsonValue,
@@ -957,8 +949,6 @@ pub struct PropertyJSON {
 const _: () = assert!(core::mem::size_of::<PropertyJSON>() == 32);
 
 /// Where a [`JsonTape`]'s buffers (and, in arena mode, the tape itself) live.
-/// `Arena` is lifetime-erased like `StoreRef`: the arena must outlive the
-/// document, and nothing may depend on the tape's `Drop` running.
 #[derive(Clone, Copy)]
 pub enum TapeAlloc {
     Global,
@@ -1002,19 +992,13 @@ unsafe impl core::alloc::Allocator for TapeAlloc {
     }
 }
 
-/// Everything one parsed JSON document allocates that does not borrow the
-/// source. Container nodes hold a `NonNull<JsonTape>` back to it (the same
-/// lifetime-erasure contract as `StoreRef`): the tape and the source must
-/// outlive every `Expr` reached through the document's root.
+/// Everything one parsed JSON document allocates that does not borrow the source.
 pub struct JsonTape {
     props: Vec<PropertyJSON, TapeAlloc>,
     items: Vec<JsonValue, TapeAlloc>,
-    /// Value/item start locations parallel to `props` / `items`; filled only
-    /// when `JSONOptions::record_value_locs` is set, empty otherwise.
     prop_value_locs: Vec<crate::Loc, TapeAlloc>,
     item_locs: Vec<crate::Loc, TapeAlloc>,
     str_chunks: Vec<Vec<u8, TapeAlloc>, TapeAlloc>,
-    /// Bytes of the last chunk already handed out.
     str_used: usize,
 }
 
@@ -1030,7 +1014,6 @@ impl JsonTape {
         Self::empty_in(TapeAlloc::Global)
     }
 
-    /// An empty tape whose buffers allocate from `alloc`.
     pub fn empty_in(alloc: TapeAlloc) -> JsonTape {
         JsonTape {
             props: Vec::new_in(alloc),
@@ -1047,8 +1030,6 @@ impl JsonTape {
         *self.props.allocator()
     }
 
-    /// Append one closing object's direct children as a contiguous block and
-    /// return its `(first, count)` span.
     #[inline]
     pub fn append_props(&mut self, rows: &[PropertyJSON], value_locs: &[crate::Loc]) -> (u32, u32) {
         let first = self.props.len() as u32;
@@ -1065,8 +1046,7 @@ impl JsonTape {
         (first, rows.len() as u32)
     }
 
-    /// Copy decoded string bytes into the tape. The returned `Str` is valid
-    /// for the tape's lifetime: chunks never move once handed out.
+    /// Copy decoded string bytes into the tape; chunks never move once handed out.
     pub fn alloc_str(&mut self, bytes: &[u8]) -> Str {
         let fits = self
             .str_chunks
@@ -1109,8 +1089,7 @@ impl JsonTape {
     }
 }
 
-/// `Data::EObjectJSON`: a `(first, count)` span of the document's
-/// property-row tape.
+/// `Data::EObjectJSON`: a `(first, count)` span of the document's property-row tape.
 pub struct ObjectJSON {
     tape: core::ptr::NonNull<JsonTape>,
     first: u32,
@@ -1125,8 +1104,7 @@ unsafe impl Send for ObjectJSON {}
 unsafe impl Sync for ObjectJSON {}
 
 impl ObjectJSON {
-    /// `tape` must be the document's [`JsonTape`] and `[first, first + count)`
-    /// this object's rows in its `props` tape.
+    /// `tape` must be the document's [`JsonTape`] and outlive this node.
     #[inline]
     pub fn new(
         tape: &JsonTape,
@@ -1144,7 +1122,6 @@ impl ObjectJSON {
         }
     }
 
-    /// This object's `"key": value` rows in source order.
     #[inline]
     pub fn properties(&self) -> &[PropertyJSON] {
         if self.count == 0 {
@@ -1154,8 +1131,7 @@ impl ObjectJSON {
         unsafe { self.tape.as_ref() }.props_span(self.first, self.count)
     }
 
-    /// Start location of each property's value, parallel to
-    /// [`Self::properties`]; `None` unless the parse recorded them.
+    /// Parallel to [`Self::properties`]; `None` unless the parse recorded value locations.
     #[inline]
     pub fn value_locs(&self) -> Option<&[crate::Loc]> {
         if self.count == 0 {
@@ -1165,7 +1141,6 @@ impl ObjectJSON {
         unsafe { self.tape.as_ref() }.prop_value_locs_span(self.first, self.count)
     }
 
-    /// First value whose key's decoded bytes equal `key`.
     #[inline]
     pub fn get(&self, key: &[u8]) -> Option<&JsonValue> {
         self.properties()
@@ -1190,8 +1165,7 @@ unsafe impl Send for ArrayJSON {}
 unsafe impl Sync for ArrayJSON {}
 
 impl ArrayJSON {
-    /// `tape` must be the document's [`JsonTape`] and `[first, first + count)`
-    /// this array's rows in its `items` tape.
+    /// `tape` must be the document's [`JsonTape`] and outlive this node.
     #[inline]
     pub fn new(
         tape: &JsonTape,
@@ -1218,8 +1192,7 @@ impl ArrayJSON {
         unsafe { self.tape.as_ref() }.items_span(self.first, self.count)
     }
 
-    /// Start location of each item, parallel to [`Self::items`]; `None`
-    /// unless the parse recorded them.
+    /// Parallel to [`Self::items`]; `None` unless the parse recorded item locations.
     #[inline]
     pub fn item_locs(&self) -> Option<&[crate::Loc]> {
         if self.count == 0 {

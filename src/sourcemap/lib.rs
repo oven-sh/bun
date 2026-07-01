@@ -943,8 +943,6 @@ pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> Result<ParseUrl, b
     // and on every exit path.
     let _store_scope = DataStoreScope::new();
     bun_core::scoped_log!(SourceMapLog, "parse (JSON, {} bytes)", source.len());
-    // Everything reached through `json` borrows `parsed` (the row tape) and
-    // `json_src`; every string the map keeps is copied into owned storage.
     let parsed = match bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log) {
         Ok(p) => p,
         Err(_) => return Err(bun_core::err!("InvalidJSON")),

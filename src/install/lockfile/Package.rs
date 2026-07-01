@@ -59,9 +59,6 @@ impl ExprStr for Expr {
     }
 }
 
-/// `"key": value` rows of a JSON object expression in either representation
-/// (`EObjectJSON` or classic `EObject`), yielded as
-/// `(key, value string, key location)`. A non-string value yields `None`.
 enum JsonObjectStringRows<'a> {
     Classic(
         core::slice::Iter<'a, bun_ast::G::Property>,
@@ -71,7 +68,6 @@ enum JsonObjectStringRows<'a> {
 }
 
 impl<'a> JsonObjectStringRows<'a> {
-    /// `None` when `expr` is not a JSON object of either representation.
     fn new(expr: &'a Expr, bump: &'a bun_alloc::Arena) -> Option<Self> {
         match &expr.data {
             ExprData::EObject(obj) => Some(Self::Classic(obj.properties.slice().iter(), bump)),
@@ -111,8 +107,6 @@ impl<'a> Iterator for JsonObjectStringRows<'a> {
     }
 }
 
-/// Cold path: the location of the value of the property whose key string
-/// starts at `key_loc`; falls back to the key's location.
 pub(crate) fn value_loc_of(source: &bun_ast::Source, key_loc: bun_ast::Loc) -> bun_ast::Loc {
     crate::bun_json::property_value_loc(&source.contents, key_loc).unwrap_or(key_loc)
 }
@@ -1688,8 +1682,6 @@ impl Package<u64> {
         features: Features,
     ) -> Result<(), bun_core::Error> {
         initialize_store();
-        // `parsed` owns the tape every `Expr` reached from `parsed.root`
-        // borrows, so it must stay alive until `parse_with_json` returns.
         let parsed = match crate::bun_json::ParsedJson::parse_package_json(source, log) {
             Ok(p) => p,
             Err(err) => {
@@ -2326,7 +2318,6 @@ impl Package<u64> {
                             return;
                         }
 
-                        // The callback's key borrow is call-scoped; copy into the arena.
                         let key: &[u8] = bump.alloc_slice_copy(key);
                         optional_peer_dependencies
                             .put_assume_capacity(semver::string::Builder::string_hash(key), key);
@@ -2624,8 +2615,6 @@ impl Package<u64> {
                             let current_len = lockfile.buffers.extern_strings.len();
                             let count = n * 2;
                             lockfile.buffers.extern_strings.reserve_exact(count);
-                            // Default-fill the tail so every slot stays valid
-                            // even if `break 'bin` fires partway through.
                             let extern_strings = bun_core::vec::grow_default(
                                 &mut lockfile.buffers.extern_strings,
                                 count,
@@ -2936,8 +2925,6 @@ impl Package<u64> {
                             key_loc,
                         )? {
                             let mut dep = dep_;
-                            // Drain names with a real `peerDependencies` entry so the
-                            // synthesis pass below only sees `peerDependenciesMeta`-only names.
                             if group.behavior.is_peer()
                                 && optional_peer_dependencies.swap_remove(&external_name.hash)
                             {

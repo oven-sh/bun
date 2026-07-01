@@ -1,5 +1,4 @@
-//! Throughput benchmark for the JSON parser on a corpus of real package.json
-//! files and npm registry responses (`bench/json-corpus/fetch.sh`).
+//! Throughput benchmark for the JSON parser on the `bench/json-corpus/fetch.sh` corpus.
 //! Run via `scripts/bench-json-rust.sh [criterion args]`.
 use bun_alloc::Arena as Bump;
 use bun_ast as js_ast;
@@ -37,7 +36,6 @@ fn bench_json(c: &mut Criterion) {
         let contents = std::fs::read(path).unwrap();
         let name = path.file_stem().unwrap().to_string_lossy().into_owned();
         group.throughput(Throughput::Bytes(contents.len() as u64));
-        // Stage 1 alone: drive the streaming structural index to the end.
         group.bench_function(BenchmarkId::new("stage1", &name), |b| {
             b.iter(|| {
                 let mut x = bun_parsers::json_index::StructuralIndex::new(&contents);
@@ -54,7 +52,6 @@ fn bench_json(c: &mut Criterion) {
                 std::hint::black_box((sum, i))
             })
         });
-        // Like parse_utf8 but with duplicate-key warnings off.
         group.bench_function(BenchmarkId::new("parse_nowarn", &name), |b| {
             let mut bump = Bump::new();
             b.iter(|| {
@@ -71,7 +68,6 @@ fn bench_json(c: &mut Criterion) {
                 std::hint::black_box(&e);
             })
         });
-        // The row AST alone (`E::ObjectJSON`), without the materialize step.
         group.bench_function(BenchmarkId::new("parse_rows", &name), |b| {
             b.iter(|| {
                 let _store_scope = js_ast::StoreResetGuard::new();
@@ -82,8 +78,6 @@ fn bench_json(c: &mut Criterion) {
                 std::hint::black_box(&e);
             })
         });
-        // Like parse_nowarn but with a retained arena heap instead of a
-        // fresh `mi_heap_new` per parse.
         group.bench_function(BenchmarkId::new("parse_nowarn_warm", &name), |b| {
             let mut bump = Bump::new();
             b.iter(|| {
@@ -100,7 +94,6 @@ fn bench_json(c: &mut Criterion) {
                 std::hint::black_box(&e);
             })
         });
-        // The classic-output entry point (rows parsed, then materialized).
         group.bench_function(BenchmarkId::new("parse_utf8", &name), |b| {
             let mut bump = Bump::new();
             b.iter(|| {
@@ -113,7 +106,6 @@ fn bench_json(c: &mut Criterion) {
             })
         });
     }
-    // The fixed per-parse cost every caller pays regardless of the parser.
     group.throughput(Throughput::Elements(1));
     group.bench_function("per_parse_overhead/empty_object", |b| {
         let two = b"{}".to_vec();

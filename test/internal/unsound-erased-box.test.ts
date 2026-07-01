@@ -55,6 +55,13 @@ function scan(pattern: RegExp): string[] {
   return offenders;
 }
 
+test("scans a non-empty set of tracked Rust sources", () => {
+  // Guards against the tracked/realpath filters above over-firing (e.g. a
+  // symlinked checkout root) and leaving nothing to scan, which would make the
+  // assertions below pass vacuously.
+  expect(sources.size).toBeGreaterThan(0);
+});
+
 test("ErasedBox (safe-forgeable ptr/dtor pair) stays deleted", () => {
   expect(scan(/\bErasedBox\b/)).toEqual([]);
 });

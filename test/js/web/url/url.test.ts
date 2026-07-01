@@ -19,6 +19,27 @@ describe("url", () => {
     );
   });
 
+  // https://url.spec.whatwg.org/#url-class: a provided base is always parsed, and an
+  // empty string is not a valid URL, so it must be rejected even if the input is absolute.
+  it("rejects an empty string base", () => {
+    expect(() => new URL("http://example.com/", "")).toThrow(
+      '"http://example.com/" cannot be parsed as a URL against ""',
+    );
+    expect(() => new URL("http://example.com/", "")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_URL" }),
+    );
+    // The constructor must agree with the static validators.
+    expect(URL.canParse("http://example.com/", "")).toBe(false);
+    expect(URL.parse("http://example.com/", "")).toBeNull();
+  });
+
+  it("treats only an undefined base as no base", () => {
+    expect(new URL("http://example.com/", undefined).href).toBe("http://example.com/");
+    expect(new URL("http://example.com/").href).toBe("http://example.com/");
+    expect(URL.canParse("http://example.com/", undefined)).toBe(true);
+    expect(URL.parse("http://example.com/", undefined)?.href).toBe("http://example.com/");
+  });
+
   it("should have correct origin and protocol", () => {
     var url = new URL("https://example.com");
     expect(url.protocol).toBe("https:");

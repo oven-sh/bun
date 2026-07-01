@@ -12,7 +12,7 @@
 // the debug-build `BUN_DEBUG_alloc=1` instrumentation which logs every
 // bun.new()/bun.destroy() call, and count TSConfigJSON lifetimes directly.
 
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import path from "path";
 
@@ -120,5 +120,102 @@ test("tsconfig 'extends' merge still works after freeing intermediates", async (
 
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("leaf");
+  expect(exitCode).toBe(0);
+});
+
+// An "extends" cycle must be detected and stopped with a warning. It must
+// never abort the directory load with `error: Overflow loading directory`.
+describe("tsconfig 'extends' cycle", () => {
+  const cycles: Record<string, Record<string, string>> = {
+    "two-file": {
+      "tsconfig.json": JSON.stringify({ extends: "./tsconfig.base.json" }),
+      "tsconfig.base.json": JSON.stringify({ extends: "./tsconfig.json" }),
+    },
+    "self-extend": {
+      "tsconfig.json": JSON.stringify({ extends: "./tsconfig.json" }),
+    },
+  };
+
+  test.each(Object.keys(cycles))("does not abort `bun run <script>` (%s)", async kind => {
+    using dir = tempDir(`tsconfig-extends-cycle-${kind}`, {
+      ...cycles[kind],
+      "package.json": JSON.stringify({
+        name: "x",
+        version: "1.0.0",
+        scripts: { start: "echo RAN_THE_SCRIPT" },
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "start"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("Overflow");
+    expect(stdout).toContain("RAN_THE_SCRIPT");
+    expect(exitCode).toBe(0);
+  });
+
+  // A cycle must not discard the tsconfig wholesale: everything merged up to
+  // the point the cycle is detected (here, `paths`) still applies.
+  test("keeps the config merged up to the cycle", async () => {
+    using dir = tempDir("tsconfig-extends-cycle-paths", {
+      "tsconfig.json": JSON.stringify({
+        extends: "./tsconfig.base.json",
+        compilerOptions: { paths: { "@leaf/*": ["./lib/*"] } },
+      }),
+      "tsconfig.base.json": JSON.stringify({ extends: "./tsconfig.json" }),
+      "lib/thing.ts": `export const who = "resolved";`,
+      "index.ts": `import { who } from "@leaf/thing"; console.log(who);`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("Cannot find module");
+    expect(stderr).toContain(`Base config file "./tsconfig.json" forms cycle`);
+    expect(stdout.trim()).toBe("resolved");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// A non-cyclic chain deeper than the resolver's bounded parent array must
+// also stop with a warning instead of an internal `Overflow` error.
+test("tsconfig 'extends' chain deeper than the resolver's capacity does not abort `bun run`", async () => {
+  const chainDepth = 80;
+  const files: Record<string, string> = {
+    "tsconfig.json": JSON.stringify({ extends: "./tsconfig.1.json" }),
+    "package.json": JSON.stringify({
+      name: "x",
+      version: "1.0.0",
+      scripts: { start: "echo RAN_THE_SCRIPT" },
+    }),
+  };
+  for (let i = 1; i <= chainDepth; i++) {
+    files[`tsconfig.${i}.json`] = JSON.stringify(i < chainDepth ? { extends: `./tsconfig.${i + 1}.json` } : {});
+  }
+  using dir = tempDir("tsconfig-extends-too-deep", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "start"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("Overflow");
+  expect(stdout).toContain("RAN_THE_SCRIPT");
   expect(exitCode).toBe(0);
 });

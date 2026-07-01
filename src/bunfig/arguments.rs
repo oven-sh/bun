@@ -121,10 +121,13 @@ pub fn load_config_path(
     load_bunfig(cmd, auto_loaded, config_path, ctx)
 }
 
+/// Print the accumulated parse log (the concrete TOML error and its location)
+/// followed by the "failed to load bunfig" error, then exit 1. The shared
+/// user-facing presentation of a malformed `bunfig.toml`.
 #[cold]
-fn report_bunfig_load_failure(log: *mut bun_ast::Log, err: crate::Error) -> ! {
+pub fn report_bunfig_load_failure(ctx: Context<'_>, err: crate::Error) -> ! {
     // SAFETY: process-global Log; see `load_bunfig` note.
-    let log = unsafe { &mut *log };
+    let log = unsafe { &mut *ctx.log };
     if log.has_any() {
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
         Output::print_error("\n");
@@ -158,7 +161,7 @@ pub fn load_config(
 
             if let Some(path) = get_home_config_path(&mut config_buf) {
                 if let Err(err) = load_config_path(cmd, true, path, ctx) {
-                    report_bunfig_load_failure(ctx.log, err);
+                    report_bunfig_load_failure(ctx, err);
                 }
             }
         }
@@ -221,7 +224,7 @@ pub fn load_config(
     let config_path = ZStr::from_buf(&config_buf[..], config_path_len);
 
     if let Err(err) = load_config_path(cmd, auto_loaded, config_path, ctx) {
-        report_bunfig_load_failure(ctx.log, err);
+        report_bunfig_load_failure(ctx, err);
     }
     Ok(())
 }

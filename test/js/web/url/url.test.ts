@@ -186,9 +186,9 @@ describe("url", () => {
     }
   });
 
-  // https://url.spec.whatwg.org/#host-state: "/", "?", "#" (and "\" for special
-  // schemes) terminate the host. An empty host before the terminator must leave
-  // a special non-file URL unchanged.
+  // https://url.spec.whatwg.org/#host-state: the parser removes ASCII tab and
+  // newline, then ":", "/", "?", "#", and "\" end the host. A special non-file
+  // URL must be left unchanged when nothing in the value precedes that point.
   describe("host and hostname setters", () => {
     it("does not rewrite the authority from a path segment on an invalid value", () => {
       const url = new URL("ws://x:80/a/b/c");
@@ -208,6 +208,7 @@ describe("url", () => {
       });
     });
 
+    // Every expected href below matches Node 26.3.
     it.each([
       // values starting with a host terminator are a no-op on special schemes
       ["ws://x:80/a/b/c", "host", "#z", "ws://x/a/b/c"],
@@ -224,11 +225,32 @@ describe("url", () => {
       ["http://example.com:81/a/b/c", "host", "#z", "http://example.com:81/a/b/c"],
       ["http://example.com:81/a/b/c", "hostname", "#z", "http://example.com:81/a/b/c"],
       ["http://u:p@example.com/a/b", "host", "#z", "http://u:p@example.com/a/b"],
+      // the parser removes ASCII tab and newline first, so an all-tab-or-newline
+      // value (or one where only a terminator follows) has an empty host too
+      ["http://example.com/a/b/c", "host", "\t", "http://example.com/a/b/c"],
+      ["http://example.com/a/b/c", "hostname", "\t", "http://example.com/a/b/c"],
+      ["http://example.com/a/b/c", "host", "\n\r\t", "http://example.com/a/b/c"],
+      ["http://example.com/a/b/c", "host", "\t#z", "http://example.com/a/b/c"],
+      ["http://example.com/a/b/c", "hostname", "\t#z", "http://example.com/a/b/c"],
+      ["ws://x:80/a/b/c", "host", "\t", "ws://x/a/b/c"],
+      // ":" ends the host as well, so a value with nothing before it is a no-op
+      ["http://example.com/a/b/c", "host", ":99", "http://example.com/a/b/c"],
+      ["http://example.com/a/b/c", "hostname", ":99", "http://example.com/a/b/c"],
+      ["http://example.com/a/b/c", "host", "\t:80", "http://example.com/a/b/c"],
+      ["http://example.com/a/b/c", "host", "\t:99", "http://example.com/a/b/c"],
+      ["http://example.com/a/b/c", "host", "\t:x", "http://example.com/a/b/c"],
       // the part before the first terminator still applies when it is non-empty
       ["http://example.com/a/b/c", "host", "y#z", "http://y/a/b/c"],
       ["http://example.com/a/b/c", "hostname", "y/z", "http://y/a/b/c"],
       ["http://example.com/a/b/c", "host", "y:99#z", "http://y:99/a/b/c"],
       ["http://example.com:81/a/b/c", "host", "y#z", "http://y:81/a/b/c"],
+      ["http://example.com/a/b/c", "host", "\ty", "http://y/a/b/c"],
+      ["http://example.com/a/b/c", "hostname", "y\tz", "http://yz/a/b/c"],
+      ["http://example.com/a/b/c", "host", "y\t:99", "http://y:99/a/b/c"],
+      // file and non-special schemes allow an empty host, so the value still applies
+      ["file://x/a/b", "host", "#z", "file:///a/b"],
+      ["foo://x/a/b", "host", "#z", "foo:///a/b"],
+      ["foo://x/a/b", "hostname", "/z", "foo:///a/b"],
     ] as const)("new URL(%j).%s = %j -> %j", (base, property, value, expected) => {
       const url = new URL(base);
       url[property] = value;

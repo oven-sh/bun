@@ -339,14 +339,12 @@ impl MySQLQuery {
             };
 
             if entry.found_existing {
+                // A cached entry is never `Failed`: handle_prepared_statement evicts a
+                // failed prepare from the map; the `match` below rejects on `Failed`.
                 let stmt: *mut MySQLStatement = *entry.value_ptr;
-                // `found_existing` ⇒ the map already holds a live, ref-counted
-                // `*mut MySQLStatement` (separate heap allocation, never aliases
-                // `*self`); this thread is the only mutator. `ref_()` is `&self`,
-                // so a `ParentRef` deref covers the former raw `(*stmt).…` deref.
-                // A cached entry is never `Failed`: handle_prepared_statement
-                // evicts the statement from the map when its prepare errors, and
-                // the `match` below rejects on any `Failed` status regardless.
+                // The map holds a live, ref-counted `*mut MySQLStatement` (separate heap
+                // allocation, never aliases `*self`; this thread is the only mutator),
+                // so a `ParentRef` covers the former raw `(*stmt).…` deref in `ref_()`.
                 let stmt_ref = bun_ptr::ParentRef::from(
                     core::ptr::NonNull::new(stmt).expect("found_existing ⇒ non-null map entry"),
                 );

@@ -1238,14 +1238,12 @@ impl MySQLConnection {
                 // `on_error_packet` below.
                 self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                 statement.status = mysql_statement::Status::Failed;
-                // err.error_message is a Data{ .temporary = ... } slice into the socket read
-                // buffer which will be overwritten by the next packet. Queries that attached
-                // to this statement before the failure read stmt.error_response later, so we
-                // must own a copy of the message bytes.
-                // ErrorPacket lacks Clone in bun_sql (Data is not Clone), so
-                // reconstruct field-by-field with an owned dupe of the message
-                // — the scalar fields (header / error_code / sql_state) are
-                // all Copy.
+                // err.error_message is a temporary slice into the socket read buffer that
+                // the next packet overwrites, and queries that attached to this statement
+                // before the failure read stmt.error_response later, so own a copy of it.
+                // ErrorPacket lacks Clone in bun_sql (Data is not Clone), so rebuild it
+                // field-by-field with an owned dupe of the message; the scalar fields
+                // (header / error_code / sql_state) are all Copy.
                 statement.error_response = ErrorPacket {
                     header: err.header,
                     error_code: err.error_code,

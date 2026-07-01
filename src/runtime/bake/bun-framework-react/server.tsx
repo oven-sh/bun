@@ -104,7 +104,6 @@ export async function render(
 
       // Mark as aborted and call the abort function
       signal.aborted = err;
-      // @ts-expect-error
       signal.abort(err);
       rscPayload.destroy(err);
     },
@@ -174,7 +173,6 @@ export async function prerender(meta: Bake.RouteMetadata) {
     onError: err => {
       if (signal.aborted) return;
       signal.aborted = err;
-      // @ts-expect-error the real abort accepts a reason
       signal.abort(err);
       rscPayload.destroy(err);
     },
@@ -247,5 +245,5 @@ export const contentTypeToStaticFile = {
 export interface MiniAbortSignal {
   aborted: Error | undefined;
   /** Caller must set `aborted` to true before calling. */
-  abort: () => void;
+  abort: (reason?: Error) => void;
 }

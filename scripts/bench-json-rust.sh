@@ -1,14 +1,7 @@
 #!/usr/bin/env bash
 # Build + run the JSON parser criterion bench (src/parsers/benches/json_parse.rs).
-#
-# A cargo bench binary links the bun Rust crates but not the CMake-built C++
-# side, so this script compiles the few native pieces the parser actually
-# reaches — mimalloc, simdutf (+ Bun's simdutf__* wrapper), the highway
-# runtime, and the highway JSON structural-index kernel — from the repo's own
-# vendored sources into one small archive, then points RUSTFLAGS at it.
-# Everything else (StackCheck bound, OOM handler) is shimmed inside the bench
-# binary itself (src/parsers/native_test_shims.rs).
-#
+# Compiles the few native pieces the parser reaches (mimalloc, simdutf, the
+# highway JSON kernel) into one small archive and points RUSTFLAGS at it.
 # Requires `vendor/` and `build/debug/codegen` to exist (run `bun bd` once).
 #
 #   scripts/bench-json-rust.sh                 # whole corpus
@@ -23,8 +16,6 @@ fi
 
 SUP=target/bench-json-cdeps
 mkdir -p "$SUP/wtf"
-# Generated at configure time (`bun bd` / `bun run build`): the byte-class
-# tables shared by the Highway kernel and the Rust scalar indexer.
 export BUN_CODEGEN_DIR=${BUN_CODEGEN_DIR:-$PWD/build/debug/codegen}
 if [ ! -f "$BUN_CODEGEN_DIR/json_byte_class.h" ]; then
   echo "error: $BUN_CODEGEN_DIR/json_byte_class.h not found — run \`bun bd\` once first" >&2
@@ -32,15 +23,13 @@ if [ ! -f "$BUN_CODEGEN_DIR/json_byte_class.h" ]; then
 fi
 CC=${CC:-cc}
 CXX=${CXX:-c++}
-# Pinned simdutf amalgamation for Bun's simdutf__* C wrapper (the real build
-# gets simdutf from WebKit's WTF; the version difference is irrelevant here).
-# The download and its .o are keyed on the version so bumping it rebuilds.
+# Pinned simdutf amalgamation for Bun's simdutf__* C wrapper; the download
+# and its .o are keyed on the version so bumping it rebuilds.
 SIMDUTF_VERSION=v7.3.6
 SIMDUTF_STAMP="$SUP/.simdutf-$SIMDUTF_VERSION"
 if [ ! -f "$SIMDUTF_STAMP" ] || [ ! -f "$SUP/simdutf.cpp" ]; then
   curl -fsSL -o "$SUP/simdutf.cpp" "https://github.com/simdutf/simdutf/releases/download/$SIMDUTF_VERSION/simdutf.cpp"
   curl -fsSL -o "$SUP/simdutf.h" "https://github.com/simdutf/simdutf/releases/download/$SIMDUTF_VERSION/simdutf.h"
-  # New header: everything compiled against the old one must rebuild.
   rm -f "$SUP"/simdutf*.o "$SUP"/.simdutf-*
   touch "$SIMDUTF_STAMP"
 fi
@@ -62,22 +51,18 @@ for f in abort targets per_target print timer nanobenchmark aligned_allocator; d
   build "$SUP/hwy_$f.o" $CXX -O3 -fPIC -std=c++17 -Ivendor/highway -c "vendor/highway/hwy/$f.cc"
 done
 if [ -f src/jsc/bindings/highway_json.cpp ]; then
-  # Always rebuild the kernel: it is the TU under iteration, and it includes
-  # the generated json_byte_class.h, which build()'s source-mtime cache
-  # would not see change.
+  # Always rebuild the kernel: it includes the generated json_byte_class.h,
+  # which build()'s source-mtime cache would not see change.
   $CXX -O3 -fPIC -std=c++17 -Ivendor/highway -Isrc/jsc/bindings -I"$BUN_CODEGEN_DIR" -c src/jsc/bindings/highway_json.cpp -o "$SUP/highway_json.o"
 fi
 rm -f "$SUP/libbun_bench_cdeps.a"
 ar rcs "$SUP/libbun_bench_cdeps.a" "$SUP"/*.o
 ranlib "$SUP/libbun_bench_cdeps.a"
 
-# A criterion iteration is much slower than a real `bun install` manifest
-# parse, so mimalloc's default 10ms purge delay returns the arena pages to
-# the OS between iterations and the bench turns into a page-fault storm bun
-# never sees in production. Keep pages resident like a busy install process.
+# Keep mimalloc pages resident between (slow) criterion iterations, like a
+# busy install process; the default 10ms purge delay is a page-fault storm.
 export MIMALLOC_PURGE_DELAY=${MIMALLOC_PURGE_DELAY:-2000}
 export BUN_JSON_BENCH_FIXTURES=${BUN_JSON_BENCH_FIXTURES:-$PWD/bench/json-corpus}
-# Same link line everywhere; only the C++ runtime library name differs.
 CXXLIB=stdc++
 [ "$(uname -s)" = Darwin ] && CXXLIB=c++
 export RUSTFLAGS="${RUSTFLAGS:-} -Clink-arg=$PWD/$SUP/libbun_bench_cdeps.a -Clink-arg=-l$CXXLIB -Clink-arg=-lm -Clink-arg=-ldl -Clink-arg=-lpthread -Clink-arg=-lc"

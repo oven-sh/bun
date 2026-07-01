@@ -1,28 +1,11 @@
 //! JSON / JSONC parser.
 //!
-//! Two stages (see [`crate::json_index`] and [`crate::json_stage2`]):
-//!
-//!   1. a batched SIMD **structural indexer** (Highway, simdjson-style) finds
-//!      every token boundary in one pass over the document
-//!   2. a recursive-descent parser over the index array builds the compact
-//!      immutable row AST (`E::ObjectJSON` / `E::ArrayJSON` on an
-//!      [`E::JsonTape`]), taking strings zero-copy out of the source whenever
-//!      stage 1 proved they contain no escape and no control character
-//!
-//! That row AST is the only thing the parser builds. Entry points either
-//! return it as a [`ParsedJson`] (the `ParsedJson::parse_*` constructors) or
-//! deep-convert it into the classic `E::Object` / `E::Array` tree at their
-//! boundary ([`materialize`]) for the callers that mutate, print, or splice
-//! the result into a JavaScript AST.
-//!
-//! This file owns the public entry points (one per option preset / caller
-//! family), the option type, the `.env`/`--define` auto-quote path,
-//! materialization, and the `PackageJSONVersionChecker` helper.
-//!
-//! Supported beyond strict JSON: comments and trailing commas (gated by
-//! [`JSONOptions`]), single-quoted strings, hex/octal/binary/underscore
-//! numeric literals, `\x`/`\v` escapes, BOM and exotic unicode whitespace
-//! between tokens, duplicate-key warnings, and indentation guessing.
+//! Two stages: a SIMD structural indexer ([`crate::json_index`]) finds every
+//! token boundary, then a recursive-descent parser over the index
+//! ([`crate::json_stage2`]) builds the immutable row AST (`E::ObjectJSON` /
+//! `E::ArrayJSON` on an [`E::JsonTape`]). Entry points either return the rows
+//! as a [`ParsedJson`] or [`materialize`] them into the classic
+//! `E::Object` / `E::Array` tree at the boundary.
 
 use bun_alloc::Arena as Bump;
 use bun_ast::G;
@@ -41,7 +24,6 @@ use crate::json_stage2::Parser;
 
 #[derive(Clone, Copy)]
 pub struct JSONOptions {
-    /// tsconfig.json supports comments & trailing commas.
     pub allow_comments: bool,
     pub allow_trailing_commas: bool,
     /// Loading JSON-in-JSON may start like `\"\"` — technically invalid; we
@@ -51,11 +33,8 @@ pub struct JSONOptions {
     /// Mark as originally for a macro to enable inlining.
     pub was_originally_macro: bool,
     pub guess_indentation: bool,
-    /// Record each property value's / array item's start location into the
-    /// document's [`E::JsonTape`]. Only the classic-output driver asks for
-    /// this: [`materialize`] then carries every exact location into the
-    /// classic tree without re-scanning the source. The immutable AST
-    /// itself never stores per-value locations.
+    /// Record each value's start location into the [`E::JsonTape`]; the
+    /// immutable AST itself never stores per-value locations.
     pub record_value_locs: bool,
 }
 
@@ -113,40 +92,34 @@ pub const PACKAGE_JSON_OPTS: JSONOptions = JSONOptions {
 // Shared driver
 // ──────────────────────────────────────────────────────────────────────────
 
-// Never mutated — `RacyCell` only because
-// `StoreRef::from_raw` wants a `*mut T` and the payload types are `!Sync`.
+// Never mutated — `RacyCell` only because `StoreRef::from_raw` wants a `*mut T`.
 static EMPTY_OBJECT: bun_core::RacyCell<E::Object> = bun_core::RacyCell::new(E::Object::EMPTY);
 
 #[inline]
 fn empty_object_expr() -> Expr {
-    // EMPTY_OBJECT is a never-mutated static; `StoreRef::from_raw` checks
-    // non-null and the static trivially outlives any Store reset.
     Expr {
         loc: bun_ast::Loc { start: 0 },
         data: js_ast::expr::Data::EObject(js_ast::StoreRef::from_raw(EMPTY_OBJECT.get())),
     }
 }
 
-/// A parsed immutable-AST JSON document (`E::ObjectJSON` / `E::ArrayJSON`
-/// containers): the root expression plus the [`E::JsonTape`] that owns every
-/// row and decoded string of the document. Everything reachable from `root`
-/// borrows the tape and the source it was parsed from, so keep all three
+/// A parsed immutable-AST JSON document: the root expression plus the
+/// [`E::JsonTape`] that owns every row and decoded string. Everything
+/// reachable from `root` borrows the tape and the source; keep all three
 /// alive together.
 pub struct ParsedJson {
     pub root: Expr,
     pub tape: Option<Box<E::JsonTape>>,
 }
 
-/// Everything a full parse produces beyond the root expression.
 struct ParseOutput {
     root: Expr,
-    /// `Some` only for a [`E::TapeAlloc::Global`] parse: see
-    /// [`ParsedJson::tape`]. An arena-mode tape belongs to the arena.
+    /// `Some` only for a [`E::TapeAlloc::Global`] parse; an arena-mode tape
+    /// belongs to the arena.
     tape: Option<Box<E::JsonTape>>,
     indentation: Indentation,
 }
 
-/// Build the structural index, run stage 2, release the index.
 fn parse_impl(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -156,9 +129,7 @@ fn parse_impl(
     parse_impl_in(source, log, opts, check_len, E::TapeAlloc::Global)
 }
 
-/// [`parse_impl`] with the allocator the document's [`E::JsonTape`] lives
-/// in: the global heap (returned in [`ParseOutput::tape`], dropped by its
-/// owner) or a caller's arena (nothing to return, nothing ever runs `Drop`).
+/// [`parse_impl`] with the allocator the document's [`E::JsonTape`] lives in.
 fn parse_impl_in(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -168,26 +139,20 @@ fn parse_impl_in(
 ) -> Result<ParseOutput, bun_core::Error> {
     let contents: &[u8] = &source.contents;
 
-    // Duplicate keys in a dependency's own files (any JSON/JSONC whose path
-    // is under node_modules: package.json, tsconfig, imported .json) are not
-    // actionable: skip the warnings, and with them the per-key tracking.
     let mut opts = opts;
     if opts.json_warn_duplicate_keys && source.path.is_node_module() {
         opts.json_warn_duplicate_keys = false;
     }
 
     let mut sidx = StructuralIndex::new(contents);
-    // A construction-time index error (the document is too large to
-    // address) has no index window for stage 2 to walk; report it now.
     if let Some(e) = sidx.index_error {
         return Err(report_index_error(e, source, log));
     }
     let log_mark = (log.errors, log.warnings, log.msgs.len());
     let result = run_stage2(source, log, &mut sidx, opts, check_len, tape_alloc);
 
-    // Index-layer errors take precedence: the index stream was truncated at
-    // the offending byte, so whatever stage 2 logged about the truncated
-    // document is noise. Only the index error is reported.
+    // An index error truncated the index stream, so whatever stage 2 logged
+    // about the truncated document is noise: only the index error is reported.
     let drop_stage2_msgs = |log: &mut bun_ast::Log| {
         log.errors = log_mark.0;
         log.warnings = log_mark.1;
@@ -197,10 +162,8 @@ fn parse_impl_in(
         drop_stage2_msgs(log);
         return Err(report_index_error(e, source, log));
     }
-    // Comments are detected by the indexer (the index contains nothing for
-    // their bytes) so a single stage 2 serves both modes. Comments are
-    // skipped, not truncated, so an error stage 2 reported *before* the
-    // first comment is the document's real first problem — keep it.
+    // Comments are skipped, not truncated, so an error stage 2 reported
+    // *before* the first comment is the document's real first problem.
     if !opts.allow_comments
         && let Some(range) = sidx.first_comment
         && log.msgs[log_mark.2..]
@@ -222,11 +185,8 @@ fn parse_impl_in(
         );
         return Err(bun_core::err!("SyntaxError"));
     }
-    // One stage-2 path logs an error without failing the parse (a trailing
-    // comma in strict mode). A document that produced *errors* is not a
-    // parse: returning the partial tree as `Ok` would let
-    // callers that only check the `Result` (`Bun.JSONC.parse`, the resolver)
-    // silently use truncated data. The messages stay in `log`.
+    // Stage 2 can log an error without failing the parse; never return a
+    // partial tree as `Ok`.
     if result.is_ok() && log.errors > log_mark.0 {
         return Err(bun_core::err!("SyntaxError"));
     }
@@ -301,8 +261,8 @@ fn report_index_error(
     bun_core::err!("SyntaxError")
 }
 
-/// Indentation guesser: the first line (after a run of newlines) that
-/// starts with a space or a tab determines the guess.
+/// The first line (after a run of newlines) starting with a space or a tab
+/// determines the guess.
 fn guess_indentation(s: &[u8]) -> Indentation {
     let mut i = 0;
     while i < s.len() {
@@ -363,12 +323,8 @@ pub fn parse_utf8_impl<const CHECK_LEN: bool>(
     Ok(parse_classic(source, log, bump, JSON_OPTS, CHECK_LEN)?.root)
 }
 
-/// Shared driver for the classic-output (`E::Object` / `E::Array`) entry
-/// points: parse into the immutable AST — the only form stage 2 builds — and
-/// [`materialize`] the classic tree the caller expects at the boundary, with
-/// every node's exact source location. The document's row tape dies here;
-/// everything was copied out of it (into the AST store, and `bump` for
-/// decoded strings).
+/// Parse into the immutable AST and [`materialize`] the classic tree. The
+/// document's row tape dies here; everything was copied out of it.
 fn parse_classic(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -376,8 +332,6 @@ fn parse_classic(
     opts: JSONOptions,
     check_len: bool,
 ) -> Result<ParseOutput, bun_core::Error> {
-    // Record every value's start location in the tape so the classic tree
-    // gets exact locations without re-scanning the source.
     let opts = JSONOptions {
         record_value_locs: true,
         ..opts
@@ -386,8 +340,6 @@ fn parse_classic(
     out.root = match materialize_impl(&out.root, source, bump, opts.was_originally_macro) {
         Ok(root) => root,
         Err(e) => {
-            // The parse's own guard bounds depth for its frames, not this
-            // walk's; give the log a diagnostic before propagating.
             log.add_error_fmt_opts(
                 format_args!("JSON document is too deeply nested"),
                 bun_ast::AddErrorOptions {
@@ -404,8 +356,6 @@ fn parse_classic(
     Ok(out)
 }
 
-/// The document-as-rows entry points: parse a dialect, get the document
-/// back as a [`ParsedJson`] (the root rows plus the tape that owns them).
 impl ParsedJson {
     /// Strict JSON.
     pub fn parse_json(
@@ -415,8 +365,7 @@ impl ParsedJson {
         parse_to_rows(source, log, JSON_OPTS)
     }
 
-    /// JSONC (comments and trailing commas): tsconfig, `.jsonc` files,
-    /// `Bun.JSONC.parse`.
+    /// JSONC (comments and trailing commas).
     pub fn parse_jsonc(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
@@ -432,11 +381,8 @@ impl ParsedJson {
         parse_to_rows(source, log, PACKAGE_JSON_OPTS)
     }
 
-    /// A document fetched from an npm registry (package manifests,
-    /// packuments): strict JSON with **no duplicate-key warnings** — these
-    /// documents are machine-generated, the warnings are never surfaced to
-    /// anyone, and computing them costs a measurable fraction of every
-    /// manifest parse.
+    /// A document fetched from an npm registry: strict JSON with no
+    /// duplicate-key warnings.
     pub fn parse_npm_manifest(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
@@ -450,10 +396,8 @@ impl ParsedJson {
 }
 
 /// [`ParsedJson::parse_json`], with the whole document — its [`E::JsonTape`]
-/// included — allocated in `arena`. For callers whose AST lifetime *is* an
-/// arena and that never run `Drop` (the bundler / module loader): nothing is
-/// returned to free, the arena's bulk free is the free, and everything
-/// reachable from the root is valid until the arena resets.
+/// included — allocated in `arena`: nothing is returned to free, and
+/// everything reachable from the root is valid until the arena resets.
 pub fn parse_json_into_arena(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -472,7 +416,7 @@ pub fn parse_jsonc_into_arena(
     parse_to_rows_in(source, log, TSCONFIG_OPTS, arena)
 }
 
-/// Shared driver for the [`ParsedJson::parse_*`] entry points. No arena: the document's
+/// Shared driver for the [`ParsedJson::parse_*`] entry points: the document's
 /// [`E::JsonTape`] owns everything the parse allocates and is returned to
 /// the caller.
 fn parse_to_rows(
@@ -481,9 +425,7 @@ fn parse_to_rows(
     opts: JSONOptions,
 ) -> Result<ParsedJson, bun_core::Error> {
     if source.contents.is_empty() {
-        // Empty input parses as `{}`, like the classic entry points: a
-        // rowless object backed by an empty tape, so consumers checking for
-        // an `EObjectJSON` root see one.
+        // Empty input parses as `{}`, like the classic entry points.
         let tape = Box::new(E::JsonTape::empty());
         let root = Expr::init(
             E::ObjectJSON::new(&tape, 0, 0, true, bun_ast::Loc::EMPTY),
@@ -510,7 +452,6 @@ fn parse_to_rows_in(
 ) -> Result<Expr, bun_core::Error> {
     let tape_alloc = E::TapeAlloc::Arena(core::ptr::NonNull::from(arena));
     if source.contents.is_empty() {
-        // See `parse_to_rows`: an empty document is an empty object.
         let tape = arena.alloc(E::JsonTape::empty_in(tape_alloc));
         return Ok(Expr::init(
             E::ObjectJSON::new(tape, 0, 0, true, bun_ast::Loc::EMPTY),
@@ -520,10 +461,8 @@ fn parse_to_rows_in(
     Ok(parse_impl_in(source, log, opts, false, tape_alloc)?.root)
 }
 
-/// Parse package.json (comments & trailing commas allowed, strings UTF-8).
-/// Classic `E::Object` AST: these callers (install, `bun pm pkg`, lockfile,
-/// init) mutate and re-print the tree, which the read-only immutable containers
-/// cannot represent. Parsed immutable and [`materialize`]d.
+/// Parse package.json (comments & trailing commas allowed) into the classic
+/// `E::Object` AST.
 pub fn parse_package_json_utf8(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -573,13 +512,8 @@ pub fn parse_for_macro(
     Ok(parse_classic(source, log, bump, MACRO_JSON_OPTS, false)?.root)
 }
 
-/// `tsconfig.json` / `.jsonc` (the dialect: comments, trailing commas).
-///
-/// Classic `E::Object` AST — bunfig and the bundler's `.jsonc` module loader
-/// pattern-match `Expr` nodes (and bunfig reports diagnostics with per-value
-/// `Loc`s), so the immutable parse is [`materialize`]d at this boundary with
-/// every location intact. (The tsconfig walker itself reads the rows via
-/// [`ParsedJson::parse_jsonc`].)
+/// `tsconfig.json` / `.jsonc` (comments, trailing commas) into the classic
+/// `E::Object` AST.
 #[inline]
 pub fn parse_ts_config(
     source: &bun_ast::Source,
@@ -606,9 +540,7 @@ pub fn parse_env_json(
     }
 
     // JSON-in-JSON (`--define X='\\"str\\"'`): a leading escaped quote means
-    // the value is a JSON string whose quotes the outer document escaped
-    // (`ignore_leading_escape_sequences`). Unescape the two quotes and parse
-    // the result as JSON.
+    // the outer document escaped the string's quotes; unescape and parse.
     if contents.len() >= 2 && contents[0] == b'\\' && matches!(contents[1], b'"' | b'\'') {
         let quote = contents[1];
         let mut unescaped: Vec<u8> = Vec::with_capacity(contents.len());
@@ -618,8 +550,8 @@ pub fn parse_env_json(
             unescaped.truncate(n - 2);
             unescaped.push(quote);
         }
-        // The parsed string borrows the rewritten text zero-copy, so it
-        // must live as long as the returned AST: allocate it in `bump`.
+        // The parsed string borrows the rewritten text zero-copy: it must
+        // outlive the returned AST, so allocate it in `bump`.
         let rewritten: &[u8] = bump.alloc_slice_copy(&unescaped);
         let rw_source = bun_ast::Source::init_path_string("", rewritten);
         return Ok(parse_classic(&rw_source, log, bump, DOTENV_JSON_OPTS, false)?.root);
@@ -629,14 +561,11 @@ pub fn parse_env_json(
         b'{' | b'[' | b'0'..=b'9' | b'"' | b'\'' => {
             Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
         }
-        // `-1`, `.5`, `-.5`: a sign or dot starts JSON only when a number
-        // follows; `-foo` / `.foo` are implicitly quoted strings.
         b'-' | b'.' if leads_a_number(contents) => {
             Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
         }
         _ => {
-            // Keyword fast paths: the first token alone decides (no EOF
-            // required after it).
+            // Keyword fast paths: the first token alone decides.
             let word_len = contents
                 .iter()
                 .position(|c| !c.is_ascii_alphanumeric() && *c != b'_' && *c != b'$')
@@ -668,15 +597,13 @@ pub fn parse_env_json(
                 }
                 _ => {}
             }
-            // Auto-quote: the entire value is an implicitly-quoted string.
             parse_auto_quoted_string(source, log, bump)
         }
     }
 }
 
-/// Does a `.env`/`--define` value starting with `-` or `.` begin a numeric
-/// literal (`-1`, `.5`, `-.5`)? Anything else is an implicitly quoted
-/// string, like every other non-JSON first byte.
+/// Does a value starting with `-` or `.` begin a numeric literal
+/// (`-1`, `.5`, `-.5`)?
 fn leads_a_number(contents: &[u8]) -> bool {
     let after_sign = if contents[0] == b'-' {
         &contents[1..]
@@ -701,9 +628,6 @@ fn parse_auto_quoted_string(
     let contents: &[u8] = &source.contents;
     let loc = bun_ast::Loc { start: 0 };
 
-    // The whole input is the string: a define/env value is one complete
-    // value (it can legitimately contain newlines, e.g. an inlined
-    // environment variable). Scan only to decide whether decoding is needed.
     let mut needs_decode = false;
     let mut i = 0;
     while i < contents.len() {
@@ -723,7 +647,6 @@ fn parse_auto_quoted_string(
     if !needs_decode {
         return Ok(Expr::allocate(bump, E::String::init(body), loc));
     }
-    // Decode through the same escape decoder as real strings.
     let opts = DOTENV_JSON_OPTS;
     match crate::json_stage2::decode_auto_quoted(source, log, bump, body, opts) {
         Ok(s) => Ok(Expr::allocate(bump, s, loc)),
@@ -734,13 +657,8 @@ fn parse_auto_quoted_string(
 // ──────────────────────────────────────────────────────────────────────────
 // PackageJSONVersionChecker
 // ──────────────────────────────────────────────────────────────────────────
-//
-// Extracts the top-level `name` and `version` strings from a package.json.
-// This runs once per installed package (`verify_package_json_name_and_
-// version`), so it does the least work a parse can: the immutable AST, read
-// straight off the document's row tape — no classic nodes, no arena, and
-// nothing outliving the call but the two copied strings.
 
+/// Extracts the top-level `name` and `version` strings from a package.json.
 pub struct PackageJSONVersionChecker<'a> {
     source: &'a bun_ast::Source,
     log: &'a mut bun_ast::Log,
@@ -825,25 +743,12 @@ const PKG_JSON_CHECKER_OPTS: JSONOptions = JSONOptions {
 // Source-location recovery
 // ──────────────────────────────────────────────────────────────────────────
 //
-// The immutable JSON AST (`E::ObjectJSON` / `E::ArrayJSON`) stores no
-// per-value locations: a property row records only its key's location and
-// containers their own. Two consumers recover a *value*'s location by
-// re-scanning the source it was parsed from:
-//
-//   - error reporters that point at a value or array item (strictly
-//     cold-path work — a diagnostic is about to be printed — so the linear
-//     scans don't matter), via `property_value_loc` / `array_item_loc`;
-//   - [`materialize`], which re-derives the exact `Loc` of every classic
-//     node with one forward sweep per container.
+// The immutable AST stores no per-value locations; a value's `Loc` is
+// recovered by re-scanning the source it was parsed from.
 
 /// Location of the first byte of the value of the property whose key string
-/// token starts at `key_loc` (= [`E::PropertyJSON::key_loc`], the opening
-/// quote): the key token, then any whitespace/comments, the `:`, and any
-/// whitespace/comments after it are skipped.
-///
-/// `contents` must be the bytes the property was parsed from. Returns `None`
-/// when they aren't (the bytes at `key_loc` don't look like `"key" : value`)
-/// or `key_loc` is empty, so callers can fall back to the key's location.
+/// token starts at `key_loc`. `contents` must be the bytes the property was
+/// parsed from; `None` when they aren't, so callers can fall back to the key.
 pub fn property_value_loc(contents: &[u8], key_loc: bun_ast::Loc) -> Option<bun_ast::Loc> {
     let key_start = usize::try_from(key_loc.start).ok()?;
     let after_key = skip_string_token(contents, key_start)?;
@@ -855,23 +760,15 @@ pub fn property_value_loc(contents: &[u8], key_loc: bun_ast::Loc) -> Option<bun_
     Some(bun_ast::usize2loc(value))
 }
 
-/// [`property_value_loc`] with the key's location as the fallback: the
-/// diagnostic-site spelling every consumer of the immutable AST wants
-/// (`None` only means the bytes don't match, where the key is the best
-/// location available).
+/// [`property_value_loc`] with the key's location as the fallback.
 #[inline]
 pub fn property_value_loc_or_key(contents: &[u8], key_loc: bun_ast::Loc) -> bun_ast::Loc {
     property_value_loc(contents, key_loc).unwrap_or(key_loc)
 }
 
-/// Sibling of [`property_value_loc`] for array items: the location of the
-/// first byte of item `index` of the array whose `[` is at `array_loc`
-/// (= the `E::ArrayJSON` expression's `loc`). `None` if the array's source
-/// has fewer than `index + 1` items (or `contents`/`array_loc` don't match).
-///
-/// Linear in the array's source extent: a caller visiting every item should
-/// take the first item's loc (`index == 0`) and sweep forward with
-/// [`array_next_item_loc`] instead.
+/// Location of the first byte of item `index` of the array whose `[` is at
+/// `array_loc`. `None` if the array's source has fewer than `index + 1`
+/// items or `contents`/`array_loc` don't match. Linear in the array's extent.
 pub fn array_item_loc(
     contents: &[u8],
     array_loc: bun_ast::Loc,
@@ -884,11 +781,9 @@ pub fn array_item_loc(
     Some(bun_ast::usize2loc(p))
 }
 
-/// Exact source location of a property's value for a diagnostic, given the
-/// value `Expr` a property lookup or [`Expr::for_each_property`] returned:
-/// a node from the mutable tree carries its own location; a value
-/// materialized from an immutable row carries its *key's*, so the value's
-/// first byte is recovered from the source (cold path).
+/// Source location of a property's value: a node from the mutable tree
+/// carries its own location; a value materialized from an immutable row
+/// carries its *key's*, so the value's first byte is recovered from `contents`.
 pub fn value_loc_of_property(contents: &[u8], key_loc: bun_ast::Loc, value: &Expr) -> bun_ast::Loc {
     if value.loc != key_loc {
         return value.loc;
@@ -897,9 +792,7 @@ pub fn value_loc_of_property(contents: &[u8], key_loc: bun_ast::Loc, value: &Exp
 }
 
 /// Where an immutable-AST JSON value sits in its document, so its exact
-/// source location can be recovered on a (cold) diagnostic path — the rows
-/// store no per-value `Loc`. Parents chain by reference; nothing is
-/// re-scanned unless a diagnostic actually fires.
+/// source location can be recovered on a diagnostic path.
 #[derive(Clone, Copy)]
 pub enum ValueLocation<'p> {
     /// The value of the property whose key token starts at this `Loc`.
@@ -922,16 +815,14 @@ impl ValueLocation<'_> {
     }
 }
 
-/// Sibling of [`array_item_loc`] for visiting every item: the location of
-/// the item after the one starting at `item_loc`, in one forward step.
-/// `None` past the last item (or when the bytes don't match).
+/// Location of the item after the one starting at `item_loc`, in one forward
+/// step. `None` past the last item (or when the bytes don't match).
 pub fn array_next_item_loc(contents: &[u8], item_loc: bun_ast::Loc) -> Option<bun_ast::Loc> {
     let p = array_next_item(contents, usize::try_from(item_loc.start).ok()?)?;
     Some(bun_ast::usize2loc(p))
 }
 
-/// Byte offset of the first byte of the first item of the array whose `[` is
-/// at `start`. `None` for an empty array or non-matching bytes.
+/// First byte of the first item of the array whose `[` is at `start`.
 fn array_first_item(contents: &[u8], start: usize) -> Option<usize> {
     if *contents.get(start)? != b'[' {
         return None;
@@ -940,9 +831,8 @@ fn array_first_item(contents: &[u8], start: usize) -> Option<usize> {
     (!matches!(contents[p], b']' | b',')).then_some(p)
 }
 
-/// Byte offset of the first byte of the item after the one starting at
-/// `item`: the item's value, any whitespace/comments, the `,`, and any
-/// whitespace/comments after it are skipped. `None` past the last item.
+/// First byte of the item after the one starting at `item`; `None` past the
+/// last item.
 fn array_next_item(contents: &[u8], item: usize) -> Option<usize> {
     let p = skip_json_value(contents, item)?;
     let p = skip_ws_and_comments(contents, p)?;
@@ -953,8 +843,7 @@ fn array_next_item(contents: &[u8], item: usize) -> Option<usize> {
     (!matches!(contents[p], b']' | b',')).then_some(p)
 }
 
-/// Byte offset just past the string token whose opening `"` / `'` is at
-/// `start`. `None` if `start` isn't a quote or the string is unterminated.
+/// Byte offset just past the string token whose opening quote is at `start`.
 fn skip_string_token(contents: &[u8], start: usize) -> Option<usize> {
     let quote = *contents.get(start)?;
     if quote != b'"' && quote != b'\'' {
@@ -971,10 +860,8 @@ fn skip_string_token(contents: &[u8], start: usize) -> Option<usize> {
     None
 }
 
-/// First byte offset at/after `from` that isn't whitespace (including the
-/// exotic unicode whitespace the parser skips between tokens) or part of a
-/// `//` / `/* */` comment. `None` at end of input or in an unterminated
-/// block comment.
+/// First byte offset at/after `p` that isn't whitespace (including exotic
+/// unicode whitespace) or part of a comment; `None` at end of input.
 pub(crate) fn skip_ws_and_comments(contents: &[u8], mut p: usize) -> Option<usize> {
     use bun_core::strings;
     while p < contents.len() {
@@ -983,8 +870,7 @@ pub(crate) fn skip_ws_and_comments(contents: &[u8], mut p: usize) -> Option<usiz
             b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C => p += 1,
             b'/' => match contents.get(p + 1) {
                 Some(b'/') => {
-                    // Terminated by any line ending the indexer accepts:
-                    // `\n`, `\r`, U+2028 or U+2029.
+                    // Terminated by any line ending the indexer accepts.
                     p += 2;
                     while p < contents.len()
                         && !matches!(contents[p], b'\n' | b'\r')
@@ -1000,7 +886,6 @@ pub(crate) fn skip_ws_and_comments(contents: &[u8], mut p: usize) -> Option<usiz
                 _ => return Some(p),
             },
             _ if b >= 0x80 => {
-                // A multi-byte codepoint: only exotic whitespace is skipped.
                 let iterator = strings::CodepointIterator::init(&contents[p..]);
                 let mut cursor = strings::Cursor::default();
                 if !iterator.next(&mut cursor)
@@ -1038,8 +923,7 @@ fn skip_json_value(contents: &[u8], p: usize) -> Option<usize> {
                     b'}' | b']' => {
                         depth -= 1;
                         if depth == 0 {
-                            // Containers of mixed kinds nest, so only the
-                            // matching closer can bring `depth` back to 0.
+                            // Only the matching closer can bring `depth` back to 0.
                             debug_assert_eq!(contents[q], close);
                             return Some(q + 1);
                         }
@@ -1050,10 +934,8 @@ fn skip_json_value(contents: &[u8], p: usize) -> Option<usize> {
             }
             None
         }
-        // A primitive token (number, `true`/`false`/`null`): everything up
-        // to the next delimiter, whitespace, or comment. A `-` is its own
-        // token in this dialect — whitespace and comments may separate it
-        // from its digits — so the value extends through them.
+        // A `-` is its own token in this dialect — whitespace and comments
+        // may separate it from its digits — so the value extends through them.
         _ => {
             let mut q = p;
             if contents[q] == b'-' {
@@ -1076,38 +958,27 @@ fn skip_json_value(contents: &[u8], p: usize) -> Option<usize> {
 // Materialization: immutable AST → classic AST
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Deep-convert an immutable-AST document (`E::ObjectJSON` / `E::ArrayJSON`)
-/// into the classic `E::Object` / `E::Array` tree, indistinguishable from a
-/// classic parse of the same `source`:
-///
-/// - every property value, array item, and nested container carries its
-///   exact source [`Loc`](bun_ast::Loc) again, recovered by re-scanning
-///   `source` from the locations the immutable AST does keep (a property's key,
-///   a container's opening bracket). One forward pass per container — see
-///   the "Cold-path source-location recovery" section above. If the bytes
-///   don't match (a caller passed the wrong source) the key's / container's
-///   location is used instead, never a bogus one.
-/// - strings that don't borrow `source` (escape-decoded into the document's
-///   [`E::JsonTape`], which a caller materializing at a boundary is about to
-///   drop) are copied into `bump`, exactly where the classic parser put them.
-///
-/// Everything else (`is_single_line`, closing-bracket locations, property
-/// order and duplicates) is preserved. A non-container root is returned
-/// unchanged apart from the string re-homing.
-///
-/// This is the boundary for consumers that genuinely need the classic tree —
-/// to mutate it and print it back, or to splice it into a JavaScript AST.
-/// Everything that just *reads* JSON should stay on the immutable containers.
+/// Deep-convert an immutable-AST document into the classic `E::Object` /
+/// `E::Array` tree: exact per-node `Loc`s are recovered by re-scanning
+/// `source`, and strings that borrow the document's tape are copied into `bump`.
 pub fn materialize(
     root: &Expr,
     source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
     bump: &Bump,
 ) -> Result<Expr, bun_core::Error> {
-    materialize_impl(root, source, bump, false)
+    materialize_impl(root, source, bump, false).inspect_err(|_| {
+        log.add_error_fmt_opts(
+            format_args!("JSON document is too deeply nested"),
+            bun_ast::AddErrorOptions {
+                source: Some(source),
+                loc: root.loc,
+                ..Default::default()
+            },
+        );
+    })
 }
 
-/// [`materialize`] with the one parse option a classic container records
-/// that the immutable containers don't.
 fn materialize_impl(
     root: &Expr,
     source: &bun_ast::Source,
@@ -1123,8 +994,7 @@ fn materialize_impl(
     };
     let out = m.expr(root, root.loc);
     if m.overflowed.get() {
-        // The parse itself is depth-guarded, but this walk's frames are its
-        // own; never return a silently truncated tree.
+        // Never return a silently truncated tree.
         return Err(bun_core::err!("StackOverflow"));
     }
     Ok(out)
@@ -1133,11 +1003,8 @@ fn materialize_impl(
 struct Materializer<'a> {
     contents: &'a [u8],
     bump: &'a Bump,
-    /// `E::Object::was_originally_macro` of every materialized container
-    /// (the immutable containers don't store it; it is an option of the parse).
     was_originally_macro: bool,
-    /// Same guard as the parser's and the printer's recursive walks; sets
-    /// `overflowed` instead of recursing past the safe depth.
+    /// Sets `overflowed` instead of recursing past the safe depth.
     stack_check: bun_core::StackCheck,
     overflowed: core::cell::Cell<bool>,
 }
@@ -1148,9 +1015,7 @@ impl Materializer<'_> {
             js_ast::expr::Data::EObjectJSON(o) => Expr::init(self.object(o.get()), loc),
             js_ast::expr::Data::EArrayJSON(a) => Expr::init(self.array(a.get(), loc), loc),
             // The root of a scalar document can be a string that borrows the
-            // tape (an escaped literal); everything else is inline or in the
-            // Store and survives the tape. Immutable-AST strings are always
-            // UTF-8, so `init` rebuilds the node losslessly.
+            // tape; everything else survives the tape.
             js_ast::expr::Data::EString(s) => {
                 Expr::init(E::EString::init(self.rehome(s.get().data).slice()), loc)
             }
@@ -1166,9 +1031,6 @@ impl Materializer<'_> {
         let rows = o.properties();
         let mut properties: G::PropertyList =
             Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
-        // Exact value locations: recorded by the parse when the entry point
-        // asked for them (`record_value_locs`); recovered from the source
-        // otherwise (an immutable parse materialized after the fact).
         let value_locs = o.value_locs();
         for (i, row) in rows.iter().enumerate() {
             let key = Expr::init(
@@ -1207,9 +1069,6 @@ impl Materializer<'_> {
         let rows = a.items();
         let mut items: js_ast::ExprNodeList =
             Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
-        // Exact item locations: recorded by the parse when asked for
-        // (`record_value_locs`); otherwise one forward sweep over the
-        // array's source, falling back to the array's own location.
         let item_locs = a.item_locs();
         let mut cursor = match item_locs {
             Some(_) => None,
@@ -1236,7 +1095,6 @@ impl Materializer<'_> {
         }
     }
 
-    /// One row value at its recovered location; nested containers recurse.
     fn json_value(&self, value: &E::JsonValue, loc: bun_ast::Loc) -> Expr {
         match value {
             E::JsonValue::Object(o) => Expr::init(self.object(o.get()), loc),
@@ -1247,9 +1105,7 @@ impl Materializer<'_> {
     }
 
     /// `bytes`, but never borrowing the document's tape: a slice of the
-    /// source is returned as-is (the common, zero-copy case) and anything
-    /// else — escape-decoded bytes the tape owns — is copied into the arena
-    /// the classic tree's strings belong to.
+    /// source is returned as-is; anything else is copied into `bump`.
     fn rehome(&self, bytes: E::Str) -> E::Str {
         let source = self.contents.as_ptr_range();
         let p = bytes.slice().as_ptr();
@@ -1325,16 +1181,13 @@ mod tests {
         TsConfig,
         Env,
         PackageJson,
-        /// `Bun.JSONC.parse`'s entry: tsconfig dialect, row output.
+        /// tsconfig dialect, row output.
         Jsonc,
-        /// Strict JSON, row output (what a registry-manifest caller
-        /// would use).
+        /// Strict JSON, row output.
         Immutable,
     }
 
-    /// Render the parsed AST as compact JSON (object keys in source order,
-    /// last duplicate wins is NOT applied — duplicates appear as parsed).
-    /// Only for test assertions.
+    /// Render the parsed AST as compact JSON for test assertions.
     fn json_value_to_string(v: &E::JsonValue, out: &mut String) {
         match v {
             E::JsonValue::Null => out.push_str("null"),
@@ -1499,9 +1352,6 @@ mod tests {
     }
 
     // ── strict JSON ──────────────────────────────────────────────────────
-    //
-    // (The broad randomized differential against `JSON.parse` lives in
-    // test/js/bun/jsonc/jsonc.test.ts, where it exercises the real binary.)
 
     #[test]
     fn parses_basics() {
@@ -1585,9 +1435,8 @@ mod tests {
             p.first_msg
         );
         expect_error("{\"a\": /* x */ 1}", "JSON does not support comments");
-        // A comment in the value's own index run (comment bytes are never
-        // indexed) must be reported as a comment, not as junk after the
-        // value.
+        // A comment in the value's own index run is reported as a comment,
+        // not as junk after the value.
         for doc in ["[1 // x\n]", "[1// x\n]", "{\"a\": 1 /* c */}"] {
             expect_error(doc, "JSON does not support comments");
         }
@@ -1658,15 +1507,12 @@ mod tests {
 
     #[test]
     fn escaped_keyword_identifiers() {
-        // Keywords, including the `\uXXXX`-escaped spelling that
-        // `parse_escaped_identifier` accepts.
+        // The `\uXXXX`-escaped spelling of keywords is accepted.
         let p = run(br"[\u0074rue, \u0066alse, \u006eull]", Which::Utf8);
         assert_eq!(p.errors, 0, "{}", p.first_msg);
         let mut got = String::new();
         to_json_string(p.root.as_ref().unwrap(), &mut got);
         assert_eq!(got, "[true,false,null]");
-        // Escaped keywords after exotic whitespace (which shares their
-        // index run).
         let p = run(
             "[\u{a0}\\u0074rue, \u{feff}\\u006eull]".as_bytes(),
             Which::Utf8,
@@ -1679,9 +1525,8 @@ mod tests {
 
     #[test]
     fn minus_separated_from_its_digits() {
-        // `-` is its own token in this dialect (like the old lexer): ASCII
-        // whitespace, exotic whitespace, and comments may separate it from
-        // its digits, in the same index run or a later one.
+        // `-` is its own token: whitespace and comments may separate it
+        // from its digits.
         for (doc, want) in [
             ("[- 5]", -5.0),
             ("[-\u{a0}5]", -5.0),
@@ -1701,15 +1546,12 @@ mod tests {
             };
             assert_eq!(n.value(), want, "{doc}");
         }
-        // Still an error when no number follows the `-`, reported at the
-        // token that was found rather than at the `-`.
         for (doc, found) in [
             ("[- ]", "\"]\""),
             ("[-\u{a0}true]", "true"),
             ("[- , 1]", "\",\""),
             ("[-]", "\"]\""),
             ("[-\u{feff}]", "\"]\""),
-            // Nothing but whitespace after the `-`: reported at end of file.
             ("- \u{a0}", "end of file"),
         ] {
             let p = run(doc.as_bytes(), Which::TsConfig);
@@ -1732,10 +1574,8 @@ mod tests {
             "{}",
             p.first_msg
         );
-        // Same key in different (nested) objects: no warning.
         let p = run(br#"{"a":{"a":1},"b":{"a":2}}"#, Which::Utf8);
         assert_eq!(p.warnings, 0);
-        // Lots of keys (the map-based path) still detects.
         let many: String = (0..200).map(|i| format!("\"k{i}\":{i},")).collect();
         let p = run(format!("{{{many}\"k7\":1}}").as_bytes(), Which::Utf8);
         assert_eq!(p.warnings, 1);
@@ -1743,8 +1583,6 @@ mod tests {
 
     #[test]
     fn duplicate_key_warnings_skipped_under_node_modules() {
-        // A dependency's own package.json / tsconfig: the warning is not
-        // actionable, so it is suppressed (and the key tracking skipped).
         bun_ast::initialize_store_or_reset();
         let doc = br#"{"a":1,"b":2,"a":3}"#;
         let sep = std::path::MAIN_SEPARATOR;
@@ -1767,11 +1605,8 @@ mod tests {
         }
     }
 
-    /// One parse, two output shapes: the compact row containers
-    /// and the classic tree the classic-output entry
-    /// points materialize from them must be semantically identical — same
-    /// canonical JSON, same warnings, same errors — on every shape the
-    /// parser supports.
+    /// The row containers and the materialized classic tree must be
+    /// semantically identical (same canonical JSON, warnings, errors).
     #[test]
     fn immutable_rows_match_the_materialized_tree() {
         let mut generated = std::string::String::from("{");
@@ -1796,8 +1631,8 @@ mod tests {
             "\u{FEFF}{\"bom\": 1}",
             &generated,
         ];
-        // The AST store is reset by the next `run()`, so each tree must be
-        // serialized before the other parse happens.
+        // The AST store is reset by the next `run()`: serialize each tree
+        // before the other parse happens.
         fn canon(
             doc: &str,
             which: Which,
@@ -1833,22 +1668,15 @@ mod tests {
                 );
             }
         }
-        // The JSONC entry (comments + trailing commas + single quotes) too.
         let jsonc = "// c\n{\"a\": [1, 2,], /* x */ \"b\": 'sq', } ";
         assert_eq!(canon(jsonc, Which::TsConfig), canon(jsonc, Which::Jsonc));
     }
 
-    /// A standalone `json::materialize` over a row tree must produce a
-    /// classic tree *indistinguishable* from what the classic-output entry
-    /// points return for the same document (they materialize at their own
-    /// boundary): no immutable nodes left, identical canonical JSON, and the
-    /// exact same `loc` and `is_single_line` on **every** node (keys,
-    /// values, array items, nested containers), across comments, escapes,
-    /// trailing commas, and exotic whitespace.
+    /// A standalone `json::materialize` must produce a tree indistinguishable
+    /// from the classic entry points' output: same canonical JSON and the
+    /// same `loc` / `is_single_line` on every node.
     #[test]
     fn materialize_matches_the_classic_entry_points() {
-        // Canonical JSON + every node of a classic tree in pre-order as
-        // (loc, leaf text or container shape).
         type Nodes = Vec<(i32, std::string::String)>;
         fn canon_full(root: &Expr) -> (std::string::String, Nodes) {
             fn nodes(e: &Expr, out: &mut Nodes) {
@@ -1918,14 +1746,11 @@ mod tests {
             ),
             (&deep, Which::Utf8, Which::Immutable),
             (&generated, Which::Utf8, Which::Immutable),
-            // JSONC: comments, trailing commas, single quotes.
             (
                 "// c\n{\"a\": [1, 2,], /* x */ \"b\": 'sq', }",
                 Which::TsConfig,
                 Which::Jsonc,
             ),
-            // Comments and exotic unicode whitespace in every gap a value
-            // location is recovered across.
             (
                 "{\n  // line\n  \"a\" /* k */ : // v\n   42,\n  \"arr\": [ /* a */ 1,\n     [2], // b\n   {'z': 'q'},\n  ],\n}",
                 Which::TsConfig,
@@ -1945,21 +1770,19 @@ mod tests {
             };
             let materialized = {
                 let p = run(doc.as_bytes(), immutable_which);
-                // The same bytes `run` parsed, for the location re-scan.
                 let source = bun_ast::Source::init_path_string("fixture.json", doc.as_bytes());
                 let bump = Bump::new();
-                let root = materialize(p.root.as_ref().unwrap(), &source, &bump).unwrap();
+                let mut mlog = bun_ast::Log::init();
+                let root =
+                    materialize(p.root.as_ref().unwrap(), &source, &mut mlog, &bump).unwrap();
                 (root.loc, canon_full(&root))
             };
             assert_eq!(full, materialized, "materialized tree differs for {doc:?}");
         }
     }
 
-    /// Cold-path value-location recovery: for every property and array item
-    /// of a document, re-scanning the source from the locations the immutable
-    /// AST keeps must land exactly on the location the classic tree records
-    /// for the value, across whitespace, comments, escapes, and exotic
-    /// unicode whitespace.
+    /// Re-scanning the source from the locations the immutable AST keeps must
+    /// land exactly on the location the classic tree records for each value.
     #[test]
     fn value_location_recovery() {
         fn walk(src: &[u8], e: &Expr) {
@@ -1989,7 +1812,6 @@ mod tests {
                         );
                         walk(src, item);
                     }
-                    // One past the end is "no such item", not a bogus loc.
                     assert_eq!(array_item_loc(src, e.loc, a.items.len()), None);
                 }
                 _ => {}
@@ -1997,15 +1819,9 @@ mod tests {
         }
         let docs: [&str; 7] = [
             r#"{"a":1,"b" : "two", "es\"cé\\" :  [1, "x", {"y":null}, true, ["", -2]], "c":{"d":3}}"#,
-            // Multiline JSONC: line + block comments on both sides of `:`
-            // and between array items, trailing commas.
             "{\n  // line\n  \"a\" /* k */ : // v\n   42,\n  \"arr\": [ /* a */ 1,\n     [2], // b\n   {'z': 'q'},\n  ],\n}",
-            // Exotic unicode whitespace (NBSP, BOM) in the gaps.
             "{\"\u{e9}k\":\u{a0}\u{feff} 1,\"l\":\u{a0}[\u{a0}1\u{a0},\u{a0}2]}",
-            // Line comments ended by `\r` alone and by U+2028 (no `\n`),
-            // exactly the terminators the indexer accepts.
             "{\"a\": // c\r 1, \"b\": [0, // d\u{2028} 2]}",
-            // A `-` separated from its digits is one value.
             "[- 5, 1, -\u{a0}2, /* c */ - /* d */ 3]",
             "[]",
             "[ [ ] , { } , \"]\" ]",
@@ -2015,23 +1831,19 @@ mod tests {
             assert_eq!(p.errors, 0, "fixture must parse: {doc:?}");
             walk(doc.as_bytes(), p.root.as_ref().unwrap());
         }
-        // Hand-positioned: the recovered loc is the value's first byte.
         let doc = b"{\"k\" /* : 9 */ : /* x */ 42}";
         let key_loc = bun_ast::usize2loc(1);
         let value_loc = property_value_loc(doc, key_loc).unwrap();
         assert_eq!(value_loc.start as usize, 25);
         assert_eq!(&doc[value_loc.start as usize..][..2], b"42");
-        // Mismatched source (no `:` after the key token): None, never a
-        // bogus location.
+        // Mismatched source: `None`, never a bogus location.
         assert_eq!(property_value_loc(b"{\"k\", 1}", key_loc), None);
         assert_eq!(property_value_loc(b"{\"k\"", key_loc), None);
         assert_eq!(array_item_loc(b"{}", bun_ast::usize2loc(0), 0), None);
     }
 
-    /// The generic `Expr` accessors (`get`, `as_property`, `as_array`,
-    /// `as_string`, ...) must observe the same document through a
-    /// `Which::Immutable` root — where leaf values are wrapped into `Expr`s
-    /// out of the row tape on demand — as through the classic tree.
+    /// The generic `Expr` accessors must observe the same document through an
+    /// immutable root as through the classic tree.
     #[test]
     fn immutable_expr_accessor_materialization() {
         let doc: &[u8] = br#"{
@@ -2055,7 +1867,6 @@ mod tests {
                     write!(out, "{}", n.value()).unwrap();
                 }
                 Data::EString(_) => {
-                    // Both string accessors must agree on a materialized leaf.
                     assert_eq!(e.as_utf8_string_literal(), e.as_string(bump));
                     out.push('"');
                     out.push_str(&std::string::String::from_utf8_lossy(
@@ -2069,8 +1880,6 @@ mod tests {
             }
         }
 
-        // Walk the document through the generic accessors only and render
-        // everything they returned; both parse modes must agree byte-for-byte.
         fn probe(doc: &[u8], which: Which) -> std::string::String {
             use std::fmt::Write;
             let p = run(doc, which);
@@ -2083,7 +1892,6 @@ mod tests {
             assert!(root.get(b"missing").is_none());
             assert!(root.as_array().is_none());
 
-            // as_property: value kind + the key's Loc.
             for key in [
                 &b"name"[..],
                 b"version",
@@ -2107,7 +1915,6 @@ mod tests {
                 out.push('\n');
             }
 
-            // Typed property getters.
             writeln!(out, "bool={:?}", Expr::get_boolean(&root, b"private")).unwrap();
             writeln!(out, "num={:?}", root.get_number(b"count").map(|(n, _)| n)).unwrap();
             writeln!(
@@ -2138,15 +1945,12 @@ mod tests {
             )
             .unwrap();
 
-            // Nested object access through a materialized container.
             let deps = root.get(b"deps").unwrap();
             assert!(deps.is_object());
             out.push_str("deps.a=");
             describe(&deps.get(b"a").unwrap(), bump, &mut out);
             out.push('\n');
 
-            // Property iteration over the nested object: both shapes must
-            // visit the same (key, value) pairs in source order.
             let mut pairs: Vec<(std::string::String, std::string::String)> = Vec::new();
             deps.for_each_property(|key, _loc, value| {
                 if let Some(v) = value.as_utf8_string_literal() {
@@ -2158,7 +1962,6 @@ mod tests {
             });
             writeln!(out, "deps_map={pairs:?}").unwrap();
 
-            // Array iteration: every item is materialized in order.
             let mut iter = root.get_array(b"files").unwrap();
             out.push_str("files=[");
             while let Some(item) = iter.next() {
@@ -2166,13 +1969,10 @@ mod tests {
                 out.push(',');
             }
             out.push_str("]\n");
-            // `as_array` on the property's value behaves the same way.
             assert!(root.get(b"files").unwrap().as_array().is_some());
-            // Empty containers: same `None` contract as the classic AST.
             assert!(root.get(b"empty_arr").unwrap().as_array().is_none());
             assert!(root.get_array(b"empty_obj").is_none());
 
-            // Path lookups (object key, array index, nested object key).
             for path in [
                 &b"deps.a"[..],
                 b"files[0]",
@@ -2195,9 +1995,8 @@ mod tests {
         let full = probe(doc, Which::Utf8);
         let immutable = probe(doc, Which::Immutable);
         assert_eq!(full, immutable);
-        // Sanity-check the probe itself against fixed expectations so a bug
-        // shared by both modes can't cancel out.
-        // The reported `Query::loc` is the key's location in the source.
+        // Sanity-check the probe itself so a bug shared by both modes can't
+        // cancel out.
         let name_key_offset = doc.windows(6).position(|w| w == b"\"name\"").unwrap();
         assert!(
             full.starts_with(&format!("name@{name_key_offset}=\"pkg\"\n")),
@@ -2217,14 +2016,10 @@ mod tests {
 
     #[test]
     fn duplicate_key_detection_with_nested_large_objects() {
-        // A large object (spilled to the hash-map path) containing another
-        // large object as one of its later values. The inner object must not
-        // disturb the outer object's membership state: a duplicate of an
-        // early outer key appearing *after* the nested object must still be
-        // reported, and inner keys that match outer keys must not be.
+        // A nested large object must not disturb the outer object's
+        // duplicate-key membership state.
         let many: String = (0..60).map(|i| format!("\"k{i}\":{i},")).collect();
         let inner = format!("{{{}\"inner\":0}}", many.clone());
-        // Outer: 60 unique keys, then a big nested value, then "k3" again.
         let doc = format!("{{{many}\"nest\":{inner},\"k3\":true}}");
         let p = run(doc.as_bytes(), Which::Utf8);
         assert_eq!(p.errors, 0);
@@ -2235,7 +2030,6 @@ mod tests {
             p.first_msg
         );
 
-        // Sibling large objects with identical key sets: no warnings.
         let p = run(
             format!("{{\"a\":{inner},\"b\":{inner}}}").as_bytes(),
             Which::Utf8,
@@ -2243,8 +2037,6 @@ mod tests {
         assert_eq!(p.errors, 0);
         assert_eq!(p.warnings, 0);
 
-        // Duplicates in the inner and the outer large object are each
-        // reported, independently.
         let dup_inner = format!("{{{}\"y\":1,\"y\":2}}", many.clone());
         let p = run(
             format!("{{{many}\"nest\":{dup_inner},\"x\":1,\"x\":2}}").as_bytes(),
@@ -2269,7 +2061,6 @@ mod tests {
             panic!()
         };
         assert!(!o.is_single_line);
-        // Newline inside a nested value does not affect the outer object.
         let p = run(b"{\"a\": [1,\n2]}", Which::Utf8);
         let Data::EObject(o) = &p.root.as_ref().unwrap().data else {
             panic!()
@@ -2280,9 +2071,7 @@ mod tests {
         };
         assert!(!a.is_single_line);
         // A newline hidden inside (or before) a block comment still breaks
-        // the line, exactly like the bare newline above (JSONC). A comment
-        // body may itself contain `/*` (comments do not nest), and a `/*`
-        // inside an earlier *string* is not a comment opener.
+        // the line.
         for doc in [
             "{\"a\": 1 /* x\n*/, \"b\": 2}",
             "{\"a\": 1\n/* x */, \"b\": 2}",
@@ -2296,8 +2085,6 @@ mod tests {
             };
             assert!(!o.is_single_line, "{doc:?}");
         }
-        // A newline inside a comment whose body starts with `/`, and a
-        // newline next to exotic whitespace, still break the line.
         for doc in ["[1 /*/\n*/ ]", "{\"a\":1,\n\u{a0}\"b\":2}", "[\u{a0}\n1]"] {
             let p = run(doc.as_bytes(), Which::TsConfig);
             assert_eq!(p.errors, 0, "{doc:?}: {}", p.first_msg);
@@ -2309,8 +2096,7 @@ mod tests {
             };
             assert!(!single, "{doc:?}");
         }
-        // A `/*` inside a comment body or an earlier string must not be
-        // mistaken for the opener: these documents have no newline anywhere.
+        // A `/*` inside a comment body or an earlier string is not an opener.
         for doc in [
             "{\"a\":1/* X/* */,\"b\":2}",
             "{\"x\":\"/*\",\"a\":1/* c */,\"b\":2}",
@@ -2322,8 +2108,6 @@ mod tests {
             };
             assert!(o.is_single_line, "{doc:?}");
         }
-        // A comment in the same index run as exotic whitespace (comment
-        // bytes are never indexed) must be stepped over.
         for doc in [
             "\u{feff}// c\n{\"a\": 1}",
             "\u{feff}/* x */[1]",
@@ -2334,8 +2118,6 @@ mod tests {
             let p = run(doc.as_bytes(), Which::TsConfig);
             assert_eq!(p.errors, 0, "{doc:?}: {}", p.first_msg);
         }
-        // A comment in a scalar's index run (between the value and the next
-        // structural token) is not trailing junk.
         for doc in [
             "{\"a\": 1 /* x */, \"b\": true /* y */ , \"c\": null // z\n}",
             "[1 /* a */, 2.5 // b\n, -3 /* c */ ]",
@@ -2343,7 +2125,6 @@ mod tests {
             let p = run(doc.as_bytes(), Which::TsConfig);
             assert_eq!(p.errors, 0, "{doc:?}: {}", p.first_msg);
         }
-        // ... and so does a newline between a trailing comma and the closer.
         let p = run(b"[1,\n]", Which::TsConfig);
         let Data::EArray(a) = &p.root.as_ref().unwrap().data else {
             panic!()
@@ -2354,7 +2135,6 @@ mod tests {
             panic!()
         };
         assert!(!o.is_single_line);
-        // The closing token's location survives into the classic tree.
         let doc = b"{\"a\": [1, 2] }";
         let p = run(doc, Which::Utf8);
         let Data::EObject(o) = &p.root.as_ref().unwrap().data else {
@@ -2416,28 +2196,20 @@ mod tests {
             ("hello world", "hello world"),
             ("*{box-sizing:border-box}", "*{box-sizing:border-box}"),
             ("a\\nb", "a\nb"),
-            // The whole value is the string, embedded newlines included: a
-            // define/`--env` value is one complete value, not a `.env` line.
+            // The whole value is the string, embedded newlines included.
             ("first line\nsecond", "first line\nsecond"),
             ("(\nrest", "(\nrest"),
             ("*\nrest", "*\nrest"),
-            // A raw newline/tab plus something that forces the escape
-            // decoder (a `\\` escape, a non-ASCII byte): the raw control
-            // characters pass through the decode unchanged.
             ("a\\nb\nc", "a\nb\nc"),
             ("caf\u{e9}\tx\nrest", "caf\u{e9}\tx\nrest"),
-            // `-`/`.` followed by anything but a number is a string.
             ("-abc", "-abc"),
             (".env-like", ".env-like"),
-            // JSON-in-JSON: the outer document escaped the quotes.
             (r#"\"hello\""#, "hello"),
         ] {
             let p = run(src.as_bytes(), Which::Env);
             assert_eq!(p.errors, 0, "{src}: {}", p.first_msg);
             assert_eq!(root_string(&p), want, "{src}");
         }
-        // A sign or dot followed by a number is JSON, not an auto-quoted
-        // string.
         for (src, want) in [("-1", -1.0), (".5", 0.5), ("-.25", -0.25)] {
             let p = run(src.as_bytes(), Which::Env);
             let Some(Data::ENumber(n)) = p.root.as_ref().map(|r| &r.data) else {
@@ -2475,8 +2247,7 @@ mod tests {
         assert!(checker.has_found_name && checker.has_found_version);
         assert_eq!(checker.found_name(), b"my-pkg");
         assert_eq!(checker.found_version(), b"1.2.3");
-        // Non-string `name`/`version` values are skipped, not coerced; later
-        // string-valued duplicates win, exactly like the classic walk.
+        // Non-string `name`/`version` values are skipped, not coerced.
         let source = bun_ast::Source::init_path_string(
             "package.json",
             br#"{"version": {"x": 1}, "name": 1, "name": "n2", "version": "9.9.9"}"#.as_slice(),
@@ -2488,7 +2259,6 @@ mod tests {
             (checker.found_name(), checker.found_version()),
             (b"n2".as_slice(), b"9.9.9".as_slice())
         );
-        // Empty input parses to an empty object: nothing found, no error.
         let source = bun_ast::Source::init_path_string("package.json", b"".as_slice());
         let mut log = bun_ast::Log::init();
         let mut checker = PackageJSONVersionChecker::init(&source, &mut log);

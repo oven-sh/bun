@@ -779,8 +779,6 @@ impl CreateCommand {
                 let mut package_json_expr = match JSON::parse_utf8(&source, log, &bump) {
                     Ok(e) => e,
                     Err(_) => {
-                        // Surface the syntax error: the template's package.json
-                        // is unusable, so dependency detection is skipped.
                         if log.errors > 0 {
                             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                         }

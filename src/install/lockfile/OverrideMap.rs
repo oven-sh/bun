@@ -15,9 +15,8 @@ use super::{StringBuilder, package::Package};
 // produces the T2 value-shaped `bun_ast::Expr` (aliased as
 // `crate::bun_json::Expr`), NOT the full T4 `bun_ast::Expr`. JSON parse
 // is always UTF-8, so `as_utf8_string_literal()` needs no allocator.
-// The root `expr` may be either the classic `EObject` tree (yarn import,
-// cached workspace package.json) or the immutable `EObjectJSON` document
-// produced by `ParsedJson::parse_package_json`; both are handled below.
+// The root `expr` may be the classic `EObject` tree or the immutable
+// `EObjectJSON` document; both are handled below.
 use crate::bun_json::Expr;
 
 declare_scope!(OverrideMap, visible);
@@ -176,8 +175,6 @@ impl OverrideMap {
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
         if !expr.is_object() {
-            // An immutable-AST lookup locates the value at its key; point the
-            // diagnostic at the value itself.
             log.add_warning_fmt(
                 Some(source),
                 value_loc_of(source, expr.loc),
@@ -200,8 +197,6 @@ impl OverrideMap {
 
             let name_hash = SemverBuilder::string_hash(k);
 
-            // An immutable-row value carries its key's location; recover the
-            // value's own location from the source for diagnostics.
             let value_expr_loc =
                 crate::bun_json::value_loc_of_property(&source.contents, key_loc, &value_expr);
             let (value, value_loc): (Expr, _) = 'value: {
@@ -300,8 +295,6 @@ impl OverrideMap {
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
         if !expr.is_object() {
-            // An immutable-AST lookup locates the value at its key; point the
-            // diagnostic at the value itself.
             log.add_warning_fmt(
                 Some(source),
                 value_loc_of(source, expr.loc),
@@ -379,8 +372,6 @@ impl OverrideMap {
                 pm,
                 root_package,
                 source,
-                // An immutable-row value carries its key's location; recover
-                // the value's own location from the source for diagnostics.
                 crate::bun_json::value_loc_of_property(&source.contents, key_loc, &value),
                 log,
                 k,

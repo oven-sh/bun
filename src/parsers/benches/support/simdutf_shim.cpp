@@ -1,9 +1,6 @@
 // Bench-only implementations of the `simdutf__*` C symbols Bun's Rust side
-// calls (`src/simdutf_sys`). The real build gets these from
-// `src/simdutf_sys/bun-simdutf.cpp`, which needs WebKit's WTF headers; for
-// `cargo bench` we wrap the upstream simdutf single-header amalgamation
-// instead (fetched by scripts/bench-json-rust.sh). Only the entry points
-// reachable from the parsers are needed.
+// calls (`src/simdutf_sys`), wrapping the upstream simdutf amalgamation
+// fetched by scripts/bench-json-rust.sh.
 #include "simdutf.h"
 
 typedef struct SIMDUTFResult {

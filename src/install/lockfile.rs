@@ -559,8 +559,7 @@ impl Lockfile {
             let source = bun_ast::Source::init_path_string(b"bun.lock", buf.as_slice());
             initialize_store();
             // `parsed` owns the row tape every `Expr` reached from `parsed.root`
-            // borrows; it must stay alive until `parse_into_binary_lockfile`
-            // returns (everything it keeps is copied into the lockfile's buffers).
+            // borrows; it must outlive `parse_into_binary_lockfile`.
             let parsed = match JSON::ParsedJson::parse_package_json(&source, log) {
                 Ok(j) => j,
                 Err(e) => {

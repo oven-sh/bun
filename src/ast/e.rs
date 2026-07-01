@@ -865,21 +865,9 @@ impl BigInt {
 // ── immutable JSON nodes ───────────────────────────────────────────────────
 //
 // Compact, read-only object/array nodes: the JSON parser's native output.
-// Entry points that return them (`json::ParsedJson::parse_*`: npm registry
-// manifests, package.json readers, `Bun.JSONC.parse`, tsconfig) hand the
-// caller the rows plus the [`JsonTape`] that owns them; the classic-output
-// entry points deep-convert them into `E::Object` / `E::Array` at their
-// boundary (`json::materialize`). The *containers* are ordinary `Expr` nodes
-// in the Store, so everything keeps passing `Expr` around; their *children*
-// are not: a property is a 32-byte `PropertyJSON` row and a leaf value is
-// an inline 16-byte [`JsonValue`] (a tagged value "like JSValue":
-// number/bool/null inline, strings as a `Str` — borrowing the source when
-// they contain no escapes — and nested containers as `StoreRef`s). Compared
-// to `E::Object` this removes the three per-node costs that dominate JSON
-// parsing: a 112-byte `G::Property` per key, an `EString` Store node per key
-// and per string value, and the `Option`/kind/initializer baggage JSON never
-// uses.
-//
+// The containers are ordinary `Expr` nodes in the Store; their children are
+// not: a property is a 32-byte `PropertyJSON` row and a leaf value is an
+// inline 16-byte [`JsonValue`], both stored in the document's [`JsonTape`].
 // String leaves are always UTF-8 (WTF-8 for the lone surrogates JSON
 // escapes can produce), never UTF-16.
 
@@ -888,11 +876,9 @@ impl BigInt {
 pub enum JsonValue {
     Null,
     Boolean(bool),
-    /// Same packed-`f64` payload as `Data::ENumber`.
     Number(Number),
-    /// UTF-8 bytes of the decoded string: a zero-copy slice of the source
-    /// when the literal has no escapes (the common case), otherwise decoded
-    /// into the document's [`JsonTape`].
+    /// Decoded UTF-8 bytes: borrows the source when the literal has no
+    /// escapes, otherwise points into the document's [`JsonTape`].
     String(Str),
     Object(StoreRef<ObjectJSON>),
     Array(StoreRef<ArrayJSON>),
@@ -902,7 +888,6 @@ const _: () = assert!(core::mem::size_of::<JsonValue>() == 16);
 const _: () = assert!(core::mem::align_of::<JsonValue>() == 4);
 
 impl JsonValue {
-    /// Structural hash (used by [`crate::expr::Data::write_to_hasher`]).
     pub fn write_to_hasher<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
         match self {
             JsonValue::Null => hasher.update(&[0]),
@@ -968,38 +953,21 @@ pub struct PropertyJSON {
 
 const _: () = assert!(core::mem::size_of::<PropertyJSON>() == 32);
 
-/// Where a [`JsonTape`]'s buffers (and, in arena mode, the tape itself)
-/// live.
-///
-/// - `Global` (the default): the parser hands the tape to the caller as a
-///   `Box<JsonTape>` whose `Drop` frees the whole document. For callers
-///   with a clear owner.
-/// - `Arena`: every buffer *and* the `JsonTape` struct are allocated in the
-///   caller's arena, for callers whose AST lifetime *is* an arena and where
-///   nothing runs `Drop` (the bundler / module loader): the arena's bulk
-///   free is the free, and no `Box` that would need dropping ever exists.
-///   The pointer is lifetime-erased like `StoreRef`; the arena must outlive
-///   the document.
+/// Where a [`JsonTape`]'s buffers (and, in arena mode, the tape itself) live.
+/// `Arena` is lifetime-erased like `StoreRef`: the arena must outlive the
+/// document, and nothing may depend on the tape's `Drop` running.
 #[derive(Clone, Copy)]
 pub enum TapeAlloc {
     Global,
     Arena(core::ptr::NonNull<Bump>),
 }
 
-// SAFETY: `Global` is `std`'s; an arena tape is built and read on the
-// thread that owns the arena, like every other arena-backed AST allocation.
+// SAFETY: an arena tape is built and read on the thread that owns the arena.
 unsafe impl Send for TapeAlloc {}
 // SAFETY: see the `Send` impl.
 unsafe impl Sync for TapeAlloc {}
 
-// Dispatch is per buffer growth (a closing container appends its children
-// as one block), never per row.
-//
-// SAFETY: both arms forward to allocators that uphold the `Allocator`
-// contract (`std`'s `Global`; `&MimallocArena`'s impl). Blocks live until
-// deallocated here or, for the arena, until the arena is reset/destroyed —
-// which the lifetime-erasure contract of `TapeAlloc::Arena` (the arena
-// outlives the tape) makes strictly later than any use.
+// SAFETY: both arms forward to allocators that uphold the `Allocator` contract.
 unsafe impl core::alloc::Allocator for TapeAlloc {
     fn allocate(
         &self,
@@ -1022,9 +990,7 @@ unsafe impl core::alloc::Allocator for TapeAlloc {
                 core::alloc::Allocator::deallocate(&std::alloc::Global, ptr, layout)
             },
             TapeAlloc::Arena(a) => {
-                // SAFETY: see `allocate`; freeing an individual block back
-                // into a live arena (a buffer's doubling) is sound, and
-                // whatever is never freed here goes with the arena.
+                // SAFETY: the arena outlives the tape (the type's contract).
                 let arena: &Bump = unsafe { a.as_ref() };
                 // SAFETY: forwarding the caller's contract to the arena.
                 unsafe { core::alloc::Allocator::deallocate(&arena, ptr, layout) }
@@ -1034,31 +1000,14 @@ unsafe impl core::alloc::Allocator for TapeAlloc {
 }
 
 /// Everything one parsed JSON document allocates that does not borrow the
-/// source, owned in one place — dropping the document is dropping this (or,
-/// in [`TapeAlloc::Arena`] mode, resetting the arena that owns it):
-///
-/// - `props` / `items`: every object's property rows and every array's items. Containers hold `(first, count)` *index* spans of their
-///   direct children (contiguous because a container's rows are appended as
-///   one block when it closes), so growth may relocate these freely — they
-///   are plain `Vec`s, and the abandoned half of a doubling is freed by
-///   `Vec`'s realloc.
-/// - `str_chunks`: escape-decoded string bytes. `Str`s point *into* these,
-///   so they are append-only chunks whose addresses never move. Empty for
-///   almost every real document (clean strings borrow the source).
-///
-/// The parser builds one per document and is its only writer; once parsing
-/// returns the tape is immutable. Every container node holds a
-/// `NonNull<JsonTape>` back to it — the same lifetime-erasure contract as
-/// `StoreRef`: the tape (and the source, for borrowed strings) must outlive
-/// every `Expr` reached through the document's root.
+/// source. Container nodes hold a `NonNull<JsonTape>` back to it (the same
+/// lifetime-erasure contract as `StoreRef`): the tape and the source must
+/// outlive every `Expr` reached through the document's root.
 pub struct JsonTape {
     props: Vec<PropertyJSON, TapeAlloc>,
     items: Vec<JsonValue, TapeAlloc>,
-    /// Each property value's / array item's start location, parallel to
-    /// `props` / `items`. Filled only for a parse that will be
-    /// [`materialize`](crate::Expr)d (`JSONOptions::record_value_locs`), so
-    /// the classic tree gets every exact location without re-scanning the
-    /// source; empty otherwise.
+    /// Value/item start locations parallel to `props` / `items`; filled only
+    /// when `JSONOptions::record_value_locs` is set, empty otherwise.
     prop_value_locs: Vec<crate::Loc, TapeAlloc>,
     item_locs: Vec<crate::Loc, TapeAlloc>,
     str_chunks: Vec<Vec<u8, TapeAlloc>, TapeAlloc>,
@@ -1066,10 +1015,7 @@ pub struct JsonTape {
     str_used: usize,
 }
 
-// SAFETY: written only by the parsing thread while it holds exclusive access
-// (the parser is the tape's only writer and nothing reads it until parsing
-// returns); shared use afterwards is read-only. Same contract as the
-// container nodes that point at it.
+// SAFETY: only the parsing thread writes it; shared use afterwards is read-only.
 unsafe impl Send for JsonTape {}
 // SAFETY: see the `Send` impl.
 unsafe impl Sync for JsonTape {}
@@ -1081,9 +1027,7 @@ impl JsonTape {
         Self::empty_in(TapeAlloc::Global)
     }
 
-    /// An empty tape whose buffers will allocate from `alloc`. In
-    /// [`TapeAlloc::Arena`] mode the tape value itself belongs in the same
-    /// arena (nothing must depend on its `Drop` running).
+    /// An empty tape whose buffers allocate from `alloc`.
     pub fn empty_in(alloc: TapeAlloc) -> JsonTape {
         JsonTape {
             props: Vec::new_in(alloc),
@@ -1095,14 +1039,13 @@ impl JsonTape {
         }
     }
 
-    /// The allocator every buffer of this tape uses.
     #[inline]
     fn alloc(&self) -> TapeAlloc {
         *self.props.allocator()
     }
 
     /// Append one closing object's direct children as a contiguous block and
-    /// return its `(first, count)` span in the property tape.
+    /// return its `(first, count)` span.
     #[inline]
     pub fn append_props(&mut self, rows: &[PropertyJSON], value_locs: &[crate::Loc]) -> (u32, u32) {
         let first = self.props.len() as u32;
@@ -1111,7 +1054,6 @@ impl JsonTape {
         (first, rows.len() as u32)
     }
 
-    /// See [`Self::append_props`]; the array-item tape.
     #[inline]
     pub fn append_items(&mut self, rows: &[JsonValue], item_locs: &[crate::Loc]) -> (u32, u32) {
         let first = self.items.len() as u32;
@@ -1121,8 +1063,7 @@ impl JsonTape {
     }
 
     /// Copy decoded string bytes into the tape. The returned `Str` is valid
-    /// for the tape's lifetime: chunks are never grown or moved once handed
-    /// out, only new ones appended.
+    /// for the tape's lifetime: chunks never move once handed out.
     pub fn alloc_str(&mut self, bytes: &[u8]) -> Str {
         let fits = self
             .str_chunks
@@ -1142,36 +1083,31 @@ impl JsonTape {
         Str::new(out)
     }
 
-    /// `[first, first + count)` of the recorded property-value locations,
-    /// `None` unless this document recorded them (see `prop_value_locs`).
     #[inline]
     fn prop_value_locs_span(&self, first: u32, count: u32) -> Option<&[crate::Loc]> {
         self.prop_value_locs
             .get(first as usize..first as usize + count as usize)
     }
 
-    /// See [`Self::prop_value_locs_span`]; the array-item locations.
     #[inline]
     fn item_locs_span(&self, first: u32, count: u32) -> Option<&[crate::Loc]> {
         self.item_locs
             .get(first as usize..first as usize + count as usize)
     }
 
-    /// `[first, first + count)` of the property tape.
     #[inline]
     fn props_span(&self, first: u32, count: u32) -> &[PropertyJSON] {
         &self.props[first as usize..first as usize + count as usize]
     }
 
-    /// `[first, first + count)` of the item tape.
     #[inline]
     fn items_span(&self, first: u32, count: u32) -> &[JsonValue] {
         &self.items[first as usize..first as usize + count as usize]
     }
 }
 
-/// `Data::EObjectJSON` — see the immutable JSON nodes comment above. Holds
-/// a `(first, count)` span of the document's property-row tape.
+/// `Data::EObjectJSON`: a `(first, count)` span of the document's
+/// property-row tape.
 pub struct ObjectJSON {
     tape: core::ptr::NonNull<JsonTape>,
     first: u32,
@@ -1180,17 +1116,14 @@ pub struct ObjectJSON {
     pub is_single_line: bool,
 }
 
-// SAFETY: `tape` points at the document's [`JsonTape`] (same lifetime-erasure
-// contract as `StoreRef`/`StoreStr`: the owner must outlive the AST); the
-// tape is only written by the parsing thread before the AST is visible to
-// anyone else, and shared use afterwards is read-only.
+// SAFETY: the tape outlives the AST (`StoreRef`'s contract) and is read-only once parsing returns.
 unsafe impl Send for ObjectJSON {}
 // SAFETY: see the `Send` impl.
 unsafe impl Sync for ObjectJSON {}
 
 impl ObjectJSON {
-    /// `tape` must be the document's [`JsonTape`] and `[first, first +
-    /// count)` this object's rows in its `props` tape.
+    /// `tape` must be the document's [`JsonTape`] and `[first, first + count)`
+    /// this object's rows in its `props` tape.
     #[inline]
     pub fn new(
         tape: &JsonTape,
@@ -1214,14 +1147,12 @@ impl ObjectJSON {
         if self.count == 0 {
             return &[];
         }
-        // SAFETY: per the constructor's contract the tape outlives this node
-        // and is no longer being written to.
+        // SAFETY: per the constructor's contract the tape outlives this node.
         unsafe { self.tape.as_ref() }.props_span(self.first, self.count)
     }
 
-    /// The recorded start location of each property's value, parallel to
-    /// [`Self::properties`]; `None` unless the parse recorded them (only
-    /// materializing entry points ask for that).
+    /// Start location of each property's value, parallel to
+    /// [`Self::properties`]; `None` unless the parse recorded them.
     #[inline]
     pub fn value_locs(&self) -> Option<&[crate::Loc]> {
         if self.count == 0 {
@@ -1231,8 +1162,7 @@ impl ObjectJSON {
         unsafe { self.tape.as_ref() }.prop_value_locs_span(self.first, self.count)
     }
 
-    /// First value whose key's decoded bytes equal `key` (matching
-    /// `E::Object::get`'s first-match semantics used everywhere else).
+    /// First value whose key's decoded bytes equal `key`.
     #[inline]
     pub fn get(&self, key: &[u8]) -> Option<&JsonValue> {
         self.properties()
@@ -1242,8 +1172,7 @@ impl ObjectJSON {
     }
 }
 
-/// `Data::EArrayJSON` — see the immutable JSON nodes comment above. Holds
-/// a `(first, count)` span of the document's item tape.
+/// `Data::EArrayJSON`: a `(first, count)` span of the document's item tape.
 pub struct ArrayJSON {
     tape: core::ptr::NonNull<JsonTape>,
     first: u32,
@@ -1258,8 +1187,8 @@ unsafe impl Send for ArrayJSON {}
 unsafe impl Sync for ArrayJSON {}
 
 impl ArrayJSON {
-    /// See [`ObjectJSON::new`]; `[first, first + count)` indexes the
-    /// `items` tape.
+    /// `tape` must be the document's [`JsonTape`] and `[first, first + count)`
+    /// this array's rows in its `items` tape.
     #[inline]
     pub fn new(
         tape: &JsonTape,
@@ -1286,8 +1215,8 @@ impl ArrayJSON {
         unsafe { self.tape.as_ref() }.items_span(self.first, self.count)
     }
 
-    /// The recorded start location of each item, parallel to
-    /// [`Self::items`]; `None` unless the parse recorded them.
+    /// Start location of each item, parallel to [`Self::items`]; `None`
+    /// unless the parse recorded them.
     #[inline]
     pub fn item_locs(&self) -> Option<&[crate::Loc]> {
         if self.count == 0 {

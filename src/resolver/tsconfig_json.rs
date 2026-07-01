@@ -23,12 +23,11 @@ pub enum JsonMode {
 /// directly — `bun_parsers::json_parser` is lower-tier than the resolver, so no
 /// cycle exists.
 ///
-/// tsconfig.json and package.json parse into the compact immutable row AST
+/// tsconfig.json and package.json parse into the immutable row AST
 /// ([`json_parser::ParsedJson`]); the caller owns the returned document and
-/// its row tape. `parse_json` still produces the classic `E::Object` tree
-/// (its callers pattern-match and splice `Expr` nodes), which `json_parser`
-/// arena-allocates into a `&bun_alloc::Arena`, so this struct owns one. That
-/// arena is **never reset** — those ASTs are cached process-long.
+/// its row tape. `parse_json` still produces the classic `E::Object` tree in
+/// this struct's arena, which is **never reset** (those ASTs are cached
+/// process-long).
 ///
 /// The arena is lazy-initialized on first `parse()`. `Resolver::for_worker`
 /// creates one `CacheSet` (and thus one `JsonCache`) per bundler worker thread,
@@ -62,8 +61,7 @@ impl JsonCache {
         Ok(result)
     }
 
-    /// Row-AST twin of [`Self::parse`]: no arena — the returned
-    /// [`json_parser::ParsedJson`] owns the document's row tape, and
+    /// The returned [`json_parser::ParsedJson`] owns the document's row tape;
     /// everything reachable from its `root` borrows that tape and `source`.
     #[inline]
     fn parse_rows(
@@ -320,9 +318,6 @@ impl TSConfigJSON {
         Ok(Box::from(&written[..len]))
     }
 
-    // NOTE: `E::JsonValue::as_str()` returns decoded UTF-8 bytes (the JSON
-    // parser stores every string as UTF-8), so every field is copied at the
-    // boundary; nothing borrows the parsed document past this function.
     pub fn parse(
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
@@ -336,9 +331,9 @@ impl TSConfigJSON {
         // these particular files. This is likely not a completely accurate
         // emulation of what the TypeScript compiler does (e.g. string escape
         // behavior may also be different).
-        // `parsed` owns the document's row tape: every `Expr`, row, and byte
-        // slice reached through `json` borrows it (and `source`), so it must
-        // stay alive for the rest of this function.
+
+        // `parsed` owns the row tape everything below borrows; it must stay
+        // alive for the rest of this function.
         let parsed = match json_cache.parse_tsconfig(log, source).ok().flatten() {
             Some(p) => p,
             None => return Ok(None),
@@ -404,7 +399,6 @@ impl TSConfigJSON {
             if let Some(obj) = compiler_opts.as_object() {
                 for property in obj.properties() {
                     let value = &property.value;
-                    // The immutable AST stores only the key's location.
                     let loc = property.key_loc;
                     match property.key.slice() {
                         b"baseUrl" if base_url_v.is_none() => base_url_v = Some(value),
@@ -621,15 +615,11 @@ impl TSConfigJSON {
                                 if !array.is_empty() {
                                     let mut values: Vec<Box<[u8]>> =
                                         Vec::with_capacity(array.len());
-                                    // Items carry no `Loc`: recover each one from the
-                                    // source, starting at the array's `[` (the first
-                                    // byte of this property's value).
+                                    // Items carry no `Loc`; recover each one from
+                                    // the source in one forward sweep.
                                     let array_loc =
                                         json_parser::property_value_loc(&source.contents, key_loc)
                                             .unwrap_or(key_loc);
-                                    // One forward sweep recovers every item's
-                                    // location (per-index recovery would
-                                    // re-scan the array for each item).
                                     let mut item_cursor =
                                         json_parser::array_item_loc(&source.contents, array_loc, 0);
                                     // errdefer allocator.free(values) — handled by Drop.

@@ -145,10 +145,6 @@ pub(crate) fn object_to_js(
     Ok(obj)
 }
 
-/// immutable JSON containers (`E::ObjectJSON` / `E::ArrayJSON`,
-/// produced by the JSON parser for opted-in entry points like
-/// `Bun.JSONC.parse`): children are inline `E::JsonValue`s, with string
-/// leaves already-decoded UTF-8.
 pub(crate) fn object_json_to_js(
     this: &E::ObjectJSON,
     global: &JSGlobalObject,
@@ -201,12 +197,8 @@ fn json_value_to_js(
 }
 
 /// Serialize parser string bytes to a JS string, transcoding to UTF-16 only
-/// when the bytes are not pure ASCII (`wtf8_to_utf16_alloc` returns `None`
-/// for pure-ASCII, in which case the 8-bit Latin-1 form is kept).
-///
-/// The bytes are WTF-8, not UTF-8: the lexer's escape decoder stores a lone
-/// `\uD800` as the 3-byte surrogate sequence, which must round-trip to the
-/// surrogate code unit (`JSON.parse` semantics) rather than U+FFFD.
+/// when the bytes are not pure ASCII. The bytes are WTF-8, not UTF-8: a lone
+/// surrogate must round-trip to its code unit rather than U+FFFD.
 fn utf8_bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
     if bytes.is_empty() {
         // `create_uninitialized_latin1` requires a non-zero length.

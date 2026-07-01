@@ -59,15 +59,9 @@ impl ExprStr for Expr {
     }
 }
 
-/// `"key": value` rows of a JSON object expression, yielded as
-/// `(key, value string, key location)` so the property loops below accept
-/// both shapes `parse_with_json` receives: the immutable `EObjectJSON`
-/// produced by `ParsedJson::parse_package_json`, and the classic `EObject`
-/// of cached/edited documents (`WorkspacePackageJSONCache`).
-///
-/// A non-string value yields `None`. Classic UTF-16 strings are transcoded
-/// into `bump`; rows are already decoded UTF-8 borrowing the
-/// document's source or tape.
+/// `"key": value` rows of a JSON object expression in either representation
+/// (`EObjectJSON` or classic `EObject`), yielded as
+/// `(key, value string, key location)`. A non-string value yields `None`.
 enum JsonObjectStringRows<'a> {
     Classic(
         core::slice::Iter<'a, bun_ast::G::Property>,
@@ -100,9 +94,6 @@ impl<'a> Iterator for JsonObjectStringRows<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             Self::Classic(iter, bump) => {
-                // The cached/edited trees this arm walks always have string
-                // keys and a value, but a malformed node ends the iteration
-                // instead of panicking.
                 let prop = iter.next()?;
                 let key = prop.key?;
                 let key_bytes = key.as_utf8(*bump)?;
@@ -121,15 +112,11 @@ impl<'a> Iterator for JsonObjectStringRows<'a> {
 }
 
 /// Cold path: the location of the value of the property whose key string
-/// starts at `key_loc`. The immutable JSON AST stores only key locations, so a
-/// diagnostic that points at a value re-scans the source it was parsed from;
-/// the key's location is the fallback when the bytes don't match.
+/// starts at `key_loc`; falls back to the key's location.
 pub(crate) fn value_loc_of(source: &bun_ast::Source, key_loc: bun_ast::Loc) -> bun_ast::Loc {
     crate::bun_json::property_value_loc(&source.contents, key_loc).unwrap_or(key_loc)
 }
 
-/// `trustedDependencies` type error, reported at the property's key both
-/// when the value is not an array and when an item is not a string.
 #[cold]
 fn invalid_trusted_dependencies(
     log: &mut bun_ast::Log,
@@ -2134,8 +2121,6 @@ impl Package<u64> {
                         text: text.into(),
                         location: bun_ast::Location::init_or_null(
                             Some(source),
-                            // The map stores the first occurrence's key
-                            // location; the note points at its value.
                             source.range_of_string(value_loc_of(source, *entry.value_ptr)),
                         ),
                         ..Default::default()
@@ -2341,14 +2326,10 @@ impl Package<u64> {
                             return;
                         }
 
-                        // The callback's key borrow is call-scoped; copy it
-                        // into the arena so the map entry can outlive the loop.
+                        // The callback's key borrow is call-scoped; copy into the arena.
                         let key: &[u8] = bump.alloc_slice_copy(key);
                         optional_peer_dependencies
                             .put_assume_capacity(semver::string::Builder::string_hash(key), key);
-                        // Reserve space for a synthesised entry. If the
-                        // matching name later appears in `peerDependencies`
-                        // the slot just goes unused.
                         string_builder.count(key);
                         string_builder.count(b"*");
                         total_dependencies_count += 1;
@@ -2400,9 +2381,6 @@ impl Package<u64> {
                                 dependencies_q.expr.as_property(b"packages")
                             {
                                 let packages_expr = packages_query.expr;
-                                // The immutable representation locates a looked-up
-                                // value at its key; recover the value's own
-                                // location for the diagnostics below.
                                 let packages_loc =
                                     if matches!(dependencies_q.expr.data, ExprData::EObject(_)) {
                                         packages_expr.loc
@@ -2646,11 +2624,8 @@ impl Package<u64> {
                             let current_len = lockfile.buffers.extern_strings.len();
                             let count = n * 2;
                             lockfile.buffers.extern_strings.reserve_exact(count);
-                            // Default-fill the tail; the loop below
-                            // overwrites each slot. Keeps every exposed
-                            // `ExternalString` valid even if `break 'bin`
-                            // fires partway through (replaces raw
-                            // `set_len`).
+                            // Default-fill the tail so every slot stays valid
+                            // even if `break 'bin` fires partway through.
                             let extern_strings = bun_core::vec::grow_default(
                                 &mut lockfile.buffers.extern_strings,
                                 count,
@@ -2669,9 +2644,6 @@ impl Package<u64> {
                             if cfg!(debug_assertions) {
                                 debug_assert!(i == extern_strings.len());
                             }
-                            // `init` only needs the tail's offset, so
-                            // construct directly to avoid an aliasing
-                            // borrow of the full extern_strings buffer.
                             self.bin = Bin {
                                 tag: bin::Tag::Map,
                                 value: bin::Value {
@@ -2964,11 +2936,8 @@ impl Package<u64> {
                             key_loc,
                         )? {
                             let mut dep = dep_;
-                            // swapRemove (not contains): drain names that
-                            // have a real `peerDependencies` entry so the
-                            // meta-only synthesis pass below only sees
-                            // names that appear *only* in
-                            // `peerDependenciesMeta`.
+                            // Drain names with a real `peerDependencies` entry so the
+                            // synthesis pass below only sees `peerDependenciesMeta`-only names.
                             if group.behavior.is_peer()
                                 && optional_peer_dependencies.swap_remove(&external_name.hash)
                             {

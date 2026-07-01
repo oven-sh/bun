@@ -983,8 +983,6 @@ impl<'a> PackageInstall<'a> {
         if package_json_checker.parse().is_err() {
             return false;
         }
-        // `log` is exclusively borrowed by the checker; read the error count
-        // through it.
         if package_json_checker.has_errors() || !package_json_checker.has_found_name {
             return false;
         }

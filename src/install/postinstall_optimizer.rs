@@ -48,8 +48,6 @@ impl PostinstallOptimizer {
         expr: &js_ast::Expr,
         value: PostinstallOptimizer,
     ) -> Result<bool, bun_alloc::AllocError> {
-        // `expr.as_array()` returns `None` for both non-array AND empty
-        // arrays, so an explicit empty check is unnecessary.
         let Some(mut array) = expr.as_array() else {
             return Ok(false);
         };
@@ -58,9 +56,8 @@ impl PostinstallOptimizer {
             let js_ast::ExprData::EString(s) = &entry.data else {
                 continue;
             };
-            // JSON parsing never folds strings into ropes (same invariant
-            // `as_utf8_string_literal` asserted before this was inlined),
-            // and JSON-parsed strings are always UTF-8.
+            // JSON parsing never folds strings into ropes, and JSON-parsed
+            // strings are always UTF-8.
             debug_assert!(s.next.is_none());
             debug_assert!(s.is_utf8());
             let str = s.slice8();

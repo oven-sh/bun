@@ -5,16 +5,13 @@
     clippy::disallowed_macros
 )]
 //! Export `BUN_CODEGEN_DIR` for
-//! `include!(concat!(env!("BUN_CODEGEN_DIR"), "/json_byte_class.rs"))`
-//! (the byte-classification table shared with the Highway JSON kernel,
-//! written at configure time by `scripts/build/jsonByteClass.ts`).
-//! Mirrors `src/{bun_core,jsc,runtime}/build.rs`.
+//! `include!(concat!(env!("BUN_CODEGEN_DIR"), "/json_byte_class.rs"))`,
+//! written at configure time by `scripts/build/jsonByteClass.ts`.
 
 use std::env;
 use std::path::{Path, PathBuf};
 
 fn main() {
-    // src/parsers → repo root is two up.
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let repo = manifest
         .parent()

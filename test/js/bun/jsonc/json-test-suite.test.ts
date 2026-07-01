@@ -1,18 +1,8 @@
-// JSONTestSuite (https://github.com/nst/JSONTestSuite @ 1ef36fa01286573e846ac449e8683f8833c5b26a, MIT,
-// (c) Nicolas Seriot), vendored inline: every file from test_parsing/, decoded
-// as UTF-8 (lossily for the deliberately malformed encodings, with BOMs
-// preserved — both parsers see the same string), run through `Bun.JSONC.parse`
-// with JavaScriptCore's `JSON.parse` as the oracle.
-//
-// - y_*: valid JSON. Both parsers must accept and agree exactly.
-// - n_*: invalid JSON (JSON.parse rejects every one). `Bun.JSONC.parse` must
-//   reject them too, except the named cases in N_VALID_JSONC: those are valid in
-//   the JSONC dialect (comments, trailing commas, single-quoted strings,
-//   JavaScript number forms, \x escapes, an empty document, and trailing data
-//   after the first value), and their exact parsed value is pinned. A parser
-//   change that accepts more (or fewer) n_ cases fails this file.
-// - i_*: implementation-defined. Bun must accept everything JSON.parse accepts,
-//   agree with it when it does, and never crash on the rest.
+// JSONTestSuite (https://github.com/nst/JSONTestSuite @ 1ef36fa01286573e846ac449e8683f8833c5b26a,
+// MIT, (c) Nicolas Seriot) test_parsing/ corpus, vendored inline as UTF-8.
+// y_ = valid (must agree with JSON.parse); n_ = invalid (must throw, except the
+// N_VALID_JSONC cases that are valid JSONC, whose value is pinned exactly);
+// i_ = implementation-defined (must agree with JSON.parse whenever it accepts).
 import { describe, expect, test } from "bun:test";
 
 type Case = [name: string, source: string];
@@ -406,8 +396,7 @@ describe("JSONTestSuite", () => {
       } catch {
         bunAccepted = false;
       }
-      // JSONC is a superset of JSON: anything JSC accepts, Bun must accept
-      // and agree on. The converse is not required.
+      // JSONC is a superset of JSON: anything JSC accepts, Bun must accept and agree on.
       if (jscAccepted) {
         expect(bunAccepted).toBe(true);
         expect(bun).toStrictEqual(jsc);

@@ -92,12 +92,9 @@ pub struct PackageJSON {
     /// (`bun_ast::Source::contents` is `&'static [u8]`, so this separate owner
     /// field is what keeps that borrow — and the map values above — alive.)
     pub source_contents: Box<[u8]>,
-    /// Owns the parsed document's escape-decoded string bytes
-    /// (`E::JsonTape`). The lifetime-erased `&'static [u8]` values stored in
-    /// `scripts`/`config` (and the `dependencies` name/version slices) borrow
-    /// either `source_contents` (escape-free literals, the common case) or
-    /// this tape, so both owners live on the struct. `None` when nothing was
-    /// parsed (e.g. the node fallback stubs).
+    /// Owns the parsed document's escape-decoded string bytes. Lifetime-erased
+    /// `&'static [u8]` values in `scripts`/`config`/`dependencies` borrow
+    /// either `source_contents` or this tape, so both owners live on the struct.
     pub(crate) json_tape: Option<Box<js_ast::E::JsonTape>>,
     pub main_fields: MainFieldMap,
     pub module_type: ModuleType,
@@ -512,10 +509,8 @@ impl PackageJSON {
         let contents_static: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&entry_contents) };
         let json_source = bun_ast::Source::init_path_string(package_json_path, contents_static);
 
-        // `parsed_json` owns the document's row tape: every `Expr`, row, and
-        // string slice reached through `json` borrows it (and `json_source`).
-        // It must stay alive for the rest of this function; the tape itself
-        // moves into the returned `PackageJSON` at the bottom (`json_tape`).
+        // `parsed_json` owns the row tape everything below borrows; it must
+        // outlive this function (it moves into the returned `PackageJSON`).
         let parsed_json = match r.caches.json.parse_package_json(r_log, &json_source) {
             Ok(Some(v)) => v,
             Ok(None) => return None,
@@ -669,9 +664,6 @@ impl PackageJSON {
                         // import of "foo", but that's actually not a bug. Or arguably it's a
                         // bug in Browserify but we have to replicate this bug because packages
                         // do this in the wild.
-                        // inherent `FileSystem::normalize` (fs.rs)
-                        // returns a threadlocal-backed `&[u8]` and shadows the
-                        // owned-returning trait method; UFCS to get the `Box`.
                         let key: Box<[u8]> = FileSystemPackageJsonExt::normalize(r_fs, _key_str);
 
                         match &prop.value {
@@ -692,13 +684,10 @@ impl PackageJSON {
                             }
                             _ => {
                                 // Only print this warning if its not inside node_modules, since node_modules/ is not actionable.
-                                // `bun_paths::fs::Path<'static>` has no `is_node_module`; inline the check.
                                 if !strings::contains(
                                     json_source.path.text,
                                     NODE_MODULES_PATH.as_bytes(),
                                 ) {
-                                    // The immutable AST stores no per-value `Loc`;
-                                    // recover the value's first byte (cold path).
                                     let value_loc = json_parser::property_value_loc(
                                         &json_source.contents,
                                         prop.key_loc,
@@ -736,8 +725,6 @@ impl PackageJSON {
                 }
             } else if let js_ast::ExprData::EArrayJSON(e_array) = &side_effects_field.data {
                 // Handle arrays, including empty arrays
-                // Reshaped — `ArrayIterator` is not `Clone`; iterate the
-                // underlying item rows directly for both passes.
                 let items = e_array.get().items();
                 let mut map = SideEffectsMap::default();
                 let mut glob_list = GlobList::default();
@@ -944,12 +931,8 @@ impl PackageJSON {
                             if let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data {
                                 for prop in group_obj.get().properties() {
                                     let name_str = prop.key.slice();
-                                    // `SemverString` and the map's hash
-                                    // context index into the source buffer.
-                                    // An escape-decoded key lives in the
-                                    // parse's tape instead; real dependency
-                                    // names never need escapes, so skip it
-                                    // rather than store a wild offset.
+                                    // `SemverString` indexes into `source_buf`; an escape-decoded
+                                    // key lives in the tape instead, so skip it.
                                     if !bun_alloc::is_slice_in_buffer(
                                         name_str,
                                         package_json.dependencies.source_buf,
@@ -1011,16 +994,9 @@ impl PackageJSON {
         }
 
         // used by `bun run`
-        // `ScriptsMap` stores `&'static [u8]` slices of the package.json source
-        // bytes (`contents_static`, see SAFETY note above), so walk the object's
-        // rows inline here instead of using a bump-lifetime `Expr` accessor.
         if include_scripts {
             // Local: build a `StringArrayHashMap<&'static [u8]>` for the named
-            // top-level object property. Values are JSON string literals:
-            // slices into `contents_static`, or — for literals with escape
-            // sequences — into the document's tape (moved into
-            // `package_json.json_tape` below, so both owners live as long as
-            // the map).
+            // top-level object property.
             let property_string_map =
                 |name: &[u8]| -> Option<Box<StringArrayHashMap<&'static [u8]>>> {
                     let prop = json.as_property(name)?;
@@ -1045,8 +1021,7 @@ impl PackageJSON {
                             continue;
                         }
                         // SAFETY: `value` borrows `contents_static` or the document's
-                        // tape; both are owned by the returned PackageJSON (see the
-                        // SAFETY note on `contents_static` and the `json_tape` field).
+                        // tape; both are owned by the returned PackageJSON.
                         let value: &'static [u8] = unsafe { bun_ptr::detach_lifetime(value) };
                         map.put_assume_capacity(key, value);
                     }
@@ -1079,9 +1054,7 @@ impl PackageJSON {
         // backing buffer into the returned struct (replaces the prior
         // `mem::forget`, forbidden per docs/PORTING.md §Forbidden patterns).
         package_json.source_contents = entry_contents;
-        // The document's tape owns every escape-decoded string; `scripts`/
-        // `config` values may borrow it (see `json_tape`). Boxed, so the move
-        // does not invalidate those slices.
+        // The tape owns every escape-decoded string `scripts`/`config` may borrow.
         package_json.json_tape = parsed_json.tape;
         Some(package_json)
     }
@@ -1092,11 +1065,8 @@ pub struct ExportsMap {
 }
 
 impl ExportsMap {
-    /// `json` is the "exports"/"imports" property's value as returned by
-    /// `Expr::as_property` on the immutable row AST: its `.loc` is the
-    /// property's KEY location (the immutable containers store no per-value
-    /// `Loc`), which the visitor uses to recover exact value locations on
-    /// its diagnostic paths.
+    /// `json` is the "exports"/"imports" property's value from
+    /// `Expr::as_property`; its `.loc` is the property's KEY location.
     pub fn parse(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
@@ -1129,8 +1099,7 @@ impl<'a> Visitor<'a> {
                 data: EntryData::Null,
             },
             js_ast::ExprData::EString(str) => {
-                // JSON-parsed strings are always UTF-8 (latin1 source bytes);
-                // `str.data` is the raw slice, no transcode needed.
+                // JSON-parsed strings are always UTF-8; no transcode needed.
                 debug_assert!(!str.is_utf16);
                 Entry {
                     data: EntryData::String(Box::from(str.data.slice())),
@@ -1171,7 +1140,6 @@ impl<'a> Visitor<'a> {
 
     fn visit_object(&mut self, e_obj: &js_ast::E::ObjectJSON) -> Entry {
         let rows = e_obj.properties();
-        // `EntryDataMapList` is a `Vec<MapEntry>`, so push whole entries.
         let mut map_data: EntryDataMapList = Vec::with_capacity(rows.len());
         let mut expansion_keys: Vec<MapEntry> = Vec::with_capacity(rows.len());
         let mut is_conditional_sugar = false;
@@ -1200,7 +1168,6 @@ impl<'a> Visitor<'a> {
                         ),
                         prev.key_range,
                     );
-                // map_data.deinit / allocator.free(expansion_keys) — drop handles cleanup
                 return Entry {
                     data: EntryData::Invalid,
                 };
@@ -1228,7 +1195,6 @@ impl<'a> Visitor<'a> {
         }
 
         // this leaks a lil, but it's fine.
-        // (Rust: Vec already sized correctly via push)
 
         // Let expansionKeys be the list of keys of matchObj either ending in "/"
         // or containing only a single "*", sorted by the sorting function
@@ -1258,8 +1224,6 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    /// The materialized root can be a Boolean/Number leaf `Expr`; report it
-    /// at the value's recovered location like [`Self::visit_value`] does.
     #[cold]
     fn invalid_root(
         &mut self,

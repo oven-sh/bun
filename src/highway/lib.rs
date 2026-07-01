@@ -599,24 +599,13 @@ pub fn count_mapping_delims(bytes: &[u8]) -> usize {
     unsafe { highway_count_mapping_delims(bytes.as_ptr(), bytes.len()) }
 }
 
-/// JSON structural index, simdjson-style stage 1, for one chunk of a
-/// document — see `src/jsc/bindings/highway_json.cpp` for the kernel and
-/// `bun_parsers::json_index` for the consumer and the output contract.
-///
-/// The caller streams a document through this in consecutive chunks; `chunk`
-/// must start at `base_offset` in the document, every chunk's length except
-/// the last must be a multiple of 4096 (so 64-block dirty-bitmap words never
-/// straddle calls), and `state` carries the kernel's escape / in-string /
-/// scalar-run state across calls (zeroed before the first chunk).
-///
-/// `out` is intentionally `MaybeUninit`: the kernel initializes exactly the
-/// `n` entries it reports (absolute indices, no sentinels), and zero-filling
-/// a worst-case buffer would cost more than the indexing. `dirty` receives
-/// this chunk's blocks: one bit per 64 input bytes, "contains a backslash or
-/// a control character inside a string".
-///
-/// `flags & ODDITY` means the chunk contained a `/` or `'` outside a string:
-/// no output was produced and the caller must re-index without the kernel.
+/// JSON structural index, simdjson-style stage 1, for one chunk of a document
+/// (the kernel is `src/jsc/bindings/highway_json.cpp`). `chunk` must start at
+/// `base_offset`, every chunk's length except the last must be a multiple of
+/// 4096, and `state` carries the kernel's state across calls (zeroed before
+/// the first chunk). The kernel initializes exactly the `n` `out` entries it
+/// reports; `flags & ODDITY` means no output was produced and the caller must
+/// re-index without the kernel.
 #[inline(always)]
 pub fn json_structural_index_chunk(
     chunk: &[u8],
@@ -629,10 +618,8 @@ pub fn json_structural_index_chunk(
     assert!(dirty.len() >= (chunk.len().div_ceil(64)).div_ceil(64));
     assert!(base_offset.is_multiple_of(4096));
     let mut flags: u32 = 0;
-    // SAFETY: pointers/lengths come from live slices whose sizes satisfy the
-    // kernel's documented requirements (asserted above); the kernel writes
-    // only within them, and `state`/`out_flags` are valid out-pointers.
-    // `MaybeUninit<u32>` has the same layout as `u32`.
+    // SAFETY: the slices satisfy the kernel's size requirements (asserted
+    // above); `MaybeUninit<u32>` has the same layout as `u32`.
     let n = unsafe {
         highway_json_index_chunk(
             chunk.as_ptr(),

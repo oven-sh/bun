@@ -1555,9 +1555,8 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let mut temp_log = bun_ast::Log::init();
 
-        // `parsed` owns the row tape `json_expr` borrows; both (and
-        // `self.ipc_data`) outlive every advisory string, which
-        // `parse_security_advisories_from_expr` copies into `Box<[u8]>`.
+        // `parsed` owns the row tape `json_expr` borrows; advisory strings
+        // are copied out before either dies.
         let parsed = match crate::bun_json::ParsedJson::parse_json(&json_source, &mut temp_log) {
             Ok(e) => e,
             Err(e) => {
@@ -1806,8 +1805,8 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 }
 
-/// The tag name the scanner diagnostics have always printed: the immutable JSON
-/// containers report their classic equivalents (`e_object`, `e_array`).
+/// The immutable JSON containers report their classic tag names
+/// (`e_object`, `e_array`) in diagnostics.
 fn json_type_name(data: &ExprData) -> &'static str {
     match data {
         ExprData::EObjectJSON(_) => bun_ast::expr::Tag::EObject.into(),
@@ -1832,8 +1831,6 @@ fn parse_security_advisories_from_expr(
     };
 
     for (i, item_value) in array.get().items().iter().enumerate() {
-        // Array items carry no source location of their own; the advisory
-        // strings are copied out, so the array's location is good enough.
         let item = Expr::from_json_value(item_value, advisories_expr.loc);
         if !matches!(item.data, ExprData::EObjectJSON(_)) {
             Output::err_generic(

@@ -3979,9 +3979,8 @@ pub mod __gated_printer {
                         self.print(b")");
                     }
                 }
-                // JSON-only compact containers (`E::ObjectJSON`): children
-                // are inline `JsonValue`s, not `Expr`s, so they are printed
-                // here rather than through `print_property`/`print_expr`.
+                // JSON-only compact containers: children are inline
+                // `JsonValue`s, not `Expr`s, so they are printed here.
                 ExprData::EObjectJSON(e) => {
                     let e = e.get();
                     let n = self.writer.written();
@@ -4652,8 +4651,6 @@ pub mod __gated_printer {
 
         /// `E::ObjectJSON` (JSON-only): always printed in JSON shape.
         pub fn print_object_json(&mut self, e: &E::ObjectJSON) {
-            // Same guard as `print_expr`: a `.json` document nests as deep
-            // as the parser's own stack allowed, which can exceed ours.
             if !self.stack_check.is_safe_to_recurse() {
                 self.stack_overflowed = true;
                 return;
@@ -4697,7 +4694,6 @@ pub mod __gated_printer {
 
         /// `E::ArrayJSON` (JSON-only).
         pub fn print_array_json(&mut self, e: &E::ArrayJSON) {
-            // See `print_object_json`.
             if !self.stack_check.is_safe_to_recurse() {
                 self.stack_overflowed = true;
                 return;

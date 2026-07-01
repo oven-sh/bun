@@ -1883,8 +1883,8 @@ fn parse_data_loader<'a>(
         options::Loader::Jsonc => {
             // We allow importing tsconfig.*.json or jsconfig.*.json with comments
             // These files implicitly become JSONC files, which aligns with the behavior of text editors.
-            // The whole document (its row tape included) lives in `arena`,
-            // which owns the returned AST; nothing depends on `Drop`.
+            // The whole document (row tape included) lives in `arena`, which
+            // owns the returned AST; nothing depends on `Drop`.
             match bun_parsers::json::parse_jsonc_into_arena(source, log, arena) {
                 Ok(e) => e,
                 Err(_) => return None,
@@ -1915,19 +1915,15 @@ fn parse_data_loader<'a>(
     };
     let mut expr = value_expr;
 
-    // The bundler (everything but the runtime's lazy single-statement
-    // export, whose AST goes straight to `to_js`) gets a classic tree: its
-    // named-exports rewrite splices every top-level property's value `Expr`
-    // into the module's statements, and the linker's visit/clone/shake
-    // passes only know the classic shape. The materializer recovers every
-    // node's exact location from the source (this parse records none).
+    // The bundler needs a classic tree: the named-exports rewrite and the
+    // linker's visit/clone/shake passes only know the classic shape.
     if !keep_json_and_toml_as_one_statement
         && matches!(
             expr.data,
             bun_ast::ExprData::EObjectJSON(_) | bun_ast::ExprData::EArrayJSON(_)
         )
     {
-        expr = match bun_parsers::json::materialize(&expr, source, arena) {
+        expr = match bun_parsers::json::materialize(&expr, source, log, arena) {
             Ok(e) => e,
             Err(_) => return None,
         };

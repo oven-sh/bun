@@ -1,24 +1,6 @@
 //! Stage 2 of the JSON parser: recursive descent over the structural index
-//! built by [`crate::json_index`] (stage 1).
-//!
-//! The parser never iterates bytes of the document except:
-//!   - inside string bodies that stage 1 marked dirty (escape or control
-//!     character in the same 64-byte block) — everything else is zero-copy
-//!   - inside number / keyword tokens (bounded by two consecutive indices)
-//!   - in whitespace gaps, only on error paths and for `is_single_line`
-//!     newline checks (gaps are empty in minified JSON)
-//!
-//! Accepted inputs (strict JSON plus the lenient extensions `JSONOptions`
-//! gates), error messages, duplicate-key warnings, and `is_single_line` are
-//! part of the parser's contract — differentially tested against
-//! `JSON.parse`; see `json.rs` for the entry points.
-//!
-//! The only thing built here is the immutable JSON AST (`E::ObjectJSON`
-//! / `E::ArrayJSON` rows on the document's [`E::JsonTape`], one `Expr` per
-//! container); the classic `E::Object` tree some entry points return is
-//! materialized from it at their boundary (`json::materialize`). Strings are
-//! always UTF-8 (WTF-8 for lone surrogates), zero-copy from the source
-//! unless they contain escapes.
+//! built by [`crate::json_index`] (stage 1). Builds the immutable JSON AST
+//! ([`E::JsonTape`] rows); see `json.rs` for the entry points.
 use bun_alloc::Arena as Bump;
 use bun_ast::LexerLog;
 use bun_ast::expr::Data;
@@ -32,8 +14,6 @@ use crate::json_index::{self as jidx, StructuralIndex};
 
 type PResult<T = ()> = Result<T, bun_core::Error>;
 
-/// Duplicate-key spill map (see [`Parser::check_duplicate_key`]). Keys are
-/// already wyhash values, so the identity context hashes nothing.
 type DupMap = bun_collections::HashMap<u64, (), bun_collections::IdentityContext<u64>>;
 
 pub(crate) struct Parser<'a, 's, 'i> {
@@ -43,38 +23,21 @@ pub(crate) struct Parser<'a, 's, 'i> {
     idx: &'i mut StructuralIndex<'s>,
     pub cursor: usize,
     opts: JSONOptions,
-    /// Start of the token currently being parsed; error locations point here.
     token_start: usize,
     prev_error_loc: Loc,
     stack_check: StackCheck,
-    /// Reusable build stacks for container contents: a closing container's
-    /// direct children are appended to the tape as one contiguous block.
     scratch_props: Vec<E::PropertyJSON>,
     scratch_json_items: Vec<E::JsonValue>,
-    /// Parallel to the two stacks above when `opts.record_value_locs`: each
-    /// property value's / item's start location, block-appended to the tape
-    /// with its row. Empty otherwise.
     scratch_prop_value_locs: Vec<Loc>,
     scratch_item_locs: Vec<Loc>,
-    /// Reused escape-decode buffer (`parse_string_slow`), cleared per string.
     scratch_str: Vec<u8>,
-    /// The document's [`E::JsonTape`]. With [`E::TapeAlloc::Global`] it is
-    /// heap-allocated and owned by the parser (raw, from `Box::leak`) until
-    /// [`Self::take_tape`] hands it to the caller, and [`Drop`] reclaims it
-    /// on the error paths that never get there. With [`E::TapeAlloc::Arena`]
-    /// it lives in — and is bulk-freed with — the caller's arena, and the
-    /// parser never frees it. `None` only after `take_tape`.
+    /// The document's [`E::JsonTape`]. Owned by the parser (`Box::leak`) until
+    /// [`Self::take_tape`] with `TapeAlloc::Global`; owned by the caller's
+    /// arena with `TapeAlloc::Arena`. `None` only after `take_tape`.
     tape: Option<core::ptr::NonNull<E::JsonTape>>,
     /// Whether `tape` is the parser's to free (`TapeAlloc::Global`).
     tape_owned: bool,
-    /// Parallel to `scratch_props` (only when duplicate-key warnings
-    /// are on): the wyhash of every key of the in-progress objects, so
-    /// duplicate detection is a contiguous `u64` scan, not pointer-chasing.
     dup_hashes: Vec<u64>,
-    /// Duplicate-key spill maps for objects with more than `DUP_LINEAR_MAX`
-    /// keys, one per nesting level of such objects (`spill_depth` is the
-    /// number currently active). Pooled across the document and cleared when
-    /// their object closes, so each stays the size of one object.
     dup_maps: Vec<DupMap>,
     spill_depth: usize,
 }
@@ -106,16 +69,13 @@ impl<'s> LexerLog<'s> for Parser<'_, 's, '_> {
     }
 }
 
-/// A parse that errors out never reaches `take_tape`: reclaim the tape it
-/// leaked in `new` (everything that pointed into it is unreachable).
+/// Reclaims the tape on error paths that never reach `take_tape`.
 impl Drop for Parser<'_, '_, '_> {
     fn drop(&mut self) {
         drop(self.take_tape());
     }
 }
 
-// JSON only ever needs the ASCII subset of identifier classification
-// (keywords, `\uXXXX`-escaped keywords); everything else errors.
 #[inline]
 fn is_identifier_start(c: u8) -> bool {
     matches!(c, b'$' | b'_' | b'a'..=b'z' | b'A'..=b'Z')
@@ -125,9 +85,8 @@ fn is_identifier_continue(c: u8) -> bool {
     is_identifier_start(c) || c.is_ascii_digit()
 }
 
-/// Unicode whitespace accepted between any two tokens beyond ASCII
-/// space/tab/newline: VT, FF, LS, PS, BOM, and the Zs space separators
-/// (the JavaScript `WhiteSpace` / `LineTerminator` set).
+/// Non-ASCII whitespace accepted between tokens (the JavaScript
+/// `WhiteSpace` / `LineTerminator` set beyond space/tab/newline).
 #[inline]
 pub(crate) fn is_exotic_whitespace(cp: CodePoint) -> bool {
     matches!(cp, 0x000B | 0x000C | 0x2028 | 0x2029 | 0xFEFF)
@@ -142,10 +101,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         opts: JSONOptions,
         tape_alloc: E::TapeAlloc,
     ) -> Self {
-        // The document's tape: a leaked `Box` the parser owns until it hands
-        // it to the caller (`Global`), or a value in the caller's arena that
-        // the arena owns from the start (`Arena` — nothing here, including
-        // an early-error `Drop`, may free it).
         let (tape, tape_owned) = match tape_alloc {
             E::TapeAlloc::Global => (
                 core::ptr::NonNull::from(Box::leak(Box::new(E::JsonTape::empty()))),
@@ -184,10 +139,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    /// Hand the document's [`E::JsonTape`] — and ownership of it, when the
-    /// parser owns it — to the caller. The AST just produced borrows the
-    /// tape, so it must outlive every use of the root `Expr`; an
-    /// arena-allocated tape (`None` here) is already owned by the arena.
+    /// Hand the document's [`E::JsonTape`] (and ownership, when the parser
+    /// owns it) to the caller; it must outlive every use of the root `Expr`.
     pub(crate) fn take_tape(&mut self) -> Option<Box<E::JsonTape>> {
         let tape = self.tape.take()?;
         if !self.tape_owned {
@@ -198,8 +151,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         Some(unsafe { Box::from_raw(tape.as_ptr()) })
     }
 
-    /// Does some string indexed so far contain a `\` or a control character?
-    /// (If not, no string seen by the parser needs its body scanned.)
     #[inline(always)]
     fn any_string_needs_scan(&self) -> bool {
         self.idx.flags & (jidx::FLAG_HAS_BACKSLASH_IN_STRING | jidx::FLAG_HAS_CTRL_IN_STRING) != 0
@@ -207,22 +158,19 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     // ── token cursor ─────────────────────────────────────────────────────
 
-    /// Byte position of the cursor's index (the sentinel yields `len`).
     #[inline(always)]
     fn pos_at(&mut self, cursor: usize) -> usize {
         self.idx.at(cursor)
     }
 
-    /// The bytes of the scalar run starting at index `cursor`
-    /// (`[idx[cursor], idx[cursor+1])`).
+    /// The bytes of the run `[idx[cursor], idx[cursor+1])`.
     #[inline(always)]
     fn run(&mut self, cursor: usize) -> &'s [u8] {
         let (a, b) = (self.pos_at(cursor), self.pos_at(cursor + 1));
         &self.contents[a..b]
     }
 
-    /// Range of the token at `cursor` for error reporting: scalar runs are
-    /// trimmed to their non-whitespace extent, strings span quote to quote.
+    /// Range of the token at `cursor` for error reporting.
     fn token_range(&mut self, cursor: usize) -> Range {
         let p = self.pos_at(cursor);
         if p >= self.contents.len() {
@@ -256,8 +204,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    /// "Unexpected X" + `ParserError` (the JS lexer's `unexpected()`
-    /// message shape, which callers' error matchers depend on).
+    /// "Unexpected X" + `ParserError` (the JS lexer's `unexpected()` shape,
+    /// which callers' error matchers depend on).
     #[cold]
     fn unexpected(&mut self, cursor: usize) -> bun_core::Error {
         let r = self.token_range(cursor);
@@ -271,8 +219,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         bun_core::err!("ParserError")
     }
 
-    /// Log "Expected X but found Y". Every caller fails the parse after
-    /// logging (some via [`Self::unexpected`], which adds its own message).
+    /// Log "Expected X but found Y".
     #[cold]
     fn expected(&mut self, cursor: usize, what: &str) {
         let r = self.token_range(cursor);
@@ -288,9 +235,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    /// The per-character "Unsupported syntax: ..." hard errors for JS-only
-    /// punctuation reached outside of strings (any other junk byte flows to
-    /// `expected`/`unexpected` instead).
     fn js_punct_message(c: u8) -> Option<&'static str> {
         Some(match c {
             b'#' => "Private identifiers are not allowed in JSON",
@@ -304,31 +248,18 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         })
     }
 
-    /// Error for a junk byte at a token position: either
-    /// "Unsupported syntax: ..." (for JS punctuation) or "Unexpected x".
     #[cold]
     fn junk_byte_error(&mut self, cursor: usize, pos: usize, c: u8) -> bun_core::Error {
         if let Some(msg) = Self::js_punct_message(c) {
-            // "Unsupported syntax" diagnostics point at the position just
-            // past the offending character.
             self.add_error(pos + 1, format_args!("Unsupported syntax: {msg}"));
             return bun_core::err!("SyntaxError");
         }
         self.unexpected(cursor)
     }
 
-    /// Exotic unicode whitespace (BOM, NBSP, U+2028, VT, FF, ...) is
-    /// accepted between any two tokens. Those bytes are not whitespace to
-    /// stage 1 (they are ordinary scalar-run bytes), so this works on byte
-    /// positions: decode codepoints forward from the current token position
-    /// until the first non-whitespace one — stepping over any comment that
-    /// follows inside the same index run (comment bytes are never indexed) —
-    /// then resync the cursor onto the index containing (or starting at)
-    /// that position.
-    ///
-    /// Returns the first non-whitespace byte position, which is either
-    /// exactly at `pos_at(cursor)` (a fresh token) or inside the cursor's
-    /// run, or `None` at end of input.
+    /// Skip exotic unicode whitespace (and comments) forward from the current
+    /// token position, resync the cursor, and return the first
+    /// non-whitespace byte position (`None` at end of input).
     #[cold]
     fn skip_unicode_ws(&mut self) -> Option<usize> {
         let start = self.pos_at(self.cursor);
@@ -345,11 +276,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 }
                 p = from + iter.i as usize + iter.width as usize;
             }
-            // Comments are stepped over regardless of the dialect: in
-            // strict mode the driver rejects the document afterwards (the
-            // indexer records `first_comment` unconditionally), and treating
-            // the comment as junk here would bury that error under a
-            // misleading one.
             if p >= self.contents.len() || self.contents[p] != b'/' {
                 break;
             }
@@ -364,21 +290,16 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     }
                 }
                 Some(b'*') => {
-                    // The indexer rejects unterminated block comments
-                    // before stage 2 runs; treat one as end of input.
                     let Some(close) = strings::index_of(&self.contents[p + 2..], b"*/") else {
                         p = self.contents.len();
                         break 'outer;
                     };
                     p += 2 + close as usize + 2;
                 }
-                // A `/` that opens no comment: the indexer already
-                // reported it; stop here.
                 _ => break,
             }
         }
         if p >= self.contents.len() {
-            // Trailing whitespace: park the cursor on the sentinel.
             while self.pos_at(self.cursor) < self.contents.len() {
                 self.cursor += 1;
             }
@@ -391,16 +312,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         Some(p)
     }
 
-    /// Token byte at the cursor (0xFF at end of input), skipping exotic
-    /// whitespace first.
     #[inline(always)]
     fn peek_byte(&mut self) -> u8 {
         self.peek().0
     }
 
-    /// [`Self::peek_byte`] plus the byte position of the cursor's index after
-    /// the skip (== `pos_at(self.cursor)`, the sentinel `len` at end of
-    /// input), so container loops resolve both in one window access.
+    /// Token byte at the cursor (0xFF at end of input) and its byte
+    /// position, skipping exotic whitespace first.
     #[inline(always)]
     fn peek(&mut self) -> (u8, usize) {
         let p = self.pos_at(self.cursor);
@@ -419,45 +337,27 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     /// Is there a newline in the whitespace gap immediately before byte `p`?
-    /// (`has_newline_before` of the token starting at `p`, which the cursor
-    /// points at; drives `is_single_line`.) In minified documents the gap is
-    /// empty (the byte before `p` already decides), so only that byte is
-    /// examined inline.
+    /// Drives `is_single_line`.
     #[inline(always)]
     fn newline_before(&mut self, p: usize) -> bool {
         if p == 0 {
-            // Start of file counts as a newline before it.
             return true;
         }
         match self.contents[p - 1] {
             b'\n' | b'\r' => true,
-            // Anything else defers to the gap scan, which also steps over
-            // comments (a newline inside `/* … */` still breaks the line).
             _ => self.newline_in_gap_before(p),
         }
     }
 
     /// See [`Self::newline_before`]: the rest of a non-empty whitespace gap.
-    ///
-    /// Everything between the end of the previous token and `p` is the gap:
-    /// whitespace, (JSONC) comments, exotic-whitespace runs the cursor
-    /// skipped — and the unscanned tail of the previous token, which can
-    /// never contain a raw newline (a string with one is a syntax error; no
-    /// other token spans lines). So "is there a newline before this token",
-    /// including one hidden inside a block comment, is "does any byte after
-    /// the previous *token* and before `p` equal `\n` or `\r`".
+    /// No token but a string body can contain a raw newline (and one there is
+    /// a syntax error), so scanning back to the previous token index is exact.
     fn newline_in_gap_before(&mut self, p: usize) -> bool {
-        // Walk back to the previous index that is a token (not a skipped
-        // run of exotic whitespace, which is part of the gap). A token index
-        // is a structural byte, a quote, or the first byte of a scalar run;
-        // string bodies (the only token bytes that can hold arbitrary
-        // newline-free data) end at their closing-quote index. The walk is
-        // bounded by the index window's look-behind; layouts with that many
-        // separate whitespace runs before one token give up (cosmetic).
+        // The walk is bounded by the index window's look-behind; layouts with
+        // that many whitespace runs before one token give up (cosmetic).
         let mut hi = p;
         for step in 1..=(jidx::LOOKBEHIND - 2) {
             if self.cursor < step {
-                // Start of file counts as a newline before it.
                 return true;
             }
             let j = self.cursor - step;
@@ -483,9 +383,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     // ── values ───────────────────────────────────────────────────────────
 
-    /// After the root value, only whitespace may remain (used by the
-    /// `CHECK_LEN` entry point). Exotic unicode whitespace appears as
-    /// scalar-run indices; plain ASCII whitespace never produces an index.
+    /// After the root value, only whitespace may remain.
     pub(crate) fn at_trailing_end(&mut self) -> bool {
         loop {
             let p = self.pos_at(self.cursor);
@@ -507,9 +405,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         self.unexpected(self.cursor)
     }
 
-    /// A value as an `Expr`: only the document root (and the exotic-
-    /// whitespace re-dispatch) needs one — containers inside the document
-    /// are [`E::JsonValue`] rows (see [`Self::parse_json_value`]).
+    /// A value as an `Expr` (the document root); nested containers are
+    /// [`E::JsonValue`] rows (see [`Self::parse_json_value`]).
     pub(crate) fn parse_value(&mut self) -> PResult<Expr> {
         let cursor = self.cursor;
         let start = self.pos_at(cursor);
@@ -530,29 +427,24 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    /// The document's [`E::JsonTape`].
     #[inline]
     fn tape_ref(&self) -> &'a E::JsonTape {
-        // SAFETY: heap-allocated in `Parser::new`; the lifetime-erased
-        // contract is that the caller keeps it alive for the AST's lifetime.
+        // SAFETY: allocated in `Parser::new`; the lifetime-erased contract is
+        // that the caller keeps it alive for the AST's lifetime.
         unsafe { self.tape.expect("the tape was already taken").as_ref() }
     }
 
-    /// The document's [`E::JsonTape`], mutably. The parser is its only
-    /// writer; nothing reads it until parsing returns.
     #[inline]
     fn tape_mut(&mut self) -> &mut E::JsonTape {
         // SAFETY: see `tape_ref`; exclusively owned until `take_tape`.
         unsafe { self.tape.expect("the tape was already taken").as_mut() }
     }
 
-    /// Append `scratch_props[mark..]` (one closing object's direct
-    /// children, contiguous on top of the scratch stack) as a block to the
-    /// property tape and return its `(first, count)` span.
+    /// Append `scratch_props[mark..]` (one closing object's direct children)
+    /// as a block to the property tape and return its `(first, count)` span.
     fn push_props_block(&mut self, mark: usize) -> (u32, u32) {
         // SAFETY: see `tape_mut`. The raw-derived `&mut` is not a borrow of
-        // `self`, so the (disjoint, parser-owned) scratch stack can be read
-        // alongside it.
+        // `self`, so the disjoint scratch stack can be read alongside it.
         let tape = unsafe { self.tape.expect("the tape was already taken").as_mut() };
         let locs: &[Loc] = if self.opts.record_value_locs {
             &self.scratch_prop_value_locs[mark..]
@@ -582,15 +474,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         span
     }
 
-    /// A container's child value: nested containers and strings become
-    /// inline [`E::JsonValue`]s (no `Expr`, no Store node); every other kind
-    /// of token goes through the ordinary scalar path, whose `Expr` payload
-    /// is inline in `Data` (numbers, booleans, null) — so the only Store
-    /// traffic in a document is one node per container.
-    ///
-    /// Also returns the value's location (its first non-whitespace byte —
-    /// a scalar's index run can begin with exotic unicode whitespace),
-    /// recorded in the tape for [`crate::json::materialize`].
+    /// A container's child value as an inline [`E::JsonValue`], plus its
+    /// location (recorded in the tape for [`crate::json::materialize`]).
     #[inline(always)]
     fn parse_json_value(&mut self) -> PResult<(E::JsonValue, Loc)> {
         let cursor = self.cursor;
@@ -625,9 +510,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                         Data::ENumber(n) => E::JsonValue::Number(n),
                         Data::EBoolean(b) => E::JsonValue::Boolean(b.value),
                         Data::ENull(_) => E::JsonValue::Null,
-                        // Exotic whitespace before the value re-dispatches
-                        // through `parse_value`, which can return a string
-                        // or a container.
                         Data::EString(r) => E::JsonValue::String(r.get().data),
                         Data::EObjectJSON(r) => E::JsonValue::Object(r),
                         Data::EArrayJSON(r) => E::JsonValue::Array(r),
@@ -641,10 +523,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     // ── strings ──────────────────────────────────────────────────────────
 
-    /// Locate the body of the string whose opening quote is at `open` (the
-    /// byte position of the cursor's index, which every caller has already
-    /// resolved) and whether it needs a body scan (a `\` or a control
-    /// character may be inside). Advances the cursor past both quote indices.
+    /// Locate the body of the string whose opening quote is at `open` and
+    /// whether it needs a body scan. Advances the cursor past both quotes.
     #[inline(always)]
     fn string_body_at(&mut self, open: usize) -> PResult<(&'s [u8], bool)> {
         let i = self.cursor;
@@ -653,7 +533,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let quote = self.contents[open];
         self.token_start = open;
         if close >= self.contents.len() || self.contents[close] != quote {
-            // Stage 1 found no partner quote.
             self.add_default_error(b"Unterminated string literal")?;
             unreachable!()
         }
@@ -664,18 +543,12 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         Ok((body, dirty))
     }
 
-    /// Parse the string whose opening quote is at the cursor's index into an
-    /// `E::String` node (the document root; everything nested stores the
-    /// bare [`E::Str`] of [`Self::parse_string_utf8_at`]).
     fn parse_string(&mut self) -> PResult<E::EString> {
         let open = self.pos_at(self.cursor);
         Ok(E::EString::init(self.parse_string_utf8_at(open)?.slice()))
     }
 
-    /// [`Self::parse_string`] for callers that only keep the string's bytes:
-    /// the clean-string fast path is just the body slice, no `E::EString`.
-    /// `open` is the opening quote's byte position (`pos_at(self.cursor)`),
-    /// which every caller has already resolved.
+    /// [`Self::parse_string`] for callers that only keep the string's bytes.
     #[inline(always)]
     fn parse_string_utf8_at(&mut self, open: usize) -> PResult<E::Str> {
         let (body, dirty) = self.string_body_at(open)?;
@@ -685,14 +558,12 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         Ok(E::Str::new(body))
     }
 
-    /// Copy decoded string bytes the AST keeps alive into the document's
-    /// [`E::JsonTape`] (which owns everything the AST allocates).
     fn alloc_owned_str(&mut self, bytes: &[u8]) -> E::Str {
         self.tape_mut().alloc_str(bytes)
     }
 
-    /// Dirty-block path: find the first `\` or control character; decode if
-    /// escaped, error on raw control characters, zero-copy otherwise.
+    /// Dirty-block path: decode escapes, error on raw control characters,
+    /// zero-copy otherwise.
     #[cold]
     fn parse_string_slow(&mut self, body: &'s [u8]) -> PResult<E::EString> {
         let mut first_special = None;
@@ -706,16 +577,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             return Ok(E::EString::init(body));
         };
         if body[k] != b'\\' {
-            // Raw control character inside a string.
             return Err(self.string_control_char_error(body[k]));
         }
-        // Escape decode, with the main loop's raw-control-character check
-        // folded in. The decoded bytes are WTF-8: lone surrogates from
-        // `\uXXXX` keep their 3-byte encoding, which the printer and
-        // `to_js` both understand.
-        // One reusable decode buffer per parser: this path runs once per
-        // escaped string, which large registry manifests hit thousands of
-        // times.
         let mut buf = core::mem::take(&mut self.scratch_str);
         buf.clear();
         self.decode_escapes(body, &mut buf)?;
@@ -726,8 +589,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     #[cold]
     fn string_control_char_error(&mut self, c: u8) -> bun_core::Error {
-        // \r and \n end the line => "Unterminated string literal"; any other
-        // raw control character is a plain syntax error.
         if c == b'\r' || c == b'\n' {
             match self.add_default_error(b"Unterminated string literal") {
                 Err(e) => e,
@@ -749,8 +610,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     // ── scalars (numbers, keywords, junk) ────────────────────────────────
 
-    /// Parse the scalar run at the cursor. Hot for `true`/`false`/`null` and
-    /// numbers; everything else is the cold path.
     fn parse_scalar(&mut self, loc: Loc) -> PResult<Expr> {
         let cursor = self.cursor;
         let run = self.run(cursor);
@@ -781,10 +640,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         run.len() == n || self.rest_is_ws_cold(&run[n..])
     }
 
-    /// ASCII whitespace fast check + the cold fallback for everything else
-    /// a scalar run's tail may legally hold: exotic unicode whitespace and
-    /// comments (`1 /* note */,` — the indexer emits no index inside a
-    /// comment, so its bytes stay in the run).
+    /// Is `rest` (a scalar run's tail) nothing but whitespace, exotic
+    /// unicode whitespace, and comments?
     #[cold]
     fn rest_is_ws_cold(&self, rest: &[u8]) -> bool {
         if rest
@@ -797,8 +654,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         while i < rest.len() {
             match rest[i] {
                 b' ' | b'\t' | b'\n' | b'\r' => i += 1,
-                // Comments count as whitespace in every dialect: the driver
-                // rejects them in strict mode (see `parse_impl_in`).
                 b'/' => match rest.get(i + 1) {
                     Some(b'/') => {
                         i += 2;
@@ -807,8 +662,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                         }
                     }
                     Some(b'*') => {
-                        // The indexer guarantees `*/` exists (an unterminated
-                        // block comment is an index error before stage 2).
                         let Some(close) = rest[i + 2..].windows(2).position(|w| w == b"*/") else {
                             return false;
                         };
@@ -817,7 +670,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     _ => return false,
                 },
                 _ => {
-                    // One (possibly exotic-whitespace) codepoint.
                     let iterator = strings::CodepointIterator::init(&rest[i..]);
                     let mut iter = strings::Cursor::default();
                     if !iterator.next(&mut iter) || !is_exotic_whitespace(iter.c) {
@@ -838,8 +690,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
         self.cursor += 1; // [
         let mark = self.scratch_json_items.len();
-        // `peek` skips any exotic-whitespace runs so `here` is the first
-        // real token (or closer) inside the container.
         let (_, here) = self.peek();
         let mut is_single_line = !self.newline_before(here);
         let mut close_loc = Loc::EMPTY;
@@ -847,7 +697,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             let (b, p) = self.peek();
             let cursor = self.cursor;
             if p >= self.contents.len() {
-                // Unterminated array: hard error.
                 self.token_start = self.contents.len();
                 self.expected(cursor, "\"]\"");
                 break Err(bun_core::err!("ParserError"));
@@ -861,7 +710,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 break Ok(());
             }
             if self.scratch_json_items.len() != mark {
-                // Expect a `,` here.
                 if b != b',' {
                     if let Some(msg) = Self::js_punct_message(b) {
                         self.add_error(p + 1, format_args!("Unsupported syntax: {msg}"));
@@ -876,7 +724,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 self.cursor += 1; // ,
                 let (after_b, after) = self.peek();
                 if after_b == b']' {
-                    // Trailing comma.
                     if !self.opts.allow_trailing_commas {
                         let r = Range {
                             loc: usize2loc(p),
@@ -898,8 +745,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     is_single_line = false;
                 }
             }
-            // See the object loop: the item's location is recorded in
-            // lockstep with the item itself.
             match self.parse_json_value() {
                 Ok((item, item_loc)) => {
                     if self.opts.record_value_locs {
@@ -930,8 +775,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         self.cursor += 1; // {
         let mark = self.scratch_props.len();
         let hmark = self.dup_hashes.len();
-        // `peek` skips any exotic-whitespace runs so `here` is the first
-        // real token (or closer) inside the container.
         let (_, here) = self.peek();
         let mut is_single_line = !self.newline_before(here);
         let mut close_loc = Loc::EMPTY;
@@ -941,7 +784,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             let (mut b, mut p) = self.peek();
             let cursor = self.cursor;
             if p >= self.contents.len() {
-                // Unterminated object: hard error.
                 self.token_start = self.contents.len();
                 self.expected(cursor, "\"}\"");
                 break Err(bun_core::err!("ParserError"));
@@ -995,7 +837,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
             // ── key ──
             let key_cursor = self.cursor;
-            // `peek` already resolved the cursor's byte position.
             let key_start = p;
             debug_assert_eq!(key_start, self.pos_at(key_cursor));
             self.token_start = key_start;
@@ -1005,16 +846,12 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     Err(e) => break Err(e),
                 }
             } else {
-                // Not a string key: "Expected string but found X", then bail
-                // out of the object.
                 self.expected(key_cursor, "string");
                 break Err(self.unexpected(key_cursor));
             };
             let key_loc = usize2loc(key_start);
 
             if warn_dup && self.check_duplicate_key(mark, hmark, key.slice()) {
-                // Cold: the warning is the only consumer of the key's full
-                // range (`token_range` re-derives it from the index window).
                 let key_range = self.token_range(key_cursor);
                 self.warn_duplicate_key(key.slice(), key_range);
             }
@@ -1030,10 +867,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             }
 
             // ── value ──
-            // The value and its location, recorded for `materialize` so it
-            // never re-scans the source. Pushed together with the row: a
-            // nested container inside this value pushes its own rows and
-            // locations in between.
             let (value, value_loc) = match self.parse_json_value() {
                 Ok(v) => v,
                 Err(e) => break Err(e),
@@ -1047,7 +880,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 value,
             });
         };
-        // If this object spilled past the linear window, release its map.
         if self.dup_hashes.len() - hmark > Self::DUP_LINEAR_MAX {
             self.spill_depth -= 1;
             self.dup_maps[self.spill_depth].clear();
@@ -1071,28 +903,15 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     /// from a linear scan of the object's key hashes to the spill map.
     const DUP_LINEAR_MAX: usize = 32;
 
-    /// Is `key` (decoded UTF-8) a duplicate of an earlier key of the object
-    /// whose properties start at `scratch_props[mark]` /
-    /// `dup_hashes[hmark]`? Records the key.
-    ///
-    /// Hash-first: small objects scan their contiguous hash stack and confirm
-    /// a hit by comparing the actual keys. An object past `DUP_LINEAR_MAX`
-    /// keys spills to a hash map of its own: `dup_maps[spill_depth - 1]`,
-    /// taken when the object crosses the threshold and released (cleared)
-    /// when it closes, so nested large objects each have their own map and
-    /// every map stays the size of a single object. (A first version shared
-    /// one map across the document, which both let a nested large object
-    /// poison its parent's membership test and made the map monotonically
-    /// grow: on a large registry manifest a quarter of the parse went to
-    /// growing and probing it.)
+    /// Is `key` a duplicate of an earlier key of the object whose properties
+    /// start at `scratch_props[mark]` / `dup_hashes[hmark]`? Records the key.
     fn check_duplicate_key(&mut self, mark: usize, hmark: usize, key: &[u8]) -> bool {
         let h = bun_wyhash::hash(key);
         let n_prior = self.dup_hashes.len() - hmark;
         let dup = if n_prior <= Self::DUP_LINEAR_MAX {
             if n_prior == Self::DUP_LINEAR_MAX {
-                // The object is getting big: take this nesting level's map
-                // and seed it with everything so far (the map was left
-                // cleared by whichever object used it last).
+                // Take this nesting level's map (left cleared by whichever
+                // object used it last) and seed it with everything so far.
                 if self.dup_maps.len() == self.spill_depth {
                     self.dup_maps.push(DupMap::default());
                 }
@@ -1102,32 +921,19 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 for &ph in &self.dup_hashes[hmark..] {
                     map.insert(ph, ());
                 }
-                // The current key goes in too: later keys only consult the
-                // map, so leaving it out would never warn on its duplicates.
                 map.insert(h, ());
             }
             match self.dup_hashes[hmark..].iter().position(|&ph| ph == h) {
                 None => false,
-                Some(i) => {
-                    // Hash hit: confirm against the real key (the property at
-                    // `mark + i` — hashes and completed properties stay in
-                    // step because the hash is pushed before the value).
-                    self.scratch_props[mark + i].key.slice() == key
-                }
+                Some(i) => self.scratch_props[mark + i].key.slice() == key,
             }
         } else {
-            // This object's map: it is the innermost spilled object, since
-            // any large object opened after it has already been closed (and
-            // released its map) by the time we are back parsing its keys.
             self.dup_maps[self.spill_depth - 1].insert(h, ()).is_some()
         };
         self.dup_hashes.push(h);
         dup
     }
 
-    /// Log the depth-limit diagnostic (the `StackOverflow` error alone
-    /// reaches callers that only report the log) and return the error the
-    /// stack-overflow entry points special-case.
     #[cold]
     fn too_deeply_nested(&mut self, loc: Loc) -> bun_core::Error {
         let _ = self.add_range_error(
@@ -1152,17 +958,14 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     // ── numbers ──────────────────────────────────────────────────────────
 
-    /// Numeric literal at the cursor's run, ported from the JS lexer's
-    /// `parse_numeric_literal_or_dot`: decimal/hex/octal/binary, legacy
-    /// octal, `_` separators, exponent, and the "identifier cannot follow a
-    /// number" check.
+    /// Numeric literal at the cursor's run; matches the JS lexer's
+    /// `parse_numeric_literal_or_dot`.
     fn parse_number(&mut self, loc: Loc) -> PResult<Expr> {
         let cursor = self.cursor;
         let full_run = self.run(cursor);
         let start = self.pos_at(cursor);
 
-        // `-` is its own token in this dialect: whitespace (ASCII or
-        // exotic) and comments may separate it from its digits.
+        // `-` is its own token: whitespace and comments may follow it.
         if full_run[0] == b'-' {
             return self.parse_negative_number_at(start, loc);
         }
@@ -1175,16 +978,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         Ok(Expr::init(E::Number::new(value), loc))
     }
 
-    /// A `-` at `minus_pos` (the cursor's run): find its digits — possibly
-    /// after whitespace, exotic whitespace, or comments, in this run or a
-    /// later one — parse them, and return the negated number.
+    /// A `-` at `minus_pos`: find its digits (possibly after whitespace or
+    /// comments), parse them, and return the negated number.
     #[cold]
     fn parse_negative_number_at(&mut self, minus_pos: usize, loc: Loc) -> PResult<Expr> {
         self.token_start = minus_pos;
         let contents = self.contents;
         let Some(q) = crate::json::skip_ws_and_comments(contents, minus_pos + 1) else {
-            // Nothing but whitespace and comments to the end of input: park
-            // the cursor on the sentinel so the error says so.
             while self.pos_at(self.cursor) < contents.len() {
                 self.cursor += 1;
             }
@@ -1221,8 +1021,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 Ok(()) => unreachable!(),
             }
         } else {
-            // The previous token (the number) is at `cursor - 1`; report the
-            // junk byte itself.
             self.junk_byte_error(self.cursor, pos, c)
         }
     }
@@ -1235,12 +1033,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let first = t[0];
         let mut i = 1;
 
-        // `.` with no digit after it is a syntax error in JSON.
         if first == b'.' && (n < 2 || !t[1].is_ascii_digit()) {
             return Err(self.syntax_err_at(pos));
         }
 
-        // Radix literals.
         if first == b'0' && n > 1 {
             let (radix, prefix_len, legacy_octal): (u32, usize, bool) = match t[1] {
                 b'b' | b'B' => (2, 2, false),
@@ -1255,8 +1051,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             }
         }
 
-        // Decimal: digits ( . digits )? ( [eE] [+-]? digits )?, with `_`
-        // separators.
         let mut has_dot_or_exp = first == b'.';
         let mut underscores = false;
         let mut last_underscore_end: usize = usize::MAX;
@@ -1314,8 +1108,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         if last_underscore_end != usize::MAX && i == last_underscore_end + 1 {
             return Err(self.syntax_err_at(pos));
         }
-        // BigInt suffix: JSON has no bigint literal, so the trailing `n`
-        // falls into the identifier-start error below.
         let text = &t[..i];
         let value: f64 = if !has_dot_or_exp && !underscores && text.len() < 10 {
             // Fast path: short integers.
@@ -1332,7 +1124,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             } else {
                 text
             };
-            // All bytes are ASCII digits/./e/+/-.
             match core::str::from_utf8(digits)
                 .ok()
                 .and_then(|s| s.parse::<f64>().ok())
@@ -1454,33 +1245,25 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let run = self.run(cursor);
         let start = self.pos_at(cursor);
 
-        // Leading unicode whitespace (BOM, NBSP, LS/PS, VT, FF...): decode it
-        // away from the source, then either re-dispatch on a fresh token or
-        // parse the rest of the run the first real byte lands in.
         if run[0] >= 0x80 || run[0] == 0x0B || run[0] == 0x0C {
             let Some(p) = self.skip_unicode_ws() else {
-                // Nothing but whitespace where a value was expected.
                 self.token_start = self.contents.len();
                 return Err(self.unexpected(self.cursor));
             };
             if p != start {
                 if p == self.pos_at(self.cursor) {
-                    // Whitespace-only run (BOM, exotic unicode spaces):
-                    // re-dispatch on the next token.
                     return self.parse_value();
                 }
                 return self.parse_scalar_tail(p);
             }
         }
 
-        // `\uXXXX`-escaped identifiers: an escaped keyword is still that
-        // keyword (yes, really).
+        // An escaped keyword (`true`) is still that keyword.
         if run[0] == b'\\' {
             return self.parse_escaped_identifier(start, loc);
         }
 
         if is_identifier_start(run[0]) {
-            // An identifier that isn't a keyword: "Unexpected x".
             return Err(self.unexpected(cursor));
         }
         if run[0] >= 0x80 {
@@ -1490,8 +1273,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     /// Re-dispatch a value that starts mid-run (after leading exotic
-    /// whitespace): only numbers, keywords, escaped identifiers, or junk are
-    /// possible (strings and containers always start their own index).
+    /// whitespace).
     #[cold]
     fn parse_scalar_tail(&mut self, pos: usize) -> PResult<Expr> {
         let end = self.pos_at(self.cursor + 1);
@@ -1536,10 +1318,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     /// A `\uXXXX`-escaped spelling of `true` / `false` / `null` starting at
-    /// `start` (the `\` — it may sit after exotic whitespace inside the
-    /// cursor's run): port of the JS lexer's `scan_identifier_with_escapes`
-    /// (the JSON-relevant subset: the decoded identifier must be one of
-    /// those keywords).
+    /// `start` (the `\`).
     #[cold]
     fn parse_escaped_identifier(&mut self, start: usize, loc: Loc) -> PResult<Expr> {
         let cursor = self.cursor;
@@ -1554,8 +1333,6 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     return self.syntax_error().map(|_| unreachable!());
                 }
                 i += 2;
-                // Exactly four hex digits: JSON escapes have no `\u{...}`
-                // form (the decode pass rejects it too).
                 for _ in 0..4 {
                     if !run.get(i).is_some_and(|c| c.is_ascii_hexdigit()) {
                         return self.syntax_error().map(|_| unreachable!());
@@ -1598,8 +1375,7 @@ fn ident_len(t: &[u8]) -> usize {
         .max(1)
 }
 
-/// Append `cp` to `buf` as WTF-8 (1–4 bytes; surrogate code points get the
-/// 3-byte encoding the rest of the pipeline understands).
+/// Append `cp` to `buf` as WTF-8.
 #[inline]
 fn push_codepoint(buf: &mut Vec<u8>, cp: CodePoint) {
     if cp < 0 {
@@ -1610,10 +1386,8 @@ fn push_codepoint(buf: &mut Vec<u8>, cp: CodePoint) {
     buf.extend_from_slice(&tmp[..n]);
 }
 
-/// After a high-surrogate `\uXXXX`, consume an *immediately following*
-/// low-surrogate `\uXXXX` and return its value. The cursor is advanced only
-/// on a match; on `None` it is untouched and the caller re-reads the next
-/// codepoint normally.
+/// After a high-surrogate `\uXXXX`, consume an immediately following
+/// low-surrogate `\uXXXX` and return its value. Advances only on a match.
 fn read_trail_surrogate_escape(
     iterator: &strings::CodepointIterator<'_>,
     iter: &mut strings::Cursor,
@@ -1639,18 +1413,9 @@ fn read_trail_surrogate_escape(
     Some(value as u16)
 }
 
-/// Decode the escapes of a string body into WTF-8 bytes, plus the enclosing
-/// scan loop's check that runs before it: raw control characters are errors
-/// ("Unterminated string literal" for `\r`/`\n`, a plain syntax error
-/// otherwise). A `\uXXXX` high surrogate immediately followed by a `\uXXXX`
-/// low surrogate is one code point; an unpaired surrogate keeps its own
-/// 3-byte WTF-8 encoding (`JSON.parse` round-trips it as a lone code unit).
-/// Generic over the error reporter so the `.env` auto-quote path can reuse
-/// it without a full parser.
-/// `ALLOW_RAW_CONTROL`: a real string literal rejects raw control characters
-/// in its body; an implicitly-quoted `.env`/`--define` value (the whole
-/// input is the "string") passes them through — it can legitimately contain
-/// newlines and tabs.
+/// Decode the escapes of a string body into WTF-8 bytes (lone surrogates keep
+/// their 3-byte encoding). `ALLOW_RAW_CONTROL` (the `.env`/`--define`
+/// auto-quote path) passes raw control characters through instead of erroring.
 fn decode_string_escapes<
     's,
     const ALLOW_RAW_CONTROL: bool,
@@ -1676,7 +1441,7 @@ fn decode_string_escapes<
             push_codepoint(buf, c);
             continue;
         }
-        // Escape sequence. A trailing backslash is silently accepted.
+        // A trailing backslash is silently accepted.
         if !iterator.next(&mut iter) {
             return Ok(());
         }
@@ -1730,7 +1495,7 @@ fn decode_string_escapes<
 }
 
 /// Minimal [`LexerLog`] for paths that have no parser (the `.env` auto-quote
-/// string decoder). Errors point at the start of the source.
+/// string decoder).
 struct MiniLog<'a, 's> {
     log: &'a mut Log,
     source: &'s Source,
@@ -1756,10 +1521,8 @@ impl<'s> LexerLog<'s> for MiniLog<'_, 's> {
     }
 }
 
-/// Decode the body of an implicitly-quoted `.env`/`--define` value (the
-/// "auto quote" path): escape sequences are processed and the result is
-/// stored as a UTF-8 `E::String` in `bump`, exactly like a string literal
-/// the JSON entry points decode.
+/// Decode the body of an implicitly-quoted `.env`/`--define` value into a
+/// UTF-8 `E::String` in `bump`.
 pub(crate) fn decode_auto_quoted(
     source: &Source,
     log: &mut Log,

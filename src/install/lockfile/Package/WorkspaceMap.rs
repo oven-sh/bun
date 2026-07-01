@@ -87,10 +87,8 @@ pub(crate) enum NamesArray<'a> {
 }
 
 impl<'a> NamesArray<'a> {
-    /// `expr` must be an array in either representation (`Expr::is_array`).
-    /// `value_loc` is the array's own location: an immutable array reached
-    /// through a property lookup carries its key's, so callers recover it
-    /// (see `value_loc_of`).
+    /// `expr` must be an array in either representation (`Expr::is_array`);
+    /// `value_loc` is the array's own location.
     pub(crate) fn from_expr(expr: &'a js_ast::Expr, value_loc: bun_ast::Loc) -> Option<Self> {
         match &expr.data {
             js_ast::ExprData::EArray(arr) => Some(NamesArray::Mutable(arr.get())),
@@ -114,8 +112,7 @@ impl<'a> NamesArray<'a> {
         }
     }
 
-    /// Item `i`'s source location. Only diagnostics ask: the immutable form
-    /// re-scans the source for it.
+    /// Item `i`'s source location (cold: the immutable form re-scans the source).
     fn item_loc(&self, source: &bun_ast::Source, i: usize) -> bun_ast::Loc {
         match self {
             NamesArray::Mutable(arr) => arr.slice()[i].loc,
@@ -201,7 +198,6 @@ impl WorkspaceMap {
         // Boxed to avoid a large stack frame.
         let filepath_buf: &mut [u8] = &mut filepath_buf_os.0[..];
 
-        // Scratch arena for `item_str`'s mutable-tree arm.
         let scratch = Arena::new();
 
         for i in 0..item_count {

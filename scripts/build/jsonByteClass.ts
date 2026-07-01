@@ -1,26 +1,8 @@
 /**
- * Generates `${codegenDir}/json_byte_class.h` and `json_byte_class.rs` — the
- * byte classification used by BOTH producers of the JSON structural index:
- *
- *   - the Highway SIMD kernel (`src/jsc/bindings/highway_json.cpp`) consumes
- *     the two 16-byte nibble LUTs (`cls = lo[b & 0xF] & hi[b >> 4]`,
- *     simdjson's trick: one `TableLookupBytes` pair classifies 64 bytes),
- *   - the Rust scalar indexer (`src/parsers/json_index.rs`) consumes the
- *     derived 256-entry table (`JSON_BYTE_CLASS[b]`, the same expression
- *     evaluated per byte).
- *
- * The high-nibble rows 8..15 belong only to bytes >= 0x80 (no ASCII byte has
- * a high nibble above 7) and are all zero, so every non-ASCII byte is an
- * ordinary scalar-run byte. That matters for correctness: a multi-byte
- * UTF-8 whitespace codepoint between tokens (a BOM) must stay inside ONE
- * index run so stage 2 can decode it. And the two producers MUST agree byte
- * for byte: when the kernel bails out on a comment or a single quote, the
- * scalar restart swallows a *count* of already-delivered indices, and the
- * differential tests compare the two streams. Generating both sides from
- * this one definition makes a disagreement structurally impossible.
- *
- * Written at configure time like `buildOptionsRs.ts` — it is a constant
- * manifest, not a build edge.
+ * Generates `${codegenDir}/json_byte_class.h` (nibble LUTs for the Highway
+ * SIMD kernel) and `json_byte_class.rs` (the derived 256-entry table for the
+ * Rust scalar indexer). The two producers must agree byte for byte, so both
+ * artifacts come from this one definition. No byte >= 0x80 classifies.
  */
 
 import { mkdirSync } from "node:fs";
@@ -34,10 +16,8 @@ const WHITESPACE = 0x18; // space \t \n \r
 const ODDITY = 0x20; // / '   (comment / single-quoted string: kernel bails)
 const CONTROL = 0x40; // < 0x20
 
-// The nibble LUTs, derived from simdjson's structural/whitespace tables with
-// the oddity and control classes folded in. THE single source of truth.
-// Rows 8..15 of the high-nibble LUT (non-ASCII bytes) are zero on purpose;
-// see the module comment.
+// Derived from simdjson's structural/whitespace tables with the oddity and
+// control classes folded in.
 const LUT_LO = [0x50, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x60, 0x40, 0x48, 0x4c, 0x41, 0x42, 0x49, 0x40, 0x60];
 const LUT_HI = [0x48, 0x40, 0x32, 0x04, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
@@ -45,8 +25,6 @@ const classOf = (b: number): number => LUT_LO[b & 0xf] & LUT_HI[b >> 4];
 
 /** The classification must be exact for every ASCII byte. */
 function check() {
-  // The classes a byte belongs to (a byte can be in several: `\t` is both
-  // whitespace and a control character).
   const classesOf = (b: number): number[] => {
     const ch = String.fromCharCode(b);
     const classes: number[] = [];
@@ -60,7 +38,6 @@ function check() {
     const got = classOf(b);
     const classes = classesOf(b);
     const allowed = classes.reduce((acc, c) => acc | c, 0);
-    // At least one bit of every class the byte is in, and no foreign bits.
     const ok = classes.every(c => (got & c) !== 0) && (got & ~allowed) === 0;
     if (!ok) {
       throw new Error(
@@ -68,7 +45,7 @@ function check() {
       );
     }
   }
-  // No byte of a multi-byte UTF-8 sequence may classify: a BOM between two
+  // No byte >= 0x80 may classify: a multi-byte UTF-8 codepoint between two
   // tokens must remain a single scalar run for stage 2 to decode it.
   for (let b = 0x80; b < 0x100; b++) {
     if (classOf(b) !== 0) {
@@ -114,10 +91,8 @@ export function generateJsonByteClass(cfg: Config): { h: string; rs: string } {
     for (let b = row; b < row + 16; b++) cells.push(hex(classOf(b)));
     table.push(`    ${cells.join(", ")},`);
   }
-  // The scalar indexer needs only these two classes (quotes, `/` comments and
-  // control characters are handled by explicit byte matches before the table
-  // dispatch), so only these are emitted for Rust: every generated item must
-  // be live (`test/internal/dead-code-escapes.test.ts`).
+  // Only the classes the scalar indexer reads are emitted for Rust: every
+  // generated item must be live (`test/internal/dead-code-escapes.test.ts`).
   const rs = [
     ...banner("//"),
     `pub const CLASS_STRUCTURAL: u8 = ${hex(STRUCTURAL)};`,

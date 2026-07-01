@@ -1672,14 +1672,10 @@ pub fn init(
                     }
 
                     if let Some(prop) = json.as_property(b"workspaces") {
-                        // The lookup locates a value at its key; recover the
-                        // value's own location (the array's `[`), which the
-                        // rows need to locate items in diagnostics.
                         let value_loc =
                             crate::bun_json::property_value_loc(&json_source.contents, prop.loc)
                                 .unwrap_or(prop.loc);
-                        // `"workspaces"` is either the names array or
-                        // `{ "packages": [...] }`.
+                        // `"workspaces"` is either the names array or `{ "packages": [...] }`.
                         let names = match &prop.expr.data {
                             bun_ast::ExprData::EArrayJSON(arr) => Some(
                                 Package::WorkspaceMap::NamesArray::Immutable(arr.get(), value_loc),
@@ -1691,8 +1687,6 @@ pub fn init(
                                 .find(|row| row.key.slice() == b"packages")
                                 .and_then(|row| match &row.value {
                                     bun_ast::E::JsonValue::Array(arr) => {
-                                        // The row stores its key's location;
-                                        // the array's `[` locates its items.
                                         let packages_loc = crate::bun_json::property_value_loc(
                                             &json_source.contents,
                                             row.key_loc,

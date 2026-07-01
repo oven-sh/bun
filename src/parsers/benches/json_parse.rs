@@ -1,18 +1,11 @@
 //! Throughput benchmark for the JSON parser on a corpus of real package.json
-//! files and npm registry responses.
-//!
-//! Run via `scripts/bench-json-rust.sh [criterion args]` — it compiles the
-//! small native support archive (mimalloc, simdutf, the highway JSON kernel)
-//! from the repo's vendored sources and sets RUSTFLAGS to link it.
-//!
-//! Fixture directory: `BUN_JSON_BENCH_FIXTURES` (default `bench/json-corpus`),
-//! populated by `bench/json-corpus/fetch.sh`.
+//! files and npm registry responses (`bench/json-corpus/fetch.sh`).
+//! Run via `scripts/bench-json-rust.sh [criterion args]`.
 use bun_alloc::Arena as Bump;
 use bun_ast as js_ast;
 use bun_parsers::json;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
-// Native symbols normally provided by Bun's C++ side; see the module docs.
 #[path = "../native_test_shims.rs"]
 mod native_test_shims;
 
@@ -44,8 +37,7 @@ fn bench_json(c: &mut Criterion) {
         let contents = std::fs::read(path).unwrap();
         let name = path.file_stem().unwrap().to_string_lossy().into_owned();
         group.throughput(Throughput::Bytes(contents.len() as u64));
-        // Stage 1 alone: drive the streaming structural index to the end of
-        // the document (SIMD kernel + window refills), like stage 2 does.
+        // Stage 1 alone: drive the streaming structural index to the end.
         group.bench_function(BenchmarkId::new("stage1", &name), |b| {
             b.iter(|| {
                 let mut x = bun_parsers::json_index::StructuralIndex::new(&contents);
@@ -62,8 +54,7 @@ fn bench_json(c: &mut Criterion) {
                 std::hint::black_box((sum, i))
             })
         });
-        // Like parse_utf8 but with duplicate-key warnings off (what a registry
-        // manifest caller would pass): isolates the duplicate-detection cost.
+        // Like parse_utf8 but with duplicate-key warnings off.
         group.bench_function(BenchmarkId::new("parse_nowarn", &name), |b| {
             let mut bump = Bump::new();
             b.iter(|| {
@@ -80,12 +71,7 @@ fn bench_json(c: &mut Criterion) {
                 std::hint::black_box(&e);
             })
         });
-        // The row AST alone (`E::ObjectJSON`): what JSON-data consumers
-        // (registry manifests, `Bun.JSONC.parse`) get. Same options as
-        // parse_nowarn but without the materialize step. No arena: the
-        // document's `JsonTape` (returned in the result and dropped at the
-        // end of every iteration) owns everything the parse allocates, so
-        // this measures parse + free of the whole document.
+        // The row AST alone (`E::ObjectJSON`), without the materialize step.
         group.bench_function(BenchmarkId::new("parse_rows", &name), |b| {
             b.iter(|| {
                 let _store_scope = js_ast::StoreResetGuard::new();
@@ -96,13 +82,8 @@ fn bench_json(c: &mut Criterion) {
                 std::hint::black_box(&e);
             })
         });
-        // Like parse_nowarn but with a *retained* arena heap
-        // (`reset_retain_with_limit`) instead of a fresh `mi_heap_new` per
-        // parse. This mirrors classic-AST callers with a long-lived arena
-        // (the resolver's `JsonCache`, whose arena is never reset),
-        // isolating the parser-only delta on small documents from the flat
-        // ~5us mi_heap lifecycle. (The row AST never touches an arena, so it
-        // has no "warm" variant.)
+        // Like parse_nowarn but with a retained arena heap instead of a
+        // fresh `mi_heap_new` per parse.
         group.bench_function(BenchmarkId::new("parse_nowarn_warm", &name), |b| {
             let mut bump = Bump::new();
             b.iter(|| {
@@ -119,9 +100,7 @@ fn bench_json(c: &mut Criterion) {
                 std::hint::black_box(&e);
             })
         });
-        // The classic-output entry point (rows parsed, then materialized),
-        // as the remaining classic-AST CLI callers use it: thread-local AST
-        // stores reset per parse, fresh Log + Bump per parse.
+        // The classic-output entry point (rows parsed, then materialized).
         group.bench_function(BenchmarkId::new("parse_utf8", &name), |b| {
             let mut bump = Bump::new();
             b.iter(|| {
@@ -134,9 +113,7 @@ fn bench_json(c: &mut Criterion) {
             })
         });
     }
-    // The fixed per-parse cost every caller pays regardless of the parser:
-    // thread-local AST store reset + a fresh arena + a fresh Log, measured by
-    // parsing a 2-byte document.
+    // The fixed per-parse cost every caller pays regardless of the parser.
     group.throughput(Throughput::Elements(1));
     group.bench_function("per_parse_overhead/empty_object", |b| {
         let two = b"{}".to_vec();

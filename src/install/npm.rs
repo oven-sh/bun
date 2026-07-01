@@ -650,8 +650,7 @@ pub(crate) fn negatable_from_json<T: NegatableEnum>(expr: &JSON::Expr) -> Result
     Ok(this.combine())
 }
 
-/// `negatable_from_json` for the immutable JSON AST (`E::JsonValue`), used by the
-/// registry-manifest walker.
+/// `negatable_from_json` for the immutable JSON AST (`E::JsonValue`).
 pub(crate) fn negatable_from_json_value<T: NegatableEnum>(value: &JSON::E::JsonValue) -> T {
     let mut this = T::NONE.negatable();
     match value {
@@ -1989,11 +1988,8 @@ impl PackageManifest {
         // across calls (the AstAlloc state stays installed for the re-arm) and
         // bulk-frees via `reset_retain_with_limit` on the next call — see
         // `initialize_mini_store` in lib.rs for why.
-        // Registry manifests get no duplicate-key warnings: nothing ever
-        // reads them for this log, and they cost a measurable fraction of
-        // every manifest parse.
-        // `parsed` owns the document's row tape; `json` (and every `Expr`
-        // reached through it) borrows the tape and `source`.
+        // `parsed` owns the row tape `json` (and every `Expr` reached through
+        // it) borrows; it must outlive them.
         let parsed = match JSON::ParsedJson::parse_npm_manifest(&source, log) {
             Ok(j) => j,
             Err(_) => {
@@ -2773,9 +2769,8 @@ impl PackageManifest {
                                         string_builder.append::<ExternalString>(meta_key);
                                     version_extern_strings[values_base + i] =
                                         string_builder.append::<ExternalString>(b"*");
-                                    // Swap to the optional-peer
-                                    // prefix the rest of the loop
-                                    // body would have produced.
+                                    // Swap to the optional-peer prefix the rest
+                                    // of the loop body would have produced.
                                     if non_optional_peer_dependency_offset != i {
                                         all_extern_strings.swap(
                                             names_base + i,

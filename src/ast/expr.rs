@@ -189,25 +189,12 @@ impl Expr {
     }
     #[inline]
     pub fn is_string(&self) -> bool {
-        // immutable JSON leaves are never `Expr`s: a string inside an
-        // `EObjectJSON`/`EArrayJSON` only becomes an `Expr` (an
-        // `EString`) once materialized by `Expr::from_json_value`.
         matches!(self.data, Data::EString(_))
     }
 
     /// Materialize an immutable JSON leaf/container value as an `Expr`.
-    ///
-    /// Leaves become real nodes (`EString`/`ENumber`/`EBoolean`/`ENull`);
-    /// nested containers are already arena rows and are just re-wrapped as
-    /// `EObjectJSON`/`EArrayJSON`. A string allocates one `Store` node,
-    /// so this is meant for occasional field reads through the generic
-    /// `Expr` accessors (`get`, `as_array`, ...), not for hot iteration —
-    /// iterate `E::ObjectJSON::properties()` / `E::ArrayJSON::items()`
-    /// directly for that.
-    ///
-    /// `loc` is the best location the caller has: the JSON tape stores no
-    /// per-value `Loc`, only the property's key location and the container's
-    /// closing-token location.
+    /// A string leaf allocates one `Store` node per call, so iterate
+    /// `E::ObjectJSON::properties()` / `E::ArrayJSON::items()` on hot paths.
     pub fn from_json_value(value: &E::JsonValue, loc: Loc) -> Expr {
         match value {
             E::JsonValue::Null => Expr::init(E::Null, loc),
@@ -231,14 +218,9 @@ impl Expr {
         }
     }
 
-    /// Visit every `"key": value` property of an object expression in
-    /// source order, in either representation (the mutable `E::Object`
-    /// tree or `E::ObjectJSON`'s rows), as the decoded key bytes, the
-    /// key's location, and the value as an `Expr`. A row's value is
-    /// materialized per call (its `loc` is the key's — see
-    /// `bun_parsers::json::value_loc_of_property` for diagnostics);
-    /// non-string keys of a mutable tree are skipped. Does nothing for a
-    /// non-object expression.
+    /// Visit every `"key": value` property of an object expression in source
+    /// order, in either representation (`E::Object` or `E::ObjectJSON`).
+    /// Does nothing for a non-object expression.
     pub fn for_each_property(&self, mut f: impl FnMut(&[u8], Loc, Expr)) {
         let _: Result<(), core::convert::Infallible> =
             self.try_for_each_property(|key, loc, value| {
@@ -292,10 +274,6 @@ impl Expr {
     }
 
     /// Look up `name` among the properties of an object-literal expression.
-    ///
-    /// For `EObjectJSON` the found value is materialized as an `Expr`
-    /// (see [`Expr::from_json_value`]); the returned `loc` is the key's
-    /// location, which is also used as the materialized value's `loc`.
     pub fn as_property(&self, name: &[u8]) -> Option<Query> {
         match &self.data {
             Data::EObject(obj) => {
@@ -450,9 +428,6 @@ impl Expr {
                 }
                 Some(array.items.slice()[index as usize])
             }
-            // Immutable JSON containers: materialize the addressed value (see
-            // `Expr::from_json_value`). Items carry no `Loc`, so the
-            // container's `loc` / the key's `loc` is used.
             Data::EArrayJSON(array) => {
                 let items = array.get().items();
                 let item = items.get(index as usize)?;
@@ -569,8 +544,7 @@ impl Expr {
     /// Don't use this if you care about performance.
     ///
     /// Sets the value of a property, creating it if it doesn't exist.
-    /// `self` must be a (full) `EObject`: the immutable JSON containers are
-    /// read-only and cannot be mutated through this helper.
+    /// `self` must be an `EObject`; the immutable JSON containers are read-only.
     pub fn set(&mut self, _bump: &Bump, name: &[u8], value: Expr) -> Result<(), AllocError> {
         debug_assert!(matches!(self.data, Data::EObject(_)));
         let Data::EObject(obj) = &mut self.data else {
@@ -608,8 +582,7 @@ impl Expr {
     /// Don't use this if you care about performance.
     ///
     /// Sets the value of a property to a string, creating it if it doesn't exist.
-    /// `expr` must be a (full) `EObject`: the immutable JSON containers are
-    /// read-only and cannot be mutated through this helper.
+    /// `expr` must be an `EObject`; the immutable JSON containers are read-only.
     pub fn set_string(
         expr: &mut Expr,
         _bump: &Bump,
@@ -724,9 +697,6 @@ impl Expr {
         q.expr.as_array()
     }
 
-    // No `EObjectJSON`/`EArrayJSON` arms: rope queries exist only for the
-    // TOML/ini object *builders*, which construct mutable full `EObject`
-    // trees. The read-only JSON immutable containers can never appear here.
     pub fn get_rope<'a>(&self, rope: &'a E::Rope) -> Option<E::RopeQuery<'a>> {
         if let Some(existing) = self.get(&rope.head.data.as_e_string().unwrap().data) {
             match &existing.data {
@@ -776,9 +746,7 @@ pub enum ArrayIterator {
         array: StoreRef<E::Array>,
         index: u32,
     },
-    /// immutable JSON array: each `next()` materializes one item as an `Expr`
-    /// (see [`Expr::from_json_value`]), so leaf items each allocate a node.
-    /// `loc` is the array expression's `loc` (items carry none of their own).
+    /// Immutable JSON array: each `next()` materializes one item as an `Expr`.
     Json {
         array: StoreRef<E::ArrayJSON>,
         index: u32,
@@ -1814,8 +1782,7 @@ pub enum Data {
 
     EJsxElement(StoreRef<E::JSXElement>),
     EObject(StoreRef<E::Object>),
-    // JSON-only compact containers (see `E::ObjectJSON`): produced solely
-    // by the JSON parser for opted-in entry points, never by the JS parser.
+    // JSON-only compact containers (see `E::ObjectJSON`).
     EObjectJSON(StoreRef<E::ObjectJSON>),
     EArrayJSON(StoreRef<E::ArrayJSON>),
     ESpread(StoreRef<E::Spread>),
@@ -2375,9 +2342,7 @@ impl Data {
     }
 }
 
-/// One immutable-JSON row value, deep-cloned into `bump` as a classic node
-/// (strings copy their bytes out of the tape/source; nested containers
-/// recurse through `Data::deep_clone_no_detach`).
+/// One immutable-JSON row value, deep-cloned into `bump` as a classic node.
 fn json_value_deep_clone(
     value: &E::JsonValue,
     loc: Loc,
@@ -2396,7 +2361,6 @@ fn json_value_deep_clone(
             loc,
             data: Data::EArrayJSON(*a).deep_clone_no_detach(bump)?,
         },
-        // Inline payloads (numbers, booleans, null): nothing to allocate.
         _ => Expr::from_json_value(value, loc),
     })
 }
@@ -2511,9 +2475,7 @@ impl Data {
                 Ok(Data::EArray(StoreRef::from_bump(item)))
             }
             // The immutable JSON containers deep-clone into the classic
-            // mutable tree: a deep clone is asked for precisely so the
-            // result outlives (and can be edited independently of) the
-            // parse that owns the row tape, which a row node cannot.
+            // mutable tree so the result outlives the parse's row tape.
             Data::EObjectJSON(el) => {
                 let el = el.get();
                 let rows = el.properties();

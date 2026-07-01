@@ -1,56 +1,11 @@
 // SIMD structural indexer for JSON (simdjson-style "stage 1"), runtime-
-// dispatched via Google Highway (same mechanism as highway_strings.cpp /
-// highway_sourcemap.cpp). Consumed by `bun_parsers::json_index` (Rust), which
-// also owns the scalar fallback for documents this kernel rejects.
+// dispatched via Google Highway. Per 64-byte block: nibble-LUT byte
+// classification, odd-backslash-run escape resolution, prefix-XOR in-string
+// mask, then CompressStore of the emit bitmask into indices.
 //
-// One pass over the document emits the byte offset of every
-//
-//   - `{` `}` `[` `]` `:` `,` outside of strings
-//   - opening AND closing `"` of every string
-//   - first byte of every other run of non-whitespace bytes outside strings
-//     (numbers, true/false/null, garbage)
-//
-// in document order into `out` (u32 each), followed by two sentinel entries
-// equal to `len`. Stage 2 parses by walking these indices and never re-scans
-// string bodies: their bounds are consecutive indices.
-//
-// Per 64-byte block:
-//   1. classify bytes with two nibble LUTs (one TableLookupBytes pair) into
-//      structural / whitespace / oddity / control classes, plus Eq for
-//      backslash and quote                                            [SIMD]
-//   2. resolve escaped quotes with the odd-length-backslash-run trick
-//   3. compute the in-string mask with a prefix-XOR over unescaped quotes
-//   4. expand the emit bitmask into indices with CompressStore (branchless;
-//      structural density of minified JSON is ~20%, so a per-bit loop is the
-//      bottleneck if you let it be one)
-//
-// It also fills `out_dirty` (one bit per 64-byte block: "a backslash or a
-// control character inside a string lives here", assigned, never OR'd, so the
-// caller does not need to zero the buffer) and returns document-global flags.
-//
-// Two entry points share the implementation:
-//   - `highway_json_index`: whole document in one call (appends two sentinel
-//     entries equal to `len` after the indices).
-//   - `highway_json_index_chunk`: resumable. The caller feeds consecutive
-//     chunks whose lengths are multiples of 4096 (except the last) and
-//     threads `state[3]` (escape carry, in-string carry, scalar-run carry)
-//     through the calls; emitted indices are absolute (chunk base + offset).
-//     This bounds the per-call output buffer for huge documents: a
-//     worst-case whole-document index buffer is 4 bytes per input byte,
-//     which for the largest npm manifests is a >100 MB allocation that
-//     costs more in page faults than the entire parse.
-//
-// Comments and single-quoted strings (both accepted by Bun's JSON parser)
-// cannot be folded into the quote-parity math: a `"` inside `// comment`
-// poisons the in-string mask. The first `/` or `'` seen outside a string sets
-// BUN_JSON_IDX_ODDITY and the kernel returns immediately; the Rust side
-// re-indexes with its scalar indexer. Valid JSON documents contain `/` and
-// `'` only inside strings, so the bail-out never costs the hot path anything.
-//
-// The two-nibble classification is exact for ASCII and classifies every byte
-// >= 0x80 as an ordinary scalar-run byte (the generated high-nibble LUT is
-// zero for nibbles 8..15), so multi-byte UTF-8 between tokens (exotic
-// whitespace, a BOM) stays inside one index run for stage 2 to decode.
+// It handles plain JSON only: the first `/` or `'` seen outside a string
+// sets BUN_JSON_IDX_ODDITY and the kernel returns immediately; the Rust side
+// (`bun_parsers::json_index`) re-indexes with its scalar indexer.
 
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "highway_json.cpp"
@@ -78,8 +33,6 @@ using D8 = hn::CappedTag<uint8_t, 64>;
 
 static HWY_INLINE uint64_t PrefixXor(uint64_t x)
 {
-    // Carryless multiply by ~0 == prefix XOR; the shift ladder is portable
-    // and fast enough (the in-string chain is not the bottleneck).
     x ^= x << 1;
     x ^= x << 2;
     x ^= x << 4;
@@ -88,12 +41,6 @@ static HWY_INLINE uint64_t PrefixXor(uint64_t x)
     x ^= x << 32;
     return x;
 }
-
-// Class bits produced by the two-nibble lookup (cls = lo[b & 0xf] & hi[b >> 4]):
-//   structural { } [ ] : ,    whitespace sp \t \n \r    oddity / '    control
-// The LUTs (and the 256-entry table the Rust scalar indexer uses) are
-// generated from one definition — scripts/build/jsonByteClass.ts — so the
-// two producers can never disagree on a byte's class.
 
 // `base_offset` is added to every emitted index. `inout_state[0..3]` carries
 // the escape / in-string / scalar-run state across chunks (zeros for the
@@ -190,8 +137,7 @@ size_t JsonIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, size_t base_
             dirty_acc = 0;
         }
 
-        // A '/' or '\'' outside a double-quoted string: comments / single
-        // quotes are in play and the quote parity above can't be trusted.
+        // A '/' or '\'' outside a string: the quote parity can't be trusted.
         if (m_odd & ~in_str & valid) {
             *out_flags = flags | BUN_JSON_IDX_ODDITY;
             return 0;
@@ -204,7 +150,7 @@ size_t JsonIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, size_t base_
         prev_scalar = scalar >> 63;
         const uint64_t emit = (op_out | rq | scalar_start) & valid;
 
-        // --- flatten: branchless CompressStore of iota+base, L bits at a time ---
+        // --- flatten: CompressStore of iota+base, L bits at a time ---
         const uint32_t base = (uint32_t)(base_offset + pos);
         for (size_t k = 0; k < 64; k += L) {
             uint64_t slice = (emit >> k) & (L >= 64 ? ~(uint64_t)0 : (((uint64_t)1 << L) - 1));
@@ -242,7 +188,7 @@ HWY_AFTER_NAMESPACE();
 namespace bun {
 HWY_EXPORT(JsonIndexImpl);
 
-// Resumable form: see the header comment. Sentinels are the caller's job.
+// Resumable form. Sentinels are the caller's job.
 extern "C" size_t highway_json_index_chunk(const uint8_t* input, size_t len, size_t base_offset,
     uint32_t* out_indices, uint64_t* out_dirty, uint64_t* inout_state, uint32_t* out_flags)
 {

@@ -1,15 +1,5 @@
-/**
- * Deterministic, seeded differential fuzz of Bun's JSON parser (via the public
- * `Bun.JSONC.parse` API) against JavaScriptCore's `JSON.parse`.
- *
- * Every failure message embeds the seed, the iteration index, and the offending
- * input as a `JSON.stringify`'d string so it can be replayed exactly:
- *
- *   BUN_JSON_FUZZ_SEED=<seed> bun bd test test/js/bun/jsonc/json-differential-fuzz.test.ts
- *
- * For a longer soak, raise BUN_JSON_FUZZ_ITERS (and optionally vary the seed).
- * No Math.random / Date.now is used anywhere — only the seeded PRNG below.
- */
+// Seeded differential fuzz of Bun.JSONC.parse against JSON.parse; replay a
+// failure with BUN_JSON_FUZZ_SEED=<seed> (and BUN_JSON_FUZZ_ITERS for a soak).
 import { expect, test } from "bun:test";
 
 const DEFAULT_SEED = 0x6a736f6e; // "json"
@@ -22,16 +12,11 @@ function envIters(name: string, fallback: number): number {
   return n > 0 ? n : fallback;
 }
 
-// Defaults sized so each test stays well under bun:test's 5s default timeout
-// in a debug build (the generated-document test is ~4ms/iteration there).
-// Raise BUN_JSON_FUZZ_ITERS for a longer soak.
+// Sized to stay under bun:test's 5s default timeout in a debug build.
 const DOC_ITERS = envIters("BUN_JSON_FUZZ_ITERS", 400);
 const MUTATION_ITERS = envIters("BUN_JSON_FUZZ_ITERS", 1500);
 
-// ---------------------------------------------------------------------------
-// Deterministic PRNG (mulberry32)
-// ---------------------------------------------------------------------------
-
+// Deterministic PRNG (mulberry32).
 class Rng {
   private a: number;
   constructor(seed: number) {
@@ -59,18 +44,10 @@ class Rng {
   }
 }
 
-// ---------------------------------------------------------------------------
-// JSON text generator. Emits a flat token list so oracle 3 can re-join the same
-// document with JSONC decorations at token boundaries.
-// ---------------------------------------------------------------------------
-
-// Raw characters that are legal unescaped inside a JSON string (no `"`, no `\`,
-// no control characters).
+// Generator emits a flat token list so the decorated oracle can re-join the
+// same document with JSONC decorations at token boundaries.
 const PLAIN_STRING_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _-./:'<>!@#$%^&*()=~|;?";
-// Source-text escape sequences (each entry is the literal characters that appear
-// in the JSON document, e.g. a backslash followed by `n`).
 const STRING_ESCAPES = ["\\n", "\\t", "\\r", "\\b", "\\f", "\\\\", '\\"', "\\/", "\\u0000", "\\u001f", "\\uffff"];
-// Raw non-ASCII content, including astral characters encoded as real surrogate pairs.
 const RAW_NON_ASCII = ["é", "ß", "ÿ", "日", "中文", "Ω≈ç√", "ࠀ", "🚀", "😀", "𝟘"];
 
 function hex4(n: number): string {
@@ -85,7 +62,6 @@ function genStringToken(rng: Rng): string {
       case 0:
       case 1:
       case 2: {
-        // a short run of plain ASCII
         const n = rng.range(1, 6);
         for (let j = 0; j < n; j++) body += PLAIN_STRING_CHARS[rng.int(PLAIN_STRING_CHARS.length)];
         break;
@@ -94,11 +70,9 @@ function genStringToken(rng: Rng): string {
         body += rng.pick(STRING_ESCAPES);
         break;
       case 4:
-        // arbitrary \uXXXX (may itself be a surrogate code unit)
         body += "\\u" + hex4(rng.int(0x10000));
         break;
       case 5:
-        // lone surrogates and a well-formed escaped surrogate pair
         body += rng.pick(["\\uD800", "\\udfff", "\\uDBFF", "\\uDC00", "\\uD83D\\uDE00"]);
         break;
       case 6:
@@ -128,14 +102,13 @@ function genNumberToken(rng: Rng): string {
         "-123456789012345678901234567890",
       ]);
     case 3: {
-      // 17 significant digits, the round-trip boundary for doubles
+      // 17 significant digits = the round-trip boundary for doubles
       let s = String(rng.range(1, 9));
       s += ".";
       for (let i = 0; i < 16; i++) s += String(rng.int(10));
       return (rng.chance(0.5) ? "-" : "") + s;
     }
     case 4: {
-      // random mantissa with a random (possibly extreme) decimal exponent
       let s = String(rng.range(1, 9));
       const frac = rng.int(18);
       if (frac > 0) {
@@ -148,7 +121,6 @@ function genNumberToken(rng: Rng): string {
       return (rng.chance(0.5) ? "-" : "") + s;
     }
     case 5:
-      // overflow / underflow / subnormal boundaries
       return rng.pick([
         "1e400",
         "-1e400",
@@ -159,7 +131,6 @@ function genNumberToken(rng: Rng): string {
         "1.7976931348623159e308",
       ]);
     case 6: {
-      // long fraction with no exponent
       let s = "0.";
       const n = rng.range(1, 32);
       for (let i = 0; i < n; i++) s += String(rng.int(10));
@@ -182,13 +153,12 @@ function genValueTokens(rng: Rng, out: string[], depth: number, budget: { n: num
   const allowContainer = depth > 0 && budget.n > 0;
   const kind = allowContainer ? rng.int(10) : 4 + rng.int(6);
   if (kind <= 1) {
-    // object
     out.push("{");
     const n = rng.int(6);
     const keys: string[] = [];
     for (let i = 0; i < n; i++) {
       if (i > 0) out.push(",");
-      // sometimes reuse an earlier key token => duplicate keys
+      // sometimes reuse an earlier key token so duplicate keys are covered
       const key = keys.length > 0 && rng.chance(0.15) ? rng.pick(keys) : genKeyToken(rng);
       keys.push(key);
       out.push(key, ":");
@@ -196,7 +166,6 @@ function genValueTokens(rng: Rng, out: string[], depth: number, budget: { n: num
     }
     out.push("}");
   } else if (kind <= 3) {
-    // array
     out.push("[");
     const n = rng.int(6);
     for (let i = 0; i < n; i++) {
@@ -232,17 +201,10 @@ function joinTokens(tokens: string[], rng: Rng): string {
   return s;
 }
 
-// ---------------------------------------------------------------------------
-// Oracle 3: JSONC decoration (comments, trailing commas, single quotes)
-// ---------------------------------------------------------------------------
-
-// Picked whole (never indexed by UTF-16 code unit) so the emoji's surrogate
-// pair stays intact.
 const COMMENT_FILLER = [..."abc XYZ 09 *,:[]{}\"'\\ é true null e+10 -", "🚀", "日本"];
 
 function genComment(rng: Rng, atEof: boolean): string {
   if (rng.chance(0.5)) {
-    // block comment, possibly spanning lines, never containing "*/"
     let body = "";
     const n = rng.int(12);
     for (let i = 0; i < n; i++) body += rng.chance(0.15) ? "\n" : rng.pick(COMMENT_FILLER);
@@ -255,28 +217,16 @@ function genComment(rng: Rng, atEof: boolean): string {
   return "//" + body + (atEof && rng.chance(0.5) ? "" : "\n");
 }
 
-/**
- * Swaps a JSON string token's delimiters to single quotes. Only used for bodies
- * with no raw `'` (which would need the `\'` escape — not part of the JSON
- * escape set, so JSONC implementations disagree on it). Every escape that can
- * appear in the body (`\"`, `\n`, `\uXXXX`, ...) is also valid single-quoted.
- */
+/** Only called for bodies with no raw `'` (the `\'` escape is not JSON). */
 function toSingleQuoted(token: string): string {
   return "'" + token.slice(1, -1) + "'";
 }
 
-/**
- * Re-serializes `tokens` (a valid JSON document) using JSONC-only syntax:
- * comments at random token boundaries (including immediately after scalars and
- * at EOF), trailing commas before `}` / `]`, and single-quoted strings. The
- * decorated text must parse to the same value as the original.
- */
+/** Re-serializes a valid JSON token stream with JSONC-only decorations that must not change its value. */
 function decorate(tokens: string[], rng: Rng): string {
   let s = "";
   const gap = (atEof: boolean) => {
-    // Decide every piece up front: a `//` comment may only omit its terminating
-    // newline when it is the very last thing emitted, otherwise whatever
-    // follows it (whitespace, another comment) would be swallowed into it.
+    // A `//` comment may only omit its newline when it is the last thing emitted.
     const c1 = rng.chance(0.25);
     const ws = rng.chance(0.4);
     const c2 = rng.chance(0.1);
@@ -290,7 +240,6 @@ function decorate(tokens: string[], rng: Rng): string {
   for (let i = 0; i < tokens.length; i++) {
     let tok = tokens[i];
     const prev = i > 0 ? tokens[i - 1] : "";
-    // trailing comma: previous token ends a value and this token closes a container
     if ((tok === "}" || tok === "]") && i > 0 && prev !== "{" && prev !== "[" && rng.chance(0.4)) {
       s += "," + gap(false);
     }
@@ -303,10 +252,6 @@ function decorate(tokens: string[], rng: Rng): string {
   }
   return s;
 }
-
-// ---------------------------------------------------------------------------
-// Mutator
-// ---------------------------------------------------------------------------
 
 const MUTATION_ALPHABET = `{}[]",:0123456789eE.+-\\/ \n\r\ttruefalsnu'`;
 
@@ -324,35 +269,24 @@ function mutate(text: string, rng: Rng): string {
     }
     const pos = rng.int(s.length);
     switch (rng.int(3)) {
-      case 0: // delete
+      case 0:
         s = s.slice(0, pos) + s.slice(pos + 1);
         break;
-      case 1: // insert
+      case 1:
         s = s.slice(0, pos) + randChar(rng) + s.slice(pos);
         break;
-      default: // replace
+      default:
         s = s.slice(0, pos) + randChar(rng) + s.slice(pos + 1);
         break;
     }
   }
-  // Splicing at arbitrary UTF-16 indices can split a surrogate pair from the
-  // base document into raw unpaired surrogates in the *source text*. Those are
-  // out of scope: the JS-string -> UTF-8 API boundary replaces them with U+FFFD
-  // (identically in every Bun release, same as TextEncoder), so JSON.parse and
-  // Bun.JSONC.parse necessarily disagree on them. Escaped lone surrogates
-  // (`\uD800` as 6 ASCII chars) are unaffected and still fuzzed.
+  // Raw unpaired surrogates in the source text become U+FFFD at the JS-string
+  // -> UTF-8 API boundary, so JSON.parse and Bun.JSONC.parse must disagree.
   return s.isWellFormed() ? s : s.toWellFormed();
 }
 
-// ---------------------------------------------------------------------------
-// Recursive comparator. Returns `null` on equality or a human-readable
-// description of the first mismatch. Distinguishes -0 from 0 (Object.is),
-// compares strings by UTF-16 code units (`===` / Object.is — lone surrogates
-// included), and compares own-key order (Object.keys), reading values through
-// Object.getOwnPropertyDescriptor so an own "__proto__" data property is
-// compared as a plain property instead of walking the prototype chain.
-// ---------------------------------------------------------------------------
-
+// Comparator: distinguishes -0, compares own-key order, and reads values via
+// getOwnPropertyDescriptor so an own "__proto__" data property is comparable.
 function show(v: unknown): string {
   if (typeof v === "number") return Object.is(v, -0) ? "-0" : String(v);
   if (typeof v === "string") return JSON.stringify(v);
@@ -415,11 +349,6 @@ function reproInfo(iteration: number, text: string): string {
   return `seed=${SEED} iteration=${iteration} input=${JSON.stringify(text)}`;
 }
 
-// ---------------------------------------------------------------------------
-// Oracle 1 + Oracle 3: every generated document is valid JSON; Bun.JSONC.parse
-// must agree with JSON.parse exactly, with and without JSONC decorations.
-// ---------------------------------------------------------------------------
-
 test(`differential fuzz: generated JSON and JSONC decorations agree with JSON.parse (seed=${SEED}, iters=${DOC_ITERS})`, () => {
   const rng = new Rng(SEED);
   let maxTokens = 0;
@@ -432,7 +361,6 @@ test(`differential fuzz: generated JSON and JSONC decorations agree with JSON.pa
     try {
       jsc = JSON.parse(text);
     } catch (e) {
-      // The generator only emits strict JSON; this is a bug in the test itself.
       throw new Error(`generator emitted text JSON.parse rejects (${e}). ${reproInfo(i, text)}`);
     }
 
@@ -447,8 +375,7 @@ test(`differential fuzz: generated JSON and JSONC decorations agree with JSON.pa
       throw new Error(`Bun.JSONC.parse disagrees with JSON.parse: ${diff}. ${reproInfo(i, text)}`);
     }
 
-    // Oracle 3: the same token stream decorated with JSONC-only syntax must
-    // still parse to the same value as the undecorated original.
+    // The JSONC-decorated form must parse to the same value as the undecorated original.
     const decorated = decorate(tokens, rng);
     let bunDecorated: unknown;
     try {
@@ -468,27 +395,16 @@ test(`differential fuzz: generated JSON and JSONC decorations agree with JSON.pa
     }
   }
   console.log(`json-differential-fuzz: ${DOC_ITERS} generated docs OK (seed=${SEED}, largest doc=${maxTokens} tokens)`);
-  // The generator must actually be producing documents.
   expect(maxTokens).toBeGreaterThan(1);
 });
 
-// ---------------------------------------------------------------------------
-// Oracle 2: mutate valid documents. JSONC accepts a superset of JSON, so
-// whenever JSON.parse accepts the mutant, Bun.JSONC.parse must accept it and
-// produce the exact same value. When JSON.parse rejects it, Bun.JSONC.parse may
-// reject it too or accept it (comments / trailing commas / etc.) — it just must
-// not crash, and an accepted value must be re-serializable.
-// ---------------------------------------------------------------------------
-
 test(`differential fuzz: mutated documents (seed=${SEED}, iters=${MUTATION_ITERS})`, () => {
-  // Decorrelate from the first test's stream while staying derived from SEED.
   const rng = new Rng((SEED ^ 0x9e3779b9) >>> 0);
   let base = "";
   let jscAccepted = 0;
   let bunAccepted = 0;
   let bothAccepted = 0;
   for (let i = 0; i < MUTATION_ITERS; i++) {
-    // A fresh base document every few iterations; several mutants per base.
     if (i % 4 === 0) base = joinTokens(genDocTokens(rng), rng);
     const text = mutate(base, rng);
 
@@ -515,7 +431,7 @@ test(`differential fuzz: mutated documents (seed=${SEED}, iters=${MUTATION_ITERS
     if (jscOk && bunOk) bothAccepted++;
 
     if (jscOk) {
-      // JSONC is a superset of JSON: this direction must always hold.
+      // JSONC is a superset of JSON: any mutant JSON.parse accepts, Bun.JSONC.parse must accept and agree on.
       if (!bunOk) {
         throw new Error(
           `mutant accepted by JSON.parse but rejected by Bun.JSONC.parse (${bunErr}). ${reproInfo(i, text)}`,
@@ -526,8 +442,6 @@ test(`differential fuzz: mutated documents (seed=${SEED}, iters=${MUTATION_ITERS
         throw new Error(`mutant parsed differently: ${diff}. ${reproInfo(i, text)}`);
       }
     } else if (bunOk) {
-      // Looser-than-JSON acceptance is fine; the value must at least be a sane,
-      // re-serializable JS value (and parsing must not have crashed the process).
       try {
         JSON.stringify(bun);
       } catch (e) {
@@ -536,8 +450,6 @@ test(`differential fuzz: mutated documents (seed=${SEED}, iters=${MUTATION_ITERS
         );
       }
     } else if (bunErr === null || bunErr === undefined) {
-      // Both rejected it: fine, as long as the rejection is a real thrown value
-      // (Bun.JSONC.parse historically throws BuildMessage, not an Error subclass).
       throw new Error(`Bun.JSONC.parse threw ${show(bunErr)} on a mutant. ${reproInfo(i, text)}`);
     }
   }
@@ -545,18 +457,11 @@ test(`differential fuzz: mutated documents (seed=${SEED}, iters=${MUTATION_ITERS
     `json-differential-fuzz: ${MUTATION_ITERS} mutants (seed=${SEED}): ` +
       `JSON.parse accepted ${jscAccepted}, Bun.JSONC.parse accepted ${bunAccepted}, both accepted ${bothAccepted}`,
   );
-  // Sanity: the mutator must produce a healthy mix of valid and invalid inputs,
-  // otherwise oracle 2 is vacuous.
   expect(jscAccepted).toBeGreaterThan(0);
   expect(jscAccepted).toBeLessThan(MUTATION_ITERS);
-  // Superset invariant, restated over the whole run.
   expect(bunAccepted).toBeGreaterThanOrEqual(jscAccepted);
   expect(bothAccepted).toBe(jscAccepted);
 });
-
-// ---------------------------------------------------------------------------
-// Targeted, non-random checks for the trickiest oracles above.
-// ---------------------------------------------------------------------------
 
 test("__proto__ key becomes an own data property and never pollutes Object.prototype", () => {
   const text = '{"__proto__":{"polluted":1},"a":2}';
@@ -576,8 +481,7 @@ test("lone surrogates from \\uXXXX escapes are preserved code-unit-for-code-unit
   const jsc = JSON.parse(text) as string[];
   const bun = Bun.JSONC.parse(text) as string[];
   expect(deepCompare(jsc, bun, "$")).toBeNull();
-  // Spot-check the actual code units so this cannot pass via lossy replacement
-  // on both sides at once.
+  // Exact code units: cannot pass via lossy replacement on both sides at once.
   expect(Array.from(bun[0], c => c.charCodeAt(0))).toEqual([0x61, 0xd800, 0x62]);
   expect(bun[2]).toBe("\u{1F600}");
 });

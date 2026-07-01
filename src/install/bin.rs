@@ -208,8 +208,6 @@ impl Bin {
         buf: &mut bun_semver::string::Buf,
         extern_strings: &mut Vec<ExternalString>,
     ) -> Result<Bin, AllocError> {
-        // A `"bin"` object in either JSON AST representation: each row as
-        // `(name, path)`, `None` for a non-string.
         match &bin_expr.data {
             ExprData::EObject(o) => {
                 let props = o.properties.slice();
@@ -281,9 +279,7 @@ impl Bin {
                         (current_len + num_props).saturating_sub(extern_strings.len()),
                     )
                     .map_err(|_| AllocError)?;
-                // Push incrementally so a bailout leaves only the slots
-                // actually written. The returned `Bin` is `Tag::None` on
-                // bailout so the slots are never indexed either way.
+                // Push incrementally so a bailout leaves only the slots actually written.
                 let mut i: usize = 0;
                 for (key_str, value_str) in pairs {
                     let (Some(key_str), Some(value_str)) = (key_str, value_str) else {

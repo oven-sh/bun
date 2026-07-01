@@ -82,9 +82,8 @@ pub(crate) fn get_candidate_package_patterns<'a>(
             // `defer allocator.free(json_source.contents)` — deleted; `json_source` owns its
             // contents and drops at end of scope.
 
-            // `parsed` owns the row tape everything below borrows; it (and
-            // `json_source`) must stay alive until the patterns are copied
-            // into `out_patterns`.
+            // `parsed` owns the row tape everything below borrows; it must stay
+            // alive until the patterns are copied into `out_patterns`.
             let parsed = json::ParsedJson::parse_package_json(&json_source, log)?;
             let json = parsed.root;
 

@@ -12,10 +12,8 @@ use bun_install::{Dependency, Lockfile, PackageManager};
 // `crate::bun_json`). Importing `bun_js_parser` here would force a higher-tier
 // dep and produce distinct-`Expr`-type errors at every call site, so use the
 // T2 type directly.
-// The `expr` handed to `parse_count` / `parse_append` may be either the
-// classic `EObject` tree (yarn/pnpm import, cached workspace package.json)
-// or the immutable `EObjectJSON` document produced by
-// `ParsedJson::parse_package_json`; both are handled below.
+// The `expr` handed to `parse_count` / `parse_append` may be the classic
+// `EObject` tree or the immutable `EObjectJSON` document; both are handled.
 use crate::bun_json::{E, Expr, ExprData, value_loc_of_property};
 use bun_ast::{Log, Source};
 use bun_semver::String;
@@ -129,9 +127,8 @@ impl CatalogMap {
         }
     }
 
-    /// Count one catalog group's `"name": "version"` rows into `builder`
-    /// (the `"catalog"` object or one entry of `"catalogs"`), in either
-    /// `Expr` representation. Does nothing when the group is not an object.
+    /// Count one catalog group's `"name": "version"` rows into `builder`.
+    /// Does nothing when the group is not an object.
     fn count_catalog_group(group: &Expr, builder: &mut StringBuilder) {
         group.for_each_property(|dep_name, _, version| {
             builder.count(dep_name);
@@ -171,10 +168,8 @@ impl CatalogMap {
         Ok(found_any)
     }
 
-    /// Append one catalog group's `"name": "version"` rows into `group` (the
-    /// `"catalog"` object or one entry of `"catalogs"`), in either `Expr`
-    /// representation. Does nothing when the group is not an object.
-    /// Per-value locations are recovered on the (cold) diagnostic paths.
+    /// Append one catalog group's `"name": "version"` rows into `group`.
+    /// Does nothing when the group is not an object.
     fn parse_append_group(
         group: &mut Map,
         pm: &mut PackageManager,

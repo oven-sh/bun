@@ -40,8 +40,7 @@ test("import anything.jsonc as json", async () => {
 });
 
 test("imported JSON strings match JSON.parse exactly (escapes, lone surrogates, non-ASCII)", async () => {
-  // Lone surrogate escapes must round-trip as their code unit (JSON.parse
-  // semantics), never U+FFFD; literal non-ASCII stays byte-exact.
+  // Lone surrogate escapes must round-trip as their code unit, never U+FFFD.
   const json = `{"lone":"\\ud800","pair":"\\ud83d\\ude00","mix":"a\\udfffz","e":"caf\\u00e9\\ud800x","lit":"é🚀","esc\\nkey":"a\\n\\"b\\""}`;
   const dir = tempDirWithFiles("jsonc", {
     "weird.json": json,

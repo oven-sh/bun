@@ -1585,14 +1585,10 @@ impl<T> PkgMap<T> {
 
 // const PkgMap = struct {};
 
-/// Property rows of an immutable-AST object `Expr` (callers have already
-/// established `is_object()`, and the lockfile parse only ever sees the
-/// immutable containers).
+/// Property rows of an immutable-AST object `Expr`.
 fn object_rows(expr: &Expr) -> &[JSON::E::PropertyJSON] {
     match &expr.data {
         ExprData::EObjectJSON(o) => o.get().properties(),
-        // The lockfile root always comes from the immutable entry point; a
-        // classic tree here would silently parse as an empty lockfile.
         _ => {
             debug_assert!(!expr.is_object(), "object_rows on a mutable object");
             &[]
@@ -1600,7 +1596,7 @@ fn object_rows(expr: &Expr) -> &[JSON::E::PropertyJSON] {
     }
 }
 
-/// Items of an immutable-AST array `Expr`. See [`object_rows`].
+/// Items of an immutable-AST array `Expr`.
 fn array_items(expr: &Expr) -> &[JSON::E::JsonValue] {
     match &expr.data {
         ExprData::EArrayJSON(a) => a.get().items(),
@@ -1608,8 +1604,8 @@ fn array_items(expr: &Expr) -> &[JSON::E::JsonValue] {
     }
 }
 
-/// Location of item `index` of the array that is the value of the property
-/// whose key starts at `key_loc`. Cold path, see [`value_loc_of`].
+/// Cold path: location of item `index` of the array that is the value of the
+/// property whose key starts at `key_loc`.
 fn item_loc(source: &bun_ast::Source, key_loc: bun_ast::Loc, index: usize) -> bun_ast::Loc {
     let array_loc = value_loc_of(source, key_loc);
     JSON::array_item_loc(&source.contents, array_loc, index).unwrap_or(array_loc)
@@ -1713,7 +1709,6 @@ pub fn parse_into_binary_lockfile(
                 );
                 return Err(ParseError::InvalidTrustedDependenciesSet);
             };
-            // Copied: the set outlives the parsed document.
             let name: Box<[u8]> = Box::from(name_str);
             let name_hash: TruncatedPackageNameHash =
                 StringBuilder::string_hash(&name) as TruncatedPackageNameHash;
@@ -2007,8 +2002,6 @@ pub fn parse_into_binary_lockfile(
             );
             return Err(ParseError::InvalidWorkspaceObject);
         }
-        // The workspace object: `Expr::get` and `parse_append_dependencies`
-        // accept it as an `Expr`; its `loc` is the key's location.
         let value = Expr::from_json_value(&row.value, row.key_loc);
 
         let path = row.key.slice();
@@ -2541,7 +2534,6 @@ pub fn parse_into_binary_lockfile(
                             );
                             return Err(ParseError::InvalidPackageInfo);
                         };
-                        // For the generic accessors / `parse_append_dependencies`.
                         let deps_expr = Expr::from_json_value(&pkg_info[deps_idx], key_loc);
 
                         let (off, len) = parse_append_dependencies::<true, false>(

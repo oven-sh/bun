@@ -1949,7 +1949,8 @@ fn update_name_and_name_hash_from_version_replacement(
     new_version: &dependency::Version,
 ) -> (SemverString, PackageNameHash) {
     match new_version.tag {
-        // only get name hash for npm and dist_tag. git, github, tarball don't have names until after extracting tarball
+        // npm and dist_tag carry their name up front; git/github/tarball only
+        // learn it post-extract (see name_and_hash_from_extracted_package_name).
         dependency::version::Tag::DistTag => (
             new_version.dist_tag().name,
             Semver::string::Builder::string_hash(lockfile.str(&new_version.dist_tag().name)),

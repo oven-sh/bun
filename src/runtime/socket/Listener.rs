@@ -1857,10 +1857,9 @@ impl WindowsNamedPipeListeningContext {
             )
         };
         if listen_rc.is_err() {
-            // Surface the real error code: EADDRINUSE (name taken) and
-            // EACCES (pipe namespace denied, e.g. a sandboxed process
-            // binding outside \\.\pipe\LOCAL\) need different handling by
-            // callers, and a generic bind failure hides that.
+            // Surface the real error code: EADDRINUSE (name taken) vs
+            // EACCES (pipe namespace denied) need different caller
+            // handling, and a generic bind failure hides that.
             use bun_sys::ReturnCodeExt as _;
             if let Some(err) = listen_rc.to_error(bun_sys::Tag::listen) {
                 return Err(err.into());

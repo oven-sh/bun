@@ -4472,18 +4472,9 @@ impl<'a> Resolver<'a> {
                             {
                                 return Ok(None);
                             }
-                            // A permission-denied ANCESTOR (queue not yet at the
-                            // requested directory) exists but cannot be
-                            // enumerated. Sandboxed processes (e.g. a Windows
-                            // AppContainer) hit this for every walk on the
-                            // system drive: `C:\` and the profile dirs carry no
-                            // ACE for the container, while the project tree
-                            // does. Treat the ancestor as an opaque, empty
-                            // directory and keep walking instead of failing the
-                            // whole resolution; nothing above the readable tree
-                            // can contribute a package.json or node_modules
-                            // anyway. Errors on the requested directory itself
-                            // stay fatal.
+                            // A permission-denied ancestor (sandboxed drive roots, x-only
+                            // shared dirs) is treated as opaque and empty, like the
+                            // ENOTDIR tolerance; the requested directory itself stays fatal.
                             if queue_slice_len > 0
                                 && (err == bun_core::err!("EPERM")
                                     || err == bun_core::err!("EACCES")

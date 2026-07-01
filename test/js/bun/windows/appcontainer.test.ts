@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunExe, isWindows, tempDirWithFiles } from "harness";
 import { dirname, join } from "path";
 
@@ -22,6 +22,9 @@ let skipReason = "not windows";
 let workDir = "";
 let containerSidString = "";
 let launchInContainer: ((cmdline: string, cwd: string, timeoutMs: number) => number) | undefined;
+// UpdateProcThreadAttribute stores raw pointers into these; keep them
+// reachable for the life of the module or the GC can reuse the memory.
+let keepAlive: Buffer[] = [];
 
 if (isWindows) {
   try {
@@ -132,6 +135,7 @@ if (isWindows) {
       kernel32.UpdateProcThreadAttribute(ptr(attrList), 0, 0x20009n as any, ptr(secCaps), 24n as any, null, null) === 0
     )
       throw new Error("UpdateProcThreadAttribute");
+    keepAlive = [attrList, secCaps];
 
     launchInContainer = (cmdline: string, cwd: string, timeoutMs: number): number => {
       // STARTUPINFOEXW: 104-byte STARTUPINFOW (cb=112) + lpAttributeList.
@@ -214,6 +218,16 @@ if (isWindows) {
   if (!preconditionHolds) console.error("[appcontainer.test] skipping:", skipReason);
 }
 
+afterAll(() => {
+  // The profile and ACL grants are single and idempotent; only the per-run
+  // fixture accumulates, so it is the only thing removed here.
+  if (workDir) {
+    try {
+      rmSync(workDir, { recursive: true, force: true });
+    } catch {}
+  }
+});
+
 describe.skipIf(!isWindows)("bun inside a Windows AppContainer", () => {
   test.skipIf(!preconditionHolds)(
     `runtime works sandboxed${preconditionHolds ? "" : ` (skipped: ${skipReason})`}`,
@@ -264,10 +278,11 @@ main().then(
       );
 
       const exit = launchInContainer!(`"${bunExe()}" "${join(workDir, "probe.js")}"`, workDir, 60_000);
+      // Read the child's report before asserting the exit code so a sandbox
+      // failure shows its own message, not just "expected 0, received 3".
+      const r = existsSync(resultsPath) ? JSON.parse(readFileSync(resultsPath, "utf8")) : {};
+      expect(r.fatal ?? "").toBe("");
       expect(exit).toBe(0);
-      expect(existsSync(resultsPath)).toBe(true);
-      const r = JSON.parse(readFileSync(resultsPath, "utf8"));
-      expect(r.fatal).toBeUndefined();
       // The child really ran lowboxed: CreateProcess rewrites TEMP for
       // AppContainer children to the package's AC\Temp.
       expect(r.tempRewritten).toBe(true);

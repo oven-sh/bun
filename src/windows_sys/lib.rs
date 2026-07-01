@@ -38,6 +38,18 @@ impl LocalPipeStr {
             );
             i += 1;
         }
+
+        // The proof must survive DOS-to-NT normalization: forward slashes
+        // become backslashes and dot segments collapse, so either could
+        // rewrite the name out of LOCAL\ after the prefix check.
+        while i < b.len() {
+            assert!(b[i] != b'/', "pipe name must not contain forward slashes");
+            assert!(
+                !(b[i] == b'.' && b[i - 1] == P[0]),
+                "pipe name must not contain dot segments"
+            );
+            i += 1;
+        }
         Self(s)
     }
 
@@ -51,8 +63,8 @@ impl LocalPipeStr {
 #[macro_export]
 macro_rules! local_pipe {
     ($lit:expr) => {{
-        const PIPE: $crate::LocalPipeStr = $crate::LocalPipeStr::new($lit);
-        PIPE
+        const __BUN_LOCAL_PIPE: $crate::LocalPipeStr = $crate::LocalPipeStr::new($lit);
+        __BUN_LOCAL_PIPE
     }};
 }
 

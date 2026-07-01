@@ -37,21 +37,22 @@ describe.skipIf(isWindows || process.getuid?.() === 0)("resolver with unreadable
 
   test("errors on the requested directory itself stay fatal", () => {
     const dir = tempDirWithFiles("unreadable-cwd", {
-      "project/index.js": `console.log("should not run");`,
+      "project/package.json": JSON.stringify({ name: "p", scripts: { start: "echo should-not-run" } }),
     });
     const project = join(dir, "project");
-    // Execute-only: chdir succeeds (so the failure under test is the
-    // resolver's read of the requested directory, not the child's chdir),
-    // but listing it is denied -- this must stay fatal, unlike ancestors.
+    // Execute-only: chdir succeeds, but `bun run` must read the requested
+    // directory for script discovery, which is denied -- unlike ancestors,
+    // this stays fatal ("error loading current directory").
     chmodSync(project, 0o111);
     try {
       const proc = Bun.spawnSync({
-        cmd: [bunExe(), "index.js"],
+        cmd: [bunExe(), "run", "start"],
         cwd: project,
         env: bunEnv,
       });
       expect(proc.exitCode).not.toBe(0);
-      expect(proc.stdout.toString()).not.toContain("should not run");
+      expect(proc.stderr.toString()).toContain("error loading current directory");
+      expect(proc.stdout.toString()).not.toContain("should-not-run");
     } finally {
       chmodSync(project, 0o755);
       rmSync(dir, { recursive: true, force: true });

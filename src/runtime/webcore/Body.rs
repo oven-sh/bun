@@ -2607,7 +2607,7 @@ impl<'a> ValueBufferer<'a> {
                     // every other pipe delivery: the per-chunk callback
                     // copies it out synchronously (no user JS runs while
                     // `bytes` is borrowed) and drives the rewriter from a
-                    // fresh microtask frame, so no `&mut` of this
+                    // fresh event-loop task, so no `&mut` of this
                     // `ValueBufferer` is live if a handler there spins the
                     // event loop and re-enters the pipe.
                     byte_stream

@@ -5,6 +5,7 @@ use core::ptr::NonNull;
 use std::rc::Rc;
 
 use bun_core::MutableString;
+use bun_event_loop::AnyTask::AnyTask;
 use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
     ProtectedJSValue, SystemError, bun_string_jsc,
@@ -580,10 +581,14 @@ pub struct BufferOutputSink {
     /// those signals are queued in the fields below and drained by the
     /// suspended `drive_rewriter` once its in-flight `write` returns.
     pub writing: bool,
-    /// `true` while a `drain_microtask` is queued and has not yet run.
+    /// `true` while a drain task is enqueued and has not yet run.
     pub drain_scheduled: bool,
+    /// The event-loop task `schedule_drain` enqueues. It lives on the
+    /// sink (a stable heap address) so the event loop holds a pointer to
+    /// it; `drain_scheduled` guarantees at most one is in flight.
+    drain_task: AnyTask,
     /// Source bytes not yet fed to lol-html: either queued by the
-    /// asynchronous delivery paths for the next `drain_microtask`, or
+    /// asynchronous delivery paths for the next drain task, or
     /// queued by a re-entrant arrival while `drive_rewriter` is suspended.
     pub pending_input: MutableString,
     /// Deferred terminal source signal: `Some(None)` is a clean end,
@@ -635,6 +640,7 @@ impl BufferOutputSink {
             failed: false,
             writing: false,
             drain_scheduled: false,
+            drain_task: AnyTask::default(),
             pending_input: MutableString::init_empty(),
             pending_finish: None,
             tmp_sync_error: None,
@@ -906,9 +912,10 @@ impl BufferOutputSink {
     ///   spinning the full event loop, which would park the HTTP thread
     ///   (and every in-flight `fetch`) on that mutex for the duration, and
     ///   deadlock outright if the handler's own `await` needs it. Copy the
-    ///   bytes out and drive the rewriter from a fresh microtask frame,
-    ///   which runs in the same tick but strictly after the enqueuing task
-    ///   has returned and released its locks.
+    ///   bytes out and drive the rewriter from a fresh event-loop task,
+    ///   which runs strictly after the enqueuing task has returned and
+    ///   released its locks, and at the top of an event-loop turn (see
+    ///   `schedule_drain` for why that last part matters).
     /// - Synchronous delivery (a materialized blob / string, or a source
     ///   that is already complete): `init()` is on the stack and no
     ///   producer lock is held, so drive the rewriter directly. This
@@ -943,34 +950,45 @@ impl BufferOutputSink {
         unsafe { Self::drive_rewriter(sink, bytes, false) };
     }
 
-    /// If no `drain_microtask` is already queued, take a +1 ref on the
-    /// sink and queue one. The microtask consumes that ref.
+    /// If no drain task is already enqueued, take a +1 ref on the sink
+    /// and enqueue one on the event loop. The task consumes that ref.
+    ///
+    /// This must be an event-loop TASK, never a microtask. `write` runs
+    /// user element handlers, and an async handler blocks the `write` by
+    /// spinning the full event loop (`wait_for_promise`), which drains
+    /// the microtask queue. Doing that from inside a microtask callback
+    /// would re-enter the microtask drain. A task instead runs at the
+    /// top of an event-loop turn, the same kind of frame the synchronous
+    /// `transform()` path has always driven lol-html from.
     ///
     /// # Safety
     /// `sink` must be a live `BufferOutputSink` heap allocation with
     /// refcount > 0.
     unsafe fn schedule_drain(sink: *mut Self) {
         // SAFETY: sink live (fn contract); raw field accesses only.
+        // `drain_scheduled` guarantees at most one enqueued task points at
+        // `drain_task`, so overwriting it below is never a race with one.
         unsafe {
             if (*sink).drain_scheduled {
                 return;
             }
             (*sink).drain_scheduled = true;
             (*sink).ref_();
+            (*sink).drain_task = AnyTask::from_typed(sink, Self::drain_pending_input);
         }
-        // SAFETY: sink live; the +1 just taken keeps it alive until the
-        // microtask runs. The microtask is queued on the JS thread's own
-        // JSC microtask queue and drains after the current event-loop
-        // task returns (and releases any locks it holds).
-        unsafe { &(*sink).global }.queue_microtask_callback(sink, Self::drain_microtask);
+        // SAFETY: the sink is a heap allocation with a stable address, and
+        // the +1 taken above keeps it (and `drain_task` inside it) alive
+        // until the task runs.
+        let task = unsafe { (*sink).drain_task.task() };
+        // SAFETY: the per-thread VM singleton outlives this call.
+        VirtualMachine::get().as_mut().enqueue_task(task);
     }
 
-    /// Drain the queued source input on a fresh microtask frame, outside
+    /// Drain the queued source input on a fresh event-loop task, outside
     /// the producer's critical section. Consumes the +1 ref taken by
     /// `schedule_drain`.
-    unsafe extern "C" fn drain_microtask(ctx: *mut core::ffi::c_void) {
-        let sink = ctx.cast::<BufferOutputSink>();
-        // SAFETY: the microtask owns the +1 taken in `schedule_drain`;
+    fn drain_pending_input(sink: *mut Self) -> bun_event_loop::JsResult<()> {
+        // SAFETY: the task owns the +1 taken in `schedule_drain`;
         // `adopt` consumes it on drop.
         let _g = unsafe { bun_ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
         // SAFETY: sink live (refcount > 0).
@@ -980,10 +998,11 @@ impl BufferOutputSink {
         // once its in-flight `write` returns.
         // SAFETY: sink live (refcount > 0).
         if unsafe { (*sink).writing } {
-            return;
+            return Ok(());
         }
         // SAFETY: sink live; `writing` is false.
         unsafe { Self::drive_rewriter(sink, b"", true) };
+        Ok(())
     }
 
     /// Feed `first`, then everything that accumulates in `pending_input`,
@@ -1006,7 +1025,7 @@ impl BufferOutputSink {
     /// long as the upstream stays open.
     ///
     /// `source_is_async` is whether the source is a still-open stream (the
-    /// microtask drain path) rather than the synchronous `init()` path; it
+    /// drain-task path) rather than the synchronous `init()` path; it
     /// selects the error channel (the body vs. `transform()`'s throw slot).
     ///
     /// # Safety
@@ -1128,7 +1147,7 @@ impl BufferOutputSink {
         // - `is_async`: the delivery may be running inside a producer's
         //   critical section (see `on_input_chunk`), and `end()` can also
         //   suspend on an async `onDocument.end` handler. Defer to a
-        //   fresh microtask frame.
+        //   fresh event-loop task.
         // The +1 ref this call holds is deliberately NOT consumed here;
         // `finish` (invoked from `drive_rewriter`'s tail) adopts it.
         // SAFETY: sink live (fn contract); raw field accesses only.

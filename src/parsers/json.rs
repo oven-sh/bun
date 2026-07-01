@@ -1480,10 +1480,7 @@ mod tests {
     #[test]
     fn indentation_skips_block_comments() {
         let i = guess_indentation(b"/* c\n   x */\n{\n\t\"a\": 1\n}");
-        assert!(matches!(
-            i.character,
-            bun_ast::IndentationCharacter::Tab
-        ));
+        assert!(matches!(i.character, bun_ast::IndentationCharacter::Tab));
         assert_eq!(i.scalar, 1);
     }
 

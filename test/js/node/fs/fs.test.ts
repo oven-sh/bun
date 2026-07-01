@@ -1930,6 +1930,18 @@ describe("writeFileSync", () => {
     const stat = fs.statSync(path);
     expect(stat.mode).toBe(isWindows ? 33206 : 33188);
   });
+  it.skipIf(isWindows)("write file preserves special POSIX mode bits", () => {
+    for (const mode of [0o107644, "107644"] as const) {
+      const path = `${tmpdirSync()}/writeFileSyncWithSpecialMode.txt`;
+      const oldUmask = process.umask(0);
+      try {
+        writeFileSync(path, "bun", { mode });
+      } finally {
+        process.umask(oldUmask);
+      }
+      expect(fs.statSync(path).mode & 0o7777).toBe(0o7644);
+    }
+  });
   it("returning Buffer works", () => {
     const buffer = new Buffer([
       70, 105, 108, 101, 32, 119, 114, 105, 116, 116, 101, 110, 32, 115, 117, 99, 99, 101, 115, 115, 102, 117, 108, 108,
@@ -1954,6 +1966,58 @@ describe("writeFileSync", () => {
 
     for (let i = 0; i < buffer.length; i++) {
       expect(buffer[i]).toBe(out[i]);
+    }
+  });
+});
+
+describe.skipIf(isWindows)("chmod", () => {
+  const specialMode = 0o7644;
+  const inputMode = 0o100000 | specialMode;
+  const inputs = [inputMode, inputMode.toString(8)];
+
+  it("preserves special POSIX mode bits", async () => {
+    for (const input of inputs) {
+      const path = `${tmpdirSync()}/chmodSpecialMode.txt`;
+      writeFileSync(path, "bun");
+
+      fs.chmodSync(path, input);
+      expect(fs.statSync(path).mode & 0o7777).toBe(specialMode);
+
+      await new Promise<void>((resolve, reject) => {
+        fs.chmod(path, input, err => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      expect(fs.statSync(path).mode & 0o7777).toBe(specialMode);
+    }
+  });
+
+  it("fchmod preserves special POSIX mode bits", async () => {
+    for (const input of inputs) {
+      const path = `${tmpdirSync()}/fchmodSpecialMode.txt`;
+      writeFileSync(path, "bun");
+
+      let fd = openSync(path, "w");
+      try {
+        fs.fchmodSync(fd, input);
+        expect(fstatSync(fd).mode & 0o7777).toBe(specialMode);
+      } finally {
+        closeSync(fd);
+      }
+
+      fd = openSync(path, "w");
+      try {
+        await new Promise<void>((resolve, reject) => {
+          fs.fchmod(fd, input, err => {
+            if (err) reject(err);
+            else resolve();
+          });
+        });
+        expect(fstatSync(fd).mode & 0o7777).toBe(specialMode);
+      } finally {
+        closeSync(fd);
+      }
     }
   });
 });

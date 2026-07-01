@@ -1646,7 +1646,7 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
         )?
     };
 
-    Ok(Some((mode_int & 0o777) as Mode))
+    Ok(Some((mode_int & 0o7777) as Mode))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

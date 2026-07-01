@@ -899,9 +899,7 @@ fn prepare_workspace_update_plan(
                 >(&top_level_dir, &mut path_buf.0, &[&rel, b"package.json"])
             };
 
-        if let Some(member) = prepare_member_before_install(manager, abs_path, name_hash)? {
-            members.push(member);
-        }
+        members.push(prepare_member_before_install(manager, abs_path, name_hash)?);
     }
 
     Ok(WorkspaceUpdatePlan {
@@ -999,8 +997,10 @@ fn prepare_member_before_install(
     manager: &mut PackageManager,
     abs_path: &[u8],
     name_hash: PackageNameHash,
-) -> Result<Option<MemberUpdate>, Error> {
-    // Demote to a raw pointer so the edit pass can take `&mut manager`.
+) -> Result<MemberUpdate, Error> {
+    // Demote to a raw pointer so the edit pass can take `&mut manager`. A
+    // selected workspace that can't be read/parsed is a hard failure (its
+    // dependencies are already in the update gate), matching the cwd path above.
     let entry_ptr: *mut MapEntry = match manager.workspace_package_json_cache.get_with_path(
         manager.log_mut(),
         abs_path,
@@ -1010,8 +1010,23 @@ fn prepare_member_before_install(
         },
     ) {
         GetResult::Entry(entry) => core::ptr::from_mut(entry),
-        // A member we can't read/parse is skipped rather than aborting the whole update.
-        GetResult::ParseErr(_) | GetResult::ReadErr(_) => return Ok(None),
+        GetResult::ParseErr(err) => {
+            let _ = manager
+                .log_mut()
+                .print(std::ptr::from_mut(Output::error_writer()));
+            Output::err_generic(
+                "failed to parse package.json \"{s}\": {s}",
+                (BStr::new(abs_path), err.name()),
+            );
+            Global::crash();
+        }
+        GetResult::ReadErr(err) => {
+            Output::err_generic(
+                "failed to read package.json \"{s}\": {s}",
+                (BStr::new(abs_path), err.name()),
+            );
+            Global::crash();
+        }
     };
 
     // SAFETY: pointer into `manager.workspace_package_json_cache`, valid until the
@@ -1056,7 +1071,7 @@ fn prepare_member_before_install(
         Global::crash();
     }
 
-    Ok(Some(MemberUpdate {
+    Ok(MemberUpdate {
         package_json_path: Box::from(abs_path),
         name_hash: Some(name_hash),
         source_before_install,
@@ -1064,7 +1079,7 @@ fn prepare_member_before_install(
         updating_packages,
         indentation,
         preserve_trailing_newline,
-    }))
+    })
 }
 
 fn commit_workspace_member_update(

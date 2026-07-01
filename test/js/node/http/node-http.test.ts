@@ -4039,6 +4039,46 @@ describe("server headersTimeout/requestTimeout enforcement", () => {
     }
   }, 20_000);
 
+  it.each([["auto"], ["checkContinue"]] as const)(
+    "an Expect: 100-continue request whose body stalls still gets the canned 408 after the 100 (%s)",
+    async mode => {
+      // Node v26 writes the interim "100 Continue" and then, on requestTimeout
+      // expiry, still appends the canned 408: socketOnError only suppresses it
+      // once the in-flight response's own header was sent (_headerSent), and an
+      // interim 1xx does not set it.
+      const { promise: aborted, resolve: onAborted } = Promise.withResolvers<void>();
+      const server = createServer(timeoutOptions, (req, res) => {
+        req.on("aborted", () => onAborted());
+        req.on("error", () => {});
+        res.on("error", () => {});
+      });
+      if (mode === "checkContinue") {
+        server.on("checkContinue", (req, res) => {
+          res.writeContinue();
+          server.emit("request", req, res);
+        });
+      }
+      try {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const { port } = server.address() as AddressInfo;
+        const socket = connect(port, "127.0.0.1");
+        socket.on("error", () => {});
+        const received: Buffer[] = [];
+        socket.on("data", chunk => received.push(chunk));
+        const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+        socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nExpect: 100-continue\r\nContent-Length: 100\r\n\r\n");
+        await aborted;
+        await closed;
+        expect(Buffer.concat(received).toString()).toBe(`HTTP/1.1 100 Continue\r\n\r\n${REQUEST_TIMEOUT_408_RESPONSE}`);
+      } finally {
+        server.closeAllConnections();
+        server.close();
+      }
+    },
+    20_000,
+  );
+
   it("req.setTimeout() does not replace the requestTimeout deadline", async () => {
     // In Node the receive deadlines are enforced independently of any user
     // socket timeout; arming a much longer one must not disarm requestTimeout.

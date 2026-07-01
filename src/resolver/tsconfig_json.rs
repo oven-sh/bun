@@ -1,5 +1,4 @@
 use bun_collections::ArrayHashMap;
-use bun_collections::VecExt;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
 use bun_parsers::json_parser;
@@ -23,11 +22,6 @@ pub enum JsonMode {
 /// JSON parse cache. Lives below `bun_bundler::cache` so the resolver names it
 /// directly — `bun_parsers::json_parser` is lower-tier than the resolver, so no
 /// cycle exists.
-///
-/// `json_parser` arena-allocates into a `&bun_alloc::Arena`, so this struct
-/// owns one. The arena is **never reset** — package.json/tsconfig ASTs are
-/// cached process-long (the DirInfo cache is reused globally, so these cannot
-/// be freed).
 ///
 /// The arena is lazy-initialized on first `parse()`. `Resolver::for_worker`
 /// creates one `CacheSet` (and thus one `JsonCache`) per bundler worker thread,
@@ -61,31 +55,40 @@ impl JsonCache {
         Ok(result)
     }
 
-    /// Parses tsconfig.json/jsconfig.json source as JSONC into the cache
-    /// arena.
+    #[inline]
+    fn parse_rows(
+        &mut self,
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
+        func: fn(
+            &bun_ast::Source,
+            &mut bun_ast::Log,
+        ) -> Result<json_parser::ParsedJson, bun_core::Error>,
+    ) -> Result<Option<json_parser::ParsedJson>, bun_core::Error> {
+        let mut temp_log = bun_ast::Log::init();
+        let result = func(source, &mut temp_log).ok();
+        let _ = temp_log.append_to_maybe_recycled(log, source);
+        Ok(result)
+    }
+
+    /// Parses tsconfig.json/jsconfig.json source as JSONC into the immutable row AST.
     #[inline]
     pub fn parse_tsconfig(
         &mut self,
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
-    ) -> Result<Option<bun_ast::Expr>, bun_core::Error> {
-        self.parse(log, source, json_parser::parse_ts_config::<true>)
+    ) -> Result<Option<json_parser::ParsedJson>, bun_core::Error> {
+        self.parse_rows(log, source, json_parser::ParsedJson::parse_jsonc)
     }
 
-    /// Parses package.json source into the cache arena, optionally forcing
-    /// UTF-8 string allocation.
+    /// Parses package.json source into the immutable row AST.
     #[inline]
     pub fn parse_package_json(
         &mut self,
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
-        force_utf8: bool,
-    ) -> Result<Option<bun_ast::Expr>, bun_core::Error> {
-        if force_utf8 {
-            self.parse(log, source, json_parser::parse_ts_config::<true>)
-        } else {
-            self.parse(log, source, json_parser::parse_ts_config::<false>)
-        }
+    ) -> Result<Option<json_parser::ParsedJson>, bun_core::Error> {
+        self.parse_rows(log, source, json_parser::ParsedJson::parse_package_json)
     }
 
     /// Parses JSON source into the cache arena using `mode` to pick strict
@@ -96,22 +99,18 @@ impl JsonCache {
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         mode: JsonMode,
-        force_utf8: bool,
     ) -> Result<Option<bun_ast::Expr>, bun_core::Error> {
         // tsconfig.* and jsconfig.* files are JSON files, but they are not valid JSON files.
         // They are JSON files with comments and trailing commas.
         // Sometimes tooling expects this to work.
-        let f: fn(
-            &bun_ast::Source,
-            &mut bun_ast::Log,
-            &bun_alloc::Arena,
-        ) -> Result<bun_ast::Expr, bun_core::Error> = match (mode, force_utf8) {
-            (JsonMode::Jsonc, true) => json_parser::parse_ts_config::<true>,
-            (JsonMode::Jsonc, false) => json_parser::parse_ts_config::<false>,
-            (JsonMode::Json, true) => json_parser::parse::<true>,
-            (JsonMode::Json, false) => json_parser::parse::<false>,
-        };
-        self.parse(log, source, f)
+        self.parse(
+            log,
+            source,
+            match mode {
+                JsonMode::Jsonc => json_parser::parse_ts_config,
+                JsonMode::Json => json_parser::parse_utf8,
+            },
+        )
     }
 }
 
@@ -308,10 +307,6 @@ impl TSConfigJSON {
         Ok(Box::from(&written[..len]))
     }
 
-    // NOTE: the `Expr` query API exposes `as_utf8_string_literal() ->
-    // Option<&[u8]>` — the tsconfig parser forces UTF-8 (`force_utf8=true`),
-    // so every `EString` is already a flat UTF-8 slice and we can copy at the
-    // boundary.
     pub fn parse(
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
@@ -325,10 +320,12 @@ impl TSConfigJSON {
         // these particular files. This is likely not a completely accurate
         // emulation of what the TypeScript compiler does (e.g. string escape
         // behavior may also be different).
-        let json: bun_ast::Expr = match json_cache.parse_tsconfig(log, source).ok().flatten() {
-            Some(e) => e,
+
+        let parsed = match json_cache.parse_tsconfig(log, source).ok().flatten() {
+            Some(p) => p,
             None => return Ok(None),
         };
+        let json: bun_ast::Expr = parsed.root;
 
         bun_analytics::features::tsconfig.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
@@ -347,21 +344,15 @@ impl TSConfigJSON {
         // guards), then handle them below in the original fixed order so any
         // inter-field ordering (`baseUrl` before `paths`, `jsx` before
         // `jsxImportSource`) is preserved.
-        let mut extends_value: Option<bun_ast::Expr> = None;
-        let mut compiler_opts: Option<bun_ast::Expr> = None;
-        if let bun_ast::ExprData::EObject(obj) = &json.data {
-            for property in obj.properties.slice() {
-                let (Some(key_expr), Some(value)) =
-                    (property.key.as_ref(), property.value.as_ref())
-                else {
-                    continue;
-                };
-                let Some(key) = key_expr.as_utf8_string_literal() else {
-                    continue;
-                };
-                match key {
-                    b"extends" if extends_value.is_none() => extends_value = Some(*value),
-                    b"compilerOptions" if compiler_opts.is_none() => compiler_opts = Some(*value),
+        let mut extends_value: Option<&bun_ast::E::JsonValue> = None;
+        let mut compiler_opts: Option<&bun_ast::E::JsonValue> = None;
+        if let bun_ast::ExprData::EObjectJSON(obj) = &json.data {
+            for property in obj.get().properties() {
+                match property.key.slice() {
+                    b"extends" if extends_value.is_none() => extends_value = Some(&property.value),
+                    b"compilerOptions" if compiler_opts.is_none() => {
+                        compiler_opts = Some(&property.value)
+                    }
                     _ => {}
                 }
             }
@@ -369,7 +360,7 @@ impl TSConfigJSON {
 
         if let Some(extends_value) = extends_value {
             if !source.path.is_node_module() {
-                if let Some(str) = extends_value.as_utf8_string_literal() {
+                if let Some(str) = extends_value.as_str() {
                     result.extends = Box::from(str);
                 }
             }
@@ -380,57 +371,50 @@ impl TSConfigJSON {
         if let Some(compiler_opts) = compiler_opts {
             // Single pass over `compilerOptions`' properties; first occurrence
             // of each key wins (matching `asProperty`).
-            let mut base_url_v: Option<bun_ast::Expr> = None;
-            let mut emit_decorator_metadata_v: Option<bun_ast::Expr> = None;
-            let mut experimental_decorators_v: Option<bun_ast::Expr> = None;
-            let mut jsx_factory_v: Option<(bun_ast::Expr, bun_ast::Loc)> = None;
-            let mut jsx_fragment_factory_v: Option<(bun_ast::Expr, bun_ast::Loc)> = None;
-            let mut jsx_v: Option<bun_ast::Expr> = None;
-            let mut jsx_import_source_v: Option<bun_ast::Expr> = None;
-            let mut use_define_v: Option<bun_ast::Expr> = None;
-            let mut imports_not_used_v: Option<(bun_ast::Expr, bun_ast::Loc)> = None;
-            let mut module_suffixes_v: Option<(bun_ast::Expr, bun_ast::Loc)> = None;
-            let mut paths_v: Option<bun_ast::Expr> = None;
+            let mut base_url_v: Option<&bun_ast::E::JsonValue> = None;
+            let mut emit_decorator_metadata_v: Option<&bun_ast::E::JsonValue> = None;
+            let mut experimental_decorators_v: Option<&bun_ast::E::JsonValue> = None;
+            let mut jsx_factory_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
+            let mut jsx_fragment_factory_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
+            let mut jsx_v: Option<&bun_ast::E::JsonValue> = None;
+            let mut jsx_import_source_v: Option<&bun_ast::E::JsonValue> = None;
+            let mut use_define_v: Option<&bun_ast::E::JsonValue> = None;
+            let mut imports_not_used_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
+            let mut module_suffixes_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
+            let mut paths_v: Option<&bun_ast::E::JsonValue> = None;
 
-            if let bun_ast::ExprData::EObject(obj) = &compiler_opts.data {
-                for property in obj.properties.slice() {
-                    let (Some(key_expr), Some(value)) =
-                        (property.key.as_ref(), property.value.as_ref())
-                    else {
-                        continue;
-                    };
-                    let Some(key) = key_expr.as_utf8_string_literal() else {
-                        continue;
-                    };
-                    let loc = key_expr.loc;
-                    match key {
-                        b"baseUrl" if base_url_v.is_none() => base_url_v = Some(*value),
+            if let Some(obj) = compiler_opts.as_object() {
+                for property in obj.properties() {
+                    let value = &property.value;
+                    let loc = property.key_loc;
+                    match property.key.slice() {
+                        b"baseUrl" if base_url_v.is_none() => base_url_v = Some(value),
                         b"emitDecoratorMetadata" if emit_decorator_metadata_v.is_none() => {
-                            emit_decorator_metadata_v = Some(*value)
+                            emit_decorator_metadata_v = Some(value)
                         }
                         b"experimentalDecorators" if experimental_decorators_v.is_none() => {
-                            experimental_decorators_v = Some(*value)
+                            experimental_decorators_v = Some(value)
                         }
                         b"jsxFactory" if jsx_factory_v.is_none() => {
-                            jsx_factory_v = Some((*value, loc))
+                            jsx_factory_v = Some((value, loc))
                         }
                         b"jsxFragmentFactory" if jsx_fragment_factory_v.is_none() => {
-                            jsx_fragment_factory_v = Some((*value, loc))
+                            jsx_fragment_factory_v = Some((value, loc))
                         }
-                        b"jsx" if jsx_v.is_none() => jsx_v = Some(*value),
+                        b"jsx" if jsx_v.is_none() => jsx_v = Some(value),
                         b"jsxImportSource" if jsx_import_source_v.is_none() => {
-                            jsx_import_source_v = Some(*value)
+                            jsx_import_source_v = Some(value)
                         }
                         b"useDefineForClassFields" if use_define_v.is_none() => {
-                            use_define_v = Some(*value)
+                            use_define_v = Some(value)
                         }
                         b"importsNotUsedAsValues" if imports_not_used_v.is_none() => {
-                            imports_not_used_v = Some((*value, loc))
+                            imports_not_used_v = Some((value, loc))
                         }
                         b"moduleSuffixes" if module_suffixes_v.is_none() => {
-                            module_suffixes_v = Some((*value, loc))
+                            module_suffixes_v = Some((value, loc))
                         }
-                        b"paths" if paths_v.is_none() => paths_v = Some(*value),
+                        b"paths" if paths_v.is_none() => paths_v = Some(value),
                         _ => {}
                     }
                 }
@@ -438,7 +422,7 @@ impl TSConfigJSON {
 
             // Parse "baseUrl"
             if let Some(base_url_prop) = base_url_v {
-                if let Some(base_url) = base_url_prop.as_utf8_string_literal() {
+                if let Some(base_url) = base_url_prop.as_str() {
                     result.base_url =
                         match Self::str_replacing_templates(Box::from(base_url), source) {
                             Ok(v) => v,
@@ -449,22 +433,18 @@ impl TSConfigJSON {
             }
 
             // Parse "emitDecoratorMetadata"
-            if let Some(emit_decorator_metadata_prop) = emit_decorator_metadata_v {
-                if let Some(val) = emit_decorator_metadata_prop.as_bool() {
-                    result.emit_decorator_metadata = val;
-                }
+            if let Some(&bun_ast::E::JsonValue::Boolean(val)) = emit_decorator_metadata_v {
+                result.emit_decorator_metadata = val;
             }
 
             // Parse "experimentalDecorators"
-            if let Some(experimental_decorators_prop) = experimental_decorators_v {
-                if let Some(val) = experimental_decorators_prop.as_bool() {
-                    result.experimental_decorators = val;
-                }
+            if let Some(&bun_ast::E::JsonValue::Boolean(val)) = experimental_decorators_v {
+                result.experimental_decorators = val;
             }
 
             // Parse "jsxFactory"
             if let Some((jsx_prop, loc)) = jsx_factory_v {
-                if let Some(str) = jsx_prop.as_utf8_string_literal() {
+                if let Some(str) = jsx_prop.as_str() {
                     result.jsx.factory =
                         Self::parse_member_expression_for_jsx(log, source, loc, str)?.into();
                     result.jsx_flags.insert(JsxField::Factory);
@@ -473,7 +453,7 @@ impl TSConfigJSON {
 
             // Parse "jsxFragmentFactory"
             if let Some((jsx_prop, loc)) = jsx_fragment_factory_v {
-                if let Some(str) = jsx_prop.as_utf8_string_literal() {
+                if let Some(str) = jsx_prop.as_str() {
                     result.jsx.fragment =
                         Self::parse_member_expression_for_jsx(log, source, loc, str)?.into();
                     result.jsx_flags.insert(JsxField::Fragment);
@@ -482,7 +462,7 @@ impl TSConfigJSON {
 
             // https://www.typescriptlang.org/docs/handbook/jsx.html#basic-usages
             if let Some(jsx_prop) = jsx_v {
-                if let Some(str) = jsx_prop.as_utf8_string_literal() {
+                if let Some(str) = jsx_prop.as_str() {
                     // PERF: lowercase into a fixed stack buffer instead of
                     // allocating before the map lookup. `RUNTIME_MAP`'s keys
                     // are all lowercase ASCII and the longest
@@ -506,7 +486,7 @@ impl TSConfigJSON {
 
             // Parse "jsxImportSource"
             if let Some(jsx_prop) = jsx_import_source_v {
-                if let Some(str) = jsx_prop.as_utf8_string_literal() {
+                if let Some(str) = jsx_prop.as_str() {
                     if str.len() >= b"solid-js".len() && &str[..b"solid-js".len()] == b"solid-js" {
                         result.jsx.runtime = options::jsx::Runtime::Solid;
                         result.jsx_flags.insert(JsxField::Runtime);
@@ -519,16 +499,14 @@ impl TSConfigJSON {
             }
 
             // Parse "useDefineForClassFields"
-            if let Some(use_define_value_prop) = use_define_v {
-                if let Some(val) = use_define_value_prop.as_bool() {
-                    result.use_define_for_class_fields = Some(val);
-                }
+            if let Some(&bun_ast::E::JsonValue::Boolean(val)) = use_define_v {
+                result.use_define_for_class_fields = Some(val);
             }
 
             // Parse "importsNotUsedAsValues"
             if let Some((jsx_prop, loc)) = imports_not_used_v {
                 // This should never allocate since it will be utf8
-                if let Some(str) = jsx_prop.as_utf8_string_literal() {
+                if let Some(str) = jsx_prop.as_str() {
                     match IMPORTS_NOT_USED_AS_VALUE_LIST
                         .get(str)
                         .copied()
@@ -555,11 +533,11 @@ impl TSConfigJSON {
             if let Some((prefixes, loc)) = module_suffixes_v {
                 if !source.path.is_node_module() {
                     'handle_module_prefixes: {
-                        let Some(mut array) = prefixes.as_array() else {
+                        let Some(array) = prefixes.as_array() else {
                             break 'handle_module_prefixes;
                         };
-                        while let Some(element) = array.next() {
-                            if let Some(str) = element.as_utf8_string_literal() {
+                        for element in array.items() {
+                            if let Some(str) = element.as_str() {
                                 if !str.is_empty() {
                                     // Only warn when there is actually content
                                     // Sometimes, people do "moduleSuffixes": [""]
@@ -578,7 +556,7 @@ impl TSConfigJSON {
 
             // Parse "paths"
             if let Some(paths_prop) = paths_v {
-                if let bun_ast::ExprData::EObject(paths) = &paths_prop.data {
+                if let Some(paths) = paths_prop.as_object() {
                     bun_analytics::features::tsconfig_paths
                         .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
@@ -588,21 +566,13 @@ impl TSConfigJSON {
                         Box::from(b".".as_slice())
                     };
                     result.paths = PathsMap::default();
-                    for property in paths.properties.slice() {
-                        let Some(key_prop) = &property.key else {
-                            continue;
-                        };
-                        let Some(key) = key_prop.as_utf8_string_literal() else {
-                            continue;
-                        };
+                    for property in paths.properties() {
+                        let key = property.key.slice();
+                        let key_loc = property.key_loc;
 
-                        if !Self::is_valid_tsconfig_path_pattern(key, log, source, key_prop.loc) {
+                        if !Self::is_valid_tsconfig_path_pattern(key, log, source, key_loc) {
                             continue;
                         }
-
-                        let Some(value_prop) = &property.value else {
-                            continue;
-                        };
 
                         // The "paths" field is an object which maps a pattern to an
                         // array of remapping patterns to try, in priority order. See
@@ -625,16 +595,26 @@ impl TSConfigJSON {
                         //
                         // Matching "folder1/file2" should first check "projectRoot/folder1/file2"
                         // and then, if that didn't work, also check "projectRoot/generated/folder1/file2".
-                        match &value_prop.data {
-                            bun_ast::ExprData::EArray(e_array) => {
-                                let array = e_array.items.slice();
+                        match &property.value {
+                            bun_ast::E::JsonValue::Array(e_array) => {
+                                let array = e_array.get().items();
 
                                 if !array.is_empty() {
                                     let mut values: Vec<Box<[u8]>> =
                                         Vec::with_capacity(array.len());
+                                    let array_loc =
+                                        json_parser::property_value_loc(&source.contents, key_loc)
+                                            .unwrap_or(key_loc);
+                                    let mut item_cursor =
+                                        json_parser::array_item_loc(&source.contents, array_loc, 0);
                                     // errdefer allocator.free(values) — handled by Drop.
-                                    for expr in array {
-                                        if let Some(str_) = expr.as_utf8_string_literal() {
+                                    for item in array.iter() {
+                                        let this_item_loc = item_cursor.unwrap_or(key_loc);
+                                        item_cursor = item_cursor.and_then(|cur| {
+                                            json_parser::array_next_item_loc(&source.contents, cur)
+                                        });
+                                        if let Some(str_) = item.as_str() {
+                                            let item_loc = this_item_loc;
                                             let str = match Self::str_replacing_templates(
                                                 Box::from(str_),
                                                 source,
@@ -644,10 +624,10 @@ impl TSConfigJSON {
                                             };
                                             // errdefer allocator.free(str) — handled by Drop.
                                             if Self::is_valid_tsconfig_path_pattern(
-                                                &str, log, source, expr.loc,
+                                                &str, log, source, item_loc,
                                             ) && (has_base_url
                                                 || Self::is_valid_tsconfig_path_no_base_url_pattern(
-                                                    &str, log, source, expr.loc,
+                                                    &str, log, source, item_loc,
                                                 ))
                                             {
                                                 values.push(str);
@@ -669,7 +649,7 @@ impl TSConfigJSON {
                             _ => {
                                 let _ = log.add_range_warning_fmt(
                                     Some(source),
-                                    source.range_of_string(key_prop.loc),
+                                    source.range_of_string(key_loc),
                                     format_args!(
                                         "Substitutions for pattern \"{}\" should be an array",
                                         bstr::BStr::new(key)

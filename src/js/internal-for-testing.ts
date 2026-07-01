@@ -144,6 +144,16 @@ export const setSyntheticAllocationLimitForTesting: (limit: number) => number = 
   1,
 );
 
+// Shrink the markdown parser's block-metadata cap (in bytes) so its
+// `TooManyBlocks` error is reachable without 4 GiB of input. The cap can only
+// be lowered, never raised past the real limit. Returns the previous value so
+// a test can restore it.
+export const setMaxMarkdownBlockBytesForTesting: (limit: number) => number = $newRustFunction(
+  "MarkdownObject.rs",
+  "setMaxMarkdownBlockBytesForTesting",
+  1,
+);
+
 export const npm_manifest_test_helpers = $rust("npm.rs", "PackageManifest.bindings.generate") as {
   /**
    * Returns the parsed manifest file. Currently only returns an array of available versions.

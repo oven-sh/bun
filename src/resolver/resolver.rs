@@ -3493,7 +3493,7 @@ impl<'a> Resolver<'a> {
 
         if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
             if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                if entries.generation >= self.generation {
+                if !entries.stale && entries.generation >= self.generation {
                     dir_entries_option = cached_entry;
                     needs_iter = false;
                 } else {
@@ -4562,7 +4562,7 @@ impl<'a> Resolver<'a> {
 
             if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
                 if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                    if entries.generation >= self.generation {
+                    if !entries.stale && entries.generation >= self.generation {
                         dir_entries_option = cached_entry;
                         needs_iter = false;
                     } else {

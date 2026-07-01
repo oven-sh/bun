@@ -998,6 +998,20 @@ impl Lockfile {
                 .is_workspace()
     }
 
+    /// Is the package whose `node_modules` this tree represents resolved from a
+    /// local `file:` folder? Its `Resolution::Folder` dependencies were normalized
+    /// relative to the top-level dir (`Package::parse`), unlike npm's (`Package::from_npm`).
+    pub fn is_folder_tree_id(&self, id: tree::Id) -> bool {
+        if id == 0 {
+            return false;
+        }
+        let dependency_id = self.buffers.trees[id as usize].dependency_id;
+        let package_id = self.buffers.resolutions[dependency_id as usize];
+        package_id != invalid_package_id
+            && self.packages.slice().items_resolution()[package_id as usize].tag
+                == ResolutionTag::Folder
+    }
+
     /// Returns the package id of the workspace the install is taking place in.
     pub fn get_workspace_package_id(
         &self,

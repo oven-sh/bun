@@ -29,8 +29,8 @@ use crate::config_version::ConfigVersion;
 use crate::migration;
 use crate::package_manager::WorkspaceFilter;
 use crate::package_manager_real::{
-    Options as PackageManagerOptions, PackageUpdateInfo, options::Do, options::LogLevel,
-    populate_manifest_cache,
+    Options as PackageManagerOptions, PackageUpdateInfo, Subcommand, options::Do,
+    options::LogLevel, populate_manifest_cache,
 };
 use crate::resolution_real::{self as resolution, Resolution};
 use crate::string_builder;
@@ -794,6 +794,7 @@ impl Lockfile {
         let root_deps_list: DependencySlice =
             old.packages.items_dependencies()[workspace_package_id as usize];
 
+        let is_update_subcommand = manager.subcommand == Subcommand::Update;
         let mut rewrites: Vec<(usize, Vec<u8>)> = Vec::new();
         if (root_deps_list.off as usize) < old.buffers.dependencies.len() {
             let string_buf = old.buffers.string_bytes.as_slice();
@@ -818,9 +819,23 @@ impl Lockfile {
                             continue;
                         }
                         let res = resolutions_of_yore[old_resolution as usize];
-                        if res.tag != ResolutionTag::Npm
-                            || update.version.tag != dependency::Tag::DistTag
-                        {
+                        if res.tag != ResolutionTag::Npm {
+                            continue;
+                        }
+                        // Mirror `PackageJSONEditor::edit`'s post-install gate: a dist-tag
+                        // request always rewrites package.json; an npm range does so only
+                        // under `bun update`, for a recorded target or a non-exact request.
+                        let rewrites_package_json = match update.version.tag {
+                            dependency::Tag::DistTag => true,
+                            dependency::Tag::Npm if is_update_subcommand => {
+                                manager
+                                    .updating_packages
+                                    .contains(dep.name.slice(string_buf))
+                                    || !update.version.is_exact_npm()
+                            }
+                            _ => false,
+                        };
+                        if !rewrites_package_json {
                             continue;
                         }
 

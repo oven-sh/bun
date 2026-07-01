@@ -387,6 +387,57 @@ it("update <name> of a versionless scoped alias keeps the files in agreement, is
 });
 
 // https://github.com/oven-sh/bun/issues/13388
+// A positional request with an explicit version. `bun update` of a recorded
+// dependency re-pins from its original literal, of an unrecorded one it saves
+// `^<resolved>`, and `bun add <name>@<range>` keeps the requested range.
+for (const { label, init, args, expected } of [
+  {
+    label: "update existing@range",
+    init: { baz: "~0.0.3" },
+    args: ["update", "baz@~0.0.4"],
+    expected: { baz: "~0.0.5" },
+  },
+  {
+    label: "update existing@exact",
+    init: { baz: "~0.0.3" },
+    args: ["update", "baz@0.0.5"],
+    expected: { baz: "~0.0.5" },
+  },
+  {
+    // `baz` has no recorded entry and its range is satisfied by the already
+    // locked 0.0.3, so both files get the `^<resolved>` fallback.
+    label: "update new@range",
+    init: { "baz-alias": "npm:baz@~0.0.3" },
+    args: ["update", "baz@~0.0.3"],
+    expected: { "baz-alias": "npm:baz@~0.0.3", baz: "^0.0.3" },
+  },
+  { label: "add existing@range", init: { baz: "~0.0.3" }, args: ["add", "baz@~0.0.4"], expected: { baz: "~0.0.4" } },
+]) {
+  it(`${label} saves the same literal into both files, issue#13388`, async () => {
+    const urls: string[] = [];
+    const registry: Record<string, any> = { "0.0.3": {}, latest: "0.0.3" };
+    setHandler(dummyRegistry(urls, registry));
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", dependencies: init }));
+
+    await runInPackageDir(["install", "--save-text-lockfile"]);
+
+    registry["0.0.5"] = {};
+    registry.latest = "0.0.5";
+    setHandler(dummyRegistry(urls, registry));
+    await runInPackageDir(args);
+
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({ name: "foo", dependencies: expected });
+    const lockfile = await file(join(package_dir, "bun.lock")).text();
+    for (const [name, literal] of Object.entries(expected)) {
+      expect(lockfile).toContain(`"${name}": "${literal}"`);
+    }
+
+    const { err } = await runInPackageDir(["install"]);
+    expect(err).not.toContain("Saved lockfile");
+  });
+}
+
+// https://github.com/oven-sh/bun/issues/13388
 // When a package exists in two dependency groups, only one group moves in
 // package.json, and no-arg and positional updates pick different groups. The
 // untouched group's bun.lock entry must stay unchanged too.

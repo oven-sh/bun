@@ -182,8 +182,6 @@ declare function $getAsyncGeneratorInternalField(): TODO;
 declare function $getAbstractModuleRecordInternalField(): TODO;
 declare function $getArrayIteratorInternalField(): TODO;
 declare function $getStringIteratorInternalField(): TODO;
-declare function $getMapIteratorInternalField(): TODO;
-declare function $getSetIteratorInternalField(): TODO;
 declare function $getProxyInternalField(): TODO;
 declare function $idWithProfile(): TODO;
 /**
@@ -215,8 +213,6 @@ declare function $isSet<V>(obj: unknown): obj is Set<V>;
 declare function $isShadowRealm(obj: unknown): obj is ShadowRealm;
 declare function $isStringIterator(obj: unknown): obj is Iterator<string>;
 declare function $isArrayIterator(obj: unknown): obj is Iterator<any>;
-declare function $isMapIterator(obj: unknown): obj is Iterator<any>;
-declare function $isSetIterator(obj: unknown): obj is Iterator<any>;
 declare function $isUndefinedOrNull(obj: unknown): obj is null | undefined;
 declare function $tailCallForwardArguments(fn: CallableFunction, thisValue: ThisType): any;
 /**
@@ -234,8 +230,6 @@ declare function $throwRangeError(message: string): never;
  * @deprecated
  */
 declare function $throwOutOfMemoryError(): never;
-declare function $tryGetById(): TODO;
-declare function $tryGetByIdWithWellKnownSymbol(obj: any, key: WellKnownSymbol): any;
 declare function $putByIdDirect(obj: any, key: PropertyKey, value: any): void;
 
 /**
@@ -264,8 +258,6 @@ declare function $putGeneratorInternalField(): TODO;
 declare function $putAsyncGeneratorInternalField(): TODO;
 declare function $putArrayIteratorInternalField(): TODO;
 declare function $putStringIteratorInternalField(): TODO;
-declare function $putMapIteratorInternalField(): TODO;
-declare function $putSetIteratorInternalField(): TODO;
 declare function $superSamplerBegin(): TODO;
 declare function $superSamplerEnd(): TODO;
 declare function $toNumber(x: any): number;
@@ -328,9 +320,7 @@ declare const $arrayIteratorFieldIndex: TODO;
 declare const $arrayIteratorFieldIteratedObject: TODO;
 declare const $arrayIteratorFieldKind: TODO;
 declare const $mapIteratorFieldMapBucket: TODO;
-declare const $mapIteratorFieldKind: TODO;
 declare const $setIteratorFieldSetBucket: TODO;
-declare const $setIteratorFieldKind: TODO;
 declare const $stringIteratorFieldIndex: TODO;
 declare const $stringIteratorFieldIteratedString: TODO;
 declare const $asyncGeneratorFieldSuspendReason: TODO;
@@ -383,6 +373,7 @@ declare function $code(): TODO;
 declare function $controlledReadableStream(): TODO;
 declare function $controller(): TODO;
 declare function $createEmptyReadableStream(): TODO;
+declare function $createErroredReadableStream(reason: unknown): TODO;
 declare function $createFIFO(): TODO;
 declare function $createNativeReadableStream(): TODO;
 declare function $createUninitializedArrayBuffer(size: number): ArrayBuffer;
@@ -538,9 +529,6 @@ declare const __internal: unique symbol;
 interface InternalFieldObject<T extends any[]> {
   [__internal]: T;
 }
-
-// Types used in the above functions
-type WellKnownSymbol = keyof { [K in keyof SymbolConstructor as SymbolConstructor[K] extends symbol ? K : never]: K };
 
 // You can also `@` on any method on a classes to avoid prototype pollution and secret internals
 type ClassWithIntrinsics<T> = { [K in keyof T as T[K] extends Function ? `$${K}` : never]: T[K] };
@@ -752,6 +740,7 @@ declare function $ERR_VM_MODULE_NOT_MODULE(): Error;
 declare function $ERR_VM_MODULE_DIFFERENT_CONTEXT(): Error;
 declare function $ERR_VM_MODULE_LINK_FAILURE(message: string, cause: Error): Error;
 declare function $ERR_TLS_ALPN_CALLBACK_WITH_PROTOCOLS(): TypeError;
+declare function $ERR_TLS_ALPN_CALLBACK_INVALID_RESULT(message: string): TypeError;
 declare function $ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS(): Error;
 declare function $ERR_HTTP2_CONNECT_AUTHORITY(): Error;
 declare function $ERR_HTTP2_CONNECT_SCHEME(): Error;

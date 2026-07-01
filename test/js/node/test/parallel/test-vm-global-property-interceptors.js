@@ -126,4 +126,5 @@ assert.strictEqual(ctx.e, 'newE');
 assert.throws(() => vm.runInContext(`
 'use strict';
 Object.defineProperty(this, 'f', { value: 'newF' });
-`, ctx), /TypeError: .*readonly property.,*/);
+` // JSC's defineProperty failure message differs from V8's
+, ctx), typeof Bun === 'undefined' ? /TypeError: Cannot redefine property: f/ : /TypeError: Attempting to change value of a readonly property\./);

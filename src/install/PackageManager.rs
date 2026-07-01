@@ -174,7 +174,8 @@ impl PackageManagerCommand {
   <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder
   <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder
   <b><green>bun<r> <blue>list<r>                  list the dependency tree according to the current lockfile
-  <d>└<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
+  <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
+  <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies
   <b><green>bun pm<r> <blue>why<r> <d>\<pkg\><r>            show dependency tree explaining why a package is installed
   <b><green>bun pm<r> <blue>whoami<r>               print the current npm username
   <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>
@@ -210,7 +211,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.
 
 use crate::lockfile_real::package as Package;
 use crate::package_manager_task as Task;
-use crate::resolvers::folder_resolver::FolderResolution;
+use crate::resolvers::folder_resolver::{Entry as FolderResolutionEntry, FolderResolution};
 use bun_install::lockfile::{self, Lockfile};
 use bun_install::{
     Dependency, DependencyID, Features, NetworkTask, PackageID, PackageManifestMap,
@@ -313,7 +314,7 @@ type ResolveTaskQueue = UnboundedQueue<Task::Task<'static> /* , .next */>;
 
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
 pub(crate) type FolderResolutionMap =
-    HashMap<u64, FolderResolution /* , IdentityContext<u64>, 80 */>;
+    HashMap<u64, FolderResolutionEntry /* , IdentityContext<u64>, 80 */>;
 pub(crate) type NpmAliasMap =
     HashMap<PackageNameHash, crate::dependency::Version /* , IdentityContext<u64>, 80 */>;
 
@@ -2071,7 +2072,10 @@ pub fn init(
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         unsafe { &mut *manager_ptr }.folders.put(
             crate::resolvers::folder_resolver::hash(normalized),
-            crate::resolvers::folder_resolver::FolderResolution::PackageId(0),
+            FolderResolutionEntry {
+                abs_path: Box::<[u8]>::from(&*normalized),
+                resolution: FolderResolution::PackageId(0),
+            },
         )?;
         // normalized.deinit() → Drop (stack buffer)
     }

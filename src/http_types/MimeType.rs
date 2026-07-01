@@ -19,10 +19,9 @@ mod loader_disc {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// `Table` (= generated `mime_type_list_enum::MimeTypeList`). The Rust side is a
-// hand-rolled stand-in (`&'static str` newtype) until
-// `src/codegen/generate-compact-string-table.ts` emits `.rs`. See the
-// note at the top of `mime_type_list_enum.rs`.
+// `Table` (= `mime_type_list_enum::MimeTypeList`). Hand-maintained `&'static
+// str` newtype derived from `mime_type_list.txt`; see the note at the top of
+// `mime_type_list_enum.rs`.
 // ───────────────────────────────────────────────────────────────────────────
 pub use super::mime_type_list_enum::MimeTypeList as Table;
 use bun_collections::StringHashMap;
@@ -30,8 +29,8 @@ use bun_collections::StringHashMap;
 // `mime_type_list_enum.rs` exposes `const fn from_mime_literal(&'static str)`,
 // an UNCHECKED literal wrapper: a typo'd literal still compiles and simply
 // never matches anything at runtime (comparison is string equality, not an
-// enum compare). The checked, packed-enum form is pending the codegen `.rs`
-// backend — see the header of `mime_type_list_enum.rs`.
+// enum compare). A checked, packed-enum form is not implemented; see the
+// PERF note at the top of `mime_type_list_enum.rs`.
 macro_rules! t {
     ($s:literal) => {
         Table::from_mime_literal($s)

@@ -665,6 +665,61 @@ it("readableStreamToBytes (default)", async () => {
   expect(new TextDecoder().decode(new Uint8Array(buffer))).toBe("abdefgh");
 });
 
+describe("consuming an already-errored stream rejects instead of throwing", () => {
+  const erroredStream = error =>
+    new ReadableStream({
+      start(controller) {
+        controller.error(error);
+      },
+    });
+
+  test.each([
+    "readableStreamToArrayBuffer",
+    "readableStreamToBytes",
+    "readableStreamToBlob",
+    "readableStreamToArray",
+    "readableStreamToFormData",
+    "readableStreamToText",
+    "readableStreamToJSON",
+  ])("Bun.%s", async name => {
+    const error = new Error("boom");
+    let promise;
+    expect(() => {
+      promise = Bun[name](erroredStream(error));
+    }).not.toThrow();
+    expect(promise).toBeInstanceOf(Promise);
+    await expect(promise).rejects.toBe(error);
+  });
+
+  test.each(["arrayBuffer", "bytes", "blob", "formData", "text", "json"])("Response.prototype.%s", async name => {
+    const error = new Error("boom");
+    const response = new Response(erroredStream(error), {
+      headers: { "content-type": "multipart/form-data; boundary=x" },
+    });
+    let promise;
+    expect(() => {
+      promise = response[name]();
+    }).not.toThrow();
+    expect(promise).toBeInstanceOf(Promise);
+    await expect(promise).rejects.toBe(error);
+  });
+
+  test.each(["arrayBuffer", "bytes", "blob", "formData", "text", "json"])("Request.prototype.%s", async name => {
+    const error = new Error("boom");
+    const request = new Request("http://localhost/", {
+      method: "POST",
+      body: erroredStream(error),
+      headers: { "content-type": "multipart/form-data; boundary=x" },
+    });
+    let promise;
+    expect(() => {
+      promise = request[name]();
+    }).not.toThrow();
+    expect(promise).toBeInstanceOf(Promise);
+    await expect(promise).rejects.toBe(error);
+  });
+});
+
 it("ReadableStream for Blob", async () => {
   var blob = new Blob(["abdefgh", "ijklmnop"]);
   expect(await blob.text()).toBe("abdefghijklmnop");
@@ -1275,4 +1330,45 @@ it("auto-allocated byte stream chunks are zero-filled before being exposed to th
   // ...and every byte it did not write is zero.
   expect(value.subarray(1).every(b => b === 0)).toBe(true);
   reader.cancel();
+});
+
+it("ReadableStream BYOB read pending at close() + respond(0) returns a zero-length view of the caller's buffer", async () => {
+  // Spec EOF pattern for byte sources: controller.close() leaves the pending
+  // BYOB read unsettled; byobRequest.respond(0) then resolves it with a
+  // zero-length view over the caller's (transferred) buffer, returning the
+  // buffer for reuse. Only cancel() resolves pending reads with undefined.
+  let ctrl;
+  const rs = new ReadableStream({
+    type: "bytes",
+    start(c) {
+      ctrl = c;
+    },
+  });
+  const reader = rs.getReader({ mode: "byob" });
+  const pending = reader.read(new Uint8Array(new ArrayBuffer(16)));
+  ctrl.close();
+  ctrl.byobRequest.respond(0);
+  const { value, done } = await pending;
+  expect(done).toBe(true);
+  expect(value).toBeInstanceOf(Uint8Array);
+  expect(value.byteLength).toBe(0);
+  // The caller's 16-byte buffer comes back (transferred) for reuse.
+  expect(value.buffer.byteLength).toBe(16);
+  await reader.closed;
+});
+
+it("ReadableStream BYOB read pending at cancel() resolves with undefined", async () => {
+  // Spec (ReadableStreamCancel step 6): pending readIntoRequests get their
+  // close steps with undefined - { value: undefined, done: true }.
+  const rs = new ReadableStream({
+    type: "bytes",
+    start() {},
+  });
+  const reader = rs.getReader({ mode: "byob" });
+  const pending = reader.read(new Uint8Array(16));
+  await reader.cancel("bye");
+  const { value, done } = await pending;
+  expect(done).toBe(true);
+  expect(value).toBeUndefined();
+  await reader.closed;
 });

@@ -204,7 +204,7 @@ const run_test_5 = common.mustCall(function() {
     code: 'ERR_OUT_OF_RANGE',
     message: 'The value of "start" is out of range. It must be ' +
              `>= 0 and <= ${Number.MAX_SAFE_INTEGER}. ` +
-             'Received 9007199254740992',
+             'Received 9_007_199_254_740_992',
     name: 'RangeError'
   };
   assert.throws(fn, err);

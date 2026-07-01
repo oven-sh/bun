@@ -405,6 +405,7 @@ pub mod bun_object {
         BunObject_lazyPropCb_cwd => super::get_cwd,
         BunObject_lazyPropCb_embeddedFiles => super::get_embedded_files,
         BunObject_lazyPropCb_enableANSIColors => super::enable_ansi_colors,
+        BunObject_lazyPropCb_isStandaloneExecutable => super::get_is_standalone_executable,
         BunObject_lazyPropCb_hash => super::get_hash_object,
         BunObject_lazyPropCb_inspect => super::get_inspect,
         BunObject_lazyPropCb_origin => super::get_origin,
@@ -1528,7 +1529,8 @@ pub(crate) fn index_of_line(
         if let Some(i) = strings::index_of_newline_or_non_ascii(bytes, current_offset as u32) {
             let byte = bytes[i as usize];
             if byte > 0x7F {
-                current_offset += (strings::wtf8_byte_sequence_length(byte) as usize).max(1);
+                current_offset =
+                    i as usize + (strings::wtf8_byte_sequence_length(byte) as usize).max(1);
                 continue;
             }
 
@@ -1987,6 +1989,10 @@ pub(crate) fn get_valkey_client_constructor(global_this: &JSGlobalObject, _: &JS
 
 pub(crate) fn get_terminal_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     crate::api::bun_terminal_body::js::get_constructor(global_this)
+}
+
+pub(crate) fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    JSValue::js_boolean(global_this.bun_vm().standalone_module_graph.is_some())
 }
 
 pub(crate) fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
@@ -2525,18 +2531,10 @@ pub mod JSZlib {
                 }
             }
             Library::Libdeflate => {
-                let decompressor_ptr = bun_libdeflate::Decompressor::alloc();
-                if decompressor_ptr.is_null() {
+                let Some(mut decompressor) = bun_libdeflate::OwnedDecompressor::new() else {
                     drop(list);
                     return Err(global_this.throw_out_of_memory());
-                }
-                // SAFETY: non-null per check above; freed via the scopeguard below.
-                let decompressor = unsafe { &mut *decompressor_ptr };
-                let _decompressor_guard = scopeguard::guard(decompressor_ptr, |p| {
-                    // SAFETY: `p` is the non-null `Decompressor::alloc` pointer
-                    // checked above; this guard is its sole owner and runs once.
-                    unsafe { bun_libdeflate::Decompressor::destroy(p) }
-                });
+                };
                 let encoding = if is_gzip {
                     bun_libdeflate::Encoding::Gzip
                 } else {
@@ -2686,17 +2684,10 @@ pub mod JSZlib {
                 }
             }
             Library::Libdeflate => {
-                let compressor_ptr = bun_libdeflate::Compressor::alloc(level.unwrap_or(6));
-                if compressor_ptr.is_null() {
+                let Some(mut compressor) = bun_libdeflate::OwnedCompressor::new(level.unwrap_or(6))
+                else {
                     return Err(global_this.throw_out_of_memory());
-                }
-                // SAFETY: non-null per check above; freed via the scopeguard below.
-                let compressor = unsafe { &mut *compressor_ptr };
-                let _compressor_guard = scopeguard::guard(compressor_ptr, |p| {
-                    // SAFETY: `p` is the non-null `Compressor::alloc` pointer
-                    // checked above; this guard is its sole owner and runs once.
-                    unsafe { bun_libdeflate::Compressor::destroy(p) }
-                });
+                };
                 let encoding = if is_gzip {
                     bun_libdeflate::Encoding::Gzip
                 } else {

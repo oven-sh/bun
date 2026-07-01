@@ -9,7 +9,7 @@
 use crate::PathChar;
 use crate::resolve_path;
 use crate::windows;
-use bun_core::string::immutable as strings;
+use bun_core::strings;
 use bun_core::{WStr, ZStr};
 
 // Generic code-unit bound for fns that operate over both u8 and u16 paths:

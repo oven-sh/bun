@@ -50,15 +50,12 @@ impl Default for B {
 }
 
 // ── Layout guards ─────────────────────────────────────────────────────────
-// Three `StoreRef<T>` variants (`#[repr(transparent)] NonNull<T>`, 8-byte
-// payload) + one ZST → 1-byte discriminant + 8-byte payload = 9, align(8)
-// rounds to 16. `Binding` = `B` (16, align 8) + `Loc` (i32) → 20 → 24.
-// Matches `expr::Data`/`stmt::Data`: every pointer payload is non-nullable,
-// so `Option<B>` packs into the same 16 bytes via the NonNull niche (and
-// would continue to even under a future `#[repr(u8)]`, unlike the prior
-// `*mut T` form which relied solely on spare-tag-value niche).
-const _: () = assert!(core::mem::size_of::<B>() == 16);
-const _: () = assert!(core::mem::size_of::<super::binding::Binding>() == 24);
+// Three `StoreRef<T>` variants (8 B align 4) + one ZST → 1-byte discriminant
+// + 8-byte payload = 9, align(4) rounds to 12. `Binding` = `B` (12, align 4)
+// + `Loc` (i32) → 16. `Option<B>` niche-packs via spare discriminant values.
+const _: () = assert!(core::mem::size_of::<B>() == 12);
+const _: () = assert!(core::mem::align_of::<B>() == 4);
+const _: () = assert!(core::mem::size_of::<super::binding::Binding>() == 16);
 const _: () = assert!(
     core::mem::size_of::<Option<B>>() == core::mem::size_of::<B>(),
     "B lost its niche — check for #[repr] or oversized inline payload"

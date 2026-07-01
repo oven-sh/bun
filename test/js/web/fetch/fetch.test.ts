@@ -9,6 +9,7 @@ import {
   gc,
   isASAN,
   isBroken,
+  isDebug,
   isFlaky,
   isMacOS,
   isWindows,
@@ -1215,16 +1216,18 @@ describe("Response", () => {
   });
   describe("Response.redirect", () => {
     it("works", () => {
+      // Location is the serialization of the parsed url, so an empty path
+      // gains a trailing "/". https://fetch.spec.whatwg.org/#dom-response-redirect
       const inputs = [
-        "http://example.com",
-        "http://example.com/",
-        "http://example.com/hello",
-        "http://example.com/hello/",
-        "http://example.com/hello/world",
-        "http://example.com/hello/world/",
+        ["http://example.com", "http://example.com/"],
+        ["http://example.com/", "http://example.com/"],
+        ["http://example.com/hello", "http://example.com/hello"],
+        ["http://example.com/hello/", "http://example.com/hello/"],
+        ["http://example.com/hello/world", "http://example.com/hello/world"],
+        ["http://example.com/hello/world/", "http://example.com/hello/world/"],
       ];
-      for (let input of inputs) {
-        expect(Response.redirect(input).headers.get("Location")).toBe(input);
+      for (const [input, expected] of inputs) {
+        expect(Response.redirect(input).headers.get("Location")).toBe(expected);
       }
     });
 
@@ -1238,7 +1241,7 @@ describe("Response", () => {
         status: 307,
       });
       expect(response.headers.get("x-hello")).toBe("world");
-      expect(response.headers.get("Location")).toBe("https://example.com");
+      expect(response.headers.get("Location")).toBe("https://example.com/");
       expect(response.status).toBe(307);
       expect(response.type).toBe("default");
       expect(response.ok).toBe(false);
@@ -2447,6 +2450,10 @@ describe("fetch should allow duplex", () => {
 it("should allow to follow redirect if connection is closed, abort should work even if the socket was closed before the redirect", async () => {
   for (const type of ["normal", "delay"]) {
     await using server = net.createServer(socket => {
+      // Raw test server: tolerate client aborts, surface anything unexpected.
+      socket.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code !== "ECONNRESET" && err.code !== "EPIPE" && err.code !== "ECONNABORTED") throw err;
+      });
       let body = "";
       socket.on("data", data => {
         body += data.toString("utf8");
@@ -2765,7 +2772,10 @@ it("releases interim 1xx response bytes as they are parsed while waiting for the
     // Only a small parse tail may be retained while the interim responses stream in;
     // the ~48 MB of already-consumed 1xx bytes must not accumulate in the process.
     const deltaMB = (rssDuringFlood - rssBefore) / 1024 / 1024;
-    expect(deltaMB).toBeLessThan(isASAN ? 48 : 16);
+    // A local `bun bd` debug build is ASAN-instrumented but not named
+    // `bun-asan`, so isASAN is false there; its quarantine retains the freed
+    // flood bytes the same way - give it the same allowance.
+    expect(deltaMB).toBeLessThan(isASAN || isDebug ? 48 : 16);
   } finally {
     for (const socket of sockets) socket.destroy();
     server.close();

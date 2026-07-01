@@ -1,6 +1,6 @@
 import { color } from "bun";
 import { describe, expect, test } from "bun:test";
-import { withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isDebug, withoutAggressiveGC } from "harness";
 
 const namedColors = ["red", "green", "blue", "yellow", "purple", "orange", "pink", "brown", "gray"];
 
@@ -194,6 +194,41 @@ describe("weird", () => {
   });
 });
 
+describe("number inputs are opaque", () => {
+  test.each([
+    [0xff0000, { r: 255, g: 0, b: 0, a: 1 }],
+    [0x00ff00, { r: 0, g: 255, b: 0, a: 1 }],
+    [0x0000ff, { r: 0, g: 0, b: 255, a: 1 }],
+    [0x000000, { r: 0, g: 0, b: 0, a: 1 }],
+    [0xffffff, { r: 255, g: 255, b: 255, a: 1 }],
+  ])("color(%d, '{rgba}')", (input, expected) => {
+    expect(color(input, "{rgba}")).toEqual(expected);
+  });
+
+  test("alpha is opaque in every output format", () => {
+    expect(color(0xff0000, "[rgba]")).toEqual([255, 0, 0, 255]);
+    expect(color(0xff0000, "rgba")).toBe("rgba(255, 0, 0, 1)");
+    expect(color(0xff0000, "css")).toBe("red");
+    expect(color(0xff0000)).toBe("red");
+  });
+
+  test("round-trips through the number format", () => {
+    expect(color(color("pink", "number")!, "css")).toBe("pink");
+    expect(color(color([255, 0, 0, 255], "number")!, "[rgba]")).toEqual([255, 0, 0, 255]);
+  });
+
+  test("values wider than 24 bits keep the explicit alpha byte", () => {
+    expect(color(0x80ff0000, "[rgba]")).toEqual([255, 0, 0, 128]);
+    expect(color(0xffff0000, "{rgba}")).toEqual({ r: 255, g: 0, b: 0, a: 1 });
+    expect(color(0xffffffff, "{rgba}")).toEqual({ r: 255, g: 255, b: 255, a: 1 });
+  });
+
+  test("out-of-range values use their low 32 bits", () => {
+    expect(color(-1, "{rgba}")).toEqual({ r: 255, g: 255, b: 255, a: 1 });
+    expect(color(0x1_00ff_0000, "{rgba}")).toEqual({ r: 255, g: 0, b: 0, a: 1 });
+  });
+});
+
 test("0 args", () => {
   expect(() => color()).toThrow(
     expect.objectContaining({
@@ -202,7 +237,55 @@ test("0 args", () => {
   );
 });
 
-test("fuzz ansi256", () => {
+describe.concurrent('color(input, "ansi") picks the escape for the detected color depth', () => {
+  // The "ansi" format resolves against the terminal color depth derived from
+  // the environment, so it has to be observed from a child process.
+  async function autoAnsi(env: Record<string, string | undefined>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `process.stdout.write(JSON.stringify(Bun.color("#ff0000", "ansi")))`],
+      env: {
+        ...bunEnv,
+        NO_COLOR: undefined,
+        FORCE_COLOR: undefined,
+        CI: undefined,
+        TMUX: undefined,
+        COLORTERM: undefined,
+        TERM: "xterm-256color",
+        ...env,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr is only part of the comparison when the child failed, so the
+    // failure diff shows why without asserting it empty on success.
+    return { stdout, exitCode, stderr: exitCode === 0 ? undefined : stderr };
+  }
+
+  function ansi(format: "ansi-24bit" | "ansi-256") {
+    return { stdout: JSON.stringify(color("#ff0000", format)), exitCode: 0 };
+  }
+
+  test("TMUX is 24-bit color", async () => {
+    // https://github.com/oven-sh/bun/issues/28463
+    expect(await autoAnsi({ TMUX: "1", TERM: "screen-256color" })).toEqual(ansi("ansi-24bit"));
+  });
+
+  test("COLORTERM=truecolor is 24-bit color", async () => {
+    expect(await autoAnsi({ COLORTERM: "truecolor" })).toEqual(ansi("ansi-24bit"));
+  });
+
+  test("FORCE_COLOR=2 is 256 colors", async () => {
+    expect(await autoAnsi({ FORCE_COLOR: "2" })).toEqual(ansi("ansi-256"));
+  });
+
+  test("TERM=dumb is no color", async () => {
+    expect(await autoAnsi({ TERM: "dumb" })).toEqual({ stdout: JSON.stringify(""), exitCode: 0 });
+  });
+});
+
+// 2^24 color() calls take minutes on debug builds, past the per-test timeout.
+test.skipIf(isDebug)("fuzz ansi256", () => {
   withoutAggressiveGC(() => {
     for (let i = 0; i < 256; i++) {
       const iShifted = i << 16;

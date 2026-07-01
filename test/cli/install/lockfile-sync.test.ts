@@ -19,7 +19,6 @@ type Registry = Record<string, { versions: string[]; latest: string }>;
 
 let server: ReturnType<typeof Bun.serve>;
 let tgzDir: string;
-let cacheDir: string;
 let linkDir: string;
 // `link:<name>` always resolves against the global link dir, so point
 // `BUN_INSTALL` at a directory owned by this file and register a single
@@ -48,7 +47,6 @@ function tarball(name: string, version: string): Promise<string> {
 
 beforeAll(async () => {
   tgzDir = tempDirWithFiles("lockfile-sync-tgz", {});
-  cacheDir = tempDirWithFiles("lockfile-sync-cache", {});
   server = Bun.serve({
     port: 0,
     async fetch(req) {
@@ -84,13 +82,13 @@ beforeAll(async () => {
       "bunfig.toml": `[install]\nregistry = "${server.url}none/"\n`,
     },
   });
-  env = { ...bunEnv, BUN_INSTALL: linkDir, BUN_INSTALL_CACHE_DIR: cacheDir };
+  env = { ...bunEnv, BUN_INSTALL: linkDir };
   await runOk(join(linkDir, "link-dep"), "link");
 });
 
 afterAll(async () => {
   server.stop(true);
-  await Promise.all([tgzDir, cacheDir, linkDir].map(directory => rm(directory, { recursive: true, force: true })));
+  await Promise.all([tgzDir, linkDir].map(directory => rm(directory, { recursive: true, force: true })));
 });
 
 // ---------------------------------------------------------------------------
@@ -148,7 +146,10 @@ async function run(projectDir: string, ...args: string[]) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
     cwd: projectDir,
-    env,
+    // Per-project cache. The local tarball hashes to one cache slot, and
+    // concurrent projects extracting it into a shared cache race on Windows
+    // (ENOTEMPTY moving the temp dir into place, ENOENT for the reader).
+    env: { ...env, BUN_INSTALL_CACHE_DIR: join(projectDir, ".bun-cache") },
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -182,8 +183,7 @@ async function expectNextInstallIsNoop(projectDir: string) {
 /**
  * For single-group projects: package.json holds exactly `groups`, bun.lock's
  * root entry holds the same literals, and the next install is a no-op.
- * (When a name appears in several groups bun.lock legitimately dedups it, so
- * multi-group tests assert the two files individually instead.)
+ * (bun.lock dedups a multi-group name, so those assert each file alone.)
  */
 async function expectSettled(projectDir: string, groups: Groups, extraPackageJson: object = {}) {
   expect(await packageJson(projectDir)).toEqual({ name: "root", ...extraPackageJson, ...groups });
@@ -192,14 +192,9 @@ async function expectSettled(projectDir: string, groups: Groups, extraPackageJso
 }
 
 // ---------------------------------------------------------------------------
-// Project factory. Every project lays out every protocol target so any test
-// can reference any of them:
-//   folder-target/package.json     `file:./folder-target`
-//   packages/ws-dep/package.json   `workspace:*` (package.json needs
-//                                   `"workspaces": ["packages/*"]`)
-//   tgz-local-dep-1.0.0.tgz        `file:./tgz-local-dep-1.0.0.tgz`
-// plus the one globally `bun link`ed `link-dep` and this project's registry
-// namespace for the npm and remote-tarball dependencies.
+// Project factory. Every project is a hermetic tempDir laying out one target
+// per non-npm protocol (folder-target, packages/ws-dep, a local .tgz, the one
+// globally linked link-dep) plus its own namespace on the registry server.
 // ---------------------------------------------------------------------------
 
 interface Project extends AsyncDisposable {
@@ -226,9 +221,8 @@ async function makeProject(
   registries.set(id, reg);
   const url = (path: string) => `${server.url}${id}/${path}`;
 
-  // The extracted-package cache is shared across every test (BUN_INSTALL_CACHE_DIR;
-  // every tarball is generated from the same content), but the manifest cache
-  // is off so a registry mutation between steps is always observed.
+  // The manifest cache is off so a registry mutation between steps is always
+  // re-observed; the extracted-package cache is per project (see `run`).
   const base = tempDir(`lockfile-sync-${id}`, {
     "bunfig.toml": [
       "[install]",
@@ -312,9 +306,8 @@ function updateModes(names: string[]) {
 // ===========================================================================
 
 // Where `pkg-one` (`^1.0.0`) and its alias (`npm:pkg-one@~1.0.0`) land after
-// the registry moves. `latest` applies only to `--latest`; a root
-// peerDependency only moves under `--latest` because the deferred peer pass
-// keeps an already-satisfying resolution.
+// the registry moves. `latest` applies only to `--latest`; a root peer
+// dependency only moves under `--latest` (its deferred resolution is kept).
 const UPDATE_DELTAS: { delta: string; publish: (registry: Registry) => void; plain: Deps; latest: Deps }[] = [
   {
     delta: "same: registry unchanged",
@@ -399,10 +392,9 @@ describe("bun update resolves a dependency that is not in the lockfile yet", () 
 });
 
 // ===========================================================================
-// bun update <name> where <name> is a non-npm dependency: the literal must
-// come through untouched in both files. (`--latest <non-npm-name>` is not
-// covered here: it tries to resolve the name from the npm registry and fails
-// before touching either file, independently of this fix.)
+// `bun update <name>` on a non-npm dependency: the literal must come through
+// untouched in both files. (`--latest <non-npm-name>` fails to resolve the
+// name from the npm registry before touching either file; not covered here.)
 // ===========================================================================
 
 describe("bun update <name> leaves a non-npm dependency alone", () => {
@@ -416,11 +408,9 @@ describe("bun update <name> leaves a non-npm dependency alone", () => {
 });
 
 // ===========================================================================
-// Every pin style `which_version_is_pinned` distinguishes. The rewritten
-// literal keeps the user's pin level: an exact pin stays exact, `~` stays
-// `~`, everything looser (`^`, `>=`, `1.x`, `*`, dist-tags) becomes `^`.
-// Installed from {1.0.0, 1.0.5, 1.2.0}/latest=1.0.0, then 1.5.0 and 3.0.0 are
-// published and `latest` moves to 3.0.0.
+// The rewritten literal keeps the user's pin level: an exact pin stays exact,
+// `~` stays `~`, everything looser becomes `^`. Installed at latest=1.0.0,
+// then 1.5.0 and 3.0.0 are published and `latest` moves to 3.0.0.
 // ===========================================================================
 
 const PIN_STYLES: { pin: string; plain: string; latest: string; positional: string }[] = [
@@ -510,13 +500,8 @@ describe("bun update with install.exact", () => {
 
 // ===========================================================================
 // Same name in two dependency groups: `bun update` moves exactly one group in
-// package.json, and bun.lock must leave the other group's literal alone too.
-// No-arg update scans optional > dev > dependencies > peer; positional scans
-// dependencies > dev > optional > peer; a root peer dependency never moves
-// without --latest.
-// Note: a name present in optionalDependencies is serialized into bun.lock
-// only there (optional shadows prod/dev), so these assert the two files
-// separately and rely on the next-install-is-a-noop check for agreement.
+// package.json and bun.lock must leave the other group's literal alone. An
+// optional+prod/dev name serializes once, so each file is asserted separately.
 // ===========================================================================
 
 describe("bun update moves only one group when a name is in two", () => {
@@ -678,10 +663,9 @@ describe("bun remove leaves the remaining dependencies untouched", () => {
 });
 
 // ===========================================================================
-// Non-npm resolution changes: bumping the version inside a folder or
-// workspace target must never rewrite the root literal, and the resulting
-// lockfile must still be stable. (A `link:` target's version is never
-// recorded in bun.lock, so there is nothing to vary for it.)
+// Bumping the version inside a folder or workspace target must never rewrite
+// the root literal, and the lockfile must still be stable. (A `link:` target's
+// version is never recorded in bun.lock, so there is nothing to vary for it.)
 // ===========================================================================
 
 describe("bun update after a non-npm target's version changes", () => {

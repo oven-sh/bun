@@ -52,6 +52,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForErrorCodeCache;
     std::unique_ptr<IsoSubspace> m_subspaceForBunInspectorConnection;
     std::unique_ptr<IsoSubspace> m_subspaceForJSNextTickQueue;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSSocketHandlers;
     std::unique_ptr<IsoSubspace> m_subspaceForNAPIFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForTTYWrapObject;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiHandleScopeImpl;

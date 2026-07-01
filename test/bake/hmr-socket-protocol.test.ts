@@ -159,6 +159,13 @@ test.concurrent(
     });
     const dev = watchDevServer(proc);
     const port = await dev.port;
+    // If the bundle never reaches the plugin (so the gate fetch never comes),
+    // fail with the dev server's output instead of hanging on bundleEntered.
+    proc.exited.then(() =>
+      bundleEntered.reject(
+        new Error(`dev server exited before the bundle reached the plugin\n--- dev server stderr ---\n${dev.stderr()}`),
+      ),
+    );
 
     const closed = Promise.withResolvers<void>();
     using hmr = await connectHmr(

@@ -1077,14 +1077,8 @@ describe("Bun.serve HTTP/3 production", () => {
   // (HttpContext.h / Http3Context.h call writeContinue before routing); a
   // curl --expect100-timeout assertion was flaky enough to drop here.
 
-  // https://github.com/oven-sh/bun/issues/33082: the server auto-answers
-  // `Expect: 100-continue` with an interim HEADERS(:status 100) before the
-  // handler runs. On the first stream of a fresh QUIC connection that interim
-  // block is stashed inside lsquic (QPACK/flow-control still settling), and the
-  // final response's header block used to clobber it, resetting the stream
-  // (HTTP3StreamReset). Fixed upstream in lsquic 4.6.3 (litespeedtech/lsquic#637).
-  // The connection must be cold: a dedicated server whose very first request
-  // carries the Expect header, with no warm-up.
+  // https://github.com/oven-sh/bun/issues/33082
+  // Must stay a cold connection (no warm-up request) or the bug is masked.
   test("Expect: 100-continue delivers the final response on a cold connection", async () => {
     using server = Bun.serve({
       port: 0,

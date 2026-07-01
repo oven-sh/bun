@@ -981,9 +981,8 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
     /* Mark the context dirty so drainQuicIfNecessary picks up header-only
      * responses (204/304) that never call us_quic_stream_write. */
     if (r == 0) s->ctx->pending_write_bytes += (unsigned int) total + 1;
-    /* lsquic rejects a send while a previous header block (e.g. an auto-sent
-     * 100-continue) is still draining, with errno EBADMSG. Report it as a
-     * distinct retryable code so the caller can resend once it flushes. */
+    /* lsquic refuses a send while a prior header block (e.g. a 100-continue)
+     * is still draining (errno EBADMSG); map it to a retryable code. */
     if (r != 0 && send_errno == EBADMSG) return US_QUIC_SEND_HEADERS_PENDING;
     return r;
 }

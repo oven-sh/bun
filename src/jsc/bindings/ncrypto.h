@@ -660,10 +660,10 @@ public:
     bool isOne() const;
 
     bool setWord(unsigned long w); // NOLINT(runtime/int)
-    // Returns std::nullopt if the value does not fit in an unsigned long
-    // (BN_get_word signals overflow by returning ULONG_MAX, which is
-    // otherwise indistinguishable from the real value ULONG_MAX).
-    std::optional<unsigned long> getWord() const; // NOLINT(runtime/int)
+    // std::nullopt when the value does not fit in a single BN_ULONG, which
+    // BN_get_word reports as the all-ones word (otherwise a real value).
+    // BN_ULONG, not unsigned long: the latter is only 32 bits on LLP64.
+    std::optional<BN_ULONG> getWord() const;
 
     size_t byteLength() const;
 
@@ -703,7 +703,7 @@ public:
         size_t size);
     static int GetBitCount(const BIGNUM* bn);
     static int GetByteCount(const BIGNUM* bn);
-    static std::optional<unsigned long> GetWord(const BIGNUM* bn); // NOLINT(runtime/int)
+    static std::optional<BN_ULONG> GetWord(const BIGNUM* bn);
     static const BIGNUM* One();
 
     BignumPointer clone();

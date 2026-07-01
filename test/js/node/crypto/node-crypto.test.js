@@ -609,13 +609,16 @@ describe("DiffieHellman", () => {
     expect(dh.setPrivateKey.name).toBe("setPrivateKey");
   });
 
-  it("accepts a buffer generator wider than a BIGNUM word", () => {
-    // A 72-bit generator overflows BN_get_word (which reports the overflow as
-    // ULONG_MAX). The generator-below-2 check must not misread that as a
-    // small value, nor reject it outright: any generator too wide for a word
-    // is necessarily >= 2.
+  // BN_get_word reports a BIGNUM too wide for a single BN_ULONG by returning
+  // the all-ones word. The generator-below-2 check must not misread that (or a
+  // truncation of a 33-to-64-bit value on LLP64, where unsigned long is 32
+  // bits) as a small value: any generator that wide is necessarily >= 2.
+  it.each([
+    ["33 bits (wider than a 32-bit unsigned long)", "0100000000"],
+    ["72 bits (wider than any BN_ULONG)", "020000000000000001"],
+  ])("accepts a buffer generator of %s", (_label, hex) => {
     const p = crypto.getDiffieHellman("modp5").getPrime();
-    const g = Buffer.from("020000000000000001", "hex");
+    const g = Buffer.from(hex, "hex");
 
     const alice = crypto.createDiffieHellman(p, g);
     const bob = crypto.createDiffieHellman(p, g);

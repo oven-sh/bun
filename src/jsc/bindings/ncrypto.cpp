@@ -404,15 +404,15 @@ bool BignumPointer::setWord(unsigned long w)
     return BN_set_word(bn_.get(), w) == 1;
 }
 
-std::optional<unsigned long> BignumPointer::GetWord(const BIGNUM* bn)
-{ // NOLINT(runtime/int)
+std::optional<BN_ULONG> BignumPointer::GetWord(const BIGNUM* bn)
+{
     BN_ULONG ret = BN_get_word(bn);
     if (ret == static_cast<BN_ULONG>(-1)) return std::nullopt;
     return ret;
 }
 
-std::optional<unsigned long> BignumPointer::getWord() const
-{ // NOLINT(runtime/int)
+std::optional<BN_ULONG> BignumPointer::getWord() const
+{
     if (!bn_) return std::nullopt;
     return GetWord(bn_.get());
 }

@@ -332,5 +332,20 @@ describe("url", () => {
       expect(new URL("foo://xn--a-ecp.example/").hostname).toBe("xn--a-ecp.example");
       expect(new URL("foo://XN--A-ECP.example/").hostname).toBe("XN--A-ECP.example");
     });
+
+    it("blob: origin re-parses the inner URL with the same host validation", () => {
+      // The origin of a blob: URL is the origin of its parsed path; an invalid
+      // inner host makes that parse fail, which yields an opaque ("null") origin.
+      expect(new URL("blob:http://xn--a-ecp.example/foo").origin).toBe("null");
+      expect(new URL("blob:http://xn--bcher-kva.de/foo").origin).toBe("http://xn--bcher-kva.de");
+      expect(new URL("blob:http://ok.example/foo").origin).toBe("http://ok.example");
+    });
+
+    it("a host with an ACE label longer than ICU's stack buffer still parses", () => {
+      // 3017 code units forces the U_BUFFER_OVERFLOW_ERROR retry in Bun::domainToASCII.
+      const host = "xn--bcher-kva." + Buffer.alloc(3000, "a").toString() + ".de";
+      expect(new URL(`http://${host}/`).hostname).toBe(host);
+      expect(URL.canParse(`http://${host}/`)).toBe(true);
+    });
   });
 });

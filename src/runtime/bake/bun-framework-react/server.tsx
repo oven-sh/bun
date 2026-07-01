@@ -175,6 +175,7 @@ export async function prerender(meta: Bake.RouteMetadata) {
     onError: err => {
       if (signal.aborted) return;
       signal.aborted = err;
+      // @ts-expect-error the real abort accepts a reason
       signal.abort(err);
       rscPayload.destroy(err);
     },

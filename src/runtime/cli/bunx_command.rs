@@ -1,7 +1,6 @@
 //! `bun x` / `bunx`: resolves a package's executable — installing it into a
 //! shared cache when not already present — and execs it with the given args.
 
-use bun_collections::VecExt;
 use std::io::Write as _;
 
 use bstr::BStr;
@@ -301,29 +300,24 @@ impl BunxCommand {
         bun_ast::initialize_store();
 
         let log = transpiler.log_mut();
-        // The JSON parser takes a bump arena; everything we keep is cloned
-        // into `Box<[u8]>` before returning, so a local arena suffices.
-        let bump = bun_alloc::Arena::new();
-        let expr = json::parse_package_json_utf8(&source, log, &bump)?;
+        let parsed = json::ParsedJson::parse_package_json(&source, log)?;
+        let expr = parsed.root;
 
         // choose the first package that fits
         if let Some(bin_expr) = expr.get(b"bin") {
             match &bin_expr.data {
-                ExprData::EObject(object) => {
-                    for prop in object.properties.slice() {
-                        if let Some(key) = &prop.key {
-                            if let Some(bin_name) = key.as_string(&bump) {
-                                if !Self::is_safe_bin_name(bin_name) {
-                                    continue;
-                                }
-                                return Ok(Box::<[u8]>::from(bin_name));
-                            }
+                ExprData::EObjectJSON(object) => {
+                    for prop in object.get().properties() {
+                        let bin_name = prop.key.slice();
+                        if !Self::is_safe_bin_name(bin_name) {
+                            continue;
                         }
+                        return Ok(Box::<[u8]>::from(bin_name));
                     }
                 }
                 ExprData::EString(_) => {
                     if let Some(name_expr) = expr.get(b"name") {
-                        if let Some(name) = name_expr.as_string(&bump) {
+                        if let Some(name) = name_expr.as_utf8_string_literal() {
                             // A scoped `name` (`@scope/pkg`) is legitimate here;
                             // the command name is its unscoped portion.
                             let bin_name = if name.is_empty() {
@@ -343,7 +337,7 @@ impl BunxCommand {
 
         if let Some(dirs) = expr.as_property(b"directories") {
             if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
-                if let Some(dir_name) = bin_prop.expr.as_string(&bump) {
+                if let Some(dir_name) = bin_prop.expr.as_utf8_string_literal() {
                     let bin_dir = bun_sys::openat_a(dir_fd, dir_name, O::RDONLY | O::DIRECTORY, 0)?;
                     // Fd is non-owning Copy; guard it.
                     let _close_bin_dir = bun_sys::CloseOnDrop::new(bin_dir);

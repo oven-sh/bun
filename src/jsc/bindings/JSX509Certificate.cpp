@@ -778,13 +778,18 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(ncrypto::X509View view, JSGloba
                     RETURN_IF_EXCEPTION(scope, nullptr);
                 }
 
-                // Convert exponent to string
-                uint64_t exponent_word = static_cast<uint64_t>(ncrypto::BignumPointer::GetWord(e));
-                auto bio_e = ncrypto::BIOPointer::NewMem();
-                if (bio_e) {
-                    BIO_printf(bio_e.get(), "0x%" PRIx64, exponent_word);
-                    object->putDirect(vm, Identifier::fromString(vm, "exponent"_s), jsString(vm, toWTFString(bio_e)));
-                    RETURN_IF_EXCEPTION(scope, nullptr);
+                // Convert exponent to string. Node.js reports null when the
+                // exponent is too wide for a BIGNUM word.
+                auto exponent_word = ncrypto::BignumPointer::GetWord(e);
+                if (!exponent_word.has_value()) {
+                    object->putDirect(vm, Identifier::fromString(vm, "exponent"_s), jsNull());
+                } else {
+                    auto bio_e = ncrypto::BIOPointer::NewMem();
+                    if (bio_e) {
+                        BIO_printf(bio_e.get(), "0x%" PRIx64, static_cast<uint64_t>(*exponent_word));
+                        object->putDirect(vm, Identifier::fromString(vm, "exponent"_s), jsString(vm, toWTFString(bio_e)));
+                        RETURN_IF_EXCEPTION(scope, nullptr);
+                    }
                 }
 
                 // Set bits
@@ -947,13 +952,18 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(JSGlobalObject* globalObject)
                     RETURN_IF_EXCEPTION(scope, nullptr);
                 }
 
-                // Convert exponent to string
-                uint64_t exponent_word = static_cast<uint64_t>(ncrypto::BignumPointer::GetWord(e));
-                auto bio_e = ncrypto::BIOPointer::NewMem();
-                if (bio_e) {
-                    BIO_printf(bio_e.get(), "0x%" PRIx64, exponent_word);
-                    object->putDirect(vm, Identifier::fromString(vm, "exponent"_s), jsString(vm, toWTFString(bio_e)));
-                    RETURN_IF_EXCEPTION(scope, nullptr);
+                // Convert exponent to string. Node.js reports null when the
+                // exponent is too wide for a BIGNUM word.
+                auto exponent_word = ncrypto::BignumPointer::GetWord(e);
+                if (!exponent_word.has_value()) {
+                    object->putDirect(vm, Identifier::fromString(vm, "exponent"_s), jsNull());
+                } else {
+                    auto bio_e = ncrypto::BIOPointer::NewMem();
+                    if (bio_e) {
+                        BIO_printf(bio_e.get(), "0x%" PRIx64, static_cast<uint64_t>(*exponent_word));
+                        object->putDirect(vm, Identifier::fromString(vm, "exponent"_s), jsString(vm, toWTFString(bio_e)));
+                        RETURN_IF_EXCEPTION(scope, nullptr);
+                    }
                 }
 
                 // Set bits

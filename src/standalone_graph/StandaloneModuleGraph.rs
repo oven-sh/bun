@@ -2,7 +2,6 @@
 //! But this incurred a fixed 350ms overhead on every build, which is unacceptable
 //! so we give up on codesigning support on macOS for now until we can find a better solution
 
-use bun_collections::VecExt;
 use core::mem::size_of;
 use core::ptr::NonNull;
 use std::io::Write as _;
@@ -2453,9 +2452,6 @@ pub(crate) fn serialize_json_source_map_for_standalone(
 ) -> Result<(), BunError> {
     use bun_ast::ExprData as AstData;
 
-    // We own a local bump arena and drop it on return.
-    let arena = bun_alloc::Arena::new();
-
     let json_src = bun_ast::Source::init_path_string("sourcemap.json", json_source);
     let mut log = bun_ast::Log::init();
 
@@ -2463,61 +2459,56 @@ pub(crate) fn serialize_json_source_map_for_standalone(
     // of the parse, so we need to remember to reset the ast store
     let _reset_guard = bun_ast::StoreResetGuard::new();
 
-    let json = bun_parsers::json::parse::<false>(&json_src, &mut log, &arena)
+    let parsed = bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log)
         .map_err(|_| err!("InvalidSourceMap"))?;
+    let json = parsed.root;
 
     let mappings_str = json
         .get(b"mappings")
         .ok_or_else(|| err!("InvalidSourceMap"))?;
-    if !matches!(mappings_str.data, AstData::EString(_)) {
-        return Err(err!("InvalidSourceMap"));
-    }
+    let map_vlq: &[u8] = mappings_str
+        .as_utf8_string_literal()
+        .ok_or_else(|| err!("InvalidSourceMap"))?;
     let sources_content = match json
         .get(b"sourcesContent")
         .ok_or_else(|| err!("InvalidSourceMap"))?
         .data
     {
-        AstData::EArray(arr) => arr,
+        AstData::EArrayJSON(arr) => arr,
         _ => return Err(err!("InvalidSourceMap")),
     };
+    let sources_content = sources_content.get();
     let sources_paths = match json
         .get(b"sources")
         .ok_or_else(|| err!("InvalidSourceMap"))?
         .data
     {
-        AstData::EArray(arr) => arr,
+        AstData::EArrayJSON(arr) => arr,
         _ => return Err(err!("InvalidSourceMap")),
     };
-    if sources_content.items.len_u32() != sources_paths.items.len_u32() {
+    let sources_paths = sources_paths.get();
+    if sources_content.items().len() != sources_paths.items().len() {
         return Err(err!("InvalidSourceMap"));
     }
 
-    // SAFETY: matched `EString` above; `StoreRef` derefs `&mut` into the arena node.
-    let mut mappings_e_string = mappings_str
-        .data
-        .e_string()
-        .expect("infallible: variant checked");
-    let map_vlq: &[u8] = mappings_e_string.slice(&arena);
     let map_blob =
         SourceMap::InternalSourceMap::from_vlq(map_vlq, 0).map_err(|_| err!("InvalidSourceMap"))?;
 
     // Every offset/length in the serialized map is a u32 `StringPointer`;
     // anything that cannot be represented is a build error, not a crash.
     let map_blob_len_u32 = u32::try_from(map_blob.len()).map_err(|_| err!("SourceMapTooLarge"))?;
-    header_list.extend_from_slice(&u32::to_le_bytes(sources_paths.items.len_u32()));
+    let sources_len_u32 =
+        u32::try_from(sources_paths.items().len()).map_err(|_| err!("SourceMapTooLarge"))?;
+    header_list.extend_from_slice(&sources_len_u32.to_le_bytes());
     header_list.extend_from_slice(&map_blob_len_u32.to_le_bytes());
 
     let string_payload_start_location = size_of::<u32>()
         + size_of::<u32>()
-        + size_of::<StringPointer>() * (sources_content.items.len_u32() as usize) * 2 // path + source
+        + size_of::<StringPointer>() * sources_content.items().len() * 2 // path + source
         + map_blob.len();
 
-    for item in sources_paths.items.slice() {
-        let AstData::EString(s) = item.data else {
-            return Err(err!("InvalidSourceMap"));
-        };
-
-        let decoded = s.string_cloned(&arena).map_err(|_| err!("OutOfMemory"))?;
+    for item in sources_paths.items() {
+        let decoded = item.as_str().ok_or_else(|| err!("InvalidSourceMap"))?;
 
         let offset = string_payload.len();
         string_payload.extend_from_slice(decoded);
@@ -2532,12 +2523,8 @@ pub(crate) fn serialize_json_source_map_for_standalone(
         header_list.extend_from_slice(&slice.length.to_le_bytes());
     }
 
-    for item in sources_content.items.slice() {
-        let AstData::EString(s) = item.data else {
-            return Err(err!("InvalidSourceMap"));
-        };
-
-        let utf8 = s.string_cloned(&arena).map_err(|_| err!("OutOfMemory"))?;
+    for item in sources_content.items() {
+        let utf8 = item.as_str().ok_or_else(|| err!("InvalidSourceMap"))?;
 
         let offset = string_payload.len();
 

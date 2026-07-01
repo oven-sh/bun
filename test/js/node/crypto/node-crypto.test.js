@@ -608,6 +608,33 @@ describe("DiffieHellman", () => {
     expect(dh.setPublicKey.name).toBe("setPublicKey");
     expect(dh.setPrivateKey.name).toBe("setPrivateKey");
   });
+
+  // BN_get_word reports a BIGNUM too wide for a single BN_ULONG by returning
+  // the all-ones word. The generator-below-2 check must not misread that (or a
+  // truncation of a 33-to-64-bit value on LLP64, where unsigned long is 32
+  // bits) as a small value: any generator that wide is necessarily >= 2.
+  it.each([
+    ["33 bits (wider than a 32-bit unsigned long)", "0100000000"],
+    ["72 bits (wider than any BN_ULONG)", "020000000000000001"],
+  ])("accepts a buffer generator of %s", (_label, hex) => {
+    const p = crypto.getDiffieHellman("modp5").getPrime();
+    const g = Buffer.from(hex, "hex");
+
+    const alice = crypto.createDiffieHellman(p, g);
+    const bob = crypto.createDiffieHellman(p, g);
+    alice.generateKeys();
+    bob.generateKeys();
+
+    expect(alice.getGenerator()).toEqual(g);
+    expect(alice.computeSecret(bob.getPublicKey())).toEqual(bob.computeSecret(alice.getPublicKey()));
+  });
+
+  it("rejects a buffer generator below 2 and accepts exactly 2", () => {
+    const p = crypto.getDiffieHellman("modp5").getPrime();
+    expect(() => crypto.createDiffieHellman(p, Buffer.from([0x00]))).toThrow(/bad.generator/i);
+    expect(() => crypto.createDiffieHellman(p, Buffer.from([0x01]))).toThrow(/bad.generator/i);
+    expect(() => crypto.createDiffieHellman(p, Buffer.from([0x02]))).not.toThrow();
+  });
 });
 
 describe("ECDH", () => {

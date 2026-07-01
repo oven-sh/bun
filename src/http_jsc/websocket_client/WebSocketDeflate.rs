@@ -3,7 +3,6 @@
 use core::ffi::c_int;
 
 use bun_core::feature_flag;
-use bun_jsc::rare_data::RareData as JscRareData;
 use bun_libdeflate_sys::libdeflate as libdeflate_sys;
 use bun_zlib as zlib;
 
@@ -66,10 +65,10 @@ pub struct PerMessageDeflate {
     pub decompress_stream: zlib::InflateDecoder,
     pub params: Params,
     // VM `bun_jsc::RareData` would be the natural owner (pooled libdeflate
-    // handles, shared across connections), but `bun_jsc::RareData::websocket_deflate()`
-    // returns an opaque placeholder (the real type is *this* `RareData`, which
-    // would be a dep cycle), so each connection owns a fresh instance instead —
-    // a per-connection libdeflate allocation, not a correctness divergence.
+    // handles, shared across connections), but the concrete type is *this*
+    // `RareData`, which `bun_jsc` cannot name without a dep cycle, so each
+    // connection owns a fresh instance instead: a per-connection libdeflate
+    // allocation, not a correctness divergence.
     pub rare_data: RareData,
 }
 
@@ -108,10 +107,7 @@ pub enum CompressError {
 bun_core::named_error_set!(DecompressError, CompressError);
 
 impl PerMessageDeflate {
-    pub(crate) fn init(
-        params: Params,
-        rare_data: &mut JscRareData,
-    ) -> Result<Box<Self>, bun_core::Error> {
+    pub(crate) fn init(params: Params) -> Result<Box<Self>, bun_core::Error> {
         // Initialize compressor (deflate)
         // We use negative window bits for raw DEFLATE, as required by RFC 7692.
         let compress_stream = zlib::DeflateEncoder::new(
@@ -131,14 +127,8 @@ impl PerMessageDeflate {
             params,
             compress_stream,
             decompress_stream,
-            // `rare_data.websocket_deflate()` returns an opaque `{ _opaque: () }`
-            // placeholder in bun_jsc (the real type is `self::RareData`, which
-            // bun_jsc cannot import without a dep cycle), so use a fresh
-            // per-connection instance — see the `rare_data` field note.
-            rare_data: {
-                let _ = rare_data;
-                RareData::default()
-            },
+            // Fresh per-connection instance; see the `rare_data` field note.
+            rare_data: RareData::default(),
         }))
     }
 

@@ -1955,7 +1955,8 @@ pub struct WindowsStreamingWriter<Parent: WindowsStreamingWriterParent> {
     pub current_payload: StreamBuffer,
     // we preserve the last write result for simplicity
     pub last_write_result: WriteResult,
-    // some error happed? we will not report onClose only onError
+    // Set only by `close_without_reporting()` (i.e. `Drop`) to suppress
+    // `Parent::on_close` while the parent is mid-teardown.
     pub closed_without_reporting: bool,
 }
 
@@ -2119,7 +2120,10 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             Self::r(this).last_write_result = WriteResult::Err(err.clone());
             Self::r_on_error(this, err);
             core::hint::black_box(this);
-            Self::r(this).close_without_reporting();
+            // `close()`, not `close_without_reporting()`: the parent must still
+            // observe `on_close` after `on_error` (the `PosixStreamingWriter`
+            // contract). FileSink's stream teardown only runs from `on_close`.
+            Self::r(this).close();
             return;
         }
 
@@ -2247,11 +2251,10 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // `Parent::on_error` (re-enters JS via FileSink::on_error → promise
         // reject; user callback may `writer.with_mut(|w| w.end())`/`.close()`
         // forming a fresh aliased `&mut Self`) and then read
-        // `self.{get_fd, closed_without_reporting, is_done}` via
-        // `close_without_reporting()`. With `&mut self` `noalias`, LLVM may
-        // forward pre-`on_error` field loads across the call. Launder this
-        // entry point too — it is reached from `on_write_complete` with a
-        // fresh `&mut`.
+        // `self.{source, is_done, closed_without_reporting}` via `close()`.
+        // With `&mut self` `noalias`, LLVM may forward pre-`on_error` field
+        // loads across the call. Launder this entry point too — it is reached
+        // from `on_write_complete` with a fresh `&mut`.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // `this` is the only access path to `*self` for the rest of this
         // function; every `r(this)` reborrow is sole-aliased on the JS thread.
@@ -2278,7 +2281,8 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                     Self::r(this).last_write_result = WriteResult::Err(err.clone());
                     Self::r_on_error(this, err);
                     core::hint::black_box(this);
-                    Self::r(this).close_without_reporting();
+                    // See `on_write_complete`: the parent must get `on_close`.
+                    Self::r(this).close();
                     return;
                 }
                 Some(Source::SyncFile(_)) => {
@@ -2335,7 +2339,8 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                 Self::r(this).last_write_result = WriteResult::Err(err.clone());
                 Self::r_on_error(this, err);
                 core::hint::black_box(this);
-                Self::r(this).close_without_reporting();
+                // See `on_write_complete`: the parent must get `on_close`.
+                Self::r(this).close();
                 return;
             }
         } else {
@@ -2357,7 +2362,8 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                 Self::r(this).last_write_result = WriteResult::Err(err.clone());
                 Self::r_on_error(this, err);
                 core::hint::black_box(this);
-                Self::r(this).close_without_reporting();
+                // See `on_write_complete`: the parent must get `on_close`.
+                Self::r(this).close();
                 return;
             }
         }
@@ -2369,6 +2375,9 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         Self::r(this).last_write_result = WriteResult::Pending(0);
     }
 
+    /// Close the source without invoking `Parent::on_close`. Only `Drop` uses
+    /// this (the parent is mid-teardown there). Error paths must use `close()`
+    /// instead so the parent still observes `on_close`.
     fn close_without_reporting(&mut self) {
         if self.get_fd() != Fd::INVALID {
             debug_assert!(!self.closed_without_reporting);

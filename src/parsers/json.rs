@@ -2404,11 +2404,7 @@ mod tests {
         let p = run(s.as_bytes(), Which::Utf8);
         // A graceful, diagnosable depth error — never a crash.
         assert!(p.root.is_none());
-        assert!(
-            p.first_msg.contains("too deeply nested"),
-            "{}",
-            p.first_msg
-        );
+        assert!(p.first_msg.contains("too deeply nested"), "{}", p.first_msg);
     }
 
     // ── env / auto-quote entry point ─────────────────────────────────────

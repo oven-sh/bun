@@ -116,23 +116,25 @@ test.concurrent("a memory-visualizer subscribe frame (sM) does not abort the dev
   expect(res.status).toBe(200);
 });
 
-test.concurrent("a duplicate testing-batch frame (H) during an in-flight bundle closes the socket instead of aborting", async () => {
-  // A bundler plugin parks the bundle on a fetch to this server, so "the
-  // bundle is in flight" is an awaited condition, not a sleep.
-  const bundleEntered = Promise.withResolvers<void>();
-  const bundleRelease = Promise.withResolvers<void>();
-  await using gate = Bun.serve({
-    port: 0,
-    async fetch() {
-      bundleEntered.resolve();
-      await bundleRelease.promise;
-      return new Response("go");
-    },
-  });
+test.concurrent(
+  "a duplicate testing-batch frame (H) during an in-flight bundle closes the socket instead of aborting",
+  async () => {
+    // A bundler plugin parks the bundle on a fetch to this server, so "the
+    // bundle is in flight" is an awaited condition, not a sleep.
+    const bundleEntered = Promise.withResolvers<void>();
+    const bundleRelease = Promise.withResolvers<void>();
+    await using gate = Bun.serve({
+      port: 0,
+      async fetch() {
+        bundleEntered.resolve();
+        await bundleRelease.promise;
+        return new Response("go");
+      },
+    });
 
-  using dir = tempDir("hmr-socket-double-h", {
-    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
-    "plugin.ts": /* ts */ `
+    using dir = tempDir("hmr-socket-double-h", {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "plugin.ts": /* ts */ `
       export default {
         name: "hold-bundle",
         setup(build) {
@@ -143,50 +145,51 @@ test.concurrent("a duplicate testing-batch frame (H) during an in-flight bundle 
         },
       };
     `,
-    "index.html": indexHtml,
-    "entry.ts": `import "./hold.block";\nconsole.log("entry");`,
-    "hold.block": "",
-    "server.ts": serverTs,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "server.ts"],
-    env: { ...bunEnv, HMR_TEST_BUNDLE_GATE: String(gate.url) },
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const dev = watchDevServer(proc);
-  const port = await dev.port;
+      "index.html": indexHtml,
+      "entry.ts": `import "./hold.block";\nconsole.log("entry");`,
+      "hold.block": "",
+      "server.ts": serverTs,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: { ...bunEnv, HMR_TEST_BUNDLE_GATE: String(gate.url) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const dev = watchDevServer(proc);
+    const port = await dev.port;
 
-  const closed = Promise.withResolvers<void>();
-  using hmr = await connectHmr(
-    port,
-    () => {},
-    () => closed.resolve(),
-  );
+    const closed = Promise.withResolvers<void>();
+    using hmr = await connectHmr(
+      port,
+      () => {},
+      () => closed.resolve(),
+    );
 
-  // Kick off the bundle for `/`; the plugin holds it open on the gate fetch.
-  const pageFetch = fetch(`http://127.0.0.1:${port}/`);
-  pageFetch.catch(() => {});
-  await bundleEntered.promise;
+    // Kick off the bundle for `/`; the plugin holds it open on the gate fetch.
+    const pageFetch = fetch(`http://127.0.0.1:${port}/`);
+    pageFetch.catch(() => {});
+    await bundleEntered.promise;
 
-  // 1st "H" with a bundle in flight: Disabled -> EnableAfterBundle.
-  // 2nd "H": the EnableAfterBundle arm must close the socket, not assert.
-  hmr.ws.send("H");
-  hmr.ws.send("H");
-  await closed.promise;
+    // 1st "H" with a bundle in flight: Disabled -> EnableAfterBundle.
+    // 2nd "H": the EnableAfterBundle arm must close the socket, not assert.
+    hmr.ws.send("H");
+    hmr.ws.send("H");
+    await closed.promise;
 
-  // Release the held bundle: the deferred `/` request completes only if the
-  // dev server survived the protocol violation.
-  bundleRelease.resolve();
-  let pageStatus: string;
-  try {
-    pageStatus = String((await pageFetch).status);
-  } catch (e) {
-    pageStatus = `${(e as Error).message}\n--- dev server stderr ---\n${dev.stderr()}`;
-  }
-  expect(pageStatus).toBe("200");
-  // And it is still accepting new requests.
-  const res = await fetch(`http://127.0.0.1:${port}/`);
-  expect(res.status).toBe(200);
-});
+    // Release the held bundle: the deferred `/` request completes only if the
+    // dev server survived the protocol violation.
+    bundleRelease.resolve();
+    let pageStatus: string;
+    try {
+      pageStatus = String((await pageFetch).status);
+    } catch (e) {
+      pageStatus = `${(e as Error).message}\n--- dev server stderr ---\n${dev.stderr()}`;
+    }
+    expect(pageStatus).toBe("200");
+    // And it is still accepting new requests.
+    const res = await fetch(`http://127.0.0.1:${port}/`);
+    expect(res.status).toBe(200);
+  },
+);

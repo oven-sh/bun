@@ -524,6 +524,22 @@ pub unsafe extern "C" fn us_loop_free(loop_: *mut UsLoop) {
         (*nl).set_before_wait_hook(None);
         us_internal_loop_data_free(loop_);
         if (*backend(loop_)).is_default == 0 {
+            // Closing handles complete asynchronously (CancelIoEx posts the
+            // cancellation later; one GQCSEx dequeues at most a batch; a
+            // slow-path poll worker may be parked in select()). Drain with a
+            // bounded number of short waits; if work is STILL live, leak the
+            // loop instead of freeing it — libuv's uv_loop_close reported
+            // EBUSY here and the embedder leaked, and a leak is strictly
+            // better than freeing state in-flight kernel completions still
+            // reference (the port must outlive any worker that may post).
+            let mut drains: u32 = 16;
+            while (*nl).alive() && drains > 0 {
+                (*nl).tick(Some(1));
+                drains -= 1;
+            }
+            if (*nl).alive() {
+                return;
+            }
             (*nl).tick(Some(0));
             // Owned native loop: created by us_create_loop, destroyed exactly
             // here. Borrowed (is_default) loops belong to the embedder.
@@ -563,9 +579,10 @@ pub unsafe extern "C" fn us_loop_pump(loop_: *mut UsLoop) {
     // SAFETY: fn contract.
     unsafe {
         let nl = native(loop_);
-        if !(*nl).alive() {
-            return;
-        }
+        // No ref gate here (same class as the bun-tick gate): ref state must
+        // not stop completion collection — an unref'd child's posted exit
+        // packet still needs dequeuing, and this pump never idles anyway
+        // (zero timeout). // quirk: PROC-45
         (*loop_).data.tick_depth += 1;
         (*nl).tick(Some(0));
         (*loop_).data.tick_depth -= 1;
@@ -593,10 +610,17 @@ pub unsafe extern "C" fn us_loop_run_bun_tick(loop_: *mut UsLoop, timeout: *cons
     // nested tick from a callback re-derives rather than aliasing.
     unsafe {
         let nl = native(loop_);
-        // B.4 step 1: nothing active → return. The keep-alive model (hazard
-        // 7) counts refs + non-fallthrough timers + closing handles, never
-        // plain polls (always unref'd).
+        // B.4 step 1 — POSIX parity is a num_polls gate (registered event
+        // sources), NOT a ref gate: a loop with only unref'd work (e.g. an
+        // unref'd child whose exit packet is already posted) must still
+        // dequeue ready completions or the packet rots in the port. When
+        // nothing holds a ref we collect with ZERO timeout — never idle on
+        // unref'd work, exactly libuv's uv_run(NOWAIT) shape.
+        // // quirk: PROC-45
         if !(*nl).alive() {
+            (*loop_).data.tick_depth += 1;
+            (*nl).tick(Some(0));
+            (*loop_).data.tick_depth -= 1;
             return;
         }
         // B.4 step 2 / hazard 6: nesting depth for the closed-socket-free
@@ -1651,16 +1675,15 @@ mod tests {
         // SAFETY: loop_ live throughout.
         unsafe {
             assert_eq!(us_loop_active_count(loop_), 0);
-            // Gate: nothing active → bun tick returns immediately.
+            // Gate: nothing REF'D → bun tick still collects ready
+            // completions with ZERO timeout (POSIX num_polls parity; an
+            // unref'd child's posted exit packet must not rot in the
+            // port) — but it must never idle-wait the caller's timeout.
             let start = Instant::now();
             tick_ms(loop_, 1_000);
             assert!(
                 start.elapsed().as_millis() < 500,
                 "inactive loop must not block"
-            );
-            assert!(
-                POST_DEPTHS.with_borrow(|v| v.is_empty()),
-                "no callbacks ran"
             );
 
             us_loop_add_active(loop_, 2);
@@ -1684,6 +1707,76 @@ mod tests {
             closesocket(b);
             us_loop_free(loop_);
         }
+    }
+
+    /// An unref'd child's exit packet must dequeue through the PUBLIC bun
+    /// tick even when nothing refs the loop — the num_polls-parity gate.
+    /// Regression: the old ref-based gate returned before GQCS and the
+    /// posted exit packet rotted in the port forever. // quirk: PROC-45
+    #[test]
+    fn unrefd_exit_packet_dequeues_via_bun_tick() {
+        let _guard = serial();
+        let loop_ = create_loop();
+        struct Ctx {
+            fired: core::cell::Cell<bool>,
+            closed: core::cell::Cell<bool>,
+        }
+        unsafe extern "C" {}
+        unsafe fn on_exit(_l: &mut Loop, data: *mut c_void, code: i64, _sig: i32) {
+            // SAFETY: data is the test's live Ctx.
+            unsafe {
+                assert_eq!(code, 7);
+                (*data.cast::<Ctx>()).fired.set(true);
+            }
+        }
+        unsafe fn on_close(_l: &mut Loop, data: *mut c_void) {
+            // SAFETY: data is the test's live Ctx.
+            unsafe { (*data.cast::<Ctx>()).closed.set(true) };
+        }
+        let ctx = Box::new(Ctx {
+            fired: core::cell::Cell::new(false),
+            closed: core::cell::Cell::new(false),
+        });
+        let comspec = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into());
+        let file: Vec<u8> = comspec.into_bytes();
+        let args: &[&[u8]] = &[b"cmd", b"/d", b"/c", b"exit", b"7"];
+        let options = crate::process::ProcessOptions {
+            file: &file,
+            args,
+            env: None,
+            cwd: None,
+            flags: crate::process::PROCESS_VERBATIM_ARGUMENTS,
+            stdio: &[],
+            pseudoconsole: None,
+        };
+        // SAFETY: loop and ctx outlive the handle; standard spawn contract.
+        let mut child = unsafe {
+            crate::process::ProcessHandle::spawn(
+                native(loop_),
+                &options,
+                Some(on_exit),
+                core::ptr::from_ref(&*ctx) as *mut c_void,
+            )
+        }
+        .expect("spawn");
+        child.unref();
+        // SAFETY: loop_ live.
+        unsafe { assert!(!(*native(loop_)).alive(), "unref'd child must not ref the loop") };
+        let start = Instant::now();
+        while !ctx.fired.get() {
+            assert!(
+                start.elapsed().as_secs() < 20,
+                "exit packet never dequeued through us_loop_run_bun_tick"
+            );
+            tick_ms(loop_, 16);
+        }
+        child.close(Some(on_close), core::ptr::from_ref(&*ctx) as *mut c_void);
+        while !ctx.closed.get() {
+            assert!(start.elapsed().as_secs() < 20, "close never completed");
+            tick_ms(loop_, 16);
+        }
+        // SAFETY: all handles drained above.
+        unsafe { us_loop_free(loop_) };
     }
 
     /// Timer callbacks receive THE TIMER (hazard 4); repeat repeats; ms == 0

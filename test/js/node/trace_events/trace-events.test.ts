@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, tempDir } from "harness";
 
 // The 'http.client.request' trace span must be closed on every terminal path,
 // including ones that never reach the parser or the emitErrorEvent funnel.
@@ -27,14 +27,7 @@ test("http.client.request span is closed when the proxy CONNECT tunnel fails", a
   const traceFile = join(String(dir), "node_trace.log");
 
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "--trace-event-categories",
-      "node.http",
-      "--trace-event-file-pattern",
-      traceFile,
-      "main.mjs",
-    ],
+    cmd: [bunExe(), "--trace-event-categories", "node.http", "--trace-event-file-pattern", traceFile, "main.mjs"],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",

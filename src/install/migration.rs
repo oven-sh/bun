@@ -426,7 +426,9 @@ pub(crate) fn migrate_npm_lockfile<'a>(
             // writes it whenever it differs from the name its folder path implies,
             // e.g. a package named `admin` living at `@admin` or `packages/@admin`.
             let pkg_name: &[u8] = if let Some(set_name) = pkg.get(b"name") {
-                set_name.as_str().ok_or_else(|| err!("InvalidNPMLockfile"))?
+                set_name
+                    .as_str()
+                    .ok_or_else(|| err!("InvalidNPMLockfile"))?
             } else {
                 package_name_from_path(pkg_path)
             };

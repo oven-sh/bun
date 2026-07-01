@@ -1572,8 +1572,14 @@ fn package_name_from_path(pkg_path: &[u8]) -> &[u8] {
             b"node_modules/".len()
         } else if let Some(last_index) = strings::last_index_of(pkg_path, b"/") {
             // Link targets outside `node_modules/` (e.g. `vendor/a`) use the
-            // path's basename; skip past the separator itself.
-            last_index + b"/".len()
+            // path's basename; keep the scope (`vendor/@scope/a`) like npm's
+            // `name-from-folder`, which omits `name` when it matches this.
+            let parent = &pkg_path[..last_index];
+            match strings::last_index_of(parent, b"/") {
+                Some(i) if parent[i + 1..].starts_with(b"@") => i + b"/".len(),
+                None if parent.starts_with(b"@") => 0,
+                _ => last_index + b"/".len(),
+            }
         } else {
             0
         };

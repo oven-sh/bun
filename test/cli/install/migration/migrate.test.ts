@@ -397,23 +397,24 @@ test("package-lock.json migration keeps dependencies declared as arbitrary tarba
 // arrays. npm records those fields in the package-lock.json entry for every package, but
 // Bun only applies platform constraints to npm registry packages; a fresh `bun install`
 // of the same package.json installs the folder regardless. Migrating must not diverge.
-function filePlatformFixture(os: string[], cpu: string[]) {
-  const aPackageJson: Record<string, unknown> = { name: "a", version: "1.0.0" };
-  const aLockEntry: Record<string, unknown> = { version: "1.0.0" };
-  if (os.length) aPackageJson.os = aLockEntry.os = os;
-  if (cpu.length) aPackageJson.cpu = aLockEntry.cpu = cpu;
+function filePlatformFixture(name: string, folder: string, os: string[], cpu: string[]) {
+  const folderPackageJson: Record<string, unknown> = { name, version: "1.0.0" };
+  const folderLockEntry: Record<string, unknown> = { version: "1.0.0" };
+  if (os.length) folderPackageJson.os = folderLockEntry.os = os;
+  if (cpu.length) folderPackageJson.cpu = folderLockEntry.cpu = cpu;
   return {
-    "package.json": JSON.stringify({ name: "repro", dependencies: { a: "file:./vendor/a" } }),
-    "vendor/a/package.json": JSON.stringify(aPackageJson),
-    // Exactly what `npm install --package-lock-only` produces for this tree.
+    "package.json": JSON.stringify({ name: "repro", dependencies: { [name]: `file:./${folder}` } }),
+    [`${folder}/package.json`]: JSON.stringify(folderPackageJson),
+    // Exactly what `npm install --package-lock-only` produces for this tree. npm omits the
+    // entry's `name` field whenever it matches the name inferred from the folder path.
     "package-lock.json": JSON.stringify({
       name: "repro",
       lockfileVersion: 3,
       requires: true,
       packages: {
-        "": { name: "repro", dependencies: { a: "file:./vendor/a" } },
-        "node_modules/a": { resolved: "vendor/a", link: true },
-        "vendor/a": aLockEntry,
+        "": { name: "repro", dependencies: { [name]: `file:./${folder}` } },
+        [`node_modules/${name}`]: { resolved: folder, link: true },
+        [folder]: folderLockEntry,
       },
     }),
   };
@@ -433,7 +434,7 @@ async function install(testDir: string, ...args: string[]) {
 test.concurrent("package-lock.json migration does not platform-skip a regular file: folder dependency", async () => {
   const testDir = tempDirWithFiles(
     "migrate-folder-platform",
-    filePlatformFixture([`!${process.platform}`], [`!${process.arch}`]),
+    filePlatformFixture("a", "vendor/a", [`!${process.platform}`], [`!${process.arch}`]),
   );
 
   const { stderr, exitCode } = await install(testDir);
@@ -447,15 +448,18 @@ test.concurrent("package-lock.json migration does not platform-skip a regular fi
   expect(await Bun.file(join(testDir, "bun.lock")).text()).toContain(`"a": ["a@file:vendor/a", {}]`);
 });
 
-test.concurrent(
-  "package-lock.json migration writes a bun.lock its own parser accepts for file: folder dependencies",
-  async () => {
-    const testDir = tempDirWithFiles("migrate-folder-name", filePlatformFixture([], []));
+test.concurrent.each([
+  ["a", "vendor/a"],
+  ["@scope/a", "vendor/@scope/a"],
+])(
+  "package-lock.json migration writes a bun.lock its own parser accepts for file: folder dependency %s",
+  async (name, folder) => {
+    const testDir = tempDirWithFiles("migrate-folder-name", filePlatformFixture(name, folder, [], []));
 
     const first = await install(testDir);
     expect(first.stderr).toContain("migrated lockfile from package-lock.json");
     expect(first.exitCode).toBe(0);
-    expect(await Bun.file(join(testDir, "bun.lock")).text()).toContain(`"a": ["a@file:vendor/a", {}]`);
+    expect(await Bun.file(join(testDir, "bun.lock")).text()).toContain(`"${name}": ["${name}@file:${folder}", {}]`);
 
     // The second install consumes the bun.lock the migration just wrote. It must parse,
     // otherwise --frozen-lockfile is permanently broken after an npm migration.
@@ -463,7 +467,7 @@ test.concurrent(
     expect(second.stderr).not.toContain("Invalid package name");
     expect(second.stderr).not.toContain("Ignoring lockfile");
     expect(second.exitCode).toBe(0);
-    expect(await Bun.file(join(testDir, "node_modules", "a", "package.json")).json()).toHaveProperty("name", "a");
+    expect(await Bun.file(join(testDir, "node_modules", name, "package.json")).json()).toHaveProperty("name", name);
   },
 );
 

@@ -79,3 +79,55 @@ describe("require(specifier)", () => {
     });
   });
 });
+
+describe("require(specifier, { paths })", () => {
+  let dir: string;
+
+  beforeAll(() => {
+    dir = tempDirWithFiles("bun-test-require-paths", {
+      "package.json": JSON.stringify({ name: "require-paths-option" }),
+      "node_modules/installed-pkg/package.json": JSON.stringify({ name: "installed-pkg", main: "index.js" }),
+      "node_modules/installed-pkg/index.js": "module.exports = 'installed';",
+      "vendor/node_modules/vendored-pkg/package.json": JSON.stringify({ name: "vendored-pkg", main: "index.js" }),
+      "vendor/node_modules/vendored-pkg/index.js": "module.exports = 'from-vendor';",
+      "non-absolute.js": /* js */ `
+        const assert = require("node:assert");
+        const Module = require("node:module");
+        const request = "package-that-does-not-exist";
+        const pathsValues = [[2.2250738585072014e-308, -1000, Infinity], ["relative"], ["./relative"], [""]];
+        for (const paths of pathsValues) {
+          assert.throws(() => require.resolve(request, { paths }), { code: "MODULE_NOT_FOUND" });
+          assert.throws(() => require(request, { paths }), { code: "MODULE_NOT_FOUND" });
+          assert.throws(() => Module._resolveFilename(request, null, false, { paths }), { code: "MODULE_NOT_FOUND" });
+        }
+        console.log("ok");
+      `,
+      "relative.js": /* js */ `
+        const assert = require("node:assert");
+        const path = require("node:path");
+        const results = ["vendor", "./vendor", path.join(__dirname, "vendor")].map(entry =>
+          require.resolve("vendored-pkg", { paths: [entry] }),
+        );
+        assert.strictEqual(results[1], results[0]);
+        assert.strictEqual(results[2], results[0]);
+        assert(results[0].endsWith(path.join("vendor", "node_modules", "vendored-pkg", "index.js")), results[0]);
+        assert.strictEqual(require("vendored-pkg", { paths: ["vendor"] }), "from-vendor");
+        console.log("ok");
+      `,
+    });
+  });
+
+  afterAll(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("throws MODULE_NOT_FOUND instead of crashing when paths entries are not absolute", () => {
+    const { stdout } = bunRun(path.join(dir, "non-absolute.js"));
+    expect(stdout).toBe("ok");
+  });
+
+  it("resolves relative paths entries against the current working directory", () => {
+    const { stdout } = bunRun(path.join(dir, "relative.js"));
+    expect(stdout).toBe("ok");
+  });
+});

@@ -48,8 +48,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Mutex, Once};
 
 use bun_windows_sys::kernel32::{
-    CreateEventW, DuplicateHandle, GetConsoleScreenBufferInfo, GetModuleHandleW,
-    PostQueuedCompletionStatus, QueueUserWorkItem, SetConsoleCursorPosition,
+    CreateEventW, DuplicateHandle, GetConsoleScreenBufferInfo, GetModuleHandleW, QueueUserWorkItem, SetConsoleCursorPosition,
     WT_EXECUTELONGFUNCTION,
 };
 use bun_windows_sys::{
@@ -1376,6 +1375,7 @@ unsafe fn new_box(lp: *mut Loop, handle: HANDLE, readable: bool) -> Box<TtyHandl
 }
 
 impl TtyHandle {
+
     /// Adopt a console handle. Probes console-ness via `GetConsoleMode`
     /// (NUL, pipes and files are rejected with the probe's raw error,
     /// typically `INVALID_HANDLE`), duplicates the handle so close/cancel
@@ -1975,7 +1975,7 @@ unsafe extern "system" fn tty_raw_wait_cb(context: *mut c_void, _timed_out: BOOL
     // raw_wait_iocp was written before the registration call.
     unsafe {
         (*h).read_req.set_success(0);
-        PostQueuedCompletionStatus((*h).raw_wait_iocp, 0, 0, (*h).read_req.overlapped_ptr());
+        crate::event_loop::post_or_die((*h).raw_wait_iocp, 0, 0, (*h).read_req.overlapped_ptr(), "tty read");
     }
 }
 
@@ -2035,7 +2035,7 @@ unsafe extern "system" fn tty_line_read_thread_proc(arg: *mut c_void) -> DWORD {
             (*work).units = 0;
             (*work).error = Win32Error::SUCCESS;
             READ_CONSOLE_STATUS.swap(READ_COMPLETED, Ordering::AcqRel);
-            PostQueuedCompletionStatus((*work).iocp, 0, 0, (*work).overlapped);
+            crate::event_loop::post_or_die((*work).iocp, 0, 0, (*work).overlapped, "tty work");
             return 0;
         }
 
@@ -2086,7 +2086,7 @@ unsafe extern "system" fn tty_line_read_thread_proc(arg: *mut c_void) -> DWORD {
             output_lock_release();
         }
 
-        PostQueuedCompletionStatus((*work).iocp, 0, 0, (*work).overlapped);
+        crate::event_loop::post_or_die((*work).iocp, 0, 0, (*work).overlapped, "tty work");
     }
     0
 }

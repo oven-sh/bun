@@ -127,6 +127,11 @@ impl KeepAlive {
             return;
         }
         self.status = Status::Inactive;
+        if core::mem::take(&mut self.concurrent_origin) {
+            // Same rule as `unref`: discount the applied counter or worker
+            // teardown over-subtracts.
+            event_loop_ctx.note_concurrent_ref_released_locally();
+        }
         // vm.pending_unref_counter +|= 1;
         event_loop_ctx.increment_pending_unref_counter();
     }
@@ -137,6 +142,16 @@ impl KeepAlive {
             return;
         }
         self.status = Status::Inactive;
+        // Cross-thread release cannot discount the applied counter (a
+        // JS-thread Cell), so a concurrent-origin ref through this path
+        // would leave a permanent +1 that worker teardown over-subtracts.
+        // No such pairing exists (this fn currently has zero callers);
+        // enforce it rather than mask it.
+        debug_assert!(
+            !self.concurrent_origin,
+            "concurrent-origin refs must release via unref/unref_concurrently"
+        );
+        self.concurrent_origin = false;
         // Cross-thread increment: the counter is an `AtomicI32` RMW'd with
         // `Ordering::Relaxed` (see
         // `jsc::VirtualMachine::pending_unref_counter`).

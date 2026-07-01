@@ -151,6 +151,7 @@ pub mod sync {
 // crate naming `bun_jsc`/`bun_runtime`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod subprocess {
+    #[cfg(not(windows))]
     use bun_sys::Fd;
 
     pub use crate::process::StdioKind;
@@ -167,11 +168,7 @@ pub mod subprocess {
     pub fn stdio_result_from_fd(fd: Fd) -> StdioResult {
         Some(fd)
     }
-    #[cfg(windows)]
-    #[inline]
-    pub fn stdio_result_from_fd(fd: Fd) -> StdioResult {
-        crate::process::WindowsStdioResult::BufferFd(fd)
-    }
+
 
     /// The in-memory payload that a
     /// `StaticPipeWriter` drains into the child's stdin/extra-fd.

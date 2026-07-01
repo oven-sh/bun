@@ -37,7 +37,7 @@
 use core::mem::size_of;
 use core::ptr;
 
-use bun_windows_sys::kernel32::{FlushFileBuffers, ReadFile, WriteFile};
+use bun_windows_sys::kernel32::{GetOverlappedResult, FlushFileBuffers, ReadFile, WriteFile};
 use bun_windows_sys::ntdll::NtSetInformationFile;
 use bun_windows_sys::{
     ACCESS_MASK, CREATE_ALWAYS, CREATE_NEW, CloseHandle, CreateFileW, DELETE, DWORD,
@@ -348,6 +348,26 @@ pub unsafe fn read_at(
         total += incremental as usize;
         if ok == 0 {
             let err = Win32Error::get();
+            if err == Win32Error::IO_PENDING {
+                // Overlapped-opened handle (table fds can be): the kernel now
+                // owns `overlapped` — returning would dangle it. Wait it out;
+                // sync semantics either way. // quirk: FSIO-21
+                incremental = 0;
+                // SAFETY: same liveness as the ReadFile above; bWait blocks
+                // until the kernel releases `overlapped`.
+                let ok2 = unsafe {
+                    GetOverlappedResult(handle, &raw mut overlapped, &raw mut incremental, 1)
+                };
+                total += incremental as usize;
+                if ok2 == 0 {
+                    let err2 = Win32Error::get();
+                    if total > 0 {
+                        return Ok(total); // quirk: FSIO-26
+                    }
+                    return Err(err2); // quirk: FSIO-23
+                }
+                continue;
+            }
             if total > 0 {
                 return Ok(total); // partial success wins // quirk: FSIO-26
             }
@@ -406,6 +426,24 @@ pub unsafe fn write_at(
         total += incremental as usize;
         if ok == 0 {
             let err = Win32Error::get();
+            if err == Win32Error::IO_PENDING {
+                // Same as read_at: never abandon a kernel-armed stack
+                // OVERLAPPED. // quirk: FSIO-21
+                incremental = 0;
+                // SAFETY: same liveness as the WriteFile above.
+                let ok2 = unsafe {
+                    GetOverlappedResult(handle, &raw mut overlapped, &raw mut incremental, 1)
+                };
+                total += incremental as usize;
+                if ok2 == 0 {
+                    let err2 = Win32Error::get();
+                    if total > 0 {
+                        return Ok(total); // quirk: FSIO-26
+                    }
+                    return Err(err2);
+                }
+                continue;
+            }
             if total > 0 {
                 return Ok(total); // partial success wins // quirk: FSIO-26
             }

@@ -14,7 +14,7 @@ use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_windows_sys::kernel32::{
-    CreateIoCompletionPort, GetQueuedCompletionStatusEx, PostQueuedCompletionStatus,
+    CreateIoCompletionPort, GetQueuedCompletionStatusEx,
     QueryPerformanceCounter, QueryPerformanceFrequency,
 };
 use bun_windows_sys::{
@@ -27,6 +27,29 @@ use crate::timer::{Timer, TimerCb, Timers};
 
 /// Completions dequeued per `GetQueuedCompletionStatusEx` call.
 const COMPLETION_BATCH: usize = 128; // quirk: LOOP-01
+
+/// Post a completion packet or die: every engine post is a delivery
+/// contract (a latched flag, a pending req, a stolen-packet re-post) whose
+/// silent loss wedges a protocol forever. The assert reads only the local
+/// return — a successful post may free the owner immediately.
+/// (`wake_all_loops` in init.rs is the one deliberate best-effort post.)
+pub(crate) fn post_or_die(
+    iocp: bun_windows_sys::HANDLE,
+    bytes: u32,
+    key: usize,
+    overlapped: *mut bun_windows_sys::OVERLAPPED,
+    what: &str,
+) {
+    // SAFETY: caller passes a live port + a pinned/immortal OVERLAPPED.
+    let ok = unsafe {
+        bun_windows_sys::kernel32::PostQueuedCompletionStatus(iocp, bytes, key, overlapped)
+    };
+    assert!(
+        ok != 0,
+        "{what} completion post failed: {:?}",
+        bun_windows_sys::Win32Error::get()
+    );
+}
 
 /// Post-poll pending-drain rounds before yielding back to poll (with a zero
 /// timeout when work remains): completion callbacks synchronously start I/O
@@ -232,8 +255,10 @@ impl Loop {
                 let overlapped = (*this).wakeup_req.overlapped_ptr();
                 // Posting can only fail for invalid port/OOM of the queue —
                 // both unrecoverable for a loop wakeup.
-                let ok = PostQueuedCompletionStatus((*this).iocp, 0, 0, overlapped);
-                debug_assert!(ok != 0);
+                // `wakeup_pending` is CAS-latched: a lost post makes the loop
+                // permanently unwakeable and wedges the close protocol's
+                // wakeup_in_flight() wait.
+                post_or_die((*this).iocp, 0, 0, overlapped, "loop wakeup");
             }
         }
     }

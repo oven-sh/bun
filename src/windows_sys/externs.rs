@@ -1210,6 +1210,14 @@ pub mod kernel32 {
         pub fn GetFileSizeEx(hFile: HANDLE, lpFileSize: *mut LARGE_INTEGER) -> BOOL;
         /// `ReadFile` (`fileapi.h`) — synchronous read on a HANDLE.
         /// `lpOverlapped` may be null for non-OVERLAPPED I/O.
+        /// `GetOverlappedResult` (`ioapiset.h`) — waits (bWait=TRUE) for or
+        /// polls an overlapped op's completion and yields its transfer count.
+        pub fn GetOverlappedResult(
+            hFile: HANDLE,
+            lpOverlapped: *mut OVERLAPPED,
+            lpNumberOfBytesTransferred: *mut DWORD,
+            bWait: BOOL,
+        ) -> BOOL;
         pub fn ReadFile(
             hFile: HANDLE,
             lpBuffer: *mut u8,

@@ -1471,7 +1471,6 @@ pub enum WindowsStdioResult {
     /// [`close_engine_pipe`]; `WindowsSpawnResult::Drop` covers unconsumed
     /// slots.
     Buffer(Box<bun_iocp::PipeHandle>),
-    BufferFd(Fd),
 }
 
 /// Release an owned engine pipe end: close on its loop and free the box in
@@ -1843,24 +1842,22 @@ mod spawn_process_body {
         let mut files_to_close: Vec<Fd> = Vec::new();
         // The 2>&1 pair's server end; bare until the target slot consumes it
         // (every error exit closes it via `close_on_error`).
-        let mut dup_server: HANDLE = core::ptr::null_mut();
+        let mut dup_server: Option<Box<bun_iocp::PipeHandle>> = None;
 
         let close_on_error = |parent_ends: &mut Vec<WindowsStdioResult>,
                               client_ends: &[HANDLE],
                               files: &[Fd],
-                              dup_server: &mut HANDLE| {
-            // The dup2 pair's server end is a bare local until the target
-            // slot consumes it — close it here so no error exit leaks it.
-            let server = core::mem::replace(dup_server, core::ptr::null_mut());
-            if !server.is_null() {
-                Fd::from_system(server).close();
+                              dup_server: &mut Option<Box<bun_iocp::PipeHandle>>| {
+            // The dup2 pair's server end is a local until the target slot
+            // consumes it — release it here so no error exit leaks it.
+            if let Some(pipe) = dup_server.take() {
+                close_engine_pipe(pipe);
             }
             for slot in parent_ends.drain(..) {
                 match slot {
                     // Already adopted: async engine close (the caller's loop
                     // ticks it; sync paths drain explicitly).
                     WindowsStdioResult::Buffer(pipe) => close_engine_pipe(pipe),
-                    WindowsStdioResult::BufferFd(fd) => fd.close(),
                     WindowsStdioResult::Unavailable => {}
                 }
             }
@@ -1913,9 +1910,16 @@ mod spawn_process_body {
                     client_writable: true,
                     client_overlapped: false,
                     client_inheritable: false,
+                })
+                .and_then(|(server, client)| match adopt_server(server) {
+                    Ok(pipe) => Ok((pipe, client)),
+                    Err(w) => {
+                        Fd::from_system(client).close();
+                        Err(w)
+                    }
                 }) {
-                    Ok((server, client)) => {
-                        dup_server = server;
+                    Ok((pipe, client)) => {
+                        dup_server = Some(pipe);
                         dup_client = client;
                         client_ends.push(client);
                     }
@@ -1937,9 +1941,9 @@ mod spawn_process_body {
             for i in 0..3usize {
                 if dup_tgt == Some(i) {
                     engine_stdio.push(EngineStdio::Raw(dup_client));
-                    parent_ends.push(WindowsStdioResult::BufferFd(Fd::from_system(
-                        core::mem::replace(&mut dup_server, core::ptr::null_mut()),
-                    )));
+                    parent_ends.push(WindowsStdioResult::Buffer(
+                        dup_server.take().expect("dup2 pair adopted above"),
+                    ));
                     continue;
                 }
                 match stdio_options[i] {

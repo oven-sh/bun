@@ -143,7 +143,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
                 WindowsStdioResult::Buffer(pipe) => {
                     this_ref.writer.set_pipe(pipe);
                 }
-                WindowsStdioResult::BufferFd(_) | WindowsStdioResult::Unavailable => {
+                WindowsStdioResult::Unavailable => {
                     unreachable!("StaticPipeWriter stdin requires WindowsStdioResult::Buffer");
                 }
             }

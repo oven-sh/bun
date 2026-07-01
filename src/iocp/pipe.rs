@@ -47,7 +47,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use bun_windows_sys::kernel32::{
-    CreateNamedPipeW, DuplicateHandle, FlushFileBuffers, PostQueuedCompletionStatus,
+    CreateNamedPipeW, DuplicateHandle, FlushFileBuffers,
     QueueUserWorkItem, ReadFile, WT_EXECUTELONGFUNCTION, WriteFile,
 };
 use bun_windows_sys::ntdll::NtQueryInformationFile;
@@ -769,18 +769,29 @@ impl PipeHandle {
         let lp = self.core.loop_;
         let hp: *mut PipeHandle = self;
         if has_stash {
-            // Deliver the parked completion asynchronously through the
-            // normal dispatch path — never a synchronous callback.
-            // // quirk: PIPE-32, PIPE-29
-            debug_assert!(!self.read_pending);
-            self.read_pending = true;
-            self.core.req_submitted_uncounted();
-            // SAFETY: the read req is free (no read in flight while a stash
-            // exists) and lives inside the pinned handle.
-            unsafe { (*lp).insert_pending(&raw mut self.read_req) };
+            // Deliver the parked completion asynchronously — never a
+            // synchronous callback. Guarded like the submit arm: a second
+            // same-turn read_start is a retarget-only no-op (double-insert
+            // corrupts the pending list). // quirk: PIPE-32, PIPE-29
+            if !self.read_pending {
+                self.read_pending = true;
+                self.core.req_submitted_uncounted();
+                // SAFETY: the read req is free (no read in flight while a
+                // stash exists) and lives inside the pinned handle.
+                unsafe { (*lp).insert_pending(&raw mut self.read_req) };
+            }
         } else if !self.read_pending {
             // SAFETY: handle pinned, loop valid (init contract), not closing.
             unsafe { submit_read(lp, hp) };
+            if self.eof_timer_active && self.read_pending {
+                // Resume during the EOF grace window with a real kernel read
+                // in flight: re-arm the force-close timer `read_stop`
+                // stopped. A stash dispatch must NOT re-arm — its req is
+                // un-primed and the timer's completion probe would misread
+                // it, force-closing over live stashed bytes. // quirk: PIPE-51
+                // SAFETY: loop valid (init contract); handle pinned.
+                unsafe { eof_timer_start(lp, hp) };
+            }
         }
         Ok(())
     }
@@ -792,6 +803,15 @@ impl PipeHandle {
     pub fn read_stop(&mut self) {
         debug_assert!(!self.core.is_closing());
         self.reading = false;
+        if self.eof_timer_active {
+            // Deliberate deviation: libuv leaves this timer running and
+            // delivers EOF to a stopped reader (its own "TODO: is that
+            // okay?"). We stop it here and re-arm in read_start — no
+            // callback or state mutation while stopped. // quirk: PIPE-51
+            let lp = self.core.loop_;
+            // SAFETY: loop valid per init contract; timer embedded in self.
+            unsafe { (*lp).timer_stop(&mut self.eof_timer) };
+        }
         if !self.core.is_closing() {
             self.core.stop();
         }
@@ -1528,7 +1548,7 @@ unsafe extern "system" fn pipe_read_thread_proc(arg: *mut c_void) -> DWORD {
         let iocp = (*work).iocp;
         let overlapped = (*work).overlapped;
         // After this post the loop thread owns the block again.
-        PostQueuedCompletionStatus(iocp, 0, 0, overlapped);
+        crate::event_loop::post_or_die(iocp, 0, 0, overlapped, "pipe read");
     }
     0
 }
@@ -1737,7 +1757,7 @@ unsafe extern "system" fn pipe_write_thread_proc(arg: *mut c_void) -> DWORD {
         }
         let iocp = (*wr).iocp;
         let overlapped = (*wr).req.overlapped_ptr();
-        PostQueuedCompletionStatus(iocp, 0, 0, overlapped);
+        crate::event_loop::post_or_die(iocp, 0, 0, overlapped, "pipe write");
     }
     0
 }
@@ -1866,7 +1886,7 @@ unsafe extern "system" fn pipe_shutdown_thread_proc(arg: *mut c_void) -> DWORD {
         }
         let iocp = (*work).iocp;
         let overlapped = (*work).overlapped;
-        PostQueuedCompletionStatus(iocp, 0, 0, overlapped);
+        crate::event_loop::post_or_die(iocp, 0, 0, overlapped, "pipe shutdown");
     }
     0
 }
@@ -1948,23 +1968,24 @@ unsafe fn pipe_eof_timer_cb(loop_: &mut Loop, data: *mut c_void) {
         if (*h).read_req.completed_volatile() {
             return;
         }
+        // read_stop stops this timer, so a stopped reader can't get here.
+        // Guard BEFORE the force-close: if ever reached, leave the handle
+        // untouched — the parked read still resolves through the port.
+        debug_assert!((*h).reading);
+        if !(*h).reading {
+            return;
+        }
         // Force both ends off the pipe; the parked read aborts and drains
         // silently (the abort arm above).
         CloseHandle((*h).handle);
         (*h).handle = INVALID_HANDLE_VALUE;
         (*h).eof_timer_active = false;
         let buf = (*h).inflight_buf;
-        if (*h).reading {
-            (*h).reading = false;
-            (*h).core.stop();
-            if let Some(cb) = (*h).read_cb {
-                // BROKEN_PIPE is the raw read-side EOF shape. // quirk: PIPE-37
-                cb(&mut *lp, (*h).read_data, buf, 0, Win32Error::BROKEN_PIPE);
-            }
-        } else {
-            // Stopped reader: park the EOF for the next read_start (never a
-            // callback while stopped). // quirk: PIPE-36
-            (*h).stashed = Some((buf, 0, Win32Error::BROKEN_PIPE));
+        (*h).reading = false;
+        (*h).core.stop();
+        if let Some(cb) = (*h).read_cb {
+            // BROKEN_PIPE is the raw read-side EOF shape. // quirk: PIPE-37
+            cb(&mut *lp, (*h).read_data, buf, 0, Win32Error::BROKEN_PIPE);
         }
     }
 }
@@ -2139,7 +2160,7 @@ unsafe extern "system" fn pipe_connect_thread_proc(arg: *mut c_void) -> DWORD {
         }
         let iocp = (*cr).iocp;
         let overlapped = (*cr).req.overlapped_ptr();
-        PostQueuedCompletionStatus(iocp, 0, 0, overlapped);
+        crate::event_loop::post_or_die(iocp, 0, 0, overlapped, "pipe connect");
     }
     0
 }

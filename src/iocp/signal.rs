@@ -52,7 +52,7 @@ use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 #[allow(clippy::disallowed_types)]
 use std::sync::{Mutex, Once};
 
-use bun_windows_sys::kernel32::{PostQueuedCompletionStatus, SetConsoleCtrlHandler};
+use bun_windows_sys::kernel32::SetConsoleCtrlHandler;
 use bun_windows_sys::{
     BOOL, CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT, DWORD, FALSE, HANDLE, INFINITE,
     OVERLAPPED, Sleep, TRUE, Win32Error,
@@ -363,12 +363,7 @@ pub fn dispatch_signal(signum: i32) -> bool {
                 // signal AND wedge the close gate — die loudly.
                 // // quirk: SIGEV-10, SIGEV-19
                 let overlapped = (&raw mut (*h).req).cast::<OVERLAPPED>();
-                let ok = PostQueuedCompletionStatus((*h).iocp, 0, 0, overlapped);
-                assert!(
-                    ok != 0,
-                    "signal completion post failed: {:?}",
-                    Win32Error::get()
-                );
+                crate::event_loop::post_or_die((*h).iocp, 0, 0, overlapped, "signal");
             }
             dispatched = true;
             if (*h).one_shot.load(Ordering::Acquire) {

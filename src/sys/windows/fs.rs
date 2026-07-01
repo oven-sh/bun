@@ -294,6 +294,12 @@ pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Result<i64> {
     log!("lseek({:?}, {}, {}) = {:?}", fd, offset, whence, r);
     match r {
         Ok(n) => Ok(n as i64),
+        // The general table is row-for-row libuv parity, which has no 132
+        // row; POSIX lseek-on-pipe/device is ESPIPE, so map it at this
+        // boundary. // quirk: FSIO-21
+        Err(Win32Error::SEEK_ON_DEVICE) => {
+            Err(Error::new(bun_errno::SystemErrno::ESPIPE, Tag::lseek).with_fd(fd))
+        }
         Err(w) => Err(Error::new(win_error::translate(w), Tag::lseek).with_fd(fd)),
     }
 }

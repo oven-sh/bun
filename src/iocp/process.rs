@@ -43,7 +43,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Once;
 
 use bun_windows_sys::kernel32::{
-    DuplicateHandle, GetExitCodeProcess, GetFileType, GetStdHandle, PostQueuedCompletionStatus,
+    DuplicateHandle, GetExitCodeProcess, GetFileType, GetStdHandle,
     SetHandleInformation,
 };
 use bun_windows_sys::{
@@ -1287,7 +1287,10 @@ unsafe extern "system" fn process_exit_wait_cb(context: *mut c_void, timed_out: 
     unsafe {
         (*h).exit_req.set_success(0);
         (*h).exit_posted.store(true, Ordering::Release);
-        PostQueuedCompletionStatus((*h).exit_iocp, 0, 0, (*h).exit_req.overlapped_ptr());
+        // `exit_posted` latched true above: a lost packet would wedge the
+        // close gate forever. Must stay the last `h`-touching statement — a
+        // successful post may let the loop thread free `h`.
+        crate::event_loop::post_or_die((*h).exit_iocp, 0, 0, (*h).exit_req.overlapped_ptr(), "process exit");
     }
 }
 
@@ -1332,7 +1335,14 @@ impl ProcessHandle {
             None => get_env_var(&ascii_to_utf16(b"PATH")),
         };
 
-        let stdio = build_child_stdio(options.stdio)?;
+        // ConPTY supersedes stdio wholesale (enforced below). An empty
+        // ChildStdio keeps `handle_list` empty → bInheritHandles FALSE →
+        // the terminal child inherits nothing. // quirk: PROC-33
+        let stdio = if options.pseudoconsole.is_some() {
+            ChildStdio::new(0)
+        } else {
+            build_child_stdio(options.stdio)?
+        };
 
         // search_path resolves lpApplicationName; lpCommandLine stays the
         // caller's argv — CreateProcess never parses the command line to
@@ -1343,8 +1353,8 @@ impl ProcessHandle {
 
         // The explicit inheritance list (composes with the lpReserved2
         // blob): exactly the child's handles, nothing else in the process
-        // leaks in. Empty list (all slots forgiven) → inherit nothing.
-        // // quirk: PROC-33
+        // leaks in. Empty list (all slots forgiven, or a ConPTY spawn) →
+        // `bInheritHandles` FALSE → inherit nothing. // quirk: PROC-33
         let handle_list = stdio.inheritable_handles();
         let mut attrs = if let Some(hpcon) = options.pseudoconsole {
             // The pseudoconsole supersedes stdio wholesale; a caller mixing

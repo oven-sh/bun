@@ -18,7 +18,9 @@ use bun_jsc::{JsCell, SysErrorJsc as _};
 #[cfg(unix)]
 use bun_sys::Fd;
 use bun_sys::UV_E;
-use bun_sys::{self as sys, FdExt as _, SignalCode};
+use bun_sys::{self as sys, SignalCode};
+#[cfg(not(windows))]
+use bun_sys::FdExt as _;
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
 #[cfg(unix)]
@@ -1346,7 +1348,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                         // Unconsumed engine pipe end — async engine close,
                         // freed in the close callback on the next loop tick.
                         spawn::WindowsStdioResult::Buffer(pipe) => spawn::close_engine_pipe(pipe),
-                        spawn::WindowsStdioResult::BufferFd(fd) => fd.close(),
                         spawn::WindowsStdioResult::Unavailable => {}
                     }
                 }

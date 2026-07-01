@@ -35,7 +35,7 @@ use core::ffi::{c_int, c_long, c_uint, c_ulong, c_void};
 use core::mem::MaybeUninit;
 use core::ptr;
 
-use bun_windows_sys::kernel32::{PostQueuedCompletionStatus, QueueUserWorkItem};
+use bun_windows_sys::kernel32::QueueUserWorkItem;
 use bun_windows_sys::ntdll::NtDeviceIoControlFile;
 use bun_windows_sys::ws2_32::{
     FIONBIO, INVALID_SOCKET, MSAFD_PROVIDER_IDS, SIO_BASE_HANDLE, SIO_BSP_HANDLE_POLL,
@@ -731,7 +731,7 @@ unsafe extern "system" fn slow_poll_thread_proc(arg: *mut c_void) -> DWORD {
         let overlapped = work.overlapped;
         // After this post the loop thread owns the block again; the worker
         // must not touch it (or the overlapped) afterwards.
-        PostQueuedCompletionStatus(iocp, 0, 0, overlapped);
+        crate::event_loop::post_or_die(iocp, 0, 0, overlapped, "afd poll");
         0
     }
 }
@@ -1094,12 +1094,15 @@ mod tests {
                         }
                         for e in &entries[..n as usize] {
                             // Re-post everything stolen so the loop still
-                            // dispatches it after this callback returns.
-                            PostQueuedCompletionStatus(
+                            // dispatches it after this callback returns. A
+                            // lost re-post silently drops a stolen packet —
+                            // die loudly.
+                            crate::event_loop::post_or_die(
                                 l.iocp(),
                                 e.dwNumberOfBytesTransferred,
                                 e.lpCompletionKey,
                                 e.lpOverlapped,
+                                "afd re-post",
                             );
                             if e.lpOverlapped == r1 || e.lpOverlapped == r2 {
                                 ctx.probe_ok = true;

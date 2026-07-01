@@ -557,22 +557,20 @@ impl FdTable {
     }
 
     /// Gate for positioned (pread/pwrite-style) I/O. Seekable kinds
-    /// (`File`, `Directory`) get a ticket — positioned ops never touch the
-    /// fd's logical `pos`. Sequential-only kinds (`Pipe`, `Char`, `Tty`)
-    /// are the raw ESPIPE shape, `ERROR_SEEK_ON_DEVICE` ("the file pointer
-    /// cannot be set on the specified device or file") — POSIX pread on a
-    /// pipe/socket/tty is ESPIPE; the consumer maps the code at its
-    /// boundary. // quirk: FSIO-21
+    /// Every kind gets a ticket: the kernel ignores the OVERLAPPED offset
+    /// on non-seekable handles and reads/writes sequentially — libuv's
+    /// fs__read outcome. Explicit seeks still reject in `seek()`.
+    /// // quirk: FSIO-21
     pub fn positioned_io(&self, fd: u32) -> Result<PositionedIo, Win32Error> {
         let inner = self.lock();
         let slot = slot_of(&inner, fd)?;
-        match slot.kind {
-            FdKind::File | FdKind::Directory => Ok(PositionedIo {
-                handle: ptr::with_exposed_provenance_mut::<c_void>(slot.handle),
-                restore_pointer: slot.flags.contains(FdFlags::ADOPTED),
-            }),
-            FdKind::Pipe | FdKind::Char | FdKind::Tty => Err(Win32Error::SEEK_ON_DEVICE),
-        }
+        Ok(PositionedIo {
+            handle: ptr::with_exposed_provenance_mut::<c_void>(slot.handle),
+            // Pointer save/restore only makes sense where a file pointer
+            // exists; non-seekable kinds take the plain-op path.
+            restore_pointer: matches!(slot.kind, FdKind::File | FdKind::Directory)
+                && slot.flags.contains(FdFlags::ADOPTED),
+        })
     }
 
     /// One sequential (read(2)/write(2)-style) operation, with the
@@ -1247,11 +1245,13 @@ mod tests {
         // SAFETY: ownership of `r` transfers to the table.
         let fd = unsafe { table.mint(r, FdKind::Pipe, FdFlags::NONE) }.unwrap();
         assert_eq!(table.kind(fd), Ok(FdKind::Pipe));
-        assert_eq!(
-            table.positioned_io(fd).map(|t| t.handle),
-            Err(Win32Error::SEEK_ON_DEVICE),
-            "positioned I/O on a pipe is the raw ESPIPE shape"
-        );
+        {
+            let ticket = table.positioned_io(fd).unwrap();
+            assert!(
+                !ticket.restore_pointer,
+                "non-seekable kinds take the plain-op path (kernel ignores the offset)"
+            );
+        }
         assert_eq!(raw_write(w, b"hi", None), Ok(2));
         let mut buf = [0u8; 2];
         let n = table
@@ -1265,7 +1265,9 @@ mod tests {
         close_raw(table.close(fd).unwrap().unwrap());
         close_raw(w);
 
-        // NUL: FILE_TYPE_CHAR without a console mode → Char; ESPIPE-gated;
+        // NUL: FILE_TYPE_CHAR without a console mode → Char; positional reads
+        // pass through (kernel ignores the offset — pread(NUL) reads 0, the
+        // libuv outcome that child `process.stdin` on default stdin needs);
         // sequential writes pass through. // quirk: PIPE-57
         let nul = open_raw(
             Path::new("NUL"),
@@ -1278,9 +1280,23 @@ mod tests {
         assert_eq!(nul_kind, Ok(FdKind::Char));
         // SAFETY: ownership of `nul` transfers to the table.
         let nul_fd = unsafe { table.mint(nul, FdKind::Char, FdFlags::NONE) }.unwrap();
+        {
+            let ticket = table.positioned_io(nul_fd).unwrap();
+            assert!(!ticket.restore_pointer);
+            let mut pbuf = [0u8; 8];
+            // pread at offset 0 on NUL: the kernel ignores the offset and
+            // reports EOF (HANDLE_EOF ≡ read()==0 per classify_file_read —
+            // the consumer boundary maps it; raw ReadFile surfaces the code).
+            let r = raw_read(ticket.handle, &mut pbuf, Some(0));
+            assert!(
+                matches!(r, Ok(0) | Err(Win32Error::HANDLE_EOF)),
+                "pread(NUL) must be the read()==0 shape, got {r:?}"
+            );
+        }
         assert_eq!(
-            table.positioned_io(nul_fd).map(|t| t.handle),
-            Err(Win32Error::SEEK_ON_DEVICE)
+            table.seek(nul_fd, 0, 1 /* FILE_CURRENT */),
+            Err(Win32Error::SEEK_ON_DEVICE),
+            "explicit seeks on non-seekable kinds still reject"
         );
         let n = table
             .sequential_io(nul_fd, IoDir::Write, |h, off| {
@@ -1313,8 +1329,11 @@ mod tests {
             assert_eq!(con_kind, Ok(FdKind::Tty));
             // SAFETY: ownership of `con` transfers to the table.
             let tty_fd = unsafe { table.mint(con, FdKind::Tty, FdFlags::NONE) }.unwrap();
+            // Tty passes through like the other non-seekable kinds (kernel
+            // ignores the offset); explicit seeks still reject.
+            assert!(!table.positioned_io(tty_fd).unwrap().restore_pointer);
             assert_eq!(
-                table.positioned_io(tty_fd).map(|t| t.handle),
+                table.seek(tty_fd, 0, 1 /* FILE_CURRENT */),
                 Err(Win32Error::SEEK_ON_DEVICE)
             );
             close_raw(table.close(tty_fd).unwrap().unwrap());

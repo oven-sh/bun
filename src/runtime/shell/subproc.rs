@@ -1950,12 +1950,6 @@ impl PipeReader {
                 StdioResult::Buffer(pipe) => Some(bun_io::Source::Pipe(
                     bun_io::source::PipeSource::from_engine(pipe),
                 )),
-                StdioResult::BufferFd(fd) => {
-                    // `Fd` is Copy; restore so `stdio_result` keeps reflecting
-                    // the spawn outcome.
-                    this.stdio_result = StdioResult::BufferFd(fd);
-                    Some(bun_io::Source::File(bun_io::Source::open_file(fd)))
-                }
                 StdioResult::Unavailable => panic!("Shouldn't happen."),
             };
         }

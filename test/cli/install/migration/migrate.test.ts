@@ -503,3 +503,51 @@ test.concurrent("package-lock.json migration does not platform-skip a regular fi
   expect(exitCode).toBe(0);
   expect(await Bun.file(join(testDir, "node_modules", "a", "package.json")).json()).toHaveProperty("name", "a");
 });
+
+test.concurrent("pnpm-lock.yaml migration does not platform-skip a regular file: folder dependency", async () => {
+  // The pnpm migration copied the lockfile's `os`/`cpu` arrays into every package the
+  // same way the npm one did. pnpm records them for any `packages:` entry whose manifest
+  // declares them, so a `file:` folder dependency was silently dropped on a mismatch.
+  const testDir = tempDirWithFiles("migrate-pnpm-folder-platform", {
+    "package.json": JSON.stringify({ name: "repro", dependencies: { a: "file:./vendor/a" } }),
+    "vendor/a/package.json": JSON.stringify({
+      name: "a",
+      version: "1.0.0",
+      os: [`!${process.platform}`],
+      cpu: [`!${process.arch}`],
+    }),
+    "pnpm-lock.yaml": [
+      "lockfileVersion: '9.0'",
+      "",
+      "settings:",
+      "  autoInstallPeers: true",
+      "  excludeLinksFromLockfile: false",
+      "",
+      "importers:",
+      "",
+      "  .:",
+      "    dependencies:",
+      "      a:",
+      "        specifier: file:./vendor/a",
+      "        version: file:vendor/a",
+      "",
+      "packages:",
+      "",
+      "  a@file:vendor/a:",
+      "    resolution: {directory: vendor/a, type: directory}",
+      `    os: ['!${process.platform}']`,
+      `    cpu: ['!${process.arch}']`,
+      "    version: 1.0.0",
+      "",
+      "snapshots:",
+      "",
+      "  a@file:vendor/a: {}",
+      "",
+    ].join("\n"),
+  });
+
+  const { stderr, exitCode } = await install(testDir);
+  expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+  expect(exitCode).toBe(0);
+  expect(await Bun.file(join(testDir, "node_modules", "a", "package.json")).json()).toHaveProperty("name", "a");
+});

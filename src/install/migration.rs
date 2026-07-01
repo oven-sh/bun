@@ -1462,19 +1462,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
         finalize_pkg!();
     }
 
-    // npm records `cpu`/`os` for every lockfile entry, but a fresh resolve only
-    // reads them for the root and npm registry packages (`Package::from_npm`);
-    // workspace, folder, tarball, and git packages install unconditionally.
-    for i in 0..pkg_count {
-        match this.packages.items_resolution()[i].tag {
-            resolution::Tag::Root | resolution::Tag::Npm => {}
-            _ => {
-                let meta = &mut this.packages.items_meta_mut()[i];
-                meta.arch = Npm::Architecture::ALL;
-                meta.os = Npm::OperatingSystem::ALL;
-            }
-        }
-    }
+    clear_non_registry_platform_constraints(this);
 
     // It is our fault if we hit an error here, making it safe to disable in release.
     #[cfg(debug_assertions)]
@@ -1545,6 +1533,22 @@ pub(crate) fn migrate_npm_lockfile<'a>(
         serializer_result: Default::default(),
         format: LockfileFormat::Binary,
     }))
+}
+
+/// A fresh resolve only records `os`/`cpu` for the root and npm registry
+/// packages (`Package::from_npm`); folder, tarball, git, and workspace packages
+/// install unconditionally, so a migrated lockfile must not constrain them.
+pub(crate) fn clear_non_registry_platform_constraints(lockfile: &mut Lockfile) {
+    for i in 0..lockfile.packages.len() {
+        match lockfile.packages.items_resolution()[i].tag {
+            resolution::Tag::Root | resolution::Tag::Npm => {}
+            _ => {
+                let meta = &mut lockfile.packages.items_meta_mut()[i];
+                meta.arch = Npm::Architecture::ALL;
+                meta.os = Npm::OperatingSystem::ALL;
+            }
+        }
+    }
 }
 
 fn pkg_flag_is_true(pkg: &E::Object, key: &[u8]) -> bool {

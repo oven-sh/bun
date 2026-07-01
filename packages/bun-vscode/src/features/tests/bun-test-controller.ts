@@ -156,13 +156,15 @@ export class BunTestController implements vscode.Disposable {
   }
 
   private customFilePattern(): string {
-    return vscode.workspace.getConfiguration("bun.test").get("filePattern", DEFAULT_TEST_PATTERN);
+    return vscode.workspace
+      .getConfiguration("bun.test", this.workspaceFolder.uri)
+      .get("filePattern", DEFAULT_TEST_PATTERN);
   }
 
   private async findTestFiles(cancellationToken?: vscode.CancellationToken): Promise<vscode.Uri[]> {
     const ignoreGlobs = await this.buildIgnoreGlobs(cancellationToken);
     const tests = await vscode.workspace.findFiles(
-      this.customFilePattern(),
+      new vscode.RelativePattern(this.workspaceFolder, this.customFilePattern()),
       "**/node_modules/**",
       // 5k tests is more than enough for most projects.
       // If they need more, they can manually open the files themself and it should be added to the test explorer.
@@ -182,7 +184,7 @@ export class BunTestController implements vscode.Disposable {
 
   private async buildIgnoreGlobs(cancellationToken?: vscode.CancellationToken): Promise<string[]> {
     const ignores = await vscode.workspace.findFiles(
-      "**/.gitignore",
+      new vscode.RelativePattern(this.workspaceFolder, "**/.gitignore"),
       "**/node_modules/**",
       undefined,
       cancellationToken,
@@ -269,15 +271,19 @@ export class BunTestController implements vscode.Disposable {
   }
 
   private getBunExecutionConfig() {
-    const customFlag = vscode.workspace.getConfiguration("bun.test").get("customFlag", "").trim();
-    const customScriptSetting = vscode.workspace.getConfiguration("bun.test").get("customScript", "bun test").trim();
+    const scope = this.workspaceFolder.uri;
+    const customFlag = vscode.workspace.getConfiguration("bun.test", scope).get("customFlag", "").trim();
+    const customScriptSetting = vscode.workspace
+      .getConfiguration("bun.test", scope)
+      .get("customScript", "bun test")
+      .trim();
     const customScript = customScriptSetting.length ? customScriptSetting : "bun test";
 
     const [cmd, ...args] = customScript.split(/\s+/);
 
     let bunCommand = "bun";
     if (cmd === "bun") {
-      const bunRuntime = vscode.workspace.getConfiguration("bun").get<string>("runtime", "bun");
+      const bunRuntime = vscode.workspace.getConfiguration("bun", scope).get<string>("runtime", "bun");
       bunCommand = bunRuntime || "bun";
     } else {
       bunCommand = cmd;

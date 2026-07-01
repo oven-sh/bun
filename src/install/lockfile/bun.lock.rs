@@ -2986,7 +2986,12 @@ pub fn parse_into_binary_lockfile(
                                 return Err(ParseError::InvalidPackageKey);
                             }
                             Err(ResolveError::Unresolvable) => {
-                                if dep.behavior.contains(Behavior::OPTIONAL) {
+                                // The installer tolerates a peer it could not resolve (no
+                                // version matches the range) and writes the lockfile without
+                                // it, so the lockfile it wrote has to load back the same way.
+                                if dep.behavior.contains(Behavior::OPTIONAL)
+                                    || dep.behavior.is_peer()
+                                {
                                     continue 'deps;
                                 }
                                 dependency_resolution_failure(

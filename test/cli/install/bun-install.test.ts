@@ -1344,6 +1344,89 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/26046
+  it("should write a loadable lockfile when a peerDependency has no matching version", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      // the registry only has bar@0.0.2, so ">=2.0.0" resolves to nothing.
+      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      await Promise.all([
+        write(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            dependencies: {
+              "zz-unmet-plugin": "file:./vendor/zz-unmet-plugin",
+            },
+          }),
+        ),
+        write(
+          join(ctx.package_dir, "vendor", "zz-unmet-plugin", "package.json"),
+          JSON.stringify({
+            name: "zz-unmet-plugin",
+            version: "1.0.0",
+            peerDependencies: {
+              bar: ">=2.0.0",
+            },
+          }),
+        ),
+      ]);
+
+      {
+        const { stderr, exited } = spawn({
+          cmd: [bunExe(), "install", "--save-text-lockfile"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const err = await stderr.text();
+        expect(err).toContain("Saved lockfile");
+        expect(err).not.toContain("error:");
+        expect(await exited).toBe(0);
+      }
+
+      const lockfile = await file(join(ctx.package_dir, "bun.lock")).text();
+      expect(lockfile).toContain('"bar": ">=2.0.0"');
+
+      // bun must be able to load the lockfile it just wrote: the unresolved
+      // peer stays unresolved instead of failing the parse.
+      {
+        const { stderr, exited } = spawn({
+          cmd: [bunExe(), "install", "--frozen-lockfile"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const err = await stderr.text();
+        expect(err).not.toContain("failed to parse lockfile");
+        expect(err).not.toContain("error:");
+        expect(await exited).toBe(0);
+      }
+
+      {
+        const { stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const err = await stderr.text();
+        expect(err).not.toContain("failed to parse lockfile");
+        expect(err).not.toContain("error:");
+        expect(err).not.toContain("Saved lockfile");
+        expect(await exited).toBe(0);
+      }
+      expect(await file(join(ctx.package_dir, "bun.lock")).text()).toBe(lockfile);
+    });
+  });
+
   it("should handle life-cycle scripts within workspaces", async () => {
     await withContext(defaultOpts, async ctx => {
       await writeFile(

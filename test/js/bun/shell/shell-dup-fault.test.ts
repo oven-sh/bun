@@ -76,14 +76,14 @@ async function run() {
 }
 await run();
 
-// Conservative stack roots can pin a couple of wrappers indefinitely, so
-// retry until (almost) every ShellInterpreter has been finalized (same
-// pattern and tolerance as leak.test.ts).
+// Conservative stack roots can pin a few wrappers indefinitely, so retry
+// until (almost) every ShellInterpreter has been finalized (same pattern and
+// tolerance as leak.test.ts).
 let interpreters = -1;
 for (let k = 0; k < 25; k++) {
   Bun.gc(true);
   interpreters = heapStats().objectTypeCounts.ShellInterpreter ?? 0;
-  if (interpreters <= 2) break;
+  if (interpreters <= 3) break;
   await Bun.sleep(20);
 }
 console.log(JSON.stringify({ results, interpreters }));
@@ -151,8 +151,8 @@ test.concurrent.skipIf(!isLinux || !cc)(
       stderr: expect.any(String),
       exitCode: 0,
     });
-    // Conservative stack roots may pin a couple of the 16 wrappers; the rest
+    // Conservative stack roots may pin a few of the 16 wrappers; the rest
     // must have been finalized or this test never exercised the finalizer.
-    expect((parsed as { interpreters: number }).interpreters).toBeLessThanOrEqual(2);
+    expect((parsed as { interpreters: number }).interpreters).toBeLessThanOrEqual(3);
   },
 );

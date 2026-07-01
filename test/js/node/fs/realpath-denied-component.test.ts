@@ -34,32 +34,32 @@ if (isWindows) {
     const dir = tempDirWithFiles("realpath-denied", {
       "target/secret.txt": "out-of-root",
     });
-  fixtureDir = dir;
-  const root = join(dir, "root");
-  const target = join(dir, "target");
-  denied = join(root, "sub");
-  mkdirSync(denied, { recursive: true });
-  let junctionLive = false;
-  try {
-    // Sandboxed tokens get their junctions quarantined by the kernel (dead,
-    // ELOOP on traversal); the scenario needs a live junction, so probe
-    // through it and skip below where it is dead.
-    symlinkSync(target, join(denied, "j"), "junction");
-    lstatSync(join(denied, "j", "secret.txt"));
-    junctionLive = true;
-  } catch {}
-  if (junctionLive) {
-    linkedFile = join(denied, "j", "secret.txt");
-    expected = realpathSync(join(target, "secret.txt"));
-
-    execSync(`icacls "${denied}" /deny "%USERNAME%:(OI)(CI)(RA,RD,REA)"`, { shell: "cmd.exe" });
+    fixtureDir = dir;
+    const root = join(dir, "root");
+    const target = join(dir, "target");
+    denied = join(root, "sub");
+    mkdirSync(denied, { recursive: true });
+    let junctionLive = false;
     try {
-      lstatSync(join(denied, "j"));
-      // Succeeded: the deny is bypassed (elevated) — skip below.
-    } catch (e: any) {
-      preconditionHolds = e.code === "EPERM" || e.code === "EACCES";
+      // Sandboxed tokens get their junctions quarantined by the kernel (dead,
+      // ELOOP on traversal); the scenario needs a live junction, so probe
+      // through it and skip below where it is dead.
+      symlinkSync(target, join(denied, "j"), "junction");
+      lstatSync(join(denied, "j", "secret.txt"));
+      junctionLive = true;
+    } catch {}
+    if (junctionLive) {
+      linkedFile = join(denied, "j", "secret.txt");
+      expected = realpathSync(join(target, "secret.txt"));
+
+      execSync(`icacls "${denied}" /deny "%USERNAME%:(OI)(CI)(RA,RD,REA)"`, { shell: "cmd.exe" });
+      try {
+        lstatSync(join(denied, "j"));
+        // Succeeded: the deny is bypassed (elevated) — skip below.
+      } catch (e: any) {
+        preconditionHolds = e.code === "EPERM" || e.code === "EACCES";
+      }
     }
-  }
   } catch {
     preconditionHolds = false;
   }

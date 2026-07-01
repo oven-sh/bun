@@ -451,6 +451,73 @@ describe("bundler", () => {
     });
   }
 
+  // A later declarator that reads an earlier declarator in the same
+  // `const a = x, b = f(a)` statement is a plain left-to-right read, not a
+  // forward reference. Upstream's BlockStatement hoisting only emits a
+  // `DeclareContext` when the reference sits inside a nested function (or the
+  // binding is a function declaration), so `meta` must stay a plain local.
+  // Bun's port hoisted it unconditionally, turning `meta` into a spurious
+  // context variable, which tripped codegen's "MethodCall::property must be an
+  // unpromoted + unmemoized MemberExpression" invariant on the `Math.max`
+  // property load and silently bailed the whole component out of compilation.
+  itBundled("react-compiler/MultiDeclaratorReferencesEarlierDeclarator", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        function Text(p) { return p.children; }
+        function width(s) { return s.length; }
+        export function T({ label }) {
+          const meta = label, room = Math.max(12, width(meta));
+          return <Text>{meta}{room}</Text>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    external: ["*"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("react/compiler-runtime");
+      expect(out).toMatch(/\b_c\(\d+\)/);
+    },
+  });
+
+  // `minify: { syntax: true }` runs the statement mangler on nested blocks
+  // (the `if` body here) before the React Compiler sees them, merging the two
+  // adjacent `const` declarations into the multi-declarator shape above. The
+  // compiler must accept the same set of components with and without
+  // minify.syntax; a bailout here is a silent loss of memoization.
+  for (const minifySyntax of [false, true] as const) {
+    itBundled(`react-compiler/MathCallArgInMinifiedConditionalBranch-syntax=${minifySyntax}`, {
+      files: {
+        "/entry.tsx": /* tsx */ `
+          import * as React from "react";
+          function Text(p: { children?: React.ReactNode }) { return p.children; }
+          function width(s: string): number { return s.length; }
+          export function T({ w, label, on }: { w: number; label: string; on: boolean }) {
+            let subline: React.ReactNode;
+            if (on) {
+              const meta = label;
+              const room = Math.max(12, w - width(meta) - 3);
+              subline = <Text>{meta}{room}</Text>;
+            }
+            return <Text>{subline}</Text>;
+          }
+        `,
+      },
+      reactCompiler: true,
+      target: "browser",
+      backend: "cli",
+      minifySyntax,
+      external: ["*"],
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain("react/compiler-runtime");
+        expect(out).toMatch(/\b_c\(\d+\)/);
+      },
+    });
+  }
+
   // A user's local `jsx` / `jsxs` / `jsxDEV` / `Fragment` binding in the
   // component body scope must not capture the automatic JSX runtime import
   // when the React Compiler rewrites the component.

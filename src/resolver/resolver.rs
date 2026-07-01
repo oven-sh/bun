@@ -1762,7 +1762,11 @@ impl<'a> Resolver<'a> {
                             // panic on EACCES/EMFILE/ELOOP here.
                             let file = bun_sys::open(span, bun_sys::O::RDONLY, 0)
                                 .map_err(Into::<bun_core::Error>::into)?;
-                            query.entry().set_cache_fd(file);
+                            {
+                                // Every cached-`Entry` rewrite takes the per-entry mutex.
+                                let _entry_guard = query.entry().mutex.lock_guard();
+                                query.entry().set_cache_fd(file);
+                            }
                             Fs::FileSystem::set_max_fd(file.native());
                         }
 
@@ -1780,6 +1784,8 @@ impl<'a> Resolver<'a> {
                         scopeguard::defer! {
                             if need_close {
                                 let e = entry_ref.get();
+                                // Every cached-`Entry` rewrite takes the per-entry mutex.
+                                let _entry_guard = e.mutex.lock_guard();
                                 let fd = e.cache().fd;
                                 if fd.is_valid() {
                                     fd.close();
@@ -1797,9 +1803,13 @@ impl<'a> Resolver<'a> {
                                 bstr::BStr::new(path.text())
                             ));
                         }
-                        query
-                            .entry()
-                            .set_cache_symlink(Interned::from_static(symlink));
+                        {
+                            // Every cached-`Entry` rewrite takes the per-entry mutex.
+                            let _entry_guard = query.entry().mutex.lock_guard();
+                            query
+                                .entry()
+                                .set_cache_symlink(Interned::from_static(symlink));
+                        }
                         if !result.file_fd.is_valid() && store_fd {
                             result.file_fd = query.entry().cache().fd;
                         }
@@ -6220,13 +6230,16 @@ impl<'a> Resolver<'a> {
                             && !lookup.entry().cache().fd.is_valid()
                             && self.store_fd
                         {
+                            // Every cached-`Entry` rewrite takes the per-entry mutex.
+                            let _entry_guard = lookup.entry().mutex.lock_guard();
                             lookup.entry().set_cache_fd(entries_fd);
                         }
-                        // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
+                        // SAFETY: EntryStore-owned slot — read-only borrow,
                         // dies (NLL) before any later `&mut` to this slot.
                         let entry = lookup.entry();
 
-                        // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                        // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
+                        // rewrite inside `symlink()` is serialized on `Entry.mutex`.
                         let mut symlink = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
                         if !symlink.is_empty() {
                             if let Some(logs) = self.debug_logs.as_mut() {
@@ -6266,9 +6279,13 @@ impl<'a> Resolver<'a> {
                                 .ok();
                                 logs.add_note(buf);
                             }
-                            lookup
-                                .entry()
-                                .set_cache_symlink(Interned::from_static(symlink));
+                            {
+                                // Every cached-`Entry` rewrite takes the per-entry mutex.
+                                let _entry_guard = lookup.entry().mutex.lock_guard();
+                                lookup
+                                    .entry()
+                                    .set_cache_symlink(Interned::from_static(symlink));
+                            }
                             info.abs_real_path = symlink;
                         }
                     }

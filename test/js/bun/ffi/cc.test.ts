@@ -650,6 +650,100 @@ describe.skipIf(isFFIUnavailable)("double <-> JSValue conversions", () => {
     });
   });
 
+  // The f64 argument wrapper (ffiWrappers[FFIType.double] in ffi.ts) used
+  // `if (!val) return 0`, which rewrote NaN and -0.0 to +0.0 before C ever
+  // saw them, and its BigInt branch returned Math.abs() of the value. The C
+  // functions report the value they received, so a JS round trip cannot mask
+  // an argument-conversion bug. CFunction goes through the same
+  // FFIBuilder/ffiWrappers path as dlopen; cc() only provides the pointers.
+  it("f64 arguments reach C with NaN, -0.0, and BigInt sign intact", async () => {
+    using dir = tempDir("bun-ffi-f64-args", {
+      "observe.c": /* c */ `
+        union f64bits { double d; unsigned long long u; };
+        int isnan_f64(double x) { return x != x; }
+        int signbit_f64(double x) { union f64bits c; c.d = x; return (int)(c.u >> 63); }
+        double echo_f64(double x) { return x; }
+        void* addr_isnan_f64(void) { return (void*)isnan_f64; }
+        void* addr_signbit_f64(void) { return (void*)signbit_f64; }
+        void* addr_echo_f64(void) { return (void*)echo_f64; }
+      `,
+      "fixture.js": /* js */ `
+        import { cc, CFunction } from "bun:ffi";
+        import path from "path";
+
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "observe.c"),
+          symbols: {
+            addr_isnan_f64: { args: [], returns: "ptr" },
+            addr_signbit_f64: { args: [], returns: "ptr" },
+            addr_echo_f64: { args: [], returns: "ptr" },
+          },
+        });
+
+        const isnan_f64 = new CFunction({ ptr: symbols.addr_isnan_f64(), args: ["f64"], returns: "i32" });
+        const signbit_f64 = new CFunction({ ptr: symbols.addr_signbit_f64(), args: ["f64"], returns: "i32" });
+        const echo_f64 = new CFunction({ ptr: symbols.addr_echo_f64(), args: ["f64"], returns: "f64" });
+
+        // Report a thrown conversion as a value so one failure cannot hide the rest.
+        const show = fn => {
+          try {
+            const value = fn();
+            return [typeof value, String(value)];
+          } catch (err) {
+            return ["threw", err.name];
+          }
+        };
+        const results = {
+          nan_isnan: isnan_f64(NaN),
+          one_point_five_isnan: isnan_f64(1.5),
+          negative_zero_signbit: signbit_f64(-0),
+          positive_zero_signbit: signbit_f64(0),
+          negative_one_signbit: signbit_f64(-1),
+          negative_bigint: show(() => echo_f64(-5n)),
+          positive_bigint: show(() => echo_f64(5n)),
+          huge_bigint: show(() => echo_f64(2n ** 1024n)),
+          negative_huge_bigint: show(() => echo_f64(-(2n ** 1024n))),
+          fractional: show(() => echo_f64(-2.5)),
+          string: show(() => echo_f64("2.5")),
+          null_arg: show(() => echo_f64(null)),
+          undefined_arg: show(() => echo_f64(undefined)),
+        };
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // stderr is included in the received object so failures show it, but is not
+    // asserted empty: debug builds emit benign startup warnings.
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: {
+        nan_isnan: 1,
+        one_point_five_isnan: 0,
+        negative_zero_signbit: 1,
+        positive_zero_signbit: 0,
+        negative_one_signbit: 1,
+        negative_bigint: ["number", "-5"],
+        positive_bigint: ["number", "5"],
+        huge_bigint: ["number", "Infinity"],
+        negative_huge_bigint: ["number", "-Infinity"],
+        fractional: ["number", "-2.5"],
+        string: ["number", "2.5"],
+        null_arg: ["number", "0"],
+        undefined_arg: ["number", "NaN"],
+      },
+      exitCode: 0,
+    });
+  });
+
   // napi_create_double and napi_create_date take the double from the addon
   // verbatim, so they are the same boundary. cc()-compiled C resolves napi_*
   // from the host process; that lookup is only exercised on POSIX today (see

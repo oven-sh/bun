@@ -1,7 +1,8 @@
 import { Buffer, SlowBuffer, isAscii, isUtf8, kMaxLength } from "buffer";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gc, isASAN, isDebug, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, gc, isASAN, isDebug, nodeExe, withoutAggressiveGC } from "harness";
 import { createHash } from "node:crypto";
+import { join } from "node:path";
 import vm from "node:vm";
 
 const BufferModule = await import("buffer");
@@ -3845,6 +3846,160 @@ describe("ERR_BUFFER_OUT_OF_BOUNDS", () => {
       });
     }
   }
+});
+
+// Node's _fill (lib/buffer.js) only reinterprets a string `offset`/`end` as
+// the encoding when the fill value is itself a string; otherwise they reach
+// validateOffset and a non-number throws ERR_INVALID_ARG_TYPE. And `end` is
+// only read at all once `offset` is present.
+describe("Buffer.fill offset/end argument handling", () => {
+  it("rejects a string offset when the fill value is not a string", () => {
+    for (const value of [0, true, new Uint8Array([1])]) {
+      expect(() => Buffer.alloc(5).fill(value, "1", 3)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "offset" argument must be of type number. Received type string ('1')`,
+        }),
+      );
+      // Two-argument form: a string in the offset slot is not an encoding either.
+      expect(() => Buffer.alloc(5).fill(value, "hex")).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "offset" argument must be of type number. Received type string ('hex')`,
+        }),
+      );
+    }
+    expect(() => Buffer.alloc(5).fill(0, null, 3)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "offset" argument must be of type number. Received null',
+      }),
+    );
+  });
+
+  it("rejects a string end when the fill value is not a string", () => {
+    for (const value of [0, true, new Uint8Array([1])]) {
+      expect(() => Buffer.alloc(5).fill(value, 1, "3")).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "end" argument must be of type number. Received type string ('3')`,
+        }),
+      );
+    }
+    expect(() => Buffer.alloc(5).fill(0, 1, null)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "end" argument must be of type number. Received null',
+      }),
+    );
+  });
+
+  it("ignores end entirely when offset is undefined", () => {
+    // Node resets end = buf.length when offset === undefined; end is never
+    // validated, so even an otherwise invalid value there is accepted.
+    expect(Array.from(Buffer.alloc(5, 0xaa).fill(0, undefined, 3))).toEqual([0, 0, 0, 0, 0]);
+    expect(Array.from(Buffer.alloc(5, 0xaa).fill(0, undefined, "3"))).toEqual([0, 0, 0, 0, 0]);
+    expect(Array.from(Buffer.alloc(5, 0xaa).fill(0, undefined, -1))).toEqual([0, 0, 0, 0, 0]);
+    expect(Array.from(Buffer.alloc(5, 0xaa).fill(0, undefined, null))).toEqual([0, 0, 0, 0, 0]);
+  });
+
+  it("discards end when a string value's offset slot holds the encoding", () => {
+    // fill(value, encoding) has no end slot, so anything there is ignored.
+    expect(Buffer.alloc(5, 0xaa).fill("b", "utf8", 3).toString()).toBe("bbbbb");
+    expect(Buffer.alloc(5, 0xaa).fill("b", undefined, 3).toString()).toBe("bbbbb");
+    // An explicit numeric offset keeps end meaningful.
+    expect(Array.from(Buffer.alloc(5, 0xaa).fill("b", 1, 3))).toEqual([0xaa, 0x62, 0x62, 0xaa, 0xaa]);
+  });
+
+  it("still treats a string offset/end as the encoding when the value is a string", () => {
+    expect(Buffer.alloc(4, 0xaa).fill("ab", "utf16le").toString("hex")).toBe("61006200");
+    expect(Buffer.alloc(4, 0xaa).fill("ab", 0, "utf16le").toString("hex")).toBe("61006200");
+    expect(() => Buffer.alloc(4).fill("a", "bogus")).toThrow(expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }));
+    expect(() => Buffer.alloc(4).fill("a", 0, "bogus")).toThrow(
+      expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }),
+    );
+  });
+
+  it("never treats the 4-argument encoding as meaningful for a non-string value", () => {
+    expect(Array.from(Buffer.alloc(5, 0xaa).fill(0, 1, 3, "bogus"))).toEqual([0xaa, 0, 0, 0xaa, 0xaa]);
+  });
+
+  it("zero-fills the whole buffer when called with no arguments", () => {
+    // Node forwards the undefined value into the numeric path, which coerces to 0.
+    expect(Array.from(Buffer.alloc(3, 0xaa).fill())).toEqual([0, 0, 0]);
+    expect(Array.from(Buffer.alloc(3, 0xaa).fill(undefined))).toEqual([0, 0, 0]);
+  });
+
+  it("ignores positional arguments past the fourth", () => {
+    expect(Array.from(Buffer.alloc(5, 0xaa).fill(0, 1, 3, "utf8", "x"))).toEqual([0xaa, 0, 0, 0xaa, 0xaa]);
+    expect(Buffer.alloc(5, 0xaa).fill("ab", 0, 4, "utf16le", "x").toString("hex")).toBe("61006200aa");
+  });
+
+  it("lets an undefined offset shadow an explicit 4th-argument encoding, like Node", () => {
+    // Node's _fill assigns `encoding = offset` whenever offset is undefined or
+    // a string, so fill(str, undefined, ..., encoding) falls back to utf8 and a
+    // bogus 4th-argument encoding is never even validated.
+    expect(Buffer.alloc(4, 0xaa).fill("ab", undefined, undefined, "utf16le").toString("hex")).toBe("61626162");
+    expect(Buffer.alloc(4, 0xaa).fill("a", undefined, undefined, "bogus").toString("hex")).toBe("61616161");
+    // With a numeric offset the explicit encoding is honored.
+    expect(Buffer.alloc(4, 0xaa).fill("ab", 0, undefined, "utf16le").toString("hex")).toBe("61006200");
+    expect(() => Buffer.alloc(4).fill("a", 1, undefined, "bogus")).toThrow(
+      expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }),
+    );
+  });
+
+  it("treats a null or empty-string encoding like an absent one, as Node's normalizeEncoding does", () => {
+    // normalizeEncoding returns utf8 for exactly undefined, null, and "".
+    expect(Buffer.alloc(5, 0xaa).fill("a", 1, 3, null).toString("hex")).toBe("aa6161aaaa");
+    expect(Buffer.alloc(5, 0xaa).fill("a", 1, 3, "").toString("hex")).toBe("aa6161aaaa");
+    // A string "" in the offset or end slot becomes the encoding first, then
+    // that encoding is treated as absent.
+    expect(Buffer.alloc(5, 0xaa).fill("a", "").toString("hex")).toBe("6161616161");
+    expect(Buffer.alloc(5, 0xaa).fill("a", 1, "").toString("hex")).toBe("aa61616161");
+    expect(Buffer.alloc(3, "a", null).toString("hex")).toBe("616161");
+    expect(Buffer.alloc(3, "a", "").toString("hex")).toBe("616161");
+    // toString goes through Node's getEncodingOps, not normalizeEncoding, so a
+    // null or empty-string encoding there is still ERR_UNKNOWN_ENCODING. Pins
+    // that the handling lives at the fill/alloc gates, not inside parseEncoding.
+    expect(() => Buffer.from("ab").toString(null)).toThrow(expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }));
+    expect(() => Buffer.from("ab").toString("")).toThrow(expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }));
+    // A String object is not a string primitive, so it is not "absent".
+    expect(() => Buffer.alloc(3, "a", new String(""))).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
+
+  // Bun coerces an object encoding via toString (Node rejects a non-string
+  // encoding up front with ERR_INVALID_ARG_TYPE instead). An exception thrown
+  // from that toString must surface, not degrade to an empty or null string.
+  it("propagates an exception thrown from an object encoding's toString", () => {
+    const boom = {
+      toString() {
+        throw new Error("boom");
+      },
+    };
+    expect(() => Buffer.alloc(4, 0xaa).fill("a", 0, 4, boom)).toThrow("boom");
+    expect(() => Buffer.alloc(4, "a", boom)).toThrow("boom");
+  });
+
+  // Differential test: the fixture enumerates every fill() argument shape and
+  // prints the resulting bytes or the thrown error class + code. Running it
+  // under Node.js and under Bun must produce byte-identical output.
+  it.skipIf(!nodeExe())("every fill() argument shape produces the same output in Node.js and Bun", async () => {
+    const fixture = join(import.meta.dir, "buffer-fill-args-fixture.js");
+    async function run(exe) {
+      await using proc = Bun.spawn({ cmd: [exe, fixture], env: bunEnv, stdout: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      return { stdout, exitCode };
+    }
+    const [bunRun, nodeRun] = await Promise.all([run(bunExe()), run(nodeExe())]);
+    expect(nodeRun.stdout).toContain("fill(");
+    expect(bunRun.stdout).toBe(nodeRun.stdout);
+    expect(nodeRun.exitCode).toBe(0);
+    expect(bunRun.exitCode).toBe(0);
+  });
 });
 
 describe("*Write methods with NaN/invalid offset and length", () => {

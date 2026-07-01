@@ -1138,9 +1138,6 @@ impl<Parent: PosixStreamingWriterParent> Drop for PosixStreamingWriter<Parent> {
 pub trait BaseWindowsPipeWriter {
     type Parent: WindowsWriterParent;
 
-    /// `true` for WindowsStreamingWriter (has `current_payload`), `false` for buffered.
-    const HAS_CURRENT_PAYLOAD: bool;
-
     fn source(&self) -> &Option<Source>;
     fn source_mut(&mut self) -> &mut Option<Source>;
     fn parent_ptr(&self) -> *mut Self::Parent;
@@ -1181,19 +1178,15 @@ pub trait BaseWindowsPipeWriter {
         let Some(source) = self.source_mut().take() else {
             return;
         };
-        // Check for in-flight file write before detaching. detach()
-        // nulls fs.data so onFsWriteComplete can't recover the writer
-        // to call deref(). We must balance processSend's ref() here.
-        let has_inflight_write = if Self::HAS_CURRENT_PAYLOAD {
-            match &source {
-                Source::SyncFile(file) | Source::File(file) => {
-                    file.state == crate::source::FileState::Operating
-                        || file.state == crate::source::FileState::Canceling
-                }
-                _ => false,
+        // Check for in-flight file write before detaching. detach() nulls
+        // fs.data so on_fs_write_complete can't recover the writer to call
+        // deref(); balance the ref taken when the write was submitted here.
+        let has_inflight_write = match &source {
+            Source::SyncFile(file) | Source::File(file) => {
+                file.state == crate::source::FileState::Operating
+                    || file.state == crate::source::FileState::Canceling
             }
-        } else {
-            false
+            _ => false,
         };
         match source {
             Source::SyncFile(file) | Source::File(file) => {
@@ -1462,7 +1455,6 @@ impl<Parent: WindowsBufferedWriterParent> Default for WindowsBufferedWriter<Pare
 #[cfg(windows)]
 impl<Parent: WindowsBufferedWriterParent> BaseWindowsPipeWriter for WindowsBufferedWriter<Parent> {
     type Parent = Parent;
-    const HAS_CURRENT_PAYLOAD: bool = false;
 
     fn source(&self) -> &Option<Source> {
         &self.source
@@ -1503,8 +1495,9 @@ impl<Parent: WindowsBufferedWriterParent> BaseWindowsPipeWriter for WindowsBuffe
 
 #[cfg(windows)]
 // SAFETY: libuv write-complete callbacks re-enter via `FileSink::on_write` →
-// JS → `writer.with_mut(|w| w.end())`; writer is intrusive in `Parent`, never
-// freed during the callback; single JS thread.
+// JS → `writer.with_mut(|w| w.end())`; writer is intrusive in `Parent`, kept
+// alive across the callback by the parent ref taken in `write()` (derefed via
+// the callback-end scopeguards); single JS thread.
 unsafe impl<Parent: WindowsBufferedWriterParent> bun_ptr::LaunderedSelf
     for WindowsBufferedWriter<Parent>
 {
@@ -1551,6 +1544,17 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         unsafe { Parent::on_error(parent, err) }
     }
 
+    /// See [`r_on_error`](Self::r_on_error). Reads `self.parent` at guard
+    /// execution so a re-entrant `set_parent` cannot over-deref a stale
+    /// pointer — mirrors [`WindowsStreamingWriter::r_deref`].
+    #[inline(always)]
+    fn r_deref(this: *mut Self) {
+        let parent = Self::r(this).parent;
+        // SAFETY: type invariant — set-once parent backref; the ref taken in
+        // `write()` keeps parent (and self-as-field) alive until this deref.
+        unsafe { Parent::deref(parent) }
+    }
+
     pub fn memory_cost(&self) -> usize {
         mem::size_of::<Self>() + self.write_buffer.len as usize
     }
@@ -1565,6 +1569,10 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         // them after the call. Launder so post-`on_write` reads see fresh
         // state.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        // Scopeguard deref to balance write()'s ref: `Parent::on_write` may
+        // drop the last external strong ref, and the trailing `is_done` /
+        // `close()` reads below need the parent (and `self`, inside it) alive.
+        let _g = scopeguard::guard(this, |s| Self::r_deref(s));
         let written = Self::r(this).pending_payload_size;
         Self::r(this).pending_payload_size = 0;
         if let Some(err) = status.to_error(sys::Tag::write) {
@@ -1615,7 +1623,8 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         // callback (detach()/close() gates free).
         file.complete(was_canceled);
 
-        // If detached, file may be closing (owned fd) or just stopped (non-owned fd)
+        // If detached, file may be closing (owned fd) or just stopped (non-owned fd).
+        // The deref to balance write()'s ref was already done in close().
         if parent_ptr.is_null() {
             // owns_fd detach() path: complete() already kicked off start_close()
             // (state == Closing) and on_close_complete will heap::take the Box.
@@ -1639,12 +1648,16 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         let this: *mut Self = core::hint::black_box(parent_ptr.cast::<Self>());
 
         if was_canceled {
-            // Canceled write - clear pending state
+            // Canceled write - clear pending state and balance write()'s ref.
             Self::r(this).pending_payload_size = 0;
+            Self::r_deref(this);
             return;
         }
 
         if let Some(err) = result.to_error(sys::Tag::write) {
+            // Balance write()'s ref — lazy `.parent` read at guard execution
+            // in case close()/on_error re-enter and swap the parent pointer.
+            let _g = scopeguard::guard(this, |s| Self::r_deref(s));
             // close() may re-enter JS.
             Self::r(this).close();
             core::hint::black_box(this);
@@ -1653,7 +1666,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             return;
         }
 
-        // on_write_complete is itself laundered.
+        // on_write_complete handles the deref (and is itself laundered).
         Self::r(this).on_write_complete(uv::ReturnCode::zero());
     }
 
@@ -1715,6 +1728,12 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
                 file.complete(false);
                 self.close();
                 self.parent_on_error(err);
+            } else {
+                // Ref the parent to prevent it from being freed while the async
+                // write is in flight. The matching deref is in on_write_complete,
+                // on_fs_write_complete, or close() (mid-flight teardown).
+                // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
+                unsafe { Parent::ref_(self.parent()) };
             }
         } else {
             // the buffered version should always have a stable ptr
@@ -1732,6 +1751,12 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             {
                 self.close();
                 self.parent_on_error(write_err);
+            } else {
+                // Keep the parent alive while the stream write is in flight;
+                // the write callback (incl. ECANCELED after close) always
+                // fires, and on_write_complete's guard runs the deref.
+                // SAFETY: parent BACKREF valid; intrusive refcount bump.
+                unsafe { Parent::ref_(self.parent()) };
             }
         }
     }
@@ -1957,7 +1982,6 @@ impl<Parent: WindowsStreamingWriterParent> BaseWindowsPipeWriter
     for WindowsStreamingWriter<Parent>
 {
     type Parent = Parent;
-    const HAS_CURRENT_PAYLOAD: bool = true;
 
     fn source(&self) -> &Option<Source> {
         &self.source
@@ -2715,11 +2739,6 @@ macro_rules! impl_streaming_writer_parent {
 
 /// Stamp `PosixBufferedWriterParent` + `WindowsWriterParent` +
 /// `WindowsBufferedWriterParent` for a parent type. See module comment above.
-///
-/// `win_on_write_guard` runs on Windows immediately before forwarding
-/// `on_write`; bind a keepalive there if the callback may drop the last
-/// external strong ref (and the inline `uv_write_t`) mid-re-entry. Pass
-/// `|_this| ()` for none.
 #[macro_export]
 macro_rules! impl_buffered_writer_parent {
     (@borrow mut    $p:expr) => { &mut *$p };
@@ -2737,7 +2756,6 @@ macro_rules! impl_buffered_writer_parent {
         uv_loop    = |$uv_this:ident| $uv:expr,
         ref_       = |$ref_this:ident| $ref_:expr,
         deref      = |$deref_this:ident| $deref:expr,
-        win_on_write_guard = |$guard_this:ident| $guard:expr,
     ) => {
         #[cfg(not(windows))]
         impl $($gen)* $crate::pipe_writer::PosixBufferedWriterParent for $Ty {
@@ -2807,9 +2825,6 @@ macro_rules! impl_buffered_writer_parent {
             #[inline]
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: BACKREF set via `set_parent`; see borrow-mode note.
-                let $guard_this = this;
-                #[allow(unused_unsafe, clippy::let_unit_value)]
-                let _guard = unsafe { $guard };
                 unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_write(amount, status) };
             }
             #[inline]

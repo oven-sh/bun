@@ -371,6 +371,48 @@ it("should display a welcome message when the response value type is incorrect",
   );
 });
 
+// The async handler path already reported non-Response returns to stderr; the
+// synchronous path must emit the same diagnostic instead of staying silent.
+it("logs the invalid-response diagnostic when a synchronous fetch handler returns a non-Response value", async () => {
+  const script = `
+    const statuses = [];
+    async function hit(fetchImpl) {
+      await using server = Bun.serve({ port: 0, development: false, fetch: fetchImpl });
+      const res = await fetch(server.url);
+      await res.arrayBuffer();
+      statuses.push(res.status);
+    }
+    await hit(() => ({ forgot: "new Response" }));
+    await hit(() => "plain string");
+    await hit(() => 42);
+    await hit(async () => ({ forgot: "new Response" }));
+    console.log(JSON.stringify(statuses));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const diagnostics = stderr.match(/Expected a Response object, but received/g) ?? [];
+  expect({
+    // Returning a non-Response still renders 204 in production mode; only the
+    // missing stderr diagnostic on the synchronous path changes.
+    statuses: JSON.parse(stdout.trim()),
+    diagnosticCount: diagnostics.length,
+    exitCode,
+  }).toEqual({
+    statuses: [204, 204, 204, 204],
+    diagnosticCount: 4,
+    exitCode: 0,
+  });
+  expect(stderr).toContain(`received '"plain string"'`);
+  expect(stderr).toContain("received '42'");
+});
+
 it("request.signal works in trivial case", async () => {
   var aborty = new AbortController();
   var signaler = Promise.withResolvers();

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import { bunEnv, bunExe, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -203,6 +203,54 @@ describe.concurrent("node-module-module", () => {
   test("builtin resolution", () => {
     expect(require.resolve("fs")).toBe("fs");
     expect(require.resolve("node:fs")).toBe("node:fs");
+  });
+  // A relative `options.paths` entry must be resolved against cwd, like
+  // Module._nodeModulePaths -> path.resolve(from). It previously panicked
+  // with "cannot resolve DirInfo for non-absolute path".
+  test("require.resolve resolves relative `paths` entries against cwd", async () => {
+    using dir = tempDir("require-resolve-relative-paths", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0" }),
+      "rel/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", main: "index.js" }),
+      "rel/node_modules/pkg/index.js": "module.exports = 1;",
+    });
+    const code = /* js */ `
+      const path = require("path");
+      const resolved = require.resolve("pkg", { paths: ["rel"] });
+      console.log(path.relative(process.cwd(), resolved));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe(ospath("rel/node_modules/pkg/index.js"));
+    expect(exitCode).toBe(0);
+  });
+  test("require.resolve does not crash on non-string `paths` entries", async () => {
+    using dir = tempDir("require-resolve-nonstring-paths", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0" }),
+    });
+    const code = /* js */ `
+      function f2() { return 15; }
+      try {
+        require.resolve("pkg-that-does-not-exist", { paths: [9n, f2] });
+      } catch (e) {
+        console.log("threw");
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("threw");
+    expect(exitCode).toBe(0);
   });
   test("require cache node builtins specifier", () => {
     // as js builtin

@@ -1,5 +1,6 @@
 import { file } from "bun";
 import { expect, test } from "bun:test";
+import { realpathSync } from "fs";
 import path from "path";
 import { globAllSources } from "../../scripts/glob-sources.ts";
 
@@ -17,13 +18,31 @@ import { globAllSources } from "../../scripts/glob-sources.ts";
 const root = path.resolve(import.meta.dir, "..", "..");
 const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));
 
+// Only scan files tracked in HEAD (a `git stash` round-trip can leave stray
+// `.rs` files in the working tree; CI runs on a clean checkout). Same guard as
+// dead-code-escapes.test.ts.
+const tracked: Set<string> | null = (() => {
+  const r = Bun.spawnSync({
+    cmd: ["git", "-C", root, "ls-tree", "-r", "--name-only", "-z", "HEAD"],
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  if (!r.success) return null;
+  return new Set(r.stdout.toString().split("\0").filter(Boolean));
+})();
+
 // Read and preprocess each file once; both tests scan the cache.
 const sources = new Map<string, string>();
 for (const abs of rustSources) {
+  const source = path.relative(root, abs).replaceAll(path.sep, "/");
+  // `src/cli` is a symlink into `src/runtime/cli`; count each file once under
+  // its canonical path.
+  if (path.relative(root, realpathSync(abs)).replaceAll(path.sep, "/") !== source) continue;
+  if (tracked !== null && !tracked.has(source)) continue;
   const content = await file(abs).text();
   // Strip full-line comments so prose mentions don't count.
   const stripped = content.replace(/^\s*\/\/.*$/gm, "");
-  sources.set(path.relative(root, abs).replaceAll(path.sep, "/"), stripped);
+  sources.set(source, stripped);
 }
 
 function scan(pattern: RegExp): string[] {

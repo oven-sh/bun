@@ -663,7 +663,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_releaseL
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(callFrame->thisValue());
     if (!reader) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "ReadableStreamDefaultReader"_s, "releaseLock"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStreamDefaultReader"_s);
     if (!reader->m_stream)
         return JSValue::encode(jsUndefined());
     readableStreamDefaultReaderRelease(lexicalGlobalObject, reader);

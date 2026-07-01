@@ -294,7 +294,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamPrototypeGetter_readable, (JSGlobalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSTransformStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "TransformStream"_s, "readable"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TransformStream"_s);
     return JSValue::encode(stream->m_readable.get());
 }
 
@@ -304,7 +304,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamPrototypeGetter_writable, (JSGlobalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSTransformStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "TransformStream"_s, "writable"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TransformStream"_s);
     return JSValue::encode(stream->m_writable.get());
 }
 

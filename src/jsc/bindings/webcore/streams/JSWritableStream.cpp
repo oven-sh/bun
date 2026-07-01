@@ -288,7 +288,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamPrototypeGetter_locked, (JSGlobalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSWritableStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "WritableStream"_s, "locked"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "WritableStream"_s);
     return JSValue::encode(jsBoolean(isWritableStreamLocked(stream)));
 }
 
@@ -328,7 +328,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_getWriter, (JSGlobalO
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSWritableStream>(callFrame->thisValue());
     if (!stream) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "WritableStream"_s, "getWriter"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "WritableStream"_s);
     auto* writer = acquireWritableStreamDefaultWriter(lexicalGlobalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(writer);

@@ -670,7 +670,7 @@ JSValue readableStreamIntoArray(JSGlobalObject* globalObject, WebCore::JSReadabl
     }
     if (auto* promise = dynamicDowncast<JSPromise>(result))
         return promise;
-    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
+    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, result));
 }
 
 enum class ChunkArrayConversion : uint8_t { ArrayBuffer,
@@ -794,7 +794,7 @@ static JSValue consumeDirectStream(JSGlobalObject* globalObject, WebCore::JSRead
     }
     if (auto* promise = dynamicDowncast<JSPromise>(result))
         return promise;
-    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
+    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, result));
 }
 
 JSValue readableStreamToTextDirect(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream)
@@ -1105,7 +1105,7 @@ JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableSt
     RETURN_IF_EXCEPTION(scope, {});
     auto* arrayPromise = dynamicDowncast<JSPromise>(arrayResult);
     if (!arrayPromise) [[unlikely]] {
-        arrayPromise = promiseResolvedWith(globalObject, arrayResult);
+        arrayPromise = promiseFulfilledWith(globalObject, arrayResult);
         RETURN_IF_EXCEPTION(scope, {});
     }
     auto* runtime = JSStreamsRuntime::from(globalObject);
@@ -1124,7 +1124,7 @@ JSValue readableStreamToFormData(JSGlobalObject* globalObject, WebCore::JSReadab
     RETURN_IF_EXCEPTION(scope, {});
     auto* blobPromise = dynamicDowncast<JSPromise>(blobResult);
     if (!blobPromise) [[unlikely]] {
-        blobPromise = promiseResolvedWith(globalObject, blobResult);
+        blobPromise = promiseFulfilledWith(globalObject, blobResult);
         RETURN_IF_EXCEPTION(scope, {});
     }
     auto* runtime = JSStreamsRuntime::from(globalObject);

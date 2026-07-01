@@ -139,6 +139,7 @@ QueuingStrategyDict convertQueuingStrategyDict(JSC::JSGlobalObject*, JSC::JSValu
 // even for OUR fresh `{value, done}` result objects. Only primitive resolutions
 // (undefined / true / ...) are exempt. Do NOT "optimize" a fulfillment site to skip
 // re-validation on the grounds that the resolution value is internally constructed.
+JSC::JSPromise* promiseFulfilledWith(JSC::JSGlobalObject*, JSC::JSValue); // userJS: no — WebStreamsMisc.cpp
 JSC::JSPromise* promiseResolvedWith(JSC::JSGlobalObject*, JSC::JSValue); // userJS: yes — WebStreamsMisc.cpp
 // "a promise rejected with r" (rejection never does a `then` lookup)
 JSC::JSPromise* promiseRejectedWith(JSC::JSGlobalObject*, JSC::JSValue); // userJS: no — WebStreamsMisc.cpp

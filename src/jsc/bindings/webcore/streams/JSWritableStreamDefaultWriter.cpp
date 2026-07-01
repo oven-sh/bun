@@ -55,7 +55,7 @@ JSPromise* writableStreamDefaultWriterCloseWithErrorPropagation(JSGlobalObject* 
     ASSERT(stream);
     auto state = stream->m_state;
     if (writableStreamCloseQueuedOrInFlight(stream) || state == WritableStreamState::Closed)
-        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, jsUndefined()));
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
     if (state == WritableStreamState::Errored)
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, stream->m_storedError.get()));
     ASSERT(state == WritableStreamState::Writable || state == WritableStreamState::Erroring);
@@ -401,7 +401,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultWriterPrototypeGetter_desiredSiz
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* writer = dynamicDowncast<JSWritableStreamDefaultWriter>(JSValue::decode(thisValue));
     if (!writer) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "WritableStreamDefaultWriter"_s, "desiredSize"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "WritableStreamDefaultWriter"_s);
     if (!writer->m_stream)
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Writer is not bound to a WritableStream"_s);
     auto desiredSize = writableStreamDefaultWriterGetDesiredSize(writer);
@@ -455,7 +455,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultWriterPrototypeFunction_releaseL
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* writer = dynamicDowncast<JSWritableStreamDefaultWriter>(callFrame->thisValue());
     if (!writer) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "WritableStreamDefaultWriter"_s, "releaseLock"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "WritableStreamDefaultWriter"_s);
     auto* stream = writer->m_stream.get();
     if (!stream)
         return JSValue::encode(jsUndefined());

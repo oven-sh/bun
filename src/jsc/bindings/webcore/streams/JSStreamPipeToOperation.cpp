@@ -156,7 +156,7 @@ static void startPipeAbortBothActions(JSGlobalObject* globalObject, JSStreamPipe
         if (destination->m_state == WritableStreamState::Writable)
             actions[actionCount] = writableStreamAbort(globalObject, destination, error);
         else
-            actions[actionCount] = promiseResolvedWith(globalObject, jsUndefined());
+            actions[actionCount] = promiseFulfilledWith(globalObject, JSC::jsUndefined());
         RETURN_IF_EXCEPTION(scope, );
         actionCount++;
     }
@@ -166,7 +166,7 @@ static void startPipeAbortBothActions(JSGlobalObject* globalObject, JSStreamPipe
         if (source->m_state == ReadableStreamState::Readable)
             actions[actionCount] = readableStreamCancel(globalObject, source, error);
         else
-            actions[actionCount] = promiseResolvedWith(globalObject, jsUndefined());
+            actions[actionCount] = promiseFulfilledWith(globalObject, JSC::jsUndefined());
         RETURN_IF_EXCEPTION(scope, );
         actionCount++;
     }
@@ -570,7 +570,7 @@ void pipeToReadRequestChunkSteps(JSGlobalObject* globalObject, JSStreamPipeToOpe
     // The sink write is deferred by one reaction so an enqueue() inside the source never
     // synchronously reenters the destination's write algorithm. m_currentWrite is the deferred
     // write's promise, so a shutdown that must drain the pending writes still waits for it.
-    auto* deferred = promiseResolvedWith(globalObject, jsUndefined());
+    auto* deferred = promiseFulfilledWith(globalObject, JSC::jsUndefined());
     RETURN_IF_EXCEPTION(scope, );
     auto* writePromise = JSPromise::create(vm, globalObject->promiseStructure());
     auto* context = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), op, chunk);

@@ -61,7 +61,7 @@ static JSC::JSPromise* performDefaultControllerPullAlgorithm(JSC::JSGlobalObject
     case SourceKind::JavaScript: {
         JSC::JSObject* pullMethod = controller->m_algorithms.method1.get();
         if (!pullMethod)
-            RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, JSC::jsUndefined()));
+            RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
         JSC::MarkedArgumentBuffer args;
         args.append(controller);
         if (args.hasOverflowed()) [[unlikely]] {
@@ -71,7 +71,7 @@ static JSC::JSPromise* performDefaultControllerPullAlgorithm(JSC::JSGlobalObject
         RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, pullMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SourceKind::Nothing:
-        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, JSC::jsUndefined()));
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
     case SourceKind::Transform:
         RELEASE_AND_RETURN(scope, transformStreamDefaultSourcePullAlgorithm(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get())));
     case SourceKind::TeeBranch:
@@ -97,7 +97,7 @@ static JSC::JSPromise* performDefaultControllerCancelAlgorithm(JSC::JSGlobalObje
     case SourceKind::JavaScript: {
         JSC::JSObject* cancelMethod = controller->m_algorithms.method2.get();
         if (!cancelMethod)
-            RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, JSC::jsUndefined()));
+            RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
         JSC::MarkedArgumentBuffer args;
         args.append(reason);
         if (args.hasOverflowed()) [[unlikely]] {
@@ -107,7 +107,7 @@ static JSC::JSPromise* performDefaultControllerCancelAlgorithm(JSC::JSGlobalObje
         RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, cancelMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SourceKind::Nothing:
-        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, JSC::jsUndefined()));
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
     case SourceKind::Transform:
         RELEASE_AND_RETURN(scope, transformStreamDefaultSourceCancelAlgorithm(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get()), reason));
     case SourceKind::TeeBranch:
@@ -402,7 +402,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamDefaultControllerPrototypeGetter_desire
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSReadableStreamDefaultController>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]]
-        return throwThisTypeError(*globalObject, scope, "ReadableStreamDefaultController"_s, "desiredSize"_s);
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "ReadableStreamDefaultController"_s);
     std::optional<double> desiredSize = readableStreamDefaultControllerGetDesiredSize(thisObject);
     if (!desiredSize)
         return JSValue::encode(jsNull());
@@ -415,7 +415,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototypeFunction_clos
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSReadableStreamDefaultController>(callFrame->thisValue());
     if (!thisObject) [[unlikely]]
-        return throwThisTypeError(*globalObject, scope, "ReadableStreamDefaultController"_s, "close"_s);
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "ReadableStreamDefaultController"_s);
     if (!readableStreamDefaultControllerCanCloseOrEnqueue(thisObject))
         return throwVMTypeError(globalObject, scope, "Cannot close a ReadableStreamDefaultController whose stream is not readable or that has already requested close"_s);
     readableStreamDefaultControllerClose(globalObject, thisObject);
@@ -429,7 +429,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototypeFunction_enqu
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSReadableStreamDefaultController>(callFrame->thisValue());
     if (!thisObject) [[unlikely]]
-        return throwThisTypeError(*globalObject, scope, "ReadableStreamDefaultController"_s, "enqueue"_s);
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "ReadableStreamDefaultController"_s);
     if (!readableStreamDefaultControllerCanCloseOrEnqueue(thisObject))
         return throwVMTypeError(globalObject, scope, "Cannot enqueue on a ReadableStreamDefaultController whose stream is not readable or that has already requested close"_s);
     readableStreamDefaultControllerEnqueue(globalObject, thisObject, callFrame->argument(0));
@@ -443,7 +443,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototypeFunction_erro
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSReadableStreamDefaultController>(callFrame->thisValue());
     if (!thisObject) [[unlikely]]
-        return throwThisTypeError(*globalObject, scope, "ReadableStreamDefaultController"_s, "error"_s);
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "ReadableStreamDefaultController"_s);
     readableStreamDefaultControllerError(globalObject, thisObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());

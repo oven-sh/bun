@@ -254,7 +254,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderStreamPrototypeGetter_encoding, (JSGlobalO
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSTextEncoderStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "TextEncoderStream"_s, "encoding"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextEncoderStream"_s);
     return JSValue::encode(jsNontrivialString(vm, "utf-8"_s));
 }
 
@@ -264,7 +264,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderStreamPrototypeGetter_readable, (JSGlobalO
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSTextEncoderStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "TextEncoderStream"_s, "readable"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextEncoderStream"_s);
     return JSValue::encode(stream->m_transform->m_readable.get());
 }
 
@@ -274,7 +274,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderStreamPrototypeGetter_writable, (JSGlobalO
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSTextEncoderStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "TextEncoderStream"_s, "writable"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextEncoderStream"_s);
     return JSValue::encode(stream->m_transform->m_writable.get());
 }
 
@@ -333,7 +333,7 @@ JSPromise* textEncoderStreamTransform(JSGlobalObject* globalObject, JSTextEncode
 
     enqueueIfNonEmptyView(globalObject, controller, buffer);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, jsUndefined()));
+    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
 
 JSPromise* textEncoderStreamFlush(JSGlobalObject* globalObject, JSTextEncoderStream* stream, JSTransformStreamDefaultController* controller)
@@ -347,7 +347,7 @@ JSPromise* textEncoderStreamFlush(JSGlobalObject* globalObject, JSTextEncoderStr
 
     enqueueIfNonEmptyView(globalObject, controller, buffer);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, jsUndefined()));
+    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
 
 } // namespace WebStreams

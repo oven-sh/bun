@@ -149,7 +149,7 @@ void setUpWritableStreamDefaultWriter(JSGlobalObject* globalObject, JSWritableSt
         if (!writableStreamCloseQueuedOrInFlight(stream) && stream->m_backpressure)
             writer->m_readyPromise.set(vm, writer, JSPromise::create(vm, globalObject->promiseStructure()));
         else {
-            JSPromise* ready = promiseResolvedWith(globalObject, jsUndefined());
+            JSPromise* ready = promiseFulfilledWith(globalObject, JSC::jsUndefined());
             RETURN_IF_EXCEPTION(scope, );
             writer->m_readyPromise.set(vm, writer, ready);
         }
@@ -165,10 +165,10 @@ void setUpWritableStreamDefaultWriter(JSGlobalObject* globalObject, JSWritableSt
         return;
     }
     case WritableStreamState::Closed: {
-        JSPromise* ready = promiseResolvedWith(globalObject, jsUndefined());
+        JSPromise* ready = promiseFulfilledWith(globalObject, JSC::jsUndefined());
         RETURN_IF_EXCEPTION(scope, );
         writer->m_readyPromise.set(vm, writer, ready);
-        JSPromise* closed = promiseResolvedWith(globalObject, jsUndefined());
+        JSPromise* closed = promiseFulfilledWith(globalObject, JSC::jsUndefined());
         RETURN_IF_EXCEPTION(scope, );
         writer->m_closedPromise.set(vm, writer, closed);
         return;
@@ -194,7 +194,7 @@ JSPromise* writableStreamAbort(JSGlobalObject* globalObject, JSWritableStream* s
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (stream->m_state == WritableStreamState::Closed || stream->m_state == WritableStreamState::Errored)
-        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, jsUndefined()));
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 
     // Signaling abort runs the user's `abort` listeners synchronously.
     auto* controller = stream->m_controller.get();
@@ -204,7 +204,7 @@ JSPromise* writableStreamAbort(JSGlobalObject* globalObject, JSWritableStream* s
 
     WritableStreamState state = stream->m_state;
     if (state == WritableStreamState::Closed || state == WritableStreamState::Errored)
-        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, jsUndefined()));
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
     if (stream->m_pendingAbortRequest.promise)
         return stream->m_pendingAbortRequest.promise.get();
 

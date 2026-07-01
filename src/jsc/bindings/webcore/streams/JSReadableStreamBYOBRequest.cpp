@@ -189,7 +189,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamBYOBRequestPrototypeGetter_view, (JSGlo
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* request = dynamicDowncast<JSReadableStreamBYOBRequest>(JSValue::decode(thisValue));
     if (!request) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "ReadableStreamBYOBRequest"_s, "view"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStreamBYOBRequest"_s);
     JSArrayBufferView* view = request->m_view.get();
     return JSValue::encode(view ? JSValue(view) : jsNull());
 }
@@ -200,13 +200,13 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototypeFunction_respond, (
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* request = dynamicDowncast<JSReadableStreamBYOBRequest>(callFrame->thisValue());
     if (!request) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "ReadableStreamBYOBRequest"_s, "respond"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStreamBYOBRequest"_s);
 
     uint64_t bytesWritten = convertToIntegerEnforceRange<uint64_t>(*lexicalGlobalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!request->m_controller)
-        return throwVMTypeError(lexicalGlobalObject, scope, "Cannot respond to an invalidated ReadableStreamBYOBRequest"_s);
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: This BYOB request has been invalidated"_s);
     ASSERT(request->m_view);
     if (request->m_view->isDetached())
         return throwVMTypeError(lexicalGlobalObject, scope, "Cannot respond to a ReadableStreamBYOBRequest whose view has a detached ArrayBuffer"_s);
@@ -223,14 +223,14 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototypeFunction_respondWit
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* request = dynamicDowncast<JSReadableStreamBYOBRequest>(callFrame->thisValue());
     if (!request) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "ReadableStreamBYOBRequest"_s, "respondWithNewView"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStreamBYOBRequest"_s);
 
     auto* view = dynamicDowncast<JSArrayBufferView>(callFrame->argument(0));
     if (!view)
-        return throwVMTypeError(lexicalGlobalObject, scope, "ReadableStreamBYOBRequest.prototype.respondWithNewView requires an ArrayBufferView"_s);
+        return Bun::ERR::INVALID_ARG_INSTANCE(scope, lexicalGlobalObject, "view"_s, "Buffer, TypedArray, or DataView"_s, callFrame->argument(0));
 
     if (!request->m_controller)
-        return throwVMTypeError(lexicalGlobalObject, scope, "Cannot respond to an invalidated ReadableStreamBYOBRequest"_s);
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: This BYOB request has been invalidated"_s);
     if (view->isDetached())
         return throwVMTypeError(lexicalGlobalObject, scope, "Cannot respond with a view whose ArrayBuffer is detached"_s);
 

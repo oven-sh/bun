@@ -447,7 +447,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBReaderPrototypeFunction_releaseLock
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* reader = dynamicDowncast<JSReadableStreamBYOBReader>(callFrame->thisValue());
     if (!reader) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "ReadableStreamBYOBReader"_s, "releaseLock"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStreamBYOBReader"_s);
     if (!reader->m_stream)
         return JSValue::encode(jsUndefined());
     readableStreamBYOBReaderRelease(lexicalGlobalObject, reader);

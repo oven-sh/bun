@@ -137,7 +137,7 @@ static JSC::JSPromise* performByteControllerPullAlgorithm(JSC::JSGlobalObject* g
     case SourceKind::JavaScript: {
         JSC::JSObject* pullMethod = controller->m_algorithms.method1.get();
         if (!pullMethod)
-            RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, JSC::jsUndefined()));
+            RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
         JSC::MarkedArgumentBuffer args;
         args.append(controller);
         if (args.hasOverflowed()) [[unlikely]] {
@@ -147,7 +147,7 @@ static JSC::JSPromise* performByteControllerPullAlgorithm(JSC::JSGlobalObject* g
         RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, pullMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SourceKind::Nothing:
-        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, JSC::jsUndefined()));
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
     case SourceKind::ByteTeeBranch:
         RELEASE_AND_RETURN(scope, byteTeePullAlgorithm(globalObject, uncheckedDowncast<JSStreamTeeState>(controller->m_algorithms.algorithmContext.get()), controller->m_algorithms.teeBranchIndex));
     case SourceKind::Transform:
@@ -170,7 +170,7 @@ static JSC::JSPromise* performByteControllerCancelAlgorithm(JSC::JSGlobalObject*
     case SourceKind::JavaScript: {
         JSC::JSObject* cancelMethod = controller->m_algorithms.method2.get();
         if (!cancelMethod)
-            RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, JSC::jsUndefined()));
+            RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
         JSC::MarkedArgumentBuffer args;
         args.append(reason);
         if (args.hasOverflowed()) [[unlikely]] {
@@ -180,7 +180,7 @@ static JSC::JSPromise* performByteControllerCancelAlgorithm(JSC::JSGlobalObject*
         RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, cancelMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SourceKind::Nothing:
-        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, JSC::jsUndefined()));
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
     case SourceKind::ByteTeeBranch:
         RELEASE_AND_RETURN(scope, byteTeeCancelAlgorithm(globalObject, uncheckedDowncast<JSStreamTeeState>(controller->m_algorithms.algorithmContext.get()), controller->m_algorithms.teeBranchIndex, reason));
     case SourceKind::Transform:
@@ -506,7 +506,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableByteStreamControllerPrototypeGetter_byobReque
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSReadableByteStreamController>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]]
-        return throwThisTypeError(*globalObject, scope, "ReadableByteStreamController"_s, "byobRequest"_s);
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "ReadableByteStreamController"_s);
     JSReadableStreamBYOBRequest* byobRequest = readableByteStreamControllerGetBYOBRequest(globalObject, thisObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (!byobRequest)
@@ -520,7 +520,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableByteStreamControllerPrototypeGetter_desiredSi
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSReadableByteStreamController>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]]
-        return throwThisTypeError(*globalObject, scope, "ReadableByteStreamController"_s, "desiredSize"_s);
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "ReadableByteStreamController"_s);
     std::optional<double> desiredSize = readableByteStreamControllerGetDesiredSize(thisObject);
     if (!desiredSize)
         return JSValue::encode(jsNull());
@@ -533,11 +533,11 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableByteStreamControllerPrototypeFunction_close, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSReadableByteStreamController>(callFrame->thisValue());
     if (!thisObject) [[unlikely]]
-        return throwThisTypeError(*globalObject, scope, "ReadableByteStreamController"_s, "close"_s);
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "ReadableByteStreamController"_s);
     if (thisObject->m_closeRequested)
-        return throwVMTypeError(globalObject, scope, "Cannot close a ReadableByteStreamController after close has already been requested"_s);
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: ReadableStream is already closed"_s);
     if (!thisObject->m_stream || thisObject->m_stream->m_state != ReadableStreamState::Readable)
-        return throwVMTypeError(globalObject, scope, "Cannot close a ReadableByteStreamController whose stream is not readable"_s);
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: ReadableStream is already closed"_s);
     readableByteStreamControllerClose(globalObject, thisObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
@@ -549,23 +549,23 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableByteStreamControllerPrototypeFunction_enqueue
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSReadableByteStreamController>(callFrame->thisValue());
     if (!thisObject) [[unlikely]]
-        return throwThisTypeError(*globalObject, scope, "ReadableByteStreamController"_s, "enqueue"_s);
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "ReadableByteStreamController"_s);
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(globalObject, scope, createNotEnoughArgumentsError(globalObject));
     auto* chunk = dynamicDowncast<JSArrayBufferView>(callFrame->uncheckedArgument(0));
     if (!chunk) [[unlikely]]
-        return throwVMTypeError(globalObject, scope, "ReadableByteStreamController.enqueue expects an ArrayBufferView chunk"_s);
+        return Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, "buffer"_s, "Buffer, TypedArray, or DataView"_s, callFrame->uncheckedArgument(0));
     JSC::ArrayBuffer* viewedBuffer = chunk->possiblySharedBuffer();
     if (viewedBuffer && viewedBuffer->isShared()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "ReadableByteStreamController.enqueue does not accept a view over a SharedArrayBuffer"_s);
     if (!chunk->byteLength())
-        return throwVMTypeError(globalObject, scope, "Cannot enqueue a zero-length view on a ReadableByteStreamController"_s);
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: chunk ArrayBuffer is zero-length or detached"_s);
     if (!viewedBuffer || !viewedBuffer->byteLength())
-        return throwVMTypeError(globalObject, scope, "Cannot enqueue a view over a zero-length ArrayBuffer on a ReadableByteStreamController"_s);
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: chunk ArrayBuffer is zero-length or detached"_s);
     if (thisObject->m_closeRequested)
-        return throwVMTypeError(globalObject, scope, "Cannot enqueue on a ReadableByteStreamController after close has been requested"_s);
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: ReadableStream is already closed"_s);
     if (!thisObject->m_stream || thisObject->m_stream->m_state != ReadableStreamState::Readable)
-        return throwVMTypeError(globalObject, scope, "Cannot enqueue on a ReadableByteStreamController whose stream is not readable"_s);
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: ReadableStream is already closed"_s);
     readableByteStreamControllerEnqueue(globalObject, thisObject, chunk);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
@@ -577,7 +577,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableByteStreamControllerPrototypeFunction_error, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSReadableByteStreamController>(callFrame->thisValue());
     if (!thisObject) [[unlikely]]
-        return throwThisTypeError(*globalObject, scope, "ReadableByteStreamController"_s, "error"_s);
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "ReadableByteStreamController"_s);
     readableByteStreamControllerError(globalObject, thisObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
@@ -712,7 +712,7 @@ void readableByteStreamControllerEnqueue(JSGlobalObject* globalObject, JSReadabl
     size_t byteOffset = chunk->byteOffset();
     size_t byteLength = chunk->byteLength();
     if (buffer->impl()->isDetached()) {
-        throwTypeError(globalObject, scope, "Cannot enqueue a view over a detached ArrayBuffer"_s);
+        Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: chunk ArrayBuffer is zero-length or detached"_s);
         return;
     }
     JSArrayBuffer* transferredBuffer = transferArrayBuffer(globalObject, buffer);

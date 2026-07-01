@@ -193,7 +193,7 @@ static JSPromise* runAsyncIteratorReturnSteps(JSGlobalObject* globalObject, JSRe
     } else {
         readableStreamDefaultReaderRelease(globalObject, reader);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        innerPromise = promiseResolvedWith(globalObject, jsUndefined());
+        innerPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
 

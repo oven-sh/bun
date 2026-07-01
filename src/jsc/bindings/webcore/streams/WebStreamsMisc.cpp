@@ -283,6 +283,16 @@ QueuingStrategyDict convertQueuingStrategyDict(JSGlobalObject* globalObject, JSV
 // Web IDL "a promise resolved with v": a NEW promise resolved with v; a promise/thenable v is
 // adopted through a job, one reaction later than ES PromiseResolve's identity would fire — the
 // delay is observable (WPT transform abort/cancel-during-start races), so never use identity here.
+// For values that are provably not thenables (undefined, internal arrays/objects we
+// created): fulfill directly instead of running the observable resolve machinery.
+JSPromise* promiseFulfilledWith(JSGlobalObject* globalObject, JSValue value)
+{
+    auto& vm = getVM(globalObject);
+    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    promise->fulfill(vm, value);
+    return promise;
+}
+
 JSPromise* promiseResolvedWith(JSGlobalObject* globalObject, JSValue value)
 {
     auto& vm = getVM(globalObject);

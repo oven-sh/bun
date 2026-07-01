@@ -252,7 +252,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsByteLengthQueuingStrategyPrototypeGetter_highWaterMar
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* strategy = dynamicDowncast<JSByteLengthQueuingStrategy>(JSValue::decode(thisValue));
     if (!strategy) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "ByteLengthQueuingStrategy"_s, "highWaterMark"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ByteLengthQueuingStrategy"_s);
     return JSValue::encode(jsDoubleNumber(strategy->m_highWaterMark));
 }
 
@@ -262,7 +262,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsByteLengthQueuingStrategyPrototypeGetter_size, (JSGlo
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* strategy = dynamicDowncast<JSByteLengthQueuingStrategy>(JSValue::decode(thisValue));
     if (!strategy) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "ByteLengthQueuingStrategy"_s, "size"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ByteLengthQueuingStrategy"_s);
     // The same per-realm function object for every instance of this's realm.
     auto* globalObject = strategy->globalObject();
     return JSValue::encode(JSStreamsRuntime::from(globalObject)->byteLengthQueuingStrategySizeFunction(defaultGlobalObject(globalObject)));

@@ -79,7 +79,7 @@ static JSPromise* performFlushAlgorithm(JSGlobalObject* globalObject, JSTransfor
     case TransformerKind::TextDecoder:
         RELEASE_AND_RETURN(scope, textDecoderStreamFlush(globalObject, uncheckedDowncast<JSTextDecoderStream>(controller->m_algorithmContext.get()), controller));
     }
-    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, jsUndefined()));
+    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
 
 // [[cancelAlgorithm]] dispatch. The TextEncoder/TextDecoder kinds have no cancel algorithm.
@@ -95,7 +95,7 @@ static JSPromise* performCancelAlgorithm(JSGlobalObject* globalObject, JSTransfo
             RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, method, controller->m_transformer.get(), args));
         }
     }
-    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, jsUndefined()));
+    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
 
 JSTransformStream* createTransformStream(JSGlobalObject* globalObject, TransformerKind kind, JSCell* algorithmContext, double writableHighWaterMark, JSObject* writableSizeAlgorithm, double readableHighWaterMark, JSObject* readableSizeAlgorithm)

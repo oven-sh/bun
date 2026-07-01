@@ -305,7 +305,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_readable, (JSGlobalO
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSTextDecoderStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "TextDecoderStream"_s, "readable"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextDecoderStream"_s);
     return JSValue::encode(stream->m_transform->m_readable.get());
 }
 
@@ -315,7 +315,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_writable, (JSGlobalO
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSTextDecoderStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "TextDecoderStream"_s, "writable"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextDecoderStream"_s);
     return JSValue::encode(stream->m_transform->m_writable.get());
 }
 
@@ -376,7 +376,7 @@ static JSPromise* decodeAndEnqueue(JSGlobalObject* globalObject, JSTextDecoderSt
         transformStreamDefaultControllerEnqueue(globalObject, controller, decoded);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
-    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, jsUndefined()));
+    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
 
 JSPromise* textDecoderStreamTransform(JSGlobalObject* globalObject, JSTextDecoderStream* stream, JSTransformStreamDefaultController* controller, JSValue chunk)

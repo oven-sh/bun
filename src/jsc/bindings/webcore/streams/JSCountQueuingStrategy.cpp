@@ -252,7 +252,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCountQueuingStrategyPrototypeGetter_highWaterMark, (J
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* strategy = dynamicDowncast<JSCountQueuingStrategy>(JSValue::decode(thisValue));
     if (!strategy) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "CountQueuingStrategy"_s, "highWaterMark"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "CountQueuingStrategy"_s);
     return JSValue::encode(jsDoubleNumber(strategy->m_highWaterMark));
 }
 
@@ -262,7 +262,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCountQueuingStrategyPrototypeGetter_size, (JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* strategy = dynamicDowncast<JSCountQueuingStrategy>(JSValue::decode(thisValue));
     if (!strategy) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "CountQueuingStrategy"_s, "size"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "CountQueuingStrategy"_s);
     // The same per-realm function object for every instance of this's realm.
     auto* globalObject = strategy->globalObject();
     return JSValue::encode(JSStreamsRuntime::from(globalObject)->countQueuingStrategySizeFunction(defaultGlobalObject(globalObject)));

@@ -75,7 +75,7 @@ static JSPromise* defaultTransformAlgorithm(JSGlobalObject* globalObject, JSTran
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!thrown.isEmpty())
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, jsUndefined()));
+    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
 
 // The [[transformAlgorithm]] dispatch; the switch is total over TransformerKind.
@@ -287,7 +287,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamDefaultControllerPrototypeGetter_desir
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSTransformStreamDefaultController>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]]
-        return throwThisTypeError(*globalObject, scope, "TransformStreamDefaultController"_s, "desiredSize"_s);
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "TransformStreamDefaultController"_s);
     std::optional<double> desiredSize = readableStreamDefaultControllerGetDesiredSize(transformReadableController(thisObject->m_stream.get()));
     if (!desiredSize)
         return JSValue::encode(jsNull());
@@ -300,7 +300,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTransformStreamDefaultControllerPrototypeFunction_enq
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSTransformStreamDefaultController>(callFrame->thisValue());
     if (!thisObject) [[unlikely]]
-        return throwThisTypeError(*globalObject, scope, "TransformStreamDefaultController"_s, "enqueue"_s);
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "TransformStreamDefaultController"_s);
     transformStreamDefaultControllerEnqueue(globalObject, thisObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
@@ -312,7 +312,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTransformStreamDefaultControllerPrototypeFunction_err
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSTransformStreamDefaultController>(callFrame->thisValue());
     if (!thisObject) [[unlikely]]
-        return throwThisTypeError(*globalObject, scope, "TransformStreamDefaultController"_s, "error"_s);
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "TransformStreamDefaultController"_s);
     transformStreamDefaultControllerError(globalObject, thisObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
@@ -324,7 +324,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTransformStreamDefaultControllerPrototypeFunction_ter
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSTransformStreamDefaultController>(callFrame->thisValue());
     if (!thisObject) [[unlikely]]
-        return throwThisTypeError(*globalObject, scope, "TransformStreamDefaultController"_s, "terminate"_s);
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "TransformStreamDefaultController"_s);
     transformStreamDefaultControllerTerminate(globalObject, thisObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());

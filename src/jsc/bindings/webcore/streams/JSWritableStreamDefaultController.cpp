@@ -61,7 +61,7 @@ static JSC::JSPromise* performWriteAlgorithm(JSC::JSGlobalObject* globalObject, 
     case SinkKind::JavaScript: {
         JSC::JSObject* writeMethod = controller->m_algorithms.method1.get();
         if (!writeMethod)
-            RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, JSC::jsUndefined()));
+            RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
         JSC::MarkedArgumentBuffer args;
         args.append(chunk);
         args.append(controller);
@@ -72,7 +72,7 @@ static JSC::JSPromise* performWriteAlgorithm(JSC::JSGlobalObject* globalObject, 
         RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, writeMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SinkKind::Nothing:
-        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, JSC::jsUndefined()));
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
     case SinkKind::Transform:
         RELEASE_AND_RETURN(scope, transformStreamDefaultSinkWriteAlgorithm(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get()), chunk));
     case SinkKind::CrossRealm:
@@ -91,7 +91,7 @@ static JSC::JSPromise* performCloseAlgorithm(JSC::JSGlobalObject* globalObject, 
     case SinkKind::JavaScript: {
         JSC::JSObject* closeMethod = controller->m_algorithms.method2.get();
         if (!closeMethod)
-            RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, JSC::jsUndefined()));
+            RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
         JSC::MarkedArgumentBuffer args;
         if (args.hasOverflowed()) [[unlikely]] {
             JSC::throwOutOfMemoryError(globalObject, scope);
@@ -100,7 +100,7 @@ static JSC::JSPromise* performCloseAlgorithm(JSC::JSGlobalObject* globalObject, 
         RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, closeMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SinkKind::Nothing:
-        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, JSC::jsUndefined()));
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
     case SinkKind::Transform:
         RELEASE_AND_RETURN(scope, transformStreamDefaultSinkCloseAlgorithm(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get())));
     case SinkKind::CrossRealm:
@@ -119,7 +119,7 @@ static JSC::JSPromise* performAbortAlgorithm(JSC::JSGlobalObject* globalObject, 
     case SinkKind::JavaScript: {
         JSC::JSObject* abortMethod = controller->m_algorithms.method3.get();
         if (!abortMethod)
-            RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, JSC::jsUndefined()));
+            RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
         JSC::MarkedArgumentBuffer args;
         args.append(reason);
         if (args.hasOverflowed()) [[unlikely]] {
@@ -129,7 +129,7 @@ static JSC::JSPromise* performAbortAlgorithm(JSC::JSGlobalObject* globalObject, 
         RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, abortMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SinkKind::Nothing:
-        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, JSC::jsUndefined()));
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
     case SinkKind::Transform:
         RELEASE_AND_RETURN(scope, transformStreamDefaultSinkAbortAlgorithm(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get()), reason));
     case SinkKind::CrossRealm:
@@ -430,7 +430,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultControllerPrototypeGetter_signal
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSWritableStreamDefaultController>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]]
-        return throwThisTypeError(*globalObject, scope, "WritableStreamDefaultController"_s, "signal"_s);
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "WritableStreamDefaultController"_s);
     auto* jsAbortController = uncheckedDowncast<JSAbortController>(thisObject->m_abortController.get());
     RELEASE_AND_RETURN(scope, JSValue::encode(toJS(globalObject, jsAbortController->globalObject(), jsAbortController->wrapped().signal())));
 }
@@ -441,7 +441,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultControllerPrototypeFunction_erro
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSWritableStreamDefaultController>(callFrame->thisValue());
     if (!thisObject) [[unlikely]]
-        return throwThisTypeError(*globalObject, scope, "WritableStreamDefaultController"_s, "error"_s);
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "WritableStreamDefaultController"_s);
     if (thisObject->m_stream->m_state != WritableStreamState::Writable)
         return JSValue::encode(jsUndefined());
     writableStreamDefaultControllerError(globalObject, thisObject, callFrame->argument(0));

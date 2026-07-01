@@ -669,7 +669,7 @@ JSPromise* nativeSourcePull(JSGlobalObject* globalObject, JSReadableStreamDefaul
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
     if (asyncResult)
         return asyncResult;
-    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, jsUndefined()));
+    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
 
 JSPromise* nativeSourceCancel(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue reason)
@@ -703,7 +703,7 @@ JSPromise* nativeSourceCancel(JSGlobalObject* globalObject, JSReadableStreamDefa
     }
     if (!thrown.isEmpty())
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, jsUndefined()));
+    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
 
 // The [bound-convention] onDrain body: a dead consumer drops the chunk.

@@ -524,7 +524,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_locked, (JSGlobalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "ReadableStream"_s, "locked"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStream"_s);
     return JSValue::encode(jsBoolean(isReadableStreamLocked(stream)));
 }
 
@@ -548,21 +548,21 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_getReader, (JSGlobalO
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSReadableStream>(callFrame->thisValue());
     if (!stream) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "ReadableStream"_s, "getReader"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStream"_s);
 
     // ReadableStreamGetReaderOptions { ReadableStreamReaderMode mode; }
     bool isBYOB = false;
     JSValue options = callFrame->argument(0);
     if (!options.isUndefinedOrNull()) {
         if (!options.isObject())
-            return throwVMTypeError(lexicalGlobalObject, scope, "getReader() options must be an object"_s);
+            return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "options"_s, "object"_s, options);
         JSValue mode = asObject(options)->get(lexicalGlobalObject, builtinNames(vm).modePublicName());
         RETURN_IF_EXCEPTION(scope, {});
         if (!mode.isUndefined()) {
             auto modeString = mode.toWTFString(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, {});
             if (modeString != "byob"_s)
-                return throwVMTypeError(lexicalGlobalObject, scope, makeString("'"_s, modeString, "' is not a valid reader mode; the only accepted value is \"byob\""_s));
+                return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "options.mode"_s, mode);
             isBYOB = true;
         }
     }
@@ -587,7 +587,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_pipeThrough, (JSGloba
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSReadableStream>(callFrame->thisValue());
     if (!stream) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "ReadableStream"_s, "pipeThrough"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStream"_s);
 
     // ReadableWritablePair { required ReadableStream readable; required WritableStream writable; }
     JSValue transform = callFrame->argument(0);
@@ -659,7 +659,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_tee, (JSGlobalObject 
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSReadableStream>(callFrame->thisValue());
     if (!stream) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "ReadableStream"_s, "tee"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStream"_s);
     auto branches = readableStreamTee(lexicalGlobalObject, stream, false);
     RETURN_IF_EXCEPTION(scope, {});
     auto* array = constructEmptyArray(lexicalGlobalObject, nullptr, 2);
@@ -677,7 +677,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_values, (JSGlobalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSReadableStream>(callFrame->thisValue());
     if (!stream) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "ReadableStream"_s, "values"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStream"_s);
 
     // ReadableStreamIteratorOptions { boolean preventCancel = false; }
     bool preventCancel = false;
@@ -720,7 +720,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_text, (JSGlobalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSReadableStream>(callFrame->thisValue());
     if (!stream) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "ReadableStream"_s, "text"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStream"_s);
     RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToText(lexicalGlobalObject, stream)));
 }
 
@@ -730,7 +730,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_json, (JSGlobalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSReadableStream>(callFrame->thisValue());
     if (!stream) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "ReadableStream"_s, "json"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStream"_s);
     RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToJSON(lexicalGlobalObject, stream)));
 }
 
@@ -740,7 +740,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_bytes, (JSGlobalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSReadableStream>(callFrame->thisValue());
     if (!stream) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "ReadableStream"_s, "bytes"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStream"_s);
     RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToBytes(lexicalGlobalObject, stream)));
 }
 
@@ -750,7 +750,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_blob, (JSGlobalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSReadableStream>(callFrame->thisValue());
     if (!stream) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "ReadableStream"_s, "blob"_s);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStream"_s);
     RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToBlob(lexicalGlobalObject, stream)));
 }
 

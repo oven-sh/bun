@@ -1,16 +1,57 @@
 #include "NodeURL.h"
-#include "wtf/URLParser.h"
+#include <wtf/URL.h>
+#include <wtf/URLParser.h>
 #include <unicode/uidna.h>
 
 namespace Bun {
 
-JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+enum class IDNAMode : bool { ToASCII,
+    ToUnicode };
+
+// node defines url.domainToASCII and url.domainToUnicode in terms of the WHATWG
+// host parser: set the input as the host of "ws://x" and report any failure as
+// "". URL::setHost runs that parser, which already percent-decodes, rejects
+// forbidden domain code points, and canonicalizes IPv4. It takes a fast path
+// for all-ASCII hosts that skips UTS #46, so run the real nameTo{ASCII,Unicode}
+// on the parsed host to also reject invalid Punycode in xn-- labels (and, for
+// ToUnicode, produce the decoded form). A null return means the input is not a
+// valid domain.
+static WTF::String processDomain(const WTF::String& domain, IDNAMode mode)
+{
+    WTF::URL url { "ws://x"_str };
+    if (!url.setHost(domain))
+        return {};
+
+    WTF::String host = url.host().toString();
+    // IPv6 literals are not domains. The URL parser only applies IDNA up to
+    // hostnameBufferLength, so longer hosts pass through unvalidated there too.
+    if (host.startsWith('[') || host.length() > WTF::URLParser::hostnameBufferLength)
+        return host;
+
+    if (host.is8Bit())
+        host.convertTo16Bit();
+    const auto span = host.span16();
+
+    char16_t buffer[WTF::URLParser::hostnameBufferLength];
+    UErrorCode error = U_ZERO_ERROR;
+    UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
+    auto* encoder = &WTF::URLParser::internationalDomainNameTranscoder();
+    int32_t numCharactersConverted = mode == IDNAMode::ToASCII
+        ? uidna_nameToASCII(encoder, span.data(), span.size(), buffer, WTF::URLParser::hostnameBufferLength, &processingDetails, &error)
+        : uidna_nameToUnicode(encoder, span.data(), span.size(), buffer, WTF::URLParser::hostnameBufferLength, &processingDetails, &error);
+
+    if (!U_SUCCESS(error) || (processingDetails.errors & ~WTF::URLParser::allowedNameToASCIIErrors) || numCharactersConverted <= 0)
+        return {};
+    return WTF::String(std::span { buffer, static_cast<size_t>(numCharactersConverted) });
+}
+
+static JSC::EncodedJSValue domainTo(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, IDNAMode mode, ASCIILiteral missingArgumentMessage)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (callFrame->argumentCount() < 1) {
-        throwTypeError(globalObject, scope, "domainToASCII needs 1 argument"_s);
+        throwTypeError(globalObject, scope, missingArgumentMessage);
         return {};
     }
 
@@ -25,120 +66,22 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, J
     }
 
     auto domain = arg0.toWTFString(globalObject);
-    if (domain.isNull())
-        return JSC::JSValue::encode(jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
 
-    // https://url.spec.whatwg.org/#forbidden-host-code-point
-    if (
-        domain.contains(0x0000) || // U+0000 NULL
-        domain.contains(0x0009) || // U+0009 TAB
-        domain.contains(0x000A) || // U+000A LF
-        domain.contains(0x000D) || // U+000D CR
-        domain.contains(0x0020) || // U+0020 SPACE
-        domain.contains(0x0023) || // U+0023 (#)
-        domain.contains(0x002F) || // U+002F (/)
-        domain.contains(0x003A) || // U+003A (:)
-        domain.contains(0x003C) || // U+003C (<)
-        domain.contains(0x003E) || // U+003E (>)
-        domain.contains(0x003F) || // U+003F (?)
-        domain.contains(0x0040) || // U+0040 (@)
-        domain.contains(0x005B) || // U+005B ([)
-        domain.contains(0x005C) || // U+005C (\)
-        domain.contains(0x005D) || // U+005D (])
-        domain.contains(0x005E) || // U+005E (^)
-        domain.contains(0x007C) // // U+007C (|).
-    )
+    auto result = processDomain(domain, mode);
+    if (result.isNull())
         return JSC::JSValue::encode(jsEmptyString(vm));
+    return JSC::JSValue::encode(JSC::jsString(vm, WTF::move(result)));
+}
 
-    if (domain.containsOnlyASCII())
-        return JSC::JSValue::encode(arg0);
-    if (domain.is8Bit())
-        domain.convertTo16Bit();
-
-    constexpr static int allowedNameToASCIIErrors = UIDNA_ERROR_EMPTY_LABEL | UIDNA_ERROR_LABEL_TOO_LONG | UIDNA_ERROR_DOMAIN_NAME_TOO_LONG | UIDNA_ERROR_LEADING_HYPHEN | UIDNA_ERROR_TRAILING_HYPHEN | UIDNA_ERROR_HYPHEN_3_4;
-    constexpr static size_t hostnameBufferLength = 2048;
-
-    auto encoder = &WTF::URLParser::internationalDomainNameTranscoder();
-    char16_t hostnameBuffer[hostnameBufferLength];
-    UErrorCode error = U_ZERO_ERROR;
-    UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
-    const auto span = domain.span16();
-    int32_t numCharactersConverted = uidna_nameToASCII(encoder, span.data(), span.size(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
-
-    if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToASCIIErrors) && numCharactersConverted) {
-        return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(std::span { hostnameBuffer, static_cast<unsigned int>(numCharactersConverted) })));
-    }
-    return JSC::JSValue::encode(jsEmptyString(vm));
+JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return domainTo(globalObject, callFrame, IDNAMode::ToASCII, "domainToASCII needs 1 argument"_s);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (callFrame->argumentCount() < 1) {
-        throwTypeError(globalObject, scope, "domainToUnicode needs 1 argument"_s);
-        return {};
-    }
-
-    auto arg0 = callFrame->argument(0);
-    if (arg0.isUndefined())
-        return JSC::JSValue::encode(jsUndefined());
-    if (arg0.isNull())
-        return JSC::JSValue::encode(jsNull());
-    if (!arg0.isString()) {
-        throwTypeError(globalObject, scope, "the \"domain\" argument must be a string"_s);
-        return {};
-    }
-
-    auto domain = arg0.toWTFString(globalObject);
-    if (domain.isNull())
-        return JSC::JSValue::encode(jsUndefined());
-
-    // https://url.spec.whatwg.org/#forbidden-host-code-point
-    if (
-        domain.contains(0x0000) || // U+0000 NULL
-        domain.contains(0x0009) || // U+0009 TAB
-        domain.contains(0x000A) || // U+000A LF
-        domain.contains(0x000D) || // U+000D CR
-        domain.contains(0x0020) || // U+0020 SPACE
-        domain.contains(0x0023) || // U+0023 (#)
-        domain.contains(0x002F) || // U+002F (/)
-        domain.contains(0x003A) || // U+003A (:)
-        domain.contains(0x003C) || // U+003C (<)
-        domain.contains(0x003E) || // U+003E (>)
-        domain.contains(0x003F) || // U+003F (?)
-        domain.contains(0x0040) || // U+0040 (@)
-        domain.contains(0x005B) || // U+005B ([)
-        domain.contains(0x005C) || // U+005C (\)
-        domain.contains(0x005D) || // U+005D (])
-        domain.contains(0x005E) || // U+005E (^)
-        domain.contains(0x007C) // // U+007C (|).
-    )
-        return JSC::JSValue::encode(jsEmptyString(vm));
-
-    if (!domain.is8Bit())
-        // this function is only for undoing punycode so its okay if utf-16 text makes it out unchanged.
-        return JSC::JSValue::encode(arg0);
-
-    domain.convertTo16Bit();
-
-    constexpr static int allowedNameToUnicodeErrors = UIDNA_ERROR_EMPTY_LABEL | UIDNA_ERROR_LABEL_TOO_LONG | UIDNA_ERROR_DOMAIN_NAME_TOO_LONG | UIDNA_ERROR_LEADING_HYPHEN | UIDNA_ERROR_TRAILING_HYPHEN | UIDNA_ERROR_HYPHEN_3_4;
-    constexpr static int hostnameBufferLength = 2048;
-
-    auto encoder = &WTF::URLParser::internationalDomainNameTranscoder();
-    char16_t hostnameBuffer[hostnameBufferLength];
-    UErrorCode error = U_ZERO_ERROR;
-    UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
-
-    const auto span = domain.span16();
-
-    int32_t numCharactersConverted = uidna_nameToUnicode(encoder, span.data(), span.size(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
-
-    if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToUnicodeErrors) && numCharactersConverted) {
-        return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(std::span { hostnameBuffer, static_cast<unsigned int>(numCharactersConverted) })));
-    }
-    return JSC::JSValue::encode(jsEmptyString(vm));
+    return domainTo(globalObject, callFrame, IDNAMode::ToUnicode, "domainToUnicode needs 1 argument"_s);
 }
 
 JSC::JSValue createNodeURLBinding(Zig::GlobalObject* globalObject)

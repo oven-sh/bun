@@ -7,6 +7,7 @@
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapperCache.h"
 #include "JSReadableStream.h"
+#include "WebCoreJSBuiltins.h"
 #include "ZigGeneratedClasses.h"
 #include "ZigGlobalObject.h"
 
@@ -34,18 +35,31 @@ static bool isNonHostAsyncGeneratorFunction(JSObject* object)
     return function && !function->isHostFunction() && function->jsExecutable() && function->jsExecutable()->isAsyncGenerator();
 }
 
+// Bun's async-iterable body extension: a DIRECT stream driven by the AsyncIterableStream.ts
+// builtin (yield evaluates to the direct controller; sink backpressure is respected). The
+// spec's ReadableStream.from() semantics (readableStreamFromIterable) are NOT used here.
 JSReadableStream* readableStreamFromAsyncIterator(JSGlobalObject* globalObject, JSValue asyncIterableOrGeneratorFn)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue asyncIterable = asyncIterableOrGeneratorFn;
-    if (JSObject* object = asyncIterable.getObject(); object && isNonHostAsyncGeneratorFunction(object)) {
-        auto callData = getCallData(object);
-        asyncIterable = call(globalObject, object, callData, jsUndefined(), MarkedArgumentBuffer());
+    // The builtin takes (target, fn) and starts the iterator with fn.call(target).
+    JSValue target = jsUndefined();
+    JSValue iteratorFn = asyncIterableOrGeneratorFn;
+    if (JSObject* object = asyncIterableOrGeneratorFn.getObject(); object && !isNonHostAsyncGeneratorFunction(object)) {
+        iteratorFn = object->get(globalObject, vm.propertyNames->asyncIteratorSymbol);
         RETURN_IF_EXCEPTION(scope, nullptr);
+        target = object;
     }
-    RELEASE_AND_RETURN(scope, readableStreamFromIterable(globalObject, asyncIterable));
+    auto* converter = JSC::JSFunction::create(vm, globalObject, asyncIterableStreamReadableStreamFromAsyncIteratorCodeGenerator(vm), globalObject);
+    auto callData = JSC::getCallData(converter);
+    MarkedArgumentBuffer args;
+    args.append(target);
+    args.append(iteratorFn);
+    ASSERT(!args.hasOverflowed());
+    JSValue result = JSC::call(globalObject, converter, callData, jsUndefined(), args);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    RELEASE_AND_RETURN(scope, dynamicDowncast<JSReadableStream>(result));
 }
 
 // Shared brand check of every consumer entry point; throws ERR_INVALID_ARG_TYPE.

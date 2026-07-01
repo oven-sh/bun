@@ -186,6 +186,59 @@ describe("url", () => {
     }
   });
 
+  // https://url.spec.whatwg.org/#host-state: the host and hostname setters parse
+  // the value in host state, where "/", "?", "#" (and "\" for special schemes)
+  // terminate the host. If the host before the terminator is empty, a special
+  // (non-file) URL must be left unchanged; previously the empty host triggered a
+  // reparse of "scheme:///path" that promoted the first path segment to the
+  // authority.
+  describe("host and hostname setters", () => {
+    it("does not rewrite the authority from a path segment on an invalid value", () => {
+      const url = new URL("ws://x:80/a/b/c");
+      url.host = "#z";
+      expect({
+        href: url.href,
+        host: url.host,
+        hostname: url.hostname,
+        port: url.port,
+        pathname: url.pathname,
+      }).toEqual({
+        href: "ws://x/a/b/c",
+        host: "x",
+        hostname: "x",
+        port: "",
+        pathname: "/a/b/c",
+      });
+    });
+
+    it.each([
+      // values starting with a host terminator are a no-op on special schemes
+      ["ws://x:80/a/b/c", "host", "#z", "ws://x/a/b/c"],
+      ["ws://x:80/a/b/c", "hostname", "#z", "ws://x/a/b/c"],
+      ["http://example.com/a/b/c", "host", "#z", "http://example.com/a/b/c"],
+      ["http://example.com/a/b/c", "hostname", "#z", "http://example.com/a/b/c"],
+      ["http://example.com/a/b/c", "host", "/z", "http://example.com/a/b/c"],
+      ["http://example.com/a/b/c", "host", "?z", "http://example.com/a/b/c"],
+      ["http://example.com/a/b/c", "host", "\\z", "http://example.com/a/b/c"],
+      ["http://example.com/a/b/c", "hostname", "/z", "http://example.com/a/b/c"],
+      ["http://example.com/a/b/c", "hostname", "\\z", "http://example.com/a/b/c"],
+      ["https://example.com/a/b/c", "host", "#", "https://example.com/a/b/c"],
+      ["wss://x/a/b/c", "hostname", "#z", "wss://x/a/b/c"],
+      ["http://example.com:81/a/b/c", "host", "#z", "http://example.com:81/a/b/c"],
+      ["http://example.com:81/a/b/c", "hostname", "#z", "http://example.com:81/a/b/c"],
+      ["http://u:p@example.com/a/b", "host", "#z", "http://u:p@example.com/a/b"],
+      // the part before the first terminator still applies when it is non-empty
+      ["http://example.com/a/b/c", "host", "y#z", "http://y/a/b/c"],
+      ["http://example.com/a/b/c", "hostname", "y/z", "http://y/a/b/c"],
+      ["http://example.com/a/b/c", "host", "y:99#z", "http://y:99/a/b/c"],
+      ["http://example.com:81/a/b/c", "host", "y#z", "http://y:81/a/b/c"],
+    ] as const)("new URL(%j).%s = %j -> %j", (base, property, value, expected) => {
+      const url = new URL(base);
+      url[property] = value;
+      expect(url.href).toBe(expected);
+    });
+  });
+
   describe("URL.canParse", () => {
     (
       [

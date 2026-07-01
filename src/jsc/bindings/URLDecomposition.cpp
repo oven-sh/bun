@@ -104,9 +104,30 @@ static unsigned countASCIIDigits(StringView string)
     return length;
 }
 
+static bool isForwardSlashQuestionMarkOrNumberSign(char16_t character)
+{
+    return character == '/' || character == '?' || character == '#';
+}
+
+static bool isSlashQuestionMarkOrNumberSign(char16_t character)
+{
+    return isForwardSlashQuestionMarkOrNumberSign(character) || character == '\\';
+}
+
+// https://url.spec.whatwg.org/#host-state: the host and hostname setters stop
+// parsing at '/', '?', '#' (and '\' for special schemes). URL::setHost applies
+// the same truncation, so the empty-host checks below must run on the truncated
+// value or an all-terminator value like "#x" slips past them as "".
+static StringView hostBeforeTerminator(StringView value, const URL& fullURL)
+{
+    auto index = value.find(fullURL.hasSpecialScheme() ? isSlashQuestionMarkOrNumberSign : isForwardSlashQuestionMarkOrNumberSign);
+    return index == notFound ? value : value.left(index);
+}
+
 void URLDecomposition::setHost(StringView value)
 {
     auto fullURL = this->fullURL();
+    value = hostBeforeTerminator(value, fullURL);
     if (value.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
         return;
 
@@ -148,6 +169,7 @@ String URLDecomposition::hostname() const
 void URLDecomposition::setHostname(StringView host)
 {
     auto fullURL = this->fullURL();
+    host = hostBeforeTerminator(host, fullURL);
     if (host.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
         return;
     if (fullURL.hasOpaquePath())

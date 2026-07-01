@@ -773,10 +773,15 @@ impl<'a> Parser<'a> {
                 self.parse_install(&install_obj)?;
             }
 
+            // CLI flags take precedence over their `[run]` keys. bunfig.toml can
+            // be loaded after the CLI flags were applied (`bun run` defers it to
+            // `RunCommand::exec`), so skip any key the CLI already set.
             if let Some(run_expr) = json.get(b"run") {
                 if let Some(silent) = run_expr.get(b"silent") {
                     if let Some(value) = silent.as_bool() {
-                        self.ctx.debug.silent = value;
+                        if !self.ctx.debug.silent_from_cli {
+                            self.ctx.debug.silent = value;
+                        }
                     } else {
                         self.add_error(silent.loc, b"Expected boolean")?;
                     }
@@ -784,8 +789,10 @@ impl<'a> Parser<'a> {
 
                 if let Some(elide_lines) = run_expr.get(b"elide-lines") {
                     if let Some(n) = elide_lines.as_number() {
-                        // Note: Rust `as` saturates on overflow/NaN
-                        self.ctx.bundler_options.elide_lines = Some(n as usize);
+                        if !self.ctx.bundler_options.elide_lines_from_cli {
+                            // Note: Rust `as` saturates on overflow/NaN
+                            self.ctx.bundler_options.elide_lines = Some(n as usize);
+                        }
                     } else {
                         self.add_error(elide_lines.loc, b"Expected number")?;
                     }
@@ -793,10 +800,10 @@ impl<'a> Parser<'a> {
 
                 if let Some(shell) = run_expr.get(b"shell") {
                     if let Some(value) = shell.as_string(self.bump) {
-                        if value == b"bun" {
-                            self.ctx.debug.use_system_shell = false;
-                        } else if value == b"system" {
-                            self.ctx.debug.use_system_shell = true;
+                        if value == b"bun" || value == b"system" {
+                            if !self.ctx.debug.use_system_shell_from_cli {
+                                self.ctx.debug.use_system_shell = value == b"system";
+                            }
                         } else {
                             self.add_error(
                                 shell.loc,
@@ -810,7 +817,9 @@ impl<'a> Parser<'a> {
 
                 if let Some(bun_flag) = run_expr.get(b"bun") {
                     if let Some(value) = bun_flag.as_bool() {
-                        self.ctx.debug.run_in_bun = value;
+                        if !self.ctx.debug.run_in_bun_from_cli {
+                            self.ctx.debug.run_in_bun = value;
+                        }
                     } else {
                         self.add_error(bun_flag.loc, b"Expected boolean")?;
                     }

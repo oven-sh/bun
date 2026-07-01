@@ -248,3 +248,81 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
     expect(result.success).toBeTrue();
   });
 });
+
+// CLI flags must take precedence over the corresponding `[run]` keys in bunfig.toml.
+// `bun run <script>` (and `bun <script>`) load bunfig.toml after CLI flags are parsed,
+// which used to let the bunfig value overwrite the flag.
+describe.concurrent.each(["bun run", "bun"])("%s: CLI flags take precedence over [run] in bunfig.toml", baseCmd => {
+  const runArg = baseCmd === "bun run" ? ["run"] : [];
+
+  test("--bun overrides run.bun = false", async () => {
+    const cwd = tempDirWithFiles("bunfig-precedence-bun", {
+      "bunfig.toml": toTOMLString({ run: { bun: false } }),
+      "package.json": JSON.stringify({ scripts: { "where-node": "which node" } }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--silent", "--bun", ...runArg, "where-node"],
+      env: bunEnv,
+      cwd,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // `node` must resolve to the temporary `bun-node-*` shim, not the real node.
+    const nodeBin = stdout.trim();
+    expect(nodeBin).not.toBe("");
+    if (isWindows) {
+      expect(realpathSync(nodeBin)).toContain("\\bun-node-");
+    } else {
+      expect(realpathSync(nodeBin)).toBe(realpathSync(process.execPath));
+    }
+    expect(exitCode).toBe(0);
+  });
+
+  test("--silent overrides run.silent = false", async () => {
+    const cwd = tempDirWithFiles("bunfig-precedence-silent", {
+      "bunfig.toml": toTOMLString({ run: { silent: false } }),
+      "package.json": JSON.stringify({ scripts: { startScript: "echo 1" } }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--silent", ...runArg, "startScript"],
+      env: bunEnv,
+      cwd,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // --silent suppresses the "$ echo 1" command echo.
+    expect(stderr).not.toContain("$ echo 1");
+    expect(stdout).toContain("1");
+    expect(exitCode).toBe(0);
+  });
+
+  // The existing tests above skip `shell = "system"` on Windows: scripts always use the bun shell there.
+  test.skipIf(isWindows)('--shell=bun overrides run.shell = "system"', async () => {
+    const cwd = tempDirWithFiles("bunfig-precedence-shell", {
+      "bunfig.toml": toTOMLString({ run: { shell: "system" } }),
+      "package.json": JSON.stringify({ scripts: { start: "cli-precedence-command-not-found" } }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--silent", "--shell=bun", ...runArg, "start"],
+      env: bunEnv,
+      cwd,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    // Bun's shell prefixes command-not-found errors with "bun:"; the system shell does not.
+    expect(stderr).toContain("bun: command not found: cli-precedence-command-not-found");
+    expect(exitCode).not.toBe(0);
+  });
+});

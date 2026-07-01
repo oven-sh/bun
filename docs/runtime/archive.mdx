@@ -60,6 +60,7 @@ File contents can be:
 - **Blobs** - Binary data
 - **ArrayBufferViews** (such as `Uint8Array`) - Raw bytes
 - **ArrayBuffers** - Raw binary data
+- **`{ data, mode }`** - Any of the above plus a Unix file mode (default `0o644`)
 
 ```ts
 const data = "binary data";
@@ -72,6 +73,19 @@ const archive = new Bun.Archive({
   "buffer.bin": arrayBuffer,
 });
 ```
+
+### Setting file modes
+
+Pass `{ data, mode }` to set a per-entry Unix file mode. This is how you ship an executable binary inside a tarball (e.g. an npm platform package), since otherwise every entry defaults to `0o644`:
+
+```ts
+const archive = new Bun.Archive({
+  "bin/mytool": { data: await Bun.file("./mytool").bytes(), mode: 0o755 },
+  "README.md": "hello",
+});
+```
+
+The mode is masked to `0o777`, so passing a full `fs.stat()` mode such as `0o100755` resolves to `0o755`.
 
 ### Writing Archives to Disk
 
@@ -397,8 +411,10 @@ await Bun.write("my-project.tar.gz", archive);
 > **Note**: The following type signatures are simplified. See [`packages/bun-types/bun.d.ts`](https://github.com/oven-sh/bun/blob/main/packages/bun-types/bun.d.ts) for the full type definitions.
 
 ```ts
+type ArchiveEntry = string | Blob | Bun.ArrayBufferView | ArrayBufferLike | { data: string | Blob | Bun.ArrayBufferView | ArrayBufferLike; mode?: number };
+
 type ArchiveInput =
-  | Record<string, string | Blob | Bun.ArrayBufferView | ArrayBufferLike>
+  | Record<string, ArchiveEntry>
   | Blob
   | Bun.ArrayBufferView
   | ArrayBufferLike;

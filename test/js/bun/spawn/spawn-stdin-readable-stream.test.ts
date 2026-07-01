@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isCI } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN } from "harness";
 
 describe("spawn stdin ReadableStream", () => {
   test("basic ReadableStream as stdin", async () => {
@@ -321,6 +321,87 @@ describe("spawn stdin ReadableStream", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The ReadableStream -> stdin FileSink pump intentionally does not await the
+  // Promise FileSink.write() returns for writes it cannot complete synchronously
+  // (a full pipe on POSIX, every pipe write on Windows). When the child dies
+  // while one is in flight, the sink rejects that Promise with EPIPE; the pump
+  // must mark it handled or it surfaces as an unhandled rejection in the parent.
+  // Run in a child process so a stray rejection lands on its counter.
+  async function expectNoUnhandledRejectionWhenChildDies(useIterator: boolean) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        let uncaught = 0;
+        process.on("unhandledRejection", () => { uncaught++; });
+        process.on("exit", () => console.log("uncaught=" + uncaught));
+
+        const chunk = Buffer.alloc(256 * 1024, "x");
+        async function* iterate(producedOne) {
+          while (true) {
+            await Bun.sleep(0);
+            producedOne();
+            yield chunk;
+          }
+        }
+        function readable(producedOne) {
+          return new ReadableStream({
+            async pull(controller) {
+              await Bun.sleep(0);
+              producedOne();
+              controller.enqueue(chunk);
+            },
+          });
+        }
+
+        // The child never reads its stdin, so a 256 KiB write can never finish
+        // and the sink always holds an in-flight write. Once a few chunks have
+        // been handed to the sink, kill the child. How far the pump gets before
+        // the parent notices the death varies, so run several rounds.
+        function round() {
+          let produced = 0;
+          const child = Bun.spawn({
+            cmd: [process.execPath, "-e", "setTimeout(() => {}, 1e9)"],
+            stdin: (${useIterator} ? iterate : readable)(() => {
+              if (++produced === 4) child.kill();
+            }),
+            stdout: "ignore",
+            stderr: "ignore",
+          });
+          return child.exited;
+        }
+        await Promise.all(Array.from({ length: 8 }, round));
+
+        // Unhandled rejections are only reported after a microtask drain; give
+        // the tracker a turn so rejections from the last exits are counted.
+        await Bun.sleep(0);
+
+        // Exit explicitly: on Windows an async iterable stdin does not tear
+        // down after the child dies and would keep the event loop alive.
+        // https://github.com/oven-sh/bun/issues/33020
+        process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("EPIPE");
+    expect(stdout.trim()).toBe("uncaught=0");
+    expect(exitCode).toBe(0);
+  }
+
+  test("in-flight write when the child dies does not surface an unhandled rejection", async () => {
+    await expectNoUnhandledRejectionWhenChildDies(false);
+  });
+
+  test("in-flight write from an async iterator stdin when the child dies does not surface an unhandled rejection", async () => {
+    await expectNoUnhandledRejectionWhenChildDies(true);
+  });
+
   test("ReadableStream with process that exits immediately", async () => {
     const stream = new ReadableStream({
       start(controller) {
@@ -598,11 +679,12 @@ describe("spawn stdin ReadableStream", () => {
   });
 
   test("ReadableStream object type count", async () => {
-    const iterations =
-      isASAN && isCI
-        ? // With ASAN, entire process gets killed, including the test runner in CI. Likely an OOM or out of file descriptors.
-          10
-        : 50;
+    const iterations = isASAN
+      ? // With ASAN, entire process gets killed. Likely an OOM or out of file
+        // descriptors. 50 concurrent ASAN subprocesses also overrun the
+        // per-test timeout.
+        10
+      : 50;
 
     async function main() {
       async function iterate(i: number) {

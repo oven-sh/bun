@@ -75,13 +75,13 @@ const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 /// Pseudo-header presence bits shared by the per-field decode loop and the RFC 9113 §8.3.1
 /// request checks in `finish_header_block` (nghttp2's NGHTTP2_HTTP_FLAG__* equivalents).
 mod pseudo {
-    pub const METHOD: u8 = 1;
-    pub const SCHEME: u8 = 2;
-    pub const AUTHORITY: u8 = 4;
-    pub const PATH: u8 = 8;
-    pub const STATUS: u8 = 16;
-    pub const PROTOCOL: u8 = 32;
-    pub const UNKNOWN: u8 = 64;
+    pub(super) const METHOD: u8 = 1;
+    pub(super) const SCHEME: u8 = 2;
+    pub(super) const AUTHORITY: u8 = 4;
+    pub(super) const PATH: u8 = 8;
+    pub(super) const STATUS: u8 = 16;
+    pub(super) const PROTOCOL: u8 = 32;
+    pub(super) const UNKNOWN: u8 = 64;
 }
 
 /// What the connection engine calls back into the embedder (the JSC binding) for. Methods take

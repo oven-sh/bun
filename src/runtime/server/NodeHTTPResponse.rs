@@ -413,7 +413,6 @@ impl NodeHTTPResponse {
         // SAFETY: JS-thread only; the server (and its websocket config) outlives this call.
         let ws_handler: &mut crate::server::WebSocketServerHandler =
             unsafe { &mut *std::ptr::from_mut(ws_handler) };
-        let socket_value = self.get_server_socket_value();
         self.resume_socket();
 
         data_value.ensure_still_alive();

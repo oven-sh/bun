@@ -137,11 +137,9 @@ fn configure_archive_reader(archive: &libarchive::lib::Archive) {
     let _ = archive.read_set_options(c"read_concatenated_archives");
 }
 
-/// Entry pathname as owned UTF-8 bytes. On Windows libarchive stores every
-/// charset-converted name (e.g. a pax `path=` record) only in the wide-string
-/// slot, and `archive_entry_pathname` lossily narrows that through the process
-/// locale (always "C"), so read the wide form. Same split as
-/// `libarchive::extract_to_disk`.
+/// Entry pathname as owned UTF-8 bytes. libarchive on Windows keeps a
+/// charset-converted name (every pax `path=`) only in the wide-string slot;
+/// `archive_entry_pathname` lossily narrows that through the "C" locale.
 #[cfg(windows)]
 fn entry_pathname_utf8(entry: &libarchive::lib::Entry) -> Result<Vec<u8>, bun_alloc::AllocError> {
     bun_core::strings::to_utf8_list_with_type(Vec::new(), entry.pathname_w().as_slice())

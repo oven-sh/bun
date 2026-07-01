@@ -57,9 +57,8 @@ pub mod lib {
 
     impl Result {
         /// `Ok` or `Warn`: the call completed. libarchive returns `Warn` for
-        /// recoverable per-call issues while still producing a result, e.g.
-        /// `read_next_header` fully populates the entry after falling back to
-        /// the raw pathname bytes for a name it cannot locale-convert.
+        /// recoverable per-call issues while still producing a result, e.g. a
+        /// `read_next_header` that fell back to the raw pathname bytes.
         #[inline]
         pub fn succeeded(self) -> bool {
             matches!(self, Result::Ok | Result::Warn)

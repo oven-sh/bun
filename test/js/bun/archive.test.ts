@@ -37,9 +37,8 @@ function buildTarball(entries: Array<{ name: string | Buffer; data: Buffer | str
 }
 
 // One POSIX.1-2001 pax member: an 'x'-typed extended-header block carrying a
-// `<len> path=<name>\n` record (UTF-8 per the spec), followed by the ustar
-// header/data of the actual file under an ASCII-safe fallback name. This is
-// the layout `tar -cf` emits by default on modern GNU/BSD tar.
+// `<len> path=<name>\n` record (UTF-8 per the spec), then the file itself under
+// an ASCII-safe fallback name. This is what `tar -cf` emits by default.
 function paxEntry(name: string, data: Buffer | string, index: number): Buffer {
   const body = ` path=${name}\n`;
   // `<len>` is the decimal byte length of the whole record including its own
@@ -1296,11 +1295,9 @@ describe("Bun.Archive", () => {
       }
     });
 
-    // The next two tests put raw bytes in a plain-ustar name field. On Windows
-    // libarchive keeps a charset-converted name (every pax `path=`) only in its
-    // wide-string slot, so that is the form we read there; a raw non-ASCII
-    // ustar name field (which every modern tar puts in a pax record instead)
-    // is not recoverable byte-exact on Windows.
+    // The next two tests put raw non-ASCII bytes in a plain-ustar name field.
+    // Every modern tar emits a pax `path=` record for such names instead, and
+    // on Windows only that (wide-string) form is recoverable byte-exact.
     test.skipIf(isWindows)("files() keys distinct non-ASCII ustar entry names without colliding them", async () => {
       // A lossy pathname conversion collapses both names onto the same key
       // (the empty string) and one entry silently overwrites the other.

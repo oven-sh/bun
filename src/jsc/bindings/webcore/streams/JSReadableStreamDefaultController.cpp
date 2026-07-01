@@ -484,7 +484,7 @@ bool readableStreamDefaultControllerShouldCallPull(JSReadableStreamDefaultContro
         return false;
     if (!controller->m_started)
         return false;
-    if (isReadableStreamLocked(stream) && readableStreamGetNumReadRequests(stream) > 0)
+    if (readableStreamHasDefaultReader(stream) && readableStreamGetNumReadRequests(stream) > 0)
         return true;
     std::optional<double> desiredSize = readableStreamDefaultControllerGetDesiredSize(controller);
     ASSERT(desiredSize);
@@ -522,7 +522,7 @@ void readableStreamDefaultControllerEnqueue(JSGlobalObject* globalObject, JSRead
     if (!readableStreamDefaultControllerCanCloseOrEnqueue(controller))
         return;
     JSReadableStream* stream = controller->m_stream.get();
-    if (isReadableStreamLocked(stream) && readableStreamGetNumReadRequests(stream) > 0) {
+    if (readableStreamHasDefaultReader(stream) && readableStreamGetNumReadRequests(stream) > 0) {
         readableStreamFulfillReadRequest(globalObject, stream, chunk, false);
         RETURN_IF_EXCEPTION(scope, void());
     } else {

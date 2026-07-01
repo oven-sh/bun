@@ -5,8 +5,10 @@
 // cellLock DISCIPLINE (same pattern as src/jsc/bindings/WriteBarrierList.h): every mutation
 // of `m_queue` AND the visitChildren iteration run under
 // `WTF::Locker locker { owner->cellLock() }`, where `owner` is the GC cell embedding this
-// queue. The lock is ALWAYS taken by the CALLER and proven by the `const WTF::AbstractLocker&`
-// first parameter of every mutator and of visit() — StreamQueue NEVER acquires it itself.
+// queue. The lock is taken by the CALLER and proven by the `const WTF::AbstractLocker&`
+// first parameter of every mutator and of visit(), with ONE exception: enqueueValueWithSize
+// validates (and can throw, a GC allocation) BEFORE taking the owner's cell lock itself, so
+// callers must NOT hold the lock around it (JSCellLock is non-recursive).
 //
 //   *** JSCellLock (`cellLock()`) is NON-RECURSIVE. ***
 //   An internal-lock design would either deadlock (the owning cell takes cellLock() around
@@ -103,9 +105,9 @@ struct SinkAlgorithmSlots {
 
 // The [[queue]] + [[queueTotalSize]] pair.
 // Instantiated as StreamQueue<ValueWithSize> and StreamQueue<ByteQueueEntry>.
-// Every mutator's / visit()'s `const WTF::AbstractLocker&` proves the CALLER holds the
-// owning cell's cellLock() (see the class comment above: cellLock() is non-recursive, so
-// StreamQueue never acquires it). `owner` is the embedding GC cell (for the write barrier).
+// A `const WTF::AbstractLocker&` parameter proves the CALLER holds the owning cell's
+// cellLock(); enqueueValueWithSize is the one self-locking exception (see the class
+// comment). `owner` is the embedding GC cell (for the write barrier).
 template<typename Entry>
 class StreamQueue {
     WTF_MAKE_NONCOPYABLE(StreamQueue);

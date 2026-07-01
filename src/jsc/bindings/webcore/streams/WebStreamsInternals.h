@@ -128,7 +128,6 @@ bool canCopyDataBlockBytes(JSC::JSArrayBuffer* toBuffer, size_t toIndex, JSC::JS
 
 // The WebIDL dictionary conversions (alphabetical member order; real [[Get]]s; TypeError on
 // a present-but-not-callable member; ReadableStreamType TypeError on an unknown `type`).
-UnderlyingSourceDict convertUnderlyingSourceDict(JSC::JSGlobalObject*, JSC::JSValue underlyingSource); // userJS: yes — WebStreamsMisc.cpp
 UnderlyingSinkDict convertUnderlyingSinkDict(JSC::JSGlobalObject*, JSC::JSValue underlyingSink); // userJS: yes — WebStreamsMisc.cpp
 TransformerDict convertTransformerDict(JSC::JSGlobalObject*, JSC::JSValue transformer); // userJS: yes — WebStreamsMisc.cpp
 QueuingStrategyDict convertQueuingStrategyDict(JSC::JSGlobalObject*, JSC::JSValue strategy); // userJS: yes — WebStreamsMisc.cpp

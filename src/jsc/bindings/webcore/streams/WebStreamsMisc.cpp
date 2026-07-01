@@ -152,46 +152,6 @@ static JSValue getCallbackMember(JSGlobalObject* globalObject, JSObject* object,
     return value;
 }
 
-UnderlyingSourceDict convertUnderlyingSourceDict(JSGlobalObject* globalObject, JSValue underlyingSource)
-{
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto& names = WebCore::builtinNames(vm);
-    UnderlyingSourceDict result {};
-    bool isObject = checkDictionaryReceiver(globalObject, underlyingSource, "The underlying source must be an object"_s);
-    RETURN_IF_EXCEPTION(scope, result);
-    if (!isObject)
-        return result;
-    auto* sourceObject = asObject(underlyingSource);
-
-    JSValue autoAllocateChunkSize = sourceObject->get(globalObject, names.autoAllocateChunkSizePublicName());
-    RETURN_IF_EXCEPTION(scope, result);
-    if (!autoAllocateChunkSize.isUndefined()) {
-        uint64_t value = WebCore::convertToIntegerEnforceRange<uint64_t>(*globalObject, autoAllocateChunkSize);
-        RETURN_IF_EXCEPTION(scope, result);
-        result.autoAllocateChunkSize = value;
-    }
-
-    result.cancel = getCallbackMember(globalObject, sourceObject, names.cancelPublicName(), "The underlying source's 'cancel' property must be a function"_s);
-    RETURN_IF_EXCEPTION(scope, result);
-    result.pull = getCallbackMember(globalObject, sourceObject, names.pullPublicName(), "The underlying source's 'pull' property must be a function"_s);
-    RETURN_IF_EXCEPTION(scope, result);
-    result.start = getCallbackMember(globalObject, sourceObject, names.startPublicName(), "The underlying source's 'start' property must be a function"_s);
-    RETURN_IF_EXCEPTION(scope, result);
-
-    JSValue type = sourceObject->get(globalObject, vm.propertyNames->type);
-    RETURN_IF_EXCEPTION(scope, result);
-    if (!type.isUndefined()) {
-        auto typeString = type.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, result);
-        if (typeString != "bytes"_s) {
-            throwTypeError(globalObject, scope, "The underlying source's 'type' property must be 'bytes'"_s);
-            return result;
-        }
-        result.type = ReadableStreamType::Bytes;
-    }
-    return result;
-}
 
 UnderlyingSinkDict convertUnderlyingSinkDict(JSGlobalObject* globalObject, JSValue underlyingSink)
 {

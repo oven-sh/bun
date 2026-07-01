@@ -137,6 +137,14 @@ fn configure_archive_reader(archive: &libarchive::lib::Archive) {
     let _ = archive.read_set_options(c"read_concatenated_archives");
 }
 
+/// Entry pathname as owned UTF-8 bytes. libarchive on Windows keeps a
+/// charset-converted name (every pax `path=`) only in the wide-string slot;
+/// `archive_entry_pathname` lossily narrows that through the "C" locale.
+#[cfg(windows)]
+fn entry_pathname_utf8(entry: &libarchive::lib::Entry) -> Result<Vec<u8>, bun_alloc::AllocError> {
+    bun_core::strings::to_utf8_list_with_type(Vec::new(), entry.pathname_w().as_slice())
+}
+
 /// Count the number of files in an archive
 fn count_files_in_archive(data: &[u8]) -> u32 {
     use libarchive::lib;
@@ -149,7 +157,7 @@ fn count_files_in_archive(data: &[u8]) -> u32 {
 
     let mut count: u32 = 0;
     let mut entry: *mut lib::Entry = core::ptr::null_mut();
-    while archive.read_next_header(&mut entry) == lib::Result::Ok {
+    while archive.read_next_header(&mut entry).succeeded() {
         if lib::Entry::opaque_ref(entry).filetype() == FILETYPE_REGULAR {
             count += 1;
         }
@@ -352,13 +360,22 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         // Write entry to archive
         let data = data_slice.slice();
         let _ = entry_ref.clear();
+        // Same platform split as `pack_command::add_archive_entry`: the process
+        // locale is always "C", so libarchive's locale-keyed pax writer is only
+        // lossless with raw bytes on POSIX and with the UTF-8 form on Windows.
+        #[cfg(windows)]
         entry_ref.set_pathname_utf8(key_str.as_zstr());
+        #[cfg(not(windows))]
+        entry_ref.set_pathname(key_str.as_zstr());
         entry_ref.set_size(i64::try_from(data.len()).expect("int cast"));
         entry_ref.set_filetype(FILETYPE_REGULAR);
         entry_ref.set_perm(0o644);
         entry_ref.set_mtime(now_secs, 0);
 
-        if archive_ref.write_header(entry_ref) != lib::Result::Ok {
+        // `Warn` means the header was still written (libarchive fell back to a
+        // per-entry binary hdrcharset for a name its locale machinery could not
+        // convert); only `Failed`/`Fatal` mean no header was produced.
+        if !archive_ref.write_header(entry_ref).succeeded() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Failed to create tarball: ArchiveHeaderError"
             )));
@@ -1154,13 +1171,21 @@ impl FilesContext {
         // errdefer freeEntries(&entries) — handled by Drop on `entries`
 
         let mut entry: *mut lib::Entry = core::ptr::null_mut();
-        while archive.read_next_header(&mut entry) == lib::Result::Ok {
+        while archive.read_next_header(&mut entry).succeeded() {
             let entry_ref = lib::Entry::opaque_ref(entry);
             if entry_ref.filetype() != FILETYPE_REGULAR {
                 continue;
             }
 
-            let pathname = entry_ref.pathname_utf8().as_bytes();
+            // POSIX: the raw header/pax bytes; the locale-converting
+            // `archive_entry_pathname_utf8` returns NULL for every non-ASCII
+            // name in the "C" locale, which would key the Map by "".
+            #[cfg(not(windows))]
+            let pathname = entry_ref.pathname().as_bytes();
+            #[cfg(windows)]
+            let pathname_owned = entry_pathname_utf8(entry_ref)?;
+            #[cfg(windows)]
+            let pathname: &[u8] = &pathname_owned;
             // Apply glob pattern filtering (supports both positive and negative patterns)
             if let Some(patterns) = &self.glob_patterns {
                 if !match_glob_patterns(patterns, pathname) {
@@ -1443,9 +1468,17 @@ fn extract_to_disk_filtered(
     let mut count: u32 = 0;
     let mut entry: *mut lib::Entry = core::ptr::null_mut();
 
-    while archive.read_next_header(&mut entry) == lib::Result::Ok {
+    while archive.read_next_header(&mut entry).succeeded() {
         let entry_ref = lib::Entry::opaque_ref(entry);
-        let pathname_z = entry_ref.pathname_utf8();
+        // Same platform split as `FilesContext::do_run`; see `entry_pathname_utf8`.
+        #[cfg(not(windows))]
+        let pathname_z = entry_ref.pathname();
+        #[cfg(windows)]
+        let pathname_zbox = ZBox::from_vec_with_nul(
+            entry_pathname_utf8(entry_ref).map_err(|_| bun_core::err!("OutOfMemory"))?,
+        );
+        #[cfg(windows)]
+        let pathname_z = pathname_zbox.as_zstr();
         let pathname = pathname_z.as_bytes();
 
         // Validate path safety (reject absolute paths, path traversal)

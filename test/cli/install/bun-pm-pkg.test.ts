@@ -335,6 +335,33 @@ describe("bun pm pkg", () => {
       expect(() => JSON.parse(modifiedContent)).not.toThrow();
     });
 
+    it("should write literal keys when setting with bracket notation", async () => {
+      // Key-path segments parsed from a bracket path must stay alive until
+      // the file is written; otherwise the printer serializes freed bytes.
+      const bracketDir = tempDirWithFiles("pm-pkg-bracket-set", {
+        "package.json": JSON.stringify({ name: "x", version: "1.0.0" }, null, 2),
+      });
+
+      try {
+        const { code } = await runPmPkg(
+          ["set", "contributors[0]=alice", "nested.deep[0]=value", "scripts[lint]=eslint ."],
+          bracketDir,
+        );
+        expect(code).toBe(0);
+
+        const saved = JSON.parse(await Bun.file(join(bracketDir, "package.json")).text());
+        expect(saved).toEqual({
+          name: "x",
+          version: "1.0.0",
+          contributors: { "0": "alice" },
+          nested: { deep: { "0": "value" } },
+          scripts: { lint: "eslint ." },
+        });
+      } finally {
+        rmSync(bracketDir, { recursive: true, force: true });
+      }
+    });
+
     it("should fail with invalid key=value format", async () => {
       const { error, code } = await runPmPkg(["set", "invalidformat"], testDir!, false);
       expect(code).toBe(1);

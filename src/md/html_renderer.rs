@@ -4,6 +4,7 @@ use bun_core::strings;
 
 use crate::RenderOptions;
 use crate::helpers;
+use crate::output::{OutputBuffer, try_extend, try_push};
 use crate::types;
 use crate::types::{BlockType, JsResult, Renderer, RendererImpl, SpanDetail, SpanType, TextType};
 
@@ -19,36 +20,6 @@ pub(crate) struct HtmlRenderer<'src> {
     pub autolink_headings: bool,
     pub heading_buf: Vec<u8>,
     pub heading_tracker: helpers::HeadingIdTracker,
-}
-
-pub struct OutputBuffer {
-    pub list: Vec<u8>,
-    // allocator dropped — non-AST crate uses global mimalloc
-    pub oom: bool,
-}
-
-impl OutputBuffer {
-    fn write(&mut self, data: &[u8]) {
-        if self.oom {
-            return;
-        }
-        if self.list.try_reserve(data.len()).is_err() {
-            self.oom = true;
-            return;
-        }
-        self.list.extend_from_slice(data);
-    }
-
-    fn write_byte(&mut self, b: u8) {
-        if self.oom {
-            return;
-        }
-        if self.list.try_reserve(1).is_err() {
-            self.oom = true;
-            return;
-        }
-        self.list.push(b);
-    }
 }
 
 impl<'src> HtmlRenderer<'src> {
@@ -426,11 +397,7 @@ impl<'src> HtmlRenderer<'src> {
 
     pub(crate) fn write(&mut self, data: &[u8]) {
         if self.heading_tracker.in_heading {
-            if self.heading_buf.try_reserve(data.len()).is_err() {
-                self.out.oom = true;
-                return;
-            }
-            self.heading_buf.extend_from_slice(data);
+            try_extend(&mut self.out.oom, &mut self.heading_buf, data);
         } else {
             self.out.write(data);
         }
@@ -438,11 +405,7 @@ impl<'src> HtmlRenderer<'src> {
 
     fn write_byte(&mut self, b: u8) {
         if self.heading_tracker.in_heading {
-            if self.heading_buf.try_reserve(1).is_err() {
-                self.out.oom = true;
-                return;
-            }
-            self.heading_buf.push(b);
+            try_push(&mut self.out.oom, &mut self.heading_buf, b);
         } else {
             self.out.write_byte(b);
         }
@@ -473,11 +436,7 @@ impl<'src> HtmlRenderer<'src> {
         if self.heading_tracker.in_heading {
             let items = self.heading_buf.as_slice();
             if !items.is_empty() && items[items.len() - 1] != b'\n' {
-                if self.heading_buf.try_reserve(1).is_err() {
-                    self.out.oom = true;
-                    return;
-                }
-                self.heading_buf.push(b'\n');
+                try_push(&mut self.out.oom, &mut self.heading_buf, b'\n');
             }
         } else {
             let items = self.out.list.as_slice();

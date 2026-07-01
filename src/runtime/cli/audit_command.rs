@@ -1,8 +1,8 @@
 use bstr::BStr;
 use std::io::Write as _;
 
-use bun_ast::{ExprData, e as E};
-use bun_collections::{StringArrayHashMap, StringHashMap};
+use bun_ast::{Expr, ExprData, e as E};
+use bun_collections::{StringArrayHashMap, StringHashMap, VecExt};
 use bun_core::{Global, Output, pretty, prettyln};
 use bun_core::{MutableString, strings};
 use bun_http::{self as http, HeaderBuilder};

@@ -42,15 +42,12 @@ function buildTarball(entries: Array<{ name: string | Buffer; data: Buffer | str
 // the layout `tar -cf` emits by default on modern GNU/BSD tar.
 function paxEntry(name: string, data: Buffer | string, index: number): Buffer {
   const body = ` path=${name}\n`;
-  // `<len>` is the decimal byte length of the whole record including itself.
-  let len = Buffer.byteLength(body);
-  let record = "";
-  for (;;) {
-    record = `${len + String(len).length}${body}`;
-    if (Buffer.byteLength(record) === len + String(len).length) break;
-    len = Buffer.byteLength(record) - String(len).length;
-  }
-  const recordBuf = Buffer.from(record);
+  // `<len>` is the decimal byte length of the whole record including its own
+  // digits: the smallest `len` with `digits(len) + byteLength(body) === len`.
+  const bodyBytes = Buffer.byteLength(body);
+  let len = bodyBytes + 1;
+  while (String(len).length + bodyBytes !== len) len++;
+  const recordBuf = Buffer.from(`${len}${body}`);
   const recordPad = Buffer.alloc((512 - (recordBuf.length % 512)) % 512);
   const fallback = `PaxFallback${index}`;
   return Buffer.concat([
@@ -1299,7 +1296,12 @@ describe("Bun.Archive", () => {
       }
     });
 
-    test("files() keys distinct non-ASCII ustar entry names without colliding them", async () => {
+    // The next two tests put raw bytes in a plain-ustar name field. On Windows
+    // libarchive keeps a charset-converted name (every pax `path=`) only in its
+    // wide-string slot, so that is the form we read there; a raw non-ASCII
+    // ustar name field (which every modern tar puts in a pax record instead)
+    // is not recoverable byte-exact on Windows.
+    test.skipIf(isWindows)("files() keys distinct non-ASCII ustar entry names without colliding them", async () => {
       // A lossy pathname conversion collapses both names onto the same key
       // (the empty string) and one entry silently overwrites the other.
       const tar = buildTarball([
@@ -1342,7 +1344,7 @@ describe("Bun.Archive", () => {
       expect(await Bun.file(join(String(dir), "after.txt")).text()).toBe("after");
     });
 
-    test("files() keys an entry whose name is not even valid UTF-8", async () => {
+    test.skipIf(isWindows)("files() keys an entry whose name is not even valid UTF-8", async () => {
       // "foo\xff\xfe.txt": 0xFF and 0xFE are never valid UTF-8, so libarchive
       // hands the raw header bytes back verbatim. They must not collapse onto
       // an empty Map key.

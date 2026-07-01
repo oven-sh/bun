@@ -137,6 +137,16 @@ fn configure_archive_reader(archive: &libarchive::lib::Archive) {
     let _ = archive.read_set_options(c"read_concatenated_archives");
 }
 
+/// Entry pathname as owned UTF-8 bytes. On Windows libarchive stores every
+/// charset-converted name (e.g. a pax `path=` record) only in the wide-string
+/// slot, and `archive_entry_pathname` lossily narrows that through the process
+/// locale (always "C"), so read the wide form. Same split as
+/// `libarchive::extract_to_disk`.
+#[cfg(windows)]
+fn entry_pathname_utf8(entry: &libarchive::lib::Entry) -> Result<Vec<u8>, bun_alloc::AllocError> {
+    bun_core::strings::to_utf8_list_with_type(Vec::new(), entry.pathname_w().as_slice())
+}
+
 /// Count the number of files in an archive
 fn count_files_in_archive(data: &[u8]) -> u32 {
     use libarchive::lib;
@@ -1169,10 +1179,15 @@ impl FilesContext {
                 continue;
             }
 
-            // Raw header/pax bytes. `archive_entry_pathname_utf8` converts via
-            // the process locale (always "C"/ASCII here) and returns NULL for
-            // every non-ASCII name, which would key the Map by "".
+            // POSIX: the raw header/pax bytes; the locale-converting
+            // `archive_entry_pathname_utf8` returns NULL for every non-ASCII
+            // name in the "C" locale, which would key the Map by "".
+            #[cfg(not(windows))]
             let pathname = entry_ref.pathname().as_bytes();
+            #[cfg(windows)]
+            let pathname_owned = entry_pathname_utf8(entry_ref)?;
+            #[cfg(windows)]
+            let pathname: &[u8] = &pathname_owned;
             // Apply glob pattern filtering (supports both positive and negative patterns)
             if let Some(patterns) = &self.glob_patterns {
                 if !match_glob_patterns(patterns, pathname) {
@@ -1457,9 +1472,15 @@ fn extract_to_disk_filtered(
 
     while archive.read_next_header(&mut entry).succeeded() {
         let entry_ref = lib::Entry::opaque_ref(entry);
-        // Raw header/pax bytes, same as `libarchive::extract_to_disk`; see the
-        // note in `FilesContext::do_run`.
+        // Same platform split as `FilesContext::do_run`; see `entry_pathname_utf8`.
+        #[cfg(not(windows))]
         let pathname_z = entry_ref.pathname();
+        #[cfg(windows)]
+        let pathname_zbox = ZBox::from_vec_with_nul(
+            entry_pathname_utf8(entry_ref).map_err(|_| bun_core::err!("OutOfMemory"))?,
+        );
+        #[cfg(windows)]
+        let pathname_z = pathname_zbox.as_zstr();
         let pathname = pathname_z.as_bytes();
 
         // Validate path safety (reject absolute paths, path traversal)

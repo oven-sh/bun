@@ -727,7 +727,8 @@ pub mod lib {
                 return match a.read_next_header(&mut entry) {
                     Result::Retry => continue,
                     Result::Eof => IteratorResult::init_res(None),
-                    Result::Ok => {
+                    // `Warn` still yields a fully populated entry; see `Result::succeeded`.
+                    Result::Ok | Result::Warn => {
                         let kind = bun_sys::kind_from_mode(
                             Entry::opaque_ref(entry).filetype() as bun_sys::Mode
                         );
@@ -1029,7 +1030,8 @@ pub mod lib {
                 match a.read_next_header(&mut entry) {
                     Result::Retry => continue,
                     Result::Eof => return Ok(None),
-                    Result::Ok => {
+                    // `Warn` still yields a fully populated entry; see `Result::succeeded`.
+                    Result::Ok | Result::Warn => {
                         let kind = bun_sys::kind_from_mode(
                             Entry::opaque_ref(entry).filetype() as bun_sys::Mode
                         );

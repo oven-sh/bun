@@ -352,6 +352,12 @@ impl MySQLConnection {
     /// under [`MAX_CACHED_PREPARED_STATEMENTS`], writing a COM_STMT_CLOSE for
     /// each so the server frees its side of the statement.
     fn evict_lru_statements(&mut self) {
+        // Packet framing assumes the write buffer has no flushed prefix;
+        // every other packet writer guarantees that through this same gate.
+        // A deferred eviction (backpressure) happens on the next insert.
+        if !self.is_able_to_write() {
+            return;
+        }
         while self.statements.count() >= MAX_CACHED_PREPARED_STATEMENTS {
             let mut victim: Option<core::ptr::NonNull<MySQLStatement>> = None;
             let mut oldest = u64::MAX;

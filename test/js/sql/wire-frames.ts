@@ -245,10 +245,21 @@ export function mysqlHandshakeV10(
   return mysqlRawPacket(0, payload);
 }
 
-// MySQL Protocol::OK_Packet — page_protocol_basic_ok_packet.html: Int<1>(0x00) lenenc(affected_rows) lenenc(last_insert_id) Int<2>(status) Int<2>(warnings)
-export function mysqlOkPacket(seq: number): Buffer {
-  return mysqlRawPacket(seq, Buffer.from([0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]));
+// MySQL Protocol::OK_Packet — page_protocol_basic_ok_packet.html: Int<1>(header) lenenc(affected_rows) lenenc(last_insert_id) Int<2>(status) Int<2>(warnings)
+// The header is 0x00, except for the CLIENT_DEPRECATE_EOF result-set terminator, which is an OK packet with a 0xFE header.
+export function mysqlOkPacket(seq: number, header: 0x00 | 0xfe = 0x00): Buffer {
+  return mysqlRawPacket(seq, Buffer.from([header, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]));
 }
+
+// MySQL Protocol::AuthMoreData — page_protocol_connection_phase_packets_protocol_auth_more_data.html:
+//   Int<1>(0x01) String<EOF>(plugin-specific payload)
+export function mysqlAuthMoreData(seq: number, data: Buffer): Buffer {
+  return mysqlRawPacket(seq, Buffer.concat([Buffer.from([0x01]), data]));
+}
+
+// caching_sha2_password fast_auth_success marker carried in an AuthMoreData payload —
+// page_caching_sha2_authentication_exchanges.html (its sibling, 0x04, is perform_full_authentication).
+export const MYSQL_FAST_AUTH_SUCCESS = 0x03;
 
 // MySQL Protocol::AuthSwitchRequest — page_protocol_connection_phase_packets_protocol_auth_switch_request.html:
 //   Int<1>(0xfe) NulString(plugin_name) String<EOF>(plugin_provided_data)
@@ -313,6 +324,29 @@ export function mysqlColumnDefinition(
       fixed,
     ]),
   );
+}
+
+// MySQL text-protocol resultset row — page_protocol_com_query_response_text_resultset_row.html:
+//   one string<lenenc> per column. (SQL NULL is the single byte 0xfb; not needed by any mock yet.)
+export function mysqlTextResultSetRow(seq: number, cols: (string | Buffer)[]): Buffer {
+  return mysqlRawPacket(seq, Buffer.concat(cols.map(c => mysqlLenencStr(c))));
+}
+
+// MySQL Textual Resultset — page_protocol_com_query_response_text_resultset.html, in the
+// CLIENT_DEPRECATE_EOF framing mysqlHandshakeV10's default capabilities negotiate:
+//   lenenc(column_count) packet, one ColumnDefinition41 per column, one row packet per row,
+//   then an OK packet with the 0xFE header as the terminator (no intermediate EOF).
+export function mysqlTextResultSet(
+  startSeq: number,
+  columns: { name: string; type: number }[],
+  rows: string[][],
+): Buffer {
+  let seq = startSeq;
+  const parts: Buffer[] = [mysqlRawPacket(seq++, mysqlLenencInt(columns.length))];
+  for (const column of columns) parts.push(mysqlColumnDefinition(seq++, column));
+  for (const row of rows) parts.push(mysqlTextResultSetRow(seq++, row));
+  parts.push(mysqlOkPacket(seq, 0xfe));
+  return Buffer.concat(parts);
 }
 
 // MySQL COM_STMT_PREPARE_OK — page_protocol_com_stmt_prepare.html#sect_protocol_com_stmt_prepare_response_ok:

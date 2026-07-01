@@ -191,10 +191,11 @@ describe("tsconfig 'extends' cycle", () => {
 
 // A non-cyclic chain deeper than the resolver's bounded parent array must
 // also stop with a warning instead of an internal `Overflow` error.
-test("tsconfig 'extends' chain deeper than the resolver's capacity does not abort `bun run`", async () => {
+test("tsconfig 'extends' chain deeper than the resolver's capacity does not abort", async () => {
   const chainDepth = 80;
   const files: Record<string, string> = {
     "tsconfig.json": JSON.stringify({ extends: "./tsconfig.1.json" }),
+    "index.js": `console.log("RAN_THE_SCRIPT");`,
     "package.json": JSON.stringify({
       name: "x",
       version: "1.0.0",
@@ -206,16 +207,29 @@ test("tsconfig 'extends' chain deeper than the resolver's capacity does not abor
   }
   using dir = tempDir("tsconfig-extends-too-deep", files);
 
-  await using proc = Bun.spawn({
+  await using run = Bun.spawn({
     cmd: [bunExe(), "run", "start"],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [runOut, runErr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+  expect(runErr).not.toContain("Overflow");
+  expect(runOut).toContain("RAN_THE_SCRIPT");
+  expect(runExit).toBe(0);
 
-  expect(stderr).not.toContain("Overflow");
-  expect(stdout).toContain("RAN_THE_SCRIPT");
-  expect(exitCode).toBe(0);
+  // The diagnostic surfaces through the transpiler log, which `bun <file>`
+  // flushes; `bun run <script>` shells out and never does.
+  await using file = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [fileOut, fileErr, fileExit] = await Promise.all([file.stdout.text(), file.stderr.text(), file.exited]);
+  expect(fileErr).toContain(`"extends" chain is too long`);
+  expect(fileOut).toContain("RAN_THE_SCRIPT");
+  expect(fileExit).toBe(0);
 });

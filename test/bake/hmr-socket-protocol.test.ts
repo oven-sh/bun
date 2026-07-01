@@ -1,14 +1,17 @@
 // The HMR websocket at `/_bun/hmr` accepts frames from any connected client
 // (a browser tab, an extension, anything on the LAN with `--hostname 0.0.0.0`),
 // so no frame may be able to reach an `assert`/`debug_assert` in the dev
-// server. These tests drive the two frames that could:
+// server. These tests drive the frames that could:
 //   - "sM" (subscribe to the memory-visualizer topic) reached a
 //     `debug_assert!(cfg!(feature = "bake_debugging_features"))` that is never
 //     true, because `HmrSocket`'s on-subscribe hook gated on a different
 //     predicate than the rest of the (compiled-out) visualizer machinery.
 //   - a second "H" (testing-batch) frame while a bundle was in flight hit the
 //     `TestingBatchEvents::EnableAfterBundle` arm's `debug_assert!(false)`.
-// Both aborted the whole dev server process in debug / assertion builds.
+//   - "n" (SetUrl) with a pattern not starting with "/" reached
+//     `FrameworkRouter::match_slow`'s `debug_assert!(path[0] == b'/')`: an
+//     empty pattern indexes out of bounds inside it, any other fails it.
+// All aborted the whole dev server process in debug / assertion builds.
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -198,5 +201,46 @@ test.concurrent(
     // And it is still accepting new requests.
     const res = await fetch(`http://127.0.0.1:${port}/`);
     expect(res.status).toBe(200);
+  },
+);
+
+// "n" is an empty pattern (the out-of-bounds index flavor); "nfoo" is a
+// non-absolute pattern (the failed-assertion flavor).
+test.concurrent.each(["n", "nfoo"])(
+  "a SetUrl frame without a leading slash (%j) closes the socket instead of aborting",
+  async frame => {
+    using dir = tempDir("hmr-socket-seturl", {
+      "index.html": indexHtml,
+      "entry.ts": `console.log("entry");`,
+      "server.ts": serverTs,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const dev = watchDevServer(proc);
+    const port = await dev.port;
+
+    // An aborting dev server also produces a close event, so the liveness
+    // check below is what distinguishes "closed the socket" from "died".
+    const closed = Promise.withResolvers<void>();
+    using hmr = await connectHmr(
+      port,
+      () => {},
+      () => closed.resolve(),
+    );
+    hmr.ws.send(frame);
+    await closed.promise;
+
+    let status: string;
+    try {
+      status = String((await fetch(`http://127.0.0.1:${port}/`)).status);
+    } catch (e) {
+      status = `${(e as Error).message}\n--- dev server stderr ---\n${dev.stderr()}`;
+    }
+    expect(status).toBe("200");
   },
 );

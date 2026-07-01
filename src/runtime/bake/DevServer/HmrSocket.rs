@@ -179,6 +179,11 @@ impl HmrSocket {
             }
             x if x == IncomingMessageId::SetUrl as u8 => {
                 let pattern = &msg[1..];
+                // `pattern` is peer bytes; `FrameworkRouter::match_slow` requires
+                // an absolute path (`debug_assert!(path[0] == b'/')`).
+                if pattern.first() != Some(&b'/') {
+                    return ws.close();
+                }
                 // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
                 let dev = unsafe { self.dev() };
                 let maybe_rbi = dev.route_to_bundle_index_slow(pattern);

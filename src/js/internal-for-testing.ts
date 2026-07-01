@@ -279,8 +279,15 @@ export const lowercaseHeaderNameSIMD: (name: string) => string = $newCppFunction
   1,
 );
 
-export const getEventLoopStats: () => { activeTasks: number; concurrentRef: number; numPolls: number } =
-  $newZigFunction("event_loop.zig", "getActiveTasks", 0);
+export const getEventLoopStats: () => {
+  activeTasks: number;
+  concurrentRef: number;
+  numPolls: number;
+  /** Reentrancy depth of `us_loop_run_bun_tick`; >= 1 when called from inside a poll-dispatch callback. Always 0 on Windows. */
+  tickDepth: number;
+  /** Undispatched entries remaining in the live ready-poll batch after the one being dispatched. Always 0 on Windows. */
+  pendingReadyPolls: number;
+} = $newZigFunction("event_loop.zig", "getActiveTasks", 0);
 
 export const hostedGitInfo = {
   parseUrl: $newZigFunction("hosted_git_info.zig", "TestingAPIs.jsParseUrl", 1),

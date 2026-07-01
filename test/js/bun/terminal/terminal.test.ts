@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 // Helper to enable echo on a terminal (echo is disabled by default to avoid duplication)
 function enableEcho(terminal: Bun.Terminal) {
@@ -1239,6 +1241,96 @@ describe.concurrent("Bun.spawn with terminal option", () => {
     expect(proc.stderr).toBeNull();
 
     await proc.exited;
+    proc.terminal!.close();
+  });
+
+  // BSD/macOS discards unread PTY output when the last slave fd closes. If the
+  // parent dropped its slave copy at spawn and the event loop stalls until the
+  // child writes and closes its slave fds, the output was lost and the data
+  // callback never fired. The child (sh, which holds the tty only as stdio)
+  // closes its stdio and then signals via a sentinel file, so the only
+  // remaining slave fd is the parent's.
+  test.skipIf(isWindows)(
+    "output written before the parent reads is not lost when the child drops the pty",
+    async () => {
+      using dir = tempDir("terminal-drain", {});
+      const sentinel = join(String(dir), "closed-tty-fds");
+      const dataChunks: Uint8Array[] = [];
+      const gotMarker = Promise.withResolvers<void>();
+
+      const proc = Bun.spawn(
+        [
+          "sh",
+          "-c",
+          `echo marker-before-drain
+           exec 0<&- 1>&- 2>&-
+           echo done > "$0"
+           exec sleep 1000`,
+          sentinel,
+        ],
+        {
+          env: bunEnv,
+          terminal: {
+            data: (_terminal: Bun.Terminal, data: Uint8Array) => {
+              dataChunks.push(data);
+              if (Buffer.concat(dataChunks).toString().includes("marker-before-drain")) gotMarker.resolve();
+            },
+          },
+        },
+      );
+
+      // Block the event loop until the child has written the marker and closed
+      // its tty fds, so the first master read can only happen afterwards.
+      while (!existsSync(sentinel)) {
+        Bun.sleepSync(10);
+      }
+
+      await gotMarker.promise;
+      proc.kill();
+      await proc.exited;
+      expect(Buffer.concat(dataChunks).toString()).toContain("marker-before-drain");
+      proc.terminal!.close();
+    },
+  );
+
+  // Same kernel hazard, exit flavor: when the child (the session leader) dies,
+  // older macOS flushes the PTY output queue during exit instead of letting
+  // the master drain first. Block the event loop until the child has entered
+  // exit, then expect its output to still be readable.
+  test.skipIf(isWindows)("output written before the parent reads is not lost when the child exits", async () => {
+    using dir = tempDir("terminal-exit-drain", {});
+    const sentinel = join(String(dir), "wrote-marker");
+    const dataChunks: Uint8Array[] = [];
+    const gotMarker = Promise.withResolvers<void>();
+
+    const proc = Bun.spawn(["sh", "-c", `echo marker-before-exit; echo done > "$0"; exit 0`, sentinel], {
+      env: bunEnv,
+      terminal: {
+        data: (_terminal: Bun.Terminal, data: Uint8Array) => {
+          dataChunks.push(data);
+          if (Buffer.concat(dataChunks).toString().includes("marker-before-exit")) gotMarker.resolve();
+        },
+      },
+    });
+
+    // Block the event loop until the child has written the marker and
+    // reached exit. "Z" = fully exited; "E" = exiting — a session leader
+    // with unread PTY output may park in exit until the master drains,
+    // which cannot happen while we hold the loop. spawnSync runs on its own
+    // isolated loop, so the terminal reader cannot run during this wait.
+    while (!existsSync(sentinel)) {
+      Bun.sleepSync(10);
+    }
+    while (true) {
+      const ps = Bun.spawnSync({ cmd: ["ps", "-p", String(proc.pid), "-o", "stat="] });
+      const stat = ps.stdout.toString().trim();
+      if (!ps.success || stat === "" || stat.includes("Z") || stat.includes("E")) break;
+      Bun.sleepSync(10);
+    }
+
+    await gotMarker.promise;
+    await proc.exited;
+    expect(Buffer.concat(dataChunks).toString()).toContain("marker-before-exit");
     proc.terminal!.close();
   });
 

@@ -921,6 +921,18 @@ impl Subprocess<'_> {
             }
         }
 
+        #[cfg(unix)]
+        if self.flags.get().contains(Flags::OWNS_TERMINAL) {
+            // The parent kept its slave fd open across the child's lifetime
+            // (BSD/macOS discards unread PTY output at last slave close).
+            // Drain the master now and close the slave so EOF fires the
+            // terminal's exit callback.
+            if let Some(terminal) = self.terminal.get() {
+                // `BackRef` invariant: see the Windows arm above.
+                bun_ptr::BackRef::from(terminal).drain_and_close_slave();
+            }
+        }
+
         let mut stdin: Option<NonNull<FileSink>> = if matches!(self.stdin.get(), Writable::Pipe(_))
             && self.flags.get().contains(Flags::IS_STDIN_A_READABLE_STREAM)
         {

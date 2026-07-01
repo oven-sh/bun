@@ -134,6 +134,11 @@ void us_quic_socket_context_on_stream_close(us_quic_socket_context_t *ctx,
 int us_quic_stream_write(us_quic_stream_t *s, const char *data, unsigned int len);
 void us_quic_stream_want_read(us_quic_stream_t *s, int want);
 void us_quic_stream_want_write(us_quic_stream_t *s, int want);
+/* Returned by us_quic_stream_send_headers when the send was refused because a
+ * previous header block (e.g. an auto-sent 100-continue) is still draining;
+ * the caller should resend once the stream is writable. Distinct from 0 (sent)
+ * and -1 (fatal). */
+#define US_QUIC_SEND_HEADERS_PENDING 1
 int us_quic_stream_send_headers(us_quic_stream_t *s,
     const struct us_quic_header_t *headers, unsigned int count, int end_stream);
 /* Send a 1xx interim HEADERS frame (`:status` only); the final response

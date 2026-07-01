@@ -59,6 +59,13 @@ struct Http3ResponseData {
     BackPressure backpressure;
     bool endAfterDrain = false;
 
+    /* Set when the final response header block was refused because an interim
+     * (100-continue) block is still draining in lsquic (#33082). The buffered
+     * headers stay in hdrs/hdrBuf and body bytes route to backpressure until
+     * the writable event resends them in order. */
+    bool headersDeferred = false;
+    bool deferredEndStream = false;
+
     uint64_t offset = 0;
     uint64_t totalSize = 0;
     uint8_t state = 0;
@@ -87,6 +94,8 @@ struct Http3ResponseData {
         hdrs.shrink(0);
         backpressure.clear();
         endAfterDrain = false;
+        headersDeferred = false;
+        deferredEndStream = false;
         offset = 0;
         totalSize = 0;
         state = HTTP_RESPONSE_PENDING;

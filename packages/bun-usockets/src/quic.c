@@ -972,13 +972,19 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
     }
 
     lsquic_http_headers_t lh = { .count = (int) count, .headers = xh };
+    errno = 0;
     int r = lsquic_stream_send_headers(s->stream, &lh, end_stream);
+    int send_errno = errno;
     if (buf != stackbuf) free(buf);
     if (xh != stackh) free(xh);
     if (end_stream && r == 0) lsquic_stream_shutdown(s->stream, 1);
     /* Mark the context dirty so drainQuicIfNecessary picks up header-only
      * responses (204/304) that never call us_quic_stream_write. */
     if (r == 0) s->ctx->pending_write_bytes += (unsigned int) total + 1;
+    /* lsquic rejects a send while a previous header block (e.g. an auto-sent
+     * 100-continue) is still draining, with errno EBADMSG. Report it as a
+     * distinct retryable code so the caller can resend once it flushes. */
+    if (r != 0 && send_errno == EBADMSG) return US_QUIC_SEND_HEADERS_PENDING;
     return r;
 }
 

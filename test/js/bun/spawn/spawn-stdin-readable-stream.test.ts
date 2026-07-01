@@ -452,9 +452,9 @@ describe("spawn stdin ReadableStream", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("EPIPE");
     expect(stdout.trim()).toBe("child exited");
-    expect(exitCode).toBe(0);
     // The parent reached the natural end of its event loop; it was not killed.
     expect(proc.signalCode).toBe(null);
+    expect(exitCode).toBe(0);
   }
 
   test("parent exits after the child dies when stdin is an async iterable", async () => {

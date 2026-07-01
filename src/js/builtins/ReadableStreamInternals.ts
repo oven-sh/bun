@@ -2432,7 +2432,13 @@ export async function readableStreamIntoArrayProcessManyResult(this: ReadableStr
 
 export function readableStreamIntoArray(stream) {
   var reader = stream.getReader();
-  var manyResult = reader.readMany();
+  var manyResult;
+  try {
+    // readMany() throws synchronously when the stream is already errored.
+    manyResult = reader.readMany();
+  } catch (e) {
+    return Promise.$reject(e);
+  }
 
   if (manyResult && $isPromise(manyResult)) {
     return manyResult.$then($readableStreamIntoArrayProcessManyResult.bind(reader));

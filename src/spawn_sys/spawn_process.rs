@@ -311,6 +311,10 @@ pub struct PosixSpawnOptions {
     pub extra_fds: Box<[PosixStdio]>,
     pub cwd: Box<[u8]>,
     pub detached: bool,
+    /// Run the child as this user id (`setuid` after fork, like libuv/Node).
+    pub uid: Option<u32>,
+    /// Run the child as this group id (`setgid` after fork, like libuv/Node).
+    pub gid: Option<u32>,
     pub windows: (),
     pub argv0: Option<*const c_char>,
     pub stream: bool,
@@ -354,6 +358,8 @@ impl Default for PosixSpawnOptions {
             extra_fds: Box::default(),
             cwd: Box::default(),
             detached: false,
+            uid: None,
+            gid: None,
             windows: (),
             argv0: None,
             stream: true,
@@ -686,6 +692,8 @@ pub unsafe fn spawn_process_posix(
     // Pass PTY slave fd to attr for controlling terminal setup
     attr.pty_slave_fd = options.pty_slave_fd;
     attr.new_process_group = options.new_process_group;
+    attr.uid = options.uid;
+    attr.gid = options.gid;
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {

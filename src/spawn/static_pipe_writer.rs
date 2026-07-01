@@ -78,7 +78,6 @@ bun_io::impl_buffered_writer_parent! {
     windows_loop = |this| (*this).event_loop.native_loop(),
     ref_       = |this| RefCount::<Self>::ref_(this),
     deref      = |this| RefCount::<Self>::deref(this),
-    win_on_write_guard = |_this| (),
 }
 
 impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {

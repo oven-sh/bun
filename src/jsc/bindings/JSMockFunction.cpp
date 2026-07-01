@@ -1425,12 +1425,6 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject 
 using namespace Bun;
 using namespace JSC;
 
-BUN_DEFINE_HOST_FUNCTION(JSMock__jsUseRealTimers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
-{
-    globalObject->overridenDateNow = -1;
-    return JSValue::encode(callframe->thisValue());
-}
-
 // Helper function for native code to set the overriden Date.now() time
 extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__setOverridenDateNow(JSC::JSGlobalObject* globalObject, double time_ms)
 {
@@ -1451,14 +1445,14 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
 {
     JSValue argument0 = callframe->argument(0);
 
+    // JSGlobalObject::overridenDateNow's "no override" sentinel is NaN (see
+    // JSGlobalObject::jsDateNow()), so every real timestamp, including 0 and
+    // pre-epoch negatives, overrides; an omitted arg, NaN, or invalid Date resets.
     if (auto* dateInstance = dynamicDowncast<DateInstance>(argument0)) {
-        if (std::isnormal(dateInstance->internalNumber())) {
-            globalObject->overridenDateNow = dateInstance->internalNumber();
-        }
+        globalObject->overridenDateNow = dateInstance->internalNumber();
         return JSValue::encode(callframe->thisValue());
     }
-    // number > 0 is a valid date otherwise it's invalid and we should reset the time (set to -1)
-    globalObject->overridenDateNow = (argument0.isNumber() && argument0.asNumber() >= 0) ? argument0.asNumber() : -1;
+    globalObject->overridenDateNow = argument0.isNumber() ? argument0.asNumber() : PNaN;
 
     return JSValue::encode(callframe->thisValue());
 }

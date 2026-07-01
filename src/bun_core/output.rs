@@ -801,8 +801,9 @@ fn compute_color_depth() -> ColorDepth {
         return ColorDepth::None;
     }
 
+    // tmux supports 24-bit color since 2.2 (2016); Node also reports 16m here.
     if env_var::TMUX.get().is_some() {
-        return ColorDepth::C256;
+        return ColorDepth::C16m;
     }
 
     if env_var::CI.get().is_some() {

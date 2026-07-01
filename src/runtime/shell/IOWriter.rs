@@ -1099,10 +1099,6 @@ bun_io::impl_buffered_writer_parent! {
     // `IOWriter::init` (sole constructor); passing a non-Arc ptr is UB.
     ref_       = |this| std::sync::Arc::increment_strong_count(this as *const Self),
     deref      = |this| std::sync::Arc::decrement_strong_count(this as *const Self),
-    // Hold a keepalive across Windows on_write re-entry: `on_write_pollable` →
-    // `run_yield` → `bump` may fire `on_io_writer_chunk`, which can drop the
-    // last external `Arc<IOWriter>` mid-callback.
-    win_on_write_guard = |this| (&*this).keepalive(),
 }
 
 // ──────────────────────────────────────────────────────────────────────────

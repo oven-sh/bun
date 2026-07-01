@@ -4852,6 +4852,12 @@ pub mod spawn_ffi {
         pub actions: ActionsList,
         pub pty_slave_fd: c_int,
         pub linux_pdeathsig: c_int,
+        /// `setuid(uid)` in the child before exec when `set_uid` is true.
+        pub uid: u32,
+        /// `setgid(gid)` in the child before exec when `set_gid` is true.
+        pub gid: u32,
+        pub set_uid: bool,
+        pub set_gid: bool,
     }
 
     impl Default for BunSpawnRequest {
@@ -4863,6 +4869,10 @@ pub mod spawn_ffi {
                 actions: ActionsList::default(),
                 pty_slave_fd: -1,
                 linux_pdeathsig: 0,
+                uid: 0,
+                gid: 0,
+                set_uid: false,
+                set_gid: false,
             }
         }
     }

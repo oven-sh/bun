@@ -3068,8 +3068,22 @@ fn transpile_source_code_inner(
             }
         }
 
-        // `provideFetch()` should be called.
-        L::Napi => unreachable!("napi modules go through provideFetch()"),
+        // The `.node` fast-paths in `moduleLoaderFetch` / `overridableRequire`
+        // only match module keys that literally end in `.node`, so `?query`
+        // suffixes and `--loader <ext>:napi` mappings still reach here.
+        L::Napi => {
+            if global_object.is_null() {
+                return Err(bun_core::err!("NotSupported"));
+            }
+            // SAFETY: null-checked above; `global_object` is the live
+            // per-thread global.
+            let global = unsafe { &*global_object };
+            Err(global
+                .throw_type_error(format_args!(
+                    "To load Node-API modules, use require() or process.dlopen instead of import."
+                ))
+                .into())
+        }
 
         // ────────────────────────────────────────────────────────────────────
         // .wasm

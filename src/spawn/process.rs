@@ -1561,6 +1561,12 @@ pub struct WindowsSpawnOptions {
     pub extra_fds: Box<[WindowsStdio]>,
     pub cwd: Box<[u8]>,
     pub detached: bool,
+    /// `uv_process_options_t.uid` + `UV_PROCESS_SETUID`; libuv returns
+    /// `UV_ENOTSUP` on Windows, exactly like Node.
+    pub uid: Option<u32>,
+    /// `uv_process_options_t.gid` + `UV_PROCESS_SETGID`; libuv returns
+    /// `UV_ENOTSUP` on Windows, exactly like Node.
+    pub gid: Option<u32>,
     pub windows: WindowsOptions,
     pub argv0: Option<*const c_char>,
     pub stream: bool,
@@ -1588,6 +1594,8 @@ impl Default for WindowsSpawnOptions {
             extra_fds: Box::new([]),
             cwd: Box::new([]),
             detached: false,
+            uid: None,
+            gid: None,
             windows: WindowsOptions::default(),
             argv0: None,
             stream: true,
@@ -1815,6 +1823,15 @@ mod spawn_process_body {
         }
         if options.detached {
             flags |= bun_iocp::process::PROCESS_DETACHED;
+        }
+
+        // uid/gid are POSIX-only; report ENOTSUP like Node does on Windows
+        // (libuv rejected UV_PROCESS_SETUID/SETGID the same way).
+        if options.uid.is_some() || options.gid.is_some() {
+            return Ok(Err(bun_sys::Error::new(
+                bun_sys::E::NOTSUP,
+                bun_sys::Tag::posix_spawn,
+            )));
         }
 
         let slot_count = 3 + options.extra_fds.len();

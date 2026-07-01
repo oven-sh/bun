@@ -317,6 +317,16 @@ impl PathWatcher {
         }
     }
 
+    /// The shared inotify queue overflowed and events were lost; every handler
+    /// gets `('change', null)`. No duplicate suppression — a loss signal must
+    /// always be delivered. Caller holds `manager.mutex`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn emit_overflow(&mut self) {
+        for &ctx in self.handlers.keys() {
+            (FSWatcher::ON_PATH_UPDATE)(Some(ctx), Event::NoFilename(EventType::Change), false);
+        }
+    }
+
     #[cfg(not(any(windows, target_os = "freebsd")))]
     fn emit_error(&mut self, err: &sys::Error) {
         for &ctx in self.handlers.keys() {
@@ -933,6 +943,20 @@ impl Linux {
                 };
                 i += core::mem::size_of::<InotifyEvent>() + ev.name_len as usize;
                 let wd = ev.watch_descriptor;
+
+                // Queue hit fs.inotify.max_queued_events and the kernel dropped
+                // events (wd == -1 matches no watch). Every watcher on this fd
+                // is affected — notify all, like node on Windows does.
+                if ev.mask & IN::Q_OVERFLOW != 0 {
+                    // SAFETY: holding manager.mutex.
+                    let watchers = unsafe { &*manager.watchers.get() };
+                    for &w in watchers.values() {
+                        // SAFETY: w live under manager.mutex.
+                        unsafe { (*w).emit_overflow() };
+                        let _ = handle_oom(touched.get_or_put(w));
+                    }
+                    continue;
+                }
 
                 // Kernel retired this wd: `remove_watch` issued an explicit
                 // `inotify_rm_watch` (it deletes the `wd_map` entry first, so no

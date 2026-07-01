@@ -1409,8 +1409,9 @@ impl<Parent: WindowsBufferedWriterParent> BaseWindowsPipeWriter for WindowsBuffe
 
 #[cfg(windows)]
 // SAFETY: engine write-complete callbacks re-enter via `FileSink::on_write` →
-// JS → `writer.with_mut(|w| w.end())`; writer is intrusive in `Parent`, never
-// freed during the callback; single JS thread.
+// JS → `writer.with_mut(|w| w.end())`; writer is intrusive in `Parent`, kept
+// alive across the callback by the parent ref taken in `write()` (derefed via
+// the callback-end scopeguards); single JS thread.
 unsafe impl<Parent: WindowsBufferedWriterParent> bun_ptr::LaunderedSelf
     for WindowsBufferedWriter<Parent>
 {
@@ -1458,9 +1459,10 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
     }
 
     /// See [`r_on_error`](Self::r_on_error) for the laundered-receiver
-    /// rationale. Reads `self.parent` **before** dispatch so the (potentially
-    /// freeing) `Parent::deref` runs with no borrow of `*this` live — mirrors
-    /// [`WindowsStreamingWriter::r_deref`].
+    /// rationale. Reads `self.parent` at guard execution — so the
+    /// (potentially freeing) `Parent::deref` runs with no borrow of `*this`
+    /// live, and a re-entrant `set_parent` cannot over-deref a stale
+    /// pointer — mirrors [`WindowsStreamingWriter::r_deref`].
     #[inline(always)]
     fn r_deref(this: *mut Self) {
         let parent = Self::r(this).parent;
@@ -2524,11 +2526,6 @@ macro_rules! impl_streaming_writer_parent {
 
 /// Stamp `PosixBufferedWriterParent` + `WindowsWriterParent` +
 /// `WindowsBufferedWriterParent` for a parent type. See module comment above.
-///
-/// `win_on_write_guard` runs on Windows immediately before forwarding
-/// `on_write`; bind a keepalive there if the callback may drop the last
-/// external strong ref mid-re-entry. Pass
-/// `|_this| ()` for none.
 #[macro_export]
 macro_rules! impl_buffered_writer_parent {
     (@borrow mut    $p:expr) => { &mut *$p };
@@ -2546,7 +2543,6 @@ macro_rules! impl_buffered_writer_parent {
         windows_loop = |$win_this:ident| $win:expr,
         ref_       = |$ref_this:ident| $ref_:expr,
         deref      = |$deref_this:ident| $deref:expr,
-        win_on_write_guard = |$guard_this:ident| $guard:expr,
     ) => {
         #[cfg(not(windows))]
         impl $($gen)* $crate::pipe_writer::PosixBufferedWriterParent for $Ty {
@@ -2616,9 +2612,6 @@ macro_rules! impl_buffered_writer_parent {
             #[inline]
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: BACKREF set via `set_parent`; see borrow-mode note.
-                let $guard_this = this;
-                #[allow(unused_unsafe, clippy::let_unit_value)]
-                let _guard = unsafe { $guard };
                 unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_write(amount, status) };
             }
             #[inline]

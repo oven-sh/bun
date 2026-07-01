@@ -169,7 +169,12 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
     let arguments = frame.arguments_old::<4>().ptr;
     // `as_class_ref` is the safe shared-borrow downcast (centralised deref
     // proof in `JSValue`); `Subprocess::ipc(&self)` projects the `JsCell`.
-    let subprocess = arguments[0].as_class_ref::<Subprocess<'_>>().unwrap();
+    // `cluster.Worker({ process })` accepts any object, so `process[kHandle]`
+    // is `undefined` unless `cluster.fork()` created the process; Node's
+    // `sendHelper` returns false for a worker with no IPC channel.
+    let Some(subprocess) = arguments[0].as_class_ref::<Subprocess<'_>>() else {
+        return Ok(JSValue::FALSE);
+    };
     let message = arguments[1];
     let handle = arguments[2];
     let callback = arguments[3];
@@ -227,7 +232,11 @@ pub(crate) fn on_internal_message_primary(
 ) -> JsResult<JSValue> {
     let arguments = frame.arguments_old::<3>().ptr;
     // `as_class_ref` is the safe shared-borrow downcast; `ipc()` takes `&self`.
-    let subprocess = arguments[0].as_class_ref::<Subprocess<'_>>().unwrap();
+    // Same guard as `send_helper_primary`: nothing to subscribe to when the
+    // worker's process has no native child handle.
+    let Some(subprocess) = arguments[0].as_class_ref::<Subprocess<'_>>() else {
+        return Ok(JSValue::UNDEFINED);
+    };
     let Some(ipc_data) = subprocess.ipc() else {
         return Ok(JSValue::UNDEFINED);
     };

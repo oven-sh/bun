@@ -41,15 +41,17 @@ public:
         return m_list.mutableSpan();
     }
 
-    void moveTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& arguments)
+    // Move every element into `arguments` and clear the backing vector in one
+    // linear pass under a single cellLock.
+    void drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& arguments)
     {
         WTF::Locker locker { owner->cellLock() };
+        arguments.ensureCapacity(arguments.size() + m_list.size());
         for (JSC::WriteBarrier<T>& value : m_list) {
-            if (auto* cell = value.get()) {
+            if (auto* cell = value.get())
                 arguments.append(cell);
-                value.clear();
-            }
         }
+        m_list.clear();
     }
 
     template<typename Visitor>
@@ -64,18 +66,6 @@ public:
     bool isEmpty() const
     {
         return m_list.isEmpty();
-    }
-
-    T* takeFirst(JSC::JSCell* owner)
-    {
-        WTF::Locker locker { owner->cellLock() };
-        if (m_list.isEmpty()) {
-            return nullptr;
-        }
-
-        T* value = m_list.first().get();
-        m_list.removeAt(0);
-        return value;
     }
 
     template<typename MatchFunction>

@@ -24,6 +24,9 @@
 #include "ErrorStackTrace.h"
 #include "headers-handwritten.h"
 
+#include <wtf/Scope.h>
+#include <wtf/Threading.h>
+
 using namespace JSC;
 using namespace WebCore;
 
@@ -575,6 +578,22 @@ static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackT
 WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, void* bunErrorData)
 {
     UNUSED_PARAM(bunErrorData);
+
+    // ErrorInstance::finalizeUnconditionally calls this from Heap::runEndPhase, which
+    // nulls the current thread's atom string table (and may run on the collector thread).
+    // Releasing the last ref of an atom string there crashes in AtomStringImpl::remove(),
+    // so install the VM's table for the duration; the mutator is suspended for the whole
+    // end phase, so this is race-free (same as JSLock::didAcquireLock).
+    // https://github.com/oven-sh/bun/issues/17087
+    auto& thread = WTF::Thread::currentSingleton();
+    WTF::AtomStringTable* previousAtomStringTable = thread.atomStringTable();
+    bool needsVMAtomStringTable = previousAtomStringTable != vm.atomStringTable();
+    if (needsVMAtomStringTable) [[unlikely]]
+        thread.setCurrentAtomStringTable(vm.atomStringTable());
+    auto restoreAtomStringTable = WTF::makeScopeExit([&] {
+        if (needsVMAtomStringTable) [[unlikely]]
+            thread.setCurrentAtomStringTable(previousAtomStringTable);
+    });
 
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);

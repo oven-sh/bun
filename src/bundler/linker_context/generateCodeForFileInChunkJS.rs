@@ -574,14 +574,19 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                 // TODO: variants of the runtime functions
                 let body_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
+                // The wrapper must be a regular function, not an arrow, so that a
+                // top-level `arguments` reference in the CommonJS body binds to the
+                // wrapper's own `arguments` object (Node and esbuild both allow it).
                 let cjs_args = Vec::<Expr>::from_slice(&[Expr::init(
-                    E::Arrow {
-                        args: bun_ast::StoreSlice::new(args.into_bump_slice()),
-                        body: G::FnBody {
-                            stmts: body_stmts,
-                            loc: bun_ast::Loc::EMPTY,
+                    E::Function {
+                        func: G::Fn {
+                            args: bun_ast::StoreSlice::new(args.into_bump_slice()),
+                            body: G::FnBody {
+                                stmts: body_stmts,
+                                loc: bun_ast::Loc::EMPTY,
+                            },
+                            ..Default::default()
                         },
-                        ..Default::default()
                     },
                     bun_ast::Loc::EMPTY,
                 )]);
@@ -748,12 +753,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 }
 
                                 let class_name_loc = class.class.class_name.unwrap().loc;
-                                let class_name_ref = class
-                                    .class
-                                    .class_name
-                                    .unwrap()
-                                    .ref_
-                                    .expect("infallible: ref bound");
+                                let class_name_ref = class.class.class_name.unwrap().ref_;
                                 let lhs = hoist.wrap_identifier(class_name_loc, class_name_ref);
                                 let class_ref: StoreRef<E::Class> =
                                     StoreRef::from_bump(&mut class.class);
@@ -989,14 +989,14 @@ impl DeclCollector {
                 }
                 StmtData::SFunction(s) => {
                     if let Some(name_loc_ref) = s.func.name {
-                        if let Some(name_ref) = name_loc_ref.ref_ {
+                        if let Some(name_ref) = name_loc_ref.ref_.to_nullable() {
                             self.add_ref(name_ref, DeclInfoKind::Lexical, r, c);
                         }
                     }
                 }
                 StmtData::SClass(s) => {
                     if let Some(class_name) = s.class.class_name {
-                        if let Some(name_ref) = class_name.ref_ {
+                        if let Some(name_ref) = class_name.ref_.to_nullable() {
                             self.add_ref(name_ref, DeclInfoKind::Lexical, r, c);
                         }
                     }

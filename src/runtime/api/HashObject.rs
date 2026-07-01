@@ -64,23 +64,7 @@ pub(crate) struct Crc32;
 impl HashAlgorithm for Crc32 {
     type Output = u32;
     fn hash(seed: u64, input: &[u8]) -> u32 {
-        // zlib takes a 32-bit length, so chunk large inputs to avoid truncation.
-        let mut crc: bun_zlib::uLong = seed as u32 as bun_zlib::uLong;
-        let mut offset: usize = 0;
-        while offset < input.len() {
-            let remaining = input.len() - offset;
-            let max_len: usize = u32::MAX as usize;
-            let chunk_len: u32 = if remaining > max_len {
-                u32::MAX
-            } else {
-                u32::try_from(remaining).expect("int cast")
-            };
-            // SAFETY: offset < input.len() and chunk_len <= remaining, so the
-            // pointer range [ptr+offset, ptr+offset+chunk_len) is in-bounds.
-            crc = unsafe { bun_zlib::crc32(crc, input.as_ptr().add(offset), chunk_len) };
-            offset += chunk_len as usize;
-        }
-        u32::try_from(crc).expect("int cast")
+        bun_zlib::crc32_bytes(seed as u32, input)
     }
 }
 

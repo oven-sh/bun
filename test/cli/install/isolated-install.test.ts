@@ -2026,3 +2026,20 @@ test("rejects dependency aliases that traverse outside node_modules", async () =
   expect(() => lstatSync(join(packageDir, "pwned-by-alias"))).toThrow();
   expect(exitCode).not.toBe(0);
 });
+
+test("invalid --linker value is echoed back in the error", async () => {
+  using dir = tempDir("install-linker-err", {
+    "package.json": JSON.stringify({ name: "t" }),
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--linker=isoalted"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain('--linker: "isoalted"');
+  expect(stderr).toContain("'isolated' or 'hoisted'");
+  expect(exitCode).toBe(1);
+});

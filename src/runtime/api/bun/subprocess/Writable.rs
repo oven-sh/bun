@@ -287,6 +287,8 @@ impl<'a> Writable<'a> {
                 Stdio::Ipc | Stdio::Capture(_) => {
                     return Ok(Writable::Ignore);
                 }
+                // Rejected at i < 3 in Stdio::extract(); stdin never sees this.
+                Stdio::SocketFd => unreachable!("SocketFd at stdin"),
             }
         }
 
@@ -389,6 +391,8 @@ impl<'a> Writable<'a> {
             Stdio::Inherit => Ok(Writable::Inherit),
             Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
             Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
+            // Rejected at i < 3 in Stdio::extract(); stdin never sees this.
+            Stdio::SocketFd => unreachable!("SocketFd at stdin"),
         }
     }
 

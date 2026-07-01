@@ -319,13 +319,13 @@ pub unsafe fn rename_symbols_in_chunk(
                                     {
                                         r.add_top_level_symbol(import.namespace_ref);
                                         if let Some(default_name) = &import.default_name {
-                                            if let Some(ref_) = default_name.ref_ {
+                                            if let Some(ref_) = default_name.ref_.to_nullable() {
                                                 r.add_top_level_symbol(ref_);
                                             }
                                         }
 
                                         for item in import.items.slice() {
-                                            if let Some(ref_) = item.name.ref_ {
+                                            if let Some(ref_) = item.name.ref_.to_nullable() {
                                                 r.add_top_level_symbol(ref_);
                                             }
                                         }
@@ -347,7 +347,7 @@ pub unsafe fn rename_symbols_in_chunk(
                                         r.add_top_level_symbol(export_.namespace_ref);
 
                                         for item in export_.items.slice() {
-                                            if let Some(ref_) = item.name.ref_ {
+                                            if let Some(ref_) = item.name.ref_.to_nullable() {
                                                 r.add_top_level_symbol(ref_);
                                             }
                                         }

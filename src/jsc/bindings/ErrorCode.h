@@ -71,6 +71,10 @@ JSObject* createInvalidThisError(JSGlobalObject* globalObject, const String& mes
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeErrorWithCode);
 
+// Appends Node's `determineSpecificType()` rendering of a value ("type number (5)",
+// "an instance of Foo", ...) — the "Received ..." part of ERR_INVALID_ARG_TYPE messages.
+void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSC::JSValue value);
+
 enum Bound {
     LOWER,
     UPPER,

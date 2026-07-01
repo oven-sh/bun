@@ -99,12 +99,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         self.fn_only_data_visit = FnOnlyDataVisit {
             is_this_nested: true,
-            arguments_ref: func.arguments_ref,
+            arguments_ref: func.arguments_ref.to_nullable(),
             ..Default::default()
         };
 
         if let Some(name) = func.name {
-            if let Some(name_ref) = name.ref_ {
+            if let Some(name_ref) = name.ref_.to_nullable() {
                 self.record_declared_symbol(name_ref);
                 let symbol_name = self.load_name_from_ref(name_ref);
                 if is_eval_or_arguments(symbol_name) {
@@ -142,8 +142,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             kind: StmtsKind::FnBody,
             fn_body_loc: Some(body_loc),
         };
+        let rc_binding = self.react_compiler_candidate_name.take();
+        if rc_binding.is_some() {
+            self.react_compiler_pending = Some(bun_react_compiler::PendingCompile {
+                args: func.args,
+                flags: func.flags,
+                body_loc,
+                args_loc: func.open_parens_loc,
+                binding: func
+                    .name
+                    .map(|n| n.ref_)
+                    .filter(|r| r.is_valid())
+                    .or(rc_binding),
+                in_react_hoc: core::mem::take(&mut self.react_compiler_in_react_hoc),
+            });
+        }
         self.visit_stmts_and_prepend_temp_refs(&mut stmts, &mut temp_opts)
             .expect("unreachable");
+        self.react_compiler_pending = None;
+        if let Some(result) = self.react_compiler_result.take() {
+            func.args = result.args;
+            func.flags = result.flags;
+            if let Some(b) = rc_binding.filter(|r| *r != js_ast::Ref::NONE) {
+                self.record_usage(b);
+            }
+        }
 
         if self.options.features.react_fast_refresh {
             // react_refresh.hook_ctx_storage is `Option<NonNull<Option<HookContext>>>`
@@ -301,6 +324,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                 }
+                if self.react_compiler.is_some()
+                    && self.current_scope == self.module_scope
+                    && let BData::BIdentifier(id) = decl.binding.data
+                    && let Some(in_hoc) = self.react_compiler_candidate_expr(&val)
+                {
+                    self.react_compiler_candidate_name = Some(id.r#ref);
+                    self.react_compiler_in_react_hoc = in_hoc;
+                }
                 self.visit_expr_in_out(
                     &mut val,
                     ExprIn {
@@ -308,6 +339,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ..Default::default()
                     },
                 );
+                self.react_compiler_candidate_name = None;
+                self.react_compiler_in_react_hoc = false;
                 decl.value = Some(val);
                 self.decorator_class_name = prev_decorator_class_name;
 
@@ -344,7 +377,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         self.imports_to_convert_from_require
                                             [req.unwrapped_id as usize]
                                             .namespace
-                                            .ref_ = Some(ref_);
+                                            .ref_ = ref_;
                                         self.import_items_for_namespace
                                             .insert(ref_, ImportItemForNamespaceMap::default());
                                         continue 'outer;
@@ -359,17 +392,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.is_control_flow_dead = orig_dead;
                     if let BData::BIdentifier(_) = decl.binding.data {
                         if let Some(_ptr) = replacement {
-                            // blocked_on: P::replace_decl_and_possibly_remove is -gated
-                            //   (P.rs); un-gate this call when it lands.
-                            {
-                                // `BackRef::get` — entry lives in `self.options.features.replace_exports`,
-                                // which is not mutated during the visit pass.
-                                let replacer = _ptr.get();
-                                if !self.replace_decl_and_possibly_remove(decl, replacer) {
-                                    continue 'outer;
-                                }
+                            // `BackRef::get` — entry lives in `self.options.features.replace_exports`,
+                            // which is not mutated during the visit pass.
+                            let replacer = _ptr.get();
+                            if !self.replace_decl_and_possibly_remove(decl, replacer) {
+                                continue 'outer;
                             }
-                            let _ = &mut j; // keep 'outer label live until #[cfg] un-gates
                         }
                     }
                 }
@@ -396,18 +424,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .get_ptr(name)
                         .map(bun_ptr::BackRef::new)
                     {
-                        // blocked_on: P::replace_decl_and_possibly_remove is -gated
-                        //   (P.rs); un-gate this call when it lands.
-                        {
-                            // `BackRef::get` — entry lives in `self.options.features.replace_exports`,
-                            // which is not mutated during the visit pass.
-                            let replacer = _ptr.get();
-                            if !self.replace_decl_and_possibly_remove(decl, replacer) {
-                                let is_after = self.vis_scope().is_after_const_local_prefix;
-                                self.visit_decl(decl, false, was_const && !is_after, false);
-                            } else {
-                                continue 'outer;
-                            }
+                        // `BackRef::get` — entry lives in `self.options.features.replace_exports`,
+                        // which is not mutated during the visit pass.
+                        let replacer = _ptr.get();
+                        if !self.replace_decl_and_possibly_remove(decl, replacer) {
+                            let is_after = self.vis_scope().is_after_const_local_prefix;
+                            self.visit_decl(decl, false, was_const && !is_after, false);
+                        } else {
+                            continue 'outer;
                         }
                     }
                 }
@@ -703,30 +727,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    // P::stmts_to_single_stmt is ``-gated (P.rs:6267, blocked on
-    // S::Block Default). Inline a local copy until that un-gates.
-    fn stmts_to_single_stmt_(&mut self, loc: bun_ast::Loc, stmts: &'a mut [Stmt]) -> Stmt {
-        if stmts.is_empty() {
-            return Stmt {
-                data: StmtData::SEmpty(S::Empty {}),
-                loc,
-            };
-        }
-
-        if stmts.len() == 1 && !crate::parser::statement_cares_about_scope(&stmts[0]) {
-            // "let" and "const" must be put in a block when in a single-statement context
-            return stmts[0];
-        }
-
-        self.s(
-            S::Block {
-                stmts: bun_ast::StoreSlice::new_mut(stmts),
-                close_brace_loc: bun_ast::Loc::EMPTY,
-            },
-            loc,
-        )
-    }
-
     pub fn visit_loop_body(&mut self, stmt: Stmt) -> Stmt {
         let old_is_inside_loop = self.fn_or_arrow_data_visit.is_inside_loop;
         self.fn_or_arrow_data_visit.is_inside_loop = true;
@@ -755,7 +755,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.options.features.minify_syntax {
             // `stmts` was consumed above; `items` aliases the slice now
             // stored in `s_block.stmts`.
-            new_stmt = self.stmts_to_single_stmt_(stmt.loc, items);
+            new_stmt = self.stmts_to_single_stmt(stmt.loc, items);
         }
 
         new_stmt
@@ -785,7 +785,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.pop_scope();
         }
 
-        self.stmts_to_single_stmt_(stmt.loc, stmts.into_bump_slice_mut())
+        self.stmts_to_single_stmt(stmt.loc, stmts.into_bump_slice_mut())
     }
 
     pub fn visit_class(
@@ -802,7 +802,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.visit_ts_decorators(&mut class.ts_decorators);
 
         if let Some(name) = class.class_name {
-            self.record_declared_symbol(name.ref_.expect("infallible: ref bound"));
+            self.record_declared_symbol(name.ref_);
         }
 
         self.push_scope_for_visit_pass(ScopeKind::ClassName, name_scope_loc)
@@ -826,7 +826,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Use "const" for this symbol to match JavaScript run-time semantics. You
         // are not allowed to assign to this symbol (it throws a TypeError).
         if let Some(name) = class.class_name {
-            let name_ref = name.ref_.expect("infallible: ref bound");
+            let name_ref = name.ref_;
             shadow_ref.set(name_ref);
             let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
                 .original_name
@@ -836,7 +836,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .put(
                     original_name,
                     ScopeMember {
-                        ref_: name.ref_.unwrap_or(Ref::NONE),
+                        ref_: name.ref_,
                         loc: name.loc,
                     },
                 )
@@ -1145,7 +1145,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .declare_symbol(SymbolKind::Other, bind_loc, name)
                                 .unwrap_or(id_ref);
                             self.symbols[field_symbol_ref.inner_index() as usize]
-                                .must_not_be_renamed = true;
+                                .set_must_not_be_renamed(true);
                             let field_ident = self.new_expr(
                                 E::Identifier {
                                     ref_: field_symbol_ref,
@@ -1182,7 +1182,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else if class.class_name.is_none() {
             let sr = shadow_ref.get();
             class.class_name = Some(LocRef {
-                ref_: Some(sr),
+                ref_: sr,
                 loc: name_scope_loc,
             });
             self.record_declared_symbol(sr);
@@ -1206,6 +1206,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         );
 
         let p = self;
+
+        // Consume before recursing so a nested function body's `visit_stmts`
+        // doesn't compile the wrong target.
+        let rc_pending = if kind == StmtsKind::FnBody {
+            p.react_compiler_pending.take()
+        } else {
+            None
+        };
 
         #[cfg(debug_assertions)]
         let initial_scope: js_ast::StoreRef<js_ast::Scope> = p.current_scope;
@@ -1281,14 +1289,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // Annex B of the JavaScript standard.
                             // SAFETY: current_scope is a valid arena ptr for the parse.
                             if !p.current_scope().kind_stops_hoisting()
-                                && p.symbols[data
-                                    .func
-                                    .name
-                                    .unwrap()
-                                    .ref_
-                                    .expect("infallible: ref bound")
-                                    .inner_index()
-                                    as usize]
+                                && p.symbols[data.func.name.unwrap().ref_.inner_index() as usize]
                                     .kind
                                     == SymbolKind::HoistedFunction
                             {
@@ -1332,7 +1333,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // means neither identifier can be renamed to something else. So in that
                             // case we give up and do not preserve the semantics of the original code.
                             let name = data.func.name.unwrap();
-                            let name_ref = name.ref_.expect("infallible: ref bound");
+                            let name_ref = name.ref_;
                             // SAFETY: current_scope is a valid arena ptr for the parse.
                             if p.current_scope().contains_direct_eval {
                                 if let Some(hoisted_ref) =
@@ -1484,6 +1485,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         #[cfg(debug_assertions)]
         // if this fails it means that scope pushing/popping is not balanced
         debug_assert!(p.current_scope == initial_scope);
+
+        if let Some(pending) = rc_pending
+            && let Some(mut rc) = p.react_compiler.take()
+        {
+            let name = pending
+                .binding
+                .filter(|r| *r != js_ast::Ref::NONE)
+                .map(|r| p.load_name_from_ref(r));
+            let compiled = {
+                let host = &mut crate::react_compiler_host::ReactCompilerHost::new(p);
+                bun_react_compiler::maybe_compile_pending(
+                    &mut rc,
+                    host,
+                    &pending,
+                    stmts.as_mut_slice(),
+                    name,
+                )
+            };
+            p.react_compiler = Some(rc);
+            if let Some((new_body, result)) = compiled {
+                stmts.clear();
+                stmts.extend(new_body);
+                p.react_compiler_result = Some(result);
+            }
+        }
 
         if !p.options.features.minify_syntax || !p.options.features.dead_code_elimination {
             return Ok(());

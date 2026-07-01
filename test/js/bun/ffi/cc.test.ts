@@ -456,3 +456,266 @@ describe.skipIf(isASAN || isFFIUnavailable)("GC liveness of compiled symbols and
     });
   });
 });
+
+describe.skipIf(isFFIUnavailable)("double <-> JSValue conversions", () => {
+  // JSC NaN-boxes doubles, so a NaN whose payload collides with the tag space
+  // ("impure NaN", see JSC's PureNaN.h) must never be encoded as-is: it would
+  // decode as a native-chosen JSValue (true, undefined, an Int32, or a cell
+  // pointer). Every native -> JS double boundary has to purify first.
+  // All scenarios run in one spawned fixture: a forged cell-pointer JSValue
+  // can crash the process, which must not take the test runner with it.
+  it("impure NaNs are purified: f64/f32 returns, JSCallback arguments, read.f64/f32", async () => {
+    using dir = tempDir("bun-ffi-impure-nan", {
+      "impure.c": /* c */ `
+        typedef unsigned long long bits64;
+        union caster { bits64 u; double d; float f; };
+
+        /* 0xfffe000000000007 + DoubleEncodeOffset(2^49) == 0x7 == JSValue(true) */
+        double forge_true(void) { union caster c; c.u = 0xfffe000000000007ULL; return c.d; }
+        /* 0xfffe00000000000a encodes to 0xa == JSValue(undefined) */
+        double forge_undefined(void) { union caster c; c.u = 0xfffe00000000000aULL; return c.d; }
+        /* 0xfffc...: encoded value lands in the Int32 tag range, reads back as 0x12345678 */
+        double forge_int32(void) { union caster c; c.u = 0xfffc000012345678ULL; return c.d; }
+        /* 0xfffe000012345678: encodes to a cell pointer 0x12345678 */
+        double forge_cell(void) { union caster c; c.u = 0xfffe000012345678ULL; return c.d; }
+        /* float NaN with a full payload widens to an impure double NaN */
+        float forge_f32(void) { union caster c; c.u = 0xffffffffULL; return c.f; }
+        /* the canonical quiet NaN and ordinary values must be unaffected */
+        double pure_nan(void) { union caster c; c.u = 0x7ff8000000000000ULL; return c.d; }
+        double normal_double(void) { return 1.5; }
+        double echo_f64(double x) { return x; }
+
+        typedef double (*js_cb)(double);
+        /* the JSCallback argument direction uses the same NaN-boxing */
+        double invoke_with_impure(js_cb cb) {
+          union caster c; c.u = 0xfffe000000000007ULL;
+          return cb(c.d);
+        }
+      `,
+      "fixture.js": /* js */ `
+        import { cc, ptr, read, JSCallback } from "bun:ffi";
+        import path from "path";
+
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "impure.c"),
+          symbols: {
+            forge_true: { args: [], returns: "f64" },
+            forge_undefined: { args: [], returns: "f64" },
+            forge_int32: { args: [], returns: "f64" },
+            forge_cell: { args: [], returns: "f64" },
+            forge_f32: { args: [], returns: "f32" },
+            pure_nan: { args: [], returns: "f64" },
+            normal_double: { args: [], returns: "f64" },
+            echo_f64: { args: ["f64"], returns: "f64" },
+            invoke_with_impure: { args: ["ptr"], returns: "f64" },
+          },
+        });
+
+        const show = value => [typeof value, String(value)];
+        const results = {};
+        for (const name of [
+          "forge_true",
+          "forge_undefined",
+          "forge_int32",
+          "forge_cell",
+          "forge_f32",
+          "pure_nan",
+          "normal_double",
+        ]) {
+          results[name] = show(symbols[name]());
+        }
+        results.echo_f64 = show(symbols.echo_f64(2.5));
+
+        let callbackArg = null;
+        const callback = new JSCallback(
+          x => {
+            callbackArg = show(x);
+            return 0;
+          },
+          { args: ["f64"], returns: "f64" },
+        );
+        results.callback_return = show(symbols.invoke_with_impure(callback.ptr));
+        results.callback_arg = callbackArg;
+        callback.close();
+
+        results.read_f64 = show(read.f64(ptr(new BigUint64Array([0xfffe000000000007n])), 0));
+        results.read_f32 = show(read.f32(ptr(new Uint32Array([0xffffffff])), 0));
+
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // stderr is included in the received object so failures show it, but is not
+    // asserted empty: debug builds emit benign startup warnings.
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: {
+        forge_true: ["number", "NaN"],
+        forge_undefined: ["number", "NaN"],
+        forge_int32: ["number", "NaN"],
+        forge_cell: ["number", "NaN"],
+        forge_f32: ["number", "NaN"],
+        pure_nan: ["number", "NaN"],
+        normal_double: ["number", "1.5"],
+        echo_f64: ["number", "2.5"],
+        callback_return: ["number", "0"],
+        callback_arg: ["number", "NaN"],
+        read_f64: ["number", "NaN"],
+        read_f32: ["number", "NaN"],
+      },
+      exitCode: 0,
+    });
+  });
+
+  // JSVALUE_TO_DOUBLE must decode int32-tagged JSValues: JSC tags integral
+  // numbers as int32, so treating every numeric JSValue as double-encoded
+  // hands C an impure NaN instead of the number. The C-side observers report
+  // what the native code actually received, so these cannot pass by a
+  // JS -> C -> JS round trip cancelling an encode bug against a decode bug.
+  it("integral JS numbers reach C as the exact double, not NaN", async () => {
+    using dir = tempDir("bun-ffi-int32-double", {
+      "int32args.c": /* c */ `
+        /* 1 => C saw the expected value, 2 => C saw NaN, 3 => something else */
+        static int classify(double got, double expected) {
+          if (got == expected) return 1;
+          if (got != got) return 2;
+          return 3;
+        }
+        int int32_arg_seen_by_c(double x) { return classify(x, 42.0); }
+        int double_arg_seen_by_c(double x) { return classify(x, 1.5); }
+        int f32_int32_arg_seen_by_c(float x) { return classify(x, 7.0f); }
+        double echo_f64(double x) { return x; }
+
+        typedef double (*js_cb)(double);
+        int int32_callback_return_seen_by_c(js_cb cb) { return classify(cb(0.5), 3.0); }
+      `,
+      "fixture.js": /* js */ `
+        import { cc, JSCallback } from "bun:ffi";
+        import path from "path";
+
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "int32args.c"),
+          symbols: {
+            int32_arg_seen_by_c: { args: ["f64"], returns: "int" },
+            double_arg_seen_by_c: { args: ["f64"], returns: "int" },
+            f32_int32_arg_seen_by_c: { args: ["f32"], returns: "int" },
+            echo_f64: { args: ["f64"], returns: "f64" },
+            int32_callback_return_seen_by_c: { args: ["ptr"], returns: "int" },
+          },
+        });
+
+        const results = {
+          int32_arg: symbols.int32_arg_seen_by_c(42),
+          double_arg: symbols.double_arg_seen_by_c(1.5),
+          f32_int32_arg: symbols.f32_int32_arg_seen_by_c(7),
+          echo_int32: [typeof symbols.echo_f64(7), String(symbols.echo_f64(7))],
+        };
+
+        const callback = new JSCallback(() => 3, { args: ["f64"], returns: "f64" });
+        results.int32_callback_return = symbols.int32_callback_return_seen_by_c(callback.ptr);
+        callback.close();
+
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: {
+        int32_arg: 1,
+        double_arg: 1,
+        f32_int32_arg: 1,
+        echo_int32: ["number", "7"],
+        int32_callback_return: 1,
+      },
+      exitCode: 0,
+    });
+  });
+
+  // napi_create_double and napi_create_date take the double from the addon
+  // verbatim, so they are the same boundary. cc()-compiled C resolves napi_*
+  // from the host process; that lookup is only exercised on POSIX today (see
+  // cc-fixture.c).
+  it.skipIf(isWindows)("impure NaNs through napi_create_double and napi_create_date are purified", async () => {
+    using dir = tempDir("bun-ffi-impure-nan-napi", {
+      "impure_napi.c": /* c */ `
+        typedef struct napi_env_fake* napi_env_t;
+        typedef struct napi_value_fake* napi_value_t;
+        union caster { unsigned long long u; double d; };
+        extern int napi_create_double(napi_env_t env, double value, napi_value_t* result);
+        extern int napi_create_date(napi_env_t env, double time, napi_value_t* result);
+        napi_value_t impure_from_napi(napi_env_t env) {
+          union caster c; c.u = 0xfffe000000000007ULL;
+          napi_value_t result;
+          napi_create_double(env, c.d, &result);
+          return result;
+        }
+        napi_value_t impure_date_from_napi(napi_env_t env) {
+          union caster c; c.u = 0xfffe000000000007ULL;
+          napi_value_t result;
+          napi_create_date(env, c.d, &result);
+          return result;
+        }
+      `,
+      "fixture.js": /* js */ `
+        import { cc } from "bun:ffi";
+        import path from "path";
+
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "impure_napi.c"),
+          symbols: {
+            impure_from_napi: { args: ["napi_env"], returns: "napi_value" },
+            impure_date_from_napi: { args: ["napi_env"], returns: "napi_value" },
+          },
+        });
+
+        const value = symbols.impure_from_napi();
+        // Unpurified, the Date constructor receives JSValue(true) and
+        // produces new Date(1) instead of an Invalid Date.
+        const date = symbols.impure_date_from_napi();
+        console.log(
+          JSON.stringify({
+            double: [typeof value, String(value)],
+            date: [date instanceof Date, String(date.getTime())],
+          }),
+        );
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: {
+        double: ["number", "NaN"],
+        date: [true, "NaN"],
+      },
+      exitCode: 0,
+    });
+  });
+});

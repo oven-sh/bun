@@ -290,11 +290,9 @@ impl GraphTraceState {
 
 pub use super::dev_server_body::init;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Submodule types (struct shapes un-gated; method bodies stay in drafts)
-// ──────────────────────────────────────────────────────────────────────────
 pub mod assets;
 pub mod incremental_graph;
+pub mod inspector_agent;
 mod lifecycle;
 pub mod packed_map;
 pub mod route_bundle;
@@ -536,7 +534,7 @@ impl HotReloadEvent {
         }
 
         let mut rest_extra: &[u8] = &self.extra_files;
-        while let Some(str_idx) = bun_core::index_of_char(rest_extra, 0) {
+        while let Some(str_idx) = bun_core::strings::index_of_char_usize(rest_extra, 0) {
             bun_core::handle_oom(self.files.put(&rest_extra[0..str_idx as usize], ()));
             rest_extra = &rest_extra[str_idx as usize + 1..];
         }

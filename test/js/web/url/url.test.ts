@@ -186,12 +186,9 @@ describe("url", () => {
     }
   });
 
-  // https://url.spec.whatwg.org/#host-state: the host and hostname setters parse
-  // the value in host state, where "/", "?", "#" (and "\" for special schemes)
-  // terminate the host. If the host before the terminator is empty, a special
-  // (non-file) URL must be left unchanged; previously the empty host triggered a
-  // reparse of "scheme:///path" that promoted the first path segment to the
-  // authority.
+  // https://url.spec.whatwg.org/#host-state: "/", "?", "#" (and "\" for special
+  // schemes) terminate the host. An empty host before the terminator must leave
+  // a special non-file URL unchanged.
   describe("host and hostname setters", () => {
     it("does not rewrite the authority from a path segment on an invalid value", () => {
       const url = new URL("ws://x:80/a/b/c");

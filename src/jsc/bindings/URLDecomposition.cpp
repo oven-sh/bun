@@ -114,10 +114,9 @@ static bool isSlashQuestionMarkOrNumberSign(char16_t character)
     return isForwardSlashQuestionMarkOrNumberSign(character) || character == '\\';
 }
 
-// https://url.spec.whatwg.org/#host-state: the host and hostname setters stop
-// parsing at '/', '?', '#' (and '\' for special schemes). URL::setHost applies
-// the same truncation, so the empty-host checks below must run on the truncated
-// value or an all-terminator value like "#x" slips past them as "".
+// https://url.spec.whatwg.org/#host-state: the host and hostname setters stop at
+// '/', '?', '#' (and '\' for special schemes). The empty-host checks below must
+// see the truncated value, or an all-terminator value like "#x" slips past as "".
 static StringView hostBeforeTerminator(StringView value, const URL& fullURL)
 {
     auto index = value.find(fullURL.hasSpecialScheme() ? isSlashQuestionMarkOrNumberSign : isForwardSlashQuestionMarkOrNumberSign);

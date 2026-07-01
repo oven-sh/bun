@@ -861,8 +861,9 @@ fn prepare_workspace_update_plan(
         manager.update_workspace_name_hashes = Some(name_hashes);
     }
 
-    let top_level_dir: Box<[u8]> =
-        Box::from(strings::without_trailing_slash(FileSystem::instance().top_level_dir()));
+    let top_level_dir: Box<[u8]> = Box::from(strings::without_trailing_slash(
+        FileSystem::instance().top_level_dir(),
+    ));
 
     let mut cwd_in_target = false;
     let mut members: Vec<MemberUpdate> = Vec::new();
@@ -887,19 +888,16 @@ fn prepare_workspace_update_plan(
         };
 
         let mut path_buf = PathBuffer::uninit();
-        let abs_path: &[u8] = if rel.is_empty() {
-            bun_paths::resolve_path::join_abs_string_buf::<bun_paths::resolve_path::platform::Auto>(
-                &top_level_dir,
-                &mut path_buf.0,
-                &[b"package.json"],
-            )
-        } else {
-            bun_paths::resolve_path::join_abs_string_buf::<bun_paths::resolve_path::platform::Auto>(
-                &top_level_dir,
-                &mut path_buf.0,
-                &[&rel, b"package.json"],
-            )
-        };
+        let abs_path: &[u8] =
+            if rel.is_empty() {
+                bun_paths::resolve_path::join_abs_string_buf::<
+                    bun_paths::resolve_path::platform::Auto,
+                >(&top_level_dir, &mut path_buf.0, &[b"package.json"])
+            } else {
+                bun_paths::resolve_path::join_abs_string_buf::<
+                    bun_paths::resolve_path::platform::Auto,
+                >(&top_level_dir, &mut path_buf.0, &[&rel, b"package.json"])
+            };
 
         if let Some(member) = prepare_member_before_install(manager, abs_path, name_hash)? {
             members.push(member);
@@ -1028,7 +1026,8 @@ fn prepare_member_before_install(
         )
     };
 
-    let mut updating_packages: StringArrayHashMap<PackageUpdateInfo> = StringArrayHashMap::default();
+    let mut updating_packages: StringArrayHashMap<PackageUpdateInfo> =
+        StringArrayHashMap::default();
     PackageJSONEditor::edit_update_no_args(
         manager,
         &mut updating_packages,
@@ -1043,8 +1042,12 @@ fn prepare_member_before_install(
 
     // SAFETY: see above.
     let entry: &mut MapEntry = unsafe { &mut *entry_ptr };
-    let source_before_install =
-        print_package_json(&entry.source, member_root, indentation, preserve_trailing_newline);
+    let source_before_install = print_package_json(
+        &entry.source,
+        member_root,
+        indentation,
+        preserve_trailing_newline,
+    );
     // Push the pre-install edit into the cache so install resolves the updated
     // (possibly `latest`) versions for this member.
     entry.source.contents = Cow::Owned(source_before_install.clone());
@@ -1075,7 +1078,10 @@ fn commit_workspace_member_update(
         match json::parse_package_json_utf8(&source, manager.log_mut(), &json_arena) {
             Ok(v) => v,
             Err(err) => {
-                bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
+                bun_core::pretty_errorln!(
+                    "package.json failed to parse due to error {}",
+                    err.name()
+                );
                 Global::crash();
             }
         };
@@ -1091,8 +1097,12 @@ fn commit_workspace_member_update(
         },
     )?;
 
-    let new_source =
-        print_package_json(&source, ast, member.indentation, member.preserve_trailing_newline);
+    let new_source = print_package_json(
+        &source,
+        ast,
+        member.indentation,
+        member.preserve_trailing_newline,
+    );
 
     // Don't rewrite a member the update left unchanged.
     if new_source == member.original_contents {

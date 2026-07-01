@@ -1660,11 +1660,19 @@ function getStackString(ctx, error) {
     if (typeof stack === "string") {
       return stack;
     }
+    // Restore `ctx` even if formatting the non-string stack throws, so that a
+    // later occurrence of `error` in the same call is not reported as circular.
+    const seenLength = ctx.seen.length;
+    const indentationLvl = ctx.indentationLvl;
     ctx.seen.push(error);
     ctx.indentationLvl += 4;
-    const result = formatValue(ctx, stack);
-    ctx.indentationLvl -= 4;
-    ctx.seen.pop();
+    let result;
+    try {
+      result = formatValue(ctx, stack);
+    } finally {
+      ctx.seen.length = seenLength;
+      ctx.indentationLvl = indentationLvl;
+    }
     return `${ErrorPrototypeToString(error)}\n    ${result}`;
   }
   return ErrorPrototypeToString(error);
@@ -1803,11 +1811,13 @@ function formatError(err, constructor, tag, ctx, keys) {
   }
   let nameIsGetterThatThrows = false;
   try {
-    name = err.name;
+    // Unlike V8, JSC's lazy `Error#stack` does not re-read the live `name`, so
+    // a `name` whose coercion throws (e.g. `[Symbol()]`) reaches this `String()`.
+    name = err.name != null ? String(err.name) : "Error";
   } catch {
     nameIsGetterThatThrows = true;
+    name = "Error";
   }
-  name = name != null ? String(name) : "Error";
 
   //! temp fix for Bun losing the error name from inherited errors + extraneous ": " with no message
   stack = RegExpPrototypeSymbolReplace(/^Error: /, stack, `${name}${message ? ": " : ""}`);
@@ -1850,8 +1860,9 @@ function formatError(err, constructor, tag, ctx, keys) {
 
   stack = improveStack(stack, constructor, name, tag);
 
-  // Ignore the error message if it's contained in the stack.
-  let pos = (message && StringPrototypeIndexOf(stack, message)) || -1;
+  // Ignore the error message if it's contained in the stack. Skip non-string
+  // messages: `indexOf` would coerce them and can throw (e.g. `[Symbol()]`).
+  let pos = (typeof message === "string" && StringPrototypeIndexOf(stack, message)) || -1;
   if (pos !== -1) pos += message.length;
   // Wrap the error in brackets in case it has no stack trace.
   const stackStart = StringPrototypeIndexOf(stack, "\n    at", pos);

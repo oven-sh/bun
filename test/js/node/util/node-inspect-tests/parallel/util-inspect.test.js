@@ -1837,8 +1837,8 @@ test("util.inspect stack overflow handling", () => {
   assert(longList.includes("[Object: Inspection interrupted prematurely. Maximum call stack size exceeded.]"));
 });
 
-// `util.inspect` must never throw because of the value being inspected. Expected
-// outputs here are what Node.js produces for the same inputs.
+// `util.inspect` must never throw because of the value being inspected. Unless a
+// case notes otherwise, the expected output matches what Node.js produces.
 test("util.inspect does not throw on values with throwing getters", () => {
   const throwingGetter = key => ({
     get() {
@@ -1900,6 +1900,35 @@ test("util.inspect does not throw on values with throwing getters", () => {
     const err = new Error("foo");
     err.stack = err;
     assert.strictEqual(util.inspect(err), "[Error: foo\n    [Circular *1]]");
+  }
+
+  // A non-string `stack` whose own formatting throws must leave `ctx` intact, so
+  // a second occurrence of the error is not misreported as circular. (Node leaks
+  // the error onto `ctx.seen` here and prints `[Circular *1]` for the second one.)
+  {
+    const err = new Error("x");
+    err.stack = {
+      [Symbol.for("nodejs.util.inspect.custom")]() {
+        throw new Error("boom");
+      },
+    };
+    assert.strictEqual(util.inspect([err, err]), "[ [object Error], [object Error] ]");
+  }
+
+  // `name` / `message` values whose coercion throws (such as an array holding a
+  // Symbol) must not escape either. Node never reaches the coercions because
+  // V8's lazy `Error#stack` fails first; Bun gets here with a valid stack.
+  {
+    const err = new Error("hostile");
+    err.name = [Symbol("foo")];
+    const out = util.inspect(err);
+    assert.match(out, /^Error: hostile\n {4}at /);
+    assert.match(out, /\{\n {2}name: \[ Symbol\(foo\) \]\n\}$/);
+  }
+  {
+    const err = new Error("hostile");
+    err.message = [Symbol("foo")];
+    assert.match(util.inspect(err), /^Error\n {4}at /);
   }
 
   // A throwing `Symbol.toStringTag` getter on any value is ignored.

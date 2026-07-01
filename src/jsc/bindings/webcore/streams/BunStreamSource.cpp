@@ -888,7 +888,7 @@ JSValue assignToStream(JSGlobalObject* globalObject, JSReadableStream* stream, J
     JSObject* underlyingSource = stream->m_directUnderlyingSource.get();
     if (stream->m_bunMode == BunStreamMode::DirectPending && underlyingSource)
         RELEASE_AND_RETURN(scope, readDirectStream(globalObject, stream, sink, underlyingSource));
-    RELEASE_AND_RETURN(scope, readStreamIntoSink(globalObject, stream, sink, /* isNative */ true));
+    RELEASE_AND_RETURN(scope, readStreamIntoSink(globalObject, stream, sink));
 }
 
 //                       readStreamIntoSink — the generic pump
@@ -902,8 +902,6 @@ static void rsisAbrupt(JSGlobalObject*, JSReadStreamIntoSinkOperation*, JSValue 
 static JSValue rsisSinkWrite(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue chunk)
 {
     auto& vm = getVM(globalObject);
-    if (!op->m_isNative)
-        return uncheckedDowncast<JSBunStandaloneTextSink>(op->m_sink.get())->write(globalObject, chunk);
     MarkedArgumentBuffer args;
     args.append(chunk);
     ASSERT(!args.hasOverflowed());
@@ -913,8 +911,6 @@ static JSValue rsisSinkWrite(JSGlobalObject* globalObject, JSReadStreamIntoSinkO
 static JSValue rsisSinkFlushPending(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
 {
     auto& vm = getVM(globalObject);
-    if (!op->m_isNative)
-        return uncheckedDowncast<JSBunStandaloneTextSink>(op->m_sink.get())->flush(globalObject, true);
     MarkedArgumentBuffer args;
     args.append(jsBoolean(true));
     ASSERT(!args.hasOverflowed());
@@ -924,10 +920,6 @@ static JSValue rsisSinkFlushPending(JSGlobalObject* globalObject, JSReadStreamIn
 static JSValue rsisSinkEnd(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
 {
     auto& vm = getVM(globalObject);
-    if (!op->m_isNative) {
-        uncheckedDowncast<JSBunStandaloneTextSink>(op->m_sink.get())->end(globalObject);
-        return jsUndefined();
-    }
     MarkedArgumentBuffer noArgs;
     return invokeMethod(globalObject, op->m_sink.get(), Identifier::fromString(vm, "end"_s), noArgs);
 }
@@ -935,10 +927,6 @@ static JSValue rsisSinkEnd(JSGlobalObject* globalObject, JSReadStreamIntoSinkOpe
 static void rsisSinkClose(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue error)
 {
     auto& vm = getVM(globalObject);
-    if (!op->m_isNative) {
-        uncheckedDowncast<JSBunStandaloneTextSink>(op->m_sink.get())->close(globalObject, error);
-        return;
-    }
     MarkedArgumentBuffer args;
     args.append(error);
     ASSERT(!args.hasOverflowed());
@@ -1134,7 +1122,7 @@ static void rsisRegisterAndStart(JSGlobalObject* globalObject, JSReadStreamIntoS
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (op->m_isNative) {
+    {
         auto* stream = op->m_stream.get();
         auto* runtime = WebCore::JSStreamsRuntime::from(globalObject);
         auto* onCloseBound = createBoundHandler(globalObject, runtime->boundReadStreamIntoSinkOnClose(), op);
@@ -1257,7 +1245,7 @@ static void rsisBegin(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperatio
     RELEASE_AND_RETURN(scope, rsisContinueWithMany(globalObject, op, many));
 }
 
-JSPromise* readStreamIntoSink(JSGlobalObject* globalObject, JSReadableStream* stream, JSObject* sink, bool isNative)
+JSPromise* readStreamIntoSink(JSGlobalObject* globalObject, JSReadableStream* stream, JSObject* sink)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1266,7 +1254,6 @@ JSPromise* readStreamIntoSink(JSGlobalObject* globalObject, JSReadableStream* st
     auto* op = JSReadStreamIntoSinkOperation::create(vm, runtime->readStreamIntoSinkOperationStructure(domGlobalObject));
     op->m_stream.set(vm, op, stream);
     op->m_sink.set(vm, op, sink);
-    op->m_isNative = isNative;
     auto* result = JSPromise::create(vm, globalObject->promiseStructure());
     op->m_result.set(vm, op, result);
     rsisRunCatching(globalObject, op, [&] {

@@ -40,17 +40,13 @@ public:
     // the acquired default reader. The error path CLEARS this FIRST, so the final
     // releaseLock is deliberately skipped there.
     JSC::WriteBarrier<JSReadableStreamDefaultReader> m_reader;
-    // ERASED: a native JSSink controller (m_isNative) OR the standalone Text sink cell — a
-    // WebCore::JSBunStandaloneTextSink (BunStandaloneTextSink.h) — when !m_isNative
-    // (no start(onPull,onClose) registration on that path).
+    // ERASED: the native JSSink controller the pump writes into.
     JSC::WriteBarrier<JSC::JSObject> m_sink;
     // the JSPromise readStreamIntoSink returned (what Rust's Signal protocol awaits).
     JSC::WriteBarrier<JSC::JSPromise> m_result;
     bool m_didThrow { false };
     bool m_didClose { false };
     bool m_started { false };
-    // selects the sink protocol: true = JSSink controller, false = internal sink.
-    bool m_isNative { false };
 
 private:
     JSReadStreamIntoSinkOperation(JSC::VM&, JSC::Structure*);

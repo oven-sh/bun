@@ -459,8 +459,8 @@ JSC::JSPromise* nativeSourceCancel(JSC::JSGlobalObject*, JSReadableStreamDefault
 JSC::JSValue assignToStream(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue jsSinkController); // userJS: yes — BunStreamSource.cpp
 // The direct-stream → native-JSSink path. Returns undefined | JSPromise.
 JSC::JSValue readDirectStream(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSObject* sinkController, JSC::JSObject* underlyingSource); // userJS: yes — BunStreamSource.cpp
-// The generic pump. isNative selects the JSSink protocol vs the internal Text sink.
-JSC::JSPromise* readStreamIntoSink(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSObject* sink, bool isNative); // userJS: yes — BunStreamSource.cpp
+// The generic pump into a native JSSink controller.
+JSC::JSPromise* readStreamIntoSink(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSObject* sink); // userJS: yes — BunStreamSource.cpp
 // The ResumableSink protocol. Returns undefined (encoded).
 JSC::JSValue assignStreamIntoResumableSink(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSObject* resumableSink); // userJS: yes — BunStreamSource.cpp
 

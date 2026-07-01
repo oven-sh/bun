@@ -1,11 +1,9 @@
-// BunStandaloneTextSink.h — the standalone Text sink: the GENERIC `toText` accumulator.
-// `readableStreamIntoText` (BunStreamConsumers.cpp) allocates ONE of these and runs it
-// through `readStreamIntoSink(g, stream, sink, /*isNative*/ false)`. It is a real internal
-// GC cell, deliberately DISTINCT from `JSDirectStreamController`'s Text arm (the two have
-// different BOM behaviors); the accumulation LOGIC is shared through the ONE
+// BunStandaloneTextSink.h — the GENERIC `toText` accumulator owner cell.
+// `convertChunksToText` (BunStreamConsumers.cpp) allocates ONE of these and drives the
+// shared accumulator through it (the cell is the GC owner of the accumulated chunk
+// barriers). It is deliberately DISTINCT from `JSDirectStreamController`'s Text arm (the
+// two have different BOM behaviors); the accumulation LOGIC is shared through the ONE
 // `BunTextAccumulator` value type below — "one implementation, two owners".
-// `JSReadStreamIntoSinkOperation::m_sink` with `m_isNative == false` is exactly this class
-// (the JSSink `start(onPull, onClose)` registration is skipped for it).
 // Internal cell: no prototype, no constructor, never exposed to JS.
 // DESTRUCTIBLE: the accumulator owns a WTF::StringBuilder + a WTF::Vector of barriers.
 #pragma once
@@ -59,15 +57,13 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
 
-    // `result` is the JSPromise readStreamIntoSink returned; end()/close() settle it.
-    static JSBunStandaloneTextSink* create(JSC::VM&, JSC::Structure*, JSC::JSPromise* result);
+    static JSBunStandaloneTextSink* create(JSC::VM&, JSC::Structure*);
     static void destroy(JSC::JSCell*);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
     DECLARE_INFO;
-    // visitChildrenImpl MUST visit: m_result, and the barrier container
-    // m_accumulator.pieces (via m_accumulator.visit(locker, visitor) inside ONE
-    // `Locker { cellLock() }` scope taken by THIS visitChildrenImpl).
+    // visitChildrenImpl MUST visit the barrier container m_accumulator.pieces (via
+    // m_accumulator.visit(locker, visitor) inside ONE `Locker { cellLock() }` scope).
     DECLARE_VISIT_CHILDREN;
 
     template<typename, JSC::SubspaceAccess mode>
@@ -79,27 +75,14 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
 
-    // The internal sink protocol readStreamIntoSink drives when isNative == false.
-    // All userJS: YES.
-    // `write(chunk)` — accumulate one chunk (string or view) into m_accumulator.
-    JSC::JSValue write(JSC::JSGlobalObject*, JSC::JSValue chunk);
-    // `flush(true)` — the backpressure hook (a no-op accumulator has none).
-    JSC::JSValue flush(JSC::JSGlobalObject*, bool);
-    // `end()` — finishInternal, THEN the generic-path-only `withoutUTF8BOM` strip, then
-    // resolve m_result with the final string. (The DIRECT Text sink does NOT BOM-strip.)
-    void end(JSC::JSGlobalObject*);
-    // `close(error)` — reject m_result with `error`.
-    void close(JSC::JSGlobalObject*, JSC::JSValue error);
-
-    // The shared accumulator (see BunTextAccumulator above).
+    // The shared accumulator (see BunTextAccumulator above). userJS: the write arm can
+    // run chunk getters; the owner of this cell holds no raw pointers across it.
     Bun::WebStreams::BunTextAccumulator m_accumulator;
-    // The result promise readStreamIntoSink returned.
-    JSC::WriteBarrier<JSC::JSPromise> m_result;
 
 private:
     JSBunStandaloneTextSink(JSC::VM&, JSC::Structure*);
     ~JSBunStandaloneTextSink();
-    void finishCreation(JSC::VM&, JSC::JSPromise* result);
+    void finishCreation(JSC::VM&);
 };
 
 } // namespace WebCore

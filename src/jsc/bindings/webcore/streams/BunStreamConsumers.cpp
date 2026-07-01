@@ -52,17 +52,16 @@ JSBunStandaloneTextSink::JSBunStandaloneTextSink(VM& vm, Structure* structure)
 
 JSBunStandaloneTextSink::~JSBunStandaloneTextSink() = default;
 
-void JSBunStandaloneTextSink::finishCreation(VM& vm, JSPromise* result)
+void JSBunStandaloneTextSink::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    m_result.setMayBeNull(vm, this, result);
 }
 
-JSBunStandaloneTextSink* JSBunStandaloneTextSink::create(VM& vm, Structure* structure, JSPromise* result)
+JSBunStandaloneTextSink* JSBunStandaloneTextSink::create(VM& vm, Structure* structure)
 {
     auto* cell = new (NotNull, allocateCell<JSBunStandaloneTextSink>(vm)) JSBunStandaloneTextSink(vm, structure);
-    cell->finishCreation(vm, result);
+    cell->finishCreation(vm);
     return cell;
 }
 
@@ -94,7 +93,6 @@ void JSBunStandaloneTextSink::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSBunStandaloneTextSink>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_result);
     WTF::Locker locker { thisObject->cellLock() };
     thisObject->m_accumulator.visit(locker, visitor);
 }
@@ -489,8 +487,7 @@ static JSValue convertChunksToText(JSGlobalObject* globalObject, JSValue chunksV
     // joining, the flush-on-buffer ordering, and both BOM strips stay identical.
     auto* domGlobalObject = defaultGlobalObject(globalObject);
     auto* runtime = JSStreamsRuntime::from(globalObject);
-    auto* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
-    auto* sink = WebCore::JSBunStandaloneTextSink::create(vm, runtime->standaloneTextSinkStructure(domGlobalObject), resultPromise);
+    auto* sink = WebCore::JSBunStandaloneTextSink::create(vm, runtime->standaloneTextSinkStructure(domGlobalObject));
     for (unsigned i = 0; i < length; i++) {
         JSValue chunk = chunks->getIndex(globalObject, i);
         RETURN_IF_EXCEPTION(scope, {});
@@ -1174,37 +1171,6 @@ namespace WebCore {
 using namespace JSC;
 using namespace Bun::WebStreams;
 
-JSValue JSBunStandaloneTextSink::write(JSGlobalObject* globalObject, JSValue chunk)
-{
-    return Bun::WebStreams::textAccumulatorWrite(globalObject, this, m_accumulator, chunk);
-}
-
-JSValue JSBunStandaloneTextSink::flush(JSGlobalObject*, bool)
-{
-    return jsNumber(0);
-}
-
-void JSBunStandaloneTextSink::end(JSGlobalObject* globalObject)
-{
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* result = m_result.get();
-    if (!result || result->status() != JSPromise::Status::Pending)
-        return;
-    WTF::String text = Bun::WebStreams::finishTextAccumulator(globalObject, m_accumulator);
-    RETURN_IF_EXCEPTION(scope, );
-    // The GENERIC-path-only BOM strip; the direct Text sink never runs it.
-    result->fulfill(vm, jsString(vm, Bun::WebStreams::withoutUTF8BOM(text)));
-}
-
-void JSBunStandaloneTextSink::close(JSGlobalObject* globalObject, JSValue error)
-{
-    auto& vm = getVM(globalObject);
-    auto* result = m_result.get();
-    if (!result || result->status() != JSPromise::Status::Pending)
-        return;
-    result->reject(vm, error);
-}
 
 // The js2native host-function surface (BunStreamConsumers.h).
 

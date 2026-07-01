@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";
 
@@ -41,7 +41,9 @@ describe("production", () => {
     // Check that the error message shows the proper source location
     expect(buildStderr.toString()).toContain("throw new Error");
     expect(buildStderr.toString()).toContain("oh no!");
-  });
+    // https://github.com/oven-sh/bun/issues/33214: the build must surface the
+    // thrown error and exit rather than hang on a render promise that never settles.
+  }, isASAN ? 60_000 : 30_000);
 
   test("import.meta properties are inlined in production build", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-import-meta", {

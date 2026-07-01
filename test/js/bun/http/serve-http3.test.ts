@@ -1102,11 +1102,7 @@ describe("abrupt stop with live http/3 sessions", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("status=200 body=ok\n");
     // Exited on its own — a hang here means undead conns pinned the loop
     // until idleTimeout and the harness had to kill the child.

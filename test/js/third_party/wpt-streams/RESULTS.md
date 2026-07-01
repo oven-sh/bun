@@ -3,7 +3,7 @@
 Vendored from `web-platform-tests/wpt @ 1cfa3004f4ac74aa007591529aba9e9246b1f1bf`
 (see `UPSTREAM.md` for the file list and exclusions). 68 `.any.js` files copied
 byte-for-byte plus the `streams/resources/*.js` helpers and `common/gc.js`;
-`testharness-shim.ts` supplies the `promise_test`/`assert_*`/`t.*` surface on
+`../wpt-testharness-shim.ts` supplies the `promise_test`/`assert_*`/`t.*` surface on
 top of `bun:test` and `wpt-streams.test.ts` drives every file, resolving its
 `// META: script=` includes.
 
@@ -50,7 +50,7 @@ mode.
 
 The runner and shim were reworked so the harness can no longer produce a
 result it did not actually measure (see `wpt-streams.test.ts` /
-`testharness-shim.ts`). Both baselines were recorded on the same
+`../wpt-testharness-shim.ts`). Both baselines were recorded on the same
 implementation, so every delta below is a harness-accuracy delta, not an
 implementation change.
 

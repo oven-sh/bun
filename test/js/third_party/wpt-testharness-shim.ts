@@ -1,5 +1,5 @@
-// Minimal WPT testharness.js shim mapped onto bun:test, extended from the
-// test/js/third_party/wpt-h2 shim to cover the surface the vendored streams
+// Minimal WPT testharness.js shim mapped onto bun:test, shared by the
+// wpt-h2 and wpt-streams runners. It covers the surface their vendored
 // .any.js files (and streams/resources/*.js) actually touch:
 //
 //   test / promise_test / async_test
@@ -10,12 +10,12 @@
 //   step_timeout
 //
 // The vendored files are byte-identical to upstream; every adaptation lives
-// here or in wpt-streams.test.ts. Registration of subtests is delegated to
-// the runner through `setRegistrar` so that the runner decides how a WPT
-// subtest maps onto bun:test, exactly like the wpt-h2 pattern.
+// here or in each suite's runner. Registration of subtests is delegated to
+// the runner through `setRegistrar` so that each runner decides how a WPT
+// subtest maps onto bun:test (todo/failing policy lives in the runner).
 //
 // Faithful WPT semantics the shim enforces (see wpt-streams.test.ts for how
-// the runner maps expected failures):
+// that runner maps expected failures):
 //   - `promise_test` bodies must return a thenable.
 //   - A subtest that times out still runs its `t.add_cleanup`s, so a hung
 //     body cannot leave patched globals installed for later subtests.

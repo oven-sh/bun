@@ -1,7 +1,7 @@
 // Runs the vendored Web Platform Tests streams suite (streams/**/*.any.js)
 // against Bun's Web Streams implementation. The .any.js files and the
 // streams/resources/*.js helpers are byte-identical to upstream; every
-// adaptation lives in testharness-shim.ts and this driver, following the
+// adaptation lives in ../wpt-testharness-shim.ts and this driver, following the
 // test/js/third_party/wpt-h2 pattern.
 //
 // Vendored from web-platform-tests/wpt @ 1cfa3004f4ac74aa007591529aba9e9246b1f1bf
@@ -36,7 +36,7 @@
 import { afterAll, describe, expect, test as bunTest } from "bun:test";
 import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
-import { setRegistrar, wptTest } from "./testharness-shim";
+import { setRegistrar, wptTest } from "../wpt-testharness-shim";
 import expectations from "./expectations.json";
 
 const ROOT = import.meta.dir;
@@ -166,7 +166,7 @@ for (const file of files) {
       // transpiles, which would shadow the WPT-style test(fn, name) global.
       // Evaluate the vendored sources inside a Function whose `test`
       // parameter is the shim's synchronous test(); all other testharness
-      // identifiers resolve via globalThis (see testharness-shim.ts).
+      // identifiers resolve via globalThis (see ../wpt-testharness-shim.ts).
       new Function("test", pieces.join("\n;\n"))(wptTest);
     } catch (e) {
       register("harness: file failed to evaluate", () => Promise.reject(e));

@@ -28,7 +28,7 @@ git -C /tmp/wpt checkout 1cfa3004f4ac74aa007591529aba9e9246b1f1bf
   garbage-collection tests via `// META: script=/common/gc.js`.
 
 Vendored file contents must never be modified. All adaptation lives in
-`testharness-shim.ts` / `wpt-streams.test.ts`.
+`../wpt-testharness-shim.ts` / `wpt-streams.test.ts`.
 
 ## What is excluded (and why)
 

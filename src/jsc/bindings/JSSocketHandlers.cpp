@@ -2,6 +2,7 @@
 
 #include "JavaScriptCore/JSCJSValueInlines.h"
 #include "JSSocketHandlers.h"
+#include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
@@ -57,9 +58,10 @@ DEFINE_VISIT_CHILDREN(JSSocketHandlers);
 JSSocketHandlers* JSSocketHandlers::create(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    // The Structure must be allocated before the cell: allocating any JSCell
-    // between allocateCell() and finishCreation() is not allowed.
-    auto* structure = createStructure(vm, globalObject, jsNull());
+    // Resolve the cached structure before allocateCell(): allocating any
+    // JSCell between it and finishCreation() is not allowed, and the lazily
+    // initialized structure allocates on first use.
+    auto* structure = defaultGlobalObject(globalObject)->JSSocketHandlersStructure();
     auto* cell = new (NotNull, allocateCell<JSSocketHandlers>(vm)) JSSocketHandlers(vm, structure);
     cell->finishCreation(vm);
     return cell;

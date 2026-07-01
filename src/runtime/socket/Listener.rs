@@ -152,11 +152,13 @@ impl Listener {
             None => return Err(global.throw(format_args!("Expected \"socket\" object"))),
         };
 
-        // Validates like construction, then updates the callbacks of the
-        // existing cell in place, so the listener and every live socket
-        // sharing it pick them up with no swap of the `Handlers` itself.
-        let binary_type = this.handlers.get().reload_from_js(global, socket_obj)?;
-        this.handlers.with_mut(|h| h.binary_type = binary_type);
+        // Validates like construction (the option getters run user JS), then
+        // updates the callbacks of the existing cell in place, so the
+        // listener and every live socket sharing it pick them up with no swap
+        // of the `Handlers` itself.
+        let reloaded = Handlers::prepare_reload(global, socket_obj)?;
+        this.handlers.get().apply_reload(global, &reloaded);
+        this.handlers.with_mut(|h| h.binary_type = reloaded.binary_type);
 
         Ok(JSValue::UNDEFINED)
     }
@@ -1123,7 +1125,7 @@ impl Listener {
                             }
                         }
                         debug_assert!(!prev.this_value.get().is_empty());
-                        prev.handlers.set(NonNull::new(handlers_ptr));
+                        prev.set_handlers(global, handlers_ptr);
                         // Same ownership rationale as `connect_finish`'s prev
                         // branch — see the comment there.
                         prev.flags
@@ -1224,7 +1226,7 @@ impl Listener {
                                 unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
                             }
                         }
-                        prev.handlers.set(NonNull::new(handlers_ptr));
+                        prev.set_handlers(global, handlers_ptr);
                         // Same ownership rationale as `connect_finish`'s prev
                         // branch — see the comment there.
                         prev.flags
@@ -1488,7 +1490,7 @@ fn connect_finish<const IS_SSL: bool>(
                 unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
             }
         }
-        prev.handlers.set(NonNull::new(handlers_ptr));
+        prev.set_handlers(global, handlers_ptr);
         // `handlers_ptr` is a fresh `heap::alloc` box from `connect_inner`;
         // this socket now owns it. Without the flag, `deinit_and_destroy` and
         // `mark_inactive`'s shutdown gate skip the free and the box leaks

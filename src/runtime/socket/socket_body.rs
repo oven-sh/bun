@@ -1576,6 +1576,20 @@ impl<const SSL: bool> NewSocket<SSL> {
         value
     }
 
+    /// Points this socket at `handlers` and, when its JS wrapper already
+    /// exists (the `node:net` prev-socket reuse paths), stores the new cell in
+    /// the wrapper's visited slot. Fresh wrappers get it in
+    /// [`get_this_value`](Self::get_this_value).
+    pub fn set_handlers(&self, global: &JSGlobalObject, handlers_ptr: *mut Handlers) {
+        self.handlers.set(NonNull::new(handlers_ptr));
+        if let (Some(handlers), Some(wrapper)) =
+            (self.handlers.get(), self.this_value.get().try_get())
+        {
+            let handlers: bun_ptr::BackRef<Handlers> = handlers.into();
+            Self::handlers_set_cached(wrapper, global, handlers.cell());
+        }
+    }
+
     /// `*mut Self` for the same noalias-reentry reason as `on_writable`.
     ///
     /// # Safety
@@ -3223,38 +3237,25 @@ impl<const SSL: bool> NewSocket<SSL> {
             .get(global, "socket")?
             .ok_or_else(|| global.throw(format_args!("Expected \"socket\" option")))?;
 
-        // Overwrite the pointee so the
-        // listener + all sockets observe the new callbacks. `this.handlers` is
-        // a raw `*mut Handlers` (server: `&mut listener.handlers`; client:
-        // `heap::alloc`), so writing through it has valid provenance.
         let p: *mut Handlers = this
             .handlers
             .get()
             .expect("No handlers set on Socket")
             .as_ptr();
-        // SAFETY: `p` is the freely-aliased raw pointer; no `&Handlers` borrow
-        // is live across the read/writes below (single-threaded event loop).
-        let prev_mode = unsafe { (*p).mode };
-        let handlers =
-            Handlers::from_js(global, socket_obj, prev_mode == super::SocketMode::Server)?;
+        // Parse and validate first: the option getters run user JS that can
+        // close this socket and free or repoint its `Handlers`.
+        let reloaded = Handlers::prepare_reload(global, socket_obj)?;
         if this.handlers.get().map(|n| n.as_ptr()) != Some(p) {
             return Ok(JSValue::UNDEFINED);
         }
-        // Preserve runtime state across the struct assignment. `Handlers.fromJS` returns a
-        // fresh struct with `active_connections = 0` and `mode` limited to `.server`/`.client`,
-        // but this socket (and any in-flight callback scope) still holds references that were
-        // counted against the old value, and a duplex-upgraded server socket must keep
-        // `.duplex_server`. Losing the counter causes the next `markInactive` to either free
-        // the heap-allocated client `Handlers` while the socket still points at it, or
-        // underflow on the server path.
+        // Update the callbacks of the existing cell in place, so the listener
+        // and every socket sharing it observe them; nothing else about the
+        // shared `Handlers` (mode, active_connections) is touched.
         // SAFETY: `this.handlers` still points at `p` (checked above), so the
-        // allocation is live; raw-pointer-only access; see `get_handlers` contract.
+        // allocation is live; `apply_reload` runs no user JS.
         unsafe {
-            let active_connections = (*p).active_connections.get();
-            core::ptr::drop_in_place(p);
-            core::ptr::write(p, handlers);
-            (*p).mode = prev_mode;
-            (*p).active_connections.set(active_connections);
+            (*p).apply_reload(global, &reloaded);
+            (*p).binary_type = reloaded.binary_type;
         }
 
         Ok(JSValue::UNDEFINED)

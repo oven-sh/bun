@@ -95,6 +95,21 @@ pub const CALLBACK_FIELD_COUNT: usize = 13;
 /// callbacks the user did not provide.
 type ValidatedCallbacks = [JSValue; CALLBACK_FIELD_COUNT];
 
+/// Output of [`Handlers::prepare_reload`]: everything `reload` needs, parsed
+/// and validated before any `Handlers` is touched.
+pub struct ReloadedHandlers {
+    callbacks: ValidatedCallbacks,
+    pub binary_type: BinaryType,
+}
+
+fn binary_type_from_generated(binary_type: GeneratedBinaryType) -> BinaryType {
+    match binary_type {
+        GeneratedBinaryType::Arraybuffer => BinaryType::ArrayBuffer,
+        GeneratedBinaryType::Buffer => BinaryType::Buffer,
+        GeneratedBinaryType::Uint8array => BinaryType::Uint8Array,
+    }
+}
+
 impl Handlers {
     /// The `JSSocketHandlers` cell. Also stored into the listener / socket JS
     /// wrappers' visited `handlers` slot so the callbacks stay reachable from
@@ -374,11 +389,7 @@ impl Handlers {
         let result = Handlers {
             cell,
             cell_root,
-            binary_type: match generated.binary_type {
-                GeneratedBinaryType::Arraybuffer => BinaryType::ArrayBuffer,
-                GeneratedBinaryType::Buffer => BinaryType::Buffer,
-                GeneratedBinaryType::Uint8array => BinaryType::Uint8Array,
-            },
+            binary_type: binary_type_from_generated(generated.binary_type),
             // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the
             // VM outlives every `Handlers` (process-lifetime singleton).
             vm: global_object.bun_vm(),
@@ -455,23 +466,29 @@ impl Handlers {
         ])
     }
 
-    /// Validates `opts` exactly like construction does and, on success, writes
-    /// the new callbacks into the existing cell, so every live socket sharing
-    /// it picks them up in place (`Listener::reload`). On error nothing is
-    /// modified. Returns the new `binaryType` for the caller to apply.
-    pub fn reload_from_js(
-        &self,
+    /// Parses and validates `opts` for `reload` without touching any
+    /// `Handlers`: the option getters run user JS that can close a socket and
+    /// free or repoint its `Handlers`, so callers must re-check liveness
+    /// before [`apply_reload`](Self::apply_reload). On error nothing is
+    /// modified.
+    pub fn prepare_reload(
         global_object: &JSGlobalObject,
         opts: JSValue,
-    ) -> JsResult<BinaryType> {
+    ) -> JsResult<ReloadedHandlers> {
         let generated = GeneratedSocketConfigHandlers::from_js(global_object, opts)?;
         let callbacks = Self::validate_callbacks(global_object, &generated)?;
-        self.store_callbacks(global_object, &callbacks);
-        Ok(match generated.binary_type {
-            GeneratedBinaryType::Arraybuffer => BinaryType::ArrayBuffer,
-            GeneratedBinaryType::Buffer => BinaryType::Buffer,
-            GeneratedBinaryType::Uint8array => BinaryType::Uint8Array,
+        Ok(ReloadedHandlers {
+            callbacks,
+            binary_type: binary_type_from_generated(generated.binary_type),
         })
+    }
+
+    /// Writes the validated callbacks into the existing cell, so the listener
+    /// and every live socket sharing it pick them up in place. Runs no user
+    /// JS. The caller applies [`ReloadedHandlers::binary_type`] itself with
+    /// whatever mutable access it has to this `Handlers`.
+    pub fn apply_reload(&self, global_object: &JSGlobalObject, reloaded: &ReloadedHandlers) {
+        self.store_callbacks(global_object, &reloaded.callbacks);
     }
 }
 

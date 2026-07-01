@@ -1,4 +1,4 @@
-use bun_collections::VecExt;
+use bun_collections::{StringArrayHashMap, VecExt};
 use std::io::Write as _;
 
 use bun_ast as js_ast;
@@ -9,7 +9,7 @@ use bun_semver as semver;
 use bun_install::dependency::{self, TagExt as _};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::{Dependency, INVALID_PACKAGE_ID, resolution};
-use bun_install_types::DependencyGroup;
+use bun_install_types::{DependencyGroup, PackageNameHash};
 
 use super::package_manager_options::{Do, Enable};
 use super::{PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest};
@@ -242,6 +242,14 @@ pub fn edit_trusted_dependencies(
 /// versions.
 pub(crate) fn edit_update_no_args(
     manager: &mut PackageManager,
+    // Per-workspace scratch so each workspace's original version literals stay
+    // separate (two workspaces can pin the same dependency differently). The
+    // root/cwd passes `manager.updating_packages`; fanned-out members pass a
+    // fresh map each.
+    updating_packages: &mut StringArrayHashMap<PackageUpdateInfo>,
+    // Which workspace's resolved versions to read back in the post-install pass.
+    // `None` means the root workspace.
+    workspace_name_hash: Option<PackageNameHash>,
     current_package_json: &mut Expr,
     options: EditOptions,
 ) -> Result<(), bun_alloc::AllocError> {
@@ -252,8 +260,6 @@ pub(crate) fn edit_update_no_args(
 
     // Process-lifetime arena for AST
     // nodes that must outlive `Expr.Data.Store.reset()`. See `PackageManager.ast_arena`.
-    // `arena` is a disjoint-field borrow held across
-    // the `&mut manager.updating_packages` accesses below.
     let arena = &manager.ast_arena;
 
     for group in DEPENDENCY_GROUPS {
@@ -317,9 +323,9 @@ pub(crate) fn edit_update_no_args(
 
                         let key_str = key.as_utf8_string_literal().expect("unreachable");
                         // Capture the literal as an owned
-                        // copy before borrowing `manager.updating_packages` mutably.
+                        // copy before borrowing `updating_packages` mutably.
                         let version_literal_owned = Box::<[u8]>::from(version_literal);
-                        let entry = manager.updating_packages.get_or_put(key_str)?;
+                        let entry = updating_packages.get_or_put(key_str)?;
 
                         // If a dependency is present in more than one dependency group, only one of it's versions
                         // will be updated. The group is determined by the order of `dependency_groups`, the same
@@ -361,7 +367,7 @@ pub(crate) fn edit_update_no_args(
                     let lockfile = &*manager.lockfile;
                     let string_buf = lockfile.buffers.string_bytes.as_slice();
                     let workspace_package_id =
-                        lockfile.get_workspace_package_id(manager.workspace_name_hash);
+                        lockfile.get_workspace_package_id(workspace_name_hash);
                     let packages = lockfile.packages.slice();
                     let resolutions = packages.items_resolution();
                     let deps = packages.items_dependencies()[workspace_package_id as usize];
@@ -396,9 +402,7 @@ pub(crate) fn edit_update_no_args(
                         'updated: {
                             // fetchSwapRemove because we want to update the first dependency with a matching
                             // name, or none at all
-                            if let Some(entry) =
-                                manager.updating_packages.fetch_swap_remove(key_str)
-                            {
+                            if let Some(entry) = updating_packages.fetch_swap_remove(key_str) {
                                 let is_alias = entry.value.is_alias;
                                 let dep_name = &*entry.key;
                                 debug_assert_eq!(

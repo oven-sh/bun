@@ -1998,17 +1998,19 @@ fn get_or_put_resolved_package_with_find_result(
     install_peer: bool,
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
-    // reshaped for borrowck — `is_root_dependency(&self, &mut PackageManager, …)`
+    // reshaped for borrowck — `is_update_target_dependency(&self, &mut PackageManager, …)`
     // borrows `this.lockfile` and `this` at once. Split via raw root.
     let should_update = {
         let this_ptr: *mut PackageManager = this;
-        // SAFETY: `is_root_dependency` reads `manager.root_dependency_list` /
-        // `manager.workspace_package_json_cache` only — disjoint from
+        // SAFETY: `is_update_target_dependency` reads `manager.root_package_id` /
+        // `manager.update_workspace_name_hashes` only — disjoint from
         // `manager.lockfile`.
         this.to_update
-            // If updating, only update packages in the current workspace
+            // If updating, only update packages in the targeted workspace(s):
+            // the current workspace by default, or the `--recursive`/`--filter`
+            // set when one was selected.
             && unsafe { &*(*this_ptr).lockfile }
-                .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
+                .is_update_target_dependency(unsafe { &mut *this_ptr }, dependency_id)
             // no need to do a look up if update requests are empty (`bun update` with no args)
             && (this.update_requests.is_empty()
                 || this.updating_packages.contains(

@@ -92,9 +92,28 @@ FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);
 FOR_EACH_GETTER(DECLARE_ZIG_BUN_OBJECT_GETTER);
 #undef DECLARE_ZIG_BUN_OBJECT_GETTER
 
+namespace Bun {
+
+// reifyStaticProperty stores a lazy PropertyCallback's result via putDirect
+// with no exception check, so a builder must never leave an exception pending
+// or return the empty JSValue (which would be reified as the property's value).
+static JSC::JSValue lazyPropertyResult(JSC::TopExceptionScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue result)
+{
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        return JSC::jsUndefined();
+    }
+    return result;
+}
+
+} // namespace Bun
+
 // definition of the C++ wrapper to call the Rust function
 #define DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER(name) static JSC::JSValue BunObject_lazyPropCb_wrap_##name(JSC::VM &vm, JSC::JSObject *object) { \
-    return JSC::JSValue::decode(BunObject_lazyPropCb_##name(object->globalObject(), object)); \
+    JSC::JSGlobalObject* globalObject = object->globalObject(); \
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm); \
+    return Bun::lazyPropertyResult(scope, globalObject, JSC::JSValue::decode(BunObject_lazyPropCb_##name(globalObject, object))); \
 } \
 
 FOR_EACH_GETTER(DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER);

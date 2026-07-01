@@ -704,7 +704,7 @@ impl All {
     ///
     /// TODO: thread `vm: *mut VirtualMachine` through
     /// `insert`/`insert_lock_held`/`update` once
-    /// the `RuntimeHooks::timer_insert` slot widens — see jsc_hooks.rs.
+    /// the `bun_runtime_timer_insert` signature widens — see jsc_hooks.rs.
     #[cfg(windows)]
     fn ensure_uv_timer(&mut self) {
         // `vm` here means the OWNING VM (the one this timer is embedded in),

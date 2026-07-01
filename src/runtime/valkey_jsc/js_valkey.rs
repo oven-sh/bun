@@ -1087,7 +1087,8 @@ impl JSValkeyClient {
             }
         });
         // `vm.timer.insert(timer)` — `Timer::All` lives in `bun_runtime`;
-        // dispatched through `RuntimeHooks` (see VirtualMachine::timer_insert).
+        // dispatched through `bun_runtime_timer_insert` (see
+        // VirtualMachine::timer_insert).
         let vm = std::ptr::from_ref::<VirtualMachine>(self.client.get().vm).cast_mut();
         // SAFETY: `vm` is the live per-thread VM; `timer` is an unlinked
         // `EventLoopTimer` field of the boxed `JSValkeyClient` (stable address
@@ -1622,7 +1623,7 @@ impl JSValkeyClient {
             valkey::TLS::None => None,
             valkey::TLS::Enabled => {
                 // SAFETY: `vm_ptr` is the live per-thread VM (see above).
-                Some(unsafe { crate::jsc_hooks::default_client_ssl_ctx(vm_ptr) })
+                Some(unsafe { crate::jsc_hooks::bun_runtime_default_client_ssl_ctx(vm_ptr) })
             }
             valkey::TLS::Custom(_) => Some(self._secure.get().unwrap()),
         };

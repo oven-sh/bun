@@ -5,7 +5,7 @@
 //! compiles against the `bun_jsc` crate's available dependency set.
 //! `retroactively_report_discovered_tests` reaches into the `bun:test` runner
 //! (`bun_runtime::test_runner`) — a forward-dep cycle — so it dispatches
-//! through [`RuntimeHooks::retroactively_report_discovered_tests`].
+//! through [`bun_runtime_retroactively_report_discovered_tests`].
 
 use core::cell::Cell;
 use core::ffi::{c_int, c_void};
@@ -15,7 +15,7 @@ use bun_core::String as BunString;
 use bun_io::KeepAlive;
 use bun_io::posix_event_loop::{AllocatorType, get_vm_ctx};
 
-use crate::virtual_machine::{VirtualMachine, runtime_hooks};
+use crate::virtual_machine::{VirtualMachine, bun_runtime_retroactively_report_discovered_tests};
 use crate::{self as jsc, CallFrame, JSGlobalObject, ZigException};
 
 bun_core::declare_scope!(debugger, visible);
@@ -415,7 +415,7 @@ impl Debugger {
     pub fn start_js_debugger_thread(other_vm: *mut VirtualMachine) {
         // The global allocator is mimalloc and `InitOptions` does not carry
         // `allocator`/`env_loader` (those are wired by
-        // `RuntimeHooks::init_runtime_state`).
+        // `bun_runtime_init_runtime_state`).
         bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Debugger"));
         bun_core::scoped_log!(debugger, "startJSDebuggerThread");
         jsc::mark_binding();
@@ -795,13 +795,11 @@ pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
         //
         // LAYERING: `retroactivelyReportDiscoveredTests` reaches into
         // the test runner (`bun_test.DescribeScope`), which lives in `bun_runtime::test_runner`
-        // — a forward-dep cycle. Dispatched through [`RuntimeHooks`].
-        if let Some(hooks) = runtime_hooks() {
-            // SAFETY: `handle` is the live C++ agent just stored above.
-            unsafe {
-                (hooks.retroactively_report_discovered_tests)(dbg.test_reporter_agent.handle)
-            };
-        }
+        // — a forward-dep cycle. Dispatched through the link-time extern.
+        // SAFETY: `handle` is the live C++ agent just stored above.
+        unsafe {
+            bun_runtime_retroactively_report_discovered_tests(dbg.test_reporter_agent.handle)
+        };
     }
 }
 

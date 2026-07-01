@@ -22,7 +22,8 @@ use bun_resolver::package_json::{
 use crate::expr_jsc::ExprJsc;
 use bun_jsc::js_property_iterator::JSPropertyIteratorOptions;
 use bun_jsc::virtual_machine::{
-    InitOptions as VirtualMachineInitOptions, MacroModeGuard, VirtualMachine, runtime_hooks,
+    InitOptions as VirtualMachineInitOptions, MacroModeGuard, VirtualMachine,
+    bun_runtime_body_mixin_get_blob,
 };
 #[allow(deprecated)]
 use bun_jsc::{
@@ -418,7 +419,7 @@ impl Macro {
             // The resolver's forward-decl `BundleOptions` does not carry
             // `transform_options` (the canonical owner is the bundler's
             // `BundleOptions<'a>`), and
-            // `RuntimeHooks::init_runtime_state` builds the macro VM's
+            // `bun_runtime_init_runtime_state` builds the macro VM's
             // transpiler from a fresh `TransformOptions` value rather than
             // borrowing the caller's, so there is nothing to mutate-and-restore
             // on `resolver.opts` here. `log`/`env_loader` *are* threaded so the
@@ -663,11 +664,11 @@ impl<'a> Run<'a> {
                     // LAYERING: `Response`/`Request` (and their `BodyMixin::
                     // get_blob_without_call_frame`) live in `bun_runtime::
                     // webcore`, which depends on this crate. The downcast +
-                    // body-extract is dispatched through `RuntimeHooks` (the
+                    // body-extract is dispatched through the
+                    // `bun_runtime_body_mixin_get_blob` link-time extern (the
                     // established §Dispatch cycle-break) so the data shapes
                     // stay in the high tier.
-                    let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-                    if let Some(body_blob) = (hooks.body_mixin_get_blob)(value, self.global)? {
+                    if let Some(body_blob) = bun_runtime_body_mixin_get_blob(value, self.global)? {
                         return self.run(body_blob);
                     } else if let Some(resp) = value.as_::<WebCore::Blob>() {
                         blob_ = Some(resp);

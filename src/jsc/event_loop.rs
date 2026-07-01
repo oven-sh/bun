@@ -5,9 +5,9 @@
 //! per-`Task` switch and `ImmediateObject::runImmediateTask`) name
 //! `bun_runtime` types and are hoisted to that tier via link-time
 //! `extern "Rust"` (`__bun_tick_queue_with_count` / `__bun_run_immediate_task`);
-//! `auto_tick`/`auto_tick_active` likewise
-//! dispatch through `virtual_machine::RuntimeHooks` (need `Timer::All` for the
-//! poll deadline). See PORTING.md §Dispatch.
+//! `auto_tick`/`auto_tick_active` likewise dispatch through the link-time
+//! `virtual_machine::bun_runtime_auto_tick{,_active}` externs (need
+//! `Timer::All` for the poll deadline). See PORTING.md §Dispatch.
 
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
@@ -901,8 +901,9 @@ impl EventLoop {
     }
 
     /// `eventLoop().autoTick()` — bounces through `VirtualMachine::auto_tick`,
-    /// which dispatches to the `bun_runtime` hook (needs `Timer::All` for the
-    /// poll timeout). The body lives in `bun_runtime::jsc_hooks::auto_tick`.
+    /// which dispatches into `bun_runtime` (needs `Timer::All` for the poll
+    /// timeout). The body is `bun_runtime_auto_tick` in
+    /// `bun_runtime::jsc_hooks`.
     #[inline]
     pub fn auto_tick(&mut self) {
         self.vm_ref().as_mut().auto_tick();
@@ -911,7 +912,7 @@ impl EventLoop {
     /// `eventLoop().autoTickActive()` — like [`auto_tick`](Self::auto_tick) but
     /// only sleeps in the uSockets loop while it has active handles.
     /// Dispatches through
-    /// `VirtualMachine::auto_tick_active` → `RuntimeHooks::auto_tick_active`
+    /// `VirtualMachine::auto_tick_active` → `bun_runtime_auto_tick_active`
     /// (body lives in `bun_runtime::jsc_hooks` — needs `Timer::All`).
     #[inline]
     pub fn auto_tick_active(&mut self) {

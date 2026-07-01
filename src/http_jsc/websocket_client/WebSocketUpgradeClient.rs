@@ -410,10 +410,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // §Dispatch (cycle-break): `RareData.defaultClientSslCtx()` and
         // `RareData.sslCtxCache().getOrCreateOpts()` reach
         // `RuntimeState.ssl_ctx_cache` (high-tier `bun_runtime`); routed
-        // through `RuntimeHooks` so this crate stays below `bun_runtime`.
+        // through the `bun_runtime_*` link-time externs so this crate stays
+        // below `bun_runtime`.
         let secure_ptr: Option<*mut uws::SslCtx> = if SSL {
-            let hooks =
-                bun_jsc::virtual_machine::runtime_hooks().expect("RuntimeHooks not installed");
             'brk: {
                 if let Some(config) = &client_ref.ssl_config {
                     if config.requires_custom_request_ctx {
@@ -424,7 +423,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         // SAFETY: `vm_ptr` is the live per-thread VM (caller
                         // contract); JS thread.
                         let ctx = unsafe {
-                            (hooks.ssl_ctx_cache_get_or_create)(
+                            bun_jsc::virtual_machine::bun_runtime_ssl_ctx_cache_get_or_create(
                                 vm_ptr,
                                 &config.as_usockets_for_client_verification(),
                                 &mut err,
@@ -450,7 +449,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     }
                 }
                 // SAFETY: `vm_ptr` is the live per-thread VM; JS thread.
-                Some(unsafe { (hooks.default_client_ssl_ctx)(vm_ptr) })
+                Some(unsafe {
+                    bun_jsc::virtual_machine::bun_runtime_default_client_ssl_ctx(vm_ptr)
+                })
             }
         } else {
             None

@@ -276,7 +276,7 @@ impl AbortReason {
 //
 // LAYERING: `EventLoopTimer` + `TimerFlags` live in `bun_event_loop` (lower
 // tier). The per-VM timer heap (`Timer::All`) lives in `bun_runtime` (higher
-// tier) and is reached through `RuntimeHooks::{timer_insert,timer_remove}` —
+// tier) and is reached through `bun_runtime_timer_{insert,remove}` —
 // see `VirtualMachine::timer_insert/remove`. C++ only ever sees `*mut Timeout`
 // as an opaque token round-tripped through `create`/`run`/`deinit`, so the
 // concrete layout is private to Rust; `repr(C)` is here so `offset_of!` is

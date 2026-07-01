@@ -1604,9 +1604,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     nsec: ts.nsec,
                 };
             });
-            // `Timer::All` lives in `bun_runtime`; reach it via the
-            // `RuntimeHooks` dispatch (`VirtualMachineRef::timer_insert`) which
-            // forwards to `crate::timer::All::insert`.
+            // `Timer::All` lives in `bun_runtime`; reach it via
+            // `VirtualMachineRef::timer_insert` (the `bun_runtime_timer_insert`
+            // dispatch), which forwards to `crate::timer::All::insert`.
             // SAFETY: `jsc_vm_ptr` is the live per-thread VM; the timer node is
             // owned by the boxed `Subprocess` and stays at a stable address
             // until `Subprocess::finalize` removes it from the heap.

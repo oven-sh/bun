@@ -2812,7 +2812,7 @@ impl bun_jsc::ConsoleFormatter for Formatter<'_> {
 /// implemented for both [`Formatter`] (this module) and
 /// [`bun_jsc::console_object::Formatter`] so the same body serves the test
 /// runner *and* `console.log`'s `.Private` arm (via the
-/// `RuntimeHooks::console_print_runtime_object` hook).
+/// `bun_runtime_console_print_runtime_object` extern).
 pub trait AsymmetricMatcherFormatter {
     fn amf_add_for_new_line(&mut self, n: usize);
     fn amf_global_this(&self) -> &JSGlobalObject;

@@ -810,7 +810,7 @@ impl Tree {
             }
 
             let hoisted: HoistDependencyResult = 'hoisted: {
-                // don't hoist if it's a folder dependency or a bundled dependency.
+                // don't hoist if it's a bundled dependency.
                 if dependency.behavior.is_bundled() {
                     break 'hoisted HoistDependencyResult::Placement(Placement {
                         id: next_id,
@@ -833,16 +833,19 @@ impl Tree {
                     continue 'dep;
                 }
 
-                if pkg_resolutions[pkg_id as usize].tag == crate::resolution::Tag::Folder {
-                    break 'hoisted HoistDependencyResult::Placement(Placement {
-                        id: next_id,
-                        bundled: false,
-                    });
-                }
+                // A folder dependency stays in the node_modules of the package that declares it,
+                // so cap hoisting at this node. `hoist_dependency` still deduplicates it against
+                // a same-name dependency already placed here (e.g. in deps and devDeps).
+                let dep_hoist_root_id =
+                    if pkg_resolutions[pkg_id as usize].tag == crate::resolution::Tag::Folder {
+                        next_id
+                    } else {
+                        hoist_root_id
+                    };
 
                 Tree::hoist_dependency::<true, METHOD>(
                     next_id,
-                    hoist_root_id,
+                    dep_hoist_root_id,
                     pkg_id,
                     dep_id,
                     builder,

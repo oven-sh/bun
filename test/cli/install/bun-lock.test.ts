@@ -869,3 +869,54 @@ it("prints an actionable error for a lockfile version newer than this build supp
   expect(err).not.toContain("Unknown lockfile version");
   expect(await exited).toBe(0);
 });
+
+it("writes one packages entry for a folder dependency listed in dependencies and devDependencies", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  await Promise.all([
+    write(join(packageDir, "vendor", "a", "package.json"), JSON.stringify({ name: "a", version: "1.0.0" })),
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "dup-folder-dep",
+        dependencies: { a: "file:./vendor/a" },
+        devDependencies: { a: "file:./vendor/a" },
+      }),
+    ),
+  ]);
+
+  // bun warns about the duplicate dependency, but the install succeeds
+  await runBunInstall(env, packageDir, { allowWarnings: true });
+
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  // exactly one `"a": [...]` entry in "packages"; before the fix there were two,
+  // which is a duplicate object key bun's own lockfile parser rejects
+  expect(lockfile.match(/"a": \[/g)).toEqual(['"a": [']);
+
+  // the lockfile bun just wrote must be accepted by the next install
+  await runBunInstall(env, packageDir, { allowWarnings: true, frozenLockfile: true });
+});
+
+it("writes one packages entry when dependencies and devDependencies resolve to different folders", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  await Promise.all([
+    write(join(packageDir, "v1", "a", "package.json"), JSON.stringify({ name: "a", version: "1.0.0" })),
+    write(join(packageDir, "v2", "a", "package.json"), JSON.stringify({ name: "a", version: "2.0.0" })),
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "dup-folder-dep-versions",
+        dependencies: { a: "file:./v1/a" },
+        devDependencies: { a: "file:./v2/a" },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(env, packageDir, { allowWarnings: true });
+
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  expect(lockfile.match(/"a": \[/g)).toEqual(['"a": [']);
+
+  await runBunInstall(env, packageDir, { allowWarnings: true, frozenLockfile: true });
+});

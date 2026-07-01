@@ -169,7 +169,6 @@ pub mod subprocess {
         Some(fd)
     }
 
-
     /// The in-memory payload that a
     /// `StaticPipeWriter` drains into the child's stdin/extra-fd.
     ///

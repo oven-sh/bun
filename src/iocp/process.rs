@@ -43,8 +43,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Once;
 
 use bun_windows_sys::kernel32::{
-    DuplicateHandle, GetExitCodeProcess, GetFileType, GetStdHandle,
-    SetHandleInformation,
+    DuplicateHandle, GetExitCodeProcess, GetFileType, GetStdHandle, SetHandleInformation,
 };
 use bun_windows_sys::{
     AssignProcessToJobObject, BOOL, BOOLEAN, CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW,
@@ -1292,7 +1291,13 @@ unsafe extern "system" fn process_exit_wait_cb(context: *mut c_void, timed_out: 
         // `exit_posted` latched true above: a lost packet would wedge the
         // close gate forever. Must stay the last `h`-touching statement — a
         // successful post may let the loop thread free `h`.
-        crate::event_loop::post_or_die((*h).exit_iocp, 0, 0, (*h).exit_req.overlapped_ptr(), "process exit");
+        crate::event_loop::post_or_die(
+            (*h).exit_iocp,
+            0,
+            0,
+            (*h).exit_req.overlapped_ptr(),
+            "process exit",
+        );
     }
 }
 

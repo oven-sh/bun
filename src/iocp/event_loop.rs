@@ -14,8 +14,8 @@ use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_windows_sys::kernel32::{
-    CreateIoCompletionPort, GetQueuedCompletionStatusEx,
-    QueryPerformanceCounter, QueryPerformanceFrequency,
+    CreateIoCompletionPort, GetQueuedCompletionStatusEx, QueryPerformanceCounter,
+    QueryPerformanceFrequency,
 };
 use bun_windows_sys::{
     CloseHandle, DWORD, HANDLE, INFINITE, OVERLAPPED_ENTRY, Win32Error, kernel32::GetLastError,

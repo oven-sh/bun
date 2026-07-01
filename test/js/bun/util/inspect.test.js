@@ -569,11 +569,12 @@ it("Bun.inspect huge sparse array summarizes holes without iterating them", asyn
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({
+  expect({ stdout, stderr, exitCode }).toEqual({
     stdout:
       "[\n  4294967294 x empty items\n]\n" +
       '[\n  4294967292 x empty items, "x"\n]\n' +
       "[\n  1, 2, 3, 4294967291 x empty items\n]\n",
+    stderr: "",
     exitCode: 0,
   });
 });

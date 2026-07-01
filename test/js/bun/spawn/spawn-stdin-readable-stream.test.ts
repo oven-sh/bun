@@ -376,11 +376,6 @@ describe("spawn stdin ReadableStream", () => {
         // Unhandled rejections are only reported after a microtask drain; give
         // the tracker a turn so rejections from the last exits are counted.
         await Bun.sleep(0);
-
-        // Exit explicitly: on Windows an async iterable stdin does not tear
-        // down after the child dies and would keep the event loop alive.
-        // https://github.com/oven-sh/bun/issues/33020
-        process.exit(0);
         `,
       ],
       env: bunEnv,
@@ -400,6 +395,74 @@ describe("spawn stdin ReadableStream", () => {
 
   test("in-flight write from an async iterator stdin when the child dies does not surface an unhandled rejection", async () => {
     await expectNoUnhandledRejectionWhenChildDies(true);
+  });
+
+  // When the child dies mid-write the sink's close path must tear down the
+  // ReadableStream feeding it (for an async iterable, return the generator),
+  // or the still-running pull keeps the parent's event loop alive forever.
+  // On Windows the libuv write-error path skipped that close notification.
+  // https://github.com/oven-sh/bun/issues/33020
+  async function expectParentExitsAfterChildDies(useIterator: boolean) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const chunk = Buffer.alloc(256 * 1024, "x");
+        let produced = 0;
+        function producedOne() {
+          if (++produced === 4) child.kill();
+        }
+        async function* iterate() {
+          while (true) {
+            await Bun.sleep(1);
+            producedOne();
+            yield chunk;
+          }
+        }
+        function readable() {
+          return new ReadableStream({
+            async pull(controller) {
+              await Bun.sleep(1);
+              producedOne();
+              controller.enqueue(chunk);
+            },
+          });
+        }
+
+        // The child never reads its stdin, so a 256 KiB write can never finish
+        // and the sink holds an in-flight write when the child is killed.
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", "setTimeout(() => {}, 1e9)"],
+          stdin: (${useIterator} ? iterate : readable)(),
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+
+        await child.exited;
+        console.log("child exited");
+        // No process.exit(): the point is that the event loop drains on its own.
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("EPIPE");
+    expect(stdout.trim()).toBe("child exited");
+    // The parent reached the natural end of its event loop; it was not killed.
+    expect(proc.signalCode).toBe(null);
+    expect(exitCode).toBe(0);
+  }
+
+  test("parent exits after the child dies when stdin is an async iterable", async () => {
+    await expectParentExitsAfterChildDies(true);
+  });
+
+  test("parent exits after the child dies when stdin is a ReadableStream", async () => {
+    await expectParentExitsAfterChildDies(false);
   });
 
   test("ReadableStream with process that exits immediately", async () => {

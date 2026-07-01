@@ -992,6 +992,10 @@ class Worker extends EventEmitter {
     // The transfer is committed - release fds that were transferred but are
     // not referenced from workerData (nothing will deserialize them).
     options[kFinalizeJSTransferables]?.();
+    // Tracing active (CLI flag or dynamic enable): record the Node-style
+    // `[worker N] <name>` thread-name metadata event. No-op when tracing is
+    // off — the agent module is a tiny one-time load.
+    require("internal/trace_events").emitWorkerThreadName(options.name, this.#worker.threadId);
     this.#worker.addEventListener("close", this.#onClose.bind(this), { once: true });
     this.#worker.addEventListener("error", this.#onError.bind(this));
     this.#worker.addEventListener("message", this.#onMessage.bind(this));
@@ -1222,6 +1226,8 @@ class Worker extends EventEmitter {
     }
     this.#stdinPort?.close();
     this.#onExitPromise = e.code;
+    this.#stdout?.push(null);
+    this.#stderr?.push(null);
     this.emit("exit", e.code);
   }
 

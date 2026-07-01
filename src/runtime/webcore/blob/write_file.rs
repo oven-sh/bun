@@ -595,7 +595,6 @@ mod windows_impl {
     // `bun_jsc::EventLoop`/`ManagedTask` are *modules* (namespace
     // re-exports); the structs live one level deeper.
     use bun_jsc::{ConcurrentTask, ManagedTask::ManagedTask, event_loop::EventLoop};
-    
 
     pub struct WriteFileWindows {
         pub file_blob: Blob,
@@ -638,9 +637,9 @@ mod windows_impl {
     }
 
     impl WriteFileWindows {
-// `event_loop` is the VM-owned per-thread singleton (see the SAFETY
-// comments below); the raw-pointer parameter is the bindings ABI.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
+        // `event_loop` is the VM-owned per-thread singleton (see the SAFETY
+        // comments below); the raw-pointer parameter is the bindings ABI.
+        #[allow(clippy::not_unsafe_ptr_arg_deref)]
         pub fn create_with_ctx(
             file_blob: Blob,
             bytes_blob: Blob,

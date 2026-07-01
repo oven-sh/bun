@@ -350,7 +350,8 @@ impl PathWatcher {
         };
 
         // BACKREF field stays raw (LIFETIMES.tsv); capture the pointer once before further &mut use.
-        let manager_ptr: *mut PathWatcherManager = std::ptr::from_mut::<PathWatcherManager>(manager);
+        let manager_ptr: *mut PathWatcherManager =
+            std::ptr::from_mut::<PathWatcherManager>(manager);
 
         if let Some(&existing) = manager.watchers.get(event_path.as_bytes()) {
             return sys::Result::Ok(existing);

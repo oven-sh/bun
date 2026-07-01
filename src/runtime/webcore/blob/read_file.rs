@@ -951,9 +951,9 @@ impl ReadFileUV {
 
     /// Raw entry — caller already has the type-erased `(fn, *anyopaque)` pair.
     /// Shares the body with `start`.
-// `event_loop` is the VM-owned per-thread singleton (see the SAFETY
-// comments below); the raw-pointer parameter is the bindings ABI.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
+    // `event_loop` is the VM-owned per-thread singleton (see the SAFETY
+    // comments below); the raw-pointer parameter is the bindings ABI.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn start_with_ctx(
         event_loop: *mut EventLoop,
         store: StoreRef,

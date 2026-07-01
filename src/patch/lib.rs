@@ -278,9 +278,9 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
             let p = {
                 let p = state.patch_dir_abs_path(patch_dir)?;
                 paths::resolve_path::join_z::<paths::platform::Auto>(&[
-                p.as_bytes(),
-                file_path.as_bytes(),
-            ])
+                    p.as_bytes(),
+                    file_path.as_bytes(),
+                ])
             };
             sys::stat(p)
         };

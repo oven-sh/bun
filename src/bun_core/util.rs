@@ -786,7 +786,10 @@ impl PathBuffer {
     /// the leak/stress tests. Leave the bytes uninit.
     #[inline]
     #[allow(invalid_value, clippy::uninit_assumed_init)]
-    #[expect(clippy::large_stack_frames, reason = "write-only scratch; see doc above")]
+    #[expect(
+        clippy::large_stack_frames,
+        reason = "write-only scratch; see doc above"
+    )]
     pub fn uninit() -> Self {
         // SAFETY: `PathBuffer` is `repr(transparent)` over `[u8; N]`; every bit
         // pattern is a valid `u8`, and callers treat this as a write-only

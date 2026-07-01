@@ -126,13 +126,9 @@ fn update_package_json_and_install_with_manager_with_updates(
         Global::crash();
     }
 
-    // `bun update --recursive` / `--filter` (with no package names) fan the
-    // update out to workspace members. This resolves the target workspace set,
-    // sets the install-time update gate (`manager.update_workspace_name_hashes`),
-    // and runs the pre-install edit pass on each member. The cwd/root
-    // package.json is still handled by the flow below (guarded by
-    // `plan.cwd_in_target`), and members are committed after install. Named
-    // updates (`bun update <pkg> --recursive`) keep the existing behavior.
+    // For `bun update --recursive`/`--filter` with no named packages, fan the
+    // update out to workspace members: set the install-time gate and edit each
+    // member before install (the cwd is still handled below via `cwd_in_target`).
     let mut plan = if subcommand == Subcommand::Update && updates.is_empty() {
         prepare_workspace_update_plan(manager, original_cwd)?
     } else {
@@ -833,11 +829,9 @@ fn prepare_workspace_update_plan(
         return Ok(WorkspaceUpdatePlan::cwd_only());
     }
 
-    // Enumerating workspace members needs a lockfile, but the plan only needs
-    // the workspace list, not migration, so probe without it (`<false>`).
-    // `install_with_manager` performs the real (migrating) load right after and
-    // owns the lockfile-error policy, so a missing/foreign/corrupt lockfile
-    // here just falls back to the default flow rather than migrating twice.
+    // Probe the lockfile without migration (planning only needs the workspace
+    // list). `install_with_manager` does the real migrating load and owns the
+    // error policy, so a missing/foreign/corrupt lockfile just falls back here.
     if !manager.options.do_.load_lockfile()
         || !matches!(
             manager.load_lockfile_from_cwd::<false>(),

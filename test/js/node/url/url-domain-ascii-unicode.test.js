@@ -99,3 +99,22 @@ describe("url.domainToUnicode", () => {
     });
   }
 });
+
+// https://url.spec.whatwg.org/#concept-domain-to-ascii
+// An "xn--" (ACE) label must decode to a valid IDNA label; "xn--a-ecp"
+// decodes to U+0061 U+2488 (DIGIT ONE FULL STOP), which is disallowed.
+describe("url.domainToASCII and invalid Punycode (xn--) labels", () => {
+  const invalidPunycode = ["xn--a-ecp.example", "sub.xn--a-ecp.example", "XN--A-ECP.example", "xn--pokxncvks", "xn--"];
+  for (const domain of invalidPunycode) {
+    test(`-> '${domain}' is ''`, () => {
+      expect(url.domainToASCII(domain)).toBe("");
+    });
+  }
+  test("a valid ACE label is preserved and lowercased", () => {
+    expect(url.domainToASCII("XN--BCHER-KVA.DE")).toBe("xn--bcher-kva.de");
+    expect(url.domainToASCII("xn--fiqs8s")).toBe("xn--fiqs8s");
+  });
+  test("a label that merely contains 'xn--' is not an ACE label", () => {
+    expect(url.domainToASCII("axn--a-ecp.example")).toBe("axn--a-ecp.example");
+  });
+});

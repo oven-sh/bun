@@ -383,7 +383,7 @@ fn parse_classic(
         ..opts
     };
     let mut out = parse_impl(source, log, opts, check_len)?;
-    out.root = materialize_impl(&out.root, source, bump, opts.was_originally_macro);
+    out.root = materialize_impl(&out.root, source, bump, opts.was_originally_macro)?;
     // The classic tree borrows nothing from the row tape: drop it.
     out.tape = None;
     Ok(out)
@@ -1083,7 +1083,11 @@ fn skip_json_value(contents: &[u8], p: usize) -> Option<usize> {
 /// This is the boundary for consumers that genuinely need the classic tree —
 /// to mutate it and print it back, or to splice it into a JavaScript AST.
 /// Everything that just *reads* JSON should stay on the immutable containers.
-pub fn materialize(root: &Expr, source: &bun_ast::Source, bump: &Bump) -> Expr {
+pub fn materialize(
+    root: &Expr,
+    source: &bun_ast::Source,
+    bump: &Bump,
+) -> Result<Expr, bun_core::Error> {
     materialize_impl(root, source, bump, false)
 }
 
@@ -1094,13 +1098,21 @@ fn materialize_impl(
     source: &bun_ast::Source,
     bump: &Bump,
     was_originally_macro: bool,
-) -> Expr {
-    Materializer {
+) -> Result<Expr, bun_core::Error> {
+    let m = Materializer {
         contents: &source.contents,
         bump,
         was_originally_macro,
+        stack_check: bun_core::StackCheck::init(),
+        overflowed: core::cell::Cell::new(false),
+    };
+    let out = m.expr(root, root.loc);
+    if m.overflowed.get() {
+        // The parse itself is depth-guarded, but this walk's frames are its
+        // own; never return a silently truncated tree.
+        return Err(bun_core::err!("StackOverflow"));
     }
-    .expr(root, root.loc)
+    Ok(out)
 }
 
 struct Materializer<'a> {
@@ -1109,6 +1121,10 @@ struct Materializer<'a> {
     /// `E::Object::was_originally_macro` of every materialized container
     /// (the immutable containers don't store it; it is an option of the parse).
     was_originally_macro: bool,
+    /// Same guard as the parser's and the printer's recursive walks; sets
+    /// `overflowed` instead of recursing past the safe depth.
+    stack_check: bun_core::StackCheck,
+    overflowed: core::cell::Cell<bool>,
 }
 
 impl Materializer<'_> {
@@ -1128,6 +1144,10 @@ impl Materializer<'_> {
     }
 
     fn object(&self, o: &E::ObjectJSON) -> E::Object {
+        if !self.stack_check.is_safe_to_recurse() {
+            self.overflowed.set(true);
+            return E::Object::default();
+        }
         let rows = o.properties();
         let mut properties: G::PropertyList =
             Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
@@ -1165,6 +1185,10 @@ impl Materializer<'_> {
     }
 
     fn array(&self, a: &E::ArrayJSON, loc: bun_ast::Loc) -> E::Array {
+        if !self.stack_check.is_safe_to_recurse() {
+            self.overflowed.set(true);
+            return E::Array::default();
+        }
         let rows = a.items();
         let mut items: js_ast::ExprNodeList =
             Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
@@ -1909,7 +1933,7 @@ mod tests {
                 // The same bytes `run` parsed, for the location re-scan.
                 let source = bun_ast::Source::init_path_string("fixture.json", doc.as_bytes());
                 let bump = Bump::new();
-                let root = materialize(p.root.as_ref().unwrap(), &source, &bump);
+                let root = materialize(p.root.as_ref().unwrap(), &source, &bump).unwrap();
                 (root.loc, canon_full(&root))
             };
             assert_eq!(full, materialized, "materialized tree differs for {doc:?}");

@@ -1927,7 +1927,10 @@ fn parse_data_loader<'a>(
             bun_ast::ExprData::EObjectJSON(_) | bun_ast::ExprData::EArrayJSON(_)
         )
     {
-        expr = bun_parsers::json::materialize(&expr, source, arena);
+        expr = match bun_parsers::json::materialize(&expr, source, arena) {
+            Ok(e) => e,
+            Err(_) => return None,
+        };
     }
 
     let mut symbols: Vec<bun_ast::Symbol> = Vec::new();

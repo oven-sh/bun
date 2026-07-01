@@ -4,7 +4,7 @@ use core::cell::RefCell;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_core::{self, fmt as bun_fmt};
-use bun_core::{String as BunString, Tag as BunStringTag, immutable as strings};
+use bun_core::{String as BunString, Tag as BunStringTag, strings};
 use bun_paths::resolve_path::{self, platform};
 use bun_wyhash::hash as wyhash;
 

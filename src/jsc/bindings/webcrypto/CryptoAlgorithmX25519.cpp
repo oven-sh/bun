@@ -70,7 +70,7 @@ std::optional<Vector<uint8_t>> CryptoAlgorithmX25519::platformDeriveBits(const C
 }
 #endif
 
-void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, size_t length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
+void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, std::optional<size_t> length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
     if (baseKey->type() != CryptoKey::Type::Private) {
         exceptionCallback(ExceptionCode::InvalidAccessError, ""_s);
@@ -107,17 +107,12 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
             return;
         }
 #endif
-        if (!length) {
-            callback(WTF::move(*derivedKey));
-            return;
-        }
-        auto lengthInBytes = static_cast<size_t>(std::ceil(length / 8.));
-        if (lengthInBytes > (*derivedKey).size()) {
+        auto result = extractDerivedBits(length, WTF::move(*derivedKey));
+        if (!result) {
             exceptionCallback(ExceptionCode::OperationError, ""_s);
             return;
         }
-        (*derivedKey).shrink(lengthInBytes);
-        callback(WTF::move(*derivedKey));
+        callback(WTF::move(*result));
     };
     // This is a special case that can't use dispatchOperation() because it bundles
     // the result validation and callback dispatch into unifiedCallback.

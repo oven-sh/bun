@@ -408,7 +408,10 @@ impl WebSocketProxyTunnel {
         // If we have a connected WebSocket client, notify it of the close
         if !connected_websocket.is_null() {
             // SAFETY: BACKREF — WebSocket owns tunnel via ref(); cleared before WebSocket frees.
-            unsafe { (*connected_websocket).fail(ErrorCode::Ended) };
+            unsafe {
+                let _ws_guard = bun_ptr::ScopedRef::new(connected_websocket);
+                (*connected_websocket).fail(ErrorCode::Ended)
+            };
             return;
         }
 

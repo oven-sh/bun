@@ -1171,7 +1171,6 @@ namespace WebCore {
 using namespace JSC;
 using namespace Bun::WebStreams;
 
-
 // The js2native host-function surface (BunStreamConsumers.h).
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionReadableStreamToText, (JSGlobalObject * globalObject, CallFrame* callFrame))

@@ -202,9 +202,7 @@ function stopPerf(target, key, context) {
     detail:
       ctx.detail !== undefined || context?.detail !== undefined ? { ...ctx.detail, ...context?.detail } : undefined,
   };
-  for (const observer of kObservers) {
-    observer.bufferEntry(entry);
-  }
+  enqueueNodeEntry(entry);
 }
 
 /**

@@ -140,7 +140,7 @@ Scope: `src/win/fs.c` readlink/symlink/junction, unlink/rmdir, mkdir, scandir, o
 ### [FSLNK-20] unlink of a directory: EPERM unless it's a _valid symlink-shaped_ reparse point
 
 - **What Windows does**: NT can delete directories through the same disposition API as files, so a POSIX-correct unlink must refuse directories itself. Directory symlinks/junctions, however, are POSIX-unlinkable link objects.
-- **How libuv handles it**: fs.c:1171-1193: if !isrmdir and FILE_ATTRIBUTE_DIRECTORY: no reparse bit → ERROR_ACCESS_DENIED (→EPERM, "as mandated by POSIX.1"); reparse bit → run `fs__readlink_handle(handle, NULL, NULL)` as a _validator_ and remap its ERROR_SYMLINK_NOT_SUPPORTED to ERROR_ACCESS_DENIED. So unlink deletes junctions/dir-symlinks/WSL-links but refuses mounted-volume reparse dirs and unknown-tag dirs.
+- **How libuv handles it**: fs.c:1171-1193: if !isrmdir and FILE*ATTRIBUTE_DIRECTORY: no reparse bit → ERROR_ACCESS_DENIED (→EPERM, "as mandated by POSIX.1"); reparse bit → run `fs__readlink_handle(handle, NULL, NULL)` as a \_validator* and remap its ERROR_SYMLINK_NOT_SUPPORTED to ERROR_ACCESS_DENIED. So unlink deletes junctions/dir-symlinks/WSL-links but refuses mounted-volume reparse dirs and unknown-tag dirs.
 - **History**: 7f6b86c6 (2012, "no longer allows deletion of non-symlink directory reparse points"); the validator inherits every tag rule from FSLNK-05..08 — adding LX_SYMLINK in 2026 silently fixed `unlink(wsl-symlink)` too.
 - **Bun disposition**: must-port, including reusing one readlink validator so tag support can never diverge between readlink and unlink. Target: engine
 
@@ -183,7 +183,7 @@ Scope: `src/win/fs.c` readlink/symlink/junction, unlink/rmdir, mkdir, scandir, o
 
 - **What Windows does**: CreateDirectoryW("foo?<>") fails ERROR_INVALID_NAME; some malformed paths (trailing-dot variants, empty components) fail ERROR_DIRECTORY ("The directory name is invalid"). libuv's default table maps both to ENOENT, which misleads callers into mkdir -p recursion.
 - **How libuv handles it**: fs.c:1285-1295: success → 0; else remap those two sys errnos to UV*EINVAL while preserving `sys_errno*`. POSIX mode is ignored entirely (TODO comment).
-- **History**: ecff2785 (#2375, nodejs/node#28599) added INVALID_NAME; dd8662b6 (#2601, nodejs/node#31177, "really return UV_EINVAL") added ERROR_DIRECTORY; 509214d6 switched \_wmkdir→CreateDirectoryW. Note the asymmetry: ill-formed WTF-8 in the _path conversion_ still returns ENOENT (fs\_\_capture_path → ERROR_INVALID_NAME through the table, fs.c:364-366) — only mkdir's own failure is remapped.
+- **History**: ecff2785 (#2375, nodejs/node#28599) added INVALID*NAME; dd8662b6 (#2601, nodejs/node#31177, "really return UV_EINVAL") added ERROR_DIRECTORY; 509214d6 switched \_wmkdir→CreateDirectoryW. Note the asymmetry: ill-formed WTF-8 in the \_path conversion* still returns ENOENT (fs\_\_capture_path → ERROR_INVALID_NAME through the table, fs.c:364-366) — only mkdir's own failure is remapped.
 - **Bun disposition**: must-port the remap (Node's `fs.mkdir` EINVAL behavior on bad names; recursive mkdir must distinguish "missing parent" from "name can never exist"). Target: engine
 
 ### [FSLNK-27] mkdtemp/mkstemp: OpenBSD algorithm — 6 X's, 62-char alphabet, CSPRNG per attempt, TMP_MAX retries
@@ -252,7 +252,7 @@ Scope: `src/win/fs.c` readlink/symlink/junction, unlink/rmdir, mkdir, scandir, o
 ### [FSLNK-36] dirent d_type derivation: check DEVICE, then REPARSE_POINT, then DIRECTORY — order is load-bearing
 
 - **What Windows does**: A directory symlink/junction has BOTH FILE_ATTRIBUTE_DIRECTORY and FILE_ATTRIBUTE_REPARSE_POINT set. Checking DIRECTORY first misreports links as directories, breaking recursive walkers (they descend into / delete through links).
-- **How libuv handles it**: scandir fs.c:1549-1557 and readdir fs.c:1736-1743, both: DEVICE→UV**DT_CHAR, REPARSE_POINT→UV**DT_LINK, DIRECTORY→UV**DT_DIR, else UV**DT_FILE. Caveat inherited from FSLNK-08: REPARSE_POINT here includes OneDrive placeholders etc., so DT_LINK from dirents is _unreliable_ — confirm with lstat before acting on it.
+- **How libuv handles it**: scandir fs.c:1549-1557 and readdir fs.c:1736-1743, both: DEVICE→UV**DT_CHAR, REPARSE_POINT→UV**DT*LINK, DIRECTORY→UV**DT_DIR, else UV**DT_FILE. Caveat inherited from FSLNK-08: REPARSE_POINT here includes OneDrive placeholders etc., so DT_LINK from dirents is \_unreliable* — confirm with lstat before acting on it.
 - **History**: pre-2015 scandir had DIRECTORY first (wrong); 0729ce8b fixed scandir; fs\_\_readdir (added 99440bb6, 2019) re-introduced the wrong order and was only fixed Oct 2024 (1cbffcbd) — a 5-year sync/async-twin divergence.
 - **Bun disposition**: must-port with ONE shared classifier for every directory-iteration path (the twin-divergence is the lesson). Document the DT_LINK-overreports-cloud-placeholders caveat. Target: engine
 
@@ -287,7 +287,7 @@ Scope: `src/win/fs.c` readlink/symlink/junction, unlink/rmdir, mkdir, scandir, o
 ### [FSLNK-41] UPSTREAM BUG: the sshfs-win fix is unreachable — uv_fs_readdir's entry guard still EINVALs on INVALID_HANDLE_VALUE
 
 - **What Windows does**: n/a — libuv-internal inconsistency.
-- **How libuv handles it**: `uv_fs_readdir` (fs.c:3475-3480) rejects `dir->dir_handle == INVALID_HANDLE_VALUE` with UV_EINVAL _before_ posting the work item, so the empty-result path added in fs**readdir (FSLNK-40) can never run through the public API. Verified present at upstream v1.x tip (June 2026): the guard predates the fix (99440bb6) and d7dda9ed only touched fs**readdir (15 insertions, single hunk).
+- **How libuv handles it**: `uv_fs_readdir` (fs.c:3475-3480) rejects `dir->dir_handle == INVALID_HANDLE_VALUE` with UV*EINVAL \_before* posting the work item, so the empty-result path added in fs**readdir (FSLNK-40) can never run through the public API. Verified present at upstream v1.x tip (June 2026): the guard predates the fix (99440bb6) and d7dda9ed only touched fs**readdir (15 insertions, single hunk).
 - **History**: discovered during this audit by diffing d7dda9ed against the public entry point; #4952 is therefore only half-fixed upstream.
 - **Bun disposition**: must-port the _lesson_, not the bug: Bun's opendir must represent "open but empty" as a first-class state validated consistently at every layer (or avoid the sentinel entirely by using a real directory handle per FSLNK-32/39). Also: candidate upstream patch. Target: engine
 

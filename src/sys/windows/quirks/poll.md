@@ -42,7 +42,7 @@ Bun dep config scripts/build/deps/libuv.ts. Bun's only first-party uv*poll consu
 
 ### [POLL-06] Create the peer from the watched socket's own WSAPROTOCOL_INFOW (base catalog entry)
 
-- **What Windows does**: `WSASocketW(..., &protocol_info, ...)` with an explicit WSAPROTOCOL_INFOW creates a socket from that exact catalog entry — bypassing any LSP layered on the default chain. The protocol info obtained from the _base_ socket names the clean MSAFD entry. Note TCP/UDP/RAW share one ProviderId GUID per family, so one peer serves all three socket types.
+- **What Windows does**: `WSASocketW(..., &protocol_info, ...)` with an explicit WSAPROTOCOL*INFOW creates a socket from that exact catalog entry — bypassing any LSP layered on the default chain. The protocol info obtained from the \_base* socket names the clean MSAFD entry. Note TCP/UDP/RAW share one ProviderId GUID per family, so one peer serves all three socket types.
 - **How libuv handles it**: `getsockopt(SO_PROTOCOL_INFOW)` on the (unwrapped) socket (src/win/poll.c:447-455), then `WSASocketW(protocol_info->iAddressFamily, iSocketType, iProtocol, protocol_info, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT)` (src/win/poll.c:209-214).
 - **History**: d7a71761. Code comment only.
 - **Bun disposition**: must-port if peer-socket design is kept; moot if using a raw \Device\Afd handle. Target: native AFD poll module init.
@@ -119,7 +119,7 @@ Bun dep config scripts/build/deps/libuv.ts. Bun's only first-party uv*poll consu
 
 ### [POLL-17] Exclusive=TRUE on every submission = cancel-by-resubmit, keyed on the TARGET socket (FCB), not the issuing handle
 
-- **What Windows does**: an IOCTL_AFD_POLL with Exclusive=TRUE forces other pending poll IRPs _for the same underlying socket endpoint_ to complete (ReactOS AfdSelect kills other poll IRPs on the same FCB). Proof it's per-target-FCB: libuv's normal reqs are issued via the shared peer socket and the close-time cancel via the watched socket itself, and they still kick each other; meanwhile polls for different sockets through the same peer never interact.
+- **What Windows does**: an IOCTL*AFD_POLL with Exclusive=TRUE forces other pending poll IRPs \_for the same underlying socket endpoint* to complete (ReactOS AfdSelect kills other poll IRPs on the same FCB). Proof it's per-target-FCB: libuv's normal reqs are issued via the shared peer socket and the close-time cancel via the watched socket itself, and they still kick each other; meanwhile polls for different sockets through the same peer never interact.
 - **How libuv handles it**: every fast-path submission sets `Exclusive = TRUE` — comment: "Setting Exclusive to TRUE makes the other poll request return if there is any" (src/win/poll.c:104-106). A kicked IRP completes either with `NumberOfHandles == 0` (handled by the `>= 1` guard, src/win/poll.c:165) or STATUS_CANCELLED (see POLL-24); both are silent.
 - **History**: d7a71761; semantics confirmed by 07f01752 (the cancel poll only works with Exclusive=TRUE + infinite timeout, see POLL-32).
 - **Bun disposition**: must-port the semantics knowledge even if Bun cancels differently (wepoll/mio use NtCancelIoFileEx on the specific IRP instead — cleaner on 1809+, no kick-side-effects). WARNING to carry: because Exclusive matches per-socket process-wide, any OTHER code in the process doing exclusive AFD polls on the same socket cancels yours (see POLL-37). Target: native AFD poll submit/cancel design.

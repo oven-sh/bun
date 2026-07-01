@@ -25,7 +25,7 @@ Files: `src/win/signal.c`, `src/win/fs-event.c`, plus load-bearing context in
 ### [SIGEV-03] Event mapping: CTRL_C→SIGINT, CTRL_BREAK→SIGBREAK; handler chain is LIFO
 
 - **What Windows does**: Console delivers `CTRL_C_EVENT` and `CTRL_BREAK_EVENT`; there is no kernel SIGINT. Registered handlers are called last-registered-first; returning TRUE stops the chain.
-- **How libuv handles it**: signal.c:116-144 maps CTRL_C→SIGINT, CTRL_BREAK→SIGBREAK (SIGBREAK=21 is a Windows-CRT-only signal that Node exposes). Because libuv registers at init, any handler the embedder registers _later_ runs _before_ libuv's.
+- **How libuv handles it**: signal.c:116-144 maps CTRL*C→SIGINT, CTRL_BREAK→SIGBREAK (SIGBREAK=21 is a Windows-CRT-only signal that Node exposes). Because libuv registers at init, any handler the embedder registers \_later* runs _before_ libuv's.
 - **History**: c4dbb60c; code comment only for the mapping.
 - **Bun disposition**: must-port (incl. SIGBREAK for Node compat; document handler-ordering interaction if Bun ever adds its own crash handler via ctrl handler). Target: engine
 
@@ -144,7 +144,7 @@ Files: `src/win/signal.c`, `src/win/fs-event.c`, plus load-bearing context in
 ### [SIGEV-20] Historical foot-guns: switch fall-through in endgame dispatch; assignment-in-assert
 
 - **What Windows does**: n/a.
-- **How libuv handles it**: 328f29b0 fixed (a) a missing `break` after the UV_SIGNAL endgame case in the central endgame switch — signal endgames fell through into process endgames; (b) `assert(handle->signum = 0)` assignment typos that _cleared the field in debug builds and vanished in release_.
+- **How libuv handles it**: 328f29b0 fixed (a) a missing `break` after the UV*SIGNAL endgame case in the central endgame switch — signal endgames fell through into process endgames; (b) `assert(handle->signum = 0)` assignment typos that \_cleared the field in debug builds and vanished in release*.
 - **History**: 328f29b0 "windows: fix stupid uv_signal bugs" (2012).
 - **Bun disposition**: skip (generic C hazards; Rust match exhaustiveness and `assert_eq!` eliminate the class — recorded so reviewers recognize the pattern in any C++ shims). Target: n/a.
 

@@ -103,7 +103,7 @@ headers they depend on (`src/win/req-inl.h`, `src/win/handle-inl.h`,
 
 - **What Windows does**: some APIs complete to the IOCP even when they also succeed synchronously — e.g. `WriteFile` on a port-associated handle posts a packet even if you already handled the result. Posting the same request again (e.g. `POST_COMPLETION_FOR_REQ` on a req the kernel will also complete) corrupts the circular list into an infinite or crossed loop.
 - **How libuv handles it**: `uv__insert_pending_req` walks the whole circular list under `#ifdef _DEBUG` asserting `req != current` (core.c:861-870).
-- **History**: c7ebe68f (2015) "win: fix pipe blocking writes" — blocking pipe writes called POST_COMPLETION_FOR_REQ while WriteFile _also_ posted a packet, so GQCSEx returned the same req twice; the assert was added with the fix to catch the class. (Cross-ref: PIPES, and `SetFileCompletionNotificationModes`/UV_HANDLE_SYNC_BYPASS_IOCP in 2b4b293e which removed the skip-IOCP optimization for streams.)
+- **History**: c7ebe68f (2015) "win: fix pipe blocking writes" — blocking pipe writes called POST*COMPLETION_FOR_REQ while WriteFile \_also* posted a packet, so GQCSEx returned the same req twice; the assert was added with the fix to catch the class. (Cross-ref: PIPES, and `SetFileCompletionNotificationModes`/UV_HANDLE_SYNC_BYPASS_IOCP in 2b4b293e which removed the skip-IOCP optimization for streams.)
 - **Bun disposition**: should-port as a debug assertion. The bug class (one completion source, two enqueues) is easy to recreate in Rust. Target: engine
 
 ### [LOOP-15] Request dispatch is a type switch; the back-pointer to the handle lives in different fields per req type
@@ -178,7 +178,7 @@ headers they depend on (`src/win/req-inl.h`, `src/win/handle-inl.h`,
 
 ### [LOOP-25] Close is ALWAYS asynchronous: CLOSING flag now, endgame later, close_cb from the loop — gated on reqs_pending == 0
 
-- **What Windows does**: outstanding OVERLAPPED operations reference handle-owned memory until their packets drain (LOOP-04); `CloseHandle`/`closesocket` forces them to complete with STATUS_CANCELLED _eventually_, not synchronously.
+- **What Windows does**: outstanding OVERLAPPED operations reference handle-owned memory until their packets drain (LOOP-04); `CloseHandle`/`closesocket` forces them to complete with STATUS*CANCELLED \_eventually*, not synchronously.
 - **How libuv handles it**: `uv_close` only sets `UV_HANDLE_CLOSING` and performs type-specific shutdown (handle.c:67-148). The handle joins the endgame queue (`uv__want_endgame`, handle-inl.h:88-95) either immediately (timer/prepare/check/idle: handle.c:99-121) or when its last in-flight request drains (`DECREASE_PENDING_REQ_COUNT` → want_endgame when CLOSING && reqs_pending == 0, handle-inl.h:51-60). Per-type endgame functions (core.c:632-698) free OS resources and finally `uv__handle_close` runs the user's close_cb. Calling uv_close twice asserts (handle.c:70-73).
 - **History**: design predates libuv proper; the per-type endgame switch has been stable since 3a91232f (2011).
 - **Bun disposition**: must-port (the two-phase protocol and the reqs_pending gate). This is the central memory-safety invariant of a Windows loop; Rust ownership makes violations compile-visible only if the design encodes "kernel borrows until drained". Target: engine
@@ -348,7 +348,7 @@ headers they depend on (`src/win/req-inl.h`, `src/win/handle-inl.h`,
 
 - **What Windows does**: n/a.
 - **How libuv handles it**: `uv_loop_close` (uv-common.c:899-926) returns UV_EBUSY if any active reqs or any non-INTERNAL handle is still registered (the internal wq_async is exempt — LOOP-34); on success, `#ifndef NDEBUG` memsets the whole loop to 0xFF while saving/restoring `loop->data` (embedder field survives poisoning); clears default_loop_ptr if applicable. `uv__loop_close` asserts under wq_mutex that the threadpool queue is empty (core.c:360-363).
-- **History**: 787f5fff (2013); 2cd91f97 (2014, #1387) fixed `assert(uv_loop_close(loop) == 0)` in uv_loop_delete — under NDEBUG the assert disappeared _and the close with it_; 0e5004ba (2014, #393) made the default loop actually closeable/IOCP handle closed.
+- **History**: 787f5fff (2013); 2cd91f97 (2014, #1387) fixed `assert(uv_loop_close(loop) == 0)` in uv*loop_delete — under NDEBUG the assert disappeared \_and the close with it*; 0e5004ba (2014, #393) made the default loop actually closeable/IOCP handle closed.
 - **Bun disposition**: should-port (EBUSY contract + poison-on-close in debug; the assert-with-side-effects lesson is general). Target: engine
 
 ### [LOOP-50] No backend fd, no fork: uv_backend_fd() = -1, uv_loop_fork() = ENOSYS, loop_configure only knows UV_METRICS_IDLE_TIME

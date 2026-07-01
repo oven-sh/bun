@@ -49,7 +49,7 @@ Empirical probes in this section were run on this machine: Windows 11 Pro 10.0.2
 ### [FSMETA-07] Wine doesn't implement FileFsVolumeInformation — detect via io_status, not return status
 
 - **What Windows does**: Wine's ntdll returns `STATUS_NOT_IMPLEMENTED` for `FileFsVolumeInformation` (st_dev source). That status is error severity, so the normal NT_ERROR check would fail the whole stat.
-- **How libuv handles it**: fs.c:1854-1861 and fs.c:2166-2173: `if (io_status.Status == STATUS_NOT_IMPLEMENTED) { VolumeSerialNumber = 0; } else if (NT_ERROR(nt_status)) fail; else use it`. Note it inspects `io_status.Status` (which Wine fills) rather than the returned status — on real Windows a failed call may not write io_status at all, in which case io_status holds the _previous_ call's value; the check only works because Wine writes it.
+- **How libuv handles it**: fs.c:1854-1861 and fs.c:2166-2173: `if (io_status.Status == STATUS_NOT_IMPLEMENTED) { VolumeSerialNumber = 0; } else if (NT_ERROR(nt_status)) fail; else use it`. Note it inspects `io_status.Status` (which Wine fills) rather than the returned status — on real Windows a failed call may not write io*status at all, in which case io_status holds the \_previous* call's value; the check only works because Wine writes it.
 - **History**: 2930d04e (2014, Isaiah Norton), citing Wine source `dlls/ntdll/file.c` line ref and winehq.
 - **Bun disposition**: should-port (Wine/Proton users run Bun; cost is 3 lines). If ported, prefer zero-initializing io_status before the call so the check is sound on both real Windows and Wine. Target: engine
 
@@ -57,7 +57,7 @@ Empirical probes in this section were run on this machine: Windows 11 Pro 10.0.2
 
 - **What Windows does**: The classic `FILE_FS_VOLUME_INFORMATION.VolumeSerialNumber` is a ULONG; the new `FILE_STAT_BASIC_INFORMATION.VolumeSerialNumber` is a LARGE_INTEGER and on some volumes carries 64 bits. Mixing widths makes st_dev differ between fast-path stat and slow-path stat of the same volume.
 - **How libuv handles it**: fs\_\_stat_assign_statbuf reads `.LowPart` only (fs.c:1912); the handle path writes `.LowPart` (fs.c:1860). Consequence: a file statted via fast path and its symlink statted via slow path compare equal on st_dev. Regression test `fs_fstat_st_dev` compares file vs through-symlink st_dev.
-- **History**: 82cdfb75 (2025-02, Hüseyin Açacak) "win: fix the inconsistency in volume serial number" — fast path had been reporting the full QuadPart since 4e310d0f, breaking st_dev equality. Note fs\_\_stat_directory still writes `.QuadPart` (fs.c:2172) but the reader only consumes LowPart, so it's consistent today; copy the _reader_ contract, not each writer.
+- **History**: 82cdfb75 (2025-02, Hüseyin Açacak) "win: fix the inconsistency in volume serial number" — fast path had been reporting the full QuadPart since 4e310d0f, breaking st*dev equality. Note fs\_\_stat_directory still writes `.QuadPart` (fs.c:2172) but the reader only consumes LowPart, so it's consistent today; copy the \_reader* contract, not each writer.
 - **Bun disposition**: must-port (Node exposes st_dev; copyfile same-file detection and user dev/ino caching depend on cross-path consistency). Target: engine
 
 ### [FSMETA-09] Slow-path stat open flags: FILE_READ_ATTRIBUTES + FILE_FLAG_BACKUP_SEMANTICS + share-everything
@@ -76,7 +76,7 @@ Empirical probes in this section were run on this machine: Windows 11 Pro 10.0.2
 
 ### [FSMETA-11] The NT directory FileMask treats \* ? > < " as wildcards — must reject them before querying
 
-- **What Windows does**: `NtQueryDirectoryFile`'s FileName mask is a _pattern_: `*` `?` plus the DOS-era encodings `>` (DOS_QM), `<` (DOS_STAR), `"` (DOS_DOT) glob-match. A stat fallback that passes a user path containing them would silently return metadata of _some other file_ that matches the pattern.
+- **What Windows does**: `NtQueryDirectoryFile`'s FileName mask is a _pattern_: `*` `?` plus the DOS-era encodings `>` (DOS*QM), `<` (DOS_STAR), `"` (DOS_DOT) glob-match. A stat fallback that passes a user path containing them would silently return metadata of \_some other file* that matches the pattern.
 - **How libuv handles it**: fs.c:2078-2089 scans the filename component and fails with `ERROR_INVALID_NAME` (→ UV_ENOENT) if any of the five chars appear. Also `uv__RtlUnicodeStringInit` (fs.c:61-72) caps the mask at 0x7FFF chars (UNICODE_STRING USHORT length limit) returning STATUS_INVALID_PARAMETER beyond.
 - **History**: part of 72d9abcc.
 - **Bun disposition**: must-port (correctness/security of the fallback: wrong-file metadata is a confused-deputy primitive). Target: engine
@@ -106,13 +106,13 @@ Empirical probes in this section were run on this machine: Windows 11 Pro 10.0.2
 
 - **What Windows does**: `FILE_ATTRIBUTE_REPARSE_POINT` covers far more than symlinks: OneDrive/cloud placeholders, dedup, HSM, projfs, app-exec links. A handle opened with `FILE_FLAG_OPEN_REPARSE_POINT` sees the raw stub (wrong size/content); only re-opening _without_ that flag lets the owning filter driver materialize the real file.
 - **How libuv handles it**: `fs__stat_handle` fails with the readlink error when the tag isn't link-like; `fs__stat_impl` (fs.c:2248-2264) catches exactly `ERROR_SYMLINK_NOT_SUPPORTED` or `ERROR_NOT_A_REPARSE_POINT` (the latter from `DeviceIoControl` when reparse data is absent) and re-runs the whole chain with do_lstat=0 — i.e. a second CreateFileW without OPEN_REPARSE_POINT. Recursion is bounded (retry passes 0).
-- **History**: Three-act story. 7ae4b1ad (2016, libuv#995, nodejs/node#5160): reparse attr with _no_ data → treat as regular file inline. e5024c54 (2017, nodejs/node#12737): swallow _all_ readlink failures inline — wrong, because the OPEN_REPARSE_POINT handle's metadata is the stub's. 1d9c13f1 (2017, Wade Brainerd, #1522): moved the retry up to fs\_\_stat_impl so the file is _re-opened_ and the filesystem driver processes the reparse point; commit message explicitly preserves the ERROR_NOT_A_REPARSE_POINT case "out of caution" though the author couldn't reproduce it. 72d9abcc later removed a leftover statbuf assignment in the failure path.
+- **History**: Three-act story. 7ae4b1ad (2016, libuv#995, nodejs/node#5160): reparse attr with _no_ data → treat as regular file inline. e5024c54 (2017, nodejs/node#12737): swallow _all_ readlink failures inline — wrong, because the OPEN*REPARSE_POINT handle's metadata is the stub's. 1d9c13f1 (2017, Wade Brainerd, #1522): moved the retry up to fs\_\_stat_impl so the file is \_re-opened* and the filesystem driver processes the reparse point; commit message explicitly preserves the ERROR_NOT_A_REPARSE_POINT case "out of caution" though the author couldn't reproduce it. 72d9abcc later removed a leftover statbuf assignment in the failure path.
 - **Bun disposition**: must-port (OneDrive placeholder files are everywhere on consumer Windows; getting this wrong reports stub sizes or EINVAL). The reverted-approach history is the lesson: never report metadata from an OPEN_REPARSE_POINT handle for a non-link. Target: engine
 
 ### [FSMETA-16] lstat st_size is the WTF-8 byte length of the link target, computed from FSCTL_GET_REPARSE_POINT
 
 - **What Windows does**: There is no filesystem-provided "symlink length". POSIX requires lstat st_size == strlen(readlink result).
-- **How libuv handles it**: during lstat of a reparse point, `fs__stat_handle` calls `fs__readlink_handle(handle, NULL, &target_length)` (fs.c:1879-1893) which runs the full readlink decode and sizes the target via `uv_utf16_to_wtf8(..., NULL, &len)` without allocating (fs.c:345); `st_size = target_length`. So st_size is the _WTF-8_ (not UTF-16, not on-disk) length, consistent with what uv_fs_readlink returns. For LX symlinks the raw stored bytes are counted (fs.c:256-262). EndOfFile from the file query is ignored for links.
+- **How libuv handles it**: during lstat of a reparse point, `fs__stat_handle` calls `fs__readlink_handle(handle, NULL, &target_length)` (fs.c:1879-1893) which runs the full readlink decode and sizes the target via `uv_utf16_to_wtf8(..., NULL, &len)` without allocating (fs.c:345); `st_size = target_length`. So st*size is the \_WTF-8* (not UTF-16, not on-disk) length, consistent with what uv_fs_readlink returns. For LX symlinks the raw stored bytes are counted (fs.c:256-262). EndOfFile from the file query is ignored for links.
 - **History**: behavior since the 2013 rewrite (then UTF-8); 8f32a14a (2022) switched to WTF-8.
 - **Bun disposition**: must-port (Node tests check `lstat.size === readlink.length`); ensure Bun's readlink and lstat use the same encoder so the invariant holds for unpaired-surrogate targets. Target: engine
 
@@ -189,14 +189,14 @@ Empirical probes in this section were run on this machine: Windows 11 Pro 10.0.2
 ### [FSMETA-27] fstat dispatches on handle type; TTY/pipe stats are synthesized; sockets masquerade as pipes
 
 - **What Windows does**: Console handles, pipe handles, and sockets reject file information queries; `GetFileType` returns CHAR/PIPE/DISK; consoles are CHAR handles for which `GetConsoleMode` succeeds; sockets report FILE_TYPE_PIPE.
-- **How libuv handles it**: `fs__fstat_handle` (fs.c:2271-2299) switches on `uv_guess_handle(fd)` (handle.c:31-58: CHAR+ConsoleMode→TTY, CHAR otherwise→FILE, PIPE→NAMED_PIPE, DISK→FILE). UV_FILE → full `fs__stat_handle`; UV_TTY/UV_NAMED_PIPE → zeroed statbuf with `st_mode = _S_IFCHR`/`_S_IFIFO`, `st_nlink = 1`, `st_rdev = (FILE_DEVICE_CONSOLE|FILE_DEVICE_NAMED_PIPE) << 16`, and `st_ino = (uintptr_t) handle` (fs.c:2284-2291) — the kernel handle value as a fake inode. Unknown → `ERROR_INVALID_HANDLE` → EBADF. Therefore fstat on a _socket_ fd reports S_IFIFO, not S_IFSOCK. All timestamps zero for TTY/pipes.
+- **How libuv handles it**: `fs__fstat_handle` (fs.c:2271-2299) switches on `uv_guess_handle(fd)` (handle.c:31-58: CHAR+ConsoleMode→TTY, CHAR otherwise→FILE, PIPE→NAMED*PIPE, DISK→FILE). UV_FILE → full `fs__stat_handle`; UV_TTY/UV_NAMED_PIPE → zeroed statbuf with `st_mode = _S_IFCHR`/`_S_IFIFO`, `st_nlink = 1`, `st_rdev = (FILE_DEVICE_CONSOLE|FILE_DEVICE_NAMED_PIPE) << 16`, and `st_ino = (uintptr_t) handle` (fs.c:2284-2291) — the kernel handle value as a fake inode. Unknown → `ERROR_INVALID_HANDLE` → EBADF. Therefore fstat on a \_socket* fd reports S_IFIFO, not S_IFSOCK. All timestamps zero for TTY/pipes.
 - **History**: c17bd99f (2022, #3811, nodejs/node#40006): fstat(stdin/stdout/stderr) used to hard-fail when they were consoles or pipes; dde50f0e fixed the handle cast for 32-bit.
 - **Bun disposition**: must-port (Node `fs.fstatSync(0/1/2)` and `tty.isatty` paths rely on it; `process.stdout` init stats fd 1). Keep st_ino=handle quirk for parity. Target: engine
 
 ### [FSMETA-28] Non-console character devices take the disk-file path — NUL works via the device check, serial ports may error
 
 - **What Windows does**: NUL and COM ports are FILE_TYPE_CHAR without console modes. NUL answers FileFsDeviceInformation (FILE_DEVICE_NULL); serial devices answer it too (FILE_DEVICE_SERIAL_PORT) but then fail the FileAllInformation query.
-- **How libuv handles it**: uv_guess_handle classifies them UV_FILE (GetConsoleMode fails) → `fs__stat_handle`, whose _first_ query is the device-type probe; NUL short-circuits to the synthesized char stat (fs.c:1829-1833); other char devices proceed and typically fail FileAllInformation → fstat errors. No special case for COM/other devices.
+- **How libuv handles it**: uv*guess_handle classifies them UV_FILE (GetConsoleMode fails) → `fs__stat_handle`, whose \_first* query is the device-type probe; NUL short-circuits to the synthesized char stat (fs.c:1829-1833); other char devices proceed and typically fail FileAllInformation → fstat errors. No special case for COM/other devices.
 - **History**: c17bd99f.
 - **Bun disposition**: must-port the NUL-first ordering; accept (and document) that fstat on serial ports errors — match libuv rather than inventing synthesized serial stats. Target: engine
 
@@ -219,7 +219,7 @@ Empirical probes in this section were run on this machine: Windows 11 Pro 10.0.2
 - **What Windows does**: `SetFileTime` natively supports "don't change" by passing NULL for that timestamp — a perfect match for POSIX UTIME_OMIT; there's no native UTIME_NOW so the caller snapshots `GetSystemTimeAsFileTime`.
 - **How libuv handles it**: fs.c:2658-2673: `isinf` → use a single `now` snapshot (taken once for both fields); `isnan` → NULL pointer; else convert. Constants `UV_FS_UTIME_NOW=(INFINITY)`, `UV_FS_UTIME_OMIT=(NAN)` (include/uv.h:1602-1603). `uv__isnan/uv__isinf` are open-coded bit-pattern tests (uv-common.h:462-478) "so downstream users don't have to link libm" — also immune to -ffast-math.
 - **History**: 85b526f5 (2025-02, Ben Noordhuis, #4702, libuv#4665). Commit admits the double-encoding is "Ugly, but it avoids having to add uv_fs_utime2".
-- **Bun disposition**: must-port the SetFileTime-NULL mechanism for Bun's UTIME_OMIT handling (node:fs `utimes` with `Date`/numbers, plus `fs.lutimes`); the NaN/Inf _encoding_ itself is libuv API surface Bun doesn't need (Bun should use an explicit Option type internally). Target: engine
+- **Bun disposition**: must-port the SetFileTime-NULL mechanism for Bun's UTIME*OMIT handling (node:fs `utimes` with `Date`/numbers, plus `fs.lutimes`); the NaN/Inf \_encoding* itself is libuv API surface Bun doesn't need (Bun should use an explicit Option type internally). Target: engine
 
 ### [FSMETA-32] Seconds-as-double → FILETIME conversion has inherent ~1.6µs precision ceiling
 
@@ -237,7 +237,7 @@ Empirical probes in this section were run on this machine: Windows 11 Pro 10.0.2
 
 ### [FSMETA-34] futime fails on read-only fds (no re-open dance) — POSIX deviation libuv chose to keep
 
-- **What Windows does**: SetFileTime demands FILE_WRITE_ATTRIBUTES on the _handle_; libuv opens UV_FS_O_RDONLY files with plain `FILE_GENERIC_READ` (fs.c:481-483) which lacks it → `ERROR_ACCESS_DENIED`. POSIX futimes works on O_RDONLY fds.
+- **What Windows does**: SetFileTime demands FILE*WRITE_ATTRIBUTES on the \_handle*; libuv opens UV_FS_O_RDONLY files with plain `FILE_GENERIC_READ` (fs.c:481-483) which lacks it → `ERROR_ACCESS_DENIED`. POSIX futimes works on O_RDONLY fds.
 - **How libuv handles it**: `fs__futime` (fs.c:2744-2762) uses the fd's existing handle directly — unlike fchmod, it does _not_ ReOpenFile with FILE_WRITE_ATTRIBUTES. So `futimes(open(path, 'r'))` errors EPERM on Windows.
 - **History**: the global fix (open everything with FILE_WRITE_ATTRIBUTES, aa1beaa0) was reverted (1954e9e3) for causing EPERM opens (see FSMETA-37); nobody extended the ReOpenFile workaround to futime.
 - **Bun disposition**: should-port as a _decision point_: matching libuv/Node exactly means keeping the failure; Bun could instead borrow fchmod's `ReOpenFile(handle, FILE_WRITE_ATTRIBUTES, 0, 0)` dance to make read-only-fd futimes work (strictly more POSIX-compatible, low risk). Document whichever is chosen. Target: engine
@@ -252,13 +252,13 @@ Empirical probes in this section were run on this machine: Windows 11 Pro 10.0.2
 ### [FSMETA-36] chmod is CRT `_wchmod` (READONLY-attribute toggle) with `_doserrno` as the error channel — and it's lchmod on symlinks
 
 - **What Windows does**: The only chmod-able thing is FILE_ATTRIBUTE_READONLY via Get/SetFileAttributesW. Crucially, **SetFileAttributesW/GetFileAttributesW do not follow symlinks** — they act on the link itself.
-- **How libuv handles it**: `fs__chmod` (fs.c:2558-2564) calls `_wchmod(path, mode)` and on failure reports `_doserrno` (the CRT's saved OS error — _not_ GetLastError; mixing them up reports stale errors). Consequences: only the user-write bit matters (mode & \_S_IWRITE); chmod on a symlink modifies the _link's_ readonly attribute (silent lchmod semantics, deviating from POSIX chmod-follows); no Archive-flag dance here (SetFileAttributes, unlike NtSetInformationFile, doesn't need it).
+- **How libuv handles it**: `fs__chmod` (fs.c:2558-2564) calls `_wchmod(path, mode)` and on failure reports `_doserrno` (the CRT's saved OS error — _not_ GetLastError; mixing them up reports stale errors). Consequences: only the user-write bit matters (mode & \_S*IWRITE); chmod on a symlink modifies the \_link's* readonly attribute (silent lchmod semantics, deviating from POSIX chmod-follows); no Archive-flag dance here (SetFileAttributes, unlike NtSetInformationFile, doesn't need it).
 - **History**: ae9d5207 (2020, #2945) made the `_doserrno` access explicit after refactors confused the two error channels.
 - **Bun disposition**: must-port the behavior (readonly-bit only, treat as lchmod) but implement via SetFileAttributesW directly in Rust rather than the CRT — keep the "report the OS error from the failing call, not a stale one" lesson. Target: engine
 
 ### [FSMETA-37] fchmod must ReOpenFile with FILE_WRITE_ATTRIBUTES — the global-open-rights fix was reverted for breaking opens
 
-- **What Windows does**: Changing attributes on a handle requires FILE_WRITE_ATTRIBUTES, which read/write data opens don't include. Adding FILE_WRITE_ATTRIBUTES to _every_ uv_fs_open desired-access mask makes opens fail EPERM on files where the caller has data access but not attribute-write access.
+- **What Windows does**: Changing attributes on a handle requires FILE*WRITE_ATTRIBUTES, which read/write data opens don't include. Adding FILE_WRITE_ATTRIBUTES to \_every* uv_fs_open desired-access mask makes opens fail EPERM on files where the caller has data access but not attribute-write access.
 - **How libuv handles it**: `fs__fchmod` (fs.c:2567-2581) calls `ReOpenFile(uv__get_osfhandle(fd), FILE_WRITE_ATTRIBUTES, 0, 0)` — duplicates the open with _only_ the attribute right, leaving the original handle untouched; the temp handle is closed at `fchmod_cleanup`.
 - **History**: full reverted-approach arc: aa1beaa0 (2018-03, #1777) opened all files with FILE_WRITE_ATTRIBUTES → broke Node (nodejs/node#20112, EPERM regressions) → reverted in 1954e9e3 (2018-04, #1800) → replaced by the scoped ReOpenFile in b59fc583 (2018-05, #1819).
 - **Bun disposition**: must-port (ReOpenFile pattern; never widen default open rights to enable a metadata op). Target: engine
@@ -350,6 +350,6 @@ Empirical probes in this section were run on this machine: Windows 11 Pro 10.0.2
 ### [FSMETA-50] copyfile converts EBUSY to success when src and dst are the same file — via the stat machinery's dev+ino
 
 - **What Windows does**: `CopyFileW(src, dst)` where both paths reach the same file fails with a sharing violation (the source is held open while the destination open collides with it).
-- **How libuv handles it**: fs.c:2469-2481: only when the mapped error is UV_EBUSY, stat both paths through `fs__stat_impl_from_path` and if `st_dev` and `st_ino` both match, report success (POSIX cp semantics for same-file). This is a _consumer_ of FSMETA-08's st_dev consistency guarantee: if fast-path and slow-path stat disagreed on st_dev width, same-file detection would silently break.
+- **How libuv handles it**: fs.c:2469-2481: only when the mapped error is UV*EBUSY, stat both paths through `fs__stat_impl_from_path` and if `st_dev` and `st_ino` both match, report success (POSIX cp semantics for same-file). This is a \_consumer* of FSMETA-08's st_dev consistency guarantee: if fast-path and slow-path stat disagreed on st_dev width, same-file detection would silently break.
 - **History**: 0b29acb0 "fs: fix uv_fs_copyfile if same src and dst".
 - **Bun disposition**: should-port (cross-ref: FS-COPY area owns copyfile; recorded here because the same-file check must be built on the _same_ stat normalizer Bun ships, and it constrains st_dev/st_ino stability). Target: engine

@@ -29,8 +29,8 @@ Sources: `C:/Users/dylan/code/libuv-read/src/win/fs.c` (open/close/read/write/se
 
 ### [FSIO-04] O_DIRECT (FILE_FLAG_NO_BUFFERING) is incompatible with FILE_APPEND_DATA
 
-- **What Windows does**: `FILE_FLAG_NO_BUFFERING` + `FILE_APPEND_DATA` in DesiredAccess makes CreateFile fail with ERROR_INVALID_PARAMETER (87). Not documented for CreateFile — only indirectly under NtCreateFile's `FILE_NO_INTERMEDIATE_BUFFERING`. Since FILE_GENERIC_WRITE _contains_ FILE_APPEND_DATA, naive O_DIRECT|O_WRONLY breaks.
-- **How libuv handles it**: With O_DIRECT: if access has FILE_APPEND_DATA and also FILE_WRITE_DATA, drop FILE_APPEND_DATA (appends still permitted via WRITE_DATA, just not atomic); if FILE_APPEND_DATA is the _sole_ write right (O_APPEND|O_DIRECT), fail EINVAL (fs.c:567-596, long comment block).
+- **What Windows does**: `FILE_FLAG_NO_BUFFERING` + `FILE_APPEND_DATA` in DesiredAccess makes CreateFile fail with ERROR*INVALID_PARAMETER (87). Not documented for CreateFile — only indirectly under NtCreateFile's `FILE_NO_INTERMEDIATE_BUFFERING`. Since FILE_GENERIC_WRITE \_contains* FILE_APPEND_DATA, naive O_DIRECT|O_WRONLY breaks.
+- **How libuv handles it**: With O*DIRECT: if access has FILE_APPEND_DATA and also FILE_WRITE_DATA, drop FILE_APPEND_DATA (appends still permitted via WRITE_DATA, just not atomic); if FILE_APPEND_DATA is the \_sole* write right (O_APPEND|O_DIRECT), fail EINVAL (fs.c:567-596, long comment block).
 - **History**: 7a2c889f "win: fs: fix FILE_FLAG_NO_BUFFERING for writes" (PR #2102) — commit message documents the undocumented incompatibility with the NtCreateFile citation.
 - **Bun disposition**: must-port. O_DIRECT writes simply fail to open without this. Note Bun must also decide: O_DIRECT|O_APPEND = EINVAL (libuv's choice) vs silently dropping append atomicity. Target: engine
 
@@ -50,7 +50,7 @@ Sources: `C:/Users/dylan/code/libuv-read/src/win/fs.c` (open/close/read/write/se
 
 ### [FSIO-07] FILE_FLAG_BACKUP_SEMANTICS unconditionally, so directories can be opened; the resulting semantics matrix
 
-- **What Windows does**: CreateFileW refuses to open directories unless FILE_FLAG_BACKUP_SEMANTICS is passed. With it: OPEN_EXISTING/OPEN_ALWAYS on a directory _succeed_ (even with FILE_GENERIC_WRITE — write access on a dir means add-file/add-subdir); ReadFile/WriteFile on a directory handle then fail ERROR_INVALID_FUNCTION. Side effect: if the process holds SeBackupPrivilege, BACKUP_SEMANTICS bypasses ACL checks.
+- **What Windows does**: CreateFileW refuses to open directories unless FILE*FLAG_BACKUP_SEMANTICS is passed. With it: OPEN_EXISTING/OPEN_ALWAYS on a directory \_succeed* (even with FILE_GENERIC_WRITE — write access on a dir means add-file/add-subdir); ReadFile/WriteFile on a directory handle then fail ERROR_INVALID_FUNCTION. Side effect: if the process holds SeBackupPrivilege, BACKUP_SEMANTICS bypasses ACL checks.
 - **How libuv handles it**: `attributes |= FILE_FLAG_BACKUP_SEMANTICS` always (fs.c:609-610). Resulting matrix (test-fs-open-flags.c:276-416, run with and without FILEMAP): open dir `r`/`r+`/`a`/`a+` succeeds; read/write on dir fd → EISDIR via ERROR_INVALID_FUNCTION→UV_EISDIR (error.c:168); wrong-direction op on dir → EBADF (access check fires first, FSIO-24); `w`/`w+` → EISDIR at open (FSIO-06); `*x` → EEXIST.
 - **History**: 2216d38c "windows: enable uv_fs_open to open directories"; 109e176a "only allow opening directories for reading... closer to the Posix model" (the write-mode restriction later became moot because the kernel itself rejects the I/O); b68ee404 mapped ERROR_INVALID_FUNCTION→EISDIR (joyent/node#4951) noting the same code appears in unrelated APIs (tape, firmware) libuv doesn't care about.
 - **Bun disposition**: must-port (the flag and the EISDIR-on-I/O mapping). Note the SeBackupPrivilege ACL-bypass interaction for AppContainer/least-privilege scenarios. Target: engine
@@ -171,16 +171,16 @@ Sources: `C:/Users/dylan/code/libuv-read/src/win/fs.c` (open/close/read/write/se
 - **History**: fca18c33 (2012) "win: fs: handle EOF in read" — a refactor dropped EOF handling and broke luvit's readSync; df78de04 (#3053, 2022) added BROKEN_PIPE after fs.read on a closed pipe fd produced "EPIPE" garbage errors in node.
 - **Bun disposition**: must-port both codes (reading stdin-as-pipe hits BROKEN_PIPE constantly). Target: engine
 
-### [FSIO-24] Wrong-direction I/O: ERROR_ACCESS_DENIED rewritten to EBADF — ordered _before_ the EOF check
+### [FSIO-24] Wrong-direction I/O: ERROR*ACCESS_DENIED rewritten to EBADF — ordered \_before* the EOF check
 
 - **What Windows does**: ReadFile on a write-only handle / WriteFile on a read-only handle fail with ERROR_ACCESS_DENIED. The global table maps ACCESS_DENIED→EPERM (FSIO-48), but POSIX says read(2)/write(2) on a wrongly-opened fd is EBADF.
-- **How libuv handles it**: fs**read/fs**write rewrite `ERROR_ACCESS_DENIED → ERROR_INVALID_FLAGS` (an arbitrary sentinel that the table maps to UV_EBADF, error.c:82) before any further classification (fs.c:919-921, 1125-1127). The FILEMAP emulation paths return the same sentinel for direction violations (fs.c:760-763, 946-949) so both paths produce identical errno. Side effect: a _genuine_ permission failure during read/write (e.g. region locked by another process maps differently, but ACL revocation mid-handle does not happen) is indistinguishable and also becomes EBADF — accepted.
+- **How libuv handles it**: fs**read/fs**write rewrite `ERROR_ACCESS_DENIED → ERROR_INVALID_FLAGS` (an arbitrary sentinel that the table maps to UV*EBADF, error.c:82) before any further classification (fs.c:919-921, 1125-1127). The FILEMAP emulation paths return the same sentinel for direction violations (fs.c:760-763, 946-949) so both paths produce identical errno. Side effect: a \_genuine* permission failure during read/write (e.g. region locked by another process maps differently, but ACL revocation mid-handle does not happen) is indistinguishable and also becomes EBADF — accepted.
 - **History**: Three-act story: 93942168 changed only the FILEMAP paths but updated the whole test matrix → non-FILEMAP cases still returned EPERM → reverted (103dbaed, refs PR #3205). Reapplied completely as 9604b61d (#3303) covering all four paths. Lesson: the remap must be in every sibling path or the test matrix splits.
 - **Bun disposition**: must-port (node's `fs.writeSync` on an O_RDONLY fd must be EBADF; node tests assert it). Target: engine
 
 ### [FSIO-25] Write errors go through a write-specific translator: BROKEN_PIPE and NO_DATA → EPIPE
 
-- **What Windows does**: Writing to a pipe with no readers fails ERROR_BROKEN_PIPE or ERROR_NO_DATA (232, "pipe is being closed"). But ERROR_NO_DATA is _also_ what a PIPE_NOWAIT (legacy non-blocking) pipe returns for a would-block write, and ERROR_BROKEN_PIPE on a _read_ means EOF — one Win32 code, three POSIX meanings depending on direction.
+- **What Windows does**: Writing to a pipe with no readers fails ERROR*BROKEN_PIPE or ERROR_NO_DATA (232, "pipe is being closed"). But ERROR_NO_DATA is \_also* what a PIPE*NOWAIT (legacy non-blocking) pipe returns for a would-block write, and ERROR_BROKEN_PIPE on a \_read* means EOF — one Win32 code, three POSIX meanings depending on direction.
 - **How libuv handles it**: `uv_translate_write_sys_error` (error.c:176-183): BROKEN_PIPE→UV_EPIPE, NO_DATA→UV_EPIPE, everything else falls to the general table (where BROKEN_PIPE→UV_EOF and NO_DATA→UV_EAGAIN, error.c:80,157). fs\_\_write reports `SET_REQ_UV_ERROR(req, uv_translate_write_sys_error(error), error)` (fs.c:1129); win/stream.c uses the same translator for socket/pipe writes.
 - **History**: Originally NO_DATA→EPIPE globally; 47c83367 (#4471) remapped it to EAGAIN for PIPE_NOWAIT correctness; that broke EPIPE detection on writes (#4548) → 473dafc5 (#4562) introduced the write-path override table. A textbook "context-dependent errno" arc.
 - **Bun disposition**: must-port the two-table design (direction-aware errno translation). Bun's error mapping in the Rust sys layer should take an "operation kind" hint rather than hardcoding one global table. Target: engine
@@ -225,8 +225,8 @@ Sources: `C:/Users/dylan/code/libuv-read/src/win/fs.c` (open/close/read/write/se
 ### [FSIO-31] O_FILEMAP rewrites the open flags: WRONLY→RDWR, APPEND stripped — original flags stashed for emulation
 
 - **What Windows does**: CreateFileMapping requires read access even for write-only mappings; mapped writes cannot express atomic append at all.
-- **How libuv handles it**: When UV_FS_O_FILEMAP (0x20000000, win.h:678) is set, fs\_\_open saves the _original_ flags into `fd_info.flags`, then mutates the working flags: sole-WRONLY becomes RDWR; O_APPEND is cleared and forced RDWR (fs.c:454-472). Later reads/writes consult the saved originals to enforce user-visible direction/append semantics (FSIO-24, FSIO-28) even though the handle is more capable. Directory fds get `is_directory=TRUE, mapping=INVALID` (fs.c:658-662).
-- **History**: 2c279504 "win: add UV_FS_O_FILEMAP" (PR #2295) — perf feature; node exposes `fs.constants.UV_FS_O_FILEMAP` since v12.16 so user code _can_ pass it.
+- **How libuv handles it**: When UV*FS_O_FILEMAP (0x20000000, win.h:678) is set, fs\_\_open saves the \_original* flags into `fd_info.flags`, then mutates the working flags: sole-WRONLY becomes RDWR; O_APPEND is cleared and forced RDWR (fs.c:454-472). Later reads/writes consult the saved originals to enforce user-visible direction/append semantics (FSIO-24, FSIO-28) even though the handle is more capable. Directory fds get `is_directory=TRUE, mapping=INVALID` (fs.c:658-662).
+- **History**: 2c279504 "win: add UV*FS_O_FILEMAP" (PR #2295) — perf feature; node exposes `fs.constants.UV_FS_O_FILEMAP` since v12.16 so user code \_can* pass it.
 - **Bun disposition**: should-port as accept-and-ignore: treat the 0x20000000 bit as a no-op perf hint in the Rust layer (strip it before flag validation, take the normal ReadFile/WriteFile path). Semantics are identical by design (the entire filemap machinery exists to _emulate_ the normal path), so ignoring it is compatible; rejecting it as EINVAL would break any npm package passing node's constant. Target: engine
 
 ### [FSIO-32] Zero-length files cannot be mapped: INVALID_HANDLE_VALUE sentinel; mapping recreated on growth
@@ -260,7 +260,7 @@ Sources: `C:/Users/dylan/code/libuv-read/src/win/fs.c` (open/close/read/write/se
 ### [FSIO-36] Growing a filemapped file pre-extends it via CreateFileMapping(end_pos); the failure path closes the user's HANDLE (wart — do not copy)
 
 - **What Windows does**: CreateFileMapping with a size larger than the file extends the file immediately (SetEndOfFile effect) — before any data is written. If the process dies mid-write the file keeps the zero-filled tail.
-- **How libuv handles it**: Write past cached size → CloseHandle(old mapping), CreateFileMapping(file, ..., end_pos) → update fd_info.size in the hash (fs.c:975-999). On CreateFileMapping failure it calls `CloseHandle(file)` — _the OS handle still owned by the CRT fd_ — then records a poisoned (mapping=INVALid, size 0) entry and returns the error (fs.c:987-995). Same pattern in fs\_\_ftruncate's filemap branch (fs.c:2408-2415, 2432-2440). The CRT fd is left pointing at a closed handle; the next operation gets EBADF-ish behavior. This is an accepted-by-default wart, not a design.
+- **How libuv handles it**: Write past cached size → CloseHandle(old mapping), CreateFileMapping(file, ..., end*pos) → update fd_info.size in the hash (fs.c:975-999). On CreateFileMapping failure it calls `CloseHandle(file)` — \_the OS handle still owned by the CRT fd* — then records a poisoned (mapping=INVALid, size 0) entry and returns the error (fs.c:987-995). Same pattern in fs\_\_ftruncate's filemap branch (fs.c:2408-2415, 2432-2440). The CRT fd is left pointing at a closed handle; the next operation gets EBADF-ish behavior. This is an accepted-by-default wart, not a design.
 - **History**: 2c279504, never revisited.
 - **Bun disposition**: skip the mechanism; record as anti-lesson: never close a handle you don't own on an error path — poisoning a user's fd converts one failed write into mysterious EBADFs later. Target: design note.
 
@@ -271,7 +271,7 @@ Sources: `C:/Users/dylan/code/libuv-read/src/win/fs.c` (open/close/read/write/se
 - **History**: 9604b61d aligned the codes (after the 93942168/103dbaed revert taught them the two paths must move together).
 - **Bun disposition**: must-port the principle: if Bun ever adds a fast path that bypasses the kernel (mmap reads for Bun.file), its error surface must be byte-identical to the slow path, enforced by running the same test matrix over both. Target: test strategy for fs fast paths.
 
-### [FSIO-38] Filemap append/current_pos live in the hash, not the OS file pointer — and append uses the _cached_ size
+### [FSIO-38] Filemap append/current*pos live in the hash, not the OS file pointer — and append uses the \_cached* size
 
 - **What Windows does**: Mapped I/O never moves the OS file pointer, and there is no kernel-arbitrated EOF for mapped appends.
 - **How libuv handles it**: `fd_info.current_pos` tracks the sequential position for offset==-1 ops; updated in the hash after each op (fs.c:769-773, 837-840, 1045-1048). Append writes position at `fd_info.size` — the _cached_ size, so appends are not atomic against other processes (or even other fds in the same process) growing the file; mixing CRT `_read`/`_lseeki64` with filemap I/O on the same fd silently diverges (sendfile does exactly that, FSIO-53).
@@ -292,12 +292,12 @@ Sources: `C:/Users/dylan/code/libuv-read/src/win/fs.c` (open/close/read/write/se
 - **What Windows does**: NTFS filenames are arbitrary 16-bit unit sequences — not necessarily valid UTF-16. Files with lone surrogates exist in the wild; strict UTF-8 conversion either errors on them or corrupts them (U+FFFD), making such files unopenable/unlistable.
 - **How libuv handles it**: Since 8f32a14a (#2970, fixes #2048), every path crossing the boundary uses WTF-8: `uv_wtf8_length_as_utf16` + `uv_wtf8_to_utf16` inbound (fs.c:363-380, 397-411), `uv_utf16_to_wtf8` outbound (readlink/realpath/readdir). Helpers were exported as public API in f3889085 (#4021) precisely so embedders (node) can round-trip.
 - **History**: 8f32a14a (2023, replaced an earlier stalled PR #2192); d09441ca (#4092) fixed a decoder bug — forgot to mask high bits of the first byte so _every_ 4-byte (supplementary-plane) character failed → node#48673 "can't read files with emoji in name"; 428f2c44 (2026) changed the invalid-input return from -1 to UV_EINVAL.
-- **Bun disposition**: must-port (Bun already has WTF-8 infrastructure in bun_core strings; the lesson is to use it on _every_ fs path conversion, including error paths and outputs, and to test with lone-surrogate filenames — Windows CI should create one). Target: engine
+- **Bun disposition**: must-port (Bun already has WTF-8 infrastructure in bun*core strings; the lesson is to use it on \_every* fs path conversion, including error paths and outputs, and to test with lone-surrogate filenames — Windows CI should create one). Target: engine
 
 ### [FSIO-41] fs\_\_capture_path: one allocation for both UTF-16 paths + optional UTF-8 copy; sync borrows, async copies
 
 - **What Windows does**: n/a (lifetime design).
-- **How libuv handles it**: Single malloc sized for pathw + new_pathw + (optionally) a byte copy of the original UTF-8 path; pointers carved out of it; `req->flags |= UV_FS_FREE_PATHS` frees the one block in cleanup (fs.c:349-423, 3240-3241). `copy_path` is literally `cb != NULL` (fs.c:3270): async requests copy the caller's path string (caller may free it before the threadpool runs); sync requests _borrow_ the caller's pointer for req->path. The UTF-16 lengths include the NUL terminator (uv_wtf8_length_as_utf16 counts it, idna.c:369-383), so pathw is always NUL-terminated for CreateFileW.
+- **How libuv handles it**: Single malloc sized for pathw + new*pathw + (optionally) a byte copy of the original UTF-8 path; pointers carved out of it; `req->flags |= UV_FS_FREE_PATHS` frees the one block in cleanup (fs.c:349-423, 3240-3241). `copy_path` is literally `cb != NULL` (fs.c:3270): async requests copy the caller's path string (caller may free it before the threadpool runs); sync requests \_borrow* the caller's pointer for req->path. The UTF-16 lengths include the NUL terminator (uv_wtf8_length_as_utf16 counts it, idna.c:369-383), so pathw is always NUL-terminated for CreateFileW.
 - **History**: shape dates to 72b5976e "windows: support utf8 in uv_fs functions fixes #201" (2011); WTF-8 swapped in by 8f32a14a.
 - **Bun disposition**: should-port the single-allocation pattern (Bun's Rust layer converts paths per-call into a stack-first WTF-16 buffer — keep that; the sync-borrow/async-copy distinction maps to Rust lifetimes naturally). The durable rule: convert once at the boundary, thread the converted form everywhere. Target: engine
 
@@ -341,7 +341,7 @@ Sources: `C:/Users/dylan/code/libuv-read/src/win/fs.c` (open/close/read/write/se
 ### [FSIO-47] Buffer array copying: ≤4 bufs inline (bufsml), more heap-copied; cleanup is idempotent
 
 - **What Windows does**: n/a (lifetime design).
-- **How libuv handles it**: uv_fs_read/write copy the caller's uv_buf_t array (NOT the data) into `req->fs.info.bufsml[4]` or a heap copy (fs.c:3298-3315, 3331-3353; win.h:633), so the caller's _array_ can be stack-temporary even for async calls while buffer _memory_ must outlive the op. `uv_fs_req_cleanup` frees paths/ptr/bufs guarded by UV_FS_CLEANEDUP for idempotence (fs.c:3233-3262). NULL/0 bufs → EINVAL up front (939ea06f).
+- **How libuv handles it**: uv*fs_read/write copy the caller's uv_buf_t array (NOT the data) into `req->fs.info.bufsml[4]` or a heap copy (fs.c:3298-3315, 3331-3353; win.h:633), so the caller's \_array* can be stack-temporary even for async calls while buffer _memory_ must outlive the op. `uv_fs_req_cleanup` frees paths/ptr/bufs guarded by UV_FS_CLEANEDUP for idempotence (fs.c:3233-3262). NULL/0 bufs → EINVAL up front (939ea06f).
 - **History**: 13dd3502 vectored IO (after one revert); bufsml sizing matches the unix side.
 - **Bun disposition**: should-port the shape (Rust: SmallVec<[IoSlice;4]>-style). The idempotent-cleanup flag is a C-ism Rust ownership replaces — skip that part. Target: engine
 
@@ -400,7 +400,7 @@ Sources: `C:/Users/dylan/code/libuv-read/src/win/fs.c` (open/close/read/write/se
 
 ### [FSIO-55] UNICODE_STRING lengths are USHORT bytes: anything building one must cap at 0x7FFF WCHARs
 
-- **What Windows does**: UNICODE_STRING.Length/MaximumLength are USHORT _byte_ counts, silently truncating longer paths if you cast; NT-level APIs (NtQueryDirectoryFile masks, NtCreateFile relative opens) consume them.
+- **What Windows does**: UNICODE*STRING.Length/MaximumLength are USHORT \_byte* counts, silently truncating longer paths if you cast; NT-level APIs (NtQueryDirectoryFile masks, NtCreateFile relative opens) consume them.
 - **How libuv handles it**: `uv__RtlUnicodeStringInit` rejects > 0x7FFF WCHARs with STATUS_INVALID_PARAMETER before populating (fs.c:61-72); used by fs\_\_opendir's filename mask.
 - **History**: added with the readdir NT-path work (99440bb6 era).
 - **Bun disposition**: must-port wherever Bun's Rust layer builds UNICODE_STRINGs (NtCreateFile-based opens in src/sys take this path today): validate length before the USHORT narrowing, error ENAMETOOLONG. cross-ref: fs-readdir. Target: engine

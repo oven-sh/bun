@@ -1,4 +1,5 @@
 #include "NodeURL.h"
+#include "BunIDNA.h"
 #include "wtf/URLParser.h"
 #include <unicode/uidna.h>
 
@@ -50,25 +51,15 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, J
     )
         return JSC::JSValue::encode(jsEmptyString(vm));
 
-    if (domain.containsOnlyASCII())
+    // An "xn--" (ACE) label must decode to a valid IDNA label, so it cannot
+    // take the ASCII fast path: https://url.spec.whatwg.org/#concept-domain-to-ascii
+    if (domain.containsOnlyASCII() && !domainHasACELabel(domain))
         return JSC::JSValue::encode(arg0);
-    if (domain.is8Bit())
-        domain.convertTo16Bit();
 
-    constexpr static int allowedNameToASCIIErrors = UIDNA_ERROR_EMPTY_LABEL | UIDNA_ERROR_LABEL_TOO_LONG | UIDNA_ERROR_DOMAIN_NAME_TOO_LONG | UIDNA_ERROR_LEADING_HYPHEN | UIDNA_ERROR_TRAILING_HYPHEN | UIDNA_ERROR_HYPHEN_3_4;
-    constexpr static size_t hostnameBufferLength = 2048;
-
-    auto encoder = &WTF::URLParser::internationalDomainNameTranscoder();
-    char16_t hostnameBuffer[hostnameBufferLength];
-    UErrorCode error = U_ZERO_ERROR;
-    UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
-    const auto span = domain.span16();
-    int32_t numCharactersConverted = uidna_nameToASCII(encoder, span.data(), span.size(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
-
-    if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToASCIIErrors) && numCharactersConverted) {
-        return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(std::span { hostnameBuffer, static_cast<unsigned int>(numCharactersConverted) })));
-    }
-    return JSC::JSValue::encode(jsEmptyString(vm));
+    auto ascii = domainToASCII(domain);
+    if (ascii.isNull())
+        return JSC::JSValue::encode(jsEmptyString(vm));
+    return JSC::JSValue::encode(JSC::jsString(vm, ascii));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

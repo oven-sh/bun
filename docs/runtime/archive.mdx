@@ -85,7 +85,7 @@ const archive = new Bun.Archive({
 });
 ```
 
-The mode is masked to `0o777`, so passing a full `fs.stat()` mode such as `0o100755` resolves to `0o755`.
+The mode is masked to `0o777`, so passing a full `fs.stat()` mode such as `0o100755` resolves to `0o755`. A descriptor must include `data`, and `mode` (when present) must be a non-negative integer; anything else throws a `TypeError`.
 
 ### Writing Archives to Disk
 

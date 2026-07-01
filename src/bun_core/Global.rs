@@ -33,6 +33,10 @@ static TOP_LEVEL_DIR: crate::RwLock<&'static [u8]> = crate::RwLock::new(b".");
 // Kept as a separate flag so `top_level_dir_loaded()` is a cheap relaxed load.
 static TOP_LEVEL_DIR_LOADED: AtomicBool = AtomicBool::new(false);
 
+// Owns the bytes `TOP_LEVEL_DIR` points at (a normal static, so leak checkers
+// see them as reachable for the life of the process).
+static TOP_LEVEL_DIR_STORAGE: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
+
 /// Whether `init_top_level_dir` has run.
 #[inline]
 pub fn top_level_dir_loaded() -> bool {
@@ -44,8 +48,7 @@ pub fn top_level_dir_loaded() -> bool {
 /// `set_top_level_dir` calls (post-chdir) still overwrite.
 pub fn init_top_level_dir(top_level_dir: &[u8]) {
     if !TOP_LEVEL_DIR_LOADED.swap(true, Ordering::Release) {
-        // Leak once per process: TOP_LEVEL_DIR stores `&'static [u8]`.
-        set_top_level_dir(Box::leak(top_level_dir.to_vec().into_boxed_slice()));
+        set_top_level_dir(TOP_LEVEL_DIR_STORAGE.get_or_init(|| top_level_dir.into()));
     }
 }
 

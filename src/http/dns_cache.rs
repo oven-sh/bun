@@ -377,7 +377,8 @@ const DEFAULT_HINTS_ADDRCONFIG: bool = true;
 #[cfg(not(unix))]
 const DEFAULT_HINTS_ADDRCONFIG: bool = false;
 
-#[allow(dead_code)]
+// Only the POSIX/macOS lookup paths build hints (Windows resolves via libuv).
+#[cfg(not(windows))]
 fn default_hints() -> AddrInfo {
     let mut h: AddrInfo = bun_core::ffi::zeroed();
     h.ai_family = netc::AF_UNSPEC;
@@ -396,7 +397,7 @@ fn default_hints() -> AddrInfo {
     h
 }
 
-#[allow(dead_code)]
+#[cfg(not(windows))]
 pub(crate) fn get_hints() -> AddrInfo {
     let mut hints_copy = default_hints();
     if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG

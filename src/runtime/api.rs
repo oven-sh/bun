@@ -67,6 +67,8 @@ pub mod js_bundler;
 pub mod js_transpiler;
 #[path = "api/JSON5Object.rs"]
 pub mod json5_object;
+#[path = "api/json_simd_testing.rs"]
+pub mod json_simd_testing;
 #[path = "api/JSONCObject.rs"]
 pub mod jsonc_object;
 #[path = "api/MarkdownObject.rs"]

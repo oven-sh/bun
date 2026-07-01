@@ -1953,10 +1953,24 @@ impl PackageManifest {
         public_max_age: u32,
         is_extended_manifest: bool,
     ) -> Result<Option<PackageManifest>, Error> {
+        parse_bench_init();
+        if USE_CURSOR_PARSE.load(core::sync::atomic::Ordering::Relaxed) {
+            return Self::parse_cursor(
+                scope,
+                log,
+                json_buffer,
+                expected_name,
+                last_modified,
+                etag,
+                public_max_age,
+                is_extended_manifest,
+            );
+        }
         // `bun_ast::Source::init_path_string` accepts borrowed `&[u8]` via
         // `IntoStr`; the Source only lives for the duration of this function,
         // so pass the caller's buffers through directly without manufacturing
         // `'static` references here (PORTING.md §Forbidden lifetime extension).
+        let _t0 = std::time::Instant::now();
         let source = bun_ast::Source::init_path_string(expected_name, json_buffer);
         initialize_store();
         // `initialize_mini_store` deliberately keeps the allocator pushed
@@ -1964,7 +1978,11 @@ impl PackageManifest {
         // bulk-frees via `reset_retain_with_limit` on the next call — see
         // `initialize_mini_store` in lib.rs for why.
         let bump = bun_alloc::Arena::new();
-        let json = match JSON::parse_utf8(&source, log, &bump) {
+        let json = match if USE_SCALAR_JSON.load(core::sync::atomic::Ordering::Relaxed) {
+            JSON::parse_utf8_scalar(&source, log, &bump)
+        } else {
+            JSON::parse_utf8(&source, log, &bump)
+        } {
             Ok(j) => j,
             Err(_) => {
                 // don't use the arena memory!
@@ -1974,6 +1992,8 @@ impl PackageManifest {
                 return Ok(None);
             }
         };
+
+        let _t_json = _t0.elapsed();
 
         if let Some(error_q) = json.as_property(b"error") {
             if let Some(err) = error_q.expr.as_string(&bump) {
@@ -2358,6 +2378,8 @@ impl PackageManifest {
         let mut extern_strings_consumed: usize = 0; // tracks `all_extern_strings.len - extern_strings.len`
         string_builder.cap += (string_builder.cap % 64) + 64;
         string_builder.cap *= 2;
+
+        let _t_count = _t0.elapsed();
 
         string_builder.allocate()?;
 
@@ -3463,6 +3485,1152 @@ impl PackageManifest {
 
         let _ = all_tarball_url_strings; // suppress unused-mut warnings
 
+        {
+            let total = _t0.elapsed();
+            PARSE_TOTAL_NS.fetch_add(
+                total.as_nanos() as u64,
+                core::sync::atomic::Ordering::Relaxed,
+            );
+            PARSE_TOTAL_BYTES.fetch_add(
+                json_buffer.len() as u64,
+                core::sync::atomic::Ordering::Relaxed,
+            );
+            PARSE_CALL_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            PARSE_TIMING.with(|t| {
+                t.set(ParseTiming {
+                    json_ns: _t_json.as_nanos() as u64,
+                    count_ns: (_t_count - _t_json).as_nanos() as u64,
+                    build_ns: (total - _t_count).as_nanos() as u64,
+                    total_ns: total.as_nanos() as u64,
+                });
+            });
+        }
         Ok(Some(result))
     }
+}
+
+fn negatable_from_cursor<T: NegatableEnum>(c: &cursor::JsonCursor<'_>) -> T {
+    let mut this = T::NONE.negatable();
+    match c.kind() {
+        cursor::JsonKind::Array => {
+            for item in c.iter_array() {
+                if let Some(value) = item.as_str() {
+                    this.apply(value);
+                }
+            }
+        }
+        cursor::JsonKind::String => {
+            if let Some(s) = c.as_str() {
+                this.apply(s);
+            }
+        }
+        _ => {}
+    }
+    this.combine()
+}
+
+use bun_parsers::json_cursor as cursor;
+
+impl PackageManifest {
+    /// Port of [`PackageManifest::parse`] over [`cursor::JsonCursor`] instead
+    /// of `Expr`. Produces an identical `PackageManifest`; kept side-by-side
+    /// for benchmarking until one supersedes the other.
+    pub fn parse_cursor(
+        scope: &registry::Scope,
+        log: &mut bun_ast::Log,
+        json_buffer: &[u8],
+        expected_name: &[u8],
+        last_modified: &[u8],
+        etag: &[u8],
+        public_max_age: u32,
+        is_extended_manifest: bool,
+    ) -> Result<Option<PackageManifest>, Error> {
+        let _t0 = std::time::Instant::now();
+        let source = bun_ast::Source::init_path_string(expected_name, json_buffer);
+        // No `initialize_store()` / `Arena::new()` — the cursor never allocates
+        // AST nodes. `bump` is kept only for `as_str_decoded` (escaped strings).
+        let bump = bun_alloc::Arena::new();
+        let doc = match cursor::JsonDoc::parse(&source, log) {
+            Ok(d) => d,
+            Err(_) => {
+                let mut cloned_log = bun_ast::Log::init();
+                log.clone_to_with_recycled(&mut cloned_log, true);
+                *log = cloned_log;
+                return Ok(None);
+            }
+        };
+        let json = doc.root();
+        let _t_json = _t0.elapsed();
+
+        if let Some(err_c) = json.get(b"error")
+            && let Some(err) = err_c.as_str_decoded(&bump)
+        {
+            log.add_error_fmt(
+                Some(&source),
+                bun_ast::Loc::EMPTY,
+                format_args!("npm error: {}", bstr::BStr::new(err)),
+            );
+            return Ok(None);
+        }
+
+        let mut result: PackageManifest = PackageManifest::default();
+        let mut all_extern_strings_dedupe_map = ExternalStringMapDeduper::default();
+        let mut version_extern_strings_dedupe_map = ExternalStringMapDeduper::default();
+        let mut optional_peer_dep_names: Vec<u64> = Vec::new();
+        let mut bundled_deps_set = StringSet::init();
+        let mut bundle_all_deps: bool;
+        let mut bundled_deps_count: usize = 0;
+        let mut string_builder = Semver::semver_string::Builder {
+            string_pool: Semver::semver_string::StringPool::default(),
+            ..Default::default()
+        };
+
+        if PackageManager::verbose_install()
+            && let Some(name_c) = json.get(b"name")
+        {
+            let Some(received_name) = name_c.as_str_decoded(&bump) else {
+                return Ok(None);
+            };
+            if scope.url_hash == *registry::DEFAULT_URL_HASH
+                && !strings::eql_long(expected_name, received_name, true)
+            {
+                bun_core::warn!(
+                    "Package name mismatch. Expected <b>\"{}\"<r> but received <red>\"{}\"<r>",
+                    bstr::BStr::new(expected_name),
+                    bstr::BStr::new(received_name),
+                );
+            }
+        }
+
+        string_builder.count(expected_name);
+
+        if let Some(modified_c) = json.get(b"modified") {
+            let Some(field) = modified_c.as_str_decoded(&bump) else {
+                return Ok(None);
+            };
+            string_builder.count(field);
+        }
+
+        let mut release_versions_len: usize = 0;
+        let mut pre_versions_len: usize = 0;
+        let mut dependency_sum: usize = 0;
+        let mut extern_string_count: usize = 0;
+        let mut extern_string_count_bin: usize = 0;
+        let mut tarball_urls_count: usize = 0;
+
+        // ── count pass ───────────────────────────────────────────────────
+        'get_versions: {
+            let Some(versions_c) = json.get(b"versions") else {
+                break 'get_versions;
+            };
+            if !versions_c.is_object() {
+                break 'get_versions;
+            }
+            for (version_name_raw, ver) in versions_c.iter_object() {
+                let version_name: &[u8] = if version_name_raw.contains(&b'\\') {
+                    match versions_c.get(version_name_raw) {
+                        // Unreachable in practice — version keys are semver.
+                        _ => continue,
+                    }
+                } else {
+                    version_name_raw
+                };
+                let sliced_version = SlicedString::init(version_name, version_name);
+                let parsed_version = Semver::Version::parse(sliced_version);
+                if cfg!(debug_assertions) {
+                    debug_assert!(parsed_version.valid);
+                }
+                if !parsed_version.valid {
+                    log.add_error_fmt(
+                        Some(&source),
+                        ver.loc(),
+                        format_args!(
+                            "Failed to parse dependency {}",
+                            bstr::BStr::new(version_name)
+                        ),
+                    );
+                    continue;
+                }
+                if parsed_version.version.tag.has_pre() {
+                    pre_versions_len += 1;
+                    extern_string_count += 1;
+                } else {
+                    extern_string_count +=
+                        (strings::index_of_char(version_name, b'+').is_some()) as usize;
+                    release_versions_len += 1;
+                }
+                string_builder.count(version_name);
+
+                let mut f_dist = None;
+                let mut f_bin = None;
+                let mut f_dirs = None;
+                let mut f_bundle = None;
+                let mut f_deps: [Option<cursor::JsonCursor<'_>>; 3] = [None, None, None];
+                let mut f_pmeta = None;
+                for (k, v) in ver.iter_object() {
+                    match k {
+                        b"dist" => f_dist = Some(v),
+                        b"bin" => f_bin = Some(v),
+                        b"directories" => f_dirs = Some(v),
+                        b"bundleDependencies" => f_bundle = Some(v),
+                        b"bundledDependencies" => {
+                            if f_bundle.is_none() {
+                                f_bundle = Some(v)
+                            }
+                        }
+                        b"dependencies" => f_deps[0] = Some(v),
+                        b"optionalDependencies" => f_deps[1] = Some(v),
+                        b"peerDependencies" => f_deps[2] = Some(v),
+                        b"peerDependenciesMeta" => f_pmeta = Some(v),
+                        _ => {}
+                    }
+                }
+
+                if let Some(dist_c) = f_dist
+                    && let Some(tarball_c) = dist_c.get(b"tarball")
+                    && let Some(tarball) = tarball_c.as_str_decoded(&bump)
+                {
+                    string_builder.count(tarball);
+                    tarball_urls_count += (!tarball.is_empty()) as usize;
+                }
+
+                'bin: {
+                    if let Some(bin_c) = f_bin {
+                        match bin_c.kind() {
+                            cursor::JsonKind::Object => {
+                                let bin_len = bin_c.len();
+                                match bin_len {
+                                    0 => break 'bin,
+                                    1 => {}
+                                    _ => extern_string_count_bin += bin_len * 2,
+                                }
+                                for (k, v) in bin_c.iter_object() {
+                                    let Some(k) = decode_key(k, &bump) else {
+                                        break 'bin;
+                                    };
+                                    string_builder.count(k);
+                                    let Some(v) = v.as_str_decoded(&bump) else {
+                                        break 'bin;
+                                    };
+                                    string_builder.count(v);
+                                }
+                            }
+                            cursor::JsonKind::String => {
+                                if let Some(s) = bin_c.as_str_decoded(&bump) {
+                                    string_builder.count(s);
+                                    break 'bin;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(dirs_c) = f_dirs
+                        && let Some(bin_c) = dirs_c.get(b"bin")
+                        && let Some(s) = bin_c.as_str_decoded(&bump)
+                    {
+                        string_builder.count(s);
+                        break 'bin;
+                    }
+                }
+
+                bundled_deps_set.map.clear_retaining_capacity();
+                bundle_all_deps = false;
+                if let Some(bd) = f_bundle {
+                    match bd.kind() {
+                        cursor::JsonKind::True | cursor::JsonKind::False => {
+                            bundle_all_deps = bd.as_bool().unwrap_or(false);
+                        }
+                        cursor::JsonKind::Array => {
+                            for item in bd.iter_array() {
+                                let Some(s) = item.as_str_decoded(&bump) else {
+                                    continue;
+                                };
+                                bundled_deps_set.insert(s)?;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                for (gi, _pair) in DEPENDENCY_GROUPS.iter().enumerate() {
+                    if let Some(deps_c) = f_deps[gi]
+                        && deps_c.is_object()
+                    {
+                        for (key_raw, value) in deps_c.iter_object() {
+                            let Some(key) = decode_key(key_raw, &bump) else {
+                                continue;
+                            };
+                            dependency_sum += 1;
+                            if !bundle_all_deps && bundled_deps_set.swap_remove(key) {
+                                bundled_deps_count += 1;
+                            }
+                            string_builder.count(key);
+                            string_builder.count(value.as_str_decoded(&bump).unwrap_or(b""));
+                        }
+                    }
+                }
+
+                if let Some(meta_c) = f_pmeta
+                    && meta_c.is_object()
+                {
+                    for (key_raw, mv) in meta_c.iter_object() {
+                        let Some(opt_c) = mv.get(b"optional") else {
+                            continue;
+                        };
+                        if opt_c.as_bool() != Some(true) {
+                            continue;
+                        }
+                        let Some(key) = decode_key(key_raw, &bump) else {
+                            continue;
+                        };
+                        dependency_sum += 1;
+                        string_builder.count(key);
+                        string_builder.count(b"*");
+                    }
+                }
+            }
+        }
+
+        extern_string_count += dependency_sum;
+
+        let mut dist_tags_count: usize = 0;
+        if let Some(dist_c) = json.get(b"dist-tags")
+            && dist_c.is_object()
+        {
+            for (key_raw, value) in dist_c.iter_object() {
+                let Some(key) = decode_key(key_raw, &bump) else {
+                    continue;
+                };
+                string_builder.count(key);
+                extern_string_count += 2;
+                string_builder.count(value.as_str_decoded(&bump).unwrap_or(b""));
+                dist_tags_count += 1;
+            }
+        }
+
+        if !last_modified.is_empty() {
+            string_builder.count(last_modified);
+        }
+        if !etag.is_empty() {
+            string_builder.count(etag);
+        }
+
+        let mut versioned_packages: Box<[PackageVersion]> =
+            vec![PackageVersion::default(); release_versions_len + pre_versions_len]
+                .into_boxed_slice();
+        let mut all_semver_versions: Box<[Semver::Version]> =
+            vec![
+                Semver::Version::default();
+                release_versions_len + pre_versions_len + dist_tags_count
+            ]
+            .into_boxed_slice();
+        let mut all_extern_strings: Box<[ExternalString]> =
+            vec![ExternalString::default(); extern_string_count + tarball_urls_count]
+                .into_boxed_slice();
+        let mut version_extern_strings: Box<[ExternalString]> =
+            vec![ExternalString::default(); dependency_sum].into_boxed_slice();
+        let mut all_extern_strings_bin_entries: Box<[ExternalString]> =
+            vec![ExternalString::default(); extern_string_count_bin].into_boxed_slice();
+        let mut all_tarball_url_strings: Box<[ExternalString]> =
+            vec![ExternalString::default(); tarball_urls_count].into_boxed_slice();
+        let mut bundled_deps_buf: Box<[PackageNameHash]> =
+            vec![PackageNameHash::default(); bundled_deps_count].into_boxed_slice();
+        let mut bundled_deps_offset: usize = 0;
+
+        let mut versioned_package_releases_start: usize = 0;
+        let all_versioned_package_releases_range = 0..release_versions_len;
+        let mut versioned_package_prereleases_start: usize = release_versions_len;
+        let all_versioned_package_prereleases_range =
+            release_versions_len..release_versions_len + pre_versions_len;
+        let all_release_versions_range = 0..release_versions_len;
+        let all_prerelease_versions_range =
+            release_versions_len..release_versions_len + pre_versions_len;
+        let dist_tag_versions_start = release_versions_len + pre_versions_len;
+        let mut release_versions_cursor: usize = 0;
+        let mut prerelease_versions_cursor: usize = release_versions_len;
+        let mut extern_strings_bin_entries_cursor: usize = 0;
+        let mut tarball_url_strings_cursor: usize = 0;
+        let mut extern_strings_consumed: usize = 0;
+
+        string_builder.cap += (string_builder.cap % 64) + 64;
+        string_builder.cap *= 2;
+        let _t_count = _t0.elapsed();
+        string_builder.allocate()?;
+
+        result.pkg.name = string_builder.append::<ExternalString>(expected_name);
+
+        let mut dependency_names_cursor: usize = 0;
+        let mut dependency_values_cursor: usize = 0;
+
+        // ── build pass ───────────────────────────────────────────────────
+        'get_versions2: {
+            let Some(versions_c) = json.get(b"versions") else {
+                break 'get_versions2;
+            };
+            if !versions_c.is_object() {
+                break 'get_versions2;
+            }
+            let mut prev_extern_bin_group: Option<core::ops::Range<usize>> = None;
+            let empty_version = PackageVersion {
+                bin: Bin::init(),
+                ..PackageVersion::default()
+            };
+
+            // `time` has one key per version; a per-version `get()` over it
+            // is O(n²). Index it once.
+            let mut time_map: HashMap<u64, cursor::JsonCursor<'_>, IdentityContext<u64>> =
+                HashMap::default();
+            if let Some(time_c) = json.get(b"time")
+                && time_c.is_object()
+            {
+                for (k, v) in time_c.iter_object() {
+                    time_map.insert(Semver::semver_string::Builder::string_hash(k), v);
+                }
+            }
+
+            for (version_name, ver) in versions_c.iter_object() {
+                if version_name.contains(&b'\\') {
+                    continue;
+                }
+                let mut sliced_version = SlicedString::init(version_name, version_name);
+                let mut parsed_version = Semver::Version::parse(sliced_version);
+                if cfg!(debug_assertions) {
+                    debug_assert!(parsed_version.valid);
+                }
+                if parsed_version.version.tag.has_build() || parsed_version.version.tag.has_pre() {
+                    let version_string = string_builder.append::<SemverString>(version_name);
+                    sliced_version = version_string.sliced(string_builder.allocated_slice());
+                    parsed_version = Semver::Version::parse(sliced_version);
+                }
+                if !parsed_version.valid {
+                    continue;
+                }
+
+                // One pass over this version's keys — capture cursors for the
+                // fields we need instead of calling `ver.get()` ~12 times.
+                let mut f_dist = None;
+                let mut f_bin = None;
+                let mut f_dirs = None;
+                let mut f_bundle = None;
+                let mut f_cpu = None;
+                let mut f_os = None;
+                let mut f_libc = None;
+                let mut f_his = None;
+                let mut f_deps: [Option<cursor::JsonCursor<'_>>; 3] = [None, None, None];
+                let mut f_pmeta = None;
+                for (k, v) in ver.iter_object() {
+                    match k {
+                        b"dist" => f_dist = Some(v),
+                        b"bin" => f_bin = Some(v),
+                        b"directories" => f_dirs = Some(v),
+                        b"bundleDependencies" => f_bundle = Some(v),
+                        b"bundledDependencies" => {
+                            if f_bundle.is_none() {
+                                f_bundle = Some(v)
+                            }
+                        }
+                        b"cpu" => f_cpu = Some(v),
+                        b"os" => f_os = Some(v),
+                        b"libc" => f_libc = Some(v),
+                        b"hasInstallScript" => f_his = Some(v),
+                        b"dependencies" => f_deps[0] = Some(v),
+                        b"optionalDependencies" => f_deps[1] = Some(v),
+                        b"peerDependencies" => f_deps[2] = Some(v),
+                        b"peerDependenciesMeta" => f_pmeta = Some(v),
+                        _ => {}
+                    }
+                }
+
+                bundled_deps_set.map.clear_retaining_capacity();
+                bundle_all_deps = false;
+                if let Some(bd) = f_bundle {
+                    match bd.kind() {
+                        cursor::JsonKind::True | cursor::JsonKind::False => {
+                            bundle_all_deps = bd.as_bool().unwrap_or(false);
+                        }
+                        cursor::JsonKind::Array => {
+                            for item in bd.iter_array() {
+                                let Some(s) = item.as_str_decoded(&bump) else {
+                                    continue;
+                                };
+                                bundled_deps_set.insert(s)?;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                let mut package_version: PackageVersion = empty_version;
+
+                if let Some(c) = f_cpu {
+                    package_version.cpu = negatable_from_cursor::<Architecture>(&c);
+                }
+                if let Some(c) = f_os {
+                    package_version.os = negatable_from_cursor::<OperatingSystem>(&c);
+                }
+                if let Some(c) = f_libc {
+                    package_version.libc = negatable_from_cursor::<Libc>(&c);
+                }
+                if let Some(c) = f_his
+                    && let Some(v) = c.as_bool()
+                {
+                    package_version.has_install_script = v;
+                }
+
+                'bin: {
+                    if let Some(bin_c) = f_bin {
+                        match bin_c.kind() {
+                            cursor::JsonKind::Object => {
+                                let bin_len = bin_c.len();
+                                match bin_len {
+                                    0 => {}
+                                    1 => {
+                                        let mut it = bin_c.iter_object();
+                                        let Some((k_raw, v)) = it.next() else {
+                                            break 'bin;
+                                        };
+                                        let Some(bin_name) = decode_key(k_raw, &bump) else {
+                                            break 'bin;
+                                        };
+                                        let Some(value) = v.as_str_decoded(&bump) else {
+                                            break 'bin;
+                                        };
+                                        package_version.bin = Bin {
+                                            tag: bin::Tag::NamedFile,
+                                            _padding_tag: [0; 3],
+                                            value: bin::Value::init_named_file([
+                                                string_builder.append::<SemverString>(bin_name),
+                                                string_builder.append::<SemverString>(value),
+                                            ]),
+                                        };
+                                    }
+                                    _ => {
+                                        let group_start = extern_strings_bin_entries_cursor;
+                                        let group_len = bin_len * 2;
+                                        let mut is_identical = match &prev_extern_bin_group {
+                                            Some(r) => r.len() == group_len,
+                                            None => false,
+                                        };
+                                        let mut group_i: u32 = 0;
+                                        for (k_raw, v) in bin_c.iter_object() {
+                                            let Some(k) = decode_key(k_raw, &bump) else {
+                                                break 'bin;
+                                            };
+                                            let cur = string_builder.append::<ExternalString>(k);
+                                            all_extern_strings_bin_entries
+                                                [group_start + group_i as usize] = cur;
+                                            if is_identical {
+                                                let prev = prev_extern_bin_group.as_ref().unwrap();
+                                                is_identical = cur.hash
+                                                    == all_extern_strings_bin_entries
+                                                        [prev.start + group_i as usize]
+                                                        .hash;
+                                            }
+                                            group_i += 1;
+                                            let Some(v) = v.as_str_decoded(&bump) else {
+                                                break 'bin;
+                                            };
+                                            let cur = string_builder.append::<ExternalString>(v);
+                                            all_extern_strings_bin_entries
+                                                [group_start + group_i as usize] = cur;
+                                            if is_identical {
+                                                let prev = prev_extern_bin_group.as_ref().unwrap();
+                                                is_identical = cur.hash
+                                                    == all_extern_strings_bin_entries
+                                                        [prev.start + group_i as usize]
+                                                        .hash;
+                                            }
+                                            group_i += 1;
+                                        }
+                                        let final_range = if is_identical {
+                                            prev_extern_bin_group.clone().unwrap()
+                                        } else {
+                                            let r = group_start..group_start + group_len;
+                                            prev_extern_bin_group = Some(r.clone());
+                                            extern_strings_bin_entries_cursor += group_len;
+                                            r
+                                        };
+                                        package_version.bin = Bin {
+                                            tag: bin::Tag::Map,
+                                            _padding_tag: [0; 3],
+                                            value: bin::Value::init_map(ExternalStringList::init(
+                                                &all_extern_strings_bin_entries,
+                                                &all_extern_strings_bin_entries[final_range],
+                                            )),
+                                        };
+                                    }
+                                }
+                                break 'bin;
+                            }
+                            cursor::JsonKind::String => {
+                                if let Some(s) = bin_c.as_str_decoded(&bump) {
+                                    if !s.is_empty() {
+                                        package_version.bin = Bin {
+                                            tag: bin::Tag::File,
+                                            _padding_tag: [0; 3],
+                                            value: bin::Value::init_file(
+                                                string_builder.append::<SemverString>(s),
+                                            ),
+                                        };
+                                        break 'bin;
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(dirs_c) = f_dirs
+                        && let Some(bin_c) = dirs_c.get(b"bin")
+                        && let Some(s) = bin_c.as_str_decoded(&bump)
+                        && !s.is_empty()
+                    {
+                        package_version.bin = Bin {
+                            tag: bin::Tag::Dir,
+                            _padding_tag: [0; 3],
+                            value: bin::Value::init_dir(string_builder.append::<SemverString>(s)),
+                        };
+                        break 'bin;
+                    }
+                }
+
+                'integrity: {
+                    if let Some(dist_c) = f_dist
+                        && dist_c.is_object()
+                    {
+                        let mut d_shasum = None;
+                        for (k, v) in dist_c.iter_object() {
+                            match k {
+                                b"tarball" => {
+                                    if let Some(s) = v.as_str_decoded(&bump)
+                                        && !s.is_empty()
+                                    {
+                                        package_version.tarball_url =
+                                            string_builder.append::<ExternalString>(s);
+                                        all_tarball_url_strings[tarball_url_strings_cursor] =
+                                            package_version.tarball_url;
+                                        tarball_url_strings_cursor += 1;
+                                    }
+                                }
+                                b"fileCount" => {
+                                    if let Some(n) = v.as_f64() {
+                                        package_version.file_count = n as u32;
+                                    }
+                                }
+                                b"unpackedSize" => {
+                                    if let Some(n) = v.as_f64() {
+                                        package_version.unpacked_size = n as u32;
+                                    }
+                                }
+                                b"integrity" => {
+                                    if let Some(s) = v.as_str_decoded(&bump) {
+                                        package_version.integrity = Integrity::parse(s);
+                                    }
+                                }
+                                b"shasum" => d_shasum = Some(v),
+                                _ => {}
+                            }
+                        }
+                        if package_version.integrity.tag.is_supported() {
+                            break 'integrity;
+                        }
+                        if let Some(c) = d_shasum
+                            && let Some(s) = c.as_str_decoded(&bump)
+                        {
+                            package_version.integrity =
+                                Integrity::parse_sha_sum(s).unwrap_or_default();
+                        }
+                    }
+                }
+
+                let mut non_optional_peer_dependency_offset: usize = 0;
+
+                for (group_idx, pair) in DEPENDENCY_GROUPS.iter().enumerate() {
+                    let is_peer = pair.prop == b"peerDependencies";
+                    let deps_c = f_deps[group_idx].filter(|c| c.is_object());
+                    let has_meta_only_peers = is_peer
+                        && f_pmeta
+                            .map(|m| m.is_object() && m.len() > 0)
+                            .unwrap_or(false);
+
+                    if deps_c.is_some() || has_meta_only_peers {
+                        let names_base = dependency_names_cursor;
+                        let values_base = dependency_values_cursor;
+                        let mut name_hasher = Wyhash11::init(0);
+                        let mut version_hasher = Wyhash11::init(0);
+
+                        if is_peer {
+                            optional_peer_dep_names.clear();
+                            if let Some(meta_c) = f_pmeta
+                                && meta_c.is_object()
+                            {
+                                optional_peer_dep_names.reserve(meta_c.len());
+                                for (mk_raw, mv) in meta_c.iter_object() {
+                                    if mv.get(b"optional").and_then(|c| c.as_bool()) != Some(true) {
+                                        continue;
+                                    }
+                                    let Some(mk) = decode_key(mk_raw, &bump) else {
+                                        continue;
+                                    };
+                                    optional_peer_dep_names
+                                        .push(Semver::semver_string::Builder::string_hash(mk));
+                                }
+                            }
+                        }
+
+                        let bundled_deps_begin = bundled_deps_offset;
+                        let mut i: usize = 0;
+
+                        if let Some(deps_c) = deps_c {
+                            for (name_raw, value) in deps_c.iter_object() {
+                                let Some(name_str) = decode_key(name_raw, &bump) else {
+                                    continue;
+                                };
+                                let Some(version_str) = value.as_str_decoded(&bump) else {
+                                    continue;
+                                };
+                                all_extern_strings[names_base + i] =
+                                    string_builder.append::<ExternalString>(name_str);
+                                version_extern_strings[values_base + i] =
+                                    string_builder.append::<ExternalString>(version_str);
+
+                                if !bundle_all_deps && bundled_deps_set.swap_remove(name_str) {
+                                    // SAFETY: bundled_deps_buf sized in counting pass.
+                                    unsafe {
+                                        *bundled_deps_buf.as_mut_ptr().add(bundled_deps_offset) =
+                                            all_extern_strings[names_base + i].hash;
+                                    }
+                                    bundled_deps_offset += 1;
+                                }
+
+                                if is_peer {
+                                    if optional_peer_dep_names
+                                        .iter()
+                                        .any(|h| *h == all_extern_strings[names_base + i].hash)
+                                    {
+                                        if non_optional_peer_dependency_offset != i {
+                                            all_extern_strings.swap(
+                                                names_base + i,
+                                                names_base + non_optional_peer_dependency_offset,
+                                            );
+                                            version_extern_strings.swap(
+                                                values_base + i,
+                                                values_base + non_optional_peer_dependency_offset,
+                                            );
+                                        }
+                                        non_optional_peer_dependency_offset += 1;
+                                    }
+                                    if optional_peer_dep_names.is_empty() {
+                                        name_hasher.update(
+                                            &all_extern_strings[names_base + i].hash.to_ne_bytes(),
+                                        );
+                                        version_hasher.update(
+                                            &version_extern_strings[values_base + i]
+                                                .hash
+                                                .to_ne_bytes(),
+                                        );
+                                    }
+                                } else {
+                                    name_hasher.update(
+                                        &all_extern_strings[names_base + i].hash.to_ne_bytes(),
+                                    );
+                                    version_hasher.update(
+                                        &version_extern_strings[values_base + i].hash.to_ne_bytes(),
+                                    );
+                                }
+                                i += 1;
+                            }
+                        }
+
+                        if is_peer
+                            && let Some(meta_c) = f_pmeta
+                            && meta_c.is_object()
+                        {
+                            'outer: for (mk_raw, mv) in meta_c.iter_object() {
+                                if mv.get(b"optional").and_then(|c| c.as_bool()) != Some(true) {
+                                    continue;
+                                }
+                                let Some(mk) = decode_key(mk_raw, &bump) else {
+                                    continue;
+                                };
+                                let meta_hash = Semver::semver_string::Builder::string_hash(mk);
+                                for existing in &all_extern_strings[names_base..names_base + i] {
+                                    if existing.hash == meta_hash {
+                                        continue 'outer;
+                                    }
+                                }
+                                all_extern_strings[names_base + i] =
+                                    string_builder.append::<ExternalString>(mk);
+                                version_extern_strings[values_base + i] =
+                                    string_builder.append::<ExternalString>(b"*");
+                                if non_optional_peer_dependency_offset != i {
+                                    all_extern_strings.swap(
+                                        names_base + i,
+                                        names_base + non_optional_peer_dependency_offset,
+                                    );
+                                    version_extern_strings.swap(
+                                        values_base + i,
+                                        values_base + non_optional_peer_dependency_offset,
+                                    );
+                                }
+                                non_optional_peer_dependency_offset += 1;
+                                i += 1;
+                            }
+                        }
+
+                        let count = i;
+                        let this_names = &all_extern_strings[names_base..names_base + count];
+                        let this_versions =
+                            &version_extern_strings[values_base..values_base + count];
+
+                        if !is_peer {
+                            if bundle_all_deps {
+                                package_version.bundled_dependencies =
+                                    ExternalPackageNameHashList::INVALID;
+                            } else {
+                                package_version.bundled_dependencies =
+                                    ExternalPackageNameHashList::init(
+                                        &bundled_deps_buf,
+                                        &bundled_deps_buf[bundled_deps_begin..bundled_deps_offset],
+                                    );
+                            }
+                        }
+
+                        let mut name_list =
+                            ExternalStringList::init(&all_extern_strings, this_names);
+                        let mut version_list =
+                            ExternalStringList::init(&version_extern_strings, this_versions);
+
+                        if is_peer {
+                            package_version.non_optional_peer_dependencies_start =
+                                non_optional_peer_dependency_offset as u32;
+                        }
+
+                        if count > 0 && (!is_peer || optional_peer_dep_names.is_empty()) {
+                            let name_map_hash = name_hasher.final_();
+                            let version_map_hash = version_hasher.final_();
+                            let name_entry =
+                                all_extern_strings_dedupe_map.get_or_put(name_map_hash)?;
+                            if name_entry.found_existing {
+                                name_list = *name_entry.value_ptr;
+                            } else {
+                                *name_entry.value_ptr = name_list;
+                                dependency_names_cursor += count;
+                            }
+                            let version_entry =
+                                version_extern_strings_dedupe_map.get_or_put(version_map_hash)?;
+                            if version_entry.found_existing {
+                                version_list = *version_entry.value_ptr;
+                            } else {
+                                *version_entry.value_ptr = version_list;
+                                dependency_values_cursor += count;
+                            }
+                        }
+                        if is_peer && !optional_peer_dep_names.is_empty() {
+                            dependency_names_cursor += count;
+                            dependency_values_cursor += count;
+                        }
+
+                        let map = ExternalStringMap {
+                            name: name_list,
+                            value: version_list,
+                        };
+                        match group_idx {
+                            0 => package_version.dependencies = map,
+                            1 => package_version.optional_dependencies = map,
+                            2 => package_version.peer_dependencies = map,
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+
+                if let Some(t) =
+                    time_map.get(&Semver::semver_string::Builder::string_hash(version_name))
+                    && let Some(s) = t.as_str_decoded(&bump)
+                    && let Ok(ms) = bun_core::wtf::parse_es5_date(s)
+                {
+                    package_version.publish_timestamp_ms = ms;
+                }
+
+                if !parsed_version.version.tag.has_pre() {
+                    all_semver_versions[release_versions_cursor] = parsed_version.version.min();
+                    versioned_packages[versioned_package_releases_start] = package_version;
+                    release_versions_cursor += 1;
+                    versioned_package_releases_start += 1;
+                } else {
+                    all_semver_versions[prerelease_versions_cursor] = parsed_version.version.min();
+                    versioned_packages[versioned_package_prereleases_start] = package_version;
+                    prerelease_versions_cursor += 1;
+                    versioned_package_prereleases_start += 1;
+                }
+            }
+            extern_strings_consumed = dependency_names_cursor;
+        }
+        let version_extern_strings_len = dependency_values_cursor;
+        let mut extern_strings_cursor = extern_strings_consumed;
+
+        if let Some(dist_c) = json.get(b"dist-tags")
+            && dist_c.is_object()
+        {
+            let extern_strings_slice_start = extern_strings_cursor;
+            let mut dist_tag_i: usize = 0;
+            for (key_raw, value) in dist_c.iter_object() {
+                let Some(key) = decode_key(key_raw, &bump) else {
+                    continue;
+                };
+                all_extern_strings[extern_strings_slice_start + dist_tag_i] =
+                    string_builder.append::<ExternalString>(key);
+                let Some(version_name) = value.as_str_decoded(&bump) else {
+                    continue;
+                };
+                let dist_tag_value_literal = string_builder.append::<ExternalString>(version_name);
+                let sliced_string = dist_tag_value_literal
+                    .value
+                    .sliced(string_builder.allocated_slice());
+                all_semver_versions[dist_tag_versions_start + dist_tag_i] =
+                    Semver::Version::parse(sliced_string).version.min();
+                dist_tag_i += 1;
+            }
+            result.pkg.dist_tags = DistTagMap {
+                tags: ExternalStringList::init(
+                    &all_extern_strings,
+                    &all_extern_strings
+                        [extern_strings_slice_start..extern_strings_slice_start + dist_tag_i],
+                ),
+                versions: VersionSlice::init(
+                    &all_semver_versions,
+                    &all_semver_versions
+                        [dist_tag_versions_start..dist_tag_versions_start + dist_tag_i],
+                ),
+            };
+            extern_strings_cursor += dist_tag_i;
+        }
+
+        if !last_modified.is_empty() {
+            result.pkg.last_modified = string_builder.append::<SemverString>(last_modified);
+        }
+        if !etag.is_empty() {
+            result.pkg.etag = string_builder.append::<SemverString>(etag);
+        }
+        if let Some(modified_c) = json.get(b"modified") {
+            let Some(field) = modified_c.as_str_decoded(&bump) else {
+                return Ok(None);
+            };
+            result.pkg.modified = string_builder.append::<SemverString>(field);
+        }
+
+        result.pkg.releases.keys = VersionSlice::init(
+            &all_semver_versions,
+            &all_semver_versions[all_release_versions_range.clone()],
+        );
+        result.pkg.releases.values = PackageVersionList::init(
+            &versioned_packages,
+            &versioned_packages[all_versioned_package_releases_range],
+        );
+        result.pkg.prereleases.keys = VersionSlice::init(
+            &all_semver_versions,
+            &all_semver_versions[all_prerelease_versions_range.clone()],
+        );
+        result.pkg.prereleases.values = PackageVersionList::init(
+            &versioned_packages,
+            &versioned_packages[all_versioned_package_prereleases_range],
+        );
+
+        let max_versions_count = all_release_versions_range
+            .len()
+            .max(all_prerelease_versions_range.len());
+        let how_many_bytes_to_store_indices: usize = match max_versions_count {
+            0 => 0,
+            1 => 1,
+            n => {
+                let bits = (usize::BITS - (n - 1).leading_zeros()) as usize;
+                bits.div_ceil(8)
+            }
+        };
+        macro_rules! sort_with_int {
+            ($Int:ty) => {{
+                type Int = $Int;
+                let mut all_indices: Vec<Int> = vec![0 as Int; max_versions_count];
+                let mut all_cloned_versions: Vec<Semver::Version> =
+                    vec![Semver::Version::default(); max_versions_count];
+                let mut all_cloned_packages: Vec<PackageVersion> =
+                    vec![PackageVersion::default(); max_versions_count];
+                let releases_list = [result.pkg.releases, result.pkg.prereleases];
+                for release_i in 0..2usize {
+                    let release = releases_list[release_i];
+                    let len = release.keys.len as usize;
+                    let indices = &mut all_indices[..len];
+                    let cloned_packages = &mut all_cloned_packages[..len];
+                    let cloned_versions = &mut all_cloned_versions[..len];
+                    let versioned_packages_ =
+                        &mut versioned_packages[release.values.off as usize..][..len];
+                    let semver_versions_ =
+                        &mut all_semver_versions[release.keys.off as usize..][..len];
+                    cloned_packages.copy_from_slice(versioned_packages_);
+                    cloned_versions.copy_from_slice(semver_versions_);
+                    for (idx, dest) in indices.iter_mut().enumerate() {
+                        *dest = idx as Int;
+                    }
+                    let string_bytes = string_builder.allocated_slice();
+                    indices.sort_by(|&left, &right| {
+                        cloned_versions[left as usize].order(
+                            cloned_versions[right as usize],
+                            string_bytes,
+                            string_bytes,
+                        )
+                    });
+                    for ((idx, pkg), version) in indices
+                        .iter()
+                        .copied()
+                        .zip(versioned_packages_.iter_mut())
+                        .zip(semver_versions_.iter_mut())
+                    {
+                        *pkg = cloned_packages[idx as usize];
+                        *version = cloned_versions[idx as usize];
+                    }
+                }
+            }};
+        }
+        match how_many_bytes_to_store_indices {
+            1 => sort_with_int!(u8),
+            2 => sort_with_int!(u16),
+            3 => sort_with_int!(u32),
+            4 => sort_with_int!(u32),
+            5..=8 => sort_with_int!(u64),
+            _ => debug_assert!(max_versions_count == 0),
+        }
+
+        let extern_strings_remaining = all_extern_strings.len() - extern_strings_cursor;
+        if extern_strings_remaining + tarball_urls_count > 0 {
+            let src_len = tarball_url_strings_cursor;
+            if src_len > 0 {
+                debug_assert!(all_extern_strings.len() - extern_strings_cursor >= src_len);
+                all_extern_strings[extern_strings_cursor..extern_strings_cursor + src_len]
+                    .copy_from_slice(&all_tarball_url_strings[..src_len]);
+            }
+            let new_len = all_extern_strings.len() - extern_strings_remaining;
+            let mut v = core::mem::take(&mut all_extern_strings).into_vec();
+            v.truncate(new_len);
+            all_extern_strings = v.into_boxed_slice();
+        }
+
+        result.pkg.string_lists_buf.off = 0;
+        result.pkg.string_lists_buf.len = all_extern_strings.len() as u32;
+        result.pkg.versions_buf.off = 0;
+        result.pkg.versions_buf.len = all_semver_versions.len() as u32;
+
+        result.versions = all_semver_versions;
+        result.external_strings = all_extern_strings;
+        result.external_strings_for_versions = {
+            let mut v = version_extern_strings.into_vec();
+            v.truncate(version_extern_strings_len);
+            v.into_boxed_slice()
+        };
+        result.package_versions = versioned_packages;
+        result.extern_strings_bin_entries = {
+            let mut v = all_extern_strings_bin_entries.into_vec();
+            v.truncate(extern_strings_bin_entries_cursor);
+            v.into_boxed_slice()
+        };
+        result.bundled_deps_buf = bundled_deps_buf;
+        result.pkg.public_max_age = public_max_age;
+        result.pkg.has_extended_manifest = is_extended_manifest;
+
+        if let Some(buf) = string_builder.ptr.take() {
+            let mut v = buf.into_vec();
+            v.truncate(string_builder.len);
+            result.string_buf = v.into_boxed_slice();
+        }
+        let _ = all_tarball_url_strings;
+
+        let total = _t0.elapsed();
+        PARSE_TIMING.with(|t| {
+            t.set(ParseTiming {
+                json_ns: _t_json.as_nanos() as u64,
+                count_ns: (_t_count - _t_json).as_nanos() as u64,
+                build_ns: (total - _t_count).as_nanos() as u64,
+                total_ns: total.as_nanos() as u64,
+            });
+        });
+        PARSE_TOTAL_NS.fetch_add(
+            total.as_nanos() as u64,
+            core::sync::atomic::Ordering::Relaxed,
+        );
+        PARSE_TOTAL_BYTES.fetch_add(
+            json_buffer.len() as u64,
+            core::sync::atomic::Ordering::Relaxed,
+        );
+        PARSE_CALL_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        Ok(Some(result))
+    }
+}
+
+/// `iter_object()` yields raw key bytes; decode escapes when present (rare —
+/// npm package names and packument keys are ASCII).
+#[inline]
+fn decode_key<'a>(raw: &'a [u8], bump: &'a bun_alloc::Arena) -> Option<&'a [u8]> {
+    if raw.contains(&b'\\') {
+        Some(bun_parsers::json_cursor::decode_escapes_into(raw, bump))
+    } else {
+        Some(raw)
+    }
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct ParseTiming {
+    pub json_ns: u64,
+    pub count_ns: u64,
+    pub build_ns: u64,
+    pub total_ns: u64,
+}
+thread_local! {
+    pub static PARSE_TIMING: core::cell::Cell<ParseTiming> =
+        const { core::cell::Cell::new(ParseTiming { json_ns: 0, count_ns: 0, build_ns: 0, total_ns: 0 }) };
+}
+
+static USE_CURSOR_PARSE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+static USE_SCALAR_JSON: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static PARSE_BENCH_INIT: std::sync::Once = std::sync::Once::new();
+pub static PARSE_TOTAL_NS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+pub static PARSE_TOTAL_BYTES: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+pub static PARSE_CALL_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+fn parse_bench_init() {
+    PARSE_BENCH_INIT.call_once(|| {
+        if std::env::var_os("BUN_NPM_PARSE_CURSOR").is_some() {
+            USE_CURSOR_PARSE.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if std::env::var_os("BUN_NPM_PARSE_SCALAR").is_some() {
+            USE_SCALAR_JSON.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if std::env::var_os("BUN_NPM_PARSE_STATS").is_some() {
+            bun_core::add_exit_callback(print_parse_stats_c);
+        }
+    });
+}
+
+extern "C" fn print_parse_stats_c() {
+    print_parse_stats();
+}
+
+pub fn print_parse_stats() {
+    let calls = PARSE_CALL_COUNT.load(core::sync::atomic::Ordering::Relaxed);
+    if calls == 0 {
+        return;
+    }
+    let ns = PARSE_TOTAL_NS.load(core::sync::atomic::Ordering::Relaxed);
+    let bytes = PARSE_TOTAL_BYTES.load(core::sync::atomic::Ordering::Relaxed);
+    eprintln!(
+        "[npm parse] {} manifests, {:.1} MB, {:.1} ms total ({})",
+        calls,
+        bytes as f64 / 1024.0 / 1024.0,
+        ns as f64 / 1_000_000.0,
+        if USE_CURSOR_PARSE.load(core::sync::atomic::Ordering::Relaxed) {
+            "cursor"
+        } else if USE_SCALAR_JSON.load(core::sync::atomic::Ordering::Relaxed) {
+            "expr-scalar"
+        } else {
+            "expr-simd"
+        },
+    );
 }

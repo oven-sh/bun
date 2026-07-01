@@ -87,6 +87,214 @@ unsafe extern "C" {
     ) -> usize;
 
     fn highway_count_mapping_delims(bytes: *const u8, len: usize) -> usize;
+
+    fn highway_json_index(
+        buf: *const u8,
+        len: usize,
+        indices: *mut u32,
+        cap: usize,
+        out_count: *mut u32,
+        out_flags: *mut u32,
+    ) -> usize;
+
+    fn highway_json_string_scan(src: *const u8, len: usize, out_pos: *mut u32) -> usize;
+
+    fn highway_json_parse(
+        buf: *const u8,
+        len: usize,
+        indices: *mut u32,
+        indices_cap: usize,
+        tape: *mut u64,
+        strbuf: *mut u8,
+        out_tape_len: *mut u32,
+        out_strbuf_len: *mut u32,
+        out_flags: *mut u32,
+        out_err_pos: *mut u32,
+    ) -> u32;
+}
+
+/// Bytes the SIMD JSON kernels may over-read past the input. Callers must
+/// allocate `len + JSON_PADDING` and may leave the padding uninitialised for
+/// [`json_index`] (it copies the tail block) but MUST zero-fill or otherwise
+/// populate it for [`json_string_scan`].
+pub const JSON_PADDING: usize = 64;
+
+/// Stage-1 result code.
+#[repr(usize)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum JsonIndexError {
+    Ok = 0,
+    UnclosedString = 1,
+    UnescapedCtrlInString = 2,
+    Capacity = 3,
+    Empty = 4,
+}
+
+bitflags::bitflags! {
+    #[derive(Copy, Clone, Default)]
+    pub struct JsonIndexFlags: u32 {
+        const NON_ASCII = 1;
+    }
+}
+
+/// SIMD JSON stage-1: scan `buf[..len]` for structural-character byte
+/// offsets and write them to `indices`. Returns
+/// (`JsonIndexError`, count, flags).
+///
+/// `indices.len()` must be at least `len + 64` so the per-block over-write
+/// never spills.
+///
+/// # Safety
+/// `buf` must be readable for `len` bytes (the kernel internally copies the
+/// final partial block, so no over-read past `len` here).
+#[inline]
+pub fn json_index(buf: &[u8], indices: &mut [u32]) -> (JsonIndexError, u32, JsonIndexFlags) {
+    debug_assert!(indices.len() >= buf.len() + 64);
+    let mut count: u32 = 0;
+    let mut flags: u32 = 0;
+    // SAFETY: buf.ptr/len readable; indices.ptr writable for indices.len()
+    // u32s; out-params are valid stack writes.
+    let rc = unsafe {
+        highway_json_index(
+            buf.as_ptr(),
+            buf.len(),
+            indices.as_mut_ptr(),
+            indices.len(),
+            &mut count,
+            &mut flags,
+        )
+    };
+    let err = match rc {
+        0 => JsonIndexError::Ok,
+        1 => JsonIndexError::UnclosedString,
+        2 => JsonIndexError::UnescapedCtrlInString,
+        3 => JsonIndexError::Capacity,
+        _ => JsonIndexError::Empty,
+    };
+    (err, count, JsonIndexFlags::from_bits_truncate(flags))
+}
+
+/// Tape word tags written by `highway_json_parse`.
+pub mod json_tape {
+    pub const ROOT: u8 = b'r';
+    pub const START_OBJ: u8 = b'{';
+    pub const END_OBJ: u8 = b'}';
+    pub const START_ARR: u8 = b'[';
+    pub const END_ARR: u8 = b']';
+    pub const STR: u8 = b'"';
+    pub const DBL: u8 = b'd';
+    pub const TRUE: u8 = b't';
+    pub const FALSE: u8 = b'f';
+    pub const NULL: u8 = b'n';
+
+    #[inline]
+    pub fn tag(w: u64) -> u8 {
+        (w >> 56) as u8
+    }
+    #[inline]
+    pub fn payload(w: u64) -> u64 {
+        w & 0x00FF_FFFF_FFFF_FFFF
+    }
+}
+
+/// Stage-2 result code (matches `err::*` in `highway_json.cpp`).
+#[repr(u32)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum JsonParseError {
+    Ok = 0,
+    UnclosedString = 1,
+    UnescapedCtrl = 2,
+    Capacity = 3,
+    Empty = 4,
+    DepthExceeded = 5,
+    Tape = 6,
+    Number = 7,
+    Atom = 8,
+    Utf8 = 9,
+    StringEscape = 10,
+    Trailing = 11,
+}
+
+pub struct JsonParseOutput {
+    pub tape_len: u32,
+    pub strbuf_len: u32,
+    pub flags: JsonIndexFlags,
+    pub err_pos: u32,
+}
+
+/// Full simdjson-style parse: stage-1 + stage-2 in one call.
+///
+/// # Safety
+/// - `buf` must be readable for exactly `len` bytes (no padding required).
+/// - `indices` writable for `len + 64 + 4` u32s.
+/// - `tape` writable for `len + len/2 + 8` u64s.
+/// - `strbuf` writable for `len + 32` u8s.
+#[inline]
+pub unsafe fn json_parse(
+    buf: *const u8,
+    len: usize,
+    indices: *mut u32,
+    indices_cap: usize,
+    tape: *mut u64,
+    strbuf: *mut u8,
+) -> (JsonParseError, JsonParseOutput) {
+    let mut tlen = 0u32;
+    let mut slen = 0u32;
+    let mut flags = 0u32;
+    let mut epos = 0u32;
+    // SAFETY: caller contract.
+    let rc = unsafe {
+        highway_json_parse(
+            buf,
+            len,
+            indices,
+            indices_cap,
+            tape,
+            strbuf,
+            &mut tlen,
+            &mut slen,
+            &mut flags,
+            &mut epos,
+        )
+    };
+    let err = match rc {
+        0 => JsonParseError::Ok,
+        1 => JsonParseError::UnclosedString,
+        2 => JsonParseError::UnescapedCtrl,
+        3 => JsonParseError::Capacity,
+        4 => JsonParseError::Empty,
+        5 => JsonParseError::DepthExceeded,
+        6 => JsonParseError::Tape,
+        7 => JsonParseError::Number,
+        8 => JsonParseError::Atom,
+        9 => JsonParseError::Utf8,
+        10 => JsonParseError::StringEscape,
+        _ => JsonParseError::Trailing,
+    };
+    (
+        err,
+        JsonParseOutput {
+            tape_len: tlen,
+            strbuf_len: slen,
+            flags: JsonIndexFlags::from_bits_truncate(flags),
+            err_pos: epos,
+        },
+    )
+}
+
+/// First `"` or `\` in `src[..len]`. Returns (kind, pos) where kind is 0 if
+/// neither found in the window, 1 if a quote comes first, 2 if a backslash
+/// comes first. May over-read into padding; pass `len` no larger than
+/// `buf.len() - JSON_PADDING` worth of remaining + JSON_PADDING.
+///
+/// # Safety
+/// `src` must be readable for `len` bytes.
+#[inline]
+pub unsafe fn json_string_scan(src: *const u8, len: usize) -> (u32, u32) {
+    let mut pos: u32 = 0;
+    // SAFETY: caller contract.
+    let kind = unsafe { highway_json_string_scan(src, len, &mut pos) };
+    (kind as u32, pos)
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin

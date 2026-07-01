@@ -1,11 +1,16 @@
-// Regression test for https://github.com/oven-sh/bun/issues/33169
-// In a multi-root workspace each folder must resolve its own folder-scoped
-// `bun.runtime` / `bun.test.*` settings. The controller reads config through
-// `getConfiguration(section, <folder uri>)` so VS Code applies folder overrides
-// instead of a single workspace-global value.
-import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { MockTestController, MockUri, MockWorkspaceFolder } from "./vscode-types.mock";
+// https://github.com/oven-sh/bun/issues/33169
+//
+// The Bun VS Code extension read `bun.runtime` and `bun.test.*` through
+// `getConfiguration(section)` with no resource scope, so in a multi-root
+// workspace VS Code never applied a folder's `.vscode/settings.json` override:
+// every folder saw the same workspace-global value. The fix passes the folder
+// URI as the configuration scope and raises those settings to `resource` scope.
+import { describe, expect, mock, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
+const CONTROLLER = "../../../packages/bun-vscode/src/features/tests/bun-test-controller";
+const PACKAGE_JSON = join(import.meta.dir, "../../../packages/bun-vscode/package.json");
 const DEFAULT_TEST_PATTERN = "**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts,cjs,mjs}";
 
 // folder uri string -> fully-qualified setting -> value
@@ -59,7 +64,6 @@ function vscodeFactory() {
       }),
       findFiles: async () => [],
     },
-    Uri: MockUri,
     RelativePattern: class {
       constructor(
         public base: unknown,
@@ -72,47 +76,48 @@ function vscodeFactory() {
 
 mock.module("vscode", vscodeFactory);
 
-const { BunTestController } = await import("../bun-test-controller");
+const { BunTestController } = await import(CONTROLLER);
 
-// `mock.module` is global and the module graph is evaluated with interleaved
-// awaits, so re-assert this file's mock before each test to stay independent of
-// the order in which other test files register their own vscode mock.
-beforeEach(() => {
-  mock.module("vscode", vscodeFactory);
-});
-
-function makeController(folderPath: string, name: string, index: number) {
-  const folder = new MockWorkspaceFolder(MockUri.file(folderPath), name, index);
-  const controller = new MockTestController(`bun:${folderPath}`, name);
-  return new BunTestController(controller as any, folder as any, true);
+function makeController(folderPath: string) {
+  const uri = { toString: () => `file://${folderPath}`, fsPath: folderPath };
+  const folder = { uri, name: folderPath.split("/").pop() ?? folderPath, index: 0 };
+  return new BunTestController({} as any, folder as any, true);
 }
 
 describe("multi-root workspace config scoping (issue #33169)", () => {
-  test("customFilePattern resolves each folder's own filePattern", () => {
-    const api = makeController("/repo/packages/api", "api", 0);
-    const frontend = makeController("/repo/packages/frontend", "frontend", 1);
+  test("each folder resolves its own filePattern from its folder scope", () => {
+    const api = makeController("/repo/packages/api");
+    const frontend = makeController("/repo/packages/frontend");
     expect(api._internal.customFilePattern()).toBe("**/*.spec.ts");
     expect(frontend._internal.customFilePattern()).toBe("**/*.test.tsx");
   });
 
   test("getBunExecutionConfig resolves the folder's runtime, customScript and customFlag", () => {
-    const api = makeController("/repo/packages/api", "api", 0);
-    const apiConfig = api._internal.getBunExecutionConfig();
-    expect(apiConfig.bunCommand).toBe("/custom/bin/bun");
-    expect(apiConfig.testArgs).toEqual(["run", "test:ci", "--coverage"]);
+    const api = makeController("/repo/packages/api");
+    const config = api._internal.getBunExecutionConfig();
+    expect(config.bunCommand).toBe("/custom/bin/bun");
+    expect(config.testArgs).toEqual(["run", "test:ci", "--coverage"]);
   });
 
   test("a folder without overrides keeps the defaults and does not inherit another folder's settings", () => {
-    const frontend = makeController("/repo/packages/frontend", "frontend", 1);
+    const frontend = makeController("/repo/packages/frontend");
     expect(frontend._internal.customFilePattern()).toBe("**/*.test.tsx");
 
-    const frontendConfig = frontend._internal.getBunExecutionConfig();
-    expect(frontendConfig.bunCommand).toBe("bun");
-    expect(frontendConfig.testArgs).toEqual(["test"]);
+    const config = frontend._internal.getBunExecutionConfig();
+    expect(config.bunCommand).toBe("bun");
+    expect(config.testArgs).toEqual(["test"]);
   });
 
-  test("default pattern is used when no scope matches", () => {
-    const other = makeController("/repo/packages/other", "other", 2);
+  test("default pattern is used when no folder scope matches", () => {
+    const other = makeController("/repo/packages/other");
     expect(other._internal.customFilePattern()).toBe(DEFAULT_TEST_PATTERN);
+  });
+
+  test("per-folder settings are declared with resource scope in package.json", () => {
+    const manifest = JSON.parse(readFileSync(PACKAGE_JSON, "utf8"));
+    const props = manifest.contributes.configuration.properties;
+    for (const key of ["bun.runtime", "bun.test.filePattern", "bun.test.customFlag", "bun.test.customScript"]) {
+      expect(props[key].scope).toBe("resource");
+    }
   });
 });

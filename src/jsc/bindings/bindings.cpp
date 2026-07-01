@@ -33,6 +33,8 @@
 
 #include "JavaScriptCore/AggregateError.h"
 #include "JavaScriptCore/ArrayBufferView.h"
+#include "JavaScriptCore/ArrayStorage.h"
+#include "JavaScriptCore/SparseArrayValueMap.h"
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CodeBlock.h"
 #include "JavaScriptCore/Completion.h"
@@ -6717,6 +6719,72 @@ extern "C" bool Bun__JSArray__contiguousVectorIsStillValid(
     if (butterfly->publicLength() != expectedLength) [[unlikely]]
         return false;
     return reinterpret_cast<const JSC::EncodedJSValue*>(butterfly->contiguous().data()) == expected;
+}
+
+// Smallest own present index of a JSArray that is >= `start`, or UINT64_MAX
+// when every index from `start` to the end of the array is a hole. Mirrors the
+// butterfly walk in JSObject::getOwnIndexedPropertyNames so the caller can skip
+// a run of holes without probing each index of a huge sparse array.
+// Returns `start` when the value is not a JSArray (caller probes as usual).
+extern "C" uint64_t Bun__JSArray__nextPresentIndex(
+    JSC::EncodedJSValue encodedValue,
+    uint32_t start)
+{
+    static constexpr uint64_t notFound = std::numeric_limits<uint64_t>::max();
+
+    JSC::JSArray* array = dynamicDowncast<JSC::JSArray>(JSC::JSValue::decode(encodedValue));
+    if (!array) [[unlikely]]
+        return start;
+
+    switch (array->indexingType()) {
+    case ALL_BLANK_INDEXING_TYPES:
+    case ALL_UNDECIDED_INDEXING_TYPES:
+        return notFound;
+
+    case ALL_INT32_INDEXING_TYPES:
+    case ALL_CONTIGUOUS_INDEXING_TYPES: {
+        JSC::Butterfly* butterfly = array->butterfly();
+        unsigned usedLength = butterfly->publicLength();
+        for (unsigned i = start; i < usedLength; ++i) {
+            if (butterfly->contiguous().at(array, i))
+                return i;
+        }
+        return notFound;
+    }
+
+    case ALL_DOUBLE_INDEXING_TYPES: {
+        JSC::Butterfly* butterfly = array->butterfly();
+        unsigned usedLength = butterfly->publicLength();
+        for (unsigned i = start; i < usedLength; ++i) {
+            double value = butterfly->contiguousDouble().at(array, i);
+            // A hole in a double array is stored as NaN.
+            if (value == value)
+                return i;
+        }
+        return notFound;
+    }
+
+    case ALL_ARRAY_STORAGE_INDEXING_TYPES: {
+        JSC::ArrayStorage* storage = array->butterfly()->arrayStorage();
+        unsigned usedVectorLength = std::min(storage->length(), storage->vectorLength());
+        for (unsigned i = start; i < usedVectorLength; ++i) {
+            if (storage->m_vector[i])
+                return i;
+        }
+
+        uint64_t result = notFound;
+        if (JSC::SparseArrayValueMap* map = storage->m_sparseMap.get()) {
+            for (const auto& entry : *map) {
+                if (entry.key >= start && entry.key < result)
+                    result = entry.key;
+            }
+        }
+        return result;
+    }
+
+    default:
+        return start;
+    }
 }
 
 extern "C" void JSC__ArrayBuffer__ref(JSC::ArrayBuffer* self) { self->ref(); }

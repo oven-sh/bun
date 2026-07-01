@@ -4494,7 +4494,13 @@ pub mod formatter {
                         if empty_start.is_none() {
                             empty_start = Some(i);
                         }
-                        i += 1;
+                        // Skip the whole run of holes at once: probing every
+                        // index would take O(length), and a sparse array's
+                        // length can be up to 2^32 - 1 with no elements at all.
+                        match value.next_present_index(i + 1) {
+                            Some(next) if (next as u64) < len => i = next,
+                            _ => break,
+                        }
                         continue;
                     }
                     if nonempty_count >= 100 {

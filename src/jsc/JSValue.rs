@@ -2558,6 +2558,20 @@ impl JSValue {
         }
         JSC__JSValue__getDirectIndex(self, global, i)
     }
+    /// Smallest own present index of a `JSArray` that is `>= start`, or
+    /// `None` when every index from `start` to the end of the array is a
+    /// hole. Walks the array's backing storage (and sparse map) so a run of
+    /// holes is skipped in one call instead of probing each index.
+    /// Returns `Some(start)` when `self` is not a `JSArray`.
+    pub fn next_present_index(self, start: u32) -> Option<u32> {
+        unsafe extern "C" {
+            safe fn Bun__JSArray__nextPresentIndex(this: JSValue, start: u32) -> u64;
+        }
+        match Bun__JSArray__nextPresentIndex(self, start) {
+            u64::MAX => None,
+            index => Some(index as u32),
+        }
+    }
     /// `JSValue.getNameProperty` — write the value's
     /// `.name` (function/class name) into `ret`. No-op for empty/`undefined`/`null`.
     pub fn get_name_property(

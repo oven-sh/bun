@@ -80,7 +80,7 @@ use bun_http_jsc::headers_jsc::from_fetch_headers;
 use bun_paths::resolve_path::PosixToWinNormalizer;
 use bun_picohttp as picohttp;
 use bun_resolver::data_url::DataURL;
-use bun_s3_signing::{SignOptions, SignResult};
+use bun_s3_signing::{S3HttpOptions, SignOptions, SignResult};
 use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
 
@@ -1803,6 +1803,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         compress = None;
     }
 
+    let mut s3_http_options = S3HttpOptions::default();
     if url.is_s3() {
         // get ENV config — `Transpiler::env_mut` is the safe accessor for the
         // process-singleton dotenv loader (set during init).
@@ -1836,11 +1837,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         None,
                         None,
                         false,
+                        Default::default(),
                         global_this,
                     )?;
                 }
             }
         }
+        s3_http_options = credentials_with_options.http_options;
 
         if let HTTPRequestBody::ReadableStream(ref readable_stream) = body {
             // we cannot direct stream to s3 we need to use multi part upload
@@ -1908,6 +1911,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 headers.as_ref().and_then(|h| h.get_content_encoding()),
                 proxy_url,
                 credentials_with_options.request_payer,
+                credentials_with_options.http_options,
                 Some(s3_stream_wrapper_resolve),
                 bun_core::heap::into_raw(s3_stream).cast::<libc::c_void>(),
             )?;
@@ -2039,6 +2043,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         force_http1,
         is_node_http_client: ALLOW_GET_BODY,
         compress,
+        s3_http_options,
         check_server_identity: if check_server_identity.is_empty_or_undefined_or_null() {
             jsc::strong::Optional::empty()
         } else {

@@ -1256,10 +1256,19 @@ impl<'a> Default for SignOptions<'a> {
 // S3CredentialsWithOptions
 // ──────────────────────────────────────────────────────────────────────────
 
+#[derive(Clone, Copy, Default)]
+pub struct S3HttpOptions {
+    pub max_sockets: u16,
+    pub socket_timeout_ms: Option<u32>,
+    pub connection_timeout_ms: Option<u32>,
+    pub limiter_id: u64,
+}
+
 #[derive(Default)]
 pub struct S3CredentialsWithOptions {
     pub credentials: S3Credentials,
     pub options: MultiPartUploadOptions,
+    pub http_options: S3HttpOptions,
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
     // Self-referential views: these fields are non-owning;

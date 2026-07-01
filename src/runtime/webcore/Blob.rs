@@ -622,7 +622,7 @@ impl BlobExt for Blob {
             // so clone the `Rc<S3Credentials>` out (cheap ref bump)
             // and stash `path` as a raw `*const [u8]` whose backing store is
             // kept alive by the same `t.blob` now owned by the heap task.
-            let (cred, path, payer);
+            let (cred, path, payer, http_options);
             {
                 let s3 = t
                     .blob
@@ -633,6 +633,7 @@ impl BlobExt for Blob {
                 cred = std::rc::Rc::clone(s3.get_credentials());
                 path = std::ptr::from_ref::<[u8]>(s3.path());
                 payer = s3.request_payer;
+                http_options = s3.http_options;
             }
             // SAFETY: `path` borrows the store held by `t.blob` (a fresh +1 ref);
             // it stays valid until `Task::done` deinits the blob in the callback.
@@ -653,6 +654,7 @@ impl BlobExt for Blob {
                     t_ptr,
                     proxy.as_deref(),
                     payer,
+                    http_options,
                 )?;
             } else {
                 crate::webcore::__s3_client::download(
@@ -662,6 +664,7 @@ impl BlobExt for Blob {
                     t_ptr,
                     proxy.as_deref(),
                     payer,
+                    http_options,
                 )?;
             }
             return Ok(());
@@ -1494,6 +1497,7 @@ impl BlobExt for Blob {
                 aws_options.content_encoding.as_deref(),
                 proxy_url,
                 aws_options.request_payer,
+                aws_options.http_options,
                 None,
                 core::ptr::null_mut(),
             );
@@ -1856,6 +1860,7 @@ impl BlobExt for Blob {
                     proxy,
                     credentials_with_options.storage_class,
                     credentials_with_options.request_payer,
+                    credentials_with_options.http_options,
                 );
             }
 
@@ -1870,6 +1875,7 @@ impl BlobExt for Blob {
                 proxy,
                 None,
                 s3.request_payer,
+                s3.http_options,
             );
         }
 
@@ -4756,6 +4762,7 @@ fn write_file_with_empty_source_to_destination(
                 proxy_url,
                 aws_options.storage_class,
                 aws_options.request_payer,
+                aws_options.http_options,
                 Wrapper::resolve,
                 bun_core::heap::into_raw(Box::new(Wrapper {
                     promise,
@@ -4977,6 +4984,7 @@ pub fn write_file_with_source_destination(
                             aws_options.content_encoding.as_deref(),
                             proxy_url,
                             aws_options.request_payer,
+                            aws_options.http_options,
                             None,
                             core::ptr::null_mut(),
                         );
@@ -5037,6 +5045,7 @@ pub fn write_file_with_source_destination(
                         proxy_url,
                         aws_options.storage_class,
                         aws_options.request_payer,
+                        aws_options.http_options,
                         Wrapper::resolve,
                         bun_core::heap::into_raw(Box::new(Wrapper {
                             store: source_store.clone(),
@@ -5077,6 +5086,7 @@ pub fn write_file_with_source_destination(
                         aws_options.content_encoding.as_deref(),
                         proxy_url,
                         aws_options.request_payer,
+                        aws_options.http_options,
                         None,
                         core::ptr::null_mut(),
                     );
@@ -5331,6 +5341,7 @@ pub fn write_file_internal(
                                     aws_options.content_encoding.as_deref(),
                                     proxy_url,
                                     aws_options.request_payer,
+                                    aws_options.http_options,
                                     None,
                                     core::ptr::null_mut(),
                                 )?));
@@ -6034,6 +6045,7 @@ impl S3BlobDownloadTask {
                 this.cast::<c_void>(),
                 proxy,
                 s3_store.request_payer,
+                s3_store.http_options,
             )?;
         } else if blob.size.get() == MAX_SIZE {
             crate::webcore::__s3_client::download(
@@ -6043,6 +6055,7 @@ impl S3BlobDownloadTask {
                 this.cast::<c_void>(),
                 proxy,
                 s3_store.request_payer,
+                s3_store.http_options,
             )?;
         } else {
             let len: usize = usize::try_from(blob.size.get()).expect("int cast");
@@ -6056,6 +6069,7 @@ impl S3BlobDownloadTask {
                 this.cast::<c_void>(),
                 proxy,
                 s3_store.request_payer,
+                s3_store.http_options,
             )?;
         }
         Ok(promise)

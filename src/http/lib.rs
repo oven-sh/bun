@@ -211,6 +211,19 @@ pub struct Flags {
     pub is_node_http_client: bool,
 }
 
+#[derive(Clone, Copy, Default)]
+pub struct RequestLimiter {
+    pub id: u64,
+    pub max: u16,
+}
+
+impl RequestLimiter {
+    #[inline]
+    pub fn is_enabled(&self) -> bool {
+        self.id != 0 && self.max != 0
+    }
+}
+
 impl Default for Flags {
     fn default() -> Self {
         Self {
@@ -286,6 +299,20 @@ pub static IDLE_TIMEOUT_SECONDS: AtomicU32 = AtomicU32::new(300);
 #[inline]
 pub fn idle_timeout_seconds() -> c_uint {
     IDLE_TIMEOUT_SECONDS.load(Ordering::Relaxed)
+}
+
+#[inline]
+fn timeout_ms_to_seconds(milliseconds: u32) -> c_uint {
+    if milliseconds == 0 {
+        return 0;
+    }
+
+    let seconds = u64::from(milliseconds).div_ceil(1000).min(239 * 60);
+    (if seconds > 240 {
+        seconds.div_ceil(60) * 60
+    } else {
+        seconds
+    }) as c_uint
 }
 
 pub const END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY: &[u8] = b"0\r\n\r\n";
@@ -675,6 +702,9 @@ pub struct HTTPClient<'a> {
     /// Compressed length for `Content-Length`; 0 when `compress` is None or
     /// the body hasn't been compressed yet.
     pub compressed_body_len: usize,
+    pub request_limiter: RequestLimiter,
+    pub socket_timeout_ms: Option<u32>,
+    pub connection_timeout_ms: Option<u32>,
 }
 
 impl<'a> HTTPClient<'a> {
@@ -1625,7 +1655,11 @@ impl<'a> HTTPClient<'a> {
         // blocked in epoll_wait forever. Previously the first `set_timeout` call
         // was inside `on_writable`, which only runs *after* the handshake
         // completes. See https://github.com/oven-sh/bun/issues/30325.
-        self.set_timeout(&socket);
+        if IS_SSL {
+            self.set_connection_timeout(&socket);
+        } else {
+            self.set_timeout_for_current_phase(&socket);
+        }
 
         // Enable TCP keepalive so a half-open connection (peer closed but the
         // FIN/RST never reached us — NAT timeout, wifi/cellular handoff,
@@ -3092,7 +3126,7 @@ impl<'a> HTTPClient<'a> {
         match self.state.request_stage {
             RequestStage::Pending | RequestStage::Headers | RequestStage::Opened => {
                 bun_core::scoped_log!(fetch, "sendInitialRequestPayload");
-                self.set_timeout(&socket);
+                self.set_timeout_for_current_phase(&socket);
                 let result =
                     match self.send_initial_request_payload::<IS_FIRST_CALL, IS_SSL>(socket) {
                         Ok(r) => r,
@@ -3441,7 +3475,7 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
-        self.set_timeout(&socket);
+        self.set_timeout_for_current_phase(&socket);
     }
 
     pub fn handle_on_data_headers<const IS_SSL: bool>(
@@ -3677,7 +3711,7 @@ impl<'a> HTTPClient<'a> {
 
         if self.proxy_tunnel.is_some() {
             // if we have a tunnel we dont care about the other stages, we will just tunnel the data
-            self.set_timeout(&socket);
+            self.set_timeout_for_current_phase(&socket);
             self.proxy_tunnel_mut().unwrap().receive(incoming_data);
             return;
         }
@@ -3874,11 +3908,47 @@ impl<'a> HTTPClient<'a> {
         // pass-through. `socket.set_timeout` picks the short-tick timer for values
         // ≤ 240s and the minute-granularity long timer above that, so the default
         // 300s maps to the same 5-minute long timer as before.
-        if self.flags.disable_timeout || idle_timeout_seconds() == 0 {
+        let timeout_seconds = self
+            .socket_timeout_ms
+            .map(timeout_ms_to_seconds)
+            .unwrap_or_else(idle_timeout_seconds);
+        if self.flags.disable_timeout || timeout_seconds == 0 {
             socket.set_timeout(0);
             return;
         }
-        socket.set_timeout(idle_timeout_seconds());
+        socket.set_timeout(timeout_seconds);
+    }
+
+    pub fn set_connection_timeout<S: SocketTimeout>(&self, socket: &S) {
+        let Some(connection_timeout_ms) = self.connection_timeout_ms else {
+            self.set_timeout(socket);
+            return;
+        };
+
+        let timeout_seconds = timeout_ms_to_seconds(connection_timeout_ms);
+        if self.flags.disable_timeout || timeout_seconds == 0 {
+            socket.set_timeout(0);
+            return;
+        }
+        socket.set_timeout(timeout_seconds);
+    }
+
+    pub fn set_timeout_for_current_phase<S: SocketTimeout>(&self, socket: &S) {
+        if self.http_proxy.is_some()
+            && self.url.is_https()
+            && !matches!(
+                self.state.request_stage,
+                RequestStage::ProxyHeaders
+                    | RequestStage::ProxyBody
+                    | RequestStage::Body
+                    | RequestStage::Done
+            )
+        {
+            self.set_connection_timeout(socket);
+            return;
+        }
+
+        self.set_timeout(socket);
     }
 
     fn maybe_pause_receive<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {

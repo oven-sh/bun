@@ -15,7 +15,7 @@ use bun_picohttp as picohttp;
 use crate::headers::{self, Headers};
 use crate::{
     FetchRedirect, Flags, HTTPClient, HTTPRequestBody, HTTPVerboseLevel, InternalState, Method,
-    Signals, ThreadlocalAsyncHTTP,
+    RequestLimiter, Signals, ThreadlocalAsyncHTTP,
 };
 use crate::{HTTPClientResult, HTTPClientResultCallback};
 
@@ -216,6 +216,9 @@ fn make_client<'a>(
         compress: None,
         compressed_request_body: Vec::new(),
         compressed_body_len: 0,
+        request_limiter: RequestLimiter::default(),
+        socket_timeout_ms: None,
+        connection_timeout_ms: None,
     }
 }
 
@@ -274,6 +277,9 @@ pub struct Options<'a> {
     pub reject_unauthorized: Option<bool>,
     pub tls_props: Option<SSLConfigSharedPtr>,
     pub compress: Option<crate::compress_body::CompressOption>,
+    pub request_limiter: RequestLimiter,
+    pub socket_timeout_ms: Option<u32>,
+    pub connection_timeout_ms: Option<u32>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -534,6 +540,9 @@ impl<'a> AsyncHTTP<'a> {
         if let Some(val) = options.tls_props {
             this.client.tls_props = Some(val);
         }
+        this.client.request_limiter = options.request_limiter;
+        this.client.socket_timeout_ms = options.socket_timeout_ms;
+        this.client.connection_timeout_ms = options.connection_timeout_ms;
         this.client.compress = options.compress;
 
         if let Some(proxy) = &this.http_proxy {
@@ -801,6 +810,7 @@ impl<'a> AsyncHTTP<'a> {
                 // `ThreadlocalAsyncHTTP::new` (heap::alloc); recover the parent
                 // via field offset and reclaim the Box. This is the LAST access
                 // to `this`/`async_http`; only static state is touched afterward.
+                let request_limiter = (*this).client.request_limiter;
                 let threadlocal_http: *mut ThreadlocalAsyncHTTP =
                     bun_core::from_field_ptr!(ThreadlocalAsyncHTTP, async_http, async_http);
                 {
@@ -821,6 +831,7 @@ impl<'a> AsyncHTTP<'a> {
                     std::alloc::Layout::new::<ThreadlocalAsyncHTTP>(),
                 );
 
+                crate::http_thread().decrement_request_limiter(request_limiter);
                 let active_requests = ACTIVE_REQUESTS_COUNT.fetch_sub(1, Ordering::Relaxed);
                 debug_assert!(active_requests > 0);
             }
@@ -868,6 +879,7 @@ pub unsafe fn start_async_http(task: *mut Task) {
 impl<'a> AsyncHTTP<'a> {
     pub fn on_start(&mut self) {
         let _ = ACTIVE_REQUESTS_COUNT.fetch_add(1, Ordering::Relaxed);
+        crate::http_thread().increment_request_limiter(self.client.request_limiter);
         self.err = None;
         self.state.store(State::Sending, Ordering::Relaxed);
         self.client.result_callback = HTTPClientResultCallback::new::<AsyncHTTP<'static>>(

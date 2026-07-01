@@ -1931,6 +1931,7 @@ pub(crate) fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) 
         None,
         None,
         false,
+        Default::default(),
         global_this,
     ) {
         Ok(v) => v,
@@ -1943,6 +1944,7 @@ pub(crate) fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) 
     let client = S3Client {
         credentials: aws_options.credentials.dupe(),
         options: aws_options.options,
+        http_options: aws_options.http_options,
         acl: aws_options.acl,
         storage_class: aws_options.storage_class,
         request_payer: aws_options.request_payer,

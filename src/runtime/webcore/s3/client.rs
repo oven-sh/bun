@@ -27,6 +27,7 @@ pub use error_jsc::get_js_sign_error;
 pub use error_jsc::s3_error_to_js;
 pub use error_jsc::throw_sign_error;
 
+pub use bun_s3_signing::S3HttpOptions;
 pub use bun_s3_signing::credentials::S3Credentials;
 pub use bun_s3_signing::credentials::S3CredentialsWithOptions;
 use bun_s3_signing::credentials::encode_uri_component;
@@ -68,6 +69,7 @@ pub(crate) fn stat(
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
+    http_options: S3HttpOptions,
 ) -> JsTerminatedResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
@@ -77,6 +79,7 @@ pub(crate) fn stat(
             proxy_url,
             body: b"",
             request_payer,
+            http_options,
             ..Default::default()
         },
         s3_simple_request::Callback::Stat(callback),
@@ -91,6 +94,7 @@ pub(crate) fn download(
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
+    http_options: S3HttpOptions,
 ) -> JsTerminatedResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
@@ -100,6 +104,7 @@ pub(crate) fn download(
             proxy_url,
             body: b"",
             request_payer,
+            http_options,
             ..Default::default()
         },
         s3_simple_request::Callback::Download(callback),
@@ -116,6 +121,7 @@ pub(crate) fn download_slice(
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
+    http_options: S3HttpOptions,
 ) -> JsTerminatedResult<()> {
     let range: Option<Vec<u8>> = 'brk: {
         if let Some(size_) = size {
@@ -144,6 +150,7 @@ pub(crate) fn download_slice(
             body: b"",
             range: range.map(Vec::into_boxed_slice),
             request_payer,
+            http_options,
             ..Default::default()
         },
         s3_simple_request::Callback::Download(callback),
@@ -158,6 +165,7 @@ pub(crate) fn delete(
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
+    http_options: S3HttpOptions,
 ) -> JsTerminatedResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
@@ -167,6 +175,7 @@ pub(crate) fn delete(
             proxy_url,
             body: b"",
             request_payer,
+            http_options,
             ..Default::default()
         },
         s3_simple_request::Callback::Delete(callback),
@@ -184,6 +193,7 @@ pub(crate) fn list_objects(
     callback: fn(S3ListObjectsResult, *mut c_void) -> JsTerminatedResult<()>,
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
+    http_options: S3HttpOptions,
 ) -> JsTerminatedResult<()> {
     let mut search_params: Vec<u8> = Vec::<u8>::default();
 
@@ -366,6 +376,12 @@ pub(crate) fn list_objects(
             http_proxy,
             verbose: Some(vm.get_verbose_fetch()),
             reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
+            request_limiter: bun_http::RequestLimiter {
+                id: http_options.limiter_id,
+                max: http_options.max_sockets,
+            },
+            socket_timeout_ms: http_options.socket_timeout_ms,
+            connection_timeout_ms: http_options.connection_timeout_ms,
             ..Default::default()
         },
     ));
@@ -390,6 +406,7 @@ pub fn upload(
     proxy_url: Option<&[u8]>,
     storage_class: Option<StorageClass>,
     request_payer: bool,
+    http_options: S3HttpOptions,
     callback: fn(S3UploadResult, *mut c_void) -> JsTerminatedResult<()>,
     callback_context: *mut c_void,
 ) -> JsTerminatedResult<()> {
@@ -406,6 +423,7 @@ pub fn upload(
             acl,
             storage_class,
             request_payer,
+            http_options,
             ..Default::default()
         },
         s3_simple_request::Callback::Upload(callback),
@@ -428,6 +446,7 @@ pub(crate) fn writable_stream(
     proxy: Option<&[u8]>,
     storage_class: Option<StorageClass>,
     request_payer: bool,
+    http_options: S3HttpOptions,
 ) -> JsResult<JSValue> {
     // Local callback wrapper
     fn wrapper_callback(result: S3UploadResult, sink: &mut NetworkSink) -> JsTerminatedResult<()> {
@@ -503,6 +522,7 @@ pub(crate) fn writable_stream(
         acl: None,
         storage_class,
         request_payer,
+        http_options,
         credentials,
         poll_ref: KeepAlive::init(),
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
@@ -750,6 +770,7 @@ pub fn upload_stream(
     content_encoding: Option<&[u8]>,
     proxy: Option<&[u8]>,
     request_payer: bool,
+    http_options: S3HttpOptions,
     callback: Option<fn(S3UploadResult, *mut c_void)>,
     callback_context: *mut c_void,
 ) -> JsResult<JSValue> {
@@ -861,6 +882,7 @@ pub fn upload_stream(
         acl,
         storage_class,
         request_payer,
+        http_options,
         credentials,
         poll_ref: KeepAlive::init(),
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
@@ -925,6 +947,7 @@ pub(crate) fn download_stream(
     size: Option<usize>,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
+    http_options: S3HttpOptions,
     callback: fn(
         chunk: &MutableString,
         has_more: bool,
@@ -1083,6 +1106,12 @@ pub(crate) fn download_stream(
             verbose: Some(verbose),
             signals: Some(task.signals),
             reject_unauthorized: Some(reject_unauthorized),
+            request_limiter: bun_http::RequestLimiter {
+                id: http_options.limiter_id,
+                max: http_options.max_sockets,
+            },
+            socket_timeout_ms: http_options.socket_timeout_ms,
+            connection_timeout_ms: http_options.connection_timeout_ms,
             ..Default::default()
         },
     ));
@@ -1107,6 +1136,7 @@ pub fn readable_stream(
     size: Option<usize>,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
+    http_options: S3HttpOptions,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     struct S3DownloadStreamWrapper {
@@ -1278,6 +1308,7 @@ pub fn readable_stream(
         size,
         proxy_url,
         request_payer,
+        http_options,
         S3DownloadStreamWrapper::opaque_callback,
         wrapper.cast::<c_void>(),
     );

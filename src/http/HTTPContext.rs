@@ -854,6 +854,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             .ptr(),
             false, // dont allow half-open sockets
         )?;
+        client.set_connection_timeout(&socket);
         client.allow_retry = false;
         Ok(Some(socket))
     }
@@ -1037,6 +1038,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             .ptr(),
             false,
         )?;
+        client.set_connection_timeout(&socket);
         client.allow_retry = false;
         if SSL {
             if client.can_offer_h2() {
@@ -1183,6 +1185,7 @@ impl<const SSL: bool> Handler<SSL> {
                     }
                 }
 
+                client.set_timeout(&socket);
                 return client.first_call::<SSL>(socket);
             } else {
                 // if we are here is because server rejected us, and the error_no is the cause of this

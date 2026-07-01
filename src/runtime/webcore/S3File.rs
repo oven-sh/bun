@@ -96,6 +96,7 @@ where
     s3_client::write_format_credentials::<F, W, ENABLE_ANSI_COLORS>(
         &**credentials,
         s3.options,
+        s3.http_options,
         s3.acl,
         formatter,
         writer,
@@ -357,6 +358,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     default_acl: Option<s3::ACL>,
     default_storage_class: Option<s3::StorageClass>,
     default_request_payer: bool,
+    default_http_options: s3::S3HttpOptions,
 ) -> JsResult<Blob> {
     let aws_options = <s3::S3Credentials>::get_credentials_with_options(
         default_credentials,
@@ -365,6 +367,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
         default_acl,
         default_storage_class,
         default_request_payer,
+        default_http_options,
         global,
     )?;
 
@@ -385,6 +388,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     store.data.as_s3_mut().acl = aws_options.acl;
     store.data.as_s3_mut().storage_class = aws_options.storage_class;
     store.data.as_s3_mut().request_payer = aws_options.request_payer;
+    store.data.as_s3_mut().http_options = aws_options.http_options;
 
     let blob = Blob::init_with_store(store, global);
     if let Some(opts) = options {
@@ -444,6 +448,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
         None,
         None,
         false,
+        Default::default(),
         global,
     )?;
     let mut store = blob::Store::init_s3(path, None, aws_options.credentials).expect("oom");
@@ -452,6 +457,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
     store.data.as_s3_mut().acl = aws_options.acl;
     store.data.as_s3_mut().storage_class = aws_options.storage_class;
     store.data.as_s3_mut().request_payer = aws_options.request_payer;
+    store.data.as_s3_mut().http_options = aws_options.http_options;
 
     let blob = Blob::init_with_store(store, global);
     if let Some(opts) = options {
@@ -644,6 +650,7 @@ impl S3BlobStatTask {
             this.cast::<core::ffi::c_void>(),
             env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
+            s3_store.http_options,
         )?;
         Ok(promise)
     }
@@ -671,6 +678,7 @@ impl S3BlobStatTask {
             this.cast::<core::ffi::c_void>(),
             env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
+            s3_store.http_options,
         )?;
         Ok(promise)
     }
@@ -698,6 +706,7 @@ impl S3BlobStatTask {
             this.cast::<core::ffi::c_void>(),
             env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
+            s3_store.http_options,
         )?;
         Ok(promise)
     }

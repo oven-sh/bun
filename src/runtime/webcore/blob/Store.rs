@@ -321,6 +321,7 @@ impl S3Ext for S3 {
             self.acl,
             self.storage_class,
             self.request_payer,
+            self.http_options,
             global_object,
         )
     }
@@ -404,6 +405,7 @@ impl S3Ext for S3 {
             .cast::<c_void>(),
             proxy,
             aws_options.request_payer,
+            aws_options.http_options,
         )?;
 
         Ok(value)
@@ -509,6 +511,7 @@ impl S3Ext for S3 {
             Wrapper::resolve,
             wrapper.cast::<c_void>(),
             proxy,
+            aws_options.http_options,
         )?;
 
         Ok(value)

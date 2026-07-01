@@ -1,5 +1,6 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
@@ -145,6 +146,7 @@ pub struct HttpThread {
     /// — the request socket never reaches a terminal state once the JS thread
     /// stops driving the world, so the box would otherwise strand.
     pub in_flight: Vec<NonNull<crate::ThreadlocalAsyncHttp<'static>>>,
+    pub request_limiter_counts: HashMap<u64, usize>,
 }
 
 impl HttpThread {
@@ -189,6 +191,7 @@ impl HttpThread {
             lazy_libdeflater: None,
             lazy_request_body_buffer: None,
             in_flight: Vec::new(),
+            request_limiter_counts: HashMap::new(),
         }
     }
 }
@@ -915,7 +918,7 @@ impl HttpThread {
                     .client
                     .signals
                     .get(crate::signals::Field::Aborted);
-                if aborted || active < max {
+                if aborted || (active < max && self.can_start_request_limited(http)) {
                     start_queued_task(http.as_ptr(), &mut self.in_flight);
                     if cfg!(debug_assertions) {
                         count += 1;
@@ -938,7 +941,7 @@ impl HttpThread {
                 .client
                 .signals
                 .get(crate::signals::Field::Aborted);
-            if !aborted && active >= max {
+            if !aborted && (active >= max || !self.can_start_request_limited(http)) {
                 // Can't start this one yet. Defer it (preserves FIFO relative to
                 // later pops) and keep draining — there may be aborted tasks
                 // behind it that we can fail-fast right now.
@@ -954,6 +957,46 @@ impl HttpThread {
 
         if cfg!(debug_assertions) && count > 0 {
             bun_core::scoped_log!(HTTPThread_log, "Processed {} tasks\n", count);
+        }
+    }
+
+    #[inline]
+    pub fn can_start_request_limited(&self, http: NonNull<AsyncHttp<'static>>) -> bool {
+        let limiter = bun_ptr::ParentRef::from(http).client.request_limiter;
+        if !limiter.is_enabled() {
+            return true;
+        }
+
+        self.request_limiter_counts
+            .get(&limiter.id)
+            .copied()
+            .unwrap_or(0)
+            < usize::from(limiter.max)
+    }
+
+    #[inline]
+    pub fn increment_request_limiter(&mut self, limiter: crate::RequestLimiter) {
+        if limiter.is_enabled() {
+            *self.request_limiter_counts.entry(limiter.id).or_insert(0) += 1;
+        }
+    }
+
+    #[inline]
+    pub fn decrement_request_limiter(&mut self, limiter: crate::RequestLimiter) {
+        if !limiter.is_enabled() {
+            return;
+        }
+
+        let Some(count) = self.request_limiter_counts.get_mut(&limiter.id) else {
+            debug_assert!(false, "request limiter count missing");
+            return;
+        };
+
+        debug_assert!(*count > 0);
+        if *count <= 1 {
+            self.request_limiter_counts.remove(&limiter.id);
+        } else {
+            *count -= 1;
         }
     }
 

@@ -542,6 +542,7 @@ pub struct S3SimpleRequestOptions<'a> {
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
     pub request_payer: bool,
+    pub http_options: bun_s3_signing::S3HttpOptions,
 }
 
 impl<'a> Default for S3SimpleRequestOptions<'a> {
@@ -559,6 +560,7 @@ impl<'a> Default for S3SimpleRequestOptions<'a> {
             acl: None,
             storage_class: None,
             request_payer: false,
+            http_options: Default::default(),
         }
     }
 }
@@ -690,6 +692,12 @@ pub(crate) fn execute_simple_s3_request(
             http_proxy,
             verbose: Some(verbose),
             reject_unauthorized: Some(reject_unauthorized),
+            request_limiter: bun_http::RequestLimiter {
+                id: options.http_options.limiter_id,
+                max: options.http_options.max_sockets,
+            },
+            socket_timeout_ms: options.http_options.socket_timeout_ms,
+            connection_timeout_ms: options.http_options.connection_timeout_ms,
             ..Default::default()
         },
     ));

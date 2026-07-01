@@ -7,6 +7,7 @@ use crate::webcore::blob::store::S3Ext as _;
 use crate::webcore::s3::MultiPartUploadOptions;
 use crate::webcore::s3::client::{ACL, S3Credentials, StorageClass};
 use bun_jsc::{CallFrame, ConsoleFormatter, ErrorCode, JSGlobalObject, JSValue, JsResult};
+use bun_s3_signing::S3HttpOptions;
 
 use super::s3_file as S3File;
 
@@ -47,6 +48,7 @@ pub(crate) trait S3CredentialsExt {
         default_acl: Option<ACL>,
         default_storage_class: Option<StorageClass>,
         default_request_payer: bool,
+        default_http_options: S3HttpOptions,
         global: &JSGlobalObject,
     ) -> JsResult<bun_s3_signing::S3CredentialsWithOptions>;
 }
@@ -67,6 +69,7 @@ impl S3CredentialsExt for S3Credentials {
         default_acl: Option<ACL>,
         default_storage_class: Option<StorageClass>,
         default_request_payer: bool,
+        default_http_options: S3HttpOptions,
         global: &JSGlobalObject,
     ) -> JsResult<bun_s3_signing::S3CredentialsWithOptions> {
         crate::webcore::s3::credentials_jsc::get_credentials_with_options(
@@ -76,6 +79,7 @@ impl S3CredentialsExt for S3Credentials {
             default_acl,
             default_storage_class,
             default_request_payer,
+            default_http_options,
             global,
         )
     }
@@ -93,6 +97,7 @@ fn opt_js(v: JSValue) -> Option<JSValue> {
 pub fn write_format_credentials<F, W, const ENABLE_ANSI_COLORS: bool>(
     credentials: &S3Credentials,
     options: MultiPartUploadOptions,
+    http_options: S3HttpOptions,
     acl: Option<ACL>,
     formatter: &mut F,
     writer: &mut W,
@@ -220,6 +225,51 @@ where
         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
         writer.write_str("\n")?;
 
+        if http_options.max_sockets != 0 {
+            formatter.write_indent(writer)?;
+            writer.write_str(pfmt!("<r>maxSockets<d>:<r> ", ENABLE_ANSI_COLORS))?;
+            formatter
+                .print_as::<W, ENABLE_ANSI_COLORS>(
+                    FormatTag::Double,
+                    writer,
+                    JSValue::js_number(http_options.max_sockets as f64),
+                    JSType::NumberObject,
+                )
+                .map_err(|_| core::fmt::Error)?;
+            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+            writer.write_str("\n")?;
+        }
+
+        if let Some(socket_timeout_ms) = http_options.socket_timeout_ms {
+            formatter.write_indent(writer)?;
+            writer.write_str(pfmt!("<r>socketTimeout<d>:<r> ", ENABLE_ANSI_COLORS))?;
+            formatter
+                .print_as::<W, ENABLE_ANSI_COLORS>(
+                    FormatTag::Double,
+                    writer,
+                    JSValue::js_number(socket_timeout_ms as f64),
+                    JSType::NumberObject,
+                )
+                .map_err(|_| core::fmt::Error)?;
+            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+            writer.write_str("\n")?;
+        }
+
+        if let Some(connection_timeout_ms) = http_options.connection_timeout_ms {
+            formatter.write_indent(writer)?;
+            writer.write_str(pfmt!("<r>connectionTimeout<d>:<r> ", ENABLE_ANSI_COLORS))?;
+            formatter
+                .print_as::<W, ENABLE_ANSI_COLORS>(
+                    FormatTag::Double,
+                    writer,
+                    JSValue::js_number(connection_timeout_ms as f64),
+                    JSType::NumberObject,
+                )
+                .map_err(|_| core::fmt::Error)?;
+            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+            writer.write_str("\n")?;
+        }
+
         formatter.write_indent(writer)?;
         writer.write_str(pfmt!("<r>retry<d>:<r> ", ENABLE_ANSI_COLORS))?;
         formatter
@@ -240,6 +290,7 @@ where
 pub struct S3Client {
     pub credentials: bun_ptr::IntrusiveRc<S3Credentials>,
     pub options: MultiPartUploadOptions,
+    pub http_options: S3HttpOptions,
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
     pub request_payer: bool,
@@ -285,11 +336,13 @@ impl S3Client {
             None,
             None,
             false,
+            Default::default(),
             global,
         )?;
         Ok(Box::new(S3Client {
             credentials: aws_options.credentials.dupe(),
             options: aws_options.options,
+            http_options: aws_options.http_options,
             acl: aws_options.acl,
             storage_class: aws_options.storage_class,
             request_payer: aws_options.request_payer,
@@ -328,6 +381,7 @@ impl S3Client {
         write_format_credentials::<F, W, ENABLE_ANSI_COLORS>(
             &self.credentials,
             self.options,
+            self.http_options,
             self.acl,
             formatter,
             writer,
@@ -372,6 +426,7 @@ impl S3Client {
                 ptr.acl,
                 ptr.storage_class,
                 ptr.request_payer,
+                ptr.http_options,
             )?,
         );
         // `to_js` runs `calculateEstimatedByteSize()`
@@ -422,6 +477,7 @@ impl S3Client {
             ptr.acl,
             ptr.storage_class,
             ptr.request_payer,
+            ptr.http_options,
         )?;
         S3File::get_presign_url_from(&mut blob, global, options)
     }
@@ -463,6 +519,7 @@ impl S3Client {
             ptr.acl,
             ptr.storage_class,
             ptr.request_payer,
+            ptr.http_options,
         )?;
         S3File::S3BlobStatTask::exists(global, &blob)
     }
@@ -504,6 +561,7 @@ impl S3Client {
             ptr.acl,
             ptr.storage_class,
             ptr.request_payer,
+            ptr.http_options,
         )?;
         S3File::S3BlobStatTask::size(global, &mut blob)
     }
@@ -545,6 +603,7 @@ impl S3Client {
             ptr.acl,
             ptr.storage_class,
             ptr.request_payer,
+            ptr.http_options,
         )?;
         S3File::S3BlobStatTask::stat(global, &blob)
     }
@@ -589,6 +648,7 @@ impl S3Client {
             ptr.acl,
             ptr.storage_class,
             ptr.request_payer,
+            ptr.http_options,
         )?;
         // Move into `PathOrBlob` directly; cleanup of the moved-out value is
         // handled by `Drop`.
@@ -626,6 +686,7 @@ impl S3Client {
             None,
             None,
             ptr.request_payer,
+            ptr.http_options,
         )?;
 
         let store = blob.store.get().as_ref().unwrap();
@@ -667,6 +728,7 @@ impl S3Client {
             ptr.acl,
             ptr.storage_class,
             ptr.request_payer,
+            ptr.http_options,
         )?;
         let store = blob.store.get().as_ref().unwrap();
         store.data.as_s3().unlink(store, global, options)

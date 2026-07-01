@@ -278,6 +278,27 @@ declare module "bun" {
     queueSize?: number;
 
     /**
+     * Maximum number of concurrent S3 HTTP requests for this client or file.
+     *
+     * This is similar to configuring `maxSockets` on a Node.js HTTP agent.
+     */
+    maxSockets?: number;
+
+    /**
+     * Time in milliseconds of socket inactivity before an S3 request times out.
+     *
+     * Set to `0` to disable the socket idle timeout for S3 requests.
+     */
+    socketTimeout?: number;
+
+    /**
+     * Time in milliseconds to establish the S3 connection, including the TLS handshake.
+     *
+     * Set to `0` to disable the connection timeout for S3 requests.
+     */
+    connectionTimeout?: number;
+
+    /**
      * Number of retry attempts for failed uploads.
      * - Default: 3
      * - Maximum: 255

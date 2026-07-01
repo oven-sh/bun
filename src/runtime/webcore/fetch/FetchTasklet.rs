@@ -22,6 +22,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional,
 };
+use bun_s3_signing::S3HttpOptions;
 use bun_sys::FdExt;
 use bun_threading::Mutex;
 use bun_url::URL as ZigURL;
@@ -2008,6 +2009,13 @@ impl FetchTasklet {
                 verbose: Some(fetch_options.verbose),
                 tls_props: fetch_options.ssl_config,
                 compress: fetch_options.compress,
+                request_limiter: bun_http::RequestLimiter {
+                    id: fetch_options.s3_http_options.limiter_id,
+                    max: fetch_options.s3_http_options.max_sockets,
+                },
+                socket_timeout_ms: fetch_options.s3_http_options.socket_timeout_ms,
+                connection_timeout_ms: fetch_options.s3_http_options.connection_timeout_ms,
+                ..Default::default()
             },
         )));
         // enable streaming the write side
@@ -2540,6 +2548,7 @@ pub struct FetchOptions {
     pub force_http1: bool,
     pub is_node_http_client: bool,
     pub compress: Option<http::compress_body::CompressOption>,
+    pub s3_http_options: S3HttpOptions,
 }
 
 impl Default for FetchOptions {
@@ -2575,6 +2584,7 @@ impl Default for FetchOptions {
             force_http1: false,
             is_node_http_client: false,
             compress: None,
+            s3_http_options: S3HttpOptions::default(),
         }
     }
 }

@@ -2,7 +2,7 @@
 //! `S3CredentialsWithOptions`. Lives in `runtime/webcore/s3/` because it walks
 //! a `jsc.JSValue`; `s3_signing/` is JSC-free.
 
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use bun_core::{String as BunString, Tag as BunStringTag, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, RangeErrorOptions, StringJsc as _};
@@ -11,6 +11,8 @@ use bun_s3_signing::{
     ACL, MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, StorageClass,
 };
 use bun_url::URL;
+
+static S3_HTTP_OPTIONS_LIMITER_ID: AtomicU64 = AtomicU64::new(1);
 
 /// `opts.{key}` → owned UTF-8 slice when the property is present, truthy, a
 /// JS string, and non-empty. Shared ladder for the S3 option parsers
@@ -73,6 +75,7 @@ pub(crate) fn get_credentials_with_options(
     default_acl: Option<ACL>,
     default_storage_class: Option<StorageClass>,
     default_request_payer: bool,
+    default_http_options: bun_s3_signing::S3HttpOptions,
     global_object: &JSGlobalObject,
 ) -> JsResult<S3CredentialsWithOptions> {
     bun_analytics::features::s3.fetch_add(1, Ordering::Relaxed);
@@ -86,6 +89,7 @@ pub(crate) fn get_credentials_with_options(
         acl: default_acl,
         storage_class: default_storage_class,
         request_payer: default_request_payer,
+        http_options: default_http_options,
         ..Default::default()
     };
     // errdefer new_credentials.deinit() — handled by Drop on early return
@@ -216,6 +220,61 @@ pub(crate) fn get_credentials_with_options(
                 } else {
                     new_credentials.options.queue_size = queue_size.min(i32::from(u8::MAX)) as u8;
                 }
+            }
+
+            if let Some(max_sockets) = opts.get_optional_int::<i32>(global_object, "maxSockets")? {
+                if !(1..=i32::from(u16::MAX)).contains(&max_sockets) {
+                    return Err(global_object.throw_range_error(
+                        max_sockets as i64,
+                        RangeErrorOptions {
+                            min: 1,
+                            max: u16::MAX as i64,
+                            field_name: b"maxSockets",
+                            ..Default::default()
+                        },
+                    ));
+                }
+
+                new_credentials.http_options.max_sockets = max_sockets as u16;
+                new_credentials.http_options.limiter_id =
+                    S3_HTTP_OPTIONS_LIMITER_ID.fetch_add(1, Ordering::Relaxed);
+            }
+
+            if let Some(socket_timeout) =
+                opts.get_optional_int::<i64>(global_object, "socketTimeout")?
+            {
+                if !(0..=i64::from(u32::MAX)).contains(&socket_timeout) {
+                    return Err(global_object.throw_range_error(
+                        socket_timeout,
+                        RangeErrorOptions {
+                            min: 0,
+                            max: u32::MAX as i64,
+                            field_name: b"socketTimeout",
+                            ..Default::default()
+                        },
+                    ));
+                }
+
+                new_credentials.http_options.socket_timeout_ms = Some(socket_timeout as u32);
+            }
+
+            if let Some(connection_timeout) =
+                opts.get_optional_int::<i64>(global_object, "connectionTimeout")?
+            {
+                if !(0..=i64::from(u32::MAX)).contains(&connection_timeout) {
+                    return Err(global_object.throw_range_error(
+                        connection_timeout,
+                        RangeErrorOptions {
+                            min: 0,
+                            max: u32::MAX as i64,
+                            field_name: b"connectionTimeout",
+                            ..Default::default()
+                        },
+                    ));
+                }
+
+                new_credentials.http_options.connection_timeout_ms =
+                    Some(connection_timeout as u32);
             }
 
             if let Some(retry) = opts.get_optional_int::<i32>(global_object, "retry")? {

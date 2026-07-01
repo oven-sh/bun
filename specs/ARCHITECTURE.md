@@ -115,6 +115,7 @@ take `JSReadableStreamReaderBase*`. No C++ `virtual` (see §5).
 | `WritableStreamOperations.cpp` | ALL `WritableStreamXxx` + `SetUpWritableStreamDefaultController*` + `AcquireWritableStreamDefaultWriter` + `CreateWritableStream` + `InitializeWritableStream` + the full erroring/in-flight state machine |
 | `TransformStreamOperations.cpp` | ALL `TransformStreamXxx` ops incl. `InitializeTransformStream` and the default-sink/default-source algorithms |
 | `CrossRealmTransform.{h,cpp}` | `SetUpCrossRealmTransformReadable/Writable`, `PackAndPostMessage(HandlingError)`, `CrossRealmTransformSendError`, and the transfer / transfer-RECEIVING steps for all 3 transferable classes (§6.3) |
+| `BunStreamConsumers.cpp` | BUN-LAYER-DESIGN §3: the `readableStreamTo*` set, `tryUseReadableStreamBufferedFastPath`, the `*Direct` consumers, `withoutUTF8BOM`, `ReadableStream.prototype.{text,json,bytes,blob}`. (Added by PHASE-A-NOTES ruling §4.5.) |
 | `WebStreamsMisc.cpp` | `TransferArrayBuffer`, `CanTransferArrayBuffer`, `CloneAsUint8Array`, `StructuredClone`, `CanCopyDataBlockBytes`, `IsNonNegativeNumber`, `ExtractHighWaterMark`, `ExtractSizeAlgorithm`, the sanctioned catch helper (§7.1a), promise helpers |
 | *(Bun layer — its own designed & reviewed module set)* | The `Native` source kind, the `type:"direct"` stream mode + `JSDirectStreamController`, the JSSink glue (`assignToStream`/`readDirectStream`/`readStreamIntoSink`/ResumableSink), the `readableStreamTo*` fast paths, and `WebStreamsExports.cpp` (the entire `extern "C"` + Rust FFI surface). File list, class list, and every signature: **`specs/BUN-LAYER-DESIGN.md`** — designed and adversarially reviewed exactly like the spec core, BEFORE the headers freeze. |
 
@@ -549,9 +550,12 @@ it and returns 1: follow the digest, not intuition); `TransformStreamDefaultCont
 `%ArrayBuffer%` construct in `[[PullSteps]]` (routes to the read request's error steps);
 `ReadableStreamFromIterable`'s iterator calls (convert to a rejected promise);
 `ReadableByteStreamControllerEnqueueClonedChunkToQueue`; every `startAlgorithm` invocation.
-Pattern — never any other shape, never elsewhere:
+Pattern — never any other shape, never elsewhere. NOTE: this fork does NOT export
+`JSC::CatchScope`/`DECLARE_CATCH_SCOPE`; the real, in-tree-verified API (used by
+`ZigGlobalObject.cpp` and the fork's own microtask runner) is
+`JSC::TopExceptionScope` from `<JavaScriptCore/TopExceptionScope.h>`:
 ```cpp
-auto catchScope = DECLARE_CATCH_SCOPE(vm);
+auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 JSValue r = <the call>;
 if (JSC::Exception* ex = catchScope.exception()) {
     JSValue thrown = ex->value();
@@ -560,9 +564,10 @@ if (JSC::Exception* ex = catchScope.exception()) {
     <the digest's recovery path, using `thrown`>;
 }
 ```
-This is the same form the fork's own microtask runner uses. A bare `clearException()` is
-forbidden; `clearExceptionExceptTermination()` is what makes forced VM termination
-(`vm.hasPendingTerminationException()`) uncatchable, which it must be.
+Prefer the ONE shared helper `takeAbruptCompletion(global, catchScope)` declared in
+`WebStreamsInternals.h` over hand-rolling this. A bare `clearException()` is forbidden;
+`clearExceptionExceptTermination()` is what makes forced VM termination uncatchable, which
+it must be.
 
 **7.2** These run arbitrary user JS synchronously — after any of them, re-load all cached
 state from members, re-fetch queue heads, and re-validate `[[state]]`; and NEVER hold a raw
@@ -587,9 +592,17 @@ it after; do not cache `queue.first()` across one.
 dictionary conversion. Everywhere else, algorithms were captured at set-up.
 
 **7.4** Settling one of OUR promises with a value **we constructed** (undefined, `true`, a
-fresh `{value,done}` object, a fresh Error) is NOT a user-JS point — its reactions run as
-microtasks. Settling it with a **user value** IS (see §7.2). This distinction is the whole
-rule; v1's blanket exemption was wrong.
+fresh Error) is NOT a user-JS point — its reactions run as microtasks. Settling it with a
+**user value** IS (see §7.2). This distinction is the whole rule; v1's blanket exemption was
+wrong. **One further caveat (HEADER-REVIEW-3):** even a value WE constructed can be a
+user-JS point if the *resolve* path performs the ES `PromiseResolve` thenable lookup on it —
+a plain `{value, done}` result object's `.then` lookup reaches a user-patched
+`Object.prototype.then` getter, which WPT's `patched-global.any.js` tests for. So: where the
+digest says "**resolve** promise with X", the thenable lookup (and thus this hazard) is
+spec-mandated and MUST happen; where the value is a fresh plain object and the digest's
+semantics permit it, prefer `JSC::JSPromise::fulfill...` (which performs NO thenable lookup)
+only when the digest's own step is a fulfill, never as an "optimization" of a resolve. When
+in doubt, treat resolving with any object as `userJS: yes` and re-validate after it.
 
 **7.5** Rejecting a promise nobody has `.then`'d fires unhandledRejection. The spec marks
 specific promises as handled ("Set promise.[[PromiseIsHandled]] to true") — the writer's stale

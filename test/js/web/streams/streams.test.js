@@ -1434,11 +1434,13 @@ describe("pipeTo from a byte source", () => {
           return;
         }
         const view = controller.byobRequest.view;
-        for (let i = 0; i < view.byteLength; i++) {
+        // respond() detaches `view`'s buffer, so its byteLength reads 0 afterwards.
+        const byteLength = view.byteLength;
+        for (let i = 0; i < byteLength; i++) {
           view[i] = written + i;
         }
-        controller.byobRequest?.respond(view.byteLength);
-        written += view.byteLength;
+        controller.byobRequest?.respond(byteLength);
+        written += byteLength;
       },
     });
     const received = [];

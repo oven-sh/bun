@@ -1,4 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
+use bun_install_types::PackageID;
 use core::cmp::Ordering;
 
 use bun_collections::HashMap;
@@ -6,7 +7,6 @@ use bun_core::strings;
 use bun_semver::String as SemverString;
 
 use crate::Dependency;
-use crate::PackageID;
 use crate::Resolution;
 use crate::lockfile::package;
 use crate::lockfile::package::Alphabetizer;

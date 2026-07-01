@@ -210,7 +210,7 @@ impl CompileTarget {
         // bun_sys::resolve_cache_directory)
         let cache_dir = bun_sys::fetch_cache_directory_path();
         let dest = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-            path::fs::FileSystem::instance().top_level_dir(),
+            path::fs::top_level_dir(),
             &mut buf[..],
             &[cache_dir.as_slice(), version_str.as_bytes()],
         );

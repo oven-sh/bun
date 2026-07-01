@@ -20,9 +20,9 @@ use bun_threading::{Mutex, thread_pool as ThreadPoolLib};
 use crate::cache::{Contents, Entry as CacheEntry};
 use crate::linker_context_mod::StmtList;
 // `crate::options::Target` is the lower-tier `bun_options_types`
-// enum (re-exported for downstream crates); `BundleOptions.target` is the
-// file-backed `options_impl::Target`. Compare against the latter so
-// `primary.options.target == target` type-checks. (The two enums could be
+// enum (re-exported for downstream crates); `BundleOptions.resolve.target` is
+// the file-backed `options_impl::Target`. Compare against the latter so
+// `primary.options.resolve.target == target` type-checks. (The two enums could be
 // collapsed into one; see lib.rs `pub mod options` shadow note.)
 use crate::BundleV2;
 use crate::options_impl::Target;
@@ -765,7 +765,7 @@ impl Worker {
     pub fn transpiler_for_target(&mut self, target: Target) -> &mut Transpiler<'static> {
         // Callers only invoke this after `Worker::get` → `create()`.
         let data = self.data.as_mut().expect("Worker.data set in create()");
-        if target == Target::Browser && data.transpiler.options.target != target {
+        if target == Target::Browser && data.transpiler.options.resolve.target != target {
             if data.other_transpiler.is_none() {
                 // `ctx` is a `BackRef` (set in `create()`); the `BundleV2`
                 // outlives every worker — safe `Deref`.
@@ -786,7 +786,7 @@ impl Worker {
                 .other_transpiler
                 .as_deref_mut()
                 .expect("other_transpiler set above");
-            debug_assert!(other.options.target == target);
+            debug_assert!(other.options.resolve.target == target);
             return other;
         }
 

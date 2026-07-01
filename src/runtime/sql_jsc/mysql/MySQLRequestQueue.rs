@@ -1,5 +1,5 @@
-use crate::sql_jsc::jsc::JSValue;
 use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
+use bun_jsc::JSValue;
 use bun_jsc::JsCell;
 use bun_ptr::ParentRef;
 use bun_sql::mysql::protocol::any_mysql_error::Error as AnyMySQLError;

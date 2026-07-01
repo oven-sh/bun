@@ -932,7 +932,7 @@ impl From<crate::Error> for JsError {
 impl From<JsError> for crate::Error {
     /// Widen a `bun.JSError` value back into the `anyerror` newtype. Preserves
     /// the exact tag name so call sites that round-trip through
-    /// `bun_core::Error` (e.g. the `bun_bundler::dispatch::DevServerVTable`
+    /// `bun_core::Error` (e.g. the `bun_bundler::dispatch::DevServerHandle`
     /// boundary) keep `error.OutOfMemory` distinguishable from `error.JSError`.
     #[inline]
     fn from(e: JsError) -> Self {

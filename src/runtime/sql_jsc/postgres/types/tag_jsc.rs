@@ -2,7 +2,7 @@
 //! pure helpers stay in `sql/`; only the `JSValue`/`JSGlobalObject`-touching
 //! conversion paths live here.
 
-use crate::sql_jsc::jsc::{JSGlobalObject, JSType, JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSType, JSValue, JsResult};
 use bun_sql::postgres::types::tag::Tag;
 
 // `Tag` is a runtime arg rather than a const generic: it is a

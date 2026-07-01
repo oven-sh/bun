@@ -6,7 +6,7 @@
 #![feature(adt_const_params)]
 // ──────────────────────────────────────────────────────────────────────────
 // Resolver body. Higher-tier deps are reached via lower-tier crates:
-// bun_install -> bun_install_types::AutoInstaller trait; HardcodedModule ->
+// bun_install -> bun_install_types PackageManager link fns; HardcodedModule ->
 // bun_resolve_builtins.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -288,12 +288,11 @@ pub mod fs {
                     DirnameStore::instance().append_slice(&buf[..n])?
                 }
             };
-            // Marks the lower-tier `bun_paths::fs::FileSystem` facade as
-            // initialized and writes the canonical cwd storage in
-            // `bun_core::TOP_LEVEL_DIR` (first call only; later re-roots go
-            // through `set_top_level_dir`). `cwd` is raw bytes — POSIX paths
-            // are not guaranteed UTF-8.
-            bun_paths::fs::FileSystem::init(cwd);
+            // Writes the canonical cwd storage in `bun_core::TOP_LEVEL_DIR`
+            // (first call only; later re-roots go through
+            // `set_top_level_dir`). `cwd` is raw bytes — POSIX paths are not
+            // guaranteed UTF-8.
+            bun_core::init_top_level_dir(cwd);
             // SAFETY: see above.
             unsafe {
                 (*INSTANCE.get()).write(FileSystem {

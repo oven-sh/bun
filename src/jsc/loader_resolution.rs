@@ -1,7 +1,7 @@
 //! Module-specifier → loader/virtual-source resolution for the module loader.
 //! Bodies moved verbatim from `bun_runtime::jsc_hooks` (which accessed the
 //! same VM fields); only `blob:` ObjectURL resolution dispatches up through
-//! `RuntimeHooks`.
+//! `bun_runtime_resolve_blob_url_for_loader`.
 
 use crate::virtual_machine::VirtualMachine;
 use bun_ast::Loader;
@@ -129,10 +129,10 @@ pub unsafe fn get_loader_and_virtual_source<'a>(
     }
 
     // `blob:` ObjectURL → in-memory virtual source. The loader sniff lives in
-    // `bun_runtime::webcore`; dispatched through RuntimeHooks (cold).
-    // SAFETY: hook contract — `jsc_vm` is the live per-thread VM.
+    // `bun_runtime::webcore`; dispatched through the upward extern fn (cold).
+    // SAFETY: extern-fn contract — `jsc_vm` is the live per-thread VM.
     match unsafe {
-        (crate::virtual_machine::runtime_hooks().resolve_blob_url_for_loader)(specifier, jsc_vm)
+        crate::virtual_machine::bun_runtime_resolve_blob_url_for_loader(specifier, jsc_vm)
     } {
         Ok(None) => {}
         Err(()) => return Err(bun_core::err!("BlobNotFound")),

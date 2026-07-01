@@ -1408,44 +1408,104 @@ impl Drop for WindowsNamedPipe {
     }
 }
 
-// SAFETY (every slot): the `*mut ()` is the live `*mut WindowsNamedPipe` that
-// `named_pipe_handle` was built from; the vtable only ever travels with it.
+// ── `bun_uws_sys::WindowsNamedPipe` link-time shims ─────────────────────────
+// `bun_uws_sys::socket` dispatches `InternalSocket::Pipe` through the opaque
+// `bun_uws_sys::WindowsNamedPipe` handle, whose inherent methods forward to
+// these `extern "Rust"` symbols (see `src/uws_sys/lib.rs` §shim).
+// `this` is always the live `WindowsNamedPipe` that `named_pipe_handle` was built from.
 #[cfg(windows)]
-fn np_vtable() -> &'static bun_uws::DuplexVTable {
-    static VT: bun_uws::DuplexVTable = bun_uws::DuplexVTable {
-        ssl_error: |p| unsafe { (*p.cast::<WindowsNamedPipe>()).ssl_error() },
-        is_established: |p| unsafe { (*p.cast::<WindowsNamedPipe>()).is_established() },
-        is_closed: |p| unsafe { (*p.cast::<WindowsNamedPipe>()).is_closed() },
-        is_shutdown: |p| unsafe { (*p.cast::<WindowsNamedPipe>()).is_shutdown() },
-        ssl: |p| unsafe {
-            (*p.cast::<WindowsNamedPipe>())
-                .ssl()
-                .unwrap_or(core::ptr::null_mut())
-        },
-        set_timeout: |p, seconds| unsafe { (*p.cast::<WindowsNamedPipe>()).set_timeout(seconds) },
-        flush: |p| unsafe { (*p.cast::<WindowsNamedPipe>()).flush() },
-        encode_and_write: |p, ptr, len| unsafe {
-            (*p.cast::<WindowsNamedPipe>()).encode_and_write(core::slice::from_raw_parts(ptr, len))
-        },
-        raw_write: |p, ptr, len| unsafe {
-            (*p.cast::<WindowsNamedPipe>()).raw_write(core::slice::from_raw_parts(ptr, len))
-        },
-        shutdown: |p| unsafe { (*p.cast::<WindowsNamedPipe>()).shutdown() },
-        shutdown_read: |p| unsafe { (*p.cast::<WindowsNamedPipe>()).shutdown_read() },
-        close: |p| unsafe { (*p.cast::<WindowsNamedPipe>()).close() },
-        pause_stream: Some(|p| unsafe { (*p.cast::<WindowsNamedPipe>()).pause_stream() }),
-        resume_stream: Some(|p| unsafe { (*p.cast::<WindowsNamedPipe>()).resume_stream() }),
-    };
-    &VT
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__ssl_error(
+    this: &WindowsNamedPipe,
+) -> us_bun_verify_error_t {
+    this.ssl_error()
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__is_established(this: &WindowsNamedPipe) -> bool {
+    this.is_established()
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__is_closed(this: &WindowsNamedPipe) -> bool {
+    this.is_closed()
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__is_shutdown(this: &WindowsNamedPipe) -> bool {
+    this.is_shutdown()
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__ssl(this: &WindowsNamedPipe) -> *mut boringssl::SSL {
+    this.ssl().unwrap_or(core::ptr::null_mut())
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__set_timeout(
+    this: &mut WindowsNamedPipe,
+    seconds: c_uint,
+) {
+    this.set_timeout(seconds)
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__flush(this: &mut WindowsNamedPipe) {
+    this.flush()
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "Rust" fn WindowsNamedPipe__encode_and_write(
+    this: *mut WindowsNamedPipe,
+    ptr: *const u8,
+    len: usize,
+) -> i32 {
+    // SAFETY: `this` is the live pipe behind the opaque handle; (`ptr`, `len`)
+    // is the caller's byte buffer, valid for the duration of the call.
+    unsafe { (*this).encode_and_write(core::slice::from_raw_parts(ptr, len)) }
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "Rust" fn WindowsNamedPipe__raw_write(
+    this: *mut WindowsNamedPipe,
+    ptr: *const u8,
+    len: usize,
+) -> i32 {
+    // SAFETY: see `WindowsNamedPipe__encode_and_write`.
+    unsafe { (*this).raw_write(core::slice::from_raw_parts(ptr, len)) }
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__shutdown(this: &mut WindowsNamedPipe) {
+    this.shutdown()
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__shutdown_read(this: &mut WindowsNamedPipe) {
+    this.shutdown_read()
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__close(this: &mut WindowsNamedPipe) {
+    this.close()
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__pause_stream(this: &mut WindowsNamedPipe) -> bool {
+    this.pause_stream()
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__resume_stream(this: &mut WindowsNamedPipe) -> bool {
+    this.resume_stream()
 }
 
-/// Type-erased [`bun_uws::DuplexHandle`] over a live `WindowsNamedPipe`.
+/// Erase a live `*mut WindowsNamedPipe` to the opaque `bun_uws_sys` handle.
 #[cfg(windows)]
-pub(crate) fn named_pipe_handle(this: *mut WindowsNamedPipe) -> bun_uws::DuplexHandle {
-    bun_uws::DuplexHandle {
-        ptr: core::ptr::NonNull::new(this.cast()).expect("live named pipe"),
-        vtable: np_vtable(),
-    }
+pub(crate) fn named_pipe_handle(
+    this: *mut WindowsNamedPipe,
+) -> NonNull<bun_uws_sys::WindowsNamedPipe> {
+    NonNull::new(this.cast()).expect("live named pipe")
 }
 
 // Windows-only at runtime; noop_on_poll: the POSIX impl exists purely so the

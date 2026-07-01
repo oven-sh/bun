@@ -328,15 +328,6 @@ pub mod cli {
     pub(crate) static LOG_: bun_core::RacyCell<core::mem::MaybeUninit<bun_ast::Log>> =
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
-    /// The one `MacroClient` instance; installed into `bun_js_parser` by
-    /// [`start`]. The runner bodies live in `crate::macro_runner` (they name
-    /// `Transpiler`/`Resolver`/JSC types `bun_js_parser` cannot).
-    static MACRO_CLIENT_IMPL: bun_js_parser::Macro::MacroClient =
-        bun_js_parser::Macro::MacroClient {
-            init: crate::macro_runner::macro_context_init,
-            collect_vm_garbage: crate::macro_runner::macro_collect_vm_garbage,
-        };
-
     /// `#[inline(never)]`: this is the first Rust call after `main()` (see
     /// `src/bun_bin/lib.rs`) and the head of the `bun <file>` / `bun run`
     /// startup chain. It must stay a concrete symbol so lld's
@@ -348,9 +339,6 @@ pub mod cli {
     /// shared with bundler/install/css/panic-format bodies.
     #[inline(never)]
     pub fn start() {
-        // Macro runner injection — must precede any Transpiler construction
-        // (vm.transpiler creates a MacroContext via the installed client).
-        bun_js_parser::Macro::install_macro_client(&MACRO_CLIENT_IMPL);
         // Record the main thread's OS tid so
         // `bun_crash_handler::cli_state::is_main_thread()` (used for the
         // `panic(main thread): …` header) returns true on this thread.

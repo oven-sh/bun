@@ -1,5 +1,6 @@
 use crate::lockfile::package::PackageColumns as _;
 use bun_collections::VecExt;
+use bun_install_types::{DependencyID, INVALID_PACKAGE_ID, PackageID};
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
@@ -13,12 +14,12 @@ use bun_semver::{ExternalString, String};
 use bun_sys::{self as sys, Fd};
 
 use crate::ExternalSlice;
+use crate::PackageManager;
 use crate::bin::Bin;
 use crate::integrity::Integrity;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
 use crate::npm::{self};
 use crate::resolution::{self, Resolution, TaggedValue};
-use crate::{DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager};
 use bun_install_types::dependency::{self, Dependency};
 
 // A single long-lived `Buf` for the whole function would lock out every other

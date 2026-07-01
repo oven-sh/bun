@@ -1,3 +1,4 @@
+use bun_install_types::{DependencyID, Features, INVALID_PACKAGE_ID, PackageID};
 use core::fmt;
 use std::io::Write as _;
 
@@ -19,10 +20,7 @@ use crate::package_manager_real::package_manager_directories::{
     compute_cache_dir_and_subpath, get_temporary_directory,
 };
 use crate::package_manager_real::package_manager_options::{LogLevel, PatchFeatures};
-use crate::{
-    BuntagHashBuf, DependencyID, Features, INVALID_PACKAGE_ID, PackageID, buntaghashbuf_make,
-    initialize_store,
-};
+use crate::{BuntagHashBuf, buntaghashbuf_make, initialize_store};
 use bun_install_types::dependency::Dependency;
 use bun_parsers::json as JSON;
 use bun_resolver::fs::FileSystem;
@@ -334,7 +332,7 @@ pub fn do_patch_commit(
             ]);
         };
 
-        let random_tempdir = match bun_paths::fs::FileSystem::tmpname(
+        let random_tempdir = match bun_paths::fs::tmpname(
             b"node_modules_tmp",
             &mut buf2[..],
             bun_core::fast_random(),
@@ -382,17 +380,14 @@ pub fn do_patch_commit(
             break 'has_nested_node_modules true;
         };
 
-        let patch_tag_tmpname = match bun_paths::fs::FileSystem::tmpname(
-            b"patch_tmp",
-            &mut buf3[..],
-            bun_core::fast_random(),
-        ) {
-            Ok(s) => s,
-            Err(e) => {
-                Output::err(e, "failed to make tempdir", ());
-                Global::crash();
-            }
-        };
+        let patch_tag_tmpname =
+            match bun_paths::fs::tmpname(b"patch_tmp", &mut buf3[..], bun_core::fast_random()) {
+                Ok(s) => s,
+                Err(e) => {
+                    Output::err(e, "failed to make tempdir", ());
+                    Global::crash();
+                }
+            };
 
         let mut bunpatchtagbuf: BuntagHashBuf = BuntagHashBuf::default();
         // If the package was already patched then it might have a ".bun-tag-XXXXXXXX"
@@ -573,8 +568,7 @@ pub fn do_patch_commit(
 
     // write the patch contents to temp file then rename
     let mut tmpname_buf = [0u8; 1024];
-    let tempfile_name =
-        bun_paths::fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
+    let tempfile_name = bun_paths::fs::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
     let tmpdir = get_temporary_directory(manager).handle.fd();
     if let Err(e) = sys::File::write_file(tmpdir, tempfile_name, &patchfile_contents) {
         Output::err(e, "failed to write patch to temp file", ());

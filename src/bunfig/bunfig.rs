@@ -1187,15 +1187,8 @@ impl<'a> Parser<'a> {
         &mut self,
         str: &E::EString,
     ) -> Result<api::NpmRegistry, bun_core::Error> {
-        // Dedup D009: body is the canonical port in `bun_api::npm_registry`.
-        // The api `Parser` is generic over log/source and never reads them for
-        // this path, so we just hand it our reborrowed handles.
         let bytes = str.string(self.bump)?;
-        Ok(bun_api::npm_registry::Parser {
-            log: &mut *self.log,
-            source: self.source,
-        }
-        .parse_registry_url_string_impl(bytes)?)
+        Ok(api::npm_registry::parse_registry_url_string(bytes)?)
     }
 
     fn parse_registry_object(

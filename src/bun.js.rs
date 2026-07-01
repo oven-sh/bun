@@ -27,9 +27,9 @@ pub fn apply_standalone_runtime_flags(
         DotEnvBehavior::LoadAllWithoutInlining
     };
 
-    b.resolver.opts.load_tsconfig_json =
+    b.resolver.opts.core.load_tsconfig_json =
         !graph.flags.contains(GraphFlags::DISABLE_AUTOLOAD_TSCONFIG);
-    b.resolver.opts.load_package_json = !graph
+    b.resolver.opts.core.load_package_json = !graph
         .flags
         .contains(GraphFlags::DISABLE_AUTOLOAD_PACKAGE_JSON);
 }

@@ -73,8 +73,6 @@ pub mod Graph;
 pub mod IndexStringMap;
 pub mod PathToSourceIndexMap;
 
-pub mod BundleThread;
-
 pub mod ServerComponentParseTask;
 
 pub mod HTMLImportManifest;
@@ -314,102 +312,103 @@ pub use bundle_v2::bake_types;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-export the canonical `dispatch` module from
-// `bundle_v2` (full vtable slot set) so there is one `DevServerHandle` type.
+// `bundle_v2` so there is one `DevServerHandle` type.
 // ──────────────────────────────────────────────────────────────────────────
 pub use bundle_v2::dispatch;
 
 // ── dev-server dispatch (crate root; re-exported through `bundle_v2::dispatch`) ──
 
-/// Concrete callbacks vtable for `bake::DevServer` (bun_runtime). The runtime
-/// owns the single static instance (dev_server/mod.rs) and constructs the
-/// handle in `DevServer::bundler_handle()`. Replaces the former link-time
-/// `__BUN_DEV_SERVER_HANDLE_VTABLE` extern-static dispatch — the dependency
-/// is explicit data flow now.
-/// Every fn receives the erased `*mut DevServer` first; bodies uphold their
-/// own thread-safety (same contract as before).
-pub struct DevServerVTable {
-    pub barrel_needed_exports: unsafe fn(
-        *mut (),
-    ) -> *mut bun_collections::StringArrayHashMap<
-        bun_collections::StringHashMap<()>,
-    >,
-    pub log_for_resolution_failures:
-        unsafe fn(*mut (), abs_path: &[u8], graph: bake_types::Graph) -> *mut bun_ast::Log,
-    pub finalize_bundle: unsafe fn(
-        *mut (),
+bun_opaque::opaque_ffi! {
+    /// The `bake::DevServer` (bun_runtime), opaque at this tier. The runtime
+    /// constructs the handle in `DevServer::bundler_handle()` and the
+    /// `bun_dev_server_*` definitions (dev_server/mod.rs) cast back to the
+    /// concrete type.
+    pub struct DevServerOpaque;
+}
+
+// Up-calls into `bake::DevServer`, defined under `#[unsafe(no_mangle)]` in
+// `bun_runtime::bake::dev_server` and resolved at link time. Every fn
+// receives the opaque `&DevServerOpaque` first.
+unsafe extern "Rust" {
+    fn bun_dev_server_barrel_needed_exports(
+        d: &DevServerOpaque,
+    ) -> *mut bun_collections::StringArrayHashMap<bun_collections::StringHashMap<()>>;
+    fn bun_dev_server_log_for_resolution_failures(
+        d: &DevServerOpaque,
+        abs_path: &[u8],
+        graph: bake_types::Graph,
+    ) -> *mut bun_ast::Log;
+    fn bun_dev_server_finalize_bundle(
+        d: &DevServerOpaque,
         bv2: *mut bundle_v2::BundleV2<'_>,
         result: *mut bundle_v2::DevServerOutput<'_>,
-    ) -> Result<(), bun_core::Error>,
-    pub handle_parse_task_failure: unsafe fn(
-        *mut (),
+    ) -> Result<(), bun_core::Error>;
+    fn bun_dev_server_handle_parse_task_failure(
+        d: &DevServerOpaque,
         err: bun_core::Error,
         graph: bake_types::Graph,
         abs_path: &[u8],
         log: *const bun_ast::Log,
         bv2: *mut bundle_v2::BundleV2<'_>,
-    ) -> Result<(), bun_core::Error>,
-    pub put_or_overwrite_asset: unsafe fn(
-        *mut (),
+    ) -> Result<(), bun_core::Error>;
+    fn bun_dev_server_put_or_overwrite_asset(
+        d: &DevServerOpaque,
         path: *const (),
         contents: &[u8],
         content_hash: u64,
-    ) -> Result<(), bun_core::Error>,
-    pub track_resolution_failure: unsafe fn(
-        *mut (),
+    ) -> Result<(), bun_core::Error>;
+    fn bun_dev_server_track_resolution_failure(
+        d: &DevServerOpaque,
         import_source: &[u8],
         specifier: &[u8],
         renderer: bake_types::Graph,
         loader: bun_ast::Loader,
-    ) -> Result<(), bun_core::Error>,
-    pub is_file_cached: unsafe fn(
-        *mut (),
+    ) -> Result<(), bun_core::Error>;
+    fn bun_dev_server_is_file_cached(
+        d: &DevServerOpaque,
         abs_path: &[u8],
         side: bake_types::Graph,
-    ) -> Option<bake_types::CacheEntry>,
-    pub asset_hash: unsafe fn(*mut (), abs_path: &[u8]) -> Option<u64>,
-    pub current_bundle_start_data: unsafe fn(*mut ()) -> *mut (),
-    pub register_barrel_with_deferrals:
-        unsafe fn(*mut (), path: &[u8]) -> Result<(), bun_core::Error>,
-    pub register_barrel_export: unsafe fn(*mut (), barrel_path: &[u8], alias: &[u8]),
+    ) -> Option<bake_types::CacheEntry>;
+    fn bun_dev_server_asset_hash(d: &DevServerOpaque, abs_path: &[u8]) -> Option<u64>;
+    fn bun_dev_server_current_bundle_start_data(d: &DevServerOpaque) -> *mut ();
+    fn bun_dev_server_register_barrel_with_deferrals(
+        d: &DevServerOpaque,
+        path: &[u8],
+    ) -> Result<(), bun_core::Error>;
+    fn bun_dev_server_register_barrel_export(d: &DevServerOpaque, barrel_path: &[u8], alias: &[u8]);
 }
 
-/// Typed handle over the erased `*mut bake::DevServer` plus the
-/// owner-provided method table.
+/// Typed handle over the erased `bake::DevServer`.
 #[derive(Copy, Clone)]
-pub struct DevServerHandle {
-    pub owner: *mut (),
-    pub vtable: &'static DevServerVTable,
-}
+pub struct DevServerHandle(pub core::ptr::NonNull<DevServerOpaque>);
 
 impl DevServerHandle {
-    /// SAFETY: `owner` must be the live `*mut bake::DevServer` the vtable's
-    /// fns expect, and must remain live for every dispatch through the
-    /// returned handle. This is the only place the caller writes `unsafe` for
-    /// this interface — the dispatch methods are safe given this precondition.
+    /// SAFETY: `dev_server` must be the live `bake::DevServer` the
+    /// `bun_dev_server_*` fns expect, and must remain live for every dispatch
+    /// through the returned handle. This is the only place the caller writes
+    /// `unsafe` for this interface — the dispatch methods are safe given this
+    /// precondition.
     #[inline]
-    pub unsafe fn new<T: ?Sized>(owner: *mut T, vtable: &'static DevServerVTable) -> Self {
-        Self {
-            owner: owner.cast::<()>(),
-            vtable,
-        }
+    pub unsafe fn new(dev_server: core::ptr::NonNull<DevServerOpaque>) -> Self {
+        Self(dev_server)
     }
 
     #[inline]
     pub fn barrel_needed_exports(
-        &self,
+        self,
     ) -> *mut bun_collections::StringArrayHashMap<bun_collections::StringHashMap<()>> {
         // SAFETY: established by `unsafe fn new()`.
-        unsafe { (self.vtable.barrel_needed_exports)(self.owner) }
+        unsafe { bun_dev_server_barrel_needed_exports(self.0.as_ref()) }
     }
 
     #[inline]
     pub fn log_for_resolution_failures(
-        &self,
+        self,
         abs_path: &[u8],
         graph: bake_types::Graph,
     ) -> *mut bun_ast::Log {
         // SAFETY: established by `unsafe fn new()`.
-        unsafe { (self.vtable.log_for_resolution_failures)(self.owner, abs_path, graph) }
+        unsafe { bun_dev_server_log_for_resolution_failures(self.0.as_ref(), abs_path, graph) }
     }
 
     /// `bv2`/`result` are forwarded to the dev server verbatim; this method
@@ -417,12 +416,12 @@ impl DevServerHandle {
     #[inline]
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn finalize_bundle(
-        &self,
+        self,
         bv2: *mut bundle_v2::BundleV2<'_>,
         result: *mut bundle_v2::DevServerOutput<'_>,
     ) -> Result<(), bun_core::Error> {
         // SAFETY: established by `unsafe fn new()`.
-        unsafe { (self.vtable.finalize_bundle)(self.owner, bv2, result) }
+        unsafe { bun_dev_server_finalize_bundle(self.0.as_ref(), bv2, result) }
     }
 
     /// `log`/`bv2` are forwarded to the dev server verbatim; this method never
@@ -430,7 +429,7 @@ impl DevServerHandle {
     #[inline]
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn handle_parse_task_failure(
-        &self,
+        self,
         err: bun_core::Error,
         graph: bake_types::Graph,
         abs_path: &[u8],
@@ -439,7 +438,14 @@ impl DevServerHandle {
     ) -> Result<(), bun_core::Error> {
         // SAFETY: established by `unsafe fn new()`.
         unsafe {
-            (self.vtable.handle_parse_task_failure)(self.owner, err, graph, abs_path, log, bv2)
+            bun_dev_server_handle_parse_task_failure(
+                self.0.as_ref(),
+                err,
+                graph,
+                abs_path,
+                log,
+                bv2,
+            )
         }
     }
 
@@ -448,18 +454,20 @@ impl DevServerHandle {
     #[inline]
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn put_or_overwrite_asset(
-        &self,
+        self,
         path: *const (),
         contents: &[u8],
         content_hash: u64,
     ) -> Result<(), bun_core::Error> {
         // SAFETY: established by `unsafe fn new()`.
-        unsafe { (self.vtable.put_or_overwrite_asset)(self.owner, path, contents, content_hash) }
+        unsafe {
+            bun_dev_server_put_or_overwrite_asset(self.0.as_ref(), path, contents, content_hash)
+        }
     }
 
     #[inline]
     pub fn track_resolution_failure(
-        &self,
+        self,
         import_source: &[u8],
         specifier: &[u8],
         renderer: bake_types::Graph,
@@ -467,8 +475,8 @@ impl DevServerHandle {
     ) -> Result<(), bun_core::Error> {
         // SAFETY: established by `unsafe fn new()`.
         unsafe {
-            (self.vtable.track_resolution_failure)(
-                self.owner,
+            bun_dev_server_track_resolution_failure(
+                self.0.as_ref(),
                 import_source,
                 specifier,
                 renderer,
@@ -479,47 +487,47 @@ impl DevServerHandle {
 
     #[inline]
     pub fn is_file_cached(
-        &self,
+        self,
         abs_path: &[u8],
         side: bake_types::Graph,
     ) -> Option<bake_types::CacheEntry> {
         // SAFETY: established by `unsafe fn new()`.
-        unsafe { (self.vtable.is_file_cached)(self.owner, abs_path, side) }
+        unsafe { bun_dev_server_is_file_cached(self.0.as_ref(), abs_path, side) }
     }
 
     #[inline]
-    pub fn asset_hash(&self, abs_path: &[u8]) -> Option<u64> {
+    pub fn asset_hash(self, abs_path: &[u8]) -> Option<u64> {
         // SAFETY: established by `unsafe fn new()`.
-        unsafe { (self.vtable.asset_hash)(self.owner, abs_path) }
+        unsafe { bun_dev_server_asset_hash(self.0.as_ref(), abs_path) }
     }
 
     #[inline]
-    pub fn current_bundle_start_data(&self) -> *mut () {
+    pub fn current_bundle_start_data(self) -> *mut () {
         // SAFETY: established by `unsafe fn new()`.
-        unsafe { (self.vtable.current_bundle_start_data)(self.owner) }
+        unsafe { bun_dev_server_current_bundle_start_data(self.0.as_ref()) }
     }
 
     #[inline]
-    pub fn register_barrel_with_deferrals(&self, path: &[u8]) -> Result<(), bun_core::Error> {
+    pub fn register_barrel_with_deferrals(self, path: &[u8]) -> Result<(), bun_core::Error> {
         // SAFETY: established by `unsafe fn new()`.
-        unsafe { (self.vtable.register_barrel_with_deferrals)(self.owner, path) }
+        unsafe { bun_dev_server_register_barrel_with_deferrals(self.0.as_ref(), path) }
     }
 
     #[inline]
-    pub fn register_barrel_export(&self, barrel_path: &[u8], alias: &[u8]) {
+    pub fn register_barrel_export(self, barrel_path: &[u8], alias: &[u8]) {
         // SAFETY: established by `unsafe fn new()`.
-        unsafe { (self.vtable.register_barrel_export)(self.owner, barrel_path, alias) }
+        unsafe { bun_dev_server_register_barrel_export(self.0.as_ref(), barrel_path, alias) }
     }
 }
-// SAFETY: the handle is `{ owner: *mut (), vtable: &'static _ }`; the raw
-// pointer is what defeats the auto-impl. `owner` is the single per-process
+// SAFETY: the handle is a `NonNull<DevServerOpaque>`; the raw pointer is what
+// defeats the auto-impl. It points at the single per-process
 // `bake::DevServer` (established at `unsafe fn new()`), which outlives every
 // bundler worker thread that carries this handle; thread-safety of each
-// dispatched method is upheld by the vtable shim bodies in
+// dispatched method is upheld by the `bun_dev_server_*` bodies in
 // `bake::dev_server`, not by the handle itself.
 unsafe impl Send for DevServerHandle {}
-// SAFETY: see `Send` above — sharing the erased pointer + vtable is sound for
-// the same reason.
+// SAFETY: see `Send` above — sharing the erased pointer is sound for the
+// same reason.
 unsafe impl Sync for DevServerHandle {}
 
 // `OutputFile.Options` field defaults. Kept here rather than in `OutputFile.rs` so the

@@ -202,7 +202,7 @@ impl FilePoll {
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    // Note: the cycle-broken `EventLoopCtx::platform_event_loop` vtable is typed
+    // Note: the cycle-broken `EventLoopCtx::platform_event_loop` link fn is typed
     // `*mut bun_uws_sys::Loop` (the uws `WindowsLoop` wrapper) so the
     // impl-crate bodies (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`)
     // type-check. `WindowsLoop::sub_active`/`add_active` proxy straight through

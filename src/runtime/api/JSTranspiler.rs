@@ -786,8 +786,8 @@ impl<'a> TransformTask<'a> {
         // self.log.msgs.allocator = bun.default_allocator → no-op
 
         let jsx = match self.tsconfig {
-            Some(ts) => ts.merge_jsx(self.transpiler.options.jsx.clone()),
-            None => self.transpiler.options.jsx.clone(),
+            Some(ts) => ts.merge_jsx(self.transpiler.options.resolve.jsx.clone()),
+            None => self.transpiler.options.resolve.jsx.clone(),
         };
 
         let parse_options = ParseOptions {
@@ -1085,11 +1085,11 @@ impl JSTranspiler {
             transpiler.options.minify_identifiers = true;
         }
 
-        transpiler.options.transform_only = !transpiler.options.allow_runtime;
+        transpiler.options.transform_only = !transpiler.options.resolve.allow_runtime;
 
-        transpiler.options.tree_shaking = config.tree_shaking;
+        transpiler.options.resolve.tree_shaking = config.tree_shaking;
         transpiler.options.trim_unused_imports = config.trim_unused_imports;
-        transpiler.options.allow_runtime = config.runtime.allow_runtime;
+        transpiler.options.resolve.allow_runtime = config.runtime.allow_runtime;
         transpiler.options.auto_import_jsx = config.runtime.auto_import_jsx;
         transpiler.options.inlining = config.runtime.inlining;
         transpiler.options.hot_module_reloading = config.runtime.hot_module_reloading;
@@ -1272,8 +1272,8 @@ impl JSTranspiler {
             arena.alloc(bun_ast::Source::init_path_string(name, processed_code));
 
         let jsx = match config.tsconfig.as_deref() {
-            Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),
-            None => self.transpiler.get().options.jsx.clone(),
+            Some(ts) => ts.merge_jsx(self.transpiler.get().options.resolve.jsx.clone()),
+            None => self.transpiler.get().options.resolve.jsx.clone(),
         };
 
         let parse_options = ParseOptions {
@@ -1753,8 +1753,8 @@ impl JSTranspiler {
 
         let source = bun_ast::Source::init_path_string(loader.stdin_name(), code);
         let jsx = match self.config.get().tsconfig.as_deref() {
-            Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),
-            None => self.transpiler.get().options.jsx.clone(),
+            Some(ts) => ts.merge_jsx(self.transpiler.get().options.resolve.jsx.clone()),
+            None => self.transpiler.get().options.resolve.jsx.clone(),
         };
 
         let mut opts = bun_js_parser::ParserOptions::init(jsx, loader);

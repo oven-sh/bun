@@ -1,3 +1,6 @@
+use bun_install_types::{
+    DependencyID, INVALID_PACKAGE_ID, PackageID, PackageNameHash, TruncatedPackageNameHash,
+};
 use core::sync::atomic::Ordering;
 
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
@@ -35,10 +38,7 @@ use crate::package_manager_task as task;
 use crate::patch_install::{self, PatchTask};
 use crate::postinstall_optimizer::{self, PostinstallOptimizer};
 use crate::resolution::{self, Resolution};
-use crate::{
-    DependencyID, DependencyInstallContext, ExtractData, INVALID_PACKAGE_ID, PackageID,
-    PackageNameHash, TaskCallbackContext, TruncatedPackageNameHash,
-};
+use crate::{DependencyInstallContext, ExtractData, TaskCallbackContext};
 
 bun_core::declare_scope!(PackageInstaller, hidden);
 

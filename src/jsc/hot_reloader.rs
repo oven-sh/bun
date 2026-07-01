@@ -213,11 +213,11 @@ impl HotReloaderCtx for VirtualMachine {
         self.bun_watcher = bun_core::heap::into_raw(iw);
 
         // Wire the resolver's directory-watch callback at the same time.
-        // `Watcher::get_resolve_watcher` erases the `*mut Watcher<P>` into the
-        // `bun_watcher::AnyResolveWatcher` vtable the resolver holds.
-        // SAFETY: `watcher_ptr` was just installed into `self.bun_watcher`
-        // via `heap::alloc` and is live for the VM's lifetime.
-        self.transpiler.resolver.watcher = Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
+        // `watcher_ptr` was just installed into `self.bun_watcher` via
+        // `heap::alloc` and is live for the VM's lifetime.
+        self.transpiler.resolver.watcher = Some(
+            bun_resolver::resolver::ResolveWatcher::PackageJson(watcher_ptr),
+        );
 
         watcher_ptr
     }
@@ -1375,8 +1375,9 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         let watcher_nn = bun_core::heap::into_raw_nn(watcher);
         let watcher_ptr: *mut Watcher = watcher_nn.as_ptr();
         self.bun_watcher = Some(watcher_nn);
-        // SAFETY: `watcher_ptr` was just installed; live for the process.
-        self.transpiler.resolver.watcher = Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
+        // `watcher_ptr` was just installed; live for the process.
+        self.transpiler.resolver.watcher =
+            Some(bun_resolver::resolver::ResolveWatcher::Plain(watcher_ptr));
         watcher_ptr
     }
 

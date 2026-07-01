@@ -26,9 +26,9 @@
 #[path = "CPUFeatures.rs"]
 pub mod cpu_features;
 
-/// Target for `bun_alloc::out_of_memory()` — registered as `bun_alloc`'s
-/// write-once OOM hook by `init()` (`bun_alloc` is below this crate in the
-/// dep graph).
+/// Link-time target for `bun_alloc::out_of_memory()` — declared
+/// `extern "Rust"` in `bun_alloc` (which is below this crate in the dep graph)
+/// and defined here.
 /// The single Rust-side OOM seam: `bun_alloc::out_of_memory()` (T0,
 /// re-exported as `bun_core::out_of_memory`) resolves here.
 /// `pub(crate)` so external callers route through the T0 `bun_alloc` entry
@@ -40,6 +40,14 @@ pub(crate) fn out_of_memory() -> ! {
         draft::CrashReason::OutOfMemory,
         draft::TraceSeed::BeginAddr(bun_core::return_address()),
     )
+}
+
+/// `extern "Rust"` symbol resolved by `bun_alloc::out_of_memory()` at link
+/// time. Lives in `.text` (read-only) so memory corruption cannot redirect it.
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn __bun_crash_handler_out_of_memory() -> ! {
+    out_of_memory()
 }
 
 pub use draft::*;
@@ -1717,7 +1725,6 @@ mod draft {
     }
 
     pub fn init() {
-        bun_alloc::set_oom_handler(crate::out_of_memory);
         if !ENABLE {
             return;
         }
@@ -1759,8 +1766,9 @@ mod draft {
     /// `raise_ignoring_panic_handler` does the SIG_DFL reset itself with libc.
     pub(crate) fn install_hooks() {
         bun_core::CRASH_HANDLER_INSTALLED.store(true, Ordering::Relaxed);
-        // T0 `bun_alloc::out_of_memory()` reaches this crate via the write-once
-        // OOM hook registered at the top of `init()`.
+        // T0 `bun_alloc::out_of_memory()` reaches this crate via the link-time
+        // `extern "Rust"` symbol `__bun_crash_handler_out_of_memory` — no
+        // runtime registration needed.
         //
         // Route Rust `panic!()` through the trace-string + report path. Without
         // this hook, a bare `panic!` would print the std

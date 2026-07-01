@@ -1,3 +1,4 @@
+use bun_install_types::{DependencyID, INVALID_DEPENDENCY_ID, PackageID};
 use core::cmp::Ordering;
 use core::fmt;
 use core::marker::PhantomData;
@@ -8,8 +9,8 @@ use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_semver::String as SemverString;
 
+use crate::Dependency;
 use crate::lockfile::{Lockfile, package};
-use crate::{Dependency, DependencyID, INVALID_DEPENDENCY_ID, PackageID};
 
 pub use super::installer::Installer;
 

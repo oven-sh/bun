@@ -198,6 +198,10 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
     //    by `bun_sys`; `stdio::init()` calls C's `bun_initialize_process()` and
     //    wires stdout/stderr `Source`s.
     output::stdio::init();
+    // `output::stdio::init()` just cached the std handles; pick up the real
+    // stdin HANDLE in the process-global buffered stdin reader.
+    #[cfg(windows)]
+    bun_sys::stdio::init();
     let _flush = output::flush_guard();
 
     // `bun_warn_avx_missing(...)` — x86_64 + SIMD + posix only.

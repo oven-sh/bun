@@ -1,4 +1,4 @@
-use crate::sql_jsc::jsc::{JSGlobalObject, JSValue, JsResult, bun_string_jsc};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, bun_string_jsc};
 
 use bun_sql::mysql::protocol::error_packet::{ErrorPacket, MySQLErrorOptions};
 

@@ -1,13 +1,11 @@
 use crate::lockfile::package::PackageColumns as _;
 use bun_collections::HashMap;
 use bun_core::Output;
+use bun_install_types::{DependencyID, INVALID_PACKAGE_ID, PackageID};
 
 use crate::Dependency;
-use crate::DependencyID;
-use crate::INVALID_PACKAGE_ID;
 use crate::ManifestLoad;
 use crate::NetworkTask;
-use crate::PackageID;
 use crate::Resolution;
 use bun_install_types::dependency::Behavior;
 // Import the

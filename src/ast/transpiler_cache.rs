@@ -16,7 +16,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_core::{FeatureFlags, env_var};
 use bun_core::{MAX_PATH_BYTES, PathBuffer};
 use bun_core::{String as BunString, ZStr};
-use bun_paths::fs::FileSystem;
+use bun_paths::fs;
 use bun_paths::resolve_path::{self as path_handler, platform};
 use bun_paths::{self as paths, SEP};
 use bun_sys::{self as sys, Fd, FdExt as _};
@@ -287,7 +287,7 @@ impl Entry {
 
         // atomically write to a tmpfile and then move it to the final destination
         let mut tmpname_buf = PathBuffer::uninit();
-        let tmpfilename = FileSystem::tmpname(
+        let tmpfilename = fs::tmpname(
             paths::extension(destination_path.as_bytes()),
             &mut tmpname_buf[..],
             input_hash,
@@ -730,7 +730,7 @@ impl RuntimeTranspilerCache {
         // `abs_buf` (no NUL-terminating `_z` variant), so go straight to the
         // underlying joiner with the same `top_level_dir` + `Loose` platform
         // that `absBufZ` used.
-        let top = FileSystem::instance().top_level_dir();
+        let top = fs::top_level_dir();
 
         if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
             let parts: &[&[u8]] = &[dir, b"bun", b"@t@"];

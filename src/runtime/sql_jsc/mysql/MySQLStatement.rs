@@ -1,6 +1,6 @@
 use core::cell::Cell;
 
-use crate::sql_jsc::jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue};
 
 use crate::sql_jsc::mysql::protocol::Signature;
 use crate::sql_jsc::shared::CachedStructure;

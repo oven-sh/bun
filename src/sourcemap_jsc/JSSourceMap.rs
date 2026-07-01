@@ -9,9 +9,6 @@ use bun_core::{self as bstring, strings};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
 use bun_sourcemap::{Mapping, Ordinal, ParseResult, ParsedSourceMap, mapping};
 
-// generate-classes.ts does not emit Rust accessors yet, so the
-// `to_js`/cached-setter helpers below forward to the codegen-emitted C++
-// symbols by hand.
 pub struct JSSourceMap {
     pub sourcemap: Arc<ParsedSourceMap>,
     pub sources: Box<[bstring::String]>,
@@ -88,7 +85,7 @@ pub(crate) fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsR
         sources: fake_sources_array,
         names: Box::default(),
     });
-    Ok(JSSourceMap::to_js(this, global))
+    Ok(js_SourceMap::to_js(bun_core::heap::into_raw(this), global))
 }
 
 impl JSSourceMap {
@@ -177,36 +174,13 @@ impl JSSourceMap {
         });
 
         if !payload_arg.is_empty() {
-            Self::payload_set_cached(this_value, global, payload_arg);
+            js_SourceMap::payload_set_cached(this_value, global, payload_arg);
         }
         if !line_lengths.is_empty() {
-            Self::line_lengths_set_cached(this_value, global, line_lengths);
+            js_SourceMap::line_lengths_set_cached(this_value, global, line_lengths);
         }
 
         Ok(source_map)
-    }
-
-    // generate-classes.ts emits the C++ side of `*SetCachedValue`/`__create`;
-    // these thunks forward to those extern symbols by hand.
-    #[inline]
-    fn to_js(this: Box<Self>, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: `global` is live; `this` is the freshly-constructed payload whose
-        // ownership transfers to the C++ JSCell wrapper (`m_ctx`).
-        unsafe { SourceMap__create(global.as_mut_ptr(), bun_core::heap::into_raw(this)) }
-    }
-    #[inline]
-    fn payload_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
-        // SAFETY: `global` is live; `this_value` is the freshly-constructed wrapper.
-        unsafe {
-            SourceMapPrototype__payloadSetCachedValue(this_value, global.as_mut_ptr(), value)
-        };
-    }
-    #[inline]
-    fn line_lengths_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
-        // SAFETY: `global` is live; `this_value` is the freshly-constructed wrapper.
-        unsafe {
-            SourceMapPrototype__lineLengthsSetCachedValue(this_value, global.as_mut_ptr(), value)
-        };
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -326,34 +300,10 @@ fn get_line_column(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<[i32;
     ])
 }
 
-// Codegen-emitted helpers (`SourceMap__create`, `*SetCachedValue`) are defined
-// in ZigGeneratedClasses.cpp with `extern JSC_CALLCONV` (= `"C" SYSV_ABI` on
-// Windows-x64), so they must be imported via `jsc_abi_extern!` to get the
-// matching `extern "sysv64"` cfg-arm — plain `extern "C"` here would call them
-// with the win64 ABI and corrupt arguments.
-bun_jsc::jsc_abi_extern! {
-    // `improper_ctypes`: `*mut JSSourceMap` is opaque to C++ (`void* m_ctx`);
-    // only Rust dereferences it, so the payload needs no `#[repr(C)]`.
-    #[allow(improper_ctypes)]
-    {
-        // Codegen-emitted constructor thunk; ownership of `ctx` transfers to the C++ JSCell
-        // (stored as `void* m_ctx`; pointer types are ABI-identical, so the decl is typed
-        // on the Rust side).
-        fn SourceMap__create(globalObject: *mut JSGlobalObject, ctx: *mut JSSourceMap) -> JSValue;
-
-        // Codegen-emitted cached-value setters; names match generated_classes.ts output.
-        fn SourceMapPrototype__payloadSetCachedValue(
-            thisValue: JSValue,
-            globalObject: *mut JSGlobalObject,
-            value: JSValue,
-        );
-        fn SourceMapPrototype__lineLengthsSetCachedValue(
-            thisValue: JSValue,
-            globalObject: *mut JSGlobalObject,
-            value: JSValue,
-        );
-    }
-}
+// `SourceMap__create` / `*SetCachedValue` are emitted in ZigGeneratedClasses.cpp
+// by `generate-classes.ts`; declare them through the canonical
+// `js_class_module!` codegen surface instead of by hand.
+bun_jsc::js_class_module!(js_SourceMap = "SourceMap" as crate::JSSourceMap { payload, lineLengths });
 
 // These two are hand-written in `src/jsc/modules/NodeModuleModule.cpp` as
 // plain `extern "C"` (no `JSC_CALLCONV`/`SYSV_ABI`), so they use the platform

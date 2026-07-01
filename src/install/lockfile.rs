@@ -1,5 +1,9 @@
 //! Lockfile — in-memory representation of bun.lock / bun.lockb
 
+use bun_install_types::{
+    DependencyID, Features, INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, PackageID, PackageNameHash,
+    TruncatedPackageNameHash,
+};
 use core::cmp::Ordering;
 use core::fmt;
 use std::io::Write as _;
@@ -37,9 +41,7 @@ use crate::resolution::{self, Resolution};
 use crate::string_builder;
 use crate::update_request::UpdateRequest;
 use crate::{
-    self as Install, DependencyID, ExternalSlice, Features, INVALID_DEPENDENCY_ID,
-    INVALID_PACKAGE_ID, PackageID, PackageManager, PackageNameAndVersionHash, PackageNameHash,
-    TruncatedPackageNameHash, initialize_store,
+    self as Install, ExternalSlice, PackageManager, PackageNameAndVersionHash, initialize_store,
 };
 use bun_install_types::dependency::{self, Dependency};
 
@@ -1071,7 +1073,7 @@ impl Lockfile {
         manager.ensure_preinstall_state_list_capacity(old.packages.len());
         let preinstall_state = &mut manager.preinstall_state;
         let old_preinstall_state = preinstall_state.clone();
-        preinstall_state.fill(Install::PreinstallState::Unknown);
+        preinstall_state.fill(bun_install_types::PreinstallState::Unknown);
 
         if !updates.is_empty() {
             clean_preprocess_update_requests_cold(old, manager, updates, exact_versions)?;
@@ -1400,7 +1402,7 @@ pub struct Cloner<'a> {
     pub trees: tree::List,
     pub trees_count: u32,
     pub log: &'a mut bun_ast::Log,
-    pub old_preinstall_state: Vec<Install::PreinstallState>,
+    pub old_preinstall_state: Vec<bun_install_types::PreinstallState>,
     pub manager: &'a mut PackageManager,
 }
 

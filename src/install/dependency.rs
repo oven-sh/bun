@@ -1,8 +1,9 @@
 //! `PackageManager`-side impls for the canonical
 //! `bun_install_types::dependency` parsing surface.
+use bun_install_types::PackageNameHash;
 use bun_install_types::dependency::{NpmAliasRegistry, StringBuilderLike, Version};
 
-use crate::{PackageManager, PackageNameHash};
+use crate::PackageManager;
 
 impl NpmAliasRegistry for PackageManager {
     #[inline]

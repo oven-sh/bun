@@ -39,8 +39,8 @@ use bun_uws as uws;
 
 // `uws::NewSocketHandler::from_duplex` is now inherent on the canonical
 // `bun_uws_sys::socket` impl; thin local wrapper that erases the concrete
-// `runtime::socket::UpgradedDuplex` to a type-erased `uws::DuplexHandle`
-// (owner pointer + 'static vtable).
+// `runtime::socket::UpgradedDuplex` to the opaque `bun_uws_sys::UpgradedDuplex`
+// handle (same allocation, different-crate newtype — see uws_sys/lib.rs §shim).
 #[inline]
 fn from_duplex<const SSL: bool>(duplex: &mut UpgradedDuplex) -> uws::NewSocketHandler<SSL> {
     uws::NewSocketHandler::<SSL>::from_duplex(super::upgraded_duplex::duplex_handle(
@@ -646,7 +646,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             u32::try_from(global.validate_integer_range(
                 args.ptr[1],
                 0i32,
-                crate::sql_jsc::jsc::IntegerRange {
+                bun_jsc::IntegerRange {
                     min: 0,
                     field_name: b"initialDelay",
                     ..Default::default()
@@ -702,7 +702,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             global.validate_integer_range(
                 arg,
                 0i32,
-                crate::sql_jsc::jsc::IntegerRange {
+                bun_jsc::IntegerRange {
                     min: 0,
                     max: 255,
                     field_name: b"tos",

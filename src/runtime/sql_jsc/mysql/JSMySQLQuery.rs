@@ -2,12 +2,11 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 
 use crate::sql_jsc::jsc::codegen::{js_mysql_connection, js_mysql_query as js};
-use crate::sql_jsc::jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue, JsRef, JsResult,
-    VirtualMachine, VirtualMachineSqlExt as _,
-};
+use crate::sql_jsc::jsc::{JSGlobalObjectSqlExt as _, VirtualMachineSqlExt as _};
 use crate::sql_jsc::shared::query_ctor_args::QueryCtorArgs;
 use bun_jsc::JsCell;
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult};
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
@@ -172,7 +171,7 @@ impl JSMySQLQuery {
                     err,
                 )));
             }
-            return Err(jsc::JsError::Thrown);
+            return Err(bun_jsc::JsError::Thrown);
         }
         connection.enqueue_request(this.as_ctx_ptr());
         Ok(JSValue::UNDEFINED)
@@ -580,7 +579,7 @@ impl JSMySQLQuery {
     /// allocation owned by the JS-thread VM singleton stored in `self.vm`;
     /// single-thread affinity ⇒ no two `&mut EventLoop` coexist.
     #[inline]
-    fn event_loop(&self) -> &mut crate::sql_jsc::jsc::EventLoop {
+    fn event_loop(&self) -> &mut bun_jsc::event_loop::EventLoop {
         self.vm().event_loop_mut()
     }
     #[inline]

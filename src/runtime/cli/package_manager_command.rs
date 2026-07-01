@@ -1,3 +1,4 @@
+use bun_install_types::{DependencyID, PackageID};
 use core::cmp::Ordering;
 use std::io::Write as _;
 
@@ -11,7 +12,7 @@ use bun_install::package_manager_real::{
     CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
     package_manager_options::LogLevel, setup_global_dir,
 };
-use bun_install::{DependencyID, PackageID, PackageManager, migration};
+use bun_install::{PackageManager, migration};
 use bun_install_types::dependency::Dependency;
 use bun_paths::{self as Path};
 use bun_resolver::fs as Fs;

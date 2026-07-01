@@ -1,3 +1,4 @@
+use bun_install_types::{PackageID, PackageNameHash};
 use std::sync::LazyLock;
 
 use bun_collections::{ArrayHashMap, ArrayIdentityContextU64};
@@ -10,7 +11,6 @@ use bun_semver as semver;
 
 use crate::lockfile::package::Meta;
 use crate::lockfile::tree::Id as TreeId;
-use crate::{PackageID, PackageNameHash};
 use bun_install_types::resolver_hooks::{Architecture, OperatingSystem};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

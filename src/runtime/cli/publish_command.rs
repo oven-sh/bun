@@ -1111,7 +1111,7 @@ impl PublishCommand {
         loop {
             // SAFETY: `buffered_stdin()` returns a process-global `*mut`; this
             // loop is the only accessor while it runs (single-threaded CLI path).
-            match unsafe { (*Output::buffered_stdin()).reader().read_byte() } {
+            match unsafe { bun_sys::stdio::read_byte(&mut *bun_sys::stdio::buffered_stdin()) } {
                 Ok(b'\n') => break,
                 Ok(_) => continue,
                 Err(_) => return,

@@ -132,7 +132,7 @@ pub use bun_jsc::generated::JSBlob as js;
 
 #[allow(non_snake_case, clippy::too_many_arguments)]
 pub trait BlobExt {
-    fn get_form_data_encoding(&self) -> Option<Box<bun_core::form_data::AsyncFormData>>;
+    fn get_form_data_encoding(&self) -> Option<Box<crate::webcore::form_data::AsyncFormData>>;
     // `has_content_type_from_user`/`content_type_or_mime_type`/`is_bun_file`/
     // `is_s3`/`needs_to_read_file`/`get_file_name`: data-only predicates,
     // hoisted to inherent `impl Blob` in `bun_jsc::webcore_types` (LAYERING).
@@ -420,11 +420,11 @@ pub unsafe extern "C" fn Bun__Blob__sharedView(this: *const Blob, len: *mut usiz
 
 #[allow(non_snake_case, clippy::too_many_arguments)]
 impl BlobExt for Blob {
-    fn get_form_data_encoding(&self) -> Option<Box<bun_core::form_data::AsyncFormData>> {
+    fn get_form_data_encoding(&self) -> Option<Box<crate::webcore::form_data::AsyncFormData>> {
         let content_type_slice = self.get_content_type()?;
-        let encoding = bun_core::form_data::Encoding::get(content_type_slice.slice())?;
+        let encoding = crate::webcore::form_data::Encoding::get(content_type_slice.slice())?;
         // drop content_type_slice via Drop
-        Some(bun_core::form_data::AsyncFormData::init(encoding))
+        Some(crate::webcore::form_data::AsyncFormData::init(encoding))
     }
 
     /// `Function` is the `*WithBytes` callback.
@@ -2984,8 +2984,6 @@ impl BlobExt for Blob {
             return ZigString::init(b"Invalid encoding").to_error_instance(global);
         };
 
-        // `crate::webcore::form_data::Encoding` re-exports
-        // `bun_core::form_data::Encoding` — same type, no re-tagging needed.
         // SAFETY: `buf` is valid for reads for the duration of this call (either a
         // leaked Box for `Temporary` or a store-backed view otherwise);
         // `FormData::to_js` only reads it.

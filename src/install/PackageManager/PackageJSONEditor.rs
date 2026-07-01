@@ -1,4 +1,5 @@
 use bun_collections::VecExt;
+use bun_install_types::INVALID_PACKAGE_ID;
 use std::io::Write as _;
 
 use bun_ast as js_ast;
@@ -7,7 +8,7 @@ use bun_core::strings;
 use bun_semver as semver;
 
 use crate::lockfile::package::PackageColumns as _;
-use crate::{Dependency, INVALID_PACKAGE_ID, resolution};
+use crate::{Dependency, resolution};
 use bun_install_types::DependencyGroup;
 use bun_install_types::dependency::{self};
 

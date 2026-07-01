@@ -22,6 +22,9 @@ pub use store::Store;
 pub use store::entry::Id as EntryId;
 
 use crate::lockfile::package::PackageColumns as _;
+use bun_install_types::{
+    DependencyID, INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, PackageID, PackageNameHash,
+};
 use std::io::Write as _;
 use std::sync::atomic::Ordering;
 
@@ -45,10 +48,7 @@ use crate::lockfile::{self, Lockfile};
 use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_task as Task;
-use crate::{
-    self as install, DependencyID, INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, PackageID,
-    PackageInstall, PackageNameHash, Resolution,
-};
+use crate::{self as install, PackageInstall, Resolution};
 use bun_core::Progress::{Node as ProgressNode, Progress};
 use bun_options_types::context::Context;
 use store::{Entry as StoreEntry, EntryColumns as _, Node as StoreNode, NodeColumns as _};
@@ -1281,7 +1281,10 @@ pub(crate) fn install_isolated_packages(
                                     pkg_names[pkg_id as usize].slice(string_buf),
                                     pkg_res,
                                 ) || trusted_from_update
-                                    .get(&(dep_name_hash as crate::TruncatedPackageNameHash))
+                                    .get(
+                                        &(dep_name_hash
+                                            as bun_install_types::TruncatedPackageNameHash),
+                                    )
                                     .is_some_and(|n| **n == *dep_name)
                                 {
                                     break 'eligible false;
@@ -1797,7 +1800,7 @@ pub(crate) fn install_isolated_packages(
                     // 4. attempt renaming 'node_modules/.old_modules-{hex}/.cache' to 'node_modules/.cache'
                     // 5. rename each workspace 'node_modules' into 'node_modules/.old_modules-{hex}/old_{basename}_modules'
                     let mut temp_node_modules_buf = PathBuffer::uninit();
-                    let temp_node_modules = paths::fs::FileSystem::tmpname(
+                    let temp_node_modules = paths::fs::tmpname(
                         b"tmp_modules",
                         &mut temp_node_modules_buf.0,
                         fast_random(),
@@ -2344,7 +2347,7 @@ pub(crate) fn install_isolated_packages(
 
                     let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
                     {
-                        install::PreinstallState::Done => false,
+                        bun_install_types::PreinstallState::Done => false,
                         _ => 'missing_from_cache: {
                             if matches!(patch_info, installer::PatchInfo::None) {
                                 let exists = match pkg_res_tag {
@@ -2369,7 +2372,7 @@ pub(crate) fn install_isolated_packages(
                                 if exists {
                                     installer.manager_mut().set_preinstall_state(
                                         pkg_id,
-                                        install::PreinstallState::Done,
+                                        bun_install_types::PreinstallState::Done,
                                     );
                                 }
                                 break 'missing_from_cache !exists;

@@ -1,4 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
+use bun_install_types::{DependencyID, Features, INVALID_PACKAGE_ID, PackageID, PackageNameHash};
 use bun_ptr::detach_lifetime;
 use core::mem::ManuallyDrop;
 use core::sync::atomic::Ordering;
@@ -28,13 +29,12 @@ use crate::patch_install::EnqueueAfterState;
 use crate::repository::RepositoryExt as _;
 use crate::resolution::{Tag as ResolutionTag, TaggedValue as ResolutionTagged};
 type ResolutionNpmValue = bun_install_types::resolver_hooks::VersionedURLType<u64>;
-use crate as install;
 use crate::ManifestLoad;
 use crate::NetworkTask;
 use crate::npm;
 use crate::{
-    Behavior, Dependency, DependencyID, ExtractTarball, Features, INVALID_PACKAGE_ID, Integrity,
-    PackageID, PackageNameHash, PatchTask, Repository, Resolution, TaskCallbackContext,
+    Behavior, Dependency, ExtractTarball, Integrity, PatchTask, Repository, Resolution,
+    TaskCallbackContext,
 };
 use bun_install_types::dependency;
 
@@ -935,11 +935,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             match task {
                                 ResolvedPackageTask::NetworkTask(network_task) => {
                                     if this.get_preinstall_state(result.package.meta.id)
-                                        == install::PreinstallState::Extract
+                                        == bun_install_types::PreinstallState::Extract
                                     {
                                         this.set_preinstall_state(
                                             result.package.meta.id,
-                                            install::PreinstallState::Extracting,
+                                            bun_install_types::PreinstallState::Extracting,
                                         );
                                         enqueue_network_task(this, network_task);
                                     }
@@ -949,21 +949,21 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     let cb = unsafe { &(*patch_task).callback };
                                     if cb.is_calc_hash()
                                         && this.get_preinstall_state(result.package.meta.id)
-                                            == install::PreinstallState::CalcPatchHash
+                                            == bun_install_types::PreinstallState::CalcPatchHash
                                     {
                                         this.set_preinstall_state(
                                             result.package.meta.id,
-                                            install::PreinstallState::CalcingPatchHash,
+                                            bun_install_types::PreinstallState::CalcingPatchHash,
                                         );
                                         // SAFETY: `patch_task` is a non-null `heap::alloc`.
                                         unsafe { enqueue_patch_task(this, patch_task) };
                                     } else if cb.is_apply()
                                         && this.get_preinstall_state(result.package.meta.id)
-                                            == install::PreinstallState::ApplyPatch
+                                            == bun_install_types::PreinstallState::ApplyPatch
                                     {
                                         this.set_preinstall_state(
                                             result.package.meta.id,
-                                            install::PreinstallState::ApplyingPatch,
+                                            bun_install_types::PreinstallState::ApplyingPatch,
                                         );
                                         // SAFETY: `patch_task` is a non-null `heap::alloc`.
                                         unsafe { enqueue_patch_task(this, patch_task) };
@@ -2102,13 +2102,13 @@ fn get_or_put_resolved_package_with_find_result(
     ) {
         // Is this package already in the cache?
         // We don't need to download the tarball, but we should enqueue dependencies
-        install::PreinstallState::Done => Some(ResolvedPackageResult {
+        bun_install_types::PreinstallState::Done => Some(ResolvedPackageResult {
             package,
             is_first_time: true,
             task: None,
         }),
         // Do we need to download the tarball?
-        install::PreinstallState::Extract => 'extract: {
+        bun_install_types::PreinstallState::Extract => 'extract: {
             // Skip tarball download when prefetch_resolved_tarballs is disabled (e.g., --lockfile-only)
             if !this
                 .options
@@ -2147,7 +2147,7 @@ fn get_or_put_resolved_package_with_find_result(
                 )),
             });
         }
-        install::PreinstallState::CalcPatchHash => Some(ResolvedPackageResult {
+        bun_install_types::PreinstallState::CalcPatchHash => Some(ResolvedPackageResult {
             package,
             is_first_time: true,
             task: Some(ResolvedPackageTask::PatchTask(
@@ -2162,7 +2162,7 @@ fn get_or_put_resolved_package_with_find_result(
                 ),
             )),
         }),
-        install::PreinstallState::ApplyPatch => Some(ResolvedPackageResult {
+        bun_install_types::PreinstallState::ApplyPatch => Some(ResolvedPackageResult {
             package,
             is_first_time: true,
             task: Some(ResolvedPackageTask::PatchTask(

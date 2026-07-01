@@ -21,8 +21,8 @@ impl ImmediateObject {
     }
 
     /// Thin forwarder to
-    /// `internals.run_immediate_task`. Reached from `bun_jsc::event_loop`
-    /// via `__bun_run_immediate_task` (definer in `bun_runtime::dispatch`).
+    /// `internals.run_immediate_task`. Called from
+    /// `EventLoop::tick_immediate_tasks`.
     ///
     /// Returns `true` if an exception was thrown.
     ///

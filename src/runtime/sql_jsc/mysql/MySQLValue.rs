@@ -2,18 +2,19 @@
 //! protocol layer keeps the pure `CharacterSet`/`FieldType` enums without
 //! `JSValue` references.
 
-use crate::sql_jsc::jsc::{
-    IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsError, JsResult,
-    MarkedArgumentBuffer, StringJsc as _,
-};
+use crate::sql_jsc::jsc::JSGlobalObjectSqlExt as _;
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{OwnedString, String as BunString};
+use bun_jsc::{
+    IntegerRange, JSGlobalObject, JSType, JSValue, JsError, JsResult, MarkedArgumentBuffer,
+    StringJsc as _,
+};
 
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::any_mysql_error::{self, AnyMySQLError};
 use bun_sql::shared::Data;
 
-use crate::sql_jsc::jsc::webcore::Blob;
+use crate::webcore::Blob;
 
 pub(crate) fn field_type_from_js(
     global_object: &JSGlobalObject,

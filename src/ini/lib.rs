@@ -225,7 +225,6 @@ mod draft {
     use core::ptr;
 
     use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
-    use bun_api::{self, npm_registry};
     use bun_ast::E::Rope;
     use bun_ast::{E, Expr, ExprData};
     use bun_ast::{IntoStr, Loc, Log, Source};
@@ -233,6 +232,7 @@ mod draft {
     use bun_core::ZStr;
     use bun_core::{Global, Output};
     use bun_dotenv::Loader as DotEnvLoader;
+    use bun_options_types::schema::api::npm_registry;
     use bun_options_types::schema::api::{BunInstall, Ca, NpmRegistry};
     use bun_url::URL;
 
@@ -1237,11 +1237,7 @@ mod draft {
                             let registry = 'brk: {
                                 if let Some(value) = prop.value {
                                     if let Some(str_) = value.as_utf8_string_literal() {
-                                        let mut parser = npm_registry::Parser {
-                                            log: &mut *self.log,
-                                            source: self.source,
-                                        };
-                                        break 'brk parser.parse_registry_url_string_impl(str_)?;
+                                        break 'brk npm_registry::parse_registry_url_string(str_)?;
                                     }
                                 }
                                 return Ok(Some(IniOption::None));
@@ -1355,12 +1351,9 @@ mod draft {
 
         if let Some(query) = out.as_property(b"registry") {
             if let Some(str_) = query.expr.as_utf8_string_literal() {
-                let mut p = bun_api::npm_registry::Parser {
-                    log: &mut *log,
-                    source,
-                };
-                install.default_registry =
-                    Some(p.parse_registry_url_string_impl(&Box::<[u8]>::from(str_))?);
+                install.default_registry = Some(npm_registry::parse_registry_url_string(
+                    &Box::<[u8]>::from(str_),
+                )?);
             }
         }
 

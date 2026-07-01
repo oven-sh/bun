@@ -1,6 +1,7 @@
 //! Schedule long-running callbacks for a task
 //! Slow stuff is broken into tasks, each can run independently without locks
 
+use bun_install_types::{DependencyID, PackageID};
 use core::mem::ManuallyDrop;
 
 use bun_ast::{Loc, Log};
@@ -13,8 +14,8 @@ use bun_wyhash::Wyhash11;
 
 use crate::npm;
 use crate::{
-    DependencyID, ExtractData, ExtractTarball, NetworkTask, PackageID, PackageManager, PatchTask,
-    Repository, RepositoryExt as _, Resolution,
+    ExtractData, ExtractTarball, NetworkTask, PackageManager, PatchTask, Repository,
+    RepositoryExt as _, Resolution,
 };
 
 use bun_dotenv as dot_env;

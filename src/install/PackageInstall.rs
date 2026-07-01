@@ -1,3 +1,4 @@
+use bun_install_types::{PackageID, TruncatedPackageNameHash};
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use bun_collections::{ArrayHashMap, DynamicBitSet};
@@ -18,8 +19,8 @@ use bun_threading::{ThreadPool, WaitGroup};
 
 use crate::package_installer::NodeModulesFolder;
 use crate::{
-    BuntagHashBuf, Lockfile, PackageID, PackageManager, Repository, Resolution,
-    TruncatedPackageNameHash, buntaghashbuf_make, initialize_store, npm, resolution,
+    BuntagHashBuf, Lockfile, PackageManager, Repository, Resolution, buntaghashbuf_make,
+    initialize_store, npm, resolution,
 };
 
 bun_core::declare_scope!(install, hidden);
@@ -2344,7 +2345,7 @@ impl<'a> PackageInstall<'a> {
     ) -> bool {
         let state = manager.get_preinstall_state(package_id);
         match state {
-            crate::PreinstallState::Done => false,
+            bun_install_types::PreinstallState::Done => false,
             _ => 'brk: {
                 if self.patch.is_none() {
                     let exists = match resolution_tag {
@@ -2390,7 +2391,10 @@ impl<'a> PackageInstall<'a> {
                             .unwrap_or(false),
                     };
                     if exists {
-                        manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
+                        manager.set_preinstall_state(
+                            package_id,
+                            bun_install_types::PreinstallState::Done,
+                        );
                     }
                     break 'brk !exists;
                 }
@@ -2410,7 +2414,8 @@ impl<'a> PackageInstall<'a> {
                     ZStr::from_buf(&join_buf[..], cache_dir_subpath_without_patch_hash.len());
                 let exists = sys::directory_exists_at(self.cache_dir, subpath).unwrap_or(false);
                 if exists {
-                    manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
+                    manager
+                        .set_preinstall_state(package_id, bun_install_types::PreinstallState::Done);
                 }
                 !exists
             }
@@ -2425,7 +2430,7 @@ impl<'a> PackageInstall<'a> {
         let exists =
             sys::directory_exists_at(self.cache_dir, self.cache_dir_subpath).unwrap_or(false);
         if exists {
-            manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
+            manager.set_preinstall_state(package_id, bun_install_types::PreinstallState::Done);
         }
         !exists
     }

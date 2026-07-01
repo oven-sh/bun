@@ -169,121 +169,182 @@ pub use bun_core::Timespec;
 // as `safe fn` and drop per-call-site `unsafe { }`.
 bun_opaque::opaque_ffi!(
     pub us_loop_t, pub us_socket_context_t, pub us_udp_socket_t, pub us_udp_packet_buffer_t,
+    pub UpgradedDuplex, pub WindowsNamedPipe,
 );
 
-/// Method table for runtime-tier duplex transports (TLS-over-JS-duplex and
-/// Windows named pipes). The concrete types live in `bun_runtime::socket`; they
-/// provide a `'static` table + owner pointer instead of link-time symbols.
-pub struct DuplexVTable {
-    pub ssl_error: unsafe fn(*mut ()) -> us_bun_verify_error_t,
-    pub is_established: unsafe fn(*mut ()) -> bool,
-    pub is_closed: unsafe fn(*mut ()) -> bool,
-    pub is_shutdown: unsafe fn(*mut ()) -> bool,
-    pub ssl: unsafe fn(*mut ()) -> *mut bun_boringssl_sys::SSL,
-    pub set_timeout: unsafe fn(*mut (), core::ffi::c_uint),
-    pub flush: unsafe fn(*mut ()),
-    pub encode_and_write: unsafe fn(*mut (), *const u8, usize) -> i32,
-    pub raw_write: unsafe fn(*mut (), *const u8, usize) -> i32,
-    pub shutdown: unsafe fn(*mut ()),
-    pub shutdown_read: unsafe fn(*mut ()),
-    pub close: unsafe fn(*mut ()),
-    /// Named-pipe only; `None` for `UpgradedDuplex`.
-    pub pause_stream: Option<unsafe fn(*mut ()) -> bool>,
-    pub resume_stream: Option<unsafe fn(*mut ()) -> bool>,
+// ── UpgradedDuplex (cycle-break shim) ────────────────────────────────────────
+// The full `UpgradedDuplex` lives in `bun_runtime::socket`; `socket.rs` here
+// dispatches to it from the low-tier `InternalSocket` enum. To avoid an upward
+// dep, the opaque handle gets thin inherent methods that forward to
+// `extern "Rust"` symbols which the runtime crate exports with
+// `#[unsafe(no_mangle)]`. Signatures must stay in sync with
+// `src/runtime/socket/UpgradedDuplex.rs`.
+// SAFETY (safe fn): `UpgradedDuplex` is an `opaque_ffi!` ZST handle (`!Freeze`
+// via `UnsafeCell`), so `&`/`&mut` carry no `readonly`/`noalias` and are
+// ABI-identical to non-null `*const`/`*mut`. Shims taking only the handle +
+// scalars are `safe fn`; the two `(ptr,len)` slice writers stay `unsafe fn`.
+unsafe extern "Rust" {
+    safe fn UpgradedDuplex__ssl_error(this: &UpgradedDuplex) -> us_bun_verify_error_t;
+    safe fn UpgradedDuplex__is_established(this: &UpgradedDuplex) -> bool;
+    safe fn UpgradedDuplex__is_closed(this: &UpgradedDuplex) -> bool;
+    safe fn UpgradedDuplex__is_shutdown(this: &UpgradedDuplex) -> bool;
+    safe fn UpgradedDuplex__ssl(this: &UpgradedDuplex) -> *mut bun_boringssl_sys::SSL;
+    safe fn UpgradedDuplex__set_timeout(this: &mut UpgradedDuplex, seconds: core::ffi::c_uint);
+    safe fn UpgradedDuplex__flush(this: &mut UpgradedDuplex);
+    fn UpgradedDuplex__encode_and_write(
+        this: *mut UpgradedDuplex,
+        ptr: *const u8,
+        len: usize,
+    ) -> i32;
+    fn UpgradedDuplex__raw_write(this: *mut UpgradedDuplex, ptr: *const u8, len: usize) -> i32;
+    safe fn UpgradedDuplex__shutdown(this: &mut UpgradedDuplex);
+    safe fn UpgradedDuplex__shutdown_read(this: &mut UpgradedDuplex);
+    safe fn UpgradedDuplex__close(this: &mut UpgradedDuplex);
 }
-
-/// Type-erased handle to a runtime-tier duplex transport: the owner pointer
-/// plus its [`DuplexVTable`]. Equality is pointer identity only.
-#[derive(Copy, Clone)]
-pub struct DuplexHandle {
-    pub ptr: core::ptr::NonNull<()>,
-    pub vtable: &'static DuplexVTable,
-}
-
-impl PartialEq for DuplexHandle {
-    fn eq(&self, o: &Self) -> bool {
-        self.ptr == o.ptr
-    }
-}
-
-impl DuplexHandle {
+impl UpgradedDuplex {
     #[inline]
     pub fn ssl_error(&self) -> us_bun_verify_error_t {
-        // SAFETY: `ptr` is the live owner the vtable was built for.
-        unsafe { (self.vtable.ssl_error)(self.ptr.as_ptr()) }
+        UpgradedDuplex__ssl_error(self)
     }
     #[inline]
     pub fn is_established(&self) -> bool {
-        // SAFETY: see `ssl_error`.
-        unsafe { (self.vtable.is_established)(self.ptr.as_ptr()) }
+        UpgradedDuplex__is_established(self)
     }
     #[inline]
     pub fn is_closed(&self) -> bool {
-        // SAFETY: see `ssl_error`.
-        unsafe { (self.vtable.is_closed)(self.ptr.as_ptr()) }
+        UpgradedDuplex__is_closed(self)
     }
     #[inline]
     pub fn is_shutdown(&self) -> bool {
-        // SAFETY: see `ssl_error`.
-        unsafe { (self.vtable.is_shutdown)(self.ptr.as_ptr()) }
+        UpgradedDuplex__is_shutdown(self)
     }
     #[inline]
     pub fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
-        // SAFETY: see `ssl_error`.
-        let p = unsafe { (self.vtable.ssl)(self.ptr.as_ptr()) };
+        let p = UpgradedDuplex__ssl(self);
         if p.is_null() { None } else { Some(p) }
     }
     #[inline]
-    pub fn set_timeout(&self, seconds: core::ffi::c_uint) {
-        // SAFETY: see `ssl_error`.
-        unsafe { (self.vtable.set_timeout)(self.ptr.as_ptr(), seconds) }
+    pub fn set_timeout(&mut self, seconds: core::ffi::c_uint) {
+        UpgradedDuplex__set_timeout(self, seconds)
     }
     #[inline]
-    pub fn flush(&self) {
-        // SAFETY: see `ssl_error`.
-        unsafe { (self.vtable.flush)(self.ptr.as_ptr()) }
+    pub fn flush(&mut self) {
+        UpgradedDuplex__flush(self)
     }
     #[inline]
-    pub fn encode_and_write(&self, data: &[u8]) -> i32 {
-        // SAFETY: see `ssl_error`; `(data.as_ptr(), data.len())` is a valid
-        // readable region borrowed for the call's duration.
-        unsafe { (self.vtable.encode_and_write)(self.ptr.as_ptr(), data.as_ptr(), data.len()) }
+    pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {
+        // SAFETY: `&mut self` coerces to a non-null `*mut UpgradedDuplex` valid for
+        // the call, and `(data.as_ptr(), data.len())` is a valid readable region
+        // borrowed for the call's duration; the callee only reads from it.
+        unsafe { UpgradedDuplex__encode_and_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
-    pub fn raw_write(&self, data: &[u8]) -> i32 {
-        // SAFETY: see `encode_and_write`.
-        unsafe { (self.vtable.raw_write)(self.ptr.as_ptr(), data.as_ptr(), data.len()) }
+    pub fn raw_write(&mut self, data: &[u8]) -> i32 {
+        // SAFETY: `&mut self` coerces to a non-null `*mut UpgradedDuplex` valid for
+        // the call, and `(data.as_ptr(), data.len())` is a valid readable region
+        // borrowed for the call's duration; the callee only reads from it.
+        unsafe { UpgradedDuplex__raw_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
-    pub fn shutdown(&self) {
-        // SAFETY: see `ssl_error`.
-        unsafe { (self.vtable.shutdown)(self.ptr.as_ptr()) }
+    pub fn shutdown(&mut self) {
+        UpgradedDuplex__shutdown(self)
     }
     #[inline]
-    pub fn shutdown_read(&self) {
-        // SAFETY: see `ssl_error`.
-        unsafe { (self.vtable.shutdown_read)(self.ptr.as_ptr()) }
+    pub fn shutdown_read(&mut self) {
+        UpgradedDuplex__shutdown_read(self)
     }
     #[inline]
-    pub fn close(&self) {
-        // SAFETY: see `ssl_error`.
-        unsafe { (self.vtable.close)(self.ptr.as_ptr()) }
+    pub fn close(&mut self) {
+        UpgradedDuplex__close(self)
+    }
+}
+
+// ── WindowsNamedPipe (cycle-break shim) ─────────────────────────────────────
+// Same link-time-dispatch as `UpgradedDuplex` above: the real
+// `WindowsNamedPipe` lives in `bun_runtime::socket`; this opaque handle
+// forwards to `extern "Rust"` symbols that the runtime crate exports with
+// `#[unsafe(no_mangle)]`.
+#[cfg(windows)]
+unsafe extern "Rust" {
+    safe fn WindowsNamedPipe__ssl_error(this: &WindowsNamedPipe) -> us_bun_verify_error_t;
+    safe fn WindowsNamedPipe__is_established(this: &WindowsNamedPipe) -> bool;
+    safe fn WindowsNamedPipe__is_closed(this: &WindowsNamedPipe) -> bool;
+    safe fn WindowsNamedPipe__is_shutdown(this: &WindowsNamedPipe) -> bool;
+    safe fn WindowsNamedPipe__ssl(this: &WindowsNamedPipe) -> *mut bun_boringssl_sys::SSL;
+    safe fn WindowsNamedPipe__set_timeout(this: &mut WindowsNamedPipe, seconds: core::ffi::c_uint);
+    safe fn WindowsNamedPipe__flush(this: &mut WindowsNamedPipe);
+    fn WindowsNamedPipe__encode_and_write(
+        this: *mut WindowsNamedPipe,
+        ptr: *const u8,
+        len: usize,
+    ) -> i32;
+    fn WindowsNamedPipe__raw_write(this: *mut WindowsNamedPipe, ptr: *const u8, len: usize) -> i32;
+    safe fn WindowsNamedPipe__shutdown(this: &mut WindowsNamedPipe);
+    safe fn WindowsNamedPipe__shutdown_read(this: &mut WindowsNamedPipe);
+    safe fn WindowsNamedPipe__close(this: &mut WindowsNamedPipe);
+    safe fn WindowsNamedPipe__pause_stream(this: &mut WindowsNamedPipe) -> bool;
+    safe fn WindowsNamedPipe__resume_stream(this: &mut WindowsNamedPipe) -> bool;
+}
+#[cfg(windows)]
+impl WindowsNamedPipe {
+    #[inline]
+    pub fn ssl_error(&self) -> us_bun_verify_error_t {
+        WindowsNamedPipe__ssl_error(self)
     }
     #[inline]
-    pub fn pause_stream(&self) -> bool {
-        let Some(f) = self.vtable.pause_stream else {
-            unreachable!("duplex has no pause_stream")
-        };
-        // SAFETY: see `ssl_error`.
-        unsafe { f(self.ptr.as_ptr()) }
+    pub fn is_established(&self) -> bool {
+        WindowsNamedPipe__is_established(self)
     }
     #[inline]
-    pub fn resume_stream(&self) -> bool {
-        let Some(f) = self.vtable.resume_stream else {
-            unreachable!("duplex has no resume_stream")
-        };
-        // SAFETY: see `ssl_error`.
-        unsafe { f(self.ptr.as_ptr()) }
+    pub fn is_closed(&self) -> bool {
+        WindowsNamedPipe__is_closed(self)
+    }
+    #[inline]
+    pub fn is_shutdown(&self) -> bool {
+        WindowsNamedPipe__is_shutdown(self)
+    }
+    #[inline]
+    pub fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
+        let p = WindowsNamedPipe__ssl(self);
+        if p.is_null() { None } else { Some(p) }
+    }
+    #[inline]
+    pub fn set_timeout(&mut self, seconds: core::ffi::c_uint) {
+        WindowsNamedPipe__set_timeout(self, seconds)
+    }
+    #[inline]
+    pub fn flush(&mut self) {
+        WindowsNamedPipe__flush(self)
+    }
+    #[inline]
+    pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {
+        // SAFETY: see `UpgradedDuplex::encode_and_write`.
+        unsafe { WindowsNamedPipe__encode_and_write(self, data.as_ptr(), data.len()) }
+    }
+    #[inline]
+    pub fn raw_write(&mut self, data: &[u8]) -> i32 {
+        // SAFETY: see `UpgradedDuplex::raw_write`.
+        unsafe { WindowsNamedPipe__raw_write(self, data.as_ptr(), data.len()) }
+    }
+    #[inline]
+    pub fn shutdown(&mut self) {
+        WindowsNamedPipe__shutdown(self)
+    }
+    #[inline]
+    pub fn shutdown_read(&mut self) {
+        WindowsNamedPipe__shutdown_read(self)
+    }
+    #[inline]
+    pub fn close(&mut self) {
+        WindowsNamedPipe__close(self)
+    }
+    #[inline]
+    pub fn pause_stream(&mut self) -> bool {
+        WindowsNamedPipe__pause_stream(self)
+    }
+    #[inline]
+    pub fn resume_stream(&mut self) -> bool {
+        WindowsNamedPipe__resume_stream(self)
     }
 }
 
@@ -379,7 +440,7 @@ pub use socket::{
 
 // ───────────────────────────── re-exports ────────────────────────────────────
 
-pub use internal_loop_data::InternalLoopData;
+pub use internal_loop_data::{InternalLoopData, LoopParent};
 #[cfg(windows)]
 pub use loop_::WindowsLoop;
 pub use loop_::{Loop, PosixLoop};

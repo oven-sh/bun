@@ -504,102 +504,66 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
 // resolve them without a `bun_resolver` edge.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod fs {
-    use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use core::sync::atomic::{AtomicU32, Ordering};
     use std::io::Write as _;
 
     use bun_core::ZStr;
 
     use crate::resolve_path::{is_sep_any, last_index_of_sep};
 
-    /// Stateless facade over the canonical cwd storage in
-    /// `bun_core::TOP_LEVEL_DIR`. The dir-entry cache and filename arenas live
-    /// in `bun_resolver`; this exists so lower tiers (`bun_logger`,
-    /// `resolve_path`, `Path`) can read the top-level dir and mint tmpnames
-    /// without a `bun_resolver` edge.
-    pub struct FileSystem;
-
-    // Kept as a separate flag so `instance_loaded()` is a cheap relaxed load.
-    static INSTANCE_LOADED: AtomicBool = AtomicBool::new(false);
-
     static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
 
-    impl FileSystem {
-        #[inline]
-        pub fn instance_loaded() -> bool {
-            INSTANCE_LOADED.load(Ordering::Relaxed)
-        }
+    /// Reads the canonical writable storage in `bun_core::TOP_LEVEL_DIR`
+    /// (updated by `bun_resolver::FileSystem::set_top_level_dir`), so
+    /// `Path::init_top_level_dir` observes the post-chdir value.
+    #[inline]
+    pub fn top_level_dir() -> &'static [u8] {
+        // Same contract as the old `FileSystem.instance accessed before init`
+        // panic: `bun_resolver`'s fs init seeds this before any caller.
+        assert!(
+            bun_core::top_level_dir_loaded(),
+            "top_level_dir accessed before init"
+        );
+        bun_core::top_level_dir()
+    }
 
-        /// Panics if `init` has not been called.
-        #[inline]
-        pub fn instance() -> &'static FileSystem {
-            assert!(
-                INSTANCE_LOADED.load(Ordering::Relaxed),
-                "FileSystem.instance accessed before init"
-            );
-            static ZST: FileSystem = FileSystem;
-            &ZST
+    /// The top-level dir with any single trailing separator stripped
+    /// (the root `/` is left intact).
+    pub fn top_level_dir_without_trailing_slash() -> &'static [u8] {
+        let d = top_level_dir();
+        if d.len() > 1 && d.last() == Some(&crate::SEP) {
+            &d[..d.len() - 1]
+        } else {
+            d
         }
+    }
 
-        /// `bun_resolver::fs` calls this during its own `initWithForce` after
-        /// resolving the cwd. Writes the single canonical storage in
-        /// `bun_core::TOP_LEVEL_DIR` (first writer wins is NOT preserved —
-        /// later `set_top_level_dir` calls overwrite, matching bun_core docs).
-        pub fn init(top_level_dir: &[u8]) -> &'static FileSystem {
-            if !INSTANCE_LOADED.swap(true, Ordering::Release) {
-                // Leak once: TOP_LEVEL_DIR stores `&'static [u8]`. The old
-                // OnceLock<Vec<u8>> held these bytes for the process anyway.
-                bun_core::set_top_level_dir(Box::leak(top_level_dir.to_vec().into_boxed_slice()));
-            }
-            Self::instance()
+    /// Writes `.<hex(hash|nanos)>-<HEX(counter)>.<extname>\0` into `buf` and returns
+    /// the NUL-terminated borrow.
+    pub fn tmpname<'b>(
+        extname: &[u8],
+        buf: &'b mut [u8],
+        hash: u64,
+    ) -> Result<&'b mut ZStr, bun_core::Error> {
+        let hex_value: u64 = (u128::from(hash) | (bun_core::time::nano_timestamp() as u128)) as u64;
+
+        let len = buf.len();
+        let mut cursor = &mut buf[..];
+        // Fixed-width, zero-padded hex (u64 → 16 digits, u32 → 8).
+        write!(
+            &mut cursor,
+            ".{:016x}-{:08X}.{}",
+            hex_value,
+            TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
+            bun_core::fmt::s(extname),
+        )
+        .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+        let written = len - cursor.len();
+        if written >= len {
+            return Err(bun_core::err!("NoSpaceLeft"));
         }
-
-        /// Reads the canonical writable storage in `bun_core::TOP_LEVEL_DIR`
-        /// (updated by `bun_resolver::FileSystem::set_top_level_dir`), so
-        /// `Path::init_top_level_dir` observes the post-chdir value.
-        #[inline]
-        pub fn top_level_dir(&self) -> &'static [u8] {
-            bun_core::top_level_dir()
-        }
-
-        /// The top-level dir with any single trailing separator stripped
-        /// (the root `/` is left intact).
-        pub fn top_level_dir_without_trailing_slash(&self) -> &[u8] {
-            let d = self.top_level_dir();
-            if d.len() > 1 && d.last() == Some(&crate::SEP) {
-                &d[..d.len() - 1]
-            } else {
-                d
-            }
-        }
-
-        /// Writes `.<hex(hash|nanos)>-<HEX(counter)>.<extname>\0` into `buf` and returns
-        /// the NUL-terminated borrow. Static (no `&self`).
-        pub fn tmpname<'b>(
-            extname: &[u8],
-            buf: &'b mut [u8],
-            hash: u64,
-        ) -> Result<&'b mut ZStr, bun_core::Error> {
-            let hex_value: u64 =
-                (u128::from(hash) | (bun_core::time::nano_timestamp() as u128)) as u64;
-
-            let len = buf.len();
-            let mut cursor = &mut buf[..];
-            // Fixed-width, zero-padded hex (u64 → 16 digits, u32 → 8).
-            write!(
-                &mut cursor,
-                ".{:016x}-{:08X}.{}",
-                hex_value,
-                TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
-                bun_core::fmt::s(extname),
-            )
-            .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
-            let written = len - cursor.len();
-            if written >= len {
-                return Err(bun_core::err!("NoSpaceLeft"));
-            }
-            buf[written] = 0;
-            Ok(ZStr::from_buf_mut(buf, written))
-        }
+        buf[written] = 0;
+        Ok(ZStr::from_buf_mut(buf, written))
     }
 
     /// Parsed (dir, base, ext,

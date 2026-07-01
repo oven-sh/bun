@@ -1855,7 +1855,7 @@ impl<'a> Formatter<'a> {
                             b"Timeout(# ) ".len() + bun_fmt::digit_count(timer.internals.id.max(0)),
                         );
                         if timer.internals.flags.get().kind()
-                            == bun_event_loop::EventLoopTimer::Kind::SetInterval
+                            == bun_jsc::timer::Kind::SetInterval
                         {
                             self.add_for_new_line(
                                 b"repeats ".len() + bun_fmt::digit_count(timer.internals.id.max(0)),

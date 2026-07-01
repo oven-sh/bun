@@ -1,4 +1,4 @@
-use crate::sql_jsc::jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue};
 use bun_sql::postgres::postgres_types::Int4;
 
 #[derive(Default)]

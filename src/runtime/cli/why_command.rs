@@ -1,3 +1,4 @@
+use bun_install_types::PackageID;
 use core::cmp::Ordering;
 use core::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::io::Write as _;
@@ -10,7 +11,7 @@ use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::{CommandLineArguments, PackageID, PackageManager, Subcommand, package_manager};
+use bun_install::{CommandLineArguments, PackageManager, Subcommand, package_manager};
 use bun_install_types::dependency::Behavior;
 use bun_semver as semver;
 

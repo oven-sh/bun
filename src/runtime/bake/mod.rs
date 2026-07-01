@@ -4,11 +4,10 @@
 //! role as a framework, Bake is tool for frameworks to build on top of.
 //!
 //! This file holds the keystone DevServer struct + lifecycle so downstream
-//! `server/` and the `bun_bundler::dispatch::DevServerVTable` can be wired.
+//! `server/` and the `bun_bundler::dispatch::DevServerHandle` can be wired.
 //! The heavy method bodies (request handling, finalize_bundle, hot-update
 //! tracing) live in `DevServer.rs` and the other `#[path]` submodules below.
 
-use core::ptr::NonNull;
 use std::borrow::Cow;
 
 // ─── Submodule bodies ────────────────────────────────────────────────────────
@@ -88,47 +87,27 @@ pub struct FileSystemRouterType {
 /// would set in order to integrate with the application. Since many fields
 /// have default values which may point to static memory, this structure is
 /// always arena-allocated, usually owned by the arena in `UserOptions`.
+#[derive(Default)]
 pub struct Framework {
-    pub is_built_in_react: bool,
-    /// Owned `Vec` so `resolve()` can take `&mut` and rewrite entries in
-    /// place; freed by `Vec::drop`.
+    /// The bundler-visible option set — the canonical
+    /// `bun_options_types::bake::Framework` (re-exported as
+    /// `bun_bundler::bake_types::Framework`). Embedded, not mirrored.
+    pub view: bun_bundler::bake_types::Framework,
+    /// Runtime-only: owned `Vec` so `resolve()` can take `&mut` and rewrite
+    /// entries in place; freed by `Vec::drop`.
     pub file_system_router_types: Vec<FileSystemRouterType>,
-    pub server_components: Option<ServerComponents>,
-    pub react_fast_refresh: Option<ReactFastRefresh>,
-    pub built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
-}
-impl Default for Framework {
-    fn default() -> Self {
-        Self {
-            is_built_in_react: false,
-            file_system_router_types: Vec::new(),
-            server_components: None,
-            react_fast_refresh: None,
-            built_in_modules: bun_collections::StringArrayHashMap::new(),
-        }
-    }
 }
 
 impl Framework {
-    /// Bundler-side view of this Framework. `bake_types::Framework` is the
-    /// canonical type for the fields the bundler reads; this deep-clones the
-    /// built-in-module map (fallible inherent clone) and Clone-copies the rest.
+    /// Bundler-side view of this Framework: a deep clone of the embedded
+    /// canonical `bake_types::Framework`.
     pub(crate) fn as_bundler_view(&self) -> bun_bundler::bake_types::Framework {
-        bun_bundler::bake_types::Framework::new(
-            bun_core::handle_oom(self.built_in_modules.clone()),
-            self.server_components.clone(),
-            self.react_fast_refresh.clone(),
-            self.is_built_in_react,
-        )
+        self.view.deep_clone()
     }
 
-    /// Sets up a per-graph
-    /// `Transpiler` in place. The full body lives in
-    /// `bake_body::Framework::init_transpiler_with_options`; this keystone
-    /// version operates on the keystone `BuildConfigSubset` (which omits
-    /// `conditions`/`env`/`define`/`drop` until the schema types are
-    /// const-constructible — those paths default).
-    /// Returns the arena slot for the `bake_types::Framework` projection; caller must `drop_in_place` it.
+    /// Sets up a per-graph `Transpiler` in place with the mode-derived
+    /// source-map/minify defaults. Returns the arena slot for the
+    /// `bake_types::Framework` projection; caller must `drop_in_place` it.
     pub fn init_transpiler<'a>(
         &mut self,
         arena: &'a bun_alloc::Arena,
@@ -138,79 +117,7 @@ impl Framework {
         out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
         bundler_options: &BuildConfigSubset,
     ) -> Result<*mut bun_bundler::bake_types::Framework, bun_core::Error> {
-        use bun_options_types::schema as bun_schema;
-
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
-        let _ast_scope = ast_memory_allocator.enter();
-
-        let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
-            arena,
-            log,
-            bun_schema::api::TransformOptions::default(),
-            None,
-        )?);
-
-        out.options.target = match renderer {
-            Graph::Client => bun_ast::Target::Browser,
-            Graph::Server | Graph::Ssr => bun_ast::Target::Bun,
-        };
-        out.options.public_path = match renderer {
-            Graph::Client => dev_server::CLIENT_PREFIX.as_bytes().into(),
-            Graph::Server | Graph::Ssr => Box::default(),
-        };
-        out.options.entry_points = Box::default();
-        out.options.log = log;
-        out.options.output_format = match mode {
-            Mode::Development => bun_bundler::options::Format::InternalBakeDev,
-            Mode::ProductionDynamic | Mode::ProductionStatic => bun_bundler::options::Format::Esm,
-        };
-        out.options.out_extensions = bun_collections::StringHashMap::new();
-        out.options.hot_module_reloading = mode == Mode::Development;
-        out.options.code_splitting = mode != Mode::Development;
-        out.options.output_dir = Box::default();
-
-        out.options.react_fast_refresh = mode == Mode::Development
-            && renderer == Graph::Client
-            && self.react_fast_refresh.is_some();
-        out.options.server_components = self.server_components.is_some();
-
-        out.options.conditions = bun_bundler::options::ESMConditions::init(
-            out.options.target.default_conditions(),
-            out.options.target.is_server_side(),
-            bundler_options.conditions.keys(),
-        )?;
-        if renderer == Graph::Server && self.server_components.is_some() {
-            out.options.conditions.append_slice(&[b"react-server"])?;
-        }
-        if mode == Mode::Development {
-            out.options.conditions.append_slice(&[b"development"])?;
-        }
-        if matches!(renderer, Graph::Server | Graph::Ssr) {
-            out.options.conditions.append_slice(&[b"node"])?;
-        }
-
-        out.options.production = mode != Mode::Development;
-        out.options.tree_shaking = mode != Mode::Development;
-        // The three minify overrides always default to `mode != Development`
-        // here regardless of `BuildConfigSubset`. User-supplied minify flags
-        // are only honored by `init_transpiler_with_options` (bake_body).
-        out.options.minify_syntax = mode != Mode::Development;
-        out.options.minify_identifiers = mode != Mode::Development;
-        out.options.minify_whitespace = mode != Mode::Development;
-        out.options.css_chunking = true;
-        // The bundler crate (lower tier) carries a TYPE_ONLY
-        // projection (`bake_types::Framework`); construct it here and give it
-        // arena lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
-        let framework_view: *mut bun_bundler::bake_types::Framework =
-            arena.alloc(self.as_bundler_view());
-        // SAFETY: `arena.alloc` returns a non-null, initialized pointer backed by `arena: &'a Arena`,
-        // which outlives `out: &mut Transpiler<'a>`, so borrowing it as `&'a Framework` is sound.
-        out.options.framework = Some(unsafe { &*framework_view });
-        out.options.inline_entrypoint_import_meta_main = true;
-        if let Some(ignore) = bundler_options.ignore_dce_annotations {
-            out.options.ignore_dce_annotations = ignore;
-        }
-        out.options.source_map = match mode {
+        let source_map = match mode {
             // Source maps must always be external, as DevServer special cases
             // the linking and part of the generation of these. It also relies
             // on source maps always being enabled.
@@ -220,65 +127,18 @@ impl Framework {
                 bun_bundler::options::SourceMapOption::None
             }
         };
-        if bundler_options.env != bun_dotenv::DotEnvBehavior::_none {
-            out.options.env.behavior = bundler_options.env;
-            out.options.env.prefix = bundler_options.env_prefix.unwrap_or(b"").into();
-        }
-        // The resolver crate carries a FORWARD_DECL subset of `BundleOptions`, so
-        // re-project via the dedicated helper rather than `Clone`.
-        out.sync_resolver_opts();
-
-        out.configure_linker();
-        out.configure_defines()?;
-        out.options.jsx.development = mode == Mode::Development;
-
-        bake_body::add_import_meta_defines(
-            &mut out.options.define,
+        self.init_transpiler_with_options(
+            arena,
+            log,
             mode,
-            match renderer {
-                Graph::Client => Side::Client,
-                Graph::Server | Graph::Ssr => Side::Server,
-            },
-        )?;
-
-        if (bundler_options.define.keys.len() + bundler_options.drop.count()) > 0 {
-            debug_assert_eq!(
-                bundler_options.define.keys.len(),
-                bundler_options.define.values.len()
-            );
-            use bun_bundler::DefineDataExt;
-            for (k, v) in bundler_options
-                .define
-                .keys
-                .iter()
-                .zip(bundler_options.define.values.iter())
-            {
-                let parsed =
-                    bun_js_parser::defines::DefineData::parse(k, v, false, false, log, arena)?;
-                out.options.define.insert(k, parsed)?;
-            }
-
-            for drop_item in bundler_options.drop.keys() {
-                if !drop_item.is_empty() {
-                    let parsed = bun_js_parser::defines::DefineData::parse(
-                        drop_item, b"", true, true, log, arena,
-                    )?;
-                    out.options.define.insert(drop_item, parsed)?;
-                }
-            }
-        }
-
-        if mode != Mode::Development {
-            // Hide information about the source repository, at the cost of debugging quality.
-            out.options.entry_naming = b"_bun/[hash].[ext]".as_slice().into();
-            out.options.chunk_naming = b"_bun/[hash].[ext]".as_slice().into();
-            out.options.asset_naming = b"_bun/[hash].[ext]".as_slice().into();
-        }
-
-        // Re-sync after define/naming mutations so the
-        // resolver sees the final option set.
-        out.sync_resolver_opts();
-        Ok(framework_view)
+            renderer,
+            out,
+            bundler_options,
+            source_map,
+            None,
+            None,
+            None,
+        )
     }
 
     /// Resolves built-in module
@@ -292,18 +152,18 @@ impl Framework {
     ) -> Result<(), bun_core::Error> {
         let mut had_errors = false;
 
-        if let Some(rfr) = &mut self.react_fast_refresh {
+        if let Some(rfr) = &mut self.view.react_fast_refresh {
             Self::resolve_helper(
-                &self.built_in_modules,
+                &self.view.built_in_modules,
                 client,
                 &mut rfr.import_source,
                 &mut had_errors,
                 b"react refresh runtime",
             );
         }
-        if let Some(sc) = &mut self.server_components {
+        if let Some(sc) = &mut self.view.server_components {
             Self::resolve_helper(
-                &self.built_in_modules,
+                &self.view.built_in_modules,
                 server,
                 &mut sc.server_runtime_import,
                 &mut had_errors,
@@ -322,7 +182,7 @@ impl Framework {
             let _ = arena;
             if let Some(entry_client) = &mut fsr.entry_client {
                 Self::resolve_helper(
-                    &self.built_in_modules,
+                    &self.view.built_in_modules,
                     client,
                     entry_client,
                     &mut had_errors,
@@ -330,7 +190,7 @@ impl Framework {
                 );
             }
             Self::resolve_helper(
-                &self.built_in_modules,
+                &self.view.built_in_modules,
                 client,
                 &mut fsr.entry_server,
                 &mut had_errors,
@@ -397,98 +257,9 @@ impl Framework {
     }
 }
 
-/// `bake.SplitBundlerOptions` — per-graph bundler config + shared plugin.
-#[derive(Default)]
-pub struct SplitBundlerOptions {
-    /// FFI: `jsc.API.JSBundler.Plugin` (`JSBundlerPlugin__create`); deinit
-    /// goes through the C++ side. See LIFETIMES.tsv.
-    pub plugin: Option<NonNull<crate::api::js_bundler::Plugin>>,
-    pub client: BuildConfigSubset,
-    pub server: BuildConfigSubset,
-    pub ssr: BuildConfigSubset,
-}
-
-// ─── bake_body → keystone bridges ────────────────────────────────────────────
-// LAYERING: `UserOptions` (bake_body.rs) carries `&'static [u8]`-backed
-// duplicates of `Framework`/`SplitBundlerOptions`; `DevServer::Options`
-// (DevServer.rs) wants the keystone Cow-backed types defined above. Until the
-// two struct families unify, bridge by-value here so `server/mod.rs` can hand
-// `config.bake` straight into `DevServer::init`. All `&'static [u8]` →
-// `Cow::Borrowed` / `Box<[u8]>` projections are by-reference (no copy of the
-// underlying arena bytes).
-impl From<bake_body::BuiltInModule> for BuiltInModule {
-    fn from(src: bake_body::BuiltInModule) -> Self {
-        match src {
-            bake_body::BuiltInModule::Import(p) => BuiltInModule::Import(p.into()),
-            bake_body::BuiltInModule::Code(c) => BuiltInModule::Code(c.into()),
-        }
-    }
-}
-impl From<bake_body::Framework> for Framework {
-    fn from(src: bake_body::Framework) -> Self {
-        let mut built_in_modules = bun_collections::StringArrayHashMap::new();
-        for (k, v) in src.built_in_modules.iter() {
-            bun_core::handle_oom(built_in_modules.put(*k, BuiltInModule::from(*v)));
-        }
-        Self {
-            is_built_in_react: src.is_built_in_react,
-            file_system_router_types: src.file_system_router_types,
-            server_components: src.server_components,
-            react_fast_refresh: src.react_fast_refresh,
-            built_in_modules,
-        }
-    }
-}
-impl From<bake_body::BuildConfigSubset> for BuildConfigSubset {
-    fn from(src: bake_body::BuildConfigSubset) -> Self {
-        // `BuildConfigSubset` mirrors the field-set
-        // `Framework::init_transpiler` reads (everything except `loader` /
-        // `source_map`, which only `init_transpiler_with_options` honours).
-        Self {
-            ignore_dce_annotations: src.ignore_dce_annotations,
-            conditions: src.conditions,
-            drop: src.drop,
-            env: src.env,
-            env_prefix: src.env_prefix,
-            define: src.define,
-            minify_syntax: src.minify_syntax,
-            minify_identifiers: src.minify_identifiers,
-            minify_whitespace: src.minify_whitespace,
-        }
-    }
-}
-impl From<bake_body::SplitBundlerOptions> for SplitBundlerOptions {
-    fn from(src: bake_body::SplitBundlerOptions) -> Self {
-        Self {
-            // `bake_body::Plugin` aliases `crate::api::js_bundler::Plugin` —
-            // same nominal type, no cast.
-            plugin: src.plugin,
-            client: src.client.into(),
-            server: src.server.into(),
-            ssr: src.ssr.into(),
-        }
-    }
-}
-
-/// `bake.SplitBundlerOptions.BuildConfigSubset`. Full body (with `from_js`)
-/// lives in `bake_body.rs`; this keystone mirror carries every field that
-/// `Framework::init_transpiler` reads so DevServer's
-/// per-graph transpilers see bunfig `[serve.static]` define/env/conditions.
-#[derive(Default)]
-pub struct BuildConfigSubset {
-    pub ignore_dce_annotations: Option<bool>,
-    pub conditions: bun_collections::ArrayHashMap<&'static [u8], ()>,
-    pub drop: bun_collections::ArrayHashMap<&'static [u8], ()>,
-    pub env: bun_dotenv::DotEnvBehavior,
-    pub env_prefix: Option<&'static [u8]>,
-    pub define: bun_options_types::schema::api::StringMap,
-    pub minify_syntax: Option<bool>,
-    pub minify_identifiers: Option<bool>,
-    pub minify_whitespace: Option<bool>,
-    // `loader`/`source_map` intentionally omitted — only
-    // `init_transpiler_with_options` (bake_body) honours those, and DevServer
-    // never calls that path.
-}
+/// `bake.SplitBundlerOptions` / `bake.BuildConfigSubset` — canonical defs
+/// (with `from_js`) live in `bake_body.rs`; one nominal type each.
+pub use bake_body::{BuildConfigSubset, SplitBundlerOptions};
 
 /// `bake.HmrRuntime` — embedded HMR runtime code + precomputed line count.
 /// Canonical definition; `bake_body::HmrRuntime` re-exports this

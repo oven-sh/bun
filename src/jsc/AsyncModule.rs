@@ -4,7 +4,8 @@ use core::sync::atomic::AtomicU32;
 use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::transpiler::ParseResult;
 use bun_core::{OwnedString, String as BunString, ZigString};
-use bun_install::{Dependency, DependencyID, Resolution};
+use bun_install::{Dependency, Resolution};
+use bun_install_types::DependencyID;
 use bun_io::KeepAlive;
 use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
@@ -255,7 +256,8 @@ use std::io::Write as _;
 
 use bun_core::strings;
 use bun_install::package_manager::run_tasks;
-use bun_install::{self as install, LogLevel, PackageID};
+use bun_install::{self as install, LogLevel};
+use bun_install_types::PackageID;
 
 use crate::event_loop::{AnyTask, ConcurrentTaskItem, Task};
 
@@ -307,7 +309,7 @@ impl Queue {
     }
 
     /// # Safety
-    /// `ctx` must point to a live [`Queue`] (the `WakeHandler::context`
+    /// `ctx` must point to a live [`Queue`] (the `WakeHandler` owner
     /// registered in `runtime::jsc_hooks`).
     unsafe fn on_dependency_error_impl(
         ctx: *mut c_void,
@@ -384,7 +386,7 @@ impl Queue {
     pub fn run_tasks(&mut self) {
         // The `run_tasks` free fn takes both
         // `&mut PackageManager` and `&mut Queue`; the package manager is a
-        // separate heap allocation (`NonNull<dyn AutoInstaller>` on the
+        // separate heap allocation (`NonNull<PackageManagerHandle>` on the
         // resolver), so the two borrows are disjoint.
         // S017: per-thread VM singleton (safe accessor) instead of
         // `container_of`-derived `*mut` reborrow.
@@ -531,7 +533,7 @@ impl Queue {
 
                     match pending_imports[tag_i].tag {
                         bun_resolver::PendingResolutionTag::Resolve => {
-                            if package_id == install::INVALID_PACKAGE_ID {
+                            if package_id == bun_install_types::INVALID_PACKAGE_ID {
                                 continue;
                             }
 
@@ -540,7 +542,7 @@ impl Queue {
                                 bun_resolver::PendingResolutionTag::Download;
                         }
                         bun_resolver::PendingResolutionTag::Download => {
-                            if package_id == install::INVALID_PACKAGE_ID {
+                            if package_id == bun_install_types::INVALID_PACKAGE_ID {
                                 unreachable!();
                             }
                         }
@@ -550,7 +552,7 @@ impl Queue {
                         }
                     }
 
-                    if package_id == install::INVALID_PACKAGE_ID {
+                    if package_id == bun_install_types::INVALID_PACKAGE_ID {
                         continue;
                     }
 
@@ -567,7 +569,7 @@ impl Queue {
                         &mut name_and_version_hash,
                         &mut patchfile_hash,
                     ) {
-                        install::PreinstallState::Done => {
+                        bun_install_types::PreinstallState::Done => {
                             // we are only truly done if all the dependencies are done.
                             let current_tasks = pm.total_tasks;
                             // so if enqueuing all the dependencies produces no new tasks, we are done.
@@ -578,12 +580,12 @@ impl Queue {
                                 done_count += 1;
                             }
                         }
-                        install::PreinstallState::Extracting => {
+                        bun_install_types::PreinstallState::Extracting => {
                             // we are extracting the package
                             // we need to wait for the next poll
                             continue;
                         }
-                        install::PreinstallState::Extract => {}
+                        bun_install_types::PreinstallState::Extract => {}
                         _ => {}
                     }
                 }
@@ -606,19 +608,51 @@ impl Queue {
     }
 }
 
-impl bun_install_types::resolver_hooks::WakeHandlerOps for Queue {
-    unsafe fn wake(this: *mut Self, package_manager: *mut c_void) {
-        Queue::on_wake_handler(this.cast::<c_void>(), package_manager)
+impl Queue {
+    /// Build the [`WakeHandler`](bun_install_types::WakeHandler) the resolver
+    /// invokes; `queue` is the typed owner the `__bun_wake_handler_*` link fns
+    /// below cast back to a [`Queue`].
+    pub fn wake_handler(queue: core::ptr::NonNull<Queue>) -> bun_install_types::WakeHandler {
+        bun_install_types::WakeHandler(Some(queue.cast()))
     }
+}
 
-    unsafe fn on_dependency_error(
-        this: *mut Self,
-        dep: &Dependency,
-        id: DependencyID,
-        err: bun_core::Error,
-    ) {
-        // SAFETY: caller passes the live `Queue` registered as `WakeHandler` context.
-        unsafe { Queue::on_dependency_error_impl(this.cast::<c_void>(), dep, id, err) }
+/// `__bun_wake_handler_wake` body — declared `extern "Rust"` in
+/// `bun_install_types::resolver_hooks`.
+///
+/// # Safety
+/// `owner` must be the live [`Queue`] the `WakeHandler` was built from.
+#[unsafe(no_mangle)]
+unsafe fn __bun_wake_handler_wake(
+    owner: core::ptr::NonNull<bun_install_types::WakeHandlerOwner>,
+    package_manager: *mut c_void,
+) {
+    Queue::on_wake_handler(
+        owner.cast::<Queue>().as_ptr().cast::<c_void>(),
+        package_manager,
+    )
+}
+
+/// `__bun_wake_handler_on_dependency_error` body — declared `extern "Rust"`
+/// in `bun_install_types::resolver_hooks`.
+///
+/// # Safety
+/// `owner` must be the live [`Queue`] the `WakeHandler` was built from.
+#[unsafe(no_mangle)]
+unsafe fn __bun_wake_handler_on_dependency_error(
+    owner: core::ptr::NonNull<bun_install_types::WakeHandlerOwner>,
+    dep: &Dependency,
+    id: DependencyID,
+    err: bun_core::Error,
+) {
+    // SAFETY: `owner` is the live `Queue` registered as the `WakeHandler` owner.
+    unsafe {
+        Queue::on_dependency_error_impl(
+            owner.cast::<Queue>().as_ptr().cast::<c_void>(),
+            dep,
+            id,
+            err,
+        )
     }
 }
 

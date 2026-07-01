@@ -227,9 +227,10 @@ pub fn write_output_files_to_disk(
         {
             &bv2.transpiler_for_target(options::Target::Browser)
                 .options
+                .resolve
                 .public_path
         } else {
-            &resolver_opts.public_path
+            &resolver_opts.core.public_path
         };
 
         // Take `intermediate_output` by value so its `&mut self` is
@@ -266,7 +267,7 @@ pub fn write_output_files_to_disk(
                 chunk,
                 chunks,
                 Some(&mut display_size),
-                resolver_opts.compile
+                resolver_opts.core.compile
                     && !chunk
                         .flags
                         .contains(ChunkFlags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD),

@@ -1,4 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
+use bun_install_types::{DependencyID, PackageID, PreinstallState};
 
 use bstr::BStr;
 
@@ -17,10 +18,7 @@ use bun_wyhash::Wyhash11;
 
 use crate::package_install::PackageInstall;
 use crate::package_manager;
-use crate::{
-    BUN_HASH_TAG, DependencyID, PackageID, PackageManager, lockfile::Package,
-    resolution::Resolution,
-};
+use crate::{BUN_HASH_TAG, PackageManager, lockfile::Package, resolution::Resolution};
 
 pub use crate::lockfile::PatchedDep;
 
@@ -861,7 +859,6 @@ impl PatchTask {
     }
 }
 
-use crate::PreinstallState;
 use crate::network_task::Authorization;
 use crate::package_install::{InstallResult, Method as InstallMethod};
 use crate::package_manager::Options::LogLevel;

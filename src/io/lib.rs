@@ -98,89 +98,182 @@ pub enum EventLoopCtxKind {
     Mini,
 }
 
-/// Owner-provided method table: the Js table lives in bun_jsc
-/// (VirtualMachine), the Mini table in bun_event_loop (MiniEventLoop).
-///
-/// `platform_event_loop_ptr` is typed `*mut bun_uws_sys::Loop` (the uws
-/// wrapper — `PosixLoop`/`WindowsLoop`), NOT the cfg-aliased `crate::Loop`
-/// re-export. On POSIX those coincide, but on Windows `crate::Loop` is the raw
-/// `uv_loop_t` whereas the impl bodies
-/// (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`) hand back the wrapper.
-pub struct EventLoopCtxVTable {
-    pub platform_event_loop_ptr: unsafe fn(*mut ()) -> *mut bun_uws_sys::Loop,
-    // `alloc_file_poll() -> *mut FilePoll` was removed — it
-    // returned an *uninitialized* hive slot, and any caller forming
-    // `&mut FilePoll` over it hit validity-invariant UB on the niche-
-    // bearing enum fields. `FilePoll::init` now goes through
-    // `file_polls_ptr()` + `Store::get_init` (write-before-read).
-    pub file_polls_ptr: unsafe fn(*mut ()) -> *mut Store,
-    pub increment_pending_unref_counter: unsafe fn(*mut ()),
-    pub ref_concurrently: unsafe fn(*mut ()),
-    pub unref_concurrently: unsafe fn(*mut ()),
-    pub after_event_loop_callback: unsafe fn(*mut ()) -> Option<OpaqueCallback>,
-    pub set_after_event_loop_callback:
-        unsafe fn(*mut (), Option<OpaqueCallback>, Option<core::ptr::NonNull<core::ffi::c_void>>),
-    pub pipe_read_buffer: unsafe fn(*mut ()) -> *mut [u8],
+bun_opaque::opaque_ffi! {
+    /// The JS-loop owner (`jsc::VirtualMachine`), opaque at this tier.
+    pub struct JsLoopCtxOwner;
+    /// The Mini-loop owner (`bun_event_loop::MiniEventLoop`), opaque at this tier.
+    pub struct MiniLoopCtxOwner;
 }
 
+// Js vs Mini is a fixed layering pair, not open polymorphism: one typed link
+// fn per former vtable slot, defined in `bun_jsc::VirtualMachine` (Js) and
+// `bun_event_loop::MiniEventLoop` (Mini), resolved at link time. Every body
+// casts the owner back to the live pointer it was erased from.
+//
+// `bun_*_loop_ctx_platform_event_loop_ptr` is typed `*mut bun_uws_sys::Loop`
+// (the uws wrapper — `PosixLoop`/`WindowsLoop`), NOT the cfg-aliased
+// `crate::Loop` re-export. On POSIX those coincide, but on Windows
+// `crate::Loop` is the raw `uv_loop_t` whereas the impl bodies
+// (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`) hand back the wrapper.
+//
+// A `*_alloc_file_poll() -> *mut FilePoll` slot was removed — it returned an
+// *uninitialized* hive slot, and any caller forming `&mut FilePoll` over it
+// hit validity-invariant UB on the niche-bearing enum fields. `FilePoll::init`
+// now goes through `*_file_polls_ptr()` + `Store::get_init` (write-before-read).
+unsafe extern "Rust" {
+    pub unsafe fn bun_vm_loop_ctx_platform_event_loop_ptr(
+        vm: core::ptr::NonNull<JsLoopCtxOwner>,
+    ) -> *mut bun_uws_sys::Loop;
+    pub unsafe fn bun_vm_loop_ctx_file_polls_ptr(
+        vm: core::ptr::NonNull<JsLoopCtxOwner>,
+    ) -> *mut Store;
+    pub unsafe fn bun_vm_loop_ctx_increment_pending_unref_counter(
+        vm: core::ptr::NonNull<JsLoopCtxOwner>,
+    );
+    pub unsafe fn bun_vm_loop_ctx_ref_concurrently(vm: core::ptr::NonNull<JsLoopCtxOwner>);
+    pub unsafe fn bun_vm_loop_ctx_unref_concurrently(vm: core::ptr::NonNull<JsLoopCtxOwner>);
+    pub unsafe fn bun_vm_loop_ctx_after_event_loop_callback(
+        vm: core::ptr::NonNull<JsLoopCtxOwner>,
+    ) -> Option<OpaqueCallback>;
+    pub unsafe fn bun_vm_loop_ctx_set_after_event_loop_callback(
+        vm: core::ptr::NonNull<JsLoopCtxOwner>,
+        cb: Option<OpaqueCallback>,
+        ctx: Option<core::ptr::NonNull<core::ffi::c_void>>,
+    );
+    pub unsafe fn bun_vm_loop_ctx_pipe_read_buffer(
+        vm: core::ptr::NonNull<JsLoopCtxOwner>,
+    ) -> *mut [u8];
+
+    pub unsafe fn bun_mini_loop_ctx_platform_event_loop_ptr(
+        ml: core::ptr::NonNull<MiniLoopCtxOwner>,
+    ) -> *mut bun_uws_sys::Loop;
+    pub unsafe fn bun_mini_loop_ctx_file_polls_ptr(
+        ml: core::ptr::NonNull<MiniLoopCtxOwner>,
+    ) -> *mut Store;
+    pub unsafe fn bun_mini_loop_ctx_increment_pending_unref_counter(
+        ml: core::ptr::NonNull<MiniLoopCtxOwner>,
+    );
+    pub unsafe fn bun_mini_loop_ctx_ref_concurrently(ml: core::ptr::NonNull<MiniLoopCtxOwner>);
+    pub unsafe fn bun_mini_loop_ctx_unref_concurrently(ml: core::ptr::NonNull<MiniLoopCtxOwner>);
+    pub unsafe fn bun_mini_loop_ctx_after_event_loop_callback(
+        ml: core::ptr::NonNull<MiniLoopCtxOwner>,
+    ) -> Option<OpaqueCallback>;
+    pub unsafe fn bun_mini_loop_ctx_set_after_event_loop_callback(
+        ml: core::ptr::NonNull<MiniLoopCtxOwner>,
+        cb: Option<OpaqueCallback>,
+        ctx: Option<core::ptr::NonNull<core::ffi::c_void>>,
+    );
+    pub unsafe fn bun_mini_loop_ctx_pipe_read_buffer(
+        ml: core::ptr::NonNull<MiniLoopCtxOwner>,
+    ) -> *mut [u8];
+}
+
+/// Handle to the loop's owner — a live `*mut VirtualMachine` (`Js`) or
+/// `*mut MiniEventLoop` (`Mini`), erased to the matching opaque handle type.
+/// SAFETY invariant: the owner must outlive every dispatch through the handle.
+/// The repr is private so a handle can only come from the `unsafe`
+/// constructors [`EventLoopCtx::js`] / [`EventLoopCtx::mini`].
 #[derive(Copy, Clone)]
-pub struct EventLoopCtx {
-    pub kind: EventLoopCtxKind,
-    pub owner: *mut (),
-    pub vtable: &'static EventLoopCtxVTable,
+pub struct EventLoopCtx(EventLoopCtxRepr);
+
+#[derive(Copy, Clone)]
+enum EventLoopCtxRepr {
+    Js(core::ptr::NonNull<JsLoopCtxOwner>),
+    Mini(core::ptr::NonNull<MiniLoopCtxOwner>),
 }
 
 impl EventLoopCtx {
-    /// SAFETY: owner must be live (and match the vtable's concrete type) for
-    /// every dispatch through the handle — same contract as before.
+    /// Build a `Js` handle from the owning `VirtualMachine` pointer.
+    ///
+    /// # Safety
+    /// `owner` must point to a live `jsc::VirtualMachine` that outlives every
+    /// dispatch through the returned handle (and any copy of it).
     #[inline]
-    pub unsafe fn new(
-        kind: EventLoopCtxKind,
-        owner: *mut (),
-        vtable: &'static EventLoopCtxVTable,
-    ) -> Self {
-        Self {
-            kind,
-            owner,
-            vtable,
+    pub unsafe fn js(owner: core::ptr::NonNull<JsLoopCtxOwner>) -> Self {
+        Self(EventLoopCtxRepr::Js(owner))
+    }
+    /// Build a `Mini` handle from the owning `MiniEventLoop` pointer.
+    ///
+    /// # Safety
+    /// `owner` must point to a live `bun_event_loop::MiniEventLoop` that
+    /// outlives every dispatch through the returned handle (and any copy).
+    #[inline]
+    pub unsafe fn mini(owner: core::ptr::NonNull<MiniLoopCtxOwner>) -> Self {
+        Self(EventLoopCtxRepr::Mini(owner))
+    }
+    #[inline]
+    pub fn kind(&self) -> EventLoopCtxKind {
+        match self.0 {
+            EventLoopCtxRepr::Js(_) => EventLoopCtxKind::Js,
+            EventLoopCtxRepr::Mini(_) => EventLoopCtxKind::Mini,
         }
     }
     #[inline]
     pub fn is(&self, kind: EventLoopCtxKind) -> bool {
-        self.kind == kind
+        self.kind() == kind
     }
 }
 
 impl EventLoopCtx {
     #[inline]
     pub fn platform_event_loop_ptr(&self) -> *mut bun_uws_sys::Loop {
-        // SAFETY: established by `unsafe fn new()`.
-        unsafe { (self.vtable.platform_event_loop_ptr)(self.owner) }
+        // SAFETY: live-owner invariant on the enum.
+        unsafe {
+            match self.0 {
+                EventLoopCtxRepr::Js(vm) => bun_vm_loop_ctx_platform_event_loop_ptr(vm),
+                EventLoopCtxRepr::Mini(ml) => bun_mini_loop_ctx_platform_event_loop_ptr(ml),
+            }
+        }
     }
     #[inline]
     pub fn file_polls_ptr(&self) -> *mut Store {
-        // SAFETY: established by `unsafe fn new()`.
-        unsafe { (self.vtable.file_polls_ptr)(self.owner) }
+        // SAFETY: live-owner invariant on the enum.
+        unsafe {
+            match self.0 {
+                EventLoopCtxRepr::Js(vm) => bun_vm_loop_ctx_file_polls_ptr(vm),
+                EventLoopCtxRepr::Mini(ml) => bun_mini_loop_ctx_file_polls_ptr(ml),
+            }
+        }
     }
     #[inline]
     pub fn increment_pending_unref_counter(&self) {
-        // SAFETY: established by `unsafe fn new()`.
-        unsafe { (self.vtable.increment_pending_unref_counter)(self.owner) }
+        // SAFETY: live-owner invariant on the enum.
+        unsafe {
+            match self.0 {
+                EventLoopCtxRepr::Js(vm) => bun_vm_loop_ctx_increment_pending_unref_counter(vm),
+                EventLoopCtxRepr::Mini(ml) => bun_mini_loop_ctx_increment_pending_unref_counter(ml),
+            }
+        }
     }
     #[inline]
     pub fn ref_concurrently(&self) {
-        // SAFETY: established by `unsafe fn new()`.
-        unsafe { (self.vtable.ref_concurrently)(self.owner) }
+        // SAFETY: live-owner invariant on the enum.
+        unsafe {
+            match self.0 {
+                EventLoopCtxRepr::Js(vm) => bun_vm_loop_ctx_ref_concurrently(vm),
+                EventLoopCtxRepr::Mini(ml) => bun_mini_loop_ctx_ref_concurrently(ml),
+            }
+        }
     }
     #[inline]
     pub fn unref_concurrently(&self) {
-        // SAFETY: established by `unsafe fn new()`.
-        unsafe { (self.vtable.unref_concurrently)(self.owner) }
+        // SAFETY: live-owner invariant on the enum.
+        unsafe {
+            match self.0 {
+                EventLoopCtxRepr::Js(vm) => bun_vm_loop_ctx_unref_concurrently(vm),
+                EventLoopCtxRepr::Mini(ml) => bun_mini_loop_ctx_unref_concurrently(ml),
+            }
+        }
     }
     #[inline]
     pub fn after_event_loop_callback(&self) -> Option<OpaqueCallback> {
-        // SAFETY: established by `unsafe fn new()`.
-        unsafe { (self.vtable.after_event_loop_callback)(self.owner) }
+        // SAFETY: live-owner invariant on the enum.
+        unsafe {
+            match self.0 {
+                EventLoopCtxRepr::Js(vm) => bun_vm_loop_ctx_after_event_loop_callback(vm),
+                EventLoopCtxRepr::Mini(ml) => bun_mini_loop_ctx_after_event_loop_callback(ml),
+            }
+        }
     }
     #[inline]
     pub fn set_after_event_loop_callback(
@@ -188,13 +281,27 @@ impl EventLoopCtx {
         cb: Option<OpaqueCallback>,
         ctx: Option<core::ptr::NonNull<core::ffi::c_void>>,
     ) {
-        // SAFETY: established by `unsafe fn new()`.
-        unsafe { (self.vtable.set_after_event_loop_callback)(self.owner, cb, ctx) }
+        // SAFETY: live-owner invariant on the enum.
+        unsafe {
+            match self.0 {
+                EventLoopCtxRepr::Js(vm) => {
+                    bun_vm_loop_ctx_set_after_event_loop_callback(vm, cb, ctx)
+                }
+                EventLoopCtxRepr::Mini(ml) => {
+                    bun_mini_loop_ctx_set_after_event_loop_callback(ml, cb, ctx)
+                }
+            }
+        }
     }
     #[inline]
     pub fn pipe_read_buffer(&self) -> *mut [u8] {
-        // SAFETY: established by `unsafe fn new()`.
-        unsafe { (self.vtable.pipe_read_buffer)(self.owner) }
+        // SAFETY: live-owner invariant on the enum.
+        unsafe {
+            match self.0 {
+                EventLoopCtxRepr::Js(vm) => bun_vm_loop_ctx_pipe_read_buffer(vm),
+                EventLoopCtxRepr::Mini(ml) => bun_mini_loop_ctx_pipe_read_buffer(ml),
+            }
+        }
     }
 }
 
@@ -205,14 +312,23 @@ thread_local! {
         const { core::cell::Cell::new(None) };
 }
 
-/// Install (or clear) the per-thread `EventLoopCtx` handle that
-/// [`posix_event_loop::get_vm_ctx`] hands out. The `Js` cell is set in
-/// `VirtualMachine::init` and cleared in `VirtualMachine::destroy`; the `Mini`
-/// cell is set in `MiniEventLoop::init_global`.
-pub fn set_current_ctx(kind: EventLoopCtxKind, ctx: Option<EventLoopCtx>) {
+/// Install the per-thread `EventLoopCtx` handle that
+/// [`posix_event_loop::get_vm_ctx`] hands out; the cell is chosen by the
+/// handle's own variant. The `Js` cell is set in `VirtualMachine::init` and
+/// cleared in `VirtualMachine::destroy`; the `Mini` cell is set in
+/// `MiniEventLoop::init_global`.
+pub fn set_current_ctx(ctx: EventLoopCtx) {
+    match ctx.0 {
+        EventLoopCtxRepr::Js(_) => CURRENT_JS_CTX.with(|c| c.set(Some(ctx))),
+        EventLoopCtxRepr::Mini(_) => CURRENT_MINI_CTX.with(|c| c.set(Some(ctx))),
+    }
+}
+
+/// Clear the per-thread `EventLoopCtx` cell for `kind` (loop teardown).
+pub fn clear_current_ctx(kind: EventLoopCtxKind) {
     match kind {
-        EventLoopCtxKind::Js => CURRENT_JS_CTX.with(|c| c.set(ctx)),
-        EventLoopCtxKind::Mini => CURRENT_MINI_CTX.with(|c| c.set(ctx)),
+        EventLoopCtxKind::Js => CURRENT_JS_CTX.with(|c| c.set(None)),
+        EventLoopCtxKind::Mini => CURRENT_MINI_CTX.with(|c| c.set(None)),
     }
 }
 

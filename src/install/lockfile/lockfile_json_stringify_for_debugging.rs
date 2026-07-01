@@ -1,6 +1,7 @@
 use crate::lockfile::package::PackageColumns as _;
 use bun_core::PathBuffer;
 use bun_core::fmt as bun_fmt;
+use bun_install_types::{DependencyID, INVALID_PACKAGE_ID, PackageID};
 use bun_semver::ExternalString;
 use bun_semver::string::JsonFormatterOptions;
 
@@ -11,7 +12,7 @@ use bun_install_types::dependency::{Behavior, NpmInfo, TagInfo, TarballInfo, URI
 use bun_install_types::resolver_hooks::Repository;
 use bun_install_types::resolver_hooks::{Architecture, OperatingSystem};
 
-use crate::{Dependency, DependencyID, INVALID_PACKAGE_ID, Origin, PackageID};
+use crate::{Dependency, Origin};
 
 use super::package::scripts::Scripts as PackageScripts;
 use super::tree::{DepthBuf, IteratorPathStyle, MAX_DEPTH};

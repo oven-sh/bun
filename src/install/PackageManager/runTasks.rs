@@ -1,4 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
+use bun_install_types::{DependencyID, INVALID_PACKAGE_ID, PackageID};
 use core::cell::Cell;
 use core::sync::atomic::Ordering;
 use std::io::Write as _;
@@ -13,10 +14,7 @@ use crate::network_task::Callback as NetworkTaskCallback;
 use crate::npm;
 use crate::patch_install::{Callback as PatchTaskCallback, PatchTask};
 use crate::tarball_stream::TarballStream;
-use crate::{
-    DependencyID, ExtractTarball, INVALID_PACKAGE_ID, NetworkTask, PackageID, PackageManifestError,
-    Repository,
-};
+use crate::{ExtractTarball, NetworkTask, PackageManifestError, Repository};
 // Import the *module* under the `Task` name so `Task::Id` resolves as a path.
 use super::{PackageInstaller, PackageManager, ProgressStrings, Subcommand, TaskCallbackList};
 use super::{directories, enqueue};
@@ -1241,7 +1239,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     )?;
                 }
 
-                manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
+                manager.set_preinstall_state(package_id, bun_install_types::PreinstallState::Done);
 
                 if log_level.show_progress() {
                     if !has_updated_this_run.get() {

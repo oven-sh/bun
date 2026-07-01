@@ -256,7 +256,7 @@ impl BodyMixin for Response {
     #[inline]
     fn get_form_data_encoding(
         &self,
-    ) -> bun_jsc::JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
+    ) -> bun_jsc::JsResult<Option<Box<crate::webcore::form_data::AsyncFormData>>> {
         Response::get_form_data_encoding(self)
     }
 }
@@ -389,15 +389,18 @@ impl Response {
 
     pub fn get_form_data_encoding(
         &self,
-    ) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
+    ) -> JsResult<Option<Box<crate::webcore::form_data::AsyncFormData>>> {
         let Some(content_type_slice) = self.get_content_type()? else {
             return Ok(None);
         };
         // content_type_slice drops at scope exit
-        let Some(encoding) = bun_core::form_data::Encoding::get(content_type_slice.slice()) else {
+        let Some(encoding) = crate::webcore::form_data::Encoding::get(content_type_slice.slice())
+        else {
             return Ok(None);
         };
-        Ok(Some(bun_core::form_data::AsyncFormData::init(encoding)))
+        Ok(Some(crate::webcore::form_data::AsyncFormData::init(
+            encoding,
+        )))
     }
 
     pub fn calculate_estimated_byte_size(&self) {

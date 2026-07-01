@@ -712,10 +712,8 @@ pub mod windows_stdio {
         #[cfg(debug_assertions)]
         fd_internals::WINDOWS_CACHED_FD_SET.store(true, Ordering::Relaxed);
 
-        // SAFETY: BUFFERED_STDIN is a static initialized at startup before use.
-        unsafe {
-            (*BUFFERED_STDIN.get()).fd = Fd::stdin();
-        }
+        // The stdin handle is now cached: `bun_sys::stdio::init()` (called by
+        // `bun_bin` right after `stdio::init()`) fixes up `BUFFERED_STDIN.fd`.
 
         // https://learn.microsoft.com/en-us/windows/console/setconsoleoutputcp
         const CP_UTF8: u32 = 65001;
@@ -2738,120 +2736,9 @@ pub fn err_fmt(formatter: impl fmt::Display) {
 // ──────────────────────────────────────────────────────────────────────────
 // Stdin readers
 //
-// `BufferedStdin` is a plain tier-0 buffered reader over `fdio::read`, used
-// by the `prompt`/`init`/`publish` callers to read stdin.
+// The buffered process-global stdin reader (`bun.Output.buffered_stdin`)
+// lives in `bun_sys::stdio` (it reads through `bun_sys::read`).
 // ──────────────────────────────────────────────────────────────────────────
-
-pub(crate) static BUFFERED_STDIN: crate::RacyCell<BufferedStdin> =
-    crate::RacyCell::new(BufferedStdin {
-        fd: {
-            #[cfg(windows)]
-            {
-                Fd::INVALID // set in WindowsStdio.init
-            }
-            #[cfg(not(windows))]
-            {
-                Fd::stdin()
-            }
-        },
-        buf: [0; 4096],
-        start: 0,
-        end: 0,
-    });
-
-/// `bun.deprecated.BufferedReader(4096, File.Reader)` over the process stdin.
-/// Layout is local to bun_core; bun_sys never casts into this (it only fills
-/// `.fd` during Windows startup).
-#[repr(C)]
-pub struct BufferedStdin {
-    pub fd: Fd,
-    pub buf: [u8; 4096],
-    pub start: usize,
-    pub end: usize,
-}
-
-impl BufferedStdin {
-    /// Hands back `&mut Self` (which already exposes `read`/`read_byte`).
-    #[inline]
-    pub fn reader(&mut self) -> &mut Self {
-        self
-    }
-
-    /// Fill `dest` from the buffer, refilling from
-    /// the underlying fd until `dest` is full or EOF. Returns `Ok(0)` on EOF.
-    ///
-    /// Matches std `BufferedReader.read` fill-to-completion semantics
-    /// (loops on the underlying fd), not POSIX partial-read.
-    pub fn read(&mut self, dest: &mut [u8]) -> Result<usize, crate::Error> {
-        let mut written: usize = 0;
-        loop {
-            let current = &self.buf[self.start..self.end];
-            if !current.is_empty() {
-                let n = current.len().min(dest.len() - written);
-                dest[written..written + n].copy_from_slice(&current[..n]);
-                self.start += n;
-                written += n;
-                if written == dest.len() {
-                    return Ok(written);
-                }
-            }
-            let remaining = dest.len() - written;
-            if remaining >= self.buf.len() {
-                // Large dest tail: bypass the buffer.
-                let n = crate::fdio::read(self.fd, &mut dest[written..])?;
-                if n == 0 {
-                    return Ok(written);
-                }
-                written += n;
-                if written == dest.len() {
-                    return Ok(written);
-                }
-                continue;
-            }
-            self.end = crate::fdio::read(self.fd, &mut self.buf)?;
-            self.start = 0;
-            if self.end == 0 {
-                return Ok(written);
-            }
-        }
-    }
-
-    /// Read one byte — `Err` on I/O error *or* EOF (`EndOfStream`).
-    pub fn read_byte(&mut self) -> Result<u8, crate::Error> {
-        if self.start < self.end {
-            let b = self.buf[self.start];
-            self.start += 1;
-            return Ok(b);
-        }
-        let mut one = [0u8; 1];
-        match self.read(&mut one)? {
-            0 => Err(crate::err!(EndOfStream)),
-            _ => Ok(one[0]),
-        }
-    }
-
-    /// Appends bytes (not
-    /// including `delimiter`) into `out`; errors with `StreamTooLong`
-    /// semantics if `out.len()` would exceed `max_size`.
-    pub fn read_until_delimiter_array_list(
-        &mut self,
-        out: &mut Vec<u8>,
-        delimiter: u8,
-        max_size: usize,
-    ) -> Result<(), crate::Error> {
-        out.clear();
-        loop {
-            if out.len() >= max_size {
-                return Err(crate::err!(StreamTooLong));
-            }
-            let b = self.read_byte()?;
-            if b == delimiter {
-                return Ok(());
-            }
-            out.push(b);
-        }
-    }
-}
 
 /// Unbuffered stdin byte reader.
 /// Each `take_byte` is a 1-byte blocking read on the process stdin.
@@ -2881,38 +2768,6 @@ impl StdinReader {
 #[inline]
 pub fn stdin_reader() -> StdinReader {
     StdinReader { fd: Fd::stdin() }
-}
-
-/// `bun.Output.buffered_stdin` — raw pointer to the process-global 4 KiB
-/// buffered stdin. Used by `prompt()`/`bun init`/`bun publish` line reads.
-///
-/// Returns `*mut` (not `&'static mut`) to avoid handing out two live aliasing
-/// `&mut` to the same static (PORTING.md §Forbidden); callers materialise the
-/// `&mut` at the use site. Matches the other self-ref escapes in this module
-/// (`writer()`, `error_writer()`, …).
-///
-/// SAFETY: the static is single-threaded by construction (only ever touched
-/// from the main JS/CLI thread while blocked on user input).
-#[inline]
-pub fn buffered_stdin() -> *mut BufferedStdin {
-    BUFFERED_STDIN.get()
-}
-
-/// `bun.Output.buffered_stdin.reader()` — same accessor as [`buffered_stdin`].
-#[inline]
-pub fn buffered_stdin_reader() -> *mut BufferedStdin {
-    buffered_stdin()
-}
-
-/// Convenience for `bun.Output.buffered_stdin.reader().readUntilDelimiterArrayList`.
-#[inline]
-pub fn buffered_stdin_read_until_delimiter(
-    out: &mut Vec<u8>,
-    delimiter: u8,
-    max_size: usize,
-) -> Result<(), crate::Error> {
-    // SAFETY: single-threaded static; only live `&mut` for this call's duration.
-    unsafe { (*buffered_stdin()).read_until_delimiter_array_list(out, delimiter, max_size) }
 }
 
 /// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036

@@ -1,4 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
+use bun_install_types::{INVALID_PACKAGE_ID, PackageID, PreinstallState, TruncatedPackageNameHash};
 use core::sync::atomic::Ordering;
 use std::io::Write as _;
 
@@ -17,15 +18,13 @@ use bun_threading::Mutex;
 use bun_resolver::fs::FileSystem;
 
 use super::directories;
+use crate::PackageManager;
 use crate::lifecycle_script_runner::{
     InstallCtx, LifecycleScriptSubprocess as RealLifecycleScriptSubprocess,
 };
 use crate::lockfile::package::scripts::List as ScriptsList;
 use crate::lockfile::{self, Lockfile, Package};
 use crate::resolution::Tag as ResolutionTag;
-use crate::{
-    INVALID_PACKAGE_ID, PackageID, PackageManager, PreinstallState, TruncatedPackageNameHash,
-};
 use bun_options_types::context::Context;
 
 #[derive(Default)]

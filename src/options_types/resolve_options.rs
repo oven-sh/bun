@@ -8,11 +8,27 @@ use crate::jsx;
 
 pub type ConditionsMap = bun_collections::StringArrayHashMap<()>;
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Packages {
     #[default]
     Bundle,
     External,
+}
+
+impl Packages {
+    pub fn from_api(packages: Option<crate::schema::api::PackagesMode>) -> Packages {
+        match packages.unwrap_or(crate::schema::api::PackagesMode::Bundle) {
+            crate::schema::api::PackagesMode::External => Packages::External,
+            crate::schema::api::PackagesMode::Bundle => Packages::Bundle,
+        }
+    }
+
+    pub fn to_api(packages: Option<Packages>) -> crate::schema::api::PackagesMode {
+        match packages.unwrap_or(Packages::Bundle) {
+            Packages::External => crate::schema::api::PackagesMode::External,
+            Packages::Bundle => crate::schema::api::PackagesMode::Bundle,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -46,11 +62,11 @@ pub struct Conditions {
 }
 
 /// `Copy` tag selecting one of the extension-order lists owned by
-/// [`BundleOptions`]. Replaces the previous `*const [Box<[u8]>]`
+/// [`ResolveOptionsCore`]. Replaces the previous `*const [Box<[u8]>]`
 /// self-reference (`Resolver.extension_order` pointing into
 /// `Resolver.opts`) with a value type. The tag is
 /// `Copy`, and the actual slice is resolved on demand via
-/// [`BundleOptions::ext_order_slice`] / [`Resolver::extension_order`].
+/// [`ResolveOptionsCore::ext_order_slice`] / [`Resolver::extension_order`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum ExtOrder {
     /// `opts.extension_order.default.default`
@@ -69,14 +85,16 @@ pub enum ExtOrder {
     MainField,
 }
 
+#[derive(Clone)]
 pub struct ExtensionOrder {
     pub default: ExtensionOrderGroup,
     pub node_modules: ExtensionOrderGroup,
-    /// Not on the bundler-side struct — the spec resolver reads
-    /// `Defaults.CssExtensionOrder` directly. Stored here so every
+    /// Never user-configurable (the spec resolver reads
+    /// `Defaults.CssExtensionOrder` directly). Stored here so every
     /// [`ExtOrder`] tag resolves into storage with the same owner/lifetime.
     pub css: Box<[Box<[u8]>]>,
 }
+#[derive(Clone)]
 pub struct ExtensionOrderGroup {
     pub default: Box<[Box<[u8]>]>,
     pub esm: Box<[Box<[u8]>]>,
@@ -131,7 +149,7 @@ impl ExtensionOrder {
     }
 }
 
-impl BundleOptions {
+impl ResolveOptionsCore {
     /// Resolve an [`ExtOrder`] tag to the slice it names inside `self`.
     /// All targets are `Box<[Box<[u8]>]>` owned by `self` and never
     /// reallocated after `Resolver::init1`, so the returned borrow is
@@ -149,25 +167,25 @@ impl BundleOptions {
     }
 }
 
-/// Resolver-tier `BundleOptions` — the canonical resolver-input struct.
-/// `bun_bundler::options::BundleOptions` (the ~200-field CLI/config
-/// aggregate) projects into this via
-/// `bun_bundler::transpiler::resolver_bundle_options_subset`; the bundler
-/// depends on this crate, so this type is the lower-tier source of truth
-/// for everything resolution reads.
-pub struct BundleOptions {
+/// The resolver-input fields whose single source of truth is the bundler's
+/// `BundleOptions.resolve` embed. `conditions` and `framework` are NOT here:
+/// the bundler keeps richer authoritative copies of those (`ESMConditions`,
+/// a borrowed `&Framework`) and projects them only into the resolver
+/// snapshot ([`BundleOptions`]), so this type cannot even spell a stale copy.
+#[derive(Clone)]
+pub struct ResolveOptionsCore {
     pub target: Target,
     pub packages: Packages,
     pub jsx: jsx::Pragma,
     pub extension_order: ExtensionOrder,
-    pub conditions: Conditions,
     pub external: ExternalModules,
     pub extra_cjs_extensions: Box<[Box<[u8]>]>,
-    pub framework: Option<crate::bake::Framework>,
     pub global_cache: crate::global_cache::GlobalCache,
-    // The bundler
-    // projects this from its own `Option<NonNull<api::BunInstall>>` field
-    // (CLI-owned `Box<BunInstall>`, process-lifetime).
+    /// Stored as a raw `NonNull` (not a typed reference) because every CLI
+    /// caller borrows the process-lifetime `ctx.install: Box<BunInstall>`,
+    /// whose lifetime is unrelated to the bundler's `'a`. The consumers
+    /// (`BundleOptions::install()`, `PackageManager::init_with_runtime`) only
+    /// read through it.
     pub install: Option<core::ptr::NonNull<crate::schema::api::BunInstall>>,
     pub load_package_json: bool,
     pub load_tsconfig_json: bool,
@@ -175,9 +193,10 @@ pub struct BundleOptions {
     pub main_fields: Box<[Box<[u8]>]>,
     /// `auto_main` compares the *pointer* of
     /// `opts.main_fields` against `Target.DefaultMainFields.get(target)` to
-    /// detect "user did not pass --main-fields". The bundler stores an owned
-    /// `Box<[Box<[u8]>]>` whose pointer can never match a static, so the
-    /// bundler projects this flag explicitly instead.
+    /// detect "user did not pass --main-fields". `main_fields` is an owned
+    /// `Box<[Box<[u8]>]>` whose pointer can never match a static, so
+    /// `bun_bundler::options::BundleOptions::from_api` sets this flag
+    /// explicitly instead.
     pub main_fields_is_default: bool,
     pub mark_builtins_as_external: bool,
     pub polyfill_node_globals: bool,
@@ -198,21 +217,55 @@ pub struct BundleOptions {
     pub allow_runtime: bool,
 }
 
-impl Default for BundleOptions {
-    /// Only the fields the resolver
-    /// reads — `bun_bundler::Transpiler::init` overlays the per-field
-    /// projections it can map (target/packages/jsx/bools/global_cache/…)
-    /// before handing this to `Resolver::init1`.
-    fn default() -> Self {
+/// Resolver-tier `BundleOptions` — the struct `Resolver::init1` receives.
+/// `bun_bundler::options::BundleOptions` (the ~200-field CLI/config
+/// aggregate) embeds only [`ResolveOptionsCore`] as its `resolve` field;
+/// `bun_bundler::transpiler::resolver_options_snapshot` builds this wrapper
+/// by cloning that core and projecting the bundler's authoritative
+/// `conditions` / `framework` alongside it.
+#[derive(Default)]
+pub struct BundleOptions {
+    pub core: ResolveOptionsCore,
+    pub conditions: Conditions,
+    pub framework: Option<crate::bake::Framework>,
+}
+
+impl BundleOptions {
+    /// See [`ResolveOptionsCore::ext_order_slice`].
+    #[inline]
+    pub fn ext_order_slice(&self, tag: ExtOrder) -> &[Box<[u8]>] {
+        self.core.ext_order_slice(tag)
+    }
+
+    pub fn set_production(&mut self, value: bool) {
+        self.core.set_production(value);
+    }
+
+    pub fn deep_clone(&self) -> Self {
         BundleOptions {
+            core: self.core.clone(),
+            conditions: self.conditions.deep_clone(),
+            framework: self
+                .framework
+                .as_ref()
+                .map(crate::bake::Framework::deep_clone),
+        }
+    }
+}
+
+impl Default for ResolveOptionsCore {
+    /// Only the fields the resolver
+    /// reads — `bun_bundler::options::BundleOptions::from_api` overwrites them
+    /// on the embedded `resolve` field before `Resolver::init1` receives its
+    /// snapshot.
+    fn default() -> Self {
+        ResolveOptionsCore {
             target: Target::default(),
             packages: Packages::default(),
             jsx: jsx::Pragma::default(),
             extension_order: ExtensionOrder::default(),
-            conditions: Conditions::default(),
             external: ExternalModules::default(),
             extra_cjs_extensions: Box::default(),
-            framework: None,
             global_cache: Default::default(),
             install: None,
             load_package_json: true,
@@ -241,7 +294,19 @@ impl Default for BundleOptions {
     }
 }
 
-impl BundleOptions {
+impl Conditions {
+    /// `ConditionsMap::clone` is an inherent fallible method (returns
+    /// `Result<_, AllocError>`), so this can't be `#[derive(Clone)]`.
+    pub fn deep_clone(&self) -> Self {
+        Conditions {
+            import: self.import.clone().expect("oom"),
+            require: self.require.clone().expect("oom"),
+            style: self.style.clone().expect("oom"),
+        }
+    }
+}
+
+impl ResolveOptionsCore {
     pub fn set_production(&mut self, value: bool) {
         if self.force_node_env == crate::bundle_enums::ForceNodeEnv::Unspecified {
             self.production = value;

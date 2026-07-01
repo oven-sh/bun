@@ -1,4 +1,5 @@
 use bun_collections::VecExt;
+use bun_install_types::PackageNameHash;
 use std::io::Write as _;
 
 use crate::bun_schema::api;
@@ -20,8 +21,8 @@ use crate::ExternalPackageNameHashList;
 use crate::bin::{self, Bin};
 use crate::integrity::Integrity;
 use crate::{
-    Aligner, ExternalSlice, ExternalStringList, ExternalStringMap, PackageManager, PackageNameHash,
-    VersionSlice, initialize_mini_store as initialize_store,
+    Aligner, ExternalSlice, ExternalStringList, ExternalStringMap, PackageManager, VersionSlice,
+    initialize_mini_store as initialize_store,
 };
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -233,7 +233,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
         });
         let mut path_buf = PathBuffer::uninit();
         let out_path = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
-            bun_paths::fs::FileSystem::instance().top_level_dir(),
+            bun_paths::fs::top_level_dir(),
             &mut path_buf.0,
             &[&opts.reports_directory, b"lcov.info"],
         );

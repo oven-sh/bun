@@ -1,6 +1,6 @@
-use crate::sql_jsc::jsc::{JSGlobalObject, JSValue};
 use crate::sql_jsc::mysql::my_sql_value::DateTime;
 use bun_core::parse_int;
+use bun_jsc::{JSGlobalObject, JSValue};
 
 use bun_sql::mysql::protocol::ColumnDefinition41;
 use bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError;
@@ -40,7 +40,7 @@ impl<'a> Row<'a> {
         result_mode: SQLQueryResultMode,
         // Passed by ref because CachedStructure is non-Copy (owns Strong + Box).
         cached_structure: Option<&CachedStructure>,
-    ) -> crate::sql_jsc::jsc::JsResult<JSValue> {
+    ) -> bun_jsc::JsResult<JSValue> {
         SQLDataCell::to_js_object(
             global_object,
             array,

@@ -1438,7 +1438,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         // DirEntry cache stays in `bun_resolver`).
         Self::init_with_cwd(
             pattern,
-            bun_paths::fs::FileSystem::instance().top_level_dir(),
+            bun_paths::fs::top_level_dir(),
             dot,
             absolute,
             follow_symlinks,

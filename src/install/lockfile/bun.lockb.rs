@@ -1,6 +1,7 @@
 //! Binary lockfile (bun.lockb) serializer/deserializer.
 
 use crate::lockfile::package::PackageColumns as _;
+use bun_install_types::{PackageID, PackageNameHash};
 use core::mem::{align_of, size_of};
 
 use bun_core::Error;
@@ -16,7 +17,7 @@ use crate::ALIGNMENT_BYTES_TO_REPEAT_BUFFER;
 use crate::config_version::ConfigVersion;
 use crate::package_manager_real::Options as PackageManagerOptions;
 use crate::resolution::Tag as ResolutionTag;
-use crate::{PackageID, PackageManager, PackageNameAndVersionHash, PackageNameHash};
+use crate::{PackageManager, PackageNameAndVersionHash};
 use bun_ast::Log;
 use bun_core::strings;
 use bun_install_types::dependency;

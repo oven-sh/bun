@@ -1,3 +1,4 @@
+use bun_install_types::{DependencyID, Features, INVALID_PACKAGE_ID, PackageID, PackageNameHash};
 use core::sync::atomic::Ordering;
 
 use bun_core::time::nano_timestamp;
@@ -12,10 +13,7 @@ use crate::GetJsonResult as WorkspacePackageJsonCacheResult;
 use crate::Subcommand;
 use crate::lockfile::{self, Lockfile};
 use crate::resolution::Tag as ResolutionTag;
-use crate::{
-    Dependency, DependencyID, Features, INVALID_PACKAGE_ID, PackageID, PackageNameHash, PatchTask,
-    Resolution,
-};
+use crate::{Dependency, PatchTask, Resolution};
 use bun_install_types::dependency::Tag as DependencyVersionTag;
 // Bring the typed `items_<field>()` column accessors into scope for
 // `MultiArrayList<Package>` / `Slice<Package>`.

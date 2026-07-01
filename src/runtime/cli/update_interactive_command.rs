@@ -1,3 +1,4 @@
+use bun_install_types::{INVALID_PACKAGE_ID, PackageID};
 use core::fmt;
 use core::fmt::Write as _;
 use std::borrow::Cow;
@@ -16,8 +17,8 @@ use bun_install::package_manager::{
     install_with_manager, populate_manifest_cache,
 };
 use bun_install::{
-    CommandLineArguments, GetJsonOptions, GetJsonResult, INVALID_PACKAGE_ID, PackageID,
-    PackageManager, WorkspacePackageJsonCacheEntry, resolution,
+    CommandLineArguments, GetJsonOptions, GetJsonResult, PackageManager,
+    WorkspacePackageJsonCacheEntry, resolution,
 };
 use bun_install_types::DependencyGroup;
 use bun_install_types::dependency::{self, Behavior};

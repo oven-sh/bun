@@ -1,8 +1,8 @@
 use core::mem::size_of;
 
-use crate::sql_jsc::jsc::{JSGlobalObject, JSValue};
 use bun_core::String as BunString;
 use bun_core::err;
+use bun_jsc::{JSGlobalObject, JSValue};
 
 use crate::sql_jsc::shared::cached_structure::CachedStructure as PostgresCachedStructure;
 use bun_sql::postgres::postgres_protocol as protocol;
@@ -217,7 +217,7 @@ fn parse_array(
                     let mut str = BunString::init(date_str);
                     // defer str.deref() → Drop on BunString
                     array.push(SQLDataCell::date(
-                        crate::sql_jsc::jsc::bun_string_jsc::parse_date(&mut str, global_object)
+                        bun_jsc::bun_string_jsc::parse_date(&mut str, global_object)
                             .map_err(AnyPostgresError::from)?,
                     ));
 
@@ -322,7 +322,7 @@ fn parse_array(
                     if array_type == types::Tag::date_array {
                         let mut str = BunString::init(element);
                         array.push(SQLDataCell::date(
-                            crate::sql_jsc::jsc::bun_string_jsc::parse_date(&mut str, global_object)
+                            bun_jsc::bun_string_jsc::parse_date(&mut str, global_object)
                                 .map_err(AnyPostgresError::from)?,
                         ));
                     } else {
@@ -847,7 +847,7 @@ pub(crate) fn from_bytes(
                     Some(d) => d,
                     None => {
                         let mut str = BunString::init(bytes);
-                        crate::sql_jsc::jsc::bun_string_jsc::parse_date(&mut str, global_object)
+                        bun_jsc::bun_string_jsc::parse_date(&mut str, global_object)
                             .map_err(AnyPostgresError::from)?
                     }
                 };

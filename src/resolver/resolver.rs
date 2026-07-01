@@ -12,31 +12,33 @@ use std::io::Write as _;
 
 // ── Cross-crate type surface ──────────────────────────────────────────────
 // Higher-tier symbols are reached through lower-tier crates:
-//   • install value types + AutoInstaller trait — bun_install_types (MOVE_DOWN)
+//   • install value types + PackageManager link fns — bun_install_types (MOVE_DOWN)
 //   • HardcodedModule alias table              — bun_resolve_builtins
 //   • StandaloneModuleGraph                    — concrete graph type re-exported
 //     from bun_standalone_graph_core
 //   • perf / crash_handler                     — real bun_perf / bun_crash_handler
 use ::bun_install_types::resolver_hooks as Install;
-use ::bun_install_types::resolver_hooks::{AutoInstaller, Resolution};
+use ::bun_install_types::resolver_hooks::{PackageManagerHandle, PackageManagerRef, Resolution};
 use ::bun_semver as Semver;
 
-/// Lazily constructs (or returns) the process-static `PackageManager`
-/// singleton as a `dyn AutoInstaller`. Wired by `bun_runtime::jsc_hooks`
-/// at Transpiler init (`bun_install::auto_installer::init_package_manager`),
-/// alongside `on_wake_package_manager`.
-///
-/// # Safety
-/// Same contract as the former link-time extern: `log` / `install` / `env`
-/// must point at process-lifetime Transpiler-owned storage; the returned
-/// `NonNull` names the `'static` `PackageManager` singleton. Init failure is
-/// sticky inside the factory.
-pub type PackageManagerFactory =
-    unsafe fn(
+// Body lives in `bun_install::auto_installer`, next to the single
+// `PackageManager` implementation — `bun_resolver` cannot name it (dep
+// cycle), so the lazy init is reached through this typed link fn.
+unsafe extern "Rust" {
+    /// Lazily constructs (or returns) the process-static `PackageManager`
+    /// singleton as an opaque [`PackageManagerHandle`]. Init failure is
+    /// sticky inside `PackageManager::init_with_runtime`.
+    ///
+    /// # Safety
+    /// `log` / `install` / `env` must point at process-lifetime
+    /// Transpiler-owned storage with no aliasing `&mut` live across the
+    /// call; the returned `NonNull` names the `'static` singleton.
+    fn bun_package_manager_init(
         log: NonNull<bun_ast::Log>,
         install: Option<NonNull<bun_options_types::schema::api::BunInstall>>,
         env: NonNull<bun_dotenv::Loader<'static>>,
-    ) -> core::result::Result<NonNull<dyn AutoInstaller>, bun_core::Error>;
+    ) -> core::result::Result<NonNull<PackageManagerHandle>, bun_core::Error>;
+}
 use crate::cache::Set as CacheSet;
 use ::bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 
@@ -449,6 +451,32 @@ static BIN_FOLDERS_LOCK: Mutex = Mutex::new();
 static BIN_FOLDERS_LOADED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+/// Directory-watch sink: the two concrete `bun_watcher::Watcher`
+/// instantiations that accept resolver directory discoveries — the runtime
+/// hot reloader's (`P = PackageJSON`) and the bundler `--watch` /
+/// dev-server's (`P = ()`).
+#[derive(Clone, Copy)]
+pub enum ResolveWatcher {
+    PackageJson(*mut bun_watcher::Watcher<PackageJSON>),
+    Plain(*mut bun_watcher::Watcher<()>),
+}
+
+impl ResolveWatcher {
+    pub fn watch(&self, dir_path: &[u8], dir_fd: FD) {
+        match *self {
+            Self::PackageJson(w) => {
+                // SAFETY: the installer (hot_reloader / DevServer) guarantees
+                // the Watcher outlives the resolver holding this handle.
+                bun_watcher::Watcher::on_maybe_watch_directory(unsafe { &mut *w }, dir_path, dir_fd)
+            }
+            Self::Plain(w) => {
+                // SAFETY: as above — the installer keeps the Watcher alive.
+                bun_watcher::Watcher::on_maybe_watch_directory(unsafe { &mut *w }, dir_path, dir_fd)
+            }
+        }
+    }
+}
+
 pub struct Resolver<'a> {
     pub opts: options::BundleOptions,
     // NOTE: `fs` / `log` are raw aliasing
@@ -478,21 +506,21 @@ pub struct Resolver<'a> {
 
     /// Directory-watch sink. Installed by hot_reloader / bake::DevServer; the
     /// Watcher outlives the resolver (process/dev-server lifetime).
-    pub watcher: Option<bun_watcher::AnyResolveWatcher>,
+    pub watcher: Option<ResolveWatcher>,
 
     pub caches: CacheSet,
     pub generation: Generation,
 
-    /// Auto-install backend. `bun_install::PackageManager` implements
-    /// [`AutoInstaller`]; the resolver only sees the trait object so it stays
-    /// below `bun_install` in the dep graph. `None` until the auto-install
+    /// Auto-install backend: `bun_install::PackageManager`. The resolver only
+    /// sees the opaque [`PackageManagerHandle`] (dispatched through the
+    /// `bun_pm_*` link fns via [`PackageManagerRef`]) so it stays below
+    /// `bun_install` in the dep graph. `None` until the auto-install
     /// path is first reached: [`get_package_manager`] then initializes the
-    /// singleton through the wired `package_manager_factory`
-    /// factory and caches the pointer here. A failed init (e.g. unreadable
+    /// singleton through the `bun_package_manager_init` link fn and caches
+    /// the handle here. A failed init (e.g. unreadable
     /// top-level directory) is returned as an error and leaves this `None`.
-    pub package_manager: Option<NonNull<dyn AutoInstaller>>,
+    pub package_manager: Option<NonNull<PackageManagerHandle>>,
     pub on_wake_package_manager: Install::WakeHandler,
-    pub package_manager_factory: Option<PackageManagerFactory>,
     // Stored as `NonNull` (not `&'a Loader`) because the same allocation is
     // mutably reborrowed via `Transpiler.env: *mut Loader` after this field is
     // set (e.g. bake/production.rs assigns this then calls `configure_defines()`
@@ -621,7 +649,6 @@ impl<'a> Resolver<'a> {
             generation: from.generation,
             package_manager: from.package_manager,
             on_wake_package_manager: from.on_wake_package_manager,
-            package_manager_factory: from.package_manager_factory,
             // SAFETY: see fn doc — pointee outlives `'a`.
             env_loader: from.env_loader.map(|p| p.cast::<DotEnv::Loader<'a>>()),
             store_fd: from.store_fd,
@@ -810,21 +837,24 @@ impl<'a> Resolver<'a> {
     /// Lazily initializing
     /// `PackageManager.initWithRuntime` here directly would
     /// be a `bun_resolver → bun_install` cycle, so the lazy init is
-    /// dispatched through the [`PackageManagerFactory`] wired by
-    /// `bun_runtime::jsc_hooks` at Transpiler init. The factory performs
+    /// dispatched through the `bun_package_manager_init` link fn, whose body
+    /// (`bun_install::auto_installer`) performs
     /// `HTTPThread.init` + `PackageManager.initWithRuntime` and returns the
-    /// process-static singleton as a `dyn AutoInstaller`. We then wire
-    /// `on_wake` and cache the pointer. Reached from
+    /// process-static singleton as an opaque handle. We then wire
+    /// `on_wake` and cache the handle. Reached from
     /// the auto-install path (`load_node_modules` global-cache block) when
     /// [`use_package_manager`] is `true`. Errs (without caching, but sticky
-    /// inside the factory) when the one-time init fails, e.g. the top-level
-    /// directory was deleted or is unreadable — callers surface that as a
-    /// resolve failure rather than panicking.
+    /// inside `init_with_runtime`) when the one-time init fails, e.g. the
+    /// top-level directory was deleted or is unreadable — callers surface
+    /// that as a resolve failure rather than panicking.
     pub fn get_package_manager(
         &mut self,
-    ) -> core::result::Result<*mut dyn AutoInstaller, bun_core::Error> {
+    ) -> core::result::Result<PackageManagerRef, bun_core::Error> {
         if let Some(pm) = self.package_manager {
-            return Ok(pm.as_ptr());
+            // SAFETY: cached handle from the successful init below; the
+            // PackageManager lives in a separate allocation, so `&mut self`
+            // is the only route to it.
+            return Ok(unsafe { PackageManagerRef::from_handle(pm) });
         }
         // SAFETY: `DotEnv::Loader<'a>` is layout-identical across `'a`;
         // `init_with_runtime` only borrows it for the synchronous init (the
@@ -833,33 +863,33 @@ impl<'a> Resolver<'a> {
             .env_loader
             .expect("Resolver.env_loader must be set before auto-install")
             .cast::<DotEnv::Loader<'static>>();
-        let factory = self
-            .package_manager_factory
-            .expect("package_manager_factory must be wired (jsc_hooks) before auto-install");
-        // SAFETY: factory contract — `self.log` / `self.opts.install` / `env`
+        // SAFETY: link-fn contract — `self.log` / `self.opts.core.install` / `env`
         // point at process-lifetime Transpiler-owned storage.
-        let pm: NonNull<dyn AutoInstaller> = unsafe { factory(self.log, self.opts.install, env) }?;
-        // SAFETY: `pm` is the just-initialized singleton; sole `&mut` here.
-        unsafe { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager) };
+        let pm: NonNull<PackageManagerHandle> =
+            unsafe { bun_package_manager_init(self.log, self.opts.core.install, env) }?;
+        // SAFETY: `pm` is the just-initialized singleton; sole handle here.
+        let pm_ref = unsafe { PackageManagerRef::from_handle(pm) };
+        pm_ref.set_on_wake(self.on_wake_package_manager);
         self.package_manager = Some(pm);
-        Ok(pm.as_ptr())
+        Ok(pm_ref)
     }
 
-    /// Safe accessor for the optional [`AutoInstaller`] back-reference.
+    /// Safe accessor for the optional [`PackageManagerRef`] back-reference.
     ///
-    /// Single `unsafe` deref site for the `package_manager:
-    /// Option<NonNull<dyn AutoInstaller>>` field. The pointee is the
+    /// Single wrap site for the `package_manager:
+    /// Option<NonNull<PackageManagerHandle>>` field. The pointee is the
     /// process-static `PackageManager` singleton (set via
     /// [`get_package_manager`](Self::get_package_manager) /
-    /// the wired `package_manager_factory`), so it strictly outlives the
-    /// resolver. `&mut self` ensures the returned `&mut dyn AutoInstaller` is
-    /// the only live reference for its lifetime.
+    /// the `bun_package_manager_init` link fn), so it strictly outlives the
+    /// resolver. `&mut self` ensures the resolver hands out only one handle
+    /// at a time.
     #[inline]
-    pub fn auto_installer(&mut self) -> Option<&mut dyn AutoInstaller> {
+    pub fn auto_installer(&mut self) -> Option<PackageManagerRef> {
         // SAFETY: BACKREF — `package_manager` names the bun_install-owned
         // singleton, live for the resolver's lifetime once installed; `&mut
         // self` ⇒ exclusive access to the only Rust handle.
-        self.package_manager.map(|mut pm| unsafe { pm.as_mut() })
+        self.package_manager
+            .map(|pm| unsafe { PackageManagerRef::from_handle(pm) })
     }
 
     /// Safe read-only accessor for the optional `DotEnv::Loader` back-reference.
@@ -899,7 +929,7 @@ impl<'a> Resolver<'a> {
             return false;
         }
 
-        self.opts.global_cache.is_enabled()
+        self.opts.core.global_cache.is_enabled()
     }
 
     pub fn init1(
@@ -909,7 +939,7 @@ impl<'a> Resolver<'a> {
     ) -> Self {
         // resolver_Mutex_loaded check elided; static is const-inited in Rust.
 
-        let care_about_browser_field = opts.target == options::Target::Browser;
+        let care_about_browser_field = opts.core.target == options::Target::Browser;
         Resolver {
             // allocator dropped
             // Route through the per-monomorphization singleton so this field and
@@ -931,7 +961,6 @@ impl<'a> Resolver<'a> {
             generation: 0,
             package_manager: None,
             on_wake_package_manager: Default::default(),
-            package_manager_factory: None,
             env_loader: None,
             store_fd: false,
             standalone_module_graph: None,
@@ -941,7 +970,7 @@ impl<'a> Resolver<'a> {
     }
 
     pub fn is_external_pattern(&self, import_path: &[u8]) -> bool {
-        if self.opts.packages == options::Packages::External && is_package_path(import_path) {
+        if self.opts.core.packages == options::Packages::External && is_package_path(import_path) {
             return true;
         }
         self.matches_user_external_pattern(import_path)
@@ -951,7 +980,7 @@ impl<'a> Resolver<'a> {
     /// pattern. Does NOT consider `packages = external`; use
     /// `isExternalPattern` for the combined check.
     pub fn matches_user_external_pattern(&self, import_path: &[u8]) -> bool {
-        for pattern in self.opts.external.patterns.iter() {
+        for pattern in self.opts.core.external.patterns.iter() {
             if import_path.len() >= pattern.prefix.len() + pattern.suffix.len()
                 && (import_path.starts_with(pattern.prefix.as_ref())
                     && import_path.ends_with(pattern.suffix.as_ref()))
@@ -1141,14 +1170,14 @@ impl<'a> Resolver<'a> {
             return ResultUnion::NotFound;
         }
 
-        if self.opts.mark_builtins_as_external {
+        if self.opts.core.mark_builtins_as_external {
             if import_path.starts_with(b"node:")
                 || import_path.starts_with(b"bun:")
                 || HardcodedAlias::has(
                     import_path,
-                    self.opts.target,
+                    self.opts.core.target,
                     HardcodedAliasCfg {
-                        rewrite_jest_for_tests: self.opts.rewrite_jest_for_tests,
+                        rewrite_jest_for_tests: self.opts.core.rewrite_jest_for_tests,
                     },
                 )
             {
@@ -1174,7 +1203,7 @@ impl<'a> Resolver<'a> {
         // .d.ts stubs must still let real bare imports stay external.
         if kind != ImportKind::EntryPointBuild
             && kind != ImportKind::EntryPointRun
-            && self.opts.packages == options::Packages::External
+            && self.opts.core.packages == options::Packages::External
             && is_package_path(import_path)
             && !self.matches_user_external_pattern(import_path)
         {
@@ -1198,7 +1227,7 @@ impl<'a> Resolver<'a> {
                     package_json: res.package_json,
                     dirname_fd: res.dirname_fd,
                     file_fd: res.file_fd,
-                    jsx: self.opts.jsx.clone(),
+                    jsx: self.opts.core.jsx.clone(),
                     ..Default::default()
                 });
             }
@@ -1852,7 +1881,7 @@ impl<'a> Resolver<'a> {
                                 package_json: res.package_json,
                                 dirname_fd: res.dirname_fd,
                                 file_fd: res.file_fd,
-                                jsx: tsconfig.merge_jsx(self.opts.jsx.clone()),
+                                jsx: tsconfig.merge_jsx(self.opts.core.jsx.clone()),
                                 ..Default::default()
                             });
                         }
@@ -1860,8 +1889,8 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            if self.opts.external.abs_paths.count() > 0
-                && self.opts.external.abs_paths.contains(import_path)
+            if self.opts.core.external.abs_paths.count() > 0
+                && self.opts.core.external.abs_paths.contains(import_path)
             {
                 // If the string literal in the source text is an absolute path and has
                 // been marked as an external module, mark it as *not* an absolute path.
@@ -1901,7 +1930,7 @@ impl<'a> Resolver<'a> {
                     diff_case: entry.diff_case,
                     package_json: entry.package_json,
                     file_fd: entry.file_fd,
-                    jsx: self.opts.jsx.clone(),
+                    jsx: self.opts.core.jsx.clone(),
                     ..Default::default()
                 });
             }
@@ -1947,8 +1976,8 @@ impl<'a> Resolver<'a> {
         }
 
         if check_package {
-            if self.opts.polyfill_node_globals {
-                result.jsx = self.opts.jsx.clone();
+            if self.opts.core.polyfill_node_globals {
+                result.jsx = self.opts.core.jsx.clone();
                 let had_node_prefix = import_path.starts_with(b"node:");
                 let import_path_without_node_prefix = if had_node_prefix {
                     &import_path[b"node:".len()..]
@@ -2005,13 +2034,13 @@ impl<'a> Resolver<'a> {
             }
 
             // Check for external packages first
-            if self.opts.external.node_modules.count() > 0
+            if self.opts.core.external.node_modules.count() > 0
             // Imports like "process/" need to resolve to the filesystem, not a builtin
             && !import_path.ends_with(b"/")
             {
                 let mut query = import_path;
                 loop {
-                    if self.opts.external.node_modules.contains(query) {
+                    if self.opts.core.external.node_modules.contains(query) {
                         if let Some(debug) = self.debug_logs.as_mut() {
                             debug.add_note_fmt(format_args!(
                                 "The path \"{}\" was marked as external by the user",
@@ -2080,8 +2109,8 @@ impl<'a> Resolver<'a> {
             return ResultUnion::NotFound;
         };
 
-        if self.opts.external.abs_paths.count() > 0
-            && self.opts.external.abs_paths.contains(abs_path)
+        if self.opts.core.external.abs_paths.count() > 0
+            && self.opts.core.external.abs_paths.contains(abs_path)
         {
             // If the string literal in the source text is an absolute path and has
             // been marked as an external module, mark it as *not* an absolute path.
@@ -2158,7 +2187,7 @@ impl<'a> Resolver<'a> {
                                 diff_case: match_result.diff_case,
                                 dirname_fd: match_result.dirname_fd,
                                 package_json: Some(std::ptr::from_ref(pkg)),
-                                jsx: self.opts.jsx.clone(),
+                                jsx: self.opts.core.jsx.clone(),
                                 module_type: match_result.module_type,
                                 flags,
                                 ..Default::default()
@@ -2172,7 +2201,7 @@ impl<'a> Resolver<'a> {
         let prev_extension_order = self.extension_order;
         // NOTE: defer restore reshaped — restored before each return
         if strings::path_contains_node_modules_folder(abs_path) {
-            self.extension_order = self.opts.extension_order.kind(kind, true);
+            self.extension_order = self.opts.core.extension_order.kind(kind, true);
         }
         let mut res = MatchResult::default();
         let ret = if self
@@ -2184,7 +2213,7 @@ impl<'a> Resolver<'a> {
                 diff_case: res.diff_case,
                 dirname_fd: res.dirname_fd,
                 package_json: res.package_json,
-                jsx: self.opts.jsx.clone(),
+                jsx: self.opts.core.jsx.clone(),
                 ..Default::default()
             })
         } else {
@@ -2283,7 +2312,7 @@ impl<'a> Resolver<'a> {
                                     dirname_fd: node_module.dirname_fd,
                                     diff_case: node_module.diff_case,
                                     package_json: Some(std::ptr::from_ref(package_json)),
-                                    jsx: self.opts.jsx.clone(),
+                                    jsx: self.opts.core.jsx.clone(),
                                     ..Default::default()
                                 });
                             } else {
@@ -2298,7 +2327,7 @@ impl<'a> Resolver<'a> {
                                         secondary: None,
                                     },
                                     diff_case: None,
-                                    jsx: self.opts.jsx.clone(),
+                                    jsx: self.opts.core.jsx.clone(),
                                     ..Default::default()
                                 });
                             }
@@ -2325,7 +2354,7 @@ impl<'a> Resolver<'a> {
                         primary: Path::empty(),
                         secondary: None,
                     },
-                    jsx: self.opts.jsx.clone(),
+                    jsx: self.opts.core.jsx.clone(),
                     ..Default::default()
                 };
                 result.path_pair = res.path_pair;
@@ -2725,7 +2754,7 @@ impl<'a> Resolver<'a> {
                                 ImportKind::Url | ImportKind::AtConditional | ImportKind::At => {
                                     options::ExtOrder::Css
                                 }
-                                _ => self.opts.extension_order.kind(kind, true),
+                                _ => self.opts.core.extension_order.kind(kind, true),
                             };
 
                             if let Some(package_json) = pkg_dir_info.package_json() {
@@ -2948,13 +2977,12 @@ impl<'a> Resolver<'a> {
                 // If the source directory doesn't have a node_modules directory, we can
                 // check the global cache directory for a package.json file.
                 //
-                // NOTE (Stacked Borrows): `get_package_manager` returns the
-                // `*mut dyn AutoInstaller` raw pointer; the body below re-borrows
+                // NOTE: `get_package_manager` returns a copyable
+                // [`PackageManagerRef`] handle; the body below re-borrows
                 // `self` for `enqueue_dependency_to_resolve` / `debug_logs` /
-                // `log()`. The PackageManager lives in a separate allocation, so
-                // derive a raw pointer once and re-borrow per use — disjoint
-                // from `self`'s storage.
-                let manager_ptr: *mut dyn AutoInstaller = match self.get_package_manager() {
+                // `log()`. The PackageManager lives in a separate allocation,
+                // disjoint from `self`'s storage.
+                let manager_ref: PackageManagerRef = match self.get_package_manager() {
                     Ok(pm) => pm,
                     Err(err) => {
                         // One-time init reads the top-level directory, which
@@ -2984,8 +3012,8 @@ impl<'a> Resolver<'a> {
                 };
                 macro_rules! manager {
                     () => {
-                        // SAFETY: re-borrowed narrowly per use; PackageManager outlives resolver.
-                        unsafe { &mut *manager_ptr }
+                        // Copyable handle; PackageManager outlives the resolver.
+                        manager_ref
                     };
                 }
                 let mut dependency_version = Install::DependencyVersion::default();
@@ -3183,7 +3211,7 @@ impl<'a> Resolver<'a> {
                                             )
                                             .expect("unreachable");
                                         // The npm version + URL live inside `resolution.value`;
-                                        // the `AutoInstaller` impl decodes them itself.
+                                        // the `bun_pm_*` link-fn body decodes them itself.
                                         if let Err(enqueue_download_err) = manager!()
                                             .enqueue_package_for_download(
                                                 esm.name,
@@ -3593,19 +3621,20 @@ impl<'a> Resolver<'a> {
         }
 
         let input_package_id = *input_package_id_;
-        // NOTE: see `manager_ptr` note in `load_node_modules` — split the
-        // `&mut self` borrow by holding the PackageManager via raw pointer.
+        // NOTE: see `manager_ref` note in `load_node_modules` — split the
+        // `&mut self` borrow by holding the PackageManager via the copyable
+        // handle.
         // Init failure is unreachable in practice (`load_node_modules`
         // initialized the manager before calling here), but propagate rather
         // than unwrap so the invariant isn't load-bearing for safety.
-        let pm_ptr: *mut dyn AutoInstaller = match self.get_package_manager() {
+        let pm_ref: PackageManagerRef = match self.get_package_manager() {
             Ok(pm) => pm,
             Err(err) => return DependencyToResolve::Failure(err),
         };
         macro_rules! pm {
             () => {
-                // SAFETY: PackageManager lives in a separate allocation; disjoint from `self`.
-                unsafe { &mut *pm_ptr }
+                // PackageManager lives in a separate allocation; disjoint from `self`.
+                pm_ref
             };
         }
         // we should never be trying to resolve a dependency that is already resolved
@@ -3623,7 +3652,7 @@ impl<'a> Resolver<'a> {
                 // exists here.
                 let package_json: &mut PackageJSON = unsafe { package_json.as_mut() };
                 // NOTE: the `Package` type is bun_install-internal; the
-                // `AutoInstaller` impl performs the from-package-json /
+                // `bun_pm_*` link-fn body performs the from-package-json /
                 // setHasInstallScript / appendPackage steps.
                 let id = match pm!().lockfile_append_from_package_json(
                     package_json.as_install_ref(),
@@ -3648,7 +3677,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        if self.opts.prefer_offline_install {
+        if self.opts.core.prefer_offline_install {
             if let Some(package_id) = pm!().resolve_from_disk_cache(esm.name, &version) {
                 *input_package_id_ = package_id;
                 return DependencyToResolve::Resolution(
@@ -3752,6 +3781,7 @@ impl<'a> Resolver<'a> {
                         self.extension_order
                     } else {
                         self.opts
+                            .core
                             .extension_order
                             .kind(kind, resolved_dir_info.is_inside_node_modules())
                     };
@@ -4914,10 +4944,10 @@ impl<'a> Resolver<'a> {
             //       "#fs": "node:fs"
             //     }
             //
-            if self.opts.mark_builtins_as_external || self.opts.target.is_bun() {
+            if self.opts.core.mark_builtins_as_external || self.opts.core.target.is_bun() {
                 if let Some(alias) = HardcodedAlias::get(
                     &esm_resolution.path,
-                    self.opts.target,
+                    self.opts.core.target,
                     HardcodedAliasCfg::default(),
                 ) {
                     *out = MatchResult {
@@ -5188,11 +5218,11 @@ impl<'a> Resolver<'a> {
         // NOTE: index by `0..len` so each iteration takes a fresh short
         // borrow of `self.opts` that ends before `&mut self` is taken by
         // `load_index_with_extension` (avoids the forbidden lifetime-extension cast).
-        let n = self.opts.extra_cjs_extensions.len();
+        let n = self.opts.core.extra_cjs_extensions.len();
         for i in 0..n {
             // BACKREF: see `RawSlice` note above — backing `Box<[u8]>` in
             // `extra_cjs_extensions` is heap-stable for the resolver's life.
-            let ext = bun_core::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
+            let ext = bun_core::RawSlice::new(&*self.opts.core.extra_cjs_extensions[i]);
             if self
                 .load_index_with_extension(dir_info, &ext, out)
                 .is_success()
@@ -5474,16 +5504,17 @@ impl<'a> Resolver<'a> {
             package_json = Some(std::ptr::from_ref(pkg_json));
             if pkg_json.main_fields.count() > 0 {
                 let main_field_values = &pkg_json.main_fields;
-                // BACKREF: `RawSlice` detaches the `&self.opts.main_fields`
+                // BACKREF: `RawSlice` detaches the `&self.opts.core.main_fields`
                 // borrow so the loop body can take `&mut self`. Backing
                 // `Box<[Box<[u8]>]>` heap buffer is owned by `self.opts` and
                 // never mutated during resolve.
-                let main_field_keys = bun_core::RawSlice::<Box<[u8]>>::new(&self.opts.main_fields);
+                let main_field_keys =
+                    bun_core::RawSlice::<Box<[u8]>>::new(&self.opts.core.main_fields);
                 let mf_ext_order = options::ExtOrder::MainField;
                 // The bundler projects "user did not pass --main-fields" as an
                 // explicit bool because the owned `Box<[Box<[u8]>]>` can never
                 // alias a static default to compare pointers against.
-                let auto_main = self.opts.main_fields_is_default;
+                let auto_main = self.opts.core.main_fields_is_default;
 
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!(
@@ -5771,11 +5802,11 @@ impl<'a> Resolver<'a> {
         // NOTE: index by `0..len` so each iteration takes a fresh short
         // borrow of `self.opts` that ends before `&mut self` is taken by
         // `load_extension` (avoids the forbidden lifetime-extension cast).
-        let n = self.opts.extra_cjs_extensions.len();
+        let n = self.opts.core.extra_cjs_extensions.len();
         for i in 0..n {
             // BACKREF: see `RawSlice` note above — backing `Box<[u8]>` in
             // `extra_cjs_extensions` is heap-stable for the resolver's life.
-            let ext = bun_core::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
+            let ext = bun_core::RawSlice::new(&*self.opts.core.extra_cjs_extensions[i]);
             if let Some(result) = self.load_extension(base, path, &ext, entries!()) {
                 dec_ret!(Some(result));
             }
@@ -6162,7 +6193,7 @@ impl<'a> Resolver<'a> {
                 .or(parent_.package_json_for_dependencies);
 
             // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
-            if !self.opts.preserve_symlinks {
+            if !self.opts.core.preserve_symlinks {
                 if let Some(parent_entries) = parent_.get_entries_ref(self.generation) {
                     if let Some(lookup) = parent_entries.get(base) {
                         let entries_fd = entries!().fd;
@@ -6239,7 +6270,7 @@ impl<'a> Resolver<'a> {
         }
 
         // Record if this directory has a package.json file
-        if self.opts.load_package_json {
+        if self.opts.core.load_package_json {
             if let Some(lookup) = entries!().get_comptime_query(b"package.json") {
                 // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                 // dies (NLL) before any later `&mut` to this slot.
@@ -6307,9 +6338,9 @@ impl<'a> Resolver<'a> {
         }
 
         // Record if this directory has a tsconfig.json or jsconfig.json file
-        if self.opts.load_tsconfig_json {
+        if self.opts.core.load_tsconfig_json {
             let mut tsconfig_path: Option<&[u8]> = None;
-            if self.opts.tsconfig_override.is_none() {
+            if self.opts.core.tsconfig_override.is_none() {
                 if let Some(lookup) = entries!().get_comptime_query(b"tsconfig.json") {
                     // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                     // dies (NLL) before any later `&mut` to this slot.
@@ -6350,6 +6381,7 @@ impl<'a> Resolver<'a> {
                 // the `'static` erase only ends the `&self` borrow for the `&mut self` call below.
                 tsconfig_path = self
                     .opts
+                    .core
                     .tsconfig_override
                     .as_deref()
                     .map(|s| unsafe { &*std::ptr::from_ref::<[u8]>(s) });

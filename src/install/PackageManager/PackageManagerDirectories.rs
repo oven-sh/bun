@@ -1,12 +1,13 @@
+use bun_install_types::PackageID;
 use core::fmt;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
 
+use crate::Resolution;
 use crate::lockfile::package::PackageColumns;
 use crate::lockfile::{LoadResult, Lockfile, LockfileFormat};
 use crate::resolution::Tag as ResolutionTag;
-use crate::{PackageID, Resolution};
 use bun_core::PathBuffer;
 use bun_core::ZStr;
 use bun_core::{Error, Global, Output, ZBox, env_var, fmt as bun_fmt};

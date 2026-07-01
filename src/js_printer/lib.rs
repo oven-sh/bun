@@ -1286,7 +1286,10 @@ pub struct Options<'a> {
     pub inline_require_and_import_errors: bool,
     pub has_run_symbol_renamer: bool,
 
-    pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
+    /// Handle to the bundler's `LinkerContext` (the single
+    /// `__bun_require_or_import_meta_for_source` producer). `None` outside the
+    /// bundler print pass.
+    pub require_or_import_meta_source: Option<&'a RequireOrImportMetaSource>,
 
     /// The module type of the importing file (after linking), used to determine interop helper behavior.
     /// Controls whether __toESM uses Node ESM semantics (isNodeMode=1 for .esm) or respects __esModule markers.
@@ -1316,15 +1319,11 @@ impl<'a> Options<'a> {
         id: u32,
         was_unwrapped_require: bool,
     ) -> RequireOrImportMeta {
-        if self
-            .require_or_import_meta_for_source_callback
-            .ctx
-            .is_none()
-        {
+        let Some(ctx) = self.require_or_import_meta_source else {
             return RequireOrImportMeta::default();
-        }
-        self.require_or_import_meta_for_source_callback
-            .call(id, was_unwrapped_require)
+        };
+        // SAFETY: `ctx` names the live `LinkerContext` driving this print pass.
+        unsafe { __bun_require_or_import_meta_for_source(ctx, id, was_unwrapped_require) }
     }
 }
 
@@ -1361,7 +1360,7 @@ impl<'a> Default for Options<'a> {
             transform_only: false,
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
-            require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
+            require_or_import_meta_source: None,
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
             ts_enums: None,
@@ -1400,32 +1399,26 @@ pub struct RequireOrImportMeta {
     pub was_unwrapped_require: bool,
 }
 
-// Clone/Copy: bitwise OK — `ctx` is a non-owning opaque backref the caller
-// keeps alive for the print pass; `callback` is POD.
-#[derive(Clone, Copy)]
-pub struct RequireOrImportMetaCallback {
-    pub ctx: Option<NonNull<()>>,
-    pub callback: fn(*mut (), u32, bool) -> RequireOrImportMeta,
+bun_opaque::opaque_ffi! {
+    /// Opaque handle to the bundler's `LinkerContext` — the non-owning backref
+    /// the caller keeps alive for the print pass. The printer only ever passes
+    /// it back through `__bun_require_or_import_meta_for_source`; see
+    /// `LinkerContext::require_or_import_meta_source` for the single producer.
+    pub struct RequireOrImportMetaSource;
 }
 
-impl Default for RequireOrImportMetaCallback {
-    fn default() -> Self {
-        fn noop(_: *mut (), _: u32, _: bool) -> RequireOrImportMeta {
-            RequireOrImportMeta::default()
-        }
-        Self {
-            ctx: None,
-            callback: noop,
-        }
-    }
-}
-
-/// PORTING.md §Dispatch — manual vtable — bundler-side builder constructs
-/// ctx+fn directly; see `LinkerContext::require_or_import_meta_callback`.
-impl RequireOrImportMetaCallback {
-    pub fn call(&self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
-        (self.callback)(self.ctx.unwrap().as_ptr(), id, was_unwrapped_require)
-    }
+// LAYERING: `LinkerContext::require_or_import_meta_for_source` lives in
+// `bun_bundler`, which depends on this crate. The body is defined
+// `#[unsafe(no_mangle)]` next to it and resolved at link time.
+unsafe extern "Rust" {
+    /// SAFETY: `ctx` must name the live `LinkerContext` that built the
+    /// `Options` (the impl reborrows it as `&mut LinkerContext`), with no
+    /// other borrow of that context held across the call.
+    fn __bun_require_or_import_meta_for_source(
+        ctx: &RequireOrImportMetaSource,
+        id: u32,
+        was_unwrapped_require: bool,
+    ) -> RequireOrImportMeta;
 }
 
 fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> bool {

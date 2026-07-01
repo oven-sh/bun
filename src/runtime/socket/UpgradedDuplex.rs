@@ -621,77 +621,79 @@ fn on_close_js(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
     Ok(JSValue::UNDEFINED)
 }
 
-// SAFETY (every slot): the `*mut ()` is the live `*mut UpgradedDuplex` that
-// `duplex_handle` was built from; the vtable only ever travels with it.
-fn ud_vtable() -> &'static bun_uws::DuplexVTable {
-    static VT: bun_uws::DuplexVTable = bun_uws::DuplexVTable {
-        ssl_error: |p| {
-            // SAFETY: see the banner above.
-            unsafe { (*p.cast::<UpgradedDuplex>()).ssl_error() }
-        },
-        is_established: |p| {
-            // SAFETY: see the banner above.
-            unsafe { (*p.cast::<UpgradedDuplex>()).is_established() }
-        },
-        is_closed: |p| {
-            // SAFETY: see the banner above.
-            unsafe { (*p.cast::<UpgradedDuplex>()).is_closed() }
-        },
-        is_shutdown: |p| {
-            // SAFETY: see the banner above.
-            unsafe { (*p.cast::<UpgradedDuplex>()).is_shutdown() }
-        },
-        ssl: |p| {
-            // SAFETY: see the banner above.
-            unsafe {
-                (*p.cast::<UpgradedDuplex>())
-                    .ssl()
-                    .unwrap_or(core::ptr::null_mut())
-            }
-        },
-        set_timeout: |p, seconds| {
-            // SAFETY: see the banner above.
-            unsafe { (*p.cast::<UpgradedDuplex>()).set_timeout(seconds) }
-        },
-        flush: |p| {
-            // SAFETY: see the banner above.
-            unsafe { (*p.cast::<UpgradedDuplex>()).flush() }
-        },
-        encode_and_write: |p, ptr, len| {
-            // SAFETY: see the banner above; (`ptr`, `len`) is the caller's byte buffer.
-            unsafe {
-                (*p.cast::<UpgradedDuplex>())
-                    .encode_and_write(core::slice::from_raw_parts(ptr, len))
-            }
-        },
-        raw_write: |p, ptr, len| {
-            // SAFETY: see the banner above; (`ptr`, `len`) is the caller's byte buffer.
-            unsafe {
-                (*p.cast::<UpgradedDuplex>()).raw_write(core::slice::from_raw_parts(ptr, len))
-            }
-        },
-        shutdown: |p| {
-            // SAFETY: see the banner above.
-            unsafe { (*p.cast::<UpgradedDuplex>()).shutdown() }
-        },
-        shutdown_read: |p| {
-            // SAFETY: see the banner above.
-            unsafe { (*p.cast::<UpgradedDuplex>()).shutdown_read() }
-        },
-        close: |p| {
-            // SAFETY: see the banner above.
-            unsafe { (*p.cast::<UpgradedDuplex>()).close() }
-        },
-        pause_stream: None,
-        resume_stream: None,
-    };
-    &VT
+// ── `bun_uws_sys::UpgradedDuplex` link-time shims ───────────────────────────
+// `bun_uws_sys::socket` dispatches `InternalSocket::UpgradedDuplex` through the
+// opaque `bun_uws_sys::UpgradedDuplex` handle, whose inherent methods forward
+// to these `extern "Rust"` symbols (see `src/uws_sys/lib.rs` §shim).
+// `this` is always the live `UpgradedDuplex` that `duplex_handle` was built from.
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn UpgradedDuplex__ssl_error(
+    this: &UpgradedDuplex,
+) -> us_bun_verify_error_t {
+    this.ssl_error()
+}
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn UpgradedDuplex__is_established(this: &UpgradedDuplex) -> bool {
+    this.is_established()
+}
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn UpgradedDuplex__is_closed(this: &UpgradedDuplex) -> bool {
+    this.is_closed()
+}
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn UpgradedDuplex__is_shutdown(this: &UpgradedDuplex) -> bool {
+    this.is_shutdown()
+}
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn UpgradedDuplex__ssl(
+    this: &UpgradedDuplex,
+) -> *mut bun_boringssl_sys::SSL {
+    this.ssl().unwrap_or(core::ptr::null_mut())
+}
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn UpgradedDuplex__set_timeout(
+    this: &mut UpgradedDuplex,
+    seconds: c_uint,
+) {
+    this.set_timeout(seconds)
+}
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn UpgradedDuplex__flush(this: &mut UpgradedDuplex) {
+    this.flush()
+}
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "Rust" fn UpgradedDuplex__encode_and_write(
+    this: *mut UpgradedDuplex,
+    ptr: *const u8,
+    len: usize,
+) -> i32 {
+    // SAFETY: `this` is the live duplex behind the opaque handle; (`ptr`, `len`)
+    // is the caller's byte buffer, valid for the duration of the call.
+    unsafe { (*this).encode_and_write(core::slice::from_raw_parts(ptr, len)) }
+}
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "Rust" fn UpgradedDuplex__raw_write(
+    this: *mut UpgradedDuplex,
+    ptr: *const u8,
+    len: usize,
+) -> i32 {
+    // SAFETY: see `UpgradedDuplex__encode_and_write`.
+    unsafe { (*this).raw_write(core::slice::from_raw_parts(ptr, len)) }
+}
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn UpgradedDuplex__shutdown(this: &mut UpgradedDuplex) {
+    this.shutdown()
+}
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn UpgradedDuplex__shutdown_read(this: &mut UpgradedDuplex) {
+    this.shutdown_read()
+}
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn UpgradedDuplex__close(this: &mut UpgradedDuplex) {
+    this.close()
 }
 
-/// Type-erased [`bun_uws::DuplexHandle`] over a live `UpgradedDuplex`.
-pub(crate) fn duplex_handle(this: *mut UpgradedDuplex) -> bun_uws::DuplexHandle {
-    bun_uws::DuplexHandle {
-        ptr: core::ptr::NonNull::new(this.cast()).expect("live duplex"),
-        vtable: ud_vtable(),
-    }
+/// Erase a live `*mut UpgradedDuplex` to the opaque `bun_uws_sys` handle.
+pub(crate) fn duplex_handle(this: *mut UpgradedDuplex) -> NonNull<bun_uws_sys::UpgradedDuplex> {
+    NonNull::new(this.cast()).expect("live duplex")
 }

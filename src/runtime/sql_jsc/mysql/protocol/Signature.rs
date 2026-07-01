@@ -1,4 +1,4 @@
-use crate::sql_jsc::jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue};
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
 

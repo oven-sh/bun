@@ -1,4 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
+use bun_install_types::{DependencyID, INVALID_PACKAGE_ID, PackageID, PackageNameHash};
 use core::mem::ManuallyDrop;
 
 use bun_core::Output;
@@ -8,10 +9,10 @@ use bun_semver as semver;
 use bun_semver::{SlicedString, String as SemverString};
 
 use crate::_folder_resolver::{self as folder_resolver, GlobalOrRelative};
+use crate::Resolution;
 use crate::lockfile::{DependencyIDSlice, DependencySlice};
 use crate::npm;
 use crate::resolution::Tag as ResolutionTag;
-use crate::{DependencyID, INVALID_PACKAGE_ID, PackageID, PackageNameHash, Resolution};
 use bun_install_types::dependency;
 
 use super::PackageManager;

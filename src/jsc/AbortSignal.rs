@@ -5,8 +5,10 @@ use core::sync::atomic::Ordering;
 use crate::virtual_machine::VirtualMachine;
 use crate::{CommonAbortReasonExt as _, JSGlobalObject, JSValue};
 use bun_event_loop::EventLoopTimer::{
-    EventLoopTimer, InHeap, IntrusiveField, State as TimerState, Tag as TimerTag, TimerFlags,
+    EventLoopTimer, InHeap, IntrusiveField, State as TimerState, Tag as TimerTag,
 };
+
+use crate::timer::TimerFlags;
 use bun_http_types::FetchRedirect::CommonAbortReason;
 
 bun_opaque::opaque_ffi! {
@@ -272,7 +274,8 @@ impl AbortReason {
 // ──────────────────────────────────────────────────────────────────────────
 // `AbortSignal.Timeout`.
 //
-// `EventLoopTimer` + `TimerFlags` live in `bun_event_loop` (lower tier). The
+// `EventLoopTimer` lives in `bun_event_loop` (lower tier); `TimerFlags` in
+// `crate::timer`. The
 // per-VM timer heap (`crate::timer::All`) is a separate heap allocation
 // reached via the typed `VirtualMachine.timer` field. C++ only ever sees
 // `*mut Timeout` as an opaque token round-tripped through

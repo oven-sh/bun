@@ -1,4 +1,4 @@
-use crate::sql_jsc::jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 // Postgres stores timestamp and timestampz as microseconds since 2000-01-01
 // This is a signed 64-bit integer.
@@ -46,7 +46,7 @@ pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<i64> 
     } else if value.is_string() {
         let mut str =
             bun_core::OwnedString::new(value.to_bun_string(global_object).expect("unreachable"));
-        crate::sql_jsc::jsc::bun_string_jsc::parse_date(&mut str, global_object)?
+        bun_jsc::bun_string_jsc::parse_date(&mut str, global_object)?
     } else {
         return Ok(0);
     };

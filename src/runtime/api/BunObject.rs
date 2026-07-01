@@ -1710,9 +1710,7 @@ pub(crate) fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
                     break 'brk bun_paths::resolve_path::join_abs_string_buf::<
                         bun_paths::resolve_path::platform::Auto,
                     >(
-                        bun_paths::fs::FileSystem::instance().top_level_dir(),
-                        &mut buf,
-                        paths,
+                        bun_paths::fs::top_level_dir(), &mut buf, paths
                     );
                 }
             }

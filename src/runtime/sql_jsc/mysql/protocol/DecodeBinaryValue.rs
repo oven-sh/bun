@@ -1,6 +1,6 @@
-use crate::sql_jsc::jsc::JSGlobalObject;
 use crate::sql_jsc::mysql::my_sql_value::{DateTime, Time};
 use crate::sql_jsc::shared::sql_data_cell::SQLDataCell;
+use bun_jsc::JSGlobalObject;
 use bun_sql::mysql::mysql_types as types;
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::new_reader::{NewReader, ReaderContext};

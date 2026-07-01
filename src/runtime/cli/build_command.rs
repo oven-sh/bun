@@ -146,7 +146,7 @@ impl BuildCommand {
         this_transpiler.options.source_map =
             options::SourceMapOption::from_api(ctx.args.source_map);
 
-        this_transpiler.options.compile = ctx.bundler_options.compile;
+        this_transpiler.options.resolve.compile = ctx.bundler_options.compile;
 
         if this_transpiler.options.source_map == options::SourceMapOption::External
             && ctx.bundler_options.outdir.is_empty()
@@ -163,11 +163,12 @@ impl BuildCommand {
             && outfile.is_empty()
             && ctx.bundler_options.outdir.is_empty();
 
-        this_transpiler.options.supports_multiple_outputs =
+        this_transpiler.options.resolve.supports_multiple_outputs =
             !(output_to_stdout || !outfile.is_empty());
 
         this_transpiler
             .options
+            .resolve
             .public_path
             .clone_from(&ctx.bundler_options.public_path);
         this_transpiler
@@ -185,7 +186,7 @@ impl BuildCommand {
         this_transpiler.options.server_components = ctx.bundler_options.server_components;
         this_transpiler.options.react_fast_refresh = ctx.bundler_options.react_fast_refresh;
         this_transpiler.options.react_compiler = if ctx.bundler_options.react_compiler {
-            if this_transpiler.options.target.is_server_side() {
+            if this_transpiler.options.resolve.target.is_server_side() {
                 bun_ast::runtime::ReactCompilerMode::Ssr
             } else {
                 bun_ast::runtime::ReactCompilerMode::Client
@@ -226,12 +227,13 @@ impl BuildCommand {
 
         this_transpiler
             .options
+            .resolve
             .output_dir
             .clone_from(&ctx.bundler_options.outdir);
         this_transpiler.options.output_format = ctx.bundler_options.output_format;
 
         if ctx.bundler_options.output_format == options::Format::InternalBakeDev {
-            this_transpiler.options.tree_shaking = false;
+            this_transpiler.options.resolve.tree_shaking = false;
         }
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
@@ -272,14 +274,14 @@ impl BuildCommand {
 
                 this_transpiler.options.compile_to_standalone_html = true;
                 // This is not a bun executable compile - clear compile flags
-                this_transpiler.options.compile = false;
+                this_transpiler.options.resolve.compile = false;
                 ctx.bundler_options.compile = false;
 
                 if ctx.bundler_options.outdir.is_empty() && outfile.is_empty() {
                     outfile = bun_paths::basename(&first_entry_point);
                 }
 
-                this_transpiler.options.supports_multiple_outputs =
+                this_transpiler.options.resolve.supports_multiple_outputs =
                     !ctx.bundler_options.outdir.is_empty();
             } else {
                 // Standard --compile: produce standalone bun executable
@@ -305,7 +307,7 @@ impl BuildCommand {
                         b"root/",
                     );
 
-                this_transpiler.options.public_path = base_public_path.into();
+                this_transpiler.options.resolve.public_path = base_public_path.into();
 
                 if outfile.is_empty() {
                     outfile = bun_paths::basename(&first_entry_point);
@@ -417,7 +419,7 @@ impl BuildCommand {
             break 'brk1 &*result;
         };
 
-        this_transpiler.options.root_dir = src_root_dir.into();
+        this_transpiler.options.resolve.root_dir = src_root_dir.into();
         this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_transpiler.options.transform_only = ctx.bundler_options.transform_only;
 
@@ -436,7 +438,7 @@ impl BuildCommand {
         this_transpiler.configure_defines()?;
         this_transpiler.configure_linker();
 
-        if !this_transpiler.options.production {
+        if !this_transpiler.options.resolve.production {
             this_transpiler
                 .options
                 .conditions
@@ -451,8 +453,8 @@ impl BuildCommand {
 
         // Allow tsconfig.json overriding, but always set it to false if --production is passed.
         if ctx.bundler_options.production {
-            this_transpiler.options.jsx.development = false;
-            this_transpiler.resolver.opts.jsx.development = false;
+            this_transpiler.options.resolve.jsx.development = false;
+            this_transpiler.resolver.opts.core.jsx.development = false;
         }
 
         match &ctx.debug.macros {
@@ -478,7 +480,7 @@ impl BuildCommand {
             // and the divergent fields are set explicitly below. `client_transpiler`
             // is currently unused after this block, so a
             // perfect field-wise copy is not load-bearing.
-            ct.options.target = bun_ast::Target::Browser;
+            ct.options.resolve.target = bun_ast::Target::Browser;
             ct.options.server_components = true;
             ct.options.conditions = this_transpiler.options.conditions.clone()?;
             this_transpiler
@@ -550,11 +552,11 @@ impl BuildCommand {
         // which (with `'a = 'static` from the leaked arena) borrows
         // `this_transpiler` for the rest of its life. Snapshot every options
         // field read after that point so the borrow checker is satisfied.
-        let opt_output_dir: Box<[u8]> = this_transpiler.options.output_dir.clone();
+        let opt_output_dir: Box<[u8]> = this_transpiler.options.resolve.output_dir.clone();
         let opt_minify_identifiers = this_transpiler.options.minify_identifiers;
         let opt_minify_whitespace = this_transpiler.options.minify_whitespace;
         let opt_minify_syntax = this_transpiler.options.minify_syntax;
-        let opt_public_path: Box<[u8]> = this_transpiler.options.public_path.clone();
+        let opt_public_path: Box<[u8]> = this_transpiler.options.resolve.public_path.clone();
         let opt_output_format = this_transpiler.options.output_format;
         let opt_source_map = this_transpiler.options.source_map;
         let opt_transform_only = this_transpiler.options.transform_only;
@@ -563,8 +565,8 @@ impl BuildCommand {
         let mut output_files: Vec<options::OutputFile> = 'brk: {
             if ctx.bundler_options.transform_only {
                 this_transpiler.options.import_path_format = options::ImportPathFormat::Relative;
-                this_transpiler.options.allow_runtime = false;
-                this_transpiler.resolver.opts.allow_runtime = false;
+                this_transpiler.options.resolve.allow_runtime = false;
+                this_transpiler.resolver.opts.core.allow_runtime = false;
 
                 // TODO: refactor this .transform function
                 let result = this_transpiler.transform(ctx.log, ctx.args.clone())?;

@@ -1,5 +1,6 @@
 use crate::lockfile::package::PackageColumns as _;
 use bun_collections::ByteVecExt;
+use bun_install_types::{DependencyID, INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, PackageID};
 use std::collections::VecDeque;
 use std::io::Write as _;
 
@@ -10,7 +11,7 @@ use bstr::BStr;
 // `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
 // on Windows. The inherent `loop_()` projects `.uv_loop` from the uws wrapper
 // on Windows so `BufferedReaderParent::loop_` returns the libuv loop directly.
-use crate::{DependencyID, INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, PackageID, PackageManager};
+use crate::PackageManager;
 use bun_ast::{Expr, ExprData};
 use bun_collections::ArrayHashMap;
 use bun_core::strings;

@@ -1,7 +1,8 @@
 use bun_install_types::resolver_hooks::{Architecture, OperatingSystem};
+use bun_install_types::{INVALID_PACKAGE_ID, PackageID};
 
+use crate::Origin;
 use crate::integrity::Integrity;
-use crate::{INVALID_PACKAGE_ID, Origin, PackageID};
 use bun_semver::String;
 
 use crate::lockfile::StringBuilder as LockfileStringBuilder;

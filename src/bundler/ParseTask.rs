@@ -242,7 +242,7 @@ impl ParseTask {
         // write provenance from the `*mut BundleV2` parameter; caller passes a
         // live `&mut BundleV2` coerced to `*mut`.
         let ctx_ref = unsafe { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) };
-        let known_target = ctx_ref.get().transpiler().options.target;
+        let known_target = ctx_ref.get().transpiler().options.resolve.target;
         ParseTask {
             ctx: Some(ctx_ref),
             path: resolve_result.path_pair.primary,
@@ -904,7 +904,7 @@ pub mod parse_worker {
             }
 
             Loader::SqliteEmbedded | Loader::Sqlite => {
-                if !topts.target.is_bun() {
+                if !topts.resolve.target.is_bun() {
                     // logger OOM-only
                     let _ = log.add_error(
                         Some(source),
@@ -1025,7 +1025,7 @@ pub mod parse_worker {
             }
             Loader::Napi => {
                 // (dap-eval-cb "source.contents.ptr")
-                if topts.target == options::Target::Browser {
+                if topts.resolve.target == options::Target::Browser {
                     // logger OOM-only
                     let _ = log.add_error(
                     Some(source),
@@ -1205,7 +1205,7 @@ pub mod parse_worker {
                 if let Err(e) = css_ast.minify(
                     bump,
                     &bun_css::MinifyOptions {
-                        targets: bun_css::Targets::for_bundler_target(topts.target),
+                        targets: bun_css::Targets::for_bundler_target(topts.resolve.target),
                         unused_symbols: Default::default(),
                     },
                     &extra,
@@ -2379,7 +2379,7 @@ pub mod parse_worker {
             {
                 options::Target::ServerComponentsSsr
             } else {
-                topts.target
+                topts.resolve.target
             }
         });
 
@@ -2519,7 +2519,7 @@ pub mod parse_worker {
         opts.tree_shaking = if task.source_index.is_runtime() {
             true
         } else {
-            topts.tree_shaking
+            topts.resolve.tree_shaking
         };
         opts.code_splitting = topts.code_splitting;
         opts.module_type = task.module_type;

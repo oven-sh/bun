@@ -1,3 +1,4 @@
+use bun_install_types::{DependencyID, Features, INVALID_PACKAGE_ID, PackageID};
 use core::cell::Cell;
 
 use bun_core::{Global, Output};
@@ -15,10 +16,7 @@ use crate::package_manager_real::{
 };
 use crate::repository::RepositoryExt as _;
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
-use crate::{
-    DependencyID, ExtractData, Features, INVALID_PACKAGE_ID, PackageID, Resolution,
-    TaskCallbackContext, initialize_store,
-};
+use crate::{ExtractData, Resolution, TaskCallbackContext, initialize_store};
 use bun_ast::Expr;
 use bun_install_types::resolver_hooks::Repository;
 use bun_parsers::json;

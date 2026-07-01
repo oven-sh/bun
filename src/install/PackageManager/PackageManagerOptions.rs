@@ -2,10 +2,10 @@ use crate::bun_schema::api as Api;
 use bun_core::PathBuffer;
 use bun_core::ZStr;
 use bun_core::{Output, env_var};
+use bun_install_types::Features;
 
 use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
-use crate::Features;
 use crate::npm;
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install_types::resolver_hooks::{Architecture, OperatingSystem};

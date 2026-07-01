@@ -1,4 +1,7 @@
 use bun_collections::VecExt;
+use bun_install_types::{
+    Features, INVALID_PACKAGE_ID, PackageID, PackageNameHash, TruncatedPackageNameHash,
+};
 use core::mem;
 
 use bun_collections::{ArrayHashMap, ArrayIdentityContext, MultiArrayList, StringSet};
@@ -13,9 +16,8 @@ use bun_semver::{self as semver, ExternalString, String, Version as SemverVersio
 
 use crate::repository::RepositoryExt as _;
 use crate::{
-    self as install, Aligner, Bin, Dependency, ExternalStringList, ExternalStringMap, Features,
-    INVALID_PACKAGE_ID, PackageID, PackageManager, PackageNameHash, Repository,
-    TruncatedPackageNameHash, UpdateRequest, bin, default_trusted_dependencies, initialize_store,
+    self as install, Aligner, Bin, Dependency, ExternalStringList, ExternalStringMap,
+    PackageManager, Repository, UpdateRequest, bin, default_trusted_dependencies, initialize_store,
     npm,
 };
 use bun_ast::{Expr, ExprData, e as E};
@@ -225,7 +227,7 @@ pub trait ResolverContext {
         static EMPTY: ResolutionType<u64> = ResolutionType::<u64>::ZEROED;
         &EMPTY
     }
-    fn dep_id(&self) -> install::DependencyID {
+    fn dep_id(&self) -> bun_install_types::DependencyID {
         debug_assert!(false, "ResolverContext::dep_id called on non-git resolver");
         0
     }
@@ -277,7 +279,7 @@ pub(crate) trait ResolverContextDyn {
     ) -> Result<ResolutionType<u64>, bun_core::Error>;
 
     fn resolution(&self) -> &ResolutionType<u64>;
-    fn dep_id(&self) -> install::DependencyID;
+    fn dep_id(&self) -> bun_install_types::DependencyID;
     fn new_name(&self) -> &[u8];
     fn set_new_name(&mut self, name: Vec<u8>);
     fn take_new_name(&mut self) -> Vec<u8>;
@@ -315,7 +317,7 @@ impl<R: ResolverContext> ResolverContextDyn for R {
         ResolverContext::resolution(self)
     }
     #[inline]
-    fn dep_id(&self) -> install::DependencyID {
+    fn dep_id(&self) -> bun_install_types::DependencyID {
         ResolverContext::dep_id(self)
     }
     #[inline]

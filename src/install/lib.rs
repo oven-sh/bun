@@ -9,6 +9,8 @@ pub(crate) mod bun_schema {
 use core::cell::Cell;
 use core::fmt;
 
+use bun_install_types::{DependencyID, PackageID};
+
 // ──────────────────────────────────────────────────────────────────────────
 // Module declarations — explicit #[path] attrs for PascalCase files.
 // ──────────────────────────────────────────────────────────────────────────
@@ -85,7 +87,7 @@ pub mod package_manager {
 
     /// `populateManifestCache` `Packages` union.
     pub enum ManifestCacheOptions<'a> {
-        Ids(&'a [crate::PackageID]),
+        Ids(&'a [bun_install_types::PackageID]),
         Names(&'a [&'a [u8]]),
     }
     /// Alias used by `outdated_command.rs`.
@@ -756,12 +758,6 @@ pub(crate) fn initialize_mini_store() {
     });
 }
 
-// Canonical identity scalars live in bun_install_types::resolver_hooks.
-pub use bun_install_types::{
-    DependencyID, INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, PackageID, PackageNameHash,
-    TruncatedPackageNameHash,
-};
-
 pub(crate) type PackageNameAndVersionHash = u64;
 
 pub(crate) struct Aligner;
@@ -813,9 +809,6 @@ pub enum Origin {
     Npm = 1,
     Tarball = 2,
 }
-
-// `Features` and `PreinstallState` live in `bun_install_types::resolver_hooks`.
-pub use bun_install_types::resolver_hooks::{Features, PreinstallState};
 
 #[derive(Default)]
 pub struct ExtractDataJson {

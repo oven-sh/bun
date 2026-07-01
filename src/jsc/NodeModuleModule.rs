@@ -195,7 +195,7 @@ fn on_require_extension_modify(
 
     // PERF: the resolver's
     // `extra_cjs_extensions` is owned `Box<[Box<[u8]>]>`, so we clone the keys.
-    vm.transpiler.resolver.opts.extra_cjs_extensions = vm
+    vm.transpiler.resolver.opts.core.extra_cjs_extensions = vm
         .commonjs_custom_extensions
         .keys()
         .to_vec()
@@ -221,7 +221,7 @@ fn on_require_extension_modify_non_function(
     }
 
     // PERF: see `on_require_extension_modify`.
-    vm.transpiler.resolver.opts.extra_cjs_extensions = vm
+    vm.transpiler.resolver.opts.core.extra_cjs_extensions = vm
         .commonjs_custom_extensions
         .keys()
         .to_vec()

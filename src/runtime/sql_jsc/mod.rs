@@ -6,9 +6,8 @@
 // basenames).
 // ──────────────────────────────────────────────────────────────────────────
 
-// `bun_jsc` surface re-exported wholesale; SQL-specific glue lives in `jsc`.
+// SQL-specific glue over `bun_jsc` (extension traits, codegen, AutoFlusher).
 pub mod jsc;
-pub use jsc::{CallFrame, JSGlobalObject, JSValue};
 
 pub mod mysql;
 pub mod postgres;

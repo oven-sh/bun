@@ -1,4 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
+use bun_install_types::{INVALID_PACKAGE_ID, PackageID, PackageNameHash};
 use std::io::Write as _;
 
 use bun_ast::{Loc, Log};
@@ -7,7 +8,7 @@ use bun_core::{Global, Output};
 use bun_js_parser as js_ast;
 use bun_semver::{SlicedString, String as SemverString, string::Builder as StringBuilder};
 
-use crate::{Dependency, INVALID_PACKAGE_ID, Lockfile, PackageID, PackageManager, PackageNameHash};
+use crate::{Dependency, Lockfile, PackageManager};
 use bun_install_types::dependency::{self};
 // `lockfile.packages.items_name()` is provided by an extension trait on
 // `MultiArrayList<Package>`.

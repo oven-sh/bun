@@ -230,6 +230,37 @@ pub mod api {
         }
     }
 
+    /// Registry-string parsing for [`NpmRegistry`]; the canonical path is
+    /// `bun_options_types::schema::api::npm_registry::Parser`.
+    pub mod npm_registry {
+        use bun_url::URL;
+
+        use super::NpmRegistry;
+
+        /// Parse an npm registry URL (with optional embedded credentials)
+        /// into an [`NpmRegistry`].
+        pub fn parse_registry_url_string(str: &[u8]) -> Result<NpmRegistry, bun_alloc::AllocError> {
+            let url = URL::parse(str);
+            let mut registry = NpmRegistry::default();
+
+            // Token
+            if url.username.is_empty() && !url.password.is_empty() {
+                registry.token = Box::<[u8]>::from(url.password);
+                registry.url = url.href_without_auth();
+            } else if !url.username.is_empty() && !url.password.is_empty() {
+                registry.username = Box::<[u8]>::from(url.username);
+                registry.password = Box::<[u8]>::from(url.password);
+
+                registry.url = url.href_without_auth();
+            } else {
+                // Do not include a trailing slash. There might be parameters at the end.
+                registry.url = Box::<[u8]>::from(url.href);
+            }
+
+            Ok(registry)
+        }
+    }
+
     /// Per-scope npm registry overrides, keyed by scope name.
     #[derive(Default)]
     pub struct NpmRegistryMap {

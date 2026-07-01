@@ -229,13 +229,14 @@ impl MacroContext {
 // Lower-tier bridge (`bun_js_parser::Macro::MacroContext` ⇆ this crate)
 //
 // `bun_js_parser` / `bun_bundler` cannot name `Resolver`/`DotEnv`/JSC types,
-// so the parser-visible `MacroContext` holds this crate's boxed `MacroContext`
-// behind the `MacroRunner` trait object. Construction goes through the
-// `MacroClient` table installed by `Cli::start` (`macro_context_init` /
-// `macro_collect_vm_garbage`); per-call dispatch is the trait vtable.
+// so the parser-visible `MacroContext` carries an opaque `runner` handle to a
+// boxed instance of this crate's `MacroContext` and dispatches `init`/`call`/
+// `deinit` through `extern "Rust"` fns resolved at link time. All type
+// erasure is confined to these bodies.
 // ══════════════════════════════════════════════════════════════════════════
 
-pub(crate) fn macro_context_init(
+#[unsafe(no_mangle)]
+pub(crate) fn __bun_macro_context_init(
     transpiler: *mut core::ffi::c_void,
 ) -> js_parser::Macro::MacroContext {
     // SAFETY: every caller of `js_parser::Macro::MacroContext::init<T>` passes a
@@ -253,9 +254,9 @@ pub(crate) fn macro_context_init(
         bun_core::heap::into_raw(Box::new(MacroContext::init(transpiler)));
     js_parser::Macro::MacroContext {
         javascript_object: js_parser::Macro::MacroJSCtx::ZERO,
-        // SAFETY: just allocated, non-null. Unsized coercion to the trait object.
+        // SAFETY: just allocated, non-null.
         runner: Some(unsafe {
-            NonNull::new_unchecked(data as *mut dyn js_parser::Macro::MacroRunner)
+            NonNull::new_unchecked(data.cast::<js_parser::Macro::MacroContextData>())
         }),
         remap: &raw const transpiler.options.macro_remap,
     }
@@ -270,30 +271,41 @@ impl Drop for MacroContext {
     }
 }
 
-impl js_parser::Macro::MacroRunner for MacroContext {
-    fn call(
-        &mut self,
-        javascript_object: js_parser::Macro::MacroJSCtx,
-        import_record_path: &[u8],
-        source_dir: &[u8],
-        log: &mut Log,
-        source: &Source,
-        import_range: Range,
-        caller: Expr,
-        function_name: &[u8],
-    ) -> Result<Expr, Error> {
-        self.javascript_object = JSValue::from_encoded(javascript_object.0 as usize);
-        MacroContext::call(
-            self,
-            import_record_path,
-            source_dir,
-            log,
-            source,
-            import_range,
-            caller,
-            function_name,
-        )
-    }
+#[unsafe(no_mangle)]
+pub(crate) fn __bun_macro_context_deinit(runner: NonNull<js_parser::Macro::MacroContextData>) {
+    // SAFETY: `runner` is exactly the `Box<MacroContext>` allocated in
+    // `__bun_macro_context_init` above; sole owner. Dropping the Box frees the
+    // `MacroMap` and, if a macro was invoked, runs `Arena::drop`
+    // (→ `mi_heap_destroy`) on the lazily-created `bump`.
+    drop(unsafe { Box::from_raw(runner.as_ptr().cast::<MacroContext>()) });
+}
+
+#[unsafe(no_mangle)]
+pub(crate) fn __bun_macro_context_call(
+    ctx: &mut js_parser::Macro::MacroContext,
+    import_record_path: &[u8],
+    source_dir: &[u8],
+    log: &mut Log,
+    source: &Source,
+    import_range: Range,
+    caller: Expr,
+    function_name: &[u8],
+) -> Result<Expr, Error> {
+    let runner = ctx.runner.expect("MacroContext.call reached without init");
+    // SAFETY: `runner` is the `Box<MacroContext>` allocated in `init` above;
+    // the lower-tier handle is uniquely borrowed for this call so no alias
+    // exists.
+    let inner = unsafe { &mut *runner.as_ptr().cast::<MacroContext>() };
+    inner.javascript_object = JSValue::from_encoded(ctx.javascript_object.0 as usize);
+    inner.call(
+        import_record_path,
+        source_dir,
+        log,
+        source,
+        import_range,
+        caller,
+        function_name,
+    )
 }
 
 /// Exposed for `bun_bundler::ThreadPool::Worker::deinit` (which has no
@@ -301,7 +313,8 @@ impl js_parser::Macro::MacroRunner for MacroContext {
 /// `MacroContext` boxes are freed. See [`collect_macro_vm_garbage`].
 ///
 /// [`collect_macro_vm_garbage`]: bun_jsc::virtual_machine::collect_macro_vm_garbage
-pub(crate) fn macro_collect_vm_garbage() {
+#[unsafe(no_mangle)]
+pub(crate) fn __bun_macro_collect_vm_garbage() {
     bun_jsc::virtual_machine::collect_macro_vm_garbage();
 }
 
@@ -373,7 +386,7 @@ impl Macro {
             // The resolver's forward-decl `BundleOptions` does not carry
             // `transform_options` (the canonical owner is the bundler's
             // `BundleOptions<'a>`), and
-            // `RuntimeHooks::init_runtime_state` builds the macro VM's
+            // `bun_runtime_init_runtime_state` builds the macro VM's
             // transpiler from a fresh `TransformOptions` value rather than
             // borrowing the caller's, so there is nothing to mutate-and-restore
             // on `resolver.opts` here. `log`/`env_loader` *are* threaded so the

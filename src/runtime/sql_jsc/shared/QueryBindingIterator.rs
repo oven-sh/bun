@@ -1,4 +1,4 @@
-use crate::sql_jsc::jsc::{JSArrayIterator, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{JSArrayIterator, JSGlobalObject, JSValue, JsResult};
 
 use super::object_iterator::ObjectIterator;
 

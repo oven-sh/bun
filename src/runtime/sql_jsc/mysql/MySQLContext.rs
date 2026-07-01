@@ -1,6 +1,5 @@
-use crate::sql_jsc::jsc::{
-    CallFrame, JSGlobalObject, JSValue, StrongOptional, VirtualMachineSqlExt as _,
-};
+use crate::sql_jsc::jsc::VirtualMachineSqlExt as _;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, StrongOptional};
 
 #[repr(C)]
 #[derive(Default)]

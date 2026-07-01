@@ -145,22 +145,22 @@ pub(crate) fn filter<'a>(
             }
         },
     );
-    scan_transpiler.options.target = bun_ast::Target::Bun;
+    scan_transpiler.options.resolve.target = bun_ast::Target::Bun;
     // Do not follow bare specifiers into node_modules; changes there are not
     // considered local edits.
-    scan_transpiler.options.packages = bun_bundler::options::PackagesOption::External;
+    scan_transpiler.options.resolve.packages = bun_bundler::options::PackagesOption::External;
     // The module graph scan is best-effort. A test file that imports
     // something unresolved should still be considered, not abort --changed.
     scan_transpiler.options.ignore_module_resolution_errors = true;
-    scan_transpiler.options.output_dir = Box::default();
-    scan_transpiler.options.tree_shaking = false;
+    scan_transpiler.options.resolve.output_dir = Box::default();
+    scan_transpiler.options.resolve.tree_shaking = false;
     scan_transpiler.configure_linker();
     let _ = scan_transpiler.configure_defines();
     // `Transpiler::init` already projected resolver.opts, so sync only the
     // fields we changed above.
-    scan_transpiler.resolver.opts.target = scan_transpiler.options.target;
-    scan_transpiler.resolver.opts.packages = bun_resolver::options::Packages::External;
-    scan_transpiler.resolver.opts.output_dir = Box::default();
+    scan_transpiler.resolver.opts.core.target = scan_transpiler.options.resolve.target;
+    scan_transpiler.resolver.opts.core.packages = bun_resolver::options::Packages::External;
+    scan_transpiler.resolver.opts.core.output_dir = Box::default();
     scan_transpiler.resolver.env_loader = core::ptr::NonNull::new(scan_transpiler.env);
 
     // Stack-owned Mini loop so its tasks/concurrent_tasks queues drop at

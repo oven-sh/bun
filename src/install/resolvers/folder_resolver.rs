@@ -1,3 +1,4 @@
+use bun_install_types::{Features, PackageID};
 use core::fmt;
 
 use bun_collections::{HashMap, IdentityContext};
@@ -12,13 +13,13 @@ use bun_sys::{self, Fd, File, O};
 use bun_ast::Expr;
 use bun_install_types::resolver_hooks::VersionedURLType;
 
+use crate::Lockfile;
 use crate::lockfile::Package as LockfilePackage;
 use crate::lockfile::StringBuilder;
 use crate::lockfile::package::ResolverContext;
 use crate::npm;
 use crate::package_manager_real::PackageManager;
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
-use crate::{Features, Lockfile, PackageID};
 use bun_install_types::dependency::{self};
 
 #[derive(Copy, Clone)]

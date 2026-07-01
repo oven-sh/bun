@@ -684,7 +684,7 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
         // afterwards (overwrites relative_to_buf anyway).
         let norm_len = normalize_string_buf::<true, P, true>(from, &mut relative_to_buf[..]).len();
         join_abs_string_buf::<P>(
-            Fs::FileSystem::instance().top_level_dir(),
+            Fs::top_level_dir(),
             relative_from_buf,
             &[&relative_to_buf[..norm_len]],
         )
@@ -715,11 +715,7 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
         // output buffer, untouched until the final relative_normalized_buf call
         // and disjoint from both threadlocals), then join into relative_to_buf.
         let norm_len = normalize_string_buf::<true, P, true>(to, buf).len();
-        join_abs_string_buf::<P>(
-            Fs::FileSystem::instance().top_level_dir(),
-            relative_to_buf,
-            &[&buf[..norm_len]],
-        )
+        join_abs_string_buf::<P>(Fs::top_level_dir(), relative_to_buf, &[&buf[..norm_len]])
     };
 
     relative_normalized_buf::<P, ALWAYS_COPY>(buf, normalized_from, normalized_to)

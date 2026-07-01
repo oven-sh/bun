@@ -183,8 +183,8 @@ pub fn write<W: Write + ?Sized>(
     let options = &bv2.transpiler().options;
     let mut entry_point_bits = AutoBitSet::init_empty(graph.entry_points.len())?;
 
-    let root_dir: &[u8] = if !options.root_dir.is_empty() {
-        &options.root_dir[..]
+    let root_dir: &[u8] = if !options.resolve.root_dir.is_empty() {
+        &options.resolve.root_dir[..]
     } else {
         // SAFETY: FileSystem singleton is initialized before bundling.
         FileSystem::get().top_level_dir
@@ -192,9 +192,9 @@ pub fn write<W: Write + ?Sized>(
 
     writer.write_all(b"{")?;
 
-    let inject_compiler_filesystem_prefix = options.compile;
+    let inject_compiler_filesystem_prefix = options.resolve.compile;
     // Use the server-side public path here.
-    let public_path: &[u8] = &options.public_path;
+    let public_path: &[u8] = &options.resolve.public_path;
     let mut temp_buffer: Vec<u8> = Vec::new();
 
     for ch in chunks.iter() {

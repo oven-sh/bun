@@ -2,7 +2,8 @@
 //! simple?)` constructor-argument parsing/validation used by both the
 //! Postgres and MySQL query constructors.
 
-use crate::sql_jsc::jsc::{JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsResult};
+use crate::sql_jsc::jsc::JSGlobalObjectSqlExt as _;
+use bun_jsc::{JSGlobalObject, JSType, JSValue, JsResult};
 
 pub(crate) struct QueryCtorArgs {
     pub query: JSValue,

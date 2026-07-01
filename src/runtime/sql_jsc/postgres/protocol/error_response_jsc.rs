@@ -1,6 +1,6 @@
-use crate::sql_jsc::jsc::{JSGlobalObject, JSValue};
 use bun_core::String;
 use bun_core::StringBuilder;
+use bun_jsc::{JSGlobalObject, JSValue};
 use bun_sql::postgres::protocol::error_response::ErrorResponse;
 use bun_sql::postgres::protocol::field_message::FieldMessage;
 

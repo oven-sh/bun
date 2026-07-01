@@ -126,10 +126,9 @@ const _: () = {
     impl JsClass for Blob {
         fn from_js(value: JSValue) -> Option<*mut Self> {
             // BuildArtifact (bun_runtime) wraps a Blob; the downcast must also
-            // match it. Dispatched through RuntimeHooks (cold fallback).
-            JSBlob::from_js(value).or_else(|| {
-                (crate::virtual_machine::runtime_hooks().blob_from_build_artifact)(value)
-            })
+            // match it. Dispatched through the upward extern fn (cold fallback).
+            JSBlob::from_js(value)
+                .or_else(|| crate::virtual_machine::bun_runtime_blob_from_build_artifact(value))
         }
         fn from_js_direct(value: JSValue) -> Option<*mut Self> {
             JSBlob::from_js_direct(value)

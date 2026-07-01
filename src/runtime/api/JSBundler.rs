@@ -1879,7 +1879,7 @@ pub struct BuildArtifact {
 pub use bun_bundler::options::OutputKind;
 
 /// `JSValue::as(Blob)` BuildArtifact fallback — installed as
-/// `RuntimeHooks::blob_from_build_artifact`.
+/// `bun_runtime_blob_from_build_artifact`.
 pub(crate) fn blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
     <BuildArtifact as bun_jsc::JsClass>::from_js(value).map(|b| {
         // SAFETY: `from_js` returns the non-null `*mut BuildArtifact` kept alive by

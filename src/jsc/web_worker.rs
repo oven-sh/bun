@@ -68,7 +68,11 @@ use bun_core::{String as BunString, WTFStringImpl};
 use bun_io::KeepAlive;
 use bun_threading::{Futex, Mutex};
 
-use crate::virtual_machine::{self, VirtualMachine, runtime_hooks};
+use crate::virtual_machine::{
+    self, VirtualMachine, bun_runtime_apply_standalone_runtime_flags,
+    bun_runtime_cancel_all_timers, bun_runtime_cron_clear_all_teardown,
+    bun_runtime_parse_worker_exec_argv_allow_addons,
+};
 use crate::{self as jsc, JSGlobalObject, JSValue, JsError, LogJsc};
 
 bun_core::define_scoped_log!(log, Worker, hidden);
@@ -827,8 +831,6 @@ impl WebWorker {
         debug_assert!(self.status.get() == Status::Start);
         debug_assert!(self.vm_ptr().is_null());
 
-        let hooks = runtime_hooks();
-
         // `parent` is a `BackRef` and outlives this worker while
         // `parent_poll_ref` is held (see file header). The parent VM runs
         // concurrently on its own thread, so we must NOT materialise a
@@ -846,7 +848,7 @@ impl WebWorker {
             // Parse `execArgv` with the
             // RunCommand param table. The param table lives in
             // `bun_runtime::cli` (forward-dep), so dispatch through
-            // `RuntimeHooks::parse_worker_exec_argv_allow_addons`. Currently
+            // `bun_runtime_parse_worker_exec_argv_allow_addons`. Currently
             // only honours `--no-addons`; the hook owns the temporary UTF-8
             // alloc + clap parse + `args.deinit()`. `None` on parse failure
             // (the parent's setting is kept).
@@ -854,7 +856,7 @@ impl WebWorker {
             // SAFETY: `exec_argv` borrows C++ `WorkerOptions` kept alive by the
             // owning `WebCore::Worker` for `self`'s lifetime; the hook only
             // reads the slice and owns its own temporary allocations.
-            let parsed = unsafe { (hooks.parse_worker_exec_argv_allow_addons)(exec_argv) };
+            let parsed = unsafe { bun_runtime_parse_worker_exec_argv_allow_addons(exec_argv) };
             if let Some(allow_addons) = parsed {
                 // override the existing even if it was set
                 transform_options.allow_addons = Some(allow_addons);
@@ -971,7 +973,7 @@ impl WebWorker {
             b.resolver.env_loader = NonNull::new(b.env);
 
             if let Some(graph) = parent.standalone_module_graph {
-                (hooks.apply_standalone_runtime_flags)(b, graph);
+                bun_runtime_apply_standalone_runtime_flags(b, graph);
             }
         }
 
@@ -1227,8 +1229,7 @@ impl WebWorker {
             vm.is_shutting_down = true;
             vm.on_exit();
             {
-                let hooks = runtime_hooks();
-                (hooks.cron_clear_all_teardown)(vm);
+                bun_runtime_cron_clear_all_teardown(vm);
                 // Drain `TimeoutObject`s from this worker's timer heap before
                 // `close_all_socket_groups` / `WebWorker__teardownJSCVM` so
                 // their heap nodes are unlinked while `runtime_state` and the
@@ -1236,7 +1237,7 @@ impl WebWorker {
                 // SAFETY: `vm_ptr` was unpublished under `vm_lock` above, so
                 // this thread is the sole owner; `runtime_state` for this
                 // worker thread is still installed (torn down in `destroy()`).
-                unsafe { (hooks.cancel_all_timers)(vm_ptr) };
+                unsafe { bun_runtime_cancel_all_timers(vm_ptr) };
             }
             // Embedded socket groups must drain while JSC is still alive —
             // closeAll() fires on_close → JS callbacks. RareData.deinit() runs

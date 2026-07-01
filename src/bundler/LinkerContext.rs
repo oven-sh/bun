@@ -1803,6 +1803,7 @@ impl<'a> LinkerContext<'a> {
             &bundle
                 .transpiler_for_target(Target::Browser)
                 .options
+                .resolve
                 .public_path
         } else {
             self.options.public_path
@@ -2165,12 +2166,12 @@ impl<'a> LinkerContext<'a> {
         }];
 
         // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
-        // across `self.require_or_import_meta_callback()` (`&mut self`) below.
+        // across `self.require_or_import_meta_source()` (`&mut self`) below.
         let parse_graph = unsafe { &*self.parse_graph };
 
         // Note: reshaped for borrowck — `Options` borrows `ts_enums` /
         // `line_offset_tables` / `mangled_props` from `self.graph`, but the
-        // `require_or_import_meta_for_source_callback` field below needs
+        // `require_or_import_meta_source` field below needs
         // `&mut self`. Detach the read-only borrows via raw-pointer round-trip
         // (graph SoA storage is never reallocated during the print step).
         // SAFETY: `self.graph` columns are stable heap allocations valid for
@@ -2220,7 +2221,7 @@ impl<'a> LinkerContext<'a> {
                 Format::Cjs => None, // use unbounded global
                 _ => runtime_require_ref,
             },
-            require_or_import_meta_for_source_callback: self.require_or_import_meta_callback(),
+            require_or_import_meta_source: Some(self.require_or_import_meta_source()),
             line_offset_tables: Some(line_offset_table),
             target: self.options.target,
 
@@ -2552,26 +2553,35 @@ impl<'a> LinkerContext<'a> {
 } // end — split: tree-shaking trio below
 
 impl<'a> LinkerContext<'a> {
-    /// Builds the printer's require/import-meta callback over `self`.
-    /// The print pass never outlives the `LinkerContext` it was built from.
-    pub fn require_or_import_meta_callback(&mut self) -> js_printer::RequireOrImportMetaCallback {
-        fn thunk(
-            p: *mut (),
-            id: u32,
-            was_unwrapped_require: bool,
-        ) -> js_printer::RequireOrImportMeta {
-            // SAFETY: `p` was derived from the `&mut LinkerContext` captured
-            // below; the context outlives every print pass holding the
-            // callback, and prints re-enter only through this thunk.
-            unsafe {
-                (*p.cast::<LinkerContext>())
-                    .require_or_import_meta_for_source(id, was_unwrapped_require)
-            }
-        }
-        js_printer::RequireOrImportMetaCallback {
-            ctx: Some(core::ptr::NonNull::from(self).cast::<()>()),
-            callback: thunk,
-        }
+    /// Builds the printer's require/import-meta source handle over `self`.
+    /// The print pass never outlives the `LinkerContext` it was built from,
+    /// so the handle's lifetime is the caller's choice (raw-pointer detach;
+    /// no borrow of `self` is held by the result).
+    pub fn require_or_import_meta_source<'r>(
+        &mut self,
+    ) -> &'r js_printer::RequireOrImportMetaSource {
+        js_printer::RequireOrImportMetaSource::opaque_ref(core::ptr::from_mut(self).cast())
+    }
+}
+
+/// `__bun_require_or_import_meta_for_source` body — declared `extern "Rust"`
+/// in `bun_js_printer`; link-time resolved.
+///
+/// # Safety
+/// See the declaration in `bun_js_printer`: `ctx` must name the live
+/// `LinkerContext` that built the printer's `Options`.
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_require_or_import_meta_for_source(
+    ctx: &js_printer::RequireOrImportMetaSource,
+    id: u32,
+    was_unwrapped_require: bool,
+) -> js_printer::RequireOrImportMeta {
+    // SAFETY: `ctx` was derived from the `&mut LinkerContext` in
+    // `require_or_import_meta_source`; the context outlives every print pass
+    // holding the handle, and prints re-enter only through this fn.
+    unsafe {
+        (*ctx.as_mut_ptr().cast::<LinkerContext>())
+            .require_or_import_meta_for_source(id, was_unwrapped_require)
     }
 }
 
@@ -3659,7 +3669,7 @@ impl<'a> LinkerContext<'a> {
                         // "undefined" instead of emitting an error.
                         symbol.import_item_status = ImportItemStatus::Missing;
 
-                        if self.resolver().opts.target == Target::Browser
+                        if self.resolver().opts.core.target == Target::Browser
                             && bun_resolve_builtins::Alias::has(
                                 next_source.path.pretty,
                                 Target::Bun,
@@ -3686,7 +3696,7 @@ impl<'a> LinkerContext<'a> {
                                 ),
                             );
                         }
-                    } else if self.resolver().opts.target == Target::Browser
+                    } else if self.resolver().opts.core.target == Target::Browser
                         && next_source
                             .path
                             .text

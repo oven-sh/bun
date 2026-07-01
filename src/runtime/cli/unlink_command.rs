@@ -6,7 +6,6 @@ use bun_core::{Global, Output, err};
 use bun_paths::{AbsPath, platform, resolve_path};
 use bun_sys::{self as sys, Dir};
 
-use bun_install::Features;
 use bun_install::bin as stub_bin;
 use bun_install::bin;
 use bun_install::lockfile::{Lockfile, package::Package};
@@ -15,6 +14,7 @@ use bun_install::package_manager_real::{
     global_link_dir_path, package_manager_options, package_manager_options::LogLevel,
     setup_global_dir,
 };
+use bun_install_types::Features;
 
 use crate::command::ContextData;
 

@@ -1269,9 +1269,9 @@ pub mod ssl_wrapper {
 // Mirrors `struct us_internal_loop_data_t` (packages/bun-usockets/src/internal/
 // loop_data.h) and `struct us_loop_t` (epoll_kqueue.h / libuv.h). Re-exported
 // from bun_uws_sys so `bun_uws::Loop` and `bun_uws_sys::Loop` are the same
-// type (bun_io's EventLoopCtxVTable is typed against the uws_sys version).
+// type (bun_io's EventLoopCtx link fns are typed against the uws_sys version).
 pub use bun_uws_sys::loop_::{LoopHandler, us_wakeup_loop};
-pub use bun_uws_sys::{InternalLoopData, Loop, PosixLoop, Timespec, WindowsLoop};
+pub use bun_uws_sys::{InternalLoopData, Loop, LoopParent, PosixLoop, Timespec, WindowsLoop};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SocketGroup
@@ -1312,7 +1312,6 @@ pub use bun_uws_sys::socket::{
     AnySocket, ConnectError, InternalSocket, NewSocketHandler, SocketHandler, SocketTCP, SocketTLS,
     SocketTcp, SocketTls,
 };
-pub use bun_uws_sys::{DuplexHandle, DuplexVTable};
 
 /// Runtime-tagged TCP/TLS socket with a `None` arm for the "no active socket"
 /// state. Used by proxy-tunnel layers (HTTP `ProxyTunnel`, WebSocket

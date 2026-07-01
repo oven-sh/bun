@@ -63,7 +63,11 @@ impl DeferredBatchTask {
         // resetting the flag afterwards covers both paths.
         {
             let bv2 = self.get_bundle_v2();
-            let rejected = bv2.completion.map(|c| c.result_is_err()).unwrap_or(false);
+            // SAFETY: the completion task outlives the bundle pass.
+            let rejected = bv2
+                .completion
+                .map(|c| unsafe { c.as_ref() }.result_is_err())
+                .unwrap_or(false);
             // The void result is discarded — see
             // `Plugin::drain_deferred` for the exception-scope note.
             bv2.plugins_mut().expect("plugins").drain_deferred(rejected);

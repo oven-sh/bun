@@ -177,7 +177,7 @@ fn task_callback(
 
     let target = match &task.data {
         // Server-side
-        Data::ClientReferenceProxy(_) => ctx.transpiler().options.target,
+        Data::ClientReferenceProxy(_) => ctx.transpiler().options.resolve.target,
         // Client-side,
         Data::ClientEntryWrapper(_) => Target::Browser,
     };

@@ -1,14 +1,12 @@
 use bun_collections::{DynamicBitSet, HashMap};
+use bun_install_types::{DependencyID, INVALID_PACKAGE_ID, PackageID, PackageNameHash};
 use bun_io::Write;
 use bun_semver as semver;
 
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Printer, package::Meta as PackageMeta};
 use crate::package_manager_real::TrackInstalledBin;
-use crate::{
-    self as install, Bin, Dependency, DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager,
-    PackageNameHash, Resolution, bin, resolution,
-};
+use crate::{self as install, Bin, Dependency, PackageManager, Resolution, bin, resolution};
 use bun_core::fmt::PathSep;
 use bun_sys::Fd;
 

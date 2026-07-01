@@ -50,25 +50,6 @@ pub const MAX_EVICTION_COUNT: usize = 8096;
 
 const NO_WATCH_ITEM: WatchItemIndex = WatchItemIndex::MAX;
 
-/// Manual vtable for resolver→watcher directory-watch callbacks; erases the
-/// watcher's payload type `P` so `Resolver` can hold one concrete field.
-#[derive(Clone, Copy)]
-pub struct AnyResolveWatcher {
-    pub context: *mut (),
-    // Safe fn-pointer: the callback has no caller-side preconditions — it
-    // receives exactly the `context` it was paired with at construction (a
-    // closure-style invariant upheld by this struct), and the body discharges
-    // its own type-recovery `unsafe` internally.
-    pub callback: fn(*mut (), dir_path: &[u8], dir_fd: Fd),
-}
-
-impl AnyResolveWatcher {
-    #[inline]
-    pub fn watch(self, dir_path: &[u8], dir_fd: Fd) {
-        (self.callback)(self.context, dir_path, dir_fd)
-    }
-}
-
 // TODO: some platform-specific behavior is implemented in
 // this file instead of the platform-specific file.
 // ideally, the constants above can be inlined
@@ -155,7 +136,7 @@ impl<P: 'static> Watcher<P> {
     ///
     /// To integrate a started watcher into module resolution:
     ///
-    ///     transpiler.resolver.watcher = watcher.get_resolve_watcher();
+    ///     transpiler.resolver.watcher = Some(ResolveWatcher::...(&raw mut *watcher));
     ///
     /// To integrate a started watcher into bundle_v2:
     ///
@@ -930,20 +911,6 @@ impl<P: 'static> Watcher<P> {
                     self.evict_list_i += 1;
                 }
             }
-        }
-    }
-
-    pub fn get_resolve_watcher(&mut self) -> AnyResolveWatcher {
-        fn wrap<P: 'static>(ctx: *mut (), dir_path: &[u8], dir_fd: Fd) {
-            // SAFETY: ctx was stored from *mut Watcher in get_resolve_watcher()
-            // and `AnyResolveWatcher::watch` only ever feeds back the paired
-            // `context`; the resolver holds it for the Watcher's lifetime.
-            let this = unsafe { &mut *ctx.cast::<Watcher<P>>() };
-            Watcher::on_maybe_watch_directory(this, dir_path, dir_fd);
-        }
-        AnyResolveWatcher {
-            context: std::ptr::from_mut::<Self>(self).cast::<()>(),
-            callback: wrap::<P>,
         }
     }
 

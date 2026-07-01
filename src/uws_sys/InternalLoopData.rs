@@ -16,6 +16,10 @@ const _: () = assert!(
 bun_opaque::opaque_ffi! {
     /// Opaque C handle from `us_internal_create_async`.
     pub struct us_internal_async;
+    /// Erased parent event loop stored in `parent_ptr` — a `jsc::EventLoop`
+    /// (`parent_tag` 1) or `jsc::MiniEventLoop` (`parent_tag` 2). Tier-0 crate
+    /// cannot name either; the typed wrappers live in `bun_event_loop`.
+    pub struct LoopParent;
 }
 
 #[repr(C)]
@@ -42,7 +46,7 @@ pub struct InternalLoopData {
     // C calls Bun__lock/Bun__unlock (exported from bun_sync) on this field;
     // loop.c runtime-checks Bun__lock__size == sizeof.
     pub mutex: bun_sync::ReleaseImpl,
-    pub parent_ptr: *mut c_void,
+    pub parent_ptr: *mut LoopParent,
     pub parent_tag: c_char,
     pub iteration_nr: u64,
     // SAFETY: erased `Option<&'static jsc::VM>` — tier-0 crate cannot name jsc types.
@@ -69,13 +73,13 @@ impl InternalLoopData {
     /// (`set_parent_event_loop` / `get_parent`) live in the higher-tier crate
     /// that can name `bun_jsc` — see `bun_runtime::dispatch` (move-in pass).
     #[inline]
-    pub fn set_parent_raw(&mut self, tag: c_char, ptr: *mut c_void) {
+    pub fn set_parent_raw(&mut self, tag: c_char, ptr: *mut LoopParent) {
         self.parent_tag = tag;
         self.parent_ptr = ptr;
     }
 
     #[inline]
-    pub fn get_parent_raw(&self) -> (c_char, *mut c_void) {
+    pub fn get_parent_raw(&self) -> (c_char, *mut LoopParent) {
         if self.parent_ptr.is_null() {
             panic!("Parent loop not set - pointer is null");
         }

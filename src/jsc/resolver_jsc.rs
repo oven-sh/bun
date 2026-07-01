@@ -52,7 +52,7 @@ pub(crate) extern "C" fn node_module_paths_js_value(
     let mut buf = bun_paths::path_buffer_pool::get();
 
     let full_path: &[u8] = resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-        bun_paths::fs::FileSystem::instance().top_level_dir(),
+        bun_paths::fs::top_level_dir(),
         &mut **buf,
         &[base_path],
     );

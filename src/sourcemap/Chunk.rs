@@ -1,7 +1,7 @@
 use bun_ast::{Loc, Source};
 use bun_core::PathBuffer;
 use bun_core::{MutableString, strings};
-use bun_paths::fs::FileSystem;
+use bun_paths::fs;
 
 use crate::{
     InternalSourceMap, LineOffsetTable, SourceMapState, append_mapping_to_buffer,
@@ -100,7 +100,7 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
 ) -> Result<(), bun_core::Error> {
     let mut filename_buf = PathBuffer::uninit();
     let mut filename: &[u8] = source.path.text;
-    let top_level_dir: &[u8] = FileSystem::instance().top_level_dir();
+    let top_level_dir: &[u8] = fs::top_level_dir();
     if strings::has_prefix(filename, top_level_dir) {
         filename = &filename[top_level_dir.len() - 1..];
     } else if !filename.is_empty() && filename[0] != b'/' {

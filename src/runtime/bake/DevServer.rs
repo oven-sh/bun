@@ -509,6 +509,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
 
     let separate_ssr_graph = options
         .framework
+        .view
         .server_components
         .as_ref()
         .map(|sc| sc.separate_ssr_graph)
@@ -793,7 +794,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         ));
     }
 
-    let resolve_watcher = dev.bun_watcher.get_resolve_watcher();
+    let resolve_watcher = bun_resolver::resolver::ResolveWatcher::Plain(&raw mut **dev.bun_watcher);
     dev.server_transpiler_mut().options.dev_server = dev_ptr as *const ();
     dev.server_transpiler_mut().resolver.watcher = Some(resolve_watcher);
     dev.client_transpiler_mut().options.dev_server = dev_ptr as *const ();
@@ -804,8 +805,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         dev.ssr_transpiler_mut().resolver.watcher = Some(resolve_watcher);
     }
 
-    debug_assert!(dev.server_transpiler().resolver.opts.target != bun_ast::Target::Browser);
-    debug_assert!(dev.client_transpiler().resolver.opts.target == bun_ast::Target::Browser);
+    debug_assert!(dev.server_transpiler().resolver.opts.core.target != bun_ast::Target::Browser);
+    debug_assert!(dev.client_transpiler().resolver.opts.core.target == bun_ast::Target::Browser);
 
     // Note: reborrow `framework` and the two resolvers via `dev_ptr` so
     // borrowck doesn't see three overlapping `&mut dev`.
@@ -821,7 +822,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         )
         .is_err()
     {
-        if dev.framework.is_built_in_react {
+        if dev.framework.view.is_built_in_react {
             bake::Framework::add_react_install_command_note(&mut dev.log);
         }
         return Err(global.throw_value(bun_ast_jsc::log_to_js_aggregate_error(
@@ -898,7 +899,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             h.update(&[0]);
         }
 
-        if let Some(sc) = &dev.framework.server_components {
+        if let Some(sc) = &dev.framework.view.server_components {
             bun_core::write_any_to_hasher(&mut h, 1u8);
             bun_core::write_any_to_hasher(&mut h, sc.separate_ssr_graph as u8);
             h.update(&sc.client_register_server_reference);
@@ -913,7 +914,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             bun_core::write_any_to_hasher(&mut h, 0u8);
         }
 
-        if let Some(rfr) = &dev.framework.react_fast_refresh {
+        if let Some(rfr) = &dev.framework.view.react_fast_refresh {
             bun_core::write_any_to_hasher(&mut h, 1u8);
             h.update(&rfr.import_source);
         } else {
@@ -922,10 +923,11 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
 
         for (k, v) in dev
             .framework
+            .view
             .built_in_modules
             .keys()
             .iter()
-            .zip(dev.framework.built_in_modules.values())
+            .zip(dev.framework.view.built_in_modules.values())
         {
             h.update(k);
             h.update(&[0]);
@@ -949,7 +951,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
 
     // Add react fast refresh if needed. This is the first file on the client side,
     // as it will be referred to by index.
-    if let Some(rfr) = &dev.framework.react_fast_refresh {
+    if let Some(rfr) = &dev.framework.view.react_fast_refresh {
         // `debug_assert!` does not evaluate its argument in release. Hoist
         // the side-effecting `insert_stale`
         // out so the refresh runtime is registered at index 0 in all builds.
@@ -1215,6 +1217,7 @@ impl Drop for DevServer {
 
         let separate_ssr_graph = self
             .framework
+            .view
             .server_components
             .as_ref()
             .is_some_and(|sc| sc.separate_ssr_graph);
@@ -1276,6 +1279,7 @@ impl DevServer {
             global,
             runtime,
             self.framework
+                .view
                 .server_components
                 .as_ref()
                 .map(|sc| sc.separate_ssr_graph)
@@ -3580,7 +3584,7 @@ impl DevServer {
         self.trace_all_route_imports(route_bundle, &mut gts, TraceImportGoal::FindClientModules)?;
 
         let mut react_fast_refresh_id: &[u8] = b"";
-        if let Some(rfr) = &self.framework.react_fast_refresh {
+        if let Some(rfr) = &self.framework.view.react_fast_refresh {
             'brk: {
                 let Some(rfr_index) = self.client_graph.get_file_index(&rfr.import_source) else {
                     break 'brk;

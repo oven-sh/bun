@@ -2,15 +2,19 @@ use core::cell::Cell;
 use core::ffi::c_void;
 
 use crate::sql_jsc::jsc::{
-    CallFrame, EventLoopSqlExt as _, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
-    GlobalRef, HasAutoFlush, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, KeepAlive,
-    VirtualMachine, VirtualMachineSqlExt as _, codegen::js_mysql_connection as js,
-    webcore::AutoFlusher,
+    AutoFlusher, EventLoopSqlExt as _, HasAutoFlush, VirtualMachineSqlExt as _,
+    codegen::js_mysql_connection as js,
 };
 use crate::sql_jsc::shared::CachedStructure;
 use crate::sql_jsc::shared::connection_ctor_args::{self, ConnectionCtorArgs};
 use bun_core::strings;
 use bun_core::{TimespecMockMode, timespec};
+use bun_event_loop::EventLoopTimer::{
+    EventLoopTimer, State as EventLoopTimerState, Tag as EventLoopTimerTag,
+};
+use bun_io::KeepAlive;
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsRef, JsResult};
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::Error as AnyMySQLErrorT;
@@ -36,9 +40,8 @@ bun_core::declare_scope!(MySQLConnection, visible);
 // The #[bun_jsc::JsClass] proc-macro is not applied because this type
 // already has its `to_js`/`from_js` wired through `crate::sql_jsc::jsc::codegen::
 // js_mysql_connection` (which owns the extern symbols) — the hand-rolled
-// `impl crate::sql_jsc::jsc::JsClass` below forwards to those. `crate::sql_jsc::jsc` re-exports
-// `bun_jsc::{JSGlobalObject, CallFrame, JSValue}`, so the types are identical;
-// switching to the derive is a mechanical follow-up, not a layering blocker.
+// `impl bun_jsc::JsClass` below forwards to those; switching to the derive is
+// a mechanical follow-up, not a layering blocker.
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
 // shim still emits `this: &mut JSMySQLConnection` — `&mut T` auto-derefs
@@ -158,7 +161,7 @@ impl JSMySQLConnection {
     /// the loop is a disjoint heap allocation owned by the JS-thread VM
     /// singleton; single-thread affinity ⇒ no two `&mut EventLoop` coexist.
     #[inline]
-    fn event_loop(&self) -> &'static mut crate::sql_jsc::jsc::EventLoop {
+    fn event_loop(&self) -> &'static mut bun_jsc::event_loop::EventLoop {
         // `vm_mut()` yields the process-lifetime `'static mut VM` (see above);
         // the owned event loop lives for the VM's lifetime. Single-JS-thread
         // invariant ⇒ callers never overlap `&mut`.

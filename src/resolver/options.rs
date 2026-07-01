@@ -2,10 +2,10 @@
 //!
 //! Canonical defs live in `bun_options_types::resolve_options`; both the
 //! resolver and the bundler re-export them, so `options::X` on either side
-//! names the SAME nominal type. `bun_bundler::options::BundleOptions` is the
-//! ~200-field CLI/config aggregate;
-//! `bun_bundler::transpiler::resolver_bundle_options_subset` projects it into
-//! the canonical struct for `Resolver::init1`.
+//! names the SAME nominal type. `bun_bundler::options::BundleOptions` (the
+//! ~200-field CLI/config aggregate) embeds the canonical struct as its
+//! `resolve` field; `bun_bundler::transpiler::resolver_options_snapshot`
+//! snapshots it for `Resolver::init1`.
 
 pub use crate::tsconfig_json::options::jsx;
 pub(crate) use bun_ast::{Loader, Target};
@@ -28,5 +28,5 @@ pub use ::bun_options_types::ForceNodeEnv;
 pub use bun_options_types::bake::Framework;
 pub use bun_options_types::resolve_options::{
     BundleOptions, Conditions, ConditionsMap, ExtOrder, ExtensionOrder, ExtensionOrderGroup,
-    ExternalModules, Packages, WildcardPattern,
+    ExternalModules, Packages, ResolveOptionsCore, WildcardPattern,
 };

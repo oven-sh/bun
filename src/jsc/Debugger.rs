@@ -362,7 +362,7 @@ impl Debugger {
     pub fn start_js_debugger_thread(other_vm: *mut VirtualMachine) {
         // The global allocator is mimalloc and `InitOptions` does not carry
         // `allocator`/`env_loader` (those are wired by
-        // `RuntimeHooks::init_runtime_state`).
+        // `bun_runtime_init_runtime_state`).
         bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Debugger"));
         bun_core::scoped_log!(debugger, "startJSDebuggerThread");
         jsc::mark_binding();

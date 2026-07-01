@@ -676,7 +676,7 @@ pub fn compute_chunks(
                 }
             };
 
-            let root_dir = &this.resolver().opts.root_dir;
+            let root_dir = &this.resolver().opts.core.root_dir;
             chunk.template.placeholder.dir = resolve_path::relative_alloc(root_dir, dir)?;
         }
     }

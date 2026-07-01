@@ -293,7 +293,7 @@ impl<'a> Coordinator<'a> {
 
     pub(crate) fn rel_path(&self, file_idx: u32) -> &[u8] {
         bun_paths::resolve_path::relative(
-            bun_paths::fs::FileSystem::instance().top_level_dir(),
+            bun_paths::fs::top_level_dir(),
             self.files[file_idx as usize].as_bytes(),
         )
     }
@@ -634,7 +634,7 @@ impl<'a> Coordinator<'a> {
                     // Reshaped for borrowck — inline rel_path body
                     // since `self.workers` is mutably borrowed.
                     bstr::BStr::new(bun_paths::resolve_path::relative(
-                        bun_paths::fs::FileSystem::instance().top_level_dir(),
+                        bun_paths::fs::top_level_dir(),
                         self.files[idx as usize].as_bytes(),
                     )),
                     bstr::BStr::new(reason),

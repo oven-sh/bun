@@ -4,8 +4,8 @@
 //! reach into `bun_runtime::node::fs` / `bun_bundler::transpiler` internals / gated
 //! bundler types (forward-dep cycle on `bun_jsc`), so their bodies — and the
 //! `Bun__*` extern "C" entry points that call them — live in
-//! `bun_runtime::jsc_hooks`; this crate reaches the two it needs through
-//! `virtual_machine::RuntimeHooks`.
+//! `bun_runtime::jsc_hooks`; this crate reaches the two it needs through the
+//! `virtual_machine::bun_runtime_*` extern fns.
 
 use core::ffi::c_void;
 
@@ -123,7 +123,7 @@ impl FetchFlags {
 // source-code printer pool, `bun_standalone_graph`, and `webcore::Blob` —
 // every one a forward-dep on `bun_jsc`. Per PORTING.md §Dispatch (cold-path:
 // called per-import, not per-tick), the two bodies live in `bun_runtime` and
-// are reached through `virtual_machine::RuntimeHooks`
+// are reached through the `virtual_machine::bun_runtime_*` extern fns
 // (`transpile_source_code` / `fetch_builtin_module`); the `Bun__*` extern "C"
 // entry points live next to their bodies in `bun_runtime::jsc_hooks`. Only the
 // argument/result types they share with this crate are declared here.
@@ -167,7 +167,7 @@ pub struct TranspileExtra {
     pub promise_ptr: *mut *mut JSPromise,
 }
 
-/// Result of `RuntimeHooks::fetch_builtin_module` — tri-state because
+/// Result of `bun_runtime_fetch_builtin_module` — tri-state because
 /// an ERROR during builtin lookup must be
 /// surfaced to C++ (return `true` with `ret` populated as `.err`) rather than
 /// falling through to filesystem resolution.

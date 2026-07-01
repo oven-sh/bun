@@ -696,7 +696,7 @@ impl TranspilerJob {
         transpiler.macro_context = None;
         // Note: `parse_maybe` re-creates the macro context per-iteration
         // when `macro_context.is_none()`. It boxes a
-        // higher-tier `MacroContext` via the installed `MacroClient::init`; that Box
+        // higher-tier `MacroContext` via `__bun_macro_context_init`; that Box
         // is intentionally leaked for the long-lived `vm.transpiler`, but here
         // we operate on a per-iteration `ManuallyDrop` bytewise copy, so we
         // MUST free what `parse_maybe` allocates or every dynamic `import()`
@@ -823,14 +823,14 @@ impl TranspilerJob {
             file_hash: Some(hash),
             macro_remappings,
             macro_js_ctx: bun_js_parser::Macro::MacroJSCtx::ZERO,
-            jsx: transpiler.options.jsx.clone(),
+            jsx: transpiler.options.resolve.jsx.clone(),
             emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
             experimental_decorators: transpiler.options.experimental_decorators,
             virtual_source: None,
             replace_exports: Default::default(),
             dont_bundle_twice: true,
             allow_commonjs: true,
-            inject_jest_globals: transpiler.options.rewrite_jest_for_tests,
+            inject_jest_globals: transpiler.options.resolve.rewrite_jest_for_tests,
             // SAFETY: leaf-field `&` borrow on `*vm.debugger`; see `vm` note above.
             set_breakpoint_on_first_line: unsafe { &(*vm).debugger }
                 .as_ref()
@@ -1034,9 +1034,9 @@ impl TranspilerJob {
 
             if let Some(replacement) = HardcodedAlias::get(
                 import_record.path.text,
-                transpiler.options.target,
+                transpiler.options.resolve.target,
                 HardcodedAliasCfg {
-                    rewrite_jest_for_tests: transpiler.options.rewrite_jest_for_tests,
+                    rewrite_jest_for_tests: transpiler.options.resolve.rewrite_jest_for_tests,
                 },
             ) {
                 import_record.path.text = replacement.path.as_bytes();

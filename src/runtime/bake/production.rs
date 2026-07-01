@@ -133,10 +133,10 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         // `BundleOptions.install` is `Option<NonNull<_>>`, so no
         // lifetime-extension cast is needed.
         let install_ptr = ctx.install.as_deref().map(NonNull::from);
-        b.options.install = install_ptr;
-        b.resolver.opts.install = install_ptr;
-        b.resolver.opts.global_cache = ctx.debug.global_cache;
-        b.resolver.opts.prefer_offline_install = ctx
+        b.options.resolve.install = install_ptr;
+        b.resolver.opts.core.install = install_ptr;
+        b.resolver.opts.core.global_cache = ctx.debug.global_cache;
+        b.resolver.opts.core.prefer_offline_install = ctx
             .debug
             .offline_mode_setting
             .unwrap_or(OfflineMode::Online)
@@ -150,8 +150,8 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
             .offline_mode_setting
             .unwrap_or(OfflineMode::Online)
             == OfflineMode::Latest;
-        b.options.global_cache = b.resolver.opts.global_cache;
-        b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
+        b.options.resolve.global_cache = b.resolver.opts.core.global_cache;
+        b.options.resolve.prefer_offline_install = b.resolver.opts.core.prefer_offline_install;
         b.options.prefer_latest_install = prefer_latest;
         // SAFETY: `b.env` is the Transpiler-owned `*mut Loader`; store it
         // as `NonNull` (not `&Loader`) because `configure_defines()` below
@@ -390,6 +390,7 @@ pub(super) fn build_with_vm(
     let framework = &mut options.framework;
 
     let separate_ssr_graph = framework
+        .view
         .server_components
         .as_ref()
         .map(|sc| sc.separate_ssr_graph)
@@ -494,18 +495,18 @@ pub(super) fn build_with_vm(
     // these share pointers right now, so setting NODE_ENV == production on one should affect all
     debug_assert!(core::ptr::eq(server_transpiler.env, client_transpiler.env));
 
-    *framework = match framework.resolve(
+    match framework.resolve(
         &mut server_transpiler.resolver,
         &mut client_transpiler.resolver,
         &options.arena,
     ) {
-        Ok(f) => f,
+        Ok(()) => {}
         Err(_) => {
-            if framework.is_built_in_react {
+            if framework.view.is_built_in_react {
                 // SAFETY: `server_transpiler.log` is the process-lifetime ctx.log.
                 bake_body::Framework::add_react_install_command_note(unsafe {
                     &mut *server_transpiler.log
-                })?;
+                });
             }
             bun_core::err_generic!("Failed to resolve all imports required by the framework");
             Output::flush();
@@ -586,13 +587,8 @@ pub(super) fn build_with_vm(
         framework_router::InsertionContext::wrap(&mut entry_points),
     )?;
 
-    // `bake_body::Framework` is the runtime-side superset; the bundler reads only
-    // `built_in_modules` / `server_components` / `react_fast_refresh` /
-    // `is_built_in_react` via its lower-tier `bake_types::Framework` view.
-    // Project once here via the shared helper so the field-shape (e.g.
-    // `BuiltInModule` `&'static [u8]` → `Box<[u8]>`) stays in one place.
-    // (The two Framework types could only merge if `FileSystemRouterType` /
-    // `framework_router::Style` moved down to bun_bundler.)
+    // The bundler reads only the embedded canonical `bake_types::Framework`
+    // (`framework.view`); deep-clone it once here for the bundle pass.
     let bundler_framework = framework.as_bundler_view();
 
     let bundled_outputs_list: Vec<OutputFile> = {

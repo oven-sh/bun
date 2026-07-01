@@ -1,12 +1,10 @@
 use core::ptr;
 use core::slice;
 
-use crate::sql_jsc::jsc::{
-    ExternColumnIdentifier, JSGlobalObject, JSType, JSValue, JsError, JsResult,
-};
 use bun_collections::StringHashMap;
 use bun_core::UnwrapOrOom as _;
 use bun_core::wtf::WTFStringImpl;
+use bun_jsc::{ExternColumnIdentifier, JSGlobalObject, JSType, JSValue, JsError, JsResult};
 use bun_sql::shared::{ColumnIdentifier, Data};
 
 // Note: This entire type is passed by pointer

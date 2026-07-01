@@ -1,3 +1,4 @@
+use bun_install_types::DependencyID;
 use core::fmt;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -23,7 +24,7 @@ use bun_sys::{self as sys, Fd, FdExt as _};
 
 use bun_ast::{Expr, ExprData};
 
-use crate::{DependencyID, ExternalStringList};
+use crate::ExternalStringList;
 use bun_install_types::dependency::Dependency;
 #[cfg(windows)]
 use bun_shim_impl::bin_linking_shim::BinLinkingShim as WinBinLinkingShim;
@@ -1009,7 +1010,7 @@ impl<'a> Linker<'a> {
         // always unlink the old one. If it fails for any reason then exit
         // early.
         let mut tmpname_buf = [0u8; 1024];
-        let Ok(tmpname) = path::fs::FileSystem::tmpname(
+        let Ok(tmpname) = path::fs::tmpname(
             path::basename(abs_target.as_bytes()),
             &mut tmpname_buf,
             bun_wyhash::hash(chunk_without_newline),

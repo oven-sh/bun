@@ -19,7 +19,6 @@ use bun_jsc::{
 };
 // Re-export so callers can write `body::InternalBlob`.
 pub use crate::webcore::InternalBlob;
-use crate::webcore::form_data::AsyncFormDataExt as _;
 use crate::webcore::sink::{self, ArrayBufferSink};
 use bun_core::{MutableString, String as BunString, ZigString};
 use bun_core::{WTFStringImpl, WTFStringImplStruct};
@@ -427,10 +426,12 @@ impl PendingValue {
                             let fd = form_data.take().unwrap();
                             // defer: form_data already taken; action.getFormData = None handled by take()
                             let encoding_js = match &fd.encoding {
-                                bun_core::form_data::Encoding::Multipart(multipart) => {
+                                crate::webcore::form_data::Encoding::Multipart(multipart) => {
                                     BunString::init(&multipart[..]).to_js(global_this)?
                                 }
-                                bun_core::form_data::Encoding::URLEncoded => JSValue::UNDEFINED,
+                                crate::webcore::form_data::Encoding::URLEncoded => {
+                                    JSValue::UNDEFINED
+                                }
                             };
                             // fd dropped at end of scope (Box<AsyncFormData> -> Drop)
                             break 'brk global_this
@@ -471,7 +472,7 @@ pub enum Action {
     GetArrayBuffer,
     GetBytes,
     GetBlob,
-    GetFormData(Option<Box<bun_core::form_data::AsyncFormData>>),
+    GetFormData(Option<Box<crate::webcore::form_data::AsyncFormData>>),
 }
 
 impl Action {
@@ -1155,7 +1156,6 @@ impl Value {
                             r?;
                             break 'inner;
                         };
-                        // `to_js` is provided via the `AsyncFormDataExt` extension trait.
                         let result = async_form_data.to_js(global, blob.slice(), promise);
                         blob.detach();
                         // async_form_data dropped (Box<AsyncFormData> -> Drop replaces deinit)
@@ -1694,7 +1694,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// (FFI signature is `*mut`). Returning `NonNull` instead of `&FetchHeaders`
     /// avoids deriving `&mut T` from `&T` at the call sites (UB).
     fn get_fetch_headers(&self) -> Option<NonNull<FetchHeaders>>;
-    fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>>;
+    fn get_form_data_encoding(
+        &self,
+    ) -> JsResult<Option<Box<crate::webcore::form_data::AsyncFormData>>>;
 
     // ────────────────────────────────────────────────────────────────────
     // Twin methods (identical for Request/Response). These were previously

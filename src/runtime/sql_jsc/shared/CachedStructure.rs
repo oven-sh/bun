@@ -1,8 +1,6 @@
 use core::mem::{ManuallyDrop, MaybeUninit};
 
-use crate::sql_jsc::jsc::{
-    ExternColumnIdentifier, JSGlobalObject, JSObject, JSValue, StrongOptional,
-};
+use bun_jsc::{ExternColumnIdentifier, JSGlobalObject, JSObject, JSValue, StrongOptional};
 use bun_sql::shared::ColumnIdentifier;
 
 #[derive(Default)]

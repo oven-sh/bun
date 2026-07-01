@@ -394,7 +394,7 @@ pub(crate) fn inject(
     // tmpdir-fallback retry below may need to repoint `zname` at a heap-owned
     // buffer instead, so hoist that owner here so it outlives the loop.
     let mut zname_owned: Option<Box<[u8]>> = None;
-    let mut zname: &ZStr = match bun_fs::FileSystem::tmpname(
+    let mut zname: &ZStr = match bun_fs::tmpname(
         b"bun-build",
         &mut buf[..],
         // i64 → u64 bitcast.
@@ -939,7 +939,7 @@ pub(crate) fn download_to_path(
 
                 let mut tmpname_buf = [0u8; 1024];
                 let tempdir_name: &ZStr =
-                    bun_fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
+                    bun_fs::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
                 let tmpdir = bun_sys::Dir::cwd()
                     .make_open_path(tempdir_name.as_bytes(), Default::default())?;
                 scopeguard::defer! {

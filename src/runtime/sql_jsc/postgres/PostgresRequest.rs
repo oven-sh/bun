@@ -1,6 +1,6 @@
-use crate::sql_jsc::jsc::{JSGlobalObject, JSValue, StringJsc as _};
 use bun_core::String as BunString;
 use bun_core::fmt as bun_fmt;
+use bun_jsc::{JSGlobalObject, JSValue, StringJsc as _};
 
 use bun_sql::postgres::PostgresProtocol as protocol;
 use bun_sql::postgres::PostgresTypes as types;

@@ -66,7 +66,7 @@ pub(crate) fn view(
                 }
             }
 
-            break 'brk bun_paths::basename(bun_paths::fs::FileSystem::instance().top_level_dir());
+            break 'brk bun_paths::basename(bun_paths::fs::top_level_dir());
         }
 
         break 'brk spec_;

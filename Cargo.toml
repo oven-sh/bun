@@ -3,7 +3,6 @@ resolver = "2"
 members = [
   "src/opaque",
   "src/analytics",
-  "src/api",
   "src/base64",
   "src/bundler",
   "src/collections",
@@ -353,7 +352,6 @@ itoa = "1"
 lol_html = { path = "vendor/lolhtml" }
 bun_opaque = { path = "src/opaque" }
 bun_analytics = { path = "src/analytics" }
-bun_api = { path = "src/api" }
 bun_base64 = { path = "src/base64" }
 bun_bundler = { path = "src/bundler" }
 bun_collections = { path = "src/collections" }

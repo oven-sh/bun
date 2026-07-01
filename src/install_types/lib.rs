@@ -6,12 +6,13 @@ pub mod hosted_git_info;
 pub mod resolver_hooks;
 
 pub use resolver_hooks::{
-    Architecture, AutoInstaller, Behavior, Dependency, DependencyGroup, DependencyID,
-    DependencySlice, DependencyVersion, DependencyVersionTag, DependencyVersionValue,
-    EnqueueResult, ExternalPackageNameHashList, ExternalSlice, ExternalStringList,
-    ExternalStringMap, Features, INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, Libc, Negatable,
-    NegatableEnum, NegatableExt, NpmInfo, OldV2VersionedURL, OperatingSystem, PackageID,
-    PackageJsonRef, PackageNameHash, PreinstallState, Repository, Resolution, ResolutionSlice,
+    Architecture, Behavior, Dependency, DependencyGroup, DependencyID, DependencySlice,
+    DependencyVersion, DependencyVersionTag, DependencyVersionValue, EnqueueResult,
+    ExternalPackageNameHashList, ExternalSlice, ExternalStringList, ExternalStringMap, Features,
+    INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, Libc, Negatable, NegatableEnum, NegatableExt,
+    NpmInfo, OldV2VersionedURL, OperatingSystem, PackageID, PackageJsonRef, PackageManagerHandle,
+    PackageManagerRef, PackageNameHash, PreinstallState, Repository, Resolution, ResolutionSlice,
     ResolutionTag, ResolutionValue, TagInfo, TarballInfo, TaskCallbackContext,
     TruncatedPackageNameHash, URI, VersionSlice, VersionedURL, VersionedURLType, WakeHandler,
+    WakeHandlerOwner,
 };

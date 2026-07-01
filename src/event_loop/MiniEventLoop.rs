@@ -183,12 +183,9 @@ pub fn init_global(
     // loop is init-once and lives for the process, so it is never cleared.
     // SAFETY: `global_ptr` is the live process-global `MiniEventLoop`
     // published above; the ctx only stores it as a tagged backref.
-    bun_io::set_current_ctx(
-        bun_io::EventLoopCtxKind::Mini,
-        Some(MiniEventLoop::as_event_loop_ctx(unsafe {
-            &mut *global_ptr
-        })),
-    );
+    bun_io::set_current_ctx(MiniEventLoop::as_event_loop_ctx(unsafe {
+        &mut *global_ptr
+    }));
     global_ptr
 }
 
@@ -198,7 +195,7 @@ impl<'a> MiniEventLoop<'a> {
     /// This is the sole accessor for the `loop_` field. A `&mut UwsLoop`-
     /// returning accessor is intentionally **not** provided: `UwsLoop::tick()`
     /// fires FilePoll callbacks which re-enter this struct via the
-    /// `EventLoopCtx` vtable (`platform_event_loop`) and via
+    /// `EventLoopCtx` link fns (`platform_event_loop`) and via
     /// `EventLoopHandle::Mini` (e.g. `enqueue_task_concurrent` → `wakeup()`),
     /// so a held `&mut UwsLoop` across `.tick()` would alias. The loop is also
     /// a C-owned handle whose internals are mutated by uSockets itself. All
@@ -269,7 +266,7 @@ impl<'a> MiniEventLoop<'a> {
 
     /// Raw-pointer variant of [`file_polls`] for re-entrant callers.
     ///
-    /// The `mini_ctx` vtable shim (`file_polls`) is reached
+    /// The `bun_mini_loop_ctx_file_polls_ptr` link fn is reached
     /// via `EventLoopCtx` from inside FilePoll callbacks fired by
     /// `UwsLoop::tick()`, which is itself invoked from
     /// `tick`/`tick_once`/`tick_without_idle` while those methods hold
@@ -461,90 +458,95 @@ impl<'a> MiniEventLoop<'a> {
 // ───────────── EventLoopCtx adapter (bun_io cycle-break) ─────────────────
 // `bun_io::file_poll::Store::put` and friends take an erased `EventLoopCtx`
 // instead of naming `MiniEventLoop`/`VirtualMachine` directly. This crate owns
-// `MiniEventLoop`, so the Mini-side vtable lives here. The Js-side vtable lives
-// in `bun_runtime` (it must name `jsc::VirtualMachine`).
+// `MiniEventLoop`, so the `bun_mini_loop_ctx_*` link fns live here. The
+// Js-side fns live in `bun_jsc` (they must name `jsc::VirtualMachine`).
 
-unsafe fn minictx_platform_event_loop_ptr(this: *mut ()) -> *mut UwsLoop {
-    let this: *mut MiniEventLoop<'static> = this.cast();
-    // SAFETY: `this` is the live `*mut MiniEventLoop` the vtable was installed with.
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_mini_loop_ctx_platform_event_loop_ptr(
+    ml: NonNull<bun_io::MiniLoopCtxOwner>,
+) -> *mut UwsLoop {
+    let this: *mut MiniEventLoop<'static> = ml.as_ptr().cast();
+    // SAFETY: `ml` is the live `*mut MiniEventLoop` the ctx was built from.
     unsafe { (*this).loop_ptr() }
 }
 
 // `file_polls_raw` to avoid aliased `&mut MiniEventLoop` while `tick*`
 // holds `&mut self` across the re-entrant `UwsLoop::tick()` that
 // reaches this body.
-unsafe fn minictx_file_polls_ptr(this: *mut ()) -> *mut FilePollStore {
-    let this: *mut MiniEventLoop<'static> = this.cast();
-    // SAFETY: `this` is the live `*mut MiniEventLoop` the vtable was installed with.
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_mini_loop_ctx_file_polls_ptr(
+    ml: NonNull<bun_io::MiniLoopCtxOwner>,
+) -> *mut FilePollStore {
+    let this: *mut MiniEventLoop<'static> = ml.as_ptr().cast();
+    // SAFETY: `ml` is the live `*mut MiniEventLoop` the ctx was built from.
     unsafe { MiniEventLoop::file_polls_raw(this) }
 }
 
 // Mini has no pending_unref_counter; the upstream deliberately panics.
-unsafe fn minictx_increment_pending_unref_counter(_this: *mut ()) {
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_mini_loop_ctx_increment_pending_unref_counter(
+    _ml: NonNull<bun_io::MiniLoopCtxOwner>,
+) {
     panic!("FIXME TODO")
 }
 
 // `KeepAlive::{,un}refConcurrently` is JS-VM-only (statically rejected
 // on Mini upstream); preserve that invariant rather than racily
 // mutating uws counters off-thread.
-unsafe fn minictx_ref_concurrently(_this: *mut ()) {
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_mini_loop_ctx_ref_concurrently(
+    _ml: NonNull<bun_io::MiniLoopCtxOwner>,
+) {
     unreachable!("KeepAlive::refConcurrently is JS-VM-only")
 }
 
-unsafe fn minictx_unref_concurrently(_this: *mut ()) {
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_mini_loop_ctx_unref_concurrently(
+    _ml: NonNull<bun_io::MiniLoopCtxOwner>,
+) {
     unreachable!("KeepAlive::unrefConcurrently is JS-VM-only")
 }
 
-unsafe fn minictx_after_event_loop_callback(this: *mut ()) -> Option<bun_io::OpaqueCallback> {
-    let this: *mut MiniEventLoop<'static> = this.cast();
-    // SAFETY: `this` is the live `*mut MiniEventLoop` the vtable was installed with.
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_mini_loop_ctx_after_event_loop_callback(
+    ml: NonNull<bun_io::MiniLoopCtxOwner>,
+) -> Option<bun_io::OpaqueCallback> {
+    let this: *mut MiniEventLoop<'static> = ml.as_ptr().cast();
+    // SAFETY: `ml` is the live `*mut MiniEventLoop` the ctx was built from.
     unsafe { (*this).after_event_loop_callback }
 }
 
-unsafe fn minictx_set_after_event_loop_callback(
-    this: *mut (),
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_mini_loop_ctx_set_after_event_loop_callback(
+    ml: NonNull<bun_io::MiniLoopCtxOwner>,
     cb: Option<bun_io::OpaqueCallback>,
     ctx: Option<NonNull<c_void>>,
 ) {
-    let this: *mut MiniEventLoop<'static> = this.cast();
-    // SAFETY: `this` is the live `*mut MiniEventLoop` the vtable was installed with.
+    let this: *mut MiniEventLoop<'static> = ml.as_ptr().cast();
+    // SAFETY: `ml` is the live `*mut MiniEventLoop` the ctx was built from.
     unsafe {
         (*this).after_event_loop_callback = cb;
         (*this).after_event_loop_callback_ctx = ctx;
     }
 }
 
-unsafe fn minictx_pipe_read_buffer(this: *mut ()) -> *mut [u8] {
-    let this: *mut MiniEventLoop<'static> = this.cast();
-    // SAFETY: `this` is the live `*mut MiniEventLoop` the vtable was installed with.
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_mini_loop_ctx_pipe_read_buffer(
+    ml: NonNull<bun_io::MiniLoopCtxOwner>,
+) -> *mut [u8] {
+    let this: *mut MiniEventLoop<'static> = ml.as_ptr().cast();
+    // SAFETY: `ml` is the live `*mut MiniEventLoop` the ctx was built from.
     unsafe { core::ptr::from_mut::<[u8]>((*this).pipe_read_buffer()) }
 }
-
-pub static MINI_EVENT_LOOP_CTX_VTABLE: bun_io::EventLoopCtxVTable = bun_io::EventLoopCtxVTable {
-    platform_event_loop_ptr: minictx_platform_event_loop_ptr,
-    file_polls_ptr: minictx_file_polls_ptr,
-    increment_pending_unref_counter: minictx_increment_pending_unref_counter,
-    ref_concurrently: minictx_ref_concurrently,
-    unref_concurrently: minictx_unref_concurrently,
-    after_event_loop_callback: minictx_after_event_loop_callback,
-    set_after_event_loop_callback: minictx_set_after_event_loop_callback,
-    pipe_read_buffer: minictx_pipe_read_buffer,
-};
 
 impl<'a> MiniEventLoop<'a> {
     /// `this` is the per-thread `MiniEventLoop` singleton; the returned ctx
     /// must not outlive it.
     #[inline]
     pub fn as_event_loop_ctx(this: &mut MiniEventLoop<'a>) -> bun_io::EventLoopCtx {
-        // SAFETY: `this` is a live `&mut`, so the pointer handed to `new` is
-        // non-null and exclusively borrowed for the call's duration.
-        unsafe {
-            bun_io::EventLoopCtx::new(
-                bun_io::EventLoopCtxKind::Mini,
-                core::ptr::from_mut(this).cast(),
-                &MINI_EVENT_LOOP_CTX_VTABLE,
-            )
-        }
+        // SAFETY: `this` is the live per-thread singleton and outlives every
+        // dispatch through the returned handle (see doc comment).
+        unsafe { bun_io::EventLoopCtx::mini(NonNull::from(this).cast()) }
     }
 }
 

@@ -7,7 +7,6 @@ use bun_paths::AbsPath;
 use bun_resolver::fs::FileSystem;
 use bun_sys::Dir;
 
-use bun_install::Features;
 use bun_install::bin;
 use bun_install::lockfile::{Lockfile, package::Package};
 use bun_install::package_manager_real::{
@@ -15,6 +14,7 @@ use bun_install::package_manager_real::{
     package_manager_options, package_manager_options::LogLevel, setup_global_dir,
     update_package_json_and_install_with_manager,
 };
+use bun_install_types::Features;
 
 use crate::command;
 

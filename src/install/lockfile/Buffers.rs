@@ -1,3 +1,4 @@
+use bun_install_types::{DependencyID, INVALID_PACKAGE_ID, PackageID};
 use core::mem::size_of;
 
 use bun_collections::DynamicBitSet as Bitset;
@@ -13,7 +14,7 @@ use super::{
 };
 use crate::lockfile;
 use crate::package_manager_real::package_manager_options::Options as PackageManagerOptions;
-use crate::{Aligner, DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager};
+use crate::{Aligner, PackageManager};
 use bun_install_types::dependency;
 
 #[derive(Default)]

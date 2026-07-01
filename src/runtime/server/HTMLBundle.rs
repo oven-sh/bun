@@ -8,7 +8,6 @@ use core::ptr::NonNull;
 
 use bun_ast::Loader;
 use bun_ast::Log;
-use bun_bundler::BundleThread::BundleV2Result;
 use bun_bundler::options as bundler_options;
 use bun_core::strings;
 use bun_http::Headers;
@@ -18,7 +17,7 @@ use bun_ptr::{AsCtxPtr, IntrusiveRc, RefCount};
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::api::js_bundle_completion_task::{
-    JSBundleCompletionTask, create_and_schedule_completion_task,
+    BundleV2Result, JSBundleCompletionTask, create_and_schedule_completion_task,
 };
 use crate::api::js_bundler::js_bundler::{self as JSBundler, Config as JSBundlerConfig};
 use crate::api::output_file_jsc::OutputFileJsc as _;

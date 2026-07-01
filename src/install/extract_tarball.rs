@@ -1,3 +1,4 @@
+use bun_install_types::DependencyID;
 use core::cell::RefCell;
 use core::fmt;
 
@@ -12,12 +13,12 @@ use bun_paths::{self as path};
 use bun_semver::Version;
 use bun_sys::{self as sys, Dir, Fd};
 
+use crate::ExtractData;
 use crate::integrity::Integrity;
 use crate::npm;
 use crate::package_manager_real::PackageManager;
 use crate::package_manager_real::directories;
 use crate::resolution::{Resolution, Tag as ResolutionTag};
-use crate::{DependencyID, ExtractData};
 use bun_libarchive::{ArchiveAppender, ExtractOptions};
 use bun_resolver::fs::FileSystem;
 type Error = bun_core::Error;

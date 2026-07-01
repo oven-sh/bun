@@ -559,8 +559,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         unsafe(link_section = ".text.unlikely")
     )]
     fn configure_run_transpiler_linker(this_transpiler: &mut Transpiler<'static>) {
-        this_transpiler.resolver.opts.load_tsconfig_json = true;
-        this_transpiler.options.load_tsconfig_json = true;
+        this_transpiler.resolver.opts.core.load_tsconfig_json = true;
+        this_transpiler.options.resolve.load_tsconfig_json = true;
         this_transpiler.configure_linker();
     }
 
@@ -648,7 +648,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
             if let Some(node_env) = env_loader.get(b"NODE_ENV") {
                 if node_env == b"production" {
-                    this_transpiler.options.production = true;
+                    this_transpiler.options.resolve.production = true;
                 }
             }
 
@@ -729,18 +729,18 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `as_deref` yields `&BunInstall`, which
         // `NonNull::from` converts without the lifetime tie.
         let install_ptr = ctx.install.as_deref().map(::core::ptr::NonNull::from);
-        b.options.install = install_ptr;
-        b.resolver.opts.install = install_ptr;
-        b.resolver.opts.global_cache = ctx.debug.global_cache;
+        b.options.resolve.install = install_ptr;
+        b.resolver.opts.core.install = install_ptr;
+        b.resolver.opts.core.global_cache = ctx.debug.global_cache;
         let offline = ctx
             .debug
             .offline_mode_setting
             .unwrap_or(OfflineMode::Online);
-        b.resolver.opts.prefer_offline_install = offline == OfflineMode::Offline;
+        b.resolver.opts.core.prefer_offline_install = offline == OfflineMode::Offline;
         // resolver's forward-decl `BundleOptions` lacks
         // `prefer_latest_install`; only the bundler-side mirror carries it.
-        b.options.global_cache = ctx.debug.global_cache;
-        b.options.prefer_offline_install = offline == OfflineMode::Offline;
+        b.options.resolve.global_cache = ctx.debug.global_cache;
+        b.options.resolve.prefer_offline_install = offline == OfflineMode::Offline;
         b.options.prefer_latest_install = offline == OfflineMode::Latest;
         b.resolver.env_loader = ::core::ptr::NonNull::new(b.env);
 
@@ -879,7 +879,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // is real (calls `JSCInitialize` over `bun_sys::environ()`); the
         // dispatch hooks (`jsc_hooks::install_jsc_hooks`) are installed by
         // `main.rs` before `Cli::start`, so `VirtualMachine::init` already sees
-        // a populated `RuntimeHooks` table.
+        // the `bun_runtime_*` hook fns linked in.
         bun_jsc::initialize(ctx.runtime_options.eval.eval_and_print);
         bun_ast::initialize_store();
 
@@ -1847,14 +1847,11 @@ impl RunCommand {
         let bun_node_dir_win = bun_paths::dirname(bun_node_exe.as_bytes())
             .ok_or_else(|| bun_core::err!("FailedToGetTempPath"))?;
         let found_node = env_loader
-            .load_node_js_config(
-                bun_paths::fs::FileSystem::instance(),
-                if force_using_bun {
-                    bun_node_exe.as_bytes()
-                } else {
-                    b""
-                },
-            )
+            .load_node_js_config(if force_using_bun {
+                bun_node_exe.as_bytes()
+            } else {
+                b""
+            })
             .unwrap_or(false);
 
         let mut needs_to_force_bun = force_using_bun || !found_node;
@@ -2467,8 +2464,8 @@ impl RunCommand {
         // Temporarily honor `--preserve-symlinks-main` / NODE_PRESERVE_SYMLINKS_MAIN
         // for this one resolve.
         let resolution: ::core::result::Result<bun_resolver::Result, bun_core::Error> = {
-            let saved_preserve = this_transpiler.resolver.opts.preserve_symlinks;
-            this_transpiler.resolver.opts.preserve_symlinks =
+            let saved_preserve = this_transpiler.resolver.opts.core.preserve_symlinks;
+            this_transpiler.resolver.opts.core.preserve_symlinks =
                 ctx.runtime_options.preserve_symlinks_main
                     || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
                         .get()
@@ -2491,7 +2488,7 @@ impl RunCommand {
                     )
                 }
             };
-            this_transpiler.resolver.opts.preserve_symlinks = saved_preserve;
+            this_transpiler.resolver.opts.core.preserve_symlinks = saved_preserve;
             resolved
         };
         // (path, loader) — captured if the resolve hit a real file whose
@@ -3522,7 +3519,7 @@ impl RunCommand {
 
             if let Some(node_env) = this_transpiler.env().get(b"NODE_ENV") {
                 if node_env == b"production" {
-                    this_transpiler.options.production = true;
+                    this_transpiler.options.resolve.production = true;
                 }
             }
         }

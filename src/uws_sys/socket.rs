@@ -17,9 +17,12 @@ use core::ptr::NonNull;
 
 use bun_core::{Fd, ZStr};
 
+#[cfg(windows)]
+use crate::WindowsNamedPipe;
 use crate::{
-    CloseCode, ConnectResult, ConnectingSocket, DuplexHandle, LIBUS_SOCKET_ALLOW_HALF_OPEN,
-    LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx, us_bun_verify_error_t, us_socket_t,
+    CloseCode, ConnectResult, ConnectingSocket, LIBUS_SOCKET_ALLOW_HALF_OPEN,
+    LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx, UpgradedDuplex,
+    us_bun_verify_error_t, us_socket_t,
 };
 
 bun_core::declare_scope!(uws, visible);
@@ -31,17 +34,17 @@ bun_core::declare_scope!(uws, visible);
 /// State of a single connection. `Copy` — passed by value
 /// through the entire HTTP-client / Bun.Socket state machines, so the handle
 /// is a trivially-copyable tagged pointer. The `UpgradedDuplex` / `Pipe`
-/// payloads are [`DuplexHandle`]s (owner pointer + `'static` vtable) into the
-/// runtime-tier transports; they are stored in long-lived
-/// `Cell<NewSocketHandler>` fields and dispatched through the vtable per call.
+/// payloads are `NonNull` handles into the runtime-tier transports: they are
+/// stored in long-lived `Cell<NewSocketHandler>` fields and re-borrowed per
+/// call via the opaque deref helpers below.
 #[derive(Copy, Clone)]
 pub enum InternalSocket {
     Connected(*mut us_socket_t),
     Connecting(*mut ConnectingSocket),
     Detached,
-    UpgradedDuplex(DuplexHandle),
+    UpgradedDuplex(NonNull<UpgradedDuplex>),
     #[cfg(windows)]
-    Pipe(DuplexHandle),
+    Pipe(NonNull<WindowsNamedPipe>),
     #[cfg(not(windows))]
     Pipe,
 }
@@ -89,14 +92,13 @@ impl InternalSocket {
 }
 
 // ── Safe deref helpers for `InternalSocket` payloads ────────────────────────
-// The `Connected` / `Connecting` payload types are `#[repr(C)]
-// UnsafeCell<[u8; 0]>` opaque ZSTs (`opaque_ffi!`): zero-sized, align-1, no
-// `noalias` / `readonly`. Materializing `&mut T` from `*mut T` therefore has
-// exactly one validity requirement — non-null — which uSockets guarantees for
-// every pointer it stores in `Connected` / `Connecting`. Centralizing the
-// deref keeps the proof local instead of repeating `unsafe { &mut *s }` at
-// ~50 match arms. The `UpgradedDuplex` / `Pipe` payloads are value-typed
-// `DuplexHandle`s — no deref needed.
+// All four payload types are `#[repr(C)] UnsafeCell<[u8; 0]>` opaque ZSTs
+// (`opaque_ffi!`): zero-sized, align-1, no `noalias` / `readonly`.
+// Materializing `&mut T` from `*mut T` therefore has exactly one validity
+// requirement — non-null — which uSockets guarantees for every pointer it
+// stores in `Connected` / `Connecting` / `UpgradedDuplex` / `Pipe`.
+// Centralizing the deref keeps the proof local instead of repeating
+// `unsafe { &mut *s }` at ~50 match arms.
 
 /// Reborrow the `InternalSocket::Connected` payload.
 #[inline(always)]
@@ -108,11 +110,21 @@ fn sock<'a>(p: *mut us_socket_t) -> &'a mut us_socket_t {
 fn conn<'a>(p: *mut ConnectingSocket) -> &'a mut ConnectingSocket {
     bun_opaque::opaque_deref_mut(p)
 }
+/// Reborrow the `InternalSocket::UpgradedDuplex` payload (cycle-break shim).
+#[inline(always)]
+fn duplex<'a>(p: NonNull<UpgradedDuplex>) -> &'a mut UpgradedDuplex {
+    bun_opaque::opaque_deref_mut(p.as_ptr())
+}
+/// Reborrow the `InternalSocket::Pipe` payload (Windows only).
+#[cfg(windows)]
+#[inline(always)]
+fn pipe<'a>(p: NonNull<WindowsNamedPipe>) -> &'a mut WindowsNamedPipe {
+    bun_opaque::opaque_deref_mut(p.as_ptr())
+}
 
 /// Five-arm `match self.socket` with the `#[cfg(windows)]` Pipe split owned
-/// exactly once. Each arm binds the deref'd opaque (`$s` / `$c`) or the
-/// `DuplexHandle` (`$d` / `$p`) so method bodies are one-liners and the
-/// per-arm `#[cfg]` noise lives here.
+/// exactly once. Each arm binds the deref'd opaque (`$s` / `$c` / `$d` / `$p`)
+/// so method bodies are one-liners and the per-arm `#[cfg]` noise lives here.
 ///
 /// Arms not supplied default to: `connecting`/`detached` → `$det` expr;
 /// `pipe` → `$det` on non-Windows (no payload), supplied body on Windows.
@@ -129,9 +141,9 @@ macro_rules! on_socket {
             InternalSocket::Connected(__s) => { let $s = sock(__s); $conn }
             InternalSocket::Connecting(__c) => { let $c = conn(__c); $cing }
             InternalSocket::Detached => $det,
-            InternalSocket::UpgradedDuplex(__d) => { let $d = __d; $dup }
+            InternalSocket::UpgradedDuplex(__d) => { let $d = duplex(__d); $dup }
             #[cfg(windows)]
-            InternalSocket::Pipe(__p) => { let $p = __p; $pip }
+            InternalSocket::Pipe(__p) => { let $p = pipe(__p); $pip }
             #[cfg(not(windows))]
             InternalSocket::Pipe => $det,
         }
@@ -559,10 +571,10 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
                 let h = conn(s).get_native_handle();
                 if h.is_null() { None } else { Some(h) }
             }
-            InternalSocket::UpgradedDuplex(s) if IS_SSL => s.ssl().map(|p| p.cast()),
+            InternalSocket::UpgradedDuplex(s) if IS_SSL => duplex(s).ssl().map(|p| p.cast()),
             InternalSocket::UpgradedDuplex(_) => None,
             #[cfg(windows)]
-            InternalSocket::Pipe(s) if IS_SSL => s.ssl().map(|p| p.cast()),
+            InternalSocket::Pipe(s) if IS_SSL => pipe(s).ssl().map(|p| p.cast()),
             #[cfg(windows)]
             InternalSocket::Pipe(_) => None,
             #[cfg(not(windows))]
@@ -672,14 +684,14 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         Self { socket }
     }
     #[inline]
-    pub fn from_duplex(d: DuplexHandle) -> Self {
+    pub fn from_duplex(d: NonNull<UpgradedDuplex>) -> Self {
         Self {
             socket: InternalSocket::UpgradedDuplex(d),
         }
     }
     #[cfg(windows)]
     #[inline]
-    pub fn from_named_pipe(p: DuplexHandle) -> Self {
+    pub fn from_named_pipe(p: NonNull<WindowsNamedPipe>) -> Self {
         Self {
             socket: InternalSocket::Pipe(p),
         }

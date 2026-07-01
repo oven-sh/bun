@@ -7,7 +7,7 @@
 //!   - leaf enums/newtypes (`ChunkKind`, `Magic`, `MessageId`, …) and the
 //!     `FileKind` alias of `bun_bundler::bake_types::CacheKind`
 //!   - submodule struct types (`Assets`, `RouteBundle`, `SourceMapStore`, …)
-//!   - `bun_bundler::dispatch::DevServerVTable` wiring (`DEV_SERVER_VTABLE`)
+//!   - the `bun_dev_server_*` link fns behind `bun_bundler::dispatch::DevServerHandle`
 //!   - `is_file_cached`
 
 #![allow(clippy::module_inception)]
@@ -1111,24 +1111,27 @@ pub mod directory_watch_store {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// CYCLEBREAK §Dispatch — DevServerVTable impl (high tier provides static)
+// CYCLEBREAK §Dispatch — `bun_dev_server_*` link fns (high tier provides the
+// definitions resolved against `bun_bundler`'s `unsafe extern "Rust"` block).
 // ══════════════════════════════════════════════════════════════════════════
 
-unsafe fn bake_barrel_needed_exports(
-    this: *mut (),
+#[unsafe(no_mangle)]
+unsafe fn bun_dev_server_barrel_needed_exports(
+    d: &bun_bundler::DevServerOpaque,
 ) -> *mut bun_collections::StringArrayHashMap<bun_collections::StringHashMap<()>> {
-    let this: *mut DevServer = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+    let this: *mut DevServer = d.as_mut_ptr().cast();
+    // SAFETY: dispatch contract — `d` was erased from a live `*mut DevServer`.
     unsafe { &raw mut (*this).barrel_needed_exports }
 }
 
-unsafe fn bake_log_for_resolution_failures(
-    this: *mut (),
+#[unsafe(no_mangle)]
+unsafe fn bun_dev_server_log_for_resolution_failures(
+    d: &bun_bundler::DevServerOpaque,
     abs_path: &[u8],
     graph: bun_bundler::bake_types::Graph,
 ) -> *mut bun_ast::Log {
-    let this: *mut DevServer = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+    let this: *mut DevServer = d.as_mut_ptr().cast();
+    // SAFETY: dispatch contract — `d` was erased from a live `*mut DevServer`.
     unsafe {
         match (*this).get_log_for_resolution_failures(abs_path, graph) {
             Ok(log) => log,
@@ -1137,13 +1140,14 @@ unsafe fn bake_log_for_resolution_failures(
     }
 }
 
-unsafe fn bake_finalize_bundle(
-    this: *mut (),
+#[unsafe(no_mangle)]
+unsafe fn bun_dev_server_finalize_bundle(
+    d: &bun_bundler::DevServerOpaque,
     bv2: *mut bun_bundler::bundle_v2::BundleV2<'_>,
     result: *mut bun_bundler::bundle_v2::DevServerOutput<'_>,
 ) -> Result<(), bun_core::Error> {
-    let this: *mut DevServer = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+    let this: *mut DevServer = d.as_mut_ptr().cast();
+    // SAFETY: dispatch contract — `d` was erased from a live `*mut DevServer`.
     unsafe {
         // `bv2` borrows the three `Transpiler`s stored inline in `DevServer`
         // (stable heap address); the `'static` is a stand-in for the
@@ -1153,16 +1157,17 @@ unsafe fn bake_finalize_bundle(
     }
 }
 
-unsafe fn bake_handle_parse_task_failure(
-    this: *mut (),
+#[unsafe(no_mangle)]
+unsafe fn bun_dev_server_handle_parse_task_failure(
+    d: &bun_bundler::DevServerOpaque,
     err: bun_core::Error,
     graph: bun_bundler::bake_types::Graph,
     abs_path: &[u8],
     log: *const bun_ast::Log,
     bv2: *mut bun_bundler::bundle_v2::BundleV2<'_>,
 ) -> Result<(), bun_core::Error> {
-    let this: *mut DevServer = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+    let this: *mut DevServer = d.as_mut_ptr().cast();
+    // SAFETY: dispatch contract — `d` was erased from a live `*mut DevServer`.
     unsafe {
         (*this)
             .handle_parse_task_failure(err, graph, abs_path, &*log, &mut *bv2)
@@ -1170,14 +1175,15 @@ unsafe fn bake_handle_parse_task_failure(
     }
 }
 
-unsafe fn bake_put_or_overwrite_asset(
-    this: *mut (),
+#[unsafe(no_mangle)]
+unsafe fn bun_dev_server_put_or_overwrite_asset(
+    d: &bun_bundler::DevServerOpaque,
     path: *const (),
     contents: &[u8],
     content_hash: u64,
 ) -> Result<(), bun_core::Error> {
-    let this: *mut DevServer = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+    let this: *mut DevServer = d.as_mut_ptr().cast();
+    // SAFETY: dispatch contract — `d` was erased from a live `*mut DevServer`.
     unsafe {
         // `path` was erased from `&bun_resolver::fs::Path<'_>` at the
         // `DevServerHandle::put_or_overwrite_asset_erased` call site. Re-wrap
@@ -1188,15 +1194,16 @@ unsafe fn bake_put_or_overwrite_asset(
     }
 }
 
-unsafe fn bake_track_resolution_failure(
-    this: *mut (),
+#[unsafe(no_mangle)]
+unsafe fn bun_dev_server_track_resolution_failure(
+    d: &bun_bundler::DevServerOpaque,
     import_source: &[u8],
     specifier: &[u8],
     renderer: bun_bundler::bake_types::Graph,
     loader: bun_ast::Loader,
 ) -> Result<(), bun_core::Error> {
-    let this: *mut DevServer = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+    let this: *mut DevServer = d.as_mut_ptr().cast();
+    // SAFETY: dispatch contract — `d` was erased from a live `*mut DevServer`.
     unsafe {
         (*this)
             .directory_watchers
@@ -1205,25 +1212,31 @@ unsafe fn bake_track_resolution_failure(
     }
 }
 
-unsafe fn bake_is_file_cached(
-    this: *mut (),
+#[unsafe(no_mangle)]
+unsafe fn bun_dev_server_is_file_cached(
+    d: &bun_bundler::DevServerOpaque,
     abs_path: &[u8],
     side: bun_bundler::bake_types::Graph,
 ) -> Option<bun_bundler::bake_types::CacheEntry> {
-    let this: *mut DevServer = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+    let this: *mut DevServer = d.as_mut_ptr().cast();
+    // SAFETY: dispatch contract — `d` was erased from a live `*mut DevServer`.
     unsafe { (*this).is_file_cached(abs_path, side) }
 }
 
-unsafe fn bake_asset_hash(this: *mut (), abs_path: &[u8]) -> Option<u64> {
-    let this: *mut DevServer = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+#[unsafe(no_mangle)]
+unsafe fn bun_dev_server_asset_hash(
+    d: &bun_bundler::DevServerOpaque,
+    abs_path: &[u8],
+) -> Option<u64> {
+    let this: *mut DevServer = d.as_mut_ptr().cast();
+    // SAFETY: dispatch contract — `d` was erased from a live `*mut DevServer`.
     unsafe { (*this).assets.get_hash(abs_path) }
 }
 
-unsafe fn bake_current_bundle_start_data(this: *mut ()) -> *mut () {
-    let this: *mut DevServer = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+#[unsafe(no_mangle)]
+unsafe fn bun_dev_server_current_bundle_start_data(d: &bun_bundler::DevServerOpaque) -> *mut () {
+    let this: *mut DevServer = d.as_mut_ptr().cast();
+    // SAFETY: dispatch contract — `d` was erased from a live `*mut DevServer`.
     unsafe {
         (*this)
             .current_bundle
@@ -1233,12 +1246,13 @@ unsafe fn bake_current_bundle_start_data(this: *mut ()) -> *mut () {
     }
 }
 
-unsafe fn bake_register_barrel_with_deferrals(
-    this: *mut (),
+#[unsafe(no_mangle)]
+unsafe fn bun_dev_server_register_barrel_with_deferrals(
+    d: &bun_bundler::DevServerOpaque,
     path: &[u8],
 ) -> Result<(), bun_core::Error> {
-    let this: *mut DevServer = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+    let this: *mut DevServer = d.as_mut_ptr().cast();
+    // SAFETY: dispatch contract — `d` was erased from a live `*mut DevServer`.
     unsafe {
         let _ = (*this)
             .barrel_files_with_deferrals
@@ -1248,9 +1262,14 @@ unsafe fn bake_register_barrel_with_deferrals(
     }
 }
 
-unsafe fn bake_register_barrel_export(this: *mut (), barrel_path: &[u8], alias: &[u8]) {
-    let this: *mut DevServer = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut DevServer`.
+#[unsafe(no_mangle)]
+unsafe fn bun_dev_server_register_barrel_export(
+    d: &bun_bundler::DevServerOpaque,
+    barrel_path: &[u8],
+    alias: &[u8],
+) {
+    let this: *mut DevServer = d.as_mut_ptr().cast();
+    // SAFETY: dispatch contract — `d` was erased from a live `*mut DevServer`.
     unsafe {
         // Silently drop on alloc failure.
         let Ok(gop) = (*this).barrel_needed_exports.get_or_put(barrel_path) else {
@@ -1259,22 +1278,6 @@ unsafe fn bake_register_barrel_export(this: *mut (), barrel_path: &[u8], alias: 
         let _ = gop.value_ptr.get_or_put(alias);
     }
 }
-
-/// CYCLEBREAK §Dispatch successor — concrete vtable instance handed to the
-/// bundler by `bundler_handle()` (no link-time symbols).
-static DEV_SERVER_VTABLE: bun_bundler::DevServerVTable = bun_bundler::DevServerVTable {
-    barrel_needed_exports: bake_barrel_needed_exports,
-    log_for_resolution_failures: bake_log_for_resolution_failures,
-    finalize_bundle: bake_finalize_bundle,
-    handle_parse_task_failure: bake_handle_parse_task_failure,
-    put_or_overwrite_asset: bake_put_or_overwrite_asset,
-    track_resolution_failure: bake_track_resolution_failure,
-    is_file_cached: bake_is_file_cached,
-    asset_hash: bake_asset_hash,
-    current_bundle_start_data: bake_current_bundle_start_data,
-    register_barrel_with_deferrals: bake_register_barrel_with_deferrals,
-    register_barrel_export: bake_register_barrel_export,
-};
 
 impl DevServer {
     /// Length of `configuration_hash_key`.
@@ -1285,7 +1288,11 @@ impl DevServer {
     #[inline]
     pub fn bundler_handle(&mut self) -> bun_bundler::dispatch::DevServerHandle {
         // SAFETY: `self` is the single per-process DevServer; outlives all dispatch.
-        unsafe { bun_bundler::dispatch::DevServerHandle::new(self, &DEV_SERVER_VTABLE) }
+        unsafe {
+            bun_bundler::dispatch::DevServerHandle::new(
+                core::ptr::NonNull::from(&mut *self).cast::<bun_bundler::DevServerOpaque>(),
+            )
+        }
     }
 }
 

@@ -21,7 +21,8 @@ use bun_url::URL;
 use crate::options::{self, BundleOptions, ImportPathFormat};
 use crate::options_impl::Target as BundleTarget;
 use crate::transpiler::{
-    BunPluginTarget, ParseResult, PluginResolver, PluginRunner, ResolveQueue, ResolveResults,
+    __bun_plugin_runner_on_resolve, BunPluginTarget, JscPluginRunner, ParseResult, PluginRunner,
+    ResolveQueue, ResolveResults,
 };
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -56,7 +57,7 @@ pub struct Linker {
     pub import_counter: usize,
     pub tagged_resolutions: TaggedResolution,
 
-    pub plugin_runner: Option<core::ptr::NonNull<dyn PluginResolver>>,
+    pub plugin_runner: Option<core::ptr::NonNull<JscPluginRunner>>,
 }
 
 pub(crate) const RUNTIME_SOURCE_PATH: &[u8] = b"bun:wrap";
@@ -402,7 +403,7 @@ impl Linker {
         // (`generate_import_path`, `log_mut`).
         let (target, rewrite_jest_for_tests) = {
             let opts = self.options();
-            (opts.target, opts.rewrite_jest_for_tests)
+            (opts.resolve.target, opts.resolve.rewrite_jest_for_tests)
         };
 
         let source_dir = file_path.source_dir();
@@ -521,20 +522,28 @@ impl Linker {
                             // single-threaded and holds no other borrow of it
                             // for the duration of `on_resolve`, so shared
                             // access is sound.
+                            // The same contract discharges the link fn's
+                            // precondition below.
+                            // SAFETY: as above — the runner outlives the link.
                             let runner = unsafe { runner.as_ref() };
-                            if let Some(path) = runner.on_resolve(
-                                import_record.path.text,
-                                file_path.text,
-                                self.log_mut(),
-                                import_record.range.loc,
-                                if IS_BUN {
-                                    BunPluginTarget::Bun
-                                } else if target == options::Target::Browser {
-                                    BunPluginTarget::Browser
-                                } else {
-                                    BunPluginTarget::Node
-                                },
-                            )? {
+                            // SAFETY: `runner` is live for the duration of the
+                            // call (same contract as the deref above).
+                            if let Some(path) = unsafe {
+                                __bun_plugin_runner_on_resolve(
+                                    runner,
+                                    import_record.path.text,
+                                    file_path.text,
+                                    self.log_mut(),
+                                    import_record.range.loc,
+                                    if IS_BUN {
+                                        BunPluginTarget::Bun
+                                    } else if target == options::Target::Browser {
+                                        BunPluginTarget::Browser
+                                    } else {
+                                        BunPluginTarget::Node
+                                    },
+                                )
+                            }? {
                                 import_record.path = self.generate_import_path(
                                     source_dir,
                                     path.text,

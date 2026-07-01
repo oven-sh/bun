@@ -1,5 +1,6 @@
-use crate::sql_jsc::jsc::{JSValue, VirtualMachineSqlExt as _};
+use crate::sql_jsc::jsc::VirtualMachineSqlExt as _;
 use bun_collections::{OffsetByteList, StringHashMap, VecExt};
+use bun_jsc::JSValue;
 use bun_uws::{self as uws, AnySocket as Socket, SslCtx};
 
 use bun_sql::mysql::Capabilities;
@@ -328,7 +329,7 @@ impl MySQLConnection {
 
         // `as_mut()` is `'static`, so `tls_group` borrows the VM singleton —
         // not `*self` — and stays live across the field reads below.
-        let tls_group: &mut bun_uws::SocketGroup = crate::sql_jsc::jsc::VirtualMachine::get()
+        let tls_group: &mut bun_uws::SocketGroup = bun_jsc::virtual_machine::VirtualMachine::get()
             .as_mut()
             .mysql_socket_group::<true>();
 

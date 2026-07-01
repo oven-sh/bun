@@ -1,13 +1,12 @@
 //! `jsc.EventLoop` — the JS-thread event loop.
 //!
 //! `tick`/`enter`/`exit`/`drain_microtasks`/`run_callback`/concurrent-queue
-//! plumbing are real. The two hot dispatch loops (`tickQueueWithCount`'s
-//! per-`Task` switch and `ImmediateObject::runImmediateTask`) name
-//! `bun_runtime` types and are hoisted to that tier via link-time
-//! `extern "Rust"` (`__bun_tick_queue_with_count` / `__bun_run_immediate_task`);
+//! plumbing are real. The hot dispatch loop (`tickQueueWithCount`'s
+//! per-`Task` switch) names `bun_runtime` types and is hoisted to that tier
+//! via the link-time `extern "Rust"` `__bun_tick_queue_with_count`;
 //! `auto_tick`/`auto_tick_active` likewise
-//! dispatch through `virtual_machine::RuntimeHooks` (need `Timer::All` for the
-//! poll deadline). See PORTING.md §Dispatch.
+//! dispatch through the `virtual_machine::bun_runtime_*` extern fns (need
+//! `Timer::All` for the poll deadline). See PORTING.md §Dispatch.
 
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
@@ -61,10 +60,6 @@ pub struct EventLoop {
     ///   - immediate_tasks: tasks that will run on the current tick
     ///
     /// Having two queues avoids infinite loops creating by calling `setImmediate` in a `setImmediate` callback.
-    ///
-    /// Note (§Dispatch): the per-task body still dispatches through the
-    /// link-time `__bun_run_immediate_task` hook defined in
-    /// `bun_runtime::dispatch`.
     pub immediate_tasks: Vec<*mut crate::timer::ImmediateObject>,
     pub next_immediate_tasks: Vec<*mut crate::timer::ImmediateObject>,
 
@@ -181,18 +176,6 @@ unsafe extern "Rust" {
         vm: *mut VirtualMachine,
         counter: &mut u32,
     ) -> Result<(), JsTerminated>;
-    /// `ImmediateObject::runImmediateTask` — returns whether the callback
-    /// threw. Defined in `bun_runtime::dispatch`. Link-time resolved.
-    fn __bun_run_immediate_task(
-        task: *mut crate::timer::ImmediateObject,
-        vm: *mut VirtualMachine,
-    ) -> bool;
-    /// Release the event loop's `+1` ref on a still-queued `ImmediateObject`
-    /// without running it. Defined in `bun_runtime::dispatch`.
-    fn __bun_cancel_pending_immediate(
-        task: *mut crate::timer::ImmediateObject,
-        vm: *mut VirtualMachine,
-    );
     /// `WTFTimer::run` — `timer` is an opaque [`WTFTimerHandle`] to
     /// `bun_runtime::wtf_timer::WTFTimer`; the definer casts it back.
     /// Defined in `bun_runtime::dispatch`. Link-time resolved.
@@ -784,13 +767,11 @@ impl EventLoop {
             let vm = self.vm();
             for task in pending.into_iter().chain(next) {
                 // SAFETY: `task` came from `enqueue_immediate_task`; `vm` is the live per-thread VM.
-                unsafe { __bun_cancel_pending_immediate(task, vm) };
+                unsafe { crate::timer::ImmediateObject::cancel_pending(task, vm) };
             }
         }
     }
 
-    /// Note (§Dispatch): the per-task body dispatches through the link-time
-    /// `__bun_run_immediate_task` hook defined in `bun_runtime::dispatch`.
     pub fn enqueue_immediate_task(&mut self, task: *mut crate::timer::ImmediateObject) {
         self.immediate_tasks.push(task);
     }
@@ -799,9 +780,7 @@ impl EventLoop {
     /// immediate queues, drains the now-current batch, then recycles the
     /// drained Vec as the next-tick buffer.
     ///
-    /// Note: the real `ImmediateObject` lives in `bun_runtime` (cycle), so
-    /// the per-task body dispatches through `__bun_run_immediate_task` (link-
-    /// time, definer in `bun_runtime`). The swap always happens — this is
+    /// The swap always happens — this is
     /// load-bearing for `auto_tick`'s `has_pending_immediate` read, which must
     /// observe the post-swap `immediate_tasks` (next-tick immediates), not the
     /// un-drained current batch (busy-spin hazard).
@@ -811,7 +790,7 @@ impl EventLoop {
     pub unsafe fn tick_immediate_tasks(&mut self, virtual_machine: *mut VirtualMachine) {
         // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
         // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` is `noalias`, and
-        // the only thing reaching the `__bun_run_immediate_task` extern call is
+        // the only thing reaching the `run_immediate_task` call is
         // `virtual_machine` — a *separate* pointer parameter that LLVM is told
         // does NOT alias `*self` (even though `EventLoop` is a value field of
         // `*virtual_machine`). JS re-enters via `setImmediate` →
@@ -832,7 +811,9 @@ impl EventLoop {
             // SAFETY: ImmediateObject pointers are kept alive by the JS heap
             // until `runImmediateTask` consumes them; `virtual_machine` is the
             // live owning VM per caller contract.
-            exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
+            exception_thrown = unsafe {
+                crate::timer::ImmediateObject::run_immediate_task(*task, virtual_machine)
+            };
         }
         // Re-escape `this` after the re-entrant loop so nothing about `*this`
         // is carried across it.
@@ -923,7 +904,7 @@ impl EventLoop {
     /// `eventLoop().autoTickActive()` — like [`auto_tick`](Self::auto_tick) but
     /// only sleeps in the uSockets loop while it has active handles.
     /// Dispatches through
-    /// `VirtualMachine::auto_tick_active` → `RuntimeHooks::auto_tick_active`
+    /// `VirtualMachine::auto_tick_active` → `bun_runtime_auto_tick_active`
     /// (body lives in `bun_runtime::jsc_hooks` — needs `Timer::All`).
     #[inline]
     pub fn auto_tick_active(&mut self) {
@@ -1248,34 +1229,47 @@ pub fn event_loop_exit(global: &JSGlobalObject) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `bun_event_loop::JsEventLoop` method table
+// `bun_event_loop::JsEventLoop` link fns
 //
 // `AnyEventLoop` / `EventLoopHandle` live in the lower-tier `bun_event_loop`
-// crate and cannot name `jsc::EventLoop`. The low tier declares the
-// `#[no_mangle]` static `__BUN_JS_EVENT_LOOP_VTABLE` as `extern "Rust"`; the
-// typed shims below are its slots, resolved at link time — hardcoded, single
-// implementor. Each slot casts the erased `*mut ()` owner back to
-// `*mut EventLoop` and forwards to the real method.
+// crate and cannot name `jsc::EventLoop`. The low tier declares one typed
+// `extern "Rust"` fn per `JsEventLoop` method; the `#[no_mangle]` definitions
+// below are resolved at link time — hardcoded, single implementor. Each fn
+// casts the opaque `NonNull<JscEventLoop>` back to `*mut EventLoop` and
+// forwards to the real method.
 // ──────────────────────────────────────────────────────────────────────────
 
-// `this: *mut EventLoop` — owner was erased from a live `*mut EventLoop` in
+// `el: *mut EventLoop` — the handle was erased from a live `*mut EventLoop` in
 // `js_event_loop_handle` / `EventLoopHandle::init`. All calls run on the
 // JS thread.
 
-unsafe fn jsel_iteration_number(this: *mut ()) -> u64 {
-    let this: *mut EventLoop = this.cast();
+/// The `*mut EventLoop` behind a `bun_event_loop::JscEventLoop` link handle
+/// (shared by every `bun_jsc_event_loop_*` definition below).
+#[inline]
+fn event_loop_raw(el: NonNull<bun_event_loop::JscEventLoop>) -> *mut EventLoop {
+    el.as_ptr().cast()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_iteration_number(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) -> u64 {
+    let this = event_loop_raw(el);
     // Reads the EventLoop's own `uws_loop` field; on
     // Windows that and `VM::uws_loop()` (= `uws::Loop::get()`) are different
     // code paths. Route through `usockets_loop()`.
-    // SAFETY: vtable contract — `this` was erased from a live `*mut EventLoop`.
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
     unsafe { (&*(*this).usockets_loop()).iteration_number() }
 }
 
-unsafe fn jsel_file_polls(this: *mut ()) -> *mut Async::file_poll::Store {
-    let this: *mut EventLoop = this.cast();
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_file_polls(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) -> *mut Async::file_poll::Store {
+    let this = event_loop_raw(el);
     // Return raw to avoid asserting uniqueness — multiple handles may name the
     // same VM (see `EventLoopHandle::file_polls` doc).
-    // SAFETY: vtable contract — `this` was erased from a live `*mut EventLoop`.
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
     unsafe {
         core::ptr::from_mut(
             (*this)
@@ -1289,16 +1283,17 @@ unsafe fn jsel_file_polls(this: *mut ()) -> *mut Async::file_poll::Store {
     }
 }
 
-unsafe fn jsel_put_file_poll(
-    this: *mut (),
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_put_file_poll(
+    el: NonNull<bun_event_loop::JscEventLoop>,
     poll: *mut bun_io::FilePoll,
     was_ever_registered: bool,
 ) {
-    let this: *mut EventLoop = this.cast();
+    let this = event_loop_raw(el);
     // `Store::put` only needs the VM as an opaque `EventLoopCtx`; reach it
     // via the JS-ctx hook so we don't form a competing `&mut VirtualMachine`
     // while holding the store.
-    // SAFETY: vtable contract — `this` was erased from a live `*mut EventLoop`;
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`;
     // `poll` is a live hive-slot pointer (non-null).
     unsafe {
         let store = core::ptr::from_mut(
@@ -1311,7 +1306,7 @@ unsafe fn jsel_put_file_poll(
                 .as_mut(),
         );
         let ctx = Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js);
-        // `poll` is a live hive-slot pointer (vtable contract) — non-null.
+        // `poll` is a live hive-slot pointer (caller contract) — non-null.
         (*store).put(
             core::ptr::NonNull::new_unchecked(poll),
             ctx,
@@ -1320,39 +1315,55 @@ unsafe fn jsel_put_file_poll(
     }
 }
 
-unsafe fn jsel_uws_loop(this: *mut ()) -> *mut uws::Loop {
-    let this: *mut EventLoop = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut EventLoop`.
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_uws_loop(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) -> *mut uws::Loop {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
     unsafe { (*this).usockets_loop() }
 }
 
-unsafe fn jsel_pipe_read_buffer(this: *mut ()) -> *mut [u8] {
-    let this: *mut EventLoop = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut EventLoop`.
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_pipe_read_buffer(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) -> *mut [u8] {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
     unsafe { core::ptr::from_mut::<[u8]>((*this).pipe_read_buffer()) }
 }
 
-unsafe fn jsel_tick(this: *mut ()) {
-    let this: *mut EventLoop = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut EventLoop`.
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_tick(el: NonNull<bun_event_loop::JscEventLoop>) {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
     unsafe { (*this).tick() }
 }
 
-unsafe fn jsel_auto_tick(this: *mut ()) {
-    let this: *mut EventLoop = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut EventLoop`.
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_auto_tick(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
     unsafe { (*this).auto_tick() }
 }
 
-unsafe fn jsel_auto_tick_active(this: *mut ()) {
-    let this: *mut EventLoop = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut EventLoop`.
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_auto_tick_active(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
     unsafe { (*this).auto_tick_active() }
 }
 
-unsafe fn jsel_global_object(this: *mut ()) -> *mut () {
-    let this: *mut EventLoop = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut EventLoop`.
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_global_object(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) -> *mut () {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
     unsafe {
         (*this)
             .global
@@ -1360,9 +1371,12 @@ unsafe fn jsel_global_object(this: *mut ()) -> *mut () {
     }
 }
 
-unsafe fn jsel_bun_vm(this: *mut ()) -> *mut () {
-    let this: *mut EventLoop = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut EventLoop`.
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_bun_vm(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) -> *mut () {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
     unsafe {
         (*this)
             .virtual_machine
@@ -1370,50 +1384,64 @@ unsafe fn jsel_bun_vm(this: *mut ()) -> *mut () {
     }
 }
 
-unsafe fn jsel_enter(this: *mut ()) {
-    let this: *mut EventLoop = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut EventLoop`.
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_enter(el: NonNull<bun_event_loop::JscEventLoop>) {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
     unsafe { (*this).enter() }
 }
 
-unsafe fn jsel_exit(this: *mut ()) {
-    let this: *mut EventLoop = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut EventLoop`.
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_exit(el: NonNull<bun_event_loop::JscEventLoop>) {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
     unsafe { (*this).exit() }
 }
 
-unsafe fn jsel_enqueue_task(this: *mut (), task: bun_event_loop::Task) {
-    let this: *mut EventLoop = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut EventLoop`.
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_enqueue_task(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+    task: bun_event_loop::Task,
+) {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
     unsafe { (*this).enqueue_task(task) }
 }
 
-unsafe fn jsel_enqueue_task_concurrent(
-    this: *mut (),
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_enqueue_task_concurrent(
+    el: NonNull<bun_event_loop::JscEventLoop>,
     task: NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
 ) {
-    let this: *mut EventLoop = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut EventLoop`.
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
     unsafe { (*this).enqueue_task_concurrent(task) }
 }
 
-unsafe fn jsel_env(this: *mut ()) -> *mut bun_dotenv::Loader<'static> {
-    let this: *mut EventLoop = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut EventLoop`.
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_env(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) -> *mut bun_dotenv::Loader<'static> {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
     unsafe { (*this).vm_ref().transpiler.env }
 }
 
-unsafe fn jsel_top_level_dir(this: *mut ()) -> *const [u8] {
-    let this: *mut EventLoop = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut EventLoop`.
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_top_level_dir(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) -> *const [u8] {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
     unsafe { core::ptr::from_ref::<[u8]>((*this).vm_ref().top_level_dir()) }
 }
 
-unsafe fn jsel_create_null_delimited_env_map(
-    this: *mut (),
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_create_null_delimited_env_map(
+    el: NonNull<bun_event_loop::JscEventLoop>,
 ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> {
-    let this: *mut EventLoop = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut EventLoop`.
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
     unsafe {
         (*(*this).vm_ref().transpiler.env)
             .map
@@ -1421,38 +1449,18 @@ unsafe fn jsel_create_null_delimited_env_map(
     }
 }
 
-unsafe fn jsel_as_event_loop_ctx(this: *mut ()) -> bun_io::EventLoopCtx {
-    let this: *mut EventLoop = this.cast();
-    // SAFETY: vtable contract — `this` was erased from a live `*mut EventLoop`.
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_as_event_loop_ctx(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) -> bun_io::EventLoopCtx {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
     unsafe { VirtualMachine::event_loop_ctx((*this).virtual_machine.expect("vm set").as_ptr()) }
 }
 
-#[unsafe(no_mangle)]
-pub static __BUN_JS_EVENT_LOOP_VTABLE: bun_event_loop::JsEventLoopVTable =
-    bun_event_loop::JsEventLoopVTable {
-        iteration_number: jsel_iteration_number,
-        file_polls: jsel_file_polls,
-        put_file_poll: jsel_put_file_poll,
-        uws_loop: jsel_uws_loop,
-        pipe_read_buffer: jsel_pipe_read_buffer,
-        tick: jsel_tick,
-        auto_tick: jsel_auto_tick,
-        auto_tick_active: jsel_auto_tick_active,
-        global_object: jsel_global_object,
-        bun_vm: jsel_bun_vm,
-        enter: jsel_enter,
-        exit: jsel_exit,
-        enqueue_task: jsel_enqueue_task,
-        enqueue_task_concurrent: jsel_enqueue_task_concurrent,
-        env: jsel_env,
-        top_level_dir: jsel_top_level_dir,
-        create_null_delimited_env_map: jsel_create_null_delimited_env_map,
-        as_event_loop_ctx: jsel_as_event_loop_ctx,
-    };
-
 pub fn js_event_loop_handle(el: *mut EventLoop) -> bun_event_loop::JsEventLoop {
     // SAFETY: el is the live per-thread jsc::EventLoop.
-    unsafe { bun_event_loop::JsEventLoop::new(el.cast(), &__BUN_JS_EVENT_LOOP_VTABLE) }
+    unsafe { bun_event_loop::JsEventLoop::from_ptr(el.cast()) }
 }
 
 /// C++ (webcore/streams) entries for the deferred task queue: register/unregister a task that

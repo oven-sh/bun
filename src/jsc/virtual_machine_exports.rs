@@ -4,7 +4,6 @@ use crate::event_loop::ConcurrentTask;
 use crate::plugin_runner::PluginRunner;
 use crate::virtual_machine::VirtualMachine;
 use crate::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task};
-use bun_bundler::transpiler::PluginResolver;
 use bun_core::String as BunString;
 use bun_event_loop::ManagedTask::ManagedTask;
 use bun_sourcemap::SourceProviderMap;
@@ -181,7 +180,7 @@ pub fn on_did_append_plugin(jsc_vm: &mut VirtualMachine, global: &JSGlobalObject
         global_object: bun_ptr::BackRef::new(global),
     });
     jsc_vm.transpiler.linker.plugin_runner =
-        Some(core::ptr::NonNull::from(runner as &mut dyn PluginResolver));
+        Some(core::ptr::NonNull::from(runner).cast::<bun_bundler::transpiler::JscPluginRunner>());
 }
 
 #[cfg(windows)]

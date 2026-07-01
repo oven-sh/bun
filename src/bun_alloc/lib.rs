@@ -753,35 +753,28 @@ pub fn usable_size(ptr: *const u8) -> usize {
 
 // ── out_of_memory ─────────────────────────────────────────────────────────
 
-/// OOM crash hook, installed once at startup by `bun_crash_handler::init()`.
-/// Write-once: `set_oom_handler` refuses to overwrite a non-null value, so a
-/// memory-corruption write cannot silently redirect an already-installed hook.
-static OOM_HANDLER: core::sync::atomic::AtomicPtr<()> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-
-/// Called by `bun_crash_handler::init()` (single-threaded startup).
-pub fn set_oom_handler(f: fn() -> !) {
-    let _ = OOM_HANDLER.compare_exchange(
-        core::ptr::null_mut(),
-        f as *mut (),
-        core::sync::atomic::Ordering::Release,
-        core::sync::atomic::Ordering::Relaxed,
-    );
-}
+// `bun_alloc` is T0 and cannot depend on `bun_crash_handler`, so the upward
+// call is a link-time `extern "Rust"` symbol defined by `bun_crash_handler`.
+// Under `cfg(test)` (no `bun_crash_handler` linked) the fallback aborts.
 
 #[cold]
 #[inline(never)]
 pub fn out_of_memory() -> ! {
-    let p = OOM_HANDLER.load(core::sync::atomic::Ordering::Acquire);
-    if !p.is_null() {
-        // SAFETY: only `set_oom_handler` stores here, with a `fn() -> !`.
-        let f: fn() -> ! = unsafe { core::mem::transmute(p) };
-        f();
+    #[cfg(not(test))]
+    {
+        unsafe extern "Rust" {
+            // Defined `#[no_mangle] extern "Rust"` in `bun_crash_handler` and
+            // linked into every binary that depends on this crate; no args, no
+            // preconditions — `safe fn` discharges the link-time proof here.
+            safe fn __bun_crash_handler_out_of_memory() -> !;
+        }
+        __bun_crash_handler_out_of_memory()
     }
-    // Pre-init OOM (or test binaries that never link the crash handler):
-    // fail closed with a plain abort.
-    let _ = std::io::Write::write_all(&mut std::io::stderr(), b"bun: out of memory\n");
-    std::process::abort()
+    #[cfg(test)]
+    {
+        let _ = std::io::Write::write_all(&mut std::io::stderr(), b"bun: out of memory\n");
+        std::process::abort()
+    }
 }
 
 // ── page_size ─────────────────────────────────────────────────────────────

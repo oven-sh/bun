@@ -50,6 +50,16 @@ impl Framework {
         }
     }
 }
+impl Default for Framework {
+    fn default() -> Self {
+        Framework::new(
+            bun_collections::StringArrayHashMap::new(),
+            None,
+            None,
+            false,
+        )
+    }
+}
 impl Framework {
     /// Deep clone; the built-in-module map clone is fallible (OOM routes
     /// through handle_oom like every other map clone).

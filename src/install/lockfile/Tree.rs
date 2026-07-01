@@ -1,3 +1,6 @@
+use bun_install_types::{
+    DependencyID, INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, PackageID, PackageNameHash,
+};
 use core::marker::ConstParamTy;
 
 use bun_alloc::AllocError;
@@ -10,10 +13,7 @@ use bun_paths::{self, SEP};
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{DepSorter, DependencyIDList, DependencyIDSlice, Lockfile};
 use crate::package_manager::{PackageManager, WorkspaceFilter};
-use crate::{
-    Dependency, DependencyID, INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, PackageID,
-    PackageNameHash, Resolution,
-};
+use crate::{Dependency, Resolution};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Tree

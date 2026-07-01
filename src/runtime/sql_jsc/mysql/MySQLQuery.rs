@@ -1,5 +1,5 @@
-use crate::sql_jsc::jsc::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
 use bun_core::String as BunString;
+use bun_jsc::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
 
 use super::my_sql_value::{Params, Value};
 use bun_sql::mysql::mysql_param::Param;

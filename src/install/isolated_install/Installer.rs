@@ -1,3 +1,6 @@
+use bun_install_types::{
+    DependencyID, INVALID_DEPENDENCY_ID, PackageID, PackageNameHash, TruncatedPackageNameHash,
+};
 use core::sync::atomic::{AtomicU8, Ordering};
 use std::io::Write as _;
 
@@ -18,10 +21,7 @@ use crate::package_install::{Method as InstallMethod, Summary as InstallSummary}
 use crate::postinstall_optimizer;
 use crate::postinstall_optimizer::PostinstallOptimizer;
 use crate::resolution;
-use crate::{
-    self as install, DependencyID, INVALID_DEPENDENCY_ID, Lockfile, PackageID, PackageManager,
-    PackageNameHash, Resolution, TaskCallbackContext, TruncatedPackageNameHash, bin,
-};
+use crate::{self as install, Lockfile, PackageManager, Resolution, TaskCallbackContext, bin};
 use bun_options_types::context as Command;
 // Bring `items_<field>()` column accessors into scope for
 // `MultiArrayList<Package>` / `Slice<Package>`.

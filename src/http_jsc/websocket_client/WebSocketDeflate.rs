@@ -32,27 +32,16 @@ impl Params {
     pub const MIN_WINDOW_BITS: u8 = 8;
 }
 
-#[derive(Default)]
-pub struct RareData {
-    libdeflate_decompressor: Option<libdeflate_sys::OwnedDecompressor>,
-    // PERF: a 128KB inline buffer reused as scratch for (de)compression
-    // output could avoid per-call allocation — profile if hot.
-}
+pub const STACK_BUFFER_SIZE: usize = 128 * 1024;
 
-impl RareData {
-    pub const STACK_BUFFER_SIZE: usize = 128 * 1024;
-
-    pub fn array_list(&self) -> Vec<u8> {
-        // PERF: allocates a fresh heap Vec per call — profile if hot.
-        Vec::with_capacity(Self::STACK_BUFFER_SIZE)
+/// Lazy-init the per-VM pooled libdeflate decompressor in `slot`.
+fn decompressor(
+    slot: &mut Option<libdeflate_sys::OwnedDecompressor>,
+) -> Option<&mut libdeflate_sys::Decompressor> {
+    if slot.is_none() {
+        *slot = libdeflate_sys::OwnedDecompressor::new();
     }
-
-    pub fn decompressor(&mut self) -> Option<&mut libdeflate_sys::Decompressor> {
-        if self.libdeflate_decompressor.is_none() {
-            self.libdeflate_decompressor = libdeflate_sys::OwnedDecompressor::new();
-        }
-        self.libdeflate_decompressor.as_deref_mut()
-    }
+    slot.as_deref_mut()
 }
 
 /// Parent module references this type as `WebSocketDeflate`.
@@ -65,9 +54,10 @@ pub struct PerMessageDeflate {
     pub compress_stream: zlib::DeflateEncoder,
     pub decompress_stream: zlib::InflateDecoder,
     pub params: Params,
-    // Per-VM pooled libdeflate state, owned by bun_jsc::RareData.websocket_deflate
-    // (ErasedBox); outlives every connection on this VM.
-    pub pool: core::ptr::NonNull<RareData>,
+    // Per-VM pooled libdeflate state: its own heap allocation owned (and
+    // freed) by `bun_jsc::RareData`, so this pointer stays valid across
+    // later `&mut RareData` borrows and outlives every connection on this VM.
+    pub pool: core::ptr::NonNull<bun_jsc::rare_data::WebSocketDeflateSlot>,
 }
 
 // Constants from zlib.h
@@ -128,23 +118,7 @@ impl PerMessageDeflate {
             params,
             compress_stream,
             decompress_stream,
-            pool: {
-                let slot = rare_data.websocket_deflate_slot();
-                if slot.is_none() {
-                    unsafe fn drop_pool(p: *mut core::ffi::c_void) {
-                        // SAFETY: p was produced by heap::into_raw(Box<RareData>) below.
-                        drop(unsafe { bun_core::heap::take(p.cast::<RareData>()) });
-                    }
-                    *slot = Some(bun_jsc::rare_data::ErasedBox {
-                        ptr: core::ptr::NonNull::new(
-                            bun_core::heap::into_raw(Box::new(RareData::default())).cast(),
-                        )
-                        .unwrap(),
-                        dtor: drop_pool,
-                    });
-                }
-                slot.as_ref().unwrap().ptr.cast::<RareData>()
-            },
+            pool: rare_data.websocket_deflate_slot(),
         }))
     }
 
@@ -153,7 +127,7 @@ impl PerMessageDeflate {
             return false;
         }
 
-        len < RareData::STACK_BUFFER_SIZE
+        len < STACK_BUFFER_SIZE
     }
 
     pub(crate) fn decompress(
@@ -168,7 +142,7 @@ impl PerMessageDeflate {
             // SAFETY: single JS thread; the pool lives in the VM's RareData which outlives
             // every open connection (connections are torn down by close_all_socket_groups
             // before RareData drops).
-            if let Some(decompressor) = unsafe { self.pool.as_mut() }.decompressor() {
+            if let Some(decompressor) = decompressor(unsafe { self.pool.as_mut() }) {
                 let result =
                     decompressor.decompress_to_vec(in_buf, out, libdeflate_sys::Encoding::Deflate);
                 if result.status == libdeflate_sys::Status::Success {

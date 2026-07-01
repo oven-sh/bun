@@ -689,7 +689,7 @@ impl ServerConfig {
             args.development = DevelopmentOption::Production;
         }
 
-        if arguments.vm.transpiler.options.production {
+        if arguments.vm.transpiler.options.resolve.production {
             args.development = DevelopmentOption::Production;
         }
 
@@ -998,10 +998,7 @@ impl ServerConfig {
                     // `UserOptions` (lives until `args.bake` is dropped).
                     let arena = bun_alloc::Arena::new();
 
-                    let root = bb::arena_dupe_z(
-                        &arena,
-                        bun_paths::fs::FileSystem::instance().top_level_dir(),
-                    );
+                    let root = bb::arena_dupe_z(&arena, bun_paths::fs::top_level_dir());
 
                     let router_types: Vec<bb::FileSystemRouterType> =
                         core::mem::take(&mut init_ctx.framework_router_list);

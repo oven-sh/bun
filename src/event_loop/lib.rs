@@ -8,6 +8,8 @@ pub mod DeferredTaskQueue;
 pub mod EventLoopTimer;
 pub mod ManagedTask;
 
+use core::ptr::NonNull;
+
 // ────────────────────────────────────────────────────────────────────────────
 // AnyEventLoop / MiniEventLoop.
 // `InternalLoopData::set_parent_event_loop`
@@ -42,171 +44,200 @@ pub use any_event_loop::{AnyEventLoop, EventLoopHandle, EventLoopTask, EventLoop
 
 // JS-event-loop arm of `AnyEventLoop` / `EventLoopHandle`. `bun_event_loop` is
 // a lower tier than `bun_jsc`, so it cannot name `jsc::EventLoop` /
-// `jsc::VirtualMachine` directly. Owner is an erased `*mut jsc::EventLoop`;
-// `bun_jsc::event_loop` provides the method table.
+// `jsc::VirtualMachine` directly. The handle stores an opaque
+// `*mut JscEventLoop`; `bun_jsc::event_loop` defines the
+// `#[no_mangle]` `bun_jsc_event_loop_*` fns, resolved at link time — hardcoded,
+// single implementor, no runtime registration and no init-order hazard.
 
-/// Method table for the JS event loop (`jsc::EventLoop`). The single
-/// implementor lives in bun_jsc, which builds JS_EVENT_LOOP_VTABLE from
-/// typed shims; the owner pointer is the live `*mut jsc::EventLoop`.
-pub struct JsEventLoopVTable {
-    pub iteration_number: unsafe fn(*mut ()) -> u64,
-    pub file_polls: unsafe fn(*mut ()) -> *mut bun_io::file_poll::Store,
-    pub put_file_poll: unsafe fn(*mut (), poll: *mut bun_io::FilePoll, was_ever_registered: bool),
-    pub uws_loop: unsafe fn(*mut ()) -> *mut bun_uws::Loop,
-    pub pipe_read_buffer: unsafe fn(*mut ()) -> *mut [u8],
-    pub tick: unsafe fn(*mut ()),
-    pub auto_tick: unsafe fn(*mut ()),
-    pub auto_tick_active: unsafe fn(*mut ()),
-    pub global_object: unsafe fn(*mut ()) -> *mut (),
-    pub bun_vm: unsafe fn(*mut ()) -> *mut (),
-    pub enter: unsafe fn(*mut ()),
-    pub exit: unsafe fn(*mut ()),
-    pub enqueue_task: unsafe fn(*mut (), Task),
-    pub enqueue_task_concurrent:
-        unsafe fn(*mut (), core::ptr::NonNull<ConcurrentTask::ConcurrentTask>),
-    pub env: unsafe fn(*mut ()) -> *mut bun_dotenv::Loader<'static>,
-    pub top_level_dir: unsafe fn(*mut ()) -> *const [u8],
-    pub create_null_delimited_env_map:
-        unsafe fn(*mut ()) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError>,
-    pub as_event_loop_ctx: unsafe fn(*mut ()) -> bun_io::EventLoopCtx,
+bun_opaque::opaque_ffi! {
+    /// The JS event loop (`jsc::EventLoop`), opaque at this tier.
+    pub struct JscEventLoop;
 }
 
-/// Typed handle over the erased `*mut jsc::EventLoop` plus the owner-provided
-/// method table.
-#[derive(Copy, Clone)]
-pub struct JsEventLoop {
-    pub owner: *mut (),
-    pub vtable: &'static JsEventLoopVTable,
-}
-
+// One typed link fn per `JsEventLoop` method, all defined in
+// `bun_jsc::event_loop`. Every body casts `el` back to the live
+// `*mut jsc::EventLoop` it was erased from.
 unsafe extern "Rust" {
-    /// The single `#[no_mangle]` method table, defined in `bun_jsc::event_loop`
-    /// and resolved at link time.
-    pub safe static __BUN_JS_EVENT_LOOP_VTABLE: JsEventLoopVTable;
+    pub unsafe fn bun_jsc_event_loop_iteration_number(el: NonNull<JscEventLoop>) -> u64;
+    pub unsafe fn bun_jsc_event_loop_file_polls(
+        el: NonNull<JscEventLoop>,
+    ) -> *mut bun_io::file_poll::Store;
+    pub unsafe fn bun_jsc_event_loop_put_file_poll(
+        el: NonNull<JscEventLoop>,
+        poll: *mut bun_io::FilePoll,
+        was_ever_registered: bool,
+    );
+    pub unsafe fn bun_jsc_event_loop_uws_loop(el: NonNull<JscEventLoop>) -> *mut bun_uws::Loop;
+    pub unsafe fn bun_jsc_event_loop_pipe_read_buffer(el: NonNull<JscEventLoop>) -> *mut [u8];
+    pub unsafe fn bun_jsc_event_loop_tick(el: NonNull<JscEventLoop>);
+    pub unsafe fn bun_jsc_event_loop_auto_tick(el: NonNull<JscEventLoop>);
+    pub unsafe fn bun_jsc_event_loop_auto_tick_active(el: NonNull<JscEventLoop>);
+    pub unsafe fn bun_jsc_event_loop_global_object(el: NonNull<JscEventLoop>) -> *mut ();
+    pub unsafe fn bun_jsc_event_loop_bun_vm(el: NonNull<JscEventLoop>) -> *mut ();
+    pub unsafe fn bun_jsc_event_loop_enter(el: NonNull<JscEventLoop>);
+    pub unsafe fn bun_jsc_event_loop_exit(el: NonNull<JscEventLoop>);
+    pub unsafe fn bun_jsc_event_loop_enqueue_task(el: NonNull<JscEventLoop>, task: Task);
+    pub unsafe fn bun_jsc_event_loop_enqueue_task_concurrent(
+        el: NonNull<JscEventLoop>,
+        task: core::ptr::NonNull<ConcurrentTask::ConcurrentTask>,
+    );
+    pub unsafe fn bun_jsc_event_loop_env(
+        el: NonNull<JscEventLoop>,
+    ) -> *mut bun_dotenv::Loader<'static>;
+    pub unsafe fn bun_jsc_event_loop_top_level_dir(el: NonNull<JscEventLoop>) -> *const [u8];
+    pub unsafe fn bun_jsc_event_loop_create_null_delimited_env_map(
+        el: NonNull<JscEventLoop>,
+    ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError>;
+    pub unsafe fn bun_jsc_event_loop_as_event_loop_ctx(
+        el: NonNull<JscEventLoop>,
+    ) -> bun_io::EventLoopCtx;
 }
+
+/// Typed handle over the erased, opaque `jsc::EventLoop` pointer.
+///
+/// The pointer is raw (not `NonNull`) because `EventLoopHandle::init(null)`
+/// is a documented never-dispatched placeholder; every dispatch requires a
+/// live (hence non-null) owner per the constructor contracts.
+#[derive(Copy, Clone)]
+pub struct JsEventLoop(*mut JscEventLoop);
 
 impl JsEventLoop {
-    /// SAFETY: `owner` must be the live `*mut jsc::EventLoop` the vtable was
-    /// written for, live for every dispatch through the handle.
+    /// SAFETY: `el` must be the live `*mut jsc::EventLoop` this handle is
+    /// for (live for every dispatch through the handle), or null for a
+    /// handle that is never dispatched through.
     #[inline]
-    pub unsafe fn new(owner: *mut (), vtable: &'static JsEventLoopVTable) -> Self {
-        Self { owner, vtable }
+    pub unsafe fn from_ptr(el: *mut JscEventLoop) -> Self {
+        Self(el)
+    }
+
+    /// The erased `*mut jsc::EventLoop` this handle wraps.
+    #[inline]
+    pub fn as_ptr(self) -> *mut JscEventLoop {
+        self.0
+    }
+
+    /// SAFETY: constructor contract — non-null on every dispatch.
+    #[inline]
+    unsafe fn owner(&self) -> NonNull<JscEventLoop> {
+        debug_assert!(
+            !self.0.is_null(),
+            "dispatch through a placeholder JsEventLoop"
+        );
+        // SAFETY: forwarded to the caller (`from_ptr` contract).
+        unsafe { NonNull::new_unchecked(self.0) }
     }
 
     #[inline]
-    pub fn iteration_number(&self) -> u64 {
-        // SAFETY: `new()` contract — `owner` is the live `*mut jsc::EventLoop`.
-        unsafe { (self.vtable.iteration_number)(self.owner) }
+    pub fn iteration_number(self) -> u64 {
+        // SAFETY: `new()` contract — `self.0` is the live `*mut jsc::EventLoop`.
+        unsafe { bun_jsc_event_loop_iteration_number(self.owner()) }
     }
 
     #[inline]
-    pub fn file_polls(&self) -> *mut bun_io::file_poll::Store {
-        // SAFETY: `new()` contract — `owner` is the live `*mut jsc::EventLoop`.
-        unsafe { (self.vtable.file_polls)(self.owner) }
+    pub fn file_polls(self) -> *mut bun_io::file_poll::Store {
+        // SAFETY: `new()` contract — `self.0` is the live `*mut jsc::EventLoop`.
+        unsafe { bun_jsc_event_loop_file_polls(self.owner()) }
     }
 
     /// `poll` is forwarded to the JS event loop's poll store verbatim and
     /// never dereferenced here.
     #[inline]
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn put_file_poll(&self, poll: *mut bun_io::FilePoll, was_ever_registered: bool) {
-        // SAFETY: `new()` contract — `owner` is the live `*mut jsc::EventLoop`.
-        unsafe { (self.vtable.put_file_poll)(self.owner, poll, was_ever_registered) }
+    pub fn put_file_poll(self, poll: *mut bun_io::FilePoll, was_ever_registered: bool) {
+        // SAFETY: `new()` contract — `self.0` is the live `*mut jsc::EventLoop`.
+        unsafe { bun_jsc_event_loop_put_file_poll(self.owner(), poll, was_ever_registered) }
     }
 
     #[inline]
-    pub fn uws_loop(&self) -> *mut bun_uws::Loop {
-        // SAFETY: `new()` contract — `owner` is the live `*mut jsc::EventLoop`.
-        unsafe { (self.vtable.uws_loop)(self.owner) }
+    pub fn uws_loop(self) -> *mut bun_uws::Loop {
+        // SAFETY: `new()` contract — `self.0` is the live `*mut jsc::EventLoop`.
+        unsafe { bun_jsc_event_loop_uws_loop(self.owner()) }
     }
 
     #[inline]
-    pub fn pipe_read_buffer(&self) -> *mut [u8] {
-        // SAFETY: `new()` contract — `owner` is the live `*mut jsc::EventLoop`.
-        unsafe { (self.vtable.pipe_read_buffer)(self.owner) }
+    pub fn pipe_read_buffer(self) -> *mut [u8] {
+        // SAFETY: `new()` contract — `self.0` is the live `*mut jsc::EventLoop`.
+        unsafe { bun_jsc_event_loop_pipe_read_buffer(self.owner()) }
     }
 
     #[inline]
-    pub fn tick(&self) {
-        // SAFETY: `new()` contract — `owner` is the live `*mut jsc::EventLoop`.
-        unsafe { (self.vtable.tick)(self.owner) }
+    pub fn tick(self) {
+        // SAFETY: `new()` contract — `self.0` is the live `*mut jsc::EventLoop`.
+        unsafe { bun_jsc_event_loop_tick(self.owner()) }
     }
 
     #[inline]
-    pub fn auto_tick(&self) {
-        // SAFETY: `new()` contract — `owner` is the live `*mut jsc::EventLoop`.
-        unsafe { (self.vtable.auto_tick)(self.owner) }
+    pub fn auto_tick(self) {
+        // SAFETY: `new()` contract — `self.0` is the live `*mut jsc::EventLoop`.
+        unsafe { bun_jsc_event_loop_auto_tick(self.owner()) }
     }
 
     #[inline]
-    pub fn auto_tick_active(&self) {
-        // SAFETY: `new()` contract — `owner` is the live `*mut jsc::EventLoop`.
-        unsafe { (self.vtable.auto_tick_active)(self.owner) }
+    pub fn auto_tick_active(self) {
+        // SAFETY: `new()` contract — `self.0` is the live `*mut jsc::EventLoop`.
+        unsafe { bun_jsc_event_loop_auto_tick_active(self.owner()) }
     }
 
     #[inline]
-    pub fn global_object(&self) -> *mut () {
-        // SAFETY: `new()` contract — `owner` is the live `*mut jsc::EventLoop`.
-        unsafe { (self.vtable.global_object)(self.owner) }
+    pub fn global_object(self) -> *mut () {
+        // SAFETY: `new()` contract — `self.0` is the live `*mut jsc::EventLoop`.
+        unsafe { bun_jsc_event_loop_global_object(self.owner()) }
     }
 
     #[inline]
-    pub fn bun_vm(&self) -> *mut () {
-        // SAFETY: `new()` contract — `owner` is the live `*mut jsc::EventLoop`.
-        unsafe { (self.vtable.bun_vm)(self.owner) }
+    pub fn bun_vm(self) -> *mut () {
+        // SAFETY: `new()` contract — `self.0` is the live `*mut jsc::EventLoop`.
+        unsafe { bun_jsc_event_loop_bun_vm(self.owner()) }
     }
 
     #[inline]
-    pub fn enter(&self) {
-        // SAFETY: `new()` contract — `owner` is the live `*mut jsc::EventLoop`.
-        unsafe { (self.vtable.enter)(self.owner) }
+    pub fn enter(self) {
+        // SAFETY: `new()` contract — `self.0` is the live `*mut jsc::EventLoop`.
+        unsafe { bun_jsc_event_loop_enter(self.owner()) }
     }
 
     #[inline]
-    pub fn exit(&self) {
-        // SAFETY: `new()` contract — `owner` is the live `*mut jsc::EventLoop`.
-        unsafe { (self.vtable.exit)(self.owner) }
+    pub fn exit(self) {
+        // SAFETY: `new()` contract — `self.0` is the live `*mut jsc::EventLoop`.
+        unsafe { bun_jsc_event_loop_exit(self.owner()) }
     }
 
     #[inline]
-    pub fn enqueue_task(&self, task: Task) {
-        // SAFETY: `new()` contract — `owner` is the live `*mut jsc::EventLoop`.
-        unsafe { (self.vtable.enqueue_task)(self.owner, task) }
+    pub fn enqueue_task(self, task: Task) {
+        // SAFETY: `new()` contract — `self.0` is the live `*mut jsc::EventLoop`.
+        unsafe { bun_jsc_event_loop_enqueue_task(self.owner(), task) }
     }
 
     #[inline]
-    pub fn enqueue_task_concurrent(
-        &self,
-        task: core::ptr::NonNull<ConcurrentTask::ConcurrentTask>,
-    ) {
-        // SAFETY: `new()` contract — `owner` is the live `*mut jsc::EventLoop`.
-        unsafe { (self.vtable.enqueue_task_concurrent)(self.owner, task) }
+    pub fn enqueue_task_concurrent(self, task: core::ptr::NonNull<ConcurrentTask::ConcurrentTask>) {
+        // SAFETY: `new()` contract — `self.0` is the live `*mut jsc::EventLoop`.
+        unsafe { bun_jsc_event_loop_enqueue_task_concurrent(self.owner(), task) }
     }
 
     #[inline]
-    pub fn env(&self) -> *mut bun_dotenv::Loader<'static> {
-        // SAFETY: `new()` contract — `owner` is the live `*mut jsc::EventLoop`.
-        unsafe { (self.vtable.env)(self.owner) }
+    pub fn env(self) -> *mut bun_dotenv::Loader<'static> {
+        // SAFETY: `new()` contract — `self.0` is the live `*mut jsc::EventLoop`.
+        unsafe { bun_jsc_event_loop_env(self.owner()) }
     }
 
     #[inline]
-    pub fn top_level_dir(&self) -> *const [u8] {
-        // SAFETY: `new()` contract — `owner` is the live `*mut jsc::EventLoop`.
-        unsafe { (self.vtable.top_level_dir)(self.owner) }
+    pub fn top_level_dir(self) -> *const [u8] {
+        // SAFETY: `new()` contract — `self.0` is the live `*mut jsc::EventLoop`.
+        unsafe { bun_jsc_event_loop_top_level_dir(self.owner()) }
     }
 
     #[inline]
     pub fn create_null_delimited_env_map(
-        &self,
+        self,
     ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> {
-        // SAFETY: `new()` contract — `owner` is the live `*mut jsc::EventLoop`.
-        unsafe { (self.vtable.create_null_delimited_env_map)(self.owner) }
+        // SAFETY: `new()` contract — `self.0` is the live `*mut jsc::EventLoop`.
+        unsafe { bun_jsc_event_loop_create_null_delimited_env_map(self.owner()) }
     }
 
     #[inline]
-    pub fn as_event_loop_ctx(&self) -> bun_io::EventLoopCtx {
-        // SAFETY: `new()` contract — `owner` is the live `*mut jsc::EventLoop`.
-        unsafe { (self.vtable.as_event_loop_ctx)(self.owner) }
+    pub fn as_event_loop_ctx(self) -> bun_io::EventLoopCtx {
+        // SAFETY: `new()` contract — `self.0` is the live `*mut jsc::EventLoop`.
+        unsafe { bun_jsc_event_loop_as_event_loop_ctx(self.owner()) }
     }
 }
 

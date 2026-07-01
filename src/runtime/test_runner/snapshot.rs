@@ -214,7 +214,7 @@ impl<'a> Snapshots<'a> {
         // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
         let vm = VirtualMachine::get().as_mut();
         let opts =
-            js_parser::ParserOptions::init(vm.transpiler.options.jsx.clone(), bun_ast::Loader::Js);
+            js_parser::ParserOptions::init(vm.transpiler.options.resolve.jsx.clone(), bun_ast::Loader::Js);
         // Thread a per-call arena — js_parser is bump-allocated.
         let arena = bun_alloc::Arena::new();
         let mut temp_log = bun_ast::Log::init();
@@ -542,7 +542,7 @@ impl<'a> Snapshots<'a> {
                     lexer.next()?;
                     // `ParserOptions` isn't `Clone`; rebuild per-iteration.
                     let opts = js_parser::ParserOptions::init(
-                        vm.transpiler.options.jsx.clone(),
+                        vm.transpiler.options.resolve.jsx.clone(),
                         bun_ast::Loader::Js,
                     );
                     // `P::init` takes an out-param

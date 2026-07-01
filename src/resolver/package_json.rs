@@ -21,8 +21,8 @@ use bun_parsers::json_parser;
 // all install-tier value types are the canonical `bun_install_types` shapes.
 
 pub use ::bun_install_types::resolver_hooks::{
-    Architecture, AutoInstaller, Behavior as DepBehavior, Dependency, DependencyGroup,
-    DependencyVersion, DependencyVersionTag, OperatingSystem,
+    Architecture, Behavior as DepBehavior, Dependency, DependencyGroup, DependencyVersion,
+    DependencyVersionTag, OperatingSystem,
 };
 pub use ::bun_install_types::resolver_hooks::{INVALID_PACKAGE_ID, PackageID};
 
@@ -173,7 +173,7 @@ const NODE_MODULES_PATH: &str = const_format::concatcp!(SEP_STR, "node_modules",
 
 impl PackageJSON {
     /// Install-side borrowed view consumed by
-    /// `AutoInstaller::lockfile_append_from_package_json`.
+    /// `PackageManagerRef::lockfile_append_from_package_json`.
     pub fn as_install_ref(&self) -> ::bun_install_types::resolver_hooks::PackageJsonRef<'_> {
         ::bun_install_types::resolver_hooks::PackageJsonRef {
             name: &self.name,
@@ -581,7 +581,7 @@ impl PackageJSON {
         }
 
         // Read the "main" fields
-        for main in r.opts.main_fields.iter() {
+        for main in r.opts.core.main_fields.iter() {
             if let Some(main_json) = json.as_property(main) {
                 let expr: &js_ast::Expr = &main_json.expr;
 
@@ -915,7 +915,7 @@ impl PackageJSON {
                                         Semver::SlicedString::init(version_str, version_str);
 
                                     // The parser body lives in install-tier so route through
-                                    // the AutoInstaller vtable when one is wired. When it
+                                    // the PackageManager link fns when one is wired. When it
                                     // isn't, still record the dependency name (with an
                                     // uninitialized-tag version) — `bun run --filter` reads
                                     // only the map keys to compute workspace ordering.

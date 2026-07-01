@@ -30,8 +30,27 @@ use crate::ZStr;
 // window; writes are rare and serial.
 static TOP_LEVEL_DIR: crate::RwLock<&'static [u8]> = crate::RwLock::new(b".");
 
+// Kept as a separate flag so `top_level_dir_loaded()` is a cheap relaxed load.
+static TOP_LEVEL_DIR_LOADED: AtomicBool = AtomicBool::new(false);
+
+/// Whether `init_top_level_dir` has run.
+#[inline]
+pub fn top_level_dir_loaded() -> bool {
+    TOP_LEVEL_DIR_LOADED.load(Ordering::Relaxed)
+}
+
+/// Write-once init of the top-level directory: the first writer wins; the
+/// resolver calls this once after resolving the cwd. Later
+/// `set_top_level_dir` calls (post-chdir) still overwrite.
+pub fn init_top_level_dir(top_level_dir: &[u8]) {
+    if !TOP_LEVEL_DIR_LOADED.swap(true, Ordering::Release) {
+        // Leak once per process: TOP_LEVEL_DIR stores `&'static [u8]`.
+        set_top_level_dir(Box::leak(top_level_dir.to_vec().into_boxed_slice()));
+    }
+}
+
 /// Record the top-level directory (interned `'static` slice). Idempotent;
-/// later calls overwrite. Called from `FileSystem::init` / `set_top_level_dir`.
+/// later calls overwrite. Called from `init_top_level_dir` / `set_top_level_dir`.
 #[inline]
 pub fn set_top_level_dir(dir: &'static [u8]) {
     *TOP_LEVEL_DIR.write() = dir;

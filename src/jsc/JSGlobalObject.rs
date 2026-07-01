@@ -1482,7 +1482,7 @@ impl JSGlobalObject {
 pub use crate::GregorianDateTime;
 
 /// The enum is defined once in `bun_bundler::transpiler` (the lowest tier that names it,
-/// for `Linker::link`'s call into `PluginResolver::on_resolve`) and re-exported
+/// for `Linker::link`'s call into `__bun_plugin_runner_on_resolve`) and re-exported
 /// here so the C++ FFI signature and all `bun_jsc` callers share one nominal
 /// type — no mirror enum, no transmute.
 pub use bun_bundler::transpiler::BunPluginTarget;

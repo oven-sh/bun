@@ -1,10 +1,11 @@
 use bun_collections::VecExt;
+use bun_install_types::{DependencyID, PackageID};
 use std::borrow::Cow;
 use std::io::Write as _;
 
+use crate::PackageManager;
 use crate::bin::Bin;
 use crate::integrity::Integrity;
-use crate::{DependencyID, PackageID, PackageManager};
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::Error;
 use bun_install_types::dependency::{self, Dependency};
@@ -1296,7 +1297,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
     for yarn_idx in 0..yarn_lock.entries.len() {
         let package_id = yarn_entry_to_package_id[yarn_idx];
-        if package_id == crate::INVALID_PACKAGE_ID {
+        if package_id == bun_install_types::INVALID_PACKAGE_ID {
             continue;
         }
 
@@ -1568,7 +1569,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     let mut usage_count: StringHashMap<u32> = StringHashMap::new();
     for entry_idx in 0..yarn_lock.entries.len() {
         let package_id = yarn_entry_to_package_id[entry_idx];
-        if package_id == crate::INVALID_PACKAGE_ID {
+        if package_id == bun_install_types::INVALID_PACKAGE_ID {
             continue;
         }
         let base_name = package_names[package_id as usize];
@@ -1587,7 +1588,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
     for entry_idx in 0..yarn_lock.entries.len() {
         let package_id = yarn_entry_to_package_id[entry_idx];
-        if package_id == crate::INVALID_PACKAGE_ID {
+        if package_id == bun_install_types::INVALID_PACKAGE_ID {
             continue;
         }
         let base_name = package_names[package_id as usize];
@@ -1603,7 +1604,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     let mut scoped_count: u32 = 0;
     for entry_idx in 0..yarn_lock.entries.len() {
         let package_id = yarn_entry_to_package_id[entry_idx];
-        if package_id == crate::INVALID_PACKAGE_ID {
+        if package_id == bun_install_types::INVALID_PACKAGE_ID {
             continue;
         }
         let base_name = package_names[package_id as usize];
@@ -1619,7 +1620,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         let mut scoped_name: Option<Vec<u8>> = None;
         for (dep_entry_idx, dep_entry) in yarn_lock.entries.iter().enumerate() {
             let dep_package_id = yarn_entry_to_package_id[dep_entry_idx];
-            if dep_package_id == crate::INVALID_PACKAGE_ID {
+            if dep_package_id == bun_install_types::INVALID_PACKAGE_ID {
                 continue;
             }
 
@@ -1699,7 +1700,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         let package_id = yarn_entry_to_package_id[yarn_idx];
-        if package_id == crate::INVALID_PACKAGE_ID {
+        if package_id == bun_install_types::INVALID_PACKAGE_ID {
             continue;
         }
 
@@ -1723,7 +1724,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         let package_id = yarn_entry_to_package_id[yarn_idx];
-        if package_id == crate::INVALID_PACKAGE_ID {
+        if package_id == bun_install_types::INVALID_PACKAGE_ID {
             continue;
         }
 
@@ -1780,7 +1781,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             if let Some(pkg_id) = spec_to_package_id.get(dep_spec.as_slice()).copied() {
                 this.buffers.resolutions.push(pkg_id);
             } else {
-                this.buffers.resolutions.push(crate::INVALID_PACKAGE_ID);
+                this.buffers
+                    .resolutions
+                    .push(bun_install_types::INVALID_PACKAGE_ID);
             }
         }
     }
@@ -1796,7 +1799,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         let package_id = yarn_entry_to_package_id[yarn_idx];
-        if package_id == crate::INVALID_PACKAGE_ID {
+        if package_id == bun_install_types::INVALID_PACKAGE_ID {
             continue;
         }
 
@@ -1848,7 +1851,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 if let Some(res_pkg_id) = spec_to_package_id.get(dep_spec.as_slice()).copied() {
                     this.buffers.resolutions.push(res_pkg_id);
                 } else {
-                    this.buffers.resolutions.push(crate::INVALID_PACKAGE_ID);
+                    this.buffers
+                        .resolutions
+                        .push(bun_install_types::INVALID_PACKAGE_ID);
                 }
 
                 dep_count += 1;
@@ -1900,7 +1905,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 if let Some(res_pkg_id) = spec_to_package_id.get(dep_spec.as_slice()).copied() {
                     this.buffers.resolutions.push(res_pkg_id);
                 } else {
-                    this.buffers.resolutions.push(crate::INVALID_PACKAGE_ID);
+                    this.buffers
+                        .resolutions
+                        .push(bun_install_types::INVALID_PACKAGE_ID);
                 }
 
                 dep_count += 1;
@@ -1952,7 +1959,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 if let Some(res_pkg_id) = spec_to_package_id.get(dep_spec.as_slice()).copied() {
                     this.buffers.resolutions.push(res_pkg_id);
                 } else {
-                    this.buffers.resolutions.push(crate::INVALID_PACKAGE_ID);
+                    this.buffers
+                        .resolutions
+                        .push(bun_install_types::INVALID_PACKAGE_ID);
                 }
 
                 dep_count += 1;
@@ -2004,7 +2013,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 if let Some(res_pkg_id) = spec_to_package_id.get(dep_spec.as_slice()).copied() {
                     this.buffers.resolutions.push(res_pkg_id);
                 } else {
-                    this.buffers.resolutions.push(crate::INVALID_PACKAGE_ID);
+                    this.buffers
+                        .resolutions
+                        .push(bun_install_types::INVALID_PACKAGE_ID);
                 }
 
                 dep_count += 1;

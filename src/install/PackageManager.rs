@@ -1,3 +1,4 @@
+use bun_install_types::{DependencyID, Features, PackageID, PackageNameHash, PreinstallState};
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -181,9 +182,8 @@ use crate::lockfile::{self, Lockfile};
 use crate::package_manager_task as Task;
 use crate::resolvers::folder_resolver::{Entry as FolderResolutionEntry, FolderResolution};
 use crate::{
-    Dependency, DependencyID, Features, NetworkTask, PackageID, PackageManifestMap,
-    PackageNameAndVersionHash, PackageNameHash, PatchTask, PreinstallState, TaskCallbackContext,
-    initialize_store,
+    Dependency, NetworkTask, PackageManifestMap, PackageNameAndVersionHash, PatchTask,
+    TaskCallbackContext, initialize_store,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1088,10 +1088,7 @@ fn configure_env_for_scripts_run(
         };
     }
 
-    // The resolver-tier
-    // `FileSystem` mirrors `bun_paths::fs::FileSystem` for `top_level_dir`.
-    let paths_fs = bun_paths::fs::FileSystem::instance();
-    this.env_mut().load_ccache_path(paths_fs);
+    this.env_mut().load_ccache_path();
 
     {
         // Run node-gyp jobs in parallel.
@@ -1112,10 +1109,8 @@ fn configure_env_for_scripts_run(
 
     {
         let mut node_path = PathBuffer::uninit();
-        if let Some(node_path_z) = this.env_mut().get_node_path(paths_fs, &mut node_path) {
-            let _ = this
-                .env_mut()
-                .load_node_js_config(paths_fs, node_path_z.as_ref())?;
+        if let Some(node_path_z) = this.env_mut().get_node_path(&mut node_path) {
+            let _ = this.env_mut().load_node_js_config(node_path_z.as_ref())?;
         } else {
             'brk: {
                 let current_path = this.env().get(b"PATH").unwrap_or(b"");
@@ -1128,7 +1123,7 @@ fn configure_env_for_scripts_run(
                     break 'brk;
                 }
                 this.env_mut().map.put(b"PATH", &path_var)?;
-                let _ = this.env_mut().load_node_js_config(paths_fs, bun_path)?;
+                let _ = this.env_mut().load_node_js_config(bun_path)?;
             }
         }
     }
@@ -2074,13 +2069,10 @@ pub fn init(
             mini_event_loop::GLOBAL.with(|g| g.set(mini_ptr));
             // Install the per-thread handle `bun_io::get_vm_ctx(Mini)` hands
             // out, mirroring `init_global` (lifecycle-script polls need it).
-            // SAFETY: `mini_ptr` is the live embedded loop set just above.
-            bun_io::set_current_ctx(
-                bun_io::EventLoopCtxKind::Mini,
-                Some(mini_event_loop::MiniEventLoop::as_event_loop_ctx(unsafe {
-                    &mut *mini_ptr
-                })),
-            );
+            bun_io::set_current_ctx(mini_event_loop::MiniEventLoop::as_event_loop_ctx(
+                // SAFETY: `mini_ptr` is the live embedded loop set just above.
+                unsafe { &mut *mini_ptr },
+            ));
         }
     }
     {

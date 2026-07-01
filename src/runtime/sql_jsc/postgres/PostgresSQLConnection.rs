@@ -4,22 +4,20 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::sql_jsc::jsc::EventLoopTimer;
-use crate::sql_jsc::jsc::webcore::AutoFlusher;
-use crate::sql_jsc::jsc::{
-    self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSValue, JsResult, VirtualMachine,
-    VirtualMachineSqlExt as _,
-};
+use crate::sql_jsc::jsc::AutoFlusher;
+use crate::sql_jsc::jsc::{HasAutoFlush, VirtualMachineSqlExt as _};
 use bun_boringssl as BoringSSL;
 use bun_collections::{OffsetByteList, StringHashMap, StringMap};
 use bun_core::strings;
 use bun_core::{self};
+use bun_event_loop::EventLoopTimer::EventLoopTimer;
 use bun_io::KeepAlive;
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
 use bun_uws as uws;
 use core::ptr::NonNull;
 
-use crate::sql_jsc::jsc::{EventLoopTimerState, EventLoopTimerTag};
 use crate::sql_jsc::postgres::AuthenticationState;
 use crate::sql_jsc::postgres::PostgresSQLQuery;
 use crate::sql_jsc::postgres::PostgresSQLStatement;
@@ -34,6 +32,7 @@ use crate::sql_jsc::postgres::postgres_sql_statement::{
 use crate::sql_jsc::postgres::sasl::SASLStatus;
 use crate::sql_jsc::shared::CachedStructure as PostgresCachedStructure;
 use crate::sql_jsc::shared::connection_ctor_args::{self, ConnectionCtorArgs};
+use bun_event_loop::EventLoopTimer::{State as EventLoopTimerState, Tag as EventLoopTimerTag};
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::PostgresErrorOptions;
 use bun_sql::postgres::PostgresProtocol as protocol;
@@ -62,7 +61,7 @@ pub mod js {
 }
 pub use js::{from_js, from_js_direct, to_js};
 
-impl jsc::JsClass for PostgresSQLConnection {
+impl bun_jsc::JsClass for PostgresSQLConnection {
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
         // Ownership transfers to the JSC wrapper's m_ctx; freed via `finalize`.
         js::to_js(bun_core::heap::into_raw(Box::new(self)), global)
@@ -125,7 +124,7 @@ pub struct PostgresSQLConnection {
     // Self-wrapper back-ref (the JS object that owns this payload). Stored as a
     // weak `JsRef`, never a bare `JSValue` — this struct is heap-allocated and
     // the conservative GC scan covers stack/registers only.
-    pub js_value: JsCell<crate::sql_jsc::jsc::JsRef>,
+    pub js_value: JsCell<bun_jsc::JsRef>,
 
     pub backend_parameters: JsCell<StringMap>,
     pub backend_key_data: JsCell<protocol::BackendKeyData>,
@@ -147,7 +146,7 @@ pub struct PostgresSQLConnection {
     /// `us_ssl_ctx_t` built from `tls_config` at construct time. Applied via
     /// `us_socket_adopt_tls` when the server replies `S` to the SSLRequest.
     pub secure: Option<*mut uws::SslCtx>,
-    pub tls_config: jsc::api::server_config::SSLConfig,
+    pub tls_config: crate::sql_jsc::jsc::api::server_config::SSLConfig,
     pub tls_status: Cell<TLSStatus>,
     pub ssl_mode: SSLMode,
 
@@ -243,7 +242,7 @@ impl PostgresSQLConnection {
     /// singleton (see [`vm_mut`]); single-thread affinity ⇒ no two
     /// `&mut EventLoop` ever coexist.
     #[inline]
-    fn event_loop(&self) -> &'static mut crate::sql_jsc::jsc::EventLoop {
+    fn event_loop(&self) -> &'static mut bun_jsc::event_loop::EventLoop {
         // `vm_mut()` yields the process-lifetime `'static mut VM` (see above);
         // the event loop it owns lives for the VM's lifetime. Single-JS-thread
         // invariant ⇒ callers never hold two `&mut EventLoop` at once.
@@ -1222,7 +1221,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             statements: JsCell::new(PreparedStatementsMap::default()),
             prepared_statement_id: Cell::new(0),
             pending_activity_count: AtomicU32::new(0),
-            js_value: JsCell::new(crate::sql_jsc::jsc::JsRef::empty()),
+            js_value: JsCell::new(bun_jsc::JsRef::empty()),
             backend_parameters: JsCell::new(StringMap::init(true)),
             backend_key_data: JsCell::new(protocol::BackendKeyData::default()),
             database,
@@ -1308,8 +1307,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     this.poll_ref.with_mut(|r| r.ref_(this.vm_ctx()));
     let js_value = js::to_js(ptr, global_object);
     js_value.ensure_still_alive();
-    this.js_value
-        .set(crate::sql_jsc::jsc::JsRef::init_weak(js_value));
+    this.js_value.set(bun_jsc::JsRef::init_weak(js_value));
     js::onconnect_set_cached(js_value, global_object, on_connect);
     js::onclose_set_cached(js_value, global_object, on_close);
     bun_analytics::features::postgres_connections.fetch_add(1, Ordering::Relaxed);
@@ -2409,7 +2407,7 @@ impl PostgresSQLConnection {
                 };
 
                 let mut stack_buf = [DataCell::SQLDataCell::default(); 70];
-                let max_inline = jsc::JSObject::max_inline_capacity() as usize;
+                let max_inline = bun_jsc::JSObject::max_inline_capacity() as usize;
                 let mut heap_cells: Vec<DataCell::SQLDataCell>;
                 let mut free_cells = false;
                 let cells: &mut [DataCell::SQLDataCell] = if statement.fields.len() >= max_inline {

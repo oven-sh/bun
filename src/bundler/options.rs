@@ -86,10 +86,19 @@ pub use bun_js_parser::AllowUnresolved;
 
 // Canonical defs live in `bun_resolver::options` (lower tier; resolver is the
 // runtime consumer of `.patterns`/`.abs_paths`/`.node_modules`). Re-export so
-// `BundleOptions.external` and `Resolver.opts.external` are the SAME nominal
-// type and the projection in `transpiler::resolver_bundle_options_subset` is a
-// plain `.clone()`.
+// `BundleOptions.resolve.external` and `Resolver.opts.core.external` are the
+// SAME nominal type.
 pub use bun_resolver::options::{ExternalModules, WildcardPattern};
+
+/// The canonical resolver-visible option set, embedded as
+/// [`BundleOptions::resolve`]. `Resolver::init1` receives a snapshot of it —
+/// `resolve_options::BundleOptions { core, conditions, framework }` — built by
+/// `Transpiler::resolver_options_snapshot`. `conditions` / `framework` are
+/// deliberately absent here: the bundler's own `conditions: ESMConditions` and
+/// borrowed `framework` fields are authoritative and are projected only into
+/// that snapshot.
+pub use bun_resolver::options::ResolveOptionsCore;
+pub use bun_resolver::options::{ExtensionOrder, ExtensionOrderGroup, Packages as PackagesOption};
 
 /// Free fn (not an inherent
 /// method) because `ExternalModules` is now a foreign type and Rust forbids
@@ -629,61 +638,6 @@ const DEFAULT_LOADER_EXT: &[&[u8]] = &[
 // Only set it for browsers by default.
 const DEFAULT_LOADER_EXT_BROWSER: &[&[u8]] = &[b".html"];
 
-#[derive(Debug, Clone)]
-pub struct ResolveFileExtensions {
-    pub node_modules: ResolveFileExtensionsGroup,
-    pub default: ResolveFileExtensionsGroup,
-}
-
-impl Default for ResolveFileExtensions {
-    fn default() -> Self {
-        ResolveFileExtensions {
-            node_modules: ResolveFileExtensionsGroup {
-                esm: owned_string_list(bundle_defaults::node_modules::MODULE_EXTENSION_ORDER),
-                default: owned_string_list(bundle_defaults::node_modules::EXTENSION_ORDER),
-            },
-            default: ResolveFileExtensionsGroup::default(),
-        }
-    }
-}
-
-impl ResolveFileExtensions {
-    #[inline]
-    fn group(&self, is_node_modules: bool) -> &ResolveFileExtensionsGroup {
-        if is_node_modules {
-            &self.node_modules
-        } else {
-            &self.default
-        }
-    }
-
-    pub fn kind(&self, kind_: bun_ast::ImportKind, is_node_modules: bool) -> &[Box<[u8]>] {
-        use bun_ast::ImportKind;
-        match kind_ {
-            ImportKind::Stmt
-            | ImportKind::EntryPointBuild
-            | ImportKind::EntryPointRun
-            | ImportKind::Dynamic => &self.group(is_node_modules).esm,
-            _ => &self.group(is_node_modules).default,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ResolveFileExtensionsGroup {
-    pub esm: Box<[Box<[u8]>]>,
-    pub default: Box<[Box<[u8]>]>,
-}
-
-impl Default for ResolveFileExtensionsGroup {
-    fn default() -> Self {
-        ResolveFileExtensionsGroup {
-            esm: owned_string_list(bundle_defaults::MODULE_EXTENSION_ORDER),
-            default: owned_string_list(bundle_defaults::EXTENSION_ORDER),
-        }
-    }
-}
-
 pub fn loaders_from_transform_options(
     loaders: Option<&api::LoaderMap>,
     target: Target,
@@ -788,28 +742,8 @@ bun_core::comptime_string_map! {
     };
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PackagesOption {
-    Bundle,
-    External,
-}
-
-impl PackagesOption {
-    pub fn from_api(packages: Option<api::PackagesMode>) -> PackagesOption {
-        match packages.unwrap_or(api::PackagesMode::Bundle) {
-            api::PackagesMode::External => PackagesOption::External,
-            api::PackagesMode::Bundle => PackagesOption::Bundle,
-        }
-    }
-
-    pub fn to_api(packages: Option<PackagesOption>) -> api::PackagesMode {
-        match packages.unwrap_or(PackagesOption::Bundle) {
-            PackagesOption::External => api::PackagesMode::External,
-            PackagesOption::Bundle => api::PackagesMode::Bundle,
-        }
-    }
-}
-
+// `PackagesOption` is the canonical `bun_options_types::resolve_options::Packages`
+// (re-exported above); `from_api`/`to_api` are inherent methods on it.
 // hoisted from `impl PackagesOption` — Rust forbids `static` in inherent impls.
 bun_core::comptime_string_map! {
     pub static PACKAGES_OPTION_MAP: PackagesOption = {
@@ -821,6 +755,11 @@ bun_core::comptime_string_map! {
 /// BundleOptions is used when ResolveMode is not set to "disable".
 /// BundleOptions is effectively webpack + babel
 pub struct BundleOptions<'a> {
+    /// The resolver-visible option subset; the resolver gets a snapshot at
+    /// `Transpiler::init` (re-synced only by `sync_resolver_opts`). The
+    /// bundler's own `conditions`/`framework` fields stay authoritative and
+    /// are not representable here (see [`ResolveOptionsCore`]).
+    pub resolve: ResolveOptionsCore,
     pub footer: Cow<'static, [u8]>,
     pub banner: Cow<'static, [u8]>,
     pub define: Box<js_defines::Define>,
@@ -833,14 +772,11 @@ pub struct BundleOptions<'a> {
     pub bundler_feature_flags: Option<Box<StringSet>>,
     pub loaders: LoaderHashTable,
     pub resolve_dir: Cow<'static, [u8]>,
-    pub jsx: jsx::Pragma,
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
     pub auto_import_jsx: bool,
-    pub allow_runtime: bool,
 
     pub trim_unused_imports: Option<bool>,
-    pub mark_builtins_as_external: bool,
     pub server_components: bool,
     pub hot_module_reloading: bool,
     pub react_fast_refresh: bool,
@@ -852,83 +788,55 @@ pub struct BundleOptions<'a> {
     pub origin: bun_url::OwnedURL,
     pub output_dir_handle: Option<Dir>,
 
-    pub output_dir: Box<[u8]>,
-    pub root_dir: Box<[u8]>,
     pub node_modules_bundle_url: Cow<'static, [u8]>,
     pub node_modules_bundle_pretty_path: Cow<'static, [u8]>,
 
     pub write: bool,
-    pub preserve_symlinks: bool,
     pub preserve_extensions: bool,
-    pub production: bool,
 
     // only used by bundle_v2
     pub output_format: Format,
 
     pub append_package_version_in_query_string: bool,
 
-    pub tsconfig_override: Option<Box<[u8]>>,
-    pub target: Target,
-    pub main_fields: Box<[Box<[u8]>]>,
     /// TODO: remove this in favor accessing bundler.log
     /// raw `*mut` (not `&'a mut`) — the same `*Log` is aliased
     /// into `Transpiler.log` / `Resolver.log` / `Linker.log`. A stored
     /// `&'a mut` here would assert uniqueness for `'a` and make every access
     /// through those sibling raw pointers UB under stacked borrows.
     pub log: *mut bun_ast::Log,
-    pub external: ExternalModules,
     pub allow_unresolved: AllowUnresolved,
     pub entry_points: Box<[Box<[u8]>]>,
     pub entry_naming: Box<[u8]>,
     pub asset_naming: Box<[u8]>,
     pub chunk_naming: Box<[u8]>,
-    pub public_path: Box<[u8]>,
-    pub extension_order: ResolveFileExtensions,
-    pub main_field_extension_order: &'static [&'static [u8]],
-    /// This list applies to all extension resolution cases. The runtime uses
-    /// this for implementing `require.extensions`
-    pub extra_cjs_extensions: Box<[Box<[u8]>]>,
     pub out_extensions: StringHashMap<&'static [u8]>,
     pub import_path_format: ImportPathFormat,
     pub defines_loaded: bool,
     pub env: Env,
     /// The raw API struct as passed to `from_api`. Kept around because a
-    /// handful of places (jsx auto-detect, resolver `main_fields_is_default`,
+    /// handful of places (jsx auto-detect,
     /// `configure_defines`, runtime VM/server config) re-read the original
     /// user-supplied flags after projection. `Arc` so `for_worker` is a
     /// pointer-clone instead of a deep clone of the (large) peechy struct —
     /// workers never mutate it.
     pub transform_options: std::sync::Arc<api::TransformOptions>,
-    pub polyfill_node_globals: bool,
     pub transform_only: bool,
-    pub load_tsconfig_json: bool,
-    pub load_package_json: bool,
-
-    pub rewrite_jest_for_tests: bool,
 
     pub macro_remap: MacroRemap,
     pub no_macros: bool,
 
+    /// Authoritative export-condition set (a superset of the resolver's
+    /// `Conditions`: it keeps the extra `default` map). The snapshot handed
+    /// to the resolver projects `import`/`require`/`style`.
     pub conditions: ESMConditions,
-    pub tree_shaking: bool,
     pub tree_shaking_override: Option<bool>,
     pub code_splitting: bool,
     pub source_map: SourceMapOption,
-    pub packages: PackagesOption,
 
     pub disable_transpilation: bool,
 
-    pub global_cache: GlobalCache,
-    pub prefer_offline_install: bool,
     pub prefer_latest_install: bool,
-    /// Stored as a raw
-    /// `NonNull` (not `Option<&'a _>`) because every CLI caller borrows the
-    /// process-lifetime `ctx.install: Box<BunInstall>` whose lifetime is
-    /// unrelated to `'a`; a typed reference forced an `unsafe { &*(p as *const _) }`
-    /// lifetime-extension cast at every call site (PORTING.md §Forbidden).
-    /// The sole consumer (`PackageManager::init_with_runtime` via the resolver's
-    /// `BundleOptions.install`) only reads through it.
-    pub install: Option<core::ptr::NonNull<api::BunInstall>>,
 
     pub inlining: bool,
     pub inline_entrypoint_import_meta_main: bool,
@@ -954,7 +862,6 @@ pub struct BundleOptions<'a> {
     pub code_coverage: bool,
     pub debugger: bool,
 
-    pub compile: bool,
     pub compile_to_standalone_html: bool,
     pub metafile: bool,
     /// Path to write JSON metafile (for Bun.build API)
@@ -964,9 +871,11 @@ pub struct BundleOptions<'a> {
 
     /// Set when bake.DevServer is bundling.
     // SAFETY: erased bun_runtime::bake::DevServer (T6). bundler never dereferences fields
-    // directly — all access goes through crate::dispatch::DevServerVTable.
+    // directly — all access goes through crate::dispatch::DevServerHandle.
     pub dev_server: *const (),
-    /// Set when Bake is bundling. Affects module resolution.
+    /// Set when Bake is bundling. Affects module resolution. Borrowed (unlike
+    /// the resolver's owned `framework`); projected into the resolver
+    /// snapshot via `Framework::deep_clone`.
     pub framework: Option<&'a crate::bake_types::Framework>,
 
     pub serve_plugins: Option<Box<[Box<[u8]>]>>,
@@ -979,14 +888,6 @@ pub struct BundleOptions<'a> {
     ///
     /// So we have a list of packages which we know are safe to do this with.
     pub unwrap_commonjs_packages: &'static [&'static [u8]],
-
-    pub supports_multiple_outputs: bool,
-
-    /// This is set by the process environment, which is used to override the
-    /// JSX configuration. When this is unspecified, the tsconfig.json is used
-    /// to determine if a development jsx-runtime is used (by going between
-    /// "react-jsx" or "react-jsx-dev-runtime")
-    pub force_node_env: ForceNodeEnv,
 
     pub ignore_module_resolution_errors: bool,
 
@@ -1011,14 +912,11 @@ fn clone_macro_remap(src: &MacroRemap) -> MacroRemap {
 
 impl<'a> BundleOptions<'a> {
     pub fn is_test(&self) -> bool {
-        self.rewrite_jest_for_tests
+        self.resolve.rewrite_jest_for_tests
     }
 
     pub fn set_production(&mut self, value: bool) {
-        if self.force_node_env == ForceNodeEnv::Unspecified {
-            self.production = value;
-            self.jsx.development = !value;
-        }
+        self.resolve.set_production(value);
     }
 
     /// Per-worker deep clone — replaces the prior bitwise
@@ -1036,6 +934,7 @@ impl<'a> BundleOptions<'a> {
             "BundleOptions::for_worker requires configure_defines() to have run on the parent (env.defaults is not cloned)",
         );
         BundleOptions {
+            resolve: self.resolve.clone(),
             footer: self.footer.clone(),
             banner: self.banner.clone(),
             define: Box::new(js_defines::Define {
@@ -1050,13 +949,10 @@ impl<'a> BundleOptions<'a> {
                 .map(|s| Box::new(bun_core::handle_oom(s.clone()))),
             loaders: bun_core::handle_oom(self.loaders.clone()),
             resolve_dir: self.resolve_dir.clone(),
-            jsx: self.jsx.clone(),
             emit_decorator_metadata: self.emit_decorator_metadata,
             experimental_decorators: self.experimental_decorators,
             auto_import_jsx: self.auto_import_jsx,
-            allow_runtime: self.allow_runtime,
             trim_unused_imports: self.trim_unused_imports,
-            mark_builtins_as_external: self.mark_builtins_as_external,
             server_components: self.server_components,
             hot_module_reloading: self.hot_module_reloading,
             react_fast_refresh: self.react_fast_refresh,
@@ -1067,30 +963,18 @@ impl<'a> BundleOptions<'a> {
             // The owning handle stays with the parent; copying it here would
             // close the parent's fd when the worker options drop.
             output_dir_handle: None,
-            output_dir: self.output_dir.clone(),
-            root_dir: self.root_dir.clone(),
             node_modules_bundle_url: self.node_modules_bundle_url.clone(),
             node_modules_bundle_pretty_path: self.node_modules_bundle_pretty_path.clone(),
             write: self.write,
-            preserve_symlinks: self.preserve_symlinks,
             preserve_extensions: self.preserve_extensions,
-            production: self.production,
             output_format: self.output_format,
             append_package_version_in_query_string: self.append_package_version_in_query_string,
-            tsconfig_override: self.tsconfig_override.clone(),
-            target: self.target,
-            main_fields: self.main_fields.clone(),
             log: self.log,
-            external: self.external.clone(),
             allow_unresolved: self.allow_unresolved.clone(),
             entry_points: self.entry_points.clone(),
             entry_naming: self.entry_naming.clone(),
             asset_naming: self.asset_naming.clone(),
             chunk_naming: self.chunk_naming.clone(),
-            public_path: self.public_path.clone(),
-            extension_order: self.extension_order.clone(),
-            main_field_extension_order: self.main_field_extension_order,
-            extra_cjs_extensions: self.extra_cjs_extensions.clone(),
             out_extensions: self.out_extensions.clone(),
             import_path_format: self.import_path_format,
             defines_loaded: self.defines_loaded,
@@ -1105,11 +989,7 @@ impl<'a> BundleOptions<'a> {
                 disable_default_env_files: self.env.disable_default_env_files,
             },
             transform_options: std::sync::Arc::clone(&self.transform_options),
-            polyfill_node_globals: self.polyfill_node_globals,
             transform_only: self.transform_only,
-            load_tsconfig_json: self.load_tsconfig_json,
-            load_package_json: self.load_package_json,
-            rewrite_jest_for_tests: self.rewrite_jest_for_tests,
             macro_remap: clone_macro_remap(&self.macro_remap),
             no_macros: self.no_macros,
             conditions: ESMConditions {
@@ -1118,16 +998,11 @@ impl<'a> BundleOptions<'a> {
                 require: bun_core::handle_oom(self.conditions.require.clone()),
                 style: bun_core::handle_oom(self.conditions.style.clone()),
             },
-            tree_shaking: self.tree_shaking,
             tree_shaking_override: self.tree_shaking_override,
             code_splitting: self.code_splitting,
             source_map: self.source_map,
-            packages: self.packages,
             disable_transpilation: self.disable_transpilation,
-            global_cache: self.global_cache,
-            prefer_offline_install: self.prefer_offline_install,
             prefer_latest_install: self.prefer_latest_install,
-            install: self.install,
             inlining: self.inlining,
             inline_entrypoint_import_meta_main: self.inline_entrypoint_import_meta_main,
             minify_whitespace: self.minify_whitespace,
@@ -1143,7 +1018,6 @@ impl<'a> BundleOptions<'a> {
             generate_cached_bytecode: self.generate_cached_bytecode,
             code_coverage: self.code_coverage,
             debugger: self.debugger,
-            compile: self.compile,
             compile_to_standalone_html: self.compile_to_standalone_html,
             metafile: self.metafile,
             metafile_json_path: self.metafile_json_path.clone(),
@@ -1153,8 +1027,6 @@ impl<'a> BundleOptions<'a> {
             serve_plugins: self.serve_plugins.clone(),
             bunfig_path: self.bunfig_path.clone(),
             unwrap_commonjs_packages: self.unwrap_commonjs_packages,
-            supports_multiple_outputs: self.supports_multiple_outputs,
-            force_node_env: self.force_node_env,
             ignore_module_resolution_errors: self.ignore_module_resolution_errors,
             optimize_imports: self.optimize_imports,
         }
@@ -1201,11 +1073,11 @@ impl<'a> BundleOptions<'a> {
     pub fn install(&self) -> Option<&api::BunInstall> {
         // SAFETY: when `Some`, the `NonNull` points at the process-lifetime
         // `ctx.install` box (see field doc), never mutated after CLI parsing.
-        self.install.map(|p| unsafe { p.as_ref() })
+        self.resolve.install.map(|p| unsafe { p.as_ref() })
     }
 
     /// Whether `bake.DevServer` is driving this bundle. The stored pointer is
-    /// erased (`*const ()` — runtime type lives behind `dispatch::DevServerVTable`),
+    /// erased (`*const ()` — runtime type lives behind `dispatch::DevServerHandle`),
     /// so no `&T` accessor is possible; bundler code only ever tests presence.
     #[inline]
     pub fn has_dev_server(&self) -> bool {
@@ -1224,7 +1096,7 @@ impl<'a> BundleOptions<'a> {
 
     #[inline]
     pub fn css_import_behavior(&self) -> api::CssInJsBehavior {
-        match self.target {
+        match self.resolve.target {
             Target::Browser => api::CssInJsBehavior::AutoOnimportcss,
             _ => api::CssInJsBehavior::Facade,
         }
@@ -1268,7 +1140,7 @@ impl<'a> BundleOptions<'a> {
                 break 'node_env Some(Cow::Borrowed(b"\"test\"".as_slice()));
             }
 
-            if self.production {
+            if self.resolve.production {
                 break 'node_env Some(Cow::Borrowed(b"\"production\"".as_slice()));
             }
 
@@ -1280,7 +1152,7 @@ impl<'a> BundleOptions<'a> {
             // caller contract).
             self.log_mut(),
             self.transform_options.define.as_ref(),
-            self.target,
+            self.resolve.target,
             loader_,
             Some(&self.env),
             node_env.as_deref(),
@@ -1322,6 +1194,41 @@ impl<'a> BundleOptions<'a> {
         );
 
         let mut opts = BundleOptions {
+            // Resolver-visible option subset. The authoritative bundler-side
+            // `conditions` / `framework` fields are projected into the
+            // snapshot handed to `Resolver::init1`.
+            resolve: ResolveOptionsCore {
+                target,
+                packages: PackagesOption::Bundle,
+                jsx: jsx::Pragma::default(),
+                extension_order: ExtensionOrder::default(),
+                external: ExternalModules::default(), // filled below
+                extra_cjs_extensions: Box::default(),
+                global_cache: GlobalCache::disable,
+                install: None,
+                load_package_json: true,
+                load_tsconfig_json: true,
+                main_field_extension_order: owned_string_list(
+                    bundle_defaults::MAIN_FIELD_EXTENSION_ORDER,
+                ),
+                main_fields: owned_string_list(Target::default_main_fields_map()[Target::Browser]),
+                main_fields_is_default: transform.main_fields.is_empty(),
+                mark_builtins_as_external: false,
+                polyfill_node_globals: false,
+                prefer_offline_install: false,
+                preserve_symlinks: false,
+                rewrite_jest_for_tests: false,
+                tsconfig_override: None,
+                production: false,
+                force_node_env: ForceNodeEnv::Unspecified,
+                output_dir: Box::from(transform.output_dir.as_deref().unwrap_or(b"out")),
+                root_dir: Box::default(),
+                public_path: Box::default(),
+                compile: false,
+                supports_multiple_outputs: true,
+                tree_shaking: false,
+                allow_runtime: true,
+            },
             footer: Cow::Borrowed(b""),
             banner: Cow::Borrowed(b""),
             log,
@@ -1333,10 +1240,7 @@ impl<'a> BundleOptions<'a> {
                 drop_debugger: false,
             }),
             loaders,
-            output_dir: Box::from(transform.output_dir.as_deref().unwrap_or(b"out")),
-            target,
             write: transform.write.unwrap_or(false),
-            external: ExternalModules::default(), // filled below
             entry_points: transform.entry_points.clone().into_boxed_slice(),
             out_extensions: StringHashMap::default(), // filled below
             env: Env::init(),
@@ -1346,13 +1250,10 @@ impl<'a> BundleOptions<'a> {
             bundler_feature_flags,
 
             resolve_dir: Cow::Borrowed(b"/"),
-            jsx: jsx::Pragma::default(),
             emit_decorator_metadata: false,
             experimental_decorators: false,
             auto_import_jsx: true,
-            allow_runtime: true,
             trim_unused_imports: None,
-            mark_builtins_as_external: false,
             server_components: false,
             hot_module_reloading: false,
             react_fast_refresh: false,
@@ -1361,31 +1262,18 @@ impl<'a> BundleOptions<'a> {
             inject: None,
             origin: bun_url::OwnedURL::from_href(Box::default()),
             output_dir_handle: None,
-            root_dir: Box::default(),
             node_modules_bundle_url: Cow::Borrowed(b""),
             node_modules_bundle_pretty_path: Cow::Borrowed(b""),
-            preserve_symlinks: false,
             preserve_extensions: false,
-            production: false,
             output_format: Format::Esm,
             append_package_version_in_query_string: false,
-            tsconfig_override: None,
-            main_fields: owned_string_list(Target::default_main_fields_map()[Target::Browser]),
             allow_unresolved: AllowUnresolved::All,
             entry_naming: Box::default(),
             asset_naming: Box::default(),
             chunk_naming: Box::default(),
-            public_path: Box::default(),
-            extension_order: ResolveFileExtensions::default(),
-            main_field_extension_order: bundle_defaults::MAIN_FIELD_EXTENSION_ORDER,
-            extra_cjs_extensions: Box::default(),
             import_path_format: ImportPathFormat::Relative,
             defines_loaded: false,
-            polyfill_node_globals: false,
             transform_only: false,
-            load_tsconfig_json: true,
-            load_package_json: true,
-            rewrite_jest_for_tests: false,
             macro_remap: MacroRemap::default(),
             no_macros: false,
             conditions: ESMConditions {
@@ -1394,16 +1282,11 @@ impl<'a> BundleOptions<'a> {
                 require: Default::default(),
                 style: Default::default(),
             }, // filled below
-            tree_shaking: false,
             tree_shaking_override: None,
             code_splitting: false,
             source_map: SourceMapOption::None,
-            packages: PackagesOption::Bundle,
             disable_transpilation: false,
-            global_cache: GlobalCache::disable,
-            prefer_offline_install: false,
             prefer_latest_install: false,
-            install: None,
             inlining: false,
             inline_entrypoint_import_meta_main: false,
             minify_whitespace: false,
@@ -1418,7 +1301,6 @@ impl<'a> BundleOptions<'a> {
             generate_cached_bytecode: None,
             code_coverage: false,
             debugger: false,
-            compile: false,
             compile_to_standalone_html: false,
             metafile: false,
             metafile_json_path: Box::default(),
@@ -1428,8 +1310,6 @@ impl<'a> BundleOptions<'a> {
             serve_plugins: None,
             bunfig_path: Box::default(),
             unwrap_commonjs_packages: Self::DEFAULT_UNWRAP_COMMONJS_PACKAGES,
-            supports_multiple_outputs: true,
-            force_node_env: ForceNodeEnv::Unspecified,
             ignore_module_resolution_errors: false,
             optimize_imports: None,
         };
@@ -1460,11 +1340,11 @@ impl<'a> BundleOptions<'a> {
         }
 
         if let Some(jsx_opts) = &transform.jsx {
-            opts.jsx = jsx::Pragma::from_api(jsx_opts.clone())?;
+            opts.resolve.jsx = jsx::Pragma::from_api(jsx_opts.clone())?;
         }
 
         if !transform.extension_order.is_empty() {
-            opts.extension_order.default.default = transform
+            opts.resolve.extension_order.default.default = transform
                 .extension_order
                 .iter()
                 .map(|s| Box::<[u8]>::from(s.as_ref()))
@@ -1472,8 +1352,9 @@ impl<'a> BundleOptions<'a> {
         }
 
         if let Some(t) = transform.target {
-            opts.target = <Target as bun_options_types::TargetExt>::from_api(Some(t));
-            opts.main_fields = owned_string_list(Target::default_main_fields_map()[opts.target]);
+            opts.resolve.target = <Target as bun_options_types::TargetExt>::from_api(Some(t));
+            opts.resolve.main_fields =
+                owned_string_list(Target::default_main_fields_map()[opts.resolve.target]);
         }
 
         {
@@ -1482,7 +1363,7 @@ impl<'a> BundleOptions<'a> {
             // 2. node-addons
             // 3. user conditions
             opts.conditions = ESMConditions::init(
-                Target::default_conditions_map()[opts.target],
+                Target::default_conditions_map()[opts.resolve.target],
                 transform.allow_addons.unwrap_or(true),
                 &transform
                     .conditions
@@ -1492,10 +1373,10 @@ impl<'a> BundleOptions<'a> {
             )?;
         }
 
-        match opts.target {
+        match opts.resolve.target {
             Target::Node => {
                 opts.import_path_format = ImportPathFormat::Relative;
-                opts.allow_runtime = false;
+                opts.resolve.allow_runtime = false;
             }
             Target::Bun => {
                 opts.import_path_format =
@@ -1516,15 +1397,16 @@ impl<'a> BundleOptions<'a> {
                         b".jsx", b".cjs", b".js", b".mjs", b".mts", b".tsx", b".ts", b".cts",
                         b".json", b".node",
                     ];
-                    opts.extension_order.default.default = owned_string_list(EXT_WITH_NODE);
-                    opts.extension_order.node_modules.default = owned_string_list(NM_EXT_WITH_NODE);
+                    opts.resolve.extension_order.default.default = owned_string_list(EXT_WITH_NODE);
+                    opts.resolve.extension_order.node_modules.default =
+                        owned_string_list(NM_EXT_WITH_NODE);
                 }
             }
             _ => {}
         }
 
         if !transform.main_fields.is_empty() {
-            opts.main_fields = transform
+            opts.resolve.main_fields = transform
                 .main_fields
                 .iter()
                 .map(|s| Box::<[u8]>::from(s.as_ref()))
@@ -1533,7 +1415,7 @@ impl<'a> BundleOptions<'a> {
 
         // Reborrow the raw `*mut Log`
         // for the duration of this call only.
-        opts.external = init_external_modules(
+        opts.resolve.external = init_external_modules(
             &mut fs.fs,
             fs.top_level_dir,
             &transform
@@ -1543,16 +1425,16 @@ impl<'a> BundleOptions<'a> {
                 .collect::<Vec<&[u8]>>(),
             // sole live `&mut` for this call (struct not yet returned).
             opts.log_mut(),
-            opts.target,
+            opts.resolve.target,
         );
-        opts.out_extensions = opts.target.out_extensions();
+        opts.out_extensions = opts.resolve.target.out_extensions();
 
         opts.source_map = SourceMapOption::from_api(transform.source_map);
 
-        opts.packages = PackagesOption::from_api(transform.packages);
+        opts.resolve.packages = PackagesOption::from_api(transform.packages);
 
-        opts.tree_shaking = opts.target.is_bun() || opts.production;
-        opts.inlining = opts.tree_shaking;
+        opts.resolve.tree_shaking = opts.resolve.target.is_bun() || opts.resolve.production;
+        opts.inlining = opts.resolve.tree_shaking;
         if opts.inlining {
             opts.minify_syntax = true;
         }
@@ -1561,25 +1443,25 @@ impl<'a> BundleOptions<'a> {
             opts.import_path_format = ImportPathFormat::AbsoluteUrl;
         }
 
-        if opts.write && !opts.output_dir.is_empty() {
-            let handle = open_output_dir(&opts.output_dir)?;
+        if opts.write && !opts.resolve.output_dir.is_empty() {
+            let handle = open_output_dir(&opts.resolve.output_dir)?;
             // The inline `bun_resolver::fs::FileSystem` does
             // not yet expose `get_fd_path`, so resolve via `bun_sys` and box.
             let mut buf = bun_core::PathBuffer::uninit();
             let dir = bun_sys::get_fd_path(handle.fd(), &mut buf).map_err(bun_core::Error::from)?;
-            opts.output_dir = Box::from(&dir[..]);
+            opts.resolve.output_dir = Box::from(&dir[..]);
             opts.output_dir_handle = Some(handle);
         }
 
-        opts.polyfill_node_globals = opts.target == Target::Browser;
+        opts.resolve.polyfill_node_globals = opts.resolve.target == Target::Browser;
 
         if let Some(tsconfig) = &transform.tsconfig_override {
-            opts.tsconfig_override = Some(tsconfig.clone());
+            opts.resolve.tsconfig_override = Some(tsconfig.clone());
         }
 
         {
             analytics::features::macros.fetch_add(
-                usize::from(opts.target == Target::BunMacro),
+                usize::from(opts.resolve.target == Target::BunMacro),
                 Ordering::Relaxed,
             );
             analytics::features::external.fetch_add(

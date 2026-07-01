@@ -1297,6 +1297,7 @@ pub mod file;
 pub use file::{File, ReadToEndResult};
 pub mod dir;
 pub use dir::*;
+pub mod stdio;
 
 /// `bun_sys::cwd()` returns the process cwd `Dir`.
 #[inline]

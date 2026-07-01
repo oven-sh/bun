@@ -186,11 +186,7 @@ impl<'a> Loader<'a> {
         self.get_node_env() == Some(b"test")
     }
 
-    pub fn get_node_path<'b>(
-        &mut self,
-        fs: &bun_paths::fs::FileSystem,
-        buf: &'b mut PathBuffer,
-    ) -> Option<&'b ZStr> {
+    pub fn get_node_path<'b>(&mut self, buf: &'b mut PathBuffer) -> Option<&'b ZStr> {
         // Check NODE or npm_node_execpath env var, but only use it if the file actually exists.
         // NLL workaround: compute the length in an inner scope so the borrow of `buf` for the
         // executable check ends before we either return a fresh borrow or fall through to `which`.
@@ -210,7 +206,7 @@ impl<'a> Loader<'a> {
         }
 
         let path = self.get(b"PATH")?;
-        if let Some(node) = which(buf, path, fs.top_level_dir(), b"node") {
+        if let Some(node) = which(buf, path, bun_paths::fs::top_level_dir(), b"node") {
             return Some(node);
         }
 
@@ -445,15 +441,15 @@ impl<'a> Loader<'a> {
         false
     }
 
-    pub fn load_ccache_path(&mut self, fs: &bun_paths::fs::FileSystem) {
+    pub fn load_ccache_path(&mut self) {
         if DID_LOAD_CCACHE_PATH.load(Ordering::Relaxed) {
             return;
         }
         DID_LOAD_CCACHE_PATH.store(true, Ordering::Relaxed);
-        let _ = self.load_ccache_path_impl(fs);
+        let _ = self.load_ccache_path_impl();
     }
 
-    fn load_ccache_path_impl(&mut self, fs: &bun_paths::fs::FileSystem) -> Result<(), AllocError> {
+    fn load_ccache_path_impl(&mut self) -> Result<(), AllocError> {
         // if they have ccache installed, put it in env variable `CMAKE_CXX_COMPILER_LAUNCHER` so
         // cmake can use it to hopefully speed things up
         let mut buf = PathBuffer::uninit();
@@ -463,9 +459,10 @@ impl<'a> Loader<'a> {
         };
         // borrowck — `path` borrows `self.map`; `which` writes into `buf` and
         // returns a borrow of `buf`. Copy the result before mutating `self.map`.
-        let ccache_path: Box<[u8]> = which(&mut buf, path, fs.top_level_dir(), b"ccache")
-            .map(|z| Box::<[u8]>::from(z.as_bytes()))
-            .unwrap_or_default();
+        let ccache_path: Box<[u8]> =
+            which(&mut buf, path, bun_paths::fs::top_level_dir(), b"ccache")
+                .map(|z| Box::<[u8]>::from(z.as_bytes()))
+                .unwrap_or_default();
 
         if !ccache_path.is_empty() {
             let cxx_gop = self
@@ -495,11 +492,7 @@ impl<'a> Loader<'a> {
     /// Populates `NODE` /
     /// `npm_node_execpath` with the resolved node binary path. Returns `false`
     /// only when no node could be discovered and no override was supplied.
-    pub fn load_node_js_config(
-        &mut self,
-        fs: &bun_paths::fs::FileSystem,
-        override_node: &[u8],
-    ) -> Result<bool, bun_core::Error> {
+    pub fn load_node_js_config(&mut self, override_node: &[u8]) -> Result<bool, bun_core::Error> {
         let mut buf = PathBuffer::uninit();
 
         let node_path_to_use: Box<[u8]> = if !override_node.is_empty() {
@@ -513,7 +506,7 @@ impl<'a> Loader<'a> {
             if let Some(c) = cached {
                 c
             } else {
-                let Some(node) = self.get_node_path(fs, &mut buf) else {
+                let Some(node) = self.get_node_path(&mut buf) else {
                     return Ok(false);
                 };
                 Box::from(node.as_bytes())

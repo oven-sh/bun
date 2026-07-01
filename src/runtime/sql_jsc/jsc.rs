@@ -1,8 +1,7 @@
-//! `bun_jsc` re-export façade for the SQL bindings.
-//!
-//! `bun_jsc` surface re-exported wholesale; items below are SQL-specific glue
-//! (extension traits [`JSGlobalObjectSqlExt`], [`VirtualMachineSqlExt`],
-//! [`EventLoopSqlExt`], …).
+//! SQL-specific glue over `bun_jsc`: extension traits
+//! ([`JSGlobalObjectSqlExt`], [`VirtualMachineSqlExt`], [`EventLoopSqlExt`]),
+//! the [`AutoFlusher`] deferred-microtask wrapper, the generated
+//! [`codegen`] modules, and the [`put_host_functions!`] macro.
 //!
 //! [`RareData`] here is the **per-VM SQL state** (`mysql_context` /
 //! `postgresql_context`) that `bun_runtime::jsc_hooks::RuntimeState` owns by
@@ -15,29 +14,9 @@
 use core::ffi::{c_char, c_void};
 use core::ptr::NonNull;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Core handles — re-exported from `bun_jsc` so proc-macro generated wrappers
-// (which hard-code `bun_jsc::JSGlobalObject` / `bun_jsc::CallFrame` / …) see
-// the same types as user code importing `crate::sql_jsc::jsc::*`.
-// ──────────────────────────────────────────────────────────────────────────
-
-pub use bun_jsc::*;
-
-// ──────────────────────────────────────────────────────────────────────────
-// host_fn helpers (mirrors bun_jsc::host_fn::from_js_host_call*; kept local
-// for the few extension-trait bodies below that call extern "C" symbols
-// directly).
-// ──────────────────────────────────────────────────────────────────────────
-
-// ──────────────────────────────────────────────────────────────────────────
-// uws.create_bun_socket_error_t::toJS
-//
-// Canonical impl (and the `boringssl_err_to_js` it calls) lives in
-// `bun_jsc::system_error`; re-exported here for the SQL connection
-// `createInstance` paths.
-// ──────────────────────────────────────────────────────────────────────────
-
-pub(crate) use bun_jsc::system_error::create_bun_socket_error_to_js;
+use bun_jsc::event_loop::{EventLoop, EventLoopEnterGuard as EventLoopGuard};
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{ErrorBuilder, ErrorCode, JSGlobalObject, JSValue, JsError, JsResult};
 
 // ──────────────────────────────────────────────────────────────────────────
 // JSGlobalObject — SQL-specific extension surface.
@@ -70,21 +49,6 @@ impl JSGlobalObjectSqlExt for JSGlobalObject {
         JSC__JSGlobalObject__bunVM(self).cast::<VirtualMachine>()
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// VirtualMachine / EventLoop — direct re-exports from bun_jsc.
-//
-// This module depends on bun_jsc, so the previous opaque-ZST view
-// structs that round-tripped through Rust→Rust extern "C" shims
-// (Bun__VM__global / Bun__VM__eventLoop / Bun__EventLoop__enterLoop / …)
-// were a layering workaround. SQL-specific accessors that bun_jsc doesn't
-// expose at this tier (sql_state(), timer()) are provided
-// as the [VirtualMachineSqlExt] extension trait.
-// ──────────────────────────────────────────────────────────────────────────
-
-pub use bun_io::KeepAlive;
-pub use bun_jsc::event_loop::{EventLoop, EventLoopEnterGuard as EventLoopGuard};
-pub use bun_jsc::virtual_machine::VirtualMachine;
 
 /// Per-VM SQL state — the concrete crate::sql_jsc::mysql::MySQLContext /
 /// crate::sql_jsc::postgres::PostgresSQLContext.
@@ -170,25 +134,6 @@ impl EventLoopSqlExt for EventLoop {
         unsafe { EventLoop::enter_scope(self) }
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Timer heap / EventLoopTimer.
-//
-// The intrusive `EventLoopTimer` node + `Tag`/`State` enums are the canonical
-// `bun_event_loop` types (lower tier — also what `bun_runtime::dispatch::
-// fire_timer` reads via `from_field_ptr!`). The previous local `#[repr(C)]`
-// stub diverged on layout (`[usize;3]` heap, no `in_heap`) *and* discriminants
-// (Tag::PostgresSQLConnectionTimeout=1 vs canonical 8, State::FIRED/CANCELLED
-// swapped), so insertion into the real pairing-heap was UB and tag dispatch
-// mis-routed.
-//
-// `Timer::All` (the heap container) is `bun_jsc::timer::All`; reached via
-// [`VirtualMachineSqlExt::timer`].
-// ──────────────────────────────────────────────────────────────────────────
-
-pub use bun_event_loop::EventLoopTimer::{
-    EventLoopTimer, State as EventLoopTimerState, Tag as EventLoopTimerTag,
-};
 
 // ──────────────────────────────────────────────────────────────────────────
 // AutoFlusher — thin VM-taking wrapper over
@@ -313,17 +258,6 @@ pub mod api {
     }
 }
 
-pub mod webcore {
-    pub use super::AutoFlusher;
-
-    pub use crate::webcore::Blob;
-}
-
-/// `bun_jsc::JsClass` — generic downcast trait backing `JSValue::as_<T>()`.
-/// Re-exported so the codegen module's blanket impls land on the same trait
-/// `bun_jsc::JSValue::as_<T>()` keys on.
-pub use bun_jsc::JsClass;
-
 // ──────────────────────────────────────────────────────────────────────────
 // codegen::JS{Type} — per-JsClass cached-value getters/setters generated from
 // `.classes.ts`.
@@ -358,8 +292,6 @@ pub mod codegen {
     pub use js_mysql_query as JSMySQLQuery;
 }
 
-pub use bun_jsc::JSFunction;
-
 /// `bun_jsc::JSValue::put_host_functions`-shaped helper for the SQL binding
 /// objects. Macro (not fn) because each entry's `$f` is a *distinct* fn-item
 /// ZST routed through [`bun_jsc::js_function::IntoJsHostFn`] — a
@@ -369,13 +301,13 @@ pub use bun_jsc::JSFunction;
 #[macro_export]
 macro_rules! put_host_functions {
     ($obj:expr, $global:expr, [ $( ($name:literal, $f:expr, $arity:expr) ),* $(,)? ]) => {{
-        let __obj: $crate::sql_jsc::jsc::JSValue = $obj;
+        let __obj: ::bun_jsc::JSValue = $obj;
         let __g = $global;
         $(
             __obj.put(
                 __g,
                 $name.as_bytes(),
-                $crate::sql_jsc::jsc::JSFunction::create_from_host_fn(__g, $name, $f, $arity, ::core::default::Default::default()),
+                ::bun_jsc::JSFunction::create_from_host_fn(__g, $name, $f, $arity, ::core::default::Default::default()),
             );
         )*
         __obj

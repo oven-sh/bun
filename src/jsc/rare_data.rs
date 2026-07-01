@@ -1,5 +1,4 @@
 use core::ffi::c_void;
-use core::ptr::NonNull;
 use std::sync::Arc;
 
 use crate::virtual_machine::VirtualMachine;
@@ -29,7 +28,8 @@ use super::uuid::UUID;
 //   - `mysql_context` / `postgresql_context` / `editor_context`
 //     → moved to `bun_runtime::jsc_hooks::RuntimeState` (already there).
 //   - `websocket_deflate`
-//     → erased `*mut c_void` slot; high tier lazy-inits.
+//     → typed `*mut WebSocketDeflateSlot` (own heap allocation so handed-out
+//       `NonNull`s keep their provenance); high tier lazy-inits the contents.
 //   - the `bun test --isolate` watcher/server registries → moved to
 //     `bun_runtime::jsc_hooks::IsolationHandles` so the entries keep their
 //     concrete types.
@@ -119,26 +119,20 @@ impl CleanupHook {
     }
 }
 
-/// Erased high-tier slot with paired destructor (e.g. `WebSocketDeflate::RareData`).
-pub struct ErasedBox {
-    pub ptr: NonNull<c_void>,
-    pub dtor: unsafe fn(*mut c_void),
-}
-impl Drop for ErasedBox {
-    fn drop(&mut self) {
-        // SAFETY: `dtor` was supplied by the same high-tier code that allocated `ptr`.
-        unsafe { (self.dtor)(self.ptr.as_ptr()) };
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // RareData
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Per-VM pooled libdeflate decompressor shared by every WebSocket on this
+/// VM; lazy-init in `bun_http_jsc::WebSocketDeflate`.
+pub type WebSocketDeflateSlot = Option<bun_libdeflate_sys::libdeflate::OwnedDecompressor>;
+
 pub struct RareData {
-    /// `bun_http_jsc::WebSocketDeflate::RareData` — erased; lazy-init in
-    /// `bun_http_jsc::WebSocketDeflate::rare_data()`.
-    pub websocket_deflate: Option<ErasedBox>,
+    /// Separate heap allocation (never inline) so the `NonNull` handed to
+    /// `PerMessageDeflate` keeps its provenance across later `&mut RareData`
+    /// reborrows. Owned by `RareData`; allocated in `websocket_deflate_slot`,
+    /// freed exactly once in `Drop`.
+    websocket_deflate: *mut WebSocketDeflateSlot,
     pub boring_ssl_engine: Option<*mut boring::ENGINE>,
 
     pub entropy_cache: Option<Box<EntropyCache>>,
@@ -217,7 +211,7 @@ pub(crate) type FilePollStore = Async::file_poll::Store;
 impl Default for RareData {
     fn default() -> Self {
         Self {
-            websocket_deflate: None,
+            websocket_deflate: core::ptr::null_mut(),
             boring_ssl_engine: None,
             entropy_cache: None,
             cleanup_hooks: Vec::new(),
@@ -522,9 +516,17 @@ impl RareData {
     // ── trivial field accessors ────────────────────────────────────────────
 
     /// Raw slot — lazy-init body lives in `bun_http_jsc::WebSocketDeflate`.
+    /// Lazily heap-allocates the slot; `RareData::drop` is the single free.
     #[inline]
-    pub fn websocket_deflate_slot(&mut self) -> &mut Option<ErasedBox> {
-        &mut self.websocket_deflate
+    pub fn websocket_deflate_slot(&mut self) -> core::ptr::NonNull<WebSocketDeflateSlot> {
+        match core::ptr::NonNull::new(self.websocket_deflate) {
+            Some(slot) => slot,
+            None => {
+                let slot = bun_core::heap::into_raw_nn(Box::new(None));
+                self.websocket_deflate = slot.as_ptr();
+                slot
+            }
+        }
     }
 
     /// `RareData.defaultClientSslCtx()` — lazy default-trust-store client
@@ -844,8 +846,13 @@ impl Drop for RareData {
     fn drop(&mut self) {
         // temp_pipe_read_buffer / spawn_sync_event_loop_ / aws_signature_cache /
         // default_csrf_secret / cleanup_hooks /
-        // path_buf / websocket_deflate / tls_default_ciphers:
+        // path_buf / tls_default_ciphers:
         // all dropped automatically via field Drop.
+
+        if !self.websocket_deflate.is_null() {
+            // SAFETY: allocated by `websocket_deflate_slot`; `RareData` is the sole owner.
+            unsafe { bun_core::heap::destroy(self.websocket_deflate) };
+        }
 
         if let Some(engine) = self.boring_ssl_engine.take() {
             // SAFETY: engine was created by ENGINE_new.

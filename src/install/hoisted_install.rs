@@ -1,4 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
+use bun_install_types::{DependencyID, PackageID};
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
@@ -12,8 +13,8 @@ use bun_core::Progress::{Node as ProgressNode, Progress};
 use bun_options_types::context::Context;
 use bun_resolver::fs::FileSystem;
 
+use crate::ExtractData;
 use crate::lockfile::tree;
-use crate::{DependencyID, ExtractData, PackageID};
 // Bring the `items_<field>{,_mut}()` column accessors for
 // `MultiArrayList::Slice<Package>` into scope.
 use crate::PackageManager;

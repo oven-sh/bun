@@ -69,23 +69,13 @@ pub mod Macro {
         }
     }
 
-    /// Upward dispatch surface for macro execution. Sole implementor:
-    /// `bun_runtime::macro_runner::MacroContext` (which owns resolver/env/
-    /// macros/bump). Object-safe so the parser can hold it typed without
-    /// naming the higher-tier crate.
-    pub trait MacroRunner {
-        #[allow(clippy::too_many_arguments)]
-        fn call(
-            &mut self,
-            javascript_object: MacroJSCtx,
-            import_record_path: &[u8],
-            source_dir: &[u8],
-            log: &mut bun_ast::Log,
-            source: &bun_ast::Source,
-            import_range: bun_ast::Range,
-            caller: bun_ast::Expr,
-            function_name: &[u8],
-        ) -> Result<bun_ast::Expr, bun_core::Error>;
+    bun_opaque::opaque_ffi! {
+        /// Opaque handle to `bun_runtime::macro_runner::MacroContext`. That
+        /// type names `Resolver`/`DotEnv`/JSC types this crate cannot
+        /// (dep-cycle), so the parser-visible [`MacroContext`] carries it
+        /// behind this ZST and only the `__bun_macro_*` definitions in
+        /// `bun_runtime` ever cast it back to the concrete type.
+        pub struct MacroContextData;
     }
 
     /// Lower-tier handle for `bun_runtime::macro_runner::MacroContext`.
@@ -93,8 +83,9 @@ pub mod Macro {
     /// Real fields (`env`, `macros`, `resolver`, `bump`) reference
     /// `Transpiler` and JSC types that live in crates which depend on
     /// `bun_js_parser`. To break the dep cycle the higher-tier crate owns
-    /// that state behind the [`MacroRunner`] trait object so `visitExpr.rs`
-    /// avoids an upward import; ownership is released by [`deinit`]
+    /// that state behind the opaque `runner` handle; the visit pass reaches
+    /// it via link-time-resolved `extern "Rust"` fns so `visitExpr.rs`
+    /// avoids an upward import. Ownership is released by [`deinit`]
     /// (`Box::from_raw`) on short-lived clones. `javascript_object` is
     /// surfaced here so `Transpiler::parse` can thread
     /// `this_parse.macro_js_ctx` through without this crate depending on
@@ -110,7 +101,7 @@ pub mod Macro {
         /// NOT `Box`: the long-lived `vm.transpiler` instance intentionally
         /// leaks it, and `RuntimeTranspilerStore` bytewise-copies the
         /// containing `Transpiler`, which must stay alias-legal).
-        pub runner: Option<core::ptr::NonNull<dyn MacroRunner>>,
+        pub runner: Option<core::ptr::NonNull<MacroContextData>>,
         /// Borrowed view of `Transpiler.options.macro_remap` (set by the
         /// runner's init; null when macros are unconfigured). The table is owned
         /// by `Transpiler.options`, which outlives every parse — the same
@@ -127,29 +118,35 @@ pub mod Macro {
             }
         }
     }
-    /// Fn-pointer table for the macro runner. The runner lives in
-    /// `bun_runtime::macro_runner` (it names Transpiler/Resolver/JSC types
-    /// this crate cannot); the CLI installs the table once at startup
-    /// (`Cli::start`). Replaces the former link-time `extern "Rust"` symbols
-    /// with explicit injection.
-    pub struct MacroClient {
-        /// SAFETY contract (same as the old extern): `transpiler` is a live,
-        /// exclusively-borrowed `*mut bun_bundler::Transpiler<'_>` — erased
+    unsafe extern "Rust" {
+        /// Defined `#[unsafe(no_mangle)]` in `bun_runtime::macro_runner`.
+        /// `transpiler` is `*mut bun_bundler::Transpiler<'_>` — erased
         /// because this crate cannot name it (dep-cycle).
-        pub init: unsafe fn(transpiler: *mut core::ffi::c_void) -> MacroContext,
-        pub collect_vm_garbage: fn(),
-    }
-    static MACRO_CLIENT: std::sync::OnceLock<&'static MacroClient> = std::sync::OnceLock::new();
-    /// Called once from CLI startup (before any command can construct a
-    /// Transpiler). Idempotent.
-    pub fn install_macro_client(client: &'static MacroClient) {
-        let _ = MACRO_CLIENT.set(client);
-    }
-    #[inline]
-    fn client() -> &'static MacroClient {
-        MACRO_CLIENT.get().expect(
-            "macro client not installed (Cli::start runs install_macro_client before any command)",
-        )
+        // NOT `safe fn`: callee derefs `transpiler` as `&mut Transpiler<'_>` —
+        // caller must guarantee it is non-null, exclusively borrowed, and of
+        // that exact concrete type.
+        fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> MacroContext;
+        // NOT `safe fn`: `runner` must be the exact `Box::into_raw` value
+        // produced by `__bun_macro_context_init` and uniquely owned (callee
+        // `Box::from_raw`s it → double-free / aliasing UB otherwise).
+        fn __bun_macro_context_deinit(runner: core::ptr::NonNull<MacroContextData>);
+        // All args are safe Rust-ABI types (refs/slices/by-value); the only
+        // raw pointer involved is `ctx.runner`, which is a struct invariant
+        // maintained by `init`/`Default` — not a caller precondition. The
+        // `#[unsafe(no_mangle)]` body in `bun_runtime` is itself a safe `fn`.
+        safe fn __bun_macro_context_call(
+            ctx: &mut MacroContext,
+            import_record_path: &[u8],
+            source_dir: &[u8],
+            log: &mut bun_ast::Log,
+            source: &bun_ast::Source,
+            import_range: bun_ast::Range,
+            caller: bun_ast::Expr,
+            function_name: &[u8],
+        ) -> Result<bun_ast::Expr, bun_core::Error>;
+        // No raw-pointer args; the body is a safe `fn` in `bun_runtime`. See
+        // [`collect_vm_garbage`] for the call-site contract.
+        safe fn __bun_macro_collect_vm_garbage();
     }
 
     /// Sweep this thread's bundler-macro VM so JS-wrapper-owned native boxes
@@ -161,7 +158,7 @@ pub mod Macro {
     /// re-entering `run_gc(true)` is unsound.
     #[inline]
     pub fn collect_vm_garbage() {
-        (client().collect_vm_garbage)();
+        __bun_macro_collect_vm_garbage();
     }
     impl MacroContext {
         #[inline]
@@ -175,13 +172,8 @@ pub mod Macro {
             caller: bun_ast::Expr,
             function_name: &[u8],
         ) -> Result<bun_ast::Expr, bun_core::Error> {
-            let js = self.javascript_object;
-            let mut runner = self.runner.expect("MacroContext.call reached without init");
-            // SAFETY: `runner` was produced by the installed `MacroClient::init`
-            // (Box::into_raw) and is uniquely borrowed for this call — the
-            // handle is `&mut self` here and nothing else aliases the box.
-            unsafe { runner.as_mut() }.call(
-                js,
+            __bun_macro_context_call(
+                self,
                 import_record_path,
                 source_dir,
                 log,
@@ -193,8 +185,8 @@ pub mod Macro {
         }
         /// `T` is always `bun_bundler::Transpiler<'_>`; generic so callers in
         /// `bun_bundler`/`bun_runtime` compile without `bun_js_parser` taking
-        /// an upward dep on the bundler. The macro runner reads the concrete
-        /// type back inside the installed `MacroClient::init`.
+        /// an upward dep on the bundler. The `bun_runtime` macro runner reads
+        /// the concrete type back inside `__bun_macro_context_init`.
         #[inline]
         pub fn init<T>(transpiler: &mut T) -> Self {
             // SAFETY: `transpiler` is a live `&mut T` (exclusive, non-null,
@@ -202,7 +194,11 @@ pub mod Macro {
             // `&mut Transpiler<'_>` and only reads/borrows fields — it does not
             // retain the pointer past return (the boxed state it allocates owns
             // its own data).
-            unsafe { (client().init)(core::ptr::from_mut(transpiler).cast::<core::ffi::c_void>()) }
+            unsafe {
+                __bun_macro_context_init(
+                    core::ptr::from_mut(transpiler).cast::<core::ffi::c_void>(),
+                )
+            }
         }
         /// Free the boxed higher-tier state. Only call when the owning
         /// `Transpiler` is a short-lived bytewise clone (e.g. the off-thread
@@ -211,10 +207,10 @@ pub mod Macro {
         #[inline]
         pub fn deinit(self) {
             if let Some(p) = self.runner {
-                // SAFETY: exact `Box::into_raw` from the installed
-                // `MacroClient::init`; `self` taken by value so this is the
-                // unique owner and no double-free is possible.
-                drop(unsafe { Box::from_raw(p.as_ptr()) });
+                // SAFETY: `p` is the exact `Box::into_raw` produced by
+                // `__bun_macro_context_init`; `self` is taken by value so this
+                // is the unique owner and no double-free is possible.
+                unsafe { __bun_macro_context_deinit(p) }
             }
         }
         /// Returns `'static` so callers can keep the result across `&mut self`
@@ -226,8 +222,8 @@ pub mod Macro {
                 return None;
             }
             // SAFETY: `remap` points at `Transpiler.options.macro_remap`
-            // (process-lifetime relative to every parse), set by the installed
-            // `MacroClient::init`; justifies the `'static` borrow the
+            // (process-lifetime relative to every parse), set by
+            // `__bun_macro_context_init`; justifies the `'static` borrow the
             // callers keep across `&mut self` parser calls.
             let remap = unsafe { &*self.remap };
             if remap.is_empty() {

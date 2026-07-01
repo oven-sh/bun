@@ -2,9 +2,9 @@
 //! `createConnection(hostname, port, username, password, database, sslMode,
 //! tls, ...)` host functions, through the per-VM `SSL_CTX*` cache lookup.
 
-use crate::sql_jsc::jsc::{
-    JSGlobalObject, JSValue, JsResult, VirtualMachine, api::server_config::SSLConfig,
-};
+use crate::sql_jsc::jsc::api::server_config::SSLConfig;
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_uws as uws;
 
 pub(crate) trait SslModeArg: Copy + PartialEq {
@@ -114,7 +114,7 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
             if secure.is_none() {
                 drop(tls_config);
                 return Err(global_object.throw_value(
-                    crate::sql_jsc::jsc::create_bun_socket_error_to_js(err, global_object),
+                    bun_jsc::system_error::create_bun_socket_error_to_js(err, global_object),
                 ));
             }
         }

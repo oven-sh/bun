@@ -251,7 +251,7 @@ pub enum AllocatorType {
 
 // `FilePoll`/`Store` here are POSIX-specific (kqueue/epoll registration,
 // generation_number, allocator_type). On Windows the variants live in
-// `windows_event_loop`; the shared `EventLoopCtxVTable` above names
+// `windows_event_loop`; the shared `EventLoopCtx` link fns name
 // `crate::FilePoll`/`crate::Store` so the right one is picked.
 #[cfg(not(windows))]
 pub struct FilePoll {

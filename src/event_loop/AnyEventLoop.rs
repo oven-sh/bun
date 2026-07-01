@@ -7,18 +7,19 @@ use bun_uws::Loop as UwsLoop;
 
 use crate::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use crate::ConcurrentTask::ConcurrentTask;
+use crate::JsEventLoop;
 use crate::MiniEventLoop::{EventLoopKind, MiniEventLoop};
-use crate::{__BUN_JS_EVENT_LOOP_VTABLE, JsEventLoop};
 
 // JS-event-loop arm of `AnyEventLoop` / `EventLoopHandle`.
 //
 // LAYERING: `bun_event_loop` is a lower tier than `bun_jsc`, so it cannot name
 // `jsc::EventLoop` / `jsc::VirtualMachine` directly. The `Js` variant stores a
-// [`JsEventLoop`] handle: the erased `*mut jsc::EventLoop` owner plus the
-// `#[no_mangle]` method table `__BUN_JS_EVENT_LOOP_VTABLE` defined in
+// [`JsEventLoop`] handle: the erased `*mut jsc::EventLoop` owner, dispatched
+// through the `#[no_mangle]` `bun_jsc_event_loop_*` fns defined in
 // `bun_jsc::event_loop` and resolved at link time, so there is no runtime
 // registration and no init-order hazard. The single `unsafe` is at handle
-// construction (`JsEventLoop::new`); all dispatch sites are safe method calls.
+// construction (`JsEventLoop::from_ptr`); all dispatch sites are safe method
+// calls.
 
 /// Wrap an erased `*mut jsc::EventLoop` in a
 /// [`JsEventLoop`] handle. The pointer is stored opaquely — never dereferenced
@@ -32,7 +33,7 @@ use crate::{__BUN_JS_EVENT_LOOP_VTABLE, JsEventLoop};
 fn jsc_event_loop_handle(js_event_loop: *mut ()) -> JsEventLoop {
     // SAFETY: stored opaquely; back-reference invariant (owner outlives every
     // dispatch) is the caller's structural guarantee.
-    unsafe { JsEventLoop::new(js_event_loop, &__BUN_JS_EVENT_LOOP_VTABLE) }
+    unsafe { JsEventLoop::from_ptr(js_event_loop.cast()) }
 }
 
 /// Useful for code that may need an event loop and could be used from either JavaScript or directly without JavaScript.
@@ -395,9 +396,9 @@ impl EventLoopHandle {
     /// Erase to the `(tag, ptr)` pair stored in `uws::InternalLoopData`
     /// (`parent_tag` / `parent_ptr`). Tag 1 = JS, tag 2 = mini.
     #[inline]
-    pub fn into_tag_ptr(self) -> (core::ffi::c_char, *mut core::ffi::c_void) {
+    pub fn into_tag_ptr(self) -> (core::ffi::c_char, *mut bun_uws::LoopParent) {
         match self {
-            EventLoopHandle::Js { owner, .. } => (1, owner.owner.cast()),
+            EventLoopHandle::Js { owner, .. } => (1, owner.as_ptr().cast()),
             EventLoopHandle::Mini(mini) => (2, mini.as_ptr().cast()),
         }
     }
@@ -418,14 +419,14 @@ impl EventLoopHandle {
     #[inline]
     pub unsafe fn from_tag_ptr(
         tag: core::ffi::c_char,
-        ptr: *mut core::ffi::c_void,
+        ptr: *mut bun_uws::LoopParent,
     ) -> EventLoopHandle {
         match tag {
             1 => EventLoopHandle::Js {
                 // SAFETY: `(tag, ptr)` was produced by `into_tag_ptr` on a
                 // still-live event loop, so `ptr` is a live erased
                 // `*mut jsc::EventLoop`. Same boundary as `EventLoopHandle::init`.
-                owner: unsafe { JsEventLoop::new(ptr.cast::<()>(), &__BUN_JS_EVENT_LOOP_VTABLE) },
+                owner: unsafe { JsEventLoop::from_ptr(ptr.cast()) },
             },
             // `(tag, ptr)` came from `into_tag_ptr` on a live loop, so `ptr`
             // is non-null. `BackRef: From<NonNull<T>>`.

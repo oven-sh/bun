@@ -490,6 +490,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 {
                     &b.transpiler_for_target(options::Target::Browser)
                         .options
+                        .resolve
                         .public_path
                 } else {
                     c.options.public_path
@@ -571,7 +572,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // `write_output_files_to_disk` below — `output_dir` lives in the resolver,
     // disjoint from anything `c` mutates.
     let resolver = c.resolver.expect("resolver set in load()");
-    let root_path: &[u8] = &resolver.opts.output_dir;
+    let root_path: &[u8] = &resolver.opts.core.output_dir;
     let is_standalone = c.options.compile_to_standalone_html;
     let more_than_one_output = !is_standalone
         && (c.parse_graph().additional_output_files.len() > 0
@@ -579,9 +580,9 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             || (has_css_chunk && has_js_chunk)
             || (has_html_chunk && (has_js_chunk || has_css_chunk)));
 
-    if !c.resolver().opts.compile
+    if !c.resolver().opts.core.compile
         && more_than_one_output
-        && !c.resolver().opts.supports_multiple_outputs
+        && !c.resolver().opts.core.supports_multiple_outputs
     {
         c.log_mut().add_error(
             None,
@@ -755,7 +756,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     }
 
     // Don't write to disk if compile mode is enabled - we need buffer values for compilation
-    let is_compile = bundler.transpiler.options.compile;
+    let is_compile = bundler.transpiler.options.resolve.compile;
     if root_path.len() > 0 && !is_compile {
         write_output_files_to_disk(
             c,
@@ -855,6 +856,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 &bundler
                     .transpiler_for_target(options::Target::Browser)
                     .options
+                    .resolve
                     .public_path
             } else {
                 c.options.public_path
@@ -882,7 +884,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     standalone_chunk_contents.as_deref().unwrap(),
                 )?
             } else {
-                let force_abs = c.resolver().opts.compile
+                let force_abs = c.resolver().opts.core.compile
                     && !chunks[chunk_index_in_chunks_list]
                         .flags
                         .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD);

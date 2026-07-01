@@ -3,7 +3,7 @@
 //! Struct + `Flags` packed-u32 state machine. `run_immediate_task()` +
 //! helpers (`event_loop_timer`/`ref_`/`deref_`/
 //! `set_enable_keeping_event_loop_alive`/`run`) drive the
-//! `__bun_run_immediate_task` dispatch path. `fire()` + `reschedule()`/
+//! `EventLoop::tick_immediate_tasks` dispatch path. `fire()` + `reschedule()`/
 //! `should_reschedule_timer()`/`convert_to_interval()` drive the
 //! `FIRE_TIMER` dispatch path (Timeout/Immediate arms). `init()` backs the
 //! `TimeoutObject::init` / `ImmediateObject::init` constructors.
@@ -60,11 +60,10 @@ impl Default for TimerObjectInternals {
     }
 }
 
-// TimerFlags is canonical in bun_event_loop::EventLoopTimer (needed by bun_jsc::abort_signal::Timeout).
-use bun_event_loop::EventLoopTimer::TimerFlags as Flags;
+use super::TimerFlags as Flags;
 
 // ──────────────────────────────────────────────────────────────────────────
-// `runImmediateTask` path for `__bun_run_immediate_task` (dispatch.rs).
+// `runImmediateTask` path for `EventLoop::tick_immediate_tasks`.
 // ──────────────────────────────────────────────────────────────────────────
 
 // C++ symbol emitted from ImmediateList.cpp / setTimeout.cpp; already linked.
@@ -302,8 +301,8 @@ impl TimerObjectInternals {
                 unreachable!()
             };
             // SAFETY: `vm` is the live per-thread VM. The queued
-            // `*mut ImmediateObject` is run via the link-time
-            // `__bun_run_immediate_task` hook (PORTING.md §Dispatch).
+            // `*mut ImmediateObject` is run by
+            // `EventLoop::tick_immediate_tasks`.
             unsafe { (*vm).enqueue_immediate_task(parent) };
             self.set_enable_keeping_event_loop_alive(vm, true);
             // ref'd by event loop

@@ -653,7 +653,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     let uid_int = global_this.validate_integer_range::<i32>(
                         uid_value,
                         0,
-                        crate::sql_jsc::jsc::IntegerRange {
+                        bun_jsc::IntegerRange {
                             min: i128::from(i32::MIN),
                             max: i128::from(i32::MAX),
                             field_name: b"uid",
@@ -669,7 +669,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     let gid_int = global_this.validate_integer_range::<i32>(
                         gid_value,
                         0,
-                        crate::sql_jsc::jsc::IntegerRange {
+                        bun_jsc::IntegerRange {
                             min: i128::from(i32::MIN),
                             max: i128::from(i32::MAX),
                             field_name: b"gid",
@@ -708,7 +708,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                         let timeout_int = global_this.validate_integer_range::<u64>(
                             timeout_value,
                             0,
-                            crate::sql_jsc::jsc::IntegerRange {
+                            bun_jsc::IntegerRange {
                                 min: 0,
                                 field_name: b"timeout",
                                 ..Default::default()

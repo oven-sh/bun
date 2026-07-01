@@ -1,4 +1,4 @@
-use crate::sql_jsc::jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue};
 
 pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
     let binding = JSValue::create_empty_object_with_null_prototype(global_object);

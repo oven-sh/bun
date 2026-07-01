@@ -34,6 +34,7 @@ bun_io.workspace = true
 bun_ast.workspace = true
 bun_js_lexer.workspace = true
 bun_react_compiler = { path = "../react_compiler" }
+bun_opaque.workspace = true
 bun_options_types.workspace = true
 bun_paths.workspace = true
 bun_url.workspace = true

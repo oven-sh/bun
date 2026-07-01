@@ -166,7 +166,7 @@ pub fn post_process_js_chunk(
             .to_ast(),
         );
         let source = c.get_source(chunk.entry_point.source_index());
-        let target = c.resolver().opts.target;
+        let target = c.resolver().opts.core.target;
 
         // Hoist the StoreSlice extraction so the two `&mut chunk` borrows below
         // (content vs renamer) don't overlap inside a single expression.
@@ -864,7 +864,7 @@ pub fn post_process_js_chunk(
             chunk.isolated_hash,
             worker,
             &compile_results_for_source_map,
-            &resolver.opts.output_dir,
+            &resolver.opts.core.output_dir,
             can_have_shifts,
         )?;
     }
@@ -1345,7 +1345,7 @@ pub fn generate_entry_point_tail_js<'a>(
         };
     }
 
-    let require_or_import_meta_cb = c.require_or_import_meta_callback();
+    let require_or_import_meta_source = c.require_or_import_meta_source();
     let print_options = js_printer::Options {
         // TODO: IIFE indent
         indent: Default::default(),
@@ -1353,7 +1353,7 @@ pub fn generate_entry_point_tail_js<'a>(
 
         to_esm_ref,
         to_commonjs_ref: to_common_js_ref,
-        require_or_import_meta_for_source_callback: require_or_import_meta_cb,
+        require_or_import_meta_source: Some(require_or_import_meta_source),
 
         minify_whitespace: c.options.minify_whitespace,
         print_dce_annotations: c.options.emit_dce_annotations,
@@ -1374,7 +1374,7 @@ pub fn generate_entry_point_tail_js<'a>(
     CompileResult::Javascript {
         result: js_printer::print::<false>(
             arena,
-            c.resolver().opts.target,
+            c.resolver().opts.core.target,
             &ast_view,
             c.get_source(source_index),
             print_options,

@@ -624,38 +624,6 @@ pub fn tick_queue_with_count(
 // `bun_jsc::event_loop` extern impls (link-time)
 // ════════════════════════════════════════════════════════════════════════════
 
-/// `__bun_run_immediate_task` body — run the queued
-/// `bun_jsc::timer::ImmediateObject` (link-time hook for `bun_jsc::event_loop`).
-///
-/// # Safety
-/// `task` was produced by `enqueue_immediate_task` from a live
-/// `timer::ImmediateObject`; `vm` is the live per-thread VM.
-#[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_run_immediate_task(
-    task: *mut bun_jsc::timer::ImmediateObject,
-    vm: *mut bun_jsc::virtual_machine::VirtualMachine,
-) -> bool {
-    // SAFETY: per fn contract.
-    unsafe { bun_jsc::timer::ImmediateObject::run_immediate_task(task, vm) }
-}
-
-/// `__bun_cancel_pending_immediate` body — VM-teardown release of the event
-/// loop's `+1` ref on a still-queued `ImmediateObject` (link-time hook for
-/// `bun_jsc::event_loop`). Does not run the callback.
-///
-/// # Safety
-/// `task` was produced by `enqueue_immediate_task` from a live
-/// `timer::ImmediateObject` whose event-loop ref has not yet been released;
-/// `vm` is the live per-thread VM with `RuntimeState` still installed.
-#[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_cancel_pending_immediate(
-    task: *mut bun_jsc::timer::ImmediateObject,
-    vm: *mut bun_jsc::virtual_machine::VirtualMachine,
-) {
-    // SAFETY: per fn contract.
-    unsafe { bun_jsc::timer::ImmediateObject::cancel_pending(task, vm) }
-}
-
 /// `__bun_run_wtf_timer` body — cast the low tier's opaque
 /// [`bun_jsc::event_loop::WTFTimerHandle`] back to the real
 /// `crate::wtf_timer::WTFTimer` and fire it.

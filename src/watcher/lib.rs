@@ -32,7 +32,7 @@ pub mod watcher_impl;
 pub use WatchItemKind as Kind;
 pub use bun_core::loader::Loader;
 pub use watcher_impl::{
-    AnyResolveWatcher, ChangedFilePath, Event, HashType, Item, ItemList, MAX_COUNT,
-    MAX_EVICTION_COUNT, Op, REQUIRES_FILE_DESCRIPTORS, WATCH_OPEN_FLAGS, WatchEvent, WatchItem,
-    WatchItemColumns, WatchItemIndex, WatchItemKind, WatchList, Watcher, WatcherContext,
+    ChangedFilePath, Event, HashType, Item, ItemList, MAX_COUNT, MAX_EVICTION_COUNT, Op,
+    REQUIRES_FILE_DESCRIPTORS, WATCH_OPEN_FLAGS, WatchEvent, WatchItem, WatchItemColumns,
+    WatchItemIndex, WatchItemKind, WatchList, Watcher, WatcherContext,
 };

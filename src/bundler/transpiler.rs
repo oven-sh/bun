@@ -41,18 +41,24 @@ pub enum BunPluginTarget {
 // is what matters at the ABI.
 bun_core::assert_ffi_discr!(BunPluginTarget, u8; Bun = 0, Node = 1, Browser = 2);
 
-/// The JSC-aware resolve hook, injected per-VM (`virtual_machine_exports.rs`).
-///
-/// The body calls `JSGlobalObject.runOnResolvePlugins`, so it cannot live at
-/// this tier (`bun_jsc` depends on this crate); `bun_jsc::plugin_runner::
-/// PluginRunner` is the implementor. This trait is the sanctioned injection
-/// seam for the linker's mid-link plugin resolution — `Linker.plugin_runner`
-/// holds it as `Option<NonNull<dyn PluginResolver>>` so the linker stays
-/// JSC-free while the body lives in exactly one place. Do not add parallel
-/// fn-pointer/`extern` paths around it.
-pub trait PluginResolver {
-    fn on_resolve(
-        &self,
+bun_opaque::opaque_ffi! {
+    /// Opaque handle to the JSC-aware `bun_jsc::plugin_runner::PluginRunner`,
+    /// injected per-VM (`virtual_machine_exports.rs`). `Linker.plugin_runner`
+    /// holds it as `Option<NonNull<JscPluginRunner>>` so the linker stays
+    /// JSC-free while the body lives in exactly one place.
+    pub struct JscPluginRunner;
+}
+
+// LAYERING: the resolve hook calls `JSGlobalObject.runOnResolvePlugins`, so
+// its body cannot live at this tier (`bun_jsc` depends on this crate). It is
+// defined `#[unsafe(no_mangle)]` in `bun_jsc::plugin_runner` and resolved at
+// link time. Do not add parallel fn-pointer paths around it.
+unsafe extern "Rust" {
+    /// SAFETY: `runner` must name the live VM-owned
+    /// `bun_jsc::plugin_runner::PluginRunner` installed by
+    /// `Bun__onDidAppendPlugin`.
+    pub(crate) fn __bun_plugin_runner_on_resolve(
+        runner: &JscPluginRunner,
         specifier: &[u8],
         importer: &[u8],
         log: &mut bun_ast::Log,
@@ -172,8 +178,8 @@ impl<'a> Transpiler<'a> {
     /// VM-teardown: the owning `VirtualMachine` is raw-allocated and never `Drop`'d,
     /// so free `BundleOptions` here. `log`/`fs`/`env` are aliased/singletons; left alone.
     /// `resolver` is a value field whose caches alias process-global BSSMaps, so the
-    /// resolver itself stays put — only its owned `opts` projection (cloned in
-    /// `resolver_bundle_options_subset`) is released.
+    /// resolver itself stays put — only its owned `opts` snapshot (cloned in
+    /// `resolver_options_snapshot`) is released.
     ///
     /// # Safety
     /// Calls `drop_in_place` on `options` / `result` / `resolver.opts` /
@@ -328,7 +334,7 @@ impl<'a> Transpiler<'a> {
                 from.options.for_worker(),
             )
         };
-        let resolver_opts = resolver_bundle_options_subset(&options);
+        let resolver_opts = resolver_options_snapshot(&options);
         let log_nn = core::ptr::NonNull::new(log).expect("Transpiler::for_worker: log is non-null");
         // SAFETY: see fn doc — `Resolver::for_worker` widens
         // `standalone_module_graph` / `env_loader` lifetimes.
@@ -403,7 +409,7 @@ impl<'a> Transpiler<'a> {
     #[inline]
     pub fn get_package_manager(
         &mut self,
-    ) -> Result<*mut dyn bun_install_types::resolver_hooks::AutoInstaller, bun_core::Error> {
+    ) -> Result<bun_install_types::resolver_hooks::PackageManagerRef, bun_core::Error> {
         self.resolver.get_package_manager()
     }
 
@@ -552,7 +558,7 @@ impl<'a> Transpiler<'a> {
             return Ok(());
         }
 
-        if self.options.target == options::Target::BunMacro {
+        if self.options.resolve.target == options::Target::BunMacro {
             self.options.env.behavior = bun_dotenv::DotEnvBehavior::Prefix;
             self.options.env.prefix = Box::from(b"BUN_".as_slice());
         }
@@ -592,8 +598,8 @@ impl<'a> Transpiler<'a> {
         if is_development {
             self.options.set_production(false);
             self.resolver.opts.set_production(false);
-            self.options.force_node_env = ForceNodeEnv::Development;
-            self.resolver.opts.force_node_env = ForceNodeEnv::Development;
+            self.options.resolve.force_node_env = ForceNodeEnv::Development;
+            self.resolver.opts.core.force_node_env = ForceNodeEnv::Development;
         } else if is_production {
             self.options.set_production(true);
             self.resolver.opts.set_production(true);
@@ -601,12 +607,11 @@ impl<'a> Transpiler<'a> {
         Ok(())
     }
 
-    /// The resolver
-    /// crate carries a FORWARD_DECL subset of `BundleOptions`, so re-project
-    /// rather than `Clone`. Called after `init_transpiler_with_options` mutates
+    /// Re-snapshot `self.options` for the resolver. Called after
+    /// `init_transpiler_with_options` mutates
     /// `self.options` so the resolver sees the same conditions/target/public_path.
     pub fn sync_resolver_opts(&mut self) {
-        self.resolver.opts = resolver_bundle_options_subset(&self.options);
+        self.resolver.opts = resolver_options_snapshot(&self.options);
     }
 
     /// Print the loaded environment variables to stdout as 2-space-indented
@@ -688,7 +693,7 @@ impl<'a> Transpiler<'a> {
                 if let Some(tsconfig) = root_dir.tsconfig_json() {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig
                     if self.options.transform_options.jsx.is_none() {
-                        self.options.jsx = tsconfig.jsx.clone();
+                        self.options.resolve.jsx = tsconfig.jsx.clone();
                     }
                     self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                     self.options.experimental_decorators = tsconfig.experimental_decorators;
@@ -719,7 +724,7 @@ impl<'a> Transpiler<'a> {
                 // unconditionally before attempting directory traversal, so
                 // that inherited environment variables are always available
                 // even when a parent directory is not readable.
-                let was_production = self.options.production;
+                let was_production = self.options.resolve.production;
                 env.load_process()?;
                 let has_production_env = env.is_production();
                 if !was_production && has_production_env {
@@ -744,7 +749,7 @@ impl<'a> Transpiler<'a> {
                 };
 
                 if let Some(tsconfig) = dir_info.tsconfig_json() {
-                    merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
+                    merge_tsconfig_jsx_into(tsconfig, &mut self.options.resolve.jsx);
                 }
 
                 let Some(dir) = dir_info.get_entries(self.resolver.generation) else {
@@ -765,7 +770,7 @@ impl<'a> Transpiler<'a> {
 
                 let suffix = if self.options.is_test() || env.is_test() {
                     dot_env::DotEnvFileSuffix::Test
-                } else if self.options.production {
+                } else if self.options.resolve.production {
                     dot_env::DotEnvFileSuffix::Production
                 } else {
                     dot_env::DotEnvFileSuffix::Development
@@ -944,7 +949,7 @@ pub struct ParseOptions<'a, 'b> {
     pub path: bun_paths::fs::Path<'static>,
     pub loader: options::Loader,
     /// `BundleOptions.jsx` — the file-backed `options_impl::jsx::Pragma`, NOT
-    /// the lib.rs shim. Callers pass `transpiler.options.jsx.clone()`.
+    /// the lib.rs shim. Callers pass `transpiler.options.resolve.jsx.clone()`.
     pub jsx: crate::options_impl::jsx::Pragma,
     pub macro_remappings: MacroRemap,
     pub macro_js_ctx: MacroJSCtx,
@@ -1018,93 +1023,37 @@ fn init_file_system(
     Fs::FileSystem::init(top_level_dir)
 }
 
-/// Projects the flat CLI/config aggregate into the canonical
-/// `bun_options_types::resolve_options::BundleOptions` consumed by
-/// `Resolver::init1`. One nominal type family on both sides; this is a value
-/// copy, not a mirror conversion.
+/// Snapshot of the resolver-visible options for `Resolver::init1`.
 ///
-/// `resolver.opts` must carry the same user-configured
-/// `--external`, `--conditions`, `--main-fields`, and the extension order.
-/// Every field the resolver reads is now projected (clone of owned data, no
-/// `Box::leak`); the resolver-side FORWARD_DECL types were widened to owned
-/// `Box<[Box<[u8]>]>`/`StringSet`/`StringArrayHashMap` so this is a faithful
-/// value copy rather than a `Default` stub.
+/// `options.resolve` already IS the canonical
+/// `bun_options_types::resolve_options::ResolveOptionsCore`; the two fields
+/// the resolver needs on top of it are `conditions` (the bundler's
+/// `ESMConditions` is a superset carrying an extra `default` map) and
+/// `framework` (borrowed on the bundler side, owned on the resolver side),
+/// so those two are projected here and the core is cloned.
 ///
-/// `#[cold]`/`#[inline(never)]`: this is a ~100-line struct-construction blob
-/// run exactly once per `Transpiler::init` (i.e. once per VM bring-up). Keeping
-/// it out-of-line stops it from bloating `init`'s prologue — `init` is on the
-/// startup path of every `bun`/`bunx`/`bun --bun` process, where the perf cost
-/// is the icache/decode footprint of the prologue, not the cold body itself.
+/// `#[cold]`/`#[inline(never)]`: run once per `Transpiler::init` (i.e. once
+/// per VM bring-up). Keeping it out-of-line stops it from bloating `init`'s
+/// prologue — `init` is on the startup path of every `bun`/`bunx`/`bun --bun`
+/// process, where the perf cost is the icache/decode footprint of the
+/// prologue, not the cold body itself.
 #[cold]
 #[inline(never)]
-pub(crate) fn resolver_bundle_options_subset(
+pub(crate) fn resolver_options_snapshot(
     src: &options::BundleOptions<'_>,
 ) -> resolver::options::BundleOptions {
     use resolver::options as ropts;
 
     ropts::BundleOptions {
-        target: src.target,
-        packages: match src.packages {
-            options::PackagesOption::External => ropts::Packages::External,
-            options::PackagesOption::Bundle => ropts::Packages::Bundle,
-        },
-        // D042: same nominal type on both sides.
-        jsx: src.jsx.clone(),
-        // Spec `options.ResolveFileExtensions` — clone all four owned slices so
-        // the resolver honours user `--extension-order` and the per-target
-        // `.node` augmentation `from_api` applied.
-        extension_order: ropts::ExtensionOrder {
-            default: ropts::ExtensionOrderGroup {
-                default: src.extension_order.default.default.clone(),
-                esm: src.extension_order.default.esm.clone(),
-            },
-            node_modules: ropts::ExtensionOrderGroup {
-                default: src.extension_order.node_modules.default.clone(),
-                esm: src.extension_order.node_modules.esm.clone(),
-            },
-            css: ropts::owned_string_list(bun_options_types::bundle_defaults::CSS_EXTENSION_ORDER),
-        },
+        core: src.resolve.clone(),
         conditions: ropts::Conditions {
             import: src.conditions.import.clone().expect("oom"),
             require: src.conditions.require.clone().expect("oom"),
             style: src.conditions.style.clone().expect("oom"),
         },
-        external: src.external.clone(),
-        extra_cjs_extensions: src.extra_cjs_extensions.clone(),
         framework: src
             .framework
             .map(bun_options_types::bake::Framework::deep_clone),
-        global_cache: src.global_cache,
-        // Both sides store
-        // `Option<NonNull<api::BunInstall>>`, so this is a straight copy.
-        install: src.install,
-        load_package_json: src.load_package_json,
-        load_tsconfig_json: src.load_tsconfig_json,
-        main_field_extension_order: ropts::owned_string_list(src.main_field_extension_order),
-        // `auto_main` is projected as a
-        // bool: it's "default" iff the user did not pass `--main-fields`
-        // (`from_api` overwrites `main_fields` only when
-        // `transform.main_fields` is non-empty — options.rs:2231).
-        main_fields: src.main_fields.clone(),
-        main_fields_is_default: src.transform_options.main_fields.is_empty(),
-        mark_builtins_as_external: src.mark_builtins_as_external,
-        polyfill_node_globals: src.polyfill_node_globals,
-        prefer_offline_install: src.prefer_offline_install,
-        preserve_symlinks: src.preserve_symlinks,
-        rewrite_jest_for_tests: src.rewrite_jest_for_tests,
-        tsconfig_override: src.tsconfig_override.clone(),
-        production: src.production,
-        force_node_env: src.force_node_env,
-        // FORWARD_DECL: bundler-only fields read via `c.resolver.opts` in
-        // `linker_context/*`. Project them so the linker sees the same values
-        // the bundler configured.
-        output_dir: src.output_dir.clone(),
-        root_dir: src.root_dir.clone(),
-        public_path: src.public_path.clone(),
-        compile: src.compile,
-        supports_multiple_outputs: src.supports_multiple_outputs,
-        tree_shaking: src.tree_shaking,
-        allow_runtime: src.allow_runtime,
     }
 }
 
@@ -1297,14 +1246,12 @@ impl<'a> Transpiler<'a> {
         // borrow for the duration of `from_api`.
         let bundle_options = options::BundleOptions::from_api(unsafe { &mut *fs }, log, opts)?;
 
-        // `Resolver.opts` is the resolver-crate subset
-        // (`bun_resolver::options::BundleOptions`), nominally distinct from this
-        // crate's `options::BundleOptions<'a>`. Project the fields the resolver
-        // reads; the rest stay at `Default` until MOVE_DOWN to
-        // `bun_options_types` unifies the two (resolver/lib.rs:2773 note).
-        let resolver_opts = resolver_bundle_options_subset(&bundle_options);
+        // `Resolver.opts` is an owned snapshot of `bundle_options.resolve`
+        // (plus the projected `conditions`/`framework`); later mutations of
+        // `bundle_options` are not observed by the resolver unless re-synced.
+        let resolver_opts = resolver_options_snapshot(&bundle_options);
 
-        let outbase = bundle_options.output_dir.clone();
+        let outbase = bundle_options.resolve.output_dir.clone();
         let resolve_results = Box::new(ResolveResults::default());
 
         // Construct directly into the caller-owned storage instead of building a
@@ -1569,7 +1516,7 @@ impl<'a> Transpiler<'a> {
                     ));
                 }
 
-                let target = self.options.target;
+                let target = self.options.resolve.target;
 
                 let mut jsx = this_parse.jsx;
                 jsx.parse = loader.is_jsx();
@@ -1594,7 +1541,7 @@ impl<'a> Transpiler<'a> {
                     suppress_warnings_about_weird_code: true,
                     filepath_hash_for_hmr: file_hash.unwrap_or(0),
                     features: js_ast::RuntimeFeatures::default(),
-                    tree_shaking: self.options.tree_shaking,
+                    tree_shaking: self.options.resolve.tree_shaking,
                     bundle: false,
                     code_splitting: false,
                     package_version: b"",
@@ -1616,7 +1563,7 @@ impl<'a> Transpiler<'a> {
                 // TC39 standard decorators have their own metadata mechanism.
                 opts.features.standard_decorators = !loader.is_typescript()
                     || !(this_parse.experimental_decorators || this_parse.emit_decorator_metadata);
-                opts.features.allow_runtime = self.options.allow_runtime;
+                opts.features.allow_runtime = self.options.resolve.allow_runtime;
                 opts.features.set_breakpoint_on_first_line =
                     this_parse.set_breakpoint_on_first_line;
                 opts.features.trim_unused_imports = self
@@ -1845,7 +1792,7 @@ impl<'a> Transpiler<'a> {
                     source_backing,
                     arena,
                     &path,
-                    self.options.target,
+                    self.options.resolve.target,
                     log,
                 );
             }
@@ -2391,7 +2338,7 @@ impl<'a> Transpiler<'a> {
                 // Runtime `target.is_bun()` bool → const-generic dispatch,
                 // hoisted into the `print_ast_esm_ascii` helper so the
                 // const-generic IS_BUN can also drive `module_type`.
-                if self.options.target.is_bun() {
+                if self.options.resolve.target.is_bun() {
                     self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, true>(
                         print_arena,
                         writer,
@@ -2593,7 +2540,7 @@ impl<'a> Transpiler<'a> {
             // js_printer/lib.rs:6872 to gate the `var {require}=import.meta;`
             // hoist on `Target::Bun` — defaulting to `Browser` here regressed
             // oven-sh/bun#15738.
-            target: self.options.target,
+            target: self.options.resolve.target,
             ..Default::default()
         };
         js_printer::print_ast::<_, IS_BUN, ENABLE_SOURCE_MAP>(
@@ -3028,7 +2975,7 @@ impl<'a> Transpiler<'a> {
 
                 if !self.options.transform_only {
                     let origin = self.options.origin.url();
-                    if !self.options.target.is_bun() {
+                    if !self.options.resolve.target.is_bun() {
                         self.linker.link::<false, false>(
                             &file_path,
                             &mut result,
@@ -3052,7 +2999,7 @@ impl<'a> Transpiler<'a> {
                 // `result.ast` above. (`bun build` is one-shot — `self.arena`
                 // here is `cli_arena()` and lives for the process.)
                 let print_arena: &Arena = self.arena;
-                output_file.size = match self.options.target {
+                output_file.size = match self.options.resolve.target {
                     options::Target::Browser | options::Target::Node => {
                         self.print(print_arena, result, &mut writer, js_printer::Format::Esm)?
                     }
@@ -3188,7 +3135,7 @@ impl<'a> Transpiler<'a> {
         let result = match sheet.to_css(
             alloc,
             &bun_css::PrinterOptions {
-                targets: bun_css::Targets::for_bundler_target(self.options.target),
+                targets: bun_css::Targets::for_bundler_target(self.options.resolve.target),
                 minify: self.options.minify_whitespace,
                 ..bun_css::PrinterOptions::default()
             },

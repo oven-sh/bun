@@ -1,6 +1,6 @@
 use core::cell::Cell;
 
-use crate::sql_jsc::jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 use crate::sql_jsc::postgres::error_jsc::postgres_error_to_js;
 use crate::sql_jsc::postgres::signature::Signature;

@@ -188,6 +188,7 @@ namespace WebCore {
     V(onBufferedFastPathSettled)                                                                             \
     V(onReadableStreamToArrayBufferFulfilled)                                                                \
     V(onReadableStreamToBytesFulfilled)                                                                      \
+    V(onReadableStreamToTextChunksFulfilled)                                                                 \
     V(onReadableStreamToJSONFulfilled)                                                                       \
     V(onReadableStreamToBlobFulfilled)                                                                       \
     V(onReadableStreamToFormDataFulfilled)                                                                   \

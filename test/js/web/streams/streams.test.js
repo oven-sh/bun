@@ -609,6 +609,35 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     });
   }
 
+  const textCases = {
+    "only strings": { chunks: () => ["hé", "llo"], text: "héllo" },
+    "strings mixed with bytes": { chunks: () => ["ab", new Uint8Array([49, 50]), "cd"], text: "ab12cd" },
+    "many typed-array views": { chunks: () => [new TextEncoder().encode("a\u00e9"), new TextEncoder().encode("b")], text: "aéb" },
+    "single string with a BOM": { chunks: () => ["\uFEFFabc"], text: "abc" },
+    "a BOM split across string chunks": { chunks: () => ["\uFEFF", "\uFEFFabc"], text: "abc" },
+    "a BOM string chunk before bytes": { chunks: () => ["\uFEFF", new TextEncoder().encode("abc")], text: "abc" },
+    "lone surrogate in a string chunk": { chunks: () => ["a\uD800b"], text: "a\uD800b" },
+    "a BOM string chunk after bytes": { chunks: () => [new TextEncoder().encode("ab"), "\uFEFFcd"], text: "abcd" },
+    "a surrogate pair split across string chunks after bytes": {
+      chunks: () => [new TextEncoder().encode("x"), "\uD83D", "\uDE00"],
+      text: "x\u{1F600}",
+    },
+    "invalid UTF-8 bytes": { chunks: () => [new Uint8Array([0x61, 0xff, 0x62])], text: "a\uFFFDb" },
+  };
+  for (const [name, { chunks, text }] of Object.entries(textCases)) {
+    it(`text: ${name}`, async () => {
+      expect(await Bun.readableStreamToText(source(chunks()))).toBe(text);
+      expect(await new Response(source(chunks())).text()).toBe(text);
+    });
+  }
+
+  it("text: an invalid chunk rejects rather than throwing", async () => {
+    const p = Bun.readableStreamToText(source([42]));
+    expect(p).toBeInstanceOf(Promise);
+    await expect(p).rejects.toThrow(expect.objectContaining({ name: "TypeError" }));
+    await expect(new Response(source([42])).text()).rejects.toThrow(expect.objectContaining({ name: "TypeError" }));
+  });
+
   it("a detached chunk throws", () => {
     const chunk = new Uint8Array([1, 2, 3]);
     structuredClone(chunk.buffer, { transfer: [chunk.buffer] });

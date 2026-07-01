@@ -483,14 +483,12 @@ JSC::JSValue readableStreamToFormData(JSC::JSGlobalObject*, JSReadableStream*, J
 // (propagate without setting m_disturbed).
 JSC::JSValue tryUseReadableStreamBufferedFastPath(JSC::JSGlobalObject*, JSReadableStream*, const JSC::Identifier& method); // userJS: yes — BunStreamConsumers.cpp
 
-// The GENERIC toText accumulator. Allocates a WebCore::JSBunStandaloneTextSink
-// (BunStandaloneTextSink.h — the standalone Text sink cell, NOT a JSDirectStreamController)
-// and runs it through readStreamIntoSink(g, stream, sink, /*isNative*/ false). BOM-strips via
-// withoutUTF8BOM; the DIRECT path does not.
+// The generic toText path: the readMany array pump + a single chunk-array -> string
+// conversion (BunStreamConsumers.cpp convertChunksToText); BOM-strips its result.
 JSC::JSValue readableStreamIntoText(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 // toArray's generic path (getReader + readMany until done).
 JSC::JSValue readableStreamIntoArray(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
-// Drop ONE leading U+FEFF. The ONLY BOM strip, and only on the generic toText path.
+// Drop ONE leading U+FEFF, and only on the generic toText path.
 WTF::String withoutUTF8BOM(const WTF::String&); // userJS: no — BunStreamConsumers.cpp
 
 // The three *Direct conversion paths.

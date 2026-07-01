@@ -291,8 +291,6 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForReadableStreamBYOBRequest;
     std::unique_ptr<IsoSubspace> m_subspaceForReadableStreamDefaultController;
     std::unique_ptr<IsoSubspace> m_subspaceForReadableStreamDefaultReader;
-    std::unique_ptr<IsoSubspace> m_subspaceForReadableStreamSink;
-    std::unique_ptr<IsoSubspace> m_subspaceForReadableStreamSource;
     std::unique_ptr<IsoSubspace> m_subspaceForTransformStream;
     std::unique_ptr<IsoSubspace> m_subspaceForTransformStreamDefaultController;
     std::unique_ptr<IsoSubspace> m_subspaceForCompressionStream;
@@ -300,7 +298,6 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForWritableStream;
     std::unique_ptr<IsoSubspace> m_subspaceForWritableStreamDefaultController;
     std::unique_ptr<IsoSubspace> m_subspaceForWritableStreamDefaultWriter;
-    std::unique_ptr<IsoSubspace> m_subspaceForWritableStreamSink;
     // std::unique_ptr<IsoSubspace> m_subspaceForWebLock;
     // std::unique_ptr<IsoSubspace> m_subspaceForWebLockManager;
     // std::unique_ptr<IsoSubspace> m_subspaceForAnalyserNode;

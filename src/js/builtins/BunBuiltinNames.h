@@ -39,16 +39,10 @@ using namespace JSC;
     macro(WritableStreamDefaultController) \
     macro(WritableStreamDefaultWriter) \
     macro(_events) \
-    macro(abortAlgorithm) \
-    macro(abortSteps) \
     macro(addAbortAlgorithmToSignal) \
-    macro(assignToStream) \
-    macro(associatedReadableByteStreamController) \
     macro(atimeMs) \
     macro(attributes) \
     macro(autoAllocateChunkSize) \
-    macro(backpressure) \
-    macro(backpressureChangePromise) \
     macro(basename) \
     macro(birthtimeMs) \
     macro(body) \
@@ -56,29 +50,17 @@ using namespace JSC;
     macro(bunNativeType) \
     macro(byobRequest) \
     macro(cancel) \
-    macro(cancelAlgorithm) \
     macro(checks) \
     macro(checkBufferRead) \
     macro(cloneArrayBuffer) \
     macro(close) \
-    macro(closeAlgorithm) \
-    macro(closeRequest) \
-    macro(closeRequested) \
-    macro(closedPromise) \
-    macro(closedPromiseCapability) \
     macro(cmd) \
     macro(code) \
-    macro(controlledReadableStream) \
     macro(controller) \
     macro(createCommonJSModule) \
-    macro(createEmptyReadableStream) \
-    macro(createErroredReadableStream) \
     macro(createFIFO) \
     macro(createInternalModuleById) \
-    macro(createNativeReadableStream) \
     macro(createUninitializedArrayBuffer) \
-    macro(createUsedReadableStream) \
-    macro(createWritableStreamFromInternal) \
     macro(ctimeMs) \
     macro(data) \
     macro(dataView) \
@@ -90,7 +72,6 @@ using namespace JSC;
     macro(encoding) \
     macro(end) \
     macro(errno) \
-    macro(errorSteps) \
     macro(evaluateCommonJSModule) \
     macro(evictIsolationSourceProviderCache) \
     macro(expires) \
@@ -100,14 +81,12 @@ using namespace JSC;
     macro(fatal) \
     macro(fd) \
     macro(filename) \
-    macro(flushAlgorithm) \
     macro(format) \
     macro(fulfillModuleSync) \
     macro(esmNamespaceForCjs) \
     macro(esmRegistryDelete) \
     macro(esmRegistryEvaluatedKeys) \
     macro(esmLoadSync) \
-    macro(getInternalWritableStream) \
     macro(handleEvent) \
     macro(headers) \
     macro(highWaterMark) \
@@ -117,17 +96,13 @@ using namespace JSC;
     macro(httpOnly) \
     macro(ignoreBOM) \
     macro(importer) \
-    macro(inFlightCloseRequest) \
-    macro(inFlightWriteRequest) \
     macro(inherits) \
     macro(internalModuleRegistry) \
     macro(internalRequire) \
-    macro(internalWritable) \
     macro(isAbortSignal) \
     macro(isAbsolute) \
     macro(join) \
     macro(lazy) \
-    macro(lazyStreamPrototypeMap) \
     macro(lineText) \
     macro(loadEsmIntoCjs) \
     macro(main) \
@@ -147,31 +122,19 @@ using namespace JSC;
     macro(originalColumn) \
     macro(originalLine) \
     macro(overridableRequire) \
-    macro(ownerReadableStream) \
     macro(parse) \
     macro(partitioned) \
     macro(path) \
     macro(paths) \
     macro(peekPromiseSettledValue) \
     macro(peekPromiseStatus) \
-    macro(pendingAbortRequest) \
-    macro(pendingPullIntos) \
     macro(pokePromiseAsHandled) \
     macro(port) \
     macro(post) \
     macro(processBindingConstants) \
     macro(pull) \
-    macro(pullAgain) \
-    macro(pullAlgorithm) \
-    macro(pulling) \
-    macro(queue) \
     macro(read) \
-    macro(readIntoRequests) \
-    macro(readRequests) \
     macro(readable) \
-    macro(readableStreamController) \
-    macro(reader) \
-    macro(readyPromise) \
     macro(redirect) \
     macro(relative) \
     macro(removeAbortAlgorithmFromSignal) \
@@ -185,42 +148,27 @@ using namespace JSC;
     macro(secure) \
     macro(self) \
     macro(signal) \
-    macro(sink) \
     macro(size) \
     macro(specifier) \
     macro(start) \
-    macro(startAlgorithm) \
-    macro(startDirectStream) \
     macro(started) \
     macro(state) \
     macro(status) \
     macro(statusText) \
-    macro(storedError) \
-    macro(strategy) \
-    macro(strategyHWM) \
-    macro(strategySizeAlgorithm) \
     macro(stream) \
     macro(structuredCloneForStream) \
     macro(syscall) \
     macro(textDecoder) \
     macro(textDecoderStreamDecoder) \
-    macro(textDecoderStreamTransform) \
     macro(textEncoderStreamEncoder) \
-    macro(textEncoderStreamTransform) \
     macro(toClass) \
     macro(toNamespacedPath) \
-    macro(transformAlgorithm) \
-    macro(underlyingByteSource) \
-    macro(underlyingSink) \
-    macro(underlyingSource) \
     macro(url) \
     macro(view) \
     macro(vmErrorDecorated) \
     macro(warning) \
     macro(writable) \
     macro(write) \
-    macro(writeAlgorithm) \
-    macro(writeRequests) \
     macro(writer) \
     macro(written) \
     macro($$typeof) \

@@ -51,11 +51,10 @@ static JSPromise* invokePromiseReturningMethod(JSGlobalObject* globalObject, JSO
         if (catchScope.exception()) [[unlikely]]
             thrown = takeAbruptCompletion(globalObject, catchScope);
     }
-    if (result.isEmpty()) {
-        if (thrown.isEmpty())
-            return nullptr;
+    if (!thrown.isEmpty())
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    }
+    if (result.isEmpty())
+        return nullptr;
     RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
 }
 

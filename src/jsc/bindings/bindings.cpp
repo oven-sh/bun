@@ -3170,41 +3170,6 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
     }
 }
 
-[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto clientData = WebCore::clientData(vm);
-    auto* function = globalObject->getDirect(vm, clientData->builtinNames().createEmptyReadableStreamPrivateName()).getObject();
-    JSValue emptyStream = JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(emptyStream);
-}
-
-[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject* globalObject)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto clientData = WebCore::clientData(vm);
-    auto* function = globalObject->getDirect(vm, clientData->builtinNames().createUsedReadableStreamPrivateName()).getObject();
-    JSValue usedStream = JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(usedStream);
-}
-
-[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue ReadableStream__errored(Zig::GlobalObject* globalObject, JSC::EncodedJSValue encodedReason)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto clientData = WebCore::clientData(vm);
-    auto* function = globalObject->getDirect(vm, clientData->builtinNames().createErroredReadableStreamPrivateName()).getObject();
-    JSC::MarkedArgumentBuffer arguments;
-    arguments.append(JSC::JSValue::decode(encodedReason));
-    ASSERT(!arguments.hasOverflowed());
-    JSValue erroredStream = JSC::call(globalObject, function, arguments, "ReadableStream.create"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(erroredStream);
-}
 
 JSC::EncodedJSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigString* arg1,
     JSC::JSGlobalObject* globalObject)

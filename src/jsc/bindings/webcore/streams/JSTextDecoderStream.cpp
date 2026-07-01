@@ -367,11 +367,10 @@ static JSPromise* decodeAndEnqueue(JSGlobalObject* globalObject, JSTextDecoderSt
         if (catchScope.exception()) [[unlikely]]
             thrown = takeAbruptCompletion(globalObject, catchScope);
     }
-    if (decoded.isEmpty()) {
-        if (thrown.isEmpty())
-            return nullptr;
+    if (!thrown.isEmpty())
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    }
+    if (decoded.isEmpty())
+        return nullptr;
 
     if (decoded.isString() && asString(decoded)->length()) {
         transformStreamDefaultControllerEnqueue(globalObject, controller, decoded);

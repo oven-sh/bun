@@ -100,7 +100,11 @@ static JSValue pipeShutdownError(JSStreamPipeToOperation* op)
 static void registerPipeReaction(JSGlobalObject* globalObject, JSPromise* promise, JSFunction* onFulfilled, JSFunction* onRejected, JSObject* context)
 {
     auto& vm = getVM(globalObject);
-    promise->performPromiseThenWithContext(vm, globalObject, onFulfilled ? JSValue(onFulfilled) : jsUndefined(), onRejected ? JSValue(onRejected) : jsUndefined(), jsUndefined(), context);
+    // With no result capability, JSC requires BOTH handlers to be callable: a non-callable
+    // handler routes the settlement through PromiseResolveWithoutHandlerJob, which does an
+    // unconditional [[Get]] on the (here undefined) capability. Substitute the shared no-op.
+    auto* runtime = JSStreamsRuntime::from(globalObject);
+    promise->performPromiseThenWithContext(vm, globalObject, onFulfilled ? onFulfilled : runtime->onReturnUndefined(), onRejected ? onRejected : runtime->onReturnUndefined(), jsUndefined(), context);
 }
 
 // [reaction-convention] deferral: runs handler(value, context) as its own microtask,

@@ -989,7 +989,7 @@ std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSGloba
     defaultControllerOf(branch2)->m_algorithms.teeBranchIndex = 1;
     teeState->m_branch2.set(vm, teeState, branch2);
 
-    reader->m_closedPromise->performPromiseThenWithContext(vm, globalObject, jsUndefined(), runtime->onDefaultTeeReaderClosedRejected(), jsUndefined(), teeState);
+    reader->m_closedPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReturnUndefined(), runtime->onDefaultTeeReaderClosedRejected(), jsUndefined(), teeState);
     RETURN_IF_EXCEPTION(scope, failure);
     return { branch1, branch2 };
 }
@@ -1000,7 +1000,7 @@ static void byteTeeForwardReaderError(JSGlobalObject* globalObject, JSStreamTeeS
     auto& vm = getVM(globalObject);
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* context = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), teeState, thisReader);
-    thisReader->m_closedPromise->performPromiseThenWithContext(vm, globalObject, jsUndefined(), runtime->onByteTeeReaderClosedRejected(), jsUndefined(), context);
+    thisReader->m_closedPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReturnUndefined(), runtime->onByteTeeReaderClosedRejected(), jsUndefined(), context);
 }
 
 // ReadableByteStreamTee's pullWithDefaultReader.

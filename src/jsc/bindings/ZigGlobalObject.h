@@ -273,7 +273,6 @@ public:
     JSC::JSObject* NodeVMSyntheticModule() const { return m_NodeVMSyntheticModuleClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NodeVMSyntheticModulePrototype() const { return m_NodeVMSyntheticModuleClassStructure.prototypeInitializedOnMainThread(this); }
 
-    JSC::JSMap* readableStreamNativeMap() const { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     WebCore::JSStreamsRuntime* streamsRuntime() const { return m_streamsRuntime.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() const { return m_requireMap.getInitializedOnMainThread(this); }
     // The JSC module loader registry is no longer a JS Map. Use
@@ -363,7 +362,6 @@ public:
     JSObject* subtleCrypto() { return m_subtleCryptoObject.getInitializedOnMainThread(this); }
 
     JSC::EncodedJSValue assignToStream(JSValue stream, JSValue controller);
-    JSC::EncodedJSValue assignStreamToResumableSink(JSValue stream, JSValue sink);
     WebCore::EventTarget& eventTarget();
 
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
@@ -485,14 +483,6 @@ public:
     V(public, Bun::BakeAdditionsToGlobalObject, m_bakeAdditions)                                             \
                                                                                                              \
     /* TODO: these should use LazyProperty */                                                                \
-    V(private, WriteBarrier<JSFunction>, m_assignToStream)                                                   \
-    V(private, WriteBarrier<JSFunction>, m_assignStreamToResumableSink)                                      \
-    V(public, WriteBarrier<JSFunction>, m_readableStreamToArrayBuffer)                                       \
-    V(public, WriteBarrier<JSFunction>, m_readableStreamToBytes)                                             \
-    V(public, WriteBarrier<JSFunction>, m_readableStreamToBlob)                                              \
-    V(public, WriteBarrier<JSFunction>, m_readableStreamToJSON)                                              \
-    V(public, WriteBarrier<JSFunction>, m_readableStreamToText)                                              \
-    V(public, WriteBarrier<JSFunction>, m_readableStreamToFormData)                                          \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleResolveFilenameFunction)                           \
     V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleRunMainFunction)                                   \
@@ -603,7 +593,6 @@ public:
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeColorFunction)                    \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeNoColorFunction)                  \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_wasmStreamingConsumeStreamFunction)                 \
-    V(private, LazyPropertyOfGlobalObject<JSMap>, m_lazyReadableStreamPrototypeMap)                          \
     V(private, LazyPropertyOfGlobalObject<WebCore::JSStreamsRuntime>, m_streamsRuntime)                      \
     V(private, LazyPropertyOfGlobalObject<JSMap>, m_requireMap)                                              \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSArrayBufferControllerPrototype)                     \

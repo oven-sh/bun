@@ -309,8 +309,6 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamBYOBRequest;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamDefaultController;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamDefaultReader;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamSink;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamSource;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTransformStream;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTransformStreamDefaultController;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCompressionStream;
@@ -318,7 +316,6 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWritableStream;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWritableStreamDefaultController;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWritableStreamDefaultWriter;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWritableStreamSink;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWebLock;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWebLockManager;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAnalyserNode;

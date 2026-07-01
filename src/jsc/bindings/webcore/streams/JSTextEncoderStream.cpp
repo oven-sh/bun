@@ -326,11 +326,10 @@ JSPromise* textEncoderStreamTransform(JSGlobalObject* globalObject, JSTextEncode
         if (catchScope.exception()) [[unlikely]]
             thrown = takeAbruptCompletion(globalObject, catchScope);
     }
-    if (buffer.isEmpty()) {
-        if (thrown.isEmpty())
-            return nullptr;
+    if (!thrown.isEmpty())
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    }
+    if (buffer.isEmpty())
+        return nullptr;
 
     enqueueIfNonEmptyView(globalObject, controller, buffer);
     RETURN_IF_EXCEPTION(scope, nullptr);

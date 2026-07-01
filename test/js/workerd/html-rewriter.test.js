@@ -1451,11 +1451,11 @@ describe.concurrent("HTMLRewriter streaming", () => {
 
   it("two concurrent transforms with failed handlers each report their own error", async () => {
     // A `lolhtml::write` on a source chunk can now fail long before the
-    // source ends. lol-html poisons the rewriter after a failed `write`
-    // (`end()` on it panics) and its last-error buffer is a take-once
-    // thread-local, so a second transform failing, or reporting, in that
-    // window must neither drive `end()` on the poisoned rewriter nor
-    // leave this one with an empty or clobbered error message.
+    // source ends, and lol-html poisons the rewriter after a failed
+    // `write` (`end()` on it panics). A second transform failing, or
+    // reporting, in that window must neither drive `end()` on the
+    // poisoned rewriter nor leave this one with an empty or clobbered
+    // error message.
     const gate1 = Promise.withResolvers();
     const gate2 = Promise.withResolvers();
     using upstream1 = gatedUpstream(gate1.promise);

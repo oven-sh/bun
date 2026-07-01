@@ -711,8 +711,8 @@ impl BufferOutputSink {
         let (element_content_handlers, document_content_handlers) =
             unsafe { build_settings(&mut (*sink).context.borrow_mut()) };
         // `SinkRef` carries the raw `sink` (`heap::into_raw` root) so every
-        // `(*sink).field` access shares its provenance; `run_output_sink`
-        // reaches the rewriter through a raw pointer, never `&mut *sink`.
+        // `(*sink).field` access shares its provenance; `drive_rewriter` and
+        // `finish` reach the rewriter through a raw pointer, never `&mut *sink`.
         let rewriter = bun_core::heap::into_raw(Box::new(lol_html::HtmlRewriter::new(
             lol_html::Settings {
                 element_content_handlers,
@@ -846,7 +846,7 @@ impl BufferOutputSink {
 
     /// `PendingValue::on_start_streaming`: seed the consumer's new
     /// `ByteStream` with whatever rewritten output already accumulated.
-    /// Always `Owned` — `Empty` would null the body and skip
+    /// Always `Owned`: `Empty` would null the body and skip
     /// `on_readable_stream_available`, orphaning the transform.
     fn on_start_streaming(ctx: *mut core::ffi::c_void) -> webcore::DrainResult {
         let sink = ctx.cast::<BufferOutputSink>();
@@ -1161,7 +1161,7 @@ impl BufferOutputSink {
         // SAFETY: the caller holds a +1 ref (see fn doc); `adopt` consumes
         // it on Drop.
         let _g = unsafe { bun_ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
-        // Note: do not materialise `&mut *sink` here — the rewriter `end()`
+        // Note: do not materialise `&mut *sink` here. The rewriter `end()`
         // call below re-enters `SinkRef::handle_chunk` through the stored
         // raw pointer, which forms its own `&mut *sink`. Holding an outer
         // `&mut` across that re-entry is aliased-&mut UB. Access fields via
@@ -1353,7 +1353,7 @@ impl BufferOutputSink {
 
     pub fn done(&mut self) {
         // A consumer is streaming the output: close its `ByteStream`. The
-        // body `Value` stays `Locked { readable }` — the data already went
+        // body `Value` stays `Locked { readable }`; the data already went
         // through the stream, exactly like a completed `fetch()` body.
         if let Some(out) = self.output_stream.get(&self.global) {
             if let Some(byte_stream) = out.ptr.bytes() {
@@ -1406,8 +1406,8 @@ pub struct SinkRef(*mut BufferOutputSink);
 impl lol_html::OutputSink for SinkRef {
     fn handle_chunk(&mut self, chunk: &[u8]) {
         // SAFETY: `self.0` is the sink that owns this rewriter (refcount > 0
-        // inside `run_output_sink`), and no other `&mut *sink` is live —
-        // `run_output_sink` reads its fields into locals before the call.
+        // per `write_chunk` / `finish`, lol-html's only drivers), and no
+        // other `&mut *sink` is live: both read the rewriter into a local first.
         let sink = unsafe { &mut *self.0 };
         // lol-html signals end-of-output with a zero-length final chunk.
         if chunk.is_empty() {

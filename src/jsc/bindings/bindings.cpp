@@ -6757,7 +6757,9 @@ extern "C" uint64_t Bun__JSArray__nextPresentIndex(
         unsigned usedLength = butterfly->publicLength();
         for (unsigned i = start; i < usedLength; ++i) {
             double value = butterfly->contiguousDouble().at(array, i);
-            // A hole in a double array is stored as NaN.
+            // In DoubleShape storage the hole is NaN. A real NaN element can
+            // never be stored there: JSObject::putByIndex / putDirectIndex
+            // convert the array to ContiguousShape first.
             if (value == value)
                 return i;
         }

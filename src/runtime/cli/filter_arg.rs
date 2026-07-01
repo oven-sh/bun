@@ -91,12 +91,10 @@ pub(crate) fn get_candidate_package_patterns<'a>(
 
             let json_array = match prop.expr.data {
                 ExprData::EArrayJSON(arr) => arr,
-                ExprData::EObjectJSON(obj) => {
-                    match (*obj).get(b"packages") {
-                        Some(bun_ast::e::JsonValue::Array(arr)) => *arr,
-                        _ => break 'walk,
-                    }
-                }
+                ExprData::EObjectJSON(obj) => match (*obj).get(b"packages") {
+                    Some(bun_ast::e::JsonValue::Array(arr)) => *arr,
+                    _ => break 'walk,
+                },
                 _ => break 'walk,
             };
 

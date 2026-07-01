@@ -197,10 +197,7 @@ test("dependency on workspace without version in package.json", async () => {
 // to the workspace package, including when the lockfile is loaded rather than
 // resolved fresh; otherwise every install re-registers the folder and rewrites bun.lock.
 describe("file: dependency on a workspace member", () => {
-  async function writeWorkspace(
-    appDependencies: Record<string, string>,
-    rootDependencies?: Record<string, string>,
-  ) {
+  async function writeWorkspace(appDependencies: Record<string, string>, rootDependencies?: Record<string, string>) {
     await Promise.all([
       write(
         packageJson,

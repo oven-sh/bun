@@ -368,9 +368,8 @@ fn find_workspace_by_path(
         .find(|workspace_path| {
             let workspace_path = workspace_path.slice(buf);
             workspace_path.len() == folder_path.len()
-                && core::iter::zip(workspace_path, folder_path).all(|(&a, &b)| {
-                    a == b || (path::is_sep_any(a) && path::is_sep_any(b))
-                })
+                && core::iter::zip(workspace_path, folder_path)
+                    .all(|(&a, &b)| a == b || (path::is_sep_any(a) && path::is_sep_any(b)))
         })
         .copied()
 }

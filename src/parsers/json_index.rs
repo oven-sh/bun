@@ -21,7 +21,7 @@ pub(crate) const LOOKBEHIND: usize = 16;
 /// Errors the indexer itself can detect; the index stream is truncated at the error.
 #[derive(Clone, Copy)]
 pub enum IndexError {
-    UnterminatedBlockComment,
+    UnterminatedBlockComment { pos: usize },
     UnexpectedSlash { pos: usize },
     DocumentTooLarge,
 }
@@ -258,7 +258,9 @@ impl<'c> StructuralIndex<'c> {
                             i += 2;
                             loop {
                                 if i >= n {
-                                    return self.fail(IndexError::UnterminatedBlockComment);
+                                    return self.fail(IndexError::UnterminatedBlockComment {
+                                        pos: start,
+                                    });
                                 }
                                 if s[i] == b'*' && s.get(i + 1) == Some(&b'/') {
                                     i += 2;
@@ -470,7 +472,7 @@ mod tests {
         let _ = collect(&mut x);
         assert!(matches!(
             x.index_error,
-            Some(IndexError::UnterminatedBlockComment)
+            Some(IndexError::UnterminatedBlockComment { pos: 3 })
         ));
         let mut x = StructuralIndex::new(b"{\"a\": 1 ~/ 2}");
         let _ = collect(&mut x);

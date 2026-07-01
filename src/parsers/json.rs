@@ -135,8 +135,9 @@ fn parse_impl_in(
     };
     if let Some(e) = sidx.index_error {
         let pos = match e {
-            IndexError::UnterminatedBlockComment => contents.len(),
-            IndexError::UnexpectedSlash { pos } => pos,
+            IndexError::UnterminatedBlockComment { pos } | IndexError::UnexpectedSlash { pos } => {
+                pos
+            }
             IndexError::DocumentTooLarge => 0,
         };
         let earlier_stage2_err = log.msgs[log_mark.2..]
@@ -209,7 +210,7 @@ fn report_index_error(
     log: &mut bun_ast::Log,
 ) -> bun_core::Error {
     match err {
-        IndexError::UnterminatedBlockComment => {
+        IndexError::UnterminatedBlockComment { .. } => {
             log.add_error_fmt_opts(
                 format_args!("Expected \"*/\" to terminate multi-line comment"),
                 bun_ast::AddErrorOptions {
@@ -2055,6 +2056,7 @@ mod tests {
         expect_error("{\"a\": 1/2}", "Operators are not allowed in JSON");
         expect_error("[1] /* unterminated", "terminate multi-line comment");
         expect_error("[@] /* unterminated", "Decorators are not allowed in JSON");
+        expect_error("[1 /* never", "terminate multi-line comment");
         expect_error("[@] 1/2", "Decorators are not allowed in JSON");
         expect_error("/ [1]", "Operators are not allowed in JSON");
     }

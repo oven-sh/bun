@@ -300,6 +300,14 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // force-include would lock those in before the source can speak.
   const noPchSources = new Set<string>();
 
+  // highway_json.cpp is compiled -O2 even in debug profiles (see its
+  // fileOverrides entry in flags.ts); a TU at a different -O level than the
+  // PCH cannot use the PCH ("__OPTIMIZE__ ... was disabled in precompiled
+  // file"). It only includes highway + libc headers anyway.
+  if (cfg.debug) {
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_json.cpp"));
+  }
+
   // Windows-only cpp sources (rescle — PE resource editor for --compile).
   if (cfg.windows) {
     // rescle.h does `#define UNICODE` before including ATL; with PCH the

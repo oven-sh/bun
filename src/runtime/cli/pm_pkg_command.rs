@@ -161,18 +161,16 @@ impl PmPkgCommand {
         // SAFETY: CLI dispatch is single-threaded; no other borrow of
         // `ctx.log` is live while `log` is passed to the JSON parser below.
         let log: &mut Log = unsafe { ctx.log_mut() };
-        // The remaining JSONOptions fields are at their defaults (false).
-        let result = match json::parse_package_json_utf8_with_opts::<
-            true,  // IS_JSON
-            true,  // ALLOW_COMMENTS
-            true,  // ALLOW_TRAILING_COMMAS
-            false, // IGNORE_LEADING_ESCAPE_SEQUENCES
-            false, // IGNORE_TRAILING_ESCAPE_SEQUENCES
-            false, // JSON_WARN_DUPLICATE_KEYS
-            false, // WAS_ORIGINALLY_MACRO
-            true,  // GUESS_INDENTATION
-        >(&source, log, bump)
-        {
+        let result = match json::parse_package_json_utf8_with_opts(
+            json::JSONOptions {
+                json_warn_duplicate_keys: false,
+                guess_indentation: true,
+                ..json::PACKAGE_JSON_OPTS
+            },
+            &source,
+            log,
+            bump,
+        ) {
             Ok(r) => r,
             Err(e) => {
                 Output::err_generic("Failed to parse package.json: {s}", (e.name(),));

@@ -64,7 +64,6 @@ declare var $alwaysInline;
  * Overrides **
  */
 
-
 interface ReadableStream<R = any> extends _ReadableStream<R> {}
 
 declare var ReadableStream: {

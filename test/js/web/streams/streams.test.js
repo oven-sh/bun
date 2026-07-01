@@ -637,13 +637,25 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
   it("a queuing strategy size() result is coerced like Node (valueOf)", async () => {
     let calls = 0;
     const rs = new ReadableStream(
-      { start(c) { c.enqueue("a"); c.close(); } },
+      {
+        start(c) {
+          c.enqueue("a");
+          c.close();
+        },
+      },
       { highWaterMark: 5, size: () => ({ valueOf: () => (calls++, 2) }) },
     );
     expect(await Bun.readableStreamToText(rs)).toBe("a");
     expect(calls).toBe(1);
     const written = [];
-    const ws = new WritableStream({ write(c) { written.push(c); } }, { highWaterMark: 5, size: () => ({ valueOf: () => 3 }) });
+    const ws = new WritableStream(
+      {
+        write(c) {
+          written.push(c);
+        },
+      },
+      { highWaterMark: 5, size: () => ({ valueOf: () => 3 }) },
+    );
     const writer = ws.getWriter();
     await writer.write("z");
     expect(written).toEqual(["z"]);

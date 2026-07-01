@@ -57,7 +57,10 @@ DEFINE_VISIT_CHILDREN(JSSocketHandlers);
 JSSocketHandlers* JSSocketHandlers::create(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto* cell = new (NotNull, allocateCell<JSSocketHandlers>(vm)) JSSocketHandlers(vm, createStructure(vm, globalObject, jsNull()));
+    // The Structure must be allocated before the cell: allocating any JSCell
+    // between allocateCell() and finishCreation() is not allowed.
+    auto* structure = createStructure(vm, globalObject, jsNull());
+    auto* cell = new (NotNull, allocateCell<JSSocketHandlers>(vm)) JSSocketHandlers(vm, structure);
     cell->finishCreation(vm);
     return cell;
 }
@@ -71,7 +74,7 @@ extern "C" JSC::EncodedJSValue Bun__SocketHandlers__create(JSC::JSGlobalObject* 
 
 extern "C" JSC::EncodedJSValue Bun__SocketHandlers__getField(JSC::EncodedJSValue cellValue, uint32_t index)
 {
-    auto* cell = JSC::jsCast<Bun::JSSocketHandlers*>(JSC::JSValue::decode(cellValue));
+    auto* cell = uncheckedDowncast<Bun::JSSocketHandlers>(JSC::JSValue::decode(cellValue).asCell());
     ASSERT(index < Bun::JSSocketHandlers::numberOfInternalFields);
     return JSC::JSValue::encode(cell->internalField(index).get());
 }
@@ -79,7 +82,7 @@ extern "C" JSC::EncodedJSValue Bun__SocketHandlers__getField(JSC::EncodedJSValue
 extern "C" void Bun__SocketHandlers__setField(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue cellValue, uint32_t index, JSC::EncodedJSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto* cell = JSC::jsCast<Bun::JSSocketHandlers*>(JSC::JSValue::decode(cellValue));
+    auto* cell = uncheckedDowncast<Bun::JSSocketHandlers>(JSC::JSValue::decode(cellValue).asCell());
     ASSERT(index < Bun::JSSocketHandlers::numberOfInternalFields);
     JSC::JSValue incoming = JSC::JSValue::decode(value);
     cell->internalField(index).set(vm, cell, incoming.isEmpty() ? JSC::jsUndefined() : incoming);

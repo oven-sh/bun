@@ -307,8 +307,8 @@ impl Handlers {
                 // (Listener::connect_inner via `heap::alloc`).
                 // Free in place so callers that only hold a `*mut`
                 // (and thus can't `drop(Box)`) don't leak the allocation or
-                // its `protect()`ed JSValues. Caller must still null its
-                // field when this returns true.
+                // the cell root it owns. Caller must still null its field
+                // when this returns true.
                 // SAFETY: client-mode caller contract — `this` is the
                 // `heap::alloc` allocation root; no live `&`/`&mut` borrow
                 // of it remains (all reborrows above have ended).

@@ -279,6 +279,13 @@ impl Listener {
                 // SAFETY: `global` is live; ownership of `this` (heap-allocated above)
                 // transfers to the C++ wrapper.
                 let this_value = js_Listener::to_js(this, global);
+                // The listener holds the handlers cell in a visited slot; every
+                // accepted socket shares the same cell.
+                js_Listener::handlers_set_cached(
+                    this_value,
+                    global,
+                    this_ref.handlers.get().cell(),
+                );
                 this_ref.strong_self.with_mut(|s| s.set(global, this_value));
                 this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
                 return Ok(this_value);
@@ -530,6 +537,9 @@ impl Listener {
         // transfers to the C++ wrapper (freed via `ListenerClass__finalize` →
         // `Listener::finalize` → `deinit`).
         let this_value = js_Listener::to_js(this, global);
+        // The listener holds the handlers cell in a visited slot; every
+        // accepted socket shares the same cell.
+        js_Listener::handlers_set_cached(this_value, global, this_ref.handlers.get().cell());
         this_ref.strong_self.with_mut(|s| s.set(global, this_value));
         this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
 

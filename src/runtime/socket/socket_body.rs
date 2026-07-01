@@ -399,6 +399,14 @@ impl<const SSL: bool> NewSocket<SSL> {
             js_TCPSocket::data_get_cached(this)
         }
     }
+    pub fn handlers_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
+        jsc::mark_binding!();
+        if SSL {
+            js_TLSSocket::handlers_set_cached(this, global, value);
+        } else {
+            js_TCPSocket::handlers_set_cached(this, global, value);
+        }
+    }
 
     pub fn new(init: Self) -> *mut Self {
         bun_core::heap::into_raw(Box::new(init))
@@ -1556,6 +1564,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         let value = self.to_js(global);
         value.ensure_still_alive();
+        // The wrapper holds the shared handlers cell in a visited slot, so the
+        // callbacks stay reachable from every socket that can still fire them.
+        // A detached socket has no handlers left to root.
+        if let Some(handlers) = self.handlers.get() {
+            let handlers: bun_ptr::BackRef<Handlers> = handlers.into();
+            Self::handlers_set_cached(value, global, handlers.cell());
+        }
         // Hold strong until the socket is closed / marked inactive.
         self.this_value.with_mut(|r| r.set_strong(value, global));
         value
@@ -1921,8 +1936,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         // while keeping the old one alive for the in-flight `Scope`. If the
         // deferred `mark_inactive()` re-read the cell at that point it would
         // (a) underflow the new `Handlers`' counter (created with
-        // `active_connections == 0`) and (b) leak the old one with its
-        // `protect()`'d JS callbacks orphaned at count 1.
+        // `active_connections == 0`) and (b) leak the old one, orphaned at
+        // count 1 and still rooting its callback cell.
         let captured_handlers = handlers.as_ptr();
         let cleanup = scopeguard::guard((this.as_ctx_ptr(), captured_handlers), |(p, h)| {
             // SAFETY: `p` is the live `*mut Self`; shared reborrow, fields celled.
@@ -3331,12 +3346,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         if global.has_exception() {
             return Ok(JSValue::ZERO);
         }
-        // 9 .protect()'d JS callbacks live in `handlers`; every error/throw
-        // from here until they're moved into `tls.handlers` would leak them.
-        // The flag flips once ownership transfers so the guard is a no-op
-        // on success.
+        // `handlers` owns the callback cell root; every error/throw from here
+        // until it's moved into `tls.handlers` would leak it. The flag flips
+        // once ownership transfers so the guard is a no-op on success.
         let mut handlers_guard = scopeguard::guard(Some(handlers), |h| {
-            // `Drop for Handlers` (unprotect + Strong drop). Explicit drop for clarity.
+            // `Drop for Handlers` releases what it owns. Explicit drop for clarity.
             drop(h);
         });
 

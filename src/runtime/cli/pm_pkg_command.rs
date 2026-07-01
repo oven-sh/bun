@@ -161,18 +161,16 @@ impl PmPkgCommand {
         // SAFETY: CLI dispatch is single-threaded; no other borrow of
         // `ctx.log` is live while `log` is passed to the JSON parser below.
         let log: &mut Log = unsafe { ctx.log_mut() };
-        // The remaining JSONOptions fields are at their defaults (false).
-        let result = match json::parse_package_json_utf8_with_opts::<
-            true,  // IS_JSON
-            true,  // ALLOW_COMMENTS
-            true,  // ALLOW_TRAILING_COMMAS
-            false, // IGNORE_LEADING_ESCAPE_SEQUENCES
-            false, // IGNORE_TRAILING_ESCAPE_SEQUENCES
-            false, // JSON_WARN_DUPLICATE_KEYS
-            false, // WAS_ORIGINALLY_MACRO
-            true,  // GUESS_INDENTATION
-        >(&source, log, bump)
-        {
+        let result = match json::parse_package_json_utf8_with_opts(
+            json::JSONOptions {
+                json_warn_duplicate_keys: false,
+                guess_indentation: true,
+                ..json::PACKAGE_JSON_OPTS
+            },
+            &source,
+            log,
+            bump,
+        ) {
             Ok(r) => r,
             Err(e) => {
                 Output::err_generic("Failed to parse package.json: {s}", (e.name(),));
@@ -441,10 +439,10 @@ impl PmPkgCommand {
             })),
             ExprData::ENumber(n) => {
                 let mut v = Vec::new();
-                if n.value.floor() == n.value {
-                    write!(&mut v, "{:.0}", n.value).or_write_failed()?;
+                if n.value().floor() == n.value() {
+                    write!(&mut v, "{:.0}", n.value()).or_write_failed()?;
                 } else {
-                    write!(&mut v, "{}", n.value).or_write_failed()?;
+                    write!(&mut v, "{}", n.value()).or_write_failed()?;
                 }
                 Ok(v.into_boxed_slice())
             }
@@ -764,16 +762,11 @@ impl PmPkgCommand {
             }
 
             if let Some(int_val) = bun_core::fmt::parse_decimal::<i64>(value) {
-                return Ok(Expr::init(
-                    E::Number {
-                        value: int_val as f64,
-                    },
-                    Loc::EMPTY,
-                ));
+                return Ok(Expr::init(E::Number::new(int_val as f64), Loc::EMPTY));
             }
 
             if let Some(float_val) = parse_f64(value) {
-                return Ok(Expr::init(E::Number { value: float_val }, Loc::EMPTY));
+                return Ok(Expr::init(E::Number::new(float_val), Loc::EMPTY));
             }
 
             let temp_source = Source::init_path_string(b"package.json", value);

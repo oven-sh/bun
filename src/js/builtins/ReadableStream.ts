@@ -207,10 +207,11 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
   }
 
   if ($isPromise(result)) {
-    const completedResult = Bun.peek(result);
-    if (completedResult !== result) {
-      result = completedResult;
+    if ($isPromiseFulfilled(result)) {
+      result = $peekPromiseSettledValue(result);
     } else {
+      // Pending, or already rejected (the stream was errored): the returned
+      // promise must settle the same way.
       return result.then(toArrayBuffer);
     }
   }
@@ -285,10 +286,11 @@ export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Prom
   }
 
   if ($isPromise(result)) {
-    const completedResult = Bun.peek(result);
-    if (completedResult !== result) {
-      result = completedResult;
+    if ($isPromiseFulfilled(result)) {
+      result = $peekPromiseSettledValue(result);
     } else {
+      // Pending, or already rejected (the stream was errored): the returned
+      // promise must settle the same way.
       return result.then(toBytes);
     }
   }
@@ -356,6 +358,15 @@ export function createUsedReadableStream() {
     pull() {},
   } as any);
   stream.getReader();
+  return stream;
+}
+
+$linkTimeConstant;
+export function createErroredReadableStream(reason) {
+  var stream = new ReadableStream({
+    pull() {},
+  } as any);
+  $readableStreamError(stream, reason);
   return stream;
 }
 

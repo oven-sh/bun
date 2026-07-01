@@ -36,6 +36,8 @@ const std::string_view ERR_WEBSOCKET_TIMEOUT("WebSocket timed out from inactivit
 const std::string_view ERR_INVALID_TEXT("Received invalid UTF-8");
 const std::string_view ERR_TOO_BIG_MESSAGE_INFLATION("Received too big message, or other inflation error");
 const std::string_view ERR_INVALID_CLOSE_PAYLOAD("Received invalid close payload");
+const std::string_view ERR_INVALID_MASKING("Received an incorrectly masked frame");
+const std::string_view ERR_INVALID_RSV1("Received unexpected RSV1 bit");
 
 enum OpCode : unsigned char {
     CONTINUATION = 0,
@@ -129,8 +131,12 @@ static inline CloseFrame parseClosePayload(char *src, size_t length) {
     if (length >= 2) {
         memcpy(&cf.code, src, 2);
         cf = {cond_byte_swap<uint16_t>(cf.code), src + 2, length - 2};
-        if (cf.code < 1000 || cf.code > 4999 || (cf.code > 1011 && cf.code < 4000) ||
-            (cf.code >= 1004 && cf.code <= 1006) || !isValidUtf8((unsigned char *) cf.message, cf.length)) {
+        // RFC 6455 §7.4: 1000-1015 defined, 1016-2999 reserved (MUST NOT be
+        // used), 3000-3999 IANA-registered for libraries/frameworks, 4000-4999
+        // private use. 1004/1005/1006/1015 are not valid on the wire.
+        if (cf.code < 1000 || cf.code > 4999 || (cf.code > 1015 && cf.code < 3000) ||
+            (cf.code >= 1004 && cf.code <= 1006) || cf.code == 1015 ||
+            !isValidUtf8((unsigned char *) cf.message, cf.length)) {
             /* Even though we got a WebSocket close frame, it in itself is abnormal */
             return {1006, nullptr, 0};
         }
@@ -234,6 +240,7 @@ protected:
     static inline unsigned char payloadLength(char *frame) {return ((unsigned char *) frame)[1] & 127;}
     static inline bool rsv23(char *frame) {return *((unsigned char *) frame) & 48;}
     static inline bool rsv1(char *frame) {return *((unsigned char *) frame) & 64;}
+    static inline bool isMasked(char *frame) {return ((unsigned char *) frame)[1] & 128;}
 
     template <int N>
     static inline void UnrolledXor(char * __restrict data, char * __restrict mask) {
@@ -400,8 +407,24 @@ public:
             parseNext:
             while (length >= SHORT_MESSAGE_HEADER) {
 
-                // invalid reserved bits / invalid opcodes / invalid control frames / set compressed frame
-                if ((rsv1(src) && !Impl::setCompressed(wState, user)) || rsv23(src) || (getOpCode(src) > 2 && getOpCode(src) < 8) ||
+                /* RFC 6455 5.1: a server must refuse unmasked frames, a client masked ones.
+                 * The MESSAGE_HEADER constants assume the mask bit matches our role, so a
+                 * mismatched frame would otherwise desync the parser. */
+                if (isMasked(src) != isServer) {
+                    Impl::forceClose(wState, user, ERR_INVALID_MASKING);
+                    return;
+                }
+
+                /* RSV1 (compression) is only valid on the first frame of a data message, and
+                 * only if negotiated (RFC 7692 6.1). A control frame or continuation must never
+                 * reach setCompressed(): the armed flag would inflate the next data frame. */
+                if (rsv1(src) && (getOpCode(src) == 0 || getOpCode(src) > 2 || !Impl::setCompressed(wState, user))) {
+                    Impl::forceClose(wState, user, ERR_INVALID_RSV1);
+                    return;
+                }
+
+                // invalid reserved bits / invalid opcodes / invalid control frames
+                if (rsv23(src) || (getOpCode(src) > 2 && getOpCode(src) < 8) ||
                     getOpCode(src) > 10 || (getOpCode(src) > 2 && (!isFin(src) || payloadLength(src) > 125))) {
                     Impl::forceClose(wState, user);
                     return;
@@ -422,6 +445,13 @@ public:
                 } else if (consumeMessage<LONG_MESSAGE_HEADER, uint64_t>(protocol::cond_byte_swap<uint64_t>(protocol::bit_cast<uint64_t>(src + 2)), src, length, wState, user)) {
                     return;
                 }
+            }
+            /* A server's SHORT_MESSAGE_HEADER includes the 4-byte masking key, but the mask
+             * bit is already visible once the 2-byte base header is in: an unmasked frame
+             * must be refused now, not spilled until enough of a masked header arrives. */
+            if (isServer && length >= 2 && !isMasked(src)) {
+                Impl::forceClose(wState, user, ERR_INVALID_MASKING);
+                return;
             }
             if (length) {
                 memcpy(wState->state.spill, src, length);

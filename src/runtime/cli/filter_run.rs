@@ -658,7 +658,7 @@ impl AbortHandler {
                 bun_sys::windows::TRUE,
             );
             if res == 0 {
-                if cfg!(debug_assertions) {
+                if bun_core::env::IS_DEBUG {
                     bun_core::warn!("Failed to set abort handler\n");
                 }
             }
@@ -765,7 +765,10 @@ pub(crate) fn run_scripts_with_filter(
             None,
             IncludeScripts::IncludeScripts,
         ) else {
-            bun_core::warn!("Failed to read package.json\n");
+            bun_core::warn!(
+                "Failed to read {}, skipping this workspace package\n",
+                bun_core::fmt::quote(&*package_json_path),
+            );
             continue;
         };
         let Some(pkgscripts) = &pkgjson.scripts else {

@@ -143,13 +143,13 @@ impl Parser<'_> {
 
         // No '[' means nothing will ever be looked up; no ']' means every
         // opener is trivially unmatched (e.g. "[".repeat(n)) — skip the walk.
-        if bun_core::immutable::index_of_char(content, b'[').is_none() {
+        if bun_core::strings::index_of_char(content, b'[').is_none() {
             return BracketMatches {
                 pairs: storage,
                 no_closers: false,
             };
         }
-        if bun_core::immutable::index_of_char(content, b']').is_none() {
+        if bun_core::strings::index_of_char(content, b']').is_none() {
             return BracketMatches {
                 pairs: storage,
                 no_closers: true,
@@ -206,8 +206,8 @@ impl Parser<'_> {
                 }
                 // Ordinary text: SIMD-jump to the next character that can
                 // affect bracket matching.
-                _ => match bun_core::immutable::index_of_any(&content[pos..], scan_chars) {
-                    Some(rel) => pos += rel as usize,
+                _ => match bun_core::strings::index_of_any(&content[pos..], scan_chars) {
+                    Some(rel) => pos += rel,
                     None => break,
                 },
             }

@@ -169,7 +169,6 @@ JSC_DEFINE_HOST_FUNCTION(constructDirent, (JSC::JSGlobalObject * globalObject, J
     auto* originalStructure = structure;
     JSValue newTarget = callFrame->newTarget();
     if (zigGlobalObject->m_JSDirentClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Dirent cannot be invoked without 'new'"_s);
             return {};

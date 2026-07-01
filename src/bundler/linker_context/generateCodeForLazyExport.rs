@@ -523,7 +523,7 @@ pub fn generate_code_for_lazy_export(
                     alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
                         S::ExportDefault {
                             default_name: bun_ast::LocRef {
-                                ref_: Some(generated.0),
+                                ref_: generated.0,
                                 loc: stmt.loc,
                             },
                             value: bun_ast::StmtOrExpr::Expr(expr),

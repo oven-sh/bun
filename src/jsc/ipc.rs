@@ -8,7 +8,7 @@ use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, Task};
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::{Output, handle_oom};
-use bun_core::{String as BunString, immutable as strings};
+use bun_core::{String as BunString, strings};
 use bun_event_loop::ManagedTask::ManagedTask;
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;

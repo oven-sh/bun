@@ -539,20 +539,7 @@ fn is_selector_unused(
     for component in selector.components.iter() {
         match component {
             Component::Class(ident) | Component::Id(ident) => {
-                // `IdentOrRef::as_original_string` is
-                // gated (blocked_on bun_ast::symbol::List::at
-                // + Symbol.original_name). Inline the ident arm; the ref arm
-                // (CSS-modules symbol-table lookup) is unreachable until
-                // `Parser::add_symbol_for_name` un-gates (see
-                // `SelectorParser::new_local_identifier`).
-                let actual_ident: &[u8] = match (*ident).as_ident() {
-                    // SAFETY: arena-owned slice (`'static` placeholder for the arena lifetime).
-                    Some(i) => unsafe { crate::arena_str(i.v) },
-                    None => {
-                        let _ = symbols;
-                        continue; // blocked_on: as_original_string ref arm
-                    }
-                };
+                let actual_ident: &[u8] = ident.as_original_string(symbols);
                 // Look up the borrowed `&[u8]` against the map's owned
                 // `Box<[u8]>` keys without allocating.
                 struct SliceAdapter;
@@ -1052,8 +1039,6 @@ pub mod serialize {
                 };
                 if let Some(class) = class {
                     $d.write_char(b'.')?;
-                    // blocked_on: `Printer::write_ident` (gated on css_modules
-                    // Pattern::write closure-arity reshape). Non-modules path:
                     $d.serialize_identifier(class)?;
                 } else {
                     $d.write_str($s)?;
@@ -1178,10 +1163,7 @@ pub mod serialize {
                 dest.write_char(b':')?;
                 dest.serialize_identifier(name)?;
                 dest.write_char(b'(')?;
-                // blocked_on: properties::custom (TokenList::to_css_raw) un-gate.
-
                 arguments.to_css_raw(dest)?;
-                let _ = arguments;
                 dest.write_char(b')')?;
             }
         }
@@ -1318,10 +1300,7 @@ pub mod serialize {
                 dest.write_str(b"::")?;
                 dest.serialize_identifier(name)?;
                 dest.write_char(b'(')?;
-                // blocked_on: properties::custom (TokenList::to_css_raw) un-gate.
-
                 arguments.to_css_raw(dest)?;
-                let _ = arguments;
                 dest.write_char(b')')?;
             }
         }

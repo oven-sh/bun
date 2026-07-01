@@ -407,10 +407,8 @@ pub(super) type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
     NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, true>;
 
 // ─── BunInfo (moved from bun_core::Global) ───────────────────────────────────
-// `generate()` builds the JSON AST by hand instead of reflecting over a
-// struct's fields (cf.
-// `bun_parsers::json::ToAst` derive sketch, json.rs:808-824): an `E.Object`
-// with `bun_version` (string) + `platform` (nested `E.Object` of `os`/`arch`/
+// `generate()` builds the JSON AST by hand: an `E.Object` with
+// `bun_version` (string) + `platform` (nested `E.Object` of `os`/`arch`/
 // `version`, enums emitted as `@tagName` strings).
 pub mod BunInfo {
     use bun_analytics::generate_header::generate_platform;
@@ -1681,19 +1679,20 @@ where
         let compress = compress_js.to_boolean();
 
         if let Some(buffer) = message_value.as_array_buffer(global) {
-            return Ok(JSValue::js_number(f64::from(
-                // if 0, return 0
-                // else return number of bytes sent
-                (AnyWebSocket::publish_with_options(
-                    SSL,
-                    app,
-                    topic_slice.slice(),
-                    buffer.slice(),
-                    uws_sys::Opcode::Binary,
-                    compress,
-                ) as i32)
-                    * ((buffer.len as u32 & 0x7FFF_FFFF) as i32), // length truncated to a non-negative i32
-            )));
+            let status = AnyWebSocket::publish_with_options(
+                SSL,
+                app,
+                topic_slice.slice(),
+                buffer.slice(),
+                uws_sys::Opcode::Binary,
+                compress,
+            );
+            return Ok(super::server_web_socket::send_status_to_js(
+                status,
+                buffer.slice().len(),
+                "publish",
+                "bytes",
+            ));
         }
 
         {
@@ -1706,19 +1705,22 @@ where
             // GC during `publish_with_options` could otherwise reclaim the bytes
             // `slice` borrows.
             let buffer = slice.slice();
-            let result = (AnyWebSocket::publish_with_options(
+            let status = AnyWebSocket::publish_with_options(
                 SSL,
                 app,
                 topic_slice.slice(),
                 buffer,
                 uws_sys::Opcode::Text,
                 compress,
-            ) as i32)
-                * ((buffer.len() as u32 & 0x7FFF_FFFF) as i32);
+            );
+            let result = super::server_web_socket::send_status_to_js(
+                status,
+                buffer.len(),
+                "publish",
+                "bytes",
+            );
             js_string.ensure_still_alive();
-            // if 0, return 0
-            // else return number of bytes sent
-            return Ok(JSValue::js_number(f64::from(result)));
+            return Ok(result);
         }
     }
 
@@ -2978,12 +2980,6 @@ where
 
         self.on_pending_request();
 
-        // SAFETY: vm.event_loop() returns the live VM-owned `*mut EventLoop`.
-        let _dbg_guard = unsafe {
-            jsc::event_loop::Debug::enter_scope(core::ptr::addr_of_mut!(
-                (*self.vm_ref().event_loop()).debug
-            ))
-        };
         ReqLike::set_yield(req, false);
         RespLike::timeout(resp, self.config.idle_timeout);
 

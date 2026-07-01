@@ -198,6 +198,14 @@ function buildDefinedColumnsAndQuery<T>(
   let columnsSql = "(";
   const columnCount = columns.length;
 
+  if ($isArray(items)) {
+    for (let j = 0; j < items.length; j++) {
+      if (items[j] == null) {
+        throw new SyntaxError("Cannot use null or undefined as an item in INSERT helper");
+      }
+    }
+  }
+
   for (let k = 0; k < columnCount; k++) {
     const column = columns[k];
 
@@ -489,6 +497,8 @@ function normalizeQuery(
                 const value = items[j];
                 if (typeof value === "undefined") {
                   binding_values.push(null);
+                } else if (value === null) {
+                  throw new SyntaxError("Cannot use null as an item in WHERE IN helper with a column");
                 } else {
                   const value_from_key = value[columns[0]];
 
@@ -518,6 +528,9 @@ function normalizeQuery(
               item = items[0];
             } else {
               item = items;
+            }
+            if (item == null) {
+              throw new SyntaxError("Cannot use null or undefined as an item in UPDATE helper");
             }
             // no need to include SET if is updateSet or upsert
             if (command === SQLCommand.update && !adapter.isUpsertUpdate(query)) {
@@ -908,6 +921,10 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     this.connectionInfo = connectionInfo;
+    // Slots are filled one at a time in connect()'s pool-start loop, and
+    // createPooledConnection can synchronously run user code (for example a
+    // function-valued `password`) that re-enters methods scanning this array,
+    // so every scan must tolerate unassigned holes.
     this.connections = new Array(connectionInfo.max);
   }
 
@@ -974,8 +991,9 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   }
 
   detachConnectionCloseHandler(connection: PooledConnection, handler: () => void): void {
-    if (connection.queries) {
-      connection.queries.delete(handler);
+    const queries = connection.queries;
+    if (queries) {
+      queries.delete(handler);
     }
   }
 
@@ -1052,7 +1070,8 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
     if (connection.state !== PooledConnectionState.connected) {
       // connection is not ready
-      if (connection.storedError) {
+      const storedError = connection.storedError;
+      if (storedError) {
         // this connection got a error but maybe we can wait for another
 
         if (this.hasConnectionsAvailable()) {
@@ -1066,10 +1085,10 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         this.reservedQueue = [];
         // we have no connections available so lets fails
         for (const pending of waitingQueue) {
-          pending(connection.storedError, connection);
+          pending(storedError, connection);
         }
         for (const pending of reservedQueue) {
-          pending(connection.storedError, connection);
+          pending(storedError, connection);
         }
         // draining the queues may have been the last pending work; a
         // graceful close() is waiting on this callback
@@ -1128,7 +1147,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
       const pollSize = this.connections.length;
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
-        if (connection.state === PooledConnectionState.connected) {
+        if (connection?.state === PooledConnectionState.connected) {
           return true;
         }
       }
@@ -1143,7 +1162,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
       const pollSize = this.connections.length;
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
-        if (connection.state === PooledConnectionState.connected) {
+        if (connection?.state === PooledConnectionState.connected) {
           connection.connection?.flush();
         }
       }
@@ -1169,7 +1188,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
       const pollSize = this.connections.length;
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
-        switch (connection.state) {
+        switch (connection?.state) {
           case PooledConnectionState.pending:
           case PooledConnectionState.connected: {
             // cancelRetry only returns true while a connect retry is parked
@@ -1272,7 +1291,9 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         for (let i = 0; i < pollSize; i++) {
           const connection = this.connections[i];
           // we need a new connection and we have some connections that can retry
-          if (connection.state === PooledConnectionState.closed) {
+          // (an unassigned hole is a connection still being created, so it
+          // lands in the "pending" branch below)
+          if (connection?.state === PooledConnectionState.closed) {
             if (connection.retry()) {
               // lets wait for connection to be released
               if (!retry_in_progress) {
@@ -1598,22 +1619,24 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
   // Resolve URL based on adapter type
   let resolvedUrl: string | URL | null = stringOrUrl;
 
+  let optionsFilename;
+  let optionsUrl;
   if (options.adapter === "sqlite") {
     // SQLite adapter - only check filename (not url)
-    if ("filename" in options && options.filename) {
-      resolvedUrl = options.filename;
+    if ("filename" in options && (optionsFilename = options.filename)) {
+      resolvedUrl = optionsFilename;
     }
   } else if (!options.adapter) {
     // Unknown adapter - check both, filename first (more specific)
-    if ("filename" in options && options.filename) {
-      resolvedUrl = options.filename;
-    } else if ("url" in options && options.url) {
-      resolvedUrl = options.url;
+    if ("filename" in options && (optionsFilename = options.filename)) {
+      resolvedUrl = optionsFilename;
+    } else if ("url" in options && (optionsUrl = options.url)) {
+      resolvedUrl = optionsUrl;
     }
   } else {
     // Known non-SQLite adapter - only check url (not filename)
-    if ("url" in options && options.url) {
-      resolvedUrl = options.url;
+    if ("url" in options && (optionsUrl = options.url)) {
+      resolvedUrl = optionsUrl;
     }
   }
 
@@ -1644,9 +1667,10 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
         protocol = urlToProcess.protocol.replace(/:$/, "");
       } catch (e) {
         // options.adpater won't be sqlite here, we already did the special case check for it
-        if (options.adapter && typeof urlToProcess === "string" && urlToProcess.includes("sqlite")) {
+        const optionsAdapter = options.adapter;
+        if (optionsAdapter && typeof urlToProcess === "string" && urlToProcess.includes("sqlite")) {
           throw new Error(
-            `Invalid URL '${urlToProcess}' for ${options.adapter}. Did you mean to specify \`{ adapter: "sqlite" }\`?`,
+            `Invalid URL '${urlToProcess}' for ${optionsAdapter}. Did you mean to specify \`{ adapter: "sqlite" }\`?`,
             { cause: e },
           );
         }
@@ -1667,12 +1691,13 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
   }
 
   // Step 5: Return early if adapter is explicitly specified
-  if (options.adapter) {
+  const optionsAdapter = options.adapter;
+  if (optionsAdapter) {
     // Validate that the adapter is supported
     const supportedAdapters = ["postgres", "sqlite", "mysql", "mariadb"];
-    if (!supportedAdapters.includes(options.adapter)) {
+    if (!supportedAdapters.includes(optionsAdapter)) {
       throw new Error(
-        `Unsupported adapter: ${options.adapter}. Supported adapters: "postgres", "sqlite", "mysql", "mariadb"`,
+        `Unsupported adapter: ${optionsAdapter}. Supported adapters: "postgres", "sqlite", "mysql", "mariadb"`,
       );
     }
     return [urlToProcess, sslMode, options as Bun.SQL.__internal.OptionsWithDefinedAdapter];

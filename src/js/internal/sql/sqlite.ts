@@ -315,11 +315,12 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
         options.readwrite = true;
       }
 
-      if ("safeIntegers" in this.connectionInfo) {
-        options.safeIntegers = this.connectionInfo.safeIntegers;
+      const connectionInfo = this.connectionInfo;
+      if ("safeIntegers" in connectionInfo) {
+        options.safeIntegers = connectionInfo.safeIntegers;
       }
-      if ("strict" in this.connectionInfo) {
-        options.strict = this.connectionInfo.strict;
+      if ("strict" in connectionInfo) {
+        options.strict = connectionInfo.strict;
       }
 
       this.db = new SQLiteModule.Database(filename, options);
@@ -408,8 +409,8 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     return false;
   }
 
-  throwIfUpdateEmpty(query: string, _hasValues: boolean): void {
-    if (query.endsWith("SET ")) {
+  throwIfUpdateEmpty(_query: string, hasValues: boolean): void {
+    if (!hasValues) {
       throw new SyntaxError("Update needs to have at least one column");
     }
   }
@@ -426,10 +427,12 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     }
 
     // Since SQLite connection is synchronous, we immediately know the result
-    if (this.storedError) {
-      onConnected(this.storedError, null);
-    } else if (this.db) {
-      onConnected(null, this.db);
+    const storedError = this.storedError;
+    let db;
+    if (storedError) {
+      onConnected(storedError, null);
+    } else if ((db = this.db)) {
+      onConnected(null, db);
     } else {
       onConnected(this.connectionClosedError(), null);
     }

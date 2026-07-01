@@ -7,8 +7,8 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::jsc::EventLoopTimer;
 use crate::jsc::webcore::AutoFlusher;
 use crate::jsc::{
-    self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue,
-    JsResult, VirtualMachine, VirtualMachineSqlExt as _,
+    self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSValue, JsResult, VirtualMachine,
+    VirtualMachineSqlExt as _,
 };
 use bun_boringssl as BoringSSL;
 use bun_collections::{HashMap, IdentityContext, OffsetByteList, StringMap};
@@ -473,6 +473,7 @@ impl PostgresSQLConnection {
             bun_uws::SocketKind::PostgresTls,
             ssl_ctx,
             sni,
+            true, // is_client
             ext_size,
             ext_size,
         ) else {
@@ -615,7 +616,13 @@ impl PostgresSQLConnection {
     }
 
     pub fn set_status(&self, status: Status) {
-        if self.status.get() == status {
+        let current = self.status.get();
+        if current == status {
+            return;
+        }
+        // `Failed` is terminal: `fail_with_js_value` already closed the socket
+        // and rejected every pending request. Nothing may transition out of it.
+        if current == Status::Failed {
             return;
         }
         // reshaped for borrowck — `defer this.updateHasPendingActivity()` moved to explicit calls below.
@@ -1155,10 +1162,10 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
         if !entry.is_empty() && entry.contains(&0) {
             drop(options_buf);
             // tls_config / secure released by the errdefer above.
-            return global_object.throw_invalid_arguments_fmt(format_args!(
+            return Err(global_object.throw_invalid_arguments(format_args!(
                 "{} must not contain null bytes",
                 bstr::BStr::new(name)
-            ));
+            )));
         }
     }
 
@@ -2972,7 +2979,7 @@ impl PostgresSQLConnection {
             }
             MessageType::NoticeResponse => {
                 debug!("UNSUPPORTED NoticeResponse");
-                let _resp = protocol::NoticeResponse::decode_notice_internal(reader.reborrow())?;
+                let _resp = protocol::NoticeResponse::decode_internal(reader.reborrow())?;
                 // _resp dropped at scope end
             }
             MessageType::NotificationResponse => {

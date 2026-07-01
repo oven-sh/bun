@@ -75,7 +75,7 @@ function runTest() {
   http.get({ port: this.address().port }, common.mustCall((response) => {
     response.on('end', common.mustCall(() => {
       assert.strictEqual(response.headers.test, '2');
-      assert(response.rawHeaders.includes('test'));
+      assert(response.rawHeaders.includes('Test'));
       s.close();
     }));
     response.resume();
@@ -95,12 +95,12 @@ function runTest() {
   }));
 
   server.listen(0, common.mustCall(() => {
-    http.get({ port: server.address().port }, (res) => {
+    http.get({ port: server.address().port }, common.mustCall((res) => {
       assert.strictEqual(res.headers.test, '1');
       assert.strictEqual('test2' in res.headers, false);
       res.resume().on('end', common.mustCall(() => {
         server.close();
       }));
-    });
+    }));
   }));
 }

@@ -4,12 +4,6 @@ use bun_alloc::ArenaVecExt as _;
 pub use css::Error;
 use css::{CssResult as Result, PrintErr, Printer};
 
-// The `*Handler` types imported below are the real per-shorthand-group
-// implementations from their leaf modules (BackgroundHandler, BoxShadowHandler,
-// BorderRadiusHandler, …). A few leaf modules still keep individual method
-// bodies internally gated until their deps land — see the per-module status
-// notes at the top of properties/mod.rs; this file composes over whichever
-// surface is live.
 use crate::css_properties::align::AlignHandler;
 use crate::css_properties::background::BackgroundHandler;
 use crate::css_properties::border::BorderHandler;
@@ -46,8 +40,6 @@ pub struct DeclarationBlock<'bump> {
 }
 
 pub struct DebugFmt<'a, 'bump>(&'a DeclarationBlock<'bump>);
-
-// blocked_on: Printer::new signature (the ctor shape is unsettled).
 
 impl<'a, 'bump> core::fmt::Display for DebugFmt<'a, 'bump> {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -263,11 +255,7 @@ impl DeclarationBlock<'static> {
     }
 }
 
-// ─── hash / eql / deep_clone (gated) ──────────────────────────────────────
-// blocked_on: properties_generated — `Property` lacks `DeepClone`/`CssEql`
-// derives and `PropertyId` lacks a `hash(&mut Wyhash)` method. The bodies
-// below un-gate the moment the
-// per-variant trait impls land in `properties_generated.rs`.
+// ─── hash / eql / deep_clone ──────────────────────────────────────────────
 
 impl<'bump> DeclarationBlock<'bump> {
     pub fn hash_property_ids(&self, hasher: &mut bun_wyhash::Wyhash) {
@@ -467,17 +455,16 @@ where
                     );
                 }
                 css::ComposesState::DisallowNotSingleClass(info) => {
-                    // blocked_on: ParserOptions::warn_fmt_with_notes
-                    // (`bun_ast::Log` notes-ownership API). Until that
-                    // lands the note ("The parent selector is not a single
-                    // class selector because of the syntax here:" at
-                    // `info.to_logger_location(options.filename)`) is dropped;
-                    // the primary warning still fires at the right location.
-                    let _ = info;
-                    options.warn_fmt(
+                    options.warn_fmt_with_notes(
                         format_args!("\"composes\" only works inside single class selectors"),
                         source_location.line,
                         source_location.column,
+                        Box::new([bun_ast::Data {
+                            text: b"The parent selector is not a single class selector because of the syntax here:"
+                                .as_slice()
+                                .into(),
+                            location: Some(info.to_logger_location(options.filename)),
+                        }]),
                     );
                 }
             }
@@ -493,10 +480,6 @@ where
 }
 
 /// Per-shorthand-group handler state used by `DeclarationBlock::minify`.
-///
-/// Each `*Handler` is the real implementation from its leaf module (see the
-/// per-module status notes in properties/mod.rs for any internally-gated
-/// bodies); `Direction` is the data-only `properties::text` enum.
 pub struct DeclarationHandler<'bump> {
     pub background: BackgroundHandler,
     pub border: BorderHandler,

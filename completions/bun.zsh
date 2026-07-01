@@ -292,6 +292,7 @@ _bun_pm_completion() {
         ls)
             pmargs=(
                 "--all[list the entire dependency tree according to the current lockfile]"
+                "--trusted[list only trusted dependencies]"
             )
 
             _arguments -s -C \

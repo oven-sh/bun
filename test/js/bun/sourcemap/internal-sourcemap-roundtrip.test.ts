@@ -408,3 +408,67 @@ console.log(go());
     }
   });
 });
+
+// LineOffsetTable::generate builds the per-line column table directly from the
+// raw source bytes, so it must tolerate a truncated trailing multi-byte UTF-8
+// sequence: a lead byte that declares more bytes than the file has left.
+describe.concurrent("sourcemap of a source with a truncated trailing UTF-8 sequence", () => {
+  test.each([
+    ["lone 4-byte lead 0xF0", [0xf0]],
+    ["lone 3-byte lead 0xE2", [0xe2]],
+    ["lone 2-byte lead 0xC3", [0xc3]],
+    ["overlong 2-byte lead 0xC1", [0xc1]],
+    ["2 of 3 bytes 0xE0 0x81", [0xe0, 0x81]],
+    ["3 of 4 bytes 0xF0 0x9F 0x92", [0xf0, 0x9f, 0x92]],
+  ] as [string, number[]][])("%s", async (_name, tail) => {
+    using dir = tempDir("sourcemap-truncated-utf8", {
+      "in.js": Buffer.concat([Buffer.from("console.log(1);//"), Buffer.from(tail)]),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--sourcemap=external", "--outdir=out", "in.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ exitCode, stdout, stderr }).toEqual({
+      exitCode: 0,
+      stdout: expect.any(String),
+      stderr: expect.any(String),
+    });
+    // `console.log(1);` is identical in every variant and the truncated bytes
+    // live in a stripped comment, so the encoded mappings must be identical too.
+    const map = await Bun.file(path.join(String(dir), "out", "in.js.map")).json();
+    expect(map).toMatchObject({
+      sources: ["../in.js"],
+      mappings: ";AAAA,QAAQ,IAAI,CAAC;",
+    });
+  });
+});
+
+// `sources` entries in the emitted map are URLs: the path from the chunk
+// directory to each source must use forward slashes on every platform, never
+// the host path separator.
+test.concurrent("sourcemap sources use forward slashes on every platform", async () => {
+  using dir = tempDir("sourcemap-forward-slashes", {
+    "src/nested/in.js": `import { v } from "../dep.js";\nconsole.log(v);\n`,
+    "src/dep.js": `export const v = 1;\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--sourcemap=external", "--outdir=out", "src/nested/in.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stdout, stderr }).toEqual({
+    exitCode: 0,
+    stdout: expect.any(String),
+    stderr: expect.any(String),
+  });
+  // Two sources so both `sources` emission paths (first entry and the rest) are covered.
+  const map = await Bun.file(path.join(String(dir), "out", "in.js.map")).json();
+  expect(map.sources).toEqual(["../src/dep.js", "../src/nested/in.js"]);
+});

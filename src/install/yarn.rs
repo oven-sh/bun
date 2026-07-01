@@ -738,19 +738,17 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         };
         drop(package_json_fd); // close now; fd no longer needed past path resolution
 
-        // The 8 JSON option flags are spelled out as const generics (stable
-        // Rust has no struct const-generics).
         let json_bump = bun_alloc::Arena::new();
-        let Ok(package_json_expr) = bun_json::parse_package_json_utf8_with_opts::<
-            true,  // IS_JSON
-            true,  // ALLOW_COMMENTS
-            true,  // ALLOW_TRAILING_COMMAS
-            false, // IGNORE_LEADING_ESCAPE_SEQUENCES
-            false, // IGNORE_TRAILING_ESCAPE_SEQUENCES
-            false, // JSON_WARN_DUPLICATE_KEYS
-            false, // WAS_ORIGINALLY_MACRO
-            true,  // GUESS_INDENTATION
-        >(&package_json_source, log, &json_bump) else {
+        let Ok(package_json_expr) = bun_json::parse_package_json_utf8_with_opts(
+            bun_json::JSONOptions {
+                json_warn_duplicate_keys: false,
+                guess_indentation: true,
+                ..bun_json::PACKAGE_JSON_OPTS
+            },
+            &package_json_source,
+            log,
+            &json_bump,
+        ) else {
             return Err(bun_core::err!("InvalidPackageJSON"));
         };
 

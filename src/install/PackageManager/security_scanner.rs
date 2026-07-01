@@ -1,5 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::ByteVecExt;
 use std::collections::VecDeque;
 use std::io::Write as _;
 
@@ -1557,9 +1557,8 @@ impl<'a> SecurityScanSubprocess<'a> {
             bun_ast::Source::init_path_string("ipc-message.json", self.ipc_data.as_slice());
 
         let mut temp_log = bun_ast::Log::init();
-        let bump = bun_alloc::Arena::new();
 
-        let json_expr = match crate::bun_json::parse_utf8(&json_source, &mut temp_log, &bump) {
+        let parsed = match crate::bun_json::ParsedJson::parse_json(&json_source, &mut temp_log) {
             Ok(e) => e,
             Err(e) => {
                 Output::err_generic("Security scanner sent invalid JSON: {}", (e.name(),));
@@ -1569,8 +1568,9 @@ impl<'a> SecurityScanSubprocess<'a> {
                 return Err(err!("InvalidIPCMessage"));
             }
         };
+        let json_expr = parsed.root;
 
-        if !matches!(json_expr.data, ExprData::EObject(_)) {
+        if !matches!(json_expr.data, ExprData::EObjectJSON(_)) {
             Output::err_generic("Security scanner IPC message must be a JSON object", ());
             return Err(err!("InvalidIPCFormat"));
         }
@@ -1580,7 +1580,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             return Err(err!("MissingIPCType"));
         };
 
-        let Some(type_str) = type_expr.as_string(&bump) else {
+        let Some(type_str) = type_expr.as_utf8_string_literal() else {
             Output::err_generic("Security scanner IPC 'type' must be a string", ());
             return Err(err!("InvalidIPCType"));
         };
@@ -1591,7 +1591,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                 return Err(err!("MissingErrorCode"));
             };
 
-            let Some(code_str) = code_expr.as_string(&bump) else {
+            let Some(code_str) = code_expr.as_utf8_string_literal() else {
                 Output::err_generic("Security scanner error 'code' must be a string", ());
                 return Err(err!("InvalidErrorCode"));
             };
@@ -1666,7 +1666,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                 }
                 ErrorCode::InvalidVersion => {
                     if let Some(msg) = json_expr.get(b"message") {
-                        if let Some(msg_str) = msg.as_string(&bump) {
+                        if let Some(msg_str) = msg.as_utf8_string_literal() {
                             Output::err_generic(
                                 "Security scanner error: {}",
                                 (BStr::new(msg_str),),
@@ -1677,7 +1677,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                 }
                 ErrorCode::ScanFailed => {
                     if let Some(msg) = json_expr.get(b"message") {
-                        if let Some(msg_str) = msg.as_string(&bump) {
+                        if let Some(msg_str) = msg.as_utf8_string_literal() {
                             Output::err_generic(
                                 "Security scanner failed: {}",
                                 (BStr::new(msg_str),),
@@ -1761,12 +1761,8 @@ impl<'a> SecurityScanSubprocess<'a> {
             return Err(err!("MissingAdvisoriesField"));
         };
 
-        let advisories = parse_security_advisories_from_expr(
-            self.manager,
-            advisories_expr,
-            &bump,
-            package_paths,
-        )?;
+        let advisories =
+            parse_security_advisories_from_expr(self.manager, advisories_expr, package_paths)?;
 
         if !status.is_ok() {
             match &status {
@@ -1810,27 +1806,35 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 }
 
+fn json_type_name(data: &ExprData) -> &'static str {
+    match data {
+        ExprData::EObjectJSON(_) => bun_ast::expr::Tag::EObject.into(),
+        ExprData::EArrayJSON(_) => bun_ast::expr::Tag::EArray.into(),
+        other => other.tag().into(),
+    }
+}
+
 fn parse_security_advisories_from_expr(
     manager: &PackageManager,
     advisories_expr: Expr,
-    bump: &bun_alloc::Arena,
     package_paths: &mut ArrayHashMap<PackageID, PackagePath>,
 ) -> Result<Box<[SecurityAdvisory]>, Error> {
     let mut advisories_list: Vec<SecurityAdvisory> = Vec::new();
 
-    let ExprData::EArray(array) = &advisories_expr.data else {
+    let ExprData::EArrayJSON(array) = &advisories_expr.data else {
         Output::err_generic(
             "Security scanner 'advisories' field must be an array, got: {}",
-            (<&str>::from(advisories_expr.data.tag()),),
+            (json_type_name(&advisories_expr.data),),
         );
         return Err(err!("InvalidAdvisoriesFormat"));
     };
 
-    for (i, item) in array.items.slice().iter().enumerate() {
-        if !matches!(item.data, ExprData::EObject(_)) {
+    for (i, item_value) in array.get().items().iter().enumerate() {
+        let item = Expr::from_json_value(item_value, advisories_expr.loc);
+        if !matches!(item.data, ExprData::EObjectJSON(_)) {
             Output::err_generic(
                 "Security advisory at index {} must be an object, got: {}",
-                (i, <&str>::from(item.data.tag())),
+                (i, json_type_name(&item.data)),
             );
             return Err(err!("InvalidAdvisoryFormat"));
         }
@@ -1842,7 +1846,7 @@ fn parse_security_advisories_from_expr(
             );
             return Err(err!("MissingPackageField"));
         };
-        let Some(name_str_temp) = name_expr.as_string(bump) else {
+        let Some(name_str_temp) = name_expr.as_utf8_string_literal() else {
             Output::err_generic(
                 "Security advisory at index {} 'package' field must be a string",
                 (i,),
@@ -1856,13 +1860,11 @@ fn parse_security_advisories_from_expr(
             );
             return Err(err!("EmptyPackageField"));
         }
-        // Duplicate the string since asString returns temporary memory
         let name_str: Box<[u8]> = Box::from(name_str_temp);
 
         let desc_str: Option<Box<[u8]>> = if let Some(desc_expr) = item.get(b"description") {
             'blk: {
-                if let Some(str) = desc_expr.as_string(bump) {
-                    // Duplicate the string since asString returns temporary memory
+                if let Some(str) = desc_expr.as_utf8_string_literal() {
                     break 'blk Some(Box::from(str));
                 }
                 if matches!(desc_expr.data, ExprData::ENull(_)) {
@@ -1880,8 +1882,7 @@ fn parse_security_advisories_from_expr(
 
         let url_str: Option<Box<[u8]>> = if let Some(url_expr) = item.get(b"url") {
             'blk: {
-                if let Some(str) = url_expr.as_string(bump) {
-                    // Duplicate the string since asString returns temporary memory
+                if let Some(str) = url_expr.as_utf8_string_literal() {
                     break 'blk Some(Box::from(str));
                 }
                 if matches!(url_expr.data, ExprData::ENull(_)) {
@@ -1904,7 +1905,7 @@ fn parse_security_advisories_from_expr(
             );
             return Err(err!("MissingLevelField"));
         };
-        let Some(level_str) = level_expr.as_string(bump) else {
+        let Some(level_str) = level_expr.as_utf8_string_literal() else {
             Output::err_generic(
                 "Security advisory at index {} 'level' field must be a string",
                 (i,),

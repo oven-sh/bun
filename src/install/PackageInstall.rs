@@ -982,25 +982,11 @@ impl<'a> PackageInstall<'a> {
 
         initialize_store();
 
-        // `Arena::new()` here was creating + destroying a fresh
-        // `mi_heap` per package — measurable on no-op installs (~390× heap churn
-        // on create-next/elysia). `borrowing_default()` wraps `mi_heap_main()`
-        // with a no-op Drop. The lexer
-        // scratch frees its own buffers on `Lexer::deinit()` via the checker's
-        // Drop, so nothing leaks.
-        let bump = bun_alloc::Arena::borrowing_default();
-        let Ok(mut package_json_checker) =
-            bun_json::PackageJSONVersionChecker::init(&bump, source, &mut log)
-        else {
-            return false;
-        };
-        if package_json_checker.parse_expr().is_err() {
+        let mut package_json_checker = bun_json::PackageJSONVersionChecker::init(source, &mut log);
+        if package_json_checker.parse().is_err() {
             return false;
         }
-        // Reshaped for borrowck — `log` is exclusively borrowed by the
-        // checker's lexer; route the read through `lexer.log_mut()` (single
-        // provenance chain, see PackageJSONVersionChecker doc).
-        if package_json_checker.lexer.log_mut().errors > 0 || !package_json_checker.has_found_name {
+        if package_json_checker.has_errors() || !package_json_checker.has_found_name {
             return false;
         }
         // workspaces aren't required to have a version

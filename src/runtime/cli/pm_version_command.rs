@@ -106,16 +106,12 @@ impl PmVersionCommand {
         );
         // Hand the parser a local bump arena for its scratch allocations.
         let json_bump = Arena::new();
-        let json_result = match JSON::parse_package_json_utf8_with_opts::<
-            true,  // IS_JSON
-            true,  // ALLOW_COMMENTS
-            true,  // ALLOW_TRAILING_COMMAS
-            false, // IGNORE_LEADING_ESCAPE_SEQUENCES
-            false, // IGNORE_TRAILING_ESCAPE_SEQUENCES
-            false, // JSON_WARN_DUPLICATE_KEYS
-            false, // WAS_ORIGINALLY_MACRO
-            true,  // GUESS_INDENTATION
-        >(
+        let json_result = match JSON::parse_package_json_utf8_with_opts(
+            JSON::JSONOptions {
+                json_warn_duplicate_keys: false,
+                guess_indentation: true,
+                ..JSON::PACKAGE_JSON_OPTS
+            },
             &package_json_source,
             // SAFETY: single-threaded CLI dispatch; the returned `&mut Log` is
             // passed straight into this parse call and no other borrow of the

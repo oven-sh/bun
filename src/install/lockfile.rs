@@ -558,8 +558,7 @@ impl Lockfile {
         if lockfile_format == LockfileFormat::Text {
             let source = bun_ast::Source::init_path_string(b"bun.lock", buf.as_slice());
             initialize_store();
-            let bump = bun_alloc::Arena::new();
-            let json = match JSON::parse_package_json_utf8(&source, log, &bump) {
+            let parsed = match JSON::ParsedJson::parse_package_json(&source, log) {
                 Ok(j) => j,
                 Err(e) => {
                     return LoadResult::Err(LoadResultErr {
@@ -572,7 +571,7 @@ impl Lockfile {
             };
 
             if let Err(e) =
-                TextLockfile::parse_into_binary_lockfile(self, json, &source, log, manager)
+                TextLockfile::parse_into_binary_lockfile(self, parsed.root, &source, log, manager)
             {
                 if matches!(e, TextLockfile::ParseError::OutOfMemory) {
                     bun_core::out_of_memory();
@@ -633,8 +632,7 @@ impl Lockfile {
 
                 let source = bun_ast::Source::init_path_string(b"bun.lock", writer_buf.as_slice());
                 initialize_store();
-                let bump = bun_alloc::Arena::new();
-                let json = match JSON::parse_package_json_utf8(&source, log, &bump) {
+                let parsed = match JSON::ParsedJson::parse_package_json(&source, log) {
                     Ok(j) => j,
                     Err(e) => Output::panic(format_args!(
                         "failed to print valid json from binary lockfile: {}",
@@ -644,7 +642,7 @@ impl Lockfile {
 
                 if let Err(e) = TextLockfile::parse_into_binary_lockfile(
                     &mut *ok.lockfile,
-                    json,
+                    parsed.root,
                     &source,
                     log,
                     Some(manager),

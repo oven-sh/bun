@@ -295,9 +295,6 @@ pub mod options {
     /// Re-export of the canonical def in `crate::bake_types` (bundle_v2.rs).
     pub use crate::bake_types::Side;
 
-    /// Legacy `options::Framework` (referenced by the resolver's
-    /// `FrameworkRouterPair`). The full struct is `bake::Framework` which
-    /// lives in a higher-tier crate; minimal real struct lives in `bake_types`.
     pub use crate::bake_types::Framework;
 
     // `Env`, `EnvEntry`, `RouteConfig`, `jsx`/`JSX` are intentionally NOT

@@ -407,10 +407,8 @@ pub(super) type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
     NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, true>;
 
 // ─── BunInfo (moved from bun_core::Global) ───────────────────────────────────
-// `generate()` builds the JSON AST by hand instead of reflecting over a
-// struct's fields (cf.
-// `bun_parsers::json::ToAst` derive sketch, json.rs:808-824): an `E.Object`
-// with `bun_version` (string) + `platform` (nested `E.Object` of `os`/`arch`/
+// `generate()` builds the JSON AST by hand: an `E.Object` with
+// `bun_version` (string) + `platform` (nested `E.Object` of `os`/`arch`/
 // `version`, enums emitted as `@tagName` strings).
 pub mod BunInfo {
     use bun_analytics::generate_header::generate_platform;

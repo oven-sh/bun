@@ -446,6 +446,10 @@ impl FileSink {
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
     pub unsafe fn on_error(this: *mut FileSink, err: sys::Error) {
         bun_core::scoped_log!(FileSink, "onError({:?})", err);
+        // The streaming writer follows every `onError` with `close()` →
+        // `onClose` (on both platforms), which fires `signal.close()` and
+        // releases the keep-alive ref. Releasing the ref here instead could
+        // drop the last reference and free `this` before that `close()` runs.
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
             if (*this).pending.get().state == streams::PendingState::Pending {
@@ -455,27 +459,12 @@ impl FileSink {
                 if let Some(vm) = (*this).js_vm() {
                     if vm.is_inside_deferred_task_queue.get() {
                         (*this).run_pending_later();
-                        #[cfg(windows)]
-                        FileSink::clear_keep_alive_ref(this);
                         return;
                     }
                 }
 
                 FileSink::run_pending(this);
             }
-
-            // On POSIX, the streaming writer always calls `close()` → `onClose`
-            // after `onError`, so `onClose` releases the keep-alive ref. Releasing
-            // it here could drop the last ref and free `this` before the writer's
-            // subsequent `close()` touches its (embedded) fields.
-            //
-            // On Windows, the pipe error paths call `closeWithoutReporting()` which
-            // skips `onClose`, so release here. This is safe because those paths
-            // always hold another ref (the in-flight write's ref via `defer
-            // parent.deref()` in `onWriteComplete`, or the JS caller's ref when
-            // reached synchronously from `write()`) through `closeWithoutReporting`.
-            #[cfg(windows)]
-            FileSink::clear_keep_alive_ref(this);
         }
     }
 

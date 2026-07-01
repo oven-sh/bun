@@ -3953,6 +3953,23 @@ pub mod __gated_printer {
                         self.print(b")");
                     }
                 }
+                ExprData::EObjectJSON(e) => {
+                    let e = e.get();
+                    let n = self.writer.written();
+                    let wrap = !IS_JSON && (self.stmt_start == n || self.arrow_expr_start == n);
+                    if wrap {
+                        self.print(b"(");
+                    }
+                    self.add_source_mapping(expr.loc);
+                    self.print_object_json(e);
+                    if wrap {
+                        self.print(b")");
+                    }
+                }
+                ExprData::EArrayJSON(e) => {
+                    self.add_source_mapping(expr.loc);
+                    self.print_array_json(e.get());
+                }
                 ExprData::EBoolean(e) | ExprData::EBranchBoolean(e) => {
                     self.add_source_mapping(expr.loc);
                     if self.options.minify_syntax {
@@ -4602,6 +4619,99 @@ pub mod __gated_printer {
             value.is_sign_negative()
                 || (value == f64::INFINITY
                     && (self.options.minify_syntax || !self.options.has_run_symbol_renamer))
+        }
+
+        /// `E::ObjectJSON` (JSON-only): always printed in JSON shape.
+        pub fn print_object_json(&mut self, e: &E::ObjectJSON) {
+            if !self.stack_check.is_safe_to_recurse() {
+                self.stack_overflowed = true;
+                return;
+            }
+            self.print(b"{");
+            let props = e.properties();
+            if !props.is_empty() {
+                if !e.is_single_line {
+                    self.indent();
+                }
+                for (i, prop) in props.iter().enumerate() {
+                    if i > 0 {
+                        self.print(b",");
+                    }
+                    if e.is_single_line {
+                        if i > 0 || !IS_JSON {
+                            self.print_space();
+                        }
+                    } else {
+                        self.print_newline();
+                        self.print_indent();
+                    }
+                    let key = E::String::init(prop.key.slice());
+                    self.print_string_literal_e_string(&key, false);
+                    self.print(b":");
+                    self.print_space();
+                    self.print_json_value(&prop.value);
+                }
+                if e.is_single_line {
+                    if !IS_JSON {
+                        self.print_space();
+                    }
+                } else {
+                    self.unindent();
+                    self.print_newline();
+                    self.print_indent();
+                }
+            }
+            self.print(b"}");
+        }
+
+        /// `E::ArrayJSON` (JSON-only).
+        pub fn print_array_json(&mut self, e: &E::ArrayJSON) {
+            if !self.stack_check.is_safe_to_recurse() {
+                self.stack_overflowed = true;
+                return;
+            }
+            self.print(b"[");
+            let items = e.items();
+            if !items.is_empty() {
+                if !e.is_single_line {
+                    self.indent();
+                }
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        self.print(b",");
+                    }
+                    if e.is_single_line {
+                        if i > 0 {
+                            self.print_space();
+                        }
+                    } else {
+                        self.print_newline();
+                        self.print_indent();
+                    }
+                    self.print_json_value(item);
+                }
+                if !e.is_single_line {
+                    self.unindent();
+                    self.print_newline();
+                    self.print_indent();
+                }
+            }
+            self.print(b"]");
+        }
+
+        fn print_json_value(&mut self, value: &E::JsonValue) {
+            match value {
+                E::JsonValue::Null => self.print(b"null"),
+                E::JsonValue::Boolean(true) => self.print(b"true"),
+                E::JsonValue::Boolean(false) => self.print(b"false"),
+                E::JsonValue::Number(n) => self.print_number(n.value(), Level::Lowest),
+                E::JsonValue::String(s) => {
+                    let s = E::String::init(s.slice());
+                    self.print_string_literal_e_string(&s, false);
+                }
+                E::JsonValue::Object(o) => self.print_object_json(o.get()),
+                E::JsonValue::Array(a) => self.print_array_json(a.get()),
+            }
         }
 
         pub fn print_property(&mut self, item_in: &G::Property) {

@@ -11,7 +11,7 @@ use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
-use bun_core::{String as BunString, immutable as strings};
+use bun_core::{String as BunString, strings};
 
 // `strings::Cursor` aliased as `CodepointCursor` for readability.
 type CodepointCursor = strings::Cursor;
@@ -3440,7 +3440,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             if is_all_ascii(bytes) {
                 self.strpool.extend_from_slice(bytes);
             } else {
-                let non_ascii_idx = bun_core::first_non_ascii(bytes).unwrap_or(0) as usize;
+                let non_ascii_idx = bun_core::strings::first_non_ascii(bytes).unwrap_or(0) as usize;
                 if non_ascii_idx > 0 {
                     self.strpool.extend_from_slice(&bytes[..non_ascii_idx]);
                 }
@@ -4280,7 +4280,7 @@ pub fn escape_utf16<const ADD_QUOTES: bool>(
         outbuf.push(b'"');
     }
 
-    let non_ascii = bun_core::first_non_ascii16(str).unwrap_or(0);
+    let non_ascii = bun_core::strings::first_non_ascii16(str).unwrap_or(0);
     let mut cp_buf = [0u8; 4];
 
     let mut i: usize = 0;

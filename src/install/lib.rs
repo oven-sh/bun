@@ -737,7 +737,7 @@ impl RunCommand {
                 // `PathAlreadyExists` after a sibling re-created it. Swallow
                 // the error — the `CreateHardLinkW` retry below already
                 // re-mkdirs on failure, so a lost race here is harmless.
-                let dir_slice_u8 = bun_core::immutable::to_utf8_alloc_with_type(
+                let dir_slice_u8 = bun_core::strings::to_utf8_alloc_with_type(
                     &target_path_buffer[..dir_slice_len],
                 );
                 let _ = bun_sys::delete_tree_absolute(&dir_slice_u8);

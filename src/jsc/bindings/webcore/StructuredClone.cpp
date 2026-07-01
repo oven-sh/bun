@@ -96,13 +96,17 @@ JSC_DEFINE_HOST_FUNCTION(structuredCloneForStream, (JSGlobalObject * globalObjec
             throwDataCloneError(*globalObject, scope);
             return {};
         }
-        auto bufferClone = buffer->slice(0);
+        // Copy only the bytes the view covers. Chunks are often narrow windows into a
+        // much larger shared buffer (e.g. a fetch body's read buffer); cloning the whole
+        // backing buffer per chunk retains every neighboring chunk's bytes again.
+        size_t byteOffset = bufferView->byteOffset();
+        auto bufferClone = buffer->slice(byteOffset, byteOffset + bufferView->byteLength());
         Structure* structure = bufferView->structure();
 
-#define CLONE_TYPED_ARRAY(name)                                                                                                                                                   \
-    do {                                                                                                                                                                          \
-        if (bufferView->inherits<JS##name##Array>())                                                                                                                              \
-            RELEASE_AND_RETURN(scope, JSValue::encode(JS##name##Array::create(globalObject, structure, WTF::move(bufferClone), bufferView->byteOffset(), bufferView->length()))); \
+#define CLONE_TYPED_ARRAY(name)                                                                                                                            \
+    do {                                                                                                                                                   \
+        if (bufferView->inherits<JS##name##Array>())                                                                                                       \
+            RELEASE_AND_RETURN(scope, JSValue::encode(JS##name##Array::create(globalObject, structure, WTF::move(bufferClone), 0, bufferView->length()))); \
     } while (0);
 
         FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(CLONE_TYPED_ARRAY)
@@ -110,7 +114,7 @@ JSC_DEFINE_HOST_FUNCTION(structuredCloneForStream, (JSGlobalObject * globalObjec
 #undef CLONE_TYPED_ARRAY
 
         if (value.inherits<JSDataView>())
-            RELEASE_AND_RETURN(scope, JSValue::encode(JSDataView::create(globalObject, structure, WTF::move(bufferClone), bufferView->byteOffset(), bufferView->length())));
+            RELEASE_AND_RETURN(scope, JSValue::encode(JSDataView::create(globalObject, structure, WTF::move(bufferClone), 0, bufferView->length())));
     }
 
     throwTypeError(globalObject, scope, "structuredClone not implemented for non-ArrayBuffer / non-ArrayBufferView"_s);

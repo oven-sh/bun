@@ -21,7 +21,7 @@ use bun_core::strings::CodepointIterator;
 use bun_options_types::bundle_enums as bundle_opts;
 use bun_sys::Fd;
 
-/// Local stand-in for `bun_core::Encoding` that derives `ConstParamTy` so it can
+/// Local stand-in for `bun_core::strings::Encoding` that derives `ConstParamTy` so it can
 /// be used as a const-generic parameter (`const ENCODING: Encoding`). The variant set is
 /// identical; convert at the boundary if a `strings::Encoding` is ever needed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, core::marker::ConstParamTy)]

@@ -560,10 +560,8 @@ pub fn trim<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
 
 // ─── ascii-lowercase helpers ──────────────────────────────────────────────
 // Sunk from bun_core::strings so bun_alloc::BSSList::append_lower_case can call
-// it without a dep cycle (bun_core → bun_alloc, not the reverse). bun_core
-// re-exports both names so all existing callers of
-// `bun_core::strings::copy_lowercase` / `bun_core::immutable::copy_lowercase`
-// keep compiling unchanged.
+// them without a dep cycle (bun_core → bun_alloc, not the reverse).
+// `bun_core::strings` re-exports `copy_lowercase` and `ascii_lowercase_buf`.
 
 /// ASCII-lowercase
 /// `in_` into `out` (which must be at least `in_.len()`), returning the
@@ -591,19 +589,6 @@ pub fn copy_lowercase<'a>(in_: &[u8], out: &'a mut [u8]) -> &'a [u8] {
     }
 
     &out[0..in_.len()]
-}
-
-/// If
-/// `in_` contains no ASCII uppercase byte, returns `in_` unchanged and leaves
-/// `out` UNTOUCHED. Otherwise identical to [`copy_lowercase`]: writes the
-/// lowercased bytes into `out[..in_.len()]` and returns that prefix. Both
-/// borrows share `'a` so the return may alias either.
-pub fn copy_lowercase_if_needed<'a>(in_: &'a [u8], out: &'a mut [u8]) -> &'a [u8] {
-    if in_.iter().any(u8::is_ascii_uppercase) {
-        copy_lowercase(in_, out)
-    } else {
-        in_
-    }
 }
 
 /// Lowercase `input` into a fresh `[u8; N]` stack buffer, returning

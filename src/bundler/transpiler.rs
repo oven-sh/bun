@@ -69,7 +69,7 @@ impl PluginRunner {
     /// Returns the `namespace:` prefix of `specifier`, or `b""` if it has none
     /// (Windows drive-letter prefixes are not namespaces).
     pub fn extract_namespace(specifier: &[u8]) -> &[u8] {
-        let Some(colon) = bun_core::index_of_char(specifier, b':') else {
+        let Some(colon) = bun_core::strings::index_of_char_usize(specifier, b':') else {
             return b"";
         };
         let colon = colon as usize;
@@ -88,7 +88,7 @@ impl PluginRunner {
     /// Cheap pre-filter that rules
     /// out `./` / `../` / absolute paths before hitting the resolve hook.
     pub fn could_be_plugin(specifier: &[u8]) -> bool {
-        if let Some(last_dot) = bun_core::last_index_of_char(specifier, b'.') {
+        if let Some(last_dot) = bun_core::strings::last_index_of_char(specifier, b'.') {
             let ext = &specifier[last_dot + 1..];
             // '.' followed by either a letter or a non-ascii character
             // maybe there are non-ascii file extensions?
@@ -99,7 +99,8 @@ impl PluginRunner {
                 return true;
             }
         }
-        !bun_paths::is_absolute(specifier) && bun_core::index_of_char(specifier, b':').is_some()
+        !bun_paths::is_absolute(specifier)
+            && bun_core::strings::index_of_char_usize(specifier, b':').is_some()
     }
 }
 

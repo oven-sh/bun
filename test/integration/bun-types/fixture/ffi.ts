@@ -71,6 +71,9 @@ tsd.expectType<Pointer | null>(lib.symbols.ptr_type(ptr));
 
 tsd.expectType<Pointer | null>(lib.symbols.fn_type(new JSCallback(() => {}, {})));
 
+// "size_t" is accepted anywhere a type name string is (it maps to uint64_t).
+tsd.expectType<Pointer | null>(new JSCallback(() => 7n, { args: [], returns: "size_t" }).ptr);
+
 function _arg(
   ...params: [
     number,

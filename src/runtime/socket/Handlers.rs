@@ -110,7 +110,11 @@ impl Handlers {
     #[inline]
     fn callback(&self, field: CallbackField) -> JSValue {
         let value = Bun__SocketHandlers__getField(self.cell, field as u32);
-        if value.is_undefined() { JSValue::ZERO } else { value }
+        if value.is_undefined() {
+            JSValue::ZERO
+        } else {
+            value
+        }
     }
 
     pub fn on_open(&self) -> JSValue {

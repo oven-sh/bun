@@ -406,6 +406,11 @@ pub struct PackageManager {
     // (catalog name, dependency name) -> original version literal
     pub updating_catalogs: Vec<CatalogUpdateInfo>,
 
+    // When `bun update` is run with `--recursive` or `--filter`, this holds the
+    // name hashes of the workspaces whose dependencies should be updated. `None`
+    // means the default behavior: only the current (root/cwd) workspace updates.
+    pub(crate) update_workspace_name_hashes: Option<Box<[PackageNameHash]>>,
+
     pub(crate) patched_dependencies_to_remove:
         ArrayHashMap<PackageNameAndVersionHash, () /* , ArrayIdentityContext::U64, false */>,
 
@@ -1954,6 +1959,7 @@ pub fn init(
         wr!(any_failed_to_install, false);
         wr!(updating_packages, StringArrayHashMap::default());
         wr!(updating_catalogs, Vec::new());
+        wr!(update_workspace_name_hashes, None);
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
@@ -2392,6 +2398,7 @@ fn init_with_runtime_once(
         );
         wr!(updating_packages, StringArrayHashMap::default());
         wr!(updating_catalogs, Vec::new());
+        wr!(update_workspace_name_hashes, None);
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);

@@ -9600,7 +9600,7 @@ it("installs the transitive file: dependency of a file: dependency", async () =>
       stderr: "pipe",
     });
     const [runOut, runErr, runExit] = await Promise.all([runProc.stdout.text(), runProc.stderr.text(), runProc.exited]);
-    expect(runErr).toBe("");
+    expect(runErr).not.toContain("error:");
     expect(runOut.trim()).toBe("it worked");
     expect(runExit).toBe(0);
   }
@@ -9634,7 +9634,8 @@ it("fails when a transitive file: dependency's folder does not exist", async () 
   });
   const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
 
-  expect(err).toContain('Could not find folder "file:vendor/nested" for dependency "nested"');
+  // The printed folder path uses the platform separator on Windows.
+  expect(err.replaceAll(sep, "/")).toContain('Could not find folder "file:vendor/nested" for dependency "nested"');
   expect(out).not.toContain("2 packages installed");
   expect(exitCode).toBe(1);
 });

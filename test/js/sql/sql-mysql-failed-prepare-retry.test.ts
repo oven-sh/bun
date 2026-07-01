@@ -97,7 +97,7 @@ const settled = (q: Promise<any>) =>
     reason => ({ status: "rejected", reason }),
   );
 
-test("MySQL: a failed prepare is evicted from the statement cache and retried", async () => {
+test.concurrent("MySQL: a failed prepare is evicted from the statement cache and retried", async () => {
   // First COM_STMT_PREPARE for a given text answers ERR 1146 (table missing),
   // every later one answers OK.
   let stmtId = 0;
@@ -138,13 +138,10 @@ test("MySQL: a failed prepare is evicted from the statement cache and retried", 
   }
 });
 
-// Two identical queries started in the same synchronous turn share one prepare:
-// the second attaches to the first's in-flight (Parsing) statement before the
-// server answers. When that shared prepare failed, advance() re-ran the second
-// query, JSMySQLQuery::run's errguard marked it failed on unwind, and
-// reject_with_js_value's settle-once guard then returned without ever invoking
-// the reject callback, leaving the second query's promise pending forever.
-test("MySQL: a concurrent query sharing a failed prepare is rejected, not left pending", async () => {
+// Two identical queries started in the same synchronous turn share one prepare
+// (the second attaches to the first's in-flight statement); a shared failure
+// must reject both, not leave one pending forever.
+test.concurrent("MySQL: a concurrent query sharing a failed prepare is rejected, not left pending", async () => {
   // Every COM_STMT_PREPARE for the text answers ERR 1146, so the only correct
   // outcome for BOTH queries is a rejection carrying that error.
   const mock = await mockMySQLServer(() => tableMissing());

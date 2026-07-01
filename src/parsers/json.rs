@@ -537,7 +537,10 @@ pub fn parse_env_json(
 
 fn leads_a_number(contents: &[u8]) -> bool {
     let after_sign = if contents[0] == b'-' {
-        &contents[1..]
+        match skip_ws_and_comments(contents, 1) {
+            Some(p) => &contents[p..],
+            None => return false,
+        }
     } else {
         contents
     };
@@ -2046,7 +2049,7 @@ mod tests {
             assert_eq!(p.errors, 0, "{src}: {}", p.first_msg);
             assert_eq!(root_string(&p), want, "{src}");
         }
-        for (src, want) in [("-1", -1.0), (".5", 0.5), ("-.25", -0.25)] {
+        for (src, want) in [("-1", -1.0), (".5", 0.5), ("-.25", -0.25), ("- 5", -5.0)] {
             let p = run(src.as_bytes(), Which::Env);
             let Some(Data::ENumber(n)) = p.root.as_ref().map(|r| &r.data) else {
                 panic!("{src}: expected a number ({})", p.first_msg);

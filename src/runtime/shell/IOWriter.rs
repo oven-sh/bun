@@ -117,7 +117,6 @@ struct Writer {
 }
 
 impl Writer {
-    #[cfg(not(windows))]
     #[inline]
     fn wrote_everything(&self) -> bool {
         self.written >= self.len
@@ -680,8 +679,7 @@ impl IOWriter {
 
     // ── file write (non-pollable sync path) ─────────────────────────────
 
-    /// POSIX-only. `child` is the writer being enqueued (see `on_sync_error`).
-    #[cfg(not(windows))]
+    /// `child` is the writer being enqueued (see `on_sync_error`).
     fn do_file_write(&self, child: ChildPtr) -> Yield {
         {
             let s = self.state();
@@ -963,7 +961,6 @@ impl IOWriter {
         None
     }
 
-    #[cfg(not(windows))]
     fn enqueue_file(&self, child: ChildPtr) -> Yield {
         let s = self.state();
         if s.is_writing {
@@ -981,7 +978,6 @@ impl IOWriter {
     fn enqueue_internal(&self, child: ChildPtr) -> Yield {
         debug_assert!(!self.state().flags.broken_pipe);
         debug_assert!(self.state().err.is_none());
-        #[cfg(not(windows))]
         if !self.state().flags.pollable {
             return self.enqueue_file(child);
         }
@@ -1113,7 +1109,6 @@ bun_io::impl_buffered_writer_parent! {
 // drainBufferedData / tryWrite (POSIX file path)
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(not(windows))]
 fn try_write_with_write_fn(
     fd: Fd,
     buf: &[u8],
@@ -1142,7 +1137,6 @@ fn try_write_with_write_fn(
 
 /// TODO: This function and `try_write_with_write_fn` are copy-pastes from
 /// PipeWriter; it would be nice to not have to do that.
-#[cfg(not(windows))]
 fn drain_buffered_data(
     parent: &IOWriter,
     buf: &[u8],

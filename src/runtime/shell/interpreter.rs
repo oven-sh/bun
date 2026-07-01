@@ -344,10 +344,13 @@ pub struct Interpreter {
     /// Null when constructed from JS (no `ContextData` is reachable).
     pub command_ctx: *mut bun_options_types::context::ContextData,
 
-    /// Completion yields deferred by a re-entrant `Yield::run` (inline I/O
-    /// completions firing while this interpreter's trampoline is on the
-    /// stack). Drained FIFO by the active trampoline; chunk completions for
-    /// a node are scrubbed when `free_node` recycles it.
+    /// Re-entrancy guard for CALLBACK-shaped completions only (inline
+    /// process-exit, subprocess capture drains) firing while this
+    /// interpreter's trampoline is on the stack. File writes never park
+    /// here — they return their completion as a value (`do_file_write`),
+    /// the same shape POSIX uses. Drained FIFO by the active trampoline;
+    /// entries are scrubbed when their owner dies (`free_node` /
+    /// `PipeReader::drop`).
     yield_inbox: JsCell<VecDeque<Yield>>,
     /// Whether this interpreter's `Yield::run` trampoline is on the stack.
     trampoline_active: Cell<bool>,
@@ -2372,8 +2375,16 @@ fn open_null_device() -> bun_sys::Result<Fd> {
 fn is_pollable(fd: Fd) -> bool {
     #[cfg(windows)]
     {
-        let _ = fd;
-        false
+        // Pipes and console handles go through the async writer machinery
+        // (their completions are genuinely asynchronous / need the console
+        // UTF-16 path). Regular files take the synchronous returned-yield
+        // path — same split POSIX makes below.
+        let mode = match bun_sys::fstat(fd) {
+            Ok(st) => st.st_mode,
+            Err(_) => return false,
+        };
+        // WindowsStat widens st_mode to u64; the S_IF* space fits u32.
+        is_pollable_from_mode(mode as bun_sys::Mode)
     }
     #[cfg(unix)]
     {
@@ -2400,8 +2411,9 @@ fn is_pollable(fd: Fd) -> bool {
 pub fn is_pollable_from_mode(mode: bun_sys::Mode) -> bool {
     #[cfg(windows)]
     {
-        let _ = mode;
-        false
+        // fstat synthesizes S_IFIFO for pipes and S_IFCHR for console/char
+        // handles; only those need the pollable (async writer) path.
+        bun_sys::S::ISFIFO(mode) || bun_sys::S::ISCHR(mode)
     }
     #[cfg(unix)]
     {

@@ -411,13 +411,14 @@ await Bun.write("my-project.tar.gz", archive);
 > **Note**: The following type signatures are simplified. See [`packages/bun-types/bun.d.ts`](https://github.com/oven-sh/bun/blob/main/packages/bun-types/bun.d.ts) for the full type definitions.
 
 ```ts
-type ArchiveEntry = string | Blob | Bun.ArrayBufferView | ArrayBufferLike | { data: string | Blob | Bun.ArrayBufferView | ArrayBufferLike; mode?: number };
-
-type ArchiveInput =
-  | Record<string, ArchiveEntry>
+type ArchiveEntry =
+  | string
   | Blob
   | Bun.ArrayBufferView
-  | ArrayBufferLike;
+  | ArrayBufferLike
+  | { data: string | Blob | Bun.ArrayBufferView | ArrayBufferLike; mode?: number };
+
+type ArchiveInput = Record<string, ArchiveEntry> | Blob | Bun.ArrayBufferView | ArrayBufferLike;
 
 type ArchiveOptions = {
   /** Compression algorithm. Currently only "gzip" is supported. */

@@ -2032,8 +2032,13 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // `on_write`.
         core::hint::black_box(this);
 
-        // process pending outgoing data if any
-        Self::r(this).process_send();
+        // Process data the on_write callback may have queued. Guarded: a
+        // nested drain on an empty writer would clobber `last_write_result`
+        // with Wrote(0) before the outer write() frame reads it — on the
+        // synchronous file arm this whole chain runs inside that frame.
+        if Self::r(this).outgoing.is_not_empty() {
+            Self::r(this).process_send();
+        }
 
         // TODO: should we report writable?
         if Parent::HAS_ON_WRITABLE {

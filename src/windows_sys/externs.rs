@@ -1016,22 +1016,56 @@ pub mod advapi32 {
     }
 }
 
-/// `normaliz` namespace — IDN conversions.
+/// `normaliz` namespace — IDN conversions, resolved dynamically so
+/// Normaliz.dll never becomes a load-time PE import (symbols.test allowlist;
+/// absent on some minimal Server SKUs — degrade to no-IDN, never
+/// STATUS_DLL_NOT_FOUND at process start).
 pub mod normaliz {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
 
-    #[link(name = "normaliz")]
-    unsafe extern "system" {
-        /// `IdnToAscii` (`winnls.h`) — Unicode host label(s) → Punycode
-        /// ASCII (RFC 3490). Returns the written length, 0 on failure
-        /// (GetLastError). Flags 0 = default IDNA mapping.
-        pub fn IdnToAscii(
-            dwFlags: DWORD,
-            lpUnicodeCharStr: *const u16,
-            cchUnicodeChar: c_int,
-            lpASCIICharStr: *mut u16,
-            cchASCIIChar: c_int,
-        ) -> c_int;
+    type IdnToAsciiFn =
+        unsafe extern "system" fn(DWORD, *const u16, c_int, *mut u16, c_int) -> c_int;
+
+    // 0 = unresolved, 1 = unavailable, else the fn address.
+    static IDN_TO_ASCII: AtomicUsize = AtomicUsize::new(0);
+
+    /// `IdnToAscii` (`winnls.h`) — Unicode host label(s) → Punycode ASCII
+    /// (RFC 3490). Returns the written length, 0 on failure or when
+    /// Normaliz.dll / the export is unavailable. Flags 0 = default mapping.
+    ///
+    /// # Safety
+    /// Same contract as the Win32 API: both buffers valid for their counts.
+    pub unsafe fn IdnToAscii(
+        dw_flags: DWORD,
+        unicode: *const u16,
+        unicode_len: c_int,
+        ascii: *mut u16,
+        ascii_cap: c_int,
+    ) -> c_int {
+        let mut addr = IDN_TO_ASCII.load(Ordering::Acquire);
+        if addr == 0 {
+            // SAFETY: NUL-terminated literals; benign to race — both
+            // winners store the same address.
+            addr = unsafe {
+                let lib = LoadLibraryA(c"normaliz.dll".as_ptr().cast());
+                if lib.is_null() {
+                    1
+                } else {
+                    let f = GetProcAddress(lib, c"IdnToAscii".as_ptr().cast());
+                    if f.is_null() { 1 } else { f as usize }
+                }
+            };
+            IDN_TO_ASCII.store(addr, Ordering::Release);
+        }
+        if addr == 1 {
+            return 0;
+        }
+        // SAFETY: `addr` is the resolved export with the documented signature.
+        let f: IdnToAsciiFn = unsafe { core::mem::transmute(addr) };
+        // SAFETY: caller upholds the buffer contract.
+        unsafe { f(dw_flags, unicode, unicode_len, ascii, ascii_cap) }
     }
 }
 
@@ -2093,8 +2127,8 @@ pub struct AFD_POLL_INFO {
 }
 
 // Layout pins (authoritative x64 values, identical to wepoll's afd.h):
-// pointer-sized `Handle` 8-aligns the `Handles` array, leaving 4 bytes of
-// padding after `Exclusive`. // quirk: POLL-03
+// Timeout [0,8), NumberOfHandles [8,12), Exclusive [12,16), Handles [16,32)
+// — zero padding; size 32. // quirk: POLL-03
 #[cfg(all(windows, target_pointer_width = "64"))]
 const _: () = {
     assert!(core::mem::size_of::<GUID>() == 16);
@@ -2726,17 +2760,6 @@ pub struct DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS {
 /// `Recipient` is `DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS*` when `Flags` is
 /// `DEVICE_NOTIFY_CALLBACK` (2). Win8+; always present on Bun's baseline.
 pub const DEVICE_NOTIFY_CALLBACK: DWORD = 2;
-
-#[link(name = "powrprof")]
-unsafe extern "system" {
-    /// Returns ERROR_SUCCESS (0) on success. The registration handle may be
-    /// discarded for process-lifetime registrations.
-    pub fn PowerRegisterSuspendResumeNotification(
-        Flags: DWORD,
-        Recipient: *mut DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS,
-        RegistrationHandle: *mut *mut c_void,
-    ) -> DWORD;
-}
 
 #[link(name = "kernel32")]
 unsafe extern "system" {

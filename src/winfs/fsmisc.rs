@@ -69,23 +69,20 @@ pub enum FileTimeSpec {
     /// Leave unchanged (`UTIME_OMIT`) — a NULL `FILETIME*` to `SetFileTime`,
     /// the native "don't change" encoding.
     Omit,
-    /// Milliseconds since the Unix epoch (negative = pre-1970), the ledger's
-    /// chosen unit; converted to FILETIME ticks in pure integer math.
-    /// Values before 1601-01-01 are `ERROR_INVALID_PARAMETER`.
-    /// // quirk: FSMETA-32
-    Millis(i64),
+    /// 100 ns ticks since the Unix epoch (negative = pre-1970) — FILETIME's
+    /// own granularity, so no caller-side precision loss (sub-millisecond
+    /// utimes round-trip; issue #28017). Values before 1601-01-01 are
+    /// `ERROR_INVALID_PARAMETER`. // quirk: FSMETA-32
+    UnixTicks(i64),
 }
 
-const TICKS_PER_MS: i64 = 10_000; // 100ns ticks
-
-/// Unix-epoch milliseconds → FILETIME, all in checked i64 tick space — never
-/// the double round-trip with its ~1.6µs precision ceiling. Overflow and
-/// pre-1601 results (negative ticks, which FILETIME's unsigned layout cannot
-/// represent) are `ERROR_INVALID_PARAMETER`. // quirk: FSMETA-32
-fn millis_to_filetime(ms: i64) -> Result<FILETIME, Win32Error> {
-    let ticks = ms
-        .checked_mul(TICKS_PER_MS)
-        .and_then(|t| t.checked_add(WIN_TO_UNIX_TICK_OFFSET))
+/// Unix-epoch 100 ns ticks → FILETIME, checked i64 math — never the double
+/// round-trip. Overflow and pre-1601 results (negative ticks, which
+/// FILETIME's unsigned layout cannot represent) are
+/// `ERROR_INVALID_PARAMETER`. // quirk: FSMETA-32
+fn unix_ticks_to_filetime(ticks: i64) -> Result<FILETIME, Win32Error> {
+    let ticks = ticks
+        .checked_add(WIN_TO_UNIX_TICK_OFFSET)
         .ok_or(Win32Error::INVALID_PARAMETER)?;
     if ticks < 0 {
         return Err(Win32Error::INVALID_PARAMETER);
@@ -117,7 +114,7 @@ fn set_file_times(
         Ok(match spec {
             FileTimeSpec::Now => Some(now),
             FileTimeSpec::Omit => None,
-            FileTimeSpec::Millis(ms) => Some(millis_to_filetime(ms)?),
+            FileTimeSpec::UnixTicks(t) => Some(unix_ticks_to_filetime(t)?),
         })
     };
     let filetime_a = resolve(atime)?;
@@ -970,25 +967,25 @@ mod tests {
 
     /// // quirk: FSMETA-32
     #[test]
-    fn millis_to_filetime_kats() {
-        let ft = |ms: i64| {
-            let f = millis_to_filetime(ms).unwrap();
+    fn unix_ticks_to_filetime_kats() {
+        let ft = |ticks: i64| {
+            let f = unix_ticks_to_filetime(ticks).unwrap();
             (u64::from(f.dwHighDateTime) << 32) | u64::from(f.dwLowDateTime)
         };
         // Unix epoch lands exactly on the 1601 offset.
         assert_eq!(ft(0), WIN_TO_UNIX_TICK_OFFSET as u64);
-        // 1ms = 10_000 ticks; fractional seconds survive.
-        assert_eq!(ft(1), WIN_TO_UNIX_TICK_OFFSET as u64 + 10_000);
-        assert_eq!(ft(1500), WIN_TO_UNIX_TICK_OFFSET as u64 + 15_000_000);
+        // Sub-millisecond survives: 0.5 ms = 5_000 ticks (issue #28017).
+        assert_eq!(ft(5_000), WIN_TO_UNIX_TICK_OFFSET as u64 + 5_000);
+        assert_eq!(ft(15_000_000), WIN_TO_UNIX_TICK_OFFSET as u64 + 15_000_000);
         // Pre-1970 but post-1601: representable.
-        assert_eq!(ft(-1000), WIN_TO_UNIX_TICK_OFFSET as u64 - 10_000_000);
+        assert_eq!(ft(-10_000_000), WIN_TO_UNIX_TICK_OFFSET as u64 - 10_000_000);
         // Exactly 1601-01-01 is tick zero — the first valid instant.
-        assert_eq!(ft(-11_644_473_600_000), 0);
-        // One ms before 1601 → negative ticks → EINVAL shape; i64 overflow
-        // in tick space likewise (never a wrap).
-        let ft_err = |ms: i64| millis_to_filetime(ms).map(|_| ()).unwrap_err();
-        assert_eq!(ft_err(-11_644_473_600_001), Win32Error::INVALID_PARAMETER);
-        assert_eq!(ft_err(i64::MAX / 1000), Win32Error::INVALID_PARAMETER);
+        assert_eq!(ft(-WIN_TO_UNIX_TICK_OFFSET), 0);
+        // One tick before 1601 → negative → EINVAL shape; i64 overflow in
+        // tick space likewise (never a wrap).
+        let ft_err = |t: i64| unix_ticks_to_filetime(t).map(|_| ()).unwrap_err();
+        assert_eq!(ft_err(-WIN_TO_UNIX_TICK_OFFSET - 1), Win32Error::INVALID_PARAMETER);
+        assert_eq!(ft_err(i64::MAX), Win32Error::INVALID_PARAMETER);
         assert_eq!(ft_err(i64::MIN), Win32Error::INVALID_PARAMETER);
     }
 
@@ -1006,8 +1003,8 @@ mod tests {
         let atime_ms = 1_500_000_000_456i64;
         utimes_path(
             &wide(&path),
-            FileTimeSpec::Millis(atime_ms),
-            FileTimeSpec::Millis(mtime_ms),
+            FileTimeSpec::UnixTicks(atime_ms * 10_000),
+            FileTimeSpec::UnixTicks(mtime_ms * 10_000),
         )
         .unwrap();
         let st = stat(&path).unwrap();
@@ -1017,8 +1014,8 @@ mod tests {
         // Pre-1970 (negative, post-1601): -1.5s → sec -2, nsec 5e8.
         utimes_path(
             &wide(&path),
-            FileTimeSpec::Millis(-1500),
-            FileTimeSpec::Millis(-1500),
+            FileTimeSpec::UnixTicks(-1500 * 10_000),
+            FileTimeSpec::UnixTicks(-1500 * 10_000),
         )
         .unwrap();
         let st = stat(&path).unwrap();
@@ -1038,8 +1035,8 @@ mod tests {
         assert_eq!(
             utimes_path(
                 &wide(&missing),
-                FileTimeSpec::Millis(i64::MIN),
-                FileTimeSpec::Millis(i64::MIN),
+                FileTimeSpec::UnixTicks(i64::MIN),
+                FileTimeSpec::UnixTicks(i64::MIN),
             )
             .unwrap_err(),
             Win32Error::FILE_NOT_FOUND
@@ -1056,8 +1053,8 @@ mod tests {
         let mtime_ms = 1_400_000_111_000i64;
         utimes_path(
             &wide(&path),
-            FileTimeSpec::Millis(atime_ms),
-            FileTimeSpec::Millis(mtime_ms),
+            FileTimeSpec::UnixTicks((atime_ms) * 10_000),
+            FileTimeSpec::UnixTicks((mtime_ms) * 10_000),
         )
         .unwrap();
 
@@ -1085,7 +1082,7 @@ mod tests {
         assert_eq!(
             utimes_path(
                 &wide(&path),
-                FileTimeSpec::Millis(-11_644_473_600_001),
+                FileTimeSpec::UnixTicks((-11_644_473_600_001) * 10_000),
                 FileTimeSpec::Omit,
             )
             .unwrap_err(),
@@ -1103,8 +1100,8 @@ mod tests {
         let when = 1_234_567_890_000i64;
         utimes_path(
             &wide(&dir),
-            FileTimeSpec::Millis(when),
-            FileTimeSpec::Millis(when),
+            FileTimeSpec::UnixTicks((when) * 10_000),
+            FileTimeSpec::UnixTicks((when) * 10_000),
         )
         .unwrap();
         let st = stat(&dir).unwrap();
@@ -1126,7 +1123,7 @@ mod tests {
         {
             let _g = HandleGuard(h);
             // SAFETY: live test handle.
-            unsafe { futimes_handle(h, FileTimeSpec::Millis(when), FileTimeSpec::Millis(when)) }
+            unsafe { futimes_handle(h, FileTimeSpec::UnixTicks((when) * 10_000), FileTimeSpec::UnixTicks((when) * 10_000)) }
                 .unwrap();
         }
         let st = stat(&path).unwrap();
@@ -1168,8 +1165,8 @@ mod tests {
         let link_ms = 1_600_000_000_000i64;
         lutimes_path(
             &wide(&junction),
-            FileTimeSpec::Millis(link_ms),
-            FileTimeSpec::Millis(link_ms),
+            FileTimeSpec::UnixTicks((link_ms) * 10_000),
+            FileTimeSpec::UnixTicks((link_ms) * 10_000),
         )
         .unwrap();
         assert_eq!(lstat(&junction).unwrap().st_mtim, ts(link_ms));
@@ -1183,8 +1180,8 @@ mod tests {
         let target_ms = 1_500_000_000_000i64;
         utimes_path(
             &wide(&junction),
-            FileTimeSpec::Millis(target_ms),
-            FileTimeSpec::Millis(target_ms),
+            FileTimeSpec::UnixTicks((target_ms) * 10_000),
+            FileTimeSpec::UnixTicks((target_ms) * 10_000),
         )
         .unwrap();
         assert_eq!(stat(&target).unwrap().st_mtim, ts(target_ms));

@@ -100,11 +100,9 @@ function systemLibs(cfg: Config): string[] {
     // explicit is portable.
     libs.push(
       "winmm.lib",
-      "powrprof.lib", // PowerRegisterSuspendResumeNotification (suspend/resume timer rescue)
       "bcrypt.lib",
       "ntdll.lib",
       "userenv.lib",
-      "normaliz.lib",
       "dbghelp.lib",
       "crypt32.lib",
       "wsock32.lib", // ws2_32 + wsock32 — wsock32 has TransmitFile (sendfile equiv)

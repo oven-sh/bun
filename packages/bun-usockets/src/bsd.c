@@ -1154,6 +1154,11 @@ int bsd_set_defer_accept(LIBUS_SOCKET_DESCRIPTOR listenFd) {
 // return LIBUS_SOCKET_ERROR or the fd that represents listen socket
 // listen both on ipv6 and ipv4
 LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error) {
+#ifdef _WIN32
+    /* getaddrinfo below needs WSAStartup; the lazy init inside
+     * bsd_create_socket runs after it. */
+    Bun__ensure_winsock();
+#endif
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
 
@@ -1411,6 +1416,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err) {
+#ifdef _WIN32
+    Bun__ensure_winsock();
+#endif
     if (err != NULL) {
         *err = 0;
     }

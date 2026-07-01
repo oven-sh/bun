@@ -1506,4 +1506,27 @@ mod tests {
             "child not killed by the default handler\n--- child stdout ---\n{stdout}\n--- child stderr ---\n{stderr}"
         );
     }
+
+    /// A zero-req close queues an endgame with no completion packet; the
+    /// wait fold must treat it as runnable work (uv_backend_timeout parity)
+    /// or a blocking tick strands the close forever. // quirk: LOOP-19
+    #[test]
+    fn queued_endgame_forces_zero_timeout_tick() {
+        let _guard = serial();
+        let mut loop_ = Loop::new().unwrap();
+        let lp: *mut Loop = &mut *loop_;
+        // SAFETY: lp is the live loop above.
+        let mut h = unsafe { SignalHandle::new(lp) };
+        unsafe fn on_close(_l: &mut Loop, data: *mut c_void) {
+            // SAFETY: data is the test's live flag.
+            unsafe { (*data.cast::<core::cell::Cell<bool>>()).set(true) };
+        }
+        let closed = core::cell::Cell::new(false);
+        // Zero-req close: endgame queued, nothing else can wake the port.
+        h.close(Some(on_close), (&raw const closed).cast_mut().cast());
+        // Un-timed tick: hangs forever here without the endgame wait fold.
+        loop_.tick(None);
+        assert!(closed.get(), "endgame ran inside the blocking tick");
+        // `h` drops after the endgame — same ownership as close_and_drain.
+    }
 }

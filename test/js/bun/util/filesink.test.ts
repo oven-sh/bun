@@ -365,3 +365,19 @@ it("fs.promises.writeFile with iterables under GC pressure does not crash", asyn
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
 });
+
+describe("write() return values on files", () => {
+  // The synchronous file arm completes inside the write() call; the byte
+  // count must survive to the caller for both the latin1 and UTF-16 paths.
+  it("returns the byte count for ascii and non-ascii strings", async () => {
+    const path = require("path").join(require("fs").mkdtempSync(require("path").join(require("os").tmpdir(), "sink-count-")), "out.txt");
+    const sink = Bun.file(path).writer();
+    expect(sink.write("abc")).toBe(3);
+    // UTF-16-backed JS string: héllo → 6 UTF-8 bytes.
+    expect(sink.write("h\u00e9llo")).toBe(6);
+    // Zero-length write is 0 without disturbing prior results.
+    expect(sink.write("")).toBe(0);
+    await sink.end();
+    expect(await Bun.file(path).text()).toBe("abch\u00e9llo");
+  });
+});

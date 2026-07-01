@@ -1083,3 +1083,23 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     expect(norm(result)).toEqual(["linkdir/file.txt"]);
   });
 });
+
+describe("cwd spelling variants", () => {
+  // The sys layer must normalize a drive-absolute cwd before NT-prefixing it
+  // (a verbatim mangled path reaches the filesystem as-is and the root open
+  // fails). Trailing separators, doubled separators, and dot segments are
+  // all legal spellings of the same directory.
+  test("redundant separators and dot segments in cwd still scan", async () => {
+    const dir = tempFixturesDir();
+    const sep = process.platform === "win32" ? "\\" : "/";
+    const spellings = [
+      dir + sep,
+      dir + sep + sep,
+      dir + sep + "." ,
+    ];
+    for (const cwd of spellings) {
+      const entries = await Array.fromAsync(new Bun.Glob("*").scan({ cwd }));
+      expect(entries.length).toBeGreaterThan(0);
+    }
+  });
+});

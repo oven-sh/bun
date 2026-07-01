@@ -1007,11 +1007,23 @@ UV_EXTERN uint64_t uv_now(const uv_loop_t*)
     __builtin_unreachable();
 }
 
+#if OS(WINDOWS)
+/* Adopt a HANDLE into Bun's fd table (the JS-visible fd space) — the
+ * inverse of uv_get_osfhandle; -1 on failure (the CRT _open_osfhandle
+ * contract libuv exposed verbatim). */
+extern int Bun__FdTable__adoptHandle(void* handle);
+
+UV_EXTERN int uv_open_osfhandle(uv_os_fd_t os_fd)
+{
+    return Bun__FdTable__adoptHandle((void*)os_fd);
+}
+#else
 UV_EXTERN int uv_open_osfhandle(uv_os_fd_t os_fd)
 {
     __bun_throw_not_implemented("uv_open_osfhandle");
     __builtin_unreachable();
 }
+#endif
 
 UV_EXTERN int uv_os_environ(uv_env_item_t** envitems, int* count)
 {

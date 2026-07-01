@@ -647,13 +647,15 @@ unsafe fn submit_poll_req(lp: *mut Loop, h: *mut AfdPoll) {
                 bun_windows_sys::kernel32::WT_EXECUTELONGFUNCTION,
             ) == 0
             {
+                // Capture before the dealloc below can clobber last-error.
+                let err = Win32Error::get();
                 if core::ptr::eq(req, &raw mut (*h).req_1) {
                     (*h).slow_work_1 = ptr::null_mut();
                 } else {
                     (*h).slow_work_2 = ptr::null_mut();
                 }
                 drop(Box::from_raw(work));
-                (*req).set_error(Win32Error::get());
+                (*req).set_error(err);
                 (*lp).insert_pending(req); // quirk: POLL-28
             }
         }

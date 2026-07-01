@@ -805,3 +805,19 @@ pub extern "C" fn Bun__FdTable__nativeHandle(fd: i32) -> *mut core::ffi::c_void 
     }
     Fd::from_js_fd(fd).native().cast()
 }
+
+/// The inverse bridge (`uv_open_osfhandle`): adopt a caller-owned HANDLE
+/// into the table and return its JS-visible fd, or -1 — the raw CRT
+/// `_open_osfhandle` contract libuv exposed verbatim. Ownership transfers on
+/// success; on failure the table already closed the handle
+/// (make_table_owned's leak-impossible contract).
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__FdTable__adoptHandle(handle: *mut core::ffi::c_void) -> i32 {
+    if handle.is_null() || core::ptr::eq(handle, bun_windows_sys::INVALID_HANDLE_VALUE) {
+        return -1;
+    }
+    match Fd::from_system(handle).make_table_owned() {
+        Ok(fd) => fd.js_fd(),
+        Err(_) => -1,
+    }
+}

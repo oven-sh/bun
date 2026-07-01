@@ -430,6 +430,31 @@ pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
         && utf8[1] == b':'
         && resolve_path::is_sep_any(utf8[2])
     {
+        // `\\?\` disables Win32's DOS-to-NT normalization, so mangled
+        // spellings (trailing/doubled separators, dot segments) must be
+        // normalized before prefixing or they reach NTFS verbatim and fail
+        // the open. Lexical semantics match PathLike's pre-normalize; clean
+        // paths (the common case) skip the pass. // quirk: FSIO-13
+        let dirty = path.iter().enumerate().any(|(i, &c)| {
+            c == b'/'
+                || (c == b'\\' && (i + 1 == path.len() || path[i + 1] == b'\\'))
+                || (c == b'.'
+                    && (i + 1 == path.len() || resolve_path::is_sep_any(path[i + 1]))
+                    && (i == 0 || resolve_path::is_sep_any(path[i - 1]) || path[i - 1] == b'.'))
+        });
+        if dirty && path.len() < crate::MAX_PATH_BYTES {
+            // Over-long inputs skip the lexical pass (the scratch buffer is
+            // narrower than the wide-length guard); verbatim conversion is
+            // their pre-existing behavior.
+            let mut scratch = crate::path_buffer_pool::get();
+            let normalized = resolve_path::normalize_buf::<resolve_path::platform::Windows>(
+                path,
+                &mut scratch[..],
+            );
+            wbuf[..4].copy_from_slice(&windows::LONG_PATH_PREFIX);
+            let n = to_w_path(&mut wbuf[4..], normalized).len();
+            return wstr_in_buf(wbuf, n + 4);
+        }
         wbuf[..4].copy_from_slice(&windows::LONG_PATH_PREFIX);
         let n = to_w_path(&mut wbuf[4..], path).len();
         return wstr_in_buf(wbuf, n + 4);

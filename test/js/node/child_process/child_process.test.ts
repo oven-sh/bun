@@ -846,3 +846,22 @@ console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, thr
     expect(r.error?.code).toBe("ENOTSUP");
   });
 });
+
+describe("kill() return value on exited children", () => {
+  // node contract: kill() on an already-exited child returns false and does
+  // not flip .killed; on a live child it returns true.
+  it("returns false after exit, true on a live child", async () => {
+    const dead = spawn(bunExe(), ["-e", "0"], { env: bunEnv, stdio: "ignore" });
+    await new Promise(resolve => dead.on("exit", resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    expect(dead.kill()).toBe(false);
+    expect(dead.killed).toBe(false);
+
+    const live = spawn(bunExe(), ["-e", "await new Promise(r => setTimeout(r, 30_000))"], {
+      env: bunEnv,
+      stdio: "ignore",
+    });
+    expect(live.kill()).toBe(true);
+    await new Promise(resolve => live.on("exit", resolve));
+  });
+});

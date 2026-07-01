@@ -670,10 +670,18 @@ pub mod dir_iterator {
                         return Ok(None);
                     }
                     self.index = 0;
-                    self.end_index = io.Information;
+                    // Never trust a kernel/filter-driver byte count past the
+                    // buffer: it is the walk's only bound.
+                    self.end_index = io.Information.min(BUF_SIZE);
                 }
 
                 let entry_offset = self.index;
+                // Truncated trailing record: end the batch instead of
+                // panicking on the safe indexing below.
+                if entry_offset + NAME_OFFSET > self.end_index {
+                    self.index = BUF_SIZE;
+                    continue;
+                }
                 // SAFETY: the `if self.first` branch zero-fills the whole 8 KiB
                 // before the first NtQueryDirectoryFile, and every subsequent
                 // call only overwrites a prefix — `[0..BUF_SIZE)` stays fully
@@ -717,9 +725,15 @@ pub mod dir_iterator {
                 // name_byte_offset + name_len_u16*2 ≤ BUF_SIZE by clamp above.
                 // `AlignedBuf` is align(8) and `entry_offset`/`NAME_OFFSET` are
                 // both multiples of 4, so the u8→u16 cast is always aligned.
-                let dir_info_name: &[u16] = bytemuck::cast_slice(
+                let mut dir_info_name: &[u16] = bytemuck::cast_slice(
                     &buf[name_byte_offset..name_byte_offset + name_len_u16 * 2],
                 );
+                // SharePoint/WebDAV redirectors count a trailing NUL in
+                // FileNameLength; strip before the dot filter.
+                // // quirk: FSLNK-33
+                if let [rest @ .., 0] = dir_info_name {
+                    dir_info_name = rest;
+                }
 
                 if dir_info_name == [b'.' as u16] || dir_info_name == [b'.' as u16, b'.' as u16] {
                     continue;
@@ -3701,7 +3715,24 @@ mod windows_impl {
         if out == 0 {
             return Err(Error::new(w::get_last_errno(), Tag::dup).with_fd(fd));
         }
-        Ok(Fd::from_native(target as _))
+        // POSIX contract: duplicates share one file offset. Flip the source
+        // to kernel-pointer semantics (syncing the pointer to its logical
+        // pos) and mint the duplicate ADOPTED — both then follow the shared
+        // kernel pointer, matching pre-table behavior. A failed flip fails
+        // the dup: diverging offsets silently clobber. // quirk: FSIO-21
+        if let Err(w) = windows::mark_fd_shared_with_child(fd) {
+            // SAFETY: `target` was just duplicated above and is unowned.
+            unsafe { bun_windows_sys::CloseHandle(target.cast()) };
+            return Err(Error::new(bun_errno::win_error::translate(w), Tag::dup).with_fd(fd));
+        }
+        match Fd::from_native(target as _).make_table_owned() {
+            Ok(dup_fd) => Ok(dup_fd),
+            Err(code) => Err(Error::new(
+                bun_errno::win_error::translate(w::Win32Error(code as u16)),
+                Tag::dup,
+            )
+            .with_fd(fd)),
+        }
     }
     pub fn dup2(old: Fd, new: Fd) -> Maybe<Fd> {
         // No POSIX dup2 on Windows.
@@ -4042,10 +4073,12 @@ mod windows_impl {
             Err(_) => Ok(false),
         }
     }
-    /// `TimeLike` (sec+nsec) → the engine's explicit spec; sub-ms truncates
-    /// toward the engine's ms unit (the same precision libuv's f64 carried).
+    /// `TimeLike` (sec+nsec) → the engine's 100 ns-tick spec; keeps
+    /// sub-millisecond precision (nsec truncates at the 100 ns tick).
     fn timelike_to_spec(t: TimeLike) -> w::fs::FileTimeSpec {
-        w::fs::FileTimeSpec::Millis(t.sec.saturating_mul(1000) + t.nsec / 1_000_000)
+        w::fs::FileTimeSpec::UnixTicks(
+            t.sec.saturating_mul(10_000_000).saturating_add(t.nsec / 100),
+        )
     }
     pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
         w::fs::futimes(fd, timelike_to_spec(atime), timelike_to_spec(mtime)).map_err(|mut e| {
@@ -8725,7 +8758,7 @@ pub fn renameat_concurrently_a(
     to: &[u8],
     opts: RenameatConcurrentlyOptions,
 ) -> Maybe<()> {
-    // Z-terminate both paths into stack buffers.
+    // Z-terminate both paths into pool buffers.
     let mut from_buf = bun_paths::path_buffer_pool::get();
     let from_len = from.len().min(from_buf.0.len() - 1);
     from_buf.0[..from_len].copy_from_slice(&from[..from_len]);

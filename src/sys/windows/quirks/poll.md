@@ -21,7 +21,7 @@ Bun dep config scripts/build/deps/libuv.ts. Bun's only first-party uv*poll consu
 
 ### [POLL-03] AFD_POLL_INFO ABI is undocumented and must be replicated bit-exactly
 
-- **What Windows does**: The kernel parses the input buffer as `{LARGE_INTEGER Timeout; ULONG NumberOfHandles; ULONG Exclusive; {HANDLE Handle; ULONG Events; NTSTATUS Status}[N]}` — pointer-sized Handle means the struct differs between x64/arm64 and x86; padding after Exclusive on 64-bit. Wrong layout = STATUS_INVALID_PARAMETER or garbage polls.
+- **What Windows does**: The kernel parses the input buffer as `{LARGE_INTEGER Timeout; ULONG NumberOfHandles; ULONG Exclusive; {HANDLE Handle; ULONG Events; NTSTATUS Status}[N]}` — pointer-sized Handle means the struct differs between x64/arm64 and x86; on 64-bit the offsets are Timeout [0,8), NumberOfHandles [8,12), Exclusive [12,16), Handles [16,32) with zero padding. Wrong layout = STATUS_INVALID_PARAMETER or garbage polls.
 - **How libuv handles it**: `AFD_POLL_HANDLE_INFO`/`AFD_POLL_INFO` typedefs in include/uv/win.h:206-217, identical to wepoll's afd.h and ReactOS's drivers/network/afd.
 - **History**: d7a71761 (2012); never changed. Code comment only.
 - **Bun disposition**: must-port. `#[repr(C)]` structs with a layout test against known offsets. ERRATUM (caught at implementation): this entry originally cited 0x10/0x14/0x18 — those are +8 off. Actual x64 layout transcribed from `include/uv/win.h` (matches wepoll): NumberOfHandles=0x8, Exclusive=0xC, Handles=0x10, sizeof=0x20; pinned by compile-time asserts in `src/windows_sys/externs.rs`. Target: sys/windows AFD types.

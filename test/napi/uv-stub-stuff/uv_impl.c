@@ -111,6 +111,26 @@ static napi_value test_uv_once(napi_env env, napi_callback_info info) {
 
 // Test uv_hrtime
 static napi_value test_hrtime(napi_env env, napi_callback_info info) {
+#ifdef _WIN32
+  // Round-trip: fd 1 -> HANDLE -> duplicate -> new fd. uv_open_osfhandle
+  // consumes the handle (table ownership begins), so adopt a duplicate —
+  // adopting stdout's own handle would double-own it.
+  {
+    uv_os_fd_t rt_handle = uv_get_osfhandle(1);
+    HANDLE rt_dup = NULL;
+    if (!DuplicateHandle(GetCurrentProcess(), (HANDLE)rt_handle, GetCurrentProcess(), &rt_dup, 0,
+                         FALSE, DUPLICATE_SAME_ACCESS)) {
+      napi_throw_error(env, NULL, "DuplicateHandle failed");
+      return NULL;
+    }
+    int rt_fd = uv_open_osfhandle((uv_os_fd_t)rt_dup);
+    if (rt_fd < 0) {
+      napi_throw_error(env, NULL, "uv_open_osfhandle round-trip failed");
+      return NULL;
+    }
+    // The adopted duplicate stays open for the process lifetime (test scope).
+  }
+#endif
   uint64_t time1 = uv_hrtime();
 
   // Sleep for a tiny bit to ensure time passes

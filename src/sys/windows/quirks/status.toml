@@ -157,31 +157,38 @@ status = "implemented"
 test = "src/winfs/fsmisc.rs::mkstemp_creates_and_opens_unique_files"
 
 [FSLNK-32]
-status = "implemented"
+status = "pending"
+reason = "implemented+tested in winfs::readdir, which is not yet wired as the production walker (live walkers: dir_iterator.rs + sys/lib.rs twin)"
 test = "src/winfs/readdir.rs::large_directory_multi_batch_exact_set"
 
 [FSLNK-33]
 status = "implemented"
+reason = "trailing-NUL strip live in both production walkers (dir_iterator.rs + sys/lib.rs); engine twin keeps the KATs"
 test = "src/winfs/readdir.rs::trailing_nul_strip_and_dot_skip_kats"
 
 [FSLNK-34]
-status = "implemented"
+status = "pending"
+reason = "implemented+tested in winfs::readdir, which is not yet wired as the production walker (live walkers: dir_iterator.rs + sys/lib.rs twin)"
 covered_by = "FSLNK-32"
 
 [FSLNK-35]
-status = "implemented"
+status = "pending"
+reason = "implemented+tested in winfs::readdir, which is not yet wired as the production walker (live walkers: dir_iterator.rs + sys/lib.rs twin)"
 test = "src/winfs/readdir.rs::open_error_shapes_and_link_following"
 
 [FSLNK-36]
-status = "implemented"
+status = "pending"
+reason = "implemented+tested in winfs::readdir, which is not yet wired as the production walker (live walkers: dir_iterator.rs + sys/lib.rs twin)"
 test = "src/winfs/readdir.rs::classification_matrix_with_junction_and_unknown_tag"
 
 [FSLNK-37]
-status = "implemented"
+status = "pending"
+reason = "implemented+tested in winfs::readdir, which is not yet wired as the production walker (live walkers: dir_iterator.rs + sys/lib.rs twin)"
 test = "src/winfs/readdir.rs::large_directory_multi_batch_exact_set"
 
 [FSLNK-38]
-status = "implemented"
+status = "pending"
+reason = "implemented+tested in winfs::readdir, which is not yet wired as the production walker (live walkers: dir_iterator.rs + sys/lib.rs twin)"
 test = "src/winfs/readdir.rs::open_error_shapes_and_link_following"
 
 [FSLNK-39]
@@ -189,11 +196,13 @@ status = "skipped"
 reason = "if Bun's opendir uses NtQueryDirectoryFile on a real handle (recommended — avoids the entire pattern-escaping class, matches FSLNK-32); must-port only if FindFirstFile is retained anywhere. Target: engine"
 
 [FSLNK-40]
-status = "implemented"
+status = "pending"
+reason = "implemented+tested in winfs::readdir, which is not yet wired as the production walker (live walkers: dir_iterator.rs + sys/lib.rs twin)"
 test = "src/winfs/readdir.rs::empty_directory_yields_no_entries_and_is_fused"
 
 [FSLNK-41]
-status = "implemented"
+status = "pending"
+reason = "implemented+tested in winfs::readdir, which is not yet wired as the production walker (live walkers: dir_iterator.rs + sys/lib.rs twin)"
 test = "src/winfs/readdir.rs::empty_directory_yields_no_entries_and_is_fused"
 
 [FSLNK-42]
@@ -201,10 +210,12 @@ status = "skipped"
 reason = "if NtQueryDirectoryFile path chosen (no prefetch asymmetry there); otherwise must-port the latch — off-by-one entry loss/duplication is the classic FindFirstFile porting bug. Target: engine"
 
 [FSLNK-43]
-status = "pending"
+status = "implemented"
+reason = "tagged // quirk: FSMETA-50 at the implementation"
 
 [FSLNK-44]
-status = "pending"
+status = "implemented"
+reason = "tagged // quirk: FSMETA-50 at the implementation"
 
 [FSLNK-45]
 status = "skipped"
@@ -494,7 +505,8 @@ status = "implemented"
 test = "src/fdtable/table.rs::mint_get_close_roundtrip_and_recycling"
 
 [FSIO-18]
-status = "pending"
+status = "implemented"
+reason = "covered by the ADD-05 consolidation (addenda.md)"
 
 [FSIO-19]
 status = "implemented"
@@ -1278,7 +1290,8 @@ status = "implemented"
 covered_by = "POLL-28"
 
 [PIPE-56]
-status = "pending"
+status = "implemented"
+reason = "covered by the ADD-05 consolidation (addenda.md)"
 
 [PIPE-57]
 status = "implemented"
@@ -2194,7 +2207,8 @@ status = "implemented"
 test = "src/iocp/tty/tests.rs::open_rejects_non_console_handles"
 
 [TTY-04]
-status = "pending"
+status = "implemented"
+reason = "covered by the ADD-05 consolidation (addenda.md)"
 
 [TTY-05]
 status = "implemented"

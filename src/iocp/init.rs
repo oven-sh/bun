@@ -16,7 +16,7 @@ use bun_windows_sys::kernel32::{PostQueuedCompletionStatus, SetErrorMode};
 use bun_windows_sys::ws2_32::{WSADATA, WSAStartup};
 use bun_windows_sys::{
     DEVICE_NOTIFY_CALLBACK, DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS, HANDLE, PBT_APMRESUMEAUTOMATIC,
-    PBT_APMRESUMESUSPEND, PowerRegisterSuspendResumeNotification, SEM_FAILCRITICALERRORS,
+    PBT_APMRESUMESUSPEND, SEM_FAILCRITICALERRORS,
     SEM_NOGPFAULTERRORBOX, SEM_NOOPENFILEERRORBOX, ULONG,
 };
 
@@ -125,14 +125,31 @@ pub fn process_init() {
             Context: core::ptr::null_mut(),
         };
         let mut registration: *mut c_void = core::ptr::null_mut();
-        // SAFETY: params outlives the call; the callback is registered for
-        // process lifetime so no dangling context exists (Context is null).
+        // Resolved dynamically, never a PE import (libuv
+        // uv__register_system_resume_callback): powrprof.dll is absent on
+        // some Server SKUs, and a static import would be
+        // STATUS_DLL_NOT_FOUND at process start instead of degrading to
+        // "no suspend/resume wake".
+        type PowerRegisterFn = unsafe extern "system" fn(
+            u32,
+            *mut DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS,
+            *mut *mut c_void,
+        ) -> u32;
+        // SAFETY: NUL-terminated wide literal; GetProcAddress result is the
+        // documented signature; params outlives the call and the callback is
+        // registered for process lifetime (Context is null).
         unsafe {
-            PowerRegisterSuspendResumeNotification(
-                DEVICE_NOTIFY_CALLBACK,
-                &raw mut params,
-                &raw mut registration,
-            );
+            let lib = bun_windows_sys::LoadLibraryA(c"powrprof.dll".as_ptr().cast());
+            if !lib.is_null() {
+                let f = bun_windows_sys::GetProcAddress(
+                    lib,
+                    c"PowerRegisterSuspendResumeNotification".as_ptr().cast(),
+                );
+                if !f.is_null() {
+                    let f: PowerRegisterFn = core::mem::transmute(f);
+                    f(DEVICE_NOTIFY_CALLBACK, &raw mut params, &raw mut registration);
+                }
+            }
         }
 
         // Console-ctrl delivery + the SIGWINCH bridge: hooked once for the

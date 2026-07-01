@@ -625,7 +625,17 @@ describe("spawn unref and kill should not hang", () => {
     expect().pass();
   });
 
+  // process.unref() on Windows does not work ye :(
   it("should not hang after unref", async () => {
+    const proc = spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "does-not-hang.js")],
+    });
+
+    await proc.exited;
+    expect().pass();
+  });
+
+  it("should not hang after unref is actually called", async () => {
     const proc = spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "does-not-hang.js")],
     });
@@ -1252,5 +1262,118 @@ describe("uid/gid", () => {
       thrown = e;
     }
     expect(thrown?.code).toBe("EPERM");
+  });
+});
+
+describe("fd sharing and stream lifecycle", () => {
+  // A parent-owned file fd passed as child stdio shares one kernel file
+  // offset with the child; parent writes issued after the child must land
+  // after the child's output, never over it.
+  it("writes around a child sharing the fd land in order", async () => {
+    const dir = tmpdirSync();
+    const log = path.join(dir, "build.log");
+    const fd = openSync(log, "w");
+    try {
+      writeFileSync(fd, "== start ==\n");
+      const child = spawnSync({
+        cmd: [bunExe(), "-e", "console.log('CHILD-LINE')"],
+        env: bunEnv,
+        stdio: ["ignore", fd, "ignore"],
+      });
+      expect(child.exitCode).toBe(0);
+      writeFileSync(fd, "== done ==\n");
+    } finally {
+      closeSync(fd);
+    }
+    const content = readFileSync(log, "utf8");
+    const iChild = content.indexOf("CHILD-LINE");
+    const iDone = content.indexOf("== done ==");
+    expect(content.startsWith("== start ==")).toBe(true);
+    expect(iChild).toBeGreaterThan(0);
+    expect(iDone).toBeGreaterThan(iChild);
+  });
+
+  // Pausing a child's stdout through its exit (write side gone) and resuming
+  // later must deliver every byte then a clean EOF — no spurious close, no
+  // double delivery, no data loss.
+  it("pause across child exit, resume later: exact bytes then EOF", async () => {
+    // 32 KiB: safely under the 64 KiB pipe buffer so the child's write
+    // completes and it exits even while the reader is paused.
+    const child = spawn({
+      cmd: [bunExe(), "-e", "process.stdout.write('x'.repeat(32768))"],
+      env: bunEnv,
+      stdout: "pipe",
+    });
+    const reader = child.stdout.getReader();
+    const first = await reader.read();
+    reader.releaseLock();
+    await child.exited;
+    // Sleep past the engine's 50 ms EOF grace window: the wait itself is the
+    // condition under test (a paused reader across grace expiry).
+    await new Promise(r => setTimeout(r, 150));
+    let total = first.value?.length ?? 0;
+    for await (const chunk of child.stdout) total += chunk.length;
+    expect(total).toBe(32768);
+  });
+});
+
+describe("exit codes and liveness probes", () => {
+  // 259 is STILL_ACTIVE on Windows: GetExitCodeProcess alone cannot tell an
+  // exited-with-259 process from a running one; the zero-timeout wait probe
+  // must disambiguate.
+  it.if(isWindows)("a child that exits with code 259 is reported dead", async () => {
+    const child = spawn({ cmd: ["cmd", "/d", "/c", "exit", "259"], stdout: "ignore" });
+    expect(await child.exited).toBe(259);
+    let code = null;
+    try {
+      process.kill(child.pid, 0);
+    } catch (e) {
+      code = e.code;
+    }
+    expect(["ESRCH", "EPERM"]).toContain(code);
+  });
+
+  it("kill() on an already-exited child is a no-op and killed stays false", async () => {
+    const child = spawn({ cmd: [bunExe(), "-e", "0"], env: bunEnv });
+    await child.exited;
+    expect(() => child.kill()).not.toThrow();
+    expect(child.exitCode).toBe(0);
+    // -1 neighbor: killing a live child flips killed and it exits.
+    const live = spawn({
+      cmd: [bunExe(), "-e", "await new Promise(r => setTimeout(r, 30_000))"],
+      env: bunEnv,
+    });
+    live.kill();
+    await live.exited;
+    expect(live.killed).toBe(true);
+  });
+});
+
+describe.skipIf(!isWindows)("cwd executable search opt-out", () => {
+  // NoDefaultCurrentDirectoryInExePath is Windows' binary-planting opt-out;
+  // the spawn path must consult the live OS check per call, so setting it
+  // mid-process takes effect immediately.
+  it("NoDefaultCurrentDirectoryInExePath is honored live", () => {
+    const dir = tmpdirSync();
+    const planted = path.join(dir, "planted-probe.exe");
+    require("fs").copyFileSync(bunExe(), planted);
+    const prev = process.env.NoDefaultCurrentDirectoryInExePath;
+    try {
+      delete process.env.NoDefaultCurrentDirectoryInExePath;
+      const allowed = spawnSync({ cmd: ["planted-probe", "--version"], cwd: dir, env: { ...bunEnv, NoDefaultCurrentDirectoryInExePath: undefined } });
+      expect(allowed.exitCode).toBe(0);
+      process.env.NoDefaultCurrentDirectoryInExePath = "1";
+      let blocked = false;
+      try {
+        const p = spawnSync({ cmd: ["planted-probe", "--version"], cwd: dir });
+        blocked = p.exitCode !== 0;
+      } catch {
+        blocked = true;
+      }
+      expect(blocked).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.NoDefaultCurrentDirectoryInExePath;
+      else process.env.NoDefaultCurrentDirectoryInExePath = prev;
+    }
   });
 });

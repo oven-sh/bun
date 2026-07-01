@@ -196,7 +196,11 @@ impl Loop {
     }
     pub(crate) fn active_handles_dec(&mut self) {
         debug_assert!(self.active_handles > 0);
-        self.active_handles -= 1;
+        // Saturating like the POSIX twin (jsc event_loop update_counts):
+        // Bun's virtual keep-alive refs and the engine's accounting can
+        // momentarily disagree during teardown; a wrap would pin alive()
+        // true forever. Debug builds still assert the imbalance.
+        self.active_handles = self.active_handles.saturating_sub(1);
     }
     pub(crate) fn active_reqs_inc(&mut self) {
         self.active_reqs += 1;

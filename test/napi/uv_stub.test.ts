@@ -5,7 +5,10 @@ import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_
 import goodSource from "./uv-stub-stuff/good_plugin.c";
 import source from "./uv-stub-stuff/plugin.c";
 
-const all_symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
+// uv_open_osfhandle is a real polyfill on Windows (fd-table adopt), a
+// crash stub elsewhere — matching libuv, which implemented it per-platform.
+const platform_supported = process.platform === "win32" ? ["uv_open_osfhandle"] : [];
+const all_symbols_to_test = symbols.filter(s => !test_skipped.includes(s) && !platform_supported.includes(s));
 // Each per-symbol test spawns a fresh bun subprocess that aborts in the stub.
 // Under asan, process startup is ~2.3s and the CI agent exposes 2 vCPUs, so
 // the full ~294-symbol set is ~11 minutes of CPU-bound work regardless of
@@ -15,37 +18,37 @@ const all_symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
 // full set.
 const symbols_to_test = isASAN ? all_symbols_to_test.filter((_, i) => i % 6 === 0) : all_symbols_to_test;
 
-// Windows uses the same crash stubs + polyfills as POSIX (libuv removed).
+// Windows shares the POSIX crash stubs + polyfills (libuv removed), so the
+// suite runs everywhere now.
 describe("uv stubs", () => {
   const cwd = process.cwd();
   let tempdir: string = "";
   let outdir: string = "";
 
-  beforeAll(
-    async () => {
-      const files = {
-        "plugin.c": await Bun.file(source).text(),
-        "good_plugin.c": await Bun.file(goodSource).text(),
-        "package.json": JSON.stringify({
-          "name": "fake-plugin",
-          "module": "index.ts",
-          "type": "module",
-          "devDependencies": {
-            "@types/bun": "latest",
-          },
-          "peerDependencies": {
-            "typescript": "^5.0.0",
-          },
-          "scripts": {
-            "build:napi": "node-gyp configure && node-gyp build",
-          },
-          "dependencies": {
-            "node-gyp": "10.2.0",
-          },
-        }),
-        "index.ts": `const symbol = process.argv[2]; const foo = require("./build/Release/xXx123_foo_counter_321xXx.node"); foo.callUVFunc(symbol)`,
-        "nocrash.ts": `const foo = require("./build/Release/good_plugin.node");console.log('HI!')`,
-        "binding.gyp": `{
+  beforeAll(async () => {
+    const files = {
+      "plugin.c": await Bun.file(source).text(),
+      "good_plugin.c": await Bun.file(goodSource).text(),
+      "package.json": JSON.stringify({
+        "name": "fake-plugin",
+        "module": "index.ts",
+        "type": "module",
+        "devDependencies": {
+          "@types/bun": "latest",
+        },
+        "peerDependencies": {
+          "typescript": "^5.0.0",
+        },
+        "scripts": {
+          "build:napi": "node-gyp configure && node-gyp build",
+        },
+        "dependencies": {
+          "node-gyp": "10.2.0",
+        },
+      }),
+      "index.ts": `const symbol = process.argv[2]; const foo = require("./build/Release/xXx123_foo_counter_321xXx.node"); foo.callUVFunc(symbol)`,
+      "nocrash.ts": `const foo = require("./build/Release/good_plugin.node");console.log('HI!')`,
+      "binding.gyp": `{
   "targets": [
     {
       "target_name": "xXx123_foo_counter_321xXx",
@@ -64,22 +67,20 @@ describe("uv stubs", () => {
   ]
 }
 `,
-      };
+    };
 
-      tempdir = tempDirWithFiles("native-plugins", files);
+    tempdir = tempDirWithFiles("native-plugins", files);
 
-      await makeTree(tempdir, files);
-      outdir = path.join(tempdir, "dist");
+    await makeTree(tempdir, files);
+    outdir = path.join(tempdir, "dist");
 
-      process.chdir(tempdir);
+    process.chdir(tempdir);
 
-      const libuvDir = path.join(__dirname, "../../src/jsc/bindings/libuv");
-      await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`;
-      await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
-      console.log("tempdir:", tempdir);
-    },
-    5 * 60 * 1000,
-  );
+    const libuvDir = path.join(__dirname, "../../src/jsc/bindings/libuv");
+    await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`;
+    await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
+    console.log("tempdir:", tempdir);
+  }, 5 * 60 * 1000); // node-gyp build
 
   afterAll(() => {
     process.chdir(cwd);

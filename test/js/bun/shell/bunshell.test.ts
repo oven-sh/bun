@@ -2971,3 +2971,34 @@ test("cd treats interpolated arguments starting with tilde or dash as literal di
     expect(exitCode).toBe(1);
   }
 });
+
+describe("capture pipes and the event loop", () => {
+  // 2>&1 capture reads are engine-driven: a slow child must not block the
+  // JS thread, so an unrelated timer wins the race against the capture.
+  test("a timer fires while a silent child's 2>&1 capture is pending", async () => {
+    const timer = new Promise<string>(r => setTimeout(() => r("timer"), 50));
+    const shell = $`${BUN} -e ${"await new Promise(r => setTimeout(r, 1500)); console.log('late')"} 2>&1`
+      .quiet()
+      .then(() => "shell");
+    expect(await Promise.race([timer, shell])).toBe("timer");
+    // The capture itself still completes with both streams merged.
+    const out = await shell;
+    expect(out).toBe("shell");
+  });
+});
+
+describe("regular-file redirects write synchronously", () => {
+  // Regular files take the synchronous write arm (pipes/consoles stay
+  // async); every redirect spelling must produce exact bytes.
+  test("truncate, append, and stderr-only redirects produce exact content", async () => {
+    const dir = tmpdirSync();
+    const out = join(dir, "out.txt");
+    await $`echo one > ${out}`.quiet();
+    expect((await Bun.file(out).text()).trim()).toBe("one");
+    await $`echo two >> ${out}`.quiet();
+    expect((await Bun.file(out).text()).split(/\r?\n/).filter(Boolean)).toEqual(["one", "two"]);
+    const errf = join(dir, "err.txt");
+    await $`${BUN} -e ${"console.error('oops')"} 2> ${errf}`.quiet();
+    expect((await Bun.file(errf).text()).trim()).toBe("oops");
+  });
+});

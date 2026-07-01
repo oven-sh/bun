@@ -146,10 +146,10 @@ fn to_filetime_spec(t: f64) -> windows::fs::FileTimeSpec {
     } else if t.is_infinite() && t > 0.0 {
         FileTimeSpec::Now
     } else {
-        // Round, don't truncate: the JS ms → /1000.0 → ×1000.0 f64 round
-        // trip can land 1 ulp below an integral millisecond, and a bare
-        // `as i64` would set mtime 1 ms early.
-        FileTimeSpec::Millis((t * 1000.0).round() as i64)
+        // Seconds → 100 ns ticks in one f64 op: keeps the sub-millisecond
+        // fraction (issue #28017) and rounds so a 1-ulp-low value cannot
+        // land one tick early.
+        FileTimeSpec::UnixTicks((t * 10_000_000.0).round() as i64)
     }
 }
 

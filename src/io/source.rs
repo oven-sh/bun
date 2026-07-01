@@ -272,7 +272,15 @@ impl Source {
                 if pipe.fd.is_valid() {
                     pipe.fd
                 } else {
-                    Fd::from_system(pipe.handle.raw_handle())
+                    let h = pipe.handle.raw_handle();
+                    // Mirrors FileSink's construction guard: wrapping the
+                    // INVALID_HANDLE_VALUE sentinel would mint a garbage Fd
+                    // that is_valid() reports true.
+                    if h as usize == usize::MAX {
+                        Fd::INVALID
+                    } else {
+                        Fd::from_system(h)
+                    }
                 }
             }
             Source::Tty(tty) => tty.fd,

@@ -210,14 +210,14 @@ const isBoxedPrimitive = val => isBigIntObject(val) || isSymbolObject(val) || _n
 
 // We need this duplicate here to avoid a circular dependency between node:assert and node:util.
 class AssertionError extends Error {
-  constructor(message, isForced = false) {
+  constructor(message) {
     super(message);
     this.name = "AssertionError";
     this.code = "ERR_ASSERTION";
     this.operator = "==";
-    this.generatedMessage = !isForced;
-    this.actual = isForced && undefined;
-    this.expected = !isForced || undefined;
+    this.generatedMessage = true;
+    this.actual = false;
+    this.expected = true;
   }
 }
 function assert(p, message) {
@@ -1690,7 +1690,16 @@ function getStackFrames(ctx, err, stack) {
 
   // Remove stack frames identical to frames in cause.
   if (cause != null && cause instanceof Error) {
-    const causeStack = getStackString(ctx, cause);
+    // Only a string `cause.stack` has frames to deduplicate. Recursively formatting
+    // a non-string one (via `getStackString`) runs before `err` is on `ctx.seen`,
+    // so `cause.stack === err` would recurse without ever hitting the cycle check.
+    let causeStack = "";
+    try {
+      const causeStackValue = cause.stack;
+      if (typeof causeStackValue === "string") causeStack = causeStackValue;
+    } catch {
+      // A `stack` getter that throws leaves nothing to deduplicate.
+    }
     const causeStackStart = StringPrototypeIndexOf(causeStack, "\n    at");
     if (causeStackStart !== -1) {
       const causeFrames = StringPrototypeSplit(StringPrototypeSlice(causeStack, causeStackStart + 1), "\n");

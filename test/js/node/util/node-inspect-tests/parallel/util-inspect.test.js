@@ -1902,6 +1902,30 @@ test("util.inspect does not throw on values with throwing getters", () => {
     assert.strictEqual(util.inspect(err), "[Error: foo\n    [Circular *1]]");
   }
 
+  // The cause frame dedup must not recursively format a non-string `cause.stack`:
+  // the outer error is not on `ctx.seen` at that point, so `cause.stack === err`
+  // never terminates. (Node throws a stack-overflow RangeError on this input.)
+  {
+    const err = new Error("outer");
+    const cause = new Error("c");
+    Object.defineProperty(cause, "stack", { value: err });
+    err.cause = cause;
+    const out = util.inspect(err);
+    assert.match(out, /^<ref \*1> Error: outer\n {4}at /);
+    assert.match(out, /\{\n {2}cause: \[Error: c\n {6}\[Circular \*1\]\]\n\}$/);
+  }
+
+  // A `cause` whose `stack` and `name` getters both throw. (Node throws here.)
+  {
+    const cause = new Error("c");
+    for (const key of ["stack", "name"]) {
+      Object.defineProperty(cause, key, throwingGetter(key));
+    }
+    const out = util.inspect(new Error("outer", { cause }));
+    assert.match(out, /^Error: outer\n {4}at /);
+    assert.match(out, /\{\n {2}\[cause\]: \[object Error\]\n\}$/);
+  }
+
   // A non-string `stack` whose own formatting throws must leave `ctx` intact, so
   // a second occurrence of the error is not misreported as circular. (Node leaks
   // the error onto `ctx.seen` here and prints `[Circular *1]` for the second one.)

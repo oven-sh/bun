@@ -1667,17 +1667,25 @@ unsafe fn on_exit_query_times(_l: &mut Loop, data: *mut c_void, _code: i64, _sig
         let ctx = &mut *data.cast::<ExitCbHandleCtx>();
         ctx.fired = true;
         let h = (*ctx.handle).raw_handle();
-        let mut c = bun_windows_sys::FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
-        let mut e = bun_windows_sys::FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
-        let mut k = bun_windows_sys::FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
-        let mut u = bun_windows_sys::FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
-        ctx.times_ok = bun_windows_sys::GetProcessTimes(
-            h,
-            &raw mut c,
-            &raw mut e,
-            &raw mut k,
-            &raw mut u,
-        ) != 0;
+        let mut c = bun_windows_sys::FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let mut e = bun_windows_sys::FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let mut k = bun_windows_sys::FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let mut u = bun_windows_sys::FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        ctx.times_ok =
+            bun_windows_sys::GetProcessTimes(h, &raw mut c, &raw mut e, &raw mut k, &raw mut u)
+                != 0;
         // The child has exited, so its exit time must be a real timestamp —
         // proves the handle still addresses the dead process, not garbage.
         ctx.exit_time_nonzero = e.dwLowDateTime != 0 || e.dwHighDateTime != 0;
@@ -1737,7 +1745,10 @@ fn exit_cb_can_query_process_times() {
     // After the callback the dispatcher's eager close must have run.
     assert_eq!(child.raw_handle(), INVALID_HANDLE_VALUE);
     let before = ctx.closes;
-    child.close(Some(on_exit_cb_handle_close), ptr::from_mut(&mut *ctx).cast::<c_void>());
+    child.close(
+        Some(on_exit_cb_handle_close),
+        ptr::from_mut(&mut *ctx).cast::<c_void>(),
+    );
     // SAFETY: ctx live.
     tick_until(&mut loop_, 10_000, "close", || unsafe {
         (*ctx_ptr).closes > before
@@ -1880,7 +1891,15 @@ fn conpty_child_output_flows_through_pseudoconsole() {
 
     let mut hpc: bun_windows_sys::HANDLE = ptr::null_mut();
     // SAFETY: pipe ends are live; ConPTY duplicates what it needs.
-    let hr = unsafe { CreatePseudoConsole(TestCoord { x: 80, y: 25 }, in_read, out_write, 0, &raw mut hpc) };
+    let hr = unsafe {
+        CreatePseudoConsole(
+            TestCoord { x: 80, y: 25 },
+            in_read,
+            out_write,
+            0,
+            &raw mut hpc,
+        )
+    };
     assert_eq!(hr, 0, "CreatePseudoConsole HRESULT {hr:#x}");
 
     let file = comspec();
@@ -1899,7 +1918,9 @@ fn conpty_child_output_flows_through_pseudoconsole() {
     let mut child = unsafe { spawn_with(&mut loop_, &options, &mut ctx) }.expect("conpty spawn");
     let ctx_ptr: *const ExitCtx = &raw const *ctx;
     // SAFETY: ctx live.
-    tick_until(&mut loop_, 20_000, "conpty exit", || unsafe { (*ctx_ptr).fired });
+    tick_until(&mut loop_, 20_000, "conpty exit", || unsafe {
+        (*ctx_ptr).fired
+    });
     assert_eq!(ctx.code, 0);
 
     // Drain whatever the ConPTY produced (VT init + the echo). The child has
@@ -1910,7 +1931,14 @@ fn conpty_child_output_flows_through_pseudoconsole() {
         let mut avail: u32 = 0;
         // SAFETY: live pipe handle; out-params are locals.
         let ok = unsafe {
-            PeekNamedPipe(out_read, ptr::null_mut(), 0, ptr::null_mut(), &raw mut avail, ptr::null_mut())
+            PeekNamedPipe(
+                out_read,
+                ptr::null_mut(),
+                0,
+                ptr::null_mut(),
+                &raw mut avail,
+                ptr::null_mut(),
+            )
         };
         assert_ne!(ok, 0, "PeekNamedPipe failed");
         if avail > 0 {
@@ -1918,7 +1946,13 @@ fn conpty_child_output_flows_through_pseudoconsole() {
             let mut got: u32 = 0;
             // SAFETY: buf sized to avail; synchronous pipe read.
             let r = unsafe {
-                ReadFile(out_read, buf.as_mut_ptr().cast::<c_void>(), avail, &raw mut got, ptr::null_mut())
+                ReadFile(
+                    out_read,
+                    buf.as_mut_ptr().cast::<c_void>(),
+                    avail,
+                    &raw mut got,
+                    ptr::null_mut(),
+                )
             };
             assert_ne!(r, 0);
             collected.extend_from_slice(&buf[..got as usize]);

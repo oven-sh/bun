@@ -1761,7 +1761,12 @@ mod tests {
         .expect("spawn");
         child.unref();
         // SAFETY: loop_ live.
-        unsafe { assert!(!(*native(loop_)).alive(), "unref'd child must not ref the loop") };
+        unsafe {
+            assert!(
+                !(*native(loop_)).alive(),
+                "unref'd child must not ref the loop"
+            )
+        };
         let start = Instant::now();
         while !ctx.fired.get() {
             assert!(

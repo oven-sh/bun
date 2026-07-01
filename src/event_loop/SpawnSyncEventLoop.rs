@@ -245,7 +245,6 @@ impl SpawnSyncEventLoop {
         // guarantees no other safe borrow of the loop is live.
         unsafe { self.uws_loop.as_mut() }
     }
-
 }
 
 impl Drop for SpawnSyncEventLoop {

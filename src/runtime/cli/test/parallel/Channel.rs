@@ -19,11 +19,11 @@
 use core::ffi::c_void;
 use core::marker::PhantomData;
 
+#[cfg(windows)]
+use crate::api::bun::process as spawn;
 use bun_collections::VecExt;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::Fd;
-#[cfg(windows)]
-use crate::api::bun::process as spawn;
 use bun_sys::FdExt as _;
 #[cfg(not(windows))]
 use bun_uws as uws;

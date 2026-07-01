@@ -1735,7 +1735,9 @@ impl FileSystemFlags {
             // code that operates on bun.O flags works correctly.
             #[cfg(windows)]
             {
-                return Ok(Some(FileSystemFlags(bun_sys::windows::fs::bun_o_from_ucrt(flags))));
+                return Ok(Some(FileSystemFlags(
+                    bun_sys::windows::fs::bun_o_from_ucrt(flags),
+                )));
             }
             #[cfg(not(windows))]
             {

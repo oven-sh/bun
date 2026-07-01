@@ -1035,13 +1035,12 @@ impl EventLoop {
     /// went through `update_counts` must not be subtracted. Accuracy of the
     /// applied counter relies on `KeepAlive`'s concurrent-origin routing.
     #[cfg(windows)]
-    pub fn reconcile_concurrent_refs_for_teardown(
-        &self,
-        loop_: *mut crate::PlatformEventLoop,
-    ) {
+    pub fn reconcile_concurrent_refs_for_teardown(&self, loop_: *mut crate::PlatformEventLoop) {
         // Drop any never-applied pending delta so it cannot be mistaken for
         // loop-visible state by anything after us.
-        let _ = self.concurrent_ref.swap(0, core::sync::atomic::Ordering::SeqCst);
+        let _ = self
+            .concurrent_ref
+            .swap(0, core::sync::atomic::Ordering::SeqCst);
         let applied = self.applied_concurrent_refs.replace(0);
         if applied > 0 && !loop_.is_null() {
             // SAFETY: caller guarantees the loop outlives this call.

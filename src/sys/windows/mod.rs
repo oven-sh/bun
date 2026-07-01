@@ -3258,7 +3258,6 @@ mod _win32error_full_table {
     }
 } // mod _win32error_full_table
 
-
 pub use bun_errno::translate_uv_error_to_e;
 
 pub use bun_windows_sys::externs::GetProcAddress;
@@ -5011,7 +5010,6 @@ pub fn getenv_w(name: &[u16]) -> Option<Vec<u16>> {
         GetEnvW::NotFound | GetEnvW::Empty => None,
     }
 }
-
 
 bun_core::declare_scope!(windowsUserUniqueId, visible);
 

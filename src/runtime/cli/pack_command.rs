@@ -33,9 +33,7 @@ use bun_glob::matcher::MatchResult as GlobMatchResult;
 use bun_paths::resolve_path;
 use bun_semver as Semver;
 use bun_sha_hmac::sha;
-use bun_sys::{
-    self, CloseOnDrop, Dir, Fd, FdDirExt as _, File, dir_iterator as DirIterator,
-};
+use bun_sys::{self, CloseOnDrop, Dir, Fd, FdDirExt as _, File, dir_iterator as DirIterator};
 
 // ───────────────────────────────────────────────────────────────────────────
 // local shims for upstream-stub gaps
@@ -2671,7 +2669,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             };
 
             let fd: Fd = file;
-let _close_fd = CloseOnDrop::new(fd);
+            let _close_fd = CloseOnDrop::new(fd);
 
             let stat = match bun_sys::fstat(fd) {
                 Ok(s) => s,

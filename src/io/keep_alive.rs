@@ -46,7 +46,10 @@ impl KeepAlive {
         if self.status != Status::Active {
             return;
         }
-        debug_assert!(!self.concurrent_origin, "concurrent-origin ref released via deactivate");
+        debug_assert!(
+            !self.concurrent_origin,
+            "concurrent-origin ref released via deactivate"
+        );
         self.status = Status::Inactive;
         loop_.sub_active(1);
     }
@@ -56,7 +59,10 @@ impl KeepAlive {
         if self.status != Status::Active {
             return;
         }
-        debug_assert!(!self.concurrent_origin, "concurrent-origin ref released via deactivate");
+        debug_assert!(
+            !self.concurrent_origin,
+            "concurrent-origin ref released via deactivate"
+        );
         self.status = Status::Inactive;
         loop_.dec();
     }

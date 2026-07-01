@@ -4030,16 +4030,22 @@ mod windows_impl {
         w::fs::FileTimeSpec::Millis(t.sec.saturating_mul(1000) + t.nsec / 1_000_000)
     }
     pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
-        w::fs::futimes(fd, timelike_to_spec(atime), timelike_to_spec(mtime))
-            .map_err(|mut e| { e.syscall = Tag::futimens; e })
+        w::fs::futimes(fd, timelike_to_spec(atime), timelike_to_spec(mtime)).map_err(|mut e| {
+            e.syscall = Tag::futimens;
+            e
+        })
     }
     pub fn utimens(path: &ZStr, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
-        w::fs::utimes(path, timelike_to_spec(atime), timelike_to_spec(mtime))
-            .map_err(|mut e| { e.syscall = Tag::utimensat; e })
+        w::fs::utimes(path, timelike_to_spec(atime), timelike_to_spec(mtime)).map_err(|mut e| {
+            e.syscall = Tag::utimensat;
+            e
+        })
     }
     pub fn lutimens(path: &ZStr, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
-        w::fs::lutimes(path, timelike_to_spec(atime), timelike_to_spec(mtime))
-            .map_err(|mut e| { e.syscall = Tag::lutime; e })
+        w::fs::lutimes(path, timelike_to_spec(atime), timelike_to_spec(mtime)).map_err(|mut e| {
+            e.syscall = Tag::lutime;
+            e
+        })
     }
     pub fn exists_z(path: &ZStr) -> bool {
         // GetFileAttributesW != INVALID.
@@ -4101,8 +4107,9 @@ mod windows_impl {
         let mut r: w::HANDLE = core::ptr::null_mut();
         let mut wr: w::HANDLE = core::ptr::null_mut();
         // SAFETY: out-params are locals; default security, default size.
-        let ok =
-            unsafe { bun_windows_sys::CreatePipe(&raw mut r, &raw mut wr, core::ptr::null_mut(), 0) };
+        let ok = unsafe {
+            bun_windows_sys::CreatePipe(&raw mut r, &raw mut wr, core::ptr::null_mut(), 0)
+        };
         if ok == 0 {
             return Err(Error::new(w::Win32Error::get().to_e(), Tag::pipe));
         }
@@ -4188,11 +4195,10 @@ mod windows_impl {
         // before the `usize → i32` cast — otherwise ≥2 GiB buffers wrap to a
         // negative length and Winsock fails with WSAEFAULT.
         let len = buf.len().min(i32::MAX as usize) as i32;
-        let rc =
-            unsafe {
-                w::ensure_winsock();
-                w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr().cast::<_>(), len, flags)
-            };
+        let rc = unsafe {
+            w::ensure_winsock();
+            w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr().cast::<_>(), len, flags)
+        };
         if rc < 0 {
             return Err(
                 Error::new(w::WSAGetLastError().unwrap_or(E::EUNKNOWN), Tag::recv).with_fd(fd),
@@ -7217,8 +7223,7 @@ pub fn kevent(
 pub fn clonefile(from: &ZStr, to: &ZStr) -> Maybe<()> {
     // Crate `E`, not `libc::ENOTSUP` (MSVC 129 = KEYREJECTED in the
     // libuv-shaped Windows errno table), so fallback matching works.
-    Err(Error::from_code(E::ENOTSUP, Tag::clonefile)
-        .with_path_dest(from.as_bytes(), to.as_bytes()))
+    Err(Error::from_code(E::ENOTSUP, Tag::clonefile).with_path_dest(from.as_bytes(), to.as_bytes()))
 }
 
 /// `clonefileat` — macOS-only CoW copy relative to directory fds. On
@@ -8007,8 +8012,10 @@ pub mod net {
         // Same nominal types as `bun_sys::posix::sockaddr*` (see comment there)
         // so `Address::init_posix` accepts pointers callers cast through that
         // path. AF_* values come from ws2def.h.
-        pub(super) use bun_windows_sys::ws2_32::{sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
         pub(super) use bun_windows_sys::ws2_32::{AF_INET, AF_INET6};
+        pub(super) use bun_windows_sys::ws2_32::{
+            sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage,
+        };
     }
     use sock::*;
 
@@ -8485,9 +8492,7 @@ impl WindowsSymlinkOptions {
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(windows)]
 mod win_symlink_impl {
-    use super::{
-        E, Error, Maybe, Tag, Win32ErrorExt as _, WindowsSymlinkOptions, ZStr, windows,
-    };
+    use super::{E, Error, Maybe, Tag, Win32ErrorExt as _, WindowsSymlinkOptions, ZStr, windows};
     use bun_core::WStr;
     use core::sync::atomic::{AtomicU32, Ordering};
 

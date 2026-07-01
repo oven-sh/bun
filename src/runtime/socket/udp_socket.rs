@@ -14,10 +14,10 @@ use bun_ptr::BackRef;
 
 use crate::node::validators;
 use bun_cares_sys::c_ares_draft as c_ares;
-#[cfg(windows)]
-use bun_windows_sys::ws2_32::sockaddr_storage;
 use bun_sys::{self, SystemErrno};
 use bun_uws as uws;
+#[cfg(windows)]
+use bun_windows_sys::ws2_32::sockaddr_storage;
 #[cfg(not(windows))]
 use libc::sockaddr_storage;
 #[cfg(not(windows))]

@@ -63,12 +63,7 @@ impl FilePoll {
         vm.loop_sub_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
     }
 
-    pub fn init(
-        vm: EventLoopCtx,
-        fd: Fd,
-        flags: FlagsStruct,
-        owner: Owner,
-    ) -> *mut FilePoll {
+    pub fn init(vm: EventLoopCtx, fd: Fd, flags: FlagsStruct, owner: Owner) -> *mut FilePoll {
         // Crate-private backref-deref accessor — single live `&mut Store` borrow.
         vm.file_polls_mut()
             .get_init(FilePoll {
@@ -219,7 +214,10 @@ impl Store {
     /// never happens on Windows (no `register()` here), so recycling is
     /// immediate — the POSIX deferred-free list has no Windows counterpart.
     pub fn put(&mut self, poll: ptr::NonNull<FilePoll>, _vm: EventLoopCtx, ever_registered: bool) {
-        debug_assert!(!ever_registered, "windows FilePoll can never have registered");
+        debug_assert!(
+            !ever_registered,
+            "windows FilePoll can never have registered"
+        );
         let poll = poll.as_ptr();
         // SAFETY: `poll` is a fully-initialized hive slot; FilePoll has no
         // drop glue, so `put` is a no-op drop + recycle.

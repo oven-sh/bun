@@ -2402,9 +2402,8 @@ impl Drop for PipeReader {
         // is non-empty (same invariant `run_yield` relies on).
         if !self.interp.is_null() {
             // SAFETY: see comment above.
-            unsafe { &*self.interp }.scrub_deferred_subproc_chunks(
-                (&raw mut self.captured_writer).cast::<c_void>(),
-            );
+            unsafe { &*self.interp }
+                .scrub_deferred_subproc_chunks((&raw mut self.captured_writer).cast::<c_void>());
         }
         #[cfg(unix)]
         {

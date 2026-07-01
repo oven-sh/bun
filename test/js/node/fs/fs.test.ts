@@ -4967,9 +4967,7 @@ it("fs.promises.writeFile keeps a buffer path argument attached while options ar
 describe.skipIf(isWindows)("POSIX rmdir errno", () => {
   it("rmdir on a file is ENOTDIR", () => {
     using dir = tempDir("rmdir-enotdir", { "plain.txt": "x" });
-    expect(() => fs.rmdirSync(join(String(dir), "plain.txt"))).toThrow(
-      expect.objectContaining({ code: "ENOTDIR" }),
-    );
+    expect(() => fs.rmdirSync(join(String(dir), "plain.txt"))).toThrow(expect.objectContaining({ code: "ENOTDIR" }));
   });
 });
 

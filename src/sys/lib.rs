@@ -4077,7 +4077,9 @@ mod windows_impl {
     /// sub-millisecond precision (nsec truncates at the 100 ns tick).
     fn timelike_to_spec(t: TimeLike) -> w::fs::FileTimeSpec {
         w::fs::FileTimeSpec::UnixTicks(
-            t.sec.saturating_mul(10_000_000).saturating_add(t.nsec / 100),
+            t.sec
+                .saturating_mul(10_000_000)
+                .saturating_add(t.nsec / 100),
         )
     }
     pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {

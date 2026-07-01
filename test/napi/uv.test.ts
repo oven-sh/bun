@@ -17,27 +17,28 @@ describe("uv stubs", () => {
   let outdir: string = "";
   let nativeModule: any;
 
-  beforeAll(async () => {
-    const files = {
-      "uv_impl.c": await Bun.file(source).text(),
-      "package.json": JSON.stringify({
-        "name": "fake-plugin",
-        "module": "index.ts",
-        "type": "module",
-        "devDependencies": {
-          "@types/bun": "latest",
-        },
-        "peerDependencies": {
-          "typescript": "^5.0.0",
-        },
-        "scripts": {
-          "build:napi": "node-gyp configure && node-gyp build",
-        },
-        "dependencies": {
-          "node-gyp": "10.2.0",
-        },
-      }),
-      "binding.gyp": `{
+  beforeAll(
+    async () => {
+      const files = {
+        "uv_impl.c": await Bun.file(source).text(),
+        "package.json": JSON.stringify({
+          "name": "fake-plugin",
+          "module": "index.ts",
+          "type": "module",
+          "devDependencies": {
+            "@types/bun": "latest",
+          },
+          "peerDependencies": {
+            "typescript": "^5.0.0",
+          },
+          "scripts": {
+            "build:napi": "node-gyp configure && node-gyp build",
+          },
+          "dependencies": {
+            "node-gyp": "10.2.0",
+          },
+        }),
+        "binding.gyp": `{
         "targets": [
           {
             "target_name": "uv_test",
@@ -48,20 +49,22 @@ describe("uv stubs", () => {
           },
         ]
       }`,
-    };
+      };
 
-    tempdir = tempDirWithFiles("uv-tests", files);
-    await makeTree(tempdir, files);
-    outdir = path.join(tempdir, "dist");
+      tempdir = tempDirWithFiles("uv-tests", files);
+      await makeTree(tempdir, files);
+      outdir = path.join(tempdir, "dist");
 
-    process.chdir(tempdir);
+      process.chdir(tempdir);
 
-    const libuvDir = path.join(__dirname, "../../src/jsc/bindings/libuv");
-    await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`;
-    await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
+      const libuvDir = path.join(__dirname, "../../src/jsc/bindings/libuv");
+      await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`;
+      await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
 
-    nativeModule = require(path.join(tempdir, "./build/Release/uv_test.node"));
-  }, 5 * 60 * 1000); // node-gyp build
+      nativeModule = require(path.join(tempdir, "./build/Release/uv_test.node"));
+    },
+    5 * 60 * 1000,
+  ); // node-gyp build
 
   afterEach(() => {
     process.chdir(cwd);

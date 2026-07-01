@@ -370,7 +370,10 @@ describe("write() return values on files", () => {
   // The synchronous file arm completes inside the write() call; the byte
   // count must survive to the caller for both the latin1 and UTF-16 paths.
   it("returns the byte count for ascii and non-ascii strings", async () => {
-    const path = require("path").join(require("fs").mkdtempSync(require("path").join(require("os").tmpdir(), "sink-count-")), "out.txt");
+    const path = require("path").join(
+      require("fs").mkdtempSync(require("path").join(require("os").tmpdir(), "sink-count-")),
+      "out.txt",
+    );
     const sink = Bun.file(path).writer();
     expect(sink.write("abc")).toBe(3);
     // UTF-16-backed JS string: héllo → 6 UTF-8 bytes.

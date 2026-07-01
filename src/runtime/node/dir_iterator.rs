@@ -678,8 +678,7 @@ mod platform {
                 // A truncated/garbage trailing record (misbehaving driver or
                 // redirector) must not push the header reads past the buffer;
                 // treat it as end-of-batch and refill.
-                if entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileName)
-                    > self.end_index
+                if entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileName) > self.end_index
                 {
                     self.index = self.buf.len();
                     continue;

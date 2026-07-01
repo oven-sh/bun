@@ -834,10 +834,13 @@ impl Tree {
                 }
 
                 if pkg_resolutions[pkg_id as usize].tag == crate::resolution::Tag::Folder {
-                    break 'hoisted HoistDependencyResult::Placement(Placement {
-                        id: next_id,
-                        bundled: false,
-                    });
+                    // Folder packages never hoist to a parent (`next_id` is passed as
+                    // the hoist root), but a peer naming the same folder package as a
+                    // sibling entry must still dedupe here, or bun.lock gets a
+                    // duplicate package path and no longer parses.
+                    break 'hoisted Tree::hoist_dependency::<true, METHOD>(
+                        next_id, next_id, pkg_id, dep_id, builder,
+                    )?;
                 }
 
                 Tree::hoist_dependency::<true, METHOD>(

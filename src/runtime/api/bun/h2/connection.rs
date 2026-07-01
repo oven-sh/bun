@@ -2141,7 +2141,9 @@ mod tests {
         let mut server = Connection::new(true, Settings::default());
         server.begin_header_block();
         assert!(server.encode_header(b":method", b"GET", false));
+        assert!(server.encode_header(b":scheme", b"http", false));
         assert!(server.encode_header(b":path", b"/pushed", false));
+        assert!(server.encode_header(b":authority", b"localhost", false));
         server.send_push_promise(&ssink, 1, 2);
         let bytes = ssink.out.borrow().clone();
         assert_eq!(

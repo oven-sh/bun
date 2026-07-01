@@ -2186,14 +2186,18 @@ impl ReturnCode {
             None
         }
     }
-    /// [`err_enum`](Self::err_enum) that never loses an error: any negative
-    /// return code yields `Some`, collapsing unmapped codes to `E::UNKNOWN`.
+    /// [`err_enum`](Self::err_enum) that never loses an error: a negative code
+    /// that is not a `UV_E*` constant is retried as a raw errno magnitude
+    /// (libuv passes those through), then collapses to `E::UNKNOWN`.
     #[inline]
-    pub const fn err_enum_or_unknown(self) -> Option<bun_core::E> {
+    pub fn err_enum_or_unknown(self) -> Option<bun_core::E> {
         if self.0 < 0 {
             Some(match self.err_enum() {
                 Some(e) => e,
-                None => bun_core::E::UNKNOWN,
+                None => match bun_core::E::try_from_raw(-self.0 as u16) {
+                    Some(e) => e,
+                    None => bun_core::E::UNKNOWN,
+                },
             })
         } else {
             None
@@ -2246,14 +2250,18 @@ impl ReturnCodeI64 {
             None
         }
     }
-    /// [`err_enum`](Self::err_enum) that never loses an error: any negative
-    /// return code yields `Some`, collapsing unmapped codes to `E::UNKNOWN`.
+    /// [`err_enum`](Self::err_enum) that never loses an error: a negative code
+    /// that is not a `UV_E*` constant is retried as a raw errno magnitude
+    /// (libuv passes those through), then collapses to `E::UNKNOWN`.
     #[inline]
-    pub const fn err_enum_or_unknown(self) -> Option<bun_core::E> {
+    pub fn err_enum_or_unknown(self) -> Option<bun_core::E> {
         if self.0 < 0 {
             Some(match self.err_enum() {
                 Some(e) => e,
-                None => bun_core::E::UNKNOWN,
+                None => match bun_core::E::try_from_raw(-self.0 as u16) {
+                    Some(e) => e,
+                    None => bun_core::E::UNKNOWN,
+                },
             })
         } else {
             None

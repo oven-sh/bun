@@ -833,12 +833,17 @@ fn prepare_workspace_update_plan(
         return Ok(WorkspaceUpdatePlan::cwd_only());
     }
 
-    // Enumerating workspace members needs a lockfile. Without one there is no
-    // prior resolution to update against, so fall back to the default flow.
-    if !matches!(
-        manager.load_lockfile_from_cwd::<true>(),
-        lockfile::LoadResult::Ok(_)
-    ) {
+    // Enumerating workspace members needs a lockfile, but the plan only needs
+    // the workspace list, not migration, so probe without it (`<false>`).
+    // `install_with_manager` performs the real (migrating) load right after and
+    // owns the lockfile-error policy, so a missing/foreign/corrupt lockfile
+    // here just falls back to the default flow rather than migrating twice.
+    if !manager.options.do_.load_lockfile()
+        || !matches!(
+            manager.load_lockfile_from_cwd::<false>(),
+            lockfile::LoadResult::Ok(_)
+        )
+    {
         return Ok(WorkspaceUpdatePlan::cwd_only());
     }
 
@@ -874,17 +879,22 @@ fn prepare_workspace_update_plan(
             continue;
         }
 
-        let name_hash = manager.lockfile.packages.items_name_hash()[pkg_id as usize];
-        let rel: Box<[u8]> = {
+        let res_tag = manager.lockfile.packages.items_resolution()[pkg_id as usize].tag;
+        // `None` means the root workspace (the codebase convention
+        // `get_workspace_package_id` honors); only real workspaces carry a hash.
+        let name_hash: Option<PackageNameHash> = if res_tag == resolution::Tag::Workspace {
+            Some(manager.lockfile.packages.items_name_hash()[pkg_id as usize])
+        } else {
+            None
+        };
+        let rel: Box<[u8]> = if res_tag == resolution::Tag::Workspace {
             let res = manager.lockfile.packages.items_resolution()[pkg_id as usize];
-            if res.tag == resolution::Tag::Workspace {
-                Box::from(
-                    res.workspace()
-                        .slice(manager.lockfile.buffers.string_bytes.as_slice()),
-                )
-            } else {
-                Box::default()
-            }
+            Box::from(
+                res.workspace()
+                    .slice(manager.lockfile.buffers.string_bytes.as_slice()),
+            )
+        } else {
+            Box::default()
         };
 
         let mut path_buf = PathBuffer::uninit();
@@ -996,7 +1006,7 @@ fn select_filtered_workspaces(manager: &PackageManager, original_cwd: &[u8]) -> 
 fn prepare_member_before_install(
     manager: &mut PackageManager,
     abs_path: &[u8],
-    name_hash: PackageNameHash,
+    name_hash: Option<PackageNameHash>,
 ) -> Result<MemberUpdate, Error> {
     // Demote to a raw pointer so the edit pass can take `&mut manager`. A
     // selected workspace that can't be read/parsed is a hard failure (its
@@ -1046,7 +1056,7 @@ fn prepare_member_before_install(
     PackageJSONEditor::edit_update_no_args(
         manager,
         &mut updating_packages,
-        Some(name_hash),
+        name_hash,
         &mut member_root,
         EditOptions {
             exact_versions: true,
@@ -1073,7 +1083,7 @@ fn prepare_member_before_install(
 
     Ok(MemberUpdate {
         package_json_path: Box::from(abs_path),
-        name_hash: Some(name_hash),
+        name_hash,
         source_before_install,
         original_contents,
         updating_packages,

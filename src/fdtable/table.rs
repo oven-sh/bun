@@ -279,8 +279,7 @@ impl FdTable {
         }
         // SAFETY: pointer/length come from OUR startup info; the parser
         // treats every byte as hostile.
-        let blob =
-            unsafe { core::slice::from_raw_parts(si.lpReserved2, si.cbReserved2 as usize) };
+        let blob = unsafe { core::slice::from_raw_parts(si.lpReserved2, si.cbReserved2 as usize) };
         self.import_inherited_blob(blob);
     }
 
@@ -1673,7 +1672,9 @@ mod tests {
         let mut w: HANDLE = core::ptr::null_mut();
         // SAFETY: out-params are locals.
         assert_ne!(
-            unsafe { bun_windows_sys::CreatePipe(&raw mut r, &raw mut w, core::ptr::null_mut(), 0) },
+            unsafe {
+                bun_windows_sys::CreatePipe(&raw mut r, &raw mut w, core::ptr::null_mut(), 0)
+            },
             0
         );
         // SAFETY: live owned handles; ownership transfers to the table.
@@ -1696,9 +1697,8 @@ mod tests {
         /// invalid-parameter handler is installed — the reason both libuv's
         /// `uv__init` and bun's `process_init` install a no-op one. The
         /// oracle replicates that environment.
-        pub(super) type InvalidParamHandler = Option<
-            unsafe extern "C" fn(*const u16, *const u16, *const u16, u32, usize),
-        >;
+        pub(super) type InvalidParamHandler =
+            Option<unsafe extern "C" fn(*const u16, *const u16, *const u16, u32, usize)>;
         pub(super) unsafe extern "C" fn noop_invalid_param(
             _e: *const u16,
             _f: *const u16,
@@ -1741,7 +1741,11 @@ mod tests {
         fn write(&mut self, data: &[u8]) -> Obs {
             // SAFETY: live buffer; count = len.
             let n = unsafe { ucrt::_write(self.0, data.as_ptr().cast(), data.len() as u32) };
-            if n < 0 { Obs::Err } else { Obs::Wrote(n as usize) }
+            if n < 0 {
+                Obs::Err
+            } else {
+                Obs::Wrote(n as usize)
+            }
         }
         fn read(&mut self, n: usize) -> Obs {
             let mut buf = vec![0u8; n];
@@ -1761,7 +1765,11 @@ mod tests {
         fn close(&mut self) -> Obs {
             // SAFETY: fd is CRT-owned; double-close yields EBADF, no abort
             // (release ucrt _invalid_parameter_noinfo returns).
-            if unsafe { ucrt::_close(self.0) } == 0 { Obs::Closed } else { Obs::Err }
+            if unsafe { ucrt::_close(self.0) } == 0 {
+                Obs::Closed
+            } else {
+                Obs::Err
+            }
         }
     }
 
@@ -1864,8 +1872,7 @@ mod tests {
         );
 
         // SAFETY: handle ownership transfers to the CRT table.
-        let crt_fd =
-            unsafe { ucrt::_open_osfhandle(crt_handle.expose_provenance() as isize, 0) };
+        let crt_fd = unsafe { ucrt::_open_osfhandle(crt_handle.expose_provenance() as isize, 0) };
         assert!(crt_fd >= 0, "_open_osfhandle failed");
 
         // SAFETY: null std sentinels; ownership of table_handle transfers.
@@ -1895,7 +1902,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod inherited_blob_tests {
     use super::*;
@@ -1916,7 +1922,11 @@ mod inherited_blob_tests {
         unsafe {
             FdTable::with_capacity_and_std(
                 64,
-                [INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE],
+                [
+                    INVALID_HANDLE_VALUE,
+                    INVALID_HANDLE_VALUE,
+                    INVALID_HANDLE_VALUE,
+                ],
             )
         }
     }
@@ -1931,16 +1941,18 @@ mod inherited_blob_tests {
         let mut w: HANDLE = core::ptr::null_mut();
         // SAFETY: out-params are locals.
         assert_ne!(
-            unsafe { bun_windows_sys::CreatePipe(&raw mut r, &raw mut w, core::ptr::null_mut(), 0) },
+            unsafe {
+                bun_windows_sys::CreatePipe(&raw mut r, &raw mut w, core::ptr::null_mut(), 0)
+            },
             0
         );
         let entries = [
-            (0x01u8, 0usize),                      // fd 0 — stdio range, ignored by walk
-            (0x01, 0),                             // fd 1
-            (0x01, 0),                             // fd 2
-            (0x00, w.expose_provenance()),         // fd 3: FOPEN clear → skipped
-            (0x01, r.expose_provenance()),         // fd 4: live pipe → imported
-            (0x01, usize::MAX),                    // fd 5: INVALID sentinel → skipped
+            (0x01u8, 0usize),              // fd 0 — stdio range, ignored by walk
+            (0x01, 0),                     // fd 1
+            (0x01, 0),                     // fd 2
+            (0x00, w.expose_provenance()), // fd 3: FOPEN clear → skipped
+            (0x01, r.expose_provenance()), // fd 4: live pipe → imported
+            (0x01, usize::MAX),            // fd 5: INVALID sentinel → skipped
         ];
         let b = blob(entries.len() as u32, &entries);
         table.import_inherited_blob(&b);
@@ -1976,5 +1988,4 @@ mod inherited_blob_tests {
         table.import_inherited_blob(&[0u8, 0, 0, 0, 0xFF]);
         assert!(table.get(3).is_err());
     }
-
 }

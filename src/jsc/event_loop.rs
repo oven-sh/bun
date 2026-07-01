@@ -1043,7 +1043,9 @@ impl EventLoop {
     ) {
         // Drop any never-applied pending delta so it cannot be mistaken for
         // loop-visible state by anything after us.
-        let _ = self.concurrent_ref.swap(0, core::sync::atomic::Ordering::SeqCst);
+        let _ = self
+            .concurrent_ref
+            .swap(0, core::sync::atomic::Ordering::SeqCst);
         let applied = self.applied_concurrent_refs.replace(0);
         if applied > 0 && !loop_.is_null() {
             // SAFETY: caller guarantees the loop outlives this call.

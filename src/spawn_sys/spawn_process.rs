@@ -375,7 +375,6 @@ impl Default for PosixSpawnOptions {
     }
 }
 
-
 /// `bun.jsc.Subprocess.StdioKind` — defined here (not in `subprocess`) to keep
 /// the spawn-sys layer leaf. Re-exported up through `bun_spawn::process` →
 /// `bun_runtime::api::{bun_process, JscSubprocess}` → `shell::subproc`.

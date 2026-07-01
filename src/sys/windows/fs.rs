@@ -143,8 +143,9 @@ pub fn open(file_path: &ZStr, c_flags: i32, perm: Mode) -> Result<Fd> {
                 bun_fdtable::FdFlags::NONE
             };
             // SAFETY: same ownership transfer; on Err the handle is closed.
-            let idx = unsafe { bun_fdtable::the().mint(h, kind, fdflags) }
-                .map_err(|w| Error::new(win_error::translate(w), Tag::open).with_path(file_path.as_bytes()))?;
+            let idx = unsafe { bun_fdtable::the().mint(h, kind, fdflags) }.map_err(|w| {
+                Error::new(win_error::translate(w), Tag::open).with_path(file_path.as_bytes())
+            })?;
             Ok(Fd::from_table_index(idx))
         }
         Err(w) => {
@@ -197,9 +198,7 @@ fn positioned_table_io(
 fn read_impl(fd: Fd, bufs: &mut [&mut [u8]], position: Option<u64>, tag: Tag) -> Result<usize> {
     let r = match fd.decode_windows() {
         // SAFETY: bun_sys contract — the caller keeps `fd` open for the call.
-        bun_core::DecodeWindows::Windows(h) => unsafe {
-            bun_winfs::read_at(h, bufs, position)
-        },
+        bun_core::DecodeWindows::Windows(h) => unsafe { bun_winfs::read_at(h, bufs, position) },
         bun_core::DecodeWindows::Table(idx) => match position {
             None => {
                 bun_fdtable::the().sequential_io(idx, bun_fdtable::IoDir::Read, |h, off| {
@@ -230,9 +229,7 @@ fn read_impl(fd: Fd, bufs: &mut [&mut [u8]], position: Option<u64>, tag: Tag) ->
 fn write_impl(fd: Fd, bufs: &[&[u8]], position: Option<u64>, tag: Tag) -> Result<usize> {
     let r = match fd.decode_windows() {
         // SAFETY: bun_sys contract — the caller keeps `fd` open for the call.
-        bun_core::DecodeWindows::Windows(h) => unsafe {
-            bun_winfs::write_at(h, bufs, position)
-        },
+        bun_core::DecodeWindows::Windows(h) => unsafe { bun_winfs::write_at(h, bufs, position) },
         bun_core::DecodeWindows::Table(idx) => match position {
             None => {
                 bun_fdtable::the().sequential_io(idx, bun_fdtable::IoDir::Write, |h, off| {
@@ -590,7 +587,6 @@ pub fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mut ZStr>
     Ok(unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), len) })
 }
 
-
 // ── fsmisc-engine wrappers ──────────────────────────────────────────────────
 
 pub use bun_winfs::FileTimeSpec;
@@ -640,7 +636,9 @@ pub const SYMLINK_DIR: i32 = bun_winfs::SymlinkFlags::DIR.0 as i32;
 pub const SYMLINK_JUNCTION: i32 = bun_winfs::SymlinkFlags::JUNCTION.0 as i32;
 
 pub fn utimes(path: &ZStr, atime: FileTimeSpec, mtime: FileTimeSpec) -> Result<()> {
-    let r = with_wide(path, Tag::utime, |w| bun_winfs::utimes_path(w, atime, mtime));
+    let r = with_wide(path, Tag::utime, |w| {
+        bun_winfs::utimes_path(w, atime, mtime)
+    });
     log!("utimes({}) = {:?}", BStr::new(path.as_bytes()), r.is_ok());
     r
 }
@@ -665,7 +663,12 @@ pub fn futimes(fd: Fd, atime: FileTimeSpec, mtime: FileTimeSpec) -> Result<()> {
 pub fn chmod(path: &ZStr, mode: Mode) -> Result<()> {
     let readonly = mode & 0o200 == 0;
     let r = with_wide(path, Tag::chmod, |w| bun_winfs::chmod_path(w, readonly));
-    log!("chmod({}, {:o}) = {:?}", BStr::new(path.as_bytes()), mode, r.is_ok());
+    log!(
+        "chmod({}, {:o}) = {:?}",
+        BStr::new(path.as_bytes()),
+        mode,
+        r.is_ok()
+    );
     r
 }
 
@@ -693,7 +696,12 @@ pub fn access(path: &ZStr, mode: i32) -> Result<()> {
     let r = with_wide(path, Tag::access, |w| {
         bun_winfs::access_path(w, bun_winfs::AccessMode(mode as u32))
     });
-    log!("access({}, {}) = {:?}", BStr::new(path.as_bytes()), mode, r.is_ok());
+    log!(
+        "access({}, {}) = {:?}",
+        BStr::new(path.as_bytes()),
+        mode,
+        r.is_ok()
+    );
     r
 }
 

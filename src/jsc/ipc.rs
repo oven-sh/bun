@@ -1809,7 +1809,6 @@ impl SendQueue {
         }
         Ok(())
     }
-
 }
 
 impl Drop for SendQueue {

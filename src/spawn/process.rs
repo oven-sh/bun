@@ -58,9 +58,9 @@ bun_core::declare_scope!(PROCESS, visible);
 // The raw OS spawn layer (option/result structs, `Rusage`, `spawn_process_posix`)
 // moved into the leaf `bun_spawn_sys` crate so it has no event-loop dependency.
 // Re-export here so existing `bun_spawn::process::*` paths keep resolving.
-pub use bun_spawn_sys::spawn_process::{IoCounters, WinRusage, WinTimeval, rusage_zeroed};
 #[cfg(windows)]
 pub use bun_spawn_sys::process_rusage;
+pub use bun_spawn_sys::spawn_process::{IoCounters, WinRusage, WinTimeval, rusage_zeroed};
 pub use bun_spawn_sys::{
     Argv, CStrPtr, Dup2, Envp, ExtraPipe, FdT, PidFdType, PidT, PosixSpawnOptions,
     PosixSpawnResult, PosixStdio, Rusage, StdioKind,
@@ -919,8 +919,7 @@ impl PollerWindows {
     pub fn deinit(&mut self) {
         if matches!(self, PollerWindows::Engine(_)) {
             debug_assert!(false, "Process dropped with a live engine ProcessHandle");
-            let PollerWindows::Engine(h) = core::mem::replace(self, PollerWindows::Detached)
-            else {
+            let PollerWindows::Engine(h) = core::mem::replace(self, PollerWindows::Detached) else {
                 unreachable!()
             };
             Box::leak(h);
@@ -1921,7 +1920,12 @@ mod spawn_process_body {
                         client_ends.push(client);
                     }
                     Err(w) => {
-                        close_on_error(&mut parent_ends, &client_ends, &files_to_close, &mut dup_server);
+                        close_on_error(
+                            &mut parent_ends,
+                            &client_ends,
+                            &files_to_close,
+                            &mut dup_server,
+                        );
                         return Ok(Err(bun_sys::Error::new(
                             win_error::translate(w),
                             bun_sys::Tag::pipe,
@@ -1972,7 +1976,12 @@ mod spawn_process_body {
                         let path_z = match bun_sys::to_posix_path(path) {
                             Ok(p) => p,
                             Err(e) => {
-                                close_on_error(&mut parent_ends, &client_ends, &files_to_close, &mut dup_server);
+                                close_on_error(
+                                    &mut parent_ends,
+                                    &client_ends,
+                                    &files_to_close,
+                                    &mut dup_server,
+                                );
                                 return Err(e);
                             }
                         };
@@ -1987,7 +1996,12 @@ mod spawn_process_body {
                                 parent_ends.push(WindowsStdioResult::Unavailable);
                             }
                             Err(err) => {
-                                close_on_error(&mut parent_ends, &client_ends, &files_to_close, &mut dup_server);
+                                close_on_error(
+                                    &mut parent_ends,
+                                    &client_ends,
+                                    &files_to_close,
+                                    &mut dup_server,
+                                );
                                 return Ok(Err(err));
                             }
                         }
@@ -2004,11 +2018,13 @@ mod spawn_process_body {
                             client_overlapped: false,
                             client_inheritable: false,
                         })
-                        .and_then(|(server, client)| match adopt_server(server) {
-                            Ok(pipe) => Ok((pipe, client)),
-                            Err(w) => {
-                                Fd::from_system(client).close();
-                                Err(w)
+                        .and_then(|(server, client)| {
+                            match adopt_server(server) {
+                                Ok(pipe) => Ok((pipe, client)),
+                                Err(w) => {
+                                    Fd::from_system(client).close();
+                                    Err(w)
+                                }
                             }
                         });
                         match made {
@@ -2018,7 +2034,12 @@ mod spawn_process_body {
                                 parent_ends.push(WindowsStdioResult::Buffer(pipe));
                             }
                             Err(w) => {
-                                close_on_error(&mut parent_ends, &client_ends, &files_to_close, &mut dup_server);
+                                close_on_error(
+                                    &mut parent_ends,
+                                    &client_ends,
+                                    &files_to_close,
+                                    &mut dup_server,
+                                );
                                 return Ok(Err(bun_sys::Error::new(
                                     win_error::translate(w),
                                     bun_sys::Tag::uv_pipe,
@@ -2050,7 +2071,12 @@ mod spawn_process_body {
                         let path_z = match bun_sys::to_posix_path(path) {
                             Ok(p) => p,
                             Err(e) => {
-                                close_on_error(&mut parent_ends, &client_ends, &files_to_close, &mut dup_server);
+                                close_on_error(
+                                    &mut parent_ends,
+                                    &client_ends,
+                                    &files_to_close,
+                                    &mut dup_server,
+                                );
                                 return Err(e);
                             }
                         };
@@ -2065,7 +2091,12 @@ mod spawn_process_body {
                                 parent_ends.push(WindowsStdioResult::Unavailable);
                             }
                             Err(err) => {
-                                close_on_error(&mut parent_ends, &client_ends, &files_to_close, &mut dup_server);
+                                close_on_error(
+                                    &mut parent_ends,
+                                    &client_ends,
+                                    &files_to_close,
+                                    &mut dup_server,
+                                );
                                 return Ok(Err(err));
                             }
                         }
@@ -2073,15 +2104,16 @@ mod spawn_process_body {
                     WindowsStdio::Ipc | WindowsStdio::Buffer => {
                         // Extra channels are duplex with an OVERLAPPED child
                         // end (foreign runtimes adopt them into their loops).
-                        let made = create_pair(&PairOptions::duplex()).and_then(
-                            |(server, client)| match adopt_server(server) {
-                                Ok(pipe) => Ok((pipe, client)),
-                                Err(w) => {
-                                    Fd::from_system(client).close();
-                                    Err(w)
+                        let made =
+                            create_pair(&PairOptions::duplex()).and_then(|(server, client)| {
+                                match adopt_server(server) {
+                                    Ok(pipe) => Ok((pipe, client)),
+                                    Err(w) => {
+                                        Fd::from_system(client).close();
+                                        Err(w)
+                                    }
                                 }
-                            },
-                        );
+                            });
                         match made {
                             Ok((pipe, client)) => {
                                 client_ends.push(client);
@@ -2089,7 +2121,12 @@ mod spawn_process_body {
                                 parent_ends.push(WindowsStdioResult::Buffer(pipe));
                             }
                             Err(w) => {
-                                close_on_error(&mut parent_ends, &client_ends, &files_to_close, &mut dup_server);
+                                close_on_error(
+                                    &mut parent_ends,
+                                    &client_ends,
+                                    &files_to_close,
+                                    &mut dup_server,
+                                );
                                 return Ok(Err(bun_sys::Error::new(
                                     win_error::translate(w),
                                     bun_sys::Tag::uv_pipe,
@@ -2144,7 +2181,12 @@ mod spawn_process_body {
         let handle = match spawned {
             Ok(h) => h,
             Err(w) => {
-                close_on_error(&mut parent_ends, &client_ends, &files_to_close, &mut dup_server);
+                close_on_error(
+                    &mut parent_ends,
+                    &client_ends,
+                    &files_to_close,
+                    &mut dup_server,
+                );
                 // SAFETY: freshly allocated above; poller is Detached so
                 // close() is a no-op and deref frees the sole ref.
                 unsafe {
@@ -2387,7 +2429,10 @@ mod spawn_process_body {
                         let b = &mut (*this).buf;
                         (b.as_mut_ptr(), b.len())
                     };
-                    if let Err(w) = (*this).pipe.read_start(buf, len, Self::on_read, this.cast()) {
+                    if let Err(w) = (*this)
+                        .pipe
+                        .read_start(buf, len, Self::on_read, this.cast())
+                    {
                         // Intentionally leak `this`: the pipe handle is live on
                         // the loop and only a close callback may free it. The
                         // sole caller `Output::panic`s on error, so the leak is

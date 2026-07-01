@@ -165,4 +165,3 @@ pub fn ensure_winsock() {
 pub extern "C" fn Bun__ensure_winsock() {
     ensure_winsock();
 }
-

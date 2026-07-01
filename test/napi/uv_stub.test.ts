@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, makeTree, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, makeTree, tempDirWithFiles } from "harness";
 import path from "node:path";
 import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_posix_stubs_constants";
 import goodSource from "./uv-stub-stuff/good_plugin.c";
@@ -21,30 +21,31 @@ describe("uv stubs", () => {
   let tempdir: string = "";
   let outdir: string = "";
 
-  beforeAll(async () => {
-    const files = {
-      "plugin.c": await Bun.file(source).text(),
-      "good_plugin.c": await Bun.file(goodSource).text(),
-      "package.json": JSON.stringify({
-        "name": "fake-plugin",
-        "module": "index.ts",
-        "type": "module",
-        "devDependencies": {
-          "@types/bun": "latest",
-        },
-        "peerDependencies": {
-          "typescript": "^5.0.0",
-        },
-        "scripts": {
-          "build:napi": "node-gyp configure && node-gyp build",
-        },
-        "dependencies": {
-          "node-gyp": "10.2.0",
-        },
-      }),
-      "index.ts": `const symbol = process.argv[2]; const foo = require("./build/Release/xXx123_foo_counter_321xXx.node"); foo.callUVFunc(symbol)`,
-      "nocrash.ts": `const foo = require("./build/Release/good_plugin.node");console.log('HI!')`,
-      "binding.gyp": `{
+  beforeAll(
+    async () => {
+      const files = {
+        "plugin.c": await Bun.file(source).text(),
+        "good_plugin.c": await Bun.file(goodSource).text(),
+        "package.json": JSON.stringify({
+          "name": "fake-plugin",
+          "module": "index.ts",
+          "type": "module",
+          "devDependencies": {
+            "@types/bun": "latest",
+          },
+          "peerDependencies": {
+            "typescript": "^5.0.0",
+          },
+          "scripts": {
+            "build:napi": "node-gyp configure && node-gyp build",
+          },
+          "dependencies": {
+            "node-gyp": "10.2.0",
+          },
+        }),
+        "index.ts": `const symbol = process.argv[2]; const foo = require("./build/Release/xXx123_foo_counter_321xXx.node"); foo.callUVFunc(symbol)`,
+        "nocrash.ts": `const foo = require("./build/Release/good_plugin.node");console.log('HI!')`,
+        "binding.gyp": `{
   "targets": [
     {
       "target_name": "xXx123_foo_counter_321xXx",
@@ -63,20 +64,22 @@ describe("uv stubs", () => {
   ]
 }
 `,
-    };
+      };
 
-    tempdir = tempDirWithFiles("native-plugins", files);
+      tempdir = tempDirWithFiles("native-plugins", files);
 
-    await makeTree(tempdir, files);
-    outdir = path.join(tempdir, "dist");
+      await makeTree(tempdir, files);
+      outdir = path.join(tempdir, "dist");
 
-    process.chdir(tempdir);
+      process.chdir(tempdir);
 
-    const libuvDir = path.join(__dirname, "../../src/jsc/bindings/libuv");
-    await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`;
-    await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
-    console.log("tempdir:", tempdir);
-  }, 5 * 60 * 1000);
+      const libuvDir = path.join(__dirname, "../../src/jsc/bindings/libuv");
+      await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`;
+      await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
+      console.log("tempdir:", tempdir);
+    },
+    5 * 60 * 1000,
+  );
 
   afterAll(() => {
     process.chdir(cwd);

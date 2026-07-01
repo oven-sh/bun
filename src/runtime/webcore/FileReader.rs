@@ -7,9 +7,9 @@ use bun_io as aio;
 use bun_io::{BufferedReader, FileType, ReadState};
 use bun_jsc::JsCell;
 use bun_ptr::AsCtxPtr;
-use bun_sys::{self as sys, Fd};
 #[cfg(not(windows))]
 use bun_sys::FdExt as _;
+use bun_sys::{self as sys, Fd};
 
 use crate::webcore::blob;
 use crate::webcore::jsc::{self as jsc, EventLoopHandle, JSValue};

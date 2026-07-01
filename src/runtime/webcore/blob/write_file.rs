@@ -14,9 +14,9 @@ use bun_sys::{self as sys, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
 use crate::webcore::blob::{self, Blob, ClosingState, MkdirpTarget, SizeType};
-use crate::webcore::body;
 #[cfg(not(windows))]
 use crate::webcore::blob::{FileCloser, FileOpener, Retry, mkdir_if_not_exists};
+use crate::webcore::body;
 
 bun_output::declare_scope!(WriteFile, hidden);
 

@@ -1201,8 +1201,9 @@ impl Fd {
                 };
                 // SAFETY: same ownership contract; on Err the table already
                 // closed the handle (leak-impossible mint).
-                match unsafe { bun_fdtable::the().mint(handle, kind, bun_fdtable::FdFlags::ADOPTED) }
-                {
+                match unsafe {
+                    bun_fdtable::the().mint(handle, kind, bun_fdtable::FdFlags::ADOPTED)
+                } {
                     Ok(idx) => Ok(Fd::from_table_index(idx)),
                     Err(e) => Err(e.0 as u32),
                 }

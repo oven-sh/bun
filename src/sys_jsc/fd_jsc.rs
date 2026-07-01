@@ -2,9 +2,9 @@
 
 use core::ffi::c_int;
 
+use bun_sys::Fd;
 #[cfg(windows)]
 use bun_sys::FdKind;
-use bun_sys::Fd;
 
 use crate::{JSGlobalObject, JSValue, JsResult, RangeErrorOptions};
 
@@ -85,9 +85,9 @@ impl FdJsc for Fd {
                 // (POSIX make_table_owned is the identity — this arm only
                 // compiles there; `code` maps through the plain errno path.)
                 #[cfg(windows)]
-                let e = bun_sys::windows::win_error::translate(
-                    bun_sys::windows::Win32Error(u16::try_from(code).unwrap_or(u16::MAX)),
-                );
+                let e = bun_sys::windows::win_error::translate(bun_sys::windows::Win32Error(
+                    u16::try_from(code).unwrap_or(u16::MAX),
+                ));
                 #[cfg(not(windows))]
                 let e = bun_sys::E::from_raw(code as u16);
                 let err = bun_sys::Error::new(e, bun_sys::Tag::open);

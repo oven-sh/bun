@@ -1169,7 +1169,9 @@ impl WindowsBufferedReader {
             let rc = unsafe {
                 match self.source.as_mut().expect("transferred source") {
                     Source::Pipe(pipe) => pipe.read_start(Self::on_pipe_read, self_ptr),
-                    Source::Tty(tty) => Source::tty_mut(tty).read_start(Self::on_tty_read, self_ptr),
+                    Source::Tty(tty) => {
+                        Source::tty_mut(tty).read_start(Self::on_tty_read, self_ptr)
+                    }
                     Source::File(_) | Source::SyncFile(_) => Win32Error::SUCCESS,
                 }
             };

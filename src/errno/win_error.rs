@@ -393,16 +393,25 @@ mod tests {
         // ...and a genuine NTSTATUS that is neither in the table nor wrapped
         // falls back to WSAEINVAL — never misclassified as a wrapped code
         // (upstream 0ded5d29). STATUS_DATATYPE_MISALIGNMENT: facility 0.
-        assert_eq!(ntstatus_to_winsock(NTSTATUS(0x8000_0002)), Win32Error::WSAEINVAL);
+        assert_eq!(
+            ntstatus_to_winsock(NTSTATUS(0x8000_0002)),
+            Win32Error::WSAEINVAL
+        );
     }
 
     /// Pure pin of the OS-49 formula: warning severity + FACILITY_NTWIN32 +
     /// code, i.e. `0x8007xxxx` — NOT the DDK macro's `0xC007xxxx`.
     #[test]
     fn ntstatus_from_win32_formula() {
-        assert_eq!(ntstatus_from_win32(Win32Error::ACCESS_DENIED).0, 0x8007_0005);
+        assert_eq!(
+            ntstatus_from_win32(Win32Error::ACCESS_DENIED).0,
+            0x8007_0005
+        );
         assert_eq!(ntstatus_from_win32(Win32Error::BROKEN_PIPE).0, 0x8007_006D);
-        assert_eq!(ntstatus_from_win32(Win32Error::WSAECONNRESET).0, 0x8007_2746);
+        assert_eq!(
+            ntstatus_from_win32(Win32Error::WSAECONNRESET).0,
+            0x8007_2746
+        );
     }
 
     /// The warning-severity form (and only that form) round-trips through

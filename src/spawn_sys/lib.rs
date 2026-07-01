@@ -177,10 +177,10 @@ pub mod pdeathsig {
 // Public surface — flat re-exports so `bun_spawn` can `pub use bun_spawn_sys::*`.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(unix)]
-pub use spawn_process::spawn_process_posix;
 #[cfg(windows)]
 pub use spawn_process::process_rusage;
+#[cfg(unix)]
+pub use spawn_process::spawn_process_posix;
 pub use spawn_process::{
     Dup2, ExtraPipe, FdT, IoCounters, PidFdType, PidT, PosixSpawnOptions, PosixSpawnResult,
     PosixStdio, Rusage, RusageFields, StdioKind, WinRusage, WinTimeval, rusage_zeroed,

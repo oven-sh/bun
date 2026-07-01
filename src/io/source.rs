@@ -668,7 +668,7 @@ pub(crate) extern "C" fn Bun__Tty__getWindowSize(
     width: *mut c_int,
     height: *mut c_int,
 ) -> c_int {
-    use bun_windows_sys::{COORD, CONSOLE_SCREEN_BUFFER_INFO, SMALL_RECT};
+    use bun_windows_sys::{CONSOLE_SCREEN_BUFFER_INFO, COORD, SMALL_RECT};
     if fd < 0 {
         return bun_sys::E::BADF as c_int;
     }

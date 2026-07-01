@@ -1920,10 +1920,7 @@ impl<'a> ESModule<'a> {
                             return Resolution {
                                 path: Box::<[u8]>::from(subpath),
                                 status: Status::InvalidModuleSpecifier,
-                                debug: ResolutionDebug {
-                                    token: target.first_token,
-                                    ..Default::default()
-                                },
+                                debug: ResolutionDebug::default(),
                             };
                         }
                     };
@@ -1940,10 +1937,7 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::<[u8]>::from(str),
                         status: Status::InvalidPackageTarget,
-                        debug: ResolutionDebug {
-                            token: target.first_token,
-                            ..Default::default()
-                        },
+                        debug: ResolutionDebug::default(),
                     };
                 }
 

@@ -13,8 +13,22 @@ export async function registerTests(
   // One controller per workspace folder so each folder resolves its own
   // folder-scoped settings (`bun.runtime`, `bun.test.*`) and discovers tests
   // with its own `filePattern`. This is what makes multi-root workspaces work.
-  const controllers = new Map<string, { controller: vscode.TestController; bun: vscode.Disposable }>();
+  const controllers = new Map<
+    string,
+    { controller: vscode.TestController; bun: vscode.Disposable; folder: vscode.WorkspaceFolder }
+  >();
   let shownVersionError = false;
+
+  // Disambiguate the folder name only when more than one folder is open; a
+  // single-root workspace keeps the plain "Bun Tests" title.
+  const labelFor = (folder: vscode.WorkspaceFolder): string =>
+    (vscode.workspace.workspaceFolders || []).length > 1 ? `Bun Tests (${folder.name})` : "Bun Tests";
+
+  const refreshLabels = (): void => {
+    for (const { controller, folder } of controllers.values()) {
+      controller.label = labelFor(folder);
+    }
+  };
 
   const addFolder = (folder: vscode.WorkspaceFolder): void => {
     const key = folder.uri.toString();
@@ -27,15 +41,13 @@ export async function registerTests(
       return;
     }
 
+    let controller: vscode.TestController | undefined;
     try {
-      const multiRoot = (vscode.workspace.workspaceFolders || []).length > 1;
-      const controller = vscode.tests.createTestController(
-        `bun:${key}`,
-        multiRoot ? `Bun Tests (${folder.name})` : "Bun Tests",
-      );
+      controller = vscode.tests.createTestController(`bun:${key}`, labelFor(folder));
       const bun = createController(controller, folder);
-      controllers.set(key, { controller, bun });
+      controllers.set(key, { controller, bun, folder });
     } catch (error) {
+      controller?.dispose();
       debug.appendLine(`Error initializing Bun Test Controller: ${error}`);
       if (!shownVersionError) {
         shownVersionError = true;
@@ -65,6 +77,8 @@ export async function registerTests(
     vscode.workspace.onDidChangeWorkspaceFolders(event => {
       for (const folder of event.removed) removeFolder(folder);
       for (const folder of event.added) addFolder(folder);
+      // Folder count may have crossed the single/multi-root boundary.
+      refreshLabels();
     }),
     {
       dispose() {

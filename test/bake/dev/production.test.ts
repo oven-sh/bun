@@ -11,39 +11,43 @@ const platformPath = (path: string) => (process.platform === "win32" ? path.repl
  * Production build tests
  */
 describe("production", () => {
-  test("works with sourcemaps - error thrown in React component", async () => {
-    const dir = await tempDirWithBakeDeps("bake-production-sourcemap", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
-      "pages/index.tsx": `export default function IndexPage() {
+  test(
+    "works with sourcemaps - error thrown in React component",
+    async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-sourcemap", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/index.tsx": `export default function IndexPage() {
   throw new Error("oh no!");
   return <div>Hello World</div>;
 }`,
-      "package.json": JSON.stringify({
-        "name": "test-app",
-        "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
-          "react-dom": "^18.0.0",
-        },
-      }),
-    });
+        "package.json": JSON.stringify({
+          "name": "test-app",
+          "version": "1.0.0",
+          "devDependencies": {
+            "react": "^18.0.0",
+            "react-dom": "^18.0.0",
+          },
+        }),
+      });
 
-    // Run the build command
-    const {
-      exitCode: buildExitCode,
-      stdout: buildStdout,
-      stderr: buildStderr,
-    } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).throws(false);
+      // Run the build command
+      const {
+        exitCode: buildExitCode,
+        stdout: buildStdout,
+        stderr: buildStderr,
+      } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).throws(false);
 
-    // The build should fail due to the runtime error during SSG
-    expect(buildExitCode).toBe(1);
+      // The build should fail due to the runtime error during SSG
+      expect(buildExitCode).toBe(1);
 
-    // Check that the error message shows the proper source location
-    expect(buildStderr.toString()).toContain("throw new Error");
-    expect(buildStderr.toString()).toContain("oh no!");
-    // https://github.com/oven-sh/bun/issues/33214: the build must surface the
-    // thrown error and exit rather than hang on a render promise that never settles.
-  }, isASAN ? 60_000 : 30_000);
+      // Check that the error message shows the proper source location
+      expect(buildStderr.toString()).toContain("throw new Error");
+      expect(buildStderr.toString()).toContain("oh no!");
+      // https://github.com/oven-sh/bun/issues/33214: the build must surface the
+      // thrown error and exit rather than hang on a render promise that never settles.
+    },
+    isASAN ? 60_000 : 30_000,
+  );
 
   test("import.meta properties are inlined in production build", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-import-meta", {

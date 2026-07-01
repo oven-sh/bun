@@ -1233,12 +1233,14 @@ impl WindowsBufferedReader {
     /// an operating `uv_fs_read` writes through `File::iov` from the
     /// threadpool (`uv_cancel` is best-effort). Freeing the allocation while
     /// such a read is pending lets that write land in freed heap memory and
-    /// corrupt whatever is allocated there next. When a read may still land,
-    /// leak the buffer instead: file sources park it in
-    /// `File::retained_read_buffer` (reclaimed in `on_close_complete`) before
-    /// this runs; console reads have no completion signal left to observe, so
-    /// that leak is permanent but bounded to one spare-capacity buffer per
-    /// torn-down reader.
+    /// corrupt whatever is allocated there next. `close_impl` parks such a
+    /// buffer on its source, which outlives the read and reclaims it there
+    /// (`File::retained_read_buffer`, freed in `on_close_complete`;
+    /// `Tty::retained_read_buffer`, freed at the tty's next alloc_cb or with
+    /// its close callback), so by the time this runs `_buffer` is empty. The
+    /// forget below is the backstop for a torn-down reader whose source is
+    /// already closing and so was never reachable from `close_impl`: leak one
+    /// spare-capacity buffer rather than corrupt the heap.
     fn release_buffer_on_teardown(&mut self) {
         let buffer = mem::take(&mut self._buffer);
         if self.flags.contains(WindowsFlags::HAS_INFLIGHT_READ) {
@@ -1404,6 +1406,13 @@ impl WindowsBufferedReader {
         // event loop with no other Rust borrow of the reader live, so this is
         // the sole `&mut` to the allocation (single-owner).
         let this = unsafe { bun_ptr::callback_ctx::<WindowsBufferedReader>((*handle).data) };
+        // A previous, torn-down reader of this tty may have parked its buffer
+        // on it while a console line read was still in flight. libuv keeps at
+        // most one read request in flight per handle, so reaching alloc_cb
+        // again proves that request finished; free the buffer now.
+        if let Some(source) = this.source.as_mut() {
+            source.release_retained_read_buffer();
+        }
         let result = this.get_read_buffer_with_stable_memory_address(suggested_size);
         // SAFETY: buf is a valid out-pointer from libuv.
         unsafe {
@@ -1801,15 +1810,26 @@ impl WindowsBufferedReader {
                     }
                 }
                 #[cfg(windows)]
-                Source::Tty(tty) => {
+                Source::Tty(mut tty) => {
+                    // A cooked-mode console line read may still be in flight:
+                    // libuv's worker thread writes the typed (or
+                    // cancellation-injected) line into `_buffer`, and a
+                    // cancelled read is never returned through read_cb. Park
+                    // the buffer on the tty, which outlives the read; see
+                    // `Tty::retained_read_buffer` for how it is freed.
+                    if self.flags.contains(WindowsFlags::HAS_INFLIGHT_READ) {
+                        let parked = Source::tty_mut(&mut tty);
+                        debug_assert!(parked.retained_read_buffer.capacity() == 0);
+                        parked.retained_read_buffer = mem::take(&mut self._buffer);
+                    }
                     let p = tty.as_ptr();
                     if crate::source::stdin_tty::is_stdin_tty(p) {
                         // Node only ever closes stdin on process exit.
                     } else {
-                        // SAFETY: tty is a live heap-allocated uv_tty_t*.
+                        // SAFETY: tty is a live heap-allocated Tty*.
                         unsafe {
-                            (*p).data = p.cast::<c_void>();
-                            (*p).close(Self::on_tty_close);
+                            (*p).uv.data = p.cast::<c_void>();
+                            (*p).uv.close(Self::on_tty_close);
                         }
                     }
 
@@ -1884,13 +1904,15 @@ impl WindowsBufferedReader {
 
     #[cfg(windows)]
     extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
-        // `close_impl` set `handle.data = handle` and called `uv_close(handle)`;
-        // libuv passes the same pointer back, so `handle` *is* the tty ptr.
-        // Caller already gates on `!is_stdin_tty` before scheduling close, so
-        // `handle` is heap-allocated (open_tty heap::alloc). Reclaim and drop.
-        debug_assert!(!crate::source::stdin_tty::is_stdin_tty(handle));
+        // `close_impl` set `handle.uv.data = handle` and called
+        // `uv_close(&handle.uv)`; libuv passes the embedded handle back, and
+        // `from_uv` recovers the owning `Tty`. Caller already gates on
+        // `!is_stdin_tty` before scheduling close, so `tty` is heap-allocated
+        // (open_tty). Reclaim and drop, including any retained read buffer.
+        let tty = crate::source::Tty::from_uv(handle);
+        debug_assert!(!crate::source::stdin_tty::is_stdin_tty(tty));
         // SAFETY: non-stdin tty is heap-allocated; sole owner after uv_close.
-        drop(unsafe { bun_core::heap::take(handle) });
+        drop(unsafe { bun_core::heap::take(tty) });
     }
 
     pub(crate) fn on_read(

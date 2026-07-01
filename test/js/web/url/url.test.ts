@@ -239,6 +239,10 @@ describe("url", () => {
       ["http://example.com/a/b/c", "host", "\t:80", "http://example.com/a/b/c"],
       ["http://example.com/a/b/c", "host", "\t:99", "http://example.com/a/b/c"],
       ["http://example.com/a/b/c", "host", "\t:x", "http://example.com/a/b/c"],
+      // a leading space is NOT removed (that trim is for top-level parses only);
+      // it makes the host non-empty and then fails host parsing, also a no-op
+      ["http://example.com/a/b/c", "host", " #z", "http://example.com/a/b/c"],
+      ["http://example.com/a/b/c", "hostname", " /z", "http://example.com/a/b/c"],
       // the part before the first terminator still applies when it is non-empty
       ["http://example.com/a/b/c", "host", "y#z", "http://y/a/b/c"],
       ["http://example.com/a/b/c", "hostname", "y/z", "http://y/a/b/c"],

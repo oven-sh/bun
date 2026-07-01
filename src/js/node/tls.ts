@@ -789,7 +789,9 @@ var InternalSecureContext = class SecureContext {
 };
 
 function SecureContext(options): void {
-  return new InternalSecureContext(options) as never;
+  // Same contract as createSecureContext(): user-constructed contexts own
+  // their SSL_CTX exclusively (see the note there), so delegate to it.
+  return createSecureContext(options) as never;
 }
 
 function createSecureContext(options) {
@@ -914,8 +916,8 @@ function TLSSocket(socket?, options?) {
     // server-upgrade method below; leaving it unset until then means a synchronous
     // teardown during upgradeTLS won't call close() on the bare net.Socket.
   }
-  // Internal path: keep the per-digest cache (only the user-facing
-  // tls.createSecureContext() owns its SSL_CTX exclusively).
+  // Internal path: keep the per-digest cache (the user-facing constructors,
+  // createSecureContext() and new tls.SecureContext(), own theirs exclusively).
   this[ksecureContext] = options.secureContext || new InternalSecureContext(options);
   this.authorized = false;
   this.secureConnecting = true;

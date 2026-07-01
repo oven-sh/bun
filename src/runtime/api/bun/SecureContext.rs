@@ -186,7 +186,7 @@ impl SecureContext {
         Ok(result)
     }
 
-    /// `tls.createSecureContext()` entry - builds a context that owns its
+    /// `tls.createSecureContext()` / `new tls.SecureContext()` entry - builds a context that owns its
     /// SSL_CTX exclusively: no digest memoisation at either the JS-wrapper
     /// cache or the native SSLContextCache level, so prototype mutators like
     /// `addCACert` can never affect another context (or the cached

@@ -220,6 +220,40 @@ test("addCACert on one user-facing context does not affect another with identica
   expect(a.context).not.toBe(b.context);
 });
 
+// The exported constructor is user-facing too: it must never hand out the
+// digest-interned SSL_CTX, or addCACert on one instance would silently extend
+// the trust store of every context sharing that digest.
+test("new tls.SecureContext() owns its native handle exclusively, like createSecureContext()", () => {
+  const a = new (tls as any).SecureContext({ ca: tlsCerts.cert });
+  const b = new (tls as any).SecureContext({ ca: tlsCerts.cert });
+  // The interned cache would hand both the same native cell.
+  expect(a.context).not.toBe(b.context);
+});
+
+test("addCACert on one exported SecureContext instance does not change what another verifies", async () => {
+  // agent6's chain roots at ca1, which is not in the default roots: a client
+  // using `b` must keep rejecting it after `a` starts trusting ca1 (Node
+  // isolates the contexts and fails this connection closed).
+  const fx = (n: string) => readFileSync(join(import.meta.dir, "fixtures", n), "utf8");
+  const server = tls.createServer({ key: fx("agent6-key.pem"), cert: fx("agent6-cert.pem") }, s => s.end());
+  server.listen(0);
+  await once(server, "listening");
+  const { port } = server.address() as import("net").AddressInfo;
+  const a = new (tls as any).SecureContext({ ca: fx("ca2-cert.pem") });
+  const b = new (tls as any).SecureContext({ ca: fx("ca2-cert.pem") });
+  a.context.addCACert(fx("ca1-cert.pem"));
+  const outcome = Promise.withResolvers<string>();
+  const socket = tls.connect({ port, secureContext: b, checkServerIdentity: () => undefined });
+  socket.on("secureConnect", () => outcome.resolve(`secureConnect authorized=${socket.authorized}`));
+  socket.on("error", error => outcome.resolve(`error ${(error as NodeJS.ErrnoException).code}`));
+  try {
+    expect(await outcome.promise).toBe("error UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
+  } finally {
+    socket.destroy();
+    server.close();
+  }
+});
+
 test("setDefaultCACertificates() override applies to plain tls.connect (no explicit ca)", async () => {
   const keys = (f: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", f));
   const prev = tls.getCACertificates("default");

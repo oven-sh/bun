@@ -834,7 +834,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     fn parse_array(&mut self, loc: Loc) -> PResult<Expr> {
         if !self.stack_check.is_safe_to_recurse() {
-            return Err(bun_core::err!("StackOverflow"));
+            return Err(self.too_deeply_nested(loc));
         }
         self.cursor += 1; // [
         let mark = self.scratch_json_items.len();
@@ -925,7 +925,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     fn parse_object(&mut self, loc: Loc) -> PResult<Expr> {
         if !self.stack_check.is_safe_to_recurse() {
-            return Err(bun_core::err!("StackOverflow"));
+            return Err(self.too_deeply_nested(loc));
         }
         self.cursor += 1; // {
         let mark = self.scratch_props.len();
@@ -1123,6 +1123,18 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         };
         self.dup_hashes.push(h);
         dup
+    }
+
+    /// Log the depth-limit diagnostic (the `StackOverflow` error alone
+    /// reaches callers that only report the log) and return the error the
+    /// stack-overflow entry points special-case.
+    #[cold]
+    fn too_deeply_nested(&mut self, loc: Loc) -> bun_core::Error {
+        let _ = self.add_range_error(
+            Range { loc, len: 1 },
+            format_args!("JSON document is too deeply nested"),
+        );
+        bun_core::err!("StackOverflow")
     }
 
     #[cold]

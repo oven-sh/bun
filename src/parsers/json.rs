@@ -383,7 +383,22 @@ fn parse_classic(
         ..opts
     };
     let mut out = parse_impl(source, log, opts, check_len)?;
-    out.root = materialize_impl(&out.root, source, bump, opts.was_originally_macro)?;
+    out.root = match materialize_impl(&out.root, source, bump, opts.was_originally_macro) {
+        Ok(root) => root,
+        Err(e) => {
+            // The parse's own guard bounds depth for its frames, not this
+            // walk's; give the log a diagnostic before propagating.
+            log.add_error_fmt_opts(
+                format_args!("JSON document is too deeply nested"),
+                bun_ast::AddErrorOptions {
+                    source: Some(source),
+                    loc: out.root.loc,
+                    ..Default::default()
+                },
+            );
+            return Err(e);
+        }
+    };
     // The classic tree borrows nothing from the row tape: drop it.
     out.tape = None;
     Ok(out)
@@ -2387,8 +2402,13 @@ mod tests {
             s.push('[');
         }
         let p = run(s.as_bytes(), Which::Utf8);
-        // Either a graceful syntax error or a stack-depth error — never a crash.
+        // A graceful, diagnosable depth error — never a crash.
         assert!(p.root.is_none());
+        assert!(
+            p.first_msg.contains("too deeply nested"),
+            "{}",
+            p.first_msg
+        );
     }
 
     // ── env / auto-quote entry point ─────────────────────────────────────

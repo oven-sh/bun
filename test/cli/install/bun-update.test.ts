@@ -361,6 +361,32 @@ for (const args of [["update", "--latest"], ["update"], ["update", "baz", "baz-a
 }
 
 // https://github.com/oven-sh/bun/issues/13388
+// `bun update <name>` on a versionless scoped alias records no dependency
+// group for the entry, and bun.lock must still end at the same resolved
+// range package.json gets.
+it("update <name> of a versionless scoped alias keeps the files in agreement, issue#13388", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.1.0": {}, latest: "0.1.0" }));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "foo", dependencies: { "scoped-alias": "npm:@barn/moo" } }),
+  );
+
+  await runInPackageDir(["install", "--save-text-lockfile"]);
+  await runInPackageDir(["update", "scoped-alias"]);
+
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    dependencies: { "scoped-alias": "^0.1.0" },
+  });
+  const lockfile = await file(join(package_dir, "bun.lock")).text();
+  expect(lockfile).toContain(`"scoped-alias": "^0.1.0"`);
+
+  const { err } = await runInPackageDir(["install"]);
+  expect(err).not.toContain("Saved lockfile");
+});
+
+// https://github.com/oven-sh/bun/issues/13388
 // When a package exists in two dependency groups, only one group moves in
 // package.json, and no-arg and positional updates pick different groups. The
 // untouched group's bun.lock entry must stay unchanged too.

@@ -1359,16 +1359,21 @@ fn positional_update_literal(
     exact_versions: bool,
 ) -> Option<Vec<u8>> {
     if let Some(entry) = updating_packages.get(dep.name.slice(string_buf)) {
-        if !dep.behavior.intersects(entry.group_behavior) {
-            return None;
+        // `edit` leaves a default-initialized entry, with no group recorded,
+        // for a positional alias target whose version tag it cannot classify.
+        // That is not a group mismatch; it takes the fallback below.
+        if !entry.group_behavior.is_empty() {
+            if !dep.behavior.intersects(entry.group_behavior) {
+                return None;
+            }
+            return Some(format_updated_version_literal(
+                resolved_version,
+                string_buf,
+                entry,
+                dep.version.literal.slice(string_buf),
+                exact_versions,
+            ));
         }
-        return Some(format_updated_version_literal(
-            resolved_version,
-            string_buf,
-            entry,
-            dep.version.literal.slice(string_buf),
-            exact_versions,
-        ));
     }
 
     let mut out: Vec<u8> = Vec::new();

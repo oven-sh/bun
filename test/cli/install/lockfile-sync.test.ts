@@ -108,38 +108,14 @@ const ADD_FLAG: Record<Group, string[]> = {
   peerDependencies: ["--peer"],
 };
 
-// bun.lock is JSONC: valid JSON plus trailing commas. Strip the trailing
-// commas without touching string bodies, then JSON.parse.
-function parseJsonc(text: string): any {
-  let out = "";
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (ch === '"') {
-      out += ch;
-      while (++i < text.length) {
-        out += text[i];
-        if (text[i] === "\\") out += text[++i];
-        else if (text[i] === '"') break;
-      }
-      continue;
-    }
-    if (ch === ",") {
-      let j = i + 1;
-      while (j < text.length && /\s/.test(text[j])) j++;
-      if (text[j] === "}" || text[j] === "]") continue;
-    }
-    out += ch;
-  }
-  return JSON.parse(out);
-}
-
 async function packageJson(projectDir: string): Promise<any> {
   return await Bun.file(join(projectDir, "package.json")).json();
 }
 
 /** The root package's entry in bun.lock (name + the four dependency groups). */
 async function lockfileRoot(projectDir: string): Promise<any> {
-  return parseJsonc(await Bun.file(join(projectDir, "bun.lock")).text()).workspaces[""];
+  // bun.lock is JSONC (valid JSON plus trailing commas).
+  return Bun.JSONC.parse(await Bun.file(join(projectDir, "bun.lock")).text()).workspaces[""];
 }
 
 async function run(projectDir: string, ...args: string[]) {

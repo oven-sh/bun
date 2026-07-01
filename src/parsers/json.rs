@@ -126,18 +126,33 @@ fn parse_impl_in(
         log.warnings = log_mark.1;
         log.msgs.truncate(log_mark.2);
     };
-    if let Some(e) = sidx.index_error {
-        drop_stage2_msgs(log);
-        return Err(report_index_error(e, source, log));
-    }
-    if !opts.allow_comments
-        && let Some(range) = sidx.first_comment
-        && log.msgs[log_mark.2..]
+    let min_stage2_err = |log: &bun_ast::Log| {
+        log.msgs[log_mark.2..]
             .iter()
             .filter(|m| m.kind == bun_ast::Kind::Err)
             .filter_map(|m| m.data.location.as_ref().map(|l| l.offset))
             .min()
-            .is_none_or(|first_err| first_err as i32 >= range.loc.start)
+    };
+    if let Some(e) = sidx.index_error {
+        let pos = match e {
+            IndexError::UnterminatedBlockComment => contents.len(),
+            IndexError::UnexpectedSlash { pos } => pos,
+            IndexError::DocumentTooLarge => 0,
+        };
+        let earlier_stage2_err = log.msgs[log_mark.2..]
+            .iter()
+            .filter(|m| m.kind == bun_ast::Kind::Err)
+            .filter_map(|m| m.data.location.as_ref())
+            .any(|l| l.offset + l.length.max(1) <= pos);
+        if !earlier_stage2_err {
+            drop_stage2_msgs(log);
+            return Err(report_index_error(e, source, log));
+        }
+        return Err(bun_core::err!("SyntaxError"));
+    }
+    if !opts.allow_comments
+        && let Some(range) = sidx.first_comment
+        && min_stage2_err(log).is_none_or(|first_err| first_err as i32 >= range.loc.start)
     {
         drop_stage2_msgs(log);
         log.add_error_fmt_opts(
@@ -2015,6 +2030,9 @@ mod tests {
         expect_error("{\"a\": }", "Unexpected }");
         expect_error("{\"a\": 1/2}", "Operators are not allowed in JSON");
         expect_error("[1] /* unterminated", "terminate multi-line comment");
+        expect_error("[@] /* unterminated", "Decorators are not allowed in JSON");
+        expect_error("[@] 1/2", "Decorators are not allowed in JSON");
+        expect_error("/ [1]", "Operators are not allowed in JSON");
     }
 
     #[test]

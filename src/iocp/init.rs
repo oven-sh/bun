@@ -16,8 +16,8 @@ use bun_windows_sys::kernel32::{PostQueuedCompletionStatus, SetErrorMode};
 use bun_windows_sys::ws2_32::{WSADATA, WSAStartup};
 use bun_windows_sys::{
     DEVICE_NOTIFY_CALLBACK, DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS, HANDLE, PBT_APMRESUMEAUTOMATIC,
-    PBT_APMRESUMESUSPEND, SEM_FAILCRITICALERRORS,
-    SEM_NOGPFAULTERRORBOX, SEM_NOOPENFILEERRORBOX, ULONG,
+    PBT_APMRESUMESUSPEND, SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX, SEM_NOOPENFILEERRORBOX,
+    ULONG,
 };
 
 /// Every live loop's completion port. Registration is the LAST step of loop
@@ -147,7 +147,11 @@ pub fn process_init() {
                 );
                 if !f.is_null() {
                     let f: PowerRegisterFn = core::mem::transmute(f);
-                    f(DEVICE_NOTIFY_CALLBACK, &raw mut params, &raw mut registration);
+                    f(
+                        DEVICE_NOTIFY_CALLBACK,
+                        &raw mut params,
+                        &raw mut registration,
+                    );
                 }
             }
         }

@@ -1092,11 +1092,7 @@ describe("cwd spelling variants", () => {
   test("redundant separators and dot segments in cwd still scan", async () => {
     const dir = tempFixturesDir();
     const sep = process.platform === "win32" ? "\\" : "/";
-    const spellings = [
-      dir + sep,
-      dir + sep + sep,
-      dir + sep + "." ,
-    ];
+    const spellings = [dir + sep, dir + sep + sep, dir + sep + "."];
     for (const cwd of spellings) {
       const entries = await Array.fromAsync(new Bun.Glob("*").scan({ cwd }));
       expect(entries.length).toBeGreaterThan(0);

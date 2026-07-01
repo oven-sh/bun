@@ -984,7 +984,10 @@ mod tests {
         // One tick before 1601 → negative → EINVAL shape; i64 overflow in
         // tick space likewise (never a wrap).
         let ft_err = |t: i64| unix_ticks_to_filetime(t).map(|_| ()).unwrap_err();
-        assert_eq!(ft_err(-WIN_TO_UNIX_TICK_OFFSET - 1), Win32Error::INVALID_PARAMETER);
+        assert_eq!(
+            ft_err(-WIN_TO_UNIX_TICK_OFFSET - 1),
+            Win32Error::INVALID_PARAMETER
+        );
         assert_eq!(ft_err(i64::MAX), Win32Error::INVALID_PARAMETER);
         assert_eq!(ft_err(i64::MIN), Win32Error::INVALID_PARAMETER);
     }
@@ -1123,8 +1126,14 @@ mod tests {
         {
             let _g = HandleGuard(h);
             // SAFETY: live test handle.
-            unsafe { futimes_handle(h, FileTimeSpec::UnixTicks((when) * 10_000), FileTimeSpec::UnixTicks((when) * 10_000)) }
-                .unwrap();
+            unsafe {
+                futimes_handle(
+                    h,
+                    FileTimeSpec::UnixTicks((when) * 10_000),
+                    FileTimeSpec::UnixTicks((when) * 10_000),
+                )
+            }
+            .unwrap();
         }
         let st = stat(&path).unwrap();
         assert_eq!(st.st_mtim, ts(when));

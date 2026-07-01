@@ -1360,7 +1360,11 @@ describe.skipIf(!isWindows)("cwd executable search opt-out", () => {
     const prev = process.env.NoDefaultCurrentDirectoryInExePath;
     try {
       delete process.env.NoDefaultCurrentDirectoryInExePath;
-      const allowed = spawnSync({ cmd: ["planted-probe", "--version"], cwd: dir, env: { ...bunEnv, NoDefaultCurrentDirectoryInExePath: undefined } });
+      const allowed = spawnSync({
+        cmd: ["planted-probe", "--version"],
+        cwd: dir,
+        env: { ...bunEnv, NoDefaultCurrentDirectoryInExePath: undefined },
+      });
       expect(allowed.exitCode).toBe(0);
       process.env.NoDefaultCurrentDirectoryInExePath = "1";
       let blocked = false;

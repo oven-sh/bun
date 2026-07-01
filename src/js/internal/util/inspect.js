@@ -1810,7 +1810,7 @@ function formatError(err, constructor, tag, ctx, keys) {
   name = name != null ? String(name) : "Error";
 
   //! temp fix for Bun losing the error name from inherited errors + extraneous ": " with no message
-  stack = stack.replace(/^Error: /, `${name}${message ? ": " : ""}`);
+  stack = RegExpPrototypeSymbolReplace(/^Error: /, stack, `${name}${message ? ": " : ""}`);
 
   if (!ctx.showHidden && keys.length !== 0) {
     const index = ArrayPrototypeIndexOf(keys, "stack");

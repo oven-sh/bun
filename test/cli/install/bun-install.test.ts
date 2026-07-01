@@ -10091,6 +10091,37 @@ describe("override to a tarball whose internal name differs from the key", () =>
     });
   });
 
+  test("direct dependency resolved through a remote-tarball `resolutions` entry with a mismatched name", async () => {
+    // `resolutions` feeds the same override map as `overrides`, so it must honor
+    // a mismatched internal name too.
+    await using server = serveTarballs({
+      "/vite-core.tgz": npmTarball({ name: "@scope/vite-core", version: "0.2.1" }),
+    });
+    const base = `http://localhost:${server.port}`;
+    using dir = tempDir("issue-33192-resolutions", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        devDependencies: { vite: "^5.0.0" },
+        resolutions: { vite: `${base}/vite-core.tgz` },
+      }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"), npm_config_registry: `${base}/` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("failed to resolve");
+    expect(exitCode).toBe(0);
+    expect(await file(join(String(dir), "node_modules", "vite", "package.json")).json()).toEqual({
+      name: "@scope/vite-core",
+      version: "0.2.1",
+    });
+  });
+
   test("transitive peer satisfied by a remote-tarball override with a mismatched name", async () => {
     // The real-world shape from the issue: a dependency (testrunner) declares a
     // transitive peer on `vite`, and `overrides` points `vite` at a tarball whose

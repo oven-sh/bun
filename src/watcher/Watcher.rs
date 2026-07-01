@@ -870,7 +870,12 @@ impl Watcher {
                     if feature_flags::ATOMIC_FILE_WATCHER {
                         // On Linux, the file descriptor might be out of date.
                         fds[index as usize] = fd;
-                        if previous.is_valid() {
+                        // Releasing the last reference to an unlinked inode delivers
+                        // IN_DELETE_SELF on this item's still-registered inotify watch (a
+                        // spurious change event), so only close while the inode is linked.
+                        if previous.is_valid()
+                            && matches!(bun_sys::fstat(previous), Ok(st) if st.st_nlink > 0)
+                        {
                             let _ = bun_sys::close(previous);
                         }
                     } else {

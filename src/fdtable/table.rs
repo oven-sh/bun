@@ -503,7 +503,12 @@ impl FdTable {
         let handle = ptr::with_exposed_provenance_mut::<c_void>(slot.handle);
         // SAFETY: live handle per the slot; null out-param is allowed.
         let ok = unsafe {
-            SetFilePointerEx(handle, slot.pos as i64, ptr::null_mut(), 0 /* FILE_BEGIN */)
+            SetFilePointerEx(
+                handle,
+                slot.pos as i64,
+                ptr::null_mut(),
+                0, /* FILE_BEGIN */
+            )
         };
         if ok == 0 {
             return Err(Win32Error::get());

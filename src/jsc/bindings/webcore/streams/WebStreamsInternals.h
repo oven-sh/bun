@@ -240,6 +240,10 @@ void readableStreamDefaultReaderRelease(JSC::JSGlobalObject*, JSReadableStreamDe
 void readableStreamDefaultReaderErrorReadRequests(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*, JSC::JSValue error); // userJS: yes — JSReadableStreamDefaultReader.cpp
 // Bun public `reader.readMany()`: returns the `{value,size,done}` object synchronously OR
 // a promise of one.
+enum class ConsumerFillStep : uint8_t { Done, Pending };
+// The buffered-consumer pump step (BunStreamConsumers.cpp): bulk queue drain into `chunks`,
+// or one pending spec read when the queue is empty. Throws on an errored stream.
+ConsumerFillStep readableStreamDefaultReaderFillFromQueue(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*, JSC::JSArray* chunks, JSC::JSPromise** pendingRead); // userJS: yes — JSReadableStreamDefaultReader.cpp
 JSC::JSValue readableStreamDefaultReaderReadMany(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*); // userJS: yes — JSReadableStreamDefaultReader.cpp
 
 // JSReadableStreamBYOBReader.cpp

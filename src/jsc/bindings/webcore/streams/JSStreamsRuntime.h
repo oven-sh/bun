@@ -194,6 +194,8 @@ namespace WebCore {
     V(onReadableStreamToFormDataFulfilled)                                                                   \
     V(onIntoArrayReadManyFulfilled) /* append value; !done => readMany() again; done => release + resolve */ \
     V(onIntoArrayReadManyRejected) /* release the reader, reject the result promise */                       \
+    V(onIntoArrayReadFulfilled) /* persistent-op pump: append the read chunk, keep filling */                \
+    V(onIntoArrayReadRejected) /* persistent-op pump: release the reader, reject the result */               \
     V(onDirectConsumeLoopReadFulfilled)                                                                      \
     V(onDirectConsumeLoopReadRejected)                                                                       \
     V(onConsumeDirectToArrayBufferPullFulfilled)                                                             \

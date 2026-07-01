@@ -168,7 +168,10 @@ static JSObject* createReadManyResult(JSGlobalObject* globalObject, JSValue valu
 // `{value, size, done: false}` result. `size` is the PRE-drain [[queueTotalSize]], and the
 // pull decision runs against it (the drain leaves [[queueTotalSize]] untouched until the
 // final ResetQueue), matching the readMany contract.
-static JSValue drainQueueForReadMany(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue headChunk)
+// Appends every queued chunk to `into` at `base`, runs the close-if-requested /
+// pull-if-needed step, resets the queue, and returns the PRE-drain [[queueTotalSize]]
+// (the pull decision runs against it, matching the readMany contract).
+static double drainQueueEntriesInto(JSGlobalObject* globalObject, JSReadableStream* stream, JSArray* into, unsigned base)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -179,13 +182,6 @@ static JSValue drainQueueForReadMany(JSGlobalObject* globalObject, JSReadableStr
 
     double size = isByte ? byteController->m_queue.totalSize() : defaultController->m_queue.totalSize();
     size_t queueLength = isByte ? byteController->m_queue.size() : defaultController->m_queue.size();
-    unsigned base = headChunk ? 1 : 0;
-    auto* values = constructEmptyArray(globalObject, nullptr, base + queueLength);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (headChunk) {
-        values->putDirectIndex(globalObject, 0, headChunk);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
     // [[queueTotalSize]] is deliberately NOT decremented while draining (see above).
     for (unsigned i = 0; i < queueLength; ++i) {
         JSValue chunk;
@@ -202,15 +198,15 @@ static JSValue drainQueueForReadMany(JSGlobalObject* globalObject, JSReadableStr
                 byteController->m_queue.removeFirst(locker);
             }
             chunk = JSUint8Array::create(globalObject, globalObject->typedArrayStructure(TypeUint8, buffer->impl()->isResizableOrGrowableShared()), buffer->impl(), byteOffset, byteLength);
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, size);
         } else {
             WTF::Locker locker { defaultController->cellLock() };
             auto& entry = defaultController->m_queue.first();
             chunk = entry.value.get();
             defaultController->m_queue.removeFirst(locker);
         }
-        values->putDirectIndex(globalObject, base + i, chunk);
-        RETURN_IF_EXCEPTION(scope, {});
+        into->putDirectIndex(globalObject, base + i, chunk);
+        RETURN_IF_EXCEPTION(scope, size);
     }
 
     if (stream->m_state != ReadableStreamState::Closed) {
@@ -221,7 +217,7 @@ static JSValue drainQueueForReadMany(JSGlobalObject* globalObject, JSReadableStr
             readableByteStreamControllerCallPullIfNeeded(globalObject, byteController);
         else
             readableStreamDefaultControllerCallPullIfNeeded(globalObject, defaultController);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, size);
     }
     if (isByte) {
         WTF::Locker locker { byteController->cellLock() };
@@ -230,7 +226,67 @@ static JSValue drainQueueForReadMany(JSGlobalObject* globalObject, JSReadableStr
         WTF::Locker locker { defaultController->cellLock() };
         defaultController->m_queue.resetQueue(locker);
     }
+    return size;
+}
+
+static JSValue drainQueueForReadMany(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue headChunk)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool isByte = stream->m_controllerKind == ControllerKind::Byte;
+    size_t queueLength = isByte ? byteControllerOf(stream)->m_queue.size() : defaultControllerOf(stream)->m_queue.size();
+    unsigned base = headChunk ? 1 : 0;
+    auto* values = constructEmptyArray(globalObject, nullptr, base + queueLength);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (headChunk) {
+        values->putDirectIndex(globalObject, 0, headChunk);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    double size = drainQueueEntriesInto(globalObject, stream, values, base);
+    RETURN_IF_EXCEPTION(scope, {});
     return createReadManyResult(globalObject, values, size, false);
+}
+
+// The buffered-consumer pump step: bulk-appends everything queued to `chunks`; when the
+// queue is empty and the stream is still readable, issues ONE spec read and hands its
+// promise back via `pendingRead`. Throws the stored error on an errored stream.
+ConsumerFillStep readableStreamDefaultReaderFillFromQueue(JSGlobalObject* globalObject, JSReadableStreamDefaultReader* reader, JSArray* chunks, JSPromise** pendingRead)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    *pendingRead = nullptr;
+    auto* stream = reader->m_stream.get();
+    if (!stream) [[unlikely]] {
+        throwException(globalObject, scope, Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The reader is not attached to a stream"_s));
+        return ConsumerFillStep::Done;
+    }
+    stream->m_disturbed = true;
+    while (true) {
+        if (stream->m_state == ReadableStreamState::Errored) {
+            JSValue storedError = stream->m_storedError.get();
+            throwException(globalObject, scope, storedError ? storedError : jsUndefined());
+            return ConsumerFillStep::Done;
+        }
+        bool isByte = stream->m_controllerKind == ControllerKind::Byte;
+        bool queueEmpty = isByte ? byteControllerOf(stream)->m_queue.isEmpty() : defaultControllerOf(stream)->m_queue.isEmpty();
+        if (!queueEmpty) {
+            drainQueueEntriesInto(globalObject, stream, chunks, chunks->length());
+            RETURN_IF_EXCEPTION(scope, ConsumerFillStep::Done);
+            continue;
+        }
+        if (stream->m_state == ReadableStreamState::Closed)
+            return ConsumerFillStep::Done;
+        auto* runtime = JSStreamsRuntime::from(globalObject);
+        auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+        auto* readRequest = WebCore::JSReadRequest::create(vm, runtime->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::Promise, promise);
+        if (isByte)
+            byteControllerOf(stream)->pullSteps(globalObject, readRequest);
+        else
+            defaultControllerOf(stream)->pullSteps(globalObject, readRequest);
+        RETURN_IF_EXCEPTION(scope, ConsumerFillStep::Done);
+        *pendingRead = promise;
+        return ConsumerFillStep::Pending;
+    }
 }
 
 static JSValue emptyDoneReadManyResult(JSGlobalObject* globalObject)

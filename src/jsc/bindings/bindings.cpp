@@ -6725,16 +6725,13 @@ extern "C" bool Bun__JSArray__contiguousVectorIsStillValid(
 // when every index from `start` to the end of the array is a hole. Mirrors the
 // butterfly walk in JSObject::getOwnIndexedPropertyNames so the caller can skip
 // a run of holes without probing each index of a huge sparse array.
-// Returns `start` when the value is not a JSArray (caller probes as usual).
 extern "C" uint64_t Bun__JSArray__nextPresentIndex(
     JSC::EncodedJSValue encodedValue,
     uint32_t start)
 {
     static constexpr uint64_t notFound = std::numeric_limits<uint64_t>::max();
 
-    JSC::JSArray* array = dynamicDowncast<JSC::JSArray>(JSC::JSValue::decode(encodedValue));
-    if (!array) [[unlikely]]
-        return start;
+    JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(JSC::JSValue::decode(encodedValue).asCell());
 
     switch (array->indexingType()) {
     case ALL_BLANK_INDEXING_TYPES:
@@ -6785,6 +6782,7 @@ extern "C" uint64_t Bun__JSArray__nextPresentIndex(
     }
 
     default:
+        ASSERT_NOT_REACHED();
         return start;
     }
 }

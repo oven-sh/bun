@@ -2562,8 +2562,9 @@ impl JSValue {
     /// `None` when every index from `start` to the end of the array is a
     /// hole. Walks the array's backing storage (and sparse map) so a run of
     /// holes is skipped in one call instead of probing each index.
-    /// Returns `Some(start)` when `self` is not a `JSArray`.
+    /// Asserts `self` is a `JSArray` (`Array` or `DerivedArray`).
     pub fn next_present_index(self, start: u32) -> Option<u32> {
+        debug_assert!(self.is_cell() && self.js_type().is_array());
         unsafe extern "C" {
             safe fn Bun__JSArray__nextPresentIndex(this: JSValue, start: u32) -> u64;
         }

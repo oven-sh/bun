@@ -29,75 +29,72 @@
 // Fix: when us_loop_run_bun_tick detects it is nested inside a mid-iteration
 // dispatch, it dispatches the outer batch's remaining entries before its own
 // epoll_wait/kevent can overwrite them, so no one-shot event is dropped.
-import { expect, test } from "bun:test";
 import { getEventLoopStats } from "bun:internal-for-testing";
+import { expect, test } from "bun:test";
 import { isWindows } from "harness";
 
 // The uws ready-poll batch only exists on the POSIX event loop; on Windows
 // libuv drives readiness through a different path (and the stats below read 0).
-test.skipIf(isWindows)(
-  "a batch of Bun.$ commands survives a nested tick from one command's continuation",
-  async () => {
-    const N = 34;
-    let nested = false;
-    // Captured from inside the first continuation to run, then asserted after
-    // the batch settles. They make the trigger self-checking: if either
-    // implementation detail this test leans on is refactored away, these fail
-    // loudly instead of leaving the test vacuously green against a broken
-    // event loop.
-    let tickDepthInContinuation = -1;
-    let pendingSiblingsInContinuation = -1;
-    let sawNestedTick = false;
+test.skipIf(isWindows)("a batch of Bun.$ commands survives a nested tick from one command's continuation", async () => {
+  const N = 34;
+  let nested = false;
+  // Captured from inside the first continuation to run, then asserted after
+  // the batch settles. They make the trigger self-checking: if either
+  // implementation detail this test leans on is refactored away, these fail
+  // loudly instead of leaving the test vacuously green against a broken
+  // event loop.
+  let tickDepthInContinuation = -1;
+  let pendingSiblingsInContinuation = -1;
+  let sawNestedTick = false;
 
-    const cmds = Array.from({ length: N }, (_, i) => {
-      const cmd = Bun.$`printf %s out-${i}`.quiet();
-      // The first command to settle runs this continuation inline, during the
-      // poll dispatch (finish() -> loop.exit() -> drainMicrotasks). Waiting on
-      // a promise here forces a nested us_loop_run_bun_tick; without the fix it
-      // clobbers the outer batch and drops sibling commands' one-shot pipe-EOF
-      // events, which the kernel has already disarmed.
-      cmd.then(
-        () => {
-          if (nested) return;
-          nested = true;
+  const cmds = Array.from({ length: N }, (_, i) => {
+    const cmd = Bun.$`printf %s out-${i}`.quiet();
+    // The first command to settle runs this continuation inline, during the
+    // poll dispatch (finish() -> loop.exit() -> drainMicrotasks). Waiting on
+    // a promise here forces a nested us_loop_run_bun_tick; without the fix it
+    // clobbers the outer batch and drops sibling commands' one-shot pipe-EOF
+    // events, which the kernel has already disarmed.
+    cmd.then(
+      () => {
+        if (nested) return;
+        nested = true;
 
-          // Precondition 1: we really are running inline from inside a poll
-          // dispatch (tickDepth >= 1) with undispatched sibling events still in
-          // the live batch (pendingReadyPolls > 0). If finish() stops draining
-          // microtasks inline, tickDepth reads 0 here. If the continuation no
-          // longer lands inside the batch that holds the siblings' events,
-          // pendingReadyPolls reads 0. Either way the test fails instead of
-          // silently not exercising the bug.
-          const stats = getEventLoopStats();
-          tickDepthInContinuation = stats.tickDepth;
-          pendingSiblingsInContinuation = stats.pendingReadyPolls;
+        // Precondition 1: we really are running inline from inside a poll
+        // dispatch (tickDepth >= 1) with undispatched sibling events still in
+        // the live batch (pendingReadyPolls > 0). If finish() stops draining
+        // microtasks inline, tickDepth reads 0 here. If the continuation no
+        // longer lands inside the batch that holds the siblings' events,
+        // pendingReadyPolls reads 0. Either way the test fails instead of
+        // silently not exercising the bug.
+        const stats = getEventLoopStats();
+        tickDepthInContinuation = stats.tickDepth;
+        pendingSiblingsInContinuation = stats.pendingReadyPolls;
 
-          // Precondition 2: a nested tick actually runs before this
-          // continuation returns. Bun.sleep(0)'s continuation can only have run
-          // by the time the synchronous wait below returns if an event-loop
-          // tick ran inside it. If expect().resolves stops blocking
-          // synchronously, `sawNestedTick` is still false right afterwards.
-          Bun.sleep(0).then(() => {
-            sawNestedTick = true;
-          });
-          expect(Bun.sleep(1)).resolves.toBe(undefined);
-        },
-        () => {},
-      );
-      return cmd;
-    });
+        // Precondition 2: a nested tick actually runs before this
+        // continuation returns. Bun.sleep(0)'s continuation can only have run
+        // by the time the synchronous wait below returns if an event-loop
+        // tick ran inside it. If expect().resolves stops blocking
+        // synchronously, `sawNestedTick` is still false right afterwards.
+        Bun.sleep(0).then(() => {
+          sawNestedTick = true;
+        });
+        expect(Bun.sleep(1)).resolves.toBe(undefined);
+      },
+      () => {},
+    );
+    return cmd;
+  });
 
-    // With the dropped-slot bug, the commands whose pipe-EOF was skipped never
-    // finish and this hangs until the test times out. There is no other wake
-    // source for a disarmed one-shot pipe.
-    const results = await Promise.all(cmds);
+  // With the dropped-slot bug, the commands whose pipe-EOF was skipped never
+  // finish and this hangs until the test times out. There is no other wake
+  // source for a disarmed one-shot pipe.
+  const results = await Promise.all(cmds);
 
-    expect(tickDepthInContinuation).toBeGreaterThanOrEqual(1);
-    expect(pendingSiblingsInContinuation).toBeGreaterThan(0);
-    expect(sawNestedTick).toBe(true);
+  expect(tickDepthInContinuation).toBeGreaterThanOrEqual(1);
+  expect(pendingSiblingsInContinuation).toBeGreaterThan(0);
+  expect(sawNestedTick).toBe(true);
 
-    for (let i = 0; i < N; i++) {
-      expect(results[i].stdout.toString()).toBe(`out-${i}`);
-    }
-  },
-);
+  for (let i = 0; i < N; i++) {
+    expect(results[i].stdout.toString()).toBe(`out-${i}`);
+  }
+});

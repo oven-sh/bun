@@ -786,6 +786,21 @@ private:
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
     Bun::WriteBarrierList<JSC::JSPromise> m_aboutToBeNotifiedRejectedPromises;
+
+public:
+    // While handleRejectedPromises() is iterating its drained snapshot, this
+    // points at the not-yet-processed tail so promiseRejectionTracker(Handle)
+    // can suppress a spurious 'rejectionHandled' for a promise whose
+    // 'unhandledRejection' has not fired yet. Linked through `outer` to handle
+    // re-entrant handleRejectedPromises() calls.
+    struct InFlightRejections {
+        JSC::MarkedArgumentBuffer* buffer;
+        size_t index;
+        InFlightRejections* outer;
+    };
+
+private:
+    InFlightRejections* m_rejectedPromisesBeingProcessed { nullptr };
 };
 
 class EvalGlobalObject : public GlobalObject {

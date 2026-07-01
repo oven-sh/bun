@@ -2905,7 +2905,7 @@ fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
     query_string: &mut &'a [u8],
 ) -> &'a [u8] {
-    if let Some(i) = bun_core::index_of_char(specifier_, b'?') {
+    if let Some(i) = bun_core::strings::index_of_char_usize(specifier_, b'?') {
         *query_string = &specifier_[i..];
         &specifier_[..i]
     } else {
@@ -6247,29 +6247,16 @@ impl VirtualMachine {
             let message_slice = message.to_utf8();
             let msg = message_slice.slice();
             let mut cursor: u32 = 0;
-            let mut printed_first_line = false;
-            while let Some(i) =
-                bun_core::strings::index_of_newline_or_non_ascii_or_ansi(msg, cursor)
-            {
+            if let Some(i) = bun_core::strings::index_of_char(msg, b'\n') {
                 cursor = i + 1;
-                if msg[i as usize] == b'\n' {
-                    let first_line = bun_core::String::borrow_utf8(&msg[..i as usize]);
-                    let _ = write!(writer, ": {}::", first_line.github_action());
-                    printed_first_line = true;
-                    break;
-                }
-            }
-            if !printed_first_line {
+                let first_line = bun_core::String::borrow_utf8(&msg[..i as usize]);
+                let _ = write!(writer, ": {}::", first_line.github_action());
+            } else {
                 let _ = write!(writer, ": {}::", message.github_action());
             }
             // Skip past the next newline.
-            while let Some(i) =
-                bun_core::strings::index_of_newline_or_non_ascii_or_ansi(msg, cursor)
-            {
-                cursor = i + 1;
-                if msg[i as usize] == b'\n' {
-                    break;
-                }
+            if let Some(i) = bun_core::strings::index_of_char(&msg[cursor as usize..], b'\n') {
+                cursor += i + 1;
             }
             if cursor > 0 {
                 let body = jsc::ZigString::init_utf8(&msg[cursor as usize..]);

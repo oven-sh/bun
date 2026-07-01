@@ -451,7 +451,7 @@ mod draft {
                     )?
                     .into_key();
                 let is_array: bool = {
-                    key_raw.len() > 2 && bun_core::ends_with(key_raw, b"[]")
+                    key_raw.len() > 2 && bun_core::strings::ends_with(key_raw, b"[]")
                     // Commenting out because options are not supported but we might
                     // support them.
                     // if (this.opts.bracked_array) {
@@ -466,7 +466,7 @@ mod draft {
                     // }
                 };
 
-                let key = if is_array && bun_core::ends_with(key_raw, b"[]") {
+                let key = if is_array && bun_core::strings::ends_with(key_raw, b"[]") {
                     &key_raw[..key_raw.len() - 2]
                 } else {
                     key_raw
@@ -566,6 +566,12 @@ mod draft {
                             &val[1..]
                         };
                         offset += 1;
+                    }
+                    // JSON.parse("") would throw; json::parse_utf8 returns the
+                    // shared EMPTY_OBJECT static, which a later [section] write
+                    // could then mutate. Fall through to the string path instead.
+                    if val.is_empty() {
+                        break 'out;
                     }
                     // `bun_parsers::json::parse_utf8_impl` returns the T2
                     // value-subset `bun_ast::Expr`; lift it into the T4
@@ -1223,7 +1229,9 @@ mod draft {
 
             if let Some(keyexpr) = prop.key {
                 if let Some(key) = keyexpr.as_utf8_string_literal() {
-                    if bun_core::has_prefix(key, b"@") && bun_core::ends_with(key, b":registry") {
+                    if bun_core::has_prefix(key, b"@")
+                        && bun_core::strings::ends_with(key, b":registry")
+                    {
                         if !self.count {
                             let registry = 'brk: {
                                 if let Some(value) = prop.value {

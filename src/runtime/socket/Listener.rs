@@ -1469,6 +1469,11 @@ fn connect_finish<const IS_SSL: bool>(
         // SAFETY: caller passes a live NewSocket<IS_SSL>
         let prev = unsafe { &*prev_ptr };
         debug_assert!(prev.this_value.get().is_not_empty());
+        // `node:net` allows `socket.connect()` on an already-connected /
+        // still-connecting socket. Close the previous native socket before
+        // reusing this wrapper so `do_connect` does not alias two native
+        // sockets onto one ext slot.
+        prev.detach_for_reconnect();
         if let Some(prev_handlers) = prev.handlers.get() {
             // Only free the previous Handlers when no callback scope is still
             // holding it. If a `data`/`close` handler synchronously re-entered
@@ -1592,7 +1597,7 @@ fn connect_finish<const IS_SSL: bool>(
         // longer used on this branch. `handle_connect_error` takes `*mut Self`
         // (noalias re-entrancy) — no `&mut NewSocket` held across its JS call.
         unsafe {
-            let _ = NewSocket::<IS_SSL>::handle_connect_error(socket, errno);
+            let _ = NewSocket::<IS_SSL>::handle_connect_error(socket, errno, 0);
             // Balance the unconditional `socket_ref.ref_()` above.
             (*socket).deref();
         }

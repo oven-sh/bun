@@ -26,7 +26,7 @@ test("Glob.scan stress test", async () => {
     Array(1000)
       .fill(null)
       .map(() =>
-        Array.fromAsync(new Glob("src/**/*.zig").scan({ cwd })).then(results => {
+        Array.fromAsync(new Glob("src/**/*.rs").scan({ cwd })).then(results => {
           const set = new Set(results);
           return set.size == paths.length && paths.every(path => set.has(path));
         }),

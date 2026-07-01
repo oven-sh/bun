@@ -95,7 +95,9 @@ export function readIntLE(this: BufferExt, offset, byteLength) {
     case 4:
     case 5:
     case 6: {
-      if (typeof offset !== "number" || (offset | 0) !== offset)
+      // Infinity must fall through to boundsError() so it reports the
+      // ">= 0 and <= N" range like Node, not "an integer".
+      if (typeof offset !== "number" || ((offset | 0) !== offset && offset !== Infinity && offset !== -Infinity))
         require("internal/validators").validateInteger(offset, "offset");
       let thisLength;
       if (!(offset >= 0 && offset <= (thisLength = this.length) - byteLength))
@@ -139,7 +141,9 @@ export function readIntBE(this: BufferExt, offset, byteLength) {
     case 4:
     case 5:
     case 6: {
-      if (typeof offset !== "number" || (offset | 0) !== offset)
+      // Infinity must fall through to boundsError() so it reports the
+      // ">= 0 and <= N" range like Node, not "an integer".
+      if (typeof offset !== "number" || ((offset | 0) !== offset && offset !== Infinity && offset !== -Infinity))
         require("internal/validators").validateInteger(offset, "offset");
       let thisLength;
       if (!(offset >= 0 && offset <= (thisLength = this.length) - byteLength))
@@ -183,7 +187,9 @@ export function readUIntLE(this: BufferExt, offset, byteLength) {
     case 4:
     case 5:
     case 6: {
-      if (typeof offset !== "number" || (offset | 0) !== offset)
+      // Infinity must fall through to boundsError() so it reports the
+      // ">= 0 and <= N" range like Node, not "an integer".
+      if (typeof offset !== "number" || ((offset | 0) !== offset && offset !== Infinity && offset !== -Infinity))
         require("internal/validators").validateInteger(offset, "offset");
       let thisLength;
       if (!(offset >= 0 && offset <= (thisLength = this.length) - byteLength))
@@ -224,7 +230,9 @@ export function readUIntBE(this: BufferExt, offset, byteLength) {
     case 4:
     case 5:
     case 6: {
-      if (typeof offset !== "number" || (offset | 0) !== offset)
+      // Infinity must fall through to boundsError() so it reports the
+      // ">= 0 and <= N" range like Node, not "an integer".
+      if (typeof offset !== "number" || ((offset | 0) !== offset && offset !== Infinity && offset !== -Infinity))
         require("internal/validators").validateInteger(offset, "offset");
       let thisLength;
       if (!(offset >= 0 && offset <= (thisLength = this.length) - byteLength))

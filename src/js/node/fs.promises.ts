@@ -3,7 +3,13 @@ const types = require("node:util/types");
 const EventEmitter = require("node:events");
 const fs = require("internal/fs/binding") as $ZigGeneratedClasses.NodeJSFS;
 const { glob } = require("internal/fs/glob");
-const { validateInteger, validateBoolean, validateObject, validateAbortSignal } = require("internal/validators");
+const {
+  validateInteger,
+  validateBoolean,
+  validateObject,
+  validateAbortSignal,
+  validateEncoding,
+} = require("internal/validators");
 
 const constants = $processBindingConstants.fs;
 
@@ -472,7 +478,7 @@ function asyncWrap(fn: any, name: string) {
 
     async read(bufferOrParams, offset, length, position) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("fsync", fd);
+      throwEBADFIfNecessary("read", fd);
 
       let buffer = bufferOrParams;
       if (!types.isArrayBufferView(buffer)) {
@@ -598,6 +604,13 @@ function asyncWrap(fn: any, name: string) {
         }
         if (typeof length !== "number") length = buffer.byteLength - offset;
         if (typeof position !== "number") position = null;
+      } else {
+        // filehandle.write(string[, position[, encoding]]): `length` is the
+        // encoding. Node rejects a non-string before it validates the encoding.
+        if (typeof buffer !== "string") {
+          throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
+        }
+        validateEncoding(buffer, length);
       }
       try {
         this[kRef]();
@@ -1409,7 +1422,7 @@ async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: Abort
   try {
     for await (let chunk of iterable) {
       if (signal?.aborted) {
-        throw signal.reason;
+        throw $makeAbortError(undefined, { cause: signal.reason });
       }
 
       if (mustRencode && typeof chunk === "string") {
@@ -1442,7 +1455,7 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
     mode = optionsOrEncoding?.mode ?? (mode || 0o666);
     signal = optionsOrEncoding?.signal ?? null;
     if (signal?.aborted) {
-      throw signal.reason;
+      throw $makeAbortError(undefined, { cause: signal.reason });
     }
   } else if (typeof optionsOrEncoding === "string" || optionsOrEncoding == null) {
     encoding = optionsOrEncoding || "utf8";
@@ -1463,7 +1476,7 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
 
   if (signal?.aborted) {
     if (mustClose) await fs.close(fdOrPath);
-    throw signal.reason;
+    throw $makeAbortError(undefined, { cause: signal.reason });
   }
 
   let totalBytesWritten = 0;
@@ -1489,7 +1502,7 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
 
   // Abort signal shadows other errors
   if (signal?.aborted) {
-    error = signal.reason;
+    error = $makeAbortError(undefined, { cause: signal.reason });
   }
 
   if (error) {

@@ -8,8 +8,6 @@ use bun_http::HeadersExt as _;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc};
 
-use bun_core::strings;
-
 // Re-exports (thin aliases)
 pub use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 pub use crate::webcore::s3::multipart::{self, MultiPartUpload};
@@ -760,7 +758,7 @@ pub fn upload_stream(
         credentials.deref();
         return Ok(bun_jsc::JSPromise::rejected_promise(
             global_this,
-            strings::String::static_("ReadableStream is already disturbed")
+            bun_core::String::static_("ReadableStream is already disturbed")
                 .to_error_instance(global_this),
         )
         .to_js());
@@ -771,7 +769,7 @@ pub fn upload_stream(
             credentials.deref();
             return Ok(bun_jsc::JSPromise::rejected_promise(
                 global_this,
-                strings::String::static_("ReadableStream is invalid")
+                bun_core::String::static_("ReadableStream is invalid")
                     .to_error_instance(global_this),
             )
             .to_js());
@@ -1033,6 +1031,7 @@ pub(crate) fn download_stream(
                 crate::webcore::s3::download_stream::State::default().0,
             ),
             concurrent_task: Default::default(),
+            async_http_id: 0,
         },
     ));
     // SAFETY: just allocated via heap::alloc, non-null; lifetime owned by HTTP callback
@@ -1089,6 +1088,7 @@ pub(crate) fn download_stream(
     ));
     // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
     let http = unsafe { task.http.assume_init_mut() };
+    task.async_http_id = http.async_http_id;
     // enable streaming
     http.enable_response_body_streaming();
     // queue http request
@@ -1207,6 +1207,10 @@ pub fn readable_stream(
                         .signal_store
                         .aborted
                         .store(true, core::sync::atomic::Ordering::Relaxed);
+                    // Wake the HTTP thread so it observes the abort even when the
+                    // socket is idle; otherwise the final `has_more == false`
+                    // callback never fires and both the task and wrapper leak.
+                    bun_http::http_thread().schedule_shutdown_by_id((*task).async_http_id);
                 }
             }
         }

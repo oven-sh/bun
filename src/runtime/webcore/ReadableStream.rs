@@ -108,6 +108,7 @@ unsafe extern "C" {
     ) -> bool;
     safe fn ReadableStream__empty(global: &JSGlobalObject) -> JSValue;
     safe fn ReadableStream__used(global: &JSGlobalObject) -> JSValue;
+    safe fn ReadableStream__errored(global: &JSGlobalObject, reason: JSValue) -> JSValue;
     safe fn ReadableStream__cancel(stream: JSValue, global: &JSGlobalObject);
     safe fn ReadableStream__cancelWithReason(
         stream: JSValue,
@@ -433,7 +434,17 @@ impl ReadableStream {
             .reader()
             .from(buffered_reader, ctx_ptr.cast::<c_void>());
 
-        source.to_readable_stream(global_this)
+        let stream = source.to_readable_stream(global_this)?;
+
+        // The transferred poll's owner now points into this box; root the
+        // wrapper before JS can GC it. `on_start` skips a second ref via the
+        // same `waiting_for_on_reader_done` flag; `on_reader_done` releases.
+        if !source.context.reader().is_done() {
+            source.context.waiting_for_on_reader_done.set(true);
+            source.increment_count();
+        }
+
+        Ok(stream)
     }
 
     pub fn empty(global_this: &JSGlobalObject) -> JsResult<JSValue> {
@@ -447,6 +458,15 @@ impl ReadableStream {
         bun_jsc::from_js_host_call(global_this, || {
             // SAFETY: FFI call into JSC bindings; global_this is a valid &JSGlobalObject.
             ReadableStream__used(global_this)
+        })
+    }
+
+    /// A stream already in the `errored` state, so every read rejects with
+    /// `reason` instead of closing cleanly.
+    pub fn errored(global_this: &JSGlobalObject, reason: JSValue) -> JsResult<JSValue> {
+        bun_jsc::from_js_host_call(global_this, || {
+            // SAFETY: FFI call into JSC bindings; global_this is a valid &JSGlobalObject.
+            ReadableStream__errored(global_this, reason)
         })
     }
 }
@@ -650,10 +670,10 @@ pub struct NewSource<C: SourceContext> {
     /// owned/freed here). The JS path stores
     /// `on_js_close` and leaves this `None` — see [`Self::on_close`].
     pub close_ctx: Option<NonNull<c_void>>,
-    /// R-2: cleared via `&self` from `FetchTasklet::clear_stream_cancel_handler`
-    /// (through `ByteStream::parent_const`), so interior-mutable.
     pub cancel_handler: Cell<Option<fn(Option<*mut c_void>)>>,
     pub cancel_ctx: Cell<Option<*mut c_void>>,
+    pub drain_handler: Cell<Option<fn(Option<*mut c_void>)>>,
+    pub drain_ctx: Cell<Option<*mut c_void>>,
     // JSC_BORROW: process-lifetime VM global. Heap m_ctx field reassigned in
     // `start()` from a fresh `&JSGlobalObject`; `BackRef` gives a safe `Deref`
     // projection without propagating a lifetime parameter into FFI codegen.
@@ -683,6 +703,8 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             close_ctx: None,
             cancel_handler: Cell::new(None),
             cancel_ctx: Cell::new(None),
+            drain_handler: Cell::new(None),
+            drain_ctx: Cell::new(None),
             global_this: None,
             this_jsvalue: jsc::JsRef::empty(),
             is_closed: Cell::new(false),

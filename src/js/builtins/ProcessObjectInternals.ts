@@ -128,6 +128,9 @@ export function getStdinStream(
   let forceUnref = false;
 
   function own() {
+    // After EOF there is nothing left to read: no acquisition path ('readable'
+    // listeners, resume(), ref(), an explicit read()) may take the reader back.
+    if (stream_reachedEof) return;
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
     source.updateRef(forceUnref ? false : true);
@@ -169,7 +172,7 @@ export function getStdinStream(
   const originalOn = stream.on;
 
   let stream_destroyed = false;
-  let stream_endEmitted = false;
+  let stream_reachedEof = false;
   stream.addListener = stream.on = function (event, listener) {
     // Streams don't generally required to present any data when only
     // `readable` events are present, i.e. `readableFlowing === false`
@@ -215,6 +218,18 @@ export function getStdinStream(
     return originalResume.$call(this);
   };
 
+  const originalRead = stream.read;
+  stream.read = function (size) {
+    const ret = originalRead.$call(this, size);
+    // An explicit read() must acquire the native reader: _read() without one only
+    // records needsInternalReadRefresh, which own() replays. Owning afterwards so a
+    // throwing size never refs stdin; read(0) kicks never own (pause() relies on it).
+    if (size !== 0 && reader === undefined && !stream_destroyed) {
+      own();
+    }
+    return ret;
+  };
+
   async function internalRead(stream) {
     $debug("internalRead();");
     try {
@@ -226,15 +241,15 @@ export function getStdinStream(
 
         if (shouldDisown) disown();
       } else {
-        if (!stream_endEmitted) {
-          stream_endEmitted = true;
-          stream.emit("end");
-        }
-        if (!stream_destroyed) {
-          stream_destroyed = true;
-          stream.destroy();
-          disown();
-        }
+        // EOF. Nothing is left to read, so release the native reader before
+        // push(null) runs user 'readable' listeners; the process must be able
+        // to exit even if one of them throws or never drains the buffer.
+        stream_reachedEof = true;
+        disown();
+        // push(null) instead of emitting 'end' by hand so read(n) can still
+        // return the buffered < n byte remainder and 'end'/'readableEnded'
+        // come from the stream machinery once the buffer drains.
+        stream.push(null);
       }
     } catch (err) {
       if (err?.code === "ERR_STREAM_RELEASE_LOCK") {
@@ -279,6 +294,17 @@ export function getStdinStream(
         disown();
       }
     });
+  });
+
+  // The stream is created with autoClose: false so autoDestroy is off; match
+  // Node by destroying stdin once 'end' has emitted ('close' follows 'end').
+  stream.on("end", () => {
+    if (!stream_destroyed) {
+      stream_destroyed = true;
+      process.nextTick(() => {
+        stream.destroy();
+      });
+    }
   });
 
   stream.on("close", () => {
@@ -489,7 +515,7 @@ export function windowsEnv(
 
 export function getChannel() {
   const EventEmitter = require("node:events");
-  const setRef = $newZigFunction("node_cluster_binding.zig", "setRef", 1);
+  const setRef = $newRustFunction("node_cluster_binding.rs", "setRef", 1);
   return new (class Control extends EventEmitter {
     constructor() {
       super();

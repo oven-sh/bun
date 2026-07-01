@@ -189,8 +189,9 @@ describe("Intl.Segmenter", () => {
   });
 
   snapshotIf("word — km/lo/my (the khmer/lao/burmese dictionaries)", () => {
-    // Word-breaking these scripts is what forces brkitr/{khmer,lao,burmese}dict
-    // through the decompress hook; cjdict/thaidict are covered above.
+    // Word-breaking these scripts is what loads brkitr/{khmer,lao,burmese}dict
+    // (kept raw today; see keep-raw.txt). cjdict/thaidict are covered above.
+    // These snapshots pin each dictionary's output either way.
     expect({
       km: seg("km", "word", "ភាសាខ្មែរគឺជាភាសាផ្លូវការ"),
       lo: seg("lo", "word", "ພາສາລາວເປັນພາສາທາງການ"),
@@ -286,15 +287,17 @@ describe("Intl.getCanonicalLocales", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Exhaustive sweep — load EVERY compressed item.
+// Exhaustive sweep — load EVERY compressed item, and the kept-raw neighbors.
 //
 // icu-locales.txt is the full set of locales present in ICU's display-name
 // trees (extracted from the package at build time). Iterating each × the five
-// tree-touching APIs forces every region/ lang/ curr/ unit/ zone/ item AND
-// each tree's shared pool.res through the decompress hook; the coll/ sweep
-// does the same for every collation tailoring. A corrupt item surfaces as a
-// throw or empty string; "everything fell back to root" surfaces as a low
-// distinct-value count.
+// tree-touching APIs forces every per-locale region/ lang/ curr/ unit/ zone/
+// item through the decompress hook (each tree's shared pool.res is kept raw
+// per keep-raw.txt but loads on the same path). The coll/ sweep loads every
+// collation tailoring: the small per-locale ones are compressed, while
+// keep-raw.txt keeps the root collation and the >100 KB zh/ko/ja raw. A
+// corrupt item surfaces as a throw or empty string; "everything fell back to
+// root" surfaces as a low distinct-value count.
 //
 // Regenerate the fixture when WEBKIT_VERSION bumps ICU:
 //   icupkg -l icudt<NN>l.dat | grep -E '^(curr|lang|region|unit|zone)/' \
@@ -357,18 +360,22 @@ describe("exhaustive locale sweep (every compressed item)", () => {
   // share the snapshot gate even though they aren't snapshot tests.
 
   // coll/<loc>.res: loading every locale's collation tailoring proves none of
-  // the coll/ items is corrupt. The invariants are weaker than the display-
-  // name trees' because most locales legitimately inherit the root order:
-  // every result must be a clean permutation, and a meaningful number of
-  // locales must still DIFFER from each other (sv/da sort å after z, cs has
-  // the 'ch' digraph, zh/ja/ko have CJK tailorings, …).
+  // them is corrupt. Most locales legitimately inherit the root order, so the
+  // invariants are: a second Collator for the same locale must agree with the
+  // first (the decompress hook caches each decoded item for the process
+  // lifetime, so a bad cached decode shows up as the two disagreeing — the
+  // same property the "repeat calls" test below pins for DisplayNames), and
+  // a meaningful number of locales must still DIFFER from each other (sv/da
+  // sort å after z, cs has the 'ch' digraph, zh/ja/ko have CJK tailorings, …).
   snapshotIf(`coll/ — ${locales.length} locales, valid tailored sort`, () => {
     const probe = ["ch", "c", "h", "i", "å", "ä", "ö", "z", "a", "ñ", "n", "ー", "あ", "ア", "가", "하", "中", "一"];
     const orders = new Set<string>();
     for (const loc of locales) {
       const sorted = probe.toSorted(new Intl.Collator(loc).compare);
-      expect(new Set(sorted).size).toBe(probe.length);
-      orders.add(sorted.join(""));
+      expect(probe.toSorted(new Intl.Collator(loc).compare)).toEqual(sorted);
+      // "|" never appears in a probe element, so distinct orderings cannot
+      // collide (the probe holds both "ch" and the separate "c" / "h").
+      orders.add(sorted.join("|"));
     }
     expect(orders.size).toBeGreaterThan(10);
   });

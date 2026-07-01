@@ -115,26 +115,31 @@ async function statementCountingServer() {
   return { server, port, counters };
 }
 
+// Exceeding the cache cap takes MAX_CACHED_PREPARED_STATEMENTS + 1 prepare +
+// execute round trips by definition, which outgrows the 5s default per-test
+// timeout on debug + ASAN builds, so this test declares its real budget.
 test("MySQL: the prepared-statement cache is capped and evicted statements are closed with COM_STMT_CLOSE", async () => {
   const { server, port, counters } = await statementCountingServer();
   try {
     await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
 
-    // Distinct parameterized query texts on one pooled connection, which is
-    // what an ORM interpolating table/column names produces. Each text is a
-    // new server-side prepared statement.
-    const DISTINCT = MAX_CACHED_PREPARED_STATEMENTS + 44;
-    for (let i = 0; i < DISTINCT; i++) {
-      await sql.unsafe(`select ? as c${i}`, [i]);
-    }
+    // More distinct parameterized query texts than the cache cap (distinct
+    // texts are what an ORM interpolating table/column names produces), all
+    // in flight at once on the single pooled connection. While a query still
+    // references its statement nothing may be evicted or closed: the mock
+    // rejects any execute of a closed id, which would reject the Promise.all.
+    const DISTINCT = MAX_CACHED_PREPARED_STATEMENTS + 8;
+    const results = await Promise.all(Array.from({ length: DISTINCT }, (_, i) => sql.unsafe(`select ? as c${i}`, [i])));
+    expect(results).toHaveLength(DISTINCT);
     expect(counters.prepares).toBe(DISTINCT);
+    expect(counters.closed.size).toBe(0);
 
-    // A cached statement is only evictable once no query object references it
-    // anymore, and a query releases its statement when its wrapper is
-    // collected. Collect, then keep issuing new distinct texts: every insert
-    // past the cap must now evict + COM_STMT_CLOSE least-recently-used
-    // statements. Poll the condition (GC decides how many rounds the
-    // finalizers take) instead of assuming a fixed iteration count.
+    // A cached statement only becomes evictable once no query object
+    // references it anymore, and a query releases its statement when its
+    // wrapper is collected. Collect, then keep issuing new distinct texts:
+    // every insert past the cap must now evict + COM_STMT_CLOSE
+    // least-recently-used statements. Poll the condition (GC decides how many
+    // rounds the finalizers take) instead of assuming a fixed iteration count.
     let extra = 0;
     while (counters.prepares - counters.closed.size > MAX_CACHED_PREPARED_STATEMENTS && extra < 64) {
       Bun.gc(true);
@@ -150,14 +155,14 @@ test("MySQL: the prepared-statement cache is capped and evicted statements are c
     expect(counters.prepares - counters.closed.size).toBeLessThanOrEqual(MAX_CACHED_PREPARED_STATEMENTS);
     // Only ids the server actually handed out may be closed.
     expect([...counters.closed].every(id => counters.prepared.has(id))).toBe(true);
-    // Every query text was prepared and executed exactly once (an execute of a
-    // closed id would have been rejected by the mock and thrown above).
+    // Every query text was prepared and executed exactly once (an execute of
+    // a closed id would have been rejected by the mock and thrown above).
     expect(counters.prepares).toBe(DISTINCT + extra);
     expect(counters.executes).toBe(DISTINCT + extra);
   } finally {
     await new Promise<void>(r => server.close(() => r()));
   }
-});
+}, 30_000);
 
 test("MySQL: an identical query text keeps reusing one prepared statement and is never closed", async () => {
   const { server, port, counters } = await statementCountingServer();
@@ -182,37 +187,6 @@ test("MySQL: an identical query text keeps reusing one prepared statement and is
     }).toEqual({
       prepares: 1,
       executes: 50,
-      closed: 0,
-    });
-  } finally {
-    await new Promise<void>(r => server.close(() => r()));
-  }
-});
-
-test("MySQL: statements referenced by in-flight queries are never evicted or closed", async () => {
-  const { server, port, counters } = await statementCountingServer();
-  try {
-    await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
-
-    // More distinct texts than the cache cap, all in flight at once on a
-    // single connection, so every cached statement is referenced by a live
-    // query while the burst runs. None may be evicted (the mock rejects any
-    // execute of a closed id, which would reject the Promise.all).
-    const BURST = MAX_CACHED_PREPARED_STATEMENTS + 20;
-    const results = await Promise.all(
-      Array.from({ length: BURST }, (_, i) => sql.unsafe(`select ? as burst${i}`, [i])),
-    );
-    expect(results).toHaveLength(BURST);
-
-    expect({
-      prepares: counters.prepares,
-      executes: counters.executes,
-      closed: counters.closed.size,
-    }).toEqual({
-      prepares: BURST,
-      executes: BURST,
-      // Nothing was evictable: the cache only evicts statements no query
-      // holds anymore, so it defers past the cap instead of breaking queries.
       closed: 0,
     });
   } finally {

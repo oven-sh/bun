@@ -1806,11 +1806,7 @@ pub(crate) type PreparedStatementsMapGetOrPutResult<'a> =
 
 const MAX_PIPELINE_SIZE: usize = u16::MAX as usize; // about 64KB per connection
 
-/// Upper bound on server-side prepared statements a connection keeps cached.
-/// They are allocated on the server until COM_STMT_CLOSE or disconnect, and
-/// the server-wide budget (`max_prepared_stmt_count`, default 16382) is shared
-/// by every connection of every client, so an uncapped cache on a long-lived
-/// pooled connection running distinct query texts eventually makes the whole
-/// server reject prepares. Statements still referenced by a query are never
-/// evicted, so the cache can temporarily exceed this while queries are alive.
+/// Per-connection cap on cached server-side prepared statements: they stay
+/// allocated on the server until COM_STMT_CLOSE (or disconnect) and count
+/// against the server-wide `max_prepared_stmt_count` budget (default 16382).
 const MAX_CACHED_PREPARED_STATEMENTS: usize = 256;

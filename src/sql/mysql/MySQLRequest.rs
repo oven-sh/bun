@@ -35,10 +35,9 @@ pub fn prepare_request<Context: WriterContext>(
     Ok(())
 }
 
-/// COM_STMT_CLOSE deallocates a prepared statement on the server. The server
-/// never replies to it, so it is not queued as a request and does not shift
-/// response ordering for the commands around it.
-/// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_stmt_close.html
+/// COM_STMT_CLOSE deallocates a prepared statement on the server. It gets no
+/// response, so it is not queued as a request and does not shift response
+/// ordering for the commands around it.
 pub fn close_request<Context: WriterContext>(
     statement_id: u32,
     writer: NewWriter<Context>,

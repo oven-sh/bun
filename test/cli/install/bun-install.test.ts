@@ -1427,6 +1427,78 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/26046
+  it("should write a loadable lockfile when root and workspace peerDependencies have no matching version", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      // the registry only has bar@0.0.2, so ">=2.0.0" resolves to nothing.
+      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      await Promise.all([
+        write(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            workspaces: ["packages/*"],
+            dependencies: {
+              boba: "0.0.2",
+            },
+            peerDependencies: {
+              bar: ">=2.0.0",
+            },
+          }),
+        ),
+        write(
+          join(ctx.package_dir, "packages", "zz-member", "package.json"),
+          JSON.stringify({
+            name: "zz-member",
+            version: "1.0.0",
+            peerDependencies: {
+              bar: ">=2.0.0",
+            },
+          }),
+        ),
+      ]);
+
+      {
+        const { stderr, exited } = spawn({
+          cmd: [bunExe(), "install", "--save-text-lockfile"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const err = await stderr.text();
+        expect(err).toContain("Saved lockfile");
+        expect(err).not.toContain("error:");
+        expect(await exited).toBe(0);
+      }
+
+      const lockfile = await file(join(ctx.package_dir, "bun.lock")).text();
+      // the peer is recorded on both the root and the workspace member, but nothing resolved it
+      expect(lockfile.match(/"bar": ">=2\.0\.0"/g)).toHaveLength(2);
+      expect(lockfile).not.toContain('"bar@');
+
+      // the unresolved peers do not fail the parse of the root or the workspace
+      for (const args of [["install", "--frozen-lockfile"], ["install"]]) {
+        const { stderr, exited } = spawn({
+          cmd: [bunExe(), ...args],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const err = await stderr.text();
+        expect(err).not.toContain("failed to parse lockfile");
+        expect(err).not.toContain("error:");
+        expect(await exited).toBe(0);
+      }
+      expect(await file(join(ctx.package_dir, "bun.lock")).text()).toBe(lockfile);
+    });
+  });
+
   it("should handle life-cycle scripts within workspaces", async () => {
     await withContext(defaultOpts, async ctx => {
       await writeFile(

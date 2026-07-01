@@ -1989,7 +1989,7 @@ impl<'a> PackageInstaller<'a> {
                         bun_core::pretty_errorln!(
                             "<r><red>error<r>: Could not find folder \"file:{}\" for dependency \"{}\"",
                             bstr::BStr::new(resolution.folder().slice(string_buf!())),
-                            bstr::BStr::new(self.names[package_id as usize].slice(string_buf!())),
+                            bstr::BStr::new(alias.slice(string_buf!())),
                         );
                         self.summary.fail += 1;
                     } else if cause.err == bun_core::err!("AccessDenied") {

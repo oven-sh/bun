@@ -465,10 +465,9 @@ void Performance::scheduleTaskIfNeeded()
     if (!context)
         return;
 
-    // Observer callbacks run in the async context of the entry that scheduled
-    // the delivery task (the first one queued in this batch), matching Node.
-    // The capture lives in a WriteBarrier on the JSPerformance wrapper, which
-    // the global keeps alive for exactly as long as this Performance.
+    // Observer callbacks run in the async context of the first entry queued in
+    // this batch, matching Node. The capture lives in a WriteBarrier on the
+    // JSPerformance wrapper, which the global roots for this Performance's life.
     auto* schedulingGlobalObject = defaultGlobalObject(context->jsGlobalObject());
     auto* jsPerformance = uncheckedDowncast<JSPerformance>(schedulingGlobalObject->performanceObject());
     JSC::JSValue asyncContext = schedulingGlobalObject->m_asyncContextData.get()->getInternalField(0);

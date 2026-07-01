@@ -299,6 +299,39 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("perm bits: 66");
 });
 
+test.skipIf(isWindows)("round-robin pipe listen applies readableAll/writableAll to the socket file", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const SOCK = path.join(__dirname, "rr-perm.sock");
+
+if (cluster.isPrimary) {
+  // Default SCHED_RR: the primary owns the real pipe listener, so it must
+  // receive readableAll/writableAll through the worker's queryServer message.
+  const worker = cluster.fork({ BUN_CLUSTER_SOCK: SOCK });
+  cluster.on("listening", () => {
+    const mode = fs.statSync(SOCK).mode;
+    console.log("perm bits:", (mode & 0o066).toString(8));
+    worker.disconnect();
+  });
+  worker.on("exit", (code, signal) => {
+    console.log("worker exit:", code, signal);
+    process.exit(0);
+  });
+} else {
+  net.createServer(() => {}).listen({ path: process.env.BUN_CLUSTER_SOCK, readableAll: true, writableAll: true });
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("perm bits: 66");
+  expect(stdout).toContain("worker exit: 0");
+});
+
 test("round-robin accepted sockets honor the server's highWaterMark", () => {
   const dir = tempDirWithFiles("bun-test", {
     "main.ts": `

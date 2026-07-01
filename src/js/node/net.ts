@@ -3688,6 +3688,11 @@ function listenInCluster(
     fd: fd,
     flags,
     backlog,
+    // Under SCHED_RR the primary owns the real (pipe) listener, so it needs
+    // the unix-socket permission flags to apply the chmod (node forwards its
+    // whole listen-options object here).
+    readableAll,
+    writableAll,
     ...options,
     // Bun's TLS accept lifecycle lives in the native listener, so a TLS
     // worker cannot adopt round-robin connection fds; ask the primary for a

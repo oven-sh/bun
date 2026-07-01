@@ -1611,25 +1611,22 @@ describe("HTMLRewriter streaming with async handlers", () => {
     const gate1 = Promise.withResolvers();
     const gate2 = Promise.withResolvers();
     const sourceClosed = Promise.withResolvers();
-    let gated = true;
     using upstream = Bun.serve({
       port: 0,
       fetch() {
-        const waitForGates = gated;
-        gated = false;
         return new Response(
           new ReadableStream({
             type: "direct",
             async pull(controller) {
               controller.write(encoder.encode(PRELUDE));
               await controller.flush();
-              if (waitForGates) await gate1.promise;
+              await gate1.promise;
               controller.write(encoder.encode(P_A));
               await controller.flush();
-              if (waitForGates) await gate2.promise;
+              await gate2.promise;
               controller.write(encoder.encode(CHUNK_B));
               controller.close();
-              if (waitForGates) sourceClosed.resolve();
+              sourceClosed.resolve();
             },
           }),
           { headers: { "content-type": "text/html" } },
@@ -1688,22 +1685,19 @@ describe("HTMLRewriter streaming with async handlers", () => {
     // the gate, so it deadlocks.
     const gate = Promise.withResolvers();
     const sourceClosed = Promise.withResolvers();
-    let gated = true;
     using upstream = Bun.serve({
       port: 0,
       fetch() {
-        const waitForGate = gated;
-        gated = false;
         return new Response(
           new ReadableStream({
             type: "direct",
             async pull(controller) {
               controller.write(encoder.encode(CHUNK_A));
               await controller.flush();
-              if (waitForGate) await gate.promise;
+              await gate.promise;
               controller.write(encoder.encode(CHUNK_B));
               controller.close();
-              if (waitForGate) sourceClosed.resolve();
+              sourceClosed.resolve();
             },
           }),
           { headers: { "content-type": "text/html" } },

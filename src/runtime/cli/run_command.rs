@@ -2394,12 +2394,17 @@ impl RunCommand {
         if !ctx.debug.loaded_bunfig {
             // `Arguments::load_config_path` — loads global bunfig (if the
             // command opts in via `read_global_config`) then `bunfig.toml`.
-            let _ = arguments::load_config_path(
+            // A malformed bunfig is a hard error, matching every other entry
+            // point (`bun <file>`, `bun -e`, `bun install`); dropping it here
+            // silently ran the script with default config.
+            if let Err(err) = arguments::load_config_path(
                 CommandTag::RunCommand,
                 true,
                 bun_core::zstr!("bunfig.toml"),
                 ctx,
-            );
+            ) {
+                arguments::report_bunfig_load_failure(ctx, err);
+            }
         }
 
         // ── try fast run (file exists & not a dir → boot VM) ────────────────

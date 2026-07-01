@@ -1955,7 +1955,8 @@ pub struct WindowsStreamingWriter<Parent: WindowsStreamingWriterParent> {
     pub current_payload: StreamBuffer,
     // we preserve the last write result for simplicity
     pub last_write_result: WriteResult,
-    // some error happed? we will not report onClose only onError
+    // Set only by `close_without_reporting()` (i.e. `Drop`) to suppress
+    // `Parent::on_close` while the parent is mid-teardown.
     pub closed_without_reporting: bool,
 }
 

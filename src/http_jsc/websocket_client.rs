@@ -243,10 +243,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         jsc::mark_binding!();
         if let Some(ws) = self.outgoing_websocket.take() {
             log!("fail ({})", <&'static str>::from(code));
-            // Snapshot the unsent backlog before did_abrupt_close(): the JS
-            // close event fires synchronously inside it, yet the send buffer is
-            // not freed until cancel() below, so C++ must be told the amount now
-            // (it cannot query the connection across this borrow).
+            // Snapshot the backlog before did_abrupt_close(): it drops the
+            // connection (kind -> None) then fires the JS close event, so C++
+            // must be handed the amount now or an onclose read of bufferedAmount
+            // would see 0 (the send buffer lives until cancel() below).
             // SAFETY: `self` is live; buffered_amount only does short-lived
             // raw-ptr field reads.
             let buffered = unsafe { Self::buffered_amount(self) };
@@ -1855,11 +1855,11 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// plus any encrypted bytes the proxy tunnel still holds.
     ///
     /// Takes `*const Self` (callers pass `self as *const Self`) and reads the
-    /// disjoint `send_buffer`/`proxy_tunnel` fields via `addr_of!` rather than a
-    /// whole-struct `&Self`. The C++ `bufferedAmount` getter is re-entrant (JS
-    /// can read `ws.bufferedAmount` inside an `onmessage` handler), and the
-    /// proxy tunnel in particular must be reached through a raw-ptr accessor
-    /// (see below) so it never overlaps the tunnel's own `&mut SslWrapper`.
+    /// disjoint `send_buffer`/`proxy_tunnel` fields via `addr_of!`. The proxy
+    /// tunnel in particular must be reached through a raw-ptr accessor (see
+    /// below): it is reachable from inside the tunnel's SSL-wrapper callbacks,
+    /// which hold a `&mut SslWrapper`, so a whole-struct `&WebSocketProxyTunnel`
+    /// would overlap it (see WebSocketProxyTunnel's Aliasing model doc).
     ///
     /// # Safety
     /// `this` must point to a live `WebSocket<SSL>`.

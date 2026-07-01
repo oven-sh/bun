@@ -18,8 +18,13 @@ enum class IDNAMode : bool { ToASCII,
 // valid domain.
 static WTF::String processDomain(const WTF::String& domain, IDNAMode mode)
 {
+    // The basic URL parser removes ASCII tab and newline from its input before
+    // host parsing, but URL::setHost applies UTS #46 to its raw argument first,
+    // which would bake them into a Punycode label. Strip them up front.
+    auto input = domain.removeCharacters([](char16_t c) { return c == '\t' || c == '\n' || c == '\r'; });
+
     WTF::URL url { "ws://x"_str };
-    if (!url.setHost(domain))
+    if (!url.setHost(input))
         return {};
 
     WTF::String host = url.host().toString();

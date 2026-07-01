@@ -118,9 +118,14 @@ const hostParserParity = [
   ["[::ffff:127.0.0.1]", "[::ffff:7f00:1]", "[::ffff:7f00:1]"],
   ["[", "", ""],
   ["[:", "", ""],
-  // Tab/newline stripping, truncation, and authority characters.
+  // Tab/newline stripping, truncation, and authority characters. Tab/newline
+  // is stripped before UTS #46 runs, so it must not end up inside a Punycode
+  // label.
   ["ex\tample.com", "example.com", "example.com"],
   ["a\r\nb", "ab", "ab"],
+  ["b\t\u00fccher.de", "xn--bcher-kva.de", "b\u00fccher.de"],
+  ["\u00df\nxn", "xn--xn-fia", "\u00dfxn"],
+  ["\u03c2a\nxn--bcher-kva", "xn--axn--bcher-kva-phk", "\u03c2axn--bcher-kva"],
   ["a/b", "a", "a"],
   ["a?b", "a", "a"],
   ["a#b", "a", "a"],

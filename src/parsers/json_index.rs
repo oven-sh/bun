@@ -258,9 +258,8 @@ impl<'c> StructuralIndex<'c> {
                             i += 2;
                             loop {
                                 if i >= n {
-                                    return self.fail(IndexError::UnterminatedBlockComment {
-                                        pos: start,
-                                    });
+                                    return self
+                                        .fail(IndexError::UnterminatedBlockComment { pos: start });
                                 }
                                 if s[i] == b'*' && s.get(i + 1) == Some(&b'/') {
                                     i += 2;

@@ -138,7 +138,7 @@ void setUpWritableStreamDefaultWriter(JSGlobalObject* globalObject, JSWritableSt
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (isWritableStreamLocked(stream)) {
-        throwTypeError(globalObject, scope, "Cannot acquire a writer: the WritableStream is already locked to a writer"_s);
+        throwException(globalObject, scope, Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: WritableStream is locked"_s));
         return;
     }
     writer->m_stream.set(vm, writer, stream);

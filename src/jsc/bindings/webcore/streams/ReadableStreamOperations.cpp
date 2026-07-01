@@ -445,7 +445,7 @@ void setUpReadableStreamDefaultReader(JSGlobalObject* globalObject, JSReadableSt
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (isReadableStreamLocked(stream)) {
-        throwTypeError(globalObject, scope, "This ReadableStream is locked to a reader"_s);
+        throwException(globalObject, scope, Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: ReadableStream is locked"_s));
         return;
     }
     RELEASE_AND_RETURN(scope, readableStreamReaderGenericInitialize(globalObject, reader, stream));
@@ -457,7 +457,7 @@ void setUpReadableStreamBYOBReader(JSGlobalObject* globalObject, JSReadableStrea
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (isReadableStreamLocked(stream)) {
-        throwTypeError(globalObject, scope, "This ReadableStream is locked to a reader"_s);
+        throwException(globalObject, scope, Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: ReadableStream is locked"_s));
         return;
     }
     if (stream->m_controllerKind != ControllerKind::Byte) {

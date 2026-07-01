@@ -139,7 +139,8 @@ impl InstallCompletionsCommand {
         )?;
         // SAFETY: exe_suffix_z ends in NUL, so bunx_path_with_z[len-1] == 0
         let bunx_path = WStr::from_slice_with_nul(&bunx_path_with_z[..]);
-        let _ = windows::DeleteFileBun(bunx_path.as_slice(), &windows::DeleteFileOptions::default());
+        let _ =
+            windows::DeleteFileBun(bunx_path.as_slice(), &windows::DeleteFileOptions::default());
 
         if windows::CreateHardLinkW(bunx_path.as_ptr(), image_path.as_ptr(), None) == 0 {
             // if hard link fails, use a cmd script

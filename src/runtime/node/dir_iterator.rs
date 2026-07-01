@@ -679,22 +679,30 @@ mod platform {
                 // faulty VM/Sandboxing tools) — read fields via unaligned loads.
                 // SAFETY: entry_offset < end_index ≤ buf.len(); the header up through
                 // FileName lies within `buf` per the kernel contract.
-                let next_entry_offset =
-                    unsafe {
-                        core::ptr::read_unaligned(p.add(
+                let next_entry_offset = unsafe {
+                    core::ptr::read_unaligned(
+                        p.add(
                             entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, NextEntryOffset),
-                        ).cast::<u32>())
-                    };
+                        )
+                        .cast::<u32>(),
+                    )
+                };
                 // SAFETY: see above.
                 let file_name_length = unsafe {
                     core::ptr::read_unaligned(
-                        p.add(entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileNameLength)).cast::<u32>(),
+                        p.add(
+                            entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileNameLength),
+                        )
+                        .cast::<u32>(),
                     )
                 } as usize;
                 // SAFETY: see above.
                 let file_attributes = unsafe {
                     core::ptr::read_unaligned(
-                        p.add(entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileAttributes)).cast::<u32>(),
+                        p.add(
+                            entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileAttributes),
+                        )
+                        .cast::<u32>(),
                     )
                 };
 

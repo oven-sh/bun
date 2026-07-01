@@ -1025,7 +1025,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx + Copy>(bun_ctx: Ctx) -> Launc
 
             // SAFETY: offset 3 is in-bounds of buf1 — it is the '"' written above.
             break 'spawn_command_line unsafe {
-                buf1_u16.add(NT_OBJECT_PREFIX.len() - 1/* "\"".len */)
+                buf1_u16.add(NT_OBJECT_PREFIX.len() - 1 /* "\"".len */)
             };
         }
     } else {
@@ -1221,8 +1221,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx + Copy>(bun_ctx: Ctx) -> Launc
                     shebang_arg_len_u8, 1usize, /* "\"".len */ length_of_filename_u8
                 );
             }
-            let advance =
-                shebang_arg_len_u8 as usize + 2 /* "\"".len */ + length_of_filename_u8;
+            let advance = shebang_arg_len_u8 as usize + 2 /* "\"".len */ + length_of_filename_u8;
             // 2-aligned: buf2 is u16-aligned and advance is even (validated-even
             // shebang_arg_len_u8 + 2 + even filename byte length).
             let mut write_ptr: *mut u16 = buf2_u16.wrapping_byte_add(advance);

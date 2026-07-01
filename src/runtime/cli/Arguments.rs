@@ -20,8 +20,8 @@ use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
 use bun_options_types::schema::api;
-use bun_paths::resolve_path;
 use bun_paths::platform;
+use bun_paths::resolve_path;
 
 use crate::cli;
 use crate::cli::colon_list_type::ColonListType;

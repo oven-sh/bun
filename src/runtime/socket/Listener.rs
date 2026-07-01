@@ -220,7 +220,8 @@ impl Listener {
                 // Note: by-value move of Handlers — see the non-pipe arm below
                 // for rationale on `ptr::read` + `mem::forget`.
                 // SAFETY: socket_config.handlers is valid; we forget socket_config to avoid double-drop.
-                let handlers_moved: Handlers = unsafe { core::ptr::read(&raw const socket_config.handlers) };
+                let handlers_moved: Handlers =
+                    unsafe { core::ptr::read(&raw const socket_config.handlers) };
                 let protos_taken = socket_config.ssl.as_mut().and_then(|s| s.take_protos());
                 let default_data = socket_config.default_data;
                 let ssl_cfg_taken = socket_config.ssl.take();
@@ -1070,7 +1071,8 @@ impl Listener {
 
                 // Note: by-value move of Handlers — see `listen()` for rationale.
                 // SAFETY: socket_config.handlers is valid; we forget socket_config below.
-                let handlers_moved: Handlers = unsafe { core::ptr::read(&raw const socket_config.handlers) };
+                let handlers_moved: Handlers =
+                    unsafe { core::ptr::read(&raw const socket_config.handlers) };
                 let mut ssl_taken = socket_config.ssl.take();
                 let _shell = core::mem::ManuallyDrop::new(socket_config); // fields scavenged above; Drop would double-free them
 
@@ -1158,8 +1160,7 @@ impl Listener {
                     // here it owns the ref on every path (initWithCTX adopts on
                     // success, initTLSWrapper frees on failure), so null our local
                     // before the call so the cleanup guard above can't double-free.
-                    let ctx_for_pipe =
-                        (*ssl_ctx_guard).take().map(|p| p.as_ptr());
+                    let ctx_for_pipe = (*ssl_ctx_guard).take().map(|p| p.as_ptr());
                     // Note: re-borrow connection from the socket field — `connection`
                     // was moved into `tls` above.
                     let named_pipe_result = match tls_ref.connection.get().as_ref().unwrap() {

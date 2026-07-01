@@ -615,7 +615,8 @@ impl ExtractTarball {
                                             .copy_from_slice(&[b't', b'm', b'p', 0]);
                                         let tempdest =
                                             ZStr::from_buf(&tempdest_buf, tmpname.len() + 3);
-                                        let mut folder_name_z_buf = bun_paths::path_buffer_pool::get();
+                                        let mut folder_name_z_buf =
+                                            bun_paths::path_buffer_pool::get();
                                         folder_name_z_buf[0..folder_name.len()]
                                             .copy_from_slice(folder_name);
                                         folder_name_z_buf[folder_name.len()] = 0;

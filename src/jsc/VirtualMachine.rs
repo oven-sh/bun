@@ -6484,8 +6484,7 @@ impl VirtualMachine {
             let data_ptr = unsafe { core::ptr::addr_of_mut!((*instance).data) };
             // SAFETY: `data_ptr` points at the freshly-initialized SendQueue
             // stored inline in `*instance`; no other live `&mut` aliases it.
-            if unsafe { crate::ipc::SendQueue::windows_configure_client(data_ptr, fd) }.is_err()
-            {
+            if unsafe { crate::ipc::SendQueue::windows_configure_client(data_ptr, fd) }.is_err() {
                 // SAFETY: `instance` was produced by `IPCInstance::new`
                 // (heap::alloc) above and is not yet aliased.
                 unsafe { IPCInstance::deinit(instance) };

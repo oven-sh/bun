@@ -171,7 +171,8 @@ impl EventIterator {
         // NextEntryOffset values returned by the kernel, so each cast targets a
         // properly-aligned record header.
         let info: &w::FILE_NOTIFY_INFORMATION = unsafe {
-            #[allow(clippy::cast_ptr_alignment)] // proven: buf at offset 32 (assert_ffi_layout!) + NextEntryOffset is DWORD-aligned per API contract
+            #[allow(clippy::cast_ptr_alignment)]
+            // proven: buf at offset 32 (assert_ffi_layout!) + NextEntryOffset is DWORD-aligned per API contract
             &*(buf_ptr
                 .add(self.offset)
                 .cast::<w::FILE_NOTIFY_INFORMATION>())

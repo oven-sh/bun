@@ -3748,7 +3748,6 @@ pub struct DeleteFileOptions {
     pub remove_dir: bool,
 }
 
-
 const FILE_DISPOSITION_DELETE: ULONG = 0x00000001;
 const FILE_DISPOSITION_POSIX_SEMANTICS: ULONG = 0x00000002;
 const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: ULONG = 0x00000010;
@@ -4415,12 +4414,14 @@ pub fn spawn_watcher_child(
     let mut attr_size: usize = 0;
     // SAFETY: query size with null buffer
     unsafe {
-        let _ = externs::InitializeProcThreadAttributeList(ptr::null_mut(), 1, 0, &raw mut attr_size);
+        let _ =
+            externs::InitializeProcThreadAttributeList(ptr::null_mut(), 1, 0, &raw mut attr_size);
     }
     let mut p: Vec<u8> = vec![0u8; attr_size];
     // SAFETY: p has attr_size bytes
-    if unsafe { externs::InitializeProcThreadAttributeList(p.as_mut_ptr(), 1, 0, &raw mut attr_size) }
-        == 0
+    if unsafe {
+        externs::InitializeProcThreadAttributeList(p.as_mut_ptr(), 1, 0, &raw mut attr_size)
+    } == 0
     {
         return Err(bun_core::err!("Win32Error"));
     }
@@ -4821,17 +4822,17 @@ pub fn rename_at_w(
                 // retry, wtihout FILE_TRAVERSE flag
                 {
                     let fd = bun_sys::open_file_at_windows(
-                    old_dir_fd,
-                    old_path_w,
-                    bun_sys::NtCreateFileOptions {
-                        access_mask: win32::SYNCHRONIZE | win32::GENERIC_WRITE | win32::DELETE,
-                        disposition: win32::FILE_OPEN,
-                        options: win32::FILE_SYNCHRONOUS_IO_NONALERT
-                            | win32::FILE_OPEN_REPARSE_POINT,
-                        ..Default::default()
-                    },
-                )?;
-                    break 'brk fd
+                        old_dir_fd,
+                        old_path_w,
+                        bun_sys::NtCreateFileOptions {
+                            access_mask: win32::SYNCHRONIZE | win32::GENERIC_WRITE | win32::DELETE,
+                            disposition: win32::FILE_OPEN,
+                            options: win32::FILE_SYNCHRONOUS_IO_NONALERT
+                                | win32::FILE_OPEN_REPARSE_POINT,
+                            ..Default::default()
+                        },
+                    )?;
+                    break 'brk fd;
                 }
             }
             bun_sys::Result::Ok(fd) => break 'brk fd,

@@ -84,7 +84,6 @@ impl Default for Sendfile {
     }
 }
 
-
 bitflags::bitflags! {
     #[derive(Default, Copy, Clone)]
     #[repr(transparent)]

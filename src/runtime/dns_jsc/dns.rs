@@ -2469,12 +2469,18 @@ pub mod internal {
                     let addr_in = (&raw mut (*entry).addr).cast::<netc::sockaddr_in>();
                     // read_unaligned: ai_addr is OS-allocated and ABI-aligned in
                     // practice, but the type only promises sockaddr alignment.
-                    *addr_in = (*info_).ai_addr.cast::<netc::sockaddr_in>().read_unaligned();
+                    *addr_in = (*info_)
+                        .ai_addr
+                        .cast::<netc::sockaddr_in>()
+                        .read_unaligned();
                 } else if !(*info_).ai_addr.is_null() && (*info_).ai_family == netc::AF_INET6 {
                     (*entry).addr = bun_core::ffi::zeroed();
                     let addr_in = (&raw mut (*entry).addr).cast::<netc::sockaddr_in6>();
                     // read_unaligned: same rationale as the AF_INET arm above.
-                    *addr_in = (*info_).ai_addr.cast::<netc::sockaddr_in6>().read_unaligned();
+                    *addr_in = (*info_)
+                        .ai_addr
+                        .cast::<netc::sockaddr_in6>()
+                        .read_unaligned();
                 } else {
                     (*entry).addr = bun_core::ffi::zeroed();
                 }

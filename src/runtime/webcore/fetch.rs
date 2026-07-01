@@ -1471,8 +1471,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         ) {
                             Ok(p) => p,
                             Err(err) => {
-                                return Err(global_this
-                                    .throw_error(err, "Failed to resolve file url"));
+                                return Err(
+                                    global_this.throw_error(err, "Failed to resolve file url")
+                                );
                             }
                         };
                     }
@@ -1513,9 +1514,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     ) {
                         Ok(p) => p,
                         Err(err) => {
-                            return Err(
-                                global_this.throw_error(err, "Failed to resolve file url")
-                            );
+                            return Err(global_this.throw_error(err, "Failed to resolve file url"));
                         }
                     };
                 }

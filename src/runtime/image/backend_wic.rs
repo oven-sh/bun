@@ -497,7 +497,12 @@ impl ComPtr<IWICImagingFactory> {
         // SAFETY: live factory (contract above); `container` points to a
         // static GUID; `out` is a stack out-param written only on S_OK.
         let hr = unsafe {
-            ((*(*self.as_ptr()).vt).CreateEncoder)(self.as_ptr(), container, ptr::null(), &raw mut out)
+            ((*(*self.as_ptr()).vt).CreateEncoder)(
+                self.as_ptr(),
+                container,
+                ptr::null(),
+                &raw mut out,
+            )
         };
         if hr < 0 { None } else { ComPtr::new(out) }
     }

@@ -1564,7 +1564,8 @@ impl BlobExt for Blob {
                             .expect("Blob.global_this set at construction")
                             .bun_vm()
                             .as_mut()
-                            .event_loop().cast::<()>(),
+                            .event_loop()
+                            .cast::<()>(),
                     ),
                 );
                 // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
@@ -1927,7 +1928,8 @@ impl BlobExt for Blob {
                         .expect("Blob.global_this set at construction")
                         .bun_vm()
                         .as_mut()
-                        .event_loop().cast::<()>(),
+                        .event_loop()
+                        .cast::<()>(),
                 ),
             );
             // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink; sole owner here.

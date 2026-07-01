@@ -393,6 +393,15 @@ test("package-lock.json migration keeps dependencies declared as arbitrary tarba
   expect(exitCode).toBe(0);
 });
 
+// npm infers a name from a lockfile entry's folder path, keeping an `@scope` parent
+// component, and omits the entry's `name` field whenever that inference matches it.
+function npmNameFromFolder(folder: string) {
+  const parts = folder.split("/");
+  const base = parts[parts.length - 1];
+  const scope = parts[parts.length - 2];
+  return scope?.startsWith("@") ? `${scope}/${base}` : base;
+}
+
 // Regular (non-optional) `file:` folder dependency whose package.json declares `os`/`cpu`
 // arrays. npm records those fields in the package-lock.json entry for every package, but
 // Bun only applies platform constraints to npm registry packages; a fresh `bun install`
@@ -400,13 +409,13 @@ test("package-lock.json migration keeps dependencies declared as arbitrary tarba
 function filePlatformFixture(name: string, folder: string, os: string[], cpu: string[]) {
   const folderPackageJson: Record<string, unknown> = { name, version: "1.0.0" };
   const folderLockEntry: Record<string, unknown> = { version: "1.0.0" };
+  if (npmNameFromFolder(folder) !== name) folderLockEntry.name = name;
   if (os.length) folderPackageJson.os = folderLockEntry.os = os;
   if (cpu.length) folderPackageJson.cpu = folderLockEntry.cpu = cpu;
   return {
     "package.json": JSON.stringify({ name: "repro", dependencies: { [name]: `file:./${folder}` } }),
     [`${folder}/package.json`]: JSON.stringify(folderPackageJson),
-    // Exactly what `npm install --package-lock-only` produces for this tree. npm omits the
-    // entry's `name` field whenever it matches the name inferred from the folder path.
+    // Exactly what `npm install --package-lock-only` produces for this tree.
     "package-lock.json": JSON.stringify({
       name: "repro",
       lockfileVersion: 3,
@@ -451,8 +460,12 @@ test.concurrent("package-lock.json migration does not platform-skip a regular fi
 test.concurrent.each([
   ["a", "vendor/a"],
   ["@scope/a", "vendor/@scope/a"],
+  // npm writes an explicit `name` for these two, because the name it infers from the
+  // folder path (`@admin`) differs from the manifest's; migration must honor it.
+  ["admin", "@admin"],
+  ["admin", "packages/@admin"],
 ])(
-  "package-lock.json migration writes a bun.lock its own parser accepts for file: folder dependency %s",
+  "package-lock.json migration writes a bun.lock its own parser accepts for file: folder dependency %s at %s",
   async (name, folder) => {
     const testDir = tempDirWithFiles("migrate-folder-name", filePlatformFixture(name, folder, [], []));
 

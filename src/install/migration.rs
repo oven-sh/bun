@@ -430,7 +430,16 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
         if pkg.get(b"resolved").is_none() {
             let version_prop = pkg.get(b"version");
-            let pkg_name = package_name_from_path(pkg_path);
+            // Match the building phase: prefer the entry's explicit "name". npm
+            // writes it whenever it differs from the name its folder path implies,
+            // e.g. a package named `admin` living at `@admin` or `packages/@admin`.
+            let pkg_name: &[u8] = if let Some(set_name) = pkg.get(b"name") {
+                set_name
+                    .as_string(&arena)
+                    .ok_or_else(|| err!("InvalidNPMLockfile"))?
+            } else {
+                package_name_from_path(pkg_path)
+            };
             if let Some(version_prop) = version_prop
                 && !pkg_name.is_empty()
             {

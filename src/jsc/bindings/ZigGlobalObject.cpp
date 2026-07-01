@@ -767,17 +767,9 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
             return JSValue::encode(ns);
         }
 
-        // A concurrent static import of this same module may have created the
-        // registry entry and kicked off an async (transpiler-thread) fetch that
-        // is still in flight. loadModuleSync's top-level path reuses that pending
-        // fetch promise instead of forcing a synchronous fetch, so the graph
-        // never completes synchronously and require() wrongly reports a plain
-        // (non-TLA) module as an unsupported async module. Drive the fetch
-        // synchronously here so the entry reaches Fetched before loadModuleSync
-        // links and evaluates it, mirroring the dependency-load handling in
-        // JSModuleLoader::hostLoadImportedModule. A module that genuinely can't
-        // complete synchronously (real top-level await, async onLoad plugin)
-        // leaves the fetch promise pending and correctly reaches the throw below.
+        // A concurrent import may leave this entry Fetching with no record; drive
+        // the fetch synchronously so a sync-completable module reaches Fetched
+        // before loadModuleSync links it. Async fetches (TLA, plugin) stay pending.
         if (entry->status() == JSC::ModuleRegistryEntry::Status::Fetching && !entry->record()) {
             JSPromise* fetchPromise = entry->ensureFetchPromise(globalObject);
             JSPromise* modulePromise = entry->ensureModulePromise(globalObject);

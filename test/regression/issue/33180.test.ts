@@ -2,14 +2,9 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// A plain ESM module (no top-level await) that is statically imported while a
-// sibling CommonJS module require()s it must load successfully. The static
-// import kicks off a concurrent transpiler-thread fetch; the require() lands
-// while that fetch is still in flight. loadModuleSync used to reuse the pending
-// async fetch promise instead of forcing a synchronous fetch, so require()
-// wrongly reported the plain module as an unsupported async module. The module
-// body here is large enough that its off-thread transpile is reliably still
-// running when the tiny CommonJS sibling evaluates.
+// A plain (no top-level await) ESM module must stay require()-able while a
+// concurrent static import is still fetching it off-thread. The target is large
+// so its transpile reliably overlaps the tiny CommonJS sibling's require().
 function makeTarget() {
   let src = "";
   for (let i = 0; i < 1000; i++) src += `export const v${i} = ${i};\n`;
@@ -36,10 +31,8 @@ const files = {
   `,
 };
 
-// Several independent attempts: without the fix the race reports the false
-// "async module" error on essentially every run of a debug build, so any one
-// attempt failing is enough. Each attempt is its own test so a single spawn
-// stays well under the default timeout.
+// Repeat as independent tests; without the fix the race throws the false
+// "async module" error on essentially every debug run, so any attempt suffices.
 for (let attempt = 0; attempt < 4; attempt++) {
   test(`require(esm) racing a concurrent static import loads synchronously (attempt ${attempt})`, async () => {
     using dir = tempDir("issue-33180", files);

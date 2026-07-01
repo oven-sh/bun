@@ -612,7 +612,10 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
   const textCases = {
     "only strings": { chunks: () => ["hé", "llo"], text: "héllo" },
     "strings mixed with bytes": { chunks: () => ["ab", new Uint8Array([49, 50]), "cd"], text: "ab12cd" },
-    "many typed-array views": { chunks: () => [new TextEncoder().encode("a\u00e9"), new TextEncoder().encode("b")], text: "aéb" },
+    "many typed-array views": {
+      chunks: () => [new TextEncoder().encode("a\u00e9"), new TextEncoder().encode("b")],
+      text: "aéb",
+    },
     "single string with a BOM": { chunks: () => ["\uFEFFabc"], text: "abc" },
     "a BOM split across string chunks": { chunks: () => ["\uFEFF", "\uFEFFabc"], text: "abc" },
     "a BOM string chunk before bytes": { chunks: () => ["\uFEFF", new TextEncoder().encode("abc")], text: "abc" },

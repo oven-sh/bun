@@ -673,7 +673,9 @@ JSValue readableStreamIntoArray(JSGlobalObject* globalObject, WebCore::JSReadabl
     RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
 }
 
-enum class ChunkArrayConversion : uint8_t { ArrayBuffer, Bytes, Text };
+enum class ChunkArrayConversion : uint8_t { ArrayBuffer,
+    Bytes,
+    Text };
 static JSValue convertChunkArrayPromise(JSGlobalObject*, JSValue arrayResult, ChunkArrayConversion);
 
 JSValue readableStreamIntoText(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream)

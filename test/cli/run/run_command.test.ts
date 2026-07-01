@@ -38,11 +38,7 @@ describe("bun", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).not.toContain("RAN_THE_SCRIPT");
     expect(stderr).toContain("failed to load bunfig");
     expect(exitCode).toBe(1);

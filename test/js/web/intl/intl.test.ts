@@ -348,13 +348,21 @@ describe("exhaustive locale sweep (every compressed item)", () => {
     });
   }
 
+  // The coll/ and brkitr/ sweeps below assert that SPECIFIC ICU DATA ITEMS in
+  // Bun's bundled archive behave (the collation tailorings and the break
+  // dictionaries). That only means anything against the bundled ICU the rest
+  // of the snapshots were generated from: macOS uses Apple's system libicucore
+  // and Windows bundles a different ICU, both of which are free to ship a
+  // different subset (Apple's may omit break dictionaries entirely). So they
+  // share the snapshot gate even though they aren't snapshot tests.
+
   // coll/<loc>.res: loading every locale's collation tailoring proves none of
-  // the compressed coll/ items is corrupt. The invariants are weaker than the
-  // display-name trees' because most locales legitimately inherit the root
-  // order: every result must be a clean permutation, and a meaningful number
-  // of locales must still DIFFER from each other (sv/da sort å after z, cs has
+  // the coll/ items is corrupt. The invariants are weaker than the display-
+  // name trees' because most locales legitimately inherit the root order:
+  // every result must be a clean permutation, and a meaningful number of
+  // locales must still DIFFER from each other (sv/da sort å after z, cs has
   // the 'ch' digraph, zh/ja/ko have CJK tailorings, …).
-  test(`coll/ — ${locales.length} locales, valid tailored sort`, () => {
+  snapshotIf(`coll/ — ${locales.length} locales, valid tailored sort`, () => {
     const probe = ["ch", "c", "h", "i", "å", "ä", "ö", "z", "a", "ñ", "n", "ー", "あ", "ア", "가", "하", "中", "一"];
     const orders = new Set<string>();
     for (const loc of locales) {
@@ -369,7 +377,7 @@ describe("exhaustive locale sweep (every compressed item)", () => {
   // Each must produce several multi-character word-like segments — a broken
   // dictionary degrades to per-character breaks, which this catches without
   // being CLDR-version-sensitive.
-  test("brkitr/ — every break dictionary yields real words", () => {
+  snapshotIf("brkitr/ — every break dictionary yields real words", () => {
     const texts: Record<string, string> = {
       zh: "中华人民共和国位于亚洲东部面积约九百六十万平方公里",
       ja: "日本語の形態素解析は辞書を使います吾輩は猫である",

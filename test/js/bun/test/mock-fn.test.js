@@ -794,6 +794,31 @@ describe("mock()", () => {
 
     expect(bar()()).toBe(true);
   });
+
+  test("this is undefined for a bare call through a closure-captured binding", () => {
+    const fn = jest.fn().mockReturnThis();
+    const captured = 1;
+    // Referencing `fn` from an inner function forces it into the enclosing
+    // lexical environment, so `fn()` below resolves it through that scope.
+    function keepCaptured() {
+      return [fn, captured];
+    }
+    expect(fn()).toBeUndefined();
+    expect(fn.mock.contexts).toEqual([undefined]);
+  });
+
+  test("this seen by the implementation is undefined for a closure-captured bare call", () => {
+    let receivedThis = "not called";
+    const fn = jest.fn(function () {
+      receivedThis = this;
+    });
+    function keepCaptured() {
+      return fn;
+    }
+    fn();
+    expect(receivedThis).toBeUndefined();
+    expect(fn.mock.contexts).toEqual([undefined]);
+  });
 });
 
 describe("spyOn", () => {

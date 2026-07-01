@@ -838,7 +838,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
     }
 
     JSC::ArgList args = JSC::ArgList(callframe);
-    JSValue thisValue = callframe->thisValue();
+    JSValue thisValue = callframe->thisValue().toThis(globalObject, JSC::ECMAMode::strict());
     JSC::JSArray* argumentsArray = nullptr;
     {
         JSC::ObjectInitializationScope object(vm);
@@ -1271,7 +1271,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetter_mockGetLastCall, (JSC::JSGlobalObj
 {
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisObject = callframe->thisValue();
+    JSValue thisObject = callframe->thisValue().toThis(globalObject, JSC::ECMAMode::strict());
     if (!thisObject.isObject()) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
@@ -1444,17 +1444,18 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsNow, (JSC::JSGlobalObject * globalObject, JSC
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     JSValue argument0 = callframe->argument(0);
+    JSValue thisValue = callframe->thisValue().toThis(globalObject, ECMAMode::strict());
 
     // JSGlobalObject::overridenDateNow's "no override" sentinel is NaN (see
     // JSGlobalObject::jsDateNow()), so every real timestamp, including 0 and
     // pre-epoch negatives, overrides; an omitted arg, NaN, or invalid Date resets.
     if (auto* dateInstance = dynamicDowncast<DateInstance>(argument0)) {
         globalObject->overridenDateNow = dateInstance->internalNumber();
-        return JSValue::encode(callframe->thisValue());
+        return JSValue::encode(thisValue);
     }
     globalObject->overridenDateNow = argument0.isNumber() ? argument0.asNumber() : PNaN;
 
-    return JSValue::encode(callframe->thisValue());
+    return JSValue::encode(thisValue);
 }
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsRestoreAllMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))

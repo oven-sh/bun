@@ -29,6 +29,16 @@ test("we can go back in time", () => {
   expect(now.toISOString()).toBe(orig.toISOString());
 });
 
+test("setSystemTime returns undefined for a bare call through a closure-captured binding", () => {
+  const { setSystemTime } = jest;
+  // Referencing `setSystemTime` from an inner function forces it into the
+  // enclosing lexical environment, so the bare call resolves through that scope.
+  function keepCaptured() {
+    return setSystemTime;
+  }
+  expect(setSystemTime()).toBeUndefined();
+});
+
 test("setSystemTime accepts pre-epoch and epoch times and resets with no argument", () => {
   const realBefore = Date.now();
   jest.useFakeTimers();

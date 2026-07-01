@@ -366,7 +366,9 @@ When the reaction fires, the handler is called as `handler(resolutionValue, cont
 (`this` = undefined). Facts that follow from the implementation, all load-bearing:
 1. The **~20 handler functions are shared, stateless, per-global native `JSFunction`s** created
    once on the `JSStreamsRuntime` cell (§1.2). A handler's entire body is
-   `auto* c = jsDynamicCast<JSXxx*>(callFrame->uncheckedArgument(1)); c->onSomething(global, callFrame->argument(0));`.
+   `auto* c = dynamicDowncast<JSXxx>(callFrame->uncheckedArgument(1)); if (!c) return JSValue::encode(jsUndefined()); c->onSomething(global, callFrame->argument(0));`.
+   NOTE (verified against the fork + the checker): this JSC fork has NO `jsCast`/`jsDynamicCast`;
+   the casts are `uncheckedDowncast<T>` / `dynamicDowncast<T>` (with `JSValue` overloads).
    **Per stream: 0 functions. Per reaction: 0 allocations** beyond the `JSPromiseReaction`
    JSC allocates for any `.then()` anyway.
 2. **AsyncContext propagation is done by the primitive** (it snapshots/restores
@@ -380,9 +382,14 @@ When the reaction fires, the handler is called as `handler(resolutionValue, cont
    classes.**
 5. A reaction registered with `resultPromiseOrJSUndefined == jsUndefined()` that returns with a
    **pending exception escapes as an uncaught error at the microtask level**. Therefore every
-   native reaction handler in this subsystem is a *boundary*: it must convert any internal
-   failure into the spec action (error the stream / reject the tracked promise) and never
-   return with a pending exception. Reviewers verify this per handler.
+   native reaction handler is a *boundary* for SPEC-LEVEL failures: any `?`-op result it
+   observes must be consumed/routed per the spec (error the stream / reject the tracked
+   promise), never leaked. REFINEMENT (post-review ruling, PHASE-B-LOG): a handler MAY return
+   with a pending exception in exactly two cases, and `RETURN_IF_EXCEPTION` bail-outs after
+   `!`-op calls inside a handler are therefore ACCEPTED: (a) a VM termination (which must
+   never be cleared and which makes the pending promises moot), and (b) an exception escaping
+   a spec `!` op (an internal invariant failure), where the loud uncaught-error report is the
+   desired behavior — never add a catch-all that would hide it.
 6. "React to a promise resolved with X" where X is a **non-thenable we constructed** (the
    common `startResult === undefined` case) must still defer to a microtask (observably) but
    needs **no promise at all**: queue one native microtask directly

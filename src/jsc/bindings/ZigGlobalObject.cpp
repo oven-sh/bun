@@ -123,6 +123,7 @@
 #include "JSReadableByteStreamController.h"
 #include "JSReadableStream.h"
 #include "JSReadableStreamBYOBReader.h"
+#include "streams/JSStreamsRuntime.h"
 #include "JSReadableStreamBYOBRequest.h"
 #include "JSReadableStreamDefaultController.h"
 #include "JSReadableStreamDefaultReader.h"
@@ -2436,6 +2437,12 @@ void GlobalObject::finishCreation(VM& vm)
             auto* map = JSC::JSMap::create(init.vm, init.owner->mapStructure());
             init.set(map);
         });
+
+    // NOTE(webstreams Phase C): m_streamsRuntime.initLater(...) is deliberately NOT armed yet.
+    // Its initializer calls WebCore::JSStreamsRuntime::create, whose definition lives in
+    // src/jsc/bindings/webcore/streams/JSStreamsRuntime.cpp, which is not in the build until the
+    // streams/ glob line lands. Arming it now would make every incremental build fail to link.
+    // The exact block to add here at integration time is recorded in specs/PHASE-B-LOG.md.
 
     m_requireMap.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSMap>::Initializer& init) {

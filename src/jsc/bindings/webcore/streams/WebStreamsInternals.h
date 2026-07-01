@@ -427,6 +427,10 @@ void setUpCrossRealmTransformWritable(JSC::JSGlobalObject*, JSWritableStream*, W
 // Registers the source/dest [[closedPromise]] reactions and the GC-visited signal abort
 // algorithm, then starts the read/write loop. The op cell was fully populated by the caller.
 void startPipeToOperation(JSC::JSGlobalObject*, JSStreamPipeToOperation*); // userJS: yes — JSStreamPipeToOperation.cpp
+// The PipeTo read request's steps. JSReadRequest.cpp's kind switch dispatches into the cell here.
+void pipeToReadRequestChunkSteps(JSC::JSGlobalObject*, JSStreamPipeToOperation*, JSC::JSValue chunk); // userJS: yes — JSStreamPipeToOperation.cpp
+void pipeToReadRequestCloseSteps(JSC::JSGlobalObject*, JSStreamPipeToOperation*); // userJS: yes — JSStreamPipeToOperation.cpp
+void pipeToReadRequestErrorSteps(JSC::JSGlobalObject*, JSStreamPipeToOperation*, JSC::JSValue error); // userJS: yes — JSStreamPipeToOperation.cpp
 
 // JSReadableStreamAsyncIterator.cpp — its methods are on the cell; nothing is cross-file.
 

@@ -9,7 +9,7 @@
 // from libuv removal alone on protected volumes; on excluded/Dev Drive volumes the
 // uv share of the total is much larger.
 //
-// MECHANISM — what IS removable (LIBUV_WINDOWS_REMOVAL_PLAN.md §2.3, decision #3):
+// MECHANISM — what IS removable (the libuv-removal work.3, decision #3):
 // fs.openSync routes through sys_uv::open (src/sys/sys_uv.rs:102) → uv_fs_open:
 //   - heap-allocates the UTF-16 path copy (fs__capture_path, libuv src/win/fs.c:349),
 //   - calls _umask(0)+_umask(prev) — two CRT global-state calls (fs.c:476-477),
@@ -37,7 +37,7 @@
 // (bun's single pre-stat 256KB read vs node's fstat+sized-read sequence) — JS-layer
 // difference, unrelated to this plan.
 //
-// RUN (before = today's libuv build; rerun after Phase 2):
+// RUN (before = today's libuv build; rerun after the migration):
 //   bun  bench/libuv-removal/sync-fs-open-close-readfile.mjs
 //   node bench/libuv-removal/sync-fs-open-close-readfile.mjs
 // Numbers are INDICATIVE: medians of 9 reps, warm cache, <30s total.

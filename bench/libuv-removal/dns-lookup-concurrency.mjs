@@ -3,7 +3,7 @@
 // CLAIM: On Windows, concurrent `dns.lookup()` calls (and everything riding them:
 // net.connect/tls.connect/http.request to distinct hostnames) are capped at TWO
 // in-flight resolutions, no matter how many cores the machine has. Removing libuv
-// (GetAddrInfoW on Bun's WorkPool, plan Phase 1) lifts the cap to thread-pool size
+// (GetAddrInfoW on Bun's WorkPool, plan the removal) lifts the cap to thread-pool size
 // (= cores). Measured today via the UV_THREADPOOL_SIZE knob: 32 parallel lookups
 // run ~3.5x faster with a 24-thread pool than with the default — and the WorkPool
 // has no slow-IO subdivision at all, so the migrated path is >= that.
@@ -16,7 +16,7 @@
 //   - Bun routes node:dns + Bun.dns lookup() through this on Windows:
 //     src/runtime/dns_jsc/dns.rs:5227-5243 -> lib_uv_backend::lookup -> uv_getaddrinfo
 //     (dns.rs:462). node:net connect(host) calls dns.lookup (src/js/node/net.ts:2488,2508).
-//   - After LIBUV_WINDOWS_REMOVAL_PLAN.md Phase 1 ("getaddrinfo: GetAddrInfoW on
+//   - After the libuv-removal work ("getaddrinfo: GetAddrInfoW on
 //     WorkPool"), resolution uses bun_threading WorkPool — sized to cores
 //     (bun_core/util.rs get_thread_count), no slow-IO class. The kernel cost
 //     (GetAddrInfoW itself) is unchanged and demonstrably parallel: serial latency

@@ -79,17 +79,25 @@ impl FdJsc for Fd {
         }
         let table_fd = match self.make_table_owned() {
             Ok(fd) => fd,
-            Err(_) => {
-                // make_table_owned already closed the handle on failure
-                // (leak-impossible mint).
-                let err_instance = (bun_jsc::SystemError {
-                    message: bun_core::String::static_(b"EMFILE, too many open files"),
-                    code: bun_core::String::static_(b"EMFILE"),
-                    ..Default::default()
-                })
-                .to_error_instance(global);
-                let _ = global.vm().throw_error(global, err_instance);
-                return JSValue::ZERO;
+            Err(code) => {
+                // make_table_owned closed the handle on any failure; surface
+                // the real Win32 code instead of assuming table exhaustion.
+                // (POSIX make_table_owned is the identity — this arm only
+                // compiles there; `code` maps through the plain errno path.)
+                #[cfg(windows)]
+                let e = bun_sys::windows::win_error::translate(
+                    bun_sys::windows::Win32Error(u16::try_from(code).unwrap_or(u16::MAX)),
+                );
+                #[cfg(not(windows))]
+                let e = bun_sys::E::from_raw(code as u16);
+                let err = bun_sys::Error::new(e, bun_sys::Tag::open);
+                return match crate::ErrorJsc::to_js(&err, global) {
+                    Ok(v) => {
+                        let _ = global.vm().throw_error(global, v);
+                        JSValue::ZERO
+                    }
+                    Err(_) => JSValue::ZERO,
+                };
             }
         };
         JSValue::js_number_from_int32(table_fd.js_fd())

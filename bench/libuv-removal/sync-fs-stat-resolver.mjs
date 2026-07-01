@@ -3,7 +3,7 @@
 //
 // HEADLINE CLAIM (measured 2026-06-29, Win11 + active filter drivers): fs.existsSync
 // and fs.accessSync cost ~20-30µs/op while fs.statSync — THROUGH LIBUV — costs ~4µs
-// on the same paths in the same binary. The Phase 2 native sys layer, by routing
+// on the same paths in the same binary. The the removal native sys layer, by routing
 // exists/access/stat through the GetFileInformationByName / NtQueryInformationByName
 // by-name query class (plan §7 open question 5 → yes), makes existsSync/accessSync
 // ~3-7x faster. Resolver probe storms (tens of thousands of exists/stat calls per
@@ -22,7 +22,7 @@
 //     by-name fast path GetFileInformationByName(FileStatBasicByNameInfo) for
 //     non-reparse hits AND misses (libuv src/win/fs.c:1770-1806) — ~4µs hits,
 //     ~11-14µs misses here. The by-name information class largely dodges the filter
-//     stack. libuv itself proves the native floor Phase 2 should adopt everywhere.
+//     stack. libuv itself proves the native floor the removal should adopt everywhere.
 //
 // SECONDARY (the actual uv-layer tax on statSync, bounded ~5-15%): per call libuv
 // heap-allocates a WCHAR path copy + re-converts WTF-8→UTF-16 (fs__capture_path,
@@ -34,7 +34,7 @@
 // TERTIARY: readdirSync per-entry cost (~0.3µs, already-native NtQueryDirectoryFile
 // walk, src/sys/lib.rs:574+) vs per-file stat (~4µs) — enumeration headroom.
 //
-// RUN (before = today's libuv build; rerun after each Phase 2 migration step):
+// RUN (before = today's libuv build; rerun after each the removal migration step):
 //   bun  bench/libuv-removal/sync-fs-stat-resolver.mjs
 //   node bench/libuv-removal/sync-fs-stat-resolver.mjs   (cross-runtime reference; node is also libuv)
 // Numbers are INDICATIVE (dev machine, Defender on): medians of 9 reps, warm cache,

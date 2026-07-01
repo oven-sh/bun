@@ -397,12 +397,13 @@ impl Source {
                 bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
             },
             // `FdKind::Pipe` covers sockets too (GetFileType cannot
-            // distinguish). A socket fails pipe adoption (no named-pipe mode
-            // state), and falls back to the synchronous file shape — the
-            // historical classification for socket fds here.
+            // distinguish). Adoption failures propagate — a socket fails
+            // with ENOTSOCK exactly like the libuv-era path did. Falling
+            // back to the synchronous file shape would issue blocking reads
+            // on the loop thread (an indefinite stall on a silent peer).
             bun_fdtable::FdKind::Pipe => match Self::open_pipe(loop_, fd) {
                 bun_sys::Result::Ok(pipe) => bun_sys::Result::Ok(Source::Pipe(pipe)),
-                bun_sys::Result::Err(_) => bun_sys::Result::Ok(Source::File(Self::open_file(fd))),
+                bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
             },
             bun_fdtable::FdKind::File
             | bun_fdtable::FdKind::Directory

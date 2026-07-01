@@ -1,6 +1,6 @@
 # libuv-removal benchmark program (Windows)
 
-Local, uncommitted. Companion to `LIBUV_WINDOWS_REMOVAL_PLAN.md` §7. Produced by a
+Benchmark harnesses for the libuv-on-Windows removal.
 10-agent measurement workflow (8 domain hunters running real measurements on this machine
 with bun 1.4.0 release = the "before" build, node 25.8.1 as reference; 2 adversarial
 judges), then filtered by the maintainer's rule below.
@@ -27,15 +27,15 @@ Scripts are self-contained, < 30s, most run under both `bun` and `node`.
 | 2 | `pipes-stdout-throughput.mjs` (+ `pipes-raw-readfile-control.mjs`) | the zero-read dance: 0-byte ReadFile → IOCP dequeue → second quasi-sync ReadFile (+ fork's PeekNamedPipe gate) per 64KB chunk → native posts **one real overlapped read** into a preallocated buffer, skip-on-success | 2.4-3.0 GB/s today vs **5.1 GB/s same-machine kernel floor** (ffi control); parent CPU 560 → floor 150 ms/GB; publish **after-numbers only** (+30-70% is a projection); lead with CPU-per-GB (less noisy) | hold for after-build; publish full chunk curve incl. flat 256B row (child-bound, annotated) |
 | 3 | `pipes-stdin-throughput.mjs` | every chunk pays a **mandatory IOCP completion packet** even on synchronous WriteFile completion (libuv can't skip-on-success on pipes) + single in-flight write serialization | bun 7.4 GB/s vs node 12.4 on the identical kernel path — node proves the headroom | **fix first, publish the recovery after** — today's number is a "bun loses 2x" chart; attribution splits between uv deletion and FileSink rewire (both land in 3.3) |
 | 4 | `fswatch-burst.mjs` | libuv hardcodes a **4KB** ReadDirectoryChangesW buffer (fs-event.c:33, kernel-pinned at first call); Bun additionally **silently drops** the overflow signal (win_watcher.rs:237-244). Native: 64KB buffer + overflow→rescan semantics (needs owning the watcher) | blocked-loop burst: **1 of 1000 events delivered today, deterministically** → ~100% + signaled overflow | the reliability anchor (correctness, not µs). Prereq: fix the NULL-drop bug **now** and re-baseline so the before isn't worse than node; buffer size alone is fork-patchable — the rescan semantics are the removal-honest part |
-| 5 | `sync-fs-stat-resolver.mjs` | Bun's **own** exists/access uses GetFileAttributesW (~26-30µs under Defender's filter) while the by-name stat class costs ~4µs — Phase 2 consolidates all path metadata onto by-name NT APIs (answers plan open question 5: yes, with handle fallback) | existsSync **5-7×** on default-configured Windows (filter-dependent — show Dev Drive run alongside; durable framing is vs-node, which stays on GetFileAttributesW) | honest caveat: this is a syscall-class consolidation the removal *occasions*, not deleted libuv plumbing — consider shipping the `exists_os_path` fix early and re-baselining |
-| 6 | `eventloop-setimmediate-chain.mjs` | per-tick self-wake: the uv_async **PQCS packet measured at 200-240ns** (ffi probe) + uv handle-walk/double-update_time bookkeeping (estimated 200-400ns) | 792-941ns/tick loop cost today (microtask control isolates it); target ≤600ns | Phase 1 before/after metric; publish the measured number only; track the microtask-vs-setImmediate gap (machine-speed-immune) |
+| 5 | `sync-fs-stat-resolver.mjs` | Bun's **own** exists/access uses GetFileAttributesW (~26-30µs under Defender's filter) while the by-name stat class costs ~4µs — this removal consolidates all path metadata onto by-name NT APIs (by-name NT APIs with handle fallback) | existsSync **5-7×** on default-configured Windows (filter-dependent — show Dev Drive run alongside; durable framing is vs-node, which stays on GetFileAttributesW) | honest caveat: this is a syscall-class consolidation the removal *occasions*, not deleted libuv plumbing — consider shipping the `exists_os_path` fix early and re-baselining |
+| 6 | `eventloop-setimmediate-chain.mjs` | per-tick self-wake: the uv_async **PQCS packet measured at 200-240ns** (ffi probe) + uv handle-walk/double-update_time bookkeeping (estimated 200-400ns) | 792-941ns/tick loop cost today (microtask control isolates it); target ≤600ns | this removal before/after metric; publish the measured number only; track the microtask-vs-setImmediate gap (machine-speed-immune) |
 
 ## Tier 2 — real findings, thread-scheduling shaped (context + gates, not removal headlines)
 
 - `dns-lookup-concurrency.mjs` / `dns-fs-interference.mjs`: libuv's SLOW_IO class caps DNS at
   `(4+1)/2 = 2` in-flight per process (threadpool.c:46) — measured 2.5-3.5× hermetically, and
   the cap-2 prediction matched measurements exactly. Real, but threadpool-shaped (knob-mitigable
-  to cap 12) → context. The native DNS migration (Phase 1) deletes it as a side effect; assert
+  to cap 12) → context. The native DNS migration (this removal) deletes it as a side effect; assert
   post-migration that the knob is a no-op. Note: `fetch()` already bypasses this (own pool) —
   any claim must say node:dns/net/tls only.
 - `asyncfs-bunfile-vs-readfile.mjs`: Bun.file reads = **4+ chained pool hops** (open→fstat→read
@@ -56,7 +56,7 @@ Scripts are self-contained, < 30s, most run under both `bun` and `node`.
   Bun is already within 3-5% of raw CreateProcessW in the same binary (ffi control); the
   hypothesized stdio-pipe tax measured **0 ± 0.2ms**; fan-out ceiling (~400-520 spawns/s) is
   kernel CreateProcessW serialization on both stacks. Post-migration tweet is floor-proximity
-  ("within X µs of CreateProcessW"), never a speedup. Punch-list extracted for Phase 3.2:
+  ("within X µs of CreateProcessW"), never a speedup. Punch-list extracted for follow-up:
   lpEnvironment=NULL when env unmodified, cached inheritable NUL handle, skip search_path for
   absolute paths. **Regression risk found:** libuv's 64KB pipe buffers are well chosen (a 4KB
   control was 60% *slower*) — preserve the sizing.
@@ -66,7 +66,7 @@ Scripts are self-contained, < 30s, most run under both `bun` and `node`.
 - **Composites** (`composite-startup-resolve.mjs`, `composite-install-extract-link.mjs`,
   `composite-test-parallel.mjs`): startup/install/test-orchestration move ~0 — keep as the
   per-phase no-regression table ("600-module app start: unchanged through all 4 phases").
-- **TCP loopback** (`tcp-loopback-eventing.mjs`): Phase 1 keeps the AFD mechanism; node's
+- **TCP loopback** (`tcp-loopback-eventing.mjs`): this removal keeps the AFD mechanism; node's
   overlapped uv_tcp path is 25-50% faster on loopback today — internal baseline only; records
   the business case for a future AFD→overlapped project. Never near marketing.
 - **Timers** (`eventloop-timer-precision.mjs` etc.): the 16ms/60fps story requires the

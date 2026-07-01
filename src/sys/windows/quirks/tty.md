@@ -341,7 +341,7 @@ Bun baseline: Windows 10 1809+ (so ENABLE_VIRTUAL_TERMINAL_PROCESSING/INPUT alwa
 - **What Windows does**: Console handles do not support FILE_FLAG_OVERLAPPED semantics; ReadFile/WriteFile on them are always synchronous and they cannot be associated with an IOCP.
 - **How libuv handles it**: The entire architecture of this file is the workaround: RegisterWaitForSingleObject for raw readiness (TTY-25), a worker thread for cooked reads (TTY-35), synchronous writes with deferred completions (TTY-24). Nothing in tty.c ever touches the loop's IOCP except via POST_COMPLETION_FOR_REQ (manual PostQueuedCompletionStatus).
 - **History**: foundational (622eb991); the "stdio over non-overlapped pipes" sibling problem is 54982a23 (cross-ref: PIPES area).
-- **Bun disposition**: must-port as an architectural constraint of Bun's Windows loop: tty completions are *injected* into the IOCP, never native. Target: Phase 1 loop / win tty.
+- **Bun disposition**: must-port as an architectural constraint of Bun's Windows loop: tty completions are *injected* into the IOCP, never native. Target: engine
 
 ---
 

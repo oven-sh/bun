@@ -1,7 +1,7 @@
 // composite-install-extract-link.mjs
 //
 // HYPOTHESIS TESTED (and mostly REJECTED on 2026-06 baseline — keep this script as the
-// Phase 2 regression guard): tarball extraction pays the libuv CRT-fd layer per file —
+// the removal regression guard): tarball extraction pays the libuv CRT-fd layer per file —
 // extraction opens outputs natively (openat_windows, src/libarchive/lib.rs:2032) but
 // converts each HANDLE to a CRT fd via make_lib_uv_owned() (lib.rs:~2080, uv_open_osfhandle)
 // and writes/closes through uv-kind fds (plan §2.3); plain-path mkdir/unlink are uv-routed.
@@ -13,7 +13,7 @@
 //   RAW fs.linkSync and fs.copyFileSync both cost ~0.5 ms/op on the same volume — so the
 //   installer's hardlink path carries ~3 ms/file of extra per-file work (candidate suspects:
 //   uv-routed utimes/chmod per §2.3, retry/exists logic — needs a debug-build syscall trace).
-//   That gap is an installer issue, mostly NOT a libuv-removal win; expect Phase 2 to move
+//   That gap is an installer issue, mostly NOT a libuv-removal win; expect the removal to move
 //   the cold-vs-warm delta only. The in-tree comment at libarchive/lib.rs:~2095 documents
 //   AV close-stalls dominating big installs — kernel/AV cost stays regardless of libuv.
 //
@@ -85,6 +85,6 @@ const copy = scenario("warm: link-only (--backend copyfile)", ["--backend", "cop
 console.log(`\n## derived`);
 console.log(`extract-phase cost (cold - warm): ${(cold - warm).toFixed(2)} ms for 12 tarballs / ~516 files`);
 console.log(`  -> the slice that contains the uv CRT-fd write/close layer (libarchive extract). ~0 on the`);
-console.log(`     2026-06 baseline: install is NOT libuv-bound at this scale; watch this stays ~0 after Phase 2.`);
+console.log(`     2026-06 baseline: install is NOT libuv-bound at this scale; watch this stays ~0 after the migration.`);
 console.log(`copyfile vs hardlink backends: ${(copy - warm).toFixed(2)} ms (baseline found hardlink ~4x SLOWER —`);
 console.log(`  installer-level per-file overhead, raw link/copy syscalls are both ~0.5 ms on this box)`);

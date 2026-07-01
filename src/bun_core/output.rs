@@ -736,6 +736,13 @@ pub mod stdio {
     }
 
     pub fn init() {
+        // The stdio nul-repair inside bun_initialize_process must run BEFORE
+        // the fd table exists — the table snapshots GetStdHandle at first use.
+        #[cfg(windows)]
+        debug_assert!(
+            !bun_fdtable::is_initialized(),
+            "fd table constructed before the stdio repair"
+        );
         bun_initialize_process();
 
         #[cfg(windows)]

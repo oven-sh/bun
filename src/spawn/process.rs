@@ -1827,10 +1827,20 @@ mod spawn_process_body {
         let mut client_ends: Vec<HANDLE> = Vec::new();
         // Files opened for `Path` slots: parent copies, closed on both paths.
         let mut files_to_close: Vec<Fd> = Vec::new();
+        // The 2>&1 pair's server end; bare until the target slot consumes it
+        // (every error exit closes it via `close_on_error`).
+        let mut dup_server: HANDLE = core::ptr::null_mut();
 
         let close_on_error = |parent_ends: &mut Vec<WindowsStdioResult>,
                               client_ends: &[HANDLE],
-                              files: &[Fd]| {
+                              files: &[Fd],
+                              dup_server: &mut HANDLE| {
+            // The dup2 pair's server end is a bare local until the target
+            // slot consumes it — close it here so no error exit leaks it.
+            let server = core::mem::replace(dup_server, core::ptr::null_mut());
+            if !server.is_null() {
+                Fd::from_system(server).close();
+            }
             for slot in parent_ends.drain(..) {
                 match slot {
                     // Already adopted: async engine close (the caller's loop
@@ -1880,7 +1890,6 @@ mod spawn_process_body {
             } else {
                 None
             };
-            let mut dup_server: HANDLE = core::ptr::null_mut();
             let mut dup_client: HANDLE = core::ptr::null_mut();
             if dup_at_1 || dup_at_2 {
                 match create_pair(&PairOptions {
@@ -1897,7 +1906,7 @@ mod spawn_process_body {
                         client_ends.push(client);
                     }
                     Err(w) => {
-                        close_on_error(&mut parent_ends, &client_ends, &files_to_close);
+                        close_on_error(&mut parent_ends, &client_ends, &files_to_close, &mut dup_server);
                         return Ok(Err(bun_sys::Error::new(
                             win_error::translate(w),
                             bun_sys::Tag::pipe,
@@ -1948,7 +1957,7 @@ mod spawn_process_body {
                         let path_z = match bun_sys::to_posix_path(path) {
                             Ok(p) => p,
                             Err(e) => {
-                                close_on_error(&mut parent_ends, &client_ends, &files_to_close);
+                                close_on_error(&mut parent_ends, &client_ends, &files_to_close, &mut dup_server);
                                 return Err(e);
                             }
                         };
@@ -1963,7 +1972,7 @@ mod spawn_process_body {
                                 parent_ends.push(WindowsStdioResult::Unavailable);
                             }
                             Err(err) => {
-                                close_on_error(&mut parent_ends, &client_ends, &files_to_close);
+                                close_on_error(&mut parent_ends, &client_ends, &files_to_close, &mut dup_server);
                                 return Ok(Err(err));
                             }
                         }
@@ -1994,7 +2003,7 @@ mod spawn_process_body {
                                 parent_ends.push(WindowsStdioResult::Buffer(pipe));
                             }
                             Err(w) => {
-                                close_on_error(&mut parent_ends, &client_ends, &files_to_close);
+                                close_on_error(&mut parent_ends, &client_ends, &files_to_close, &mut dup_server);
                                 return Ok(Err(bun_sys::Error::new(
                                     win_error::translate(w),
                                     bun_sys::Tag::uv_pipe,
@@ -2026,7 +2035,7 @@ mod spawn_process_body {
                         let path_z = match bun_sys::to_posix_path(path) {
                             Ok(p) => p,
                             Err(e) => {
-                                close_on_error(&mut parent_ends, &client_ends, &files_to_close);
+                                close_on_error(&mut parent_ends, &client_ends, &files_to_close, &mut dup_server);
                                 return Err(e);
                             }
                         };
@@ -2041,7 +2050,7 @@ mod spawn_process_body {
                                 parent_ends.push(WindowsStdioResult::Unavailable);
                             }
                             Err(err) => {
-                                close_on_error(&mut parent_ends, &client_ends, &files_to_close);
+                                close_on_error(&mut parent_ends, &client_ends, &files_to_close, &mut dup_server);
                                 return Ok(Err(err));
                             }
                         }
@@ -2065,7 +2074,7 @@ mod spawn_process_body {
                                 parent_ends.push(WindowsStdioResult::Buffer(pipe));
                             }
                             Err(w) => {
-                                close_on_error(&mut parent_ends, &client_ends, &files_to_close);
+                                close_on_error(&mut parent_ends, &client_ends, &files_to_close, &mut dup_server);
                                 return Ok(Err(bun_sys::Error::new(
                                     win_error::translate(w),
                                     bun_sys::Tag::uv_pipe,
@@ -2120,7 +2129,7 @@ mod spawn_process_body {
         let handle = match spawned {
             Ok(h) => h,
             Err(w) => {
-                close_on_error(&mut parent_ends, &client_ends, &files_to_close);
+                close_on_error(&mut parent_ends, &client_ends, &files_to_close, &mut dup_server);
                 // SAFETY: freshly allocated above; poller is Detached so
                 // close() is a no-op and deref frees the sole ref.
                 unsafe {

@@ -95,6 +95,13 @@ fn open_flags_from_bun_o(flags: i32) -> OpenFlags {
     f
 }
 
+/// Close a raw handle whose table adoption failed before ownership
+/// transferred (classify errors — mint failures close internally).
+fn close_raw_handle(h: bun_windows_sys::HANDLE) {
+    // SAFETY: caller-owned live handle, closed exactly once here.
+    unsafe { bun_windows_sys::CloseHandle(h) };
+}
+
 pub fn open(file_path: &ZStr, c_flags: i32, perm: Mode) -> Result<Fd> {
     let mut wbuf = bun_paths::os_path_buffer_pool::get();
     let wide = match try_to_kernel32_path(&mut *wbuf, file_path.as_bytes()) {
@@ -120,10 +127,16 @@ pub fn open(file_path: &ZStr, c_flags: i32, perm: Mode) -> Result<Fd> {
     );
     match r {
         Ok(h) => {
-            // SAFETY: `h` is the handle open_path just returned; ownership
-            // transfers to the table (which closes it on mint failure).
-            let kind = unsafe { bun_fdtable::classify_handle(h) }
-                .map_err(|w| Error::new(win_error::translate(w), Tag::open).with_path(file_path.as_bytes()))?;
+            // SAFETY: `h` is the handle open_path just returned; classify
+            // does not close, so a classify failure must close it here.
+            let kind = match unsafe { bun_fdtable::classify_handle(h) } {
+                Ok(k) => k,
+                Err(w) => {
+                    close_raw_handle(h);
+                    return Err(Error::new(win_error::translate(w), Tag::open)
+                        .with_path(file_path.as_bytes()));
+                }
+            };
             let fdflags = if flags.0 & OpenFlags::APPEND.0 != 0 {
                 bun_fdtable::FdFlags::APPEND
             } else {
@@ -179,7 +192,7 @@ fn positioned_table_io(
 
 /// `position < 0` selects sequential I/O — the same sentinel contract as the
 /// libuv-path functions these replace. Table fds own a LOGICAL sequential
-/// position (positioned ops never disturb it; the bug-#28 race is structurally
+/// position (positioned ops never disturb it; the seek/write interleaving race is structurally
 /// impossible); System fds use the kernel file pointer directly.
 fn read_impl(fd: Fd, bufs: &mut [&mut [u8]], position: Option<u64>, tag: Tag) -> Result<usize> {
     let r = match fd.decode_windows() {
@@ -748,11 +761,17 @@ pub fn mkstemp(template: &ZStr, out: &mut Vec<u8>) -> Result<Fd> {
     // Strip the engine's verbatim spelling — callers expect the user shape.
     let (_, rewritten) = bun_core::util::rewrite_final_path_prefix(&mut wide);
     bun_core::strings::convert_wtf16_to_wtf8_append(out, rewritten);
-    // SAFETY: ownership of the just-created handle transfers to the table
-    // (closed by it on mint failure).
-    let kind = unsafe { bun_fdtable::classify_handle(handle) }.map_err(|w| {
-        Error::new(win_error::translate(w), Tag::mkstemp).with_path(template.as_bytes())
-    })?;
+    // SAFETY: classify does not close, so a classify failure closes the
+    // just-created handle here; mint closes it on its own failure below.
+    let kind = match unsafe { bun_fdtable::classify_handle(handle) } {
+        Ok(k) => k,
+        Err(w) => {
+            close_raw_handle(handle);
+            return Err(
+                Error::new(win_error::translate(w), Tag::mkstemp).with_path(template.as_bytes())
+            );
+        }
+    };
     // SAFETY: `handle` was just created by the engine; ownership transfers to
     // mint (which closes it on failure).
     let idx = unsafe { bun_fdtable::the().mint(handle, kind, bun_fdtable::FdFlags::NONE) }

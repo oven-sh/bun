@@ -821,7 +821,7 @@ impl SystemErrno {
     }
 }
 
-/// Thin typed adapter over the canonical row table in `bun_libuv_sys`.
+/// Thin typed adapter over the canonical row table in `crate::uv_numbers`.
 pub fn translate_uv_error_to_e(code: c_int) -> E {
     uv::uv_err_to_e_discriminant(code)
         .and_then(E::try_from_raw)
@@ -833,7 +833,7 @@ pub fn translate_uv_error_to_e(code: c_int) -> E {
         .unwrap_or(E::UNKNOWN)
 }
 
-// Thin adapter over the canonical row table in `bun_libuv_sys::uv_err_to_e_discriminant`.
+// Thin adapter over the canonical row table in `crate::uv_numbers::uv_err_to_e_discriminant`.
 #[inline]
 fn uv_code_to_system_errno(mag: u16) -> Option<SystemErrno> {
     let d = uv::uv_err_to_e_discriminant(-c_int::from(mag))?;

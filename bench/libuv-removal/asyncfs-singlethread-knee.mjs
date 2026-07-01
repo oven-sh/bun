@@ -15,7 +15,7 @@
 //       loop and every workload; no value works for both ends.
 //   fsp.stat (Bun's WorkPool, 24 threads — the post-removal model) is
 //   knob-IMMUNE in the same binary: ~470k vs ~478k at N=32. After libuv
-//   removal (Phase 2.4) the fh.read rows must be >= today's default rows
+//   removal (this removal) the fh.read rows must be >= today's default rows
 //   (745k) — and the pathology class disappears with the knob itself.
 //
 // SECONDARY HONEST FINDINGS the rows document:
@@ -35,8 +35,8 @@
 // global pool + single mutex/cond vendor libuv src/threadpool.c:33-44,66-161;
 // completion delivery via per-loop wq + uv_async_send threadpool.c:125-130;
 // WorkPool = cores-sized lock-free queue src/threading/work_pool.rs:138,
-// src/threading/ThreadPool.rs:86-204. Plan: LIBUV_WINDOWS_REMOVAL_PLAN.md
-// §2.3, Phase 2.4.
+// src/threading/ThreadPool.rs:86-204. Plan: the libuv-removal work
+// §2.3, the removal.
 //
 // Ops covered (src/runtime/node/node_fs.rs:508-563):
 //   uv pool today:   fsPromises.open+close (Open/Close), fh.read (Read)

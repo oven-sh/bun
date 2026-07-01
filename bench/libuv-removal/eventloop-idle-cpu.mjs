@@ -6,7 +6,7 @@
 // drain_timers -> ensure_uv_timer re-arm = uv_update_time + uv_timer_start
 // heap ops on TWO timer heaps (src/runtime/timer/mod.rs:709-776), plus the
 // uv_run handle-phase walk per wake (libuv src/win/core.c:701+). The native
-// loop (plan Phase 1) arms ONE heap and honors the poll timeout directly
+// loop (plan the removal) arms ONE heap and honors the poll timeout directly
 // (today's computed timespec is discarded, src/uws_sys/Loop.rs:469-472).
 //
 // MEASURED 2026-06-29 (Win11, bun 1.4.0 / node 25.8.1, one 10s run each):

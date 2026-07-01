@@ -1284,19 +1284,18 @@ impl WebWorker {
         }
         // Concurrent tasks queued but never delivered (terminate() mid-flight)
         // applied keep-alive refs whose balancing deref will never run.
-        // Reconcile the residual now so the loop's active count reflects only
-        // real handles when it is freed below (the engine asserts on drop).
+        #[cfg(windows)]
         if !vm_ptr.is_null() {
-            // SAFETY: vm_ptr valid; sole owner; single-threaded teardown.
+            // SAFETY: vm_ptr valid; sole owner; single-threaded teardown; the
+            // loop is live until on_thread_exit below.
             let el = unsafe { (*vm_ptr).event_loop() };
             if !el.is_null() {
                 // SAFETY: `el` points at the VM-embedded event loop.
-                let pending = unsafe { (*el).concurrent_ref.swap(0, core::sync::atomic::Ordering::SeqCst) };
-                let residual = unsafe { (*el).applied_concurrent_refs.get() } + i64::from(pending);
-                if residual > 0 && let Some(loop_) = loop_ {
-                    // SAFETY: loop is live until on_thread_exit below.
-                    unsafe { (*loop_).sub_active(u32::try_from(residual).unwrap_or(0)) };
-                }
+                unsafe {
+                    (*el).reconcile_concurrent_refs_for_teardown(
+                        loop_.unwrap_or(core::ptr::null_mut()),
+                    )
+                };
             }
         }
         if !vm_ptr.is_null() {

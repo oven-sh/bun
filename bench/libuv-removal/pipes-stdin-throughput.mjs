@@ -1,7 +1,7 @@
 // pipes-stdin-throughput.mjs — Windows subprocess stdin pipe throughput (parent -> child).
 //
-// CLAIM: after Bun's Windows pipe writer moves off libuv (LIBUV_WINDOWS_REMOVAL_PLAN.md
-// Phase 3.3 "Pipe streams"), a Bun parent streaming data INTO a child (piping through
+// CLAIM: after Bun's Windows pipe writer moves off libuv (the libuv-removal work
+// the removal "Pipe streams"), a Bun parent streaming data INTO a child (piping through
 // formatters, compilers, `bun build | tool`, etc.) gets higher MB/s and lower parent CPU.
 // Today Bun and Node are ~at parity: both pay the same libuv pipe-write tax.
 //
@@ -14,7 +14,7 @@
 //        (uv__process_pipe_write_req, pipe.c:2199-2247) before the next write is issued.
 //     3. Bun keeps exactly one uv_write_t in flight (src/io/PipeWriter.rs:1441-1442), so
 //        every chunk costs: WriteFile + IOCP dequeue + callback dispatch + JS drain tick.
-//   A native writer (plan Phase 3.3) sets FILE_SKIP_COMPLETION_PORT_ON_SUCCESS: a write
+//   A native writer (plan the removal) sets FILE_SKIP_COMPLETION_PORT_ON_SUCCESS: a write
 //   that completes inline costs ONE WriteFile and no loop roundtrip; only writes that
 //   actually block (pipe full) take the overlapped completion path. (The "no synchronous
 //   try-write" prohibition, ledger HIST-68, is about uv_try_write's framing semantics on

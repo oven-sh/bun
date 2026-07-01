@@ -87,6 +87,9 @@ const MODE_R_ALL: u64 = S_IREAD | (S_IREAD >> 3) | (S_IREAD >> 6);
 const MODE_RW_ALL: u64 =
     (S_IREAD | S_IWRITE) | ((S_IREAD | S_IWRITE) >> 3) | ((S_IREAD | S_IWRITE) >> 6);
 
+/// All three share modes so files can be deleted/renamed/reopened while
+/// held open — the deliberate CRT deviation matching UNIX semantics.
+/// // quirk: FSIO-01
 pub(crate) const SHARE_ALL: ULONG = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
 
 pub(crate) const BACKSLASH: u16 = b'\\' as u16;

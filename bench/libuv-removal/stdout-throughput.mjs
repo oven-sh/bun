@@ -5,7 +5,7 @@
 // WriteFile makes per-line stdout writes faster — short-line lines/sec is the
 // headline number.
 //
-// MECHANISM (today, libuv; refs into LIBUV_WINDOWS_REMOVAL_PLAN.md §2.2/§2.3 and
+// MECHANISM (today, libuv; refs into the libuv-removal work.2/§2.3 and
 // the libuv worktree at C:/Users/dylan/code/libuv-read):
 //   * console.log → Rust ConsoleObject 4KB buffered writer, flushed once per call
 //     (src/jsc/ConsoleObject.rs FlushGuard) → bun.sys write on uv-kind fd 1 →
@@ -21,7 +21,7 @@
 //     PostQueuedCompletionStatus + a next-uv_run-tick completion dispatch
 //     (win/pipe.c:1646-1666) before the JS callback resolves. Native plan keeps
 //     the blocking WriteFile and deletes the event-object churn, the IOCP
-//     round-trip, and the double-buffer queue (plan Phase 3.3).
+//     round-trip, and the double-buffer queue (plan the removal).
 //
 // RUN (each takes ~10-20s):
 //   bun  bench/libuv-removal/stdout-throughput.mjs            # before/after Bun
@@ -31,7 +31,7 @@
 // console (uv_tty + global lock + WriteConsoleW path) without spawning.
 //
 // BEFORE/AFTER: run with the shipping (libuv) bun, save output; run again with a
-// post-migration build (Phase 3.3 for pipes, Phase 2.4 for console.log/file).
+// post-migration build (the removal for pipes, the removal for console.log/file).
 // Lines/sec for 64B lines is the number to compare. node output is a sanity
 // reference (same libuv underneath, different JS stream layer).
 //

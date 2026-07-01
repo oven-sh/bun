@@ -1,7 +1,7 @@
 // pipes-stdout-throughput.mjs — Windows subprocess stdout pipe throughput.
 //
-// CLAIM: after Bun's Windows pipe reader moves off libuv (LIBUV_WINDOWS_REMOVAL_PLAN.md
-// Phase 3.3 "Pipe streams"), a Bun parent consuming a child's stdout gets higher MB/s
+// CLAIM: after Bun's Windows pipe reader moves off libuv (the libuv-removal work
+// the removal "Pipe streams"), a Bun parent consuming a child's stdout gets higher MB/s
 // and burns less parent CPU per GB — most visibly for small chunks (dev tools, test
 // runners, build watchers streaming output). Today Bun and Node are ~at parity here:
 // both pay the same libuv pipe-read tax.

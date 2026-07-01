@@ -7,7 +7,7 @@
 // MECHANISM: Bun's user-visible clocks on Windows are ALREADY native, not libuv:
 // clock_gettime_monotonic in src/jsc/bindings/c-bindings.cpp:237 calls
 // QueryPerformanceCounter directly. The only uv_hrtime callers are internal
-// (NodeHTTPParser.cpp, node/http/JSConnectionsListPrototype.cpp — plan Phase 0),
+// (NodeHTTPParser.cpp, node/http/JSConnectionsListPrototype.cpp — plan the removal),
 // which are not exercised by these loops. If the numbers here are flat
 // bun-vs-node and flat before/after, the "u128 QPC beats uv_hrtime double math"
 // item (plan §3 scorecard, getaddrinfo/os_*/hrtime row) is NOT user-visible on

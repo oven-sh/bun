@@ -1,13 +1,13 @@
 // tcp-loopback-eventing.mjs
 //
 // CLAIM (deliberately modest): replacing libuv's uv_poll/AFD socket eventing with
-// Bun's native IOCP loop (plan Phase 1) removes the uv_poll_t state machine, the
+// Bun's native IOCP loop (plan the removal) removes the uv_poll_t state machine, the
 // bun-usockets poll translation layer, and the two-loop bookkeeping per readiness
 // event — but KEEPS the same kernel mechanism (IOCTL_AFD_POLL re-arm per event,
-// LIBUV_WINDOWS_REMOVAL_PLAN.md Phase 1 "AFD socket poll (wepoll-style
+// the libuv-removal work "AFD socket poll (wepoll-style
 // IOCTL_AFD_POLL)"). Expected change is small (single-digit %). This script is the
-// regression-guard baseline: run it before and after Phase 1; the delta is the
-// honest eventing-layer cost, and a regression here is a Phase 1 bug.
+// regression-guard baseline: run it before and after the migration; the delta is the
+// honest eventing-layer cost, and a regression here is a the removal bug.
 //
 // MECHANISM (what is and is not removable):
 //   - Today every Bun TCP socket on Windows is a uv_poll_t
@@ -36,7 +36,7 @@
 // node is a reference point only — its Windows TCP uses overlapped uv_tcp WSARecv,
 // a different kernel mechanism than Bun's AFD poll, so bun-vs-node here compares
 // mechanisms, not the libuv layer. The before/after comparison that matters is the
-// same bun script across the Phase 1 migration.
+// same bun script across the the removal migration.
 
 import net from "node:net";
 
@@ -162,7 +162,7 @@ for (const par of [1, 16]) {
 }
 
 console.log(
-  `\n  Baseline for the Phase 1 loop swap: same kernel AFD mechanism before/after, so` +
-    `\n  expect small deltas; treat a regression as a Phase 1 bug, not noise.`,
+  `\n  Baseline for the the removal loop swap: same kernel AFD mechanism before/after, so` +
+    `\n  expect small deltas; treat a regression as a the removal bug, not noise.`,
 );
 server.close();

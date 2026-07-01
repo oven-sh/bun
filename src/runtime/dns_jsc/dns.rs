@@ -2574,6 +2574,12 @@ pub mod internal {
         #[cfg(windows)]
         unsafe {
             use bun_sys::windows::ws2_32 as wsa;
+            unsafe extern "C" {
+                fn Bun__ensure_winsock();
+            }
+            // First WSA call of a network-free-until-now process (e.g.
+            // `bun install` resolving the registry) — init on demand.
+            Bun__ensure_winsock();
             let mut wsa_hints: wsa::addrinfo = bun_core::ffi::zeroed();
             wsa_hints.ai_family = wsa::AF_UNSPEC;
             wsa_hints.ai_socktype = wsa::SOCK_STREAM;

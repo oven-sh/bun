@@ -186,7 +186,7 @@ test = "src/winfs/readdir.rs::open_error_shapes_and_link_following"
 
 [FSLNK-39]
 status = "skipped"
-reason = "if Bun's opendir uses NtQueryDirectoryFile on a real handle (recommended — avoids the entire pattern-escaping class, matches FSLNK-32); must-port only if FindFirstFile is retained anywhere. Target: Phase 2 fs — opendir."
+reason = "if Bun's opendir uses NtQueryDirectoryFile on a real handle (recommended — avoids the entire pattern-escaping class, matches FSLNK-32); must-port only if FindFirstFile is retained anywhere. Target: engine"
 
 [FSLNK-40]
 status = "implemented"
@@ -198,7 +198,7 @@ test = "src/winfs/readdir.rs::empty_directory_yields_no_entries_and_is_fused"
 
 [FSLNK-42]
 status = "skipped"
-reason = "if NtQueryDirectoryFile path chosen (no prefetch asymmetry there); otherwise must-port the latch — off-by-one entry loss/duplication is the classic FindFirstFile porting bug. Target: Phase 2 fs — opendir."
+reason = "if NtQueryDirectoryFile path chosen (no prefetch asymmetry there); otherwise must-port the latch — off-by-one entry loss/duplication is the classic FindFirstFile porting bug. Target: engine"
 
 [FSLNK-43]
 status = "pending"
@@ -208,7 +208,7 @@ status = "pending"
 
 [FSLNK-45]
 status = "skipped"
-reason = "the CRT loop (Bun has native copy paths and doesn't expose uv sendfile); must-port the two lessons wherever Bun loops read/write: cap per-op sizes below i32 wraparound (0x7ffff000 mirrors Linux MAX_RW_COUNT) and never abort on allocation failure in a syscall shim. Target: Phase 2 fs — copy plumbing."
+reason = "the CRT loop (Bun has native copy paths and doesn't expose uv sendfile); must-port the two lessons wherever Bun loops read/write: cap per-op sizes below i32 wraparound (0x7ffff000 mirrors Linux MAX_RW_COUNT) and never abort on allocation failure in a syscall shim. Target: engine"
 
 [FSLNK-46]
 status = "implemented"
@@ -554,7 +554,7 @@ reason = "the mechanism (no filemap port per FSIO-31), but must-carry the lesson
 
 [FSIO-33]
 status = "skipped"
-reason = "no filemap), and treat as an anti-lesson: never put a global mutex probe on the per-I/O hot path for a feature almost nobody enables; if Bun ever needs per-fd sidecar state, key it off a flag bit in the fd representation first. Target: Phase 2 fs-open-io design note."
+reason = "no filemap), and treat as an anti-lesson: never put a global mutex probe on the per-I/O hot path for a feature almost nobody enables; if Bun ever needs per-fd sidecar state, key it off a flag bit in the fd representation first. Target: engine"
 
 [FSIO-34]
 status = "pending"
@@ -818,7 +818,7 @@ covered_by = "LOOP-43"
 
 [LOOP-47]
 status = "skipped"
-reason = "the indirection (embed the heap in Bun's loop struct — no public C ABI constraint); must keep the heap-not-tree choice. Target: Phase 1 loop (timers)."
+reason = "the indirection (embed the heap in Bun's loop struct — no public C ABI constraint); must keep the heap-not-tree choice. Target: engine"
 
 [LOOP-48]
 status = "implemented"
@@ -901,7 +901,7 @@ status = "pending"
 
 [HIST-21]
 status = "skipped"
-reason = "use Rust `std::sync::Once`/`OnceLock`, which wraps the same OS facility) — recorded because any C-side Bun glue must not resurrect the event dance, and the ABI-padding trick matters if Bun ever mirrors libuv structs. Target: Phase 1 loop."
+reason = "use Rust `std::sync::Once`/`OnceLock`, which wraps the same OS facility) — recorded because any C-side Bun glue must not resurrect the event dance, and the ABI-padding trick matters if Bun ever mirrors libuv structs. Target: engine"
 
 [HIST-22]
 status = "skipped"
@@ -916,7 +916,7 @@ reason = "implementation (Rust `std::sync::RwLock`/`Mutex` already use SRWLock/f
 
 [HIST-25]
 status = "skipped"
-reason = "Rust Condvar). Record: any Bun code converting ns→Windows-ms must use integer math, clamp 0→1 when a zero-wait would busy-poll, and never pass 0xFFFFFFFF accidentally (it means INFINITE). Cross-ref: TIMERS area has the same ms-rounding contract on the loop. Target: Phase 1 loop / timers."
+reason = "Rust Condvar). Record: any Bun code converting ns→Windows-ms must use integer math, clamp 0→1 when a zero-wait would busy-poll, and never pass 0xFFFFFFFF accidentally (it means INFINITE). Cross-ref: TIMERS area has the same ms-rounding contract on the loop. Target: engine"
 
 [HIST-26]
 status = "skipped"
@@ -1294,7 +1294,7 @@ covered_by = "PIPE-04"
 
 [PIPE-60]
 status = "skipped"
-reason = "the mechanism (Bun's Rust layer can link ntdll imports statically — NtQueryInformationFile is a stable documented-enough export on 1809+; no GetProcAddress needed). Record: the *information classes* used (FileModeInformation=16, FileAccessInformation=8, FilePipeLocalInformation=24, FileNameInformation=9) are the load-bearing part. Target: Phase 2 sys."
+reason = "the mechanism (Bun's Rust layer can link ntdll imports statically — NtQueryInformationFile is a stable documented-enough export on 1809+; no GetProcAddress needed). Record: the *information classes* used (FileModeInformation=16, FileAccessInformation=8, FilePipeLocalInformation=24, FileNameInformation=9) are the load-bearing part. Target: engine"
 
 [PIPE-61]
 status = "implemented"
@@ -2172,7 +2172,7 @@ status = "pending"
 
 [SOCK-64]
 status = "skipped"
-reason = "libuv-specific API shape) — but the \"unwind partial handle registration on init failure\" pattern is must-port wherever Bun mirrors handle queues. Target: Phase 1 loop handle bookkeeping."
+reason = "libuv-specific API shape) — but the \"unwind partial handle registration on init failure\" pattern is must-port wherever Bun mirrors handle queues. Target: engine"
 
 [SOCK-65]
 status = "pending"

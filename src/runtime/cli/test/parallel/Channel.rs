@@ -22,6 +22,8 @@ use core::marker::PhantomData;
 use bun_collections::VecExt;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::Fd;
+#[cfg(windows)]
+use crate::api::bun::process as spawn;
 use bun_sys::FdExt as _;
 #[cfg(not(windows))]
 use bun_uws as uws;
@@ -133,23 +135,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 }
 
 // -- Windows (uv.Pipe) -------------------------------------------------------
-
-/// Engine close-cb: frees the pipe box leaked by [`close_engine_channel_pipe`].
-#[cfg(windows)]
-unsafe fn free_engine_pipe_on_close(_lp: &mut bun_iocp::Loop, data: *mut core::ffi::c_void) {
-    // SAFETY: `data` is the leaked box; the engine fires this exactly once
-    // after all in-flight work drains.
-    drop(unsafe { Box::from_raw(data.cast::<bun_iocp::pipe::PipeHandle>()) });
-}
-
-/// Close + free an engine pipe box: the box must stay alive until the
-/// engine's close callback (endgame) — freed there, exactly once.
-#[cfg(windows)]
-fn close_engine_channel_pipe(pipe: Box<bun_iocp::pipe::PipeHandle>) {
-    let raw = Box::into_raw(pipe);
-    // SAFETY: `raw` is live; the close cb is its sole deallocation path.
-    unsafe { (*raw).close(Some(free_engine_pipe_on_close), raw.cast()) };
-}
 
 #[cfg(windows)]
 pub struct WindowsBackend {
@@ -292,7 +277,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         if let Err(e) = rc {
             bun_core::debug_warn!("Channel.adoptPipe: readStart failed: {}", e.int());
             // Per contract this fn owns the pipe: tear it down here.
-            close_engine_channel_pipe(pipe);
+            spawn::close_engine_pipe(pipe);
             return false;
         }
         self.backend.pipe = Some(pipe);
@@ -476,7 +461,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             if let Some(p) = self.backend.pipe.take() {
                 // take() makes this idempotent; the engine close is safe on a
                 // handle with in-flight work (drained before the close cb).
-                close_engine_channel_pipe(p);
+                spawn::close_engine_pipe(p);
             }
         }
         #[cfg(not(windows))]
@@ -544,7 +529,7 @@ impl<Owner> Drop for Channel<Owner> {
         #[cfg(windows)]
         {
             if let Some(p) = self.backend.pipe.take() {
-                close_engine_channel_pipe(p);
+                spawn::close_engine_pipe(p);
             }
             // `inflight` Vec drops automatically.
         }
@@ -652,7 +637,7 @@ impl<Owner: ChannelOwner> WindowsHandlers<Owner> {
         // signalling done so the owner can tell EOF apart from a protocol
         // error (where the pipe is still attached).
         if let Some(p) = self_.backend.pipe.take() {
-            close_engine_channel_pipe(p);
+            spawn::close_engine_pipe(p);
         }
         self_.mark_done();
     }

@@ -882,7 +882,7 @@ fn spawn_exit_code_delivery_full_dword() {
     assert!(!loop_.alive());
 }
 
-// ───────────────────────── children: the bug-#9 regression ─────────────────────────
+// ───────────────────────── children: the handle-lifetime regression ─────────────────────────
 
 /// An UNREF'D process must still fire its exit callback: exit observation is
 /// decoupled from keep-alive. The loop reports not-alive the whole time —

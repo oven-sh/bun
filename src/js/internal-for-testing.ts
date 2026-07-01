@@ -369,12 +369,6 @@ export const translateNtStatusToE: (status: number) => string | undefined = $new
   1,
 );
 
-export const sysErrorNameFromLibuv: (errno: number) => string | undefined = $newRustFunction(
-  "sys/Error.rs",
-  "TestingAPIs.sysErrorNameFromLibuv",
-  1,
-);
-
 export const sigactionLayout: () =>
   | undefined
   | {

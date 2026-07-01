@@ -111,6 +111,7 @@ bun_dispatch::link_interface! {
         fn increment_pending_unref_counter();
         fn ref_concurrently();
         fn unref_concurrently();
+        fn note_concurrent_ref_released_locally();
         fn after_event_loop_callback() -> Option<OpaqueCallback>;
         fn set_after_event_loop_callback(
             cb: Option<OpaqueCallback>,
@@ -2187,9 +2188,7 @@ pub mod closer {
     }
 
     impl Closer {
-        /// `_compat`: historical second parameter, kept so call sites read
-        /// uniformly across platforms.
-        pub fn close(fd: Fd, _compat: ()) {
+        pub fn close(fd: Fd) {
             debug_assert!(fd.is_valid());
             WorkPool::schedule_owned(Box::new(Closer {
                 fd,

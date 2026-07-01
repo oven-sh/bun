@@ -13,6 +13,11 @@ use crate::posix_event_loop::js_vm_ctx;
 #[derive(Default)]
 pub struct KeepAlive {
     status: Status,
+    /// True while the active ref was taken via `ref_concurrently` — its
+    /// release must flow back through the concurrent counter so the event
+    /// loop's applied-concurrent bookkeeping stays net-accurate (a local
+    /// release of a concurrent ref would strand a permanent +1 there).
+    concurrent_origin: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -41,6 +46,7 @@ impl KeepAlive {
         if self.status != Status::Active {
             return;
         }
+        debug_assert!(!self.concurrent_origin, "concurrent-origin ref released via deactivate");
         self.status = Status::Inactive;
         loop_.sub_active(1);
     }
@@ -50,6 +56,7 @@ impl KeepAlive {
         if self.status != Status::Active {
             return;
         }
+        debug_assert!(!self.concurrent_origin, "concurrent-origin ref released via deactivate");
         self.status = Status::Inactive;
         loop_.dec();
     }
@@ -85,6 +92,13 @@ impl KeepAlive {
             return;
         }
         self.status = Status::Inactive;
+        if core::mem::take(&mut self.concurrent_origin) {
+            // A local release of a concurrent-origin ref must stay IMMEDIATE
+            // (a deferred release can strand an idle loop awake) — but the
+            // applied-concurrent bookkeeping must still see the -1 so the
+            // worker-teardown reconcile stays a true net.
+            event_loop_ctx.note_concurrent_ref_released_locally();
+        }
         #[cfg(not(windows))]
         event_loop_ctx.loop_unref();
         #[cfg(windows)]
@@ -97,6 +111,7 @@ impl KeepAlive {
             return;
         }
         self.status = Status::Inactive;
+        self.concurrent_origin = false;
         vm.unref_concurrently();
     }
 
@@ -141,11 +156,17 @@ impl KeepAlive {
     }
 
     /// Allow a poll to keep the process alive.
+    ///
+    /// Pairing invariant: a ref taken here is released through the
+    /// concurrent counter as well — `unref`/`unref_concurrently` both honor
+    /// this via `concurrent_origin`, keeping `applied_concurrent_refs` a
+    /// true net (the worker-teardown reconcile depends on it).
     pub fn ref_concurrently(&mut self, vm: EventLoopCtx) {
         if self.status != Status::Inactive {
             return;
         }
         self.status = Status::Active;
+        self.concurrent_origin = true;
         vm.ref_concurrently();
     }
 

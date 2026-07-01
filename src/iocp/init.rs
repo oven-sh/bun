@@ -117,20 +117,6 @@ pub fn process_init() {
         // no-op handler itself touches nothing.
         unsafe { _set_invalid_parameter_handler(Some(noop_invalid_parameter_handler)) };
 
-        // Winsock 2.2, process-wide (libuv: `uv__winsock_init`). Every
-        // network path creates a loop first, so first-loop init keeps
-        // network-free startups from paying the service-provider load;
-        // without it, work-pool `getaddrinfo` (e.g. `bun install`) is the
-        // first WSA call in the process and fails WSANOTINITIALISED.
-        // Safe mode (SM_CLEANBOOT) has no winsock: skip like libuv does and
-        // let socket calls fail with WSANOTINITIALISED instead of aborting.
-        if bun_windows_sys::user32::GetSystemMetrics(bun_windows_sys::user32::SM_CLEANBOOT) != 1 {
-            let mut wsa_data = core::mem::MaybeUninit::<WSADATA>::zeroed();
-            // SAFETY: valid out-pointer; winsock 2.2 always available.
-            let r = unsafe { WSAStartup(0x0202, wsa_data.as_mut_ptr()) };
-            assert_eq!(r, 0, "WSAStartup failed: {r}");
-        }
-
         // Win8+ API, always present on the supported baseline — registered
         // directly, no GetProcAddress probe. The registration handle is
         // deliberately leaked (process lifetime). // quirk: LOOP-38
@@ -154,3 +140,29 @@ pub fn process_init() {
         crate::signal::signals_init();
     });
 }
+
+/// Winsock 2.2, process-wide, initialized at the first ACTUAL WSA consumer
+/// (socket creation, AFD peer setup, work-pool `getaddrinfo`) — never at
+/// startup, so network-free invocations skip the service-provider catalog
+/// load entirely (libuv paid it in `uv__winsock_init` on every run).
+/// Safe mode (SM_CLEANBOOT) has no winsock: skip like libuv does and let
+/// socket calls fail with WSANOTINITIALISED instead of aborting.
+pub fn ensure_winsock() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        if bun_windows_sys::user32::GetSystemMetrics(bun_windows_sys::user32::SM_CLEANBOOT) != 1 {
+            let mut wsa_data = core::mem::MaybeUninit::<WSADATA>::zeroed();
+            // SAFETY: valid out-pointer; winsock 2.2 always available.
+            let r = unsafe { WSAStartup(0x0202, wsa_data.as_mut_ptr()) };
+            assert_eq!(r, 0, "WSAStartup failed: {r}");
+        }
+    });
+}
+
+/// C-ABI twin for the C consumers (usockets `bsd_create_socket`, the uv
+/// polyfills).
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__ensure_winsock() {
+    ensure_winsock();
+}
+

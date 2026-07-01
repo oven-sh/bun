@@ -1,7 +1,7 @@
 // eventloop-setimmediate-chain.mjs
 //
 // CLAIM: setImmediate tick turnaround on Windows gets faster when the libuv
-// loop is replaced by the native IOCP loop (plan Phase 1), because today every
+// loop is replaced by the native IOCP loop (plan the removal), because today every
 // chained setImmediate pays a full uv_run(UV_RUN_ONCE) handle-phase walk PLUS a
 // self-inflicted uv_async_send wakeup (PostQueuedCompletionStatus syscall +
 // IOCP packet dequeue + pending-req dispatch) per tick.
@@ -21,7 +21,7 @@
 //    process_reqs -> idle_invoke -> prepare_invoke -> GetQueuedCompletionStatusEx(0)
 //    -> process_reqs (x<=8) -> check_invoke -> endgames -> update_time+run_timers
 //    (libuv src/win/core.c:701+).
-//  AFTER (plan Phase 1): the native loop's run-once sees pending immediates and
+//  AFTER (plan the removal): the native loop's run-once sees pending immediates and
 //  polls IOCP with timeout 0 directly. Deleted per tick: the uv_async_send
 //  syscall + packet round-trip, the uv_idle/async/timer handle queue walks, the
 //  double uv_update_time, us_loop_integrate, and the pending-req trampoline.

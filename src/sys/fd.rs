@@ -14,7 +14,6 @@ bun_core::define_scoped_log!(log, SYS, visible);
 
 /// Native fd backing int — `c_int` on POSIX, `HANDLE` on Windows. Same as `FdNative`.
 pub type FdT = FdNative;
-/// `bun.windows.libuv.uv_file` (c-runtime file descriptor); on POSIX this is also `c_int`.
 
 // ──────────────────────────────────────────────────────────────────────────
 // FdExt — syscall-touching methods on `bun_core::Fd`.
@@ -296,7 +295,7 @@ impl Prehashed {
 // ──────────────────────────────────────────────────────────────────────────
 
 // ──────────────────────────────────────────────────────────────────────────
-// Platform helpers (Windows libuv / macOS close_nocancel).
+// Platform helpers (macOS close_nocancel).
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(target_os = "macos")]
 use core::ffi::c_int;

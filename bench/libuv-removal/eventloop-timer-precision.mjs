@@ -2,8 +2,8 @@
 //
 // WHAT THIS MEASURES: setTimeout(d) actual-elapsed distributions, setInterval
 // effective rates, and (bun --probe) the raw IOCP wait the native loop would
-// issue. This is the before/after gauge for the Phase 1 timer rewrite AND a
-// never-fires-early regression guard (Phase 1 exit criteria).
+// issue. This is the before/after gauge for the the removal timer rewrite AND a
+// never-fires-early regression guard (the removal exit criteria).
 //
 // TODAY'S BEHAVIOR (measured 2026-06-29, Win11, bun 1.4.0 / node 25.8.1):
 //   bun  setTimeout(16): p50 ~31.6ms elapsed (overshoot 15.6); setInterval(16)
@@ -24,7 +24,7 @@
 //    (timer/mod.rs:762-776) — a SPURIOUS SECOND WAKE every such timer.
 //
 // HONEST ATTRIBUTION (what removal does and does not buy):
-//  - Phase 1 as written (single ns heap, GQCSEx timeout honored, never-early):
+//  - the removal as written (single ns heap, GQCSEx timeout honored, never-early):
 //    deletes the spurious second wake (CPU only) and the double-heap churn;
 //    LATENCY for quantum-straddling delays stays ~2 quanta when the chain
 //    phase-locks — the kernel rounds blocking waits up to interrupt ticks and
@@ -34,7 +34,7 @@
 //    CREATE_WAITABLE_TIMER_HIGH_RESOLUTION posted into the IOCP). libuv
 //    1.51/1.52 has no such facility (verified: no high-res APIs in
 //    libuv-read/src/win/) — owning the loop is what makes this policy
-//    POSSIBLE. Track it as a Phase 1 design option, not an automatic effect.
+//    POSSIBLE. Track it as a the removal design option, not an automatic effect.
 //
 // EVIDENCE MODES:
 //   bun  eventloop-timer-precision.mjs            today's behavior (before)

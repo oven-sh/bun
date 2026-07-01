@@ -1786,7 +1786,7 @@ impl SendQueue {
         // libuv's uv_pipe_open(ipc=1) rejected non-duplex fds with EINVAL;
         // keep that contract (NODE_CHANNEL_FD must be a duplex pipe end).
         if !pipe.is_readable() || !pipe.is_writable() {
-            Self::windows_close_unattached_pipe(pipe);
+            bun_spawn::close_engine_pipe(pipe);
             return Err(bun_sys::Error::from_code(bun_sys::E::INVAL, bun_sys::Tag::open).into());
         }
         // The engine owns a private duplicate; release the inherited fd now
@@ -1801,20 +1801,6 @@ impl SendQueue {
         Ok(())
     }
 
-    /// Release an engine pipe that was never attached to a SendQueue: close
-    /// on its loop and free the box in the close callback (the only legal
-    /// free point).
-    #[cfg(windows)]
-    fn windows_close_unattached_pipe(pipe: Box<bun_iocp::pipe::PipeHandle>) {
-        unsafe fn free_cb(_lp: &mut bun_iocp::Loop, data: *mut c_void) {
-            // SAFETY: `data` is the box leaked below; the engine fires this
-            // exactly once after all in-flight work drains.
-            let _ = unsafe { bun_core::heap::take(data.cast::<bun_iocp::pipe::PipeHandle>()) };
-        }
-        let raw = bun_core::heap::into_raw(pipe);
-        // SAFETY: `raw` is live; the close cb is its sole deallocation path.
-        unsafe { (*raw).close(Some(free_cb), raw.cast()) };
-    }
 }
 
 impl Drop for SendQueue {

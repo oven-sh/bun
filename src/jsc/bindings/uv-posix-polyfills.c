@@ -196,8 +196,11 @@ UV_EXTERN void uv_free_interface_addresses(uv_interface_address_t* addresses,
     __builtin_unreachable();
 }
 
+extern void Bun__ensure_winsock(void);
+
 UV_EXTERN int uv_inet_ntop(int af, const void* src, char* dst, size_t size)
 {
+    Bun__ensure_winsock();
     __bun_throw_not_implemented("uv_inet_ntop");
     __builtin_unreachable();
 }
@@ -273,29 +276,16 @@ UV_EXTERN void uv_once(uv_once_t* guard, void (*callback)(void))
         abort();
 }
 
-static uint64_t bun__hrtime_frequency = 0;
-static uv_once_t bun__hrtime_init_guard = UV_ONCE_INIT;
-
-static void bun__hrtime_init(void)
-{
-    LARGE_INTEGER frequency;
-    if (!QueryPerformanceFrequency(&frequency))
-        abort();
-    bun__hrtime_frequency = (uint64_t)frequency.QuadPart;
-}
+/* c-bindings.cpp owns the QPC monotonic clock (cached frequency + the
+ * overflow-safe split); this polyfill is a thin adapter over it. */
+extern int clock_gettime_monotonic(int64_t* sec, int64_t* nsec);
 
 UV_EXTERN uint64_t uv_hrtime(void)
 {
-    /* libuv win/util.c uv__hrtime: split the multiply so counter * 1e9
-     * cannot overflow. */
-    LARGE_INTEGER counter;
-    uint64_t c, f;
-    uv_once(&bun__hrtime_init_guard, bun__hrtime_init);
-    if (!QueryPerformanceCounter(&counter))
-        abort();
-    c = (uint64_t)counter.QuadPart;
-    f = bun__hrtime_frequency;
-    return (c / f) * 1000000000ull + (c % f) * 1000000000ull / f;
+    int64_t s, ns;
+    if (clock_gettime_monotonic(&s, &ns) != 0)
+        abort(); /* libuv parity: uv_fatal_error on a broken QPC */
+    return (uint64_t)s * 1000000000ull + (uint64_t)ns;
 }
 
 UV_EXTERN void uv_mutex_destroy(uv_mutex_t* mutex)

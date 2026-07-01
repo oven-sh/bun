@@ -45,15 +45,12 @@ use bun_windows_sys::{
     FILE_END_OF_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_DELETE_ON_CLOSE,
     FILE_FLAG_NO_BUFFERING, FILE_FLAG_RANDOM_ACCESS, FILE_FLAG_SEQUENTIAL_SCAN,
     FILE_FLAG_WRITE_THROUGH, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_INFORMATION_CLASS,
-    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_DATA, HANDLE,
+    FILE_WRITE_DATA, HANDLE,
     INVALID_HANDLE_VALUE, IO_STATUS_BLOCK, NT_SUCCESS, OPEN_ALWAYS, OPEN_EXISTING, OVERLAPPED,
     TRUNCATE_EXISTING, ULONG, Win32Error,
 };
 
-/// Open with all three share modes so files can be deleted/renamed/reopened
-/// while held open — the deliberate CRT deviation that matches UNIX
-/// semantics. // quirk: FSIO-01
-const SHARE_ALL: DWORD = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+use crate::stat::SHARE_ALL;
 
 /// Per-syscall byte cap (libuv `UV__IO_MAX_BYTES`, uv-common.h:234 — the same
 /// 0x7ffff000 Linux applies per syscall). Each `ReadFile`/`WriteFile` length

@@ -232,7 +232,7 @@ impl Lazy {
 
             let mode = stat.st_mode as _;
             if sys::S::ISDIR(mode) {
-                aio::Closer::close(fd, ());
+                aio::Closer::close(fd);
                 return Err(sys::Error::from_code(sys::Errno::EISDIR, sys::Tag::fstat));
             }
 

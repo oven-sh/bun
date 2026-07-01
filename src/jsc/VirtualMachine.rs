@@ -1832,6 +1832,11 @@ bun_io::link_impl_EventLoopCtx! {
         // and `{,un}ref_concurrently` take `&self` (atomic fetch_add + wakeup).
         ref_concurrently()   => (*(*this).event_loop()).ref_concurrently(),
         unref_concurrently() => (*(*this).event_loop()).unref_concurrently(),
+        // SAME-THREAD only (KeepAlive::unref runs on the owner's JS thread);
+        // `&self` accessor, Cell mutation is thread-confined like update_counts.
+        note_concurrent_ref_released_locally() => {
+            (*(*this).event_loop()).note_concurrent_ref_released_locally();
+        },
         after_event_loop_callback() => vm_from_owner(this.cast()).after_event_loop_callback,
         set_after_event_loop_callback(cb, ctx) => {
             let vm = vm_from_owner(this.cast());

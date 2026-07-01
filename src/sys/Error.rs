@@ -32,8 +32,6 @@ pub(crate) type Int = u16;
 pub struct Error {
     pub errno: Int,
     pub fd: Fd,
-    #[cfg(windows)]
-    pub from_libuv: bool,
     // Box<[u8]> per PORTING.md; `with_path*` eagerly clones. Revisit if
     // profiling shows regressions.
     pub path: Box<[u8]>,
@@ -46,8 +44,6 @@ impl Default for Error {
         Self {
             errno: TODO_ERRNO,
             fd: Fd::INVALID,
-            #[cfg(windows)]
-            from_libuv: false,
             path: Box::default(),
             syscall: Tag::TODO,
             dest: Box::default(),
@@ -216,19 +212,14 @@ impl Error {
         }
     }
 
-    /// Unlike `with_path`/`with_path_dest` (which
-    /// reset `fd`/`from_libuv`), this only overlays `dest` and
-    /// preserves every other field — chained on a libuv-sourced error
-    /// (`from_libuv=true`, errno in the 4000-range) it must keep `from_libuv`
-    /// so `name()`/`msg()` still route through the uv→errno mapper.
+    /// Unlike `with_path`/`with_path_dest` (which reset `fd`), this only
+    /// overlays `dest` and preserves every other field.
     #[inline]
     pub fn with_dest(&self, dest: &[u8]) -> Error {
         Error {
             errno: self.errno,
             syscall: self.syscall,
             fd: self.fd,
-            #[cfg(windows)]
-            from_libuv: self.from_libuv,
             path: self.path.clone(),
             dest: Box::from(dest),
         }
@@ -254,27 +245,18 @@ impl Error {
         Error {
             errno: self.errno,
             fd: self.fd,
-            #[cfg(windows)]
-            from_libuv: self.from_libuv,
             syscall: self.syscall,
             path: Box::default(),
             dest: Box::default(),
         }
     }
 
-    /// Decode `self.errno` (+ `from_libuv` on Windows) into a validated `SystemErrno`.
-    /// Shared by `name()` / `get_error_code_tag_name()`; a fallible discriminant lookup.
+    /// Decode `self.errno` into a validated `SystemErrno`. Shared by
+    /// `name()` / `get_error_code_tag_name()`; a fallible discriminant lookup.
     #[inline]
     fn resolve_system_errno(&self) -> Option<SystemErrno> {
         #[cfg(windows)]
         {
-            if self.from_libuv {
-                // `self.errno` is the positive `UV_E*` magnitude; negate back to the signed
-                // uv code, map to `E`, then to `SystemErrno` via the shared #[repr(u16)]
-                // discriminant table.
-                let translated = crate::windows::translate_uv_error_to_e(-c_int::from(self.errno));
-                return Some(SystemErrno::from_raw(translated as u16));
-            }
             // `self.errno` may be out-of-range (TODO_ERRNO etc.); validate first.
             // Do NOT call `SystemErrno::init` here — on Windows its u16/i32 entry points map
             // Win32/WSA error codes to errnos and would corrupt a value that is already a

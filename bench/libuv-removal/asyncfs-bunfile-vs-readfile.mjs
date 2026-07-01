@@ -6,7 +6,7 @@
 // requests. Removing libuv (migrating Blob reads to the single-WorkPool-task
 // model POSIX uses) makes `Bun.file()` reads match or beat `readFile`.
 //
-// MECHANISM (plan LIBUV_WINDOWS_REMOVAL_PLAN.md §2.3, Phase 2.4):
+// MECHANISM (the async-fs WorkPool migration):
 //   - Bun.file() reads on Windows = `ReadFileUV`
 //     (src/runtime/webcore/blob/read_file.rs:915-1200): uv_fs_open ->
 //     uv_fs_fstat -> uv_fs_read loop -> uv_fs_close. EVERY step is a separate
@@ -17,7 +17,7 @@
 //     ONE Bun WorkPool task runs open+fstat+read+close synchronously
 //     (node_fs.rs:7015 read_file), one completion back to the JS thread.
 //   - Same kernel work, 4x the scheduling overhead for Bun.file today.
-//   - Phase 2.4 migrates Blob ReadFileUV to the WorkPool model, deleting the
+//   - this removal migrates Blob ReadFileUV to the WorkPool model, deleting the
 //     extra hops. EXPECTED AFTER: Bun.file().arrayBuffer() >= readFile.
 //
 // ATTRIBUTION CONTROL: the script re-runs itself with UV_THREADPOOL_SIZE=24.
@@ -27,7 +27,7 @@
 // for the "after" state (1 pool task per logical read).
 //
 // RUN (today, baseline):     bun bench/libuv-removal/asyncfs-bunfile-vs-readfile.mjs
-// RUN (after Phase 2.4):     same command; Bun.file row should jump to ~readFile level.
+// RUN (after the migration):     same command; Bun.file row should jump to ~readFile level.
 // Bun-only (uses Bun.file). Numbers are indicative; dev-machine rules:
 // time-boxed windows, median of 5 repeats, spread reported.
 //
@@ -135,7 +135,7 @@ if (process.argv[2] === "--child") {
   await bench();
 } else {
   console.log("Bun.file().arrayBuffer() vs fs.promises.readFile(), same 64KB files, hot cache");
-  console.log("(after libuv removal Phase 2.4, the Bun.file row should match/beat readFile)\n");
+  console.log("(after libuv removal the removal, the Bun.file row should match/beat readFile)\n");
   for (const [label, env] of [
     ["default env (libuv pool = 4 threads)", {}],
     ["UV_THREADPOOL_SIZE=24 control (gap should NOT close -> not a pool-width problem)", { UV_THREADPOOL_SIZE: "24" }],

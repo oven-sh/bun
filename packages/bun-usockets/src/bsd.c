@@ -680,7 +680,15 @@ void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
 #endif
 }
 
+#ifdef _WIN32
+/* Lazy process-wide Winsock init (bun_iocp) — first socket pays it, not startup. */
+extern void Bun__ensure_winsock(void);
+#endif
+
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err) {
+#ifdef _WIN32
+    Bun__ensure_winsock();
+#endif
     if (err != NULL) {
         *err = 0;
     }

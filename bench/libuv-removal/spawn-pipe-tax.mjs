@@ -7,7 +7,7 @@
 //   (libuv src/win/pipe.c:209-346, process-stdio.c:232-255), then runs the
 //   uv_pipe read lifecycle and deferred uv_close endgame. 'ignore' instead opens
 //   NUL 3x per spawn (process-stdio.c:210-230). The native design
-//   (LIBUV_WINDOWS_REMOVAL_PLAN.md Phase 3.2/3.3) can pool/pre-create overlapped
+//   (the libuv-removal work.2/3.3) can pool/pre-create overlapped
 //   pipe pairs and cache the NUL handle, collapsing the mode differences.
 //
 // MEASURED TODAY (Windows 11 dev box, bun 1.4.0, node 25.8.1, null child 4-10ms

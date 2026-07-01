@@ -11,7 +11,7 @@
 //
 // The gap contains: libuv's zero-read + PeekNamedPipe + IOCP roundtrips per cycle
 // (libuv-read src/win/pipe.c:1400-1458, 1968-2047 — see the throughput script header),
-// plus Bun's stream/JS delivery layer. A native reader (plan Phase 3.3) cannot reach
+// plus Bun's stream/JS delivery layer. A native reader (plan the removal) cannot reach
 // this floor (it keeps the event loop and stream delivery) but closes the syscall part
 // of the gap: ~3-4 pipe syscalls per 64KB today -> 1-2.
 //

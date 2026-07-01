@@ -450,6 +450,7 @@ unsafe fn peer_socket_for(lp: *mut Loop, info: &WSAPROTOCOL_INFOW) -> SOCKET {
 /// # Safety
 /// `lp` must be a valid pinned loop.
 unsafe fn create_peer_socket(lp: *mut Loop, info: &WSAPROTOCOL_INFOW) -> SOCKET {
+    crate::init::ensure_winsock();
     // From the watched socket's own (base) catalog entry — bypasses any LSP
     // layered on the default chain — overlapped, and never inheritable
     // (atomic at creation; no SetHandleInformation race).
@@ -1049,7 +1050,7 @@ mod tests {
         }
     }
 
-    /// THE gate (LIBUV_WINDOWS_REMOVAL_PLAN Phase 1): an AFD poll IRP must be
+    /// THE gate: an AFD poll IRP must be
     /// pending whenever user code runs in response to a poll event. Inside
     /// the first callback the peer RSTs the connection, and a zero-timeout
     /// GQCS probe on the loop's port — WITHOUT re-entering dispatch — must

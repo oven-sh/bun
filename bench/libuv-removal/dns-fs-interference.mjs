@@ -6,7 +6,7 @@
 // under 16 concurrent fs.open/read(4MB)/close loops, dns.lookup('localhost') median
 // goes ~0.23ms -> ~2.3ms (p90 ~5ms, 10-25x), and net.connect('localhost') inherits
 // the stall while the no-DNS control net.connect('127.0.0.1') stays flat. Removing
-// libuv puts DNS (GetAddrInfoW, plan Phase 1) and async fs (plan Phase 2) on Bun's
+// libuv puts DNS (GetAddrInfoW, plan the removal) and async fs (plan the removal) on Bun's
 // cores-sized WorkPool — approximated today by UV_THREADPOOL_SIZE=<cores>, which
 // recovers DNS-under-load to ~0.5ms.
 //
@@ -15,14 +15,14 @@
 //     (src/runtime/dns_jsc/dns.rs:5227-5243 -> :462), SLOW_IO class capped at 2
 //     in-flight (libuv src/threadpool.c:45-47; src/win/getaddrinfo.c:341-343).
 //   - Async fs open/read/write/close ride the SAME pool via UVFSRequest
-//     (LIBUV_WINDOWS_REMOVAL_PLAN.md §2.3 "Truly-async fs: 7 ops ... on libuv's
+//     (the libuv-removal work.3 "Truly-async fs: 7 ops ... on libuv's
 //     threadpool"). 4 threads total on a 24-core machine; DNS queues FIFO behind
 //     fs work AND is then subject to the slow-IO cap.
 //   - net.connect(host) calls dns.lookup first (src/js/node/net.ts:2488,2508), so
 //     connection latency to hostnames inherits the stall. The 127.0.0.1 control
 //     skips dns.lookup (net.ts:2463) and isolates the threadpool as the cause.
-//   - After the removal plan: DNS via GetAddrInfoW on WorkPool (Phase 1), fs via
-//     WorkPool (Phase 2) — pool sized to cores (bun_core/util.rs get_thread_count).
+//   - After the removal plan: DNS via GetAddrInfoW on WorkPool (this removal), fs via
+//     WorkPool (this removal) — pool sized to cores (bun_core/util.rs get_thread_count).
 //     Kernel costs are unchanged; only queueing behind a 4-slot pool is removed.
 //
 // HERMETIC: resolves only 'localhost' (hosts/local, no network query); connects only
@@ -160,7 +160,7 @@ function runParent() {
       `(${(before.loaded.lookup.med / after.loaded.lookup.med).toFixed(1)}x) when the pool is cores-sized.` +
       `\n  The 127.0.0.1 row is the control: no DNS hop — it moves only with general CPU` +
       `\n  contention from the load, while the DNS rows additionally queue behind the pool.` +
-      `\n  Post-removal (DNS Phase 1 + fs Phase 2 on WorkPool) the default column should match pool=${cores}.`,
+      `\n  Post-removal (DNS the removal + fs the removal on WorkPool) the default column should match pool=${cores}.`,
   );
 }
 

@@ -1148,7 +1148,7 @@ it("Bun.file().stream() of a directory rejects instead of ending empty", async (
       for await (const _ of Bun.file(join(String(dir), "sub")).stream()) {
       }
     })(),
-  ).rejects.toThrow();
+  ).rejects.toMatchObject({ code: "EISDIR" });
 });
 
 it("fs.createReadStream(filename) should be able to break inside async loop", async () => {

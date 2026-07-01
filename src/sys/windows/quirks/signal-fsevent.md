@@ -12,103 +12,103 @@ Files: `src/win/signal.c`, `src/win/fs-event.c`, plus load-bearing context in
 - **What Windows does**: `SetConsoleCtrlHandler(h, FALSE)` called from inside a ctrl-handler thread deadlocks — the console host holds the handler-list lock while a handler runs. Per-watcher register/unregister is therefore unsafe whenever a signal is being delivered concurrently.
 - **How libuv handles it**: One global handler registered exactly once in `uv__signals_init()` (signal.c:42-46), called from process-wide `uv__once_init()` (core.c:214). `abort()` if registration fails. Unregistration never happens; watchers come and go only in the RB-tree registry. Earlier design had a refcounted register/unregister scheme — removed wholesale.
 - **History**: c66f265b "win,signal: fix potential deadlock" (libuv#1168, nodejs/node#10165). Before that, the refcount itself was buggy — forgot to increment on the already-registered path — fixed twice (0c726e76 on master, b9d5396a backport). The whole refcount mechanism (c4dbb60c, 2012) was deleted in 2016.
-- **Bun disposition**: must-port (register once at process init, never unhook; treat watcher add/remove as pure registry ops). Target: Phase 1 loop (signals).
+- **Bun disposition**: must-port (register once at process init, never unhook; treat watcher add/remove as pure registry ops). Target: engine
 
 ### [SIGEV-02] The ctrl handler runs on OS-injected threads; dispatch must be allocation-free and thread-safe
 - **What Windows does**: For each console event the system injects a **new thread** into the process to run the handler. Multiple events can run handlers concurrently. The handler is fully asynchronous w.r.t. all event loops.
 - **How libuv handles it**: `uv__signal_dispatch()` (signal.c:80-113) does only: take a `CRITICAL_SECTION` (signal.c:33,87), walk the RB-tree, `InterlockedExchange` a per-handle field, and `PostQueuedCompletionStatus` a **pre-allocated** req embedded in the handle (`signal_req`, win.h:656-659). No malloc, no loop-state access, no callbacks on the handler thread.
 - **History**: original design c4dbb60c (2012); unchanged since — the structural constraint is the lesson.
-- **Bun disposition**: must-port (handler thread may only touch a global lock + atomics + PQCS with preallocated payloads). Target: Phase 1 loop (signals).
+- **Bun disposition**: must-port (handler thread may only touch a global lock + atomics + PQCS with preallocated payloads). Target: engine
 
 ### [SIGEV-03] Event mapping: CTRL_C→SIGINT, CTRL_BREAK→SIGBREAK; handler chain is LIFO
 - **What Windows does**: Console delivers `CTRL_C_EVENT` and `CTRL_BREAK_EVENT`; there is no kernel SIGINT. Registered handlers are called last-registered-first; returning TRUE stops the chain.
 - **How libuv handles it**: signal.c:116-144 maps CTRL_C→SIGINT, CTRL_BREAK→SIGBREAK (SIGBREAK=21 is a Windows-CRT-only signal that Node exposes). Because libuv registers at init, any handler the embedder registers *later* runs *before* libuv's.
 - **History**: c4dbb60c; code comment only for the mapping.
-- **Bun disposition**: must-port (incl. SIGBREAK for Node compat; document handler-ordering interaction if Bun ever adds its own crash handler via ctrl handler). Target: Phase 1 loop (signals).
+- **Bun disposition**: must-port (incl. SIGBREAK for Node compat; document handler-ordering interaction if Bun ever adds its own crash handler via ctrl handler). Target: engine
 
 ### [SIGEV-04] Handler return value controls default termination — emulates POSIX "default action"
 - **What Windows does**: Returning FALSE from the ctrl handler passes the event to the next/default handler, which calls `ExitProcess` (kills the process). Returning TRUE marks it handled and the process lives.
 - **How libuv handles it**: `uv__signal_dispatch()` returns 1 iff ≥1 active watcher consumed the signum; the ctrl handler returns that as TRUE/FALSE (signal.c:118-122). Net effect: with no JS listener the process dies (POSIX default action); with a listener it survives. This is the exact mechanism behind Node's "process exits on Ctrl-C unless a SIGINT listener exists".
 - **History**: c4dbb60c; doc comment at signal.c:75-79.
-- **Bun disposition**: must-port (the dispatched-count→return-value coupling is the compat-critical part). Target: Phase 1 loop (signals).
+- **Bun disposition**: must-port (the dispatched-count→return-value coupling is the compat-critical part). Target: engine
 
 ### [SIGEV-05] CTRL_CLOSE→SIGHUP with the Sleep(INFINITE) grace trick
 - **What Windows does**: After the handler returns for `CTRL_CLOSE_EVENT` (console window closed, tab closed, End Task), Windows terminates the process immediately. The OS grants a grace window (~5s, system-controlled) only while the handler has *not yet returned*.
 - **How libuv handles it**: If SIGHUP was dispatched to a watcher, the handler thread calls `Sleep(INFINITE)` and never returns (signal.c:124-132) — deliberately wedging the injected thread so the main loop gets the grace period to run SIGHUP callbacks and exit gracefully; otherwise return FALSE for instant default termination. The `return TRUE` after the Sleep is unreachable by design.
 - **History**: c4dbb60c; the comment (signal.c:126-129) is the spec.
-- **Bun disposition**: must-port (without it, `process.on('SIGHUP')` never observably runs on console close). Target: Phase 1 loop (signals).
+- **Bun disposition**: must-port (without it, `process.on('SIGHUP')` never observably runs on console close). Target: engine
 
 ### [SIGEV-06] CTRL_LOGOFF / CTRL_SHUTDOWN deliberately ignored
 - **What Windows does**: Logoff/shutdown notifications are delivered to console apps and (historically) services; services have SERVICE_CONTROL_* instead, and console apps are about to be killed by the session teardown regardless.
 - **How libuv handles it**: Falls through to `return FALSE` — never mapped to any signal (signal.c:135-142). Comment says "only sent to services" (slightly overstated, but the ignore is deliberate: no useful grace semantics exist for these).
 - **History**: c4dbb60c; code comment only.
-- **Bun disposition**: must-port (do not synthesize SIGHUP/SIGTERM for logoff/shutdown; matches Node behavior). Target: Phase 1 loop (signals).
+- **Bun disposition**: must-port (do not synthesize SIGHUP/SIGTERM for logoff/shutdown; matches Node behavior). Target: engine
 
 ### [SIGEV-07] Fake POSIX signal numbers defined in the public header; NSIG must be re-derived
 - **What Windows does**: The MSVC CRT defines only SIGINT=2, SIGILL=4, SIGABRT_COMPAT=6, SIGFPE=8, SIGSEGV=11, SIGTERM=15, SIGBREAK=21, SIGABRT=22, and `NSIG=23`. No SIGHUP/SIGQUIT/SIGKILL/SIGWINCH. MinGW additionally lacks SIGABRT_COMPAT.
 - **How libuv handles it**: win.h:70-102 defines SIGHUP=1, SIGQUIT=3, SIGKILL=9, SIGWINCH=28 (values chosen to match Linux/Darwin), then **redefines NSIG to SIGWINCH+1** because CRT NSIG (23) < SIGWINCH (28) — without that, `signum >= NSIG` validation rejects SIGWINCH. Defines SIGABRT_COMPAT=6 for MinGW.
 - **History**: 20f23518 (libuv#2032) — before it, validation had a special `signum != SIGWINCH &&` carve-out; the NSIG redefinition replaced the carve-out.
-- **Bun disposition**: must-port (Bun must pick one signal-number table for Windows; reuse libuv's Linux-compatible values and derive the validation limit from the table, not the CRT). Target: Phase 1 loop (signals).
+- **Bun disposition**: must-port (Bun must pick one signal-number table for Windows; reuse libuv's Linux-compatible values and derive the validation limit from the table, not the CRT). Target: engine
 
 ### [SIGEV-08] Watchers for unraisable signals are accepted silently (POSIX deviation)
 - **What Windows does**: There are no kernel-delivered SIGTERM/SIGSEGV/SIGKILL etc.; only console events exist.
 - **How libuv handles it**: `uv__signal_start` validates only range `0 < signum < NSIG` (signal.c:197-199). Watching SIGTERM, SIGKILL, SIGSEGV... succeeds and simply never fires. On Unix, libuv rejects SIGKILL/SIGSTOP with EINVAL — Windows does not, so `uv_signal_start(SIGKILL)` succeeds on Windows and fails on Linux.
 - **History**: older code had explicit per-signum switch returning "never raised" for SIGILL/SIGTERM/etc. and EINVAL otherwise (c4dbb60c); collapsed to a pure range check when registration became global (c66f265b).
-- **Bun disposition**: must-port (Node-level semantics rely on this: `process.on('SIGTERM')` is a silent no-op on Windows, not an error; decide deliberately whether to mirror the SIGKILL-accepted asymmetry). Target: Phase 1 loop (signals).
+- **Bun disposition**: must-port (Node-level semantics rely on this: `process.on('SIGTERM')` is a silent no-op on Windows, not an error; decide deliberately whether to mirror the SIGKILL-accepted asymmetry). Target: engine
 
 ### [SIGEV-09] Process-global watcher registry: RB-tree keyed (signum, loop*, handle*) under one critical section
 - **What Windows does**: Nothing — there is no per-loop signal infrastructure; one console event must fan out to every loop (incl. worker threads' loops) that has a watcher.
 - **How libuv handles it**: One static RB-tree (signal.c:30-33). Comparator orders by signum, then loop pointer, then handle pointer (signal.c:54-69) so `RB_NFIND` with `{signum, loop=NULL}` lands on the first watcher for that signum and iteration stops when signum changes (signal.c:92-94). Insert/remove in start/stop take the same lock the dispatch thread takes (signal.c:167-172, 217-225).
 - **History**: c4dbb60c; structure unchanged 13+ years.
-- **Bun disposition**: must-port (concept: one process-global, lock-protected multimap signum→watchers across all loops; exact data structure free). Target: Phase 1 loop (signals).
+- **Bun disposition**: must-port (concept: one process-global, lock-protected multimap signum→watchers across all loops; exact data structure free). Target: engine
 
 ### [SIGEV-10] `pending_signum` doubles as in-flight flag: InterlockedExchange coalescing, one completion per burst
 - **What Windows does**: Rapid repeated Ctrl-C spawns multiple handler threads; naive design would flood the IOCP or require allocation per signal.
 - **How libuv handles it**: Dispatch does `previous = InterlockedExchange(&handle->pending_signum, signum)` and posts the embedded `signal_req` **only when previous==0** (signal.c:95-103). The loop side exchanges it back to 0 (signal.c:241-243) and asserts nonzero. Result: bursts coalesce into one callback; exactly one completion can be in flight; the req is embedded so no allocation ever happens on the handler thread.
 - **History**: c4dbb60c; volatile-LONG cast added for MinGW -Wall (1ec4c234).
-- **Bun disposition**: must-port (atomic swap-based coalescing + single embedded completion token per watcher). Target: Phase 1 loop (signals).
+- **Bun disposition**: must-port (atomic swap-based coalescing + single embedded completion token per watcher). Target: engine
 
 ### [SIGEV-11] Stop/restart race: re-check signum when the completion is processed
 - **What Windows does**: A posted IOCP completion cannot be revoked; it may be dequeued after the watcher was stopped, or stopped-and-restarted on a *different* signum.
 - **How libuv handles it**: `uv__process_signal_req` fires the callback only `if (dispatched_signum == handle->signum)` (signal.c:244-249) — a stale completion for the old signum is silently swallowed. Comment documents the stop/restart desync explicitly.
 - **History**: c4dbb60c; code comment only.
-- **Bun disposition**: must-port (any swap-and-post design needs the consume-side identity re-check). Target: Phase 1 loop (signals).
+- **Bun disposition**: must-port (any swap-and-post design needs the consume-side identity re-check). Target: engine
 
 ### [SIGEV-12] Restarting on the SAME signum short-circuits instead of stop+start
 - **What Windows does**: n/a (libuv-internal race): between `uv_signal_stop` and re-insert there is a window where `handle->signum==0` and a concurrent dispatch would skip the watcher — the signal would be lost.
 - **How libuv handles it**: `uv__signal_start` with `signum == handle->signum` just swaps the callback and returns (signal.c:201-208), explicitly to avoid that lost-signal window.
 - **History**: c4dbb60c; code comment only ("avoids pending signals getting lost in the (small) time frame that handle->signum == 0").
-- **Bun disposition**: must-port. Target: Phase 1 loop (signals).
+- **Bun disposition**: must-port. Target: engine
 
 ### [SIGEV-13] One-shot watchers need a second flag to suppress repeat posts before processing
 - **What Windows does**: n/a (semantics): a one-shot watcher must fire at most once even if the signal arrives multiple times before the loop processes the first completion.
 - **How libuv handles it**: `UV_SIGNAL_ONE_SHOT_DISPATCHED` set at dispatch time under the global lock; later dispatches `continue` past the handle (signal.c:98-107). Note ordering quirk: the `InterlockedExchange` still happens *before* the DISPATCHED check (harmless — same signum). Processing side calls `uv_signal_stop` after the callback (signal.c:251-252).
 - **History**: 45616f54 (libuv#1106, issue #1104) — added for Node's `process.once` semantics and self-re-raise patterns.
-- **Bun disposition**: should-port (needed only if Bun exposes one-shot semantics at the loop layer; Node-level `once` can also be done in JS — decide once signal API shape is fixed). Target: Phase 1 loop (signals).
+- **Bun disposition**: should-port (needed only if Bun exposes one-shot semantics at the loop layer; Node-level `once` can also be done in JS — decide once signal API shape is fixed). Target: engine
 
 ### [SIGEV-14] Close protocol: defer endgame while a signal completion is in flight
 - **What Windows does**: The posted completion references memory inside the handle; freeing/closing the handle before the completion is dequeued is a UAF.
 - **How libuv handles it**: `uv__signal_close` stops the watcher (so no new posts) and endgames immediately **only if** `pending_signum == 0`; otherwise the in-flight completion's `uv__process_signal_req` sees `UV_HANDLE_CLOSING` and endgames (signal.c:254-258, 262-269). Endgame asserts both signum and pending_signum are 0 (signal.c:272-282).
 - **History**: c4dbb60c; assert bugs in endgame fixed by 328f29b0.
-- **Bun disposition**: must-port (close must rendezvous with the in-flight completion token). Target: Phase 1 loop (signals).
+- **Bun disposition**: must-port (close must rendezvous with the in-flight completion token). Target: engine
 
 ### [SIGEV-15] uv_signal_stop is infallible by design
 - **What Windows does**: n/a — fallible stop existed only because per-watcher unregistration of the ctrl handler could fail.
 - **How libuv handles it**: Since the global handler is never unregistered, stop is pure registry removal and cannot fail (signal.c:160-178); `uv__signal_start` asserts this when restarting (signal.c:211-215).
 - **History**: 8073a263 made it infallible (2012) even before the registration scheme was deleted; c66f265b finished the job.
-- **Bun disposition**: must-port (design rule: watcher teardown must be a non-failing pure data-structure op; everything fallible happens once at init). Target: Phase 1 loop (signals).
+- **Bun disposition**: must-port (design rule: watcher teardown must be a non-failing pure data-structure op; everything fallible happens once at init). Target: engine
 
 ### [SIGEV-16] SIGWINCH is synthesized by the tty layer through the same dispatch path
 - **What Windows does**: There is no SIGWINCH; console size changes are observable only by polling/console events.
 - **How libuv handles it**: tty.c's console-resize monitoring calls `uv__signal_dispatch(SIGWINCH)` directly (tty.c:2443) — the signal registry doubles as an in-process event bus, and watchers can't tell synthetic from real. First-computation suppression avoids a spurious SIGWINCH at startup (564e7c76).
 - **History**: 564e7c76 (2012); NSIG interplay in SIGEV-07.
-- **Bun disposition**: must-port (Node emits SIGWINCH on console resize; route Bun's console-resize detection through the same dispatch entry point). Target: Phase 1 loop (signals); cross-ref: TTY area.
+- **Bun disposition**: must-port (Node emits SIGWINCH on console resize; route Bun's console-resize detection through the same dispatch entry point). Target: engine
  
 ### [SIGEV-17] Library shutdown does NOT unhook the ctrl handler (deliberate no-op cleanup)
 - **What Windows does**: Unhooking is unsafe if a handler thread is currently running or parked in Sleep(INFINITE) (see SIGEV-01/05).
 - **How libuv handles it**: `uv__signal_cleanup()` on Windows is an empty TODO (signal.c:49-51), called from `uv_library_shutdown` (uv-common.c:1002). The DeleteCriticalSection/unhook is intentionally skipped.
 - **History**: 72fe3543 added uv_library_shutdown; the Windows TODO has survived every cleanup pass — treat that as a decision, not an omission.
-- **Bun disposition**: must-port (as a rule: never tear down the signal hook at exit; leak the registration). Target: Phase 1 loop (signals).
+- **Bun disposition**: must-port (as a rule: never tear down the signal hook at exit; leak the registration). Target: engine
 
 ### [SIGEV-18] InterlockedExchange type gymnastics (unsigned long field, volatile LONG* cast)
 - **What Windows does**: `InterlockedExchange` takes `volatile LONG*`; the field is `unsigned long pending_signum` (win.h:659), so MinGW -Wall warned about the implicit conversion.
@@ -120,7 +120,7 @@ Files: `src/win/signal.c`, `src/win/fs-event.c`, plus load-bearing context in
 - **What Windows does**: PQCS can fail (kernel resource exhaustion, bad IOCP handle).
 - **How libuv handles it**: `POST_COMPLETION_FOR_REQ` aborts via `uv_fatal_error` on failure (req-inl.h:76-82) — a lost signal completion would otherwise wedge close protocols (SIGEV-14) and silently drop signals.
 - **History**: original macro design.
-- **Bun disposition**: must-port (failure to enqueue the wakeup must be loud — panic/abort, never ignored — because handle lifecycle correctness depends on the completion arriving). Target: Phase 1 loop.
+- **Bun disposition**: must-port (failure to enqueue the wakeup must be loud — panic/abort, never ignored — because handle lifecycle correctness depends on the completion arriving). Target: engine
 
 ### [SIGEV-20] Historical foot-guns: switch fall-through in endgame dispatch; assignment-in-assert
 - **What Windows does**: n/a.
@@ -132,7 +132,7 @@ Files: `src/win/signal.c`, `src/win/fs-event.c`, plus load-bearing context in
 - **What Windows does**: (a) CTRL_C is only generated when console input has `ENABLE_PROCESSED_INPUT` — raw-mode stdin (Node `setRawMode(true)`) turns Ctrl-C into a key event, no SIGINT; (b) there is no kill(2): `uv_kill`/`uv_process_kill` emulate — signum 0 = liveness probe, SIGTERM/SIGKILL/SIGINT → `TerminateProcess`, and SIGQUIT triggers a WER LocalDumps minidump write if the registry key exists (process.c:1174-1210); none of these route through uv_signal watchers, and `raise()` in-process also bypasses them.
 - **How libuv handles it**: division of labor — signal.c only handles console events + synthetic SIGWINCH; everything else is tty.c/process.c.
 - **History**: process.c SIGQUIT/WER added 2023-era; cross-file invariant.
-- **Bun disposition**: should-port (cross-ref: TTY area for raw-mode/CTRL_C interaction, PROCESS area for uv_kill emulation; signal module must document that self-raised CRT signals never reach watchers). Target: Phase 1 loop (signals); cross-ref: TTY, PROCESS.
+- **Bun disposition**: should-port (cross-ref: TTY area for raw-mode/CTRL_C interaction, PROCESS area for uv_kill emulation; signal module must document that self-raised CRT signals never reach watchers). Target: engine
 
 ---
 
@@ -244,25 +244,25 @@ Files: `src/win/signal.c`, `src/win/fs-event.c`, plus load-bearing context in
 - **What Windows does**: A handle bound to an IOCP cannot be unbound. Closing the handle cancels pending RDCW, but the cancellation is itself delivered as a queued completion (STATUS_CANCELLED/ERROR_OPERATION_ABORTED) that MUST be dequeued.
 - **How libuv handles it**: `req_pending` tracks the single in-flight RDCW (fs-event.c:39, 63, 326, 439-440). `uv_fs_event_stop` closes the handle but leaves `req_pending` set (fs-event.c:374-383); `uv__fs_event_close` endgames immediately only if no req is pending, else waits for the completion to drain (fs-event.c:633-642, 645-656). The drained completion for a stopped handle fires no callbacks (`!uv__is_active` early-return, fs-event.c:446-451).
 - **History**: 0fb37695 + 1795427a (2011-2012) established "never call callbacks after close"; a39009a5 (libuv#3259, issue #3258) extended it to stop-from-callback (the `else if (uv__is_active)` re-arm guard, fs-event.c:607).
-- **Bun disposition**: must-port (single-token in-flight bookkeeping; close = close handle + await completion drain before freeing buffer/handle memory). Target: Phase 1 loop (IOCP request lifecycle).
+- **Bun disposition**: must-port (single-token in-flight bookkeeping; close = close handle + await completion drain before freeing buffer/handle memory). Target: engine
 
 ### [SIGEV-40] Stop-then-restart OVERLAPPED reuse hazard (unfixed upstream)
 - **What Windows does**: Reusing an OVERLAPPED that still has an operation pending (even a canceled one whose completion hasn't been dequeued) is undefined behavior — two completions for one structure.
 - **How libuv handles it (gap)**: `uv_fs_event_start` checks only `uv__is_active` (fs-event.c:169-170), NOT `req_pending`. Sequence stop() → start() before the canceled completion drains: start re-arms RDCW on the SAME embedded `handle->req` overlapped; when the stale ERROR_OPERATION_ABORTED completion is dequeued, the (now active) handle reports a spurious `UV_ECANCELED` error callback (ERROR_OPERATION_ABORTED→UV_ECANCELED, error.c:87) and then `uv__fs_event_queue_readdirchanges` arms a SECOND RDCW on the already-pending overlapped. Verified by inspection of fs-event.c:156-179, 428-451, 628; no upstream fix found in history. Node avoids it because `fs.watch` close() destroys the handle (uv_close path is safe) rather than stop+restart.
 - **History**: latent since the original design; the close path got all the attention (SIGEV-39), the restart path none.
-- **Bun disposition**: must-port the LESSON: re-arm must be gated on "no completion in flight" — generation-count the request or defer start until the canceled completion drains. Target: Phase 1 loop (IOCP request lifecycle).
+- **Bun disposition**: must-port the LESSON: re-arm must be gated on "no completion in flight" — generation-count the request or defer start until the canceled completion drains. Target: engine
 
 ### [SIGEV-41] Re-arm failure is delivered asynchronously through the loop, not synchronously
 - **What Windows does**: RDCW can fail immediately at re-arm time (e.g. watched dir deleted since last batch) with the error in GetLastError.
 - **How libuv handles it**: `uv__fs_event_queue_readdirchanges` converts immediate failure into a fake pending req: `SET_REQ_ERROR(...GetLastError()); uv__insert_pending_req(...)` and still sets `req_pending = 1` (fs-event.c:58-63). The error then flows through the exact same `uv__process_fs_event_req` error branch as real async failures — one error path, and the user callback never reenters from inside another callback's stack.
 - **History**: original design; this uniformity is what made the DeletePending/zombie detection (SIGEV-47/48) implementable in one place.
-- **Bun disposition**: must-port (synchronous arm failures must be queued as completions, not delivered inline — preserves callback reentrancy guarantees). Target: Phase 1 loop (IOCP request lifecycle).
+- **Bun disposition**: must-port (synchronous arm failures must be queued as completions, not delivered inline — preserves callback reentrancy guarantees). Target: engine
 
 ### [SIGEV-42] Errors ride OVERLAPPED.Internal as NTSTATUS; overflow status is success-class
 - **What Windows does**: The kernel stores NTSTATUS in OVERLAPPED.Internal and byte count in InternalHigh. `STATUS_NOTIFY_ENUM_DIR` (0x10C) — RDCW's "too many changes, rescan" — is a SUCCESS-class NTSTATUS delivered with 0 bytes.
 - **How libuv handles it**: `REQ_SUCCESS = NT_SUCCESS(Internal)`; `GET_REQ_ERROR = RtlNtStatusToDosError(Internal)`; fake errors injected via `NTSTATUS_FROM_WIN32` (req-inl.h:30-52). `RtlNtStatusToDosError` is GetProcAddress'd from ntdll (winapi.c). Because STATUS_NOTIFY_ENUM_DIR is success-class, the overflow case lands in the success branch with InternalHigh==0 — handled "for free" without ever naming ERROR_NOTIFY_ENUM_DIR (fs-event.c:455-456, 576-578).
 - **History**: 5cae6e4e established the Internal-as-status convention (2011).
-- **Bun disposition**: must-port (status plumbing: treat NT_SUCCESS-with-0-bytes as overflow, don't pattern-match the Win32 error; if Bun reads completions via GetQueuedCompletionStatusEx it sees the same NTSTATUS in the OVERLAPPED). Target: Phase 1 loop; cross-ref: LOOP/IOCP area.
+- **Bun disposition**: must-port (status plumbing: treat NT_SUCCESS-with-0-bytes as overflow, don't pattern-match the Win32 error; if Bun reads completions via GetQueuedCompletionStatusEx it sees the same NTSTATUS in the OVERLAPPED). Target: engine
 
 ### [SIGEV-43] InternalHigh==0 on success = buffer overflow → UV_CHANGE with NULL filename
 - **What Windows does**: When the 4KB buffer (or kernel-side queue) overflows between arms, RDCW completes successfully with zero bytes — meaning "changes happened but were lost; rescan everything".

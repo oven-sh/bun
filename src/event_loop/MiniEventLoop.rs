@@ -518,6 +518,7 @@ bun_io::link_impl_EventLoopCtx! {
         // mutating uws counters off-thread.
         ref_concurrently()   => unreachable!("KeepAlive::refConcurrently is JS-VM-only"),
         unref_concurrently() => unreachable!("KeepAlive::unrefConcurrently is JS-VM-only"),
+        note_concurrent_ref_released_locally() => unreachable!("KeepAlive concurrent refs are JS-VM-only"),
         after_event_loop_callback() => (*this).after_event_loop_callback,
         set_after_event_loop_callback(cb, ctx) => {
             (*this).after_event_loop_callback = cb;

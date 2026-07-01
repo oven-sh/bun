@@ -3581,7 +3581,7 @@ mod windows_impl {
     use super::*;
     use bun_paths::WPathBuffer;
 
-    // ── libuv-backed ─────────────────────────────────────────────────────
+    // ── NT/kernel32-backed (bun_winfs engines) ──────────────────────────
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         w::fs::open(path, flags, mode)
     }
@@ -3661,6 +3661,13 @@ mod windows_impl {
         super::openat_windows_a(dir, path.as_bytes(), flags, mode)
     }
     pub fn dup(fd: Fd) -> Maybe<Fd> {
+        // A dead table fd resolves to INVALID_HANDLE_VALUE, which is ALSO the
+        // current-process pseudo-handle — DuplicateHandle would happily
+        // duplicate the process itself. Report EBADF like the sibling guards
+        // in bun_io::source.
+        if fd.native() as w::HANDLE == bun_windows_sys::INVALID_HANDLE_VALUE {
+            return Err(Error::new(E::BADF, Tag::dup).with_fd(fd));
+        }
         // DuplicateHandle on the underlying HANDLE.
         let process = w::kernel32::GetCurrentProcess();
         let mut target: w::HANDLE = core::ptr::null_mut();
@@ -4182,7 +4189,10 @@ mod windows_impl {
         // negative length and Winsock fails with WSAEFAULT.
         let len = buf.len().min(i32::MAX as usize) as i32;
         let rc =
-            unsafe { w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr().cast::<_>(), len, flags) };
+            unsafe {
+                w::ensure_winsock();
+                w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr().cast::<_>(), len, flags)
+            };
         if rc < 0 {
             return Err(
                 Error::new(w::WSAGetLastError().unwrap_or(E::EUNKNOWN), Tag::recv).with_fd(fd),
@@ -4194,7 +4204,10 @@ mod windows_impl {
         // Winsock `send`. Clamp to `i32::MAX` so the
         // `usize → i32` cast can't wrap to a negative length on huge buffers.
         let len = buf.len().min(i32::MAX as usize) as i32;
-        let rc = unsafe { w::ws2_32::send(fd.native() as _, buf.as_ptr().cast::<_>(), len, flags) };
+        let rc = unsafe {
+            w::ensure_winsock();
+            w::ws2_32::send(fd.native() as _, buf.as_ptr().cast::<_>(), len, flags)
+        };
         if rc < 0 {
             return Err(
                 Error::new(w::WSAGetLastError().unwrap_or(E::EUNKNOWN), Tag::send).with_fd(fd),
@@ -4680,7 +4693,7 @@ impl std::io::Read for FileReader {
 // ──────────────────────────────────────────────────────────────────────────
 // Additional surface unblocked for dependents.
 // Symbols are real posix wrappers; Windows arms route
-// through the libuv/kernel32 layer in `windows_impl` above.
+// through the NT/kernel32 layer in `windows_impl` above.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `bun.sys.Error.Int` — backing integer for `errno`.

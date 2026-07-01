@@ -24,6 +24,16 @@ pub use bun_windows_sys::ws2_32;
 
 pub use bun_errno::win_error;
 
+/// Lazy process-wide Winsock init — the engine owns the `Once`; consumers
+/// that may touch a socket first (recv/send on inherited fds) call through.
+pub fn ensure_winsock() {
+    unsafe extern "C" {
+        fn Bun__ensure_winsock();
+    }
+    // SAFETY: no-arg C fn exported by bun_iocp, linked into every binary.
+    unsafe { Bun__ensure_winsock() };
+}
+
 /// Re-exports the tier-0 `bun_windows_sys::kernel32`
 /// surface and layers the additional externs higher-tier crates reach for
 /// (`ReadDirectoryChangesW`, IOCP, SRW locks, `CreateProcessW`, …). Declared
@@ -5002,9 +5012,6 @@ pub fn getenv_w(name: &[u16]) -> Option<Vec<u16>> {
     }
 }
 
-// `bun.windows.libuv` — re-exported as `pub use bun_libuv_sys as libuv` above.
-// The duplicate inline `pub mod libuv { ... }` that lived here caused E0260 and
-// has been removed; its items belong in `bun_libuv_sys`.
 
 bun_core::declare_scope!(windowsUserUniqueId, visible);
 

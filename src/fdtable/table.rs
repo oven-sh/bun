@@ -8,7 +8,7 @@
 //! resource. A closed table slot rejects further use with the EBADF shape
 //! instead, and the handle leaves the table exactly once. // quirk: FSIO-17
 //!
-//! Why logical position (the binding S9 decision): positioned engine I/O is
+//! Why logical position: positioned engine I/O is
 //! a single syscall carrying `OVERLAPPED.Offset`, and on a synchronous
 //! handle the kernel then moves the shared file pointer to
 //! `offset + transferred` — so the kernel pointer cannot double as the POSIX
@@ -233,8 +233,16 @@ pub struct FdTable {
 /// from `GetStdHandle` at that moment; in detached processes (null/invalid
 /// std handles) the slots exist but every use reports the EBADF shape.
 /// // quirk: FSIO-16
+static TABLE: OnceLock<FdTable> = OnceLock::new();
+
+/// True once the process-global table has been constructed (it snapshots
+/// the std handles at that moment — startup asserts the stdio repair ran
+/// first).
+pub fn is_initialized() -> bool {
+    TABLE.get().is_some()
+}
+
 pub fn the() -> &'static FdTable {
-    static TABLE: OnceLock<FdTable> = OnceLock::new();
     TABLE.get_or_init(|| FdTable::with_capacity_limit(DEFAULT_CAPACITY))
 }
 
@@ -992,7 +1000,7 @@ mod tests {
         close_raw(pw);
     }
 
-    /// The S9 logical-position discipline at table level (the bug-#28
+    /// The logical-position discipline at table level (the
     /// regression): sequential ops advance `pos`; positioned ops move the
     /// KERNEL pointer but never `pos`; interleaving behaves like POSIX.
     /// // quirk: FSIO-21

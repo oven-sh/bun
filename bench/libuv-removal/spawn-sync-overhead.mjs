@@ -9,7 +9,7 @@
 //     ffi-nul+job  : + cached inheritable NUL handle as stdin/stdout/stderr
 //                    (STARTF_USESTDHANDLES) + AssignProcessToJobObject on a
 //                    kill-on-close job. This models the POST-MIGRATION native
-//                    'ignore' spawn (plan Phase 3.2: native CreateProcessW, cached
+//                    'ignore' spawn (plan the removal: native CreateProcessW, cached
 //                    NUL, kill-on-close job object kept).
 //     bun ignore / pipe2 / pipe3 / inherit : Bun.spawnSync today (libuv uv_spawn).
 //
@@ -30,7 +30,7 @@
 //     CreateNamedPipeA (collision-retry loop) + CreateFileA + blocking
 //     ConnectNamedPipe per pipe (libuv pipe.c:209-346, process-stdio.c:232-255)
 //     plus uv_pipe handle lifecycle (read_start, EOF, deferred uv_close endgame).
-//     Plan Phase 3.2/3.3 can pre-create/pool overlapped pipe pairs and use W APIs.
+//     Plan the removal/3.3 can pre-create/pool overlapped pipe pairs and use W APIs.
 //
 // MEASURED TODAY (Windows 11, 24-core dev box, bun 1.4.0):
 //   bun-ignore − ffi-nul+job ≈ +0.13..+0.47 ms across sessions (~3-5% of a
@@ -42,7 +42,7 @@
 //   from a single run are meaningful; never compare absolutes across runs.
 //   Spawn cost is dominated by CreateProcessW (~1.3 ms) + child lifetime —
 //   kernel-inherent. EXPECT SMALL MOVES, and use this script as the regression
-//   guardrail when Phase 3.2 lands: pipe rows must converge toward ignore, ignore
+//   guardrail when the removal lands: pipe rows must converge toward ignore, ignore
 //   toward ffi-nul+job, and NOTHING may get slower.
 //
 // METHOD

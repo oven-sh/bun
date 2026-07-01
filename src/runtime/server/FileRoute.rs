@@ -377,7 +377,7 @@ impl FileRoute {
         // before handing ownership to `FileResponseStream`.
         let mut fd_guard = scopeguard::guard(true, move |owned| {
             if owned {
-                Closer::close(fd, ());
+                Closer::close(fd);
                 // SAFETY: this_ptr is valid; ref taken above keeps FileRoute alive until on_response_complete
                 Self::on_response_complete(this_ptr, resp);
             }

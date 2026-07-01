@@ -30,13 +30,13 @@
 //     get_thread_count() = cores; lock-free run queue + futex idle/wake +
 //     work stealing (src/threading/ThreadPool.rs:86-204). Monotonic scaling,
 //     knob-insensitive.
-//   - Plan refs: LIBUV_WINDOWS_REMOVAL_PLAN.md §2.3 ("Truly-async fs: 7 ops
-//     via UVFSRequest"), Phase 2.4 (migrate the 7 ops to the WorkPool model).
+//   - Plan refs: the libuv-removal work.3 ("Truly-async fs: 7 ops
+//     via UVFSRequest"), the removal (migrate the 7 ops to the WorkPool model).
 //
 // BEFORE/AFTER:
 //   today (baseline):  the two passes below show the lose-lose: a wall at 4
 //                      threads OR a low-concurrency regression at 24.
-//   after Phase 2.4:   read rows should look like the stat rows — monotonic,
+//   after the migration:   read rows should look like the stat rows — monotonic,
 //                      >= today's default at every W, >= ~1.09M at 8 workers
 //                      (the =24 pass proves the kernel+delivery can do it),
 //                      identical with and without UV_THREADPOOL_SIZE.

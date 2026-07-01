@@ -6,7 +6,7 @@
 //   Honest expectation, measured TODAY: mostly NO. The throughput ceiling is set
 //   by CreateProcessW itself (~1.3-1.6 ms serialized on the spawning thread on
 //   this box => ~600 spawns/s), which uv_spawn AND the native design
-//   (plan Phase 3.2) both call synchronously on the JS thread — Bun.spawn returns
+//   (plan the removal) both call synchronously on the JS thread — Bun.spawn returns
 //   .pid synchronously, so creation cannot move off-thread. What CAN move:
 //     * per-spawn libuv layer work serialized on the JS thread (pipe pairs,
 //       3x NUL opens, env block rebuild — see spawn-sync-overhead.mjs), a few
@@ -135,4 +135,4 @@ for (const { mode, conc, rates } of CELLS) {
 }
 console.log("\nreading: the conc>=8 ceiling is serialized CreateProcessW (kernel) — it will NOT");
 console.log("move with the libuv removal; watch that no cell regresses and that mode=pipe");
-console.log("converges toward mode=ignore as native pooled pipes land (plan Phase 3.2/3.3).");
+console.log("converges toward mode=ignore as native pooled pipes land (plan the removal/3.3).");

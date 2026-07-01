@@ -660,6 +660,12 @@ impl EventLoop {
                 .is_err()
                 || scope.has_exception()
             {
+                // A sliced pass can leave runnable tasks behind; this early
+                // return must post the same wakeup as the normal sliced exit
+                // or the caller's next engine poll blocks on queued work.
+                if sliced && self.tasks.readable_length() > 0 {
+                    self.wakeup();
+                }
                 self.entered_event_loop_count -= 1;
                 return;
             }
@@ -1021,6 +1027,34 @@ impl EventLoop {
         }
         self.concurrent_tasks.push(task);
         self.wakeup();
+    }
+
+    /// Unwind concurrent refs applied to the platform loop's active count
+    /// before a worker's loop is freed (the engine asserts on drop).
+    /// Only APPLIED deltas ever touched the loop — a pending swap that never
+    /// went through `update_counts` must not be subtracted. Accuracy of the
+    /// applied counter relies on `KeepAlive`'s concurrent-origin routing.
+    #[cfg(windows)]
+    pub fn reconcile_concurrent_refs_for_teardown(
+        &self,
+        loop_: *mut crate::PlatformEventLoop,
+    ) {
+        // Drop any never-applied pending delta so it cannot be mistaken for
+        // loop-visible state by anything after us.
+        let _ = self.concurrent_ref.swap(0, core::sync::atomic::Ordering::SeqCst);
+        let applied = self.applied_concurrent_refs.replace(0);
+        if applied > 0 && !loop_.is_null() {
+            // SAFETY: caller guarantees the loop outlives this call.
+            unsafe { (*loop_).sub_active(u32::try_from(applied).unwrap_or(0)) };
+        }
+    }
+
+    /// A concurrent-origin keep-alive was released via the local (same-
+    /// thread, immediate) path — discount the applied counter so teardown
+    /// reconciliation nets to zero. Cell: JS-thread only, like update_counts.
+    pub fn note_concurrent_ref_released_locally(&self) {
+        self.applied_concurrent_refs
+            .set(self.applied_concurrent_refs.get() - 1);
     }
 
     pub fn ref_concurrently(&self) {

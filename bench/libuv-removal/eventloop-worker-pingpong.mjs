@@ -17,7 +17,7 @@
 // VERDICT: NOT a libuv-removal win. ~19us/RT is dominated by structuredClone
 // serialization + JS dispatch; the uv_async trampoline is well under 1us of
 // it, and run-to-run spread (+/-15%) exceeds the plausible gain. Kept as a
-// regression guard for the Phase 1 wakeup rewire, not as a perf claim.
+// regression guard for the the removal wakeup rewire, not as a perf claim.
 //
 // RUN:  bun  bench/libuv-removal/eventloop-worker-pingpong.mjs
 //       node bench/libuv-removal/eventloop-worker-pingpong.mjs

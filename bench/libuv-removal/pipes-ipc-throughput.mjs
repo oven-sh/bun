@@ -1,7 +1,7 @@
 // pipes-ipc-throughput.mjs — Windows child_process IPC: round-trip latency + message throughput.
 //
-// CLAIM: after Bun's Windows IPC moves off libuv's ipc-mode pipes (LIBUV_WINDOWS_REMOVAL_PLAN.md
-// Phase 3.3 "Pipe streams" -> IPC), .send() message throughput rises and per-message
+// CLAIM: after Bun's Windows IPC moves off libuv's ipc-mode pipes (the libuv-removal work
+// the removal "Pipe streams" -> IPC), .send() message throughput rises and per-message
 // overhead drops. The win is biggest for many small messages (worker pools, test-runner
 // workers, cluster-style fanout). Today Bun and Node are ~at parity: both ride the exact
 // same libuv framing code.
@@ -19,7 +19,7 @@
 //     the payload (pipe.c:1968-2047) + re-arms the zero read. >=4 syscalls per message;
 //     frame-exact reads are mandatory in libuv's design (ledger PIPE-48: read-exactly
 //     blocks, so it must never speculate past a frame).
-//   A native IPC (plan Phase 3.3): one WriteFile per send from a reusable frame buffer
+//   A native IPC (plan the removal): one WriteFile per send from a reusable frame buffer
 //   (header+payload still ONE write — wire ABI), FILE_SKIP_COMPLETION_PORT_ON_SUCCESS for
 //   inline completions, and a buffered reader that posts real overlapped reads into a
 //   64KB buffer and parses frames in userspace — a burst of N small messages costs ~1-2

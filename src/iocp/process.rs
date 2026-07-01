@@ -1541,7 +1541,7 @@ impl ProcessHandle {
         h.core.start();
         // The exit slot gates the endgame but does NOT hold the loop open:
         // a ref'd handle pins the loop via handle accounting, an unref'd one
-        // does not — yet its exit packet still dispatches. The bug-#9
+        // does not — yet its exit packet still dispatches. The handle-lifetime
         // decoupling. // quirk: PROC-45
         h.core.req_submitted_uncounted();
         Ok(h)
@@ -1716,7 +1716,7 @@ fn kill_raw(handle: HANDLE, signum: i32) -> Result<(), KillError> {
 // ── completion dispatch ─────────────────────────────────────────────────────
 
 /// Exit packet dispatch. Runs on the loop thread; fires the exit callback
-/// regardless of ref state (the bug-#9 decoupling), unless the handle is
+/// regardless of ref state (the handle-lifetime decoupling), unless the handle is
 /// closing — close already drained the wait, so the packet only retires the
 /// slot. // quirk: PROC-45, PROC-46
 pub(crate) fn process_process_exit_req(loop_: &mut Loop, req: &mut Req) {

@@ -4,7 +4,7 @@
 // each worker is a uv_spawn'd child (plan §2.2 "Spawn is 100% uv_spawn"), receives file
 // assignments over a libuv IPC-mode pipe (uv_pipe_init(ipc=1), src/jsc/ipc.rs:878,1576-1669;
 // Channel.rs adopts CRT fd 3; 16-byte frame header), and streams results/stdout back through
-// uv pipes (WindowsBufferedReader/uv_read_start, plan §2.2). Phase 3 of the removal plan
+// uv pipes (WindowsBufferedReader/uv_read_start, plan §2.2). the removal of the removal plan
 // replaces this with native CreateProcessW + PROC_THREAD_ATTRIBUTE_HANDLE_LIST and native
 // IOCP pipes (plan §3 Process/Pipes rows).
 //
@@ -14,15 +14,15 @@
 //                                  inits + IPC dispatch/result framing + pipe reads.
 //   Worker runtime init (~`bun -e 1` floor, measured here) and kernel CreateProcessW are NOT
 //   uv-removable; the uv-removable slice is the pipe/IPC/spawn-bookkeeping layer on top.
-//   So treat deltas as an UPPER BOUND on the Phase 3 win for this composite — and treat the
-//   benchmark primarily as the Phase 3 REGRESSION GUARD (plan §3 rates pipes "Hard"; a
+//   So treat deltas as an UPPER BOUND on the the removal win for this composite — and treat the
+//   benchmark primarily as the the removal REGRESSION GUARD (plan §3 rates pipes "Hard"; a
 //   regression here is the realistic risk, and this catches it).
 //
 // SCENARIOS: `bun test` (in-process default), --parallel=2/4/24 on 50 trivial test files
 // (fixtures/tests, local bunfig.toml so the repo-root [test] preload does not interfere).
 //
 // RUN (baseline):       node bench/libuv-removal/composite-test-parallel.mjs   (or bun)
-// RUN (after Phase 3):  BENCH_BUN=path/to/new-bun.exe node bench/libuv-removal/composite-test-parallel.mjs
+// RUN (after the migration):  BENCH_BUN=path/to/new-bun.exe node bench/libuv-removal/composite-test-parallel.mjs
 // Knobs: BENCH_RUNS (default 6), BENCH_FAST=1. Dev-box numbers are INDICATIVE.
 
 import { spawnSync } from "node:child_process";
@@ -85,4 +85,4 @@ for (const [n, v] of [[2, p2], [4, p4], [24, p24]]) {
 }
 console.log(`\nper-worker overhead ~= floor => spawn+IPC layer adds little beyond runtime init (uv slice is the`);
 console.log(`difference); per-worker overhead >> floor => uv pipe/IPC dispatch costs are visible. Watch for`);
-console.log(`REGRESSIONS here after Phase 3 (native pipes) — plan §3 rates Windows pipes the hardest port.`);
+console.log(`REGRESSIONS here after the migration (native pipes) — plan §3 rates Windows pipes the hardest port.`);

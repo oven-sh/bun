@@ -1171,8 +1171,9 @@ impl Fd {
     /// Table-kind passes through; on POSIX this is the identity.
     ///
     /// On `Ok`, table ownership of the handle begins (close via
-    /// `FdExt::close()`). On `Err` the table already closed the handle
-    /// (mint's leak-impossible contract) and the raw Win32 code is returned.
+    /// `FdExt::close()`). On `Err` the handle has been CLOSED — by mint's
+    /// leak-impossible contract or by this function on classify failure —
+    /// and the raw Win32 code is returned. Callers never close on `Err`.
     #[inline]
     pub fn make_table_owned(self) -> Result<Fd, u32> {
         debug_assert!(self.is_valid());
@@ -1186,8 +1187,17 @@ impl Fd {
             FdKind::System => {
                 let handle = self.native();
                 // SAFETY: `is_valid` asserted above; the caller owns the
-                // handle until mint succeeds (then the table does).
-                let kind = unsafe { bun_fdtable::classify_handle(handle) }.map_err(|e| e.0 as u32)?;
+                // handle until adoption succeeds (then the table does).
+                let kind = match unsafe { bun_fdtable::classify_handle(handle) } {
+                    Ok(k) => k,
+                    Err(e) => {
+                        // classify does not close; uphold the single
+                        // close-on-any-failure contract here.
+                        // SAFETY: caller-owned live handle, closed once.
+                        unsafe { bun_windows_sys::CloseHandle(handle.cast()) };
+                        return Err(e.0 as u32);
+                    }
+                };
                 // SAFETY: same ownership contract; on Err the table already
                 // closed the handle (leak-impossible mint).
                 match unsafe { bun_fdtable::the().mint(handle, kind, bun_fdtable::FdFlags::ADOPTED) }

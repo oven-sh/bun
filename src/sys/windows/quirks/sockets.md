@@ -8,19 +8,19 @@ poll backend, named pipes, IPC socket transfer, and any direct winsock use hit a
 - **What Windows does**: Every winsock call fails with WSANOTINITIALISED until `WSAStartup` runs. WSAStartup/WSACleanup are refcounted per process; calling cleanup while sockets are alive breaks everything.
 - **How libuv handles it**: `uv__winsock_init` (src/win/winsock.c:78-101) calls `WSAStartup(MAKEWORD(2,2))` exactly once from the win32 one-time init, fatal-errors on failure, and never calls `WSACleanup` (process-lifetime ownership). It also pre-builds the wildcard `0.0.0.0:0` / `[::]:0` sockaddrs used for implicit binds (winsock.c:85-92).
 - **History**: d1a63c40 "win: move winsock intialization out of tcp.c" — originally TCP-local, became process-global because pipes/poll need it too.
-- **Bun disposition**: must-port. Target: Phase 1 loop (process init). One `std::sync::Once`-style init; never WSACleanup.
+- **Bun disposition**: must-port. Target: engine
 
 ### [SOCK-02] Don't abort in Windows Safe Mode (no networking)
 - **What Windows does**: In Safe Mode without networking, `WSAStartup` or the first `WSASocketW` fails; a hard abort means the program can't start at all.
 - **How libuv handles it**: `if (1 == GetSystemMetrics(SM_CLEANBOOT)) return;` skips all winsock init in safe mode (winsock.c:95). Sockets later fail naturally with normal errors instead of aborting at startup.
 - **History**: af31d014 "win: skip winsock initialization in safe mode" (PR #2205) — libuv-based apps previously could not start in safe mode because `uv_winsock_init` aborted.
-- **Bun disposition**: should-port. Target: Phase 1 loop (process init). Cheap one-liner; alternative is making winsock init lazy/fallible, which achieves the same.
+- **Bun disposition**: should-port. Target: engine
 
 ### [SOCK-03] Detect non-IFS LSPs at startup; assume the worst if detection fails
 - **What Windows does**: Layered Service Providers (LSPs — old-school firewalls/AV/proxies) can stack on the TCP/UDP providers. A *non-IFS* LSP's SOCKET is not a real kernel file handle: `ReadFile`-family fast paths, `SetFileCompletionNotificationModes`, and `CancelIo` on it misbehave or break.
 - **How libuv handles it**: At init it creates throwaway IPv4 and IPv6 TCP sockets, reads `SO_PROTOCOL_INFOW`, and checks `dwServiceFlags1 & XP1_IFS_HANDLES` (winsock.c:103-135), caching `uv_tcp_non_ifs_lsp_ipv4/ipv6` globals. Critically the flags **default to 1 (LSP present)** and are only cleared to 0 on positive proof of IFS handles — so socket-creation failure (no IPv4 stack) or getsockopt failure degrades to the safe/slow path instead of crashing.
 - **History**: cfe14452 — `uv_winsock_init` used to `uv_fatal_error` when the IPv4 dummy socket couldn't be created (machines with no IPv4 stack: "(10047) An address incompatible with the requested protocol"). e1fad5a3 (issue #1425, PR #2600) removed a remaining abort when detection failed. c0e70448 "avoid IOCP short-circuit if non-ifs lsps are detected" is the consumer.
-- **Bun disposition**: should-port. Target: Phase 1 loop (winsock init) + AFD poll backend. LSPs are deprecated since Win8 but still shipped by some AV/VPN products; the *pessimistic default on detection failure* is the part a from-scratch impl gets wrong. Bun can do the probe lazily on first socket instead of at startup.
+- **Bun disposition**: should-port. Target: engine
 
 ### [SOCK-04] AcceptEx/ConnectEx must be fetched per socket via WSAIoctl, not GetProcAddress
 - **What Windows does**: `AcceptEx`/`ConnectEx` exported from mswsock.dll are generic forwarders; the real implementations are *provider-specific*. `WSAIoctl(SIO_GET_EXTENSION_FUNCTION_POINTER, WSAID_ACCEPTEX/CONNECTEX)` on a concrete socket returns the function for *that socket's provider* (matters when LSPs or non-MSAFD providers are involved) and skips the forwarder overhead.
@@ -386,13 +386,13 @@ poll backend, named pipes, IPC socket transfer, and any direct winsock use hit a
 - **What Windows does**: nothing — forward-compat API hygiene.
 - **How libuv handles it**: `domain = flags & 0xFF` must be AF_INET/AF_INET6/AF_UNSPEC; `flags & ~0xFF` → UV_EINVAL (tcp.c:220-229). On any later init failure the handle must be removed from the loop's handle queue (uv__queue_remove, tcp.c:241-243, 253, 260) because uv__stream_init already enqueued it — forgetting this corrupts the handle list (same pattern udp.c:133-135, 145, 152).
 - **History**: f8f59824 (early socket creation introduced the failure paths).
-- **Bun disposition**: skip (libuv-specific API shape) — but the "unwind partial handle registration on init failure" pattern is must-port wherever Bun mirrors handle queues. Target: Phase 1 loop handle bookkeeping.
+- **Bun disposition**: skip (libuv-specific API shape) — but the "unwind partial handle registration on init failure" pattern is must-port wherever Bun mirrors handle queues. Target: engine
 
 ### [SOCK-65] The completion key is unused for dispatch — everything routes by OVERLAPPED pointer
 - **What Windows does**: GetQueuedCompletionStatus returns (key, overlapped). Keying dispatch off the completion key breaks for emulated/posted completions and foreign sockets.
 - **How libuv handles it**: sockets are associated with `(ULONG_PTR)socket` as key (tcp.c:170-173) but the loop ignores it; every completion is `CONTAINING_RECORD(overlapped, uv_req_t, u.io.overlapped)` and reqs carry their handle pointer (`req->data`/`req->handle`). This is what lets PostQueuedCompletionStatus-based emulation (SOCK-13) and uv_async share the port. (Stale comment "Use uv_handle_t pointer as completion key" at tcp.c:168-169 documents an older scheme — the code moved on, the comment didn't.)
 - **History**: code archaeology; the comment/code divergence is itself the warning.
-- **Bun disposition**: must-port (architecture). Target: Phase 1 loop / AFD poll backend. Route by OVERLAPPED-embedded state object; reserve the key for coarse classification only (wepoll uses the key to distinguish port sources — fine, but never as the object pointer of record).
+- **Bun disposition**: must-port (architecture). Target: engine
 
 ### [SOCK-66] WSAStartup-time wildcard sockaddr globals are shared mutable-looking state — treat as immutable
 - **What Windows does**: nothing — concurrency hygiene.

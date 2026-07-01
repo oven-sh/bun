@@ -7275,7 +7275,7 @@ pub trait FileCloser: Sized {
             && self.opened_fd().stdio_tag().is_none()
         {
             #[cfg(windows)]
-            bun_io::Closer::close(self.opened_fd(), ());
+            bun_io::Closer::close(self.opened_fd());
             #[cfg(not(windows))]
             {
                 use bun_sys::FdExt as _;

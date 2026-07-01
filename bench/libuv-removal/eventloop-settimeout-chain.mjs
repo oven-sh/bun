@@ -15,7 +15,7 @@
 //   iteration (15.7-16.3 ms/iter).
 // VERDICT: NO libuv-removal win here. The native loop keeps GQCSEx and never
 // calls timeBeginPeriod (plan ADD-02), so the quantum floor stays. Kept as a
-// regression guard (the Phase 1 rewrite must not make this SLOWER, e.g. by
+// regression guard (the the removal rewrite must not make this SLOWER, e.g. by
 // double-sleeping) and as the recorded negative for "setTimeout(0) chains get
 // faster" claims.
 //

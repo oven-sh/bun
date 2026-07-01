@@ -4,7 +4,7 @@
 // burst today; the native ReadDirectoryChangesW rewrite (64KB buffer) delivers
 // them. Measured as "unique filenames observed / files created".
 //
-// MECHANISM (refs: LIBUV_WINDOWS_REMOVAL_PLAN.md §2.2 fs.watch, Phase 2.6, §3
+// MECHANISM (refs: the libuv-removal work.2 fs.watch, the removal, §3
 // scorecard "fs events"; libuv worktree C:/Users/dylan/code/libuv-read):
 //   * libuv posts ReadDirectoryChangesW with a fixed 4096-byte buffer
 //     (win/fs-event.c:33 uv_directory_watcher_buffer_size). The FIRST RDCW call
@@ -19,7 +19,7 @@
 //     unrecoverable.
 //   * Each delivered event also costs 2x GetLongPathNameW probes + 2 mallocs
 //     in libuv's parse loop (win/fs-event.c:497-521) before reaching JS.
-//   * Native plan: direct RDCW + IOCP with a 64KB buffer (plan Phase 2.6) — a
+//   * Native plan: direct RDCW + IOCP with a 64KB buffer (plan the removal) — a
 //     1000-file burst of short names fits in one kernel buffer (~40 bytes/entry).
 //
 // RUN:
@@ -32,7 +32,7 @@
 //            child-process burst: bun 10-30% delivered vs node 25-67% — bun's
 //            per-batch dispatch loses the re-arm race ~2-5x harder than node
 //            on the SAME libuv, so the rewrite has two stacked wins here.
-//   after  — Phase 2.6 (64KB RDCW + overflow→rescan): ~100% at n=500 (fits with
+//   after  — follow-up (64KB RDCW + overflow→rescan): ~100% at n=500 (fits with
 //            headroom), ~100% at n=1000 (boundary: ~2 entries/file x 32B), and
 //            any residual overflow must surface as a rescan event, not silence.
 // latencyUs (single-touch delivery latency) is reported for completeness; it is
@@ -95,7 +95,7 @@ async function settle(state, quietMs = 500, maxMs = 8000) {
   state.watcher.close();
 }
 
-// Phase 1: single-touch delivery latency (median; NOT expected to move much).
+// the removal: single-touch delivery latency (median; NOT expected to move much).
 {
   const dir = makeDir("lat");
   const samples = [];
@@ -124,7 +124,7 @@ async function settle(state, quietMs = 500, maxMs = 8000) {
 }
 
 for (const N of NS) {
-  // Phase 2: burst while the JS thread is BLOCKED (sync create loop in-process).
+  // the removal: burst while the JS thread is BLOCKED (sync create loop in-process).
   // Kernel must buffer everything in libuv's 4KB → massive loss today.
   {
     const dir = makeDir("blocked");
@@ -147,7 +147,7 @@ for (const N of NS) {
     rmSync(dir, { recursive: true, force: true });
   }
 
-  // Phase 3: burst from a CHILD process — parent loop is free to re-arm, so this
+  // the removal: burst from a CHILD process — parent loop is free to re-arm, so this
   // measures the re-arm race (parse cost incl. GetLongPathNameW + JS dispatch vs
   // incoming event rate).
   {

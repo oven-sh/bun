@@ -1183,14 +1183,10 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
     // Wrap server (overlapped) ends as table-owned FDs so they can be passed
     // to BufferedReader/StreamingWriter.start(), which adopts them onto the
     // engine via Source::open.
-    // Do not .take() until after success — on Err the cleanup! must still see
-    // Some(h) so the HANDLE isn't leaked; clear `out_server` only after the
-    // fallible call succeeds.
-    let read_fd = match Fd::from_system(out_server.unwrap()).make_table_owned() {
-        Ok(fd) => {
-            out_server = None;
-            fd
-        }
+    // make_table_owned consumes the handle on every path (closes it on
+    // failure) — take() first so cleanup! cannot double-close it.
+    let read_fd = match Fd::from_system(out_server.take().unwrap()).make_table_owned() {
+        Ok(fd) => fd,
         Err(_) => {
             cleanup!();
             return Err(CreatePtyError::DupFailed);
@@ -1199,7 +1195,7 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
     // errdefer read_fd.close()
     let read_fd_guard = scopeguard::guard(read_fd, |fd| fd.close());
 
-    let write_fd = match Fd::from_system(in_server.unwrap()).make_table_owned() {
+    let write_fd = match Fd::from_system(in_server.take().unwrap()).make_table_owned() {
         Ok(fd) => fd,
         Err(_) => {
             cleanup!();

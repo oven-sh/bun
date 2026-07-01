@@ -34,7 +34,7 @@ pub use fsevent::{
 #[cfg(windows)]
 pub use handle::{EndgameFn, HandleCore};
 #[cfg(windows)]
-pub use init::{process_init, wake_all_loops};
+pub use init::{ensure_winsock, process_init, wake_all_loops};
 #[cfg(windows)]
 pub use pipe::{
     PairOptions, PipeCloseCb, PipeConnectCb, PipeConnectionCb, PipeHandle, PipeReadCb,

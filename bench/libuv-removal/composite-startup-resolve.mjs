@@ -6,7 +6,7 @@
 // shared read path, src/bundler/cache.rs:355-384, STORE_FILE_DESCRIPTORS=true). PROOF inside
 // this benchmark: exact-extension requires (./mK.js) cost the same as extensionless (./mK)
 // under bun (~0 us/probe), while node pays ~25-30 us/module for uv stat probes. Therefore
-// libuv removal (plan Phase 2, §2.3) is expected to move this composite only a little
+// libuv removal (plan the removal, §2.3) is expected to move this composite only a little
 // (entry-point realpath's internal uv open, lib.rs:4313-4320; CRT stdio init; loop init) —
 // this script is the REGRESSION GUARD for the migration (it must not get slower) and the
 // baseline for the bun-vs-node resolution story (bun is ~2x node per module today).

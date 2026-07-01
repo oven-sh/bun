@@ -25,10 +25,10 @@
 //
 // MEASUREMENT: t(positioned) − t(pos=null) ≈ cost of the 2 extra SetFilePointerEx
 // syscalls — pure removable overhead, measured in one binary with identical JS,
-// arg-parsing, and uv-request costs on both sides. After Phase 2 the positioned
+// arg-parsing, and uv-request costs on both sides. After the removal the positioned
 // number should drop to ≈ the pos=null number.
 //
-// RUN (before = today's libuv build; rerun after Phase 2):
+// RUN (before = today's libuv build; rerun after the migration):
 //   bun  bench/libuv-removal/sync-fs-readsync-positioned.mjs
 //   node bench/libuv-removal/sync-fs-readsync-positioned.mjs   (same libuv dance)
 // Numbers are INDICATIVE: medians of 9 reps, warm cache, <30s total.
@@ -117,5 +117,5 @@ console.log(
 console.log(
   `  64B:  positioned − sequential = ${d64.toFixed(0)} ns/op  (+${((d64 / seq64.med) * 100).toFixed(0)}%)`,
 );
-console.log(`  after Phase 2, positioned should converge to ≈ sequential (1 kernel read either way)`);
+console.log(`  after the migration, positioned should converge to ≈ sequential (1 kernel read either way)`);
 console.log(`(sink=${sink})`);

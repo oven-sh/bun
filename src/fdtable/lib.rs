@@ -23,4 +23,4 @@
 pub mod table;
 
 #[cfg(windows)]
-pub use table::{FdFlags, FdKind, FdTable, IoDir, PositionedIo, classify_handle, the};
+pub use table::{FdFlags, FdKind, FdTable, IoDir, PositionedIo, classify_handle, is_initialized, the};

@@ -78,6 +78,15 @@ pub fn exit_during_uncaught_exception(this: &mut VirtualMachine) {
     this.exit_on_uncaught_exception = true;
 }
 
+/// `bun:jsc`'s `startSamplingProfiler(directory)`. The JSC option that
+/// normally carries this path is read-only by the time user JS can run (see
+/// [`crate::VirtualMachine::sampling_profiler_directory`]), so the directory
+/// is kept here and `on_exit` writes the report.
+// HOST_EXPORT(Bun__VirtualMachine__setSamplingProfilerDirectory, c)
+pub fn set_sampling_profiler_directory(this: &mut VirtualMachine, directory: &BunString) {
+    this.sampling_profiler_directory = Some(directory.to_utf8_bytes().into_boxed_slice());
+}
+
 // `Bun__Process__send` lives in `bun_runtime::ipc_host` (its body — via
 // `do_send` — names the `bun_runtime::Listener` type; LAYERING).
 

@@ -54,6 +54,13 @@ unsafe extern "C" {
     );
     /// Plain by-value `c_int`; sets a global sampler interval, no pointer invariants.
     safe fn Bun__setSamplingInterval(interval_microseconds: c_int);
+    /// `directory` must point at `directory_len` readable bytes (UTF-8) for the
+    /// duration of the call; the C++ side only reads them before returning.
+    fn Bun__SamplingProfiler__reportToDirectory(
+        vm: &mut VM,
+        directory: *const u8,
+        directory_len: usize,
+    ) -> bool;
 }
 
 pub fn set_sampling_interval(interval: u32) {
@@ -62,6 +69,25 @@ pub fn set_sampling_interval(interval: u32) {
 
 pub fn start_cpu_profiler(vm: &mut VM) {
     Bun__startCPUProfiler(vm);
+}
+
+/// Writes the JSC sampling profiler report for `vm` into `directory`, the
+/// UTF-8 path `bun:jsc`'s `startSamplingProfiler()` was given. Called once
+/// per VM from `VirtualMachine::on_exit`.
+pub(crate) fn write_sampling_profiler_report(
+    vm: &mut VM,
+    directory: &[u8],
+) -> Result<(), ProfilerError> {
+    // SAFETY: `directory` is a live slice for the duration of the call and the
+    // C++ side only reads it before returning.
+    let written = unsafe {
+        Bun__SamplingProfiler__reportToDirectory(vm, directory.as_ptr(), directory.len())
+    };
+    if written {
+        Ok(())
+    } else {
+        Err(ProfilerError::WriteFailed)
+    }
 }
 
 pub(crate) fn stop_and_write_profile(

@@ -213,6 +213,11 @@ declare module "bun:jsc" {
 
   /**
    * Runs JavaScriptCore's sampling profiler.
+   *
+   * If `optionalDirectory` is passed, a text report of the hottest functions
+   * and bytecodes is written to a file in that directory when the process (or
+   * the worker that called this) exits. The directory is created if it does
+   * not exist.
    */
   function startSamplingProfiler(optionalDirectory?: string): void;
 

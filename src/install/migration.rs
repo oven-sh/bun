@@ -430,7 +430,16 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
         if pkg.get(b"resolved").is_none() {
             let version_prop = pkg.get(b"version");
-            let pkg_name = package_name_from_path(pkg_path);
+            // Match the building phase: prefer the entry's explicit "name". npm
+            // writes it whenever it differs from the name its folder path implies,
+            // e.g. a package named `admin` living at `@admin` or `packages/@admin`.
+            let pkg_name: &[u8] = if let Some(set_name) = pkg.get(b"name") {
+                set_name
+                    .as_string(&arena)
+                    .ok_or_else(|| err!("InvalidNPMLockfile"))?
+            } else {
+                package_name_from_path(pkg_path)
+            };
             if let Some(version_prop) = version_prop
                 && !pkg_name.is_empty()
             {
@@ -1462,6 +1471,8 @@ pub(crate) fn migrate_npm_lockfile<'a>(
         finalize_pkg!();
     }
 
+    clear_non_registry_platform_constraints(this);
+
     // It is our fault if we hit an error here, making it safe to disable in release.
     #[cfg(debug_assertions)]
     {
@@ -1533,6 +1544,22 @@ pub(crate) fn migrate_npm_lockfile<'a>(
     }))
 }
 
+/// A fresh resolve only records `os`/`cpu` for the root and npm registry
+/// packages (`Package::from_npm`); folder, tarball, git, and workspace packages
+/// install unconditionally, so a migrated lockfile must not constrain them.
+pub(crate) fn clear_non_registry_platform_constraints(lockfile: &mut Lockfile) {
+    for i in 0..lockfile.packages.len() {
+        match lockfile.packages.items_resolution()[i].tag {
+            resolution::Tag::Root | resolution::Tag::Npm => {}
+            _ => {
+                let meta = &mut lockfile.packages.items_meta_mut()[i];
+                meta.arch = Npm::Architecture::ALL;
+                meta.os = Npm::OperatingSystem::ALL;
+            }
+        }
+    }
+}
+
 fn pkg_flag_is_true(pkg: &E::Object, key: &[u8]) -> bool {
     pkg.get(key)
         .map(|x| matches!(x.data, ExprData::EBoolean(b) if b.value))
@@ -1556,8 +1583,18 @@ fn package_name_from_path(pkg_path: &[u8]) -> &[u8] {
             last_index + b"/node_modules/".len()
         } else if pkg_path.starts_with(b"node_modules/") {
             b"node_modules/".len()
+        } else if let Some(last_index) = strings::last_index_of(pkg_path, b"/") {
+            // Link targets outside `node_modules/` (e.g. `vendor/a`) use the
+            // path's basename; keep the scope (`vendor/@scope/a`) like npm's
+            // `name-from-folder`, which omits `name` when it matches this.
+            let parent = &pkg_path[..last_index];
+            match strings::last_index_of(parent, b"/") {
+                Some(i) if parent[i + 1..].starts_with(b"@") => i + b"/".len(),
+                None if parent.starts_with(b"@") => 0,
+                _ => last_index + b"/".len(),
+            }
         } else {
-            strings::last_index_of(pkg_path, b"/").unwrap_or(0)
+            0
         };
 
     &pkg_path[pkg_name_start..]

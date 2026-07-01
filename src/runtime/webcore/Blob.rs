@@ -203,6 +203,13 @@ pub trait BlobExt {
         F: jsc::ConsoleFormatter,
         W: core::fmt::Write;
     fn get_stream(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
+    fn get_stream_with_cache(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+        get_cached: fn(JSValue) -> Option<JSValue>,
+        set_cached: fn(JSValue, &JSGlobalObject, JSValue),
+    ) -> JsResult<JSValue>;
     fn get_text(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
     fn get_text_clone(&self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated>;
     fn get_text_transfer(
@@ -1185,8 +1192,26 @@ impl BlobExt for Blob {
         Ok(())
     }
     fn get_stream(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        self.get_stream_with_cache(
+            global_this,
+            callframe,
+            bun_jsc::generated::JSBlob::stream_get_cached,
+            bun_jsc::generated::JSBlob::stream_set_cached,
+        )
+    }
+
+    /// Shared body of `.stream()` for every class whose receiver wraps a
+    /// `Blob` (`Blob` itself and `BuildArtifact`). `callframe.this()` is that
+    /// receiver, so its cached-stream slot accessors must come from the caller.
+    fn get_stream_with_cache(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+        get_cached: fn(JSValue) -> Option<JSValue>,
+        set_cached: fn(JSValue, &JSGlobalObject, JSValue),
+    ) -> JsResult<JSValue> {
         let this_value = callframe.this();
-        if let Some(cached) = bun_jsc::generated::JSBlob::stream_get_cached(this_value) {
+        if let Some(cached) = get_cached(this_value) {
             return Ok(cached);
         }
         let mut recommended_chunk_size: SizeType = 0;
@@ -1211,7 +1236,7 @@ impl BlobExt for Blob {
                     // in the case we have a file descriptor store, we want to de-duplicate
                     // readable streams. in every other case we want `.stream()` to be its
                     // own stream.
-                    bun_jsc::generated::JSBlob::stream_set_cached(this_value, global_this, stream);
+                    set_cached(this_value, global_this, stream);
                 }
             }
         }

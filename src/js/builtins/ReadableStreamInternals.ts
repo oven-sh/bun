@@ -1025,11 +1025,17 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
       // (Windows pipes are always async); awaiting that here would serialize
       // every chunk behind a uv_write round-trip, so the negative-number check
       // intentionally lets those fall through.
-      if (sink.write(values[i]) < 0) {
+      const wrote = sink.write(values[i]);
+      if (wrote < 0) {
         await sink.flush(true);
         // The sink's close path resolves the same promise; stop writing into a
         // dead sink.
         if (state.didClose) break;
+      } else if ($isPromise(wrote)) {
+        // Intentionally unawaited (see above). The sink rejects it if the
+        // destination goes away mid-write (e.g. the subprocess exited); that
+        // already cancels the stream, so don't report an unhandled rejection.
+        $markPromiseAsHandled(wrote);
       }
     }
     values = many = undefined;
@@ -1047,9 +1053,13 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
         return sink.end();
       }
 
-      if (sink.write(value) < 0) {
+      const wrote = sink.write(value);
+      if (wrote < 0) {
         await sink.flush(true);
         if (state.didClose) return sink.end();
+      } else if ($isPromise(wrote)) {
+        // See the identical branch above.
+        $markPromiseAsHandled(wrote);
       }
     }
   } catch (e) {
@@ -1999,11 +2009,14 @@ export function readableStreamFromAsyncIterator(target, fn) {
           // See readStreamIntoSink: the HTTP response sink returns a negative
           // number when the socket is backed up; await the drain via
           // flush(true). FileSink's Promise return is intentionally not
-          // awaited here.
-          if (controller.write(value) < 0) {
+          // awaited here, so mark it handled.
+          const wrote = controller.write(value);
+          if (wrote < 0) {
             clearImmediate(immediateTask);
             immediateTask = undefined;
             await controller.flush(true);
+          } else if ($isPromise(wrote)) {
+            $markPromiseAsHandled(wrote);
           }
         }
       }

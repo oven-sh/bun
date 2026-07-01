@@ -684,6 +684,168 @@ it("named update with --recursive only updates the named package in the cwd", as
   expect(a.dependencies.baz).toBe("~0.0.3");
 });
 
+// https://github.com/oven-sh/bun/issues/33176
+// A workspace member's `catalog:` reference must survive `bun update`: the
+// version lives in the root catalog, not inline in the member.
+it("--recursive preserves a workspace member's catalog: reference", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": {}, "0.0.5": {}, latest: "0.0.5" }));
+
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["packages/*"],
+      catalog: { baz: "^0.0.3" },
+    }),
+  );
+  await mkdir(join(package_dir, "packages", "pkg-a"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "pkg-a", "package.json"),
+    JSON.stringify({ name: "pkg-a", dependencies: { baz: "catalog:" } }),
+  );
+
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--linker=hoisted"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    expect(await new Response(stderr).text()).not.toContain("error:");
+    expect(await exited).toBe(0);
+  }
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "--recursive", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  expect(await new Response(stderr).text()).not.toContain("error:");
+  expect(await exited).toBe(0);
+
+  const root = await file(join(package_dir, "package.json")).json();
+  const a = await file(join(package_dir, "packages", "pkg-a", "package.json")).json();
+  // The member keeps the catalog reference; the catalog definition is unchanged.
+  expect(a.dependencies.baz).toBe("catalog:");
+  expect(root.catalog.baz).toBe("^0.0.3");
+});
+
+// https://github.com/oven-sh/bun/issues/33176
+it("--filter with a path targets only the matching workspace", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": {}, "0.0.5": {}, latest: "0.0.5" }));
+
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["packages/*"],
+      dependencies: { baz: "~0.0.3" },
+    }),
+  );
+  await mkdir(join(package_dir, "packages", "pkg-a"), { recursive: true });
+  await mkdir(join(package_dir, "packages", "pkg-b"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "pkg-a", "package.json"),
+    JSON.stringify({ name: "pkg-a", dependencies: { baz: "~0.0.3" } }),
+  );
+  await writeFile(
+    join(package_dir, "packages", "pkg-b", "package.json"),
+    JSON.stringify({ name: "pkg-b", dependencies: { baz: "~0.0.3" } }),
+  );
+
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--linker=hoisted"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    expect(await new Response(stderr).text()).not.toContain("error:");
+    expect(await exited).toBe(0);
+  }
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "--filter", "./packages/pkg-a", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  expect(await new Response(stderr).text()).not.toContain("error:");
+  expect(await exited).toBe(0);
+
+  const root = await file(join(package_dir, "package.json")).json();
+  const a = await file(join(package_dir, "packages", "pkg-a", "package.json")).json();
+  const b = await file(join(package_dir, "packages", "pkg-b", "package.json")).json();
+  expect(a.dependencies.baz).toBe("~0.0.5");
+  expect(b.dependencies.baz).toBe("~0.0.3");
+  expect(root.dependencies.baz).toBe("~0.0.3");
+});
+
+// https://github.com/oven-sh/bun/issues/33176
+it("--filter with a negated pattern updates everything except the excluded workspace", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": {}, "0.0.5": {}, latest: "0.0.5" }));
+
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["packages/*"],
+      dependencies: { baz: "~0.0.3" },
+    }),
+  );
+  await mkdir(join(package_dir, "packages", "pkg-a"), { recursive: true });
+  await mkdir(join(package_dir, "packages", "pkg-b"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "pkg-a", "package.json"),
+    JSON.stringify({ name: "pkg-a", dependencies: { baz: "~0.0.3" } }),
+  );
+  await writeFile(
+    join(package_dir, "packages", "pkg-b", "package.json"),
+    JSON.stringify({ name: "pkg-b", dependencies: { baz: "~0.0.3" } }),
+  );
+
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--linker=hoisted"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    expect(await new Response(stderr).text()).not.toContain("error:");
+    expect(await exited).toBe(0);
+  }
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "--filter", "!pkg-a", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  expect(await new Response(stderr).text()).not.toContain("error:");
+  expect(await exited).toBe(0);
+
+  const root = await file(join(package_dir, "package.json")).json();
+  const a = await file(join(package_dir, "packages", "pkg-a", "package.json")).json();
+  const b = await file(join(package_dir, "packages", "pkg-b", "package.json")).json();
+  // `!pkg-a` excludes pkg-a but keeps the root and sibling members.
+  expect(a.dependencies.baz).toBe("~0.0.3");
+  expect(b.dependencies.baz).toBe("~0.0.5");
+  expect(root.dependencies.baz).toBe("~0.0.5");
+});
+
 it("should print UTF-8 arrows correctly with colors enabled", async () => {
   const urls: string[] = [];
   const registry = {

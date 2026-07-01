@@ -16,22 +16,51 @@ C++ rewrite. This is the number the rewrite is measured against.
   ```
 
   The suite is green on the current implementation: every currently-failing
-  subtest is a `test.todo` keyed in `expectations.json`, so regressions in the
-  969 passing subtests fail CI, and every fix shows up as a stale expectation.
+  subtest is keyed in `expectations.json` (assertion failures run as
+  `test.failing`, so a subtest that starts passing turns the suite red;
+  hangs/crashes are body-less `test.todo`). Regressions in the 971 passing
+  subtests fail CI, and every fix shows up as a "marked as failing but it
+  passed" error or a stale expectation key (both hard failures).
 
 ## Numbers
 
-**1174 subtests. 969 pass (82.5%). 205 do not** (193 assertion failures,
+**1174 subtests. 971 pass (82.7%). 203 do not** (191 assertion failures,
 10 hangs, 2 process crashes).
 
 | area | subtests | pass | pass % |
 |---|---|---|---|
 | piping | 229 | 226 | 98.7% |
 | queuing-strategies | 20 | 18 | 90.0% |
-| readable-streams | 348 | 283 | 81.3% |
+| readable-streams | 348 | 285 | 81.9% |
 | readable-byte-streams | 248 | 140 | **56.5%** |
 | transform-streams | 133 | 119 | 89.5% |
 | writable-streams | 196 | 183 | 93.4% |
+
+### Harness-fix re-record (2026-07-01)
+
+The original harness had structural blind spots (subtests skipped instead of
+executed for expected failures, a per-file evaluation error silently
+truncating a file, no pin on the file/subtest counts, an inverted ±0
+comparison, `promise_test` bodies not required to return a promise, and the
+shim's own `Promise.race` calling the user-patched `Promise.prototype.then`).
+It was rewritten and the baseline honestly re-recorded on the **same**
+implementation:
+
+- **0 subtests moved pass → expected-fail**: the stricter harness found no
+  false passes among the 969 previously-recorded passes.
+- **2 subtests moved expected-fail → pass**, both in
+  `readable-streams/patched-global.any.js`
+  (`tee()`/`pipeTo() should not call Promise.prototype.then()`). Their
+  recorded `FAIL: patched then() called` was thrown by the **old harness's
+  own** `Promise.race([...])`, which invoked the patched
+  `Promise.prototype.then` on the shim's internal promise. Exercised
+  directly, Bun's `tee()`/`pipeTo()` never call the patched `then`.
+- Total subtest count, and the TIMEOUT (10) and CRASH (2) sets, are
+  unchanged.
+
+So the honest baseline is **971/1174 (82.7%)** — two higher than the
+previously published 969, which under-counted by exactly the two
+harness-induced false failures.
 
 ## Top failure clusters (current implementation)
 
@@ -52,9 +81,10 @@ C++ rewrite. This is the number the rewrite is measured against.
    must reject hang) — ~12 subtests.
 7. `transformer.cancel()` (2023 addition) not implemented — ~12 subtests.
 8. `WritableStreamDefaultController.signal` missing — 10 subtests.
-9. Not primordial-safe: `pipeTo`/`tee`/async-iteration call user-patched
-   `Promise.prototype.then`, `Object.prototype` getters, patched `getReader` —
-   5 subtests (also a hardening concern).
+9. Not primordial-safe: `tee`/async-iteration touch user-patched
+   `Object.prototype` getters and a patched `getReader` — 3 subtests (also a
+   hardening concern). The two `... should not call Promise.prototype.then()`
+   subtests previously counted here were old-harness artifacts (see above).
 10. Constructor/argument validation: wrong error classes, non-callable
     members accepted, `new WritableStreamDefaultController()` doesn't throw,
     strategy `size` function `name`, async-iterator prototype shape —

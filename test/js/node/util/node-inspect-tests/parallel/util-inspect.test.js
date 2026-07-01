@@ -1939,6 +1939,41 @@ test("util.inspect does not throw on values with throwing getters", () => {
     assert.strictEqual(util.inspect([err, err]), "[ [object Error], [object Error] ]");
   }
 
+  // Same for `ctx.seenRefs`: the `<ref *1>` here was emitted into the discarded
+  // result, so a later occurrence of the same object must re-emit it instead of
+  // producing a `[Circular *1]` that points at nothing.
+  {
+    const shared = {};
+    shared.self = shared;
+    const err = new Error("x");
+    err.stack = [
+      shared,
+      {
+        [Symbol.for("nodejs.util.inspect.custom")]() {
+          throw new Error("boom");
+        },
+      },
+    ];
+    assert.strictEqual(util.inspect([err, shared]), "[ [object Error], <ref *1> { self: [Circular *1] } ]");
+  }
+
+  // An enumerable unformattable `stack` must be hidden from `keys` before it is
+  // read, or the early `[object Error]` return leaves it to be formatted a second
+  // time as a plain property, which rethrows. (Node throws on this input.)
+  {
+    const err = new Error("x");
+    Object.defineProperty(err, "stack", {
+      value: {
+        [Symbol.for("nodejs.util.inspect.custom")]() {
+          throw new Error("boom");
+        },
+      },
+      enumerable: true,
+      configurable: true,
+    });
+    assert.strictEqual(util.inspect(err), "[object Error]");
+  }
+
   // `name` / `message` values whose coercion throws (such as an array holding a
   // Symbol) must not escape either. Node never reaches the coercions because
   // V8's lazy `Error#stack` fails first; Bun gets here with a valid stack.

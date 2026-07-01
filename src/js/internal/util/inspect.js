@@ -1660,10 +1660,12 @@ function getStackString(ctx, error) {
     if (typeof stack === "string") {
       return stack;
     }
-    // Restore `ctx` even if formatting the non-string stack throws, so that a
-    // later occurrence of `error` in the same call is not reported as circular.
+    // Restore `ctx` even if formatting the non-string stack throws. Otherwise a
+    // later occurrence of `error` is misreported as circular, and a `<ref *N>`
+    // emitted into the discarded result leaves `ctx.seenRefs` dangling.
     const seenLength = ctx.seen.length;
     const indentationLvl = ctx.indentationLvl;
+    const seenRefs = ctx.seenRefs;
     ctx.seen.push(error);
     ctx.indentationLvl += 4;
     let result;
@@ -1672,6 +1674,7 @@ function getStackString(ctx, error) {
     } finally {
       ctx.seen.length = seenLength;
       ctx.indentationLvl = indentationLvl;
+      ctx.seenRefs = seenRefs;
     }
     return `${ErrorPrototypeToString(error)}\n    ${result}`;
   }
@@ -1803,6 +1806,16 @@ function safeGetCWD() {
 }
 
 function formatError(err, constructor, tag, ctx, keys) {
+  // The `stack` is rendered as the error itself, never as a `stack:` property.
+  // Hide it before reading it, so the early return below cannot leave an
+  // enumerable `stack` in `keys` to be formatted a second time as a property.
+  if (!ctx.showHidden) {
+    const index = ArrayPrototypeIndexOf(keys, "stack");
+    if (index !== -1) {
+      ArrayPrototypeSplice(keys, index, 1);
+    }
+  }
+
   let message, name, stack;
   try {
     stack = getStackString(ctx, err);
@@ -1832,11 +1845,6 @@ function formatError(err, constructor, tag, ctx, keys) {
   stack = RegExpPrototypeSymbolReplace(/^Error: /, stack, `${name}${message ? ": " : ""}`);
 
   if (!ctx.showHidden && keys.length !== 0) {
-    const index = ArrayPrototypeIndexOf(keys, "stack");
-    if (index !== -1) {
-      ArrayPrototypeSplice(keys, index, 1);
-    }
-
     if (!messageIsGetterThatThrows) {
       const index = ArrayPrototypeIndexOf(keys, "message");
       // Only hide the property if it's a string and if it's part of the original stack

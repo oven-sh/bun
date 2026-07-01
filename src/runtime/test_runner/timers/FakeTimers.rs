@@ -76,8 +76,10 @@ impl CurrentTime {
             *self.offset_raw.write() = MIN_TIMESPEC;
         }
         bun_core::mock_time::clear();
+        // NaN is JSGlobalObject::overridenDateNow's "no override" sentinel; a
+        // real -1 would pin Date.now() at 1969-12-31T23:59:59.999Z.
         // SAFETY: FFI call into C++ JSMock; global is a valid &JSGlobalObject
-        JSMock__setOverridenDateNow(global, -1.0);
+        JSMock__setOverridenDateNow(global, f64::NAN);
         vm.overridden_performance_now = None;
     }
 }

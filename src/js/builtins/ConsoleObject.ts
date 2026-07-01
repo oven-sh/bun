@@ -142,6 +142,7 @@ export function write(this: Console, input) {
 export function createConsoleConstructor(console: typeof globalThis.console) {
   const { inspect, formatWithOptions } = require("node:util");
   const { isBuffer } = require("node:buffer");
+  const { isMapIterator, isSetIterator } = require("node:util/types");
 
   const { validateObject, validateInteger, validateArray, validateOneOf } = require("internal/validators");
   const kMaxGroupIndentation = 1000;
@@ -660,7 +661,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       };
       const getIndexArray = length => Array.from({ length }, (_, i) => _inspect(i));
 
-      const mapIter = $isMapIterator(tabularData);
+      const mapIter = isMapIterator(tabularData);
       let isKeyValue = false;
       let i = 0;
       // if (mapIter) {
@@ -689,7 +690,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         return final([iterKey, keyKey, valuesKey], [getIndexArray(length), keys, values]);
       }
 
-      const setIter = $isSetIterator(tabularData);
+      const setIter = isSetIterator(tabularData);
       // if (setIter) tabularData = previewEntries(tabularData);
 
       const setlike = setIter || mapIter || $isSet(tabularData);

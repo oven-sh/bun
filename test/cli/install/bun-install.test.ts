@@ -9381,6 +9381,13 @@ it("installs transitive file: dependencies of a local file: package that point o
   expect(lock).toContain("shared-lib@file:../packages/shared-lib");
   expect(lock).toContain('"plugin/shared-dev-lib"');
   expect(await exists(join(projectDir, "node_modules", "plugin", "package.json"))).toBe(true);
+  // And both are linked under the declaring package.
+  expect(await exists(join(projectDir, "node_modules", "plugin", "node_modules", "shared-lib", "package.json"))).toBe(
+    true,
+  );
+  expect(
+    await exists(join(projectDir, "node_modules", "plugin", "node_modules", "shared-dev-lib", "package.json")),
+  ).toBe(true);
 });
 
 it("does not install transitive file: dependencies with overlong folder targets", async () => {

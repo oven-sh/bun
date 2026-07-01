@@ -430,6 +430,16 @@ for (const { label, init, args, expected } of [
     args: ["update", "baz@~0.0.4"],
     expected: { baz: "npm:baz@~0.0.5" },
   },
+  {
+    // A NEW dependency added via a positional `bun update` records no
+    // `updating_packages` entry, so the lockfile takes the `^<resolved>`
+    // fallback. That fallback must keep the request's `npm:<target>@` prefix,
+    // like the package.json edit's matching no-entry branch does.
+    label: "update NEW-alias@npm:target@range",
+    init: { baz: "~0.0.3" },
+    args: ["update", "new-alias@npm:baz@~0.0.4"],
+    expected: { baz: "~0.0.3", "new-alias": "npm:baz@^0.0.5" },
+  },
   { label: "add existing@range", init: { baz: "~0.0.3" }, args: ["add", "baz@~0.0.4"], expected: { baz: "~0.0.4" } },
 ]) {
   it(`${label} saves the same literal into both files, issue#13388`, async () => {

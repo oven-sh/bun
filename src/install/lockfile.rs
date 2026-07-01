@@ -1380,11 +1380,9 @@ fn positional_update_literal(
     string_buf: &[u8],
     exact_versions: bool,
 ) -> Option<Vec<u8>> {
-    if let Some(entry) = updating_packages.get(dep.name.slice(string_buf)) {
-        // `edit` leaves a default-initialized entry, with no group recorded,
-        // for a positional alias target whose version tag it cannot classify.
-        // That is not a group mismatch; it takes the fallback below.
-        if !entry.group_behavior.is_empty() {
+    let mut out: Vec<u8> = Vec::new();
+    match updating_packages.get(dep.name.slice(string_buf)) {
+        Some(entry) if !entry.group_behavior.is_empty() => {
             if !dep.behavior.intersects(entry.group_behavior) {
                 return None;
             }
@@ -1395,9 +1393,24 @@ fn positional_update_literal(
                 exact_versions,
             ));
         }
+        // `edit` leaves a default-initialized entry, with no group recorded,
+        // for a positional alias target whose version tag it cannot classify.
+        // Its package.json write formats that entry, which carries no prefix.
+        Some(_) => {}
+        // No entry: the request adds a new dependency. `PackageJSONEditor::edit`'s
+        // no-entry branch keeps the request's `npm:<target>@` prefix (split at
+        // the first `@`), and `dep` still carries that literal, so mirror it.
+        None => {
+            if dep.version.tag == dependency::Tag::Npm && dep.version.npm().is_alias {
+                let literal = dep.version.literal.slice(string_buf);
+                if let Some(at_index) = strings::index_of_char(literal, b'@') {
+                    out.extend_from_slice(&literal[..at_index as usize]);
+                    out.push(b'@');
+                }
+            }
+        }
     }
 
-    let mut out: Vec<u8> = Vec::new();
     write!(
         &mut out,
         "{}{}",

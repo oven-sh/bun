@@ -1597,7 +1597,7 @@ fn connect_finish<const IS_SSL: bool>(
         // longer used on this branch. `handle_connect_error` takes `*mut Self`
         // (noalias re-entrancy) — no `&mut NewSocket` held across its JS call.
         unsafe {
-            let _ = NewSocket::<IS_SSL>::handle_connect_error(socket, errno);
+            let _ = NewSocket::<IS_SSL>::handle_connect_error(socket, errno, 0);
             // Balance the unconditional `socket_ref.ref_()` above.
             (*socket).deref();
         }

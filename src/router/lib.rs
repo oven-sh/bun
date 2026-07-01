@@ -796,83 +796,94 @@ impl<'a> RouteLoader<'a> {
     ) {
         let fs = self.fs;
 
-        if let Some(entries) = root_dir_info.get_entries_const() {
-            let iter = entries.iter();
-            'outer: for entry_ptr in iter {
-                // NOTE: `iter()` yields raw `*mut Entry`. Reborrow locally for
-                // each access so `&` reads and the `&mut` `kind()` call do not
-                // overlap. Single iterator active for this scan; serialized via
-                // `RealFS.entries_mutex`.
-                // SAFETY: EntryStore-owned, valid for process lifetime.
-                if unsafe { &*entry_ptr }.base()[0] == b'.' {
-                    continue 'outer;
-                }
+        // Snapshot the cached `DirEntry`'s entry pointers under `entries_mutex`:
+        // another thread (e.g. the bundler's resolver) rewrites this map in place
+        // under that lock, so iterating it live would walk freed buckets.
+        let entry_ptrs: Vec<*mut Fs::Entry> = {
+            let _entries_lock = fs.fs.entries_mutex.lock_guard();
+            match root_dir_info.get_entries_const() {
+                Some(entries) => entries.iter().collect(),
+                None => return,
+            }
+        };
+        // NOTE: the guard is dropped before this loop on purpose — the
+        // `read_dir_info_ignore_error` recursion below re-acquires `entries_mutex`.
+        'outer: for entry_ptr in entry_ptrs {
+            // NOTE: the snapshot yields raw `*mut Entry`. Reborrow locally for
+            // each access so `&` reads and the `kind()` call do not
+            // overlap; the lazy-stat rewrite inside `kind()` is serialized on
+            // the per-entry `Entry.mutex`.
+            // SAFETY: EntryStore-owned, valid for process lifetime.
+            if unsafe { &*entry_ptr }.base()[0] == b'.' {
+                continue 'outer;
+            }
 
-                // Thread the resolver's fs `Implementation` through —
-                // `Entry.kind` derefs it to lazily stat when `need_stat` is
-                // true, so null would be a latent crash / silent route-drop
-                // once the stub forwards it.
-                // SAFETY: no other live borrow of `*entry_ptr` here; entries_mutex
-                // held; `resolver.fs_impl()` points at the process-global RealFS.
-                let kind = unsafe { (&*entry_ptr).kind(resolver.fs_impl(), false) };
-                // SAFETY: shared read-only borrow for the match arms; the only
-                // subsequent mutation is via `Route::parse` which takes the raw
-                // pointer and reborrows internally.
-                let entry: &Fs::Entry = unsafe { &*entry_ptr };
-                match kind {
-                    Fs::EntryKind::Dir => {
-                        for banned_dir in BANNED_DIRS.iter() {
-                            if entry.base() == *banned_dir {
-                                continue 'outer;
-                            }
-                        }
-
-                        let abs_parts = [entry.dir(), entry.base()];
-                        if let Some(dir_info) =
-                            resolver.read_dir_info_ignore_error(fs.abs(&abs_parts))
-                        {
-                            self.load(resolver, &dir_info, base_dir);
+            // Thread the resolver's fs `Implementation` through —
+            // `Entry.kind` derefs it to lazily stat when `need_stat` is
+            // true, so null would be a latent crash / silent route-drop
+            // once the stub forwards it.
+            // SAFETY: no other live borrow of `*entry_ptr` here;
+            // `resolver.fs_impl()` points at the process-global RealFS.
+            let kind = unsafe { (&*entry_ptr).kind(resolver.fs_impl(), false) };
+            // SAFETY: shared read-only borrow for the match arms; the only
+            // subsequent mutation is via `Route::parse` which takes the raw
+            // pointer and reborrows internally.
+            let entry: &Fs::Entry = unsafe { &*entry_ptr };
+            match kind {
+                Fs::EntryKind::Dir => {
+                    for banned_dir in BANNED_DIRS.iter() {
+                        if entry.base() == *banned_dir {
+                            continue 'outer;
                         }
                     }
 
-                    Fs::EntryKind::File => {
-                        let extname = bun_paths::extension(entry.base());
-                        // exclude "." or ""
-                        if extname.len() < 2 {
-                            continue;
-                        }
+                    let abs_parts = [entry.dir(), entry.base()];
+                    if let Some(dir_info) = resolver.read_dir_info_ignore_error(fs.abs(&abs_parts))
+                    {
+                        self.load(resolver, &dir_info, base_dir);
+                    }
+                }
 
-                        for _extname in self.config.extensions.iter() {
-                            if &extname[1..] == _extname.as_ref() {
-                                // length is extended by one
-                                // entry.dir is a string with a trailing slash
-                                let entry_dir = entry.dir();
-                                if cfg!(debug_assertions) {
-                                    debug_assert!(bun_paths::resolve_path::is_sep_any(
-                                        entry_dir[base_dir.len() - 1]
-                                    ));
-                                }
+                Fs::EntryKind::File => {
+                    let extname = bun_paths::extension(entry.base());
+                    // exclude "." or ""
+                    if extname.len() < 2 {
+                        continue;
+                    }
 
-                                // SAFETY: entry.dir is at least base_dir.len()-1 bytes; verified above in debug
-                                let public_dir = &entry_dir[base_dir.len() - 1..entry_dir.len()];
-
-                                // SAFETY: `entry_ptr` is EntryStore-owned (process
-                                // lifetime) with no other live `&mut` borrow here.
-                                let route = unsafe {
-                                    Route::parse(
-                                        entry.base(),
-                                        extname,
-                                        entry_ptr,
-                                        self.log,
-                                        public_dir,
-                                        self.route_dirname_len,
-                                    )
-                                };
-                                if let Some(route) = route {
-                                    self.append_route(route);
-                                }
-                                break;
+                    for _extname in self.config.extensions.iter() {
+                        if &extname[1..] == _extname.as_ref() {
+                            // `entry.dir()` is `base_dir` or a subdirectory of it, cached
+                            // with or without a trailing slash depending on which resolver
+                            // spelled it first (`base_dir` always has one). Both spellings
+                            // trim to the same `public_dir`.
+                            let entry_dir = entry.dir();
+                            debug_assert!(entry_dir.len() + 1 >= base_dir.len());
+                            if entry_dir.len() >= base_dir.len() {
+                                debug_assert!(bun_paths::resolve_path::is_sep_any(
+                                    entry_dir[base_dir.len() - 1]
+                                ));
                             }
+
+                            // SAFETY: entry.dir is at least base_dir.len()-1 bytes; verified above in debug
+                            let public_dir = &entry_dir[base_dir.len() - 1..entry_dir.len()];
+
+                            // SAFETY: `entry_ptr` is EntryStore-owned (process
+                            // lifetime) with no other live `&mut` borrow here.
+                            let route = unsafe {
+                                Route::parse(
+                                    entry.base(),
+                                    extname,
+                                    entry_ptr,
+                                    self.log,
+                                    public_dir,
+                                    self.route_dirname_len,
+                                )
+                            };
+                            if let Some(route) = route {
+                                self.append_route(route);
+                            }
+                            break;
                         }
                     }
                 }
@@ -1132,6 +1143,11 @@ impl Route {
                 };
 
             if abs_path_str.is_empty() {
+                // The reads of `cache().fd` and the `set_abs_path` write below
+                // rewrite the cached `Entry`; serialize them on the per-entry
+                // mutex (the same lock every other `Entry` rewrite path takes).
+                // SAFETY: see fn-level NOTE — read-only reborrow.
+                let _entry_guard = unsafe { &*entry }.mutex.lock_guard();
                 // NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
                 // becomes a scopeguard owning the Option<File>; `needs_close` is a
                 // Cell so the drop closure can read it while the body still mutates.

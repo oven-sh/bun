@@ -373,10 +373,10 @@ impl Expr {
             return None;
         }
 
-        if let Some(idx) = bun_core::index_of_any(name, b"[.") {
+        if let Some(idx) = bun_core::strings::index_of_any(name, b"[.") {
             match name[idx] {
                 b'[' => {
-                    let end_idx = bun_core::index_of_char(name, b']')? as usize;
+                    let end_idx = bun_core::strings::index_of_char_usize(name, b']')? as usize;
                     let mut base_expr = *self;
                     if idx > 0 {
                         let key = &name[..idx];
@@ -3232,7 +3232,7 @@ impl Data {
             },
             Data::EBigInt(l) => {
                 if let Data::EBigInt(r) = right {
-                    if bun_core::immutable::eql_long(&l.value, &r.value, true) {
+                    if bun_core::strings::eql_long(&l.value, &r.value, true) {
                         return Equality::TRUE;
                     }
                     // 0x0000n == 0n is true

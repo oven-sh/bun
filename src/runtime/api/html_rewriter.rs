@@ -2,11 +2,8 @@
 
 use core::cell::{Cell, RefCell};
 use core::ptr::NonNull;
-use std::io::Write as _;
 use std::rc::Rc;
 
-use bun_collections::LinearFifo;
-use bun_collections::linear_fifo::DynamicBuffer;
 use bun_core::MutableString;
 use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, ProtectedJSValue,
@@ -18,35 +15,46 @@ use bun_jsc::{
 // name resolves as a type at `&mut VirtualMachine` annotations and as the
 // owner of the `on_quiet_unhandled_rejection_handler_capture_value` assoc fn.
 use bun_jsc::virtual_machine::VirtualMachine;
+
+use crate::webcore::response::HeadersRef;
+use crate::webcore::{self, Response};
+use bun_core::String as BunString;
 // `ZigString` re-exports `bun_core::ZigString`; JSC-side methods
 // (`to_js`, `with_encoding`, …) come from the `ZigStringJsc` extension trait.
 use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString;
-// Note: there is no `bun_lolhtml` safe-wrapper crate yet — the safe
-// surface lives directly in `bun_lolhtml_sys::lol_html`. Code below references
-// both `lolhtml::Foo` (safe wrappers) and `lolhtml_sys::Foo` (raw opaque
-// handles); they resolve to the same module, so alias both names.
-use crate::webcore::response::HeadersRef;
-use crate::webcore::streams::{self, Signal, StreamResult, Writable};
-use crate::webcore::{self, Response};
-use bun_core::String as BunString;
 use bun_jsc::call_frame::ArgumentsSlice;
-use bun_lolhtml_sys::lol_html as lolhtml;
-use bun_lolhtml_sys::lol_html as lolhtml_sys;
-use bun_lolhtml_sys::lol_html::Opaque as _;
-use bun_sys;
+use bun_jsc::zig_string::ZigString;
+
+// lol-html rewritable units, lifetime-erased to `'static` so a `*mut RawX`
+// can be parked in a JsClass `Cell` for the duration of the synchronous
+// handler call (the Cell is nulled again before the handler returns).
+type RawElement = lol_html::html_content::Element<'static, 'static>;
+type RawTextChunk = lol_html::html_content::TextChunk<'static>;
+type RawComment = lol_html::html_content::Comment<'static>;
+type RawDoctype = lol_html::html_content::Doctype<'static>;
+type RawDocumentEnd = lol_html::html_content::DocumentEnd<'static>;
+type RawEndTag = lol_html::html_content::EndTag<'static>;
 
 // ───────────────────── local helpers ─────────────────────────────────────
 
-/// `HTMLString.toJS` — JSC bridge lives in the sibling `lolhtml_jsc` module
-/// (keeps `bun_lolhtml_sys` free of JSC types).
-use crate::api::lolhtml_jsc::html_string_to_js;
-
-/// `HTMLString` → owned `bun.String` (clone + free original).
-fn html_string_to_bun_string(s: lolhtml::HTMLString) -> BunString {
-    let out = BunString::clone_utf8(s.slice());
-    s.deinit();
-    out
+/// Load the lol-html unit out of a wrapper's `Cell<*mut RawX>` field for the
+/// body of one host-fn. This is the ONE sanctioned lifetime-erasure `unsafe`
+/// in this module. Returns `None` once the wrapper has been detached (the
+/// Cell nulled), so a JS object retained past its handler can never reach a
+/// dangling pointer.
+fn cell_get<'a, T>(cell: &Cell<*mut T>) -> Option<&'a mut T> {
+    // SAFETY: every non-null pointer in these Cells was erased with
+    // `ptr::from_mut(x).cast()` from the `&mut X` lol-html lends a handler
+    // closure for the duration of that synchronous call (`build_settings`,
+    // `EndTag::on_end_tag`). `handler_callback` parks it in the wrapper only
+    // while it runs the JS callback, and its scopeguard (`clear_field` /
+    // `invalidate`) nulls the Cell before that closure returns to lol-html —
+    // so a non-null load means the pointee is still inside lol-html's
+    // exclusive `&mut` borrow: live, aligned, and lent to nobody else. The
+    // unbounded `'a` is the caller's obligation: consume the returned `&mut`
+    // within the current host-fn body and never hold it across a re-entry
+    // into JS, which could reach this fn again on the same wrapper.
+    unsafe { cell.get().as_mut() }
 }
 
 /// Construct a `SystemError` with code+message and remaining fields defaulted.
@@ -57,8 +65,6 @@ fn system_error(code: &'static str, message: &'static str) -> SystemError {
         ..Default::default()
     }
 }
-
-type SelectorMap = Vec<*mut lolhtml::HTMLSelector>;
 
 // ─────────────────── instance-method arg-decode helpers ──────────────────
 //
@@ -118,13 +124,24 @@ fn eat_content_args(
     Ok((content, opts))
 }
 
+/// Map the optional JS `{ html }` content options onto lol-html's
+/// `ContentType`: `Html` iff `html` was given and truthy, `Text` otherwise.
+fn content_type(opts: Option<ContentOptions>) -> lol_html::html_content::ContentType {
+    if opts.is_some_and(|o| o.html) {
+        lol_html::html_content::ContentType::Html
+    } else {
+        lol_html::html_content::ContentType::Text
+    }
+}
+
 /// Emit the per-wrapper `content_handler` plus one `(${name}_, $name)` pair
 /// per lol-html content op, sharing one `content_handler` body across all
 /// wrappers.
 ///
-/// - `$Raw`      — bare ident under `lolhtml::` (also paths the raw op as
-///                 `lolhtml::$Raw::$name`, which holds for all 16 ops).
-/// - `$field`    — the `Cell<*mut lolhtml_sys::$Raw>` field on `self`.
+/// - `$Raw`      — the `Raw*` type alias of the backing lol-html unit, e.g.
+///                 `RawElement` (also paths the raw op as `$Raw::$name`,
+///                 which holds for all 16 ops).
+/// - `$field`    — the `Cell<*mut $Raw>` field on `self`.
 /// - `$null_ret` — sentinel when the raw ptr is null. **Differs per wrapper**:
 ///                 `JSValue::UNDEFINED` for TextChunk/Element,
 ///                 `JSValue::NULL` for DocEnd/Comment/EndTag.
@@ -138,26 +155,20 @@ macro_rules! lol_content_ops {
     ) => {
         fn content_handler(
             &self,
-            callback: fn(&mut lolhtml::$Raw, &[u8], bool) -> Result<(), lolhtml::Error>,
+            callback: fn(&mut $Raw, &str, lol_html::html_content::ContentType),
             this_object: JSValue,
             global_object: &JSGlobalObject,
             content: ZigString,
             content_options: Option<ContentOptions>,
-        ) -> JSValue {
-            let Some(raw) = lolhtml::$Raw::from_ptr(self.$field.get()) else {
-                return $null_ret;
+        ) -> JsResult<JSValue> {
+            let Some(raw) = cell_get(&self.$field) else {
+                return Ok($null_ret);
             };
             let content_slice = content.to_slice();
-            if callback(
-                raw,
-                content_slice.slice(),
-                content_options.map_or(false, |o| o.html),
-            )
-            .is_err()
-            {
-                return create_lolhtml_error(global_object);
-            }
-            this_object
+            // lol-html content ops are infallible, so the UTF-8 check is the only throw path.
+            let content_str = utf8_or_throw(global_object, content_slice.slice())?;
+            callback(raw, content_str, content_type(content_options));
+            Ok(this_object)
         }
 
         $(
@@ -168,9 +179,9 @@ macro_rules! lol_content_ops {
                 global_object: &JSGlobalObject,
                 content: ZigString,
                 content_options: Option<ContentOptions>,
-            ) -> JSValue {
+            ) -> JsResult<JSValue> {
                 self.content_handler(
-                    lolhtml::$Raw::$name,
+                    $Raw::$name,
                     call_frame.this(),
                     global_object,
                     content,
@@ -187,7 +198,7 @@ macro_rules! lol_content_ops {
                 call_frame: &CallFrame,
             ) -> JsResult<JSValue> {
                 let (content, opts) = eat_content_args(global, call_frame)?;
-                Ok(self.$name_(call_frame, global, content, opts))
+                self.$name_(call_frame, global, content, opts)
             }
         )*
     };
@@ -195,32 +206,131 @@ macro_rules! lol_content_ops {
 
 // ───────────────────────────── LOLHTMLContext ─────────────────────────────
 
+/// Selector + handler registry shared between an [`HTMLRewriter`] and every
+/// rewriter it spawns — `transform()` can run more than once, so
+/// [`build_settings`] re-derives fresh handler closures from it each time.
 #[derive(Default)]
 pub struct LOLHTMLContext {
-    pub selectors: SelectorMap,
-    // The `Box` is load-bearing: lol-html's C builder holds `NonNull` pointers
-    // into the box interiors; unboxing would dangle them on `Vec` realloc.
+    /// Paired with `element_handlers` by index: each `on()` pushes one entry
+    /// into both.
+    pub selectors: Vec<lol_html::Selector>,
+    // The `Box` is load-bearing: the lol-html handler closures produced by
+    // `build_settings` capture raw pointers into the box interiors; unboxing
+    // would dangle them on `Vec` realloc.
     #[expect(clippy::vec_box)]
     pub element_handlers: Vec<Box<ElementHandler>>,
     #[expect(clippy::vec_box)]
     pub document_handlers: Vec<Box<DocumentHandler>>,
 }
 
-impl Drop for LOLHTMLContext {
-    fn drop(&mut self) {
-        for selector in self.selectors.drain(..) {
-            // SAFETY: selector was allocated by LOLHTML.HTMLSelector.parse and is owned here.
-            unsafe { lolhtml::HTMLSelector::destroy(selector) };
-        }
-        // element_handlers / document_handlers: Box<_> drops via Drop impls below.
+/// `true` = the STOP directive from an `ElementHandler`/`DocumentHandler`/
+/// `EndTagHandler` callback. The message is load-bearing: lol-html's C API
+/// produced exactly this string for a stopped rewriter; it reaches JS as-is.
+fn directive_result(stop: bool) -> lol_html::HandlerResult {
+    if stop {
+        Err("The rewriter has been stopped.".into())
+    } else {
+        Ok(())
     }
+}
+
+/// Build the [`lol_html::Settings`] handler vectors from `ctx`. The lifetime
+/// erasures below are sound because the consuming sink's `Rc` keeps `ctx` alive
+/// and `handler_callback` detaches each JS wrapper before its handler returns.
+fn build_settings(
+    ctx: &mut LOLHTMLContext,
+) -> (
+    Vec<(
+        std::borrow::Cow<'static, lol_html::Selector>,
+        lol_html::ElementContentHandlers<'static>,
+    )>,
+    Vec<lol_html::DocumentContentHandlers<'static>>,
+) {
+    let mut element_content_handlers = Vec::with_capacity(ctx.element_handlers.len());
+    for (selector, handler) in ctx.selectors.iter().zip(ctx.element_handlers.iter_mut()) {
+        let has_element = handler.on_element_callback.is_some();
+        let has_comment = handler.on_comment_callback.is_some();
+        let has_text = handler.on_text_callback.is_some();
+        // Take the address ONCE, as the LAST access through `handler`;
+        // `NonNull` is `Copy`, so the closures below share it without ever
+        // materializing aliased `&mut` (UB under Stacked Borrows).
+        let h: NonNull<ElementHandler> = NonNull::from(&mut **handler);
+
+        let mut handlers: lol_html::ElementContentHandlers<'static> =
+            lol_html::ElementContentHandlers::default();
+        if has_element {
+            handlers = handlers.element(move |el: &mut lol_html::html_content::Element| {
+                let raw: *mut lol_html::html_content::Element<'static, 'static> =
+                    core::ptr::from_mut(el).cast();
+                directive_result(ElementHandler::on_element(h.as_ptr(), raw))
+            });
+        }
+        if has_comment {
+            handlers = handlers.comments(move |c: &mut lol_html::html_content::Comment| {
+                let raw: *mut lol_html::html_content::Comment<'static> =
+                    core::ptr::from_mut(c).cast();
+                directive_result(ElementHandler::on_comment(h.as_ptr(), raw))
+            });
+        }
+        if has_text {
+            handlers = handlers.text(move |t: &mut lol_html::html_content::TextChunk| {
+                let raw: *mut lol_html::html_content::TextChunk<'static> =
+                    core::ptr::from_mut(t).cast();
+                directive_result(ElementHandler::on_text(h.as_ptr(), raw))
+            });
+        }
+        element_content_handlers.push((std::borrow::Cow::Owned(selector.clone()), handlers));
+    }
+
+    let mut document_content_handlers = Vec::with_capacity(ctx.document_handlers.len());
+    for handler in &mut ctx.document_handlers {
+        let has_doc_type = handler.on_doc_type_callback.is_some();
+        let has_comment = handler.on_comment_callback.is_some();
+        let has_text = handler.on_text_callback.is_some();
+        let has_end = handler.on_end_callback.is_some();
+        // See the `NonNull::from` note in the element loop above.
+        let h: NonNull<DocumentHandler> = NonNull::from(&mut **handler);
+
+        let mut handlers: lol_html::DocumentContentHandlers<'static> =
+            lol_html::DocumentContentHandlers::default();
+        if has_doc_type {
+            handlers = handlers.doctype(move |d: &mut lol_html::html_content::Doctype| {
+                let raw: *mut lol_html::html_content::Doctype<'static> =
+                    core::ptr::from_mut(d).cast();
+                directive_result(DocumentHandler::on_doc_type(h.as_ptr(), raw))
+            });
+        }
+        if has_comment {
+            handlers = handlers.comments(move |c: &mut lol_html::html_content::Comment| {
+                let raw: *mut lol_html::html_content::Comment<'static> =
+                    core::ptr::from_mut(c).cast();
+                directive_result(DocumentHandler::on_comment(h.as_ptr(), raw))
+            });
+        }
+        if has_text {
+            handlers = handlers.text(move |t: &mut lol_html::html_content::TextChunk| {
+                let raw: *mut lol_html::html_content::TextChunk<'static> =
+                    core::ptr::from_mut(t).cast();
+                directive_result(DocumentHandler::on_text(h.as_ptr(), raw))
+            });
+        }
+        if has_end {
+            handlers = handlers.end(move |e: &mut lol_html::html_content::DocumentEnd| {
+                let raw: *mut lol_html::html_content::DocumentEnd<'static> =
+                    core::ptr::from_mut(e).cast();
+                directive_result(DocumentHandler::on_end(h.as_ptr(), raw))
+            });
+        }
+        document_content_handlers.push(handlers);
+    }
+
+    (element_content_handlers, document_content_handlers)
 }
 
 // ───────────────────────────── HTMLRewriter ──────────────────────────────
 
 #[bun_jsc::JsClass]
 pub struct HTMLRewriter {
-    pub builder: *mut lolhtml_sys::HTMLRewriterBuilder,
     pub context: Rc<RefCell<LOLHTMLContext>>,
 }
 
@@ -233,7 +343,6 @@ impl HTMLRewriter {
         _frame: &CallFrame,
     ) -> JsResult<*mut HTMLRewriter> {
         let rewriter = bun_core::heap::into_raw(Box::new(HTMLRewriter {
-            builder: lolhtml::HTMLRewriterBuilder::init(),
             context: Rc::new(RefCell::new(LOLHTMLContext::default())),
         }));
         bun_core::analytics::Features::HTML_REWRITER
@@ -248,47 +357,16 @@ impl HTMLRewriter {
         call_frame: &CallFrame,
         listener: JSValue,
     ) -> JsResult<JSValue> {
-        let mut selector_slice: Vec<u8> = Vec::new();
-        write!(&mut selector_slice, "{}", selector_name).ok();
-
-        let selector = match lolhtml::HTMLSelector::parse(&selector_slice) {
+        let selector_source = selector_name.to_string();
+        let selector = match selector_source.parse::<lol_html::Selector>() {
             Ok(s) => s,
-            Err(_) => return Err(global.throw_value(create_lolhtml_error(global))),
+            Err(e) => return Err(global.throw_value(create_lolhtml_error(global, &e))),
         };
-        let mut selector_guard = scopeguard::guard(selector, |s| unsafe {
-            // SAFETY: selector owned by us until appended to context.selectors below.
-            lolhtml::HTMLSelector::destroy(s)
-        });
 
-        let handler_ = ElementHandler::init(global, listener)?;
-        let mut handler = Box::new(handler_);
-        // Take the address ONCE as a raw pointer; `NonNull` is `Copy`, so the
-        // same allocation can be passed to multiple handler slots without ever
-        // materializing aliased `&mut` (which would be UB under Stacked
-        // Borrows even if only address-taken).
-        let handler_ptr: NonNull<ElementHandler> = NonNull::from(&mut *handler);
+        let handler = Box::new(ElementHandler::init(global, listener)?);
 
-        let has_element = handler.on_element_callback.is_some();
-        let has_comment = handler.on_comment_callback.is_some();
-        let has_text = handler.on_text_callback.is_some();
-
-        // SAFETY: builder is a valid lol-html builder; `handler_ptr` stays
-        // alive because the Box is pushed into `self.context.element_handlers`
-        // below, outliving the rewriter.
-        let res = unsafe {
-            (*self.builder).add_element_content_handlers(
-                &mut **selector_guard,
-                has_element.then_some(handler_ptr),
-                has_comment.then_some(handler_ptr),
-                has_text.then_some(handler_ptr),
-            )
-        };
-        if res.is_err() {
-            // Error path: drop handler (Box drop runs ElementHandler::drop) + selector_guard fires.
-            return Err(global.throw_value(create_lolhtml_error(global)));
-        }
-
-        let selector = scopeguard::ScopeGuard::into_inner(selector_guard);
+        // Invariant: `selectors[i]` pairs with `element_handlers[i]`; the two
+        // parallel vecs are zipped into lol-html `Settings` at transform time.
         let mut ctx = self.context.borrow_mut();
         ctx.selectors.push(selector);
         ctx.element_handlers.push(handler);
@@ -301,47 +379,16 @@ impl HTMLRewriter {
         listener: JSValue,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let handler_ = DocumentHandler::init(global, listener)?;
-        let mut handler = Box::new(handler_);
-        // See `on_` — single raw `NonNull`, copied per-slot, no aliased `&mut`.
-        let handler_ptr: NonNull<DocumentHandler> = NonNull::from(&mut *handler);
-
-        let has_doc_type = handler.on_doc_type_callback.is_some();
-        let has_comment = handler.on_comment_callback.is_some();
-        let has_text = handler.on_text_callback.is_some();
-        let has_end = handler.on_end_callback.is_some();
-
-        // If this fails, subsequent calls to write or end should throw
-        // SAFETY: builder is valid; `handler_ptr` lives in
-        // `context.document_handlers`, outliving the rewriter.
-        unsafe {
-            (*self.builder).add_document_content_handlers(
-                has_doc_type.then_some(handler_ptr),
-                has_comment.then_some(handler_ptr),
-                has_text.then_some(handler_ptr),
-                has_end.then_some(handler_ptr),
-            );
-        }
-
+        let handler = Box::new(DocumentHandler::init(global, listener)?);
         self.context.borrow_mut().document_handlers.push(handler);
         Ok(call_frame.this())
     }
 
     // `Box<Self>` is the JsClass finalizer thunk contract — generated codegen
-    // calls `Box::from_raw` and dispatches to this signature.
+    // calls `Box::from_raw` and dispatches to this signature; the Box drop
+    // releases `context` (an `Rc`), so there is nothing left to do here.
     #[expect(clippy::boxed_local)]
-    pub fn finalize(self: Box<Self>) {
-        self.finalize_without_destroy();
-    }
-
-    pub fn finalize_without_destroy(&self) {
-        // context: Rc drop happens via field drop; builder needs explicit FFI deinit.
-        // The Rc release happens when the HTMLRewriter box is dropped — the
-        // only caller is `finalize` above, which consumes `Box<Self>` and
-        // drops it immediately after this returns.
-        // SAFETY: builder was created by Builder::init() and not yet freed.
-        unsafe { lolhtml::HTMLRewriterBuilder::destroy(self.builder) };
-    }
+    pub fn finalize(self: Box<Self>) {}
 
     pub fn begin_transform(
         &self,
@@ -350,9 +397,8 @@ impl HTMLRewriter {
     ) -> JsResult<JSValue> {
         let new_context = Rc::clone(&self.context);
         // SAFETY: `response` is a live `Response` whose JS wrapper is on
-        // the caller's stack (see `transform_`); `self.builder` was created by
-        // `HTMLRewriterBuilder::init` and is live until `finalize`.
-        unsafe { BufferOutputSink::init(new_context, global, response, self.builder) }
+        // the caller's stack (see `transform_`).
+        unsafe { BufferOutputSink::init(new_context, global, response) }
     }
 
     pub fn transform_(
@@ -494,228 +540,18 @@ impl HTMLRewriter {
     }
 }
 
-// ─────────────────────── HTMLRewriterLoader ──────────────────────────────
-
-pub struct HTMLRewriterLoader {
-    pub rewriter: *mut lolhtml_sys::HTMLRewriter,
-    pub finalized: bool,
-    pub context: Rc<RefCell<LOLHTMLContext>>,
-    pub chunk_size: usize,
-    pub failed: bool,
-    // Invariant: `Sink<'a>` borrows its handler; the destination handler
-    // outlives this loader (the caller of `setup()` guarantees it), so
-    // `'static` stands in for that cross-object lifetime — the handler
-    // registration is type-erased through FFI, so a real lifetime parameter
-    // cannot be threaded here.
-    pub output: webcore::Sink<'static>,
-    pub signal: Signal,
-    pub backpressure: LinearFifo<u8, DynamicBuffer<u8>>,
-}
-
-impl HTMLRewriterLoader {
-    pub fn finalize(&mut self) {
-        if self.finalized {
-            return;
-        }
-        // SAFETY: rewriter created via builder.build(); not yet freed.
-        unsafe { lolhtml::HTMLRewriter::destroy(self.rewriter) };
-        self.backpressure = LinearFifo::<u8, DynamicBuffer<u8>>::init();
-        self.finalized = true;
-    }
-
-    pub fn fail(&mut self, err: bun_sys::Error) {
-        self.signal.close(Some(err.clone()));
-        let _ = self.output.end(Some(err)); // error already surfaced via signal/fail path
-        self.failed = true;
-        self.finalize();
-    }
-
-    pub fn connect(&mut self, signal: Signal) {
-        self.signal = signal;
-    }
-
-    pub fn write_to_destination(&mut self, bytes: &[u8]) {
-        if self.backpressure.readable_length() > 0 {
-            if self.backpressure.write(bytes).is_err() {
-                self.fail(bun_sys::Error::oom());
-                self.finalize();
-            }
-            return;
-        }
-
-        // `bytes` borrowed for the synchronous `output.write` call only;
-        // the `Temporary` variant signals the sink it must copy before returning.
-        let borrowed = bun_ptr::RawSlice::new(bytes);
-        let write_result = self
-            .output
-            .write(&webcore::sink::Data::Bytes(StreamResult::Temporary(
-                borrowed,
-            )));
-
-        match write_result {
-            Writable::Err(err) => {
-                self.fail(err);
-            }
-            Writable::OwnedAndDone(_)
-            | Writable::TemporaryAndDone(_)
-            | Writable::IntoArrayAndDone(_) => {
-                self.done();
-            }
-            Writable::Pending(pending) => {
-                // Do NOT also push into `self.backpressure` here — that would
-                // double-buffer.
-                // SAFETY: `pending` points at a heap WritablePending owned by
-                // the destination sink; valid for the duration of this call.
-                unsafe { (*pending).apply_backpressure(&mut self.output, bytes) };
-            }
-            // The bytes were consumed by the output sink either way; the
-            // rewriter has no resume wiring of its own, so treat a
-            // backpressure result the same as `Owned` rather than stalling.
-            Writable::IntoArray(_)
-            | Writable::Owned(_)
-            | Writable::Temporary(_)
-            | Writable::Backpressure(_) => {
-                self.signal.ready(
-                    if self.chunk_size > 0 {
-                        Some(self.chunk_size as u64)
-                    } else {
-                        None
-                    },
-                    None,
-                );
-            }
-            Writable::Done => {
-                // Route it through `done()` like the other *AndDone arms
-                // rather than silently swallowing it.
-                self.done();
-            }
-        }
-    }
-
-    pub fn done(&mut self) {
-        let _ = self.output.end(None); // error already surfaced via signal/fail path
-        self.signal.close(None);
-        self.finalize();
-    }
-
-    /// `builder` must be a live `HTMLRewriterBuilder` (from
-    /// `HTMLRewriterBuilder::init`) not yet destroyed.
-    pub fn setup(
-        &mut self,
-        builder: &mut lolhtml_sys::HTMLRewriterBuilder,
-        context: Rc<RefCell<LOLHTMLContext>>,
-        size_hint: Option<usize>,
-        mut output: webcore::Sink<'static>,
-    ) -> Option<lolhtml::HTMLString> {
-        let chunk_size = size_hint.unwrap_or(16384).max(1024);
-        // `self` outlives the rewriter (deinit'd in finalize()).
-        let built = builder.build(
-            lolhtml::Encoding::UTF8,
-            lolhtml::MemorySettings {
-                preallocated_parsing_buffer_size: chunk_size,
-                max_allowed_memory_usage: u32::MAX as usize,
-            },
-            false,
-            self,
-        );
-        self.rewriter = match built {
-            Ok(r) => r,
-            Err(_) => {
-                let _ = output.end(None); // error already surfaced via signal/fail path
-                // Return the owning `HTMLString` for lol-html's threadlocal
-                // last-error buffer (caller calls `.slice()` then `.deinit()`).
-                return Some(lolhtml::HTMLString::last_error());
-            }
-        };
-
-        self.chunk_size = chunk_size;
-        // Share the context with the caller via Rc — a struct copy would
-        // double-own `Vec`/`Box` heap buffers.
-        self.context = context;
-        self.output = output;
-
-        None
-    }
-
-    pub fn sink(&mut self) -> webcore::Sink<'_> {
-        webcore::Sink::init(self)
-    }
-
-    // Note: no deinit on the error path — only the Owned* arms free, and only
-    // on success (caller wraps owned bytes in `ManuallyDrop` and takes them
-    // back out on the success path).
-    fn write_bytes(&mut self, bytes: &[u8]) -> Option<bun_sys::Error> {
-        // SAFETY: rewriter valid (setup() succeeded, not yet finalized).
-        if unsafe { lolhtml::HTMLRewriter::write(self.rewriter, bytes) }.is_err() {
-            return Some(bun_sys::Error {
-                errno: 1,
-                // TODO: make this a union
-                path: Box::<[u8]>::from(lolhtml::HTMLString::last_error().slice()),
-                ..Default::default()
-            });
-        }
-        None
-    }
-
-    pub fn write(&mut self, data: &StreamResult) -> streams::Writable {
-        let bytes = data.slice();
-        let len = bytes.len() as webcore::BlobSizeType;
-        if let Some(err) = self.write_bytes(bytes) {
-            return Writable::Err(err);
-        }
-        match data {
-            StreamResult::Owned(_) => Writable::Owned(len),
-            StreamResult::OwnedAndDone(_) => Writable::OwnedAndDone(len),
-            StreamResult::TemporaryAndDone(_) => Writable::TemporaryAndDone(len),
-            StreamResult::Temporary(_) => Writable::Temporary(len),
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn write_utf16(&mut self, data: &StreamResult) -> streams::Writable {
-        webcore::sink::UTF8Fallback::write_utf16(self, data, HTMLRewriterLoader::write)
-    }
-
-    pub fn write_latin1(&mut self, data: &StreamResult) -> streams::Writable {
-        webcore::sink::UTF8Fallback::write_latin1(self, data, HTMLRewriterLoader::write)
-    }
-
-    pub fn end(&mut self, err: Option<bun_sys::Error>) -> bun_sys::Result<()> {
-        // On input-stream end, flush the rewriter (which calls
-        // OutputSink::done → self.done()) or fail.
-        if let Some(e) = err {
-            self.fail(e);
-        } else {
-            if !self.finalized {
-                // SAFETY: rewriter set by setup(); not yet finalized.
-                let _ = unsafe { lolhtml::HTMLRewriter::end(self.rewriter) };
-            }
-            self.done();
-        }
-        Ok(())
-    }
-}
-
-crate::impl_sink_handler!(HTMLRewriterLoader);
-
-impl lolhtml::OutputSink for HTMLRewriterLoader {
-    fn write(&mut self, bytes: &[u8]) {
-        self.write_to_destination(bytes);
-    }
-    fn done(&mut self) {
-        HTMLRewriterLoader::done(self);
-    }
-}
-
 // ───────────────────────── BufferOutputSink ──────────────────────────────
 
 #[derive(bun_ptr::CellRefCounted)]
 pub struct BufferOutputSink {
-    // Intrusive RefCount; *Self crosses FFI as lol-html userdata.
+    // Intrusive RefCount; *Self is the `SinkRef` carried inside `rewriter`.
     ref_count: Cell<u32>,
     pub global: GlobalRef, // JSC_BORROW
     pub bytes: MutableString,
-    pub rewriter: *mut lolhtml_sys::HTMLRewriter, // null when unset
+    // Heap-allocated (never held by value): `run_output_sink` must reach the
+    // rewriter through a raw pointer, never a `&mut` of `*sink`, because the
+    // output sink re-enters `&mut *sink` while the rewriter runs.
+    pub rewriter: *mut lol_html::HtmlRewriter<'static, SinkRef>, // null when unset
     pub context: Rc<RefCell<LOLHTMLContext>>,
     pub response: *mut Response, // BORROW_FIELD: kept alive by response_value Strong
     pub response_value: StrongOptional,
@@ -746,13 +582,11 @@ impl BufferOutputSink {
 
     /// # Safety
     /// `original` must point to a live `Response` whose JS wrapper is kept
-    /// alive for the duration of this call. `builder` must be a live
-    /// `HTMLRewriterBuilder` not yet destroyed.
+    /// alive for the duration of this call.
     unsafe fn init(
         context: Rc<RefCell<LOLHTMLContext>>,
         global: &JSGlobalObject,
         original: *mut Response,
-        builder: *mut lolhtml_sys::HTMLRewriterBuilder,
     ) -> JsResult<JSValue> {
         let sink = bun_core::heap::into_raw(Box::new(BufferOutputSink {
             ref_count: Cell::new(1),
@@ -824,15 +658,21 @@ impl BufferOutputSink {
             scope.apply(vm);
         }
 
-        // SAFETY: builder valid; sink outlives rewriter (deinit in Drop). Pass
-        // the raw `sink` (heap::alloc root) directly so the userdata pointer
-        // stored in the C rewriter shares provenance with every other
-        // `(*sink).field` access in this module — see the Note on
-        // `HTMLRewriterBuilder::build`.
-        let built = unsafe {
-            (*builder).build(
-                lolhtml::Encoding::UTF8,
-                lolhtml::MemorySettings {
+        // The handler closures point into `Box`es owned by `(*sink).context`,
+        // which `sink` keeps alive for the rewriter's whole lifetime.
+        // SAFETY: sink is a live heap allocation (refcount >= 1); the `RefMut`
+        // of `(*sink).context` is released at the end of this statement.
+        let (element_content_handlers, document_content_handlers) =
+            unsafe { build_settings(&mut (*sink).context.borrow_mut()) };
+        // `SinkRef` carries the raw `sink` (`heap::into_raw` root) so every
+        // `(*sink).field` access shares its provenance; `run_output_sink`
+        // reaches the rewriter through a raw pointer, never `&mut *sink`.
+        let rewriter = bun_core::heap::into_raw(Box::new(lol_html::HtmlRewriter::new(
+            lol_html::Settings {
+                element_content_handlers,
+                document_content_handlers,
+                encoding: lol_html::AsciiCompatibleEncoding::utf_8(),
+                memory_settings: lol_html::MemorySettings {
                     preallocated_parsing_buffer_size: if input_size as u64
                         == webcore::blob::MAX_SIZE
                     {
@@ -842,22 +682,14 @@ impl BufferOutputSink {
                     },
                     max_allowed_memory_usage: u32::MAX as usize,
                 },
-                false,
-                sink,
-            )
-        };
+                strict: false,
+                enable_esi_tags: false,
+                adjust_charset_on_meta_tag: false,
+            },
+            SinkRef(sink),
+        )));
         // SAFETY: sink is a live heap allocation (refcount >= 1).
-        unsafe {
-            (*sink).rewriter = match built {
-                Ok(r) => r,
-                Err(_) => {
-                    // SAFETY: `result` was heap-allocated above and never handed
-                    // to JS; reclaim ownership and finalize once.
-                    Response::finalize(Box::from_raw(result));
-                    return Ok(create_lolhtml_error(global));
-                }
-            };
-        }
+        unsafe { (*sink).rewriter = rewriter };
 
         // SAFETY: result and original are both live *Response (result allocated
         // above, original kept alive by caller); no aliasing &mut exists.
@@ -909,8 +741,8 @@ impl BufferOutputSink {
 
         // SAFETY: sink is a live heap allocation; body_value_bufferer was just
         // set to Some above. `run()` may synchronously invoke
-        // `on_finished_buffering`, which (via lol-html FFI) re-enters
-        // `<BufferOutputSink as OutputSink>::write/done` and forms a fresh
+        // `on_finished_buffering`, which (via the rewriter's output sink)
+        // re-enters `SinkRef::handle_chunk` and forms a fresh
         // `&mut *sink`. Hoist the bufferer through a raw pointer so no `&mut`
         // derived from `*sink` is live across that callback.
         let buffering_result: Result<(), bun_core::Error> = unsafe {
@@ -943,7 +775,10 @@ impl BufferOutputSink {
         if !captured.is_empty() {
             captured.ensure_still_alive();
             captured.unprotect();
-            return Ok(captured);
+            // Throw directly: the callers gate on `JSValue::to_error()`, which
+            // only recognises `ErrorInstance`/`Exception`, so an abort reason
+            // (a DOMException or any user value) would be returned instead.
+            return Err(global.throw_value(captured));
         }
 
         response_js_value.ensure_still_alive();
@@ -975,9 +810,9 @@ impl BufferOutputSink {
         // SAFETY: `sink` was ref'd in `init()` before scheduling this callback;
         // refcount > 0 so the allocation is live. `adopt` consumes that +1 on Drop.
         let _g = unsafe { bun_ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
-        // Note: do not materialise `&mut *sink` here — the lol-html
-        // write/end FFI calls below re-enter `<BufferOutputSink as
-        // OutputSink>::write/done` through the userdata pointer, which forms
+        // Note: do not materialise `&mut *sink` here — the rewriter
+        // write/end calls below re-enter `SinkRef::handle_chunk`
+        // through the stored raw pointer, which forms
         // its own `&mut *sink`. Holding an outer `&mut` across that re-entry
         // is aliased-&mut UB. Access fields via raw-pointer place expressions
         // instead (mirroring `init()`).
@@ -986,20 +821,25 @@ impl BufferOutputSink {
         // refcount > 0 so the allocation is live.
         let global = unsafe { (*sink).global };
 
-        if let Some(err) = js_err {
+        if let Some(mut err) = js_err {
             // SAFETY: (*sink).response is the heap Response allocated in init()
             // and kept alive by (*sink).response_value (Strong root).
             let sink_body_value = unsafe { (*(*sink).response).get_body_value() };
             let sink_ptr_usize = sink as usize;
-            if matches!(sink_body_value, webcore::body::Value::Locked(l)
-                if l.task.map_or(0, |p| p as usize) == sink_ptr_usize && l.promise.is_none())
+            // If a `.body` readable is already attached, stay `Locked` so
+            // `to_error_instance` delivers the error to its ByteStream; clearing
+            // to `Empty` here would strand any pending `reader.read()` forever.
+            let has_readable = match sink_body_value {
+                webcore::body::Value::Locked(l) => l.readable.has(),
+                _ => false,
+            };
+            if !has_readable
+                && matches!(sink_body_value, webcore::body::Value::Locked(l)
+                    if l.task.map_or(0, |p| p as usize) == sink_ptr_usize && l.promise.is_none())
             {
-                if let webcore::body::Value::Locked(l) = sink_body_value {
-                    l.readable.deinit();
-                }
+                // No reader and no pending read: normalize to `Empty` so
+                // `to_error_instance` takes the simple (non-`Locked`) path.
                 *sink_body_value = webcore::body::Value::Empty;
-                // is there a pending promise?
-                // we will need to reject it
             } else if matches!(sink_body_value, webcore::body::Value::Locked(l)
                 if l.task.map_or(0, |p| p as usize) == sink_ptr_usize && l.promise.is_some())
             {
@@ -1012,17 +852,14 @@ impl BufferOutputSink {
                 let _ = sink_body_value.to_error_instance(err.dupe(&global), &global);
                 // TODO: properly propagate exception upwards
             } else {
-                let ret_err = create_lolhtml_error(&global);
+                let ret_err = err.to_js(&global);
                 ret_err.ensure_still_alive();
                 ret_err.protect();
                 Self::write_tmp_sync_error(sink, ret_err);
             }
-            // SAFETY: rewriter set by init(). Read into a local before the
-            // call — `end()` re-enters `OutputSink::done(&mut *sink)`.
-            let rewriter = unsafe { (*sink).rewriter };
-            // SAFETY: `rewriter` was created via `builder.build()` in `init()`
-            // and is not yet freed (destroyed only in `Drop` at refcount zero).
-            let _ = unsafe { lolhtml::HTMLRewriter::end(rewriter) };
+            // Do not `end()` the rewriter: that would run `done()`, replacing
+            // the error just stored on the body with the truncated output.
+            // `Drop` destroys the rewriter once the sink's refcount hits zero.
             return;
         }
 
@@ -1035,50 +872,56 @@ impl BufferOutputSink {
     }
 
     /// Note: takes `*mut Self` (not `&mut self`) because
-    /// `lolhtml::HTMLRewriter::write/end` re-enter
-    /// `<BufferOutputSink as OutputSink>::write/done(&mut self)` through the
-    /// userdata pointer registered at build time. A `&mut self` receiver here
-    /// would alias that inner `&mut` (Stacked Borrows UB).
+    /// `HtmlRewriter::write/end` re-enter
+    /// `SinkRef::handle_chunk(&mut self)` through the
+    /// raw `*mut BufferOutputSink` captured at build time. A `&mut self`
+    /// receiver here would alias that inner `&mut` (Stacked Borrows UB).
     ///
     /// # Safety
     /// `sink` must be a live `BufferOutputSink` heap allocation with
     /// refcount > 0; `(*sink).rewriter` and `(*sink).response` must be set.
     unsafe fn run_output_sink(sink: *mut Self, bytes: &[u8], is_async: bool) -> Option<JSValue> {
         // SAFETY: sink is a live heap allocation (refcount > 0, caller
-        // invariant). Read fields into locals before the FFI calls so no
-        // borrow of `*sink` is live across the re-entrant callback.
+        // invariant). Read fields into locals before the rewriter calls so no
+        // borrow of `*sink` is live across the re-entrant output sink.
         let (global, response, rewriter) = unsafe {
             let _ = (*sink).bytes.grow_by(bytes.len()); // OOM/capacity: fire-and-forget
             ((*sink).global, (*sink).response, (*sink).rewriter)
         };
 
-        // SAFETY: rewriter set by init().
-        if unsafe { lolhtml::HTMLRewriter::write(rewriter, bytes) }.is_err() {
+        // SAFETY: rewriter heap-allocated by init(), not yet freed.
+        if let Err(e) = unsafe { (*rewriter).write(bytes) } {
+            // Poisoned: never call `end()` after a failed `write()`. The
+            // field stays non-null so `Drop` frees the rewriter.
             if is_async {
                 // SAFETY: response kept alive by response_value Strong.
                 let _ = unsafe { (*response).get_body_value() }.to_error_instance(
-                    webcore::body::ValueError::Message(create_lolhtml_string_error()),
+                    webcore::body::ValueError::Message(lol_err_string(&e)),
                     &global,
                 );
                 // TODO: properly propagate exception upwards
                 return None;
             } else {
-                return Some(create_lolhtml_error(&global));
+                return Some(create_lolhtml_error(&global, &e));
             }
         }
 
-        // SAFETY: rewriter set by init() and not yet freed.
-        if unsafe { lolhtml::HTMLRewriter::end(rewriter) }.is_err() {
+        // `HtmlRewriter::end(self)` consumes the rewriter: null the field
+        // first so `Drop` does not free it a second time.
+        // SAFETY: sink is a live heap allocation (refcount > 0).
+        unsafe { (*sink).rewriter = core::ptr::null_mut() };
+        // SAFETY: `rewriter` was heap-allocated by init(); sole owner now.
+        if let Err(e) = unsafe { bun_core::heap::take(rewriter) }.end() {
             if is_async {
                 // SAFETY: response kept alive by response_value Strong.
                 let _ = unsafe { (*response).get_body_value() }.to_error_instance(
-                    webcore::body::ValueError::Message(create_lolhtml_string_error()),
+                    webcore::body::ValueError::Message(lol_err_string(&e)),
                     &global,
                 );
                 // TODO: properly propagate exception upwards
                 return None;
             } else {
-                return Some(create_lolhtml_error(&global));
+                return Some(create_lolhtml_error(&global, &e));
             }
         }
 
@@ -1106,12 +949,23 @@ impl BufferOutputSink {
     }
 }
 
-impl lolhtml::OutputSink for BufferOutputSink {
-    fn write(&mut self, bytes: &[u8]) {
-        BufferOutputSink::write(self, bytes);
-    }
-    fn done(&mut self) {
-        BufferOutputSink::done(self);
+/// `lol_html::OutputSink` for the rewriter built in [`BufferOutputSink::init`].
+/// Carries a raw `*mut BufferOutputSink` (never a reference) so the rewriter
+/// stored on the sink does not self-borrow.
+pub struct SinkRef(*mut BufferOutputSink);
+
+impl lol_html::OutputSink for SinkRef {
+    fn handle_chunk(&mut self, chunk: &[u8]) {
+        // SAFETY: `self.0` is the sink that owns this rewriter (refcount > 0
+        // inside `run_output_sink`), and no other `&mut *sink` is live —
+        // `run_output_sink` reads its fields into locals before the call.
+        let sink = unsafe { &mut *self.0 };
+        // lol-html signals end-of-output with a zero-length final chunk.
+        if chunk.is_empty() {
+            sink.done();
+        } else {
+            sink.write(chunk);
+        }
     }
 }
 
@@ -1126,8 +980,9 @@ impl Drop for BufferOutputSink {
     fn drop(&mut self) {
         // bytes, body_value_bufferer, context (Rc), response_value (Strong) drop automatically.
         if !self.rewriter.is_null() {
-            // SAFETY: rewriter created via builder.build() and not yet freed.
-            unsafe { lolhtml::HTMLRewriter::destroy(self.rewriter) };
+            // SAFETY: rewriter heap-allocated by init() and not yet freed
+            // (`run_output_sink` nulls the field before consuming it in `end`).
+            unsafe { bun_core::heap::destroy(self.rewriter) };
         }
     }
 }
@@ -1150,32 +1005,44 @@ pub struct DocumentHandler {
 }
 
 impl DocumentHandler {
-    pub fn on_doc_type(this: *mut Self, value: *mut lolhtml::DocType) -> bool {
-        handler_callback::<Self, DocType, lolhtml::DocType>(
+    pub fn on_doc_type(
+        this: *mut Self,
+        value: *mut lol_html::html_content::Doctype<'static>,
+    ) -> bool {
+        handler_callback::<Self, DocType, lol_html::html_content::Doctype<'static>>(
             this,
             value,
             |w| w.doctype.set(core::ptr::null_mut()),
             |h| h.on_doc_type_callback.as_ref().map(ProtectedJSValue::value),
         )
     }
-    pub fn on_comment(this: *mut Self, value: *mut lolhtml::Comment) -> bool {
-        handler_callback::<Self, Comment, lolhtml::Comment>(
+    pub fn on_comment(
+        this: *mut Self,
+        value: *mut lol_html::html_content::Comment<'static>,
+    ) -> bool {
+        handler_callback::<Self, Comment, lol_html::html_content::Comment<'static>>(
             this,
             value,
             |w| w.comment.set(core::ptr::null_mut()),
             |h| h.on_comment_callback.as_ref().map(ProtectedJSValue::value),
         )
     }
-    pub fn on_text(this: *mut Self, value: *mut lolhtml::TextChunk) -> bool {
-        handler_callback::<Self, TextChunk, lolhtml::TextChunk>(
+    pub fn on_text(
+        this: *mut Self,
+        value: *mut lol_html::html_content::TextChunk<'static>,
+    ) -> bool {
+        handler_callback::<Self, TextChunk, lol_html::html_content::TextChunk<'static>>(
             this,
             value,
             |w| w.text_chunk.set(core::ptr::null_mut()),
             |h| h.on_text_callback.as_ref().map(ProtectedJSValue::value),
         )
     }
-    pub fn on_end(this: *mut Self, value: *mut lolhtml::DocEnd) -> bool {
-        handler_callback::<Self, DocEnd, lolhtml::DocEnd>(
+    pub fn on_end(
+        this: *mut Self,
+        value: *mut lol_html::html_content::DocumentEnd<'static>,
+    ) -> bool {
+        handler_callback::<Self, DocEnd, lol_html::html_content::DocumentEnd<'static>>(
             this,
             value,
             |w| w.doc_end.set(core::ptr::null_mut()),
@@ -1234,27 +1101,6 @@ impl DocumentHandler {
 
         handler.this_object = this_object.protected();
         Ok(handler)
-    }
-}
-
-impl lolhtml::DirectiveCallback<lolhtml::DocType> for DocumentHandler {
-    fn call(&mut self, container: &mut lolhtml::DocType) -> bool {
-        DocumentHandler::on_doc_type(self, container)
-    }
-}
-impl lolhtml::DirectiveCallback<lolhtml::Comment> for DocumentHandler {
-    fn call(&mut self, container: &mut lolhtml::Comment) -> bool {
-        DocumentHandler::on_comment(self, container)
-    }
-}
-impl lolhtml::DirectiveCallback<lolhtml::TextChunk> for DocumentHandler {
-    fn call(&mut self, container: &mut lolhtml::TextChunk) -> bool {
-        DocumentHandler::on_text(self, container)
-    }
-}
-impl lolhtml::DirectiveCallback<lolhtml::DocEnd> for DocumentHandler {
-    fn call(&mut self, container: &mut lolhtml::DocEnd) -> bool {
-        DocumentHandler::on_end(self, container)
     }
 }
 
@@ -1526,8 +1372,11 @@ impl ElementHandler {
         Ok(handler)
     }
 
-    pub fn on_element(this: *mut Self, value: *mut lolhtml::Element) -> bool {
-        handler_callback::<Self, Element, lolhtml::Element>(
+    pub fn on_element(
+        this: *mut Self,
+        value: *mut lol_html::html_content::Element<'static, 'static>,
+    ) -> bool {
+        handler_callback::<Self, Element, lol_html::html_content::Element<'static, 'static>>(
             this,
             value,
             |_| {}, // Element uses HAS_INVALIDATE
@@ -1535,8 +1384,11 @@ impl ElementHandler {
         )
     }
 
-    pub fn on_comment(this: *mut Self, value: *mut lolhtml::Comment) -> bool {
-        handler_callback::<Self, Comment, lolhtml::Comment>(
+    pub fn on_comment(
+        this: *mut Self,
+        value: *mut lol_html::html_content::Comment<'static>,
+    ) -> bool {
+        handler_callback::<Self, Comment, lol_html::html_content::Comment<'static>>(
             this,
             value,
             |w| w.comment.set(core::ptr::null_mut()),
@@ -1544,29 +1396,16 @@ impl ElementHandler {
         )
     }
 
-    pub fn on_text(this: *mut Self, value: *mut lolhtml::TextChunk) -> bool {
-        handler_callback::<Self, TextChunk, lolhtml::TextChunk>(
+    pub fn on_text(
+        this: *mut Self,
+        value: *mut lol_html::html_content::TextChunk<'static>,
+    ) -> bool {
+        handler_callback::<Self, TextChunk, lol_html::html_content::TextChunk<'static>>(
             this,
             value,
             |w| w.text_chunk.set(core::ptr::null_mut()),
             |h| h.on_text_callback.as_ref().map(ProtectedJSValue::value),
         )
-    }
-}
-
-impl lolhtml::DirectiveCallback<lolhtml::Element> for ElementHandler {
-    fn call(&mut self, container: &mut lolhtml::Element) -> bool {
-        ElementHandler::on_element(self, container)
-    }
-}
-impl lolhtml::DirectiveCallback<lolhtml::Comment> for ElementHandler {
-    fn call(&mut self, container: &mut lolhtml::Comment) -> bool {
-        ElementHandler::on_comment(self, container)
-    }
-}
-impl lolhtml::DirectiveCallback<lolhtml::TextChunk> for ElementHandler {
-    fn call(&mut self, container: &mut lolhtml::TextChunk) -> bool {
-        ElementHandler::on_text(self, container)
     }
 }
 
@@ -1579,7 +1418,7 @@ pub struct ContentOptions {
 
 // ────────────────────────── error helpers ────────────────────────────────
 
-fn create_lolhtml_error(global: &JSGlobalObject) -> JSValue {
+fn create_lolhtml_error(global: &JSGlobalObject, message: &dyn core::fmt::Display) -> JSValue {
     // If there was already a pending exception, we want to use that instead.
     if let Some(err) = global.try_take_exception() {
         // it's a synchronous error
@@ -1598,7 +1437,7 @@ fn create_lolhtml_error(global: &JSGlobalObject) -> JSValue {
         }
     }
 
-    let err = create_lolhtml_string_error();
+    let err = lol_err_string(message);
     let value = bun_string_jsc::to_error_instance(&err, global);
     value.put(
         global,
@@ -1608,19 +1447,39 @@ fn create_lolhtml_error(global: &JSGlobalObject) -> JSValue {
     value
 }
 
-fn create_lolhtml_string_error() -> BunString {
-    // We must clone this string.
-    let err = lolhtml::HTMLString::last_error();
-    let s = BunString::clone_utf8(err.slice());
-    err.deinit();
-    s
+/// lol-html error `Display` text → owned `bun.String` (a `+1` ref, consumed
+/// by `to_error_instance` / `ValueError::Message`).
+fn lol_err_string(e: impl core::fmt::Display) -> BunString {
+    BunString::clone_utf8(e.to_string().as_bytes())
 }
 
-fn html_string_value(
-    input: lolhtml::HTMLString,
-    global_object: &JSGlobalObject,
-) -> JsResult<JSValue> {
-    html_string_to_js(input, global_object)
+/// UTF-8-validate bytes headed for a lol-html `&str` API. On failure throws
+/// an `HTMLRewriterError` carrying the `Utf8Error` `Display` text — the same
+/// text lol-html's C API `to_str!` used to stash in its last-error slot.
+fn utf8_or_throw<'a>(global: &JSGlobalObject, bytes: &'a [u8]) -> JsResult<&'a str> {
+    core::str::from_utf8(bytes).map_err(|e| global.throw_value(create_lolhtml_error(global, &e)))
+}
+
+/// Decode a raw-`JSValue` setter argument to owned UTF-8. `to_slice` runs
+/// ToString (user `toString()`/`[Symbol.toPrimitive]`), so callers MUST do
+/// this BEFORE `cell_get`: the re-entered JS would alias its exclusive `&mut`.
+fn setter_utf8_arg(global: &JSGlobalObject, value: JSValue) -> JsResult<String> {
+    let slice = value.to_slice(global)?;
+    Ok(utf8_or_throw(global, slice.slice())?.to_owned())
+}
+
+fn string_to_js(s: &str, global: &JSGlobalObject) -> JsResult<JSValue> {
+    bun_string_jsc::create_utf8_for_js(global, s.as_bytes())
+}
+
+/// lol-html's optional getters (`get_attribute`, `Doctype` name/ids) return
+/// `None` for "absent" and `Some("")` for present-but-empty. Map only the
+/// former to `null` so `<div a="">` reads as `""`, not `null`.
+fn opt_string_to_js_or_null(s: Option<String>, global: &JSGlobalObject) -> JsResult<JSValue> {
+    match s {
+        None => Ok(JSValue::NULL),
+        Some(s) => string_to_js(&s, global),
+    }
 }
 
 // ─────────────────────────── TextChunk ───────────────────────────────────
@@ -1631,20 +1490,20 @@ pub struct TextChunk {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub text_chunk: Cell<*mut lolhtml_sys::TextChunk>,
+    pub text_chunk: Cell<*mut RawTextChunk>,
 }
 
 impl TextChunk {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub fn init(text_chunk: *mut lolhtml::TextChunk) -> *mut TextChunk {
+    pub fn init(text_chunk: *mut RawTextChunk) -> *mut TextChunk {
         bun_core::heap::into_raw(Box::new(TextChunk {
             ref_count: Cell::new(1),
             text_chunk: Cell::new(text_chunk),
         }))
     }
 
-    lol_content_ops! { TextChunk, text_chunk, JSValue::UNDEFINED;
+    lol_content_ops! { RawTextChunk, text_chunk, JSValue::UNDEFINED;
         before / before_,
         after / after_,
         replace / replace_,
@@ -1652,7 +1511,7 @@ impl TextChunk {
 
     #[bun_jsc::host_fn(method)]
     pub fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let Some(chunk) = lolhtml::TextChunk::from_ptr(self.text_chunk.get()) else {
+        let Some(chunk) = cell_get(&self.text_chunk) else {
             return Ok(JSValue::UNDEFINED);
         };
         chunk.remove();
@@ -1661,24 +1520,24 @@ impl TextChunk {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_text(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(chunk) = lolhtml::TextChunk::from_ptr(self.text_chunk.get()) else {
+        let Some(chunk) = cell_get(&self.text_chunk) else {
             return Ok(JSValue::UNDEFINED);
         };
-        bun_string_jsc::create_utf8_for_js(global, chunk.get_content().slice())
+        string_to_js(chunk.as_str(), global)
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn removed(&self, _global: &JSGlobalObject) -> JSValue {
-        match lolhtml::TextChunk::from_ptr(self.text_chunk.get()) {
-            Some(chunk) => JSValue::from(chunk.is_removed()),
+        match cell_get(&self.text_chunk) {
+            Some(chunk) => JSValue::from(chunk.removed()),
             None => JSValue::UNDEFINED,
         }
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn last_in_text_node(&self, _global: &JSGlobalObject) -> JSValue {
-        match lolhtml::TextChunk::from_ptr(self.text_chunk.get()) {
-            Some(chunk) => JSValue::from(chunk.is_last_in_text_node()),
+        match cell_get(&self.text_chunk) {
+            Some(chunk) => JSValue::from(chunk.last_in_text_node()),
             None => JSValue::UNDEFINED,
         }
     }
@@ -1688,7 +1547,7 @@ impl TextChunk {
     }
 }
 
-impl_wrapper_like!(TextChunk, lolhtml::TextChunk);
+impl_wrapper_like!(TextChunk, RawTextChunk);
 
 // ──────────────────────────── DocType ────────────────────────────────────
 
@@ -1698,7 +1557,7 @@ pub struct DocType {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub doctype: Cell<*mut lolhtml_sys::DocType>,
+    pub doctype: Cell<*mut RawDoctype>,
 }
 
 impl DocType {
@@ -1708,7 +1567,7 @@ impl DocType {
         bun_ptr::finalize_js_box_noop(self);
     }
 
-    pub fn init(doctype: *mut lolhtml::DocType) -> *mut DocType {
+    pub fn init(doctype: *mut RawDoctype) -> *mut DocType {
         bun_core::heap::into_raw(Box::new(DocType {
             ref_count: Cell::new(1),
             doctype: Cell::new(doctype),
@@ -1717,47 +1576,32 @@ impl DocType {
 
     /// The doctype name.
     #[bun_jsc::host_fn(getter)]
-    pub fn name(&self, global_object: &JSGlobalObject) -> JSValue {
-        let Some(dt) = lolhtml::DocType::from_ptr(self.doctype.get()) else {
-            return JSValue::UNDEFINED;
+    pub fn name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        let Some(dt) = cell_get(&self.doctype) else {
+            return Ok(JSValue::UNDEFINED);
         };
-        let owned = dt.get_name();
-        let str = owned.slice();
-        if str.is_empty() {
-            return JSValue::NULL;
-        }
-        ZigString::init(str).to_js(global_object)
+        opt_string_to_js_or_null(dt.name(), global_object)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn system_id(&self, global_object: &JSGlobalObject) -> JSValue {
-        let Some(dt) = lolhtml::DocType::from_ptr(self.doctype.get()) else {
-            return JSValue::UNDEFINED;
+    pub fn system_id(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        let Some(dt) = cell_get(&self.doctype) else {
+            return Ok(JSValue::UNDEFINED);
         };
-        let owned = dt.get_system_id();
-        let str = owned.slice();
-        if str.is_empty() {
-            return JSValue::NULL;
-        }
-        ZigString::init(str).to_js(global_object)
+        opt_string_to_js_or_null(dt.system_id(), global_object)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn public_id(&self, global_object: &JSGlobalObject) -> JSValue {
-        let Some(dt) = lolhtml::DocType::from_ptr(self.doctype.get()) else {
-            return JSValue::UNDEFINED;
+    pub fn public_id(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        let Some(dt) = cell_get(&self.doctype) else {
+            return Ok(JSValue::UNDEFINED);
         };
-        let owned = dt.get_public_id();
-        let str = owned.slice();
-        if str.is_empty() {
-            return JSValue::NULL;
-        }
-        ZigString::init(str).to_js(global_object)
+        opt_string_to_js_or_null(dt.public_id(), global_object)
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let Some(dt) = lolhtml::DocType::from_ptr(self.doctype.get()) else {
+        let Some(dt) = cell_get(&self.doctype) else {
             return Ok(JSValue::UNDEFINED);
         };
         dt.remove();
@@ -1766,14 +1610,14 @@ impl DocType {
 
     #[bun_jsc::host_fn(getter)]
     pub fn removed(&self, _global: &JSGlobalObject) -> JSValue {
-        match lolhtml::DocType::from_ptr(self.doctype.get()) {
-            Some(dt) => JSValue::from(dt.is_removed()),
+        match cell_get(&self.doctype) {
+            Some(dt) => JSValue::from(dt.removed()),
             None => JSValue::UNDEFINED,
         }
     }
 }
 
-impl_wrapper_like!(DocType, lolhtml::DocType);
+impl_wrapper_like!(DocType, RawDoctype);
 
 // ──────────────────────────── DocEnd ─────────────────────────────────────
 
@@ -1783,20 +1627,20 @@ pub struct DocEnd {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub doc_end: Cell<*mut lolhtml_sys::DocEnd>,
+    pub doc_end: Cell<*mut RawDocumentEnd>,
 }
 
 impl DocEnd {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub fn init(doc_end: *mut lolhtml::DocEnd) -> *mut DocEnd {
+    pub fn init(doc_end: *mut RawDocumentEnd) -> *mut DocEnd {
         bun_core::heap::into_raw(Box::new(DocEnd {
             ref_count: Cell::new(1),
             doc_end: Cell::new(doc_end),
         }))
     }
 
-    lol_content_ops! { DocEnd, doc_end, JSValue::NULL;
+    lol_content_ops! { RawDocumentEnd, doc_end, JSValue::NULL;
         append / append_,
     }
 
@@ -1805,7 +1649,7 @@ impl DocEnd {
     }
 }
 
-impl_wrapper_like!(DocEnd, lolhtml::DocEnd);
+impl_wrapper_like!(DocEnd, RawDocumentEnd);
 
 // ──────────────────────────── Comment ────────────────────────────────────
 
@@ -1815,20 +1659,20 @@ pub struct Comment {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub comment: Cell<*mut lolhtml_sys::Comment>,
+    pub comment: Cell<*mut RawComment>,
 }
 
 impl Comment {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub fn init(comment: *mut lolhtml::Comment) -> *mut Comment {
+    pub fn init(comment: *mut RawComment) -> *mut Comment {
         bun_core::heap::into_raw(Box::new(Comment {
             ref_count: Cell::new(1),
             comment: Cell::new(comment),
         }))
     }
 
-    lol_content_ops! { Comment, comment, JSValue::NULL;
+    lol_content_ops! { RawComment, comment, JSValue::NULL;
         before / before_,
         after / after_,
         replace / replace_,
@@ -1836,7 +1680,7 @@ impl Comment {
 
     #[bun_jsc::host_fn(method)]
     pub fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let Some(comment) = lolhtml::Comment::from_ptr(self.comment.get()) else {
+        let Some(comment) = cell_get(&self.comment) else {
             return Ok(JSValue::NULL);
         };
         comment.remove();
@@ -1845,10 +1689,10 @@ impl Comment {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_text(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(comment) = lolhtml::Comment::from_ptr(self.comment.get()) else {
+        let Some(comment) = cell_get(&self.comment) else {
             return Ok(JSValue::NULL);
         };
-        html_string_to_js(comment.get_text(), global_object)
+        string_to_js(&comment.text(), global_object)
     }
 
     // Note: no `#[bun_jsc::host_fn(setter)]` — generated_classes.rs already
@@ -1856,20 +1700,23 @@ impl Comment {
     // `JsResult<()>`); the proc-macro shim would emit a second, conflicting
     // `JsResult<bool>` wrapper.
     pub fn set_text(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
-        let Some(comment) = lolhtml::Comment::from_ptr(self.comment.get()) else {
+        if self.comment.get().is_null() {
+            return Ok(());
+        }
+        let text = setter_utf8_arg(global, value)?;
+        let Some(comment) = cell_get(&self.comment) else {
             return Ok(());
         };
-        let text = value.to_slice(global)?;
-        if comment.set_text(text.slice()).is_err() {
-            return Err(global.throw_value(create_lolhtml_error(global)));
+        if let Err(e) = comment.set_text(&text) {
+            return Err(global.throw_value(create_lolhtml_error(global, &e)));
         }
         Ok(())
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn removed(&self, _global: &JSGlobalObject) -> JSValue {
-        match lolhtml::Comment::from_ptr(self.comment.get()) {
-            Some(comment) => JSValue::from(comment.is_removed()),
+        match cell_get(&self.comment) {
+            Some(comment) => JSValue::from(comment.removed()),
             None => JSValue::UNDEFINED,
         }
     }
@@ -1879,7 +1726,7 @@ impl Comment {
     }
 }
 
-impl_wrapper_like!(Comment, lolhtml::Comment);
+impl_wrapper_like!(Comment, RawComment);
 
 // ──────────────────────────── EndTag ─────────────────────────────────────
 
@@ -1889,7 +1736,7 @@ pub struct EndTag {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub end_tag: Cell<*mut lolhtml_sys::EndTag>,
+    pub end_tag: Cell<*mut RawEndTag>,
 }
 
 pub struct EndTagHandler {
@@ -1900,32 +1747,20 @@ pub struct EndTagHandler {
 }
 
 impl EndTagHandler {
-    pub fn on_end_tag(this: *mut Self, value: *mut lolhtml::EndTag) -> bool {
-        handler_callback::<Self, EndTag, lolhtml::EndTag>(
+    pub fn on_end_tag(this: *mut Self, value: *mut RawEndTag) -> bool {
+        handler_callback::<Self, EndTag, RawEndTag>(
             this,
             value,
             |w| w.end_tag.set(core::ptr::null_mut()),
             |h| h.callback.as_ref().map(ProtectedJSValue::value),
         )
     }
-
-    /// C-ABI trampoline that lol-html invokes for end-tag handlers — routes
-    /// through `directive_handler::<EndTag, Self>` which calls
-    /// `<Self as DirectiveCallback<EndTag>>::call`.
-    pub const ON_END_TAG_HANDLER: lolhtml::lol_html_end_tag_handler_t =
-        lolhtml::directive_handler::<lolhtml::EndTag, EndTagHandler>;
-}
-
-impl lolhtml::DirectiveCallback<lolhtml::EndTag> for EndTagHandler {
-    fn call(&mut self, container: &mut lolhtml::EndTag) -> bool {
-        EndTagHandler::on_end_tag(self, container)
-    }
 }
 
 impl EndTag {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub fn init(end_tag: *mut lolhtml::EndTag) -> *mut EndTag {
+    pub fn init(end_tag: *mut RawEndTag) -> *mut EndTag {
         bun_core::heap::into_raw(Box::new(EndTag {
             ref_count: Cell::new(1),
             end_tag: Cell::new(end_tag),
@@ -1936,7 +1771,7 @@ impl EndTag {
         bun_ptr::finalize_js_box_noop(self);
     }
 
-    lol_content_ops! { EndTag, end_tag, JSValue::NULL;
+    lol_content_ops! { RawEndTag, end_tag, JSValue::NULL;
         before / before_,
         after / after_,
         replace / replace_,
@@ -1944,7 +1779,7 @@ impl EndTag {
 
     #[bun_jsc::host_fn(method)]
     pub fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let Some(end_tag) = lolhtml::EndTag::from_ptr(self.end_tag.get()) else {
+        let Some(end_tag) = cell_get(&self.end_tag) else {
             return Ok(JSValue::UNDEFINED);
         };
         end_tag.remove();
@@ -1953,29 +1788,35 @@ impl EndTag {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(end_tag) = lolhtml::EndTag::from_ptr(self.end_tag.get()) else {
+        let Some(end_tag) = cell_get(&self.end_tag) else {
             return Ok(JSValue::UNDEFINED);
         };
-        html_string_to_js(end_tag.get_name(), global_object)
+        string_to_js(&end_tag.name(), global_object)
     }
 
     // Note: no `#[bun_jsc::host_fn(setter)]` — generated_classes.rs already
     // emits `EndTagPrototype__setName` via `host_setter_result`.
     pub fn set_name(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
-        let Some(end_tag) = lolhtml::EndTag::from_ptr(self.end_tag.get()) else {
+        if self.end_tag.get().is_null() {
+            return Ok(());
+        }
+        let name = setter_utf8_arg(global, value)?;
+        let Some(end_tag) = cell_get(&self.end_tag) else {
             return Ok(());
         };
-        let text = value.to_slice(global)?;
-        if end_tag.set_name(text.slice()).is_err() {
-            return Err(global.throw_value(create_lolhtml_error(global)));
-        }
+        end_tag.set_name_str(name);
         Ok(())
     }
 }
 
-impl_wrapper_like!(EndTag, lolhtml::EndTag);
+impl_wrapper_like!(EndTag, RawEndTag);
 
 // ───────────────────────── AttributeIterator ─────────────────────────────
+
+/// The JS `AttributeIterator` heap-boxes one of these over `Element::attributes`
+/// (the Rust crate exposes a slice, not a boxed iterator like the C API did).
+/// Lifetimes are erased; `Element` detaches every iterator before invalidation.
+type RawAttributeIterator = core::slice::Iter<'static, lol_html::html_content::Attribute<'static>>;
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
@@ -1984,7 +1825,7 @@ pub struct AttributeIterator {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub iterator: Cell<*mut lolhtml_sys::AttributeIterator>,
+    pub iterator: Cell<*mut RawAttributeIterator>,
 }
 
 impl AttributeIterator {
@@ -2003,17 +1844,13 @@ impl AttributeIterator {
         }
     }
 
-    pub fn init(iterator: *mut lolhtml::AttributeIterator) -> *mut AttributeIterator {
-        bun_core::heap::into_raw(Box::new(AttributeIterator {
-            ref_count: Cell::new(1),
-            iterator: Cell::new(iterator),
-        }))
-    }
-
     fn detach(&self) {
-        if let Some(it) = lolhtml::AttributeIterator::from_ptr(self.iterator.get()) {
-            it.destroy();
-            self.iterator.set(core::ptr::null_mut());
+        let iterator = self.iterator.replace(core::ptr::null_mut());
+        if !iterator.is_null() {
+            // SAFETY: `iterator` was `heap::into_raw`'d in
+            // `Element::get_attributes`; the Cell is its sole owner and was
+            // nulled above, so this runs at most once.
+            unsafe { bun_core::heap::destroy(iterator) };
         }
     }
 
@@ -2033,19 +1870,10 @@ impl AttributeIterator {
         let done_label = bun_core::ZigString::init(b"done");
         let value_label = bun_core::ZigString::init(b"value");
 
-        let Some(it) = lolhtml::AttributeIterator::from_ptr(self.iterator.get()) else {
-            return JSValue::create_object2(
-                global_object,
-                &done_label,
-                &value_label,
-                JSValue::TRUE,
-                JSValue::UNDEFINED,
-            );
-        };
-
-        let Some(attribute) = it.next() else {
-            it.destroy();
-            self.iterator.set(core::ptr::null_mut());
+        let Some(attribute) = cell_get(&self.iterator).and_then(|it| it.next()) else {
+            // Exhausted or already detached: free the boxed iterator eagerly
+            // (a no-op once the Cell is null), matching the c-api path.
+            self.detach();
             return JSValue::create_object2(
                 global_object,
                 &done_label,
@@ -2066,8 +1894,8 @@ impl AttributeIterator {
             bun_string_jsc::to_js_array(
                 global_object,
                 &[
-                    html_string_to_bun_string(name),
-                    html_string_to_bun_string(value),
+                    BunString::clone_utf8(name.as_bytes()),
+                    BunString::clone_utf8(value.as_bytes()),
                 ],
             )?,
         )
@@ -2088,7 +1916,7 @@ pub struct Element {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub element: Cell<*mut lolhtml_sys::Element>,
+    pub element: Cell<*mut RawElement>,
     /// AttributeIterator instances created by `getAttributes()` that borrow
     /// from `element`. They must be detached in `invalidate()` when the
     /// handler returns so that JS cannot dereference the freed lol-html
@@ -2116,7 +1944,7 @@ impl Element {
         }
     }
 
-    pub fn init(element: *mut lolhtml::Element) -> *mut Element {
+    pub fn init(element: *mut RawElement) -> *mut Element {
         bun_core::heap::into_raw(Box::new(Element {
             ref_count: Cell::new(1),
             element: Cell::new(element),
@@ -2163,32 +1991,41 @@ impl Element {
         function: JSValue,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
+        let Some(el) = cell_get(&self.element) else {
             return Ok(JSValue::NULL);
         };
         if function.is_undefined_or_null() || !function.is_callable() {
-            return Ok(ZigString::init_utf8(b"Expected a function").to_js(global_object));
+            return Err(global_object.throw_type_error(format_args!("Expected a function")));
         }
 
-        // `protected()` takes the gcProtect ref up front; if registration
-        // fails below, dropping the handler box unprotects it again.
-        let end_tag_handler = bun_core::heap::into_raw(Box::new(EndTagHandler {
+        // `None` iff the element is void (`!can_have_content`) — the exact
+        // condition lol-html's C API mapped to the "No end tag." error.
+        let Some(handlers) = el.end_tag_handlers() else {
+            let err = create_lolhtml_error(global_object, &"No end tag.");
+            return Err(global_object.throw_value(err));
+        };
+
+        // `onEndTag()` replaces any previously registered handler
+        // (clear-then-add, as the C API did).
+        handlers.clear();
+
+        // The `FnOnce` box owns the handler; dropping it (whether or not
+        // lol-html ever invokes it) unprotects `callback` via `ProtectedJSValue`.
+        let mut end_tag_handler = EndTagHandler {
             global: GlobalRef::from(global_object),
             callback: Some(function.protected()),
+        };
+        handlers.push(Box::new(move |end_tag| {
+            // SAFETY: lifetime erasure. `end_tag` only lives for this
+            // synchronous call; `handler_callback`'s `clear_field` nulls the
+            // `EndTag` JsClass `Cell` before this closure returns, so JS can
+            // never reach the erased pointer afterwards.
+            let raw: *mut RawEndTag = core::ptr::from_mut(end_tag).cast();
+            directive_result(EndTagHandler::on_end_tag(
+                core::ptr::from_mut(&mut end_tag_handler),
+                raw,
+            ))
         }));
-
-        if el
-            .on_end_tag(
-                EndTagHandler::ON_END_TAG_HANDLER,
-                end_tag_handler.cast::<core::ffi::c_void>(),
-            )
-            .is_err()
-        {
-            // SAFETY: end_tag_handler allocated above and not yet handed to lol-html.
-            unsafe { drop(bun_core::heap::take(end_tag_handler)) };
-            let err = create_lolhtml_error(global_object);
-            return Err(global_object.throw_value(err));
-        }
 
         Ok(call_frame.this())
     }
@@ -2199,29 +2036,26 @@ impl Element {
         global_object: &JSGlobalObject,
         name: ZigString,
     ) -> JsResult<JSValue> {
-        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
+        let Some(el) = cell_get(&self.element) else {
             return Ok(JSValue::NULL);
         };
         let slice = name.to_slice();
-        let attr = el.get_attribute(slice.slice());
-
-        if attr.len == 0 {
+        // A non-UTF-8 name came back from the C API as a null-data `Str`,
+        // which JS saw as `null` — not a throw. Keep that distinction.
+        let Ok(name) = core::str::from_utf8(slice.slice()) else {
             return Ok(JSValue::NULL);
-        }
-
-        html_string_to_js(attr, global_object)
+        };
+        opt_string_to_js_or_null(el.get_attribute(name), global_object)
     }
 
     /// Returns a boolean indicating whether an attribute exists on the element.
-    pub fn has_attribute_(&self, global: &JSGlobalObject, name: ZigString) -> JSValue {
-        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
-            return JSValue::FALSE;
+    pub fn has_attribute_(&self, global: &JSGlobalObject, name: ZigString) -> JsResult<JSValue> {
+        let Some(el) = cell_get(&self.element) else {
+            return Ok(JSValue::FALSE);
         };
         let slice = name.to_slice();
-        match el.has_attribute(slice.slice()) {
-            Ok(b) => JSValue::from(b),
-            Err(_) => create_lolhtml_error(global),
-        }
+        let name = utf8_or_throw(global, slice.slice())?;
+        Ok(JSValue::from(el.has_attribute(name)))
     }
 
     /// Sets an attribute to a provided value, creating the attribute if it does not exist.
@@ -2231,9 +2065,9 @@ impl Element {
         global_object: &JSGlobalObject,
         name_: ZigString,
         value_: ZigString,
-    ) -> JSValue {
-        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
-            return JSValue::UNDEFINED;
+    ) -> JsResult<JSValue> {
+        let Some(el) = cell_get(&self.element) else {
+            return Ok(JSValue::UNDEFINED);
         };
 
         // Mutating the attribute Vec (push → possible realloc) invalidates the
@@ -2242,13 +2076,13 @@ impl Element {
 
         let name_slice = name_.to_slice();
         let value_slice = value_.to_slice();
-        if el
-            .set_attribute(name_slice.slice(), value_slice.slice())
-            .is_err()
-        {
-            return create_lolhtml_error(global_object);
+        let name = utf8_or_throw(global_object, name_slice.slice())?;
+        let value = utf8_or_throw(global_object, value_slice.slice())?;
+        if let Err(e) = el.set_attribute(name, value) {
+            let err = create_lolhtml_error(global_object, &e);
+            return Err(global_object.throw_value(err));
         }
-        call_frame.this()
+        Ok(call_frame.this())
     }
 
     /// Removes the attribute.
@@ -2257,9 +2091,9 @@ impl Element {
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
         name: ZigString,
-    ) -> JSValue {
-        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
-            return JSValue::UNDEFINED;
+    ) -> JsResult<JSValue> {
+        let Some(el) = cell_get(&self.element) else {
+            return Ok(JSValue::UNDEFINED);
         };
 
         // Vec::remove shifts trailing elements and shrinks len, leaving any
@@ -2267,10 +2101,9 @@ impl Element {
         self.detach_attribute_iterators();
 
         let name_slice = name.to_slice();
-        if el.remove_attribute(name_slice.slice()).is_err() {
-            return create_lolhtml_error(global_object);
-        }
-        call_frame.this()
+        let name = utf8_or_throw(global_object, name_slice.slice())?;
+        el.remove_attribute(name);
+        Ok(call_frame.this())
     }
 
     // ── instance-method arg-decode wrappers (attribute ops) ──────────────
@@ -2301,7 +2134,7 @@ impl Element {
         let args = call_frame.arguments_old::<1>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let name = eat_zig_string(&mut iter, global)?;
-        Ok(self.has_attribute_(global, name))
+        self.has_attribute_(global, name)
     }
 
     pub fn set_attribute(
@@ -2313,7 +2146,7 @@ impl Element {
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let name = eat_zig_string(&mut iter, global)?;
         let value = eat_zig_string(&mut iter, global)?;
-        Ok(self.set_attribute_(call_frame, global, name, value))
+        self.set_attribute_(call_frame, global, name, value)
     }
 
     pub fn remove_attribute(
@@ -2324,10 +2157,10 @@ impl Element {
         let args = call_frame.arguments_old::<1>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let name = eat_zig_string(&mut iter, global)?;
-        Ok(self.remove_attribute_(call_frame, global, name))
+        self.remove_attribute_(call_frame, global, name)
     }
 
-    lol_content_ops! { Element, element, JSValue::UNDEFINED;
+    lol_content_ops! { RawElement, element, JSValue::UNDEFINED;
         /// Inserts content before the element.
         before / before_,
         /// Inserts content right after the element.
@@ -2345,7 +2178,7 @@ impl Element {
     /// Removes the element with all its content.
     #[bun_jsc::host_fn(method)]
     pub fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
+        let Some(el) = cell_get(&self.element) else {
             return Ok(JSValue::UNDEFINED);
         };
         el.remove();
@@ -2359,7 +2192,7 @@ impl Element {
         _global: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
+        let Some(el) = cell_get(&self.element) else {
             return Ok(JSValue::UNDEFINED);
         };
         el.remove_and_keep_content();
@@ -2368,36 +2201,39 @@ impl Element {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_tag_name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
+        let Some(el) = cell_get(&self.element) else {
             return Ok(JSValue::UNDEFINED);
         };
-        html_string_value(el.tag_name(), global_object)
+        string_to_js(&el.tag_name(), global_object)
     }
 
     // Note: no `#[bun_jsc::host_fn(setter)]` — generated_classes.rs already
     // emits `ElementPrototype__setTagName` via `host_setter_result`.
     pub fn set_tag_name(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
-        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
+        if self.element.get().is_null() {
+            return Ok(());
+        }
+        let name = setter_utf8_arg(global, value)?;
+        let Some(el) = cell_get(&self.element) else {
             return Ok(());
         };
-        let text = value.to_slice(global)?;
-        if el.set_tag_name(text.slice()).is_err() {
-            return Err(global.throw_value(create_lolhtml_error(global)));
+        if let Err(e) = el.set_tag_name(&name) {
+            return Err(global.throw_value(create_lolhtml_error(global, &e)));
         }
         Ok(())
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_removed(&self, _global: &JSGlobalObject) -> JSValue {
-        match lolhtml::Element::from_ptr(self.element.get()) {
-            Some(el) => JSValue::from(el.is_removed()),
+        match cell_get(&self.element) {
+            Some(el) => JSValue::from(el.removed()),
             None => JSValue::UNDEFINED,
         }
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_self_closing(&self, _global: &JSGlobalObject) -> JSValue {
-        match lolhtml::Element::from_ptr(self.element.get()) {
+        match cell_get(&self.element) {
             Some(el) => JSValue::from(el.is_self_closing()),
             None => JSValue::UNDEFINED,
         }
@@ -2405,7 +2241,7 @@ impl Element {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_can_have_content(&self, _global: &JSGlobalObject) -> JSValue {
-        match lolhtml::Element::from_ptr(self.element.get()) {
+        match cell_get(&self.element) {
             Some(el) => JSValue::from(el.can_have_content()),
             None => JSValue::UNDEFINED,
         }
@@ -2413,30 +2249,31 @@ impl Element {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_namespace_uri(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
+        let Some(el) = cell_get(&self.element) else {
             return Ok(JSValue::UNDEFINED);
         };
-        // SAFETY: namespaceURI returns a NUL-terminated C string owned by lol-html.
-        let ns = unsafe { bun_core::ffi::cstr(el.namespace_uri()) };
-        bun_string_jsc::create_utf8_for_js(global_object, ns.to_bytes())
+        string_to_js(el.namespace_uri(), global_object)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_attributes(&self, global_object: &JSGlobalObject) -> JSValue {
-        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
-            return JSValue::UNDEFINED;
+    pub fn get_attributes(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        let Some(el) = cell_get(&self.element) else {
+            return Ok(JSValue::UNDEFINED);
         };
 
-        let Some(iter) = el.attributes() else {
-            return create_lolhtml_error(global_object);
-        };
+        // `cell_get`'s erased `'static` carries through `attributes()`. The
+        // boxed iterator never outlives the real attribute buffer: it is
+        // tracked below and detached in `invalidate()` (when the handler
+        // returns) and before any attribute mutation.
+        let attrs: &'static [lol_html::html_content::Attribute<'static>] = el.attributes();
+        let iter = bun_core::heap::into_raw(Box::new(attrs.iter()));
         let attr_iter = bun_core::heap::into_raw(Box::new(AttributeIterator {
             ref_count: Cell::new(1),
             iterator: Cell::new(iter),
         }));
         // Track this iterator so we can detach it when the handler returns.
-        // lol-html's attribute iterator borrows from the element's attribute
-        // buffer which is freed after the callback; leaking the iterator to JS
+        // lol-html's attribute slice borrows from the element's token buffer
+        // which is freed after the callback; leaking the iterator to JS
         // without detaching it would be a use-after-free.
         // SAFETY: attr_iter is a fresh heap::alloc allocation (refcount==1).
         unsafe { (*attr_iter).ref_() };
@@ -2444,8 +2281,8 @@ impl Element {
         self.attribute_iterators.with_mut(|v| v.push(attr_iter));
         // SAFETY: attr_iter is live (refcount==2 now); ownership is shared with
         // the GC wrapper via the intrusive refcount (`finalize` → `deref`).
-        unsafe { AttributeIterator::to_js_ptr(attr_iter, global_object) }
+        Ok(unsafe { AttributeIterator::to_js_ptr(attr_iter, global_object) })
     }
 }
 
-impl_wrapper_like!(Element, lolhtml::Element, invalidate);
+impl_wrapper_like!(Element, RawElement, invalidate);

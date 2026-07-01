@@ -4804,6 +4804,12 @@ pub mod spawn_ffi {
         pub actions: ActionsList,
         pub pty_slave_fd: c_int,
         pub linux_pdeathsig: c_int,
+        /// `setuid(uid)` in the child before exec when `set_uid` is true.
+        pub uid: u32,
+        /// `setgid(gid)` in the child before exec when `set_gid` is true.
+        pub gid: u32,
+        pub set_uid: bool,
+        pub set_gid: bool,
     }
 
     impl Default for BunSpawnRequest {
@@ -4815,6 +4821,10 @@ pub mod spawn_ffi {
                 actions: ActionsList::default(),
                 pty_slave_fd: -1,
                 linux_pdeathsig: 0,
+                uid: 0,
+                gid: 0,
+                set_uid: false,
+                set_gid: false,
             }
         }
     }
@@ -5647,7 +5657,7 @@ pub mod form_data {
             // RFC 2045 §5.1: parameter attribute names are case-insensitive;
             // the `=` value is matched byte-exact (the boundary delimiter in
             // the body must match it verbatim).
-            let Some(eq) = crate::strings_impl::index_of_char(param, b'=') else {
+            let Some(eq) = crate::strings::index_of_char_usize(param, b'=') else {
                 continue;
             };
             if !param[..eq].eq_ignore_ascii_case(b"boundary") {
@@ -5657,7 +5667,7 @@ pub mod form_data {
             if begin.is_empty() {
                 return None;
             }
-            let end = crate::strings_impl::index_of_char(begin, b';').unwrap_or(begin.len());
+            let end = crate::strings::index_of_char_usize(begin, b';').unwrap_or(begin.len());
             if begin[0] == b'"' {
                 if end > 1 && begin[end - 1] == b'"' {
                     return Some(&begin[1..end - 1]);

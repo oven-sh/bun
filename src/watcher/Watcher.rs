@@ -833,25 +833,10 @@ impl Watcher {
         #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
         let fd: Fd = Fd::INVALID;
 
-        let res = self.add_file::<true>(fd, file_path, hash, loader, Fd::INVALID, None);
-        match res {
-            Ok(()) => {
-                #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-                if fd.is_valid() {
-                    self.mutex.lock();
-                    let maybe_idx = self.index_of(hash);
-                    let stored_fd = if let Some(idx) = maybe_idx {
-                        self.watchlist.items_fd()[idx as usize]
-                    } else {
-                        Fd::INVALID
-                    };
-                    self.mutex.unlock();
-                    if maybe_idx.is_some() && stored_fd.native() != fd.native() {
-                        let _ = bun_sys::close(fd);
-                    }
-                }
-                true
-            }
+        // `add_file` owns `fd` on success (stored or closed there), so only
+        // the error path still has to release it here.
+        match self.add_file::<true>(fd, file_path, hash, loader, Fd::INVALID, None) {
+            Ok(()) => true,
             Err(_) => {
                 if fd.is_valid() {
                     let _ = bun_sys::close(fd);
@@ -861,6 +846,9 @@ impl Watcher {
         }
     }
 
+    /// Registers `file_path` in the watchlist. Ownership of `fd` transfers to
+    /// the watcher on success: it is either stored on the watch item or closed
+    /// here. On error the caller keeps ownership and must close it.
     pub fn add_file<const CLONE_FILE_PATH: bool>(
         &mut self,
         fd: Fd,
@@ -874,11 +862,21 @@ impl Watcher {
         self.mutex.lock();
 
         if let Some(index) = self.index_of(hash) {
-            if feature_flags::ATOMIC_FILE_WATCHER {
-                // On Linux, the file descriptor might be out of date.
-                if fd.is_valid() {
-                    let fds = self.watchlist.items_fd_mut();
-                    fds[index as usize] = fd;
+            // Already watched: exactly one descriptor may stay open for the item.
+            if fd.is_valid() {
+                let fds = self.watchlist.items_fd_mut();
+                let previous = fds[index as usize];
+                if previous != fd {
+                    if feature_flags::ATOMIC_FILE_WATCHER {
+                        // On Linux, the file descriptor might be out of date.
+                        fds[index as usize] = fd;
+                        if previous.is_valid() {
+                            let _ = bun_sys::close(previous);
+                        }
+                    } else {
+                        // kqueue stays registered on the stored descriptor.
+                        let _ = bun_sys::close(fd);
+                    }
                 }
             }
             self.mutex.unlock();

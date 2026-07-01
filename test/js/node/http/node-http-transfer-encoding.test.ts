@@ -3,6 +3,41 @@ import { once } from "events";
 import { createServer, request } from "http";
 import { AddressInfo, connect, Server } from "net";
 
+// node treats maxHeaderSize: 0 as "use the default limit", never "unlimited": a chunked
+// trailer section that never terminates must error the connection, not buffer unboundedly.
+// The 1024 variant proves the same cap applies when an explicit limit is configured.
+test.each([0, 1024])("chunked trailer section is bounded when maxHeaderSize is %d", async maxHeaderSize => {
+  let sawRequestEnd = false;
+  const server = createServer({ maxHeaderSize }, (req, res) => {
+    req.resume();
+    req.on("end", () => {
+      sawRequestEnd = true;
+      res.end("done");
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    await once(socket, "connect");
+    let response = "";
+    socket.on("data", chunk => (response += chunk.toString()));
+    socket.on("error", () => {});
+    const closed = once(socket, "close");
+    socket.write("POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n");
+    // Trailer lines with no terminating blank line, far past the 16 KiB default cap.
+    const junkLine = Buffer.from("x-trailer-flood: yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\r\n");
+    for (let sent = 0; sent < 64 * 1024; sent += junkLine.length) {
+      socket.write(junkLine);
+    }
+    await closed;
+    expect(response).not.toContain("HTTP/1.1 200");
+    expect(sawRequestEnd).toBe(false);
+  } finally {
+    server.close();
+  }
+});
+
 const fixture = "node-http-transfer-encoding-fixture.ts";
 test(`should not duplicate transfer-encoding header in request`, async () => {
   const { resolve, promise } = Promise.withResolvers();

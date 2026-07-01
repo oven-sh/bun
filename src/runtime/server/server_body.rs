@@ -1760,6 +1760,12 @@ where
             {
                 return Ok(JSValue::FALSE);
             }
+            // upgrade() below cannot succeed for a request uWS never classified as a WebSocket
+            // upgrade: bail before the one-shot 101 status + headers are committed to the
+            // socket, so the app's fallback response stays well-formed (see #1339).
+            if !node_http_response.can_upgrade() {
+                return Ok(JSValue::FALSE);
+            }
 
             let mut data_value = JSValue::ZERO;
 

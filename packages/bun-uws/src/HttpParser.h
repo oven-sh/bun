@@ -272,8 +272,7 @@ namespace uWS
                     // Parse comma-separated values, ensuring "chunked" is last if present
                     const auto value = h->value;
                     size_t pos = 0;
-                    size_t lastTokenStart = 0;
-                    size_t lastTokenLen = 0;
+                    bool sawChunkedToken = false;
 
                     while (pos < value.length()) {
                         // Skip leading whitespace
@@ -297,8 +296,16 @@ namespace uWS
 
                         size_t tokenLen = tokenEnd - tokenStart;
                         if (tokenLen > 0) {
-                            lastTokenStart = tokenStart;
-                            lastTokenLen = tokenLen;
+                            /* llhttp (HPE_INVALID_TRANSFER_ENCODING): any coding listed after a
+                             * "chunked" token is invalid, so "chunked, chunked" is never framed
+                             * as chunked and "chunked, foo" never falls through to another framing. */
+                            if (sawChunkedToken) {
+                                te.invalid = true;
+                                return te;
+                            }
+                            if (tokenLen == 7 && strncasecmp(value.data() + tokenStart, "chunked", 7) == 0) {
+                                sawChunkedToken = true;
+                            }
                         }
 
                         // Move past comma if present
@@ -317,10 +324,8 @@ namespace uWS
                      * Content-Length framing (request smuggling; RFC 9112 6.3). */
                     te.has = true;
 
-                    // Check if the last token is "chunked"
-                    if (lastTokenLen == 7 && strncasecmp(value.data() + lastTokenStart, "chunked", 7) == 0) [[likely]] {
-                        te.chunked = true;
-                    }
+                    /* A chunked token with no coding after it (enforced above) is the last one. */
+                    te.chunked = sawChunkedToken;
                 }
             }
 
@@ -1162,7 +1167,7 @@ namespace uWS
                 if constexpr (!ConsumeMinimally) {
                     /* Go ahead and parse it (todo: better heuristics for emitting FIN to the app level) */
                     std::string_view dataToConsume(data, length);
-                    for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, usingNodeHttpCompat ? &chunkedExtensionsByteCount : nullptr, usingNodeHttpCompat ? &nodeHttpRequestTrailers : nullptr, maxHeaderSize)) {
+                    for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, usingNodeHttpCompat ? &chunkedExtensionsByteCount : nullptr, usingNodeHttpCompat ? &nodeHttpRequestTrailers : nullptr, maxHeaderSize ? maxHeaderSize : MAX_FALLBACK_SIZE)) {
                         /* llhttp errors at the offending extension byte, before any body bytes from
                          * that chunk reach the application; check before every dispatch. */
                         if (usingNodeHttpCompat && chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
@@ -1241,7 +1246,7 @@ public:
             } else if (isParsingChunkedEncoding(remainingStreamingBytes)) {
                  /* It's either chunked or with a content-length */
                 std::string_view dataToConsume(data, length);
-                for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, usingNodeHttpCompat ? &chunkedExtensionsByteCount : nullptr, usingNodeHttpCompat ? &nodeHttpRequestTrailers : nullptr, maxHeaderSize)) {
+                for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, usingNodeHttpCompat ? &chunkedExtensionsByteCount : nullptr, usingNodeHttpCompat ? &nodeHttpRequestTrailers : nullptr, maxHeaderSize ? maxHeaderSize : MAX_FALLBACK_SIZE)) {
                     if (usingNodeHttpCompat && chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                         return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                     }
@@ -1313,7 +1318,7 @@ public:
                     } else if (isParsingChunkedEncoding(remainingStreamingBytes)) {
                         /* It's either chunked or with a content-length */
                         std::string_view dataToConsume(data, length);
-                        for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, usingNodeHttpCompat ? &chunkedExtensionsByteCount : nullptr, usingNodeHttpCompat ? &nodeHttpRequestTrailers : nullptr, maxHeaderSize)) {
+                        for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, usingNodeHttpCompat ? &chunkedExtensionsByteCount : nullptr, usingNodeHttpCompat ? &nodeHttpRequestTrailers : nullptr, maxHeaderSize ? maxHeaderSize : MAX_FALLBACK_SIZE)) {
                             if (usingNodeHttpCompat && chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                                 return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                             }

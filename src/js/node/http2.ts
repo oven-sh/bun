@@ -6023,6 +6023,7 @@ function closeAllSessions(server: Http2Server | Http2SecureServer) {
 // the surface of the native NodeHTTPResponse handle that ServerResponse drives
 // (cork/writeHead/write/end/abort/...), serializing directly onto the TLS socket.
 function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout) {
+  const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
   let head = null;
   let headWritten = false;
   let chunked = false;
@@ -6119,6 +6120,17 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       return callback();
     },
     writeHead(statusCode, statusMessage, headers) {
+      // The native NodeHTTPResponse handle validates the status line it writes; this
+      // JS stand-in serializes it by hand, so it must enforce the same invariants
+      // (response splitting via res.statusMessage / a non-numeric res.statusCode).
+      const originalStatusCode = statusCode;
+      statusCode |= 0;
+      if (statusCode < 100 || statusCode > 999) {
+        throw $ERR_HTTP_INVALID_STATUS_CODE(String(originalStatusCode));
+      }
+      if (typeof statusMessage === "string" && checkInvalidHeaderChar(statusMessage)) {
+        throw $ERR_INVALID_CHAR("statusMessage");
+      }
       head = { statusCode, statusMessage, headers };
     },
     flushHeaders() {

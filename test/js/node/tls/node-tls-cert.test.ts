@@ -551,6 +551,171 @@ it("tls.connect should not accept untrusted certificates", async () => {
   }
 });
 
+it("tls.connect with rejectUnauthorized: null still rejects untrusted certificates", async () => {
+  // Node normalizes rejectUnauthorized with `!== false`: only an explicit `false` disables
+  // verification. `null` (a common config-file "use the default") must keep it enforced.
+  const { promise, resolve, reject } = Promise.withResolvers();
+  let server: Server | null = null;
+  let socket: TLSSocket | null = null;
+
+  try {
+    server = tls
+      .createServer({
+        key: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.key")),
+        cert: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.crt")),
+        passphrase: "123123123",
+      })
+      .on("error", reject)
+      .listen(0, () => {
+        const address = server?.address() as AddressInfo;
+        socket = tls
+          .connect({ port: address.port, rejectUnauthorized: null as unknown as boolean }, () => {
+            reject(new Error("secureConnect must not fire when verification failed"));
+          })
+          .on("error", resolve);
+      });
+
+    const err = await promise;
+    expect(err.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+  } finally {
+    //@ts-ignore
+    socket?.end();
+    server?.close();
+  }
+});
+
+it("tls.connect with rejectUnauthorized: 0 keeps verification on like node", async () => {
+  // Node's normalization is `!== false`, so falsy non-`false` values (0, "") keep
+  // verification enforced; they must not blow up in the native strict-boolean conversion.
+  const { promise, resolve, reject } = Promise.withResolvers();
+  let server: Server | null = null;
+  let socket: TLSSocket | null = null;
+
+  try {
+    server = tls
+      .createServer({
+        key: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.key")),
+        cert: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.crt")),
+        passphrase: "123123123",
+      })
+      .on("error", reject)
+      .listen(0, () => {
+        const address = server?.address() as AddressInfo;
+        socket = tls
+          .connect({ port: address.port, rejectUnauthorized: 0 as unknown as boolean }, () => {
+            reject(new Error("secureConnect must not fire when verification failed"));
+          })
+          .on("error", resolve);
+      });
+
+    const err = await promise;
+    expect(err.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+  } finally {
+    //@ts-ignore
+    socket?.end();
+    server?.close();
+  }
+});
+
+it("tls.createServer with rejectUnauthorized: 0 still rejects a client with an untrusted certificate", async () => {
+  // The server-side gate runs in JS after the handshake (the native verify callback always
+  // defers to JS), so the raw option value must be normalized like Node (`!== false`): a
+  // falsy non-`false` value must not admit a client whose certificate failed verification.
+  let server: Server | null = null;
+  let socket: TLSSocket | null = null;
+  const secureConnections: string[] = [];
+  const clientErrors = Promise.withResolvers<Error>();
+  const clientClosed = Promise.withResolvers<string>();
+  const serverTLS = {
+    key: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.key")),
+    cert: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.crt")),
+    passphrase: "123123123",
+  };
+
+  try {
+    server = tls
+      .createServer(
+        {
+          ...serverTLS,
+          requestCert: true,
+          rejectUnauthorized: 0 as unknown as boolean,
+        },
+        s => {
+          secureConnections.push(s.authorizationError as string);
+          s.write("admitted");
+        },
+      )
+      .on("tlsClientError", clientErrors.resolve)
+      .listen(0, () => {
+        const address = server?.address() as AddressInfo;
+        // The client presents a certificate the server cannot verify (self-signed, no CA).
+        socket = tls.connect({ port: address.port, rejectUnauthorized: false, ...serverTLS });
+        let received = "";
+        socket.on("data", chunk => (received += chunk));
+        socket.on("error", () => {});
+        socket.on("close", () => clientClosed.resolve(received));
+      });
+
+    const [, received] = await Promise.all([clientErrors.promise, clientClosed.promise]);
+    // The unverified client is rejected: no 'secureConnection', no bytes served.
+    expect({ secureConnections, received }).toEqual({ secureConnections: [], received: "" });
+  } finally {
+    //@ts-ignore
+    socket?.end();
+    server?.close();
+  }
+});
+
+it("tls.createServer with rejectUnauthorized: null still rejects unauthorized clients", async () => {
+  // Server side of the same normalization: with requestCert, a client that fails
+  // verification must be destroyed unless rejectUnauthorized is explicitly `false`
+  // (Node's `!== false`), so `null` must never silently admit an unverified peer.
+  let server: Server | null = null;
+  let socket: TLSSocket | null = null;
+  const secureConnections: string[] = [];
+  const clientErrors = Promise.withResolvers<Error>();
+  const clientClosed = Promise.withResolvers<string>();
+
+  try {
+    server = tls
+      .createServer(
+        {
+          key: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.key")),
+          cert: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.crt")),
+          passphrase: "123123123",
+          requestCert: true,
+          rejectUnauthorized: null as unknown as boolean,
+        },
+        s => {
+          secureConnections.push(s.authorizationError as string);
+          s.write("admitted");
+        },
+      )
+      .on("tlsClientError", clientErrors.resolve)
+      .listen(0, () => {
+        const address = server?.address() as AddressInfo;
+        // The client presents no certificate, so the server's verification fails.
+        socket = tls.connect({ port: address.port, rejectUnauthorized: false });
+        let received = "";
+        socket.on("data", chunk => (received += chunk));
+        socket.on("error", () => {});
+        socket.on("close", () => clientClosed.resolve(received));
+      });
+
+    const [err, received] = await Promise.all([clientErrors.promise, clientClosed.promise]);
+    // The unauthorized client is rejected: no 'secureConnection', no bytes served.
+    expect({ secureConnections, received, code: (err as NodeJS.ErrnoException).code }).toEqual({
+      secureConnections: [],
+      received: "",
+      code: "ERR_SSL_PEER_DID_NOT_RETURN_A_CERTIFICATE",
+    });
+  } finally {
+    //@ts-ignore
+    socket?.end();
+    server?.close();
+  }
+});
+
 async function createTLSServer(options: tls.TlsOptions) {
   const server = await new Promise<tls.Server>((resolve, reject) => {
     const server = tls

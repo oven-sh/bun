@@ -455,6 +455,12 @@ function rejectUnauthorizedDefault() {
   return process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0";
 }
 
+// Node's rule for every rejectUnauthorized ingestion (_tls_wrap.js): only an explicit
+// `false` disables certificate verification — null, 0, "" and every other value keep it on.
+function normalizeRejectUnauthorized(value) {
+  return value !== false;
+}
+
 // Mirrors Node's getAllowUnauthorized(): warn (once) when certificate
 // verification is disabled by NODE_TLS_REJECT_UNAUTHORIZED=0.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/options.js#L204-L215
@@ -693,6 +699,13 @@ function newNativeSecureContext(options, cached = true) {
       }
       options = { ...options, minVersion, maxVersion };
     }
+  }
+  // Node treats any value other than an explicit `false` as "verify"; the native converter
+  // only accepts real booleans, so normalize the falsy-but-not-false spellings Node accepts
+  // (0, "", null) before they can throw or silently disable verification.
+  const rejectUnauthorized = options.rejectUnauthorized;
+  if (rejectUnauthorized !== undefined && typeof rejectUnauthorized !== "boolean") {
+    options = { ...options, rejectUnauthorized: normalizeRejectUnauthorized(rejectUnauthorized) };
   }
   const ctx = (cached ? NativeSecureContext.intern : NativeSecureContext.createPrivate)(options);
   if (pfxExtraCAs) {
@@ -1327,7 +1340,7 @@ function Server(options, secureConnectionListener): void {
       const rejectUnauthorized = options.rejectUnauthorized;
 
       if (typeof rejectUnauthorized !== "undefined") {
-        this._rejectUnauthorized = rejectUnauthorized;
+        this._rejectUnauthorized = normalizeRejectUnauthorized(rejectUnauthorized);
       } else this._rejectUnauthorized = rejectUnauthorizedDefault();
 
       const ciphers = options.ciphers;

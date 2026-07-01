@@ -79,6 +79,44 @@ test("rejects Transfer-Encoding with chunked not last", async () => {
   });
 });
 
+// llhttp (and so node) reject any coding listed after a "chunked" token with
+// HPE_INVALID_TRANSFER_ENCODING; only rejecting the multi-header form would leave the
+// single-line "chunked, chunked" framed as chunked — a smuggling differential.
+test.each(["chunked, chunked", "chunked, foo, chunked"])(
+  "rejects duplicate chunked within a single Transfer-Encoding header (%s)",
+  async te => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response("OK");
+      },
+    });
+
+    const client = net.connect(server.port, "127.0.0.1");
+
+    const maliciousRequest = [
+      "POST / HTTP/1.1",
+      "Host: localhost",
+      `Transfer-Encoding: ${te}`,
+      "",
+      "1",
+      "A",
+      "0",
+      "",
+      "",
+    ].join("\r\n");
+
+    const response = await new Promise<string>((resolve, reject) => {
+      let raw = "";
+      client.on("error", reject);
+      client.on("data", data => (raw += data.toString()));
+      client.on("close", () => resolve(raw));
+      client.write(maliciousRequest);
+    });
+    expect(response).toContain("HTTP/1.1 400");
+  },
+);
+
 test("rejects duplicate chunked in Transfer-Encoding", async () => {
   await using server = Bun.serve({
     port: 0,

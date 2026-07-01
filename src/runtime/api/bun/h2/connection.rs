@@ -72,6 +72,18 @@ pub struct Feed {
 /// behind a non-reading peer before the session is treated as flooded (NGHTTP2_ERR_FLOODED).
 const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 
+/// Pseudo-header presence bits shared by the per-field decode loop and the RFC 9113 §8.3.1
+/// request checks in `finish_header_block` (nghttp2's NGHTTP2_HTTP_FLAG__* equivalents).
+mod pseudo {
+    pub const METHOD: u8 = 1;
+    pub const SCHEME: u8 = 2;
+    pub const AUTHORITY: u8 = 4;
+    pub const PATH: u8 = 8;
+    pub const STATUS: u8 = 16;
+    pub const PROTOCOL: u8 = 32;
+    pub const UNKNOWN: u8 = 64;
+}
+
 /// What the connection engine calls back into the embedder (the JSC binding) for. Methods take
 /// `&self`: the JSC binding (H2FrameParser) is fully interior-mutable (Cell/JsCell) and its host
 /// functions receive `&Self`, so it can own the `Connection` and pass itself as the sink without an
@@ -200,6 +212,11 @@ pub struct Connection {
     header_target: u32,
     /// 0 for a normal HEADERS block; the parent stream id when assembling a PUSH_PROMISE block.
     header_push_parent: u32,
+    /// The assembling block opens a new inbound stream (a request block on the server, a
+    /// PUSH_PROMISE request block on the client). False for a later HEADERS on the same stream
+    /// (a trailer section), which RFC 9113 §8.1 forbids from carrying pseudo-headers and which
+    /// must not be held to the request pseudo-header requirements of §8.3.1.
+    header_is_request: bool,
     /// HEADERS arrived on a closed/half-closed-remote stream: the block is still decoded so the
     /// connection-scoped HPACK table stays in sync (§4.3), then refused with RST_STREAM
     /// (STREAM_CLOSED) instead of being dispatched.
@@ -251,6 +268,7 @@ impl Connection {
             header_flags: 0,
             header_target: 0,
             header_push_parent: 0,
+            header_is_request: false,
             header_stream_closed: false,
             header_refused: false,
             terminated: false,
@@ -940,6 +958,7 @@ impl Connection {
         self.header_flags = hdr.flags;
         self.header_target = hdr.stream_id;
         self.header_push_parent = 0;
+        self.header_is_request = is_new;
         self.header_stream_closed = stream_closed;
         self.header_refused = refused;
         if !end_headers {
@@ -1005,6 +1024,12 @@ impl Connection {
         let mut malformed = false;
         let mut seen_regular = false;
         let mut seen_pseudo: u8 = 0;
+        // Request-block state for the RFC 9113 §8.3.1 checks below (nghttp2's
+        // nghttp2_http_on_request_headers): only an initial HEADERS block (or a PUSH_PROMISE
+        // block) is a request; a later HEADERS on the same stream is a trailer section.
+        let is_request = self.header_is_request;
+        let mut saw_connect = false;
+        let mut saw_host = false;
         while off < block.len() {
             match self.hpack.decode(&block[off..]) {
                 Ok(h) => {
@@ -1036,13 +1061,13 @@ impl Connection {
                             malformed = true;
                         } else if let Some(rest) = name_b.strip_prefix(b":") {
                             let bit: u8 = match rest {
-                                b"method" => 1,
-                                b"scheme" => 2,
-                                b"authority" => 4,
-                                b"path" => 8,
-                                b"status" => 16,
-                                b"protocol" => 32,
-                                _ => 64,
+                                b"method" => pseudo::METHOD,
+                                b"scheme" => pseudo::SCHEME,
+                                b"authority" => pseudo::AUTHORITY,
+                                b"path" => pseudo::PATH,
+                                b"status" => pseudo::STATUS,
+                                b"protocol" => pseudo::PROTOCOL,
+                                _ => pseudo::UNKNOWN,
                             };
                             // 8.3.1: requests never carry :status - a server seeing it inbound is
                             // a malformed block. (The client direction also constrains pseudo
@@ -1058,20 +1083,36 @@ impl Connection {
                             let protocol_disabled = self.is_server
                                 && rest == b"protocol"
                                 && self.local_settings.enable_connect_protocol == 0;
+                            // RFC 9113 §8.1: pseudo-headers never appear in a trailer section.
+                            // nghttp2 (check_pseudo_header) also treats an empty pseudo-header
+                            // value as malformed, so `:path: ""` never counts as a present :path.
+                            let in_trailers = self.is_server && !is_request;
                             if seen_regular
-                                || bit == 64
+                                || bit == pseudo::UNKNOWN
                                 || (seen_pseudo & bit) != 0
                                 || wrong_direction
                                 || protocol_disabled
+                                || in_trailers
+                                || value_b.is_empty()
                             {
                                 malformed = true;
                             }
                             seen_pseudo |= bit;
+                            saw_connect |= rest == b"method" && value_b == b"CONNECT";
                         } else {
                             seen_regular = true;
                             match name_b {
                                 b"connection" | b"keep-alive" | b"proxy-connection"
                                 | b"transfer-encoding" | b"upgrade" => malformed = true,
+                                b"host" => {
+                                    // nghttp2 routes Host through the same check as :authority:
+                                    // an empty value never satisfies the authority requirement
+                                    // and a repeated Host field makes the block malformed.
+                                    if value_b.is_empty() || saw_host {
+                                        malformed = true;
+                                    }
+                                    saw_host = true;
+                                }
                                 b"te" => {
                                     // RFC 9110 10.1.4: field values are case-insensitive.
                                     if !value_b.eq_ignore_ascii_case(b"trailers") {
@@ -1110,6 +1151,22 @@ impl Connection {
             }
             sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
             return false;
+        }
+        // RFC 9113 §8.3.1 (nghttp2_http_on_request_headers): a request block needs exactly one
+        // non-empty :method, :scheme and :path plus an :authority or Host — except plain
+        // CONNECT, which must omit :scheme/:path and carry :authority; extended CONNECT
+        // (:protocol, RFC 8441) additionally requires :method CONNECT. Without this a block
+        // with no pseudo-headers reaches JS as a request whose method and url are undefined.
+        if self.is_server && is_request && !rejected && !malformed {
+            use pseudo::{AUTHORITY, METHOD, PATH, PROTOCOL, SCHEME};
+            let extended_connect = (seen_pseudo & PROTOCOL) != 0;
+            malformed = if saw_connect && !extended_connect {
+                (seen_pseudo & (SCHEME | PATH)) != 0 || (seen_pseudo & AUTHORITY) == 0
+            } else {
+                (seen_pseudo & (METHOD | SCHEME | PATH)) != (METHOD | SCHEME | PATH)
+                    || ((seen_pseudo & AUTHORITY) == 0 && !saw_host)
+                    || (extended_connect && (!saw_connect || (seen_pseudo & AUTHORITY) == 0))
+            };
         }
         if malformed && !rejected {
             // node (Http2Session::OnInvalidFrame): every locally-rejected invalid frame counts
@@ -1525,6 +1582,7 @@ impl Connection {
         self.header_flags = 0;
         self.header_target = promised;
         self.header_push_parent = hdr.stream_id;
+        self.header_is_request = true;
         self.header_stream_closed = false;
         self.header_refused = false;
         if !end_headers {

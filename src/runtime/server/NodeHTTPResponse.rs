@@ -233,6 +233,19 @@ fn err_throw<T>(global: &JSGlobalObject, code: ErrorCode, msg: &'static str) -> 
     Err(err_throw_cold(global, code, msg))
 }
 
+/// Terminate a node:http response whose handler failed (threw or rejected). The wire must
+/// never read as a complete success: status/body bytes already sent → close without valid
+/// framing (RFC 9112 §7); nothing sent yet → a well-formed 500.
+pub(crate) fn end_failed_node_http_response(raw: uws::AnyResponse, close_connection: bool) {
+    let state = raw.state();
+    if state.is_http_status_called() || state.is_http_write_called() {
+        raw.force_close();
+    } else {
+        raw.write_status(b"500 Internal Server Error");
+        raw.end_stream(close_connection);
+    }
+}
+
 /// AnyResponse `is_ssl()` shim (upstream lacks this accessor).
 #[inline]
 fn any_response_is_ssl(r: &uws::AnyResponse) -> bool {
@@ -368,16 +381,27 @@ impl NodeHTTPResponse {
         raw.resume_();
     }
 
+    /// Every precondition under which [`Self::upgrade`] refuses. Callers that must not commit
+    /// the one-shot 101 preamble to the socket for an upgrade that will fail check this first;
+    /// `upgrade()` itself starts with it, so the two can never drift.
+    pub(crate) fn can_upgrade(&self) -> bool {
+        // `AnyServer` is a `Copy` type-erased pointer to the long-lived server, not `*self`.
+        let mut server = self.server;
+        !self.upgrade_context.get().context.is_null()
+            && server.web_socket_handler().is_some()
+            && !self.get_server_socket_value().is_empty()
+    }
+
     pub(crate) fn upgrade(
         &self,
         data_value: JSValue,
         sec_websocket_protocol: ZigString,
         sec_websocket_extensions: ZigString,
     ) -> bool {
-        let upgrade_ctx = self.upgrade_context.get().context;
-        if upgrade_ctx.is_null() {
+        if !self.can_upgrade() {
             return false;
         }
+        let upgrade_ctx = self.upgrade_context.get().context;
         // `AnyServer` is a `Copy` type-erased pointer; copy it so the
         // `&mut self`-taking accessor can be called from this `&self` body.
         // The pointee is the long-lived server, not `*self`.
@@ -390,9 +414,6 @@ impl NodeHTTPResponse {
         let ws_handler: &mut crate::server::WebSocketServerHandler =
             unsafe { &mut *std::ptr::from_mut(ws_handler) };
         let socket_value = self.get_server_socket_value();
-        if socket_value.is_empty() {
-            return false;
-        }
         self.resume_socket();
 
         data_value.ensure_still_alive();
@@ -1176,10 +1197,10 @@ pub(crate) fn node_http_request_on_reject(
             raw_response.clear_on_data();
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
-            if !raw_response.state().is_http_status_called() {
-                raw_response.write_status(b"500 Internal Server Error");
-            }
-            raw_response.end_stream(raw_response.state().is_http_connection_close());
+            end_failed_node_http_response(
+                raw_response,
+                raw_response.state().is_http_connection_close(),
+            );
         }
 
         this.on_request_complete();

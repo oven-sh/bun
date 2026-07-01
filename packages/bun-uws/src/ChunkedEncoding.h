@@ -200,11 +200,15 @@ namespace uWS {
              * the whole section (including its final CRLF) has been consumed, so
              * trailers are always available by the time the message completes. */
             if (trailerSection && state == STATE_IS_TRAILERS) [[unlikely]] {
+                /* A zero cap means the caller has no header-size limit configured (node's
+                 * maxHeaderSize: 0 selects the default, never "unlimited"): the captured
+                 * section must always be bounded or a never-terminating trailer stream OOMs. */
+                uint64_t trailerSectionCap = maxTrailerSectionSize ? maxTrailerSectionSize : MAX_TRAILER_SECTION_SIZE;
                 while (data.length()) {
                     char c = data[0];
                     trailerSection->push_back(c);
                     data.remove_prefix(1);
-                    if (maxTrailerSectionSize && trailerSection->size() > maxTrailerSectionSize) [[unlikely]] {
+                    if (trailerSection->size() > trailerSectionCap) [[unlikely]] {
                         state = STATE_IS_ERROR;
                         return std::nullopt;
                     }

@@ -2578,6 +2578,54 @@ it("http2 server rejects requests carrying connection-specific or repeated pseud
       Buffer.from([0x01]), // :authority
       literal("localhost"),
     ]),
+    // RFC 9113 Section 8.3.1 (nghttp2_http_on_request_headers): :method, :scheme and :path
+    // are all mandatory (plus an :authority or Host), an empty pseudo-header value never
+    // counts as present, and plain CONNECT must omit :scheme/:path. nghttp2 (and so node)
+    // answers each of these with a stream PROTOCOL_ERROR before the request reaches JS.
+    "missing :method pseudo-header": Buffer.concat([
+      Buffer.from([0x86]), // :scheme: http
+      Buffer.from([0x84]), // :path: /
+      Buffer.from([0x01]), // :authority
+      literal("localhost"),
+    ]),
+    "missing :path pseudo-header": Buffer.concat([
+      Buffer.from([0x82]), // :method: GET
+      Buffer.from([0x86]), // :scheme: http
+      Buffer.from([0x01]), // :authority
+      literal("localhost"),
+    ]),
+    "missing :scheme pseudo-header": Buffer.concat([
+      Buffer.from([0x82]), // :method: GET
+      Buffer.from([0x84]), // :path: /
+      Buffer.from([0x01]), // :authority
+      literal("localhost"),
+    ]),
+    "empty :path pseudo-header value": Buffer.concat([
+      Buffer.from([0x82]), // :method: GET
+      Buffer.from([0x86]), // :scheme: http
+      Buffer.from([0x04]), // :path (literal without indexing, name index 4)
+      literal(""),
+      Buffer.from([0x01]), // :authority
+      literal("localhost"),
+    ]),
+    "no pseudo-headers at all": Buffer.concat([
+      Buffer.from([0x00]), // literal header field without indexing, new name
+      literal("x-plain"),
+      literal("header"),
+    ]),
+    "missing :authority and host": Buffer.concat([
+      Buffer.from([0x82]), // :method: GET
+      Buffer.from([0x86]), // :scheme: http
+      Buffer.from([0x84]), // :path: /
+    ]),
+    "CONNECT carrying :scheme and :path": Buffer.concat([
+      Buffer.from([0x02]), // :method (literal without indexing, name index 2)
+      literal("CONNECT"),
+      Buffer.from([0x86]), // :scheme: http
+      Buffer.from([0x84]), // :path: /
+      Buffer.from([0x01]), // :authority
+      literal("localhost"),
+    ]),
   };
 
   async function exchange(headerBlock) {
@@ -2653,6 +2701,61 @@ it("http2 server rejects requests carrying connection-specific or repeated pseud
     expect(deliveredRequests[0]["x-clean"]).toBe("yes");
   } finally {
     client?.close();
+    server.close();
+  }
+});
+
+it("allowHTTP1 fallback validates the status line like the native handle", async () => {
+  // The HTTP/1.1 fallback serializes `HTTP/1.1 ${statusCode} ${statusMessage}` itself, so it
+  // must enforce the same invariants node does on the implicit-header path (no writeHead()):
+  // a statusMessage carrying CR/LF throws ERR_INVALID_CHAR and an out-of-range statusCode
+  // throws ERR_HTTP_INVALID_STATUS_CODE instead of being written raw (response splitting).
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true });
+  const handlerErrors = [];
+  server.on("request", (req, res) => {
+    res.statusMessage = "OK\r\nx-injected: 1\r\n\r\nHTTP/1.1 200 OK";
+    try {
+      res.end("split");
+    } catch (err) {
+      handlerErrors.push(err.code);
+    }
+    res.statusCode = 100000;
+    try {
+      res.end("split");
+    } catch (err) {
+      handlerErrors.push(err.code);
+    }
+    res.statusCode = 200;
+    res.statusMessage = "OK";
+    res.end("clean");
+  });
+  const { promise: listening, resolve: onListening } = Promise.withResolvers();
+  server.listen(0, "127.0.0.1", onListening);
+  await listening;
+  try {
+    const { promise: closed, resolve: onClose, reject: onError } = Promise.withResolvers();
+    const socket = tls.connect({
+      port: server.address().port,
+      host: "127.0.0.1",
+      ALPNProtocols: ["http/1.1"],
+      rejectUnauthorized: false,
+    });
+    let raw = Buffer.alloc(0);
+    socket.on("secureConnect", () => {
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    });
+    socket.on("data", chunk => (raw = Buffer.concat([raw, chunk])));
+    socket.on("error", onError);
+    socket.on("close", onClose);
+    await closed;
+    const text = raw.toString("latin1");
+    expect(handlerErrors).toEqual(["ERR_INVALID_CHAR", "ERR_HTTP_INVALID_STATUS_CODE"]);
+    // Exactly one well-formed response, with nothing from the poisoned status line on the wire.
+    expect(text).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(text).not.toContain("x-injected");
+    expect(text.match(/HTTP\/1\.1 /g)).toHaveLength(1);
+    expect(text).toEndWith("clean");
+  } finally {
     server.close();
   }
 });
@@ -2745,6 +2848,182 @@ it("http2 client survives session teardown from a socket write while flushing qu
 
   expect(stdout).toContain("DATA_QUEUED");
   expect(stdout).toContain("TEARDOWN_DURING_FLUSH_OK");
+  expect(exitCode).toBe(0);
+});
+
+it("http2 client write payload cannot be transferred out from a socket write dispatch", async () => {
+  // The engine iterates the write's ArrayBuffer while synchronously re-entering JS (the JS
+  // socket's write, previous writes' callbacks): the payload is pinned for the duration, so
+  // JS running inside those dispatches can never free the bytes still being framed. Every
+  // transfer attempt from inside a write dispatch must throw and every DATA byte stay intact.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const http2 = require("node:http2");
+      const { Duplex } = require("node:stream");
+
+      function frame(type, flags, streamId, payload = Buffer.alloc(0)) {
+        const header = Buffer.alloc(9);
+        header.writeUIntBE(payload.length, 0, 3);
+        header[3] = type;
+        header[4] = flags;
+        header.writeUInt32BE(streamId, 5);
+        return Buffer.concat([header, payload]);
+      }
+      function windowUpdate(streamId, increment) {
+        const payload = Buffer.alloc(4);
+        payload.writeUInt32BE(increment, 0);
+        return frame(8, 0, streamId, payload);
+      }
+      // SETTINGS_INITIAL_WINDOW_SIZE = 4 MiB so the whole payload is framed in one
+      // writeStream call (socket writes happen inside it) instead of being queued.
+      const settingsPayload = Buffer.alloc(6);
+      settingsPayload.writeUInt16BE(0x4, 0);
+      settingsPayload.writeUInt32BE(4 * 1024 * 1024, 2);
+
+      const TOTAL = 200 * 1024;
+      const ab = new ArrayBuffer(TOTAL);
+      new Uint8Array(ab).fill(0x61);
+
+      let transferResult = "not-attempted";
+      let wire = Buffer.alloc(0);
+      let prefaceSkipped = false;
+      let dataBytes = 0;
+      let corrupt = 0;
+      let sawEndStream = false;
+
+      function consumeWire() {
+        if (!prefaceSkipped) {
+          if (wire.length < 24) return;
+          wire = wire.subarray(24); // client connection preface
+          prefaceSkipped = true;
+        }
+        while (wire.length >= 9) {
+          const length = wire.readUIntBE(0, 3);
+          if (wire.length < 9 + length) return;
+          const type = wire[3];
+          const flags = wire[4];
+          const streamId = wire.readUInt32BE(5) & 0x7fffffff;
+          const payload = wire.subarray(9, 9 + length);
+          wire = wire.subarray(9 + length);
+          if (type === 0x00 && streamId === 1) {
+            dataBytes += payload.length;
+            for (const byte of payload) if (byte !== 0x61) corrupt++;
+            if (flags & 0x01) sawEndStream = true;
+          }
+        }
+      }
+
+      const socket = new Duplex({
+        writableHighWaterMark: 16 * 1024 * 1024,
+        read() {},
+        write(chunk, encoding, callback) {
+          wire = Buffer.concat([wire, chunk]);
+          if (chunk.length >= 9 && chunk[3] === 0x00) {
+            // A DATA-bearing socket write dispatched while the payload is still being
+            // framed: freeing (and overwriting) the payload here must be impossible.
+            try {
+              const moved = structuredClone(ab, { transfer: [ab] });
+              new Uint8Array(moved).fill(0x42);
+              if (transferResult !== "threw") transferResult = "transferred";
+            } catch {
+              transferResult = "threw";
+            }
+          }
+          consumeWire();
+          if (sawEndStream) {
+            console.log(JSON.stringify({ transferResult, dataBytes, corrupt }));
+            process.exit(0);
+          }
+          callback();
+        },
+      });
+
+      const client = http2.connect("http://localhost", { createConnection: () => socket });
+      client.on("error", () => {});
+      client.on("connect", () => {
+        socket.push(
+          Buffer.concat([frame(4, 0, 0, settingsPayload), frame(4, 1, 0), windowUpdate(0, 8 * 1024 * 1024)]),
+        );
+      });
+      client.once("remoteSettings", () => {
+        const req = client.request({ ":method": "POST", ":path": "/" });
+        req.on("error", () => {});
+        req.end(Buffer.from(ab));
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = JSON.parse(stdout.trim().split("\n").at(-1));
+  expect(result).toEqual({ transferResult: "threw", dataBytes: 200 * 1024, corrupt: 0 });
+  expect(exitCode).toBe(0);
+});
+
+it("http2 client survives a synchronous parser read from a closing stream's write callback", async () => {
+  // stream.close() concludes queued writes' callbacks synchronously while native code still
+  // holds the stream. A callback that synchronously feeds inbound bytes back into the parser
+  // must not let the deferred stream free run under that live reference (use-after-free).
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const http2 = require("node:http2");
+      const { Duplex } = require("node:stream");
+
+      function frame(type, flags, streamId, payload = Buffer.alloc(0)) {
+        const header = Buffer.alloc(9);
+        header.writeUIntBE(payload.length, 0, 3);
+        header[3] = type;
+        header[4] = flags;
+        header.writeUInt32BE(streamId, 5);
+        return Buffer.concat([header, payload]);
+      }
+
+      const socket = new Duplex({
+        writableHighWaterMark: 4 * 1024 * 1024,
+        read() {},
+        write(chunk, encoding, callback) {
+          callback();
+        },
+      });
+
+      const client = http2.connect("http://localhost", { createConnection: () => socket });
+      client.on("error", () => {});
+      client.on("connect", () => {
+        socket.push(Buffer.concat([frame(4, 0, 0), frame(4, 1, 0)]));
+      });
+      client.once("remoteSettings", () => {
+        const req = client.request({ ":method": "POST", ":path": "/" });
+        req.on("error", () => {});
+        // 65535 bytes fit the flow-control window; the remainder is queued with this callback.
+        req.write(Buffer.alloc(65535 + 32768, "a"), () => {
+          // Concluded synchronously by the close path below: feed inbound bytes so the parser
+          // re-enters read() while the closing stream is still referenced natively.
+          socket.push(frame(6, 0, 0, Buffer.alloc(8)));
+        });
+        setImmediate(() => {
+          req.close(http2.constants.NGHTTP2_CANCEL);
+          setImmediate(() => {
+            console.log("REENTRANT_CLOSE_OK");
+            process.exit(0);
+          });
+        });
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("REENTRANT_CLOSE_OK");
   expect(exitCode).toBe(0);
 });
 

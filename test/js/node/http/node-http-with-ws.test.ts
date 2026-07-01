@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as options } from "harness";
 import https from "https";
-import type { AddressInfo } from "node:net";
+import http from "node:http";
+import net, { type AddressInfo } from "node:net";
 import tls from "tls";
 import { WebSocketServer } from "ws";
 
@@ -57,6 +58,44 @@ test.concurrent("WebSocket upgrade should unref poll_ref from response", async (
   expect(stderr).not.toContain("BUG_DETECTED");
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
+});
+
+test.concurrent("server.upgrade(res) on a plain request returns false without corrupting the response", async () => {
+  // A plain GET has no uWS upgrade context, so upgrade() must refuse BEFORE the one-shot
+  // 101 preamble and the caller-supplied headers are committed to the socket — otherwise the
+  // app's documented fallback response is appended after a bogus 101 (a desynced exchange).
+  const kBunInternals = Symbol.for("::bunternal::");
+  let upgradeResult: boolean | undefined;
+  const server = http.createServer((req, res) => {
+    const bunServer = (server as any)[kBunInternals];
+    const handle = (req.socket as any)[kBunInternals];
+    upgradeResult = bunServer.upgrade(handle, { headers: { "x-should-not-appear": "1" } });
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("ok");
+  });
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  server.listen(0, "127.0.0.1", () => {
+    const port = (server.address() as AddressInfo).port;
+    const socket = net.connect(port, "127.0.0.1", () => {
+      socket.write(`GET / HTTP/1.1\r\nHost: localhost:${port}\r\nConnection: close\r\n\r\n`);
+    });
+    socket.setEncoding("latin1");
+    let raw = "";
+    socket.on("data", chunk => (raw += chunk));
+    socket.on("error", reject);
+    socket.on("close", () => resolve(raw));
+  });
+  try {
+    const raw = await promise;
+    expect(upgradeResult).toBe(false);
+    expect(raw).toStartWith("HTTP/1.1 200 ");
+    expect(raw).not.toContain("101 Switching Protocols");
+    expect(raw).not.toContain("x-should-not-appear");
+    expect(raw.match(/HTTP\/1\.1 /g)).toHaveLength(1);
+    expect(raw.split("\r\n\r\n").at(-1)).toBe("ok");
+  } finally {
+    server.close();
+  }
 });
 
 test.concurrent("should not crash when closing sockets after upgrade", async () => {

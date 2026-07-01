@@ -110,7 +110,7 @@ static JSValue constructEnvObject(VM& vm, JSObject* object)
     return uncheckedDowncast<Zig::GlobalObject>(object->globalObject())->processEnvObject();
 }
 
-static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObject* lexicalGlobalObject, JSValue arrayValue, size_t maxLength, bool asUint8Array)
+JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObject* lexicalGlobalObject, JSValue arrayValue, size_t maxLength, bool asUint8Array)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
 

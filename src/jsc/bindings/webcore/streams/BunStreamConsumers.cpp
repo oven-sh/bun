@@ -1,6 +1,7 @@
 #include "config.h"
 #include "BunStreamConsumers.h"
 
+#include "BunObject.h"
 #include "BunStandaloneTextSink.h"
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
@@ -228,6 +229,19 @@ static JSValue concatenateChunks(JSGlobalObject* globalObject, JSArray* chunks, 
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned length = chunks->length();
+
+    bool anyString = false;
+    for (unsigned i = 0; i < length && !anyString; i++) {
+        JSValue chunk = chunks->getIndex(globalObject, i);
+        RETURN_IF_EXCEPTION(scope, {});
+        anyString = chunk.isString();
+    }
+    // All-binary chunk arrays (the hot path) use `Bun.concatArrayBuffers`' single-allocation
+    // concatenation, exactly as the previous implementation did.
+    if (!anyString)
+        RELEASE_AND_RETURN(scope, JSValue::decode(Bun::flattenArrayOfBuffersIntoArrayBufferOrUint8Array(globalObject, chunks, std::numeric_limits<size_t>::max(), asUint8Array)));
+
+    // String chunks require UTF-8 conversion: accumulate through the generic byte vector.
     WTF::Vector<uint8_t> bytes;
     for (unsigned i = 0; i < length; i++) {
         JSValue chunk = chunks->getIndex(globalObject, i);

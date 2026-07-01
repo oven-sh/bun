@@ -573,6 +573,55 @@ it("ReadableStream (default)", async () => {
   expect(chunks[0].join("")).toBe(Buffer.from("abdefgh").join(""));
 });
 
+describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
+  const source = chunks =>
+    new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(chunk);
+        controller.close();
+      },
+    });
+  const base = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  const cases = {
+    "many typed-array views with offsets": {
+      chunks: () => [base.subarray(1, 4), base.subarray(0, 0), base.subarray(4, 9), base.subarray(9)],
+      expected: [1, 2, 3, 4, 5, 6, 7, 8, 9],
+    },
+    "mixed ArrayBuffer, Uint8Array, and DataView": {
+      chunks: () => [base.slice(0, 3).buffer, base.subarray(3, 6), new DataView(base.buffer, 6, 4)],
+      expected: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    },
+    "strings mixed with bytes": {
+      chunks: () => ["ab", new Uint8Array([1, 2]), "cd"],
+      expected: [...Buffer.from("ab"), 1, 2, ...Buffer.from("cd")],
+    },
+    "only strings": {
+      chunks: () => ["hé", "llo"],
+      expected: [...Buffer.from("héllo")],
+    },
+  };
+  for (const [name, { chunks, expected }] of Object.entries(cases)) {
+    it(name, async () => {
+      expect(Array.from(await Bun.readableStreamToBytes(source(chunks())))).toEqual(expected);
+      expect(Array.from(new Uint8Array(await Bun.readableStreamToArrayBuffer(source(chunks()))))).toEqual(expected);
+      expect(Array.from(await new Response(source(chunks())).bytes())).toEqual(expected);
+      expect(Array.from(new Uint8Array(await new Response(source(chunks())).arrayBuffer()))).toEqual(expected);
+    });
+  }
+
+  it("a detached chunk throws", () => {
+    const chunk = new Uint8Array([1, 2, 3]);
+    structuredClone(chunk.buffer, { transfer: [chunk.buffer] });
+    // The chunk array is available synchronously, so the failure is synchronous too.
+    expect(() => Bun.readableStreamToBytes(source([new Uint8Array([9]), chunk]))).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_STATE",
+        message: "Invalid state: Cannot validate on a detached buffer",
+      }),
+    );
+  });
+});
+
 it("readableStreamToArray", async () => {
   var queue = [Buffer.from("abdefgh")];
   var stream = new ReadableStream({

@@ -121,10 +121,16 @@ fn parse_impl_in(
     let log_mark = (log.errors, log.warnings, log.msgs.len());
     let result = run_stage2(source, log, &mut sidx, opts, check_len, tape_alloc);
 
-    let drop_stage2_msgs = |log: &mut bun_ast::Log| {
+    let drop_stage2_errors = |log: &mut bun_ast::Log| {
+        let mut i = log_mark.2;
+        while i < log.msgs.len() {
+            if log.msgs[i].kind == bun_ast::Kind::Err {
+                log.msgs.remove(i);
+            } else {
+                i += 1;
+            }
+        }
         log.errors = log_mark.0;
-        log.warnings = log_mark.1;
-        log.msgs.truncate(log_mark.2);
     };
     let min_stage2_err = |log: &bun_ast::Log| {
         log.msgs[log_mark.2..]
@@ -133,6 +139,12 @@ fn parse_impl_in(
             .filter_map(|m| m.data.location.as_ref().map(|l| l.offset))
             .min()
     };
+    let rejected_comment = |sidx: &StructuralIndex, before: usize| {
+        !opts.allow_comments
+            && sidx
+                .first_comment
+                .is_some_and(|r| (r.loc.start as usize) < before)
+    };
     if let Some(e) = sidx.index_error {
         let pos = match e {
             IndexError::UnterminatedBlockComment { pos } | IndexError::UnexpectedSlash { pos } => {
@@ -140,26 +152,24 @@ fn parse_impl_in(
             }
             IndexError::DocumentTooLarge => 0,
         };
-        let earlier_stage2_err = log.msgs[log_mark.2..]
-            .iter()
-            .filter(|m| m.kind == bun_ast::Kind::Err)
-            .filter_map(|m| m.data.location.as_ref())
-            .any(|l| l.offset + l.length.max(1) <= pos);
-        if !earlier_stage2_err {
-            if log.errors > log_mark.0 {
-                drop_stage2_msgs(log);
+        if !rejected_comment(&sidx, pos) {
+            let earlier_stage2_err = log.msgs[log_mark.2..]
+                .iter()
+                .filter(|m| m.kind == bun_ast::Kind::Err)
+                .filter_map(|m| m.data.location.as_ref())
+                .any(|l| l.offset + l.length.max(1) <= pos);
+            if !earlier_stage2_err {
+                drop_stage2_errors(log);
+                return Err(report_index_error(e, source, log));
             }
-            return Err(report_index_error(e, source, log));
+            return Err(bun_core::err!("SyntaxError"));
         }
-        return Err(bun_core::err!("SyntaxError"));
     }
     if !opts.allow_comments
         && let Some(range) = sidx.first_comment
         && min_stage2_err(log).is_none_or(|first_err| first_err as i32 >= range.loc.start)
     {
-        if log.errors > log_mark.0 {
-            drop_stage2_msgs(log);
-        }
+        drop_stage2_errors(log);
         log.add_error_fmt_opts(
             format_args!("JSON does not support comments"),
             bun_ast::AddErrorOptions {
@@ -171,7 +181,7 @@ fn parse_impl_in(
         );
         return Err(bun_core::err!("SyntaxError"));
     }
-    if result.is_ok() && log.errors > log_mark.0 {
+    if sidx.index_error.is_some() || (result.is_ok() && log.errors > log_mark.0) {
         return Err(bun_core::err!("SyntaxError"));
     }
     result
@@ -247,6 +257,15 @@ fn report_index_error(
 fn guess_indentation(s: &[u8]) -> Indentation {
     let mut i = 0;
     while i < s.len() {
+        if s[i] == b'"' || s[i] == b'\'' {
+            let q = s[i];
+            i += 1;
+            while i < s.len() && s[i] != q {
+                i += if s[i] == b'\\' { 2 } else { 1 };
+            }
+            i += 1;
+            continue;
+        }
         if s[i] == b'/' && s.get(i + 1) == Some(&b'*') {
             let Some(close) = bun_core::strings::index_of(&s[i + 2..], b"*/") else {
                 return Indentation::default();
@@ -1470,7 +1489,12 @@ mod tests {
         let many: String = (0..200).map(|i| format!("\"k{i}\":{i},")).collect();
         let p = run(format!("{{{many}\"k7\":1}}").as_bytes(), Which::Utf8);
         assert_eq!(p.warnings, 1);
-        for doc in ["{\"a\":1,\"a\":2} // x", "{\"a\":1,\"a\":2} /* x"] {
+        for doc in [
+            "{\"a\":1,\"a\":2} // x",
+            "{\"a\":1,\"a\":2} /* x",
+            "{\"a\":1,\"a\":2 // x",
+            "{\"a\":1,\"a\":2 /* x",
+        ] {
             let p = run(doc.as_bytes(), Which::Utf8);
             assert!(p.errors > 0, "{doc}");
             assert_eq!(p.warnings, 1, "{doc}");
@@ -1483,6 +1507,9 @@ mod tests {
         let i = guess_indentation(b"/* c\n   x */\n{\n\t\"a\": 1\n}");
         assert!(matches!(i.character, bun_ast::IndentationCharacter::Tab));
         assert_eq!(i.scalar, 1);
+        let i = guess_indentation(b"{\"a\": \"/*\",\n  \"b\": 2}");
+        assert!(matches!(i.character, bun_ast::IndentationCharacter::Space));
+        assert_eq!(i.scalar, 2);
     }
 
     #[test]
@@ -2057,6 +2084,7 @@ mod tests {
         expect_error("[1] /* unterminated", "terminate multi-line comment");
         expect_error("[@] /* unterminated", "Decorators are not allowed in JSON");
         expect_error("[1 /* never", "terminate multi-line comment");
+        expect_error("[1] // c\n /2", "JSON does not support comments");
         expect_error("[@] 1/2", "Decorators are not allowed in JSON");
         expect_error("/ [1]", "Operators are not allowed in JSON");
     }

@@ -4256,8 +4256,9 @@ impl VirtualMachine {
 
         self.overridden_main.deinit();
 
-        // `entry_point` lives in the high-tier `RuntimeState` box, so dispatch
-        // the reclaim through the hook.
+        // Free the generated `bun:main` wrapper (owned `Box<[u8]>` on this VM).
+        self.entry_point = bun_bundler::entry_points::ServerEntryPoint::default();
+
         let state = core::mem::replace(&mut self.runtime_state, core::ptr::null_mut());
         // SAFETY: hook contract — `state` is exactly the pointer
         // `init_runtime_state` returned for this VM (or null), handed back

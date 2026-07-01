@@ -1150,7 +1150,7 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
     // fields and call &-methods on it for the duration of this host fn.
     let vm_ref = global_object.bun_vm();
     let event_loop = vm_ref.event_loop_shared();
-    let result = JSValue::create_empty_object(global_object, 5);
+    let result = JSValue::create_empty_object(global_object, 3);
     result.put(
         global_object,
         b"activeTasks",
@@ -1166,37 +1166,13 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
     let num_polls: i32 =
         i32::try_from(unsafe { (*bun_sys::windows::libuv::Loop::get()).active_handles })
             .expect("int cast");
-    // `tick_depth` and the ready-poll cursor only exist on the POSIX uws loop;
-    // the libuv loop drives readiness on Windows, so report them as 0 there.
-    #[cfg(windows)]
-    let (tick_depth, pending_ready_polls): (i32, i32) = (0, 0);
     #[cfg(not(windows))]
     // SAFETY: uws::Loop::get() returns a live process-global loop.
-    let (num_polls, tick_depth, pending_ready_polls): (i32, i32, i32) = unsafe {
-        let loop_ = &*uws::Loop::get();
-        (
-            loop_.num_polls,
-            loop_.internal_loop_data.tick_depth,
-            // Undispatched entries after the one currently being dispatched.
-            // > 0 only from inside a poll callback with remaining siblings in
-            // its batch; a completed dispatch leaves current == num.
-            (loop_.num_ready_polls - loop_.current_ready_poll - 1).max(0),
-        )
-    };
+    let num_polls: i32 = unsafe { (*uws::Loop::get()).num_polls };
     result.put(
         global_object,
         b"numPolls",
         JSValue::js_number(num_polls as f64),
-    );
-    result.put(
-        global_object,
-        b"tickDepth",
-        JSValue::js_number(tick_depth as f64),
-    );
-    result.put(
-        global_object,
-        b"pendingReadyPolls",
-        JSValue::js_number(pending_ready_polls as f64),
     );
     Ok(result)
 }

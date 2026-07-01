@@ -52,6 +52,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 #endif
 #endif
 
+static const struct timespec us_zero_timespec = {0, 0};
+
 /* Loop */
 void us_loop_free(struct us_loop_t *loop) {
     us_internal_loop_data_free(loop);
@@ -192,16 +194,12 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
     return loop;
 }
 
-/* Shared dispatch loop for both us_loop_run and us_loop_run_bun_tick.
- *
- * `start` is the first index of ready_polls to dispatch. Every normal caller
- * passes 0. A nested us_loop_run_bun_tick passes the interrupted outer
- * dispatch's cursor + 1 so the outer batch's remaining entries run before the
- * inner epoll_wait/kevent overwrites them (see the drain in
- * us_loop_run_bun_tick). Always leaves current_ready_poll == num_ready_polls. */
-static void us_internal_dispatch_ready_polls_from(struct us_loop_t *loop, int start) {
+/* Shared dispatch loop for both us_loop_run and us_loop_run_bun_tick. A fresh
+ * batch passes first_index 0; a nested tick passes the first not-yet-dispatched
+ * index so it finishes the outer remainder before its own wait overwrites it. */
+static void us_internal_dispatch_ready_polls(struct us_loop_t *loop, int first_index) {
 #ifdef LIBUS_USE_EPOLL
-    for (loop->current_ready_poll = start; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
+    for (loop->current_ready_poll = first_index; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
         struct us_poll_t *poll = GET_READY_POLL(loop, loop->current_ready_poll);
         if (LIKELY(poll)) {
             if (CLEAR_POINTER_TAG(poll) != poll) {
@@ -235,22 +233,14 @@ static void us_internal_dispatch_ready_polls_from(struct us_loop_t *loop, int st
     };
 
     _Static_assert(sizeof(struct kevent_flags) == 1, "kevent_flags must be 1 byte");
-    struct kevent_flags coalesced[LIBUS_MAX_READY_POLLS]; /* no zeroing needed — every index in [start, n) is written in the first pass */
+    struct kevent_flags coalesced[LIBUS_MAX_READY_POLLS]; /* no zeroing needed — every index in [first_index, n) is written in the first pass */
 
-    /* First pass: decode kevents and coalesce same-poll entries.
-     *
-     * The merge window is [start, n): entries below `start` were already
-     * dispatched by the interrupted outer pass, so merging into one would lose
-     * the event (its slot will never be dispatched again). The residual when
-     * start > 0 is the opposite direction and is benign: a socket whose two
-     * filters straddle `start` had the later one already folded into the
-     * earlier dispatch by the OUTER pass's (full-range) coalescing, and this
-     * pass re-dispatches the later filter on its own. If the earlier callback
-     * closed the socket, us_poll_stop nulled this slot and it is skipped; if
-     * not, it is one extra callback on a live level-triggered socket, which
-     * the next kevent() would deliver anyway. Tagged (FilePoll) entries never
-     * coalesce, so they are unaffected. */
-    for (int i = start; i < loop->num_ready_polls; i++) {
+    /* First pass: decode kevents and coalesce same-poll entries. Bounded to
+     * [first_index, n): consumed entries are never consulted (they may hold
+     * freed polls). A pair straddling first_index dispatches once from each
+     * side; level-triggered sockets already tolerate that (spurious wakeups),
+     * and a poll closed by the first delivery has its later entries nulled. */
+    for (int i = first_index; i < loop->num_ready_polls; i++) {
         struct us_poll_t *poll = GET_READY_POLL(loop, i);
         if (!poll || CLEAR_POINTER_TAG(poll) != poll) {
             coalesced[i] = (struct kevent_flags){ .skip = 1 };
@@ -271,10 +261,9 @@ static void us_internal_dispatch_ready_polls_from(struct us_loop_t *loop, int st
         };
 
         /* Look backward for a prior entry with the same poll to coalesce into.
-         * Kqueue returns at most 2 kevents per fd (READ + WRITE). Bounded by
-         * `start`: see the pass comment above. */
+         * Kqueue returns at most 2 kevents per fd (READ + WRITE). */
         int merged = 0;
-        for (int j = i - 1; j >= start; j--) {
+        for (int j = i - 1; j >= first_index; j--) {
             if (!coalesced[j].skip && GET_READY_POLL(loop, j) == poll) {
                 coalesced[j].readable |= bits.readable;
                 coalesced[j].writable |= bits.writable;
@@ -291,7 +280,7 @@ static void us_internal_dispatch_ready_polls_from(struct us_loop_t *loop, int st
     }
 
     /* Second pass: dispatch everything in order — tagged pointers and coalesced events */
-    for (loop->current_ready_poll = start; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
+    for (loop->current_ready_poll = first_index; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
         struct us_poll_t *poll = GET_READY_POLL(loop, loop->current_ready_poll);
         if (!poll) continue;
 
@@ -315,10 +304,6 @@ static void us_internal_dispatch_ready_polls_from(struct us_loop_t *loop, int st
 #endif
 }
 
-static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
-    us_internal_dispatch_ready_polls_from(loop, 0);
-}
-
 /* If the kernel filled our entire buffer, more events are likely already queued.
  * Re-poll non-blocking and dispatch again before running pre/post callbacks, so a
  * single tick covers all pending I/O instead of one 1024-event slice per roundtrip.
@@ -328,8 +313,7 @@ static void us_internal_drain_ready_polls(struct us_loop_t *loop) {
     int drain_count = 48;
     while (UNLIKELY(loop->num_ready_polls == LIBUS_MAX_READY_POLLS) && --drain_count != 0 && loop->num_polls > 0) {
 #ifdef LIBUS_USE_EPOLL
-        static const struct timespec zero = {0, 0};
-        loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, &zero);
+        loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, &us_zero_timespec);
 #else
         do {
             loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, LIBUS_MAX_READY_POLLS, KEVENT_FLAG_IMMEDIATE, NULL);
@@ -339,7 +323,7 @@ static void us_internal_drain_ready_polls(struct us_loop_t *loop) {
             loop->num_ready_polls = 0;
             break;
         }
-        us_internal_dispatch_ready_polls(loop);
+        us_internal_dispatch_ready_polls(loop, 0);
     }
 }
 
@@ -361,7 +345,7 @@ void us_loop_run(struct us_loop_t *loop) {
         } while (IS_EINTR(loop->num_ready_polls));
 #endif
 
-        us_internal_dispatch_ready_polls(loop);
+        us_internal_dispatch_ready_polls(loop, 0);
         us_internal_drain_ready_polls(loop);
 
         /* Emit post callback */
@@ -378,39 +362,15 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     loop->data.tick_depth++;
 
-    /* current_ready_poll < num_ready_polls holds only while an outer
-     * us_internal_dispatch_ready_polls is mid-iteration (a completed dispatch
-     * always leaves them equal), i.e. we are a nested tick: a poll callback
-     * re-entered us_loop_run_bun_tick (e.g. via waitForPromise -> autoTick).
-     * The epoll_wait/kevent below is about to overwrite the shared ready_polls
-     * and its counters, which would silently skip the outer batch's remaining
-     * entries. For a level-triggered fd that is harmless (the kernel reports
-     * it again), but a one-shot fd (EPOLLONESHOT / EV_DISPATCH pipe readers,
-     * EV_ONESHOT EVFILT_PROC on macOS) was already disarmed by the kernel, so
-     * a skipped entry is lost forever and its owner waits for an event that
-     * never comes.
-     *
-     * Dispatch the outer remainder now, before it is overwritten. This does
-     * not introduce a new reentrancy class: every still-ready level-triggered
-     * fd in that remainder would be re-reported by our epoll_wait below and
-     * dispatched at this depth anyway, with the outer callback on the stack;
-     * we just extend the same treatment to the one-shot entries the kernel
-     * can no longer re-report. Callbacks that stop/change/free a sibling poll
-     * are covered by us_internal_loop_update_pending_ready_polls exactly as in
-     * a flat dispatch (its [current_ready_poll, num) window is our cursor),
-     * and closed sockets stay deferred to the outermost loop_post because
-     * tick_depth is already >= 2 here.
-     *
-     * Afterwards current_ready_poll == num_ready_polls, which is the outer
-     * for-loop's normal exit state, so when we return the outer dispatch
-     * terminates correctly instead of skipping. That postcondition also makes
-     * this recurse cleanly: if one of the drained callbacks re-enters, the
-     * deeper tick drains *our* remainder the same way, and each enclosing
-     * frame exits on the same check when control unwinds. Nothing depends on
-     * the remainder running at the outer depth (level-triggered entries
-     * already did not). */
+    /* A poll callback re-entered the event loop mid-dispatch: the wait below
+     * overwrites ready_polls, dropping the outer batch's remaining events —
+     * unrecoverable for one-shot fds. Dispatch the remainder before that. */
     if (loop->current_ready_poll < loop->num_ready_polls) {
-        us_internal_dispatch_ready_polls_from(loop, loop->current_ready_poll + 1);
+        us_internal_dispatch_ready_polls(loop, loop->current_ready_poll + 1);
+        /* The remainder's callbacks may have queued JS work that only our
+         * caller can run once this tick returns, and it chose `timeout` before
+         * they ran: poll for new events, never idle in the kernel. */
+        timeout = &us_zero_timespec;
     }
 
     struct us_internal_callback_t *timer_callback = (struct us_internal_callback_t*)loop->data.sweep_timer;
@@ -464,7 +424,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     } while (IS_EINTR(loop->num_ready_polls));
 #endif
 
-    us_internal_dispatch_ready_polls(loop);
+    us_internal_dispatch_ready_polls(loop, 0);
     us_internal_drain_ready_polls(loop);
 
     /* Emit post callback */

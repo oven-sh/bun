@@ -359,15 +359,8 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
   0,
 );
 
-export const getEventLoopStats: () => {
-  activeTasks: number;
-  concurrentRef: number;
-  numPolls: number;
-  /** Reentrancy depth of `us_loop_run_bun_tick`; >= 1 when called from inside a poll-dispatch callback. Always 0 on Windows. */
-  tickDepth: number;
-  /** Undispatched entries remaining in the live ready-poll batch after the one being dispatched. Always 0 on Windows. */
-  pendingReadyPolls: number;
-} = $newRustFunction("event_loop.rs", "getActiveTasks", 0);
+export const getEventLoopStats: () => { activeTasks: number; concurrentRef: number; numPolls: number } =
+  $newRustFunction("event_loop.rs", "getActiveTasks", 0);
 
 export const hostedGitInfo = {
   parseUrl: $newRustFunction("hosted_git_info.rs", "TestingAPIs.jsParseUrl", 1),

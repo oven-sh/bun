@@ -1466,7 +1466,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         // `\uXXXX`-escaped identifiers: an escaped keyword is still that
         // keyword (yes, really).
         if run[0] == b'\\' {
-            return self.parse_escaped_identifier(loc);
+            return self.parse_escaped_identifier(start, loc);
         }
 
         if is_identifier_start(run[0]) {
@@ -1520,19 +1520,20 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     self.add_range_error(r, format_args!("Unexpected {}", bstr::BStr::new(raw)));
                 Err(bun_core::err!("ParserError"))
             }
-            b'\\' => self.parse_escaped_identifier(loc_tail),
+            b'\\' => self.parse_escaped_identifier(pos, loc_tail),
             c => Err(self.junk_byte_error(self.cursor, pos, c)),
         }
     }
 
-    /// A `\uXXXX`-escaped spelling of `true` / `false` / `null`: port of
-    /// the JS lexer's `scan_identifier_with_escapes` (the JSON-relevant
-    /// subset: the decoded identifier must be one of those keywords).
+    /// A `\uXXXX`-escaped spelling of `true` / `false` / `null` starting at
+    /// `start` (the `\` — it may sit after exotic whitespace inside the
+    /// cursor's run): port of the JS lexer's `scan_identifier_with_escapes`
+    /// (the JSON-relevant subset: the decoded identifier must be one of
+    /// those keywords).
     #[cold]
-    fn parse_escaped_identifier(&mut self, loc: Loc) -> PResult<Expr> {
+    fn parse_escaped_identifier(&mut self, start: usize, loc: Loc) -> PResult<Expr> {
         let cursor = self.cursor;
-        let run = self.run(cursor);
-        let start = self.pos_at(cursor);
+        let run = &self.contents[start..self.pos_at(cursor + 1)];
         self.token_start = start;
         // First pass: validate the escape syntax and find the extent.
         let mut i = 0;

@@ -384,7 +384,7 @@ test("Bun.JSONC.parse accepts single-quoted strings like the previous parser", (
 });
 
 test("Bun.JSONC.parse handles huge documents with every value type", () => {
-  // Large enough to exercise many 64-byte blocks and the index growth path.
+  // Large enough to exercise many 64-byte blocks and index-window refills.
   const big: Record<string, unknown> = {};
   for (let i = 0; i < 5000; i++) {
     big["key_" + i] =

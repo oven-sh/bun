@@ -1385,8 +1385,8 @@ pub(crate) unsafe extern "C" fn Bun__Node__Path_joinWTF(
 ) {
     // SAFETY: caller passes valid pointers from C++.
     let rhs = unsafe { bun_core::ffi::slice(rhs_ptr, rhs_len) };
-    let mut buf = [0u8; path_size::<u8>()];
-    let mut buf2 = [0u8; path_size::<u8>()];
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let mut buf2 = bun_paths::path_buffer_pool::get();
     // SAFETY: lhs is a valid BunString pointer.
     let slice = unsafe { &*lhs }.to_utf8();
     #[cfg(windows)]
@@ -2945,6 +2945,9 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
     } else {
         i64::try_from(paths.len() - 1).expect("int cast")
     };
+    // Hoisted: per-iteration scratch for the drive-relative env lookup.
+    #[cfg(windows)]
+    let mut u16_buf = bun_paths::w_path_buffer_pool::get();
     while i_i64 > -2 {
         // Backed by expandable buf2, to not conflict with buf2 backed resolvedTail,
         // because path may be long.
@@ -2983,7 +2986,6 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
             //   path = process.env[`=${resolvedDevice}`] || process.cwd();
             #[cfg(windows)]
             {
-                let mut u16_buf = bun_paths::WPathBuffer::uninit();
                 // Storage for the `=X:` fast-path key. Declared here (not inside the
                 // `'brk:` block) so the slice it backs stays live across `getenv_w`.
                 // 4 elements (not 3) so the wchar immediately following the 3-char

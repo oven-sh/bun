@@ -1164,7 +1164,7 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
         let mut pc: windows::HPCON = core::ptr::null_mut();
         // SAFETY: in_client/out_client are valid open HANDLEs; pc is a valid out-ptr.
         if unsafe {
-            windows::CreatePseudoConsole(size, in_client.unwrap(), out_client.unwrap(), 0, &mut pc)
+            windows::CreatePseudoConsole(size, in_client.unwrap(), out_client.unwrap(), 0, &raw mut pc)
         } < 0
         {
             cleanup!();

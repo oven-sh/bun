@@ -21,3 +21,6 @@ bitflags.workspace = true
 bun_core.workspace = true
 bun_paths.workspace = true
 bun_sys.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+bun_windows_sys.workspace = true

@@ -5,7 +5,7 @@ use bun_core::Progress::Progress;
 use bun_core::{Global, Output};
 use bun_core::{MutableString, ZStr};
 use bun_paths::strings;
-use bun_paths::{self as path, OSPathChar, OSPathSlice, PathBuffer, SEP, SEP_STR};
+use bun_paths::{self as path, OSPathChar, OSPathSlice, SEP, SEP_STR};
 use bun_semver::String as SemverString;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
@@ -546,12 +546,14 @@ impl HardLinkWindowsInstallTask {
         // process-wide `PackageManager` singleton and never changes.
         static INITIALIZED: core::sync::atomic::AtomicBool =
             core::sync::atomic::AtomicBool::new(false);
+        // SAFETY: INITIALIZED gates first-init; after the swap the static
+        // queue cell is initialized exactly once below and only read here.
         unsafe {
             if INITIALIZED.swap(true, Ordering::Relaxed) {
                 let q = (*HARDLINK_QUEUE.get()).assume_init_ref();
                 *q.errored_task.lock() = None;
                 debug_assert_eq!(
-                    q.thread_pool as *const ThreadPool,
+                    std::ptr::from_ref::<ThreadPool>(q.thread_pool),
                     core::ptr::from_ref(&PackageManager::get().thread_pool),
                     "PackageManager singleton changed between install batches",
                 );
@@ -601,6 +603,7 @@ impl HardLinkWindowsInstallTask {
 
         // SAFETY: self_ is valid until we reclaim the Box below.
         if let Some(err) = unsafe { (*self_).run() } {
+            // SAFETY: same liveness as the run() call above.
             unsafe { (*self_).err = Some(err) };
             // SAFETY: self_ was heap-allocated in init(); reclaim ownership now.
             let boxed = unsafe { bun_core::heap::take(self_) };
@@ -1271,7 +1274,7 @@ impl<'a> PackageInstall<'a> {
                 let err = if dest_path_length == 0 {
                     e.to_system_errno()
                         .map(|s| s.to_error())
-                        .unwrap_or(bun_core::err!("Unexpected"))
+                        .unwrap_or_else(|| bun_core::err!("Unexpected"))
                 } else {
                     bun_core::err!("NameTooLong")
                 };
@@ -1310,7 +1313,7 @@ impl<'a> PackageInstall<'a> {
                 let err = if cache_path_length == 0 {
                     e.to_system_errno()
                         .map(|s| s.to_error())
-                        .unwrap_or(bun_core::err!("Unexpected"))
+                        .unwrap_or_else(|| bun_core::err!("Unexpected"))
                 } else {
                     bun_core::err!("NameTooLong")
                 };
@@ -1789,7 +1792,7 @@ impl<'a> PackageInstall<'a> {
         }
 
         #[cfg(not(windows))]
-        let mut buf2 = PathBuffer::uninit();
+        let mut buf2 = bun_paths::path_buffer_pool::get();
         #[cfg(not(windows))]
         let to_copy_buf2_offset: usize;
         #[cfg(unix)]
@@ -2150,10 +2153,10 @@ impl<'a> PackageInstall<'a> {
             && dirname_slice != dest_path.as_bytes())
         .then_some(dirname_slice);
 
-        let mut dest_buf = PathBuffer::uninit();
+        let mut dest_buf = bun_paths::path_buffer_pool::get();
         // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
         let symlinked_path = self.cache_dir_subpath;
-        let mut to_buf = PathBuffer::uninit();
+        let mut to_buf = bun_paths::path_buffer_pool::get();
         // Open the target relative to cache_dir, then resolve its canonical path.
         // Returning a borrow of `to_buf` from an `FnMut` closure is rejected by
         // borrowck, so inline the open/getFdPath/close.
@@ -2205,7 +2208,7 @@ impl<'a> PackageInstall<'a> {
         #[cfg(windows)]
         {
             use bun_sys::windows::{self, Win32ErrorExt as _};
-            let mut wbuf = bun_paths::WPathBuffer::uninit();
+            let mut wbuf = bun_paths::w_path_buffer_pool::get();
             // SAFETY: FFI — destination_dir.fd() is an open handle; wbuf is a valid writable
             // WPathBuffer of the passed length.
             let dest_path_length = unsafe {
@@ -2221,7 +2224,7 @@ impl<'a> PackageInstall<'a> {
                 let err = if dest_path_length == 0 {
                     e.to_system_errno()
                         .map(|s| s.to_error())
-                        .unwrap_or(bun_core::err!("Unexpected"))
+                        .unwrap_or_else(|| bun_core::err!("Unexpected"))
                 } else {
                     bun_core::err!("NameTooLong")
                 };
@@ -2311,7 +2314,7 @@ impl<'a> PackageInstall<'a> {
             let target = path::resolve_path::relative(dest_dir_path, to_path);
             // `symlinkat` takes `&ZStr` for both target and dest; build NUL-terminated
             // copies in stack buffers.
-            let mut target_buf = PathBuffer::uninit();
+            let mut target_buf = bun_paths::path_buffer_pool::get();
             target_buf[..target.len()].copy_from_slice(target);
             target_buf[target.len()] = 0;
             // SAFETY: NUL written above.
@@ -2411,7 +2414,7 @@ impl<'a> PackageInstall<'a> {
                 let cache_dir_subpath_without_patch_hash =
                     &self.cache_dir_subpath.as_bytes()[..idx];
                 // Use a stack PathBuffer (no shared state).
-                let mut join_buf = PathBuffer::uninit();
+                let mut join_buf = bun_paths::path_buffer_pool::get();
                 join_buf[..cache_dir_subpath_without_patch_hash.len()]
                     .copy_from_slice(cache_dir_subpath_without_patch_hash);
                 join_buf[cache_dir_subpath_without_patch_hash.len()] = 0;

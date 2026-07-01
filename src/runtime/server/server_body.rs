@@ -644,7 +644,7 @@ impl AnyRoute {
                     // NOTE: `sys::exists_at_type` takes `&ZStr`; the store
                     // path is a borrowed byte slice. NUL-terminate into a path
                     // buffer for the syscall.
-                    let mut buf = bun_paths::PathBuffer::default();
+                    let mut buf = bun_paths::path_buffer_pool::get();
                     let zpath = bun_paths::resolve_path::z(store_path, &mut buf);
                     match sys::exists_at_type(sys::Fd::cwd(), zpath) {
                         Ok(sys::ExistsAtType::Directory) => {

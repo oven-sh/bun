@@ -1461,8 +1461,10 @@ impl Default for WindowsSpawnResult {
 }
 
 #[cfg(windows)]
+#[derive(Default)]
 pub enum WindowsStdioResult {
     /// inherit, ignore, path, pipe
+    #[default]
     Unavailable,
     /// Parent (server) end of an engine pipe pair, already adopted onto the
     /// spawn loop. Consumers hand it to the io layer
@@ -1485,13 +1487,6 @@ pub fn close_engine_pipe(pipe: Box<bun_iocp::PipeHandle>) {
     let raw = bun_core::heap::into_raw(pipe);
     // SAFETY: `raw` is the live heap-pinned handle; freed in `free_cb`.
     unsafe { (*raw).close(Some(free_cb), raw.cast::<c_void>()) };
-}
-
-#[cfg(windows)]
-impl Default for WindowsStdioResult {
-    fn default() -> Self {
-        Self::Unavailable
-    }
 }
 
 #[cfg(windows)]
@@ -1789,6 +1784,8 @@ mod spawn_process_body {
         // non-null; the slices only live for this call.
         let mut args: Vec<&[u8]> = Vec::new();
         let mut envs: Vec<&[u8]> = Vec::new();
+        // SAFETY: argv/envp are NUL-terminated arrays of NUL-terminated C
+        // strings per the spawn_process contract; the slices die with this call.
         unsafe {
             let mut p = argv;
             while !(*p).is_null() {
@@ -1804,6 +1801,7 @@ mod spawn_process_body {
         // SAFETY: argv0 (when set) is a NUL-terminated C string per the
         // `WindowsSpawnOptions` contract; args[0] exists per spawn_process.
         let file: &[u8] = match options.argv0 {
+            // SAFETY: argv0 (when set) is NUL-terminated per the options contract.
             Some(p) => unsafe { bun_core::ffi::cstr(p).to_bytes() },
             None => args.first().copied().unwrap_or(b""),
         };
@@ -2287,7 +2285,7 @@ mod spawn_process_body {
                     argv0: self.argv0,
                     new_process_group,
                     #[cfg(windows)]
-                    windows: self.windows.clone(),
+                    windows: self.windows,
                     #[cfg(not(windows))]
                     windows: (),
                     ..Default::default()
@@ -2448,6 +2446,9 @@ mod spawn_process_body {
             /// Re-deriving a `&mut Process` from the independent `self.process`
             /// root would pop that protected tag under Stacked Borrows, so we
             /// take the already-live pointer instead.
+            // Engine C-ABI callback target: the raw pointers are the
+            // heap-pinned roots the engine round-trips (see SAFETY below).
+            #[allow(clippy::not_unsafe_ptr_arg_deref)]
             pub fn on_process_exit(
                 this: *mut SyncWindowsProcess,
                 process: *mut Process,
@@ -2469,6 +2470,9 @@ mod spawn_process_body {
                 }
             }
 
+            // Engine C-ABI callback target: `this` is the heap-pinned root the
+            // engine round-trips (see SAFETY below).
+            #[allow(clippy::not_unsafe_ptr_arg_deref)]
             pub fn on_reader_done(
                 this: *mut SyncWindowsProcess,
                 tag: OutFd,
@@ -2527,6 +2531,9 @@ mod spawn_process_body {
             // when already closing/detached).
             unsafe {
                 (*process).detach();
+                // The condition mutates through `this` inside tick() (the
+                // close callback swaps the poller to Detached).
+                #[allow(clippy::while_immutable_condition)]
                 while matches!((*process).poller, Poller::Engine(_)) {
                     lp.tick(Some(0));
                 }
@@ -2552,7 +2559,7 @@ mod spawn_process_body {
                 Err(err) => return Ok(Err(err)),
                 Ok(lp) => lp,
             };
-            let lp_ptr: *mut bun_iocp::Loop = &mut *lp;
+            let lp_ptr: *mut bun_iocp::Loop = &raw mut *lp;
             let mut spawned = match spawn_process_windows_on(
                 lp_ptr,
                 &options.to_spawn_options(false),
@@ -2601,7 +2608,7 @@ mod spawn_process_body {
                 Err(err) => return Ok(Err(err)),
                 Ok(lp) => lp,
             };
-            let lp_ptr: *mut bun_iocp::Loop = &mut *lp;
+            let lp_ptr: *mut bun_iocp::Loop = &raw mut *lp;
             let mut spawned = match spawn_process_windows_on(
                 lp_ptr,
                 &options.to_spawn_options(false),
@@ -2689,6 +2696,9 @@ mod spawn_process_body {
 
             // SAFETY: read-only field access between ticks; callbacks fired
             // inside `tick()` write through the same `this_ptr` root.
+            // The count mutates through `this_ptr` inside tick() (exit
+            // callbacks decrement it).
+            #[allow(clippy::while_immutable_condition)]
             while unsafe { (*this_ptr).waiting_count } > 0 {
                 lp.tick(None);
             }

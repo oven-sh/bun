@@ -363,7 +363,7 @@ impl Dir {
         // SAFETY: NUL-terminated above.
         let tz = ZStr::from_buf(&tbuf.0[..], tlen);
 
-        let mut lbuf = bun_paths::PathBuffer::default();
+        let mut lbuf = bun_paths::path_buffer_pool::get();
         let llen = link_name.len().min(lbuf.0.len() - 1);
         lbuf.0[..llen].copy_from_slice(&link_name[..llen]);
         lbuf.0[llen] = 0;

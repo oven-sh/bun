@@ -9,7 +9,7 @@ use bun_core::{self as bun, Error, Global, Output, UnwrapOrOom, err};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_io::BufferedReader;
-use bun_paths::{self as path, PathBuffer};
+use bun_paths::{self as path};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 
 use crate::Command;
@@ -832,7 +832,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         };
         let mut patterns: Vec<Box<[u8]>> = Vec::new();
 
-        let mut root_buf = PathBuffer::uninit();
+        let mut root_buf = bun_paths::path_buffer_pool::get();
         let resolve_root = FilterArg::get_candidate_package_patterns(
             // SAFETY: single-threaded CLI path; the returned `&mut Log` is the only live borrow
             // of the process-static log for the duration of this call.

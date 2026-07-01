@@ -97,7 +97,7 @@ pub type ProcessExitHandler = Option<ProcessExit>;
 link_impl_ProcessExit! {
     SyncWindows for process::sync::SyncWindowsProcess => |this| {
         on_process_exit(process, status, rusage) =>
-            process::sync::SyncWindowsProcess::on_process_exit(this, process, status, &*rusage),
+            process::sync::SyncWindowsProcess::on_process_exit(this, process, status, rusage),
     }
 }
 #[cfg(not(windows))]
@@ -287,8 +287,11 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
         }
 
         let mut iter = opts.argv.iter();
-        let argv0 = iter.next().ok_or(bun_core::err!("FileNotFound"))?;
-        // `Command::new` does PATH/PATHEXT lookup on Windows.
+        let argv0 = iter.next().ok_or_else(|| bun_core::err!("FileNotFound"))?;
+        // `Command::new` does PATH/PATHEXT lookup on Windows — the exact
+        // cmd.exe-compatible resolution this CLI fallback wants; the in-tree
+        // helpers deliberately do not implement PATHEXT.
+        #[allow(clippy::disallowed_types)]
         let mut cmd = std::process::Command::new(to_os(argv0));
         for arg in iter {
             cmd.arg(to_os(arg));
@@ -330,7 +333,7 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
             break 'argv0;
         }
         #[cfg(windows)]
-        if first.iter().any(|&b| b == b'\\') {
+        if first.contains(&b'\\') {
             break 'argv0;
         }
         let path = opts

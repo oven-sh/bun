@@ -28,6 +28,8 @@ pub struct FallbackEntryPoint {
 }
 
 impl Default for FallbackEntryPoint {
+    // One per bundle invocation; the inline path buffers are the type's point.
+    #[allow(clippy::large_stack_frames)]
     fn default() -> Self {
         Self {
             code_buffer: [0u8; 8192],
@@ -116,6 +118,8 @@ pub struct ClientEntryPoint {
 }
 
 impl Default for ClientEntryPoint {
+    // One per bundle invocation; the inline path buffers are the type's point.
+    #[allow(clippy::large_stack_frames)]
     fn default() -> Self {
         Self {
             code_buffer: [0u8; 8192],
@@ -363,6 +367,8 @@ pub struct MacroEntryPoint {
 }
 
 impl Default for MacroEntryPoint {
+    // One per bundle invocation; the inline path buffers are the type's point.
+    #[allow(clippy::large_stack_frames)]
     fn default() -> Self {
         Self {
             code_buffer: [0u8; MAX_PATH_BYTES * 2 + 500],

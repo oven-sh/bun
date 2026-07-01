@@ -152,7 +152,7 @@ impl Lazy {
             fd: Fd::INVALID,
             ..Default::default()
         };
-        let mut file_buf = bun_paths::PathBuffer::uninit();
+        let mut file_buf = bun_paths::path_buffer_pool::get();
         #[cfg(unix)]
         let mut is_nonblocking = false;
 

@@ -228,11 +228,14 @@ pub mod os {
     pub unsafe fn take_environ() -> (*mut *mut c_char, usize) {
         // `&raw mut` (no intermediate `&mut`) — `static_mut_refs` is hard-denied
         // under rust_2024_compatibility, and we never need a borrow here.
+        // SAFETY: per fn contract — single-threaded startup, no concurrent access.
         unsafe { core::ptr::replace(&raw mut ENVIRON, (core::ptr::null_mut(), 0)) }
     }
     /// SAFETY: single-threaded startup only; `ptr` must be valid for `len`
     /// elements for the process lifetime (leaked allocation).
     pub unsafe fn set_environ(ptr: *mut *mut c_char, len: usize) {
+        // SAFETY: per fn contract — single-threaded startup; `ptr` outlives
+        // the process (leaked allocation).
         unsafe {
             core::ptr::write(&raw mut ENVIRON, (ptr, len));
         }
@@ -240,6 +243,8 @@ pub mod os {
     /// Borrowed view of the current envp slice (read side of the `ENVIRON` global).
     /// SAFETY: caller must not race with `set_environ`.
     pub unsafe fn environ() -> &'static [*mut c_char] {
+        // SAFETY: per fn contract — no concurrent `set_environ`; the stored
+        // (ptr, len) pair always describes a live leaked allocation.
         unsafe {
             let (p, n) = core::ptr::read(&raw const ENVIRON);
             if p.is_null() {
@@ -1385,6 +1390,7 @@ pub(crate) mod strings_impl {
             libc::strncasecmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0
         }
         // Windows MSVC libc has no `strncasecmp`; `_strnicmp` is the equivalent.
+        // SAFETY: a.len() <= b.len() here; _strnicmp reads at most a.len() bytes from each.
         #[cfg(windows)]
         unsafe {
             unsafe extern "C" {
@@ -2859,49 +2865,69 @@ pub mod ffi {
 
     // Windows POD — `bun_windows_sys` `#[repr(C)]` out-param structs that are
     // zero-init before the kernel fills them. All fields are integers / raw
-    // pointers / nested POD; audited against the Win32 SDK headers (S016).
+    // pointers / nested POD; audited against the Win32 SDK headers.
     #[cfg(windows)]
+    // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
     unsafe impl Zeroable for bun_windows_sys::externs::IO_STATUS_BLOCK {}
     #[cfg(windows)]
+    // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
     unsafe impl Zeroable for bun_windows_sys::externs::FILE_BASIC_INFORMATION {}
     #[cfg(windows)]
+    // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
     unsafe impl Zeroable for bun_windows_sys::externs::BY_HANDLE_FILE_INFORMATION {}
     #[cfg(windows)]
+    // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
     unsafe impl Zeroable for bun_windows_sys::externs::WIN32_FILE_ATTRIBUTE_DATA {}
     #[cfg(windows)]
+    // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
     unsafe impl Zeroable for bun_windows_sys::externs::OBJECT_ATTRIBUTES {}
     #[cfg(windows)]
+    // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
     unsafe impl Zeroable for bun_windows_sys::externs::UNICODE_STRING {}
     #[cfg(windows)]
+    // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
     unsafe impl Zeroable for bun_windows_sys::externs::SECURITY_ATTRIBUTES {}
     #[cfg(windows)]
+    // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
     unsafe impl Zeroable for bun_windows_sys::externs::FILETIME {}
     #[cfg(windows)]
+    // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
     unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::WSADATA {}
     #[cfg(windows)]
+    // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
     unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_storage {}
     #[cfg(windows)]
+    // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
     unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_in {}
     #[cfg(windows)]
+    // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
     unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_in6 {}
     #[cfg(windows)]
+    // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
     unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::addrinfo {}
     #[cfg(windows)]
+    // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
     unsafe impl Zeroable for bun_windows_sys::externs::IO_COUNTERS {}
     #[cfg(windows)]
+    // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
     unsafe impl Zeroable for bun_windows_sys::externs::JOBOBJECT_BASIC_LIMIT_INFORMATION {}
     #[cfg(windows)]
+    // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
     unsafe impl Zeroable for bun_windows_sys::externs::JOBOBJECT_EXTENDED_LIMIT_INFORMATION {}
     #[cfg(windows)]
+    // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
     unsafe impl Zeroable for bun_windows_sys::externs::OVERLAPPED {}
     #[cfg(windows)]
+    // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
     unsafe impl Zeroable for bun_windows_sys::externs::PROCESS_INFORMATION {}
     #[cfg(windows)]
+    // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
     unsafe impl Zeroable for bun_windows_sys::externs::ntdll::RTL_OSVERSIONINFOW {}
     #[cfg(windows)]
     // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
     unsafe impl Zeroable for bun_windows_sys::SYSTEM_INFO {}
     #[cfg(windows)]
+    // SAFETY: plain-data Win32 struct; all-zero bytes are a valid value.
     unsafe impl Zeroable for bun_windows_sys::externs::kernel32::MEMORYSTATUSEX {}
 
     /// Conjure a value of a zero-sized type without `unsafe` at the call site.

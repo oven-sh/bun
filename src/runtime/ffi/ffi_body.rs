@@ -18,7 +18,6 @@ use bun_jsc::{
 };
 #[cfg(target_os = "macos")]
 use bun_paths as path;
-use bun_paths::PathBuffer;
 use bun_resolver::fs as Fs;
 use bun_sys;
 
@@ -645,7 +644,7 @@ impl CompileC {
 
         #[cfg(target_os = "macos")]
         {
-            let mut pathbuf = PathBuffer::uninit();
+            let mut pathbuf = bun_paths::path_buffer_pool::get();
             'add_system_include_dir: {
                 let dirs_to_try: [&[u8]; 2] = [
                     env_var::SDKROOT.get().unwrap_or(b""),
@@ -2611,7 +2610,7 @@ impl CompilerRT {
             let _ = bun_sys::File::write_file(bun_cc.fd(), name_z.as_zstr(), source);
         }
 
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let Ok(path) = bun_sys::get_fd_path(bun_cc.fd(), &mut path_buf) else {
             return;
         };

@@ -86,6 +86,8 @@ impl Hardlinker {
                 // — otherwise E0502 on x86_64-pc-windows-msvc.
                 let len = dest_cwd.len();
                 let dest_ptr = dest_cwd.as_ptr();
+                // SAFETY: dest_cwd is a subslice of cwd_buf, so both pointers
+                // share the same allocation.
                 let off = unsafe { dest_ptr.offset_from(cwd_buf.as_ptr()) } as usize;
                 (off, len)
             };

@@ -802,9 +802,11 @@ pub struct WindowsWrite {
 
 #[cfg(windows)]
 impl WindowsWrite {
-    pub fn destroy(this: *mut WindowsWrite) {
-        // SAFETY: `this` was produced by heap::into_raw in SendQueue::_write;
-        // the engine write callback fires exactly once.
+    /// # Safety
+    /// `this` must be the pointer produced by `heap::into_raw` in
+    /// `SendQueue::_write`, passed exactly once — a second call double-frees.
+    pub unsafe fn destroy(this: *mut WindowsWrite) {
+        // SAFETY: per fn contract — sole owner at this point.
         let _ = unsafe { bun_core::heap::take(this) };
         // bytes freed by Box<[u8]> Drop.
     }
@@ -1458,7 +1460,7 @@ impl SendQueue {
         #[cfg(windows)]
         {
             let wp: *mut WindowsPipe = *self.get_socket().unwrap();
-            if let Some(_) = fd {
+            if fd.is_some() {
                 // TODO: send fd on windows
             }
 
@@ -1483,7 +1485,7 @@ impl SendQueue {
             let payload_len = bytes.len() - IPC_FRAME_HEADER_LEN;
 
             let write_req: *mut WindowsWrite = bun_core::heap::into_raw(Box::new(WindowsWrite {
-                owner: Some(self as *mut SendQueue),
+                owner: Some(core::ptr::from_mut::<SendQueue>(self)),
                 bytes,
                 payload_len,
             }));
@@ -1506,7 +1508,9 @@ impl SendQueue {
                 // `write_req.owner` backref, which would alias the `&mut self`
                 // already live in this frame (and in `continue_send` above it).
                 // Inline the same cleanup through `self` instead.
-                WindowsWrite::destroy(write_req);
+                // SAFETY: `write_req` was taken out of `windows_write` above;
+                // this is its single free.
+                unsafe { WindowsWrite::destroy(write_req) };
                 self.windows.windows_write = None;
                 self._on_write_complete(-1);
                 if self.windows.try_close_after_write {
@@ -1551,8 +1555,12 @@ impl SendQueue {
         // hands it back exactly once.
         let payload_len = unsafe { (*write_req).payload_len };
         let this: *mut SendQueue = 'blk: {
+            // SAFETY: `write_req` is the boxed request created at submit;
+            // the engine round-trips it to exactly this callback.
             let owner = unsafe { (*write_req).owner };
-            WindowsWrite::destroy(write_req);
+            // SAFETY: the engine hands the request to this callback exactly
+            // once; this is its single free.
+            unsafe { WindowsWrite::destroy(write_req) };
             match owner {
                 Some(o) => break 'blk o,
                 None => return, // orelse case if disconnected before the write completes
@@ -1600,6 +1608,7 @@ impl SendQueue {
     /// backref for the pipe's lifetime and later writes through the root
     /// would otherwise pop its tag under Stacked Borrows.
     #[cfg(windows)]
+    #[allow(clippy::large_stack_frames)] // Box::new temporary is heap-destined (64 KB IPC read buffer)
     unsafe fn windows_attach_pipe(
         this: *mut Self,
         mut pipe: Box<bun_iocp::pipe::PipeHandle>,

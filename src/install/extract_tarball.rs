@@ -4,8 +4,6 @@ use core::fmt;
 use bun_core::fmt::s;
 use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, ZStr};
-#[cfg(windows)]
-use bun_paths::WPathBuffer;
 use bun_paths::strings;
 use bun_paths::{self as path, PathBuffer};
 use bun_semver::{self as Semver, Version};
@@ -166,14 +164,21 @@ struct TlBufs {
     json_path_buf: PathBuffer,
 }
 
-thread_local! {
-    // bun.ThreadlocalBuffers: lazily heap-allocate so only a Box pointer lives in TLS
-    // (keeps PT_TLS MemSiz small — see test/js/bun/binary/tls-segment-size).
-    static TL_BUFS: RefCell<Box<TlBufs>> = RefCell::new(Box::new(TlBufs {
+// The Box::new temporary is heap-destined; `allow` is ignored on macro
+// invocations, so the closure body carries it via this helper-shape instead.
+#[allow(clippy::large_stack_frames)]
+fn tl_bufs_init() -> RefCell<Box<TlBufs>> {
+    RefCell::new(Box::new(TlBufs {
         final_path_buf: PathBuffer::ZEROED,
         folder_name_buf: PathBuffer::ZEROED,
         json_path_buf: PathBuffer::ZEROED,
-    }));
+    }))
+}
+
+thread_local! {
+    // bun.ThreadlocalBuffers: lazily heap-allocate so only a Box pointer lives in TLS
+    // (keeps PT_TLS MemSiz small — see test/js/bun/binary/tls-segment-size).
+    static TL_BUFS: RefCell<Box<TlBufs>> = tl_bufs_init();
 }
 
 pub(crate) fn uses_streaming_extraction() -> bool {
@@ -232,7 +237,7 @@ impl ExtractTarball {
         let tmpdir = Dir::borrow(&self.temp_dir);
         // UTF-8 on every platform; the Windows tmpdir path is converted to
         // wide at the `open_dir_at_windows_a` boundary, not here.
-        let mut tmpname_buf = PathBuffer::uninit();
+        let mut tmpname_buf = bun_paths::path_buffer_pool::get();
         let (name, basename) = self.name_and_basename();
         let truncated_basename = &basename[0..basename.len().min(32)];
         let tmpname_suffix: &[u8] =
@@ -542,7 +547,7 @@ impl ExtractTarball {
                 // handle to the destination. Back off briefly between retries.
                 const MAX_RETRIES: u32 = 4;
                 let mut retries: u32 = 0;
-                let mut path2_buf = WPathBuffer::uninit();
+                let mut path2_buf = bun_paths::w_path_buffer_pool::get();
                 let path2 = strings::to_wpath_normalized(&mut path2_buf, folder_name);
                 if create_subdir {
                     if let Some(folder) = bun_paths::Dirname::dirname_u16(path2) {
@@ -603,14 +608,14 @@ impl ExtractTarball {
                                         // we rename it back into the temp dir
                                         // and then delete that temp dir
                                         // The goal is to make it more difficult for an application to reach this folder
-                                        let mut tempdest_buf = PathBuffer::uninit();
+                                        let mut tempdest_buf = bun_paths::path_buffer_pool::get();
                                         tempdest_buf[0..tmpname.len()]
                                             .copy_from_slice(tmpname.as_bytes());
                                         tempdest_buf[tmpname.len()..][0..4]
                                             .copy_from_slice(&[b't', b'm', b'p', 0]);
                                         let tempdest =
                                             ZStr::from_buf(&tempdest_buf, tmpname.len() + 3);
-                                        let mut folder_name_z_buf = PathBuffer::uninit();
+                                        let mut folder_name_z_buf = bun_paths::path_buffer_pool::get();
                                         folder_name_z_buf[0..folder_name.len()]
                                             .copy_from_slice(folder_name);
                                         folder_name_z_buf[folder_name.len()] = 0;
@@ -838,7 +843,7 @@ impl ExtractTarball {
                                 break 'create_index;
                             }
 
-                            let mut dest_buf = PathBuffer::uninit();
+                            let mut dest_buf = bun_paths::path_buffer_pool::get();
                             let dest_path = path::resolve_path::join_abs_string_buf_z::<
                                 path::platform::Windows,
                             >(
@@ -868,7 +873,7 @@ impl ExtractTarball {
                                 break 'create_index;
                             };
 
-                            let mut dest_buf = PathBuffer::uninit();
+                            let mut dest_buf = bun_paths::path_buffer_pool::get();
                             dest_buf[..dest_name.len()].copy_from_slice(dest_name);
                             dest_buf[dest_name.len()] = 0;
                             let dest_z = ZStr::from_buf(&dest_buf, dest_name.len());

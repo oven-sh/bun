@@ -201,8 +201,10 @@ pub struct WindowsImpl {
 }
 
 #[cfg(windows)]
+// SAFETY: SRWLOCK is kernel-managed and safe to share/move across threads.
 unsafe impl Sync for WindowsImpl {}
 #[cfg(windows)]
+// SAFETY: see Sync above — no thread-affine state.
 unsafe impl Send for WindowsImpl {}
 
 // `&UnsafeCell<SRWLOCK>` is ABI-identical to kernel32's `PSRWLOCK` (thin

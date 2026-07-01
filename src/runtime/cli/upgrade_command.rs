@@ -12,7 +12,7 @@ use bun_dotenv as DotEnv;
 use bun_http::{self as HTTP, headers};
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_parsers::json as JSON;
-use bun_paths::{self, PathBuffer, SEP_STR};
+use bun_paths::{self, SEP_STR};
 use bun_resolver::fs;
 use bun_sys as sys;
 use bun_url::URL;
@@ -750,7 +750,7 @@ impl UpgradeCommand {
             let save_dir: sys::Dir = save_dir_it;
 
             // Reshaped for borrowck — use a stack-local PathBuffer instead of thread_local
-            let mut tmpdir_path_buf = PathBuffer::uninit();
+            let mut tmpdir_path_buf = bun_paths::path_buffer_pool::get();
             let tmpdir_path = match sys::get_fd_path(save_dir.fd(), &mut tmpdir_path_buf) {
                 Ok(p) => p,
                 Err(err) => {
@@ -810,7 +810,7 @@ impl UpgradeCommand {
 
                 #[cfg(unix)]
                 {
-                    let mut unzip_path_buf = PathBuffer::uninit();
+                    let mut unzip_path_buf = bun_paths::path_buffer_pool::get();
                     let Some(unzip_exe) = which(
                         &mut unzip_path_buf,
                         env_loader.map.get(b"PATH").unwrap_or(b""),
@@ -890,10 +890,10 @@ impl UpgradeCommand {
                     )
                     .expect("oom");
 
-                    let mut buf = PathBuffer::uninit();
+                    let mut buf = bun_paths::path_buffer_pool::get();
                     // Separate fallback buffer — borrowck holds `buf` for the lifetime
                     // of `which`'s returned `Option<&ZStr>` even across the `None` arm.
-                    let mut buf2 = PathBuffer::uninit();
+                    let mut buf2 = bun_paths::path_buffer_pool::get();
                     let powershell_path: &ZStr = match which(
                         &mut buf,
                         bun_core::env_var::PATH.get().unwrap_or(b""),
@@ -1084,7 +1084,7 @@ impl UpgradeCommand {
             // or `&mut [u8]` over the *whole* array, retagging it and
             // invalidating the raw-pointer-derived `&ZStr` views below. The
             // single `buf_ptr` is the shared provenance root.
-            let mut current_executable_buf = PathBuffer::uninit();
+            let mut current_executable_buf = bun_paths::path_buffer_pool::get();
             let buf_ptr: *mut u8 = current_executable_buf.as_mut_ptr();
             // SAFETY: `buf_ptr` covers `MAX_PATH_BYTES`; `destination_executable`
             // came from `self_exe_path()` which is bounded by that.
@@ -1136,7 +1136,7 @@ impl UpgradeCommand {
 
             // `move_file_z` wants `&ZStr`; pre-compute a NUL-terminated
             // copy of `exe`.
-            let mut exe_z_buf = PathBuffer::uninit();
+            let mut exe_z_buf = bun_paths::path_buffer_pool::get();
             exe_z_buf[..exe.len()].copy_from_slice(exe);
             exe_z_buf[exe.len()] = 0;
             // SAFETY: NUL written above.
@@ -1427,9 +1427,9 @@ pub mod upgrade_js_bindings {
         {
             use sys::windows as w;
 
-            let mut buf = bun_paths::WPathBuffer::uninit();
+            let mut buf = bun_paths::w_path_buffer_pool::get();
             let tmpdir_path = fs::RealFS::get_default_temp_dir();
-            let mut wtmp = bun_paths::WPathBuffer::uninit();
+            let mut wtmp = bun_paths::w_path_buffer_pool::get();
             let tmpdir_w = bun_core::convert_utf8_to_utf16_in_buffer(&mut wtmp[..], tmpdir_path);
             let path = match sys::normalize_path_windows(sys::Fd::INVALID, tmpdir_w, &mut buf[..]) {
                 sys::Result::Err(_) => return Ok(JSValue::UNDEFINED),
@@ -1447,7 +1447,7 @@ pub mod upgrade_js_bindings {
                 Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
                 RootDirectory: core::ptr::null_mut(),
                 Attributes: 0,
-                ObjectName: &mut nt_name,
+                ObjectName: &raw mut nt_name,
                 SecurityDescriptor: core::ptr::null_mut(),
                 SecurityQualityOfService: core::ptr::null_mut(),
             };
@@ -1464,10 +1464,10 @@ pub mod upgrade_js_bindings {
             // SAFETY: FFI call to NtCreateFile with valid pointers
             let rc = unsafe {
                 w::ntdll::NtCreateFile(
-                    &mut fd,
+                    &raw mut fd,
                     flags,
-                    &mut attr,
-                    &mut io,
+                    &raw mut attr,
+                    &raw mut io,
                     core::ptr::null_mut(),
                     0,
                     w::FILE_SHARE_READ | w::FILE_SHARE_WRITE,

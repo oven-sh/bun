@@ -20,7 +20,7 @@ use bun_parsers::json as JSON;
 use bun_ast::{E, Expr, ExprData};
 use bun_js_printer as js_printer;
 use bun_libarchive::lib::{Archive, Entry as ArchiveEntry, Result as ArchiveStatus};
-use bun_paths::{self as path, PathBuffer, SEP_STR};
+use bun_paths::{self as path, SEP_STR};
 // `bun.ptr.CowString = CowSlice(u8)` — the lifetime-free struct port (init_owned/
 // borrow_subslice/length live on `cow_slice::CowSliceZ`, not on the `std::borrow::Cow`
 // alias re-exported at `bun_ptr::CowString`).
@@ -330,7 +330,7 @@ impl PackCommand {
                 Err(err) => {
                     if !silent {
                         if err == bun_core::err!("MissingPackageJSON") {
-                            let mut cwd_buf = PathBuffer::uninit();
+                            let mut cwd_buf = bun_paths::path_buffer_pool::get();
                             match bun_sys::getcwd_z(&mut cwd_buf) {
                                 Ok(cwd) => {
                                     Output::err_generic(
@@ -1507,7 +1507,7 @@ struct BinInfo {
 fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
     let mut bins: Vec<BinInfo> = Vec::new();
 
-    let mut path_buf = PathBuffer::uninit();
+    let mut path_buf = bun_paths::path_buffer_pool::get();
 
     if let Some(bin) = json.as_property(b"bin") {
         if let Some(bin_str) = bin.expr.as_string(pack_bump()) {
@@ -2186,7 +2186,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         // On Windows, the cache key is stored with POSIX path separators,
         // so we need to convert the path before removing.
         #[cfg(windows)]
-        let mut cache_key_buf = PathBuffer::uninit();
+        let mut cache_key_buf = bun_paths::path_buffer_pool::get();
         #[cfg(windows)]
         let cache_key: &[u8] = {
             let len = abs_package_json_path.as_bytes().len();
@@ -2267,7 +2267,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     let edited_package_json = edit_root_package_json(ctx.lockfile, json)?;
 
     let root_dir: Dir = 'root_dir: {
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         path_buf[..abs_workspace_path.len()].copy_from_slice(abs_workspace_path);
         path_buf[abs_workspace_path.len()] = 0;
         // SAFETY: NUL written above
@@ -2353,7 +2353,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     let mut includes: Vec<Pattern> = Vec::new();
                     let mut excludes: Vec<Pattern> = Vec::new();
 
-                    let mut path_buf = PathBuffer::uninit();
+                    let mut path_buf = bun_paths::path_buffer_pool::get();
                     while let Some(files_entry) = files_array.next() {
                         if let Some(file_entry_str) = files_entry.as_string(bump) {
                             let normalized = resolve_path::normalize_buf::<
@@ -2435,7 +2435,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     log_level,
                 );
             } else {
-                let mut dest_buf = PathBuffer::uninit();
+                let mut dest_buf = bun_paths::path_buffer_pool::get();
                 let (abs_tarball_dest, _) = tarball_destination(
                     opt_pack_destination(ctx.manager),
                     opt_pack_filename(ctx.manager),
@@ -2465,7 +2465,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         }
 
         if FOR_PUBLISH {
-            let mut dest_buf = PathBuffer::uninit();
+            let mut dest_buf = bun_paths::path_buffer_pool::get();
             let (abs_tarball_dest, _) = tarball_destination(
                 opt_pack_destination(ctx.manager),
                 opt_pack_filename(ctx.manager),
@@ -2567,7 +2567,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         _ => {}
     }
 
-    let mut dest_buf = PathBuffer::uninit();
+    let mut dest_buf = bun_paths::path_buffer_pool::get();
     let (abs_tarball_dest, abs_tarball_dest_dir_end) = tarball_destination(
         opt_pack_destination(ctx.manager),
         opt_pack_filename(ctx.manager),
@@ -3719,7 +3719,7 @@ impl IgnorePatterns {
         reason: IgnoreFileFailReason,
         err: bun_core::Error,
     ) -> ! {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let dir_path: &[u8] = match bun_sys::get_fd_path(Fd::from_std_dir(dir), &mut buf) {
             Ok(p) => &*p,
             Err(_) => b"",

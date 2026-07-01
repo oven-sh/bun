@@ -786,6 +786,7 @@ impl PathBuffer {
     /// the leak/stress tests. Leave the bytes uninit.
     #[inline]
     #[allow(invalid_value, clippy::uninit_assumed_init)]
+    #[expect(clippy::large_stack_frames, reason = "write-only scratch; see doc above")]
     pub fn uninit() -> Self {
         // SAFETY: `PathBuffer` is `repr(transparent)` over `[u8; N]`; every bit
         // pattern is a valid `u8`, and callers treat this as a write-only
@@ -1531,6 +1532,7 @@ pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
         // `&mut [u16]` over `buf` ends before the raw-pointer memmove below.
         // SAFETY: kernel32 wrote `n` initialized u16s into `buf` (n < cap).
         let off = {
+            // SAFETY: kernel32 wrote `n` initialized u16s into `buf` (n < cap).
             let s = unsafe { core::slice::from_raw_parts_mut(buf, n) };
             let (_, rewritten) = rewrite_final_path_prefix(s);
             n - rewritten.len()
@@ -1675,9 +1677,9 @@ pub mod fd {
         unsafe {
             let pp = (*crate::windows_sys::peb()).ProcessParameters;
             ProcessParametersStdio {
-                hStdInput: (*pp).hStdInput as *mut c_void,
-                hStdOutput: (*pp).hStdOutput as *mut c_void,
-                hStdError: (*pp).hStdError as *mut c_void,
+                hStdInput: (*pp).hStdInput.cast::<c_void>(),
+                hStdOutput: (*pp).hStdOutput.cast::<c_void>(),
+                hStdError: (*pp).hStdError.cast::<c_void>(),
             }
         }
     }
@@ -2970,8 +2972,8 @@ pub fn self_exe_path() -> Result<&'static ZStr, crate::Error> {
             // `process.execPath` is never verbatim-prefixed).
             if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
                 s = format!(r"\\{}", rest);
-            } else if let Some(rest) = s.strip_prefix(r"\\?\") {
-                s = rest.to_owned();
+            } else if s.starts_with(r"\\?\") {
+                s.replace_range(..r"\\?\".len(), "");
             }
             Ok(ZBox::from_vec_with_nul(s.into_bytes()))
         }
@@ -4058,7 +4060,7 @@ fn argv_storage() -> &'static [ZBox] {
             // `CommandLineToArgvW` allocates its own array (lifetime managed
             // by the system — intentionally not `LocalFree`d, the
             // argv strings are referenced for the process lifetime).
-            let argvw = unsafe { CommandLineToArgvW(GetCommandLineW(), &mut argc) };
+            let argvw = unsafe { CommandLineToArgvW(GetCommandLineW(), &raw mut argc) };
             if !argvw.is_null() {
                 let argc = argc.max(0) as usize;
                 // SAFETY: `CommandLineToArgvW` returned `argc` valid `LPWSTR`s.
@@ -5120,7 +5122,7 @@ fn spawn_sync_inherit_impl(
         }
 
         let mut iter = argv.iter();
-        let argv0 = iter.next().ok_or(crate::err!("FileNotFound"))?;
+        let argv0 = iter.next().ok_or_else(|| crate::err!("FileNotFound"))?;
         let mut cmd = std::process::Command::new(to_os(argv0.as_ref()));
         for arg in iter {
             cmd.arg(to_os(arg.as_ref()));

@@ -1043,7 +1043,7 @@ pub mod package_manifest {
             // GetFinalPathnameByHandle is very expensive if called many times
             // We skip calling it when we are giving an absolute file path.
             // This needs many more call sites, doesn't have much impact on this location.
-            let mut realpath_buf = bun_paths::PathBuffer::uninit();
+            let mut realpath_buf = bun_paths::path_buffer_pool::get();
             // SAFETY: `crate::package_manager::get()` returns the live
             // singleton; `get_temporary_directory` only mutates its
             // lazy-init state and is called from the install thread.
@@ -1123,7 +1123,7 @@ pub mod package_manifest {
 
             #[cfg(windows)]
             {
-                let mut realpath2_buf = bun_paths::PathBuffer::uninit();
+                let mut realpath2_buf = bun_paths::path_buffer_pool::get();
                 let cache_dir_abs = &PackageManager::get().cache_directory_path;
                 let cache_path_abs =
                     bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(

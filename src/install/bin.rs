@@ -9,8 +9,6 @@ use bun_core::ZStr;
 use bun_core::w;
 #[cfg(not(windows))]
 use bun_paths::MAX_PATH_BYTES;
-#[cfg(windows)]
-use bun_paths::WPathBuffer;
 use bun_paths::platform::Auto as PlatformAuto;
 use bun_paths::resolve_path;
 use bun_paths::strings;
@@ -853,7 +851,7 @@ impl<'a> Linker<'a> {
 
         #[cfg(windows)]
         {
-            let mut dest_buf = WPathBuffer::uninit();
+            let mut dest_buf = bun_paths::w_path_buffer_pool::get();
             let abs_dest_w = strings::convert_utf8_to_utf16_in_buffer(
                 dest_buf.as_mut_slice(),
                 abs_dest.as_bytes(),
@@ -1096,6 +1094,8 @@ impl<'a> Linker<'a> {
     }
 
     #[cfg(windows)]
+    // One shim template buffer per created .exe shim (install-time).
+    #[allow(clippy::large_stack_frames)]
     fn create_windows_shim(
         &mut self,
         target: &sys::File,
@@ -1115,8 +1115,8 @@ impl<'a> Linker<'a> {
         let mut shim_buf = ShimBuf([0u8; 65536]);
         let shim_buf = &mut shim_buf.0;
         let mut read_in_buf = [0u8; WinShimShebang::MAX_SHEBANG_INPUT_LENGTH];
-        let mut dest_buf = WPathBuffer::uninit();
-        let mut target_buf = WPathBuffer::uninit();
+        let mut dest_buf = bun_paths::w_path_buffer_pool::get();
+        let mut target_buf = bun_paths::w_path_buffer_pool::get();
 
         let abs_dest_w =
             strings::convert_utf8_to_utf16_in_buffer(dest_buf.as_mut_slice(), abs_dest.as_bytes());

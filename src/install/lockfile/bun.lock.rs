@@ -331,7 +331,7 @@ impl Stringifier {
             buf,
         );
 
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
 
         // if we loaded from a binary lockfile and we're migrating it to a text lockfile, ensure
         // peer dependencies have resolutions, and mark them optional if they don't
@@ -2854,7 +2854,7 @@ pub fn parse_into_binary_lockfile(
             }
         }
 
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
 
         if lockfile_version != Version::V0 {
             // then workspace dependencies are resolved
@@ -3084,6 +3084,8 @@ fn dependency_resolution_failure(
 // Instead each append constructs a fresh `sbuf!(lockfile)` so the borrow
 // checker can see the disjoint field accesses against `buffers.dependencies`
 // and `workspace_paths`.
+// Lockfile-save cold path; the Option<PathBuffer> workspace scratch is per-save.
+#[allow(clippy::large_stack_frames)]
 fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>(
     lockfile: &mut BinaryLockfile,
     obj: &Expr,

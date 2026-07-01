@@ -345,7 +345,7 @@ impl FileRoute {
         let fd_result: bun_sys::Result<Fd> = {
             #[cfg(windows)]
             {
-                let mut path_buffer = bun_paths::PathBuffer::uninit();
+                let mut path_buffer = bun_paths::path_buffer_pool::get();
                 path_buffer[..path.len()].copy_from_slice(path);
                 path_buffer[path.len()] = 0;
                 bun_sys::open(
@@ -400,7 +400,7 @@ impl FileRoute {
                 Err(_) => break 'brk (false, 0, FileType::File, false),
             };
 
-            let stat_size: u64 = u64::try_from(stat.st_size.max(0)).expect("int cast");
+            let stat_size: u64 = bun_sys::stat_size(&stat);
             let _size: u64 = stat_size.min(this.blob.size.get());
 
             let mode = stat.st_mode as bun_sys::Mode;

@@ -3,9 +3,6 @@ use bun_core::strings;
 use bun_core::{Global, Output, env_var};
 #[cfg(not(windows))]
 use bun_core::{note, print_errorln};
-use bun_paths::PathBuffer;
-#[cfg(windows)]
-use bun_paths::WPathBuffer;
 #[cfg(not(windows))]
 use bun_paths::{platform, resolve_path};
 use bun_sys::{self, E, File};
@@ -24,7 +21,7 @@ impl InstallCompletionsCommand {
 
     #[cfg(not(windows))]
     fn install_bunx_symlink_posix(cwd: &[u8]) -> Result<(), bun_core::Error> {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
 
         // don't install it if it's already there
         if bun_which::which(
@@ -40,7 +37,7 @@ impl InstallCompletionsCommand {
 
         // first try installing the symlink into the same directory as the bun executable
         let exe = bun_core::self_exe_path()?;
-        let mut target_buf = PathBuffer::uninit();
+        let mut target_buf = bun_paths::path_buffer_pool::get();
         let target = buf_print_z(
             &mut target_buf,
             format_args!(
@@ -117,7 +114,7 @@ impl InstallCompletionsCommand {
             .expect("unreachable");
         let image_dirname = &image_path[..last_sep + 1];
 
-        let mut bunx_path_buf = WPathBuffer::uninit();
+        let mut bunx_path_buf = bun_paths::w_path_buffer_pool::get();
 
         let cmd_suffix: &[u16] = if bun_core::env::IS_DEBUG {
             w!("bunx-debug.cmd")
@@ -134,7 +131,7 @@ impl InstallCompletionsCommand {
             &mut bunx_path_buf,
             &[&windows::NT_OBJECT_PREFIX, image_dirname, cmd_suffix],
         )?;
-        let _ = windows::DeleteFileBun(delete_path, windows::DeleteFileOptions::default());
+        let _ = windows::DeleteFileBun(delete_path, &windows::DeleteFileOptions::default());
 
         let bunx_path_with_z = strings::concat_buf_t::<u16>(
             &mut bunx_path_buf,
@@ -142,7 +139,7 @@ impl InstallCompletionsCommand {
         )?;
         // SAFETY: exe_suffix_z ends in NUL, so bunx_path_with_z[len-1] == 0
         let bunx_path = WStr::from_slice_with_nul(&bunx_path_with_z[..]);
-        let _ = windows::DeleteFileBun(bunx_path.as_slice(), windows::DeleteFileOptions::default());
+        let _ = windows::DeleteFileBun(bunx_path.as_slice(), &windows::DeleteFileOptions::default());
 
         if windows::CreateHardLinkW(bunx_path.as_ptr(), image_path.as_ptr(), None) == 0 {
             // if hard link fails, use a cmd script
@@ -193,7 +190,7 @@ impl InstallCompletionsCommand {
 
         const CONTENT: &[u8] = include_bytes!("uninstall.ps1");
 
-        let mut bunx_path_buf = WPathBuffer::uninit();
+        let mut bunx_path_buf = bun_paths::w_path_buffer_pool::get();
         let uninstaller_path = strings::concat_buf_t::<u16>(
             &mut bunx_path_buf,
             &[
@@ -216,7 +213,7 @@ impl InstallCompletionsCommand {
             0
         };
 
-        let mut cwd_buf = PathBuffer::uninit();
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
 
         let stdout = File::stdout();
 
@@ -557,11 +554,11 @@ impl InstallCompletionsCommand {
 
             // Check if they need to load the zsh completions file into their .zshrc
             if shell == Shell::Zsh {
-                let mut completions_absolute_path_buf = PathBuffer::uninit();
+                let mut completions_absolute_path_buf = bun_paths::path_buffer_pool::get();
                 let completions_path =
                     bun_sys::get_fd_path(output_file.handle, &mut completions_absolute_path_buf)
                         .expect("unreachable");
-                let mut zshrc_filepath = PathBuffer::uninit();
+                let mut zshrc_filepath = bun_paths::path_buffer_pool::get();
                 let needs_to_tell_them_to_add_completions_file: bool = 'brk: {
                     let dot_zshrc: File = 'zshrc: {
                         'first: {

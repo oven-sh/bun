@@ -11,7 +11,7 @@ use bun_collections::{
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Error as BunError, Global, Output, err};
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, platform, resolve_path};
+use bun_paths::{MAX_PATH_BYTES, SEP, SEP_STR, platform, resolve_path};
 // `bun_install` sits above `bun_resolver` in the crate graph (no cycle), so use
 // the real resolver `FileSystem` directly — same as `PackageManager.rs`.
 use crate::bun_json as JSON;
@@ -1696,8 +1696,8 @@ impl<'a> Printer<'a> {
         // We truncate longer than allowed paths. We should probably throw an error instead.
         let path = &input_lockfile_path[..input_lockfile_path.len().min(MAX_PATH_BYTES)];
 
-        let mut lockfile_path_buf1 = PathBuffer::uninit();
-        let mut lockfile_path_buf2 = PathBuffer::uninit();
+        let mut lockfile_path_buf1 = bun_paths::path_buffer_pool::get();
+        let mut lockfile_path_buf2 = bun_paths::path_buffer_pool::get();
 
         let mut lockfile_path: &ZStr = ZStr::EMPTY;
         // Track which buffer backs `lockfile_path` so the chdir NUL-terminate
@@ -2877,7 +2877,7 @@ impl Lockfile {
 
         let mut sort_buf: Vec<PathToId> = Vec::with_capacity(l_len + r_len);
 
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let mut depth_buf: tree::DepthBuf = tree::depth_buf_uninit();
 
         // Track owned tree-path allocations so they outlive the sort and are freed at scope end.

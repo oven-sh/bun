@@ -21,8 +21,6 @@ use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{
     self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SystemError,
 };
-#[cfg(windows)]
-use bun_paths::PathBuffer;
 #[cfg(not(windows))]
 use bun_sys::Stat;
 use bun_sys::{self, Fd};
@@ -953,6 +951,9 @@ impl ReadFileUV {
 
     /// Raw entry — caller already has the type-erased `(fn, *anyopaque)` pair.
     /// Shares the body with `start`.
+// `event_loop` is the VM-owned per-thread singleton (see the SAFETY
+// comments below); the raw-pointer parameter is the bindings ABI.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn start_with_ctx(
         event_loop: *mut EventLoop,
         store: StoreRef,
@@ -1023,7 +1024,7 @@ impl ReadFileUV {
                 PathOrFileDescriptor::Path(p) => p.clone(),
                 PathOrFileDescriptor::Fd(_) => unreachable!(),
             };
-            let mut buf = PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             let s = path_string.slice();
             buf.0[..s.len()].copy_from_slice(s);
             buf.0[s.len()] = 0;

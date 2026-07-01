@@ -259,6 +259,8 @@ pub(crate) struct CreateCommand;
 
 impl CreateCommand {
     #[cold]
+    // CLI cold path (bun create).
+    #[allow(clippy::large_stack_frames)]
     pub(crate) fn exec(
         ctx: &Command::Context<'_>,
         example_tag: ExampleTag,

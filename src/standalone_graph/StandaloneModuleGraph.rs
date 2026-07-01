@@ -19,8 +19,6 @@ use bun_options_types::bundle_enums::{Format, WindowsOptions};
 use bun_paths::SEP_STR;
 use bun_paths::fs as bun_fs;
 use bun_paths::{self as path, PathBuffer, strings};
-#[cfg(windows)]
-use bun_paths::{OSPathBuffer, WPathBuffer};
 use bun_sourcemap as SourceMap;
 use bun_sys::{self as Syscall, Fd, FdExt as _, Stat};
 
@@ -1064,7 +1062,7 @@ pub(crate) fn inject(
     target: &CompileTarget,
 ) -> Fd {
     let _ = inject_options;
-    let mut buf = PathBuffer::uninit();
+    let mut buf = bun_paths::path_buffer_pool::get();
     // Note: `tmpname` borrows `buf` mutably for the &ZStr it returns. The
     // tmpdir-fallback retry below may need to repoint `zname` at a heap-owned
     // buffer instead, so hoist that owner here so it outlives the loop.
@@ -1101,10 +1099,10 @@ pub(crate) fn inject(
         {
             // copy self and then open it for writing
 
-            let mut in_buf = WPathBuffer::uninit();
+            let mut in_buf = bun_paths::w_path_buffer_pool::get();
             strings::copy_u8_into_u16(&mut in_buf, self_exe.as_bytes());
             in_buf[self_exe.len()] = 0;
-            let mut out_buf = WPathBuffer::uninit();
+            let mut out_buf = bun_paths::w_path_buffer_pool::get();
             strings::copy_u8_into_u16(&mut out_buf, zname.as_bytes());
             out_buf[zname.len()] = 0;
 
@@ -1721,7 +1719,7 @@ pub fn to_executable(
             }
         }
     } else {
-        let mut exe_path_buf = PathBuffer::uninit();
+        let mut exe_path_buf = bun_paths::path_buffer_pool::get();
         let mut version_str: Vec<u8> = Vec::new();
         let _ = write!(&mut version_str, "{}", target);
         version_str.push(0);
@@ -1784,7 +1782,7 @@ pub fn to_executable(
     #[cfg(windows)]
     {
         // Get the current path of the temp file
-        let mut temp_buf = PathBuffer::uninit();
+        let mut temp_buf = bun_paths::path_buffer_pool::get();
         let temp_path = match bun_sys::get_fd_path(fd, &mut temp_buf) {
             Ok(p) => p,
             Err(e) => {
@@ -1801,7 +1799,7 @@ pub fn to_executable(
         // Build the absolute destination path
         // On Windows, we need an absolute path for MoveFileExW
         // Get the current working directory and join with outfile
-        let mut cwd_buf = PathBuffer::uninit();
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let cwd_path: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
             Ok(len) => &cwd_buf[..len],
             Err(e) => {
@@ -1821,8 +1819,8 @@ pub fn to_executable(
         };
 
         // Convert paths to Windows UTF-16
-        let mut temp_buf_w = OSPathBuffer::uninit();
-        let mut dest_buf_w = OSPathBuffer::uninit();
+        let mut temp_buf_w = bun_paths::os_path_buffer_pool::get();
+        let mut dest_buf_w = bun_paths::os_path_buffer_pool::get();
         let temp_w_len = strings::paths::to_w_path_normalized(&mut temp_buf_w, temp_path).len();
         let dest_w_len = strings::paths::to_w_path_normalized(&mut dest_buf_w, dest_path).len();
 

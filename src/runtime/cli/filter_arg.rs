@@ -57,7 +57,7 @@ pub(crate) fn get_candidate_package_patterns<'a>(
     // `break` → `break 'walk`.
     'walk: loop {
         'body: {
-            let mut name_buf = PathBuffer::uninit();
+            let mut name_buf = bun_paths::path_buffer_pool::get();
             let json_path: &ZStr = resolve_path::join_abs_string_buf_z::<platform::Auto>(
                 workdir,
                 &mut name_buf[..],
@@ -191,7 +191,7 @@ impl FilterSet {
     ) -> Result<FilterSet, bun_core::Error> {
         let cwd = cwd_;
 
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         // TODO fixed buffer allocator with fallback?
         let mut list: Vec<Pattern> = Vec::with_capacity(filters.len());
         let mut self_ = FilterSet {

@@ -292,15 +292,14 @@ impl Stdio {
     }
 
     pub fn is_piped(&self) -> bool {
-        match self {
+        matches!(
+            self,
             Self::Capture(_)
-            | Self::ArrayBuffer(_)
-            | Self::Blob(_)
-            | Self::Pipe
-            | Self::ReadableStream(_) => true,
-            Self::Ipc => cfg!(windows),
-            _ => false,
-        }
+                | Self::ArrayBuffer(_)
+                | Self::Blob(_)
+                | Self::Pipe
+                | Self::ReadableStream(_)
+        ) || (cfg!(windows) && matches!(self, Self::Ipc))
     }
 
     fn extract_body_value(

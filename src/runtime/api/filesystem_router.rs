@@ -31,7 +31,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, LogJsc, StringJsc,
 };
-use bun_paths::{self as path, MAX_PATH_BYTES, PathBuffer};
+use bun_paths::{self as path, MAX_PATH_BYTES};
 use bun_ptr::BackRef;
 
 use bun_http_types::URLPath;
@@ -118,6 +118,8 @@ impl FileSystemRouter {
     // Note: no `#[bun_jsc::host_fn]` here — the `Free` shim it emits calls
     // a bare `constructor(...)` which cannot resolve inside an `impl`. The
     // `#[bun_jsc::JsClass]` macro already emits the `<Self>::constructor` shim.
+    // Router build cold path; pattern scratch.
+    #[allow(clippy::large_stack_frames)]
     pub fn constructor(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -957,7 +959,7 @@ impl MatchedRoute {
         file_path: &[u8],
         client_framework_enabled: bool,
     ) {
-        let mut entry_point_tempbuf = PathBuffer::uninit();
+        let mut entry_point_tempbuf = bun_paths::path_buffer_pool::get();
         // We don't store the framework config including the client parts in the server
         // instead, we just store a boolean saying whether we should generate this whenever the script is requested
         // this is kind of bad. we should consider instead a way to inline the contents of the script.

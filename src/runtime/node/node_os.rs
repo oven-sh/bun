@@ -956,7 +956,7 @@ mod _impl {
 
             let mut result: windows::ws2_32::WSADATA = bun_core::ffi::zeroed();
             // SAFETY: valid out-pointer
-            if unsafe { windows::ws2_32::WSAStartup(0x202, &mut result) } == 0 {
+            if unsafe { windows::ws2_32::WSAStartup(0x202, &raw mut result) } == 0 {
                 // SAFETY: valid buffer
                 if unsafe { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
                     let y = BunString::clone_utf16(slice_to_nul_u16(&name_buffer));

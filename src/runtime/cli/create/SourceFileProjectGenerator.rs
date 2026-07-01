@@ -247,7 +247,7 @@ pub fn generate_files(
     }
 
     // Normalize file paths
-    let mut normalized_buf = bun_paths::PathBuffer::uninit();
+    let mut normalized_buf = bun_paths::path_buffer_pool::get();
     let mut normalized_name: &[u8] = if bun_paths::is_absolute(entry_point) {
         resolve_path::relative_normalized_buf::<path::platform::Loose, true>(
             &mut normalized_buf,
@@ -612,7 +612,7 @@ fn get_shadcn_components(
 // Local wrapper for `bun.sys.exists([]const u8)` — bun_sys currently exposes
 // only `exists_z(&ZStr)`, so NUL-terminate via `resolve_path::z`.
 fn exists(path: &[u8]) -> bool {
-    let mut buf = bun_paths::PathBuffer::uninit();
+    let mut buf = bun_paths::path_buffer_pool::get();
     bun_sys::exists_z(resolve_path::z(path, &mut buf))
 }
 

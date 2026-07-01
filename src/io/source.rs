@@ -370,6 +370,7 @@ impl Source {
         // SAFETY: `raw` is live for the call (fd contract); the probe only
         // queries, never mutates.
         matches!(
+            // SAFETY: `raw` is the live handle resolved from `fd` above.
             unsafe { bun_fdtable::classify_handle(raw) },
             Ok(bun_fdtable::FdKind::Pipe)
         )

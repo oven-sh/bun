@@ -5,7 +5,6 @@ use crate::node::types::PathLikeExt as _;
 use crate::webcore::blob::{self, MAX_SIZE, MkdirpTarget, Retry, SizeType, StoreRef, store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
-use bun_paths::PathBuffer;
 #[cfg(not(windows))]
 use bun_sys::Stat;
 use bun_sys::{self, Fd, FdExt, Mode, SystemError};
@@ -215,7 +214,7 @@ impl<'a> CopyFile<'a> {
     }
 
     pub fn do_open_file<const WHICH: IOWhich>(&mut self) -> Result<(), bun_core::Error> {
-        let mut path_buf1 = PathBuffer::uninit();
+        let mut path_buf1 = bun_paths::path_buffer_pool::get();
         // open source file first
         // if it fails, we don't want the extra destination file hanging out
         if matches!(WHICH, IOWhich::Both | IOWhich::Source) {
@@ -559,8 +558,8 @@ impl<'a> CopyFile<'a> {
 
     #[cfg(target_os = "macos")]
     pub fn do_clonefile(&mut self) -> Result<(), bun_core::Error> {
-        let mut source_buf = PathBuffer::uninit();
-        let mut dest_buf = PathBuffer::uninit();
+        let mut source_buf = bun_paths::path_buffer_pool::get();
+        let mut dest_buf = bun_paths::path_buffer_pool::get();
 
         loop {
             // reshaped for borrowck — `slice_z(&'a self, &'a mut buf)`
@@ -639,7 +638,7 @@ impl<'a> CopyFile<'a> {
                         )
                     {
                         'do_clonefile: {
-                            let mut path_buf = PathBuffer::uninit();
+                            let mut path_buf = bun_paths::path_buffer_pool::get();
 
                             // stat the output file, make sure it:
                             // 1. Exists
@@ -1138,8 +1137,8 @@ impl CopyFileWindows {
     /// single `CopyFileExW`. Success stores the copied size in `self.written`;
     /// failure records `self.err` (or asks for mkdirp / the loop fallback).
     fn try_copyfile(&mut self) -> CopyFileStep {
-        let mut pathbuf1 = PathBuffer::uninit();
-        let mut pathbuf2 = PathBuffer::uninit();
+        let mut pathbuf1 = bun_paths::path_buffer_pool::get();
+        let mut pathbuf2 = bun_paths::path_buffer_pool::get();
 
         let new_path: &bun_core::ZStr = 'brk: {
             match &self.destination_file_store.data.as_file().pathlike {
@@ -1489,7 +1488,7 @@ impl CopyFileWindows {
                 self.destination_file_store.data.as_file().pathlike,
                 PathOrFileDescriptor::Path(_)
             ) {
-                let mut pathbuf = PathBuffer::uninit();
+                let mut pathbuf = bun_paths::path_buffer_pool::get();
                 let result = bun_sys::chmod(
                     self.destination_file_store
                         .data
@@ -1520,7 +1519,7 @@ impl CopyFileWindows {
         let _ = node_fs_.truncate(
             &node_fs::Arguments::Truncate {
                 path: self.destination_file_store.data.as_file().pathlike.clone(),
-                len: u64::try_from(self.size).expect("int cast"),
+                len: self.size,
                 flags: 0,
             },
             node_fs::Flavor::Sync,

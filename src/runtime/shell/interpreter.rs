@@ -2146,12 +2146,10 @@ impl ShellExecEnv {
                 .as_bytes()
                 .len()
             };
-            // remove trailing separator (Windows checks `\\` first then falls
-            // through to `/`; POSIX only `/`).
+            // remove trailing separator (Windows accepts both separators;
+            // POSIX only `/`).
             #[cfg(windows)]
-            if n > 1 && buf[n - 1] == b'\\' {
-                n -= 1;
-            } else if n > 1 && buf[n - 1] == b'/' {
+            if n > 1 && (buf[n - 1] == b'\\' || buf[n - 1] == b'/') {
                 n -= 1;
             }
             #[cfg(not(windows))]

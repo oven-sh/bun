@@ -21,6 +21,9 @@ pub struct Cp {
     pub output_queue: std::collections::VecDeque<*mut OutputTask<Cp>>,
 }
 
+// One State per cp invocation; boxing the EBUSY post-processing arm would
+// buy nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Default)]
 pub enum State {
     #[default]
@@ -232,11 +235,11 @@ impl Cp {
                     let ignorable = tref
                         .tgt_absolute
                         .as_ref()
-                        .map_or(false, |p| eb.absolute_targets.contains(p))
+                        .is_some_and(|p| eb.absolute_targets.contains(p))
                         || tref
                             .src_absolute
                             .as_ref()
-                            .map_or(false, |p| eb.absolute_srcs.contains(p));
+                            .is_some_and(|p| eb.absolute_srcs.contains(p));
                     Some((t, ignorable))
                 } else {
                     None
@@ -278,9 +281,9 @@ impl Cp {
                     let is_ebusy = matches!(err, ShellErr::Sys(sys)
                         if (sys.get_errno() == bun_sys::E::EBUSY
                                 && tref.tgt_absolute.as_deref()
-                                    .map_or(false, |p| sys.path.eql_utf8(p)))
+                                    .is_some_and(|p| sys.path.eql_utf8(p)))
                             || tref.src_absolute.as_deref()
-                                    .map_or(false, |p| sys.path.eql_utf8(p)));
+                                    .is_some_and(|p| sys.path.eql_utf8(p)));
                     if is_ebusy {
                         exec.ebusy.tasks.push(task);
                         return Self::next(interp, cmd).run(interp);
@@ -459,8 +462,8 @@ impl ShellCpTask {
         }
         #[cfg(windows)]
         {
-            let mut buf = bun_paths::PathBuffer::uninit();
-            let mut buf2 = bun_paths::PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let mut buf2 = bun_paths::path_buffer_pool::get();
             let src8 = bun_paths::strings::from_wpath(&mut buf, src);
             let dest8 = bun_paths::strings::from_wpath(&mut buf2, dest);
             self.on_copy_impl(src8, dest8);
@@ -572,8 +575,8 @@ impl ShellCpTask {
     fn run_from_thread_pool_impl(&mut self) -> Option<ShellErr> {
         use resolve_path::{Platform, platform};
 
-        let mut buf2 = bun_paths::PathBuffer::uninit();
-        let mut buf3 = bun_paths::PathBuffer::uninit();
+        let mut buf2 = bun_paths::path_buffer_pool::get();
+        let mut buf3 = bun_paths::path_buffer_pool::get();
         // We have to give an absolute path to our cp implementation for it to
         // work with cwd.
         let src: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.src) {

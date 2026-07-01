@@ -3285,6 +3285,9 @@ unsafe extern "system" {
     ) -> BOOL;
 }
 
+// C-ABI shim: callers pass NUL-terminated buffers per the Win32 contract;
+// not_unsafe_ptr_arg_deref is the standard false positive on these wrappers.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn CreateHardLinkW(
     new_file_name: LPCWSTR,
     existing_file_name: LPCWSTR,
@@ -3480,7 +3483,7 @@ pub fn user_unique_id() -> u32 {
     let mut buf: [u16; 257] = [0; 257];
     let mut size: u32 = buf.len() as u32;
     // SAFETY: buf and size are valid
-    if unsafe { externs::GetUserNameW(buf.as_mut_ptr(), &mut size) } == 0 {
+    if unsafe { externs::GetUserNameW(buf.as_mut_ptr(), &raw mut size) } == 0 {
         #[cfg(debug_assertions)]
         {
             let err = GetLastError();
@@ -3632,6 +3635,9 @@ pub enum GetFinalPathNameByHandleError {
     NameTooLong,
 }
 
+// C-ABI shim: `hFile` is an opaque kernel handle (validated kernel-side)
+// and the out-buffer is a caller slice — nothing here is a deref contract.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn GetFinalPathNameByHandle(
     hFile: HANDLE,
     fmt: win32::GetFinalPathNameByHandleFormat,
@@ -3698,13 +3704,16 @@ pub fn get_module_handle_from_address(addr: usize) -> Option<HMODULE> {
             // Docs: when FROM_ADDRESS is set, lpModuleName is "an address in
             // the module" — typed as LPCWSTR but really an opaque pointer.
             addr as *mut c_void,
-            &mut module,
+            &raw mut module,
         )
     };
     // If the function succeeds, the return value is nonzero.
     if rc != 0 { Some(module) } else { None }
 }
 
+// C-ABI shim: `module` is an opaque kernel token; the buffer is a plain
+// Rust slice. No pointer here carries a caller deref obligation.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn get_module_name_w(module: HMODULE, buf: &mut [u16]) -> Option<&[u16]> {
     // SAFETY: buf valid for buf.len()
     let rc = unsafe {
@@ -3734,26 +3743,19 @@ pub use bun_windows_sys::externs::GetConsoleOutputCP;
 pub use bun_windows_sys::externs::SetConsoleCP;
 pub use bun_windows_sys::externs::SetStdHandle;
 
+#[derive(Default)]
 pub struct DeleteFileOptions {
     pub dir: Option<HANDLE>,
     pub remove_dir: bool,
 }
 
-impl Default for DeleteFileOptions {
-    fn default() -> Self {
-        Self {
-            dir: None,
-            remove_dir: false,
-        }
-    }
-}
 
 const FILE_DISPOSITION_DELETE: ULONG = 0x00000001;
 const FILE_DISPOSITION_POSIX_SEMANTICS: ULONG = 0x00000002;
 const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: ULONG = 0x00000010;
 
 // Copy-paste of the standard library function except without unreachable.
-pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys::Result<()> {
+pub fn DeleteFileBun(sub_path_w: &[u16], options: &DeleteFileOptions) -> bun_sys::Result<()> {
     let create_options_flags: ULONG = if options.remove_dir {
         FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT
     } else {
@@ -3790,7 +3792,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
             options.dir.unwrap_or(ptr::null_mut())
         },
         Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
-        ObjectName: &mut nt_name,
+        ObjectName: &raw mut nt_name,
         SecurityDescriptor: ptr::null_mut(),
         SecurityQualityOfService: ptr::null_mut(),
     };
@@ -3799,10 +3801,10 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
     // SAFETY: all out-params are valid
     let mut rc = unsafe {
         ntdll::NtCreateFile(
-            &mut tmp_handle,
+            &raw mut tmp_handle,
             windows::SYNCHRONIZE | windows::DELETE,
-            &mut attr,
-            &mut io,
+            &raw mut attr,
+            &raw mut io,
             ptr::null_mut(),
             0,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -3851,7 +3853,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
     rc = unsafe {
         ntdll::NtSetInformationFile(
             tmp_handle,
-            &mut io,
+            &raw mut io,
             core::ptr::from_mut(&mut info).cast::<c_void>(),
             size_of::<windows::FILE_DISPOSITION_INFORMATION_EX>() as u32,
             windows::FileInformationClass::FileDispositionInformationEx,
@@ -3880,7 +3882,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         rc = unsafe {
             ntdll::NtSetInformationFile(
                 tmp_handle,
-                &mut io,
+                &raw mut io,
                 core::ptr::from_mut(&mut file_dispo).cast::<c_void>(),
                 size_of::<windows::FILE_DISPOSITION_INFORMATION>() as u32,
                 windows::FileInformationClass::FileDispositionInformation,
@@ -4084,6 +4086,9 @@ pub mod rescle {
         WindowsMetadataEditError,
     }
 
+    // C-ABI shim: callers pass NUL-terminated buffers per the Win32 contract;
+    // not_unsafe_ptr_arg_deref is the standard false positive on these wrappers.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn set_icon(exe_path: *const u16, icon: *const u16) -> Result<(), RescleError> {
         const _: () = assert!(cfg!(windows));
         // SAFETY: paths are NUL-terminated
@@ -4094,6 +4099,9 @@ pub mod rescle {
         }
     }
 
+    // C-ABI shim: callers pass NUL-terminated buffers per the Win32 contract;
+    // not_unsafe_ptr_arg_deref is the standard false positive on these wrappers.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn set_windows_metadata(
         exe_path: *const u16,
         icon: Option<&[u8]>,
@@ -4161,7 +4169,8 @@ pub mod rescle {
             .map(|cr| bun_core::strings::to_utf16_alloc_for_real(cr, false, true))
             .transpose()?;
 
-        // SAFETY: all pointers are NUL-terminated wide strings or null
+        // SAFETY: C-ABI shim — all pointers are NUL-terminated wide strings
+        // (or null) owned by the locals above for the duration of the call.
         let status = unsafe {
             rescle__setWindowsMetadata(
                 exe_path,
@@ -4243,7 +4252,7 @@ pub fn GetProcessMemoryInfo(process: HANDLE) -> Result<PROCESS_MEMORY_COUNTERS, 
 pub use bun_windows_sys::externs::GetConsoleMode;
 pub use bun_windows_sys::externs::SetConsoleMode;
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct UpdateStdioModeFlagsOpts {
     pub set: DWORD,
     pub unset: DWORD,
@@ -4407,11 +4416,11 @@ pub fn spawn_watcher_child(
     let mut attr_size: usize = 0;
     // SAFETY: query size with null buffer
     unsafe {
-        let _ = externs::InitializeProcThreadAttributeList(ptr::null_mut(), 1, 0, &mut attr_size);
+        let _ = externs::InitializeProcThreadAttributeList(ptr::null_mut(), 1, 0, &raw mut attr_size);
     }
     let mut p: Vec<u8> = vec![0u8; attr_size];
     // SAFETY: p has attr_size bytes
-    if unsafe { externs::InitializeProcThreadAttributeList(p.as_mut_ptr(), 1, 0, &mut attr_size) }
+    if unsafe { externs::InitializeProcThreadAttributeList(p.as_mut_ptr(), 1, 0, &raw mut attr_size) }
         == 0
     {
         return Err(bun_core::err!("Win32Error"));
@@ -4597,7 +4606,7 @@ pub fn delete_opened_file(fd: Fd) -> bun_sys::Result<()> {
     let rc = unsafe {
         ntdll::NtSetInformationFile(
             fd.native(),
-            &mut io,
+            &raw mut io,
             core::ptr::from_mut(&mut info).cast::<c_void>(),
             size_of::<win32::FILE_DISPOSITION_INFORMATION_EX>() as u32,
             win32::FileInformationClass::FileDispositionInformationEx,
@@ -4699,7 +4708,7 @@ pub fn move_opened_file_at(
     let rc = unsafe {
         ntdll::NtSetInformationFile(
             src_fd.native(),
-            &mut io_status_block,
+            &raw mut io_status_block,
             rename_info.cast::<c_void>(),
             u32::try_from(struct_len).expect("int cast"), // already checked for error.NameTooLong
             win32::FileInformationClass::FileRenameInformationEx,
@@ -4760,7 +4769,7 @@ pub fn move_opened_file_at_loose(
         .rposition(|&c| c == b'\\' as u16)
     {
         let dirname = &without_leading_dot_slash[0..last_slash];
-        let fd = match bun_sys::open_dir_at_windows(
+        let fd = bun_sys::open_dir_at_windows(
             new_dir_fd,
             dirname,
             bun_sys::WindowsOpenDirOptions {
@@ -4768,10 +4777,7 @@ pub fn move_opened_file_at_loose(
                 iterable: false,
                 ..Default::default()
             },
-        ) {
-            bun_sys::Result::Err(e) => return bun_sys::Result::Err(e),
-            bun_sys::Result::Ok(fd) => fd,
-        };
+        )?;
         // RAII close
         let _close = bun_sys::CloseOnDrop::new(fd);
 
@@ -4814,7 +4820,8 @@ pub fn rename_at_w(
         ) {
             bun_sys::Result::Err(_) => {
                 // retry, wtihout FILE_TRAVERSE flag
-                match bun_sys::open_file_at_windows(
+                {
+                    let fd = bun_sys::open_file_at_windows(
                     old_dir_fd,
                     old_path_w,
                     bun_sys::NtCreateFileOptions {
@@ -4824,9 +4831,8 @@ pub fn rename_at_w(
                             | win32::FILE_OPEN_REPARSE_POINT,
                         ..Default::default()
                     },
-                ) {
-                    bun_sys::Result::Err(err2) => return bun_sys::Result::Err(err2),
-                    bun_sys::Result::Ok(fd) => break 'brk fd,
+                )?;
+                    break 'brk fd
                 }
             }
             bun_sys::Result::Ok(fd) => break 'brk fd,
@@ -4892,6 +4898,10 @@ pub fn GetEnvironmentStringsW() -> Result<*mut u16, GetEnvironmentStringsError> 
     Ok(p)
 }
 
+// C-ABI shim: `penv` must be a block returned by GetEnvironmentStringsW,
+// freed exactly once — a provenance/single-free contract, not a deref one;
+// the kernel validates the pointer.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn FreeEnvironmentStringsW(penv: *mut u16) {
     // SAFETY: penv from GetEnvironmentStringsW
     let rc = unsafe { kernel32_2::FreeEnvironmentStringsW(penv) };
@@ -4906,6 +4916,9 @@ pub enum GetEnvironmentVariableError {
     Unexpected,
 }
 
+// C-ABI shim: callers pass NUL-terminated buffers per the Win32 contract;
+// not_unsafe_ptr_arg_deref is the standard false positive on these wrappers.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn GetEnvironmentVariableW(
     lpName: LPWSTR,
     lpBuffer: *mut u16,

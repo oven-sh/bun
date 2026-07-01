@@ -213,6 +213,10 @@ impl ResultFlags {
     }
 }
 
+// Success IS the common case — boxing it would add an allocation per
+// resolution to shrink the rare variants; the 416-byte by-value shape is
+// deliberate.
+#[allow(clippy::large_enum_variant)]
 pub enum ResultUnion {
     Success(Result),
     Failure(bun_core::Error),

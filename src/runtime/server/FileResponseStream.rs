@@ -68,6 +68,9 @@ struct Sendfile {
     has_set_on_writable: bool,
 }
 
+// Manual: `Fd` has no `Default` (POSIX needs `Fd::INVALID`); the derive is
+// only equivalent on Windows where the fd field is compiled out.
+#[allow(clippy::derivable_impls)]
 impl Default for Sendfile {
     fn default() -> Self {
         Self {
@@ -80,6 +83,7 @@ impl Default for Sendfile {
         }
     }
 }
+
 
 bitflags::bitflags! {
     #[derive(Default, Copy, Clone)]

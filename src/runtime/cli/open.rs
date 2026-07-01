@@ -390,6 +390,8 @@ pub(super) struct SpawnedEditorContext {
 }
 
 impl Default for SpawnedEditorContext {
+    // One editor spawn per invocation; context embeds its path scratch.
+    #[allow(clippy::large_stack_frames)]
     fn default() -> Self {
         Self {
             file_path_buf: [0; 1024 + MAX_PATH_BYTES],
@@ -505,7 +507,7 @@ impl EditorContext {
         }
 
         // `write_file` wants a `&ZStr`; NUL-terminate `basename` into a path buffer.
-        let mut basename_zbuf = PathBuffer::uninit();
+        let mut basename_zbuf = bun_paths::path_buffer_pool::get();
         let basename_z = bun_paths::resolve_path::z(basename, &mut basename_zbuf);
         // `?` converts bun_sys::Error → bun_core::Error directly; explicit
         // .map_err(Into::into) became ambiguous once node_os::OsError added
@@ -514,7 +516,7 @@ impl EditorContext {
 
         let opened = bun_sys::File::open_at(tmpdir, basename, bun_sys::O::RDONLY, 0)?;
 
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let resolved = bun_sys::get_fd_path(opened.handle(), &mut path_buf)?;
 
         editor_.open(path, resolved, Some(line), Some(column))
@@ -527,12 +529,12 @@ impl EditorContext {
     }
 
     pub fn detect_editor(&mut self, env: &mut dot_env::Loader) {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         // Note: borrowck — `by_path_for_editor`/`by_fallback` tie `out`'s lifetime
         // to `&'a mut buf`. On the `false` path NLL conservatively keeps `buf` borrowed
         // (Polonius case). Re-borrow through a raw pointer at each call site; on a hit
         // we return immediately so only one `&mut` is ever live.
-        let buf_ptr: *mut PathBuffer = &raw mut buf;
+        let buf_ptr: *mut PathBuffer = &raw mut *buf;
         let mut out: &[u8] = b"";
 
         // first: choose from user preference

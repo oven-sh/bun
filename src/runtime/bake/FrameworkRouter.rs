@@ -14,7 +14,7 @@ use bun_core::Output;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, Strong, StrongOptional,
 };
-use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer};
+use bun_paths::{self as paths, MAX_PATH_BYTES};
 use bun_resolver::{DirInfo, Resolver};
 
 use bun_wyhash;
@@ -298,6 +298,8 @@ impl EncodedPattern {
         .peek()
     }
 
+    // Route-scan cold path; the pattern scratch is embedded by design.
+    #[allow(clippy::large_stack_frames)]
     pub fn effective_url_hash(&self) -> usize {
         // The strategy is to write all bytes, then hash them. Avoiding
         // multiple hash calls on small chunks. Allocation is not needed
@@ -1610,7 +1612,7 @@ impl FrameworkRouter {
                             }
                         }
 
-                        let mut rel_path_buf = PathBuffer::uninit();
+                        let mut rel_path_buf = bun_paths::path_buffer_pool::get();
                         let full_rel_path_len = {
                             let full_rel_path = paths::resolve_path::relative_normalized_buf::<
                                 paths::platform::Auto,

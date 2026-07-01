@@ -29,7 +29,6 @@ use bun_jsc::{
     self as jsc, AnyPromise, JSGlobalObject, JSModuleLoader, JSPromise, JSValue, JsResult,
     StringJsc as _,
 };
-use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
 use bun_resolver as resolver;
 
@@ -84,7 +83,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         Global::crash();
     }
 
-    let mut cwd_buf = PathBuffer::uninit();
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
     let cwd = match bun_core::getcwd(&mut cwd_buf) {
         Ok(cwd) => cwd.as_bytes(),
         Err(err) => {
@@ -285,6 +284,8 @@ pub(super) fn write_sourcemap_to_disk(
     Ok(())
 }
 
+// Production build cold path; PatternBuffer scratch.
+#[allow(clippy::large_stack_frames)]
 pub(super) fn build_with_vm(
     ctx: Context,
     cwd: &[u8],
@@ -546,7 +547,7 @@ pub(super) fn build_with_vm(
     // trailing slash
     let public_path: &[u8] = b"/";
 
-    let mut root_dir_buf = PathBuffer::uninit();
+    let mut root_dir_buf = bun_paths::path_buffer_pool::get();
     let root_dir_path =
         resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut root_dir_buf.0, &[b"dist"]);
     // Note: reshaped for borrowck — copy out so root_dir_buf can drop.

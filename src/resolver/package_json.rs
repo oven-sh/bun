@@ -2210,6 +2210,8 @@ thread_local! {
 }
 
 #[inline]
+// Thread-local init-once; the ModuleBufs box is heap-destined.
+#[allow(clippy::large_stack_frames)]
 fn module_bufs() -> *mut ModuleBufs {
     MODULE_BUFS.with(|c| {
         let mut p = c.get();

@@ -2,7 +2,7 @@ use bstr::BStr;
 
 use bun_core::strings;
 use bun_core::{Global, Output, err};
-use bun_paths::{AbsPath, PathBuffer};
+use bun_paths::AbsPath;
 use bun_resolver::fs::FileSystem;
 use bun_sys::{Dir, Fd, FdDirExt};
 
@@ -172,7 +172,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                 use bun_paths::{platform, resolve_path};
                 // create the junction
                 let top_level = FileSystem::instance().top_level_dir_without_trailing_slash();
-                let mut link_path_buf = PathBuffer::uninit();
+                let mut link_path_buf = bun_paths::path_buffer_pool::get();
                 link_path_buf.0[..top_level.len()].copy_from_slice(top_level);
                 link_path_buf.0[top_level.len()] = 0;
                 // SAFETY: NUL written at link_path_buf[top_level.len()] above.
@@ -217,9 +217,9 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
 
         // Step 3b. Link any global bins
         if package.bin.tag != bin::Tag::None {
-            let mut link_target_buf = PathBuffer::uninit();
-            let mut link_dest_buf = PathBuffer::uninit();
-            let mut link_rel_buf = PathBuffer::uninit();
+            let mut link_target_buf = bun_paths::path_buffer_pool::get();
+            let mut link_dest_buf = bun_paths::path_buffer_pool::get();
+            let mut link_rel_buf = bun_paths::path_buffer_pool::get();
 
             // `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`)
             // cannot alias the same value, so resolve the fd path twice (cheap:

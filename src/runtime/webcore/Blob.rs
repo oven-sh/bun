@@ -467,6 +467,7 @@ impl BlobExt for Blob {
         {
             // SAFETY: handler was just boxed; sole owner.
             unsafe { (*handler).promise = jsc::JSPromiseStrong::init(global) };
+            // SAFETY: same freshly-boxed handler as the line above.
             let promise_value = unsafe { (*handler).promise.value() };
             promise_value.ensure_still_alive();
 
@@ -1515,7 +1516,7 @@ impl BlobExt for Blob {
                 let fd: Fd = if let PathOrFileDescriptor::Fd(fd) = pathlike {
                     *fd
                 } else {
-                    let mut file_path = bun_paths::PathBuffer::uninit();
+                    let mut file_path = bun_paths::path_buffer_pool::get();
                     let path = pathlike.path().slice_z(&mut file_path);
                     match bun_sys::open(
                         path,
@@ -1563,7 +1564,7 @@ impl BlobExt for Blob {
                             .expect("Blob.global_this set at construction")
                             .bun_vm()
                             .as_mut()
-                            .event_loop() as *mut (),
+                            .event_loop().cast::<()>(),
                     ),
                 );
                 // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
@@ -1577,9 +1578,10 @@ impl BlobExt for Blob {
                 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
                 if is_stdout_or_stderr {
                     // SAFETY: sink is live; sole owner here.
-                    if let bun_sys::Result::Err(err) =
-                        unsafe { (*sink).writer.with_mut(|w| w.start_sync(fd, false)) }
-                    {
+                    let started = unsafe { (*sink).writer.with_mut(|w| w.start_sync(fd, false)) };
+                    if let bun_sys::Result::Err(err) = started {
+                        // SAFETY: releases the ref taken at creation; start failed
+                        // so no writer callback can race the release.
                         unsafe { webcore::FileSink::deref(sink) };
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
@@ -1588,9 +1590,10 @@ impl BlobExt for Blob {
                     }
                 } else {
                     // SAFETY: sink is live; sole owner here.
-                    if let bun_sys::Result::Err(err) =
-                        unsafe { (*sink).writer.with_mut(|w| w.start(fd, true)) }
-                    {
+                    let started = unsafe { (*sink).writer.with_mut(|w| w.start(fd, true)) };
+                    if let bun_sys::Result::Err(err) = started {
+                        // SAFETY: releases the ref taken at creation; start failed
+                        // so no writer callback can race the release.
                         unsafe { webcore::FileSink::deref(sink) };
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
@@ -1883,7 +1886,7 @@ impl BlobExt for Blob {
             let fd: Fd = match pathlike {
                 PathOrFileDescriptor::Fd(fd) => *fd,
                 PathOrFileDescriptor::Path(p) => {
-                    let mut file_path = bun_paths::PathBuffer::uninit();
+                    let mut file_path = bun_paths::path_buffer_pool::get();
                     match bun_sys::open(
                         p.slice_z(&mut file_path),
                         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
@@ -1924,7 +1927,7 @@ impl BlobExt for Blob {
                         .expect("Blob.global_this set at construction")
                         .bun_vm()
                         .as_mut()
-                        .event_loop() as *mut (),
+                        .event_loop().cast::<()>(),
                 ),
             );
             // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink; sole owner here.
@@ -4659,7 +4662,7 @@ fn write_file_with_empty_source_to_destination(
                                 }
 
                                 // SAFETY: we check if `file.pathlike` is an fd above, returning if it is.
-                                let mut buf = bun_paths::PathBuffer::uninit();
+                                let mut buf = bun_paths::path_buffer_pool::get();
                                 let mode: bun_sys::Mode =
                                     options.mode.unwrap_or(node::fs::DEFAULT_PERMISSION);
                                 match bun_sys::File::open(
@@ -5502,7 +5505,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
     } else {
-        let mut file_path = bun_paths::PathBuffer::uninit();
+        let mut file_path = bun_paths::path_buffer_pool::get();
         match bun_sys::open(
             pathlike.path().slice_z(&mut file_path),
             // we deliberately don't use O_TRUNC here
@@ -5586,7 +5589,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
     } else {
-        let mut file_path = bun_paths::PathBuffer::uninit();
+        let mut file_path = bun_paths::path_buffer_pool::get();
         let flags = if cfg!(not(windows)) {
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK
         } else {
@@ -6317,11 +6320,11 @@ fn resolve_file_stat(store: &StoreRef) {
     let file = store.data_mut().as_file_mut();
     match &file.pathlike {
         PathOrFileDescriptor::Path(path) => {
-            let mut buffer = bun_paths::PathBuffer::uninit();
+            let mut buffer = bun_paths::path_buffer_pool::get();
             match bun_sys::stat(path.slice_z(&mut buffer)) {
                 bun_sys::Result::Ok(stat) => {
                     file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                        ((stat.st_size.max(0)) as u64) as SizeType
+                        bun_sys::stat_size(&stat) as SizeType
                     } else {
                         MAX_SIZE
                     };
@@ -6336,7 +6339,7 @@ fn resolve_file_stat(store: &StoreRef) {
         PathOrFileDescriptor::Fd(fd) => match bun_sys::fstat(*fd) {
             bun_sys::Result::Ok(stat) => {
                 file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                    ((stat.st_size.max(0)) as u64) as SizeType
+                    bun_sys::stat_size(&stat) as SizeType
                 } else {
                     MAX_SIZE
                 };
@@ -7173,7 +7176,7 @@ pub trait FileOpener: Sized {
     }
 
     fn get_fd_by_opening(&mut self, callback: fn(&mut Self, Fd)) {
-        let mut buf = bun_paths::PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let path_string = match self.pathlike() {
             PathOrFileDescriptor::Path(p) => p.clone(),
             PathOrFileDescriptor::Fd(_) => unreachable!(),

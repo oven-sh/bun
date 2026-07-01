@@ -24,7 +24,7 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult,
     SystemError, host_fn,
 };
-use bun_paths::{MAX_PATH_BYTES, PathBuffer};
+use bun_paths::MAX_PATH_BYTES;
 #[cfg(windows)]
 use bun_sys::windows::Win32Error;
 #[cfg(not(windows))]
@@ -1096,7 +1096,7 @@ pub mod get_addr_info_request {
             // SAFETY: NUL written at port_buf[port_len]
             let port_z = ZStr::from_buf(&port_buf[..], port_len);
 
-            let mut hostname = PathBuffer::uninit();
+            let mut hostname = bun_paths::path_buffer_pool::get();
             // Reserve the last byte for the NUL terminator so the index below
             // can never exceed the buffer even if the upstream length guard in
             // `doLookup` is bypassed.
@@ -1164,7 +1164,7 @@ pub mod get_addr_info_request {
             // SAFETY: NUL written at port_buf[port_len]
             let port_z = ZStr::from_buf(&port_buf[..], port_len);
 
-            let mut hostname = PathBuffer::uninit();
+            let mut hostname = bun_paths::path_buffer_pool::get();
             // Reserve the last byte for the NUL terminator so the index below
             // can never exceed the buffer even if the upstream length guard in
             // `doLookup` is bypassed.
@@ -2467,11 +2467,14 @@ pub mod internal {
                 if !(*info_).ai_addr.is_null() && (*info_).ai_family == netc::AF_INET {
                     (*entry).addr = bun_core::ffi::zeroed();
                     let addr_in = (&raw mut (*entry).addr).cast::<netc::sockaddr_in>();
-                    *addr_in = *(*info_).ai_addr.cast::<netc::sockaddr_in>();
+                    // read_unaligned: ai_addr is OS-allocated and ABI-aligned in
+                    // practice, but the type only promises sockaddr alignment.
+                    *addr_in = (*info_).ai_addr.cast::<netc::sockaddr_in>().read_unaligned();
                 } else if !(*info_).ai_addr.is_null() && (*info_).ai_family == netc::AF_INET6 {
                     (*entry).addr = bun_core::ffi::zeroed();
                     let addr_in = (&raw mut (*entry).addr).cast::<netc::sockaddr_in6>();
-                    *addr_in = *(*info_).ai_addr.cast::<netc::sockaddr_in6>();
+                    // read_unaligned: same rationale as the AF_INET arm above.
+                    *addr_in = (*info_).ai_addr.cast::<netc::sockaddr_in6>().read_unaligned();
                 } else {
                     (*entry).addr = bun_core::ffi::zeroed();
                 }
@@ -2571,6 +2574,8 @@ pub mod internal {
             ptr::null()
         };
 
+        // SAFETY: hints/out-pointers are stack locals valid for the call;
+        // Bun__ensure_winsock is the linked no-arg C symbol from the engine.
         #[cfg(windows)]
         unsafe {
             use bun_sys::windows::ws2_32 as wsa;
@@ -2593,8 +2598,8 @@ pub mod internal {
                     .map(|h| h.as_ptr().cast::<c_char>())
                     .unwrap_or(ptr::null()),
                 service,
-                &wsa_hints,
-                &mut addrinfo,
+                &raw const wsa_hints,
+                &raw mut addrinfo,
             );
             after_result(req, addrinfo.cast(), err);
         }

@@ -13,7 +13,7 @@ use bun_install::package_manager::{
     self, LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
 };
 use bun_install::{CommandLineArguments, DependencyID, PackageID, PackageManager, resolution};
-use bun_paths::{self as path, PathBuffer};
+use bun_paths::{self as path};
 use bun_resolver::fs::FileSystem;
 use bun_wyhash::hash;
 
@@ -232,7 +232,7 @@ impl OutdatedCommand {
             workspace_pkg_ids.push(pkg_id as PackageID);
         }
 
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
 
         let converted_filters: Vec<WorkspaceFilter> = filters
             .iter()

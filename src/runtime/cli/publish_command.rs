@@ -15,7 +15,7 @@ use bun_install::{self as install, Lockfile, Npm, PackageManager, Subcommand};
 use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
 use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
-use bun_paths::{self as path, PathBuffer};
+use bun_paths::{self as path};
 use bun_resolver::fs::FileSystem;
 use bun_sha_hmac as sha;
 use bun_simdutf_sys::simdutf;
@@ -143,7 +143,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         manager: &'a mut PackageManager,
         tarball_path: &[u8],
     ) -> Result<Context<'a, DIRECTORY_PUBLISH>, FromTarballError> {
-        let mut abs_buf = PathBuffer::uninit();
+        let mut abs_buf = bun_paths::path_buffer_pool::get();
         let abs_tarball_path = join_abs_string_buf_z::<path::platform::Auto>(
             FileSystem::instance().top_level_dir,
             &mut abs_buf,
@@ -1626,7 +1626,7 @@ impl PublishCommand {
                 crate::cli::cli_dupe($v) as &'static [u8]
             };
         }
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         if let Some(bin_query) = json.as_property(b"bin") {
             match &bin_query.expr.data {
                 ExprData::EString(bin_str) => {

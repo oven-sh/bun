@@ -1302,6 +1302,9 @@ impl VirtualMachine {
     /// generates) the synthetic `MacroEntryPoint` source for `(entry_path,
     /// function_name, hash)` and evaluates it under the JSC API lock via
     /// [`run_with_api_lock`].
+    // Box::new temporary is heap-destined (the macro entry point embeds its
+    // path scratch by design, same as the bundler entry points).
+    #[allow(clippy::large_stack_frames)]
     pub fn load_macro_entry_point(
         &mut self,
         entry_path: &[u8],
@@ -6481,13 +6484,13 @@ impl VirtualMachine {
             let data_ptr = unsafe { core::ptr::addr_of_mut!((*instance).data) };
             // SAFETY: `data_ptr` points at the freshly-initialized SendQueue
             // stored inline in `*instance`; no other live `&mut` aliases it.
-            if let Err(_) = unsafe { crate::ipc::SendQueue::windows_configure_client(data_ptr, fd) }
+            if unsafe { crate::ipc::SendQueue::windows_configure_client(data_ptr, fd) }.is_err()
             {
                 // SAFETY: `instance` was produced by `IPCInstance::new`
                 // (heap::alloc) above and is not yet aliased.
                 unsafe { IPCInstance::deinit(instance) };
                 self.ipc = None;
-                bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
+                bun_core::warn!("Unable to start IPC pipe '{:?}'", fd);
                 return None;
             }
 

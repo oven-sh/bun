@@ -33,8 +33,6 @@ use bun_boringssl as boringssl;
 use bun_core::strings;
 #[cfg(windows)]
 use bun_jsc::GlobalRef;
-#[cfg(windows)]
-use bun_paths::PathBuffer;
 
 bun_output::define_scoped_log!(log, Listener, visible);
 
@@ -199,13 +197,13 @@ impl Listener {
         #[cfg(windows)]
         if port.is_none() {
             // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
-            let mut buf = PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             if let Some(pipe_name) =
                 normalize_pipe_name(socket_config.hostname_or_unix.slice(), buf.as_mut_slice())
             {
                 // Note: reshaped — `pipe_name` borrows `buf`; copy to an owned
                 // buffer so the borrow ends before we move `socket_config` below.
-                let mut pipe_buf = PathBuffer::uninit();
+                let mut pipe_buf = bun_paths::path_buffer_pool::get();
                 let pipe_len = pipe_name.len();
                 pipe_buf[..pipe_len].copy_from_slice(pipe_name);
 
@@ -222,11 +220,11 @@ impl Listener {
                 // Note: by-value move of Handlers — see the non-pipe arm below
                 // for rationale on `ptr::read` + `mem::forget`.
                 // SAFETY: socket_config.handlers is valid; we forget socket_config to avoid double-drop.
-                let handlers_moved: Handlers = unsafe { core::ptr::read(&socket_config.handlers) };
+                let handlers_moved: Handlers = unsafe { core::ptr::read(&raw const socket_config.handlers) };
                 let protos_taken = socket_config.ssl.as_mut().and_then(|s| s.take_protos());
                 let default_data = socket_config.default_data;
                 let ssl_cfg_taken = socket_config.ssl.take();
-                core::mem::forget(socket_config);
+                let _shell = core::mem::ManuallyDrop::new(socket_config); // fields scavenged above; Drop would double-free them
 
                 let this: *mut Listener = bun_core::heap::into_raw(Box::new(Listener {
                     handlers: JsCell::new(handlers_moved),
@@ -1046,7 +1044,7 @@ impl Listener {
         {
             use crate::socket::windows_named_pipe_context::SocketType as PipeSocketType;
 
-            let mut buf = PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             // Note: reshaped for borrowck — `normalize_pipe_name` borrows
             // `buf` for the returned slice; store length and re-borrow after the
             // `connection` match drops.
@@ -1072,9 +1070,9 @@ impl Listener {
 
                 // Note: by-value move of Handlers — see `listen()` for rationale.
                 // SAFETY: socket_config.handlers is valid; we forget socket_config below.
-                let handlers_moved: Handlers = unsafe { core::ptr::read(&socket_config.handlers) };
+                let handlers_moved: Handlers = unsafe { core::ptr::read(&raw const socket_config.handlers) };
                 let mut ssl_taken = socket_config.ssl.take();
-                core::mem::forget(socket_config);
+                let _shell = core::mem::ManuallyDrop::new(socket_config); // fields scavenged above; Drop would double-free them
 
                 let mut handlers_box = Box::new(handlers_moved);
                 handlers_box.mode = SocketMode::Client;
@@ -1115,7 +1113,7 @@ impl Listener {
                         // Free old resources before reassignment to prevent memory leaks
                         // when sockets are reused for reconnection (common with MongoDB driver)
                         prev.connection.set(Some(connection));
-                        prev.local_binding.set(local_binding.clone());
+                        prev.local_binding.set(local_binding);
                         if prev.flags.get().contains(SocketFlags::OWNED_PROTOS) {
                             prev.protos.set(None);
                         }
@@ -1130,7 +1128,7 @@ impl Listener {
                             handlers: Cell::new(NonNull::new(handlers_ptr)),
                             socket: Cell::new(uws::NewSocketHandler::<true>::DETACHED),
                             connection: JsCell::new(Some(connection)),
-                            local_binding: JsCell::new(local_binding.clone()),
+                            local_binding: JsCell::new(local_binding),
                             protos: JsCell::new(ssl_taken.as_mut().and_then(|s| s.take_protos())),
                             server_name: JsCell::new(
                                 ssl_taken.as_mut().and_then(|s| s.take_server_name()),
@@ -1161,7 +1159,7 @@ impl Listener {
                     // success, initTLSWrapper frees on failure), so null our local
                     // before the call so the cleanup guard above can't double-free.
                     let ctx_for_pipe =
-                        core::mem::replace(&mut *ssl_ctx_guard, None).map(|p| p.as_ptr());
+                        (*ssl_ctx_guard).take().map(|p| p.as_ptr());
                     // Note: re-borrow connection from the socket field — `connection`
                     // was moved into `tls` above.
                     let named_pipe_result = match tls_ref.connection.get().as_ref().unwrap() {
@@ -1218,7 +1216,7 @@ impl Listener {
                         // non-pipe arm below. Previously `.connection = null`
                         // dropped the duped pipe-path bytes on the floor.
                         prev.connection.set(Some(connection));
-                        prev.local_binding.set(local_binding.clone());
+                        prev.local_binding.set(local_binding);
                         debug_assert!(prev.protos.get().is_none());
                         debug_assert!(prev.server_name.get().is_none());
                         prev_ptr
@@ -1228,7 +1226,7 @@ impl Listener {
                             handlers: Cell::new(NonNull::new(handlers_ptr)),
                             socket: Cell::new(uws::NewSocketHandler::<false>::DETACHED),
                             connection: JsCell::new(Some(connection)),
-                            local_binding: JsCell::new(local_binding.clone()),
+                            local_binding: JsCell::new(local_binding),
                             protos: JsCell::new(None),
                             server_name: JsCell::new(None),
                             owned_ssl_ctx: Cell::new(None),

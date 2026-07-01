@@ -19,7 +19,7 @@ use bun_core::{ZStr, strings};
 use bun_install::dependency::VersionTag;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
-use bun_paths::{self, DELIMITER, PathBuffer};
+use bun_paths::{self, DELIMITER};
 use bun_resolver::fs::RealFS;
 #[cfg(windows)]
 use bun_sys::FdExt as _;
@@ -380,7 +380,7 @@ impl BunxCommand {
         dir_fd: Fd,
         package_name: &[u8],
     ) -> Result<Box<[u8]>, bun_core::Error> {
-        let mut subpath = PathBuffer::uninit();
+        let mut subpath = bun_paths::path_buffer_pool::get();
         let len = {
             let total = subpath.len();
             let mut cursor: &mut [u8] = &mut subpath[..];
@@ -408,7 +408,7 @@ impl BunxCommand {
         package_name: &[u8],
         with_stale_check: bool,
     ) -> Result<Box<[u8]>, bun_core::Error> {
-        let mut subpath = PathBuffer::uninit();
+        let mut subpath = bun_paths::path_buffer_pool::get();
         if with_stale_check {
             let len = {
                 let total = subpath.len();
@@ -441,8 +441,8 @@ impl BunxCommand {
                     let rc = unsafe {
                         win::ntdll::NtQueryInformationFile(
                             target_package_json_fd.native(),
-                            &mut io_status_block,
-                            (&mut info as *mut win::FILE_BASIC_INFORMATION).cast(),
+                            &raw mut io_status_block,
+                            (&raw mut info).cast(),
                             u32::try_from(size_of::<win::FILE_BASIC_INFORMATION>())
                                 .expect("int cast"),
                             win::FILE_INFORMATION_CLASS::FileBasicInformation,
@@ -907,10 +907,10 @@ impl BunxCommand {
 
         // `path_buf` is a stack local so
         // `bun_which::which`'s returned slice can borrow it for the rest of exec().
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let top_level_dir: &[u8] = fs.top_level_dir;
 
-        let mut absolute_in_cache_dir_buf = PathBuffer::uninit();
+        let mut absolute_in_cache_dir_buf = bun_paths::path_buffer_pool::get();
         let buf_total = absolute_in_cache_dir_buf.len();
         let mut absolute_in_cache_dir: &[u8] = {
             let mut cursor: &mut [u8] = &mut absolute_in_cache_dir_buf[..];
@@ -930,7 +930,7 @@ impl BunxCommand {
         };
 
         {
-            let mut cache_root_buf = PathBuffer::uninit();
+            let mut cache_root_buf = bun_paths::path_buffer_pool::get();
             cache_root_buf[..bunx_cache_dir.len()].copy_from_slice(bunx_cache_dir);
             cache_root_buf[bunx_cache_dir.len()] = 0;
             if !Self::is_trusted_cache_root(
@@ -1035,8 +1035,8 @@ impl BunxCommand {
                                 let rc = unsafe {
                                     win::ntdll::NtQueryInformationFile(
                                         fd.native(),
-                                        &mut io_status_block,
-                                        (&mut info as *mut win::FILE_BASIC_INFORMATION).cast(),
+                                        &raw mut io_status_block,
+                                        (&raw mut info).cast(),
                                         u32::try_from(size_of::<win::FILE_BASIC_INFORMATION>())
                                             .expect("int cast"),
                                         win::FILE_INFORMATION_CLASS::FileBasicInformation,
@@ -1313,7 +1313,7 @@ impl BunxCommand {
                         // `env_loader` is touched again.
                         // SAFETY: `env_loader` is a valid `&'static mut Loader`; this is a
                         // stacked reborrow, not a sibling alias.
-                        Some(unsafe { &mut *(env_loader as *mut _) }),
+                        Some(unsafe { &mut *std::ptr::from_mut(env_loader) }),
                         None,
                     ),
                 ),

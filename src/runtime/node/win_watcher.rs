@@ -11,7 +11,7 @@ use bun_core::{String as BunString, ZStr};
 use bun_iocp::Loop;
 use bun_iocp::fsevent::{FS_EVENT_RENAME, FS_EVENT_RESCAN, FsEventHandle};
 use bun_jsc as jsc;
-use bun_paths::{PathBuffer, string_paths};
+use bun_paths::string_paths;
 use bun_sys as sys;
 use bun_sys::windows::{Win32Error, win_error};
 use bun_threading::Mutex;
@@ -330,7 +330,7 @@ impl PathWatcher {
         path: &ZStr,
         recursive: bool,
     ) -> sys::Result<*mut PathWatcher> {
-        let mut outbuf = PathBuffer::uninit();
+        let mut outbuf = bun_paths::path_buffer_pool::get();
         // Windows `sys::readlink` returns the byte length; the link target is
         // written into `outbuf[..len]` with `outbuf[len] == 0` (the wrapper
         // NUL-terminates). Reconstruct the string via `ZStr::from_buf`.
@@ -350,7 +350,7 @@ impl PathWatcher {
         };
 
         // BACKREF field stays raw (LIFETIMES.tsv); capture the pointer once before further &mut use.
-        let manager_ptr: *mut PathWatcherManager = manager as *mut PathWatcherManager;
+        let manager_ptr: *mut PathWatcherManager = std::ptr::from_mut::<PathWatcherManager>(manager);
 
         if let Some(&existing) = manager.watchers.get(event_path.as_bytes()) {
             return sys::Result::Ok(existing);
@@ -511,10 +511,7 @@ pub fn watch(
     // happens on this VM's thread, and concurrent `watch()` calls from other
     // Workers are serialized by DEFAULT_MANAGER_MUTEX (still held here), so
     // this `&mut` is unaliased for the call.
-    let watcher = match PathWatcher::init(unsafe { &mut *manager }, path, recursive) {
-        sys::Result::Err(err) => return sys::Result::Err(err),
-        sys::Result::Ok(w) => w,
-    };
+    let watcher = PathWatcher::init(unsafe { &mut *manager }, path, recursive)?;
     // SAFETY: watcher is a valid freshly-returned heap pointer.
     unsafe {
         (*watcher).handlers.insert(ctx, ChangeEvent::default());

@@ -439,7 +439,7 @@ impl Write for StderrWriter {
                     h,
                     bytes.as_ptr(),
                     bytes.len() as u32,
-                    &mut written,
+                    &raw mut written,
                     core::ptr::null_mut(),
                 );
             }
@@ -1044,12 +1044,13 @@ mod draft {
                                     let result = unsafe {
                                         bun_sys::windows::GetThreadDescription(
                                             bun_sys::windows::GetCurrentThread(),
-                                            &mut name,
+                                            &raw mut name,
                                         )
                                     };
                                     // SAFETY: `name` is the PWSTR out-param written by GetThreadDescription; deref is guarded by the S_OK check via `&&` short-circuit
                                     if bun_sys::windows::HRESULT_CODE(result)
                                         == bun_sys::windows::S_OK
+                                        // SAFETY: S_OK (checked above via &&) guarantees `name` is a valid PWSTR.
                                         && unsafe { *name } != 0
                                     {
                                         // SAFETY: `name` is a valid NUL-terminated wide string
@@ -1767,7 +1768,7 @@ mod draft {
                 // Publish to T0 storage (single source of truth — see note above
                 // `reset_on_posix`). `HANDLE` is `*mut c_void`; cast is identity.
                 bun_core::WINDOWS_SEGFAULT_HANDLE
-                    .store(handle as *mut core::ffi::c_void, Ordering::Relaxed);
+                    .store(handle.cast::<core::ffi::c_void>(), Ordering::Relaxed);
             }
         }
         #[cfg(any(
@@ -2030,9 +2031,11 @@ mod draft {
     ) -> c_long {
         // SAFETY: kernel provides a valid EXCEPTION_POINTERS
         let info = unsafe { &*info };
+        // SAFETY: ExceptionRecord is non-null per the vectored-handler contract.
         let reason = match unsafe { (*info.ExceptionRecord).ExceptionCode } {
             bun_sys::windows::EXCEPTION_DATATYPE_MISALIGNMENT => CrashReason::DatatypeMisalignment,
             bun_sys::windows::EXCEPTION_ACCESS_VIOLATION => {
+                // SAFETY: same ExceptionRecord contract as above.
                 CrashReason::SegmentationFault(unsafe {
                     (*info.ExceptionRecord).ExceptionInformation[1]
                 })
@@ -2042,7 +2045,8 @@ mod draft {
                 // INSTRUCTION` (winnt.h); avoids depending on the arch-specific
                 // `CONTEXT` layout.
                 CrashReason::IllegalInstruction(
-                    unsafe { (*info.ExceptionRecord).ExceptionAddress } as usize
+                    // SAFETY: same ExceptionRecord contract as above.
+                    unsafe { (*info.ExceptionRecord).ExceptionAddress } as usize,
                 )
             }
             bun_sys::windows::EXCEPTION_STACK_OVERFLOW => CrashReason::StackOverflow,
@@ -2174,9 +2178,9 @@ mod draft {
                 }
                 #[cfg(windows)]
                 {
-                    write!(
+                    writeln!(
                         writer,
-                        "Windows v{}\n",
+                        "Windows v{}",
                         bun_sys::windows::detect_runtime_version()
                     )
                     .map_err(fmt_err)?;
@@ -2829,8 +2833,8 @@ mod draft {
                     0,
                     core::ptr::null_mut(),
                     core::ptr::null(),
-                    &mut startup_info,
-                    &mut process,
+                    &raw mut startup_info,
+                    &raw mut process,
                 )
             };
 

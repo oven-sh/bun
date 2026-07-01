@@ -1040,6 +1040,7 @@ impl Writable {
                     // SAFETY: `old` is Blob (matched above) and ManuallyDrop
                     // prevents its Drop from running, so this is the sole move.
                     let blob = match &*old {
+                        // SAFETY: sole move — `old` is ManuallyDrop (no Drop).
                         Stdio::Blob(b) => unsafe { core::ptr::read(b) },
                         _ => unreachable!(),
                     };

@@ -3,7 +3,6 @@ use core::mem::ManuallyDrop;
 
 use bun_core::Output;
 use bun_core::strings;
-use bun_paths::PathBuffer;
 use bun_semver as semver;
 use bun_semver::{SlicedString, String as SemverString};
 
@@ -242,7 +241,7 @@ impl PackageManager {
                 self.lockfile.buffers.string_bytes.as_slice(),
                 tags_buf.as_slice(),
             ) {
-                let mut buf = PathBuffer::uninit();
+                let mut buf = bun_paths::path_buffer_pool::get();
                 let npm_package_path = match super::path_for_cached_npm_path(
                     self,
                     &mut buf,

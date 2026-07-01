@@ -257,7 +257,7 @@ impl<'a> Writable<'a> {
                     };
                     return Ok(Writable::Buffer(StaticPipeWriter::create(
                         evtloop,
-                        subprocess as *mut Subprocess<'a>,
+                        std::ptr::from_mut::<Subprocess<'a>>(subprocess),
                         result,
                         super::source_from_blob(blob),
                     )));
@@ -265,7 +265,7 @@ impl<'a> Writable<'a> {
                 Stdio::ArrayBuffer(array_buffer) => {
                     return Ok(Writable::Buffer(StaticPipeWriter::create(
                         evtloop,
-                        subprocess as *mut Subprocess<'a>,
+                        std::ptr::from_mut::<Subprocess<'a>>(subprocess),
                         result,
                         super::source_from_array_buffer(core::mem::take(array_buffer)),
                     )));

@@ -12,7 +12,6 @@ use bun_install::npm::{self, PackageManifest};
 use bun_js_parser as ast;
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
-use bun_paths::PathBuffer;
 use bun_semver as Semver;
 use bun_url::URL; // bumpalo::Bump re-export
 
@@ -77,12 +76,12 @@ pub(crate) fn view(
     // (`&mut self`) below; matches `outdated_command` / `update_interactive_command`.
     let scope = manager.scope_for_package_name(name).clone();
 
-    let mut url_buf = PathBuffer::uninit();
+    let mut url_buf = bun_paths::path_buffer_pool::get();
     let encoded_name = buf_print(
         url_buf.0.as_mut_slice(),
         format_args!("{}", bun_fmt::dependency_url(name)),
     );
-    let mut path_buf = PathBuffer::uninit();
+    let mut path_buf = bun_paths::path_buffer_pool::get();
     // Always fetch the full registry manifest, not a specific version
     let url_slice = buf_print(
         path_buf.0.as_mut_slice(),

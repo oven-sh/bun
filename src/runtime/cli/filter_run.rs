@@ -713,7 +713,7 @@ pub(crate) fn run_scripts_with_filter(
     let mut patterns: Vec<Box<[u8]>> = Vec::new();
 
     // Find package.json at workspace root
-    let mut root_buf = bun_paths::PathBuffer::uninit();
+    let mut root_buf = bun_paths::path_buffer_pool::get();
     let resolve_root = FilterArg::get_candidate_package_patterns(
         // SAFETY: `ctx.log` is the process-static `Cli::LOG_`; CLI dispatch is single-threaded
         // and no other `&mut Log` borrow is live for the duration of this call.

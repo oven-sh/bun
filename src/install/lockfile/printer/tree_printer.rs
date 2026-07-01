@@ -336,6 +336,8 @@ where
 
 /// - Prints an empty newline with no diffs
 /// - Prints a leading and trailing blank newline with diffs
+// Print-time cold path; NamesIterator embeds its bin-name scratch.
+#[allow(clippy::large_stack_frames)]
 pub fn print<W, const ENABLE_ANSI_COLORS: bool>(
     this: &Printer,
     manager: &mut PackageManager,

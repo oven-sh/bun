@@ -679,7 +679,7 @@ impl WindowsNamedPipe {
                 tls_nn,
                 false,
                 ssl_wrapper::Handlers {
-                    ctx: self as *mut _,
+                    ctx: std::ptr::from_mut(self),
                     on_open: Self::ssl_on_open,
                     on_handshake: Self::ssl_on_handshake,
                     on_data: Self::ssl_on_data,
@@ -747,17 +747,12 @@ impl WindowsNamedPipe {
         self.flags.set_disconnected(true);
 
         if let Some(result) = self.init_tls_wrapper(ssl_options, owned_ctx) {
-            if result.is_err() {
-                return result;
-            }
+            result?;
         }
         // Adopt the fd: the engine takes a private duplicate (PIPE-19) and
         // the fd is recorded for release on close — the same teardown the
         // old uv table-fd ownership produced.
-        let ps = match Source::open_pipe(self.vm.platform_loop(), fd) {
-            bun_sys::Result::Ok(ps) => ps,
-            bun_sys::Result::Err(e) => return bun_sys::Result::Err(e),
-        };
+        let ps = Source::open_pipe(self.vm.platform_loop(), fd)?;
         self.pipe = Some(ps);
 
         self.r#ref();
@@ -776,9 +771,7 @@ impl WindowsNamedPipe {
         self.flags.set_disconnected(true);
 
         if let Some(result) = self.init_tls_wrapper(ssl_options, owned_ctx) {
-            if result.is_err() {
-                return result;
-            }
+            result?;
         }
         let Some(name) = pipe_name_utf16(path) else {
             return bun_sys::Result::Err(bun_sys::Error::from_code(

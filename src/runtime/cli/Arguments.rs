@@ -21,7 +21,7 @@ use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
 use bun_options_types::schema::api;
 use bun_paths::resolve_path;
-use bun_paths::{PathBuffer, platform};
+use bun_paths::platform;
 
 use crate::cli;
 use crate::cli::colon_list_type::ColonListType;
@@ -48,7 +48,7 @@ pub(crate) fn loader_resolver(input: &[u8]) -> Result<api::Loader, bun_core::Err
 /// Built on `bun_paths::resolve_path` + `bun_sys::File::read_from`, which is
 /// the cross-platform path the rest of the runtime uses.
 pub fn read_file(cwd: &[u8], filename: &[u8]) -> Result<Vec<u8>, bun_core::Error> {
-    let mut buf = PathBuffer::uninit();
+    let mut buf = bun_paths::path_buffer_pool::get();
     let outpath = resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut *buf, &[filename]);
     let len = outpath.len();
     buf[len] = 0;
@@ -756,7 +756,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
     // so we dupe into a plain `Box<[u8]>`.
     let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {
-        let mut outbuf = PathBuffer::uninit();
+        let mut outbuf = bun_paths::path_buffer_pool::get();
         let cwd_len = bun_sys::getcwd(&mut *outbuf)?;
         let out = resolve_path::join_abs::<platform::Loose>(&outbuf[..cwd_len], cwd_arg);
         // `chdir` wants a NUL-terminated path; `join_abs` returns a borrowed
@@ -773,7 +773,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         }
         Box::<[u8]>::from(out_z.as_bytes())
     } else {
-        let mut temp = PathBuffer::uninit();
+        let mut temp = bun_paths::path_buffer_pool::get();
         let len = bun_sys::getcwd(&mut *temp)?;
         Box::<[u8]>::from(&temp[..len])
     };

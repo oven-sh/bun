@@ -1034,8 +1034,10 @@ impl EventLoop {
     /// Only APPLIED deltas ever touched the loop — a pending swap that never
     /// went through `update_counts` must not be subtracted. Accuracy of the
     /// applied counter relies on `KeepAlive`'s concurrent-origin routing.
+    /// # Safety
+    /// `loop_` must be the live platform loop for this event loop (or null).
     #[cfg(windows)]
-    pub fn reconcile_concurrent_refs_for_teardown(
+    pub unsafe fn reconcile_concurrent_refs_for_teardown(
         &self,
         loop_: *mut crate::PlatformEventLoop,
     ) {

@@ -53,6 +53,7 @@ class ScopedConfiguration {
 let workspaceFolders: any[] = [];
 let folderChangeListener: ((e: { added: any[]; removed: any[] }) => void) | undefined;
 const createdControllers: any[] = [];
+const knownFolderPaths = ["/repo/packages/api", "/repo/packages/frontend"];
 
 function vscodeFactory() {
   return {
@@ -71,6 +72,11 @@ function vscodeFactory() {
       onDidChangeWorkspaceFolders: (listener: (e: { added: any[]; removed: any[] }) => void) => {
         folderChangeListener = listener;
         return { dispose() {} };
+      },
+      getWorkspaceFolder: (uri: { fsPath?: string; toString(): string }) => {
+        const p = uri.fsPath ?? uri.toString();
+        const match = knownFolderPaths.find(f => p === f || p.startsWith(`${f}/`));
+        return match ? { uri: { toString: () => `file://${match}` } } : undefined;
       },
       textDocuments: [],
       createFileSystemWatcher: () => ({
@@ -139,6 +145,20 @@ describe("multi-root workspace config scoping (issue #33169)", () => {
   test("default pattern is used when no folder scope matches", () => {
     const other = makeController("/repo/packages/other");
     expect(other._internal.customFilePattern()).toBe(DEFAULT_TEST_PATTERN);
+  });
+
+  test("only adopts opened documents that belong to the controller's folder", () => {
+    const api = makeController("/repo/packages/api");
+    const inApi = { fsPath: "/repo/packages/api/foo.test.ts", toString: () => "file:///repo/packages/api/foo.test.ts" };
+    const inFrontend = {
+      fsPath: "/repo/packages/frontend/bar.test.ts",
+      toString: () => "file:///repo/packages/frontend/bar.test.ts",
+    };
+    const external = { fsPath: "/elsewhere/baz.test.ts", toString: () => "file:///elsewhere/baz.test.ts" };
+
+    expect(api._internal.documentBelongsToFolder(inApi)).toBe(true);
+    expect(api._internal.documentBelongsToFolder(inFrontend)).toBe(false);
+    expect(api._internal.documentBelongsToFolder(external)).toBe(false);
   });
 
   test("per-folder settings are declared with resource scope in package.json", () => {

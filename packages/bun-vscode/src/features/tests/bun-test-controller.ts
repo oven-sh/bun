@@ -130,7 +130,10 @@ export class BunTestController implements vscode.Disposable {
   }
 
   private handleOpenDocument(document: vscode.TextDocument): void {
-    if (this.isTestFile(document) && !this.testController.items.get(windowsVscodeUri(document.uri.fsPath))) {
+    if (!this.isTestFile(document) || !this.documentBelongsToFolder(document.uri)) {
+      return;
+    }
+    if (!this.testController.items.get(windowsVscodeUri(document.uri.fsPath))) {
       this.discoverTests(false, windowsVscodeUri(document.uri.fsPath));
     }
   }
@@ -139,6 +142,14 @@ export class BunTestController implements vscode.Disposable {
     return (
       document?.uri?.scheme === "file" && /\.(test|spec)\.(js|jsx|ts|tsx|cjs|mjs|mts|cts)$/.test(document.uri.fsPath)
     );
+  }
+
+  // The open-document listener is workspace-global, so in a multi-root
+  // workspace every folder's controller sees every opened file. Only adopt a
+  // document that belongs to this controller's folder, matching the
+  // RelativePattern scoping used by findTestFiles and the file watcher.
+  private documentBelongsToFolder(uri: vscode.Uri): boolean {
+    return vscode.workspace.getWorkspaceFolder(uri)?.uri.toString() === this.workspaceFolder.uri.toString();
   }
 
   private async discoverInitialTests(
@@ -1485,6 +1496,7 @@ export class BunTestController implements vscode.Disposable {
       shouldUseTestNamePattern: this.shouldUseTestNamePattern.bind(this),
 
       isTestFile: this.isTestFile.bind(this),
+      documentBelongsToFolder: this.documentBelongsToFolder.bind(this),
       customFilePattern: this.customFilePattern.bind(this),
       getBunExecutionConfig: this.getBunExecutionConfig.bind(this),
 

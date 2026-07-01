@@ -46,7 +46,7 @@ static WebCore::JSReadableByteStreamController* byteControllerOf(JSReadableStrea
 
 // Detaches [[readIntoRequests]] before dispatch ("set to an empty list, then iterate"): once
 // the requests leave the visited deque the MarkedArgumentBuffer is their only root.
-static bool detachReadIntoRequests(JSGlobalObject* globalObject, JSReadableStreamBYOBReader* reader, MarkedArgumentBuffer& out)
+static void detachReadIntoRequests(JSGlobalObject* globalObject, JSReadableStreamBYOBReader* reader, MarkedArgumentBuffer& out)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -56,11 +56,8 @@ static bool detachReadIntoRequests(JSGlobalObject* globalObject, JSReadableStrea
             out.append(request.get());
         reader->m_readIntoRequests.clear();
     }
-    if (out.hasOverflowed()) [[unlikely]] {
+    if (out.hasOverflowed()) [[unlikely]]
         throwOutOfMemoryError(globalObject, scope);
-        return false;
-    }
-    return true;
 }
 
 // ReadableStreamBYOBReaderErrorReadIntoRequests(reader, e)
@@ -69,8 +66,8 @@ void readableStreamBYOBReaderErrorReadIntoRequests(JSGlobalObject* globalObject,
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     MarkedArgumentBuffer readIntoRequests;
-    if (!detachReadIntoRequests(globalObject, reader, readIntoRequests))
-        return;
+    detachReadIntoRequests(globalObject, reader, readIntoRequests);
+    RETURN_IF_EXCEPTION(scope, void());
     for (size_t i = 0; i < readIntoRequests.size(); ++i) {
         uncheckedDowncast<WebCore::JSReadIntoRequest>(readIntoRequests.at(i))->errorSteps(globalObject, error);
         RETURN_IF_EXCEPTION(scope, void());
@@ -388,9 +385,9 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBReaderPrototypeFunction_cancel, (JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* reader = dynamicDowncast<JSReadableStreamBYOBReader>(callFrame->thisValue());
     if (!reader) [[unlikely]]
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStreamBYOBReader.prototype.cancel can only be called on a ReadableStreamBYOBReader"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStreamBYOBReader.prototype.cancel can only be called on a ReadableStreamBYOBReader"_s))));
     if (!reader->m_stream)
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The reader is not attached to a stream"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The reader is not attached to a stream"_s))));
     auto* promise = readableStreamReaderGenericCancel(lexicalGlobalObject, reader, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(promise);
@@ -402,7 +399,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBReaderPrototypeFunction_read, (JSGl
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* reader = dynamicDowncast<JSReadableStreamBYOBReader>(callFrame->thisValue());
     if (!reader) [[unlikely]]
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStreamBYOBReader.prototype.read can only be called on a ReadableStreamBYOBReader"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStreamBYOBReader.prototype.read can only be called on a ReadableStreamBYOBReader"_s))));
 
     // A promise-returning operation turns argument-conversion failures into rejections.
     BYOBReadArguments arguments;
@@ -413,27 +410,27 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBReaderPrototypeFunction_read, (JSGl
             JSValue thrown = takeAbruptCompletion(lexicalGlobalObject, catchScope);
             if (thrown.isEmpty())
                 return {};
-            return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, thrown));
+            RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, thrown)));
         }
     }
     JSArrayBufferView* view = arguments.view;
     uint64_t minRequested = arguments.min;
 
     if (!view->byteLength())
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The view passed to read() must have a non-zero byteLength"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The view passed to read() must have a non-zero byteLength"_s))));
     RefPtr<ArrayBuffer> viewedBuffer = view->possiblySharedBuffer();
     if (!viewedBuffer || !viewedBuffer->byteLength())
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The view passed to read() is backed by a zero-length ArrayBuffer"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The view passed to read() is backed by a zero-length ArrayBuffer"_s))));
     if (viewedBuffer->isDetached() || view->isDetached())
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The view passed to read() is backed by a detached ArrayBuffer"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The view passed to read() is backed by a detached ArrayBuffer"_s))));
     if (!minRequested)
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The 'min' option must be greater than 0"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The 'min' option must be greater than 0"_s))));
     TypedArrayType viewType = typedArrayType(view->type());
     uint64_t minLimit = viewType == TypeDataView ? static_cast<uint64_t>(view->byteLength()) : static_cast<uint64_t>(view->length());
     if (minRequested > minLimit)
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createRangeError(lexicalGlobalObject, "The 'min' option cannot be larger than the view passed to read()"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createRangeError(lexicalGlobalObject, "The 'min' option cannot be larger than the view passed to read()"_s))));
     if (!reader->m_stream)
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The reader is not attached to a stream"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The reader is not attached to a stream"_s))));
 
     auto* domGlobalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* runtime = JSStreamsRuntime::from(lexicalGlobalObject);

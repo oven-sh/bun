@@ -382,7 +382,7 @@ void transformStreamDefaultControllerEnqueue(JSGlobalObject* globalObject, JSTra
     bool backpressure = readableStreamDefaultControllerHasBackpressure(readableController);
     if (backpressure != stream->m_backpressure) {
         ASSERT(backpressure);
-        transformStreamSetBackpressure(globalObject, stream, true);
+        RELEASE_AND_RETURN(scope, transformStreamSetBackpressure(globalObject, stream, true));
     }
 }
 

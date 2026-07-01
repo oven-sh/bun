@@ -534,9 +534,9 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_cancel, (JSGlobalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSReadableStream>(callFrame->thisValue());
     if (!stream) [[unlikely]]
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStream.prototype.cancel can only be called on a ReadableStream"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStream.prototype.cancel can only be called on a ReadableStream"_s))));
     if (isReadableStreamLocked(stream))
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot cancel a locked ReadableStream"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot cancel a locked ReadableStream"_s))));
     auto* promise = readableStreamCancel(lexicalGlobalObject, stream, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(promise);
@@ -625,10 +625,10 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_pipeTo, (JSGlobalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSReadableStream>(callFrame->thisValue());
     if (!stream) [[unlikely]]
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStream.prototype.pipeTo can only be called on a ReadableStream"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStream.prototype.pipeTo can only be called on a ReadableStream"_s))));
     auto* destination = dynamicDowncast<JSWritableStream>(callFrame->argument(0));
     if (!destination)
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStream.prototype.pipeTo requires a WritableStream destination"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStream.prototype.pipeTo requires a WritableStream destination"_s))));
 
     ConvertedStreamPipeOptions options;
     {
@@ -639,14 +639,14 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_pipeTo, (JSGlobalObje
             JSValue thrown = takeAbruptCompletion(lexicalGlobalObject, catchScope);
             if (thrown.isEmpty())
                 return {};
-            return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, thrown));
+            RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, thrown)));
         }
     }
 
     if (isReadableStreamLocked(stream))
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot pipe a locked ReadableStream"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot pipe a locked ReadableStream"_s))));
     if (isWritableStreamLocked(destination))
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot pipe to a locked WritableStream"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot pipe to a locked WritableStream"_s))));
 
     auto* promise = readableStreamPipeTo(lexicalGlobalObject, stream, destination, options.preventClose, options.preventAbort, options.preventCancel, options.signal);
     RETURN_IF_EXCEPTION(scope, {});

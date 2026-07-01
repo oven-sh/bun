@@ -412,6 +412,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSourceCancelFulfilled, (JSGloba
     writableStreamDefaultControllerErrorIfNeeded(globalObject, writable->m_controller.get(), reason);
     RETURN_IF_EXCEPTION(scope, {});
     transformStreamUnblockWrite(globalObject, stream);
+    RETURN_IF_EXCEPTION(scope, {});
     resolvePromise(globalObject, finishPromise, jsUndefined());
     // Resolving with `undefined` performs no thenable lookup and cannot throw.
     scope.assertNoException();

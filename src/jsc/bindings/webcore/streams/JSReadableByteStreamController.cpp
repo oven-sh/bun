@@ -385,19 +385,20 @@ void JSReadableByteStreamController::pullSteps(JSGlobalObject* globalObject, JSR
     }
     if (m_autoAllocateChunkSize) {
         JSArrayBuffer* buffer = nullptr;
+        JSValue bufferAbruptCompletion;
         {
             // "Let buffer be Construct(%ArrayBuffer%, « autoAllocateChunkSize »)" is
             // interpreted as a completion record: an abrupt completion goes to the error steps.
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             buffer = constructArrayBuffer(globalObject, static_cast<size_t>(m_autoAllocateChunkSize));
             if (catchScope.exception()) [[unlikely]] {
-                JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
-                if (thrown.isEmpty()) [[unlikely]]
+                bufferAbruptCompletion = takeAbruptCompletion(globalObject, catchScope);
+                if (bufferAbruptCompletion.isEmpty()) [[unlikely]]
                     return;
-                readRequest->errorSteps(globalObject, thrown);
-                return;
             }
         }
+        if (!bufferAbruptCompletion.isEmpty()) [[unlikely]]
+            RELEASE_AND_RETURN(scope, readRequest->errorSteps(globalObject, bufferAbruptCompletion));
         auto* zigGlobalObject = defaultGlobalObject(globalObject);
         JSPullIntoDescriptor* pullIntoDescriptor = JSPullIntoDescriptor::create(vm, JSStreamsRuntime::from(globalObject)->pullIntoDescriptorStructure(zigGlobalObject));
         RETURN_IF_EXCEPTION(scope, void());
@@ -1004,18 +1005,19 @@ void readableByteStreamControllerPullInto(JSGlobalObject* globalObject, JSReadab
     JSArrayBuffer* viewedBuffer = view->possiblySharedJSBuffer(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
     JSArrayBuffer* buffer = nullptr;
+    JSValue transferAbruptCompletion;
     {
         // "If bufferResult is an abrupt completion", route it to the read-into request's error steps.
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         buffer = transferArrayBuffer(globalObject, viewedBuffer);
         if (catchScope.exception()) [[unlikely]] {
-            JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
-            if (thrown.isEmpty()) [[unlikely]]
+            transferAbruptCompletion = takeAbruptCompletion(globalObject, catchScope);
+            if (transferAbruptCompletion.isEmpty()) [[unlikely]]
                 return;
-            readIntoRequest->errorSteps(globalObject, thrown);
-            return;
         }
     }
+    if (!transferAbruptCompletion.isEmpty()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, readIntoRequest->errorSteps(globalObject, transferAbruptCompletion));
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSPullIntoDescriptor* pullIntoDescriptor = JSPullIntoDescriptor::create(vm, JSStreamsRuntime::from(globalObject)->pullIntoDescriptorStructure(zigGlobalObject));
     pullIntoDescriptor->m_buffer.set(vm, pullIntoDescriptor, buffer);

@@ -52,7 +52,7 @@ static WebCore::JSReadableByteStreamController* byteControllerOf(JSReadableStrea
 
 // Detaches [[readRequests]] before dispatch ("set to an empty list, then iterate"): once the
 // requests leave the visited deque the MarkedArgumentBuffer is their only root.
-static bool detachReadRequests(JSGlobalObject* globalObject, JSReadableStreamDefaultReader* reader, MarkedArgumentBuffer& out)
+static void detachReadRequests(JSGlobalObject* globalObject, JSReadableStreamDefaultReader* reader, MarkedArgumentBuffer& out)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -62,11 +62,8 @@ static bool detachReadRequests(JSGlobalObject* globalObject, JSReadableStreamDef
             out.append(request.get());
         reader->m_readRequests.clear();
     }
-    if (out.hasOverflowed()) [[unlikely]] {
+    if (out.hasOverflowed()) [[unlikely]]
         throwOutOfMemoryError(globalObject, scope);
-        return false;
-    }
-    return true;
 }
 
 // ReadableStreamDefaultReaderErrorReadRequests(reader, e)
@@ -75,8 +72,8 @@ void readableStreamDefaultReaderErrorReadRequests(JSGlobalObject* globalObject, 
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     MarkedArgumentBuffer readRequests;
-    if (!detachReadRequests(globalObject, reader, readRequests))
-        return;
+    detachReadRequests(globalObject, reader, readRequests);
+    RETURN_IF_EXCEPTION(scope, void());
     for (size_t i = 0; i < readRequests.size(); ++i) {
         uncheckedDowncast<WebCore::JSReadRequest>(readRequests.at(i))->errorSteps(globalObject, error);
         RETURN_IF_EXCEPTION(scope, void());
@@ -623,9 +620,9 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_cancel, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(callFrame->thisValue());
     if (!reader) [[unlikely]]
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStreamDefaultReader.prototype.cancel can only be called on a ReadableStreamDefaultReader"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStreamDefaultReader.prototype.cancel can only be called on a ReadableStreamDefaultReader"_s))));
     if (!reader->m_stream)
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The reader is not attached to a stream"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The reader is not attached to a stream"_s))));
     auto* promise = readableStreamReaderGenericCancel(lexicalGlobalObject, reader, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(promise);
@@ -637,9 +634,9 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_read, (J
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(callFrame->thisValue());
     if (!reader) [[unlikely]]
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStreamDefaultReader.prototype.read can only be called on a ReadableStreamDefaultReader"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStreamDefaultReader.prototype.read can only be called on a ReadableStreamDefaultReader"_s))));
     if (!reader->m_stream)
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The reader is not attached to a stream"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The reader is not attached to a stream"_s))));
 
     auto* domGlobalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* runtime = JSStreamsRuntime::from(lexicalGlobalObject);

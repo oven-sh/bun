@@ -111,7 +111,7 @@ static void reactToStartResult(JSGlobalObject* globalObject, JSValue startResult
 // then iterate". A MarkedArgumentBuffer is the only GC-visible holder once the requests
 // leave the visited deque.
 template<typename Reader>
-static bool detachReadRequests(JSGlobalObject* globalObject, Reader* reader, MarkedArgumentBuffer& out)
+static void detachReadRequests(JSGlobalObject* globalObject, Reader* reader, MarkedArgumentBuffer& out)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -127,11 +127,8 @@ static bool detachReadRequests(JSGlobalObject* globalObject, Reader* reader, Mar
             reader->m_readIntoRequests.clear();
         }
     }
-    if (out.hasOverflowed()) [[unlikely]] {
+    if (out.hasOverflowed()) [[unlikely]]
         throwOutOfMemoryError(globalObject, scope);
-        return false;
-    }
-    return true;
 }
 
 // InitializeReadableStream(stream)
@@ -247,8 +244,8 @@ void readableStreamClose(JSGlobalObject* globalObject, JSReadableStream* stream)
         return;
     auto* defaultReader = static_cast<JSReadableStreamDefaultReader*>(reader);
     MarkedArgumentBuffer readRequests;
-    if (!detachReadRequests(globalObject, defaultReader, readRequests))
-        return;
+    detachReadRequests(globalObject, defaultReader, readRequests);
+    RETURN_IF_EXCEPTION(scope, void());
     for (size_t i = 0; i < readRequests.size(); ++i) {
         uncheckedDowncast<JSReadRequest>(readRequests.at(i))->closeSteps(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
@@ -300,8 +297,8 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
     if (reader && reader->isBYOB()) {
         auto* byobReader = static_cast<JSReadableStreamBYOBReader*>(reader);
         MarkedArgumentBuffer readIntoRequests;
-        if (!detachReadRequests(globalObject, byobReader, readIntoRequests))
-            return nullptr;
+        detachReadRequests(globalObject, byobReader, readIntoRequests);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         for (size_t i = 0; i < readIntoRequests.size(); ++i) {
             uncheckedDowncast<JSReadIntoRequest>(readIntoRequests.at(i))->closeSteps(globalObject, nullptr);
             RETURN_IF_EXCEPTION(scope, nullptr);

@@ -332,7 +332,7 @@ impl HmrSocket {
             }
             if field.contains(HmrTopic::MemoryVisualizer.as_bit()) {
                 dev.emit_memory_visualizer_events -= 1;
-                if dev.emit_incremental_visualizer_events == 0
+                if dev.emit_memory_visualizer_events == 0
                     && dev.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE
                 {
                     // Note (jsc/runtime crate cycle): `vm.timer` is `()` on the low-tier

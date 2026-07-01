@@ -1536,6 +1536,17 @@ export const fileOverrides: FileOverride[] = [
     when: c => c.windows,
     desc: "Vendored electron/rcedit; VersionInfo ctor throws std::system_error caught in OnEnumResourceLanguage. Self-contained throw/catch — already excluded from PCH",
   },
+  {
+    file: "src/jsc/bindings/highway_json.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc:
+      "Always optimize the JSON structural-index kernel (debug builds use -O0 globally). At -O0 every " +
+      "highway op is an outlined call taking 64-byte vectors by value through the stack, and clang's " +
+      "unoptimized codegen for that pattern raises #GP on an aligned zmm stack store under the debug " +
+      "sanitizer set; it would also make every JSON parse in debug builds pathologically slow. " +
+      "Covered by test/js/bun/jsonc/jsonc.test.ts and `scripts/bench-json-rust.sh --test`.",
+  },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -43,6 +43,9 @@ function emitErrorEvent(request, error) {
       error,
     });
   }
+  // Every request-error path funnels here (ECONNREFUSED, DNS, parse error,
+  // reset): close the trace span; deduped by the per-request flag.
+  traceClientResponseEnd(request);
   request.emit("error", error);
 }
 
@@ -143,6 +146,19 @@ function rewriteForProxiedHttp(req, reqOptions) {
   }
   req.path = requestURL.href;
   return true;
+}
+
+// node.http trace events ('http.client.request' b/e). 'b' is emitted at the
+// end of the constructor (like Node); the per-request flag dedupes the single
+// 'e' across the response/error/destroy/close paths. Near-zero cost when off.
+const kHttpTraceCat = "node,node.http";
+const kTraceRequestActive = Symbol("kTraceRequestActive");
+let traceEvents = null;
+function traceClientResponseEnd(req) {
+  if (req[kTraceRequestActive]) {
+    req[kTraceRequestActive] = false;
+    traceEvents.emitEvent("e", kHttpTraceCat, "http.client.request");
+  }
 }
 
 function ClientRequest(input, options, cb) {
@@ -393,6 +409,12 @@ function ClientRequest(input, options, cb) {
       request: this,
     });
   }
+
+  traceEvents ??= require("internal/trace_events");
+  if (traceEvents.isCategoryGroupEnabled(kHttpTraceCat)) {
+    traceEvents.emitEvent("b", kHttpTraceCat, "http.client.request");
+    this[kTraceRequestActive] = true;
+  }
 }
 $toClass(ClientRequest, "ClientRequest", OutgoingMessage);
 
@@ -456,6 +478,10 @@ ClientRequest.prototype.destroy = function destroy(err) {
   }
   this.destroyed = true;
 
+  // Close the http.client.request trace span if no response ever arrived
+  // (req.destroy()/abort before headers); deduped by the per-request flag.
+  traceClientResponseEnd(this);
+
   // If we're aborting, we don't care about any more response data.
   const res = this.res;
   if (res) {
@@ -491,6 +517,9 @@ function socketCloseListener() {
   const res = req.res;
 
   req.destroyed = true;
+  // Socket-level close without a response (connection reset, abort):
+  // close the trace span so it doesn't stay open forever.
+  traceClientResponseEnd(req);
   if (res) {
     // Socket closed before we emitted 'end' below.
     if (!res.complete) {
@@ -751,6 +780,9 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
       response: res,
     });
   }
+  // The response arrived: close the 'http.client.request' span (Node ends it
+  // here, in parserOnIncomingClient, before handing the response to the user).
+  traceClientResponseEnd(req);
   req.res = res;
   res.req = req;
 
@@ -951,6 +983,9 @@ function destroyRequestOnSocketNT(req, socket, err) {
   if (err && err.code !== "ERR_PROXY_TUNNEL" && !socket?._hadError) {
     emitErrorEvent(req, err);
   }
+  // The request is dead with no parser: close the trace span on the paths
+  // that skip emitErrorEvent above (proxy tunnel; error already emitted).
+  traceClientResponseEnd(req);
   closeRequest(req);
 }
 

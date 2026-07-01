@@ -2394,9 +2394,7 @@ impl RunCommand {
         if !ctx.debug.loaded_bunfig {
             // `Arguments::load_config_path` — loads global bunfig (if the
             // command opts in via `read_global_config`) then `bunfig.toml`.
-            // A malformed bunfig is a hard error, matching every other entry
-            // point (`bun <file>`, `bun -e`, `bun install`); dropping it here
-            // silently ran the script with default config.
+            // A malformed bunfig is a hard error, matching every other entry point.
             if let Err(err) = arguments::load_config_path(
                 CommandTag::RunCommand,
                 true,

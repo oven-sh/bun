@@ -118,11 +118,11 @@ fn parse_impl_in(
     if let Some(e) = sidx.index_error {
         return Err(report_index_error(e, source, log));
     }
-    let log_mark = (log.errors, log.warnings, log.msgs.len());
+    let log_mark = (log.errors, log.msgs.len());
     let result = run_stage2(source, log, &mut sidx, opts, check_len, tape_alloc);
 
     let drop_stage2_errors = |log: &mut bun_ast::Log| {
-        let mut i = log_mark.2;
+        let mut i = log_mark.1;
         while i < log.msgs.len() {
             if log.msgs[i].kind == bun_ast::Kind::Err {
                 log.msgs.remove(i);
@@ -133,7 +133,7 @@ fn parse_impl_in(
         log.errors = log_mark.0;
     };
     let min_stage2_err = |log: &bun_ast::Log| {
-        log.msgs[log_mark.2..]
+        log.msgs[log_mark.1..]
             .iter()
             .filter(|m| m.kind == bun_ast::Kind::Err)
             .filter_map(|m| m.data.location.as_ref().map(|l| l.offset))
@@ -153,7 +153,7 @@ fn parse_impl_in(
             IndexError::DocumentTooLarge => 0,
         };
         if !rejected_comment(&sidx, pos) {
-            let earlier_stage2_err = log.msgs[log_mark.2..]
+            let earlier_stage2_err = log.msgs[log_mark.1..]
                 .iter()
                 .filter(|m| m.kind == bun_ast::Kind::Err)
                 .filter_map(|m| m.data.location.as_ref())
@@ -264,6 +264,13 @@ fn guess_indentation(s: &[u8]) -> Indentation {
                 i += if s[i] == b'\\' { 2 } else { 1 };
             }
             i += 1;
+            continue;
+        }
+        if s[i] == b'/' && s.get(i + 1) == Some(&b'/') {
+            i += 2;
+            while i < s.len() && s[i] != b'\n' {
+                i += 1;
+            }
             continue;
         }
         if s[i] == b'/' && s.get(i + 1) == Some(&b'*') {
@@ -1508,6 +1515,9 @@ mod tests {
         assert!(matches!(i.character, bun_ast::IndentationCharacter::Tab));
         assert_eq!(i.scalar, 1);
         let i = guess_indentation(b"{\"a\": \"/*\",\n  \"b\": 2}");
+        assert!(matches!(i.character, bun_ast::IndentationCharacter::Space));
+        assert_eq!(i.scalar, 2);
+        let i = guess_indentation(b"// don't edit\n{\n  \"a\": 1}");
         assert!(matches!(i.character, bun_ast::IndentationCharacter::Space));
         assert_eq!(i.scalar, 2);
     }

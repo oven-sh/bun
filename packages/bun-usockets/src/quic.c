@@ -864,6 +864,16 @@ void us_quic_listen_socket_close(us_quic_listen_socket_t *ls) {
         lsquic_engine_cooldown(ls->ctx->engine);
         us_quic_process(ls->ctx);
         lsquic_engine_send_unsent_packets(ls->ctx->engine);
+        /* The fd is about to disappear, so the closing handshake can never
+         * complete; abort so the engine reaps the conns now instead of
+         * pinning the loop until each conn's idle timeout. */
+        for (us_quic_socket_t *qs = ls->ctx->conns; qs; qs = qs->next) {
+            if (qs->conn) lsquic_conn_abort(qs->conn);
+        }
+        us_quic_process(ls->ctx);
+        /* Reaping the last conn can re-enter the drain path and close the
+         * udp socket (on_conn_closed when ctx->closing); re-check. */
+        if (!ls->udp) return;
     }
     us_udp_socket_close(ls->udp);
 }

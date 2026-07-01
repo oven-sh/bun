@@ -1077,3 +1077,40 @@ describe("Bun.serve HTTP/3 production", () => {
   // (HttpContext.h / Http3Context.h call writeContinue before routing); a
   // curl --expect100-timeout assertion was flaky enough to drop here.
 });
+
+describe("abrupt stop with live http/3 sessions", () => {
+  // server.stop(true) fires CONNECTION_CLOSE and closes the UDP fd in the
+  // same call, so the closing handshake can never complete. The engine must
+  // reap the connections immediately rather than waiting out idleTimeout —
+  // otherwise the process hangs for the full idle window after stop.
+  test("process exits promptly after stop(true)", async () => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      const server = Bun.serve({
+        port: 0, tls, http3: true, http1: false, idleTimeout: 60,
+        fetch: () => new Response("ok"),
+      });
+      const r = await fetch("https://127.0.0.1:" + server.port + "/", {
+        protocol: "http3",
+        tls: { rejectUnauthorized: false },
+      });
+      console.log("status=" + r.status + " body=" + (await r.text()));
+      server.stop(true);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stdout).toBe("status=200 body=ok\n");
+    // Exited on its own — a hang here means undead conns pinned the loop
+    // until idleTimeout and the harness had to kill the child.
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  });
+});

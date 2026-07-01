@@ -107,10 +107,14 @@ pub trait AccessorDirIter {
 pub trait AccessorDirEntry {
     fn name_slice(&self) -> &[u8];
     fn kind(&self) -> bun_sys::FileKind;
-    /// For accessors with [`Accessor::ENTRY_KIND_FOLLOWS_SYMLINKS`]: whether
-    /// the entry itself is a symlink, even though `kind()` reports its target.
-    fn is_symlink(&self) -> bool {
-        false
+    /// For accessors with [`Accessor::ENTRY_KIND_FOLLOWS_SYMLINKS`]: the
+    /// already-resolved real path of the entry's target when the entry itself
+    /// is a symlink (its `kind()` reports the target's kind). `None` for
+    /// non-symlinks and for accessors that never resolve targets. Must come
+    /// from data the accessor already holds — the walker uses it for the
+    /// followed-link ancestor check without issuing any extra syscall.
+    fn symlink_target(&self) -> Option<&[u8]> {
+        None
     }
 }
 
@@ -963,15 +967,32 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             let child = self.walker.eval_dir(&active, entry_name, &mut add_dir);
                             let mut followed_link: Option<FollowedLink> = None;
                             let descend = child.count() != 0
-                                && match A::statat(dir_fd, ZStr::from_slice_with_nul(b".\0")) {
-                                    Ok(target) => match self.walker.check_followed_link(&target) {
-                                        Some(link) => {
-                                            followed_link = Some(link);
-                                            true
+                                && if self.walker.followed_links.is_empty() {
+                                    // No followed ancestor exists, so this descent
+                                    // cannot be a cycle: defer identifying the target
+                                    // (record its logical path) so the walk performs
+                                    // no stat unless a nested followed link needs it.
+                                    followed_link = Some(FollowedLink::Pending(dupe_z(
+                                        symlink_full_path_z.as_bytes(),
+                                    )));
+                                    true
+                                } else {
+                                    match A::statat(dir_fd, ZStr::from_slice_with_nul(b".\0")) {
+                                        Ok(target) => {
+                                            self.walker.resolve_pending_followed_links(self.cwd_fd);
+                                            match self
+                                                .walker
+                                                .check_followed_link(FollowedLink::Target(target))
+                                            {
+                                                Some(link) => {
+                                                    followed_link = Some(link);
+                                                    true
+                                                }
+                                                None => false,
+                                            }
                                         }
-                                        None => false,
-                                    },
-                                    Err(_) => true,
+                                        Err(_) => true,
+                                    }
                                 };
                             if descend {
                                 self.walker.push_work_item(
@@ -1061,9 +1082,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             if child.count() != 0 {
                                 let mut followed_link: Option<FollowedLink> = None;
                                 if self.walker.should_descend_resolved_dir(
-                                    dir_fd,
-                                    entry_name,
-                                    entry.is_symlink(),
+                                    entry.symlink_target(),
                                     &mut followed_link,
                                 ) {
                                     let subdir_parts: &[&[u8]] = &[dir_dir_path, entry_name];
@@ -1254,8 +1273,31 @@ impl<'a, A: Accessor, const SENTINEL: bool> Drop for Iterator<'a, A, SENTINEL> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Identity of a symlinked directory on the current work item's ancestor chain.
-struct FollowedLink {
-    stat: Stat,
+/// A walker only ever produces one variant (its accessor either stats followed
+/// targets or caches their real paths), so the two never need to compare equal.
+enum FollowedLink {
+    /// Followed target not yet identified: the NUL-terminated logical path the
+    /// walker opened. Stat'd (once, in place) only if a nested followed link
+    /// later needs the ancestor comparison, so a followed link with no
+    /// followed-link descendant costs no extra syscall.
+    Pending(Box<[u8]>),
+    /// `(st_dev, st_ino)` of the followed target (Symlink work-item arm).
+    Target(Stat),
+    /// Accessor-cached real path of the followed target
+    /// ([`AccessorDirEntry::symlink_target`]).
+    RealPath(Box<[u8]>),
+}
+
+impl FollowedLink {
+    /// `Pending` entries are resolved to `Target` before any comparison; one
+    /// that cannot be resolved never matches (the descent proceeds).
+    fn same_target(&self, other: &FollowedLink) -> bool {
+        match (self, other) {
+            (Self::Target(a), Self::Target(b)) => a.st_dev == b.st_dev && a.st_ino == b.st_ino,
+            (Self::RealPath(a), Self::RealPath(b)) => a == b,
+            _ => false,
+        }
+    }
 }
 
 pub struct WorkItem<A: Accessor> {
@@ -1996,48 +2038,59 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         self.workbuf.push(item);
     }
 
+    /// Identify `Pending` ancestors in place (each is stat'd at most once) so
+    /// the chain can be compared by `(st_dev, st_ino)`. Only called when a
+    /// nested followed link actually needs the comparison.
+    fn resolve_pending_followed_links(&mut self, cwd_fd: A::Handle) {
+        for link in &mut self.followed_links {
+            if let FollowedLink::Pending(path) = link {
+                // SAFETY: `Pending` paths come from `dupe_z` (NUL-terminated).
+                let pathz = ZStr::from_slice_with_nul(path);
+                if let Ok(target) = A::statat(cwd_fd, pathz) {
+                    *link = FollowedLink::Target(target);
+                }
+            }
+        }
+    }
+
     /// `followed_links` holds exactly the ancestor chain of the work item
-    /// being processed, so a (dev, ino) match means descending re-enters it.
-    fn is_followed_link_cycle(&self, target: &Stat) -> bool {
-        self.followed_links.iter().any(|followed| {
-            followed.stat.st_dev == target.st_dev && followed.stat.st_ino == target.st_ino
-        })
+    /// being processed, so a match means descending re-enters it.
+    fn is_followed_link_cycle(&self, target: &FollowedLink) -> bool {
+        self.followed_links
+            .iter()
+            .any(|followed| followed.same_target(target))
     }
 
     /// Returns the record to attach to the descent's work item, or `None` when
     /// `target` is already on the followed-link ancestor chain (a cycle).
-    fn check_followed_link(&self, target: &Stat) -> Option<FollowedLink> {
-        if self.is_followed_link_cycle(target) {
+    fn check_followed_link(&self, target: FollowedLink) -> Option<FollowedLink> {
+        if self.is_followed_link_cycle(&target) {
             return None;
         }
-        Some(FollowedLink { stat: *target })
+        Some(target)
     }
 
     /// Accessors with [`Accessor::ENTRY_KIND_FOLLOWS_SYMLINKS`] report a
     /// symlinked directory as `Directory`, so it never reaches the Symlink
-    /// work-item arm's ancestor check; run the same check here.
+    /// work-item arm's ancestor check; run the same check here on the
+    /// accessor's already-resolved target (no extra syscall).
     fn should_descend_resolved_dir(
         &self,
-        dir_fd: A::Handle,
-        entry_name: &[u8],
-        entry_is_symlink: bool,
+        entry_symlink_target: Option<&[u8]>,
         followed_link: &mut Option<FollowedLink>,
     ) -> bool {
-        if !A::ENTRY_KIND_FOLLOWS_SYMLINKS || !entry_is_symlink {
+        if !A::ENTRY_KIND_FOLLOWS_SYMLINKS {
             return true;
         }
-        let name_z = dupe_z(entry_name);
-        // SAFETY: dupe_z NUL-terminates
-        let name_z_ref = ZStr::from_slice_with_nul(&name_z[..]);
-        match A::statat(dir_fd, name_z_ref) {
-            Ok(target) => match self.check_followed_link(&target) {
-                Some(link) => {
-                    *followed_link = Some(link);
-                    true
-                }
-                None => false,
-            },
-            Err(_) => true,
+        let Some(target) = entry_symlink_target else {
+            return true;
+        };
+        match self.check_followed_link(FollowedLink::RealPath(Box::from(target))) {
+            Some(link) => {
+                *followed_link = Some(link);
+                true
+            }
+            None => false,
         }
     }
 

@@ -1891,7 +1891,9 @@ pub mod dir_entry_accessor {
     pub struct DirEntryIterResult {
         pub name: DirEntryNameWrapper,
         pub kind: bun_sys::FileKind,
-        pub is_symlink: bool,
+        /// Resolver-cached real path of a symlink entry's target
+        /// (`Interned::EMPTY` for non-symlinks).
+        pub symlink_target: bun_ptr::Interned,
     }
 
     pub(crate) struct DirEntryNameWrapper {
@@ -1923,8 +1925,9 @@ pub mod dir_entry_accessor {
         fn kind(&self) -> bun_sys::FileKind {
             self.kind
         }
-        fn is_symlink(&self) -> bool {
-            self.is_symlink
+        fn symlink_target(&self) -> Option<&[u8]> {
+            let target = self.symlink_target.as_bytes();
+            (!target.is_empty()).then_some(target)
         }
     }
 
@@ -1954,7 +1957,7 @@ pub mod dir_entry_accessor {
                 };
                 // `Entry::kind` resolved through symlinks above; a non-empty
                 // cached realpath is what records the entry as a symlink.
-                let is_symlink = !entry.cache().symlink.is_empty();
+                let symlink_target = entry.cache().symlink;
                 // BACKREF: wrap the HashMap key's bytes in a `RawSlice`
                 // instead of fabricating `&'static [u8]` (PORTING.md §Forbidden).
                 // The key is a `Box<[u8]>` owned by `DirEntry.data` and valid
@@ -1965,7 +1968,7 @@ pub mod dir_entry_accessor {
                         value: bun_ptr::RawSlice::new(&**key),
                     },
                     kind: fskind,
-                    is_symlink,
+                    symlink_target,
                 }))
             } else {
                 Ok(None)

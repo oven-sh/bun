@@ -82,6 +82,56 @@ test("all worker_threads module properties are present", () => {
   }).toThrow("not yet implemented");
 });
 
+// The markers are JSC private names (node uses v8 Privates): invisible to user code,
+// unforgeable via the registry symbol or a public property, and not removable.
+test("markAsUncloneable and markAsUntransferable markers are private, unforgeable, and permanent", () => {
+  const expectDataCloneError = (fn: () => void) => {
+    let err: any;
+    try {
+      fn();
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DOMException);
+    expect(err?.name).toBe("DataCloneError");
+  };
+
+  // The mark is not observable on the object.
+  const marked: any = { a: 1 };
+  wt.markAsUncloneable(marked);
+  expect(Object.getOwnPropertySymbols(marked)).toHaveLength(0);
+  expect(Reflect.ownKeys(marked)).toEqual(["a"]);
+  expectDataCloneError(() => structuredClone(marked));
+
+  const markedBuffer = new ArrayBuffer(8);
+  markAsUntransferable(markedBuffer);
+  expect(Object.getOwnPropertySymbols(markedBuffer)).toHaveLength(0);
+  expect(wt.isMarkedAsUntransferable(markedBuffer)).toBe(true);
+
+  // User code cannot forge a mark with the well-known registry symbol or a public name.
+  const forged: any = { a: 1 };
+  forged[Symbol.for("nodejs.worker_threads.uncloneable")] = true;
+  forged.isUncloneable = true;
+  expect(structuredClone(forged)).toEqual({ a: 1, isUncloneable: true });
+
+  const forgedBuffer: any = new ArrayBuffer(8);
+  forgedBuffer[Symbol.for("nodejs.worker_threads.untransferable")] = true;
+  expect(wt.isMarkedAsUntransferable(forgedBuffer)).toBe(false);
+  {
+    const { port1, port2 } = new MessageChannel();
+    expect(() => port1.postMessage(forgedBuffer, [forgedBuffer])).not.toThrow();
+    port1.close();
+    port2.close();
+  }
+
+  // A real mark survives every removal user code can attempt.
+  const unmarkAttempt: any = {};
+  wt.markAsUncloneable(unmarkAttempt);
+  delete unmarkAttempt[Symbol.for("nodejs.worker_threads.uncloneable")];
+  for (const sym of Object.getOwnPropertySymbols(unmarkAttempt)) delete unmarkAttempt[sym];
+  expectDataCloneError(() => structuredClone(unmarkAttempt));
+});
+
 test("all worker_threads worker instance properties are present", async () => {
   const worker = new Worker(new URL("./worker.js", import.meta.url));
   expect(worker).toHaveProperty("threadId");

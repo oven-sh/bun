@@ -85,6 +85,9 @@ const {
   3: environmentData,
   4: _threadName,
   5: _isMessagePortActive,
+  6: _markAsUntransferable,
+  7: _isMarkedAsUntransferable,
+  8: _markAsUncloneable,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
@@ -92,6 +95,9 @@ const {
   Map<unknown, unknown>,
   string,
   (port: unknown) => boolean,
+  (value: unknown) => void,
+  (value: unknown) => boolean,
+  (value: unknown) => void,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -807,22 +813,19 @@ function setEnvironmentData(key: unknown, value: unknown): void {
   }
 }
 
-const kUntransferable = Symbol.for("nodejs.worker_threads.untransferable");
-const kUncloneable = Symbol.for("nodejs.worker_threads.uncloneable");
-
+// The markers are DontEnum JSC private names set natively (node uses v8 Privates), so
+// they are invisible to and unforgeable from user code, and marking cannot be undone.
+// Primitives (including null) are a documented no-op, handled on the native side.
 function markAsUntransferable(obj) {
-  if ((typeof obj !== "object" && typeof obj !== "function") || obj === null) return;
-  Object.defineProperty(obj, kUntransferable, { value: true, enumerable: false, configurable: true, writable: true });
+  _markAsUntransferable(obj);
 }
 
 function isMarkedAsUntransferable(obj) {
-  if (obj == null) return false;
-  return Object.hasOwn(obj, kUntransferable);
+  return _isMarkedAsUntransferable(obj);
 }
 
 function markAsUncloneable(obj) {
-  if ((typeof obj !== "object" && typeof obj !== "function") || obj === null) return;
-  Object.defineProperty(obj, kUncloneable, { value: true, enumerable: false, configurable: true, writable: true });
+  _markAsUncloneable(obj);
 }
 
 function moveMessagePortToContext(port, _context) {

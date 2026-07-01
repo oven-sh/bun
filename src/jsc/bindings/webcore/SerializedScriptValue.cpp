@@ -26,6 +26,7 @@
 
 #include "config.h"
 #include "SerializedScriptValue.h"
+#include "BunClientData.h"
 #include "BunString.h"
 // #include "BlobRegistry.h"
 // #include "ByteArrayPixelBuffer.h"
@@ -1633,20 +1634,16 @@ private:
         VM& vm = m_lexicalGlobalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        // markAsUncloneable: reject a marked object anywhere in the graph, not just the
-        // root (nested terminals go through dumpIfTerminal directly). ArrayBuffers/views
-        // are excluded: they serialize natively.
+        // markAsUncloneable: reject a marked object anywhere in the graph (nested terminals
+        // come through dumpIfTerminal directly); ArrayBuffers/views serialize natively. The
+        // marker is a DontEnum JSC private name (node parity), invisible to user JS.
         if (value.isObject()) {
             JSObject* obj = asObject(value);
             if (!obj->inherits<JSArrayBuffer>() && !obj->inherits<JSArrayBufferView>()
-                && obj->structure()->hasNonEnumerableProperties()) {
-                auto uncloneableMarker = Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.worker_threads.uncloneable"_s));
-                bool marked = obj->hasOwnProperty(m_lexicalGlobalObject, uncloneableMarker);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (marked) {
-                    code = SerializationReturnCode::DataCloneError;
-                    return true;
-                }
+                && obj->structure()->hasNonEnumerableProperties()
+                && obj->getDirect(vm, builtinNames(vm).isUncloneablePrivateName())) {
+                code = SerializationReturnCode::DataCloneError;
+                return true;
             }
         }
 
@@ -6337,14 +6334,11 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 #if ENABLE(WEB_CODECS)
     Vector<Ref<WebCodecsVideoFrame>> transferredVideoFrames;
 #endif
-    auto untransferableMarker = Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.worker_threads.untransferable"_s));
     HashSet<JSC::JSObject*> uniqueTransferables;
     for (auto& transferable : transferList) {
-        if (transferable->hasOwnProperty(&lexicalGlobalObject, untransferableMarker)) {
-            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+        // markAsUntransferable marker: a DontEnum JSC private name (see markAsUncloneable).
+        if (transferable->getDirect(vm, builtinNames(vm).isUntransferablePrivateName()))
             return Exception { DataCloneError, "Cannot transfer object marked as untransferable"_s };
-        }
-        RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
         if (!uniqueTransferables.add(transferable.get()).isNewEntry) {
             if (toPossiblySharedArrayBuffer(vm, transferable.get())) {
                 return Exception { DataCloneError, "Transfer list contains duplicate ArrayBuffer"_s };

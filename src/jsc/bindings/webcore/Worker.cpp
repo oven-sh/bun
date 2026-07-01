@@ -49,6 +49,7 @@
 #include "MessagePortPipe.h"
 #include "JSBroadcastChannel.h"
 #include "JSStructuredSerializeOptions.h"
+#include "BunClientData.h"
 
 namespace WebCore {
 
@@ -721,6 +722,38 @@ JSC_DEFINE_HOST_FUNCTION(jsMessagePortIsActive, (JSGlobalObject * lexicalGlobalO
     return JSC::JSValue::encode(jsBoolean(false));
 }
 
+// markAsUncloneable/markAsUntransferable tag objects with a DontEnum JSC private name
+// (node uses a v8 Private): invisible to and unforgeable from user JS, and not removable,
+// so marking cannot be undone. Primitives are a documented no-op.
+static void markObjectWithPrivateName(JSC::VM& vm, JSC::JSValue value, const JSC::Identifier& privateName)
+{
+    JSC::JSObject* object = value.getObject();
+    if (!object || object->getDirect(vm, privateName))
+        return;
+    object->putDirect(vm, privateName, JSC::jsBoolean(true), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionMarkAsUncloneable, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    markObjectWithPrivateName(vm, callFrame->argument(0), builtinNames(vm).isUncloneablePrivateName());
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionMarkAsUntransferable, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    markObjectWithPrivateName(vm, callFrame->argument(0), builtinNames(vm).isUntransferablePrivateName());
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsMarkedAsUntransferable, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto* object = callFrame->argument(0).getObject();
+    return JSC::JSValue::encode(jsBoolean(object && !!object->getDirect(vm, builtinNames(vm).isUntransferablePrivateName())));
+}
+
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -771,7 +804,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     ASSERT(environmentData);
     globalObject->setNodeWorkerEnvironmentData(environmentData);
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 6);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 9);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
@@ -779,6 +812,9 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     array->putDirectIndex(globalObject, 3, environmentData);
     array->putDirectIndex(globalObject, 4, threadName);
     array->putDirectIndex(globalObject, 5, JSFunction::create(vm, globalObject, 1, "isMessagePortActive"_s, jsMessagePortIsActive, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 6, JSFunction::create(vm, globalObject, 1, "markAsUntransferable"_s, jsFunctionMarkAsUntransferable, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 7, JSFunction::create(vm, globalObject, 1, "isMarkedAsUntransferable"_s, jsFunctionIsMarkedAsUntransferable, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 8, JSFunction::create(vm, globalObject, 1, "markAsUncloneable"_s, jsFunctionMarkAsUncloneable, ImplementationVisibility::Public, NoIntrinsic));
     return array;
 }
 

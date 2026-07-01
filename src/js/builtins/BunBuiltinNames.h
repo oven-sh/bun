@@ -125,6 +125,8 @@ using namespace JSC;
     macro(internalWritable) \
     macro(isAbortSignal) \
     macro(isAbsolute) \
+    macro(isUncloneable) \
+    macro(isUntransferable) \
     macro(join) \
     macro(lazy) \
     macro(lazyStreamPrototypeMap) \

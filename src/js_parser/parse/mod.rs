@@ -1403,7 +1403,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     path.loader = Some(bun_ast::Loader::SqliteEmbedded);
                                 }
                             } else {
-                                // unknown loader; consider erroring
+                                let r = p.lexer.range();
+                                p.lexer.add_range_error(
+                                    r,
+                                    format_args!(
+                                        "Import attribute \"type\" with value {} is not supported",
+                                        bun_core::fmt::quote(type_attr)
+                                    ),
+                                )?;
                             }
                         }
                         SupportedAttribute::Embed => {

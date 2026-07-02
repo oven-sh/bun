@@ -1,8 +1,8 @@
-import { bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import * as path from "path";
 
 const loaders = ["js", "jsx", "ts", "tsx", "json", "jsonc", "toml", "yaml", "text", "sqlite", "file"];
-const other_loaders_do_not_crash = ["webassembly", "does_not_exist"];
+const unsupported_type_values = ["webassembly", "does_not_exist"];
 
 async function runCmd(cmd: string[], dir: string): Promise<unknown> {
   await using proc = Bun.spawn({
@@ -335,12 +335,92 @@ test("tsconfig.json is assumed jsonc", async () => {
 `);
 });
 
-describe("other loaders do not crash", () => {
-  for (const skipped_loader of other_loaders_do_not_crash) {
-    test(skipped_loader, async () => {
-      await compileAndTest(`export const a = "demo";`);
+// An unknown `type` must fail the import rather than silently falling back to
+// the extension-derived loader: a parse error for static imports and
+// `Bun.build`, and ERR_IMPORT_ATTRIBUTE_UNSUPPORTED for `import()` at runtime.
+describe("unknown type values are rejected", () => {
+  for (const unknown_loader of unsupported_type_values) {
+    test(unknown_loader, async () => {
+      expect(
+        await compileAndTest(`export const a = "demo";`, {
+          [unknown_loader]: { loader: unknown_loader, filename: "no_extension" },
+        }),
+      ).toEqual({ [unknown_loader]: "error" });
     });
   }
+});
+
+describe("unsupported import attribute type", () => {
+  async function runFile(dir: string, file: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", file],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("static import is rejected at parse time", async () => {
+    const dir = tempDirWithFiles("import-attributes-unknown", {
+      "data.json": `{"hello":"world"}`,
+      "index.ts": `import data from "./data.json" with { type: "kaboom" };\nconsole.log("loaded", JSON.stringify(data));\n`,
+    });
+    const { stdout, stderr, exitCode } = await runFile(dir, "index.ts");
+    expect(stdout).not.toContain("loaded");
+    expect(stderr).toContain('Import attribute "type" with value "kaboom" is not supported');
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("dynamic import rejects with ERR_IMPORT_ATTRIBUTE_UNSUPPORTED", async () => {
+    const dir = tempDirWithFiles("import-attributes-unknown", {
+      "data.json": `{"hello":"world"}`,
+      "index.ts": `try {
+  await import("./data.json", { with: { type: "kaboom" } });
+  console.log("loaded");
+} catch (err) {
+  console.log([err.constructor.name, err.code, err.message].join("|"));
+}\n`,
+    });
+    const { stdout, stderr, exitCode } = await runFile(dir, "index.ts");
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({
+      stdout: 'TypeError|ERR_IMPORT_ATTRIBUTE_UNSUPPORTED|Import attribute "type" with value "kaboom" is not supported',
+      exitCode: 0,
+    });
+  });
+
+  test("require with an unknown type option throws", async () => {
+    const dir = tempDirWithFiles("import-attributes-unknown", {
+      "data.json": `{"hello":"world"}`,
+      "index.cjs": `try {
+  require("./data.json", { type: "kaboom" });
+  console.log("loaded");
+} catch (err) {
+  console.log([err.constructor.name, err.code].join("|"));
+}\n`,
+    });
+    const { stdout, stderr, exitCode } = await runFile(dir, "index.cjs");
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({
+      stdout: "TypeError|ERR_IMPORT_ATTRIBUTE_UNSUPPORTED",
+      exitCode: 0,
+    });
+  });
+
+  test("known type values still override the loader", async () => {
+    const dir = tempDirWithFiles("import-attributes-known", {
+      "data.txt": `{"hello":"world"}`,
+      "index.ts": `import staticData from "./data.txt" with { type: "json" };
+const dynamicData = (await import("./data.txt", { with: { type: "json" } })).default;
+console.log(JSON.stringify([staticData.hello, dynamicData.hello]));\n`,
+    });
+    const { stdout, stderr, exitCode } = await runFile(dir, "index.ts");
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({
+      stdout: '["world","world"]',
+      exitCode: 0,
+    });
+  });
 });
 
 describe("?raw", () => {

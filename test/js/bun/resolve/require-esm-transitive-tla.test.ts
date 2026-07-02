@@ -314,6 +314,38 @@ describe.concurrent("require(esm) whose top-level await only needs microtasks", 
     });
   });
 
+  // The per-VM out-of-loader-records bit must reset at the --isolate global
+  // swap: an earlier file's in-process ShadowRealm must not disable the
+  // require(TLA) checkpoint for every later isolated file on the same VM.
+  test("bun test --isolate resets the checkpoint guard between files", async () => {
+    using dir = tempDir("require-esm-tla-isolate", {
+      "tla.mjs": `export const x = await 0;`,
+      "1-realm.test.ts": `
+        import { test, expect } from "bun:test";
+        test("constructs a ShadowRealm in-process", () => {
+          expect(typeof new ShadowRealm()).toBe("object");
+        });
+      `,
+      "2-tla.test.ts": `
+        import { test, expect } from "bun:test";
+        test("require of a microtask-only TLA module", () => {
+          expect(require("./tla.mjs").x).toBe(0);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./1-realm.test.ts", "./2-tla.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const out = stdout + stderr;
+    expect(out).toContain(" 2 pass");
+    expect(out).not.toContain("(fail)");
+    expect(exitCode).toBe(0);
+  });
+
   // A .then() queued before the require runs inside the checkpoint and can
   // import() the very module being required. The registry entry must survive
   // the throw so both importers share one evaluation and one namespace.

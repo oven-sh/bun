@@ -639,6 +639,11 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     oldGlobal->isThreadLocalDefaultGlobalObject = false;
     JSC::gcUnprotect(oldGlobal);
 
+    // The old global's ShadowRealms and node:vm modules are discarded with it,
+    // and nothing can be mid-InnerModuleEvaluation between test files, so the
+    // per-VM out-of-loader-records bit starts clean for the next file.
+    WebCore::clientData(vm)->hasModuleRecordsOutsideLoaderMap = false;
+
     return globalObject;
 }
 

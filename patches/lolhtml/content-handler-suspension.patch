@@ -111,6 +111,96 @@
      pub use super::selectors_vm::SelectorError;
  }
  
+--- a/src/memory/arena.rs
++++ b/src/memory/arena.rs
+@@ -6,6 +6,9 @@ use super::{MemoryLimitExceededError, SharedMemoryLimiter};
+ pub(crate) struct Arena {
+     limiter: SharedMemoryLimiter,
+     data: Vec<u8>,
++    /// Offset of the live region within `data`. `shift` only advances this;
++    /// the dead prefix is reclaimed lazily by the next `append`.
++    start: usize,
+ }
+ 
+ impl Arena {
+@@ -23,10 +26,28 @@ impl Arena {
+             "Total preallocated memory size should be less than `MemorySettings::max_allowed_memory_usage`."
+         );
+ 
+-        Self { limiter, data }
++        Self {
++            limiter,
++            data,
++            start: 0,
++        }
++    }
++
++    /// Reclaim the dead prefix left behind by `shift`, in one memmove.
++    fn compact(&mut self) {
++        if self.start > 0 {
++            self.data.copy_within(self.start.., 0);
++            let live = self.data.len() - self.start;
++            self.data.truncate(live);
++            self.start = 0;
++        }
+     }
+ 
+     pub fn append(&mut self, slice: &[u8]) -> Result<(), MemoryLimitExceededError> {
++        // Only the multi-write streaming path appends after a `shift`, and it
++        // is the only place the dead prefix has to go away.
++        self.compact();
++
+         // this specific form of capacity check optimizes out redundant resizing in extend_from_slice
+         if self.data.capacity() - self.data.len() < slice.len() {
+             let additional = slice.len() + self.data.len() - self.data.capacity();
+@@ -51,16 +72,20 @@ impl Arena {
+ 
+     pub fn init_with(&mut self, slice: &[u8]) -> Result<(), MemoryLimitExceededError> {
+         self.data.clear();
++        self.start = 0;
+         self.append(slice)
+     }
+ 
++    /// O(1): advances the live-region start instead of memmoving the tail.
++    /// A suspended rewrite resumes by re-feeding the unconsumed tail, so this
++    /// runs once per suspension — memmoving there is O(suspensions × tail).
+     pub fn shift(&mut self, byte_count: usize) {
+-        self.data.copy_within(byte_count.., 0);
+-        self.data.truncate(self.data.len() - byte_count);
++        debug_assert!(byte_count <= self.data.len() - self.start);
++        self.start += byte_count;
+     }
+ 
+     pub fn bytes(&self) -> &[u8] {
+-        &self.data
++        &self.data[self.start..]
+     }
+ }
+ 
+@@ -140,4 +165,23 @@ mod tests {
+         assert_eq!(arena.bytes(), &[2, 3, 4, 5]);
+         assert_eq!(limiter.current_usage(), 5);
+     }
++
++    // A suspended rewrite shifts once per resume with no append in between;
++    // the dead prefix must accumulate and then be reclaimed by the next append.
++    #[test]
++    fn consecutive_shifts_without_append() {
++        let limiter = SharedMemoryLimiter::new(10);
++        let mut arena = Arena::new(limiter.clone(), 0);
++
++        arena.append(&[0, 1, 2, 3, 4]).unwrap();
++        arena.shift(1);
++        arena.shift(2);
++        assert_eq!(arena.bytes(), &[3, 4]);
++
++        arena.shift(2);
++        assert!(arena.bytes().is_empty());
++
++        arena.append(&[9]).unwrap();
++        assert_eq!(arena.bytes(), &[9]);
++    }
+ }
 --- a/src/parser/lexer/actions.rs
 +++ b/src/parser/lexer/actions.rs
 @@ -19,6 +19,10 @@ macro_rules! get_token_part_range {
@@ -151,7 +241,19 @@
          let token = self
              .current_tag_token
              .take()
-@@ -138,6 +155,9 @@ impl<S: LexemeSink> StateMachineActions for Lexer<S> {
+@@ -120,6 +137,11 @@ impl<S: LexemeSink> StateMachineActions for Lexer<S> {
+         context: &mut ParserContext<S>,
+         input: &[u8],
+     ) -> ActionResult {
++        // As in `emit_current_token`: the comment/doctype ends the preceding
++        // text node, so flush its pending last chunk before the lexeme is
++        // built. `emit_eof` below then finds nothing left to flush.
++        self.flush_pending_text(context)?;
++
+         let token = self.current_non_tag_content_token.take();
+         let lexeme = self.create_lexeme_with_raw_exclusive(
+             context.previously_consumed_byte_count,
+@@ -138,6 +160,9 @@ impl<S: LexemeSink> StateMachineActions for Lexer<S> {
          context: &mut ParserContext<S>,
          input: &[u8],
      ) -> ActionResult {
@@ -161,6 +263,19 @@
          let lexeme = self.create_lexeme_with_raw_inclusive(
              context.previously_consumed_byte_count,
              input,
+@@ -153,6 +178,12 @@ impl<S: LexemeSink> StateMachineActions for Lexer<S> {
+         context: &mut ParserContext<S>,
+         input: &[u8],
+     ) -> ActionResult {
++        // As in `emit_raw_without_token`. This lexeme carries no token, so
++        // nothing is dispatched between here and `emit_eof`'s own flush, but
++        // keeping the hoist uniform means every suspension point sees the
++        // in-flight lexeme either fully consumed or not yet built.
++        self.flush_pending_text(context)?;
++
+         // NOTE: since we are at EOF we use exclusive range for token's raw.
+         let lexeme = self.create_lexeme_with_raw_exclusive(
+             context.previously_consumed_byte_count,
 --- a/src/parser/lexer/mod.rs
 +++ b/src/parser/lexer/mod.rs
 @@ -7,12 +7,22 @@ mod lexeme;
@@ -1884,7 +1999,7 @@
  }
  
  // NOTE: this opaque Debug implementation is required to make
-@@ -992,4 +1122,467 @@ mod tests {
+@@ -992,4 +1122,557 @@ mod tests {
              );
          }
      }
@@ -2349,6 +2464,96 @@
 +                }))
 +                .is_err()
 +            );
++        }
++
++        /// Records the order handlers fire in, plus the serialized output.
++        fn eof_order(input: &str) -> (Vec<&'static str>, String) {
++            let order = Rc::new(RefCell::new(Vec::new()));
++            let (o_text, o_comment, o_doctype) = (order.clone(), order.clone(), order.clone());
++            let (out, _) = drive(
++                &[input],
++                Settings {
++                    document_content_handlers: vec![
++                        doc_text!(move |t| {
++                            if t.last_in_text_node() {
++                                o_text.borrow_mut().push("text-last");
++                            }
++                            Ok(())
++                        }),
++                        doc_comments!(move |_| {
++                            o_comment.borrow_mut().push("comment");
++                            Ok(())
++                        }),
++                        doctype!(move |_| {
++                            o_doctype.borrow_mut().push("doctype");
++                            Ok(())
++                        }),
++                    ],
++                    ..Settings::new()
++                },
++                |_| {},
++            );
++            let order = order.borrow().clone();
++            (order, out)
++        }
++
++        // `emit_current_token_and_eof` must flush the pending last text chunk
++        // before the comment/doctype lexeme it builds, exactly like the
++        // non-EOF `emit_current_token` does. Otherwise an input that ends
++        // inside a comment (a truncated upstream body) dispatches the comment
++        // first, inverting both handler order and output byte order.
++        #[test]
++        fn pending_text_flushes_before_unterminated_comment_at_eof() {
++            let (order, out) = eof_order("hello<!-- unterminated");
++            assert_eq!(order, ["text-last", "comment"]);
++            assert_eq!(out, "hello<!-- unterminated");
++        }
++
++        #[test]
++        fn pending_text_flushes_before_unterminated_doctype_at_eof() {
++            let (order, out) = eof_order("hello<!doctype html");
++            assert_eq!(order, ["text-last", "doctype"]);
++            assert_eq!(out, "hello<!doctype html");
++        }
++
++        // The same hoist, on the `emit_raw_without_token_and_eof` path: an
++        // input that ends inside an unterminated tag.
++        #[test]
++        fn pending_text_flushes_before_unterminated_tag_at_eof() {
++            let (order, out) = eof_order("hello<div attr");
++            assert_eq!(order, ["text-last"]);
++            assert_eq!(out, "hello<div attr");
++        }
++
++        // A text handler that suspends on the last chunk, flushed from inside
++        // the composite EOF action: the resume must still emit the comment.
++        #[test]
++        fn text_suspension_at_unterminated_comment_eof() {
++            let order = Rc::new(RefCell::new(Vec::new()));
++            let (o_text, o_comment) = (order.clone(), order.clone());
++            let (out, n) = drive(
++                &["hello<!-- unterminated"],
++                Settings {
++                    document_content_handlers: vec![
++                        doc_text!(move |t| {
++                            if t.last_in_text_node() {
++                                o_text.borrow_mut().push("text-last");
++                                return SUSPEND();
++                            }
++                            Ok(())
++                        }),
++                        doc_comments!(move |_| {
++                            o_comment.borrow_mut().push("comment");
++                            Ok(())
++                        }),
++                    ],
++                    ..Settings::new()
++                },
++                |_| {},
++            );
++            assert_eq!(*order.borrow(), ["text-last", "comment"]);
++            assert_eq!(out, "hello<!-- unterminated");
++            assert_eq!(n, 1);
 +        }
 +    }
  }

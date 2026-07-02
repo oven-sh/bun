@@ -1607,11 +1607,9 @@ impl FetchTasklet {
         if this.signal_store.body_receive_mode() == BodyReceiveMode::Ignore {
             return;
         }
-        // reader.cancel() on a still-arriving body aborts the fetch so the
-        // connection closes and the server observes the cancellation. A fully
-        // received body is left to drain/cleanup so the socket stays reusable.
-        // `result` is replaced wholesale by the HTTP thread under `mutex`, so
-        // read `has_more` under the lock like the other JS-thread callbacks.
+        // reader.cancel() on a still-arriving body aborts the fetch (server sees
+        // the close); a received body drains/cleans up for reuse. Read `has_more`
+        // under `mutex`: the HTTP thread replaces `result` wholesale.
         this.mutex.lock();
         let has_more = this.result.has_more;
         this.mutex.unlock();
@@ -1762,10 +1760,9 @@ impl FetchTasklet {
         }
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
-        // An aborted fetch (reader.cancel() on an in-flight body, or an
-        // AbortSignal) is already shutting the connection down; don't re-arm the
-        // receive or resume draining, which would read the rest of an unbounded
-        // body and hold the socket open (drain_events resumes before shutdowns).
+        // An aborted fetch is already shutting down; don't re-arm receive/resume
+        // draining, which would read the rest of an unbounded body and hold the
+        // socket open (drain_events resumes before shutdowns).
         let aborted = self.signal_store.aborted.load(Ordering::Relaxed);
         if self
             .signal_store

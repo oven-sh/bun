@@ -13,13 +13,7 @@
 // COM_STMT_EXECUTE for statement id 0 on the wire.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import {
-  listeningServer,
-  mysqlHandshakeV10,
-  mysqlOkPacket,
-  mysqlReadPackets,
-  mysqlStmtPrepareOk,
-} from "./wire-frames";
+import { listeningServer, mysqlHandshakeV10, mysqlOkPacket, mysqlReadPackets, mysqlStmtPrepareOk } from "./wire-frames";
 
 const COM_STMT_PREPARE = 0x16;
 const COM_STMT_EXECUTE = 0x17;

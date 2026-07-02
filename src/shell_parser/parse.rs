@@ -2092,24 +2092,7 @@ impl<'bump> Parser<'bump> {
     }
 
     pub fn combine_errors(&self) -> &'bump [u8] {
-        let errors = &self.errors[..];
-
-        ({
-            let size = {
-                let mut i = 0usize;
-                for e in errors {
-                    i += e.msg.len();
-                }
-                i
-            };
-            let buf = self.alloc.alloc_slice_fill_copy(size, 0u8);
-            let mut i = 0usize;
-            for e in errors {
-                buf[i..i + e.msg.len()].copy_from_slice(e.msg);
-                i += e.msg.len();
-            }
-            buf
-        }) as _
+        join_error_msgs(self.alloc, self.errors[..].iter().map(|e| e.msg))
     }
 
     fn add_error(&mut self, args: fmt::Arguments<'_>) -> ParseResult<()> {
@@ -2128,6 +2111,26 @@ impl<'bump> Parser<'bump> {
             <&'static str>::from(kind)
         ))
     }
+}
+
+/// Join error messages with a newline so each one renders on its own line in
+/// `ShellError.message` and in the CLI error output.
+fn join_error_msgs<'bump>(
+    bump: &'bump Bump,
+    msgs: impl ExactSizeIterator<Item = &'bump [u8]> + Clone,
+) -> &'bump [u8] {
+    let size = msgs.clone().map(|m| m.len()).sum::<usize>() + msgs.len().saturating_sub(1);
+    let buf = bump.alloc_slice_fill_copy(size, 0u8);
+    let mut i = 0usize;
+    for (n, msg) in msgs.enumerate() {
+        if n > 0 {
+            buf[i] = b'\n';
+            i += 1;
+        }
+        buf[i..i + msg.len()].copy_from_slice(msg);
+        i += msg.len();
+    }
+    buf
 }
 
 #[derive(Default)]
@@ -2356,25 +2359,8 @@ pub struct LexResult<'bump> {
 
 impl<'bump> LexResult<'bump> {
     pub fn combine_errors(&self, bump: &'bump Bump) -> &'bump [u8] {
-        let errors = self.errors;
-
-        ({
-            let size = {
-                let mut i = 0usize;
-                for e in errors {
-                    i += e.msg.len() as usize;
-                }
-                i
-            };
-            let buf = bump.alloc_slice_fill_copy(size, 0u8);
-            let mut i = 0usize;
-            for e in errors {
-                let s = e.msg.slice(self.strpool);
-                buf[i..i + s.len()].copy_from_slice(s);
-                i += s.len();
-            }
-            buf
-        }) as _
+        let strpool = self.strpool;
+        join_error_msgs(bump, self.errors.iter().map(move |e| e.msg.slice(strpool)))
     }
 }
 

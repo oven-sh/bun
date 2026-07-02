@@ -596,6 +596,28 @@ describe("bunshell", () => {
         await $`echo hi < ${stream}`.quiet().throws(true);
       }).toThrow(/ReadableStream cannot be redirected to a builtin command/);
     });
+
+    // Deliberate platform divergence (see the PR description): `cat` is an
+    // external command on POSIX (the stream is piped to it) but a shell
+    // builtin on Windows, and builtins read stdin synchronously from a
+    // buffer/blob, so a ReadableStream redirect to one is rejected.
+    test("cat < stream (builtin on Windows, external elsewhere)", async () => {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("meow"));
+          controller.close();
+        },
+      });
+      if (isWindows) {
+        expect(async () => {
+          await $`cat < ${stream}`.quiet().throws(true);
+        }).toThrow(/ReadableStream cannot be redirected to a builtin command \('cat'\)/);
+      } else {
+        const { stdout, exitCode } = await $`cat < ${stream}`.quiet();
+        expect(stdout.toString()).toBe("meow");
+        expect(exitCode).toBe(0);
+      }
+    });
   });
 
   // TODO This sometimes fails

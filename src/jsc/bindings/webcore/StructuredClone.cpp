@@ -140,8 +140,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globa
     auto serializeOptions = convertDictionary<StructuredSerializeOptions>(*globalObject, options);
     RETURN_IF_EXCEPTION(throwScope, {});
 
+    // structuredClone serializes within the current agent cluster, so it admits the same
+    // agent-cluster-local types postMessage does (WebAssembly.Module, shared
+    // WebAssembly.Memory, SharedArrayBuffer). The Default context would reject all three.
     Vector<RefPtr<MessagePort>> ports;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(serializeOptions.transfer), ports);
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(serializeOptions.transfer), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
         RELEASE_AND_RETURN(throwScope, {});

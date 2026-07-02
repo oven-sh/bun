@@ -111,6 +111,9 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
         WTF::move(sourceCode), moduleWrapper, initializeImportMeta);
     RETURN_IF_EXCEPTION(scope, nullptr);
     ptr->finishCreation(vm);
+    // This module's CyclicModuleRecord never enters a JSModuleLoader map, so
+    // $esmLoadSync's Evaluating scan cannot see it mid-evaluation.
+    WebCore::clientData(vm)->hasModuleRecordsOutsideLoaderMap = true;
 
     if (cachedData.isEmpty()) {
         return ptr;

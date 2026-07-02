@@ -278,6 +278,42 @@ describe.concurrent("require(esm) whose top-level await only needs microtasks", 
     expect(await run(dir)).toEqual({ stdout: "resolved x=1 | shim-threw", stderr: "", exitCode: 0 });
   });
 
+  // node:vm SourceTextModule records live outside every JSModuleLoader map. In
+  // a module CYCLE the wrapper pre-evaluation skips the back-edge (its wrapper
+  // is already Evaluating), so the sibling's spec DFS enters it instead and
+  // runs its body while two records sit at Evaluating with no [[CycleRoot]].
+  // A main-realm require() in the sandbox must not drain microtasks there.
+  test("does not drain while a node:vm module cycle is mid-evaluation", async () => {
+    using dir = tempDir("require-esm-tla-node-vm", {
+      "tla.mjs": `export const t = await 0;`,
+      "entry.cjs": `
+        const vm = require("node:vm");
+        const path = require("node:path");
+        const ctx = vm.createContext({
+          mainReq: s => {
+            try { require(path.resolve(__dirname, s)); return "req-no-throw"; }
+            catch (e) { return "req-threw"; }
+          },
+          report: m => { globalThis.__report = m; },
+        });
+        const asyncSib = new vm.SourceTextModule('export const v = await 0;', { context: ctx, identifier: "asyncSib" });
+        const A = new vm.SourceTextModule('import "B"; report(mainReq("./tla.mjs")); export const a = 1;', { context: ctx, identifier: "A" });
+        const B = new vm.SourceTextModule('import "asyncSib"; import "A"; export const b = 1;', { context: ctx, identifier: "B" });
+        const byName = { A, B, asyncSib };
+        (async () => {
+          await A.link(s => byName[s]);
+          await A.evaluate();
+          console.log("done A=" + A.status + " B=" + B.status + " | " + globalThis.__report);
+        })().catch(e => console.log("rejected: " + String(e).slice(0, 110)));
+      `,
+    });
+    expect(await run(dir)).toEqual({
+      stdout: "done A=evaluated B=evaluated | req-threw",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // A .then() queued before the require runs inside the checkpoint and can
   // import() the very module being required. The registry entry must survive
   // the throw so both importers share one evaluation and one namespace.

@@ -305,7 +305,6 @@ describe.concurrent("fetch() receive backpressure — streaming consumer shapes"
     const r1 = await fetch(server.url, { keepalive: true });
     const reader = r1.body!.getReader();
     await reader.read();
-    await Bun.sleep(50);
     await reader.cancel();
     // reader.cancel() aborts the in-flight request (#33227), closing the
     // connection; the client must recover so a later request still completes.

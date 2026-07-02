@@ -1152,12 +1152,7 @@ impl FetchTasklet {
                             // mark to wait until deinit
                             self.is_waiting_abort = self.result.has_more;
                             self.abort_reason.set(&global_object, check_result);
-                            self.signal_store.aborted.store(true, Ordering::Relaxed);
-                            self.tracker.did_cancel(&self.global_this);
-                            // we need to abort the request
-                            if let Some(http_) = self.http.as_mut() {
-                                http::http_thread().schedule_shutdown(http_);
-                            }
+                            self.abort_task();
                             self.result.fail = Some(err!("ERR_TLS_CERT_ALTNAME_INVALID"));
                             return false;
                         }
@@ -1177,11 +1172,7 @@ impl FetchTasklet {
                             let hostname_err_result = global_object.try_take_exception().unwrap();
                             self.is_waiting_abort = self.result.has_more;
                             self.abort_reason.set(&global_object, hostname_err_result);
-                            self.signal_store.aborted.store(true, Ordering::Relaxed);
-                            self.tracker.did_cancel(&self.global_this);
-                            if let Some(http_) = self.http.as_mut() {
-                                http::http_thread().schedule_shutdown(http_);
-                            }
+                            self.abort_task();
                             self.result.fail = Some(err!("ERR_TLS_CERT_ALTNAME_INVALID"));
                             return false;
                         }
@@ -1202,13 +1193,7 @@ impl FetchTasklet {
                         // mark to wait until deinit
                         self.is_waiting_abort = self.result.has_more;
                         self.abort_reason.set(&global_object, check_result);
-                        self.signal_store.aborted.store(true, Ordering::Relaxed);
-                        self.tracker.did_cancel(&self.global_this);
-
-                        // we need to abort the request
-                        if let Some(http_) = self.http.as_mut() {
-                            http::http_thread().schedule_shutdown(http_);
-                        }
+                        self.abort_task();
                         self.result.fail = Some(err!("ERR_TLS_CERT_ALTNAME_INVALID"));
                         return false;
                     }

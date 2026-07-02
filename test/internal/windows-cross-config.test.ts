@@ -212,4 +212,32 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     expect(linuxFlags.cxxflags).toContain("-fwhole-program-vtables");
     expect(linuxFlags.cxxflags).not.toContain("-fno-split-lto-unit");
   });
+
+  test("the linux release LTO link merges identical functions and strips toolchain metadata", () => {
+    const linuxToolchain = () =>
+      mockToolchain({ cc: "/fake/llvm/bin/clang", cxx: "/fake/llvm/bin/clang++", ld: "/fake/llvm/bin/ld.lld" });
+    const linux = resolveConfig(
+      { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", ci: true, buildkite: false },
+      linuxToolchain(),
+    );
+    expect(linux.lto).toBe(true);
+    const flags = computeFlags(linux);
+
+    // LLVM's MergeFunctions pass is address-identity-safe: an address-taken
+    // function becomes a tail-call thunk with its own distinct address, never
+    // an alias. That is what section-level --icf=all cannot provide and the
+    // reason 218430c731 had to revert it. Full LTO only, so gate on c.lto.
+    expect(flags.ldflags).toContain("-Wl,-mllvm,-enable-merge-functions");
+    const nonLto = resolveConfig(
+      { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", ci: true, buildkite: false, lto: false },
+      linuxToolchain(),
+    );
+    expect(computeFlags(nonLto).ldflags).not.toContain("-Wl,-mllvm,-enable-merge-functions");
+
+    // .comment leaks the linker's own build path into the shipped binary and
+    // .note.stapsdt is libstdc++'s unused SystemTap probe table. Both are
+    // non-allocated metadata sections, stripped from every Linux release.
+    expect(flags.stripflags).toContain(".comment");
+    expect(flags.stripflags).toContain(".note.stapsdt");
+  });
 });

@@ -957,6 +957,24 @@ impl ShellSubprocess {
     pub fn on_process_exit(&mut self, _: &Process, status: &Status, _: &Rusage) {
         log!("onProcessExit({:x})", std::ptr::from_mut(self) as usize);
 
+        let exit_code: Option<u8> = 'brk: {
+            if let Status::Exited(exited) = &status {
+                break 'brk Some(exited.code);
+            }
+
+            if matches!(status, Status::Err(_)) {
+                // TODO: handle error
+            }
+
+            if matches!(status, Status::Signaled(_)) {
+                if let Some(code) = status.signal_code() {
+                    break 'brk Some(code.to_exit_code().unwrap());
+                }
+            }
+
+            break 'brk None;
+        };
+
         let stdin_is_pipe = matches!(self.stdin, Writable::Pipe(_));
         if let Writable::Pipe(pipe) = &mut self.stdin {
             // Read before `on_attached_process_exit` tears the sink down: set by
@@ -981,29 +999,11 @@ impl ShellSubprocess {
                 if stream_rejected {
                     // The redirected stream failed after the pump started: the
                     // child only saw a truncated stdin. Don't report success.
-                    cmd.on_stdin_stream_rejected();
+                    cmd.on_stdin_stream_rejected(exit_code);
                 }
                 cmd.buffered_input_close();
             }
         }
-
-        let exit_code: Option<u8> = 'brk: {
-            if let Status::Exited(exited) = &status {
-                break 'brk Some(exited.code);
-            }
-
-            if matches!(status, Status::Err(_)) {
-                // TODO: handle error
-            }
-
-            if matches!(status, Status::Signaled(_)) {
-                if let Some(code) = status.signal_code() {
-                    break 'brk Some(code.to_exit_code().unwrap());
-                }
-            }
-
-            break 'brk None;
-        };
 
         if let Some(code) = exit_code {
             let handle = self.cmd_parent;

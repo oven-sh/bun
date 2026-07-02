@@ -570,6 +570,27 @@ describe("bunshell", () => {
       expect(exitCode).toBe(1);
     });
 
+    test("child's own failing exit code wins over the stream error", async () => {
+      let pulls = 0;
+      const stream = new ReadableStream({
+        async pull(controller) {
+          pulls++;
+          if (pulls === 1) {
+            controller.enqueue(new TextEncoder().encode("first-chunk"));
+            await Bun.sleep(0);
+            return;
+          }
+          throw new Error("source failed mid-stream");
+        },
+      });
+      // The child drains its truncated stdin and then fails on its own; its
+      // exit code is more useful than the shell's generic 1 and must survive.
+      const readThenExit42 = `await Bun.stdin.text(); process.exit(42)`;
+      const { stderr, exitCode } = await $`${BUN} -e ${readThenExit42} < ${stream}`.env(bunEnv).quiet().nothrow();
+      expect(stderr.toString()).toContain("ReadableStream redirected to stdin errored");
+      expect(exitCode).toBe(42);
+    });
+
     test("child exiting before the stream completes does not hang", async () => {
       // The child never reads stdin and exits while the source is still
       // producing; the shell must cancel the stream and finish.

@@ -955,10 +955,12 @@ impl Cmd {
 
     /// The ReadableStream redirected to this command's stdin failed after the
     /// pump started (its `pull()` rejected / the stream errored), so the child
-    /// only saw a truncated stdin. Mirror how output IO errors surface: note
-    /// it on the captured stderr and make the command fail unless the child
-    /// already produced a failing exit code of its own.
-    pub fn on_stdin_stream_rejected(&mut self) {
+    /// only saw a truncated stdin. Note it on the captured stderr (the
+    /// JS-visible `$` result; echoing it through the stderr IOWriter would
+    /// need a waiting state this process-exit callback cannot enter) and fail
+    /// the command unless the child itself exited non-zero: the child's own
+    /// exit code is the better diagnostic, so it is kept.
+    pub fn on_stdin_stream_rejected(&mut self, child_exit_code: Option<u8>) {
         log!("cmd stdin stream rejected");
         const MSG: &[u8] = b"bun: ReadableStream redirected to stdin errored\n";
         match &self.io.stderr {
@@ -980,7 +982,10 @@ impl Cmd {
             }
             IoOutKind::Ignore => {}
         }
-        if self.exit_code.is_none() {
+        // An exit code set earlier (a stdout/stderr IO error) or a failing
+        // child exit code is kept; `on_process_exit` only reports the child's
+        // own code when `exit_code` is still unset here.
+        if self.exit_code.is_none() && !matches!(child_exit_code, Some(code) if code != 0) {
             self.exit_code = Some(1);
         }
     }

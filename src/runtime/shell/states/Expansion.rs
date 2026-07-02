@@ -317,25 +317,40 @@ impl Expansion {
             me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
             return;
         }
-        let count = count as usize;
-        let mut expanded: Vec<Vec<u8>> = (0..count).map(|_| Vec::new()).collect();
+        // `brace_expansion_hint` is a static AST property, but the assembled
+        // word can lose its only complete `{...}` group by the time it gets
+        // here: an unquoted `$(...)` whose output IFS-splits calls
+        // `push_current_out` mid-word, flushing the brace prefix out of
+        // `current_out` (and clearing `meta_offsets`). `{a,b}$(echo x y)`
+        // reaches this point with `current_out == "y"`. `expand` writes into
+        // `out[0]` unconditionally, so a zero-count word must short-circuit
+        // to its single, literal result (the same `count == 0` contract
+        // `braces()` in `BunObject.rs` applies).
+        let expanded: Vec<Vec<u8>> = if count == 0 {
+            vec![me.current_out.clone()]
+        } else {
+            let count = count as usize;
+            let mut expanded: Vec<Vec<u8>> = (0..count).map(|_| Vec::new()).collect();
 
-        let arena = bun_alloc::Arena::new();
-        if let Err(e) = braces::expand(
-            &arena,
-            &mut lexer_output.tokens[..],
-            &mut expanded[..],
-            lexer_output.contains_nested,
-        ) {
-            if matches!(e, braces::ParserError::TooManyBraces) {
-                let msg = "too many braces in brace expansion".to_string();
-                me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
-                return;
+            let arena = bun_alloc::Arena::new();
+            if let Err(e) = braces::expand(
+                &arena,
+                &mut lexer_output.tokens[..],
+                &mut expanded[..],
+                lexer_output.contains_nested,
+            ) {
+                if matches!(e, braces::ParserError::TooManyBraces) {
+                    let msg = "too many braces in brace expansion".to_string();
+                    me.state =
+                        ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
+                    return;
+                }
+                // An unexpected token from brace expansion is a parser bug.
+                panic!("unexpected error from Braces.expand: {e:?}");
             }
-            // An unexpected token from brace expansion is a parser bug.
-            panic!("unexpected error from Braces.expand: {e:?}");
-        }
-        drop(arena);
+            drop(arena);
+            expanded
+        };
 
         // Push each variant as its own word; word boundaries are recorded
         // via `bounds`.

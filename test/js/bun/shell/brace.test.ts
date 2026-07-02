@@ -128,6 +128,66 @@ describe("brace + glob composition", () => {
   });
 });
 
+// An unquoted `$(...)` whose output contains whitespace is IFS-split, which
+// flushes the already-assembled prefix of the word out of `current_out` mid
+// assembly. When that flush took the word's only complete `{...}` group with
+// it, `do_brace_expand` tokenized the leftover fragment to zero brace groups
+// and `braces::expand` indexed an empty output slice:
+//   panic: index out of bounds: the len is 0 but the index is 0
+describe.concurrent("brace expansion after an IFS-split command substitution", () => {
+  async function run(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "exec", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // Each of these panicked. Run in a subprocess so an unfixed build aborts
+  // the child, not the test runner. The surviving fragment has no complete
+  // brace group, so the word is emitted literally (the same `count == 0`
+  // contract `$.braces()` already applies to a group-less input).
+  test("group entirely in the flushed prefix", async () => {
+    expect(await run("echo {a,b}$(echo x y)")).toEqual({
+      stdout: "{a,b}x y\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("split lands inside the group, before the comma", async () => {
+    expect(await run("echo {$(echo a b),c}")).toEqual({
+      stdout: "{a b,c}\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("split lands inside the group, after the comma", async () => {
+    expect(await run("echo {a,$(echo x y)}")).toEqual({
+      stdout: "{a,x y}\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A group that survives the split still expands.
+  test("group entirely after the split still expands", async () => {
+    expect(await run("echo $(echo x y){a,b}")).toEqual({
+      stdout: "x ya yb\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 // $.braces() recursed once per `{` group (parse_atom <-> parse_expansion /
 // expand_nested), so a word made of tens of thousands of nested braces drove
 // the parser that many native stack frames deep. The parser now rejects words

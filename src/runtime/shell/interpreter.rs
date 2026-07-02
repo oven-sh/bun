@@ -3217,22 +3217,6 @@ pub fn create_shell_interpreter(
             reject,
         );
         it.this_jsvalue.set(js_value);
-        // Re-root the terminal's JS wrapper on the `ShellInterpreter` wrapper:
-        // the `ParsedShellScript` that was rooting it becomes unreachable as
-        // soon as JS drops its reference (`this.#args = undefined`).
-        if terminal.is_some() {
-            if let Some(terminal_js) =
-                crate::generated_classes::js_ParsedShellScript::terminal_get_cached(
-                    parsed_shell_script_js,
-                )
-            {
-                crate::jsc::generated::JSShellInterpreter::terminal_set_cached(
-                    js_value,
-                    global,
-                    terminal_js,
-                );
-            }
-        }
         it.keep_alive.with_mut(|k| {
             // `bun_vm_ptr()` is the live per-thread VM singleton.
             k.ref_(crate::jsc::VirtualMachineRef::event_loop_ctx(

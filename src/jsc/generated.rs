@@ -1120,7 +1120,9 @@ js_class_module!(JSRequest   = "Request"   { body, headers, url, signal, stream 
 js_class_module!(JSResumableFetchSink    = "ResumableFetchSink"    { ondrain, oncancel, stream });
 js_class_module!(JSResumableS3UploadSink = "ResumableS3UploadSink" { ondrain, oncancel, stream });
 // `values: ["resolve", "reject", "terminal"]` in src/runtime/api/Shell.classes.ts.
-js_class_module!(JSShellInterpreter      = "ShellInterpreter"      { resolve, reject, terminal });
+// `terminal` is seeded by `Bun__createShellInterpreter` (ShellBindings.cpp) and
+// only read by the generated GC visitor, so it has no Rust-side accessor here.
+js_class_module!(JSShellInterpreter      = "ShellInterpreter"      { resolve, reject });
 // `src/runtime/crypto/crypto.classes.ts` — one entry per `StaticCryptoHasher`
 // monomorphization. Payload erased;
 // the native struct lives in `bun_runtime::crypto`.

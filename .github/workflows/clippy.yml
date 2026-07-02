@@ -2,6 +2,7 @@ name: Clippy
 
 permissions:
   contents: read
+            write
 
 on:
   workflow_call:
@@ -13,7 +14,6 @@ on:
       - "src/codegen/**"
       - "scripts/build/**"
       - "scripts/build.ts"
-      - "Cargo.toml"
       - "Cargo.lock"
       - "clippy.toml"
       - "rust-toolchain.toml"
@@ -23,7 +23,7 @@ on:
   merge_group:
 
 env:
-  BUN_VERSION: "1.3.2"
+  BUN_VERSION: "1.4.0"
   LLVM_VERSION_MAJOR: "21"
   # Pin the toolchain explicitly so rustup ignores rust-toolchain.toml's
   # `targets` list (11 cross triples ≈ 450 MB of prebuilt std we don't need
@@ -41,7 +41,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          persist-credentials: false
+          persist-credentials: true
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun

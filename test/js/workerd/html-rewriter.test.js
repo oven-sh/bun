@@ -322,6 +322,63 @@ describe("HTMLRewriter", () => {
         .transform("<div>old</div>");
       expect(out).toBe("<div>sync enough</div>");
     });
+
+    // The response body is still a pending/locked value when the client goes
+    // away; the rewrite must still be allowed to finish (or fail) afterwards
+    // without corrupting the RequestContext it was registered against, and the
+    // server must keep working.
+    for (const settle of ["resolves", "rejects"]) {
+      it(`client aborts while the handler is suspended, then the handler ${settle}`, async () => {
+        const suspended = Promise.withResolvers();
+        const serverSawAbort = Promise.withResolvers();
+        const gate = Promise.withResolvers();
+        let handlerFinished = 0;
+
+        await using server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            if (new URL(req.url).pathname === "/after") return new Response("still alive");
+            req.signal.addEventListener("abort", () => serverSawAbort.resolve());
+            return new HTMLRewriter()
+              .on("p", {
+                async element(element) {
+                  suspended.resolve();
+                  await gate.promise;
+                  element.setInnerContent("too late");
+                  handlerFinished++;
+                },
+              })
+              .transform(new Response("<p>original</p>"));
+          },
+        });
+
+        const controller = new AbortController();
+        const clientResult = fetch(`http://localhost:${server.port}/`, {
+          signal: controller.signal,
+        }).then(
+          r => r.text(),
+          e => e,
+        );
+
+        // Only abort once the handler has actually suspended the rewrite,
+        // and only resume it once the server has observed the abort.
+        await suspended.promise;
+        controller.abort();
+        expect(await clientResult).toBeInstanceOf(DOMException);
+        await serverSawAbort.promise;
+
+        if (settle === "resolves") {
+          gate.resolve();
+        } else {
+          gate.reject(new Error("handler failed after the client left"));
+        }
+
+        // The aborted request is gone; the server must still answer.
+        const after = await fetch(`http://localhost:${server.port}/after`);
+        expect(await after.text()).toBe("still alive");
+        expect(handlerFinished).toBe(settle === "resolves" ? 1 : 0);
+      });
+    }
   });
 
   it("HTMLRewriter handles Symbol invalid type error", async () => {

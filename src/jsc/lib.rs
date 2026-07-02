@@ -1480,6 +1480,24 @@ impl FromJsEnum for bun_http_types::FetchCacheMode::FetchCacheMode {
     }
 }
 
+impl FromJsEnum for bun_http_types::ReferrerPolicy::ReferrerPolicy {
+    fn from_js_value(
+        v: JSValue,
+        global: &JSGlobalObject,
+        property_name: &'static str,
+    ) -> JsResult<Self> {
+        use bun_http_types::ReferrerPolicy::ReferrerPolicy;
+        v.to_enum_from_map(
+            global,
+            property_name,
+            &ReferrerPolicy::MAP,
+            "'', 'no-referrer', 'no-referrer-when-downgrade', 'same-origin', 'origin', \
+             'strict-origin', 'origin-when-cross-origin', 'strict-origin-when-cross-origin' \
+             or 'unsafe-url'",
+        )
+    }
+}
+
 // `URL::path_from_file_url` / `URL::href_from_js` live in `URL.rs` (the
 // dedicated port file); the lib.rs copies were duplicate definitions.
 

@@ -274,6 +274,9 @@ pub use response::Response;
 pub mod request;
 pub use request::Request;
 
+#[path = "webcore/referrer.rs"]
+pub mod referrer;
+
 #[path = "webcore/ReadableStream.rs"]
 pub mod readable_stream;
 pub use readable_stream::{

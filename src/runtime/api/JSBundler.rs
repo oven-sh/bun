@@ -440,12 +440,56 @@ pub mod js_bundler {
         }
     }
 
+    /// One resolved step of the plugin `setup()` chain.
+    enum SetupStep {
+        /// `runSetupFunction` (and, for the last plugin, its `onStart()`
+        /// promises) settled synchronously; carries the updated promise array
+        /// to thread into the next plugin's `runSetupFunction` call.
+        Settled(JSValue),
+        /// `runSetupFunction` returned a promise that is still pending: an
+        /// async `setup()` that suspended on an `await`, or the last plugin's
+        /// `Promise.all` over pending `onStart()` promises.
+        Pending(JSValue),
+    }
+
+    /// Where [`Config::from_js`] stopped when a plugin `setup()` yielded a
+    /// promise that had not settled yet. `build` turns this into a
+    /// [`DeferredBuild`] and continues from the promise's `.then`
+    /// continuation.
+    pub struct SuspendedPluginSetup {
+        /// The still-pending promise `runSetupFunction` returned.
+        pending: JSValue,
+        /// `config.plugins`, snapshotted before any `setup()` ran so a getter
+        /// is not re-invoked on resume.
+        plugins_array: jsc::Strong,
+        /// Plugin index to resume the chain from.
+        next_index: u32,
+        /// Snapshot of the plugin array length.
+        length: u32,
+        plugin_target: jsc::BunPluginTarget,
+        /// The partially-parsed config: only the pre-plugin `target` fields
+        /// are set. The rest is parsed by `finish_from_js` once every
+        /// `setup()` has settled, because plugins may mutate the config
+        /// object before then.
+        config: Config,
+        did_set_target: bool,
+    }
+
     impl Config {
+        /// Parses `Bun.build`'s config object.
+        ///
+        /// Returns `Ok(None)` when a plugin's `setup()` (or the last plugin's
+        /// pending `onStart()` promises) yielded a promise that is still
+        /// pending. `*suspended` then records where the chain stopped and
+        /// owns the partially-parsed config; the caller must continue from
+        /// that promise's `.then` continuation instead of re-entering the
+        /// event loop (#33261).
         pub fn from_js(
             global_this: &JSGlobalObject,
             config: JSValue,
             plugins: &mut Option<*mut Plugin>,
-        ) -> JsResult<Config> {
+            suspended: &mut Option<SuspendedPluginSetup>,
+        ) -> JsResult<Option<Config>> {
             // Config implements Drop, so functional-record-update from Default::default()
             // is rejected by rustc (E0509). Construct default then mutate instead.
             let mut this = Config::default();
@@ -487,94 +531,163 @@ pub mod js_bundler {
 
             // Plugins must be resolved first as they are allowed to mutate the config JSValue
             if let Some(array) = config.get_array(global_this, "plugins")? {
-                let length = array.get_length(global_this)?;
-                let mut iter = array.array_iterator(global_this)?;
+                let length = array.get_length(global_this)? as u32;
+                let plugin_target = match this.target {
+                    Target::Bun | Target::BunMacro => jsc::BunPluginTarget::Bun,
+                    Target::Node => jsc::BunPluginTarget::Node,
+                    _ => jsc::BunPluginTarget::Browser,
+                };
                 let mut onstart_promise_array = JSValue::UNDEFINED;
-                let mut i: usize = 0;
-                while let Some(plugin) = iter.next()? {
-                    if !plugin.is_object() {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Expected plugin to be an object"
-                        )));
-                    }
-
-                    if let Some(slice) = plugin.get_optional_slice(global_this, b"name")? {
-                        if slice.slice().is_empty() {
-                            return Err(global_this.throw_invalid_arguments(format_args!(
-                                "Expected plugin to have a non-empty name"
-                            )));
-                        }
-                        drop(slice);
-                    } else {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Expected plugin to have a name"
-                        )));
-                    }
-
-                    let Some(function) = plugin.get_function(global_this, b"setup")? else {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Expected plugin to have a setup() function"
-                        )));
-                    };
-
-                    let bun_plugins: *mut Plugin = match **plugins {
-                        Some(p) => p,
-                        None => {
-                            let p = Plugin::create(
-                                global_this,
-                                match this.target {
-                                    Target::Bun | Target::BunMacro => jsc::BunPluginTarget::Bun,
-                                    Target::Node => jsc::BunPluginTarget::Node,
-                                    _ => jsc::BunPluginTarget::Browser,
-                                },
-                            );
-                            **plugins = Some(p);
-                            p
-                        }
-                    };
-
-                    let is_last = i == (length as usize).saturating_sub(1);
-                    // SAFETY: bun_plugins is a valid pointer created/stored above
-                    let mut plugin_result = unsafe {
-                        (*bun_plugins).add_plugin(
-                            function,
-                            config,
-                            onstart_promise_array,
-                            is_last,
-                            false,
-                        )?
-                    };
-
-                    if !plugin_result.is_empty_or_undefined_or_null() {
-                        if let Some(promise) = plugin_result.as_any_promise() {
-                            promise.set_handled(global_this.vm());
-                            // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
-                            global_this.bun_vm().as_mut().wait_for_promise(promise);
-                            match promise
-                                .unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled)
-                            {
-                                jsc::PromiseResult::Pending => unreachable!(),
-                                jsc::PromiseResult::Fulfilled(val) => {
-                                    plugin_result = val;
-                                }
-                                jsc::PromiseResult::Rejected(err) => {
-                                    return Err(global_this.throw_value(err));
-                                }
-                            }
+                for index in 0..length {
+                    match Self::run_one_plugin_setup(
+                        global_this,
+                        config,
+                        &mut **plugins,
+                        plugin_target,
+                        array,
+                        index,
+                        length,
+                        onstart_promise_array,
+                    )? {
+                        SetupStep::Settled(value) => onstart_promise_array = value,
+                        SetupStep::Pending(pending) => {
+                            // An async `setup()` (or the last plugin's pending
+                            // `onStart()` promises) has not settled. Never
+                            // re-enter the event loop from here (#33261):
+                            // record where the chain stopped so `build` can
+                            // run the remaining plugins, and the rest of the
+                            // config parse, from this promise's `.then`
+                            // continuation.
+                            *suspended = Some(SuspendedPluginSetup {
+                                pending,
+                                plugins_array: jsc::Strong::create(array, global_this),
+                                next_index: index + 1,
+                                length,
+                                plugin_target,
+                                config: this,
+                                did_set_target,
+                            });
+                            // Ownership of the plugin registry transfers to
+                            // the continuation; disarm the error cleanup.
+                            scopeguard::ScopeGuard::into_inner(plugins);
+                            return Ok(None);
                         }
                     }
-
-                    if let Some(err) = plugin_result.to_error() {
-                        return Err(global_this.throw_value(err));
-                    } else if global_this.has_exception() {
-                        return Err(JsError::Thrown);
-                    }
-
-                    onstart_promise_array = plugin_result;
-                    i += 1;
                 }
             }
 
+            let this = Self::finish_from_js(global_this, config, this, did_set_target)?;
+            scopeguard::ScopeGuard::into_inner(plugins);
+            Ok(Some(this))
+        }
+
+        /// Validate plugin `index` of the `plugins` array, lazily create the
+        /// shared plugin registry, and invoke the plugin's `setup()` through
+        /// the `runSetupFunction` builtin.
+        ///
+        /// `runSetupFunction` stores the `onStart()` promise array it is
+        /// given on the plugin registry before calling `setup()`, so the
+        /// chain has to advance one plugin at a time with the previous
+        /// plugin's settled result.
+        #[allow(clippy::too_many_arguments)]
+        fn run_one_plugin_setup(
+            global_this: &JSGlobalObject,
+            config: JSValue,
+            plugins: &mut Option<*mut Plugin>,
+            plugin_target: jsc::BunPluginTarget,
+            array: JSValue,
+            index: u32,
+            length: u32,
+            onstart_promise_array: JSValue,
+        ) -> JsResult<SetupStep> {
+            let plugin = array.get_index(global_this, index)?;
+            if !plugin.is_object() {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "Expected plugin to be an object"
+                )));
+            }
+
+            if let Some(slice) = plugin.get_optional_slice(global_this, b"name")? {
+                if slice.slice().is_empty() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected plugin to have a non-empty name"
+                    )));
+                }
+                drop(slice);
+            } else {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "Expected plugin to have a name"
+                )));
+            }
+
+            let Some(function) = plugin.get_function(global_this, b"setup")? else {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "Expected plugin to have a setup() function"
+                )));
+            };
+
+            let bun_plugins: *mut Plugin = match *plugins {
+                Some(p) => p,
+                None => {
+                    let p = Plugin::create(global_this, plugin_target);
+                    *plugins = Some(p);
+                    p
+                }
+            };
+
+            let is_last = index + 1 == length;
+            // SAFETY: bun_plugins is a valid pointer created/stored above
+            let mut plugin_result = unsafe {
+                (*bun_plugins).add_plugin(
+                    function,
+                    config,
+                    onstart_promise_array,
+                    is_last,
+                    false,
+                )?
+            };
+
+            if !plugin_result.is_empty_or_undefined_or_null() {
+                if let Some(promise) = plugin_result.as_any_promise() {
+                    promise.set_handled(global_this.vm());
+                    if matches!(promise.status(), jsc::js_promise::Status::Pending) {
+                        // Never block the event loop waiting for this promise
+                        // (#33261): the caller attaches `.then` reactions and
+                        // continues the chain from there.
+                        return Ok(SetupStep::Pending(plugin_result));
+                    }
+                    match promise.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
+                        jsc::PromiseResult::Pending => unreachable!(),
+                        jsc::PromiseResult::Fulfilled(val) => {
+                            plugin_result = val;
+                        }
+                        jsc::PromiseResult::Rejected(err) => {
+                            return Err(global_this.throw_value(err));
+                        }
+                    }
+                }
+            }
+
+            if let Some(err) = plugin_result.to_error() {
+                return Err(global_this.throw_value(err));
+            } else if global_this.has_exception() {
+                return Err(JsError::Thrown);
+            }
+
+            Ok(SetupStep::Settled(plugin_result))
+        }
+
+        /// Everything `from_js` parses after the plugin `setup()` chain has
+        /// settled. Split out so that, when a `setup()` suspends, the
+        /// remainder can run in its `.then` continuation: plugins are
+        /// allowed to mutate the config object before their promise settles,
+        /// so none of these fields may be read earlier.
+        fn finish_from_js(
+            global_this: &JSGlobalObject,
+            config: JSValue,
+            mut this: Config,
+            did_set_target: bool,
+        ) -> JsResult<Config> {
             if let Some(macros_flag) = config.get_boolean_loose(global_this, "macros")? {
                 this.no_macros = !macros_flag;
             }
@@ -1284,7 +1397,6 @@ pub mod js_bundler {
                 }
             }
 
-            scopeguard::ScopeGuard::into_inner(plugins);
             Ok(this)
         }
     }
@@ -1349,7 +1461,39 @@ pub mod js_bundler {
         }
 
         let mut plugins: Option<*mut Plugin> = None;
-        let config = Config::from_js(global_this, arguments[0], &mut plugins)?;
+        let mut suspended: Option<SuspendedPluginSetup> = None;
+        let Some(config) =
+            Config::from_js(global_this, arguments[0], &mut plugins, &mut suspended)?
+        else {
+            // A plugin `setup()` (or the last plugin's `onStart()` promises)
+            // suspended on a promise that has not settled. `Bun.build`
+            // already returns a promise, so run the remaining plugins, finish
+            // the config parse, and schedule the bundle from that promise's
+            // `.then` continuation instead of re-entering the event loop
+            // (#33261).
+            let suspended = suspended.expect("from_js returned None without a suspension");
+            let result = jsc::JSPromiseStrong::init(global_this);
+            let return_value = result.value();
+            let pending = suspended.pending;
+            let deferred = bun_core::heap::into_raw(Box::new(DeferredBuild {
+                config_js: jsc::Strong::create(arguments[0], global_this),
+                plugins_array: suspended.plugins_array,
+                next_index: suspended.next_index,
+                length: suspended.length,
+                plugin_target: suspended.plugin_target,
+                plugin: plugins,
+                partial: Some(suspended.config),
+                did_set_target: suspended.did_set_target,
+                result,
+            }));
+            pending.then(
+                global_this,
+                deferred,
+                __jsc_host_on_deferred_build_resolve,
+                __jsc_host_on_deferred_build_reject,
+            );
+            return Ok(return_value);
+        };
 
         let event_loop = vm.event_loop();
 
@@ -1381,6 +1525,159 @@ pub mod js_bundler {
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<1>();
         build(global_this, arguments.slice())
+    }
+
+    /// A `Bun.build` whose plugin `setup()` chain suspended on a pending
+    /// promise.
+    ///
+    /// Leaked with `heap::into_raw` and handed to the promise's `.then`
+    /// reactions as their context pointer; exactly one of the two reactions
+    /// runs and reclaims it (or leaks it again if the chain suspends on a
+    /// later plugin).
+    struct DeferredBuild {
+        /// `Bun.build(config)`'s config argument; the rest of the parse reads
+        /// it after the chain settles.
+        config_js: jsc::Strong,
+        /// See [`SuspendedPluginSetup::plugins_array`].
+        plugins_array: jsc::Strong,
+        next_index: u32,
+        length: u32,
+        plugin_target: jsc::BunPluginTarget,
+        /// The plugin registry, owned here until it either transfers to the
+        /// completion task (success) or is destroyed (failure).
+        plugin: Option<*mut Plugin>,
+        /// The partially-parsed config (pre-plugin `target` fields only);
+        /// `None` once it has moved into the completion task.
+        partial: Option<Config>,
+        did_set_target: bool,
+        /// `Bun.build`'s result promise. Moved into the completion task on
+        /// success, rejected here on failure.
+        result: jsc::JSPromiseStrong,
+    }
+
+    impl DeferredBuild {
+        /// Continue the plugin `setup()` chain from `next_index` with the
+        /// value the last pending step settled to, then, once every plugin
+        /// has settled, finish the config parse and schedule the bundle.
+        ///
+        /// Returns `Some(pending)` when the chain suspended again on a later
+        /// plugin's promise.
+        fn resume(
+            &mut self,
+            global_this: &JSGlobalObject,
+            mut onstart_promise_array: JSValue,
+        ) -> JsResult<Option<JSValue>> {
+            // The synchronous chain rejects when a step settles to an Error;
+            // preserve that for a step that settled through `.then`.
+            if let Some(err) = onstart_promise_array.to_error() {
+                return Err(global_this.throw_value(err));
+            }
+
+            let array = self.plugins_array.get();
+            while self.next_index < self.length {
+                let index = self.next_index;
+                self.next_index += 1;
+                match Config::run_one_plugin_setup(
+                    global_this,
+                    self.config_js.get(),
+                    &mut self.plugin,
+                    self.plugin_target,
+                    array,
+                    index,
+                    self.length,
+                    onstart_promise_array,
+                )? {
+                    SetupStep::Settled(value) => onstart_promise_array = value,
+                    SetupStep::Pending(pending) => return Ok(Some(pending)),
+                }
+            }
+
+            let partial = self.partial.take().expect("DeferredBuild resumed after completion");
+            let config =
+                Config::finish_from_js(global_this, self.config_js.get(), partial, self.did_set_target)?;
+
+            let event_loop = global_this.bun_vm().event_loop();
+            let completion =
+                crate::api::js_bundle_completion_task::create_and_schedule_completion_task(
+                    config,
+                    self.plugin.take().and_then(core::ptr::NonNull::new),
+                    global_this,
+                    event_loop,
+                )
+                .map_err(|_| JsError::OutOfMemory)?;
+            // SAFETY: `completion` is the freshly-boxed allocation returned
+            // above; sole owner on the JS thread until the enqueued task runs.
+            unsafe {
+                (*completion).promise = self.result.take();
+            }
+            Ok(None)
+        }
+
+        /// Reject `Bun.build`'s result promise with the pending exception and
+        /// destroy the plugin registry.
+        fn fail(&mut self, global_this: &JSGlobalObject, err: JsError) {
+            if let Some(plugin) = self.plugin.take() {
+                Plugin::destroy(plugin);
+            }
+            if matches!(err, JsError::Terminated) {
+                // The VM is terminating; leave the termination exception in
+                // place and don't settle the promise.
+                return;
+            }
+            let exception = global_this.take_exception(err);
+            let _ = self.result.reject(global_this, Ok(exception));
+        }
+    }
+
+    /// `.then` resolve reaction for a suspended plugin `setup()` chain: the
+    /// step's settled value (the `onStart()` promise array) arrives as the
+    /// first argument.
+    #[bun_jsc::host_fn(export = "Bun__JSBundler__onResolvePluginSetup")]
+    fn on_deferred_build_resolve(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let [onstart_promise_array, ctx] = callframe.arguments_as_array::<2>();
+        let deferred: *mut DeferredBuild = ctx.as_promise_ptr::<DeferredBuild>();
+        // SAFETY: `deferred` was leaked via `heap::into_raw` by `build` (or a
+        // previous re-suspension) and exactly one of the two `.then`
+        // reactions runs; reclaiming it here is the unique owner transition.
+        let mut this: Box<DeferredBuild> = unsafe { bun_core::heap::take(deferred) };
+        match this.resume(global_this, onstart_promise_array) {
+            Ok(Some(pending)) => {
+                // Another plugin suspended; hand the allocation to the next
+                // pair of reactions.
+                let deferred = bun_core::heap::into_raw(this);
+                pending.then(
+                    global_this,
+                    deferred,
+                    __jsc_host_on_deferred_build_resolve,
+                    __jsc_host_on_deferred_build_reject,
+                );
+            }
+            Ok(None) => {}
+            Err(err) => this.fail(global_this, err),
+        }
+        Ok(JSValue::UNDEFINED)
+    }
+
+    /// `.then` reject reaction for a suspended plugin `setup()` chain: a
+    /// plugin's async `setup()` (or one of its `onStart()` callbacks)
+    /// rejected.
+    #[bun_jsc::host_fn(export = "Bun__JSBundler__onRejectPluginSetup")]
+    fn on_deferred_build_reject(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let [error, ctx] = callframe.arguments_as_array::<2>();
+        let deferred: *mut DeferredBuild = ctx.as_promise_ptr::<DeferredBuild>();
+        // SAFETY: see `on_deferred_build_resolve`.
+        let mut this: Box<DeferredBuild> = unsafe { bun_core::heap::take(deferred) };
+        if let Some(plugin) = this.plugin.take() {
+            Plugin::destroy(plugin);
+        }
+        let _ = this.result.reject(global_this, Ok(error));
+        Ok(JSValue::UNDEFINED)
     }
 
     // NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by

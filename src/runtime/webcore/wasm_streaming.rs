@@ -40,7 +40,9 @@ pub(crate) fn get_body_stream_or_bytes_for_wasm_streaming(
         None => {
             return Err(this.throw_invalid_argument_type_value2(
                 b"source",
-                b"an instance of Response or Promise resolving to Response",
+                // "an Promise" is byte-for-byte what Node's ERR_INVALID_ARG_TYPE
+                // formatter emits for an uppercase-initial non-class entry.
+                b"an instance of Response or an Promise resolving to Response",
                 response_value,
             ));
         }

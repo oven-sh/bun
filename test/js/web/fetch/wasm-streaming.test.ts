@@ -74,7 +74,7 @@ describe("WebAssembly.compileStreaming", () => {
     const nonResponse = Buffer.from("not a Response");
     // @ts-expect-error nonResponse is not a Response
     await expect(WebAssembly.compileStreaming(nonResponse)).rejects.toThrow(
-      `The "source" argument must be an instance of Response or Promise resolving to Response. Received an instance of Buffer`,
+      `The "source" argument must be an instance of Response or an Promise resolving to Response. Received an instance of Buffer`,
     );
   });
 

@@ -300,21 +300,21 @@ describe.concurrent("fetch() receive backpressure — buffered consumers are not
 });
 
 describe.concurrent("fetch() receive backpressure — streaming consumer shapes", () => {
-  test("reader.cancel() resumes the socket so the abandoned body drains", async () => {
+  test("reader.cancel() aborts the in-flight request instead of draining the abandoned body", async () => {
     await using server = await serve("h1");
     const r1 = await fetch(server.url, { keepalive: true });
     const reader = r1.body!.getReader();
     await reader.read();
     await Bun.sleep(50);
     await reader.cancel();
-    // The cancelled body must drain before the connection is poolable;
-    // poll server.sent() instead of asserting a connection count.
-    while (server.sent() < TOTAL) await Bun.sleep(5);
+    // Cancelling an in-flight body aborts the request (matching Node/Deno and
+    // browsers, see #33227): the connection closes, so the server never sends
+    // the whole body. A subsequent request still succeeds on a fresh connection.
     const buf = await (await fetch(server.url, { keepalive: true })).arrayBuffer();
-    expect({ byteLength: buf.byteLength, sent: server.sent() }).toEqual({
-      byteLength: TOTAL,
-      sent: 2 * TOTAL,
-    });
+    expect(buf.byteLength).toBe(TOTAL);
+    // Drain-for-keepalive would push the first body to completion too, reaching
+    // 2 * TOTAL; the abort leaves the first response only partially sent.
+    expect(server.sent()).toBeLessThan(2 * TOTAL);
   });
 
   test("res.body.tee() both branches drain", async () => {

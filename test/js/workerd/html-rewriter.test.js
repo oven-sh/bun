@@ -327,8 +327,9 @@ describe("HTMLRewriter", () => {
     // away; the rewrite must still be allowed to finish (or fail) afterwards
     // without corrupting the RequestContext it was registered against, and the
     // server must keep working.
-    for (const settle of ["resolves", "rejects"]) {
-      it(`client aborts while the handler is suspended, then the handler ${settle}`, async () => {
+    it.concurrent.each(["resolves", "rejects"])(
+      "client aborts while the handler is suspended, then the handler %s",
+      async settle => {
         const suspended = Promise.withResolvers();
         const serverSawAbort = Promise.withResolvers();
         const gate = Promise.withResolvers();
@@ -364,7 +365,9 @@ describe("HTMLRewriter", () => {
         // and only resume it once the server has observed the abort.
         await suspended.promise;
         controller.abort();
-        expect(await clientResult).toBeInstanceOf(DOMException);
+        const abortError = await clientResult;
+        expect(abortError).toBeInstanceOf(DOMException);
+        expect(abortError.name).toBe("AbortError");
         await serverSawAbort.promise;
 
         if (settle === "resolves") {
@@ -377,8 +380,8 @@ describe("HTMLRewriter", () => {
         const after = await fetch(`http://localhost:${server.port}/after`);
         expect(await after.text()).toBe("still alive");
         expect(handlerFinished).toBe(settle === "resolves" ? 1 : 0);
-      });
-    }
+      },
+    );
   });
 
   it("HTMLRewriter handles Symbol invalid type error", async () => {

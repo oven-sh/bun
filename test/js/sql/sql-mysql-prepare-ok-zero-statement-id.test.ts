@@ -5,12 +5,7 @@
 // Buffer.alloc frame construction here.
 
 // A COM_STMT_PREPARE response carrying statement_id = 0 must be rejected as a
-// protocol error. The server never issues id 0, and the client keys its own
-// "prepared" state on statement_id > 0 (handle_prepared_statement dispatches
-// on it; bind_and_execute asserts it). Accepting it marks the cached statement
-// Prepared with the "not prepared" sentinel: debug builds abort on the
-// "statement is not prepared" assertion, and release builds send
-// COM_STMT_EXECUTE for statement id 0 on the wire.
+// protocol error; see StmtPrepareOKPacket::decode_internal for the invariant.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { listeningServer, mysqlHandshakeV10, mysqlOkPacket, mysqlReadPackets, mysqlStmtPrepareOk } from "./wire-frames";

@@ -49,6 +49,39 @@ describe("production", () => {
     isASAN ? 60_000 : 30_000,
   );
 
+  test(
+    "fails the build when a parameterized route throws during SSG",
+    async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-param-throw", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/blog/[slug].tsx": `export default function BlogPost({ params }) {
+  throw new Error("param boom");
+  return <div>{params.slug}</div>;
+}
+export function getStaticPaths() {
+  return { paths: [{ params: { slug: "hello" } }], fallback: false };
+}`,
+        "package.json": JSON.stringify({
+          "name": "test-app",
+          "version": "1.0.0",
+          "devDependencies": {
+            "react": "^18.0.0",
+            "react-dom": "^18.0.0",
+          },
+        }),
+      });
+
+      // A render error on a route generated from `getStaticPaths` must fail the
+      // build. Previously the render promise was dropped by the caller, so the
+      // error became an unhandled rejection and the build still exited 0.
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).throws(false);
+
+      expect(stderr.toString()).toContain("param boom");
+      expect(exitCode).toBe(1);
+    },
+    isASAN ? 60_000 : 30_000,
+  );
+
   test("import.meta properties are inlined in production build", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-import-meta", {
       "src/index.tsx": `export default { 

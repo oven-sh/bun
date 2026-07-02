@@ -774,6 +774,43 @@ it("should not hang after destroy", async () => {
   }
 }, 120_000);
 
+// `pending` is `!_handle || connecting`, and Node only detaches `_handle` in
+// Socket.prototype._destroy. The native close callback (which fires as soon as
+// the transport fully closes, i.e. before the 'end' event is delivered when our
+// writable side already finished) must not detach it early, or a live,
+// connected socket reports the pre-connection `pending === true` state.
+it("keeps `pending` false on a live socket after the peer half-closes", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<{ atEnd: unknown; atClose: unknown }>();
+  const server = createServer({ allowHalfOpen: true }, socket => {
+    // Finish our writable side first so the peer's FIN fully closes the
+    // transport before the 'end' event reaches JS.
+    socket.end("hi");
+    socket.on("error", reject);
+    socket.resume();
+    socket.on("end", () => {
+      const atEnd = { pending: socket.pending, destroyed: socket.destroyed };
+      socket.once("close", () => {
+        resolve({ atEnd, atClose: { pending: socket.pending, destroyed: socket.destroyed } });
+      });
+    });
+  });
+  try {
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
+    const client = connect({ port: server.address().port, host: "127.0.0.1", allowHalfOpen: true });
+    client.on("error", reject);
+    // Only half-close after the server's FIN arrived, so its writable side is
+    // already finished when ours shuts the transport down.
+    client.on("end", () => client.end("bye"));
+    client.resume();
+    expect(await promise).toEqual({
+      atEnd: { pending: false, destroyed: false },
+      atClose: { pending: true, destroyed: true },
+    });
+  } finally {
+    server.close();
+  }
+});
+
 it("should trigger error when aborted even if connection failed #13126", async () => {
   const signal = AbortSignal.timeout(100);
   const socket = createConnection({

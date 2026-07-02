@@ -46,44 +46,49 @@ describe("HTMLRewriter", () => {
     ).toThrow("test");
   });
 
-  it("fast async error inside element handler", () => {
-    let caught = false;
-    try {
+  // An `async` handler whose rejection is reachable by draining microtasks
+  // alone (no await on a timer / I/O) still fails `transform()` synchronously.
+  it("async error without a real await inside element handler", () => {
+    expect(() =>
       new HTMLRewriter()
         .on("div", {
           async element(element) {
-            await setImmediatePromise();
             throw new Error("test");
           },
         })
-        .transform(new Response("<div>hello</div>"));
-      expect.unreachable();
-    } catch (e) {
-      caught = true;
-      expect(e.message).toBe("test");
-    } finally {
-      expect(caught).toBeTrue();
-    }
+        .transform(new Response("<div>hello</div>")),
+    ).toThrow("test");
   });
 
-  it("slow async error inside element handler", () => {
-    let caught = false;
-    try {
-      new HTMLRewriter()
-        .on("div", {
-          async element(element) {
-            await Bun.sleep(1);
-            throw new Error("test");
-          },
-        })
-        .transform(new Response("<div>hello</div>"));
-      expect.unreachable();
-    } catch (e) {
-      caught = true;
-      expect(e.message).toBe("test");
-    } finally {
-      expect(caught).toBeTrue();
-    }
+  // A handler that only settles once the event loop turns (setImmediate /
+  // setTimeout / I/O) suspends the rewrite: `transform()` returns the
+  // Response immediately and the failure surfaces on its body, exactly like
+  // Cloudflare's HTMLRewriter. It can no longer throw synchronously, because
+  // HTMLRewriter no longer nests the event loop inside `transform()`.
+  it("fast async error inside element handler rejects the body", async () => {
+    const res = new HTMLRewriter()
+      .on("div", {
+        async element(element) {
+          await setImmediatePromise();
+          throw new Error("test");
+        },
+      })
+      .transform(new Response("<div>hello</div>"));
+    expect(res).toBeInstanceOf(Response);
+    await expect(res.text()).rejects.toThrow("test");
+  });
+
+  it("slow async error inside element handler rejects the body", async () => {
+    const res = new HTMLRewriter()
+      .on("div", {
+        async element(element) {
+          await Bun.sleep(1);
+          throw new Error("test");
+        },
+      })
+      .transform(new Response("<div>hello</div>"));
+    expect(res).toBeInstanceOf(Response);
+    await expect(res.text()).rejects.toThrow("test");
   });
 
   it("HTMLRewriter: async replacement", async () => {
@@ -100,6 +105,198 @@ describe("HTMLRewriter", () => {
     await gcTick();
     expect(await res.text()).toBe("<div><span>replace</span></div>");
     await gcTick();
+  });
+
+  // Async content handlers suspend the lol-html rewrite until their promise
+  // settles, instead of spinning a nested event loop inside `transform()`.
+  // The rewritable unit is moved onto the heap for the duration of the
+  // `await`, so post-`await` mutations still land on the element that gets
+  // serialized, and handlers stay strictly one-at-a-time.
+  describe("async handlers suspend the rewrite", () => {
+    it("runs async element handlers strictly in document order", async () => {
+      const count = 8;
+      const order = [];
+      const html = Array.from({ length: count }, (_, i) => `<i id="${i}"></i>`).join("");
+      const res = new HTMLRewriter()
+        .on("i", {
+          async element(element) {
+            const id = element.getAttribute("id");
+            await setImmediatePromise();
+            order.push(id);
+            element.setInnerContent(id);
+          },
+        })
+        .transform(new Response(html));
+      expect(await res.text()).toBe(Array.from({ length: count }, (_, i) => `<i id="${i}">${i}</i>`).join(""));
+      // Each handler must finish (including its awaited half) before the
+      // parser reaches the next element.
+      expect(order).toEqual(Array.from({ length: count }, (_, i) => String(i)));
+    });
+
+    it("mutations made before and after the await both land", async () => {
+      const res = new HTMLRewriter()
+        .on("div", {
+          async element(element) {
+            element.setAttribute("before", "1");
+            await setImmediatePromise();
+            element.setAttribute("after", "2");
+            element.setAttribute("id", "x");
+          },
+        })
+        .transform(new Response('<div id="a">inner</div>'));
+      expect(await res.text()).toBe('<div id="x" before="1" after="2">inner</div>');
+    });
+
+    it("runs the next handler for the same element after the previous one's await", async () => {
+      const order = [];
+      const res = new HTMLRewriter()
+        .on("div", {
+          async element(element) {
+            await setImmediatePromise();
+            order.push("a");
+            element.setAttribute("a", "");
+          },
+        })
+        .on("div", {
+          async element(element) {
+            await setImmediatePromise();
+            order.push("b");
+            element.setAttribute("b", "");
+          },
+        })
+        .transform(new Response("<div></div>"));
+      expect(await res.text()).toBe('<div a="" b=""></div>');
+      expect(order).toEqual(["a", "b"]);
+    });
+
+    it("element removed after the await suppresses its content", async () => {
+      const res = new HTMLRewriter()
+        .on("div", {
+          async element(element) {
+            await setImmediatePromise();
+            element.remove();
+          },
+        })
+        .transform(new Response("a<div>gone<span>too</span></div>b"));
+      expect(await res.text()).toBe("ab");
+    });
+
+    it("async text handler", async () => {
+      const res = new HTMLRewriter()
+        .on("div", {
+          async text(chunk) {
+            if (chunk.lastInTextNode) return;
+            const original = chunk.text;
+            await setImmediatePromise();
+            chunk.replace(original.toUpperCase());
+          },
+        })
+        .transform(new Response("<div>hello</div>world"));
+      expect(await res.text()).toBe("<div>HELLO</div>world");
+    });
+
+    it("async comments, doctype, and document end handlers", async () => {
+      const res = new HTMLRewriter()
+        .onDocument({
+          async doctype(doctype) {
+            await setImmediatePromise();
+            doctype.remove();
+          },
+          async comments(comment) {
+            const text = comment.text;
+            await setImmediatePromise();
+            comment.text = `${text}${text}`;
+          },
+          async end(end) {
+            await setImmediatePromise();
+            end.append("<tail>", { html: true });
+          },
+        })
+        .transform(new Response("<!DOCTYPE html><p><!--x--></p>"));
+      expect(await res.text()).toBe("<p><!--xx--></p><tail>");
+    });
+
+    it("async onEndTag handler", async () => {
+      const res = new HTMLRewriter()
+        .on("div", {
+          element(element) {
+            element.onEndTag(async endTag => {
+              await setImmediatePromise();
+              endTag.before("!");
+            });
+          },
+        })
+        .transform(new Response("<div>x</div>y"));
+      expect(await res.text()).toBe("<div>x!</div>y");
+    });
+
+    it("the element survives a GC during the await", async () => {
+      const res = new HTMLRewriter()
+        .on("div", {
+          async element(element) {
+            element.setAttribute("pre", "1");
+            await gcTick();
+            await setImmediatePromise();
+            await gcTick();
+            element.setAttribute("post", "2");
+            element.setInnerContent("<b>ok</b>", { html: true });
+          },
+        })
+        .transform(new Response("<div>old</div>"));
+      // One more collection while the transform is suspended and `transform()`
+      // has already returned.
+      await gcTick();
+      expect(await res.text()).toBe('<div pre="1" post="2"><b>ok</b></div>');
+    });
+
+    it("a nested transform inside a suspended handler", async () => {
+      const res = new HTMLRewriter()
+        .on("div", {
+          async element(element) {
+            const inner = await new HTMLRewriter()
+              .on("b", {
+                async element(b) {
+                  await setImmediatePromise();
+                  b.setInnerContent("inner");
+                },
+              })
+              .transform(new Response("<b>x</b>"))
+              .text();
+            element.setInnerContent(inner, { html: true });
+          },
+        })
+        .transform(new Response("<div>outer</div>"));
+      expect(await res.text()).toBe("<div><b>inner</b></div>");
+    });
+
+    it("transform(string) throws if a handler needs the event loop to settle", () => {
+      expect(() =>
+        new HTMLRewriter()
+          .on("div", {
+            async element(element) {
+              await setImmediatePromise();
+            },
+          })
+          .transform("<div></div>"),
+      ).toThrow(
+        "HTMLRewriter.transform() cannot synchronously return a string because a content " +
+          "handler returned a Promise that did not resolve within a microtask. Pass a " +
+          "Response instead and await its body",
+      );
+    });
+
+    it("transform(string) stays synchronous for microtask-only async handlers", () => {
+      const out = new HTMLRewriter()
+        .on("div", {
+          async element(element) {
+            await Promise.resolve();
+            await null;
+            element.setInnerContent("sync enough");
+          },
+        })
+        .transform("<div>old</div>");
+      expect(out).toBe("<div>sync enough</div>");
+    });
   });
 
   it("HTMLRewriter handles Symbol invalid type error", async () => {

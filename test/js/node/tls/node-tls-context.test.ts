@@ -386,16 +386,19 @@ describe("ALPN survives an SNI-selected SecureContext", () => {
   for (const [label, extraOptions, setup] of cases) {
     it(`negotiates the server's ALPNProtocols: ${label}`, async () => {
       const serverSide = Promise.withResolvers<string | false | null>();
-      const server = tls.createServer({ ...identity, ALPNProtocols: ["h2", "http/1.1"], ...extraOptions }, socket => {
-        serverSide.resolve(socket.alpnProtocol);
-        socket.end();
-      });
+      await using server = tls.createServer(
+        { ...identity, ALPNProtocols: ["h2", "http/1.1"], ...extraOptions },
+        socket => {
+          serverSide.resolve(socket.alpnProtocol);
+          socket.end();
+        },
+      );
       server.on("tlsClientError", serverSide.reject);
       server.listen(0);
       await once(server, "listening");
       setup?.(server);
       const { port } = server.address() as AddressInfo;
-      const client = tls.connect({
+      await using client = tls.connect({
         port,
         host: "127.0.0.1",
         servername: "alpn.sni.test",
@@ -408,9 +411,6 @@ describe("ALPN survives an SNI-selected SecureContext", () => {
         client: "h2",
         server: "h2",
       });
-      client.end();
-      server.close();
-      await once(server, "close");
     });
   }
 
@@ -418,7 +418,7 @@ describe("ALPN survives an SNI-selected SecureContext", () => {
   it("still consults the server's ALPNCallback", async () => {
     const seen: { servername: string; protocols: string[] }[] = [];
     const failed = Promise.withResolvers<never>();
-    const server = tls.createServer(
+    await using server = tls.createServer(
       {
         ...identity,
         ALPNCallback(arg: { servername: string; protocols: string[] }) {
@@ -433,7 +433,7 @@ describe("ALPN survives an SNI-selected SecureContext", () => {
     server.listen(0);
     await once(server, "listening");
     const { port } = server.address() as AddressInfo;
-    const client = tls.connect({
+    await using client = tls.connect({
       port,
       host: "127.0.0.1",
       servername: "alpn.sni.test",
@@ -444,16 +444,13 @@ describe("ALPN survives an SNI-selected SecureContext", () => {
     await Promise.race([once(client, "secureConnect"), failed.promise]);
     expect(client.alpnProtocol).toBe("h2");
     expect(seen).toEqual([{ servername: "alpn.sni.test", protocols: ["http/1.1", "h2"] }]);
-    client.end();
-    server.close();
-    await once(server, "close");
   });
 
   it("sends the fatal no_application_protocol alert on a genuine mismatch", async () => {
     // RFC 7301 3.2: no overlap between the offered and configured protocol
     // lists is a fatal no_application_protocol alert, not a silent handshake
     // that negotiated nothing.
-    const server = tls.createServer({
+    await using server = tls.createServer({
       ...identity,
       ALPNProtocols: ["h2"],
       SNICallback: (_name: string, cb: SNICb) => cb(null, tls.createSecureContext(identity)),
@@ -462,6 +459,8 @@ describe("ALPN survives an SNI-selected SecureContext", () => {
     server.listen(0);
     await once(server, "listening");
     const { port } = server.address() as AddressInfo;
+    // Not `await using`: a Readable's Symbol.asyncDispose rejects with the
+    // stream's terminal error, and this client is expected to end in one.
     const client = tls.connect({
       port,
       host: "127.0.0.1",
@@ -469,15 +468,17 @@ describe("ALPN survives an SNI-selected SecureContext", () => {
       ALPNProtocols: ["spdy/3"],
       rejectUnauthorized: false,
     });
-    const outcome = Promise.withResolvers<Error & { code?: string }>();
-    client.on("error", outcome.resolve);
-    client.on("secureConnect", () => {
-      outcome.reject(new Error(`handshake succeeded with alpnProtocol=${JSON.stringify(client.alpnProtocol)}`));
-    });
-    const err = await outcome.promise;
-    expect(err.code).toBe("ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL");
-    server.close();
-    await once(server, "close");
+    try {
+      const outcome = Promise.withResolvers<Error & { code?: string }>();
+      client.on("error", outcome.resolve);
+      client.on("secureConnect", () => {
+        outcome.reject(new Error(`handshake succeeded with alpnProtocol=${JSON.stringify(client.alpnProtocol)}`));
+      });
+      const err = await outcome.promise;
+      expect(err.code).toBe("ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL");
+    } finally {
+      client.destroy();
+    }
   });
 });
 

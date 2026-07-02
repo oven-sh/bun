@@ -75,10 +75,9 @@ async function statementCountingServer(opts: { resultColumn?: boolean } = {}) {
             counters.prepares++;
             const id = nextStatementId++;
             counters.prepared.add(id);
-            // COM_STMT_PREPARE_OK(num_columns, num_params = 1) followed by the
-            // parameter definition and, when advertised, the result column
-            // definition. CLIENT_DEPRECATE_EOF is negotiated by the handshake
-            // above, so no trailing EOF packets.
+            // COM_STMT_PREPARE_OK(num_columns, num_params = 1), then the param
+            // definition and (when advertised) the result column definition; no
+            // trailing EOF packets since CLIENT_DEPRECATE_EOF is negotiated.
             const columns = opts.resultColumn ? [mysqlColumnDefinition(3, { name: "c", type: MYSQL_TYPE_LONG })] : [];
             socket.write(
               Buffer.concat([
@@ -209,10 +208,9 @@ test("MySQL: evicting cached statements releases their rooted row Structures (cl
     await Bun.sleep(0);
 
     expect(counters.closed.size).toBeGreaterThan(0);
-    // Post-GC, only statements still cached may root a Structure (the slack
-    // absorbs unrelated Strong handles created while the test runs). Without
-    // eviction every one of the DISTINCT + extra texts roots its Structure
-    // (and retains its statement) until the connection closes.
+    // Post-GC, only still-cached statements may root a Structure (the slack
+    // absorbs unrelated Strong handles). Without eviction, every one of the
+    // DISTINCT + extra texts roots its Structure until the connection closes.
     expect(protectedStructures() - baseline).toBeLessThanOrEqual(MAX_CACHED_PREPARED_STATEMENTS + 16);
   } finally {
     await new Promise<void>(r => server.close(() => r()));

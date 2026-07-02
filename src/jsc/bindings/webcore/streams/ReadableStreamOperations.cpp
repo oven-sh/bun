@@ -1,5 +1,6 @@
 #include "root.h"
 #include "ErrorCode.h"
+#include "AsyncStackTrace.h"
 
 #include "WebStreamsInternals.h"
 
@@ -269,6 +270,22 @@ void readableStreamError(JSGlobalObject* globalObject, JSReadableStream* stream,
     auto* reader = stream->m_reader.get();
     if (!reader)
         return;
+    // Errors created inside our own promise reactions have no JavaScript frames; borrow
+    // the awaiting async function's frames from the promise user code is blocked on.
+    JSPromise* awaited = reader->m_closedPromise.get();
+    if (!reader->isBYOB()) {
+        auto* defaultReader = static_cast<JSReadableStreamDefaultReader*>(reader);
+        WTF::Locker locker { defaultReader->cellLock() };
+        for (auto& request : defaultReader->m_readRequests) {
+            if (request->kind() == ReadRequestKind::Promise) {
+                if (auto* promise = dynamicDowncast<JSPromise>(request->m_context.get())) {
+                    awaited = promise;
+                    break;
+                }
+            }
+        }
+    }
+    Bun::attachAsyncStackFromPromise(globalObject, error, awaited);
     rejectPromise(globalObject, reader->m_closedPromise.get(), error);
     RETURN_IF_EXCEPTION(scope, void());
     markPromiseAsHandled(vm, reader->m_closedPromise.get());

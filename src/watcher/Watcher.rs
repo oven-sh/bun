@@ -1,6 +1,7 @@
 //! Bun's cross-platform filesystem watcher. Runs on its own thread.
 
 use core::fmt;
+use core::sync::atomic::{AtomicU32, Ordering};
 use std::borrow::Cow;
 
 use bun_collections::MultiArrayList;
@@ -111,12 +112,15 @@ pub struct Watcher {
     // Storing the `top_level_dir` slice directly avoids a forward-decl
     // dependency on the higher-tier `bun_resolver::fs::FileSystem` type.
     // allocator field dropped — global mimalloc (see §Allocators)
-    /// Whether `thread_main` is running. Written by the watcher thread, read
-    /// by `start`/`shutdown` on the main thread. The actual `ThreadId` value
-    /// was never read — only `is_some()`/`is_none()` — so this is a `bool`.
-    pub watchloop_handle: bun_core::AtomicCell<bool>,
+    /// Owners of this heap allocation: the creator, plus the watcher thread
+    /// from the moment `start` publishes its reference. The last owner to call
+    /// [`Watcher::release`] frees it; nothing else ever does.
+    owners: AtomicU32,
+    /// Whether `start` spawned a watcher thread. Published before the thread
+    /// exists, so `shutdown` cannot mistake a not-yet-scheduled thread for no
+    /// thread at all.
+    thread_started: bun_core::AtomicCell<bool>,
     pub cwd: &'static [u8],
-    pub thread: Option<std::thread::JoinHandle<()>>,
     /// Main thread clears this in `shutdown`; watcher thread polls it in
     /// `watch_loop` and the platform `watch_loop_cycle`.
     pub running: bun_core::AtomicCell<bool>,
@@ -196,8 +200,8 @@ impl Watcher {
             platform: Platform::default(),
             watch_events: vec![WatchEvent::default(); MAX_COUNT].into_boxed_slice(),
             changed_filepaths: [const { None }; MAX_COUNT],
-            watchloop_handle: bun_core::AtomicCell::new(false),
-            thread: None,
+            owners: AtomicU32::new(1),
+            thread_started: bun_core::AtomicCell::new(false),
             running: bun_core::AtomicCell::new(true),
             close_descriptors: bun_core::AtomicCell::new(false),
             evict_list: [0; MAX_EVICTION_COUNT],
@@ -220,49 +224,79 @@ impl Watcher {
     }
 
     pub fn start(&mut self) -> Result<(), bun_core::Error> {
-        debug_assert!(!self.watchloop_handle.load());
+        debug_assert!(!self.thread_started.load());
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.
         let this = std::ptr::from_mut::<Watcher>(self) as usize;
-        // SAFETY: Watcher outlives the thread; shutdown() coordinates teardown
-        // via `running`/`close_descriptors` and the thread frees the Box.
-        self.thread = Some(
-            std::thread::Builder::new()
-                .name("FileWatcher".into())
-                .spawn(move || unsafe {
+        // Publish the watcher thread's reference *before* the thread exists: a
+        // `shutdown` landing in the spawn window must hand the allocation to
+        // the thread, not free it out from under a thread about to run.
+        self.owners.fetch_add(1, Ordering::SeqCst);
+        self.thread_started.store(true);
+        let spawned = std::thread::Builder::new()
+            .name("FileWatcher".into())
+            .spawn(move || {
+                // SAFETY: the reference published above keeps the allocation
+                // alive until `thread_main` releases it on the way out.
+                unsafe {
                     let _ = Watcher::thread_main(this as *mut Watcher);
-                })
-                .expect("spawn FileWatcher thread"),
-        );
-        Ok(())
+                }
+            });
+        match spawned {
+            // Nothing joins the watcher thread; dropping the handle detaches it.
+            Ok(_) => Ok(()),
+            Err(_) => {
+                // No thread will ever take the reference published above.
+                self.thread_started.store(false);
+                self.owners.fetch_sub(1, Ordering::SeqCst);
+                Err(bun_core::err!("SpawnFileWatcherThreadFailed"))
+            }
+        }
     }
 
-    // not `impl Drop` — takes a flag and conditionally hands
-    // ownership to the watcher thread (which frees self in thread_main).
+    // not `impl Drop` — the allocation is shared with the watcher thread, so it
+    // is released through the `owners` count rather than a `Box` drop.
     // Per PORTING.md, `pub fn deinit` is never the public name; renamed to
-    // `shutdown` (not `close(self)` because ownership may transfer to the
-    // watcher thread instead of dropping here).
-    // TODO: ownership model — needs heap::take or an Arc to make this sound.
+    // `shutdown` (not `close(self)` because the watcher thread may outlive it).
     /// # Safety
-    /// `this` must be the unique heap pointer returned from `init()`; ownership
-    /// transfers here on the no-thread path (the Box is reclaimed).
+    /// `this` must be the heap pointer returned from `init()`, and the caller
+    /// must still hold the creator's reference — i.e. call this at most once.
     pub unsafe fn shutdown(this: *mut Self, close_descriptors: bool) {
-        // SAFETY: caller passes the unique heap pointer returned from init()
-        let me = unsafe { &mut *this };
-        if me.watchloop_handle.load() {
-            me.mutex.lock();
-            me.close_descriptors.store(close_descriptors);
-            me.running.store(false);
-            me.mutex.unlock();
-        } else {
-            if close_descriptors && me.running.load() {
+        // Scope the borrow so it ends before `release` may deallocate `this`.
+        {
+            // SAFETY: the caller's reference keeps the allocation alive here.
+            let me = unsafe { &mut *this };
+            if me.thread_started.load() {
+                // The watcher thread performs the teardown; tell it to stop.
+                me.mutex.lock();
+                me.close_descriptors.store(close_descriptors);
+                me.running.store(false);
+                me.mutex.unlock();
+            } else if close_descriptors && me.running.load() {
                 let fds = me.watchlist.items_fd();
                 for &fd in fds {
                     let _ = bun_sys::close(fd);
                 }
             }
-            // watchlist freed by Drop on Box
-            // SAFETY: this was heap-allocated by caller of init()
+        }
+        // SAFETY: drops the creator's reference. Frees (watchlist included) only
+        // if the watcher thread has already dropped its own, or never took one.
+        unsafe { Watcher::release(this) };
+    }
+
+    /// Drops one reference to the heap allocation; the last one frees it.
+    ///
+    /// # Safety
+    /// `this` must be a live `Watcher` from [`init`], the caller must own a
+    /// reference it has not yet released, and no `&`/`&mut` borrow of `*this`
+    /// may be live across the call (this may deallocate through `this`).
+    unsafe fn release(this: *mut Self) {
+        // SAFETY: the caller's reference keeps the allocation alive until the
+        // count is decremented.
+        let previous = unsafe { (*this).owners.fetch_sub(1, Ordering::SeqCst) };
+        debug_assert_ne!(previous, 0, "Watcher released more times than owned");
+        if previous == 1 {
+            // SAFETY: last reference — no other thread can observe `*this` now.
             drop(unsafe { bun_core::heap::take(this) });
         }
     }
@@ -272,22 +306,20 @@ impl Watcher {
     }
 
     /// # Safety
-    /// `this` must be the unique heap pointer returned from [`init`]. The
-    /// watcher thread takes ownership: after `watch_loop` exits, this function
-    /// reconstitutes the `Box<Watcher>` and drops it. Callers must not hold a
+    /// `this` must be the heap pointer returned from [`init`], carrying the
+    /// reference `start` published for this thread. Callers must not hold a
     /// live `&`/`&mut` borrow of `*this` across the call (Stacked Borrows
     /// forbids deallocating through a pointer while a reference to the same
     /// allocation is protected — which is why this takes `*mut Self`, not
     /// `&mut self`).
     unsafe fn thread_main(this: *mut Self) -> Result<(), bun_core::Error> {
-        // Scope all `&mut *this` access so the borrow ends *before* we
+        // Scope all `&mut *this` access so the borrow ends *before* we may
         // reclaim the Box. Deallocating while a `&mut self` argument is still
         // protected is UB under Stacked Borrows / Tree Borrows.
         {
             // SAFETY: caller contract — `this` is a valid, exclusively-accessed
             // heap allocation for the duration of this scope.
             let me = unsafe { &mut *this };
-            me.watchloop_handle.store(true);
             me.thread_lock.lock();
             Output::Source::configure_named_thread(zstr!("File Watcher"));
 
@@ -296,7 +328,6 @@ impl Watcher {
 
             match me.watch_loop() {
                 Err(err) => {
-                    me.watchloop_handle.store(false);
                     me.platform.stop();
                     if me.running.load() {
                         (me.on_error)(me.ctx, err);
@@ -312,7 +343,7 @@ impl Watcher {
                     let _ = bun_sys::close(fd);
                 }
             }
-            // watchlist freed by Drop below
+            // watchlist freed by `release` below, if this is the last reference
         }
 
         // Close trace file if open
@@ -320,11 +351,9 @@ impl Watcher {
 
         Output::flush();
 
-        // SAFETY: `this` is the heap allocation from init(); the watcher thread
-        // owns it now and no `&`/`&mut` borrow of it remains live (the scoped
-        // `me` above has ended).
-        // TODO: ownership model — see shutdown()
-        drop(unsafe { bun_core::heap::take(this) });
+        // SAFETY: releases the reference `start` published for this thread; no
+        // `&`/`&mut` borrow of `*this` remains live (the scoped `me` has ended).
+        unsafe { Watcher::release(this) };
         Ok(())
     }
 

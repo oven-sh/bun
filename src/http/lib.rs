@@ -8,6 +8,8 @@ pub mod async_http;
 #[path = "CertificateInfo.rs"]
 pub mod certificate_info;
 pub mod compress_body;
+#[path = "ContentCodings.rs"]
+pub mod content_codings;
 #[path = "Decompressor.rs"]
 pub mod decompressor;
 #[path = "H2Client.rs"]
@@ -51,7 +53,8 @@ pub mod zlib;
 // ── crate-root re-exports ──
 pub use async_http::AsyncHTTP;
 pub use certificate_info::CertificateInfo;
-pub use decompressor::Decompressor;
+pub use content_codings::ContentCodings;
+pub use decompressor::{Decompressor, DecompressorChain};
 pub use header_builder::HeaderBuilder;
 pub use headers::{Headers, HeadersExt};
 pub use http_cert_error::HTTPCertError;
@@ -4699,7 +4702,7 @@ impl<'a> HTTPClient<'a> {
         }
         // we can ignore the body data in redirects
         if !self.state.flags.is_redirect_pending {
-            if self.state.encoding.is_compressed() {
+            if self.state.content_codings.is_compressed() {
                 if let Some(body_out) = self.state.body_out_str {
                     self.state
                         .decompress_bytes(incoming_data, body_out::as_mut(body_out), true)?;
@@ -5027,24 +5030,18 @@ impl<'a> HTTPClient<'a> {
                 }
                 h if h == hash_header_const(b"Content-Encoding") => {
                     if !self.flags.disable_decompression {
-                        // RFC 9110 §8.4.1: content codings are case-insensitive.
-                        // `x-gzip` is a registered deprecated alias of `gzip`.
-                        let value = header.value();
-                        if strings::eql_case_insensitive_ascii_check_length(value, b"gzip")
-                            || strings::eql_case_insensitive_ascii_check_length(value, b"x-gzip")
+                        // RFC 9110 §8.4: the field value is a list of codings in
+                        // the order they were applied, possibly split across
+                        // several Content-Encoding field lines. Collect every
+                        // coding; the body is decoded through all of them in
+                        // reverse order, or not at all when the list contains a
+                        // coding we can't decode (decoding only some layers
+                        // would silently hand over a still-compressed body).
+                        if self
+                            .state
+                            .content_codings
+                            .append_header_value(header.value())
                         {
-                            self.state.encoding = Encoding::Gzip;
-                            self.state.content_encoding_i = header_i as u8;
-                        } else if strings::eql_case_insensitive_ascii_check_length(
-                            value, b"deflate",
-                        ) {
-                            self.state.encoding = Encoding::Deflate;
-                            self.state.content_encoding_i = header_i as u8;
-                        } else if strings::eql_case_insensitive_ascii_check_length(value, b"br") {
-                            self.state.encoding = Encoding::Brotli;
-                            self.state.content_encoding_i = header_i as u8;
-                        } else if strings::eql_case_insensitive_ascii_check_length(value, b"zstd") {
-                            self.state.encoding = Encoding::Zstd;
                             self.state.content_encoding_i = header_i as u8;
                         }
                     }

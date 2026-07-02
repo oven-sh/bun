@@ -1,8 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { once } from "events";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
 import wt from "worker_threads";
+
+// Most tests here spawn a subprocess that starts a worker JSC VM; under a
+// debug+ASAN build several of them exceed the 5s default timeout.
+setDefaultTimeout(1000 * 60 * 5);
 
 describe("web worker", () => {
   async function waitForWorkerResult(worker: Worker, message: any): Promise<any> {
@@ -240,61 +244,25 @@ describe("web worker", () => {
     });
   });
 
-  test("worker with event listeners doesn't close event loop", done => {
-    const x = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.js"), "worker-fixture-many-messages.js"],
+  // The bug under test makes the parent's event loop exit before the worker
+  // message exchange finishes, so the child exits 0 without ever printing
+  // "done". A true hang is caught by the per-test timeout.
+  async function expectEventLoopSurvivesManyMessages(fixture: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.js"), fixture],
       env: bunEnv,
       stdio: ["inherit", "pipe", "inherit"],
     });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("done\n");
+    expect(exitCode).toBe(0);
+  }
 
-    const timer = setTimeout(() => {
-      x.kill();
-      done(new Error("timeout"));
-    }, 1000);
+  test("worker with event listeners doesn't close event loop", () =>
+    expectEventLoopSurvivesManyMessages("worker-fixture-many-messages.js"));
 
-    x.exited.then(async code => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        done(new Error("exited with non-zero code"));
-      } else {
-        const text = await new Response(x.stdout).text();
-        if (!text.includes("done")) {
-          console.log({ text });
-          done(new Error("event loop killed early"));
-        } else {
-          done();
-        }
-      }
-    });
-  });
-
-  test("worker with event listeners doesn't close event loop 2", done => {
-    const x = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.js"), "worker-fixture-many-messages2.js"],
-      env: bunEnv,
-      stdio: ["inherit", "pipe", "inherit"],
-    });
-
-    const timer = setTimeout(() => {
-      x.kill();
-      done(new Error("timeout"));
-    }, 1000);
-
-    x.exited.then(async code => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        done(new Error("exited with non-zero code"));
-      } else {
-        const text = await new Response(x.stdout).text();
-        if (!text.includes("done")) {
-          console.log({ text });
-          done(new Error("event loop killed early"));
-        } else {
-          done();
-        }
-      }
-    });
-  });
+  test("worker with event listeners doesn't close event loop 2", () =>
+    expectEventLoopSurvivesManyMessages("worker-fixture-many-messages2.js"));
 
   test("worker with process.exit", done => {
     const worker = new Worker(new URL("worker-fixture-process-exit.js", import.meta.url), {
@@ -308,6 +276,21 @@ describe("web worker", () => {
       }
       done();
     });
+  });
+
+  // terminate() never disentangles the implicit port, so posting to a dead
+  // Worker is a silent no-op (per the HTML spec, and Chrome/Firefox/Node).
+  test("postMessage after terminate() or exit is a no-op", async () => {
+    const terminated = new Worker("data:text/javascript,setInterval(() => {}, 100000)");
+    await new Promise(resolve => terminated.addEventListener("open", resolve, { once: true }));
+    const closed = new Promise(resolve => terminated.addEventListener("close", resolve, { once: true }));
+    terminated.terminate();
+    await closed;
+    expect(() => terminated.postMessage("after terminate")).not.toThrow();
+
+    const exited = new Worker("data:text/javascript,");
+    await new Promise(resolve => exited.addEventListener("close", resolve, { once: true }));
+    expect(() => exited.postMessage("after exit")).not.toThrow();
   });
 
   describe("worker event", () => {

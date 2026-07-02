@@ -1220,8 +1220,10 @@ impl SendQueue {
             // prepend (we have not started sending the next message yet because we are waiting for the ack/nack)
             self.queue.insert(0, message);
         } else {
-            // insert at index 1 (we are in the middle of sending a message to the other process)
-            debug_assert!(self.queue[0].is_ack_nack());
+            // insert at index 1 (we are in the middle of sending a message to the other process).
+            // Only the sender-side ack retransmission implies queue[0] is an ack/nack; the
+            // receiver-side handle paths can be mid-write of any regular message here.
+            debug_assert!(self.waiting_for_ack.is_none() || self.queue[0].is_ack_nack());
             self.queue.insert(1, message);
         }
     }

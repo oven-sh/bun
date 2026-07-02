@@ -82,7 +82,8 @@ struct us_internal_loop_data_t {
     int tick_depth;
     /* Ticks that began while an outer ready-poll dispatch was still mid-batch,
      * i.e. a poll callback synchronously waited on the event loop. Only
-     * incremented under BUN_DEBUG; always 0 in release (oven-sh/bun#33261). */
+     * incremented under BUN_DEBUG; always 0 in release (oven-sh/bun#33261).
+     * Fills what was already this struct's tail padding, so it costs no space. */
     int nested_dispatch_ticks;
 };
 

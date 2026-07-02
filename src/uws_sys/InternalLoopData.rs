@@ -66,8 +66,7 @@ pub struct InternalLoopData {
 /// `us_internal_loop_data_init` (loop.c) so a C/Rust layout skew (e.g. a
 /// mismatched `BUN_DEBUG`/`bun_debug` pairing) panics at startup.
 #[unsafe(no_mangle)]
-pub(crate) static Bun__internal_loop_data__size: usize =
-    core::mem::size_of::<InternalLoopData>();
+pub(crate) static Bun__internal_loop_data__size: usize = core::mem::size_of::<InternalLoopData>();
 
 impl InternalLoopData {
     const LIBUS_RECV_BUFFER_LENGTH: usize = 524288;

@@ -236,6 +236,21 @@ export const globalFlags: Flag[] = [
     desc: "Undefine _DLL (we link statically)",
   },
 
+  // ─── Stack protector (Windows) ───
+  {
+    // clang-cl turns /GS on by default (cc1 gets `-stack-protector 2`,
+    // "strong"), while plain clang defaults to off, so the Linux and macOS
+    // release binaries have never carried a stack canary. Nothing in this
+    // repo ever chose /GS for Windows; it is a driver default. Spelling
+    // matters: clang-cl silently ignores `-fno-stack-protector` and still
+    // emits `-stack-protector 2` (verified with `clang-cl -###`); only the
+    // /GS- form reaches cc1. Release only: debug builds keep the check as
+    // an extra crash-detection net, where its size does not matter.
+    flag: "/GS-",
+    when: c => c.windows && c.release,
+    desc: "Disable the stack buffer security check (parity with the Linux and macOS release builds)",
+  },
+
   // ─── Optimization ───
   {
     // cmake's Release/RelWithDebInfo build types append this to

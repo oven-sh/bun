@@ -59,8 +59,8 @@ impl Stmt {
             )
         };
         // Every command in a script body or an `if` branch is spawned as a
-        // Stmt, so refusing to run one here is what unwinds the enclosing list.
-        // `Binary` spawns its right side directly, and checks separately.
+        // Stmt, so refusing to run one here stops the enclosing list. `Binary`
+        // and `If` do not go through a Stmt, and check for themselves.
         if let Some(code) = interp.as_stmt(this).base.exit_requested() {
             return interp.child_done(parent, this, code);
         }

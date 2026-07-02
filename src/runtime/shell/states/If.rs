@@ -78,6 +78,12 @@ impl If {
 
     pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
         let parent = interp.as_if(this).base.parent;
+        // A Pipeline spawns an If directly into its own env, with no Stmt in
+        // between to report the status, so the `Action::Done(0)` arms below
+        // would swallow it: `echo hi | if exit 5; then echo t; fi` exits 5.
+        if let Some(code) = interp.as_if(this).base.exit_requested() {
+            return interp.child_done(parent, this, code);
+        }
         loop {
             // Read/mutate `state` via a short-lived borrow, decide an action,
             // then drop the borrow before calling back into `interp`.

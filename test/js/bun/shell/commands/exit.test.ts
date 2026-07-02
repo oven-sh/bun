@@ -115,6 +115,18 @@ echo "Bad Bun!"
 
     TestBuilder.command`echo a; exit 5 | cat; echo b`.exitCode(0).stdout("a\nb\n").runAsTest("pipeline element");
 
+    // A pipeline spawns an if-clause straight into its own env, with no
+    // statement in between, so the status has to come from the if itself.
+    TestBuilder.command`echo hi | if exit 5; then echo t; fi`
+      .exitCode(5)
+      .stdout("")
+      .runAsTest("if-clause as a pipeline element");
+
+    TestBuilder.command`echo hi | if false; then echo x; elif exit 5; then echo y; fi`
+      .exitCode(5)
+      .stdout("")
+      .runAsTest("if-clause with an elif as a pipeline element");
+
     TestBuilder.command`(if true; then exit 2; fi; echo never); echo after`
       .exitCode(0)
       .stdout("after\n")

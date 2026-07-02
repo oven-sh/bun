@@ -813,7 +813,10 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
                 break;
             }
         }
-        if (!outerModuleIsEvaluating) {
+        // A derived ShadowRealm has its own module loader on this VM, so the
+        // scan above cannot see its Evaluating records, while the checkpoint
+        // below would still run their async siblings' resumes. Do not drain.
+        if (!outerModuleIsEvaluating && !WebCore::clientData(vm)->hasDerivedShadowRealmGlobalObject) {
             // Top-level await kept the load pending. Its remaining continuations
             // (await of a non-promise, thenables, Promise.all, nested async fns)
             // are plain microtasks: a checkpoint settles them without the event loop.
@@ -919,6 +922,7 @@ static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObjec
         Zig::GlobalObject::createStructure(vm),
         ScriptExecutionContext::generateIdentifier());
     shadow->setConsole(shadow);
+    WebCore::clientData(vm)->hasDerivedShadowRealmGlobalObject = true;
 
     return shadow;
 }

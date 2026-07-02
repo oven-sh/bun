@@ -248,6 +248,36 @@ describe.concurrent("require(esm) whose top-level await only needs microtasks", 
     });
   });
 
+  // A ShadowRealm's global has its own module loader on the same VM, so a
+  // record at status Evaluating there is invisible to the single-realm scan
+  // while its async sibling's resume sits in the VM-wide queue the checkpoint
+  // drains. Deriving a ShadowRealm therefore disables the drain entirely.
+  test("does not drain when a ShadowRealm graph is mid-evaluation on the same VM", async () => {
+    using dir = tempDir("require-esm-tla-shadowrealm", {
+      "async-sibling.mjs": `export const v = await 0;`,
+      "tla.mjs": `export const t = await 0;`,
+      "sync-shim.mjs": `
+        try { globalThis.__req("./tla.mjs"); globalThis.__msg = "shim-no-throw"; }
+        catch (e) { globalThis.__msg = "shim-threw"; }
+      `,
+      "realm-entry.mjs": `
+        import "./async-sibling.mjs";
+        import "./sync-shim.mjs";
+        export const x = 1;
+      `,
+      "entry.cjs": `
+        const realm = new ShadowRealm();
+        // Smuggle the main realm's require into the realm as a wrapped callable.
+        realm.evaluate("(fn) => { globalThis.__req = fn; return 0; }")(s => { require(s); return 0; });
+        realm.importValue("./realm-entry.mjs", "x").then(
+          v => console.log("resolved x=" + v + " | " + realm.evaluate("globalThis.__msg")),
+          () => console.log("rejected"),
+        );
+      `,
+    });
+    expect(await run(dir)).toEqual({ stdout: "resolved x=1 | shim-threw", stderr: "", exitCode: 0 });
+  });
+
   // A .then() queued before the require runs inside the checkpoint and can
   // import() the very module being required. The registry entry must survive
   // the throw so both importers share one evaluation and one namespace.

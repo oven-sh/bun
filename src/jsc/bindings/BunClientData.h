@@ -127,6 +127,11 @@ public:
     void* bunVM;
     Bun::JSCTaskScheduler deferredWorkTimer;
 
+    // A derived ShadowRealm global has its own JSModuleLoader on this VM, so a
+    // single realm's module map can no longer prove that no InnerModuleEvaluation
+    // is on the stack. $esmLoadSync reads this to skip its microtask checkpoint.
+    bool hasDerivedShadowRealmGlobalObject { false };
+
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).
     // All access should go through that class. Stored as the JSC base type to
     // avoid pulling ZigSourceProvider.h into this header; the cache class

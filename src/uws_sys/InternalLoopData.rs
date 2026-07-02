@@ -56,15 +56,13 @@ pub struct InternalLoopData {
     pub jsc_vm: *const c_void,
     pub tick_depth: c_int,
     /// See `nested_dispatch_ticks` in `loop_data.h` (oven-sh/bun#33261).
-    /// `cfg(bun_debug)` and C's `BUN_DEBUG` are both set by the Debug build
-    /// type; `Bun__internal_loop_data__size` below asserts they never skew.
-    #[cfg(bun_debug)]
+    /// Only the debug (`BUN_DEBUG`) POSIX tick increments it.
     pub nested_dispatch_ticks: c_int,
 }
 
 /// Checked against `sizeof(struct us_internal_loop_data_t)` in
-/// `us_internal_loop_data_init` (loop.c) so a C/Rust layout skew (e.g. a
-/// mismatched `BUN_DEBUG`/`bun_debug` pairing) panics at startup.
+/// `us_internal_loop_data_init` (loop.c) so C/Rust drift in this mirror panics
+/// at startup. Size-only: it cannot see drift that hides in padding.
 #[unsafe(no_mangle)]
 pub(crate) static Bun__internal_loop_data__size: usize = core::mem::size_of::<InternalLoopData>();
 

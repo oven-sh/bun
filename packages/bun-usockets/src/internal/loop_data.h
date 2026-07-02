@@ -80,12 +80,10 @@ struct us_internal_loop_data_t {
      * sockets must be deferred to the outermost tick so the outer dispatch
      * doesn't read a freed poll. */
     int tick_depth;
-#ifdef BUN_DEBUG
     /* Ticks that began while an outer ready-poll dispatch was still mid-batch,
-     * i.e. a poll callback synchronously waited on the event loop. Debug builds
-     * only; getEventLoopStats() reads it (oven-sh/bun#33261). */
+     * i.e. a poll callback synchronously waited on the event loop. Only
+     * incremented under BUN_DEBUG; always 0 in release (oven-sh/bun#33261). */
     int nested_dispatch_ticks;
-#endif
 };
 
 #endif // LOOP_DATA_H

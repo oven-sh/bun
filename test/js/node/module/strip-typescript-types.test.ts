@@ -191,6 +191,13 @@ test.each([
   ["declare class parameter properties", "declare class C { constructor(public x: number); }"],
   ["declare global", "declare global { interface W {} }"],
   ["import type equals", 'import type x = require("y");'],
+  // Permissive divergence from Node: a non-declare namespace whose body is
+  // only ambient members has no runtime emit (tsc erases it), so Bun strips
+  // it to "" where Node's syntactic allowlist throws. See the PR's "Known
+  // divergences" note.
+  ["namespace with only a declared const", "namespace N { declare const x: number }"],
+  ["namespace with only a declared function", "namespace N { declare function f(): void }"],
+  ["namespace with only an import type", "namespace N { import type x = y }"],
 ])("strip mode allows ambient %s", (_label, code) => {
   expect(stripTypeScriptTypes(code)).toBe("");
 });

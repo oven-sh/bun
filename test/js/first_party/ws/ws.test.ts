@@ -958,6 +958,7 @@ describe("maxPayload", () => {
       expect(outcome.type).toBe("error");
       expect(outcome.err).toBeInstanceOf(RangeError);
       expect(outcome.err.message).toBe("Max payload size exceeded");
+      expect(outcome.err.code).toBe("WS_ERR_UNSUPPORTED_MESSAGE_LENGTH");
       expect(await clientClose.promise).toBe(1009);
     } finally {
       wss.close();

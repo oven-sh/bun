@@ -47,6 +47,48 @@ test("require(esm) rejects when a transitive dependency has top-level await", as
   expect(exitCode).toBe(0);
 });
 
+test("require(esm) of a module the surrounding import graph is already fetching stays synchronous", async () => {
+  // entry.mjs's own `import "./b.mjs"` hands b.mjs's registry entry a fetch
+  // promise backed by the off-thread runtime transpiler. The synchronous
+  // require("./b.mjs") issued from a CJS module that the same graph is
+  // already evaluating must not park on that pending promise and misreport
+  // a fully-synchronous module as "async module"; it re-issues the fetch
+  // synchronously, and the importing ES module gets the live module.exports
+  // of the still-evaluating CJS (so it sees the post-cycle `exports.late`).
+  using dir = tempDir("require-esm-in-flight-fetch", {
+    "entry.mjs": `
+      import "./starter.cjs";
+      import a from "./a.cjs";
+      import { check } from "./b.mjs";
+      const viaESM = check();
+      if (a.late !== "late") throw new Error("default binding lost exports.late: " + JSON.stringify(a.late));
+      if (viaESM !== "late") throw new Error("the ES importer lost the post-cycle exports.late: " + JSON.stringify(viaESM));
+      console.log("ok");
+    `,
+    "starter.cjs": `require("./a.cjs");`,
+    "a.cjs": `
+      exports.early = "early";
+      require("./b.mjs");
+      exports.late = "late";
+    `,
+    "b.mjs": `
+      import a from "./a.cjs";
+      export function check() { return a.late; }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("ok");
+  expect(exitCode).toBe(0);
+});
+
 test("require(esm) failing on TLA does not delete an entry an outer import() owns", async () => {
   using dir = tempDir("require-esm-no-double-eval", {
     "side.mjs": `

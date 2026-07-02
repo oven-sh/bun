@@ -768,6 +768,40 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         }
     }
 
+    // loadModule reuses a non-New entry's fetch promise instead of calling
+    // fetch(). When the surrounding import graph already claimed this
+    // specifier (an ES entry importing the same file a require() is now
+    // asking for), that promise is still waiting on the off-thread runtime
+    // transpiler, so loadModuleSync would park on it forever and the Pending
+    // handler below would misreport a fully-synchronous module as "async".
+    // Settle it through the synchronous fetch first, exactly as
+    // JSModuleLoader::hostLoadImportedModule already does for a *dependency*
+    // in this state; the async path's own reaction later finds the entry
+    // fetched and bails.
+    if (auto* entry = loader->registryEntry(key); entry && entry->status() == JSC::ModuleRegistryEntry::Status::Fetching) {
+        auto* fetchPromise = entry->ensureFetchPromise(globalObject);
+        if (fetchPromise->status() == JSC::JSPromise::Status::Pending) {
+            // moduleLoaderFetch only routes to the synchronous transpiler (and
+            // the settlement reactions below only divert onto a drainable
+            // queue) while a synchronous module queue is installed.
+            JSC::VM::SynchronousModuleQueue queue;
+            queue.prev = vm.m_synchronousModuleQueue;
+            vm.m_synchronousModuleQueue = &queue;
+            auto* fetched = loader->fetch(globalObject, keyValue, nullptr, nullptr);
+            if (!scope.exception()) {
+                // The async path's pipeFrom() already consumed the guarded
+                // resolve, so settle through the unguarded fulfill/reject.
+                if (fetched->status() == JSC::JSPromise::Status::Fulfilled)
+                    fetchPromise->fulfillPromise(vm, fetched->result());
+                else if (fetched->status() == JSC::JSPromise::Status::Rejected)
+                    fetchPromise->rejectPromise(vm, fetched->result());
+                JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+            }
+            vm.m_synchronousModuleQueue = queue.prev;
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+
     JSPromise* promise = loader->loadModuleSync(globalObject, key, nullptr, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
 

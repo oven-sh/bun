@@ -72,6 +72,10 @@ pub type Maybe<R> = core::result::Result<R, SystemError>;
 // is ABI-identical to a non-null `JSGlobalObject*` with write provenance.
 unsafe extern "C" {
     safe fn SystemError__toErrorInstance(this: &SystemError, global: &JSGlobalObject) -> JSValue;
+    safe fn SystemError__toTypeErrorInstance(
+        this: &SystemError,
+        global: &JSGlobalObject,
+    ) -> JSValue;
     safe fn SystemError__toErrorInstanceWithInfoObject(
         this: &SystemError,
         global: &JSGlobalObject,
@@ -89,6 +93,14 @@ impl SystemError {
     /// first when two `Error`s are genuinely wanted.
     pub fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {
         SystemError__toErrorInstance(&self, global)
+    }
+
+    /// Like [`to_error_instance`](Self::to_error_instance), but the instance
+    /// is a JS `TypeError` with the same `code`/`path`/`errno`/... properties.
+    /// The fetch spec maps network errors to `TypeError`, which callers
+    /// feature-detect via `instanceof`. Consumes `self` for the same reason.
+    pub fn to_type_error_instance(self, global: &JSGlobalObject) -> JSValue {
+        SystemError__toTypeErrorInstance(&self, global)
     }
 
     /// Like `to_error_instance` but populates the error's stack trace with async

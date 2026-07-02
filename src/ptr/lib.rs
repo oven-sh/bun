@@ -17,7 +17,6 @@
 //! `TaggedPtrUnion`). This crate hosts the intrusive/FFI-crossing variants.
 
 // Cow/CowSlice → std (PORTING.md says these ARE std::borrow::Cow)
-#![warn(unreachable_pub)]
 pub use std::borrow::Cow;
 pub type CowSlice<'a, T> = Cow<'a, [T]>;
 pub type CowSliceZ<'a> = Cow<'a, core::ffi::CStr>;
@@ -25,7 +24,7 @@ pub type CowString<'a> = Cow<'a, [u8]>;
 
 // `bun.ptr.CowSlice(T)` / `CowSliceZ` — the lifetime-free struct port (owns or
 // borrows a raw slice with `init_owned`/`borrow_subslice`/`length`). Distinct
-// from the `std::borrow::Cow` aliases above; callers that need the Zig-shaped
+// from the `std::borrow::Cow` aliases above; callers that need the struct-shaped
 // API (e.g. `pack_command::Pattern`) reach for `cow_slice::CowSlice<u8>`.
 #[path = "CowSlice.rs"]
 pub mod cow_slice;
@@ -37,8 +36,6 @@ pub mod shared;
 pub type Owned<T> = Box<T>;
 pub type OwnedIn<T> = Box<T>;
 pub type DynamicOwned<T> = Box<T>;
-pub type Shared<T> = std::rc::Rc<T>;
-pub type AtomicShared<T> = std::sync::Arc<T>;
 
 // FFI-crossing externally-ref-counted pointer (e.g., WTFStringImpl). Canonical
 // impl moved down to `bun_core::external_shared` (cycle-break for the
@@ -88,16 +85,11 @@ pub use bun_core::{
 // runtime crates spell `bun_ptr::callback_ctx::<T>(ctx)`.
 pub use bun_core::callback_ctx;
 
-pub mod meta; // small, used by other crates
-
-// ported from: src/ptr/ptr.zig
-
 // ─────────────────────────────────────────────────────────────────────────────
 // BackRef<T> / RawSlice<T> — runtime back-reference / borrowed-slice wrappers.
 //
-// Runtime structs frequently hold a non-owning pointer back to their owner
-// (Zig: `*Parent`, `*const VirtualMachine`, `[]const u8`). The original port
-// modeled these as raw `*mut T` / `*const [T]` and open-coded
+// Runtime structs frequently hold a non-owning pointer back to their owner.
+// These fields were once raw `*mut T` / `*const [T]` with open-coded
 // `unsafe { &*self.field }` at every read site. These two wrappers centralise
 // that pattern under the
 // `StoreRef`/`StoreSlice` contract from the parser, but for the *runtime*
@@ -112,7 +104,7 @@ pub mod meta; // small, used by other crates
 
 /// Non-owning, non-null back-reference to an object that outlives `self`.
 ///
-/// Mirrors Zig `*T` struct fields where the pointee is the owner/parent and is
+/// For struct fields where the pointee is the owner/parent and is
 /// guaranteed live for the holder's entire lifetime (owner-creates-child).
 /// `Copy` + `Deref` so call sites read `self.owner.method()` instead of
 /// `unsafe { &*self.owner }.method()`.
@@ -224,9 +216,8 @@ impl<T: ?Sized> Eq for BackRef<T> {}
 /// Detach a slice borrow from its borrowck lifetime.
 ///
 /// This is the **local-variable** counterpart to [`RawSlice`]. Use it when you
-/// need to read through a slice while a sibling field is reborrowed `&mut`
-/// (the classic Zig `var buf = lockfile.buffers.string_bytes; … &mut lockfile`
-/// pattern), and the backing storage is known not to move/realloc for the
+/// need to read through a slice while a sibling field is reborrowed `&mut`,
+/// and the backing storage is known not to move/realloc for the
 /// scope of the returned reference. Unlike `RawSlice`, this is *not* meant for
 /// struct fields — it exists so the borrowck-dodge stays a one-liner with the
 /// `unsafe` centralised here, rather than laundering the slice through a
@@ -247,8 +238,8 @@ pub unsafe fn detach_lifetime<'a, T>(s: &[T]) -> &'a [T] {
 /// [`detach_lifetime`]).
 ///
 /// Replaces the open-coded `unsafe { &*std::ptr::from_ref::<T>(x) }` /
-/// `unsafe { &*(&raw const x) }` lifetime-laundering idiom that the original
-/// port scattered everywhere a Zig `*const T` was held across a sibling
+/// `unsafe { &*(&raw const x) }` lifetime-laundering idiom that was once
+/// scattered everywhere a raw `*const T` was held across a sibling
 /// `&mut self` reborrow (arena handles, SoA columns, self-referential views).
 /// Centralising it here makes the call sites grep-able and the safety
 /// obligation uniform.
@@ -282,10 +273,8 @@ pub unsafe fn detach_lifetime_mut<'a, T: ?Sized>(r: &mut T) -> &'a mut T {
 /// `core::hint::black_box` (PORT_NOTES_PLAN **R-2**) before dispatching a
 /// re-entrant parent/user callback, then reborrow via [`LaunderedSelf::r`].
 ///
-/// Zig has no `noalias` on `*Self`, so the original `.zig` just writes
-/// `this.*` directly; this trait is the Rust-port-only artifact that makes the
-/// equivalent reborrow sound without scattering `unsafe { &mut *this }` at
-/// every field access.
+/// This trait makes the reborrow sound without scattering
+/// `unsafe { &mut *this }` at every field access.
 ///
 /// # Safety (impl contract)
 /// For every method on `Self` that calls [`r`](Self::r):

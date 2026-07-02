@@ -18,7 +18,7 @@ enum State {
 }
 
 impl Export {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         if argc == 0 {
             // No args: print all exported vars.
@@ -33,7 +33,7 @@ impl Export {
                 Some(eq) => (&s[..eq], &s[eq + 1..]),
                 None => (s, &b""[..]),
             };
-            // Spec (export.zig): argv backing is freed when the Cmd retires,
+            // The argv backing is freed when the Cmd retires,
             // so the key/value MUST be duplicated into ref-counted storage —
             // `init_slice` here would leave dangling EnvStr in `export_env`.
             let label = EnvStr::dupe_ref_counted(name);
@@ -74,7 +74,7 @@ impl Export {
         Builtin::done(interp, cmd, 0)
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,
@@ -84,5 +84,3 @@ impl Export {
         Builtin::done(interp, cmd, err.map_or(0, |_| 1))
     }
 }
-
-// ported from: src/shell/builtin/export.zig

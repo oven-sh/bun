@@ -1,4 +1,4 @@
-pub struct BufferVectorized;
+pub(crate) struct BufferVectorized;
 
 mod _impl {
     use super::*;
@@ -14,7 +14,7 @@ mod _impl {
         /// `str` must point to a valid `ZigString` and `buf_ptr` must point to a writable
         /// buffer of at least `fill_length` bytes.
         #[unsafe(export_name = "Bun__Buffer_fill")]
-        pub unsafe extern "C" fn fill(
+        pub(crate) unsafe extern "C" fn fill(
             str: *const ZigString,
             buf_ptr: *mut u8,
             fill_length: usize,
@@ -39,9 +39,12 @@ mod _impl {
                 encoding
             };
 
-            // PORT NOTE: encoder::write_u8/write_u16 take the encoding as a const-generic
+            // encoder::write_u8/write_u16 take the encoding as a const-generic
             // `u8` (stable-Rust workaround for `adt_const_params`) — `dispatch_encoding!`
             // expands the runtime `encoding` into nine monomorphized arms.
+            // `ALLOW_PARTIAL_WRITE = true`: Node's `Fill` (node_buffer.cc) copies
+            // `min(encodedLength, fillLength)` raw bytes of the encoding, so the
+            // repeat loop below always doubles a seed equal to the full encoding.
             // SAFETY: `s` and `buf` are valid slices derived above; the source/destination
             // pointers and lengths passed to the encoder are exactly those slice bounds.
             let result = if str.is_16_bit() {
@@ -57,13 +60,12 @@ mod _impl {
                 let s = str.slice();
                 dispatch_encoding!(encoding, {
                     // SAFETY: caller (`extern "C"` fill) guarantees `s`/`buf` are valid disjoint buffers per the Buffer.fill contract.
-                    Encoding::Ucs2 => unsafe { encoder::write_u8::<{ Encoding::Utf16le as u8 }>(
+                    Encoding::Ucs2 => unsafe { encoder::write_u8::<{ Encoding::Utf16le as u8 }, true>(
                         s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(),
                     ) },
                 // SAFETY: caller (`extern "C"` fill) guarantees `s`/`buf` are valid disjoint buffers per the Buffer.fill contract.
-                }, |E| unsafe { encoder::write_u8::<E>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len()) })
+                }, |E| unsafe { encoder::write_u8::<E, true>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len()) })
             };
-            // Zig writeU8/writeU16 return `!usize`; Rust port returns `Result<usize, _>` so `written` is already usize.
             let Ok(written) = result else {
                 return false;
             };
@@ -121,10 +123,8 @@ mod _impl {
                 _ => {}
             }
 
-            // PORT NOTE: reshaped for borrowck — Zig grew two slices (`contents`, `buf`) into the
-            // same underlying buffer and mutated `contents.len` in place. Here we track offsets
-            // and use copy_within (src/dst share `buf`).
-            // PERF(port): was memcpy (non-overlapping) — profile if memmove-vs-memcpy matters here.
+            // `contents` and the fill destination share the same underlying buffer,
+            // so track offsets and use copy_within (src/dst overlap within `buf`).
             let mut contents_len = written;
             let mut buf_offset = written;
 
@@ -143,5 +143,3 @@ mod _impl {
         }
     }
 } // mod _impl
-
-// ported from: src/runtime/node/buffer.zig

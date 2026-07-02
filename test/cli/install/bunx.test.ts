@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
-import { chmodSync, copyFileSync, readdirSync } from "node:fs";
+import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
@@ -1231,3 +1231,72 @@ it.skipIf(!isWindows)("should not crash on corrupted .bunx file with missing quo
   expect(stderr).not.toContain("panic");
   expect(stderr).not.toContain("reached unreachable code");
 });
+
+// The bunx cache root lives at a predictable path inside the shared temp dir
+// ($TMPDIR/bunx-<uid>-<pkg>@<version>). bunx must refuse to reuse a
+// pre-existing cache root that is not a private directory owned by the
+// current user, because the owner of that directory can replace any of the
+// cached package's module files after install. The check happens before any
+// network or filesystem access inside the cache, so this test is fully
+// offline. The check is Unix-only (no uid/world-writable-tmp model on
+// Windows).
+it.concurrent.skipIf(isWindows)(
+  "refuses to reuse a bunx cache directory that other local users can modify",
+  async () => {
+    const { x_dir, env } = setup();
+    const pkg = "bunx-cache-root-fixture";
+    const cacheRoot = join(env.TMPDIR, `bunx-${process.getuid!()}-${pkg}@latest`);
+
+    const run = () => {
+      const subprocess = spawn({
+        cmd: [bunExe(), "x", "--no-install", pkg],
+        cwd: x_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      return Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited] as const);
+    };
+
+    // Legitimate case: a pre-existing cache root that is a private directory
+    // owned by the current user is accepted. bunx gets past the cache-root
+    // validation and fails later with the normal --no-install "could not
+    // find an existing binary" message because the cache is empty.
+    await mkdir(cacheRoot, { recursive: true });
+    chmodSync(cacheRoot, 0o755);
+    {
+      const [err, out, exitCode] = await run();
+      expect(err).not.toContain("refusing to use bunx cache directory");
+      expect(err).toContain(`Could not find an existing '${pkg}' binary to run.`);
+      expect(out).toHaveLength(0);
+      expect(exitCode).toBe(1);
+    }
+
+    // The same cache root made writable by group/other -- the state a
+    // pre-created directory in the shared temp dir must be in for another
+    // user's install to populate it -- must be refused before bunx reads or
+    // writes anything inside it.
+    chmodSync(cacheRoot, 0o777);
+    {
+      const [err, out, exitCode] = await run();
+      expect(err).toContain("refusing to use bunx cache directory");
+      expect(err).toContain("not a directory owned by the current user");
+      expect(out).toHaveLength(0);
+      expect(exitCode).toBe(1);
+    }
+
+    // A cache root that is a symlink (redirecting the whole install
+    // elsewhere) must also be refused.
+    await rm(cacheRoot, { recursive: true, force: true });
+    const elsewhere = join(env.TMPDIR, "bunx-cache-root-fixture-elsewhere");
+    await mkdir(elsewhere, { recursive: true });
+    symlinkSync(elsewhere, cacheRoot);
+    {
+      const [err, out, exitCode] = await run();
+      expect(err).toContain("refusing to use bunx cache directory");
+      expect(out).toHaveLength(0);
+      expect(exitCode).toBe(1);
+    }
+  },
+);

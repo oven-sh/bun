@@ -6,7 +6,6 @@ members = [
   "src/api",
   "src/base64",
   "src/bundler",
-  "src/codegen",
   "src/collections",
   "src/css",
   "src/errno",
@@ -19,8 +18,6 @@ members = [
   "src/js",
   "src/libarchive",
   "src/md",
-  "src/meta",
-  "src/node-fallbacks",
   "src/paths",
   "src/resolver",
   "src/safety",
@@ -29,7 +26,6 @@ members = [
   "src/sql",
   "src/sys",
   "src/threading",
-  "src/unicode",
   "src/valkey",
   "src/watcher",
   "src/cares_sys",
@@ -51,12 +47,10 @@ members = [
   "src/js_parser",
   "src/js_parser_jsc",
   "src/js_printer",
-  "src/libarchive_sys",
   "src/libdeflate_sys",
   "src/libuv_sys",
   "src/ast",
   "src/ast_jsc",
-  "src/lolhtml_sys",
   "src/picohttp",
   "src/s3_signing",
   "src/sql_jsc",
@@ -65,7 +59,6 @@ members = [
   "src/platform",
   "src/sha_hmac",
   "src/sys_jsc",
-  "src/url_jsc",
   "src/zlib_sys",
   "src/dispatch",
   "src/brotli",
@@ -82,7 +75,6 @@ members = [
   "src/brotli_sys",
   "src/bun_alloc",
   "src/mimalloc_sys",
-  "src/picohttp_sys",
   "src/semver_jsc",
   "src/standalone_graph",
   "src/uws",
@@ -104,18 +96,16 @@ members = [
   "src/simdutf_sys",
   "src/which",
   "src/transpiler",
+  "src/react_compiler",
   "src/spawn",
   "src/spawn_sys",
   "src/bunfig",
   "src/bun_bin",
 ]
-# `vendor/lolhtml/c-api` is consumed as a path dependency of
-# `bun_lolhtml_sys` so its `#[no_mangle]` C API ends up inside
-# `libbun_rust.a` (one Rust staticlib → one copy of std on the link line).
-# It is deliberately NOT a workspace member: keeping it excluded means its
-# `[profile]` section is ignored and its heavy dev-dependencies (criterion,
-# html5ever) never enter `Cargo.lock`. The source is fetched into `vendor/`
-# by the build system (`scripts/build/deps/lolhtml.ts`) before cargo runs.
+# `vendor/lolhtml` (the `lol_html` crate) is a non-member path dependency,
+# fetched into `vendor/` by `scripts/build/deps/lolhtml.ts` before cargo runs.
+# Keeping it out of `members` means its `[profile]` section is ignored and its
+# heavy dev-dependencies (criterion, html5ever) never enter `Cargo.lock`.
 exclude = ["vendor"]
 
 [workspace.package]
@@ -131,13 +121,7 @@ edition = "2024"
 #
 # `panic = "abort"` — the `std::panic` hook in `bun_crash_handler` aborts,
 # so `catch_unwind` is unreachable for Rust panics regardless, and no landing
-# pads means smaller `.pdata`/`.xdata`. Re-enabled to root-cause a latent
-# Windows-only `Strong<Impl>* corrupted (0x1)` in the fs/promises writeFile
-# async-iterable path (#53265+) that this codegen exposes: the corruption is
-# not an over-deref (the `raw_ref_count` underflow assert does not fire). The
-# Windows release link is temporarily `/OPT:NOICF` (flags.ts:778) so the PDB
-# symbolicates to the real owning struct instead of an ICF-folded body; once
-# root-caused, restore `/OPT:SAFEICF` there.
+# pads means smaller `.pdata`/`.xdata`.
 #
 # Cross-language LTO (`-C linker-plugin-lto`, so Rust bitcode joins the C++
 # `-flto=full` link) is wired in `scripts/build/rust.ts` behind `cfg.lto`; it
@@ -186,13 +170,35 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = "symbols"
+# Pin these so the shim PE is byte-identical across bun's own profiles.
+# rust.ts sets CARGO_PROFILE_RELEASE_{LTO,DEBUG_ASSERTIONS} for the main
+# bun_bin build and the shim build shares that env; without explicit values
+# here the env overrides on `release` would be inherited.
+debug-assertions = false
+overflow-checks = false
 
 [workspace.lints.rust]
-# `bun_asan` is set via RUSTFLAGS (`--cfg=bun_asan` + `--check-cfg=cfg(bun_asan)`)
-# by scripts/build/rust.ts for asan builds; register it here so a plain
-# `cargo build` / `cargo check` (without those flags) doesn't warn.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)'] }
+# Every rustc warning is an error. Individual lints below can override this
+# back to "warn" (their priority 0 beats the group's -1) where a warning level
+# is intentional.
+warnings = { level = "deny", priority = -1 }
+# `bun_asan` / `bun_debug` / `socket_fault_injection` are set via RUSTFLAGS
+# (`--cfg=...` + `--check-cfg=cfg(...)`) by scripts/build/rust.ts; register
+# them here so a plain `cargo build` / `cargo check` (without those flags)
+# doesn't warn.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(socket_fault_injection)'] }
+# link.exe unconditionally prints "Creating library X.dll.lib and object
+# X.dll.exp" to stdout when linking each proc-macro DLL on Windows hosts;
+# there is no linker flag to suppress it. The lint already exempts itself
+# from `-D warnings`, so this only silences the noise.
+linker_messages = "allow"
 dead_code = "deny"
+# Every crate in this workspace is an internal implementation detail of one
+# binary, so `pub` is a claim that *another crate* imports the item. If it
+# doesn't, write `pub(crate)` — that keeps the item under `dead_code` analysis
+# instead of being exempted as an external API root. Macro-generated items that
+# must stay `pub` carry `#[allow(unreachable_pub)]` at the expansion site.
+unreachable_pub = "deny"
 unused_imports = "deny"
 unused_variables = "deny"
 unused_mut = "deny"
@@ -318,7 +324,6 @@ rust-argon2 = "3.0"
 bcrypt = "0.19"
 getrandom = "0.4"
 strum = { version = "0.26", features = ["derive"] }
-phf = { version = "0.11", features = ["macros"] }
 # `allocator-api2` feature gives `hashbrown::HashMap<K, V, S, A>` an externally-
 # implementable `A` bound. We can't use hashbrown's own `nightly` feature (which
 # would bind `A` to `core::alloc::Allocator` directly) because it also enables
@@ -339,17 +344,17 @@ memchr = "2"
 rustix = { version = "0.38", default-features = false, features = ["std", "fs", "event", "process", "net"] }
 bitflags = "2"
 thiserror = "2"
-crossbeam = "0.8"
 smallvec = "1"
 bumpalo = { version = "3", features = ["collections", "boxed"] }
 typed-arena = "2"
 itoa = "1"
+# Vendored, not crates.io — see the `exclude = ["vendor"]` note above.
+lol_html = { path = "vendor/lolhtml" }
 bun_opaque = { path = "src/opaque" }
 bun_analytics = { path = "src/analytics" }
 bun_api = { path = "src/api" }
 bun_base64 = { path = "src/base64" }
 bun_bundler = { path = "src/bundler" }
-bun_codegen = { path = "src/codegen" }
 bun_collections = { path = "src/collections" }
 bun_css = { path = "src/css" }
 bun_errno = { path = "src/errno" }
@@ -361,8 +366,6 @@ bun_io = { path = "src/io" }
 bun_js = { path = "src/js" }
 bun_libarchive = { path = "src/libarchive" }
 bun_md = { path = "src/md" }
-bun_meta = { path = "src/meta" }
-bun_node-fallbacks = { path = "src/node-fallbacks" }
 bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
 bun_safety = { path = "src/safety" }
@@ -371,7 +374,6 @@ bun_sourcemap = { path = "src/sourcemap" }
 bun_sql = { path = "src/sql" }
 bun_sys = { path = "src/sys" }
 bun_threading = { path = "src/threading" }
-bun_unicode = { path = "src/unicode" }
 bun_valkey = { path = "src/valkey" }
 bun_watcher = { path = "src/watcher" }
 bun_cares_sys = { path = "src/cares_sys" }
@@ -393,12 +395,10 @@ bun_install_types = { path = "src/install_types" }
 bun_js_parser = { path = "src/js_parser" }
 bun_js_parser_jsc = { path = "src/js_parser_jsc" }
 bun_js_printer = { path = "src/js_printer" }
-bun_libarchive_sys = { path = "src/libarchive_sys" }
 bun_libdeflate_sys = { path = "src/libdeflate_sys" }
 bun_libuv_sys = { path = "src/libuv_sys" }
 bun_ast = { path = "src/ast" }
 bun_ast_jsc = { path = "src/ast_jsc" }
-bun_lolhtml_sys = { path = "src/lolhtml_sys" }
 bun_picohttp = { path = "src/picohttp" }
 bun_s3_signing = { path = "src/s3_signing" }
 bun_sql_jsc = { path = "src/sql_jsc" }
@@ -407,7 +407,6 @@ bun_patch = { path = "src/patch" }
 bun_platform = { path = "src/platform" }
 bun_sha_hmac = { path = "src/sha_hmac" }
 bun_sys_jsc = { path = "src/sys_jsc" }
-bun_url_jsc = { path = "src/url_jsc" }
 bun_zlib_sys = { path = "src/zlib_sys" }
 bun_dispatch = { path = "src/dispatch" }
 bun_brotli = { path = "src/brotli" }
@@ -424,7 +423,6 @@ bun_boringssl = { path = "src/boringssl" }
 bun_brotli_sys = { path = "src/brotli_sys" }
 bun_alloc = { path = "src/bun_alloc" }
 bun_mimalloc_sys = { path = "src/mimalloc_sys" }
-bun_picohttp_sys = { path = "src/picohttp_sys" }
 bun_semver_jsc = { path = "src/semver_jsc" }
 bun_standalone_graph = { path = "src/standalone_graph" }
 bun_uws = { path = "src/uws" }
@@ -449,3 +447,6 @@ bun_runtime = { path = "src/runtime", default-features = false }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }
+
+[profile.release.package.bun_react_compiler]
+opt-level = "s"

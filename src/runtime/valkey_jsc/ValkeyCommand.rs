@@ -6,14 +6,14 @@ use super::protocol_jsc::{ToJSOptions, resp_value_to_js_with_options};
 
 type Slice = bun_core::ZigStringSlice;
 
-// PORT NOTE: callers in `js_valkey_functions.rs` construct
+// Note: callers in `js_valkey_functions.rs` construct
 // `Vec<crate::node::types::BlobOrStringOrBuffer>` directly, so `Args::Args` must accept
 // that exact type. The upstream `bun_jsc::Node::BlobOrStringOrBuffer` re-export is a
 // stub; use the real in-crate definition (which already provides `slice()` /
 // `byte_length()`).
 type BlobOrStringOrBuffer = crate::node::types::BlobOrStringOrBuffer;
 
-// PORT NOTE: `Command` is a transient view struct (Zig `deinit` is a no-op); fields
+// Note: `Command` is a transient view struct; fields
 // borrow caller-owned data for the duration of serialization.
 #[derive(Copy, Clone)]
 pub struct Command<'a> {
@@ -46,7 +46,7 @@ impl<'a> Default for Args<'a> {
 }
 
 impl<'a> Args<'a> {
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match self {
             Args::Slices(args) => args.len(),
             Args::Args(args) => args.len(),
@@ -57,7 +57,6 @@ impl<'a> Args<'a> {
 
 impl<'a> Command<'a> {
     pub fn write(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         // Serialize as RESP array format directly
         write!(writer, "*{}\r\n", 1 + self.args.len())?;
         write!(writer, "${}\r\n", self.command.len())?;
@@ -92,27 +91,16 @@ impl<'a> Command<'a> {
     }
 
     pub fn byte_length(&self) -> usize {
-        // Zig: std.fmt.count — DiscardingWriter is bun_io's byte-counting null sink.
+        // DiscardingWriter is bun_io's byte-counting null sink.
         let mut counter = bun_io::DiscardingWriter::default();
         self.write(&mut counter).expect("unreachable");
         counter.count
     }
 
     pub fn serialize(&self) -> Result<Box<[u8]>, bun_core::Error> {
-        // TODO(port): narrow error set
         let mut buf: Vec<u8> = Vec::with_capacity(self.byte_length());
         self.write(&mut buf)?;
         Ok(buf.into_boxed_slice())
-    }
-}
-
-impl<'a> core::fmt::Display for Command<'a> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // TODO(port): RESP bytes may not be valid UTF-8; Zig used the byte-writer protocol.
-        // Route Display through a byte-writing adapter or drop Display entirely.
-        let mut buf: Vec<u8> = Vec::new();
-        self.write(&mut buf).map_err(|_| core::fmt::Error)?;
-        write!(f, "{}", bstr::BStr::new(&buf))
     }
 }
 
@@ -123,27 +111,24 @@ pub struct Entry {
     pub promise: Promise,
 }
 
-// Zig: `pub const Queue = bun.LinearFifo(Entry, .Dynamic);` — inherent associated
+// Inherent associated
 // types are unstable on stable Rust, so expose as a sibling module alias instead.
 pub mod entry {
-    pub type Queue = super::LinearFifo<super::Entry, super::DynamicBuffer<super::Entry>>;
+    pub(crate) type Queue = super::LinearFifo<super::Entry, super::DynamicBuffer<super::Entry>>;
 }
 
 impl Entry {
     // Create an Offline by serializing the Valkey command directly
     pub fn create(command: &Command<'_>, promise: Promise) -> Result<Entry, bun_core::Error> {
-        // TODO(port): narrow error set
         Ok(Entry {
             serialized_data: command.serialize()?,
-            // TODO(markovejnovic): We should be calling .check against command here but due
+            // We should be calling .check against command here but due
             // to a hack introduced to let SUBSCRIBE work, we are not doing that for now.
             meta: command.meta,
             promise,
         })
     }
 }
-
-// Zig `Entry.deinit` only freed `serialized_data`; `Box<[u8]>` drops automatically.
 
 bitflags::bitflags! {
     #[repr(transparent)]
@@ -159,31 +144,31 @@ bitflags::bitflags! {
 
 impl Default for Meta {
     fn default() -> Self {
-        // Zig field defaults: supports_auto_pipelining = true, rest false.
+        // supports_auto_pipelining defaults to true, rest false.
         Meta::SUPPORTS_AUTO_PIPELINING
     }
 }
 
-// PERF(port): was `phf::Set<&[u8]>`. 16 entries spread across 9 distinct
-// lengths (max 4 per bucket), so a length-gated match beats the phf hash:
-// the outer `usize` compare rejects almost everything before any byte
-// compare, and within a bucket the known-equal-length lets LLVM lower the
-// `==` to a single wide load/compare. See clap::find_param (12577e958d71)
-// for the reference pattern.
-#[inline]
-fn is_not_allowed_autopipeline_command(cmd: &[u8]) -> bool {
-    match cmd.len() {
-        4 => matches!(cmd, b"AUTH" | b"EXEC" | b"INFO" | b"QUIT"),
-        5 => matches!(cmd, b"MULTI" | b"WATCH"),
-        6 => matches!(cmd, b"SCRIPT" | b"SELECT"),
-        7 => matches!(cmd, b"CLUSTER" | b"DISCARD" | b"UNWATCH"),
-        8 => cmd == b"PIPELINE",
-        9 => cmd == b"SUBSCRIBE",
-        10 => cmd == b"PSUBSCRIBE",
-        11 => cmd == b"UNSUBSCRIBE",
-        12 => cmd == b"UNPSUBSCRIBE",
-        _ => false,
-    }
+bun_core::comptime_string_set! {
+    /// Commands that must not be auto-pipelined.
+    static AUTO_PIPELINE_DISALLOWED_COMMANDS = {
+        b"AUTH",
+        b"EXEC",
+        b"INFO",
+        b"QUIT",
+        b"MULTI",
+        b"WATCH",
+        b"SCRIPT",
+        b"SELECT",
+        b"CLUSTER",
+        b"DISCARD",
+        b"UNWATCH",
+        b"PIPELINE",
+        b"SUBSCRIBE",
+        b"PSUBSCRIBE",
+        b"UNSUBSCRIBE",
+        b"UNPSUBSCRIBE",
+    };
 }
 
 impl Meta {
@@ -191,7 +176,7 @@ impl Meta {
         let mut new = self;
         new.set(
             Meta::SUPPORTS_AUTO_PIPELINING,
-            !is_not_allowed_autopipeline_command(command.command),
+            !AUTO_PIPELINE_DISALLOWED_COMMANDS.contains(command.command),
         );
         new
     }
@@ -200,7 +185,7 @@ impl Meta {
 /// Promise for a Valkey command
 pub struct Promise {
     pub meta: Meta,
-    pub promise: jsc::JSPromiseStrong, // TODO(port): exact path for jsc.JSPromise.Strong
+    pub promise: jsc::JSPromiseStrong,
 }
 
 impl Promise {
@@ -214,7 +199,6 @@ impl Promise {
         global_object: &JSGlobalObject,
         value: &mut protocol::RESPValue,
     ) -> Result<(), jsc::JsTerminated> {
-        // TODO(port): bun.JSTerminated! mapping
         let options = ToJSOptions {
             return_as_buffer: self.meta.contains(Meta::RETURN_AS_BUFFER),
         };
@@ -235,13 +219,10 @@ impl Promise {
         global_object: &JSGlobalObject,
         jsvalue: JsResult<JSValue>,
     ) -> Result<(), jsc::JsTerminated> {
-        // TODO(port): bun.JSTerminated! mapping
         self.promise.reject(global_object, jsvalue)?;
         Ok(())
     }
 }
-
-// Zig `Promise.deinit` only called `self.promise.deinit()`; JSPromiseStrong's Drop handles it.
 
 // Command+Promise pair for tracking which command corresponds to which promise
 pub struct PromisePair {
@@ -249,9 +230,9 @@ pub struct PromisePair {
     pub promise: Promise,
 }
 
-// Zig: `pub const Queue = bun.LinearFifo(PromisePair, .Dynamic);` — see `entry` note above.
+// See `entry` note above.
 pub mod promise_pair {
-    pub type Queue =
+    pub(crate) type Queue =
         super::LinearFifo<super::PromisePair, super::DynamicBuffer<super::PromisePair>>;
 }
 
@@ -261,10 +242,7 @@ impl PromisePair {
         global_object: &JSGlobalObject,
         jsvalue: JSValue,
     ) -> Result<(), jsc::JsTerminated> {
-        // TODO(port): bun.JSTerminated! mapping
         self.promise.reject(global_object, Ok(jsvalue))?;
         Ok(())
     }
 }
-
-// ported from: src/runtime/valkey_jsc/ValkeyCommand.zig

@@ -388,3 +388,36 @@ for (let algorithmValue of algorithms) {
     }
   });
 }
+
+test("verify rejects encoded argon2 hashes with cost parameters above the supported maximums", async () => {
+  // Hash with small, fast parameters so this test stays cheap on debug builds.
+  const hashed = password.hashSync("correct horse", {
+    algorithm: "argon2id",
+    memoryCost: 8,
+    timeCost: 1,
+  });
+  expect(hashed).toContain("$m=8,t=1,p=1$");
+
+  // The untampered hash still verifies.
+  expect(password.verifySync("correct horse", hashed)).toBeTrue();
+
+  // A time cost far above the verification ceiling embedded in the encoded
+  // hash must be rejected up front instead of being honored.
+  const hugeTime = hashed.replace(",t=1,", ",t=100000,");
+  expect(hugeTime).not.toBe(hashed);
+  expect(() => password.verifySync("correct horse", hugeTime)).toThrow("WeakParameters");
+  await expect(password.verify("correct horse", hugeTime)).rejects.toThrow("WeakParameters");
+
+  // A memory cost above the ceiling is rejected before any allocation is
+  // sized from the encoded string.
+  const hugeMemory = hashed.replace("$m=8,", "$m=4294967294,");
+  expect(hugeMemory).not.toBe(hashed);
+  expect(() => password.verifySync("correct horse", hugeMemory)).toThrow("WeakParameters");
+  await expect(password.verify("correct horse", hugeMemory)).rejects.toThrow("WeakParameters");
+
+  // A parallelism value above the ceiling is rejected as well.
+  const hugeParallelism = hashed.replace(",p=1$", ",p=65$");
+  expect(hugeParallelism).not.toBe(hashed);
+  expect(() => password.verifySync("correct horse", hugeParallelism)).toThrow("WeakParameters");
+  await expect(password.verify("correct horse", hugeParallelism)).rejects.toThrow("WeakParameters");
+});

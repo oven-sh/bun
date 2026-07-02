@@ -9,13 +9,14 @@ use bun_ast::{E, Expr, ExprNodeIndex, ExprNodeList, G};
 use bun_collections::VecExt;
 use bun_core::err;
 
-// Zig: `pub fn ParseJSXElement(comptime ...) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`
-// (sealed trait + ZST), so this becomes a direct `impl` on `P` instead of a wrapper struct.
-
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn parse_jsx_element(&mut self, loc: bun_ast::Loc) -> Result<Expr, bun_core::Error> {
         let p = self;
+        // Nested child elements (`<a><b><c>...`) recurse back into this function,
+        // so guard the stack the same way the other recursive parse entry points do.
+        if !p.stack_check.is_safe_to_recurse() {
+            return Err(err!("StackOverflow"));
+        }
         if SCAN_ONLY {
             p.needs_jsx_import = true;
         }
@@ -48,7 +49,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             'parse_attributes: loop {
                 match p.lexer.token {
                     T::TIdentifier => {
-                        // PORT NOTE: `defer i += 1` inlined at each exit point of this arm.
+                        // `i` must be incremented whenever this arm pushes a property.
+                        // The early `continue` for an ignored bare `key` prop
+                        // intentionally skips the increment: no property is pushed there, so
+                        // `key_prop_i`/`first_spread_prop_i` stay valid indices into `props`.
                         // Parse the prop name
                         let key_range = p.lexer.range();
                         let prop_name_literal = p.lexer.identifier;
@@ -65,7 +69,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     key_range.loc,
                                     b"\"key\" prop ignored. Must be a string, number or symbol.",
                                 );
-                                i += 1; // defer i += 1
                                 continue;
                             }
 
@@ -100,7 +103,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         i += 1; // defer i += 1
                     }
                     T::TOpenBrace => {
-                        // PORT NOTE: `defer i += 1` inlined at end of this arm.
+                        // This arm must increment `i` once before exiting.
                         // Use Next() not ExpectInsideJSXElement() so we can parse "..."
                         p.lexer.next()?;
 
@@ -328,7 +331,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         let child = Self::parse_jsx_element(p, less_than_loc)?;
                         children.push(child);
-                        // PERF(port): was `catch unreachable` on append — Vec::push is infallible
 
                         // The call to parseJSXElement() above doesn't consume the last
                         // TGreaterThan because the caller knows what Next() function to call.
@@ -343,7 +345,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let end_tag = JSXTag::parse(p)?;
 
                     if end_tag.name != tag.name {
-                        // TODO(port): arena param dropped from Zig signature.
                         p.log().add_range_error_fmt_with_note(
                             Some(p.source),
                             end_tag.range,
@@ -382,5 +383,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 }
-
-// ported from: src/js_parser/ast/parseJSXElement.zig

@@ -29,9 +29,8 @@ impl NamespaceRule {
     }
 
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk. `CssString` is
-        // `*const [u8]` (arena-owned slice → identity copy per generics.zig
-        // "const strings" rule); `Ident::deep_clone` is the same identity copy.
+        // `CssString` is `*const [u8]` (arena-owned slice → identity copy);
+        // `Ident::deep_clone` is the same identity copy.
         Self {
             prefix: self.prefix.as_ref().map(|p| p.deep_clone(bump)),
             url: self.url,
@@ -39,5 +38,3 @@ impl NamespaceRule {
         }
     }
 }
-
-// ported from: src/css/rules/namespace.zig

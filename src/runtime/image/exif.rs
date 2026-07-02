@@ -42,7 +42,7 @@ pub struct Transform {
 
 impl Orientation {
     /// The (mirror?, cw-degrees) pair that turns the stored pixels upright.
-    pub fn transform(self) -> Transform {
+    pub(crate) fn transform(self) -> Transform {
         match self {
             Orientation::Normal => Transform {
                 flop: false,
@@ -205,5 +205,3 @@ fn rd32(b: &[u8], off: usize, big: bool) -> Option<u32> {
         u32::from_le_bytes(bytes)
     })
 }
-
-// ported from: src/runtime/image/exif.zig

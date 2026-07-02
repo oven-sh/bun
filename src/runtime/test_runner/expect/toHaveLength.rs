@@ -3,8 +3,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_have_length(
+pub(crate) fn to_have_length(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -80,7 +79,6 @@ pub fn to_have_length(
 
     // handle failure
     if not {
-        // PERF(port): was comptime getSignature — const fn evaluated at compile time
         let signature: &str = get_signature("toHaveLength", "<green>expected<r>", true);
         return this.throw(
             global,
@@ -89,7 +87,6 @@ pub fn to_have_length(
         );
     }
 
-    // PERF(port): was comptime getSignature — const fn evaluated at compile time
     let signature: &str = get_signature("toHaveLength", "<green>expected<r>", false);
     this.throw(
         global,
@@ -100,5 +97,3 @@ pub fn to_have_length(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toHaveLength.zig

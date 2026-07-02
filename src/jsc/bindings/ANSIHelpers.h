@@ -5,6 +5,13 @@
 #include <span>
 #include <unicode/utf16.h>
 
+// Runtime-dispatched (HWY_DYNAMIC_DISPATCH) escape scan, defined in
+// highway_strings.cpp. Picks AVX2/AVX-512/SVE at runtime, so the no-escape fast
+// path keeps wide vectors even on the -march=nehalem baseline build where the
+// WTF SIMD helpers below would otherwise be pinned to SSE width.
+extern "C" size_t highway_index_of_escape_char8(const uint8_t* input, size_t len);
+extern "C" size_t highway_index_of_escape_char16(const uint16_t* input, size_t len);
+
 namespace Bun {
 namespace ANSI {
 
@@ -40,7 +47,16 @@ static auto exactEscapeMatch(std::conditional_t<sizeof(SIMDType) == 1, simde_uin
         return SIMD::equal<u'\x1b', u'\x90', u'\x98', u'\x9b', u'\x9c', u'\x9d', u'\x9e', u'\x9f'>(chunk);
 }
 
-// Find the first escape character in a string using SIMD
+// A long no-escape scan delegates to the runtime-dispatched Highway kernel so
+// it uses the widest SIMD the CPU supports at runtime rather than the build's
+// static -march (the baseline build would otherwise be pinned to SSE width —
+// this is the 16 KB no-ANSI stripANSI regression). The inlined WTF SIMD scan
+// below stays the path for everything else.
+static constexpr size_t kEscapeDispatchThreshold = 1024;
+
+// Find the first escape character in a string. An "escape character" is 0x1B,
+// 0x90, 0x98, 0x9B, 0x9C, 0x9D, 0x9E or 0x9F — matching isEscapeCharacter plus
+// 0x9C (C1 ST).
 template<typename Char>
 static const Char* findEscapeCharacter(const Char* start, const Char* end)
 {
@@ -57,6 +73,25 @@ static const Char* findEscapeCharacter(const Char* start, const Char* end)
     constexpr auto escVector = SIMD::splat<SIMDType>(0b00010000);
 
     auto it = start;
+    const size_t len = static_cast<size_t>(end - start);
+
+    // Long scans delegate to the runtime-dispatched Highway kernel so the
+    // baseline build isn't pinned to SSE width — but only once the first chunk
+    // is confirmed clean. When an escape sits at/near the start (e.g. dense SGR
+    // input, where stripANSI re-scans the still-large remainder after each
+    // sequence) the inlined path finds it in this one cheap chunk and never
+    // pays the kernel's per-call setup.
+    if (len >= kEscapeDispatchThreshold) {
+        const auto chunk = SIMD::load(reinterpret_cast<const SIMDType*>(it));
+        if (!SIMD::findFirstNonZeroIndex(SIMD::equal(SIMD::bitAnd(chunk, escMask), escVector))) {
+            size_t idx;
+            if constexpr (sizeof(Char) == 1)
+                idx = highway_index_of_escape_char8(reinterpret_cast<const uint8_t*>(start), len);
+            else
+                idx = highway_index_of_escape_char16(reinterpret_cast<const uint16_t*>(start), len);
+            return idx < len ? start + idx : nullptr;
+        }
+    }
 
     // 4x-unrolled prologue: process 4 chunks at a time, accumulating broad-mask
     // hits in a vector OR. Only do the NEON->GPR transfer + branch every 64 bytes

@@ -41,7 +41,7 @@ const {
   validateNumber,
 } = require("internal/validators");
 
-const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
+const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBunStringWidth", 1);
 
 const PromiseReject = Promise.$reject;
 
@@ -1018,19 +1018,21 @@ function onEnd() {
 
 function onTermEnd() {
   debug("onTermEnd");
-  if (typeof this.line === "string" && this.line.length > 0) {
-    this.emit("line", this.line);
+  const line = this.line;
+  if (typeof line === "string" && line.length > 0) {
+    this.emit("line", line);
   }
   this.close();
 }
 
 function onKeyPress(s, key) {
   this[kTtyWrite](s, key);
-  if (key && key.sequence) {
+  const sequence = key ? key.sequence : undefined;
+  if (sequence) {
     // If the keySeq is half of a surrogate pair
     // (>= 0xd800 and <= 0xdfff), refresh the line so
     // the character is displayed appropriately.
-    var ch = StringPrototypeCodePointAt.$call(key.sequence, 0)!;
+    var ch = StringPrototypeCodePointAt.$call(sequence, 0)!;
     if (ch >= 0xd800 && ch <= 0xdfff) this[kRefreshLine]();
   }
 }
@@ -1210,7 +1212,8 @@ var _Interface = class Interface extends InterfaceConstructor {
   }
   get columns() {
     var output = this.output;
-    if (output && output.columns) return output.columns;
+    var columns = output ? output.columns : undefined;
+    if (columns) return columns;
     return Infinity;
   }
 
@@ -1297,31 +1300,35 @@ var _Interface = class Interface extends InterfaceConstructor {
   [kWriteToOutput](stringToWrite) {
     validateString(stringToWrite, "stringToWrite");
 
-    if (this.output !== null && this.output !== undefined) {
-      this.output.write(stringToWrite);
+    const output = this.output;
+    if (output !== null && output !== undefined) {
+      output.write(stringToWrite);
     }
   }
 
   [kAddHistory]() {
-    if (this.line.length === 0) return "";
+    const line = this.line;
+    if (line.length === 0) return "";
 
     // If the history is disabled then return the line
-    if (this.historySize === 0) return this.line;
+    if (this.historySize === 0) return line;
 
     // If the trimmed line is empty then return the line
-    if (StringPrototypeTrim.$call(this.line).length === 0) return this.line;
+    if (StringPrototypeTrim.$call(line).length === 0) return line;
 
-    if (this.history.length === 0 || this.history[0] !== this.line) {
+    const history = this.history;
+    const historyEmpty = history.length === 0;
+    if (historyEmpty || history[0] !== line) {
       if (this.removeHistoryDuplicates) {
         // Remove older history line if identical to new one
-        var dupIndex = ArrayPrototypeIndexOf.$call(this.history, this.line);
-        if (dupIndex !== -1) ArrayPrototypeSplice.$call(this.history, dupIndex, 1);
+        var dupIndex = ArrayPrototypeIndexOf.$call(history, line);
+        if (dupIndex !== -1) ArrayPrototypeSplice.$call(history, dupIndex, 1);
       }
 
-      ArrayPrototypeUnshift.$call(this.history, this.line);
+      ArrayPrototypeUnshift.$call(history, line);
 
       // Only store so many
-      if (this.history.length > this.historySize) ArrayPrototypePop.$call(this.history);
+      if (history.length > this.historySize) ArrayPrototypePop.$call(history);
     }
 
     this.historyIndex = -1;
@@ -1329,12 +1336,12 @@ var _Interface = class Interface extends InterfaceConstructor {
     // The listener could change the history object, possibly
     // to remove the last added entry if it is sensitive and should
     // not be persisted in the history, like a password
-    var line = this.history[0];
+    const latest = this.history[0];
 
     // Emit history event to notify listeners of update
     this.emit("history", this.history);
 
-    return line;
+    return latest;
   }
 
   [kRefreshLine]() {
@@ -1480,9 +1487,11 @@ var _Interface = class Interface extends InterfaceConstructor {
 
   [kInsertString](c) {
     this[kBeforeEdit](this.line, this.cursor);
-    if (this.cursor < this.line.length) {
-      var beg = StringPrototypeSlice.$call(this.line, 0, this.cursor);
-      var end = StringPrototypeSlice.$call(this.line, this.cursor, this.line.length);
+    const line = this.line;
+    const lineLength = line.length;
+    if (this.cursor < lineLength) {
+      var beg = StringPrototypeSlice.$call(line, 0, this.cursor);
+      var end = StringPrototypeSlice.$call(line, this.cursor, lineLength);
       this.line = beg + c + end;
       this.cursor += c.length;
       this[kRefreshLine]();
@@ -1524,8 +1533,9 @@ var _Interface = class Interface extends InterfaceConstructor {
 
     // If there is a common prefix to all matches, then apply that portion.
     var prefix = commonPrefix(ArrayPrototypeFilter.$call(completions, e => e !== ""));
-    if (StringPrototypeStartsWith.$call(prefix, completeOn) && prefix.length > completeOn.length) {
-      this[kInsertString](StringPrototypeSlice.$call(prefix, completeOn.length));
+    var completeOnLength = completeOn.length;
+    if (StringPrototypeStartsWith.$call(prefix, completeOn) && prefix.length > completeOnLength) {
+      this[kInsertString](StringPrototypeSlice.$call(prefix, completeOnLength));
       return;
     } else if (!StringPrototypeStartsWith.$call(completeOn, prefix)) {
       this.line =
@@ -1578,10 +1588,11 @@ var _Interface = class Interface extends InterfaceConstructor {
   }
 
   [kWordLeft]() {
-    if (this.cursor > 0) {
+    const cursor = this.cursor;
+    if (cursor > 0) {
       // Reverse the string and match a word near beginning
       // to avoid quadratic time complexity
-      var leading = StringPrototypeSlice.$call(this.line, 0, this.cursor);
+      var leading = StringPrototypeSlice.$call(this.line, 0, cursor);
       var reversed = ArrayPrototypeJoin.$call(ArrayPrototypeReverse.$call(ArrayFrom(leading)), "");
       var match = RegExpPrototypeExec.$call(/^\s*(?:[^\w\s]+|\w+)?/, reversed);
       this[kMoveCursor](-match[0].length);
@@ -1589,21 +1600,25 @@ var _Interface = class Interface extends InterfaceConstructor {
   }
 
   [kWordRight]() {
-    if (this.cursor < this.line.length) {
-      var trailing = StringPrototypeSlice.$call(this.line, this.cursor);
+    const cursor = this.cursor;
+    const line = this.line;
+    if (cursor < line.length) {
+      var trailing = StringPrototypeSlice.$call(line, cursor);
       var match = RegExpPrototypeExec.$call(/^(?:\s+|[^\w\s]+|\w+)\s*/, trailing);
       this[kMoveCursor](match[0].length);
     }
   }
 
   [kDeleteLeft]() {
-    if (this.cursor > 0 && this.line.length > 0) {
-      this[kBeforeEdit](this.line, this.cursor);
+    const cursor = this.cursor;
+    const line = this.line;
+    const lineLength = line.length;
+    if (cursor > 0 && lineLength > 0) {
+      this[kBeforeEdit](line, cursor);
       // The number of UTF-16 units comprising the character to the left
-      var charSize = charLengthLeft(this.line, this.cursor);
+      var charSize = charLengthLeft(line, cursor);
       this.line =
-        StringPrototypeSlice.$call(this.line, 0, this.cursor - charSize) +
-        StringPrototypeSlice.$call(this.line, this.cursor, this.line.length);
+        StringPrototypeSlice.$call(line, 0, cursor - charSize) + StringPrototypeSlice.$call(line, cursor, lineLength);
 
       this.cursor -= charSize;
       this[kRefreshLine]();
@@ -1611,13 +1626,15 @@ var _Interface = class Interface extends InterfaceConstructor {
   }
 
   [kDeleteRight]() {
-    if (this.cursor < this.line.length) {
-      this[kBeforeEdit](this.line, this.cursor);
+    const cursor = this.cursor;
+    const line = this.line;
+    const lineLength = line.length;
+    if (cursor < lineLength) {
+      this[kBeforeEdit](line, cursor);
       // The number of UTF-16 units comprising the character to the left
-      var charSize = charLengthAt(this.line, this.cursor);
+      var charSize = charLengthAt(line, cursor);
       this.line =
-        StringPrototypeSlice.$call(this.line, 0, this.cursor) +
-        StringPrototypeSlice.$call(this.line, this.cursor + charSize, this.line.length);
+        StringPrototypeSlice.$call(line, 0, cursor) + StringPrototypeSlice.$call(line, cursor + charSize, lineLength);
       this[kRefreshLine]();
     }
   }
@@ -1638,12 +1655,13 @@ var _Interface = class Interface extends InterfaceConstructor {
   }
 
   [kDeleteWordRight]() {
-    if (this.cursor < this.line.length) {
-      this[kBeforeEdit](this.line, this.cursor);
-      var trailing = StringPrototypeSlice.$call(this.line, this.cursor);
+    const cursor = this.cursor;
+    const line = this.line;
+    if (cursor < line.length) {
+      this[kBeforeEdit](line, cursor);
+      var trailing = StringPrototypeSlice.$call(line, cursor);
       var match = RegExpPrototypeExec.$call(/^(?:\s+|\W+|\w+)\s*/, trailing);
-      this.line =
-        StringPrototypeSlice.$call(this.line, 0, this.cursor) + StringPrototypeSlice.$call(trailing, match[0].length);
+      this.line = StringPrototypeSlice.$call(line, 0, cursor) + StringPrototypeSlice.$call(trailing, match[0].length);
       this[kRefreshLine]();
     }
   }
@@ -1773,20 +1791,22 @@ var _Interface = class Interface extends InterfaceConstructor {
   }
 
   [kHistoryPrev]() {
-    if (this.historyIndex < this.history.length && this.history.length) {
+    const history = this.history;
+    const historyLength = history.length;
+    if (this.historyIndex < historyLength && historyLength) {
       this[kBeforeEdit](this.line, this.cursor);
       var search = this[kSubstringSearch] || "";
       var index = this.historyIndex + 1;
       while (
-        index < this.history.length &&
-        (!StringPrototypeStartsWith.$call(this.history[index], search) || this.line === this.history[index])
+        index < historyLength &&
+        (!StringPrototypeStartsWith.$call(history[index], search) || this.line === history[index])
       ) {
         index++;
       }
-      if (index === this.history.length) {
+      if (index === historyLength) {
         this.line = search;
       } else {
-        this.line = this.history[index];
+        this.line = history[index];
       }
       this.historyIndex = index;
       this.cursor = this.line.length; // Set cursor to end of line.
@@ -1851,10 +1871,11 @@ var _Interface = class Interface extends InterfaceConstructor {
     this.cursor += dx;
 
     // Bounds check
+    let lineLength;
     if (this.cursor < 0) {
       this.cursor = 0;
-    } else if (this.cursor > this.line.length) {
-      this.cursor = this.line.length;
+    } else if (this.cursor > (lineLength = this.line.length)) {
+      this.cursor = lineLength;
     }
 
     var newPos = this.getCursorPos();

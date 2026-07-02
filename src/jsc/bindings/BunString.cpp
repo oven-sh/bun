@@ -419,7 +419,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
     if (simdutf::validate_utf8(bytes, length)) {
         size_t u16Length = simdutf::utf16_length_from_utf8(bytes, length);
         std::span<char16_t> ptr;
-        auto impl = WTF::StringImpl::tryCreateUninitialized(static_cast<unsigned int>(u16Length), ptr);
+        auto impl = WTF::StringImpl::tryCreateUninitialized(u16Length, ptr);
         if (!impl) [[unlikely]] {
             return { .tag = BunStringTag::Dead };
         }

@@ -1,6 +1,9 @@
 import { spawnSync } from "bun";
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import fs from "node:fs";
+import path from "node:path";
+import { WASI } from "node:wasi";
 
 it("Should support printing 'hello world'", () => {
   const { stdout, stderr, exitCode } = spawnSync({
@@ -19,4 +22,58 @@ it("Should support printing 'hello world'", () => {
     stderr: "",
     exitCode: 0,
   });
+});
+
+it("path_* syscalls cannot escape the preopened directory", () => {
+  using dir = tempDir("wasi-sandbox", {
+    "secret.txt": "outside",
+    "sandbox/inside.txt": "inside",
+  });
+  const root = String(dir);
+  const sandbox = path.join(root, "sandbox");
+  if (!isWindows) {
+    // a symlink that already exists inside the preopen and points outside of it
+    fs.symlinkSync(path.join("..", "secret.txt"), path.join(sandbox, "escape"));
+  }
+
+  const wasi = new WASI({ preopens: { "/": sandbox } });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const memory = Buffer.from(wasi.memory.buffer);
+
+  const WASI_ESUCCESS = 0;
+  const WASI_ENOTCAPABLE = 76;
+  const WASI_RIGHT_FD_READ = BigInt(2);
+  const preopenFd = 3;
+  const pathPtr = 1024;
+  const statBufPtr = 8192;
+  const fdPtr = 16384;
+  const writePath = p => memory.write(p, pathPtr);
+
+  // (1) absolute guest path naming an arbitrary host file must not reach it
+  let len = writePath(path.join(root, "secret.txt"));
+  expect(wasi.wasiImport.path_filestat_get(preopenFd, 1, pathPtr, len, statBufPtr)).not.toBe(WASI_ESUCCESS);
+
+  // (2) ".." traversal out of the preopen
+  len = writePath("../secret.txt");
+  expect(wasi.wasiImport.path_filestat_get(preopenFd, 0, pathPtr, len, statBufPtr)).toBe(WASI_ENOTCAPABLE);
+  expect(wasi.wasiImport.path_unlink_file(preopenFd, pathPtr, len)).toBe(WASI_ENOTCAPABLE);
+  expect(fs.existsSync(path.join(root, "secret.txt"))).toBe(true);
+
+  // (3) a pre-placed symlink inside the preopen that points outside of it
+  if (!isWindows) {
+    len = writePath("escape");
+    expect(wasi.wasiImport.path_filestat_get(preopenFd, 1, pathPtr, len, statBufPtr)).toBe(WASI_ENOTCAPABLE);
+    expect(wasi.wasiImport.path_open(preopenFd, 0, pathPtr, len, 0, WASI_RIGHT_FD_READ, BigInt(0), 0, fdPtr)).toBe(
+      WASI_ENOTCAPABLE,
+    );
+    expect(wasi.FD_MAP.has(4)).toBe(false);
+  }
+
+  // a path that stays inside the preopen still works
+  len = writePath("inside.txt");
+  expect(wasi.wasiImport.path_filestat_get(preopenFd, 0, pathPtr, len, statBufPtr)).toBe(WASI_ESUCCESS);
+  expect(wasi.wasiImport.path_open(preopenFd, 0, pathPtr, len, 0, WASI_RIGHT_FD_READ, BigInt(0), 0, fdPtr)).toBe(
+    WASI_ESUCCESS,
+  );
+  expect(wasi.FD_MAP.has(4)).toBe(true);
 });

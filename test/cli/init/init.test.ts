@@ -3,6 +3,11 @@ import fs, { readdirSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import path from "path";
 
+// Whether `bun init` emits CLAUDE.md depends on a `claude` binary being on
+// PATH, which varies by CI machine — disable the detection so the directory
+// snapshots are stable everywhere.
+const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
+
 (isWindows ? describe : describe.concurrent)("bun init", () => {
   test("bun init works", async () => {
     const temp = tempDirWithFiles("bun-init-works", {});
@@ -11,7 +16,7 @@ import path from "path";
       cmd: [bunExe(), "init", "-y"],
       cwd: temp,
       stdio: ["ignore", "inherit", "inherit"],
-      env: bunEnv,
+      env: initEnv,
     });
 
     expect(await exited).toBe(0);
@@ -47,7 +52,7 @@ import path from "path";
       cmd: [bunExe(), "init"],
       cwd: temp,
       stdio: [new Blob(["\n\n\n\n\n\n\n\n\n\n\n\n"]), "inherit", "inherit"],
-      env: bunEnv,
+      env: initEnv,
     });
 
     expect(await exited).toBe(0);
@@ -90,7 +95,7 @@ import path from "path";
       cmd: [bunExe(), "init", "-y", "mydir"],
       cwd: temp,
       stdio: ["ignore", "inherit", "inherit"],
-      env: bunEnv,
+      env: initEnv,
     });
     expect(await exited).toBe(0);
     expect(readdirSync(temp).sort()).toEqual(["mydir"]);
@@ -115,7 +120,7 @@ import path from "path";
       cmd: [bunExe(), "init", "-y", "mydir"],
       cwd: temp,
       stdio: ["ignore", "pipe", "pipe"],
-      env: bunEnv,
+      env: initEnv,
     });
     expect(await exited).not.toBe(0);
     expect(readdirSync(temp).sort()).toEqual(["mydir"]);
@@ -128,7 +133,7 @@ import path from "path";
       cmd: [bunExe(), "init", "-y", "u t f ∞™/subpath"],
       cwd: temp,
       stdio: ["ignore", "inherit", "inherit"],
-      env: bunEnv,
+      env: initEnv,
     });
     expect(await exited).toBe(0);
     expect(readdirSync(temp).sort()).toEqual(["u t f ∞™"]);
@@ -152,7 +157,7 @@ import path from "path";
       cmd: [bunExe(), "init", "-y", "mydir"],
       cwd: temp,
       stdio: ["ignore", "inherit", "inherit"],
-      env: bunEnv,
+      env: initEnv,
     });
     expect(await exited).toBe(0);
     expect(readdirSync(temp).sort()).toEqual(["mydir"]);
@@ -182,7 +187,7 @@ import path from "path";
       cmd: [bunExe(), "init", "mydir"],
       cwd: temp,
       stdio: ["ignore", "pipe", "pipe"],
-      env: bunEnv,
+      env: initEnv,
     });
     expect(await exited2).toBe(0);
     expect(await stderr.text()).toMatchInlineSnapshot(`
@@ -231,7 +236,7 @@ import path from "path";
       cmd: [bunExe(), "init", "--react"],
       cwd: temp,
       stdio: ["ignore", "inherit", "inherit"],
-      env: bunEnv,
+      env: initEnv,
     });
 
     expect(await exited).toBe(0);
@@ -254,7 +259,7 @@ import path from "path";
       cmd: [bunExe(), "init", "--react=tailwind"],
       cwd: temp,
       stdio: ["ignore", "inherit", "inherit"],
-      env: bunEnv,
+      env: initEnv,
     });
 
     expect(await exited).toBe(0);
@@ -277,7 +282,7 @@ import path from "path";
       cmd: [bunExe(), "init", "--react=shadcn"],
       cwd: temp,
       stdio: ["ignore", "inherit", "inherit"],
-      env: bunEnv,
+      env: initEnv,
     });
 
     expect(await exited).toBe(0);
@@ -294,6 +299,32 @@ import path from "path";
     expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/components"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/components/ui"))).toBe(true);
+  }, 30_000);
+
+  test("nested `bun install` output is inherited", async () => {
+    // `bun init` spawns `bun install` via spawn_sync_inherit. The child must
+    // inherit stdout/stderr so its output reaches the parent's pipe — a
+    // previous regression left the child with closed fds 1/2 and the install
+    // output was silently dropped.
+    const temp = tempDirWithFiles("bun-init-inherits-install-output", {});
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: temp,
+      env: initEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("EBADF");
+    // `bun install` prints its own version header on startup; seeing it here
+    // proves the child's stdout reached us.
+    expect(stdout).toContain("bun install");
+    expect(stdout).toMatch(/\bpackages? installed\b/);
+    expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
+    expect(exitCode).toBe(0);
   }, 30_000);
 
   test("bun init --minimal only creates package.json and tsconfig.json", async () => {

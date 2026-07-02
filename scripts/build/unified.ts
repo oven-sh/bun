@@ -128,6 +128,15 @@ const noUnify: readonly string[] = [
   // baseline ISA namespace exists for image_resize → HWY_EXPORT can't find
   // N_AVX2/N_AVX3/etc. variants.
   "src/jsc/bindings/image_resize.cpp",
+  // Third highway TU — same foreach_target.h include-guard reason as
+  // image_resize.cpp: it must expand its own per-ISA namespaces so
+  // HWY_EXPORT(HashLong) resolves the N_AVX2/N_AVX3/etc. variants.
+  "src/jsc/bindings/xxhash3.cpp",
+  // Fourth highway TU — same foreach_target.h include-guard reason.
+  "src/jsc/bindings/highway_sourcemap.cpp",
+  // Fifth highway TU (JSON structural indexer) — same foreach_target.h
+  // include-guard reason.
+  "src/jsc/bindings/highway_json.cpp",
   // Declares its own minimal CGRect/kCFStringEncodingUTF8/kCFNumberDoubleType
   // so it doesn't pull a CoreGraphics load command; bundled with files that
   // include the real CF headers those names become ambiguous.

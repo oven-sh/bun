@@ -1,0 +1,2 @@
+FROM ubuntu/squid:5.2-22.04_beta
+COPY config/squid.conf /etc/squid/squid.conf

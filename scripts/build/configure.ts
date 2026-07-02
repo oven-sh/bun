@@ -11,25 +11,39 @@ import { dirname, resolve } from "node:path";
 import { globAllSources } from "../glob-sources.ts";
 import { type BunOutput, bunExeName, emitBun, shouldStrip, validateBunConfig } from "./bun.ts";
 import { generateCargoConfig } from "./cargo-config.ts";
-import { type Config, type PartialConfig, type Toolchain, detectHost, findRepoRoot, resolveConfig } from "./config.ts";
+import {
+  type Config,
+  type OS,
+  type PartialConfig,
+  type Toolchain,
+  detectHost,
+  findRepoRoot,
+  resolveConfig,
+} from "./config.ts";
 import { BuildError } from "./error.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
+import { ensureMacosSdk } from "./macos-sdk.ts";
 import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
 import { quote } from "./shell.ts";
 import { findBun, findCargo, findMsvcLinker, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
+import { ensureWindowsSysroot } from "./winsysroot.ts";
 import { checkWorkarounds } from "./workarounds.ts";
 
 /**
  * Full toolchain discovery. Returns absolute paths to all required tools.
  *
+ * `targetOs` (defaults to the host) decides which tool family is resolved —
+ * a windows target needs the MSVC-style drivers (clang-cl, llvm-lib,
+ * lld-link, llvm-rc) even from a linux/macOS host.
+ *
  * Throws BuildError with a hint if a required tool is missing. Optional
  * tools (ccache, cargo if no rust deps needed) become `undefined`.
  */
-export function resolveToolchain(): Toolchain {
+export function resolveToolchain(targetOs?: OS): Toolchain {
   const host = detectHost();
-  const llvm = resolveLlvmToolchain(host.os, host.arch);
+  const llvm = resolveLlvmToolchain(host.os, host.arch, targetOs ?? host.os);
 
   // cmake — required for nested dep builds.
   const cmake = findSystemTool("cmake", { required: true, hint: "Install cmake (>= 3.24)" });
@@ -244,12 +258,33 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
     });
   }
 
-  const toolchain = resolveToolchain();
+  const toolchain = resolveToolchain(partial.os);
   mark("resolveToolchain");
   const cfg = resolveConfig(partial, toolchain);
 
   validateBunConfig(cfg);
+
+  // Darwin cross-compile: the SDK must exist before ninja runs (every compile
+  // edge passes -isysroot) and before checkWorkarounds() (the darwin-cross
+  // workaround predicates inspect the SDK). resolveConfig picked the path;
+  // this downloads the pinned SDK into the cache dir when nothing was found.
+  // No-op otherwise.
+  await ensureMacosSdk(cfg);
+  mark("ensureMacosSdk");
+
   checkWorkarounds(cfg);
+
+  // Windows cross-compile: make sure the MSVC CRT + Windows SDK splat is
+  // usable BEFORE the graph is emitted — emitBun() enumerates its include
+  // dirs (llvm-rc's /I flags) at configure time, so the sysroot must exist
+  // by then, not just before ninja runs. CI fetches a missing sysroot into
+  // the per-build cache; local builds require a provisioned one (the fetch
+  // would be a surprise multi-GB download) and only get the case-alias
+  // fixup + completeness check.
+  if (cfg.windows && cfg.host.os !== "windows") {
+    await ensureWindowsSysroot(cfg);
+    mark("ensureWindowsSysroot");
+  }
 
   // Generated `.cargo/config.toml` — written at configure time (not a ninja
   // rule), like `bun_dependency_versions.h`. Holds the per-target `linker = `

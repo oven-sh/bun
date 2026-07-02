@@ -129,7 +129,18 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_execute, (JSGlobalObject * globalObject, C
             return {};
         }
 
+        RefPtr<ArrayBuffer> backingBuffer = buffer->possiblySharedBuffer();
+        if (!backingBuffer) {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+        if (!backingBuffer->isShared())
+            backingBuffer->pin();
+
         JSValue result = parser->impl()->execute(globalObject, reinterpret_cast<const char*>(buffer->vector()), buffer->byteLength());
+
+        if (!backingBuffer->isShared())
+            backingBuffer->unpin();
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!result.isEmpty()) {

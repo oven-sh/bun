@@ -26,6 +26,7 @@ public:
     static void destroy(JSC::JSCell* cell);
 
     DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
@@ -44,6 +45,7 @@ public:
 
     ncrypto::HMACCtxPointer m_ctx;
     bool m_finalized { false };
+    size_t m_sizeForGC { 0 };
 };
 
 class JSHmacPrototype final : public JSC::JSNonFinalObject {

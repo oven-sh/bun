@@ -1993,3 +1993,53 @@ describe("global virtual store", () => {
     expect(await file(edited).text()).toBe("module.exports = 'USER_EDITS';\n");
   });
 });
+
+test("rejects dependency aliases that traverse outside node_modules", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  // A (transitively) malicious package.json can use an arbitrary string as a
+  // dependency alias. The alias becomes a `node_modules/<alias>` path
+  // component in the isolated store layout, so a `..` segment lets it plant
+  // symlinks outside of node_modules.
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-pkg-unsafe-alias",
+      dependencies: {
+        "../pwned-by-alias": "npm:no-deps@1.0.0",
+      },
+    }),
+  );
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("is not a valid install folder name");
+  // Nothing may be created outside of node_modules. `lstatSync` instead of
+  // `existsSync` because the escaped artifact would be a dangling symlink.
+  expect(() => lstatSync(join(packageDir, "pwned-by-alias"))).toThrow();
+  expect(exitCode).not.toBe(0);
+});
+
+test("invalid --linker value is echoed back in the error", async () => {
+  using dir = tempDir("install-linker-err", {
+    "package.json": JSON.stringify({ name: "t" }),
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--linker=isoalted"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain('--linker: "isoalted"');
+  expect(stderr).toContain("'isolated' or 'hoisted'");
+  expect(exitCode).toBe(1);
+});

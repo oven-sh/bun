@@ -235,5 +235,3 @@ unsafe extern "C" {
     safe fn us_udp_packet_buffer_payload_length(buf: &mut PacketBuffer, index: c_int) -> c_int;
     safe fn us_udp_packet_buffer_truncated(buf: &mut PacketBuffer, index: c_int) -> c_int;
 }
-
-// ported from: src/uws_sys/udp.zig

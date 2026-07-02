@@ -27,6 +27,7 @@
 #include "config.h"
 #include "Worker.h"
 
+#include "BunClientData.h"
 #include "ErrorCode.h"
 #include "ErrorEvent.h"
 #include "Event.h"
@@ -43,19 +44,22 @@
 #include "MessageEvent.h"
 #include "BunWorkerGlobalScope.h"
 #include "CloseEvent.h"
+#include "JSDOMConvertObject.h"
+#include "JSDOMConvertSequences.h"
 #include "JSMessagePort.h"
 #include "JSBroadcastChannel.h"
+#include "JSStructuredSerializeOptions.h"
 
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Worker);
 
-// ---- Zig FFI -----------------------------------------------------------------------------------
-// The Zig WebWorker struct is owned by this Worker (freed in ~Worker) and drives the worker
-// thread. See src/jsc/web_worker.zig for the matching side of each entry point.
+// ---- Native FFI --------------------------------------------------------------------------------
+// The native WebWorker struct is owned by this Worker (freed in ~Worker) and drives the worker
+// thread. See src/jsc/web_worker.rs for the matching side of each entry point.
 extern "C" {
 
-// Allocate the Zig WebWorker, take a keep-alive on the parent event loop, and spawn the worker
+// Allocate the native WebWorker, take a keep-alive on the parent event loop, and spawn the worker
 // thread. Returns null (and sets errorMessage) on any failure; nothing needs cleanup in that case.
 void* WebWorker__create(
     Worker* worker,
@@ -87,7 +91,7 @@ void WebWorker__setRef(void* worker, bool ref);
 // thread.
 void WebWorker__releaseParentPollRef(void* worker);
 
-// Free the Zig WebWorker struct. Called from ~Worker.
+// Free the native WebWorker struct. Called from ~Worker.
 void WebWorker__destroy(void* worker);
 
 } // extern "C"
@@ -496,17 +500,43 @@ void Worker::dispatchErrorWithMessage(WTF::String message)
 
 bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value)
 {
+    // This is the top of the stack for the worker's error dispatch: both the
+    // structured clone below (even in NonThrowing mode, serialization can run
+    // JS via getters/proxies and leave a pending exception) and the `code`
+    // property read must not propagate exceptions out of this function.
+    auto& vm = JSC::getVM(workerGlobalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
     auto serialized = SerializedScriptValue::create(*workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
+    CLEAR_IF_EXCEPTION(scope);
     if (!serialized)
         return false;
 
-    return postTaskToParent([protectedThis = Ref { *this }, serialized](ScriptExecutionContext& context) {
+    // Structured clone keeps only the standard Error fields
+    // (name/message/stack/line/column/sourceURL), but Node's worker 'error'
+    // event preserves `error.code` (lib/internal/error_serdes.js) and the
+    // vendored node tests assert on it (e.g. ERR_TRACE_EVENTS_UNAVAILABLE).
+    // Carry a string `code` across the thread boundary manually. If reading
+    // `code` throws (a throwing getter/proxy), drop the code and proceed.
+    String errorCode;
+    if (value.isObject() && !scope.exception()) {
+        JSValue codeValue = value.getObject()->getIfPropertyExists(workerGlobalObject, WebCore::builtinNames(vm).codePublicName());
+        if (!scope.exception() && codeValue && codeValue.isString())
+            errorCode = codeValue.toWTFString(workerGlobalObject);
+        CLEAR_IF_EXCEPTION(scope);
+    }
+
+    return postTaskToParent([protectedThis = Ref { *this }, serialized, errorCode = WTF::move(errorCode).isolatedCopy()](ScriptExecutionContext& context) {
         auto* globalObject = context.globalObject();
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         ErrorEvent::Init init;
         JSValue deserialized = serialized->deserialize(*globalObject, globalObject, SerializationErrorMode::NonThrowing);
         RETURN_IF_EXCEPTION(scope, );
+        if (!errorCode.isNull()) {
+            if (auto* errorObject = deserialized.getObject())
+                errorObject->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), JSC::jsString(vm, errorCode));
+        }
         init.error = deserialized;
 
         auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
@@ -563,7 +593,7 @@ bool Worker::dispatchExit(int32_t exitCode)
         });
 }
 
-// ---- extern "C" shims (called from Zig) -------------------------------------
+// ---- extern "C" shims (called from native code) ------------------------------
 
 extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
 {
@@ -572,7 +602,14 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
 
     {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        globalObject->moduleLoader()->clearAll();
+        {
+            auto* moduleLoader = globalObject->moduleLoader();
+            // JSModuleLoader::visitChildrenImpl iterates these maps on the GC
+            // thread under cellLock(); take the same lock so clearing them
+            // can't race a concurrent marker.
+            WTF::Locker locker { moduleLoader->cellLock() };
+            moduleLoader->clearAll();
+        }
         globalObject->requireMap()->clear(globalObject);
         scope.exception(); // TODO: handle or assert none?
         vm.deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
@@ -585,9 +622,7 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
     // Drop the single ref taken by `Zig__GlobalObject__create`
     // (`vmPtr->refSuppressingSaferCPPChecking()`), bringing the VM refcount
     // to zero — `~VM` runs here while the API lock is still held by this
-    // thread, exactly as in the Zig build (where `pthread_exit` skipped the
-    // outer `JSLockHolder` destructor and a second `deref` here released its
-    // abandoned ref). The Rust port acquires the API lock manually with no
+    // thread. The worker thread acquires the API lock manually with no
     // extra VM ref (see `WebWorker::thread_main`), so a second `deref` would
     // run `~VM` twice / dereference the freed VM.
     vm.derefSuppressingSaferCPPChecking(); // NOLINT
@@ -735,26 +770,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
 
     Vector<JSC::Strong<JSC::JSObject>> transferList;
 
-    if (options.isObject()) {
-        JSC::JSValue transferListValue;
-        // postMessage(message, sequence<object>) overload — second argument is the transfer list itself.
+    // postMessage(message, sequence<object>) and postMessage(message, { transfer })
+    // overloads. Both are converted per WebIDL before serializing, so an invalid
+    // transfer list throws a TypeError without detaching anything.
+    if (!options.isUndefinedOrNull()) {
         bool isSequence = hasIteratorMethod(globalObject, options);
         RETURN_IF_EXCEPTION(scope, {});
         if (isSequence) {
-            transferListValue = options;
+            transferList = convert<IDLSequence<IDLObject>>(*globalObject, options);
+            RETURN_IF_EXCEPTION(scope, {});
         } else {
-            // postMessage(message, { transfer }) overload.
-            JSC::JSObject* optionsObject = options.getObject();
-            transferListValue = optionsObject->get(globalObject, vm.propertyNames->transfer);
+            auto serializeOptions = convertDictionary<StructuredSerializeOptions>(*globalObject, options);
             RETURN_IF_EXCEPTION(scope, {});
-        }
-        if (transferListValue.isObject()) {
-            forEachInIterable(globalObject, transferListValue, [&transferList](JSC::VM& vm, JSC::JSGlobalObject*, JSC::JSValue nextValue) {
-                if (nextValue.isObject()) {
-                    transferList.append(JSC::Strong<JSC::JSObject>(vm, nextValue.getObject()));
-                }
-            });
-            RETURN_IF_EXCEPTION(scope, {});
+            transferList = WTF::move(serializeOptions.transfer);
         }
     }
 

@@ -7,27 +7,22 @@
 //!    performance reasons and also to leverage Bun's existing IO/FS code
 //! 2. We try to use non-blocking IO operations as much as possible so the
 //!    shell does not block the main JS thread
-//! 3. The Zig original has no coroutines
 //!
 //! The idea is that this is a tree-walking interpreter — except instead of
 //! iteratively walking the AST, we build a tree of state-machine nodes so we
 //! can suspend/resume without blocking the main thread, driven in
 //! continuation-passing style by `Yield::run`.
 //!
-//! ## NodeId arena (Rust port)
+//! ## NodeId arena
 //!
-//! In Zig every state-machine node holds a `*Parent` back-pointer and calls
-//! `parent.childDone(this, exit)`. That pattern is borrow-checker hostile in
-//! Rust (overlapping `&mut` of parent and child).
+//! A parent/child back-pointer tree would be borrow-checker hostile
+//! (overlapping `&mut` of parent and child), so all state nodes live in a
+//! flat `Vec<Node>` owned by the `Interpreter`. Nodes refer to each other
+//! (and to their parent) by `NodeId` — a `u32` index. Dispatch is a single
+//! hoisted `match` on the parent's tag (`Interpreter::child_done`), which
+//! keeps the per-tick hot path inlined (see PORTING.md §Dispatch hot-path).
 //!
-//! The Rust port stores all state nodes in a flat `Vec<Node>` owned by the
-//! `Interpreter`. Nodes refer to each other (and to their parent) by `NodeId`
-//! — a `u32` index. Dispatch is a single hoisted `match` on the parent's tag
-//! (`Interpreter::child_done`), which keeps the per-tick hot path inlined the
-//! same way Zig's `inline else` did (see PORTING.md §Dispatch hot-path).
-//!
-//! State methods that previously took `(&mut self)` and reached into
-//! `self.parent` now take `(&mut Interpreter, this: NodeId)` and look their
+//! State methods take `(&mut Interpreter, this: NodeId)` and look their
 //! own data up via `interp.node_mut(this)` / `interp.nodes[this]`.
 
 use bun_collections::VecExt;
@@ -76,8 +71,7 @@ pub(crate) use shell_log as log;
 // NodeId arena
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Index into `Interpreter::nodes`. Replaces every `*Parent` / `*Child`
-/// back-pointer in the Zig state-machine tree.
+/// Index into `Interpreter::nodes`.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct NodeId(pub u32);
@@ -105,8 +99,7 @@ impl fmt::Display for NodeId {
     }
 }
 
-/// One slot in the interpreter's state arena. The Zig version heap-allocated
-/// each state struct individually via `parent.create(T)`; in Rust they all
+/// One slot in the interpreter's state arena. All state structs
 /// live as enum variants in a single `Vec<Node>` so the only outstanding
 /// borrow at any time is `&mut Interpreter`.
 pub enum Node {
@@ -144,7 +137,7 @@ impl Node {
     }
 
     /// Every state struct embeds a `Base` header at a known field; this is the
-    /// hoisted accessor (replaces Zig's structural duck-typing on `.base`).
+    /// hoisted accessor.
     pub fn base(&self) -> Option<&Base> {
         match self {
             Node::Free => None,
@@ -181,7 +174,7 @@ impl Node {
 }
 
 /// Generate `Interpreter::as_<kind>{,_mut}` typed accessors. These panic on
-/// tag mismatch — same contract as Zig's `child.as(Ty).?`.
+/// tag mismatch.
 macro_rules! node_accessors {
     ($($variant:ident => $ty:ty, $get:ident, $get_mut:ident);* $(;)?) => {
         impl Interpreter {
@@ -236,10 +229,11 @@ node_accessors! {
 pub type ExitCode = u16;
 pub type Pipe = [Fd; 2];
 
-/// Stand-in for the shell's `SmolList<T, N>` (inline small-vec). The real
-/// implementation lives in `shell_body.rs` (gated); state nodes only need
-/// `push`/`len`/indexing, which `Vec` provides.
-// TODO(port): replace with shell_body::SmolList once parser un-gates.
+/// Stand-in for the shell's `SmolList<T, N>` (inline small-vec). The parser's
+/// `bun_shell_parser::parse::SmolList` is arena-backed (its heap variant
+/// allocates from the parse arena, which the interpreter frees eagerly — see
+/// `take_args`), so it cannot back long-lived interpreter fields like
+/// `async_pids`. `Vec` is the deliberate choice here.
 pub type SmolList<T, const N: usize> = Vec<T>;
 
 #[repr(u8)]
@@ -306,12 +300,16 @@ pub struct Interpreter {
 
     pub args: JsCell<Box<ShellArgs>>,
 
-    /// JS objects used as input for the shell script. Owned storage (the Zig
-    /// `ArrayList(JSValue).items` borrow becomes `Vec` ownership in the port —
-    /// `create_shell_interpreter` moves the parsed-script's vec in here).
-    // TODO(port): GC root — bare JSValue heap storage is invisible to the
-    // conservative stack scan. Switch to MarkedArgumentBuffer or root via the
-    // wrapper's visitChildren.
+    /// JS objects used as input for the shell script. Owned storage —
+    /// `create_shell_interpreter` moves the parsed-script's vec in here.
+    ///
+    /// GC liveness: this `Vec` is heap storage invisible to the conservative
+    /// scan, but it is a duplicate of a rooted copy — `Bun__createShellInterpreter`
+    /// (ShellBindings.cpp) copies the same values into the C++
+    /// `JSShellInterpreter` wrapper's `jsvalueArray` (`valuesArray: true` in
+    /// Shell.classes.ts), which the generated `visitChildren` visits. The
+    /// wrapper outlives the run (`this_jsvalue` + `hasPendingActivity`), and
+    /// the mini-event-loop path always passes an empty vec.
     pub jsobjs: Vec<crate::jsc::JSValue>,
 
     pub root_shell: JsCell<ShellExecEnv>,
@@ -376,15 +374,14 @@ pub enum CleanupState {
 // ────────────────────────────────────────────────────────────────────────────
 
 impl ShellArgs {
-    /// Spec: interpreter.zig `ShellArgs.init` — fresh arena + zeroed AST.
     /// Heap-allocated (returned as `Box`) because the interpreter stores
     /// `Box<ShellArgs>` and state nodes hold `*const ast::*` into the arena;
     /// the box must not move once `parse()` has filled `script_ast`.
     pub fn init() -> Box<ShellArgs> {
         Box::new(ShellArgs {
             __arena: bun_alloc::Arena::new(),
-            // Zig: `.script_ast = undefined` — overwritten by `parse()` before
-            // `run()`. An empty stmt list is a safe placeholder.
+            // Overwritten by `parse()` before `run()`. An empty stmt list is
+            // a safe placeholder.
             script_ast: ast::Script { stmts: &[] },
         })
     }
@@ -421,9 +418,7 @@ impl ShellArgs {
         self.script_ast = ast::Script { stmts };
     }
 
-    /// Spec: interpreter.zig `ShellArgs.memoryCost`.
-    /// PORT NOTE: Zig walks `script_ast.memoryCost()`; the Rust port reports
-    /// the arena's `allocated_bytes()` instead (a superset — tokens + strpool
+    /// Reports the arena's `allocated_bytes()` (a superset — tokens + strpool
     /// + AST nodes). This is for GC `estimatedSize` reporting only, where
     /// over-approximation is preferable to a tree walk on a lifetime-erased
     /// AST mirror.
@@ -432,14 +427,12 @@ impl ShellArgs {
     }
 }
 
-/// `shell.Result(T)` — Zig's `union(enum) { result: T, err: ShellErr }`.
 /// Only used by the construction path (`Interpreter::init`).
 pub type ShellResult<T> = Result<T, ShellErr>;
 
 impl Interpreter {
-    /// Spec: interpreter.zig `ThisInterpreter.parse` — lex `src` (ASCII or
-    /// Unicode), build a `Parser`, and return the root `ast::Script`. Tokens
-    /// and AST nodes are bump-allocated into `arena`.
+    /// Lex `src` (ASCII or Unicode), build a `Parser`, and return the root
+    /// `ast::Script`. Tokens and AST nodes are bump-allocated into `arena`.
     ///
     /// On lex error, `out_lex_err` is populated and `ParseError::Lex` returned
     /// so the caller can `combineErrors()` for diagnostics; on parse error
@@ -481,8 +474,6 @@ impl Interpreter {
         out_parser.as_mut().unwrap().parse()
     }
 
-    /// Spec: interpreter.zig `ThisInterpreter.init` + `initImpl`.
-    ///
     /// Builds the root `ShellExecEnv` (export env from the event loop's
     /// `DotEnv::Loader`, cwd from `getcwd()`, cwd_fd from `open(O_DIRECTORY)`),
     /// dups stdin into an `IOReader`, and heap-allocates the interpreter.
@@ -490,12 +481,12 @@ impl Interpreter {
     /// `run()`) upgrades them to real `IOWriter`s unless `quiet` was set.
     ///
     /// On success the returned box owns `shargs`; on error `shargs` is
-    /// dropped (Zig: `defer shargs.deinit()` in the caller).
+    /// dropped.
     ///
-    /// PORT NOTE: `allocator` parameter dropped (always global mimalloc).
-    /// `ctx` is stored for `bun run` argv access from builtins (Zig
-    /// `command_ctx`); held as a raw pointer because the interpreter outlives
-    /// any single `&mut ContextData` borrow.
+    /// Note: `allocator` parameter dropped (always global mimalloc).
+    /// `ctx` is stored for `bun run` argv access from builtins; held as a raw
+    /// pointer because the interpreter outlives any single `&mut ContextData`
+    /// borrow.
     // `ShellErr` is the shared shell-wide error type defined in `shell_body.rs`;
     // boxing it here would change `pub fn` signatures across every
     // `?`-propagating shell caller.
@@ -509,7 +500,7 @@ impl Interpreter {
         cwd_: Option<&[u8]>,
     ) -> ShellResult<Box<Interpreter>> {
         // ── export_env ─────────────────────────────────────────────────────
-        // Zig: on `.js` event loop, take `export_env_` (or empty); on `.mini`,
+        // On the `.js` event loop, take `export_env_` (or empty); on `.mini`,
         // populate from `event_loop.env()` (the loop's `DotEnv::Loader`).
         let export_env = if matches!(event_loop, EventLoopHandle::Js { .. }) {
             export_env_.unwrap_or_else(EnvMap::init)
@@ -530,17 +521,15 @@ impl Interpreter {
 
         // ── cwd / cwd_fd ───────────────────────────────────────────────────
         // Hoisted PathBuffer so the error's borrowed `.path` stays valid until
-        // we've converted it to an owned `ShellErr` (Zig hoists for the same
-        // reason). Heap-pooled (not stack) per spec — on Windows
-        // `MAX_PATH_BYTES` is ~96 KiB and `init` runs from JS-triggered paths
-        // that may already be deep on the stack (interpreter.zig:913-914).
+        // we've converted it to an owned `ShellErr`. Heap-pooled (not stack) —
+        // on Windows `MAX_PATH_BYTES` is ~96 KiB and `init` runs from
+        // JS-triggered paths that may already be deep on the stack.
         let mut pathbuf = bun_paths::path_buffer_pool::get();
         let cwd_len = match bun_sys::getcwd(&mut pathbuf[..]) {
             Ok(n) => n,
             Err(e) => return Err(ShellErr::new_sys(&e)),
         };
-        // NUL-terminate for `open()` and so `__cwd` matches Zig's `[:0]` shape
-        // (downstream `cwd()` strips the trailing 0).
+        // NUL-terminate for `open()`; downstream `cwd()` strips the trailing 0.
         pathbuf[cwd_len] = 0;
         let cwd_z = bun_core::ZStr::from_buf(pathbuf.as_slice(), cwd_len);
 
@@ -556,7 +545,6 @@ impl Interpreter {
         // ── stdin ──────────────────────────────────────────────────────────
         log!("Duping stdin");
         let stdin_fd_res = if bun_core::output::stdio::is_stdin_null() {
-            // Zig `bun.sys.openNullDevice()`.
             #[cfg(unix)]
             {
                 bun_sys::open(
@@ -616,13 +604,8 @@ impl Interpreter {
             async_commands_executing: Cell::new(0),
             global_this: Cell::new(core::ptr::null_mut()),
             flags: Cell::new(InterpreterFlags::default()),
-            // PORT NOTE — intentional spec-bug fix: Zig declares
-            // `exit_code: ?ExitCode = 0` (the *non-null* value 0), so its
-            // `asyncCmdDone`'s `exit_code != null` check is always true and
-            // can fire `finish(0)` before the root script has actually
-            // returned. Rust starts at `None` so `async_cmd_done` only
-            // finishes once `on_root_child_done` has recorded the real exit
-            // code. The matching Zig fix is tracked upstream.
+            // Starts at `None` so `async_cmd_done` only finishes once
+            // `on_root_child_done` has recorded the real exit code.
             exit_code: Cell::new(None),
             this_jsvalue: Cell::new(crate::jsc::JSValue::ZERO),
             cleanup_state: Cell::new(CleanupState::NeedsFullCleanup),
@@ -639,20 +622,16 @@ impl Interpreter {
             r.set_interp(interp_ptr);
         }
 
-        // ── optional cwd override (Zig `init` tail) ────────────────────────
+        // ── optional cwd override ───────────────────────────────────────────
         if let Some(c) = cwd_ {
-            // Spec interpreter.zig:921-930: `root_shell.changeCwdImpl(interp,
-            // c, true)`; on failure, deref root_io + deinit root_shell + free.
-            // The interpreter parameter is unused (`_` in spec) so we don't
-            // pass it (avoids the obvious self-borrow).
+            // On failure, deref root_io + deinit root_shell + free.
             if let Err(e) = interpreter
                 .root_shell
                 .with_mut(|rs| rs.change_cwd_impl(c, true))
             {
-                // Spec: `root_io.deref(); root_shell.deinitImpl(false, true);
-                // allocator.destroy(interpreter)`. `deinit_from_exec` performs
-                // exactly that teardown (drops `root_io` Arcs, frees env maps,
-                // closes `cwd_fd`, consumes the box).
+                // `deinit_from_exec` performs the full teardown (drops
+                // `root_io` Arcs, frees env maps, closes `cwd_fd`, consumes
+                // the box).
                 interpreter.deinit_from_exec();
                 return Err(ShellErr::new_sys(&e));
             }
@@ -661,24 +640,21 @@ impl Interpreter {
         Ok(interpreter)
     }
 
-    /// Spec: interpreter.zig `#deinitFromExec` — full teardown for the
-    /// standalone (`MiniEventLoop`) path. Drops root IO refcounts, frees the
-    /// root shell env, and consumes the box.
+    /// Full teardown for the standalone (`MiniEventLoop`) path. Drops root IO
+    /// refcounts, frees the root shell env, and consumes the box.
     fn deinit_from_exec(self) {
         log!("deinit interpreter");
         self.this_jsvalue.set(crate::jsc::JSValue::ZERO);
         // `root_io` holds `Arc<IOReader>`/`Arc<IOWriter>`; replacing with
-        // default drops the refs (Zig: `root_io.deref()`).
+        // default drops the refs.
         self.root_io.set(IO::default());
-        // Spec: `root_shell.deinitImpl(false, true)` — free buffered IO, env
+        // Free buffered IO, env
         // maps, cwd fd; do NOT free the struct itself (it's embedded).
         self.root_shell.with_mut(|rs| rs.deinit_embedded(true));
-        // `vm_args_utf8` slices Drop themselves (ZigStringSlice has a Drop
+        // `vm_args_utf8` slices Drop themselves (`ZigStringSlice` has a Drop
         // impl that derefs the WTF backing); the Vec frees on box drop.
     }
 
-    /// Spec: interpreter.zig `initAndRunFromFile`.
-    ///
     /// Standalone-shell entrypoint for `bun <file>.sh`: parse `src` (already
     /// read by the caller), construct an interpreter on a `MiniEventLoop`,
     /// drive it to completion, and return the exit code. Differs from
@@ -694,16 +670,14 @@ impl Interpreter {
         Self::init_and_run_impl(ctx, mini, bun_paths::basename(path), src, None, false)
     }
 
-    /// Spec: interpreter.zig `initAndRunFromSource`.
-    ///
     /// Standalone-shell entrypoint for `bun run <script>` / `bun exec` when
     /// `--shell=bun`: parse `src`, construct an interpreter on a
     /// `MiniEventLoop`, drive it to completion via `mini.tick()`, and return
     /// the script's exit code. `path_for_errors` is only used in diagnostics.
     ///
     /// On any init/parse/run error this prints to stderr and `exit(1)`s
-    /// directly (matching Zig); the `Result` only carries lexer/parser
-    /// errors that escaped without a diagnostic (Zig `return err`).
+    /// directly; the `Result` only carries lexer/parser errors that escaped
+    /// without a diagnostic.
     pub fn init_and_run_from_source(
         ctx: &mut bun_options_types::context::ContextData,
         mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop<'static>,
@@ -717,7 +691,7 @@ impl Interpreter {
     /// Shared body for `init_and_run_from_file` / `init_and_run_from_source`.
     /// `from_source` gates the analytics bump and the extra "script " word in
     /// the parse-error diagnostic — the only two behavioural deltas between
-    /// the two Zig spec functions.
+    /// the two entrypoints.
     fn init_and_run_impl(
         ctx: &mut bun_options_types::context::ContextData,
         mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop<'static>,
@@ -801,9 +775,8 @@ impl Interpreter {
         }
 
         // ── tick until done ────────────────────────────────────────────────
-        // Zig: `mini.tick(&is_done, IsDone.isDone)` where `isDone` reads
-        // `interp.flags.done`. The closure captures a raw pointer so borrowck
-        // doesn't see an overlap with `tick`'s `&mut self` on `mini`.
+        // The closure captures a raw pointer so borrowck doesn't see an
+        // overlap with `tick`'s `&mut self` on `mini`.
         let interp_ptr: *const Interpreter = &raw const *interp;
         mini.tick(core::ptr::null_mut(), |_ctx| {
             // SAFETY: `interp` lives in this stack frame for the whole tick
@@ -820,18 +793,13 @@ impl Interpreter {
 
 // ──────────────────────────────────────────────────────────────────────────
 // shell_state_dispatch! — single source of truth for the StateKind→handler
-// table. Zig (`interpreter.zig:1527 StatePtrUnion`) derives `start`/`next`/
-// `childDone` from one `inline for (tags)` over a comptime type tuple; the
-// Rust port hand-unrolled that into three parallel 11-arm matches. This
-// macro restores the single-table property: each row declares
-// `Variant [=> HandlerType]` once and the macro emits `child_done`,
-// `next_node`, and `start_node`. Same precedent as `shell_builtins!`
-// (Builtin.rs).
+// table: each row declares `Variant [=> HandlerType]` once and the macro
+// emits `child_done`, `next_node`, and `start_node`. Same precedent as
+// `shell_builtins!` (Builtin.rs).
 //
-// PERF(port): expands to the *same* literal `match` arms as the hand-written
-// version — direct calls per arm so LLVM inlines the hot states
-// (Stmt/Pipeline/Cmd) exactly as Zig's `inline else` did. No vtable, no
-// extra indirection.
+// PERF: expands to literal `match` arms — direct calls per arm so LLVM
+// inlines the hot states (Stmt/Pipeline/Cmd). No vtable, no extra
+// indirection.
 //
 // Invoked once, inside `impl Interpreter` below. `deinit_node` is kept
 // hand-rolled for now (irregular Async/Free arms) — see the NOTE there.
@@ -846,8 +814,7 @@ macro_rules! shell_state_dispatch {
     // ── internal: emit the three dispatch fns from the normalized table ──
     (@norm [ $( ($v:ident, $h:ident) )+ ]) => {
         /// Signal to `parent` that `child` finished with `exit_code`. This is the
-        /// single hoisted `match` that replaces every per-state
-        /// `parent.childDone(this, exit)` call in Zig.
+        /// single hoisted `match` dispatching on the parent's state tag.
         pub fn child_done(&self, parent: NodeId, child: NodeId, exit_code: ExitCode) -> Yield {
             if parent == NodeId::INTERPRETER {
                 return self.on_root_child_done(child, exit_code);
@@ -919,9 +886,8 @@ impl Interpreter {
 
     // ── arena management ───────────────────────────────────────────────────
 
-    /// Allocate a fresh slot in the node arena and return its id. Replaces
-    /// Zig's `parent.create(T)` (which heap-allocated via the parent's
-    /// allocator). Reuses freed slots when available.
+    /// Allocate a fresh slot in the node arena and return its id. Reuses
+    /// freed slots when available.
     pub fn alloc_node(&self, node: Node) -> NodeId {
         if let Some(slot) = self.free_list.with_mut(|f| f.pop()) {
             // SAFETY: no other borrow of `nodes` is live across this store.
@@ -935,12 +901,12 @@ impl Interpreter {
         })
     }
 
-    /// Free a slot. Replaces Zig's `parent.destroy(this)`. The node's own
+    /// Free a slot. The node's own
     /// `deinit` (which closes IO, derefs the shell env, etc.) must run first;
     /// this only recycles the storage.
     pub fn free_node(&self, id: NodeId) {
         // Guard: callers may have stored `NodeId::NONE` in `currently_executing`
-        // when `spawn_expr` failed (Subshell init error path). Spec never
+        // when `spawn_expr` failed (Subshell init error path). Nothing
         // touches `currently_executing` on that path, so the later
         // `deinit_node`/`free_node` is a no-op there too.
         if id == NodeId::NONE || id == NodeId::INTERPRETER {
@@ -1016,12 +982,10 @@ impl Interpreter {
         Subshell,
     }
 
-    /// Init + start a child state node for an `ast::Expr`. Replaces the
-    /// per-variant `match` Zig inlines at each callsite (Stmt.zig:64-112,
-    /// Binary.zig:64-112). For `.subshell`, dupes the parent shell env first
-    /// (Zig `Subshell.initDupeShellState`); all other variants borrow `shell`.
+    /// Init + start a child state node for an `ast::Expr`. For `.subshell`,
+    /// dupes the parent shell env first; all other variants borrow `shell`.
     ///
-    /// Note: `Async` must NOT call this — Async.zig restricts its child to
+    /// Note: `Async` must NOT call this — `Async` restricts its child to
     /// pipeline/cmd/if/condexpr and inits without starting (see `Async::next`).
     pub fn spawn_expr(
         &self,
@@ -1038,7 +1002,7 @@ impl Interpreter {
             ast::Expr::If(i) => If::init(self, shell, *i, parent, io),
             ast::Expr::CondExpr(c) => CondExpr::init(self, shell, *c, parent, io),
             ast::Expr::Subshell(s) => {
-                // Zig `Subshell.initDupeShellState`: Stmt/Binary callers dupe
+                // Stmt/Binary callers dupe
                 // the env here so `Subshell::start`/`next` can use `base.shell`
                 // as-is. (Pipeline dupes itself and calls `Subshell::init`
                 // directly, so it does NOT go through this path.)
@@ -1048,13 +1012,10 @@ impl Interpreter {
                     Ok(id) => id,
                     Err(e) => {
                         self.throw(ShellErr::new_sys(&e));
-                        // Spec: Zig's `Binary.makeChild` returns `null` here and
-                        // the caller falls through as if the subshell exited 0
-                        // (Binary.zig:55-61, 130-134); Stmt.zig returns `.failed`
-                        // without touching `currently_executing`. Return `None`
-                        // so callers leave `currently_executing` unset — matches
-                        // the Zig fallthrough exactly (no `NodeId::NONE` sentinel
-                        // needed in `deinit_node`/`free_node` for this path).
+                        // Callers fall through as if the subshell exited 0.
+                        // Return `None` so callers leave `currently_executing`
+                        // unset (no `NodeId::NONE` sentinel needed in
+                        // `deinit_node`/`free_node` for this path).
                         return (None, Yield::failed());
                     }
                 }
@@ -1065,8 +1026,7 @@ impl Interpreter {
         (Some(child), y)
     }
 
-    /// Run the per-state cleanup, then recycle the slot. Replaces every
-    /// `child.deinit()` + `parent.destroy(child)` pair in Zig.
+    /// Run the per-state cleanup, then recycle the slot.
     pub fn deinit_node(&self, id: NodeId) {
         // Guard the `NodeId::NONE` sentinel: `spawn_expr` returns it on
         // Subshell init failure, and Stmt/Binary `currently_executing` may
@@ -1149,7 +1109,6 @@ impl Interpreter {
         self.root_io.get()
     }
 
-    /// Spec: interpreter.zig `#computeEstimatedSizeForGC` (interpreter.zig:752).
     pub fn compute_estimated_size_for_gc(&self) -> usize {
         let mut size = core::mem::size_of::<Interpreter>();
         size += self.args.get().memory_cost();
@@ -1164,12 +1123,11 @@ impl Interpreter {
         size
     }
 
-    /// Spec: interpreter.zig `memoryCost`.
     pub fn memory_cost(&self) -> usize {
         self.compute_estimated_size_for_gc()
     }
 
-    /// Spec: interpreter.zig `estimatedSize`. Codegen-called accessor.
+    /// Codegen-called accessor.
     pub fn estimated_size(&self) -> usize {
         self.estimated_size_for_gc.get()
     }
@@ -1191,9 +1149,9 @@ impl Interpreter {
         Some(crate::jsc::JSGlobalObject::opaque_ref(g))
     }
 
-    /// Spec: interpreter.zig `throwShellErr(err, event_loop)` — `mini` prints
-    /// and exits(1); `js` raises a JS exception. Dispatch on `global_this`
-    /// (set only on the JS event-loop path by `create_shell_interpreter`).
+    /// `mini` prints and exits(1); `js` raises a JS exception. Dispatch on
+    /// `global_this` (set only on the JS event-loop path by
+    /// `create_shell_interpreter`).
     pub fn throw(&self, err: ShellErr) {
         let Some(global) = self.global_this_ref() else {
             // Mini event loop — diverges (exit 1).
@@ -1204,8 +1162,7 @@ impl Interpreter {
 
     // ── run loop ───────────────────────────────────────────────────────────
 
-    /// Spec: interpreter.zig `setupIOBeforeRun` + `setupIOBeforeRunImpl`
-    /// (interpreter.zig:1177-1223). When `!quiet`, dup stdout/stderr (or open
+    /// When `!quiet`, dup stdout/stderr (or open
     /// the null device if the process was started with that stream closed),
     /// wrap each in an `IOWriter`, and install them as `root_io.stdout/stderr`
     /// so command output reaches the terminal. On the JS event loop the
@@ -1262,7 +1219,7 @@ impl Interpreter {
         // SAFETY: `interp_ptr` is the live `Interpreter` being initialized.
         stderr_writer.set_interp(interp_ptr);
 
-        // Spec: `if (event_loop == .js)` — hook captured buffers so the JS
+        // On the JS event loop, hook captured buffers so the JS
         // `Bun.$` API can read stdout/stderr after completion. The mini path
         // does not capture (it writes straight to the dup'd fd).
         let (cap_out, cap_err) = if matches!(event_loop, EventLoopHandle::Js { .. }) {
@@ -1308,10 +1265,9 @@ impl Interpreter {
             std::ptr::from_ref(self) as usize,
             exit_code
         );
-        // Spec interpreter.zig:1289 — `defer decrPendingActivityFlag(...)`
-        // unconditionally. Paired with the increment in `run_from_js`; harmless
-        // wrap on the mini path (flag is only read from the JS GC
-        // `hasPendingActivity()` hook).
+        // Decrement pending activity unconditionally on exit. Paired with the
+        // increment in `run_from_js`; harmless wrap on the mini path (flag is
+        // only read from the JS GC `hasPendingActivity()` hook).
         // R-2: `&self` lets the guard borrow the atomic directly — no raw-ptr
         // dance needed (the previous reshape existed only for `&mut self`).
         struct DecrOnDrop<'a>(&'a AtomicU32);
@@ -1369,7 +1325,7 @@ impl Interpreter {
         Yield::done()
     }
 
-    /// Spec: interpreter.zig `runFromJS`. JS-host entrypoint — sets up root IO
+    /// JS-host entrypoint — sets up root IO
     /// (unless quiet), spawns the root `Script` node, and starts ticking.
     pub fn run_from_js(
         &self,
@@ -1405,7 +1361,7 @@ impl Interpreter {
         Ok(crate::jsc::JSValue::UNDEFINED)
     }
 
-    /// Spec: interpreter.zig `#derefRootShellAndIOIfNeeded`. Idempotent
+    /// Idempotent
     /// teardown of `root_io`/`root_shell` for the JS event-loop path; called
     /// from `finish()` (success) and `run_from_js()` (early error). Guards on
     /// `cleanup_state` so a later `finalize()` doesn't double-free.
@@ -1430,14 +1386,12 @@ impl Interpreter {
         if self.this_jsvalue.get() != crate::jsc::JSValue::ZERO {
             // Cannot be safely called multiple times.
             // `root_io` holds `Arc<IOReader>`/`Arc<IOWriter>`; replacing with
-            // default drops the refs (Zig: `root_io.deref()`).
+            // default drops the refs.
             self.root_io.set(IO::default());
             self.root_shell.with_mut(|rs| rs.deinit_embedded(false));
         }
 
-        // PORT NOTE: free the parse arena eagerly. Zig's `args.__arena` is a
-        // lightweight `std.heap.ArenaAllocator` (a few KB), so leaving it for
-        // the GC finalizer is fine there. The Rust port's `bun_alloc::Arena` is
+        // Note: free the parse arena eagerly. `bun_alloc::Arena` is
         // a `MimallocArena` (a full `mi_heap_t`): every shell parse pulls
         // several fresh 64 KiB pages, and with `MI_DEBUG=3` each page-init
         // runs `mi_assert_expensive(mi_mem_is_zero(page, 64 KiB))`. Under the
@@ -1463,7 +1417,7 @@ impl Interpreter {
         self.cleanup_state.set(CleanupState::RuntimeCleaned);
     }
 
-    /// Spec: interpreter.zig `deinitFromFinalizer`. GC finalizer body — runs
+    /// GC finalizer body — runs
     /// whatever teardown `finish()` didn't, then frees the box.
     ///
     /// # Safety
@@ -1519,10 +1473,10 @@ impl Interpreter {
         this.keep_alive.with_mut(|k| k.disable());
         // `args: Box<ShellArgs>` and `vm_args_utf8: Vec<ZigStringSlice>` drop
         // with the box; `ZigStringSlice` has a `Drop` impl that derefs its
-        // WTF backing (Zig: per-item `str.deinit()` + list deinit).
+        // WTF backing.
     }
 
-    /// Spec: interpreter.zig `setQuiet` — JS `interp.setQuiet()`.
+    /// JS `interp.setQuiet()`.
     pub fn set_quiet(
         &self,
         _: &crate::jsc::JSGlobalObject,
@@ -1536,7 +1490,7 @@ impl Interpreter {
         Ok(crate::jsc::JSValue::UNDEFINED)
     }
 
-    /// Spec: interpreter.zig `setCwd` — JS `interp.setCwd(path)`.
+    /// JS `interp.setCwd(path)`.
     pub fn set_cwd(
         &self,
         global_this: &crate::jsc::JSGlobalObject,
@@ -1557,7 +1511,7 @@ impl Interpreter {
         Ok(crate::jsc::JSValue::UNDEFINED)
     }
 
-    /// Spec: interpreter.zig `setEnv` — JS `interp.setEnv({ FOO: "bar" })`.
+    /// JS `interp.setEnv({ FOO: "bar" })`.
     pub fn set_env(
         &self,
         global_this: &crate::jsc::JSGlobalObject,
@@ -1593,11 +1547,8 @@ impl Interpreter {
             let keyslice = key.to_owned_slice();
             let value_str = value.get_zig_string(global_this)?;
             let slice = value_str.to_owned_slice();
-            // PORT NOTE: Zig `initRefCounted` adopts the slice; the Rust
-            // `init_ref_counted` dups (see EnvStr.rs TODO), so the `Vec`s drop
-            // here without leaking. TODO(refactor): revisit the ownership contract.
-            let keyref = EnvStr::init_ref_counted(&keyslice);
-            let valueref = EnvStr::init_ref_counted(&slice);
+            let keyref = EnvStr::init_ref_counted(keyslice.into_boxed_slice());
+            let valueref = EnvStr::init_ref_counted(slice.into_boxed_slice());
             self.root_shell
                 .with_mut(|rs| rs.export_env.insert(keyref, valueref));
             keyref.deref();
@@ -1607,7 +1558,6 @@ impl Interpreter {
         Ok(crate::jsc::JSValue::UNDEFINED)
     }
 
-    /// Spec: interpreter.zig `isRunning`.
     pub fn is_running(
         &self,
         _: &crate::jsc::JSGlobalObject,
@@ -1616,7 +1566,6 @@ impl Interpreter {
         Ok(crate::jsc::JSValue::js_boolean(self.has_pending_activity()))
     }
 
-    /// Spec: interpreter.zig `getStarted`.
     pub fn get_started(
         &self,
         _: &crate::jsc::JSGlobalObject,
@@ -1627,7 +1576,6 @@ impl Interpreter {
         ))
     }
 
-    /// Spec: interpreter.zig `getBufferedStdout`.
     pub fn get_buffered_stdout(
         &self,
         global_this: &crate::jsc::JSGlobalObject,
@@ -1638,7 +1586,6 @@ impl Interpreter {
         )
     }
 
-    /// Spec: interpreter.zig `getBufferedStderr`.
     pub fn get_buffered_stderr(
         &self,
         global_this: &crate::jsc::JSGlobalObject,
@@ -1649,7 +1596,7 @@ impl Interpreter {
         )
     }
 
-    /// Spec: interpreter.zig `finalize`. GC finalizer hook — called from the
+    /// GC finalizer hook — called from the
     /// generated C++ `JSShellInterpreter::~JSShellInterpreter` via
     /// `host_fn::host_fn_finalize`.
     pub fn finalize(self: Box<Self>) {
@@ -1660,7 +1607,7 @@ impl Interpreter {
         unsafe { Self::deinit_from_finalizer(Box::into_raw(self)) };
     }
 
-    /// Spec: interpreter.zig `hasPendingActivity`. GC `hasPendingActivity()`.
+    /// GC `hasPendingActivity()` hook.
     pub fn has_pending_activity(&self) -> bool {
         self.has_pending_activity.load(Ordering::SeqCst) > 0
     }
@@ -1681,9 +1628,8 @@ impl Interpreter {
         );
     }
 
-    /// Spec: interpreter.zig `getVmArgsUtf8`. Lazily caches the worker's
-    /// `argv` as UTF-8 slices so `$@`/`$N` expansion (Expansion.zig) can index
-    /// without re-converting on every reference.
+    /// Lazily caches the worker's `argv` as UTF-8 slices so `$@`/`$N`
+    /// expansion can index without re-converting on every reference.
     pub fn get_vm_args_utf8(&self, argv: &[bun_core::WTFStringImpl], idx: u8) -> &[u8] {
         self.vm_args_utf8.with_mut(|v| {
             if v.len() != argv.len() {
@@ -1698,7 +1644,7 @@ impl Interpreter {
         self.vm_args_utf8.get()[idx as usize].slice()
     }
 
-    /// Spec: Expansion.zig `expandVarArgv`. Appends the value of `$N` to
+    /// Appends the value of `$N` to
     /// `out`. Takes the relevant interpreter fields by-part so callers can
     /// split-borrow alongside the node arena.
     ///
@@ -1789,7 +1735,7 @@ impl Interpreter {
     }
 }
 
-/// Spec: interpreter.zig `ioToJSValue`. Moves the captured stdout/stderr
+/// Moves the captured stdout/stderr
 /// `Vec<u8>` into a JS `Buffer` (ownership transfers to JSC's deallocator)
 /// and resets the source to empty.
 fn io_to_js_value(
@@ -1798,22 +1744,18 @@ fn io_to_js_value(
 ) -> crate::jsc::JSValue {
     // SAFETY: `buf` points into a live `ShellExecEnv` (root or borrowed).
     let bytelist = core::mem::take(unsafe { &mut *buf });
-    // PORT NOTE: Zig wraps in `jsc.Node.Buffer{ .buffer = ArrayBuffer.fromBytes
-    // (..., .Uint8Array) }.toNodeBuffer(global)`. `MarkedArrayBuffer::
-    // to_node_buffer` is the same `JSBuffer__bufferFromPointerAndLengthAndDeinit`
-    // call; we hand it the moved-out `Vec<u8>` storage directly. The
+    // The moved-out `Vec<u8>` storage is handed to JSC directly; the
     // `Vec<u8>` value itself is `mem::forget`-ed since JSC now owns the bytes.
     let mut bytelist = core::mem::ManuallyDrop::new(bytelist);
     crate::jsc::JSValue::create_buffer(global_this, bytelist.slice_mut())
 }
 
-/// Spec: interpreter.zig `throwShellErr(e, event_loop)`. On the mini event
+/// On the mini event
 /// loop this prints to stderr and `exit(1)`s (diverges); on the JS event loop
 /// it raises a JS exception via [`ShellErr::throw_js`] and returns
 /// `JsError::Thrown`.
-// PORT NOTE: takes ownership (Zig passed `*const ShellErr` because both arms
-// consume; Rust expresses that as by-value). `global` is `Option` because the
-// mini arm has no global; on the JS arm callers always pass `Some`.
+// `global` is `Option` because the mini arm has no global; on the JS arm
+// callers always pass `Some`.
 pub fn throw_shell_err(
     e: ShellErr,
     event_loop: EventLoopHandle,
@@ -1865,7 +1807,6 @@ impl Default for Bufio {
 }
 
 impl Bufio {
-    /// Spec: interpreter.zig `Bufio.memoryCost` (interpreter.zig:429).
     pub fn memory_cost(&self) -> usize {
         match self {
             Bufio::Owned(o) => o.memory_cost(),
@@ -1886,7 +1827,6 @@ pub enum ShellExecEnvKind {
 }
 
 impl ShellExecEnv {
-    /// Spec: interpreter.zig `ShellExecEnv.memoryCost` (interpreter.zig:449).
     pub fn memory_cost(&self) -> usize {
         let mut size = core::mem::size_of::<ShellExecEnv>();
         size += self.shell_env.memory_cost();
@@ -1896,8 +1836,7 @@ impl ShellExecEnv {
         size += self.__prev_cwd.capacity();
         size += self._buffered_stderr.memory_cost();
         size += self._buffered_stdout.memory_cost();
-        // PORT NOTE: Zig `async_pids.memoryCost()` walks the SmolList; the
-        // Rust shim is `Vec`, so report its heap capacity directly.
+        // `async_pids` is a `Vec`; report its heap capacity directly.
         size += self.async_pids.capacity() * core::mem::size_of::<PidT>();
         size
     }
@@ -1969,7 +1908,7 @@ impl ShellExecEnv {
         }
     }
 
-    /// Spec: interpreter.zig `ShellExecEnv.dupeForSubshell`. Heap-allocates a
+    /// Heap-allocates a
     /// fresh env for a subshell/pipeline child: dups `cwd_fd`, clones
     /// `shell_env`/`export_env`, gives it a fresh empty `cmd_local_env`, and
     /// borrows or owns buffered stdout/stderr per `kind` (subshell/pipeline
@@ -1985,7 +1924,7 @@ impl ShellExecEnv {
 
         let dupedfd = bun_sys::dup(self.cwd_fd)?;
 
-        // Spec (interpreter.zig dupeForSubshell): for `.fd` with a captured
+        // For `.fd` with a captured
         // buffer, borrow that; for `.ignore`, own a fresh one; for `.pipe`,
         // own when normal/cmd_subst, borrow parent's when subshell/pipeline.
         let bufio_for = |out: &OutKind, parent_buf: *mut Vec<u8>| -> Bufio {
@@ -2023,8 +1962,7 @@ impl ShellExecEnv {
         Ok(bun_core::heap::into_raw(duped))
     }
 
-    /// Spec: interpreter.zig `ShellExecEnv.deinit` — wraps `deinitImpl(true,
-    /// true)` for the heap-allocated subshell/pipeline-child case.
+    /// Teardown for the heap-allocated subshell/pipeline-child case.
     ///
     /// # Safety
     /// `this` must have been returned by `dupe_for_subshell` (or otherwise
@@ -2035,19 +1973,16 @@ impl ShellExecEnv {
         log!("[ShellExecEnv] deinit 0x{:x}", this as usize);
         // SAFETY: precondition above. Reclaim the Box; `Drop` for the env
         // maps / vecs / owned `Bufio` runs on drop. Only `cwd_fd` needs an
-        // explicit close (Zig: `closefd(this.cwd_fd)`).
+        // explicit close.
         let boxed = unsafe { bun_core::heap::take(this) };
         closefd(boxed.cwd_fd);
         // EnvMap/Vec/Vec<u8> drop impls free their storage; `Bufio::Borrowed`
-        // is a raw ptr so its drop is a no-op (matches Zig's
-        // `if (== .owned) clearAndFree`).
+        // is a raw ptr so its drop is a no-op.
         drop(boxed);
     }
 
-    /// Spec: interpreter.zig `ShellExecEnv.deinitImpl(false, free_buffered_io)`
-    /// — teardown for the *embedded* root env (held by value in `Interpreter`;
-    /// `destroy_this = false`). The Rust `deinit_impl(this: *mut)` covers the
-    /// `destroy_this = true` heap-allocated subshell case.
+    /// Teardown for the *embedded* root env (held by value in `Interpreter`).
+    /// `deinit_impl(this: *mut)` covers the heap-allocated subshell case.
     pub fn deinit_embedded(&mut self, free_buffered_io: bool) {
         log!(
             "[ShellExecEnv] deinit 0x{:x}",
@@ -2072,14 +2007,14 @@ impl ShellExecEnv {
         self.cwd_fd = bun_sys::Fd::INVALID;
     }
 
-    /// Spec: interpreter.zig `ShellExecEnv.changePrevCwd` — `cd -`.
+    /// `cd -`.
     #[inline]
     pub fn change_prev_cwd(&mut self) -> bun_sys::Result<()> {
-        // PORT NOTE: reshaped for borrowck — `prev_cwd()` borrows `self`, so
+        // Note: reshaped for borrowck — `prev_cwd()` borrows `self`, so
         // copy into a stack buffer before the `&mut self` call. Bounded by the
         // ENAMETOOLONG check inside `change_cwd_impl` (same 4 KiB).
-        // Spec uses `ResolvePath.join_buf` (`[4096]u8` on every platform); do
-        // NOT use `bun_paths::PathBuffer` here — on Windows that is ~96 KiB of
+        // Use a `[4096]u8` buffer on every platform; do NOT use
+        // `bun_paths::PathBuffer` here — on Windows that is ~96 KiB of
         // zero-filled stack, and `change_cwd_impl` stacks another on top.
         let mut buf = [0u8; 4096];
         let prev = self.prev_cwd();
@@ -2088,17 +2023,13 @@ impl ShellExecEnv {
         self.change_cwd_impl(&buf[..n], false)
     }
 
-    /// Spec: interpreter.zig `ShellExecEnv.changeCwd` — thin `in_init = false`
-    /// wrapper. The Zig version is `anytype` over `[:0]const u8` / `[]const u8`;
-    /// we accept the un-terminated slice and let `change_cwd_impl` re-NUL into
-    /// its join buffer (the sentinel fast-path is a memcpy either way).
+    /// Thin `in_init = false` wrapper. Accepts the un-terminated slice and
+    /// lets `change_cwd_impl` re-NUL into its join buffer.
     #[inline]
     pub fn change_cwd(&mut self, new_cwd: &[u8]) -> bun_sys::Result<()> {
         self.change_cwd_impl(new_cwd, false)
     }
 
-    /// Spec: interpreter.zig `ShellExecEnv.changeCwdImpl`.
-    ///
     /// Resolves `new_cwd_` (absolute, or relative to current `cwd()`), opens it
     /// with `O_DIRECTORY`, and on success rotates `__cwd`/`__prev_cwd`/`cwd_fd`.
     /// Always writes `PWD` into `export_env`; `OLDPWD` is written only when
@@ -2106,11 +2037,10 @@ impl ShellExecEnv {
     pub fn change_cwd_impl(&mut self, new_cwd_: &[u8], in_init: bool) -> bun_sys::Result<()> {
         let is_abs = bun_paths::is_absolute(new_cwd_);
 
-        // Spec interpreter.zig:620 bounds-checks against `ResolvePath.join_buf`
-        // — a `[4096]u8` threadlocal on *every* platform. Do NOT use
-        // `bun_paths::PathBuffer` here: on Windows that is `MAX_PATH_BYTES =
-        // 32767*3+1` ≈ 96 KiB of zero-filled stack per `cd`, and the
-        // `>= buf.len()` check would diverge from the Zig ENAMETOOLONG bound.
+        // Bounds-check against a `[4096]u8` buffer on *every* platform. Do NOT
+        // use `bun_paths::PathBuffer` here: on Windows that is `MAX_PATH_BYTES
+        // = 32767*3+1` ≈ 96 KiB of zero-filled stack per `cd`, and the
+        // `>= buf.len()` check would change the ENAMETOOLONG bound.
         let mut buf = [0u8; 4096];
         let required_len = if is_abs {
             new_cwd_.len()
@@ -2130,10 +2060,9 @@ impl ShellExecEnv {
             buf[new_cwd_.len()] = 0;
             new_cwd_.len()
         } else {
-            // Spec interpreter.zig:637-640 — `ResolvePath.joinZ(&.{cwd, new_cwd_},
-            // .auto)` normalizes `.`/`..` so the stored `$PWD`/`$OLDPWD` strings
-            // reflect the resolved path (not `<cwd>/..`).
-            // PORT NOTE: reshaped for borrowck — capture only the joined length
+            // `join_z_buf` normalizes `.`/`..` so the stored `$PWD`/`$OLDPWD`
+            // strings reflect the resolved path (not `<cwd>/..`).
+            // Note: reshaped for borrowck — capture only the joined length
             // so the borrow on `buf` is released before stripping below.
             let mut n = {
                 let existing_cwd = self.cwd();
@@ -2144,8 +2073,8 @@ impl ShellExecEnv {
                 .as_bytes()
                 .len()
             };
-            // remove trailing separator (spec interpreter.zig:643-653 — Windows
-            // checks `\\` first then falls through to `/`; POSIX only `/`).
+            // remove trailing separator (Windows checks `\\` first then falls
+            // through to `/`; POSIX only `/`).
             #[cfg(windows)]
             if n > 1 && buf[n - 1] == b'\\' {
                 n -= 1;
@@ -2174,7 +2103,7 @@ impl ShellExecEnv {
         self.__prev_cwd.extend_from_slice(&self.__cwd[..]);
 
         self.__cwd.clear();
-        // include trailing NUL (spec: `new_cwd[0 .. new_cwd.len + 1]`).
+        // include trailing NUL.
         self.__cwd.extend_from_slice(&buf[..new_cwd_len + 1]);
 
         debug_assert_eq!(*self.__cwd.last().unwrap(), 0);
@@ -2182,10 +2111,10 @@ impl ShellExecEnv {
 
         self.cwd_fd = new_cwd_fd;
 
-        // Spec interpreter.zig:685-688: only `OLDPWD` is gated on `!in_init`;
+        // Only `OLDPWD` is gated on `!in_init`;
         // `PWD` is written unconditionally so the very first env (built during
         // `init()` with `in_init = true`) still exports the resolved cwd.
-        // PORT NOTE: reshaped for borrowck — materialize the EnvStr (which
+        // Note: reshaped for borrowck — materialize the EnvStr (which
         // erases the slice lifetime into a packed ptr) before taking
         // `&mut self.export_env`.
         use crate::shell::env_str::EnvStr;
@@ -2200,12 +2129,10 @@ impl ShellExecEnv {
         Ok(())
     }
 
-    /// Spec: interpreter.zig `ShellExecEnv.assignVar`.
-    ///
     /// Routes `label = value` into one of the three env maps depending on
     /// where the assignment appeared (`FOO=1 cmd` → cmd-local, bare `FOO=1` →
     /// shell, `export FOO=1` → exported). NOTE: `EnvMap::insert` `.ref()`s the
-    /// value, so callers should `defer value.deref()` per the Zig contract.
+    /// value, so callers should deref `value` after the call.
     pub fn assign_var(
         &mut self,
         label: crate::shell::env_str::EnvStr,
@@ -2219,8 +2146,6 @@ impl ShellExecEnv {
         }
     }
 
-    /// Spec: interpreter.zig `ShellExecEnv.getHomedir`.
-    ///
     /// Looks up `$HOME` (`$USERPROFILE` on Windows) in `shell_env` first, then
     /// `export_env`. Falls back to `""` (or `/data/local/tmp` on Android) so
     /// `cd` with no args / `~` expansion never sees a null.
@@ -2288,14 +2213,14 @@ impl CowFd {
         new
     }
 
-    /// Spec: `CowFd.dup` — fresh `CowFd` wrapping a `dup()`'d fd. Errors
+    /// Fresh `CowFd` wrapping a `dup()`'d fd. Errors
     /// surface the syscall error (the freshly-allocated box is dropped).
     pub fn dup(&self) -> bun_sys::Result<*mut CowFd> {
         let fd = bun_sys::dup(self.__fd)?;
         Ok(Self::init(fd))
     }
 
-    /// Spec: `CowFd.use` — copy-on-write borrow. If nobody is currently
+    /// Copy-on-write borrow. If nobody is currently
     /// writing through this fd, mark it in-use and return it (refcount +1);
     /// otherwise hand out a fresh `dup()`.
     pub fn use_(&mut self) -> bun_sys::Result<*mut CowFd> {
@@ -2307,7 +2232,7 @@ impl CowFd {
         self.dup()
     }
 
-    /// Spec: `CowFd.doneUsing` — paired with [`use_`].
+    /// Paired with [`use_`].
     pub fn done_using(&mut self) {
         self.being_used = false;
     }
@@ -2316,7 +2241,7 @@ impl CowFd {
         self.refcount += 1;
     }
 
-    /// Spec: `CowFd.dupeRef` — bump refcount and return the same pointer.
+    /// Bump refcount and return the same pointer.
     pub fn dupe_ref(&mut self) -> *mut CowFd {
         self.ref_();
         self
@@ -2332,9 +2257,7 @@ impl CowFd {
         unsafe {
             (*this).refcount -= 1;
             if (*this).refcount == 0 {
-                // Spec `CowFd.deinit` (interpreter.zig:192-196): close the fd
-                // before freeing. `closefd` tolerates EBADF like Zig's
-                // `closeAllowingBadFileDescriptor`.
+                // Close the fd before freeing; `closefd` tolerates EBADF.
                 closefd((*this).__fd);
                 drop(bun_core::heap::take(this));
             }
@@ -2351,7 +2274,7 @@ pub use crate::shell::io_reader::IOReader;
 pub use crate::shell::io_writer::IOWriter;
 pub use crate::shell::states::assigns::AssignCtx;
 
-/// Spec: `bun.sys.openNullDevice()` (sys.zig:3865) — open `/dev/null` `O_RDWR`
+/// Open `/dev/null` `O_RDWR`
 /// on POSIX, `nul` on Windows. Used when a stdio stream was closed at process
 /// start so we have *something* to dup into the shell's root IO. Must be
 /// writable: `setup_io_before_run` installs the result as the stdout/stderr
@@ -2367,15 +2290,12 @@ fn open_null_device() -> bun_sys::Result<Fd> {
     }
     #[cfg(windows)]
     {
-        // Spec uses `sys_uv.open("nul", 0, 0)` — flags `0` is `O_RDONLY` in
-        // libuv's encoding, but Windows NUL is bidirectional regardless.
+        // Windows NUL is bidirectional regardless of the open flags.
         bun_sys::open(bun_core::ZStr::from_static(b"nul\0"), bun_sys::O::RDWR, 0)
     }
 }
 
-/// Spec: interpreter.zig `isPollable` (interpreter.zig:2116-2124).
-///
-/// PORT NOTE: spec takes a pre-cached `mode` from `event_loop.stdout().data
+/// Note: takes a pre-cached `mode` from `event_loop.stdout().data
 /// .file.mode`; `EventLoopHandle` is still a shim, so we `fstat` the (already
 /// dup'd) fd here instead. On `fstat` failure we conservatively return `false`
 /// (non-pollable → synchronous write path), matching Windows behavior.
@@ -2404,7 +2324,6 @@ fn is_pollable(fd: Fd) -> bool {
     }
 }
 
-/// Spec: interpreter.zig `isPollableFromMode` (interpreter.zig:2126-2134).
 /// Same test as [`is_pollable`] minus the `isatty()` check — used when the
 /// caller already has a cached `st_mode` (e.g. from `Builtin` stdio setup) and
 /// no fd is at hand.
@@ -2431,7 +2350,6 @@ pub fn is_pollable_from_mode(mode: bun_sys::Mode) -> bool {
     }
 }
 
-/// Spec: interpreter.zig `closefd` → `fd.closeAllowingBadFileDescriptor`.
 /// Tolerates EBADF (already-closed) so cleanup paths that may double-close
 /// don't panic; skips stdin/stdout/stderr.
 pub fn closefd(fd: Fd) {
@@ -2439,7 +2357,6 @@ pub fn closefd(fd: Fd) {
     let _ = fd.close_allowing_bad_file_descriptor(None);
 }
 
-/// Spec: interpreter.zig `ShellSyscall.dup` (interpreter.zig:1931-1939).
 /// Same as `bun_sys::dup` on POSIX; on Windows the duped handle is converted
 /// to a libuv-owned fd via `makeLibUVOwnedForSyscall(.dup, .close_on_fail)` so
 /// the IOWriter/IOReader uv-based async write/read paths receive a uv fd
@@ -2457,7 +2374,6 @@ pub fn shell_dup(fd: Fd) -> bun_sys::Result<Fd> {
     }
 }
 
-/// Spec: interpreter.zig `ShellSyscall.getPath` (interpreter.zig:1823-1858).
 /// Windows-only: rewrite shell paths so POSIX-absolute `/foo` resolves onto
 /// `dirfd`'s drive root, `/dev/null` maps to `NUL`, and relative paths are
 /// joined against `dirfd`'s real path. Returns a NUL-terminated slice that
@@ -2476,9 +2392,9 @@ fn shell_get_path<'a>(
             let dirpath = bun_sys::get_fd_path(dirfd, buf).map_err(|e| e.with_fd(dirfd))?;
             bun_paths::resolve_path::windows_filesystem_root(dirpath).len()
         };
-        // Spec: `copyForwards(buf[0..root], source_root)` — `dirpath` already
-        // occupies `buf[0..]` and the root is its prefix, so that copy is a
-        // no-op here. Splice `to[1..]` after the root.
+        // `dirpath` already
+        // occupies `buf[0..]` and the root is its prefix, so no copy is
+        // needed. Splice `to[1..]` after the root.
         let to_tail = &to.as_bytes()[1..];
         let end = source_root_len + to_tail.len();
         buf[source_root_len..end].copy_from_slice(to_tail);
@@ -2489,8 +2405,8 @@ fn shell_get_path<'a>(
         return Ok(to);
     }
     // Relative: resolve dirfd → path, then join.
-    // PORT NOTE: reshaped for borrowck — Zig's `joinZBuf(buf, &.{dirpath, to})`
-    // reads `dirpath` (a slice of `buf`) while writing `buf`; copy `dirpath`
+    // Note: a single-buffer join would read `dirpath` (a slice of `buf`)
+    // while writing `buf`; copy `dirpath`
     // out first so the mutable borrow on `buf` is exclusive.
     let dirpath = bun_sys::get_fd_path(dirfd, buf)
         .map_err(|e| e.with_fd(dirfd))?
@@ -2500,7 +2416,6 @@ fn shell_get_path<'a>(
     >(&mut buf[..], &[&dirpath, to.as_bytes()]))
 }
 
-/// Spec: interpreter.zig `ShellSyscall.statat` (interpreter.zig:1861-1877).
 /// Windows: rewrite the path via `shell_get_path` then `bun_sys::stat`, tagging
 /// the error with the *original* `path_` (not the rewritten one). POSIX: plain
 /// `bun_sys::fstatat(dir, path_)`.
@@ -2518,7 +2433,6 @@ pub fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<bun_sys:
     }
 }
 
-/// Spec: interpreter.zig `ShellSyscall.openat` (interpreter.zig:1881-1918).
 /// POSIX: `bun_sys::openat` with the error tagged `.with_path(path)`.
 /// Windows: for `O_DIRECTORY` opens, rewrite POSIX-absolute paths via
 /// `shell_get_path` and use `openDirAtWindowsA(.iterable=true)` +
@@ -2566,11 +2480,8 @@ pub fn shell_openat(
         }
         let mut buf = bun_paths::path_buffer_pool::get();
         let p = shell_get_path(dir, path, &mut buf)?;
-        // Spec interpreter.zig:1904-1909: `return bun.sys.open(p, flags, perm)`
-        // — no `makeLibUVOwnedForSyscall` here. `bun_sys::open` on Windows
-        // routes through `sys_uv` and already yields a uv-owned fd; the
-        // trailing `if (isWindows) makeLibUVOwned` in the Zig source is dead
-        // code (the Windows block early-returns before it).
+        // No `makeLibUVOwnedForSyscall` here: `bun_sys::open` on Windows
+        // routes through `sys_uv` and already yields a uv-owned fd.
         return bun_sys::open(p, flags, perm);
     }
     #[cfg(not(windows))]
@@ -2579,12 +2490,10 @@ pub fn shell_openat(
     }
 }
 
-/// Spec: interpreter.zig `ShellSyscall.open` (interpreter.zig:1920-1929).
 /// `bun_sys::open` already routes through `sys_uv` on Windows (returns a uv
 /// fd), so unlike `openat`'s NT-handle directory path this needs no explicit
-/// `makeLibUVOwnedForSyscall` — the dead `if (isWindows)` tail in the Zig
-/// source is unreachable after the early `return bun.sys.open(...)`.
-// no Zig callers yet; ported for ShellSyscall surface parity
+/// `makeLibUVOwnedForSyscall`.
+// no callers yet; kept for syscall-wrapper surface parity
 pub fn shell_open(
     file_path: &bun_core::ZStr,
     flags: i32,
@@ -2603,10 +2512,10 @@ pub fn shell_open(
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Builtin flag-parsing infra (Spec: interpreter.zig `ParseError` / `FlagParser`)
+// Builtin flag-parsing infra
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Custom parse error for invalid options. Spec: interpreter.zig `ParseError`.
+/// Custom parse error for invalid options.
 ///
 /// Payload slices borrow from the builtin's argv (NUL-terminated arena strings)
 /// or are `'static` literals; the builtin formats them into an error message
@@ -2633,7 +2542,6 @@ impl ParseError {
     }
 }
 
-/// Spec: interpreter.zig `ParseFlagResult`.
 pub enum ParseFlagResult {
     ContinueParsing,
     Done,
@@ -2642,25 +2550,14 @@ pub enum ParseFlagResult {
     ShowUsage,
 }
 
-/// Spec: interpreter.zig `unsupportedFlag` (interpreter.zig:2063-2065) returns
-/// the comptime-concatenated `"unsupported option, please open a GitHub issue
-/// -- " ++ name ++ "\n"`. Every caller then wraps that AGAIN in the same
-/// prefix via `fmtErrorArena`, so Zig's stderr prints the prefix twice.
-///
-/// PORT NOTE — intentional spec-bug fix: we return just `name` and let the
-/// caller's `fmt_error_arena` add the prefix once. This diverges from Zig's
-/// observable doubled output; update Zig (or any snapshot tests asserting the
-/// doubled message) rather than reproducing the duplication here. Reproducing
-/// it would require runtime allocation (leaking is forbidden — see
-/// PORTING.md §Forbidden) since Rust can't comptime-concat a non-const arg.
+/// Returns just `name` and lets the caller's `fmt_error_arena` add the
+/// "unsupported option" prefix once.
 #[inline]
 pub const fn unsupported_flag(name: &'static [u8]) -> *const [u8] {
     std::ptr::from_ref::<[u8]>(name)
 }
 
 /// Per-builtin opts type implements this to plug into `FlagParser::parse_flags`.
-/// Spec: interpreter.zig `FlagParser(comptime Opts)` — the Zig version is a
-/// type-generator; in Rust the per-opts hooks are a trait.
 pub trait FlagParser {
     /// Handle a `--long` flag. Return `None` to fall through to short parsing.
     fn parse_long(&mut self, flag: &[u8]) -> Option<ParseFlagResult>;
@@ -2668,8 +2565,7 @@ pub trait FlagParser {
     fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult>;
 }
 
-/// Spec: interpreter.zig `FlagParser.parseFlags`. Returns the trailing
-/// non-flag args (`args[idx..]`) on success.
+/// Returns the trailing non-flag args (`args[idx..]`) on success.
 pub fn parse_flags<'a, O: FlagParser>(
     opts: &mut O,
     args: &'a [*const core::ffi::c_char],
@@ -2693,7 +2589,6 @@ pub fn parse_flags<'a, O: FlagParser>(
     Err(ParseError::ShowUsage)
 }
 
-/// Spec: interpreter.zig `FlagParser.parseFlag`.
 fn parse_one_flag<O: FlagParser>(opts: &mut O, flag: &[u8]) -> ParseFlagResult {
     if flag.is_empty() || flag[0] != b'-' {
         return ParseFlagResult::Done;
@@ -2716,13 +2611,13 @@ fn parse_one_flag<O: FlagParser>(opts: &mut O, flag: &[u8]) -> ParseFlagResult {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// OutputTask (Spec: interpreter.zig `OutputTask` / `OutputSrc`)
+// OutputTask
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Spec: interpreter.zig `OutputSrc`. Owned bytes a builtin's async sub-task
+/// Owned bytes a builtin's async sub-task
 /// produced off-thread, queued for stdout once back on the main thread.
 pub enum OutputSrc {
-    /// `std.ArrayListUnmanaged(u8)` — owned, freed on drop.
+    /// Owned, freed on drop.
     Arrlist(Vec<u8>),
     /// Heap slice owned by us (freed on drop).
     OwnedBuf(Box<[u8]>),
@@ -2748,8 +2643,7 @@ pub enum OutputTaskState {
     Done,
 }
 
-/// Spec: interpreter.zig `OutputTask` vtable. In Zig this is a comptime struct
-/// of fn pointers; here it's a trait the parent builtin implements. All hooks
+/// Vtable trait the parent builtin implements. All hooks
 /// take `(&mut Interpreter, NodeId)` (NodeId style — the parent builtin lives
 /// inside the interpreter's node arena).
 ///
@@ -2773,13 +2667,12 @@ pub trait OutputTaskVTable: Sized {
     fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield;
 }
 
-/// A task that can write to stdout and/or stderr. Spec: interpreter.zig
-/// `OutputTask(Parent, vtable)`.
+/// A task that can write to stdout and/or stderr.
 ///
 /// Heap-allocated (`heap::alloc`) so the IOWriter can hold a raw pointer to
 /// it across async chunks; freed by `deinit`.
 pub struct OutputTask<P: OutputTaskVTable> {
-    /// Owning Cmd node (the builtin's `cmd` id). Replaces Zig's `*Parent`.
+    /// Owning Cmd node (the builtin's `cmd` id).
     pub parent: NodeId,
     pub output: OutputSrc,
     pub state: OutputTaskState,
@@ -2796,8 +2689,6 @@ impl<P: OutputTaskVTable> OutputTask<P> {
         })
     }
 
-    /// Spec: interpreter.zig `OutputTask.start`.
-    ///
     /// Takes the freshly-constructed task by `Box` (callers always pair `new`
     /// → `start`), leaks it to the raw `*mut Self` the IOWriter callback chain
     /// needs, and drives the first state transition. The box is reclaimed by
@@ -2833,7 +2724,6 @@ impl<P: OutputTaskVTable> OutputTask<P> {
         }
     }
 
-    /// Spec: interpreter.zig `OutputTask.next`.
     pub unsafe fn next(this: *mut Self, interp: &Interpreter) -> Yield {
         // SAFETY: caller contract — see `start`.
         unsafe {
@@ -2859,7 +2749,6 @@ impl<P: OutputTaskVTable> OutputTask<P> {
         }
     }
 
-    /// Spec: interpreter.zig `OutputTask.onIOWriterChunk`.
     pub unsafe fn on_io_writer_chunk(
         this: *mut Self,
         interp: &Interpreter,
@@ -2867,13 +2756,12 @@ impl<P: OutputTaskVTable> OutputTask<P> {
         _err: Option<bun_sys::SystemError>,
     ) -> Yield {
         log!("OutputTask(0x{:x}) onIOWriterChunk", this as usize);
-        // Zig derefs the SystemError; in Rust drop handles it.
         // SAFETY: `this` is the live heap-allocated `OutputTask` guaranteed by
         // this fn's caller contract; forwarded unchanged to `next`.
         unsafe { Self::next(this, interp) }
     }
 
-    /// Spec: interpreter.zig `OutputTask.deinit` — fires `on_done` then frees.
+    /// Fires `on_done` then frees.
     unsafe fn deinit(this: *mut Self, interp: &Interpreter) -> Yield {
         // SAFETY: `this` was heap-allocated in `new`; reclaim and drop.
         let me = unsafe { bun_core::heap::take(this) };
@@ -2886,21 +2774,18 @@ impl<P: OutputTaskVTable> OutputTask<P> {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// ShellTask (Spec: interpreter.zig `ShellTask`)
+// ShellTask
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Thread-pool task wrapper used by mv/rm/ls/mkdir/touch/cp builtins. Spec:
-/// interpreter.zig `ShellTask(Ctx, runFromThreadPool, runFromMainThread, log)`.
+/// Thread-pool task wrapper used by mv/rm/ls/mkdir/touch/cp builtins.
 ///
-/// The Zig version is a type-generator over the parent ctx + two fn pointers;
-/// here it's a trait the per-builtin task struct implements. The Zig
-/// `@fieldParentPtr("task", task)` chain (WorkPoolTask → InnerShellTask → Ctx)
-/// is reproduced via `core::mem::offset_of!` in [`ShellTaskCtx::TASK_OFFSET`]
-/// + the `#[repr(C)]` first-field guarantee on [`ShellTask::task`].
+/// A trait the per-builtin task struct implements. The container-of chain
+/// (WorkPoolTask → ShellTask → Ctx) is built from `core::mem::offset_of!` in
+/// [`ShellTaskCtx::TASK_OFFSET`] + the `#[repr(C)]` first-field guarantee on
+/// [`ShellTask::task`].
 ///
 /// `Taskable` is a supertrait so [`ShellTask::on_finish`] can build the
-/// JS-side `ConcurrentTask` (Zig: `concurrent_task.js.from(ctx, .manual_deinit)`
-/// resolved the tag via comptime `@typeName(Ctx)`).
+/// JS-side `ConcurrentTask`.
 pub trait ShellTaskCtx: Sized + bun_event_loop::Taskable {
     /// Byte offset of the embedded `task: ShellTask` field within `Self`.
     /// Implementors define this as `core::mem::offset_of!(Self, task)`.
@@ -2916,8 +2801,7 @@ pub trait ShellTaskCtx: Sized + bun_event_loop::Taskable {
     /// thread pool hands the callback. `WorkPoolTask` is the first
     /// `#[repr(C)]` field of [`ShellTask`], so the `WorkPoolTask*` and
     /// `ShellTask*` coincide; one `byte_sub(TASK_OFFSET)` walks back to the
-    /// outer `Self` (Zig: the two-hop `@fieldParentPtr` chain in
-    /// `InnerShellTask.runFromThreadPool`).
+    /// outer `Self`.
     ///
     /// Provided so the two opt-out builtins (`cp`/`rm`, which install a
     /// custom `work_pool_callback` and bypass [`shell_task_trampoline`]) can
@@ -2946,15 +2830,14 @@ pub struct ShellTask {
     pub task: WorkPoolTask,
     pub event_loop: EventLoopHandle,
     pub keep_alive: bun_io::KeepAlive,
-    /// Back-ref to the owning [`Interpreter`]. The Zig original threaded the
-    /// interpreter through each builtin's parent-ptr chain; the Rust port uses
-    /// a NodeId arena, so the high-tier dispatch (`runtime::dispatch::run_task`)
-    /// recovers `&mut Interpreter` from this field instead. Set at
-    /// `ShellTask::new`; cleared (raw-ptr) only when the task is freed.
+    /// Back-ref to the owning [`Interpreter`]. The high-tier dispatch
+    /// (`runtime::dispatch::run_task`) recovers `&mut Interpreter` from this
+    /// field. Set at `ShellTask::new`; cleared (raw-ptr) only when the task
+    /// is freed.
     pub interp: *mut Interpreter,
     /// Intrusive concurrent-task node for the worker→main bounce. JS arm holds
     /// a [`ConcurrentTask`](bun_event_loop::ConcurrentTask::ConcurrentTask),
-    /// mini arm holds an `AnyTaskWithExtraContext` (Zig: `jsc.EventLoopTask`).
+    /// mini arm holds an `AnyTaskWithExtraContext`.
     pub concurrent_task: bun_event_loop::EventLoopTask,
 }
 
@@ -2974,7 +2857,7 @@ impl ShellTask {
         }
     }
 
-    /// Spec: interpreter.zig `InnerShellTask.schedule`. Installs the per-`C`
+    /// Installs the per-`C`
     /// trampoline and hands the intrusive task to the global [`WorkPool`].
     ///
     /// SAFETY: `ctx` must be a live heap allocation that embeds this
@@ -2992,10 +2875,9 @@ impl ShellTask {
     }
 
     /// Install the per-`C` trampoline and hand the intrusive task to
-    /// [`WorkPool`] WITHOUT a `keep_alive.ref` — for tasks that the Zig spec
-    /// schedules via raw `WorkPool.schedule(&this.task)` (e.g. ls.zig
-    /// `ShellLsTask.schedule`, called recursively from a worker thread where
-    /// no JS-thread VM thread-local exists).
+    /// [`WorkPool`] WITHOUT a `keep_alive.ref` — for tasks scheduled
+    /// recursively from a worker thread where no JS-thread VM thread-local
+    /// exists (e.g. `ls`).
     ///
     /// SAFETY: same as [`Self::schedule`].
     pub unsafe fn schedule_no_ref<C: ShellTaskCtx>(ctx: *mut C) {
@@ -3011,7 +2893,7 @@ impl ShellTask {
         }
     }
 
-    /// Spec: interpreter.zig `InnerShellTask.onFinish`. Called from the worker
+    /// Called from the worker
     /// thread once `C::run_from_thread_pool` returns; enqueues the embedded
     /// concurrent task so the main thread re-enters via
     /// [`run_from_main_thread`](Self::run_from_main_thread) (which performs the
@@ -3034,16 +2916,14 @@ impl ShellTask {
             let event_loop = (*this).event_loop;
             let task_ptr = match &mut (*this).concurrent_task {
                 EventLoopTask::Js(ct) => {
-                    // Zig: `concurrent_task.js.from(ctx, .manual_deinit)` —
-                    // tag resolved via `C: Taskable`.
+                    // Tag resolved via `C: Taskable`.
                     ct.from(ctx, AutoDeinit::ManualDeinit);
                     EventLoopTaskPtr {
                         js: std::ptr::from_mut(ct),
                     }
                 }
                 EventLoopTask::Mini(at) => {
-                    // Zig: `concurrent_task.mini.from(this, "runFromMainThreadMini")`.
-                    // Rust passes the monomorphised callback explicitly.
+                    // Pass the monomorphised callback explicitly.
                     EventLoopTaskPtr {
                         mini: at.from(this, shell_task_run_from_main_thread_mini::<C>),
                     }
@@ -3054,12 +2934,11 @@ impl ShellTask {
         event_loop.enqueue_task_concurrent(task_ptr);
     }
 
-    /// Spec: interpreter.zig `InnerShellTask.runFromMainThread`. Unrefs the
+    /// Unrefs the
     /// event-loop keep-alive paired with [`schedule`], then dispatches to
     /// `C::run_from_main_thread`. The high-tier `runtime::dispatch::run_task`
     /// `shell_dispatch!` arm calls this so the ref/unref pairing is kept at
-    /// the seam (Zig: `this.ref.unref(this.event_loop)` before
-    /// `runFromMainThread_(ctx)`).
+    /// the seam.
     ///
     /// # Safety
     /// `ctx` must be a live heap allocation that embeds a `ShellTask` at
@@ -3079,11 +2958,11 @@ impl ShellTask {
     }
 }
 
-/// Spec: interpreter.zig `runFromThreadPool` — recover `*Ctx` from the
+/// Recover `*Ctx` from the
 /// intrusive `*WorkPoolTask`, run the user body, then post back to main.
 unsafe fn shell_task_trampoline<C: ShellTaskCtx>(task: *mut WorkPoolTask) {
     // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`, which is
-    // embedded in `C` at `TASK_OFFSET` (Zig: two `container_of` hops). `ctx`
+    // embedded in `C` at `TASK_OFFSET`. `ctx`
     // remains the live heap allocation handed to `schedule`.
     unsafe {
         let ctx = C::from_work_task(task);
@@ -3094,8 +2973,7 @@ unsafe fn shell_task_trampoline<C: ShellTaskCtx>(task: *mut WorkPoolTask) {
     }
 }
 
-/// Spec: interpreter.zig `InnerShellTask.runFromMainThreadMini` — mini-loop
-/// `AnyTaskWithExtraContext` callback shape (`fn(*mut T, *mut ())`).
+/// Mini-loop `AnyTaskWithExtraContext` callback shape (`fn(*mut T, *mut ())`).
 fn shell_task_run_from_main_thread_mini<C: ShellTaskCtx>(this: *mut ShellTask, _: *mut ()) {
     // SAFETY: `this` is the `ShellTask` embedded in a live `C` at `TASK_OFFSET`;
     // mini-loop dispatch runs on the main thread.
@@ -3122,7 +3000,6 @@ pub fn unreachable_state(context: &str, state: &str) -> ! {
 
 // ─── createShellInterpreter ─────────────────────────────────────────────────
 // Host fn for `Bun.$` template tag — `BunObject_callback_createShellInterpreter`.
-// Port of `Interpreter.createShellInterpreter` (interpreter.zig:773).
 
 // C++ side (`ShellBindings.cpp`) takes `void* ptr` — `Interpreter` is opaque
 // across the boundary, layout is irrelevant. Defined `extern "C" SYSV_ABI`.
@@ -3197,14 +3074,13 @@ pub fn create_shell_interpreter(
         ShellResult::Ok(i) => i,
         ShellResult::Err(e) => {
             // shargs/jsobjs were consumed by `init` and dropped on its error
-            // path; export_env likewise (Zig: `defer shargs.deinit()` in caller).
+            // path; export_env likewise.
             return Err(e.throw_js(global));
         }
     };
 
     if global.has_exception() {
-        // Spec interpreter.zig:828-834: `interpreter.finalize()` →
-        // `deinitFromFinalizer` derefs root_io and closes `root_shell.cwd_fd`.
+        // `deinit_from_finalizer` derefs root_io and closes `root_shell.cwd_fd`.
         // Neither `Interpreter` nor `ShellExecEnv` implements `Drop`, so a plain
         // box drop would leak the raw `cwd_fd`; run the explicit teardown.
         interpreter.deinit_from_exec();
@@ -3241,5 +3117,3 @@ pub fn create_shell_interpreter(
     bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);
     Ok(js_value)
 }
-
-// ported from: src/shell/interpreter.zig

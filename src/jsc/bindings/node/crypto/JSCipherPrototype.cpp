@@ -116,7 +116,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
 
     if (!res && cipher->m_kind == CipherKind::Decipher && cipher->m_ctx.isCcmMode()) {
         cipher->m_pendingAuthFailed = true;
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(outBuf), 0, bufLen)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), 0)));
     }
 
     if (res != 1) {
@@ -186,6 +186,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObje
     }
 
     cipher->m_ctx.reset();
+    cipher->m_sizeForGC = 0;
 
     if (!ok) {
         throwCryptoErrorWithAuth(lexicalGlobalObject, scope);
@@ -348,6 +349,12 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAAD, (JSC::JSGlobalObject * globalObject, JS
 
     if (aadbuf->byteLength() > std::numeric_limits<int>::max()) {
         return ERR::OUT_OF_RANGE(scope, globalObject, "buffer is too big"_s, 0, INT_MAX, jsNumber(aadbuf->byteLength()));
+    }
+
+    // Passing a NULL output buffer to EVP_CipherUpdate is only valid for AEAD
+    // modes; for any other mode it writes the ciphertext through the NULL pointer.
+    if (!cipher->m_ctx || !cipher->isAuthenticatedMode()) {
+        return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "setAAD"_s);
     }
 
     MarkPopErrorOnReturn popError;

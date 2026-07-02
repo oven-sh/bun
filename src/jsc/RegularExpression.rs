@@ -28,8 +28,6 @@ pub enum RegularExpressionError {
 
 bun_core::named_error_set!(RegularExpressionError);
 
-// TODO(port): move to bun_jsc_sys
-//
 // `RegularExpression` is an opaque `UnsafeCell`-backed ZST handle, so
 // `&RegularExpression` is ABI-identical to a non-null `*const` and C++ mutating
 // internal Yarr state through it is interior mutation invisible to Rust. The
@@ -61,7 +59,6 @@ impl RegularExpression {
             unsafe { Self::destroy(regex) };
             return Err(RegularExpressionError::InvalidRegExp);
         }
-        // TODO(port): consider an owning wrapper with Drop instead of returning a raw *mut.
         Ok(regex)
     }
 
@@ -102,15 +99,14 @@ impl RegularExpression {
 // ──────────────────────────────────────────────────────────────────────────
 // `bun_install_types::NodeLinker` / `bun_install::PnpmMatcher` extern impls.
 //
-// Those lower-tier crates cannot name `jsc::RegularExpression`. Zig
-// (`PnpmMatcher.zig`) called `bun.jsc.RegularExpression.init` inline after
-// `bun.jsc.initialize(false)`. The bodies live here as `#[no_mangle]` Rust-ABI
+// Those lower-tier crates cannot name `jsc::RegularExpression`.
+// The bodies live here as `#[no_mangle]` Rust-ABI
 // fns, declared `extern "Rust"` on the low-tier side; link-time resolved.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub fn __bun_regex_compile(pattern: BunString) -> Option<core::ptr::NonNull<()>> {
-    // Zig: `bun.jsc.initialize(false)` before first compile (idempotent).
+pub(crate) fn __bun_regex_compile(pattern: BunString) -> Option<core::ptr::NonNull<()>> {
+    // Initialize JSC before first compile (idempotent).
     crate::initialize(false);
     match RegularExpression::init(pattern, Flags::None) {
         Ok(r) => core::ptr::NonNull::new(r.cast()),
@@ -119,7 +115,7 @@ pub fn __bun_regex_compile(pattern: BunString) -> Option<core::ptr::NonNull<()>>
 }
 
 #[unsafe(no_mangle)]
-pub fn __bun_regex_matches(regex: core::ptr::NonNull<()>, input: &BunString) -> bool {
+pub(crate) fn __bun_regex_matches(regex: core::ptr::NonNull<()>, input: &BunString) -> bool {
     // `RegularExpression` is an `opaque_ffi!` ZST handle; `opaque_mut` is the
     // centralised non-null deref proof. `regex` was produced by
     // `__bun_regex_compile` and remains live until `__bun_regex_drop`.
@@ -127,9 +123,7 @@ pub fn __bun_regex_matches(regex: core::ptr::NonNull<()>, input: &BunString) -> 
 }
 
 #[unsafe(no_mangle)]
-pub fn __bun_regex_drop(regex: core::ptr::NonNull<()>) {
+pub(crate) fn __bun_regex_drop(regex: core::ptr::NonNull<()>) {
     // SAFETY: `regex` was produced by `__bun_regex_compile`; consumed here.
     unsafe { RegularExpression::destroy(regex.as_ptr().cast()) }
 }
-
-// ported from: src/jsc/RegularExpression.zig

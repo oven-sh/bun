@@ -39,7 +39,19 @@ fn main() {
         );
     }
 
+    let resolved_source_tag_rs = codegen_dir.join("generated_resolved_source_tag.rs");
+    if !resolved_source_tag_rs.exists() {
+        panic!(
+            "generated_resolved_source_tag.rs not found at {} — run `bun bd` (bundle-modules codegen) first",
+            resolved_source_tag_rs.display()
+        );
+    }
+
     println!("cargo:rustc-env=BUN_CODEGEN_DIR={}", codegen_dir.display());
     println!("cargo:rerun-if-changed={}", cpp_rs.display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        resolved_source_tag_rs.display()
+    );
     println!("cargo:rerun-if-env-changed=BUN_CODEGEN_DIR");
 }

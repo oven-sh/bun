@@ -37,24 +37,31 @@
 #include "DOMJITIDLTypeFilter.h"
 #include "DOMJITHelpers.h"
 
-class FFICallbackFunctionWrapper {
+// Refcounted so FFI_Callback_threadsafe_call can keep the wrapper alive from a
+// foreign thread; copying the JSC::Strong members is only safe on the JS thread.
+class FFICallbackFunctionWrapper : public ThreadSafeRefCounted<FFICallbackFunctionWrapper> {
 
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FFICallbackFunctionWrapper);
 
 public:
     JSC::Strong<JSC::JSFunction> m_function;
     JSC::Strong<Zig::GlobalObject> globalObject;
+    // Cached on the JS thread at construction time so the foreign-thread
+    // trampoline never has to dereference a Strong to find the context.
+    WebCore::ScriptExecutionContextIdentifier m_contextId;
     ~FFICallbackFunctionWrapper() = default;
 
     FFICallbackFunctionWrapper(JSC::JSFunction* function, Zig::GlobalObject* globalObject)
         : m_function(globalObject->vm(), function)
         , globalObject(globalObject->vm(), globalObject)
+        , m_contextId(globalObject->scriptExecutionContext()->identifier())
     {
     }
 };
 extern "C" void FFICallbackFunctionWrapper_destroy(FFICallbackFunctionWrapper* wrapper)
 {
-    delete wrapper;
+    // deref, not delete: pending event-loop tasks may still hold refs.
+    wrapper->deref();
 }
 
 extern "C" FFICallbackFunctionWrapper* Bun__createFFICallbackFunction(
@@ -143,18 +150,12 @@ void JSFFIFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSFFIFunction);
 
-void JSFFIFunction::finishCreation(VM& vm, NativeExecutable* executable, unsigned length, const String& name)
-{
-    Base::finishCreation(vm, executable, length, name);
-    ASSERT(inherits(info()));
-}
-
 JSFFIFunction* JSFFIFunction::create(VM& vm, Zig::GlobalObject* globalObject, unsigned length, const String& name, FFIFunction FFIFunction, Intrinsic intrinsic, NativeFunction nativeConstructor)
 {
-    NativeExecutable* executable = vm.getHostFunction(FFIFunction, ImplementationVisibility::Public, intrinsic, FFIFunction, nullptr, name);
+    NativeExecutable* executable = vm.getHostFunction(FFIFunction, ImplementationVisibility::Public, intrinsic, FFIFunction, nullptr, length, name);
     Structure* structure = globalObject->FFIFunctionStructure();
     JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, reinterpret_cast<CFFIFunction>(WTF::move(FFIFunction)));
-    function->finishCreation(vm, executable, length, name);
+    function->finishCreation(vm);
     return function;
 }
 
@@ -171,203 +172,113 @@ JSC_DEFINE_HOST_FUNCTION(JSFFIFunction::trampoline, (JSC::JSGlobalObject * globa
 JSFFIFunction* JSFFIFunction::createForFFI(VM& vm, Zig::GlobalObject* globalObject, unsigned length, const String& name, CFFIFunction FFIFunction)
 {
 #if OS(WINDOWS)
-    NativeExecutable* executable = vm.getHostFunction(trampoline, ImplementationVisibility::Public, NoIntrinsic, trampoline, nullptr, name);
+    NativeExecutable* executable = vm.getHostFunction(trampoline, ImplementationVisibility::Public, NoIntrinsic, trampoline, nullptr, length, name);
 #else
-    NativeExecutable* executable = vm.getHostFunction(FFIFunction, ImplementationVisibility::Public, NoIntrinsic, FFIFunction, nullptr, name);
+    NativeExecutable* executable = vm.getHostFunction(FFIFunction, ImplementationVisibility::Public, NoIntrinsic, FFIFunction, nullptr, length, name);
 #endif
     Structure* structure = globalObject->FFIFunctionStructure();
     JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, reinterpret_cast<CFFIFunction>(WTF::move(FFIFunction)));
-    function->finishCreation(vm, executable, length, name);
+    function->finishCreation(vm);
     return function;
 }
 
 } // namespace JSC
 
+// Shared tail for the FFI_Callback_* entry points: call back into JS and leave any exception
+// pending on the VM, like any other host function. Never clear and re-throw here: re-installing
+// the TerminationException once the termination request is retired trips VM::setException.
+static JSC::EncodedJSValue invokeFFICallback(Zig::GlobalObject* globalObject, JSC::JSFunction* function, JSC::MarkedArgumentBuffer& arguments)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, function, JSC::getCallData(function), JSC::jsUndefined(), arguments);
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsNull()));
+    return JSC::JSValue::encode(result);
+}
+
 extern "C" JSC::EncodedJSValue
 FFI_Callback_call(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
-    auto* function = wrapper.m_function.get();
-    auto* globalObject = wrapper.globalObject.get();
-    auto& vm = JSC::getVM(globalObject);
     JSC::MarkedArgumentBuffer arguments;
     for (size_t i = 0; i < argCount; ++i)
         arguments.appendWithCrashOnOverflow(JSC::JSValue::decode(args[i]));
-    WTF::NakedPtr<JSC::Exception> exception;
-    auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, function, JSC::getCallData(function), JSC::jsUndefined(), arguments, exception);
-    if (exception) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        scope.throwException(globalObject, exception);
-        return JSC::JSValue::encode(JSC::jsNull());
-    }
-
-    return JSC::JSValue::encode(result);
+    return invokeFFICallback(wrapper.globalObject.get(), wrapper.m_function.get(), arguments);
 }
 
 extern "C" void
 FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
-
-    auto* globalObject = wrapper.globalObject.get();
+    // Runs on a foreign thread: do not touch the wrapper's JSC::Strong members here.
     WTF::Vector<JSC::EncodedJSValue, 8> argsVec;
     for (size_t i = 0; i < argCount; ++i)
         argsVec.append(args[i]);
 
-    WebCore::ScriptExecutionContext::postTaskTo(globalObject->scriptExecutionContext()->identifier(), [argsVec = WTF::move(argsVec), wrapper](WebCore::ScriptExecutionContext& ctx) mutable {
+    WebCore::ScriptExecutionContext::postTaskTo(wrapper.m_contextId, [argsVec = WTF::move(argsVec), protectedWrapper = Ref { wrapper }](WebCore::ScriptExecutionContext& ctx) mutable {
         auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(ctx.jsGlobalObject());
-        auto& vm = JSC::getVM(globalObject);
         JSC::MarkedArgumentBuffer arguments;
-        auto* function = wrapper.m_function.get();
         for (size_t i = 0; i < argsVec.size(); ++i)
             arguments.appendWithCrashOnOverflow(JSC::JSValue::decode(argsVec[i]));
-        WTF::NakedPtr<JSC::Exception> exception;
-        JSC::profiledCall(globalObject, JSC::ProfilingReason::API, function, JSC::getCallData(function), JSC::jsUndefined(), arguments, exception);
-        if (exception) [[unlikely]] {
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            scope.throwException(globalObject, exception);
-            return;
-        }
+        invokeFFICallback(globalObject, protectedWrapper->m_function.get(), arguments);
     });
 }
 
 extern "C" JSC::EncodedJSValue
 FFI_Callback_call_0(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
-    auto* function = wrapper.m_function.get();
-    auto* globalObject = wrapper.globalObject.get();
-    auto& vm = JSC::getVM(globalObject);
-
     JSC::MarkedArgumentBuffer arguments;
-
-    WTF::NakedPtr<JSC::Exception> exception;
-    auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, function, JSC::getCallData(function), JSC::jsUndefined(), arguments, exception);
-    if (exception) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        scope.throwException(globalObject, exception);
-        return JSC::JSValue::encode(JSC::jsNull());
-    }
-
-    return JSC::JSValue::encode(result);
+    return invokeFFICallback(wrapper.globalObject.get(), wrapper.m_function.get(), arguments);
 }
 
 extern "C" JSC::EncodedJSValue
 FFI_Callback_call_1(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
-    auto* function = wrapper.m_function.get();
-    auto* globalObject = wrapper.globalObject.get();
-    auto& vm = JSC::getVM(globalObject);
-
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(JSC::JSValue::decode(args[0]));
-
-    WTF::NakedPtr<JSC::Exception> exception;
-    auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, function, JSC::getCallData(function), JSC::jsUndefined(), arguments, exception);
-    if (exception) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        scope.throwException(globalObject, exception);
-        return JSC::JSValue::encode(JSC::jsNull());
-    }
-
-    return JSC::JSValue::encode(result);
+    return invokeFFICallback(wrapper.globalObject.get(), wrapper.m_function.get(), arguments);
 }
 
 extern "C" JSC::EncodedJSValue
 FFI_Callback_call_2(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
-    auto* function = wrapper.m_function.get();
-    auto* globalObject = wrapper.globalObject.get();
-    auto& vm = JSC::getVM(globalObject);
-
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(JSC::JSValue::decode(args[0]));
     arguments.append(JSC::JSValue::decode(args[1]));
-
-    WTF::NakedPtr<JSC::Exception> exception;
-    auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, function, JSC::getCallData(function), JSC::jsUndefined(), arguments, exception);
-    if (exception) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        scope.throwException(globalObject, exception);
-        return JSC::JSValue::encode(JSC::jsNull());
-    }
-
-    return JSC::JSValue::encode(result);
+    return invokeFFICallback(wrapper.globalObject.get(), wrapper.m_function.get(), arguments);
 }
 
 extern "C" JSC::EncodedJSValue FFI_Callback_call_3(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
-    auto* function = wrapper.m_function.get();
-    auto* globalObject = wrapper.globalObject.get();
-    auto& vm = JSC::getVM(globalObject);
-
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(JSC::JSValue::decode(args[0]));
     arguments.append(JSC::JSValue::decode(args[1]));
     arguments.append(JSC::JSValue::decode(args[2]));
-
-    WTF::NakedPtr<JSC::Exception> exception;
-    auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, function, JSC::getCallData(function), JSC::jsUndefined(), arguments, exception);
-    if (exception) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        scope.throwException(globalObject, exception);
-        return JSC::JSValue::encode(JSC::jsNull());
-    }
-
-    return JSC::JSValue::encode(result);
+    return invokeFFICallback(wrapper.globalObject.get(), wrapper.m_function.get(), arguments);
 }
 
 extern "C" JSC::EncodedJSValue FFI_Callback_call_4(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
-    auto* function = wrapper.m_function.get();
-    auto* globalObject = wrapper.globalObject.get();
-    auto& vm = JSC::getVM(globalObject);
-
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(JSC::JSValue::decode(args[0]));
     arguments.append(JSC::JSValue::decode(args[1]));
     arguments.append(JSC::JSValue::decode(args[2]));
     arguments.append(JSC::JSValue::decode(args[3]));
-
-    WTF::NakedPtr<JSC::Exception> exception;
-    auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, function, JSC::getCallData(function), JSC::jsUndefined(), arguments, exception);
-    if (exception) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        scope.throwException(globalObject, exception);
-        return JSC::JSValue::encode(JSC::jsNull());
-    }
-
-    return JSC::JSValue::encode(result);
+    return invokeFFICallback(wrapper.globalObject.get(), wrapper.m_function.get(), arguments);
 }
 
 extern "C" JSC::EncodedJSValue FFI_Callback_call_5(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
-    auto* function = wrapper.m_function.get();
-    auto* globalObject = wrapper.globalObject.get();
-    auto& vm = JSC::getVM(globalObject);
-
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(JSC::JSValue::decode(args[0]));
     arguments.append(JSC::JSValue::decode(args[1]));
     arguments.append(JSC::JSValue::decode(args[2]));
     arguments.append(JSC::JSValue::decode(args[3]));
     arguments.append(JSC::JSValue::decode(args[4]));
-
-    WTF::NakedPtr<JSC::Exception> exception;
-    auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, function, JSC::getCallData(function), JSC::jsUndefined(), arguments, exception);
-    if (exception) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        scope.throwException(globalObject, exception);
-        return JSC::JSValue::encode(JSC::jsNull());
-    }
-
-    return JSC::JSValue::encode(result);
+    return invokeFFICallback(wrapper.globalObject.get(), wrapper.m_function.get(), arguments);
 }
 
 extern "C" JSC::EncodedJSValue
 FFI_Callback_call_6(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
-    auto* function = wrapper.m_function.get();
-    auto* globalObject = wrapper.globalObject.get();
-    auto& vm = JSC::getVM(globalObject);
-
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(JSC::JSValue::decode(args[0]));
     arguments.append(JSC::JSValue::decode(args[1]));
@@ -375,25 +286,12 @@ FFI_Callback_call_6(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::E
     arguments.append(JSC::JSValue::decode(args[3]));
     arguments.append(JSC::JSValue::decode(args[4]));
     arguments.append(JSC::JSValue::decode(args[5]));
-
-    WTF::NakedPtr<JSC::Exception> exception;
-    auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, function, JSC::getCallData(function), JSC::jsUndefined(), arguments, exception);
-    if (exception) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        scope.throwException(globalObject, exception);
-        return JSC::JSValue::encode(JSC::jsNull());
-    }
-
-    return JSC::JSValue::encode(result);
+    return invokeFFICallback(wrapper.globalObject.get(), wrapper.m_function.get(), arguments);
 }
 
 extern "C" JSC::EncodedJSValue
 FFI_Callback_call_7(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
-    auto* function = wrapper.m_function.get();
-    auto* globalObject = wrapper.globalObject.get();
-    auto& vm = JSC::getVM(globalObject);
-
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(JSC::JSValue::decode(args[0]));
     arguments.append(JSC::JSValue::decode(args[1]));
@@ -402,14 +300,5 @@ FFI_Callback_call_7(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::E
     arguments.append(JSC::JSValue::decode(args[4]));
     arguments.append(JSC::JSValue::decode(args[5]));
     arguments.append(JSC::JSValue::decode(args[6]));
-
-    WTF::NakedPtr<JSC::Exception> exception;
-    auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, function, JSC::getCallData(function), JSC::jsUndefined(), arguments, exception);
-    if (exception) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        scope.throwException(globalObject, exception);
-        return JSC::JSValue::encode(JSC::jsNull());
-    }
-
-    return JSC::JSValue::encode(result);
+    return invokeFFICallback(wrapper.globalObject.get(), wrapper.m_function.get(), arguments);
 }

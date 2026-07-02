@@ -84,6 +84,33 @@ describe("Bun.markdown.render", () => {
     expect(result).toBe('<img src="image.png" alt="alt text" />');
   });
 
+  test("link callback with href/title from reference-style link", () => {
+    const md = '[click here][ref]\n\n[ref]: https://example.com/path "the title"\n';
+    const result = Markdown.render(md, {
+      link: (children: string, { href, title }: any) => `<a href="${href}" title="${title}">${children}</a>`,
+      paragraph: (children: string) => children,
+    });
+    expect(result).toBe('<a href="https://example.com/path" title="the title">click here</a>');
+  });
+
+  test("link callback with href from shortcut reference link", () => {
+    const md = "[ref]\n\n[ref]: https://example.com/path\n";
+    const result = Markdown.render(md, {
+      link: (children: string, { href }: any) => `<a href="${href}">${children}</a>`,
+      paragraph: (children: string) => children,
+    });
+    expect(result).toBe('<a href="https://example.com/path">ref</a>');
+  });
+
+  test("image callback with src/title from reference-style image", () => {
+    const md = '![alt text][ref]\n\n[ref]: https://example.com/img.png "the title"\n';
+    const result = Markdown.render(md, {
+      image: (children: string, { src, title }: any) => `<img src="${src}" title="${title}" alt="${children}" />`,
+      paragraph: (children: string) => children,
+    });
+    expect(result).toBe('<img src="https://example.com/img.png" title="the title" alt="alt text" />');
+  });
+
   test("code block callback with language metadata", () => {
     const result = Markdown.render("```js\nconsole.log('hi');\n```\n", {
       code: (children: string, meta: any) => `<pre lang="${meta?.language}">${children}</pre>`,
@@ -378,5 +405,25 @@ describe("Bun.markdown.render", () => {
       paragraph: (children: string) => children,
     });
     expect(result).toBe("&");
+  });
+});
+
+describe("Bun.markdown buffer input", () => {
+  test("the input buffer stays attached while a callback runs and is released after", () => {
+    const input = new TextEncoder().encode("# Hello\n\nworld\n");
+    let detachedDuringRender: boolean | null = null;
+    const result = Markdown.render(input, {
+      heading: (children: string) => {
+        input.buffer.transfer();
+        detachedDuringRender = (input.buffer as ArrayBuffer).detached;
+        return `<h1>${children}</h1>`;
+      },
+      paragraph: (children: string) => `<p>${children}</p>`,
+    });
+    expect(detachedDuringRender).toBe(false);
+    expect(result).toBe("<h1>Hello</h1><p>world</p>");
+
+    input.buffer.transfer();
+    expect((input.buffer as ArrayBuffer).detached).toBe(true);
   });
 });

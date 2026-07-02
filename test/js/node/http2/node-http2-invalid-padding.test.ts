@@ -211,3 +211,107 @@ test("should not drop trailing data byte from padded DATA frame split across rea
     close();
   }
 });
+
+test("should zero-fill padding octets in padded DATA frames sent by the client", async () => {
+  // RFC 7540 Section 6.1: "Padding octets MUST be set to zero when sending."
+  // Padded DATA frames are assembled in a shared scratch buffer before being
+  // written to the socket; the bytes after the payload must be zeroed rather
+  // than left with whatever a previous frame stored in that buffer.
+  const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers<void>();
+  const { promise: firstBodySent, resolve: firstBodyDone } = Promise.withResolvers<void>();
+  const { promise: secondBodySent, resolve: secondBodyDone } = Promise.withResolvers<void>();
+
+  type CapturedDataFrame = { streamId: number; padded: boolean; padLength: number; data: Buffer; padding: Buffer };
+  const dataFrames: CapturedDataFrame[] = [];
+  const bytesPerStream = new Map<number, number>();
+  let firstStreamId = -1;
+
+  const firstBody = Buffer.alloc(2048, 0x41); // 2048 x "A"
+  const secondBody = Buffer.from("XYZ");
+
+  let received = Buffer.alloc(0);
+  let sawPreface = false;
+
+  const server = net.createServer(socket => {
+    socket.on("error", () => {});
+    socket.setNoDelay(true);
+    // Acknowledge the client's SETTINGS so the session emits `connect`.
+    socket.write(new http2utils.SettingsFrame(true).data);
+    socket.on("data", chunk => {
+      received = Buffer.concat([received, chunk]);
+      if (!sawPreface) {
+        if (received.length < http2utils.kClientMagic.length) return;
+        received = received.subarray(http2utils.kClientMagic.length);
+        sawPreface = true;
+      }
+      // Parse complete frames out of the accumulated bytes (frames may span
+      // or share TCP reads).
+      while (received.length >= 9) {
+        const length = (received[0] << 16) | (received[1] << 8) | received[2];
+        if (received.length < 9 + length) break;
+        const type = received[3];
+        const flags = received[4];
+        const streamId = received.readUInt32BE(5) & 0x7fffffff;
+        const payload = received.subarray(9, 9 + length);
+        received = received.subarray(9 + length);
+        if (type !== 0) continue; // only DATA frames carry the padding under test
+        const padded = (flags & 0x8) !== 0;
+        const padLength = padded ? payload[0] : 0;
+        const data = Buffer.from(padded ? payload.subarray(1, payload.length - padLength) : payload);
+        const padding = Buffer.from(padded ? payload.subarray(payload.length - padLength) : Buffer.alloc(0));
+        dataFrames.push({ streamId, padded, padLength, data, padding });
+        if (firstStreamId === -1) firstStreamId = streamId;
+        const total = (bytesPerStream.get(streamId) ?? 0) + data.length;
+        bytesPerStream.set(streamId, total);
+        if (streamId === firstStreamId && total >= firstBody.length) firstBodyDone();
+        if (streamId !== firstStreamId && total >= secondBody.length) secondBodyDone();
+      }
+    });
+  });
+  server.listen(0, "127.0.0.1", () => serverResolve());
+  await serverListening;
+
+  const url = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
+  const client = http2.connect(url);
+  client.on("error", () => {});
+  try {
+    await new Promise<void>(resolve => client.on("connect", () => resolve()));
+
+    const requestOptions = { paddingStrategy: http2.constants.PADDING_STRATEGY_MAX };
+
+    // First request: a longer body, so the scratch buffer used to assemble
+    // padded DATA frames has held known payload bytes well past the region
+    // the next (shorter) frame's padding will occupy.
+    const req1 = client.request({ ":path": "/first", ":method": "POST" }, requestOptions);
+    req1.on("error", () => {});
+    req1.end(firstBody);
+    await firstBodySent;
+
+    // Second request: a much shorter body whose padding region overlaps the
+    // buffer offsets the first request's payload occupied.
+    const req2 = client.request({ ":path": "/second", ":method": "POST" }, requestOptions);
+    req2.on("error", () => {});
+    req2.end(secondBody);
+    await secondBodySent;
+
+    // The short body must actually have been transmitted in at least one
+    // padded DATA frame, otherwise the padding path was never exercised.
+    const secondStreamFrames = dataFrames.filter(f => f.streamId !== firstStreamId);
+    expect(secondStreamFrames.length).toBeGreaterThan(0);
+    expect(secondStreamFrames.some(f => f.padded && f.padLength > 0)).toBe(true);
+
+    // Payload bytes are transmitted intact for both requests.
+    expect(Buffer.concat(secondStreamFrames.map(f => f.data)).toString("latin1")).toBe("XYZ");
+    const firstStreamData = Buffer.concat(dataFrames.filter(f => f.streamId === firstStreamId).map(f => f.data));
+    expect(firstStreamData.equals(firstBody)).toBe(true);
+
+    // RFC 7540 Section 6.1: every padding octet on the wire must be zero —
+    // none of them may carry bytes from previously transmitted payloads.
+    for (const frame of dataFrames) {
+      expect(Array.from(frame.padding).every(byte => byte === 0)).toBe(true);
+    }
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});

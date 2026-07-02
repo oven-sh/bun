@@ -1,7 +1,6 @@
 use core::ptr::NonNull;
 
-/// Zig: `packed struct(u32) { reference_count: u31, finalized: bool }`
-/// First field occupies the low bits, so:
+/// Bit layout:
 ///   bits 0..=30 → reference_count
 ///   bit  31     → finalized
 #[repr(transparent)]
@@ -55,10 +54,8 @@ impl Default for WeakPtrData {
 /// Implemented by types that embed a `WeakPtrData` field and can be weakly
 /// referenced via `WeakPtr<T>`.
 ///
-/// Zig expressed this as `WeakPtr(comptime T: type, data_field: []const u8)`
-/// and used `@field(value, data_field)` to reach the embedded data. Rust has
-/// no comptime field-name reflection, so the field projection becomes a trait
-/// method (typically implemented via `core::mem::offset_of!`).
+/// The field projection is a trait method (typically implemented via
+/// `core::mem::offset_of!`).
 pub trait HasWeakPtrData {
     /// Return a pointer to the embedded `WeakPtrData` field on `this`.
     ///
@@ -75,14 +72,12 @@ pub trait HasWeakPtrData {
 /// `WeakPtr`s are released. Even if the allocation is present, `WeakPtr<T>::get`
 /// will return `None` after the inner contents are freed.
 pub struct WeakPtr<T: HasWeakPtrData> {
-    // PORT NOTE: LIFETIMES.tsv classifies this field as SHARED → `Weak<T>`,
-    // but this file *is* the definition of the intrusive weak pointer; per
-    // PORTING.md §Pointers ("keep as `*mut T` + manual ref/deref over an
-    // embedded `WeakPtrData`"), the field stays a raw pointer.
+    // Intentionally a raw pointer, not `std::sync::Weak<T>`: this file *is*
+    // the definition of the intrusive weak pointer, with liveness tracked by
+    // the embedded `WeakPtrData` and manual ref/deref.
     raw_ptr: Option<NonNull<T>>,
 }
 
-// Zig's `WeakPtr.Data` — inherent assoc types unstable; expose at module level.
 pub type Data = WeakPtrData;
 
 impl<T: HasWeakPtrData> WeakPtr<T> {
@@ -130,8 +125,7 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
         let count = weak_data.reference_count() - 1;
         weak_data.set_reference_count(count);
         if weak_data.finalized() && count == 0 {
-            // Zig: `bun.destroy(value)` — the allocation came from
-            // `bun.new(T, ...)` (i.e. `Box::new` + `heap::alloc`).
+            // The allocation came from `heap::alloc` (via `Box::new`).
             // SAFETY: this is the last reference and the owner has finalized,
             // so we hold the only pointer to a `Box`-allocated `T`.
             drop(unsafe { bun_core::heap::take(value.as_ptr()) });
@@ -144,5 +138,3 @@ impl<T: HasWeakPtrData> Default for WeakPtr<T> {
         Self::EMPTY
     }
 }
-
-// ported from: src/ptr/weak_ptr.zig

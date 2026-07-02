@@ -24,6 +24,9 @@
 #include "ErrorStackTrace.h"
 #include "headers-handwritten.h"
 
+#include <wtf/Scope.h>
+#include <wtf/Threading.h>
+
 using namespace JSC;
 using namespace WebCore;
 
@@ -236,7 +239,7 @@ WTF::String formatStackTrace(
     sb.append("\n"_s);
 
     // Pass 1: collect (line, col, source_url) for frames that should be
-    // source-mapped, then batch the remap so the Zig side can resolve each
+    // source-mapped, then batch the remap so the Rust side can resolve each
     // file's map once instead of per frame.
     WTF::Vector<ZigStackFrame, 8> remappedFrames;
     WTF::Vector<WTF::String, 8> sourceURLs;
@@ -250,7 +253,7 @@ WTF::String formatStackTrace(
     for (size_t i = 0; i < framesCount; i++) {
         StackFrame& frame = stackTrace.at(i);
         ZigStackFrame& remappedFrame = remappedFrames[i];
-        // Match `ZigStackFramePosition.invalid` exactly so the Zig batch loop's
+        // Match `ZigStackFramePosition::INVALID` exactly so the Rust batch loop's
         // `position.isInvalid()` skips frames we never populate (vm-context
         // frames, frames without line/col info). memset alone leaves
         // `line_start_byte = 0` which fails that byte-compare.
@@ -576,6 +579,22 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
 {
     UNUSED_PARAM(bunErrorData);
 
+    // ErrorInstance::finalizeUnconditionally calls this from Heap::runEndPhase, which nulls
+    // the current thread's atom string table and runs on whichever thread conducts the GC.
+    // Releasing the last ref of an atom string there crashes in AtomStringImpl::remove(),
+    // so install the VM's table for the duration; the mutator is suspended for the whole
+    // end phase, so this is race-free (same as JSLock::didAcquireLock).
+    // https://github.com/oven-sh/bun/issues/17087
+    auto& thread = WTF::Thread::currentSingleton();
+    WTF::AtomStringTable* previousAtomStringTable = thread.atomStringTable();
+    bool needsVMAtomStringTable = previousAtomStringTable != vm.atomStringTable();
+    if (needsVMAtomStringTable) [[unlikely]]
+        thread.setCurrentAtomStringTable(vm.atomStringTable());
+    auto restoreAtomStringTable = WTF::makeScopeExit([&] {
+        if (needsVMAtomStringTable)
+            thread.setCurrentAtomStringTable(previousAtomStringTable);
+    });
+
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
 
@@ -701,8 +720,20 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
         WTF::Vector<JSC::StackFrame> emptyTrace;
         result = computeErrorInfoToJSValue(vm, emptyTrace, line, column, sourceURL, errorObject, nullptr);
     } else {
-        result = computeErrorInfoToJSValue(vm, *stackTrace, line, column, sourceURL, errorObject, nullptr);
-        stackTrace->clear();
+        auto ownedStackTrace = makeUnique<WTF::Vector<JSC::StackFrame>>(WTF::move(*stackTrace));
+        JSC::MarkedArgumentBuffer protectedFrameCells;
+        protectedFrameCells.ensureCapacity(ownedStackTrace->size() * 2);
+        for (auto& frame : *ownedStackTrace) {
+            if (auto* callee = frame.callee())
+                protectedFrameCells.append(callee);
+            if (auto* codeBlock = frame.codeBlock())
+                protectedFrameCells.append(codeBlock);
+        }
+        if (protectedFrameCells.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+        result = computeErrorInfoToJSValue(vm, *ownedStackTrace, line, column, sourceURL, errorObject, nullptr);
         errorObject->setStackFrames(vm, {});
     }
     RETURN_IF_EXCEPTION(scope, {});

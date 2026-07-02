@@ -294,6 +294,14 @@ size_t simdutf__utf8_length_from_utf16le(const char16_t* input, size_t length)
     return simdutf::utf8_length_from_utf16le(input, length);
 }
 
+// Unlike the non-validating variant above, this charges 3 bytes (U+FFFD) per
+// unpaired surrogate, matching the replacement encoder's output. `.count` is
+// documented to be correct even when `.error` is SURROGATE.
+size_t simdutf__utf8_length_from_utf16le_with_replacement(const char16_t* input, size_t length)
+{
+    return simdutf::utf8_length_from_utf16le_with_replacement(input, length).count;
+}
+
 size_t simdutf__utf8_length_from_utf16be(const char16_t* input, size_t length)
 {
     return simdutf::utf8_length_from_utf16be(input, length);
@@ -360,6 +368,25 @@ SIMDUTFResult simdutf__base64_decode_from_binary16(const char16_t* input, size_t
 {
     size_t outlen = outlen_;
     auto res = simdutf::base64_to_binary_safe(input, length, output, outlen, is_urlsafe ? simdutf::base64_url : simdutf::base64_default);
+
+    if (res.error == simdutf::error_code::SUCCESS) {
+        return { .error = 0, .count = outlen };
+    }
+
+    return { .error = res.error, .count = res.count };
+}
+
+// Lenient base64 decoding for Node.js Buffer semantics ("base64" and
+// "base64url"): both the standard and URL-safe alphabets are accepted,
+// whitespace and any other non-alphabet characters are skipped, and decoding
+// stops at the first '='. This is simdutf's base64_default_or_url_accept_garbage
+// mode combined with loose handling of the final chunk.
+SIMDUTFResult simdutf__base64_decode_from_binary_lenient(const char* input, size_t length, char* output, size_t outlen_)
+{
+    size_t outlen = outlen_;
+    auto res = simdutf::base64_to_binary_safe(input, length, output, outlen,
+        simdutf::base64_default_or_url_accept_garbage,
+        simdutf::last_chunk_handling_options::loose);
 
     if (res.error == simdutf::error_code::SUCCESS) {
         return { .error = 0, .count = outlen };

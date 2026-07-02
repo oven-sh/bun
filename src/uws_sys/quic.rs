@@ -1,7 +1,7 @@
 //! Rust bindings for the lsquic-backed QUIC transport in
 //! `packages/bun-usockets/src/quic.{c,h}`. One opaque per C handle; the
 //! HTTP/3 server uses these via the C++ uWS layer (`uws.H3`), the HTTP/3
-//! fetch client (`src/http/H3Client.zig`) uses them directly.
+//! fetch client (`src/http/H3Client.rs`) uses them directly.
 //!
 //! Lifetimes: a `Context` outlives every `Socket` on it; a `Socket`
 //! outlives every `Stream` on it. `Socket`/`Stream` pointers are valid
@@ -29,12 +29,10 @@ pub use self::header::Qpack;
 
 unsafe extern "C" {
     // safe: no args; idempotent C-side initialization with no preconditions.
-    pub safe fn us_quic_global_init();
+    pub(crate) safe fn us_quic_global_init();
 }
 
 #[inline]
 pub fn global_init() {
     us_quic_global_init()
 }
-
-// ported from: src/uws_sys/quic.zig

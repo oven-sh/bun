@@ -8,8 +8,8 @@ use crate::{read_struct, write_struct};
 
 use bun_core::env_var::feature_flag;
 
-pub const SEGNAME_BUN: [u8; 16] = *b"__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
-pub const SECTNAME: [u8; 16] = *b"__bun\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+pub(crate) const SEGNAME_BUN: [u8; 16] = *b"__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+pub(crate) const SECTNAME: [u8; 16] = *b"__bun\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
 pub enum MachoError {
@@ -40,8 +40,7 @@ pub struct MachoFile {
     pub section: macho::section_64,
 }
 
-/// Port of Zig `Shifter.shift(value, comptime fields)` — `inline for` + `@field` over a
-/// comptime field-name list. Expands to one `shift_one` call per named field.
+/// Expands to one `shift_one` call per named field.
 macro_rules! shift_fields {
     ($shifter:expr, $value:expr, $($field:ident),+ $(,)?) => {{
         $( $shifter.shift_one(&mut $value.$field)?; )+
@@ -71,8 +70,6 @@ impl MachoFile {
         }))
     }
 
-    // Zig `deinit` only frees `data` and destroys self — both handled by Drop on Vec/Box.
-
     pub fn write_section(&mut self, data: &[u8]) -> Result<(), MachoError> {
         let blob_alignment: u64 = 16 * 1024;
         const PAGE_SIZE: u64 = 1 << 12;
@@ -94,7 +91,7 @@ impl MachoFile {
 
         let mut found_bun = false;
 
-        // PORT NOTE: reshaped for borrowck — capture base ptr as usize before iterating so we can
+        // reshaped for borrowck — capture base ptr as usize before iterating so we can
         // compute byte offsets without holding a borrow of self.data across the mutable writes below.
         let base_addr = self.data.as_ptr() as usize;
         let mut iter = self.iterator();
@@ -131,7 +128,10 @@ impl MachoFile {
                                     found_bun = true;
                                     original_fileoff = sect.offset as u64;
                                     let original_vmaddr = sect.addr;
-                                    original_data_end = command.fileoff + command.filesize;
+                                    original_data_end = command
+                                        .fileoff
+                                        .checked_add(command.filesize)
+                                        .ok_or(MachoError::OffsetOverflow)?;
                                     original_segsize = command.filesize;
                                     self.segment = command;
                                     self.section = sect;
@@ -207,6 +207,15 @@ impl MachoFile {
         let mut sig_size: usize = 0;
 
         let prev_len = self.data.len();
+        let original_bun_end = usize::try_from(original_fileoff)
+            .ok()
+            .and_then(|off| off.checked_add(usize::try_from(original_segsize).ok()?))
+            .ok_or(MachoError::OffsetOverflow)?;
+        let original_data_end =
+            usize::try_from(original_data_end).map_err(|_| MachoError::OffsetOverflow)?;
+        if original_bun_end > prev_len || original_data_end > original_bun_end {
+            return Err(MachoError::OffsetOutOfRange);
+        }
         // SAFETY: we just reserved `size_diff` bytes; new_len <= capacity. The newly-exposed bytes
         // are written below before being read (memmove + memset cover the whole range).
         unsafe {
@@ -217,19 +226,17 @@ impl MachoFile {
         // Binary is:
         // [header][...data before __BUN][__BUN][...data after __BUN]
         // We need to shift [...data after __BUN] forward by size_diff bytes.
-        // SAFETY: source and destination overlap; ptr::copy (memmove) handles this. Ranges are
-        // within self.data per the offset arithmetic above.
+        // SAFETY: source and destination overlap; ptr::copy (memmove) handles this.
+        // `original_bun_end <= prev_len` and `original_data_end <= original_bun_end` were
+        // checked above, so the source range stays within the previously-initialized bytes
+        // and the destination range stays within the new length `prev_len + size_diff`.
         unsafe {
             let after_bun_dst = self
                 .data
                 .as_mut_ptr()
-                .add((original_data_end as usize) + usize::try_from(size_diff).expect("int cast"));
-            let prev_after_bun_src = self
-                .data
-                .as_ptr()
-                .add(original_fileoff as usize + original_segsize as usize);
-            let prev_after_bun_len =
-                prev_len - (original_fileoff as usize + original_segsize as usize);
+                .add(original_data_end + usize::try_from(size_diff).expect("int cast"));
+            let prev_after_bun_src = self.data.as_ptr().add(original_bun_end);
+            let prev_after_bun_len = prev_len - original_bun_end;
             core::ptr::copy(prev_after_bun_src, after_bun_dst, prev_after_bun_len);
         }
 
@@ -463,8 +470,6 @@ impl MachoFile {
     }
 
     pub fn build(&self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
-        // PORT NOTE: Zig used `writer: anytype`; std::io::Write is the canonical
-        // Rust equivalent (bun_io has no Write trait).
         writer.write_all(&self.data)?;
         Ok(())
     }
@@ -488,8 +493,10 @@ impl MachoFile {
         Ok(())
     }
 
+    // Returns `bun_core::Error` (the repo-wide union type) rather than a bespoke
+    // `MachoError | io::Error` enum: `From<MachoError>` routes through
+    // `Error::from_name`, so variant names survive into the caller's `e.name()`.
     pub fn build_and_sign(&self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         if self.header.cputype == macho::CPU_TYPE_ARM64
             && feature_flag::BUN_NO_CODESIGN_MACHO_BINARY.get() != Some(true)
         {
@@ -544,7 +551,7 @@ impl Shifter {
     }
 }
 
-pub struct MachoSigner {
+pub(crate) struct MachoSigner {
     data: Vec<u8>,
     sig_off: usize,
     linkedit_seg: macho::segment_command_64,
@@ -552,7 +559,7 @@ pub struct MachoSigner {
 }
 
 impl MachoSigner {
-    pub fn init(obj: &[u8]) -> Result<Box<MachoSigner>, MachoError> {
+    pub(crate) fn init(obj: &[u8]) -> Result<Box<MachoSigner>, MachoError> {
         let header_size = size_of::<macho::mach_header_64>();
         let header: macho::mach_header_64 = read_struct(&obj[..header_size]);
 
@@ -631,8 +638,6 @@ impl MachoSigner {
         }))
     }
 
-    // Zig `deinit` only frees `data` and destroys self — both handled by Drop on Vec/Box.
-
     const IDENTIFIER: &'static [u8] = b"a.out\x00";
     const SIGNATURE_PAGE_SIZE: usize = 1 << 12;
     const SIGNATURE_HASH_SIZE: usize = 32; // SHA256 = 32 bytes
@@ -642,7 +647,7 @@ impl MachoSigner {
     /// hashes). `writeSection` uses this to size `linkedit_seg.filesize` and
     /// the `LC_CODE_SIGNATURE.datasize` so the signer's output fits exactly
     /// inside __LINKEDIT.
-    pub fn compute_signature_size(sig_off: u64) -> usize {
+    pub(crate) fn compute_signature_size(sig_off: u64) -> usize {
         let total_pages: usize =
             usize::try_from(sig_off.div_ceil(Self::SIGNATURE_PAGE_SIZE as u64)).unwrap();
         let super_blob_header_size = size_of::<SuperBlob>();
@@ -654,8 +659,8 @@ impl MachoSigner {
         super_blob_header_size + blob_index_size + code_dir_length
     }
 
-    pub fn sign(&mut self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    // `bun_core::Error` union return — see the note on `build_and_sign`.
+    pub(crate) fn sign(&mut self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
         const PAGE_SIZE: usize = MachoSigner::SIGNATURE_PAGE_SIZE;
         const HASH_SIZE: usize = MachoSigner::SIGNATURE_HASH_SIZE;
 
@@ -729,8 +734,7 @@ impl MachoSigner {
             b.write(0);
         }
 
-        // Position writer at signature offset
-        // (Zig used `self.data.writer()`; here we extend the Vec directly.)
+        // Position writer at signature offset; extend the Vec directly.
 
         // Write signature components — SuperBlob / BlobIndex / CodeDirectory are
         // `NoUninit` (#[repr(C)] POD, no padding); byte-serialized verbatim into
@@ -741,7 +745,7 @@ impl MachoSigner {
         self.data.extend_from_slice(id);
 
         // Hash and write pages
-        // PORT NOTE: reshaped for borrowck — index instead of slicing self.data while pushing.
+        // reshaped for borrowck — index instead of slicing self.data while pushing.
         let mut off: usize = 0;
         let end = self.sig_off;
         while end - off >= PAGE_SIZE {
@@ -797,25 +801,6 @@ fn align_vmsize(size: u64, page_size: u64) -> u64 {
 
 const SEG_LINKEDIT: &[u8] = b"__LINKEDIT";
 
-pub mod utils {
-    use super::macho;
-
-    pub fn is_elf(data: &[u8]) -> bool {
-        if data.len() < 4 {
-            return false;
-        }
-        u32::from_be_bytes(data[0..4].try_into().expect("infallible: size matches")) == 0x7f454c46
-    }
-
-    pub fn is_macho(data: &[u8]) -> bool {
-        if data.len() < 4 {
-            return false;
-        }
-        u32::from_le_bytes(data[0..4].try_into().expect("infallible: size matches"))
-            == macho::MH_MAGIC_64
-    }
-}
-
 const CSMAGIC_CODEDIRECTORY: u32 = 0xfade0c02;
 const CSMAGIC_EMBEDDED_SIGNATURE: u32 = 0xfade0cc0;
 const CSSLOT_CODEDIRECTORY: u32 = 0;
@@ -828,5 +813,3 @@ fn sha256_hash(bytes: &[u8], out: &mut [u8; 32]) {
     // SAFETY: engine is null (default).
     unsafe { bun_sha_hmac::sha::SHA256::hash(bytes, out, core::ptr::null_mut()) };
 }
-
-// ported from: src/exe_format/macho.zig

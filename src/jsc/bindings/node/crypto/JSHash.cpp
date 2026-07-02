@@ -46,6 +46,18 @@ void JSHash::finishCreation(JSC::VM& vm)
     Base::finishCreation(vm);
 }
 
+template<typename Visitor>
+void JSHash::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSHash* thisObject = uncheckedDowncast<JSHash>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.reportExtraMemoryVisited(thisObject->m_sizeForGC);
+}
+
+DEFINE_VISIT_CHILDREN(JSHash);
+
 template<typename, JSC::SubspaceAccess mode>
 JSC::GCClient::IsoSubspace* JSHash::subspaceFor(JSC::VM& vm)
 {
@@ -94,6 +106,9 @@ bool JSHash::init(JSC::JSGlobalObject* globalObject, ThrowScope& scope, const EV
         m_mdLen = xofLen.value();
     }
 
+    m_sizeForGC = sizeof(EVP_MD_CTX) + m_mdLen;
+    globalObject->vm().heap.reportExtraMemoryAllocated(this, m_sizeForGC);
+
     return true;
 }
 
@@ -106,9 +121,16 @@ bool JSHash::initZig(JSGlobalObject* globalObject, ThrowScope& scope, ExternZigH
         return false;
     }
 
-    if (xofLen.has_value()) {
+    if (xofLen.has_value() && xofLen.value() != m_mdLen) {
+        if (!ExternZigHash::isXof(hasher)) {
+            EVPerr(EVP_F_EVP_DIGESTFINALXOF, EVP_R_NOT_XOF_OR_INVALID_LENGTH);
+            return false;
+        }
         m_mdLen = xofLen.value();
     }
+
+    m_sizeForGC = m_mdLen;
+    globalObject->vm().heap.reportExtraMemoryAllocated(this, m_sizeForGC);
 
     return true;
 }
@@ -357,7 +379,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
 
     if (zigHasher) {
         if (!hash->initZig(globalObject, scope, zigHasher, xofLen)) {
-            throwCryptoError(globalObject, scope, 0, "Digest method not supported"_s);
+            throwCryptoError(globalObject, scope, ERR_get_error(), "Digest method not supported"_s);
             return {};
         }
         return JSValue::encode(hash);

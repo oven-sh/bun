@@ -80,7 +80,6 @@ impl PendingConnect {
     pub unsafe fn on_dns_resolved(this: *mut PendingConnect) {
         // SAFETY: `this` was heap-allocated in `register`; reclaim it so the Box drops at
         // end of scope — `Drop` derefs `session` and the allocation is freed.
-        // (Zig: defer { session.deref(); bun.destroy(this); })
         let this = unsafe { bun_core::heap::take(this) };
         let session = this.session;
 
@@ -159,7 +158,6 @@ impl PendingConnect {
                 super::client_session::client_mut(cl).fail_from_h2(err);
             }
         }
-        // Zig .monotonic == LLVM monotonic == Rust Relaxed
         let _ = super::LIVE_SESSIONS.fetch_sub(1, Ordering::Relaxed);
         // SAFETY: `s` refers to a live heap-allocated ClientSession (caller holds
         // an intrusive ref for the duration); this drops the connection-alive ref.
@@ -188,5 +186,3 @@ unsafe impl Send for Resolved {}
 /// dedicated `Sync` static sidesteps that without weakening the singleton
 /// accessor's `&mut` contract.
 static RESOLVED: Guarded<Vec<Resolved>> = Guarded::new(Vec::new());
-
-// ported from: src/http/h3_client/PendingConnect.zig

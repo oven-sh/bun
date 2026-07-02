@@ -13,9 +13,7 @@ use super::node_assert;
 /// declare function myersDiff(actual: string, expected: string): Diff[];
 /// ```
 #[bun_jsc::host_fn]
-pub fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // PERF(port): was stack-fallback (2KB) + ArenaAllocator bulk-free.
-
+pub(crate) fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let nargs = frame.arguments_count();
     if nargs < 2 {
         return Err(global.throw_not_enough_arguments("printMyersDiff", 2, nargs as usize));
@@ -74,5 +72,3 @@ pub fn generate(global: &JSGlobalObject) -> JSValue {
 
     exports
 }
-
-// ported from: src/runtime/node/node_assert_binding.zig

@@ -8,9 +8,8 @@ use bun_sys::{Fd, FdExt};
 
 use crate::{JSGlobalObject, JSValue, JsResult, RangeErrorOptions};
 
-/// Extension trait wiring `to_js` / `from_js` onto `bun_sys::Fd`.
-/// In Zig these are free functions re-exported onto `bun.FD` via the
-/// `*_jsc` alias; in Rust the `*_jsc` crate provides them as trait methods.
+/// Extension trait wiring `to_js` / `from_js` onto `bun_sys::Fd`;
+/// the `*_jsc` crate provides them as trait methods.
 pub trait FdJsc: Sized {
     fn from_js(value: JSValue) -> Option<Self>;
     fn from_js_validated(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Self>>;
@@ -88,9 +87,6 @@ impl FdJsc for Fd {
                     ..Default::default()
                 })
                 .to_error_instance(global);
-                // Zig: `return global.vm().throwError(global, err_instance) catch .zero;`
-                // — `throwError` always returns the error type, so `catch .zero`
-                // makes the expression evaluate to JSValue.zero.
                 let _ = global.vm().throw_error(global, err_instance);
                 return JSValue::ZERO;
             }
@@ -109,8 +105,6 @@ impl FdJsc for Fd {
         }
         #[cfg(windows)]
         {
-            // PORT NOTE: Zig accessed `any_fd.value.as_system` / `.as_uv` directly.
-            // `bun_core::Fd` exposes `kind()` / `native()` / `uv()` instead.
             return match self.kind() {
                 FdKind::System => JSValue::js_number_from_uint64(self.native() as u64),
                 FdKind::Uv => JSValue::js_number_from_int32(self.uv()),
@@ -122,5 +116,3 @@ impl FdJsc for Fd {
         }
     }
 }
-
-// ported from: src/sys_jsc/fd_jsc.zig

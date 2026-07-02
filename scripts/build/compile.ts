@@ -13,6 +13,7 @@ import { assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja, Rule } from "./ninja.ts";
 import { quote } from "./shell.ts";
+import { machoPostlinkCommand } from "./shims.ts";
 import { streamPath } from "./stream.ts";
 
 // ---------------------------------------------------------------------------
@@ -27,7 +28,9 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // Quote tool paths — ninja passes commands through cmd/sh; a space in a
   // toolchain path (e.g. "C:\Program Files\LLVM\bin\clang-cl.exe") would
   // split argv without quoting. quote() passes through safe paths unchanged.
-  const q = (p: string) => quote(p, cfg.windows);
+  // Quoting style follows the HOST shell (cmd vs sh) — the target decides
+  // the command *shape* (clang-cl vs clang flags) below.
+  const q = (p: string) => quote(p, cfg.host.os === "windows");
   const cc = q(cfg.cc);
   const cxx = q(cfg.cxx);
   const ar = q(cfg.ar);
@@ -149,11 +152,25 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // everything after passes verbatim to lld-link. Our ldflags are all
   // pure linker options (/STACK, /DEF, /OPT, /errorlimit, system libs)
   // that clang-cl's driver doesn't recognize.
+  //
+  // /clang:-B<dir of cfg.ld> pins WHICH lld-link `-fuse-ld=lld` resolves:
+  // -B program-prefix dirs are searched before the driver's own InstalledDir
+  // and PATH. Normally that's the same host-LLVM lld-link the driver would
+  // pick anyway; under cross-language LTO resolveConfig() swaps cfg.ld to
+  // rustc's gcc-ld/lld-link (newer LLVM, able to read rustc's bitcode), and
+  // this is what makes the link actually use it — clang-cl has no working
+  // --ld-path= spelling, and `-fuse-ld=<abs path>` mangles the path with the
+  // target triple.
+  //
+  // Darwin cross links append `&& macho-postlink $out ...` (the suffix is
+  // empty everywhere else): ninja runs the whole command through `sh -c`,
+  // so the fixup runs after the link succeeds and the declared output is
+  // already the final, patched, re-signed artifact. See shims.ts.
   const wrap = `${cfg.jsRuntime} ${q(streamPath)} link --console`;
   n.rule("link", {
     command: cfg.windows
-      ? `${wrap} ${cxx} /nologo -fuse-ld=lld @$out.rsp /Fe$out /link $ldflags`
-      : `${wrap} ${cxx} @$out.rsp $ldflags -o $out`,
+      ? `${wrap} ${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp /Fe$out /link $ldflags`
+      : `${wrap} ${cxx} @$out.rsp $ldflags -o $out${machoPostlinkCommand(cfg)}`,
     description: "link $out",
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
@@ -243,7 +260,10 @@ export function nasm(
 ): string {
   assert(extname(src) === ".asm", `nasm() expects .asm source, got: ${src}`);
   assert(cfg.nasm !== undefined, "nasm not found in toolchain", {
-    hint: "Install from https://nasm.us or `winget install NASM.NASM`",
+    hint:
+      cfg.host.os === "windows"
+        ? "Install from https://nasm.us or `winget install NASM.NASM`"
+        : "Install nasm from your distro (apt/dnf/brew install nasm) or https://nasm.us",
   });
   const out = objectPath(cfg, src);
   n.build({

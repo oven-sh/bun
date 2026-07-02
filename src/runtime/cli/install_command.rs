@@ -9,10 +9,10 @@ use crate::Cli;
 use crate::build_command::BuildCommand;
 use crate::command::ContextData;
 
-pub struct InstallCommand;
+pub(crate) struct InstallCommand;
 
 impl InstallCommand {
-    pub fn exec(ctx: &mut ContextData) -> Result<(), Error> {
+    pub(crate) fn exec(ctx: &mut ContextData) -> Result<(), Error> {
         match install(ctx) {
             Ok(()) => Ok(()),
             Err(e) => Self::handle_error(e),
@@ -25,7 +25,6 @@ impl InstallCommand {
     #[cold]
     #[inline(never)]
     fn handle_error(e: Error) -> Result<(), Error> {
-        // TODO(port): narrow error set
         if e == err!("InstallFailed") || e == err!("InvalidPackageJSON") {
             // SAFETY: `Cli::LOG_` is initialised once during single-threaded
             // startup in `Cli::start()` before any command (including this
@@ -45,7 +44,6 @@ impl InstallCommand {
 // the ~84 MB binary and get faulted in one page at a time.
 #[inline(never)]
 fn install(ctx: &mut ContextData) -> Result<(), Error> {
-    // TODO(port): narrow error set
     let mut cli = CommandLineArguments::parse(Subcommand::Install)?;
 
     // The way this works:
@@ -54,11 +52,9 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
     //    typing in the dependency names
     // 3. Run the install command
     if cli.analyze {
-        // PORT NOTE: hoisted from Zig fn-local `const Analyzer = struct {...}`.
-        // `ctx` is stored as a raw `*mut ContextData` (Zig `Command.Context` is
-        // `*ContextData` — a freely-aliasing pointer); the `on_fetch` callback
+        // `ctx` is stored as a raw `*mut ContextData`; the `on_fetch` callback
         // re-enters the install path while `BuildCommand::exec` still holds the
-        // global `Context`, so a Rust `&mut` here would be aliased UB.
+        // global `Context`, so a `&mut` here would be aliased UB.
         struct Analyzer {
             ctx: *mut ContextData,
             cli: *mut CommandLineArguments,
@@ -71,9 +67,8 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
                 let this = self;
                 // TODO: add separate argument that makes it so positionals[1..] is not done     and instead the positionals are passed
                 //
-                // Process-lifetime storage for the rewritten positionals.
-                // Zig: `bun.default_allocator.alloc(string, keys.len + 1)` with
-                // no matching free — `Global::exit(0)` follows immediately.
+                // Process-lifetime storage for the rewritten positionals —
+                // `Global::exit(0)` follows immediately.
                 // `OnceLock` (not leaking) per PORTING.md §Forbidden.
                 static OWNED_KEYS: std::sync::OnceLock<Vec<Box<[u8]>>> = std::sync::OnceLock::new();
                 static POSITIONALS: std::sync::OnceLock<Vec<&'static [u8]>> =
@@ -114,9 +109,9 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
             }
         }
 
-        // PORT NOTE: `DependenciesScanner.entry_points` is `Box<[Box<[u8]>]>`; Zig
-        // borrowed `cli.positionals[1..]` directly. Clone the argv slices into an
-        // owned buffer (small one-shot list — no perf concern). Captured *before*
+        // `DependenciesScanner.entry_points` is `Box<[Box<[u8]>]>`. Clone the
+        // argv slices into an owned buffer (small one-shot list — no perf
+        // concern). Captured *before*
         // raw-ptr aliasing of `cli` below so the access goes through the live
         // `&mut cli` borrow.
         let entry_points: Box<[Box<[u8]>]> = cli.positionals[1..]
@@ -125,8 +120,7 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
             .collect();
 
         // Derive raw pointers from the existing `&mut` borrows; all subsequent
-        // access to `ctx` / `cli` in this branch goes through these (Zig
-        // `Command.Context` is a freely-aliasing `*ContextData`).
+        // access to `ctx` / `cli` in this branch goes through these.
         let ctx_ptr: *mut ContextData = ctx;
         let mut analyzer = Analyzer {
             ctx: ctx_ptr,
@@ -135,7 +129,6 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
 
         let fetcher = DependenciesScanner::new(&mut analyzer, entry_points);
 
-        // Zig: `bun.cli.BuildCommand.exec(bun.cli.Command.get(), &fetcher)`.
         // `Command.get()` resolves to the same `*ContextData` already held in
         // `ctx`; reborrow through `ctx_ptr` rather than minting a fresh
         // `&'static mut` from the global static (which would alias the
@@ -151,7 +144,6 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
 
 #[inline(never)]
 fn install_with_cli(ctx: &mut ContextData, cli: CommandLineArguments) -> Result<(), Error> {
-    // TODO(port): narrow error set
     let subcommand: Subcommand = if cli.positionals.len() > 1 {
         Subcommand::Add
     } else {
@@ -166,20 +158,20 @@ fn install_with_cli(ctx: &mut ContextData, cli: CommandLineArguments) -> Result<
     if subcommand == Subcommand::Add {
         manager.subcommand = Subcommand::Add;
         if manager.options.should_print_command_name() {
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "<r><b>bun add <r><d>v{}<r>\n",
                 Global::package_json_version_with_sha,
-            ));
+            );
             Output::flush();
         }
         return update_package_json_and_install_with_manager(manager, &mut *ctx, &original_cwd);
     }
 
     if manager.options.should_print_command_name() {
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><b>bun install <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
     }
 
@@ -194,5 +186,3 @@ fn install_with_cli(ctx: &mut ContextData, cli: CommandLineArguments) -> Result<
 
     Ok(())
 }
-
-// ported from: src/cli/install_command.zig

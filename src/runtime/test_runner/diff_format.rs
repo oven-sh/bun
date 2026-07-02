@@ -44,7 +44,6 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
                 flush: false,
                 quote_strings: true,
             };
-            // Zig: @as([*]const JSValue, @ptrCast(&received)), 1  → 1-element slice
             let _ = JestPrettyFormat::format(
                 MessageLevel::Debug,
                 global_this,
@@ -87,13 +86,13 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
 /// C++ bridge for `BunAnalyzeTranspiledModule.cpp` — renders a diff between the
 /// JSC-parsed module record and Bun's transpiler output when they disagree.
 ///
-/// Ported from `src/bundler_jsc/analyze_jsc.zig`. Lives here (not in
+/// Lives here (not in
 /// `bun_bundler_jsc::analyze_jsc`) because `DiffFormatter` is a `bun_runtime`
 /// type and `bun_bundler_jsc` is a lower-tier crate that cannot depend on it;
 /// the `extern "C"` symbol resolves the same at link time regardless of which
 /// crate defines it.
 #[unsafe(no_mangle)]
-pub extern "C" fn zig__renderDiff(
+pub(crate) extern "C" fn zig__renderDiff(
     expected_ptr: *const core::ffi::c_char,
     expected_len: usize,
     received_ptr: *const core::ffi::c_char,
@@ -112,8 +111,5 @@ pub extern "C" fn zig__renderDiff(
         global_this: Some(global_this),
         ..Default::default()
     };
-    // Zig: `Output.errorWriter().print("DIFF:\n{any}\n", .{formatter}) catch {};`
     let _ = bun_core::output::error_writer().print(format_args!("DIFF:\n{}\n", formatter));
 }
-
-// ported from: src/test_runner/diff_format.zig

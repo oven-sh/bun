@@ -1,11 +1,8 @@
-//! Port of src/shell/shell.zig + interpreter.zig
 //! Shell lexer, parser, AST, and tree-walking state-machine interpreter.
 //!
-//! ## NodeId arena architecture (Rust port)
+//! ## NodeId arena architecture
 //!
-//! The Zig interpreter uses parent-pointer mixin structs (`*Parent` back-refs
-//! everywhere — borrow-checker hostile). The Rust port replaces this with an
-//! **arena + NodeId index** scheme:
+//! Inter-node back-references use an **arena + NodeId index** scheme:
 //!
 //! - `Interpreter` owns `nodes: Vec<Node>` (a flat arena of state nodes)
 //! - Each state struct stores `parent: NodeId` (a `u32` index), NOT `*Parent`
@@ -20,8 +17,7 @@
 
 #[path = "shell_body.rs"]
 pub mod shell_body;
-// Codegen (`generated_js2native.rs`) addresses this as `crate::shell::shell::*`
-// (Zig path `src/runtime/shell/shell.zig`).
+// Codegen (`generated_js2native.rs`) addresses this as `crate::shell::shell::*`.
 pub use shell_body as shell;
 
 // ─── submodules ──────────────────────────────────────────────────────────────
@@ -138,8 +134,6 @@ pub mod dispatch_tasks;
 #[path = "subproc.rs"]
 pub mod subproc;
 
-pub const SUBSHELL_TODO_ERROR: &str = "Subshells are not implemented, please open GitHub issue!";
-
 // ─── shell escaping (canonical impl lives in bun_shell_parser) ───────────────
 // Re-export so `crate::shell::*` callers resolve without duplicating the table.
 pub use bun_shell_parser::{
@@ -164,12 +158,12 @@ pub mod ast {
     pub type Script = p::Script<'static>;
     pub type Stmt = p::Stmt<'static>;
     pub type Expr = p::Expr<'static>;
-    pub type Binary = p::Binary<'static>;
+    pub(crate) type Binary = p::Binary<'static>;
     pub type Pipeline = p::Pipeline<'static>;
     pub type PipelineItem = p::PipelineItem<'static>;
     pub type Cmd = p::Cmd<'static>;
     pub type Redirect = p::Redirect<'static>;
-    pub type If = p::If<'static>;
+    pub(crate) type If = p::If<'static>;
     pub type Subshell = p::Subshell<'static>;
     pub type CondExpr = p::CondExpr<'static>;
     pub type Assign = p::Assign<'static>;
@@ -179,11 +173,10 @@ pub mod ast {
     pub type CmdOrAssigns = p::CmdOrAssigns<'static>;
 }
 
-// Canonical 4-variant error enum (shell.zig `ShellErr`). Defined in
+// Canonical 4-variant shell error enum. Defined in
 // `shell_body.rs` and re-exported so subproc/state nodes use the same type.
 pub use shell_body::ShellErr;
 
-/// Spec: shell.zig `bun.shell.Result(T)`.
 pub type Result<T, E = ShellErr> = core::result::Result<T, E>;
 
 pub use parsed_shell_script::ParsedShellScript;
@@ -197,5 +190,3 @@ pub use parsed_shell_script::ParsedShellScript;
 /// Distinct from [`ShellSubprocess`](subproc::ShellSubprocess), the shell
 /// interpreter's internal process node.
 pub type Subprocess = crate::api::bun::subprocess::Subprocess<'static>;
-
-// ported from: src/shell/shell.zig

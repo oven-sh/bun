@@ -1,4 +1,4 @@
-//! `DevServer.IncrementalGraph(side)` — port of `IncrementalGraph.zig`.
+//! `DevServer.IncrementalGraph(side)`.
 //!
 //! An earlier draft formerly defined a *second*, layout-incompatible
 //! `IncrementalGraph<S: GraphSide>` struct here (trait-param `Client`/`Server`
@@ -17,4 +17,4 @@
 //! `crate::bake::dev_server::incremental_graph` and are re-exported here so
 //! `incremental_graph_body` resolves to the same nominal types. Per-side
 //! `ServerFile`/`ClientFile` are folded into the canonical `File` (see the
-//! `TODO(port)` there for the eventual layout split).
+//! note on `File` there about the eventual layout split).

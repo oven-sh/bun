@@ -46,9 +46,7 @@ fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
     }
 }
 
-// Zig: `pub fn AstMaybe(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block.
+// File-split mixin pattern: a direct `impl P` block.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn maybe_relocate_vars_to_top_level(
@@ -128,7 +126,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         let name_static = E::Str::new(name);
 
-        // Zig labeled switch with `continue :sw` → loop + match with mutable scrutinee.
+        // Loop + match with mutable scrutinee (a restartable switch).
         let mut sw_data = target.data;
         'sw: loop {
             match sw_data {
@@ -139,8 +137,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // module linking just to rewrite these EDot expressions.
                     if p.options.bundle {
                         if p.import_items_for_namespace.contains_key(&id.ref_) {
-                            // PORT NOTE: reshaped for borrowck — Zig held `*ImportItemForNamespaceMap`
-                            // across `p.newSymbol`; split into lookup → (maybe new_symbol) → re-borrow.
+                            // Note: split into lookup → (maybe new_symbol) → re-borrow for borrowck.
                             let existing = p
                                 .import_items_for_namespace
                                 .get(&id.ref_)
@@ -148,7 +145,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .get(name)
                                 .copied();
                             let ref_ = match existing {
-                                Some(loc_ref) => loc_ref.ref_.expect("infallible: ref bound"),
+                                Some(loc_ref) => loc_ref.ref_,
                                 None => {
                                     // Generate a new import item symbol in the module scope
                                     let new_ref = p
@@ -156,7 +153,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         .expect("unreachable");
                                     let new_item = LocRef {
                                         loc: name_loc,
-                                        ref_: Some(new_ref),
+                                        ref_: new_ref,
                                     };
                                     // SAFETY: module_scope is arena-owned and valid for the parser lifetime.
                                     VecExt::append(&mut p.module_scope_mut().generated, new_ref);
@@ -325,12 +322,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         return None;
                                     }
                                 }
-                                // Zig: `for (props) |prop| { ... } else { deopt; return null }`
-                                // — the loop body has no `break`, so the `else` arm runs on
-                                // every normal completion (including empty `props`). The
-                                // entire stmts/decls/clause_items rewriting block that follows
-                                // in the Zig source is therefore unreachable there too and is
-                                // dropped from the port.
+                                // The loop above always runs to completion (no `break`), so
+                                // this block runs on every normal completion (including empty
+                                // `props`).
                                 {
                                     // empty object de-opts because otherwise the statement becomes
                                     // <empty space> = {};
@@ -389,12 +383,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     return None;
                                 }
 
-                                // PORT NOTE: reshaped for borrowck — Zig held the
-                                // `getOrPut` entry across `p.newSymbol`.
+                                // Note: lookup is split from insertion for borrowck.
                                 let ref_ = if let Some(existing) =
                                     p.commonjs_named_exports.get(name)
                                 {
-                                    existing.loc_ref.ref_.expect("infallible: ref bound")
+                                    existing.loc_ref.ref_
                                 } else {
                                     let sym_name: &'a [u8] = p.arena.alloc_slice_copy(
                                         format!("${}", bun_core::fmt::fmt_identifier(name))
@@ -411,7 +404,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             CommonJSNamedExport {
                                                 loc_ref: LocRef {
                                                     loc: name_loc,
-                                                    ref_: Some(new_ref),
+                                                    ref_: new_ref,
                                                 },
                                                 needs_decl: true,
                                             },
@@ -457,7 +450,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // minify "long-string".length to 11
                         if name == b"length" {
                             if let Some(len) = e_string_javascript_length(&str_) {
-                                return Some(p.new_expr(E::Number { value: len as f64 }, loc));
+                                return Some(p.new_expr(E::Number::new(len as f64), loc));
                             }
                         }
                     }
@@ -588,7 +581,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         inner_use.count_estimate += 1;
                     }
                 }
-                // Zig: `inline .e_dot, .e_index => |data, tag|` — expanded per arm
+                // EDot and EIndex are handled with structurally identical arms.
                 js_ast::ExprData::EDot(data) => {
                     if matches!(p.ts_namespace.expr, js_ast::ExprData::EDot(ns_data) if data.as_ptr() == ns_data.as_ptr())
                         && identifier_opts.assign_target() == js_ast::AssignTarget::None
@@ -619,11 +612,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         return None;
                                     }
 
-                                    // PORT NOTE: reshaped for borrowck — see exports_ref arm above.
+                                    // Note: reshaped for borrowck — see exports_ref arm above.
                                     let ref_ = if let Some(existing) =
                                         p.commonjs_named_exports.get(name)
                                     {
-                                        existing.loc_ref.ref_.expect("infallible: ref bound")
+                                        existing.loc_ref.ref_
                                     } else {
                                         let sym_name: &'a [u8] = p.arena.alloc_slice_copy(
                                             format!("${}", bun_core::fmt::fmt_identifier(name))
@@ -643,7 +636,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                 CommonJSNamedExport {
                                                     loc_ref: LocRef {
                                                         loc: name_loc,
-                                                        ref_: Some(new_ref),
+                                                        ref_: new_ref,
                                                     },
                                                     needs_decl: true,
                                                 },
@@ -699,7 +692,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 loc,
                             });
                         }
-                        // Zig: `bun.ComptimeStringMap(void, ...)` over 7 fixed keys.
+                        // Membership check over 7 fixed keys.
                         let in_lookup_table = matches!(
                             name,
                             b"decline"
@@ -774,7 +767,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Some(p.wrap_inlined_enum(
                         Expr {
                             loc,
-                            data: js_ast::ExprData::ENumber(E::Number { value: num }),
+                            data: js_ast::ExprData::ENumber(E::Number::new(num)),
                         },
                         name,
                     ));
@@ -818,7 +811,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn check_if_defined_helper(&mut self, expr: Expr) -> Result<Expr, bun_core::Error> {
         let p = self;
-        // TODO(port): narrow error set
         let flags = if matches!(expr.data, js_ast::ExprData::EIdentifier(_)) {
             E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER
         } else {
@@ -845,7 +837,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn maybe_defined_helper(&mut self, identifier_expr: Expr) -> Result<Expr, bun_core::Error> {
         let p = self;
-        // TODO(port): narrow error set
         let test_ = Self::check_if_defined_helper(p, identifier_expr)?;
         let object_ref = p
             .find_symbol(bun_ast::Loc::EMPTY, b"Object")
@@ -862,12 +853,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub fn maybe_comma_spread_error(&mut self, comma_after_spread: Option<bun_ast::Loc>) {
+    pub fn maybe_comma_spread_error(&mut self, comma_after_spread: bun_ast::Loc) {
         let p = self;
-        let Some(comma_after_spread) = comma_after_spread else {
-            return;
-        };
-        if comma_after_spread.start == -1 {
+        if comma_after_spread.is_empty() {
             return;
         }
 
@@ -881,5 +869,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         );
     }
 }
-
-// ported from: src/js_parser/ast/maybe.zig

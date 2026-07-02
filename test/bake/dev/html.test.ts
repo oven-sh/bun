@@ -222,3 +222,60 @@ devTest("chrome devtools automatic workspace folders", {
     });
   },
 });
+
+devTest("error report endpoint handles stack frames with very long absolute paths", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["/script.ts"],
+      body: "<h1>Error Report</h1>",
+    }),
+    "script.ts": `
+      console.log("hello");
+    `,
+  },
+  async test(dev) {
+    // Wire format of POST /_bun/report_error (length-prefixed binary):
+    //   string32 error name, string32 message, string32 browser url,
+    //   u32 frame count, then per frame: i32 line, i32 column,
+    //   string32 function name, string32 file name.
+    function u32(n: number) {
+      const b = Buffer.alloc(4);
+      b.writeUInt32LE(n >>> 0, 0);
+      return b;
+    }
+    function i32(n: number) {
+      const b = Buffer.alloc(4);
+      b.writeInt32LE(n, 0);
+      return b;
+    }
+    function str32(s: string) {
+      const bytes = Buffer.from(s, "utf8");
+      return Buffer.concat([u32(bytes.length), bytes]);
+    }
+    function frame(line: number, column: number, functionName: string, fileName: string) {
+      return Buffer.concat([i32(line), i32(column), str32(functionName), str32(fileName)]);
+    }
+
+    // One ordinary frame pointing at a real project file, plus one frame whose
+    // absolute path is far larger than any platform path buffer (16 KiB).
+    const normalPath = dev.join("script.ts");
+    const oversizedPath = "/" + "A/".repeat(8192);
+    const body = Buffer.concat([
+      str32("Error"), // error name
+      str32("test message"), // error message
+      str32(dev.baseUrl + "/"), // browser url
+      u32(2), // stack frame count
+      frame(1, 1, "first", normalPath),
+      frame(1, 1, "second", oversizedPath),
+    ]);
+
+    const res = await dev.fetch("/_bun/report_error", { method: "POST", body });
+    expect(res.status).toBe(200);
+    // The reply still references the legitimate frame's file.
+    const text = await res.text();
+    expect(text).toContain("script.ts");
+
+    // The dev server must still be serving requests afterwards.
+    await dev.fetch("/").expect.toInclude("<h1>Error Report</h1>");
+  },
+});

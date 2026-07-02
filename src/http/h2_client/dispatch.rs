@@ -64,7 +64,7 @@ pub fn parse_frames(session: &mut ClientSession, buf: &[u8]) -> usize {
     consumed
 }
 
-// PORT NOTE: Zig's `wire.FrameType` is non-exhaustive (any u8 valid). A
+// Frame types are non-exhaustive on the wire (any u8 is valid). A
 // `#[repr(u8)]` Rust enum is UB for unknown discriminants, so dispatch on the
 // raw u8.
 const FT_DATA: u8 = wire::FrameType::HTTP_FRAME_DATA as u8;
@@ -83,7 +83,7 @@ const ST_MAX_CONCURRENT_STREAMS: u16 = wire::SettingsType::SETTINGS_MAX_CONCURRE
 const ST_INITIAL_WINDOW_SIZE: u16 = wire::SettingsType::SETTINGS_INITIAL_WINDOW_SIZE.0;
 const ST_MAX_FRAME_SIZE: u16 = wire::SettingsType::SETTINGS_MAX_FRAME_SIZE.0;
 
-pub fn dispatch_frame(
+pub(crate) fn dispatch_frame(
     session: &mut ClientSession,
     frame_type: u8,
     flags: u8,
@@ -140,7 +140,7 @@ pub fn dispatch_frame(
                     &payload[i..i + wire::SettingsPayloadUnit::BYTE_SIZE],
                     0,
                 );
-                // PORT NOTE: brace-expr copies of packed fields (unaligned-safe).
+                // Brace-expr copies of packed fields (unaligned-safe).
                 let utype = { unit.type_ };
                 let uvalue = { unit.value };
                 match utype {
@@ -543,7 +543,6 @@ pub fn dispatch_frame(
 /// Feed an orphaned (untracked-stream) header block through the HPACK
 /// decoder purely to keep the dynamic table in sync, then discard.
 pub fn decode_discard_orphan(session: &mut ClientSession) {
-    // PORT NOTE: reshaped for borrowck (was `defer .clearRetainingCapacity()`).
     let mut offset: usize = 0;
     while offset < session.orphan_header_block.len() {
         // Disjoint field borrows: `hpack` (mut) vs `orphan_header_block` (shared).
@@ -565,8 +564,7 @@ pub fn decode_discard_orphan(session: &mut ClientSession) {
 /// HEADERS frames arrive in one read. 1xx and trailers are decoded then
 /// dropped; the final response is stored on the stream for delivery.
 pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
-    // PORT NOTE: reshaped for borrowck (was `defer stream.header_block.clearRetainingCapacity()`)
-    // — `.clear()` is inlined before each return below.
+    // `stream.header_block.clear()` is inlined before each return below.
     let mut status: u32 = 0;
     let mut bounds: Vec<[u32; 3]> = Vec::new();
     let start_len = stream.decoded_bytes.len();
@@ -619,7 +617,7 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
         if stream.status_code != 0 || malformed {
             continue;
         }
-        if is_malformed_response_field(result.name) {
+        if is_malformed_response_field(result.name) || is_malformed_response_value(result.value) {
             malformed = true;
             continue;
         }
@@ -705,7 +703,7 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
             .saturating_sub(stream.decoded_headers.capacity()),
     );
     for b in &bounds {
-        // PORT NOTE: self-referential — decoded_headers stores raw-ptr slices
+        // Self-referential — decoded_headers stores raw-ptr slices
         // borrowing stream.decoded_bytes. picohttp::Header stores raw ptrs so
         // this is sound as long as decoded_bytes is not reallocated before
         // delivery (it isn't — only ever appended to once per END_HEADERS).
@@ -715,14 +713,13 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
         // SAFETY: b[1] <= b[2] <= decoded_bytes.len(); bytes is decoded_bytes.as_ptr() with no realloc since.
         let value =
             unsafe { bun_core::ffi::slice(bytes.add(b[1] as usize), (b[2] - b[1]) as usize) };
-        // PERF(port): was appendAssumeCapacity.
         stream
             .decoded_headers
             .push(picohttp::Header::new(name, value));
     }
 }
 
-pub fn strip_padding(payload: &[u8]) -> Option<&[u8]> {
+pub(crate) fn strip_padding(payload: &[u8]) -> Option<&[u8]> {
     if payload.is_empty() {
         return None;
     }
@@ -736,13 +733,32 @@ pub fn strip_padding(payload: &[u8]) -> Option<&[u8]> {
 /// RFC 9113 §8.2.1/§8.2.2 response-side validation: lowercase names, no
 /// hop-by-hop fields. Names from lshpack are already lowercase for table
 /// hits but a literal can carry anything.
-pub fn is_malformed_response_field(name: &[u8]) -> bool {
+pub(crate) fn is_malformed_response_field(name: &[u8]) -> bool {
+    if name.is_empty() {
+        return true;
+    }
     for &c in name {
-        if c >= b'A' && c <= b'Z' {
-            return true;
+        match c {
+            b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'!'
+            | b'#'
+            | b'$'
+            | b'%'
+            | b'&'
+            | b'\''
+            | b'*'
+            | b'+'
+            | b'-'
+            | b'.'
+            | b'^'
+            | b'_'
+            | b'`'
+            | b'|'
+            | b'~' => {}
+            _ => return true,
         }
     }
-    // PORT NOTE: Zig used a comptime string set; small enough to open-code.
     matches!(
         name,
         b"connection"
@@ -754,8 +770,16 @@ pub fn is_malformed_response_field(name: &[u8]) -> bool {
     )
 }
 
+/// RFC 9113 §8.2.1: a field value MUST NOT contain NUL (0x00), LF (0x0a), or
+/// CR (0x0d). HPACK is length-prefixed so these would otherwise pass through
+/// verbatim, breaking the no-CR/LF invariant the HTTP/1.1 parser provides and
+/// enabling header injection when values are forwarded downstream.
+pub fn is_malformed_response_value(value: &[u8]) -> bool {
+    value.iter().any(|&c| c == 0 || c == b'\r' || c == b'\n')
+}
+
 pub fn error_code_for(err: bun_core::Error) -> wire::ErrorCode {
-    // PORT NOTE: bun_core::Error is a NonZeroU16 interned tag; `err!()` yields
+    // bun_core::Error is a NonZeroU16 interned tag; `err!()` yields
     // a const Error per name once the link-time table lands. Until then all
     // arms compare equal to `Error::TODO`, so this degrades to the first arm —
     // no worse than the prior unconditional INTERNAL_ERROR, and correct once
@@ -771,5 +795,3 @@ pub fn error_code_for(err: bun_core::Error) -> wire::ErrorCode {
         _ => wire::ErrorCode::INTERNAL_ERROR,
     }
 }
-
-// ported from: src/http/h2_client/dispatch.zig

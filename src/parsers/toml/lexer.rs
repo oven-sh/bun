@@ -4,12 +4,11 @@ use bun_ast as js_ast;
 use bun_ast::LexerLog;
 use bun_core::fmt::hex_digit_value_u32;
 use bun_core::strings;
-// In Zig it's `bun.CodePoint` (i32); lives at `bun_core::strings::CodePoint`.
 use bun_core::strings::CodePoint;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr)]
-#[allow(non_camel_case_types)] // PORTING.md: "Match the Zig's structure" — Zig: `t_end_of_file`.
+#[allow(non_camel_case_types)]
 pub enum T {
     t_end_of_file,
 
@@ -46,12 +45,18 @@ pub enum T {
     t_empty_array,
 }
 
+bun_core::comptime_string_map! {
+    static KEYWORDS: T = {
+        b"true" => T::t_true,
+        b"false" => T::t_false,
+    };
+}
+
 pub struct Lexer<'a> {
-    // PORT NOTE: borrowed (`&'a Source`) rather than owned so
+    // Borrowed (`&'a Source`) rather than owned so
     // `identifier`/`string_literal_slice` can borrow `&'a [u8]` from
-    // `source.contents` without a self-referential struct. The Zig original
-    // copied `Source` by value because Zig has no borrow checker; the Rust
-    // `bun_ast::Source.contents` is now `Cow<'static,[u8]>` so an owned copy
+    // `source.contents` without a self-referential struct.
+    // `bun_ast::Source.contents` is `Cow<'static,[u8]>` so an owned copy
     // would tie those slices to `&self` instead of `'a`.
     pub source: &'a bun_ast::Source,
     pub log: &'a mut bun_ast::Log,
@@ -62,8 +67,6 @@ pub struct Lexer<'a> {
     pub bump: &'a Arena,
 
     pub code_point: CodePoint,
-    // TODO(port): lifetime — borrows from `source.contents` (and arena for decoded strings);
-    // may be self-referential depending on how bun_ast::Source owns `contents` in Rust.
     pub identifier: &'a [u8],
     pub number: f64,
     pub prev_error_loc: bun_ast::Loc,
@@ -293,7 +296,7 @@ impl<'a> Lexer<'a> {
                             i += 1;
                         }
                     }
-                    // PORT NOTE: Zig discards `bytes` here (dead store); ported faithfully.
+                    // `bytes` is intentionally discarded here.
                 }
 
                 // Store bigints as text to avoid precision loss;
@@ -431,7 +434,6 @@ impl<'a> Lexer<'a> {
             // Filter out underscores;
             if underscore_count > 0 {
                 let mut i: usize = 0;
-                // PORT NOTE: Zig handled OOM via if/else on allocator.alloc; arena alloc here is infallible.
                 let bytes = self
                     .bump
                     .alloc_slice_fill_default::<u8>(text.len() - underscore_count);
@@ -469,7 +471,6 @@ impl<'a> Lexer<'a> {
 
     #[inline]
     pub fn expect(&mut self, token: T) -> Result<(), Error> {
-        // PERF(port): was comptime monomorphization (`comptime token: T`) — profile
         if self.token != token {
             self.expected(token)?;
         }
@@ -712,8 +713,8 @@ impl<'a> Lexer<'a> {
                         }
                     }
 
-                    // PORT NOTE: reshaped for borrowck — capture slice bounds as indices
-                    // instead of laundering a `&'a [u8]` through a raw pointer. On the fast
+                    // Capture the slice bounds as indices instead of laundering
+                    // a `&'a [u8]` through a raw pointer. On the fast
                     // path we reslice immediately before `return`; on the slow path we
                     // reslice after the loop and hand it straight to
                     // `decode_escape_sequences` without stashing in `self` first.
@@ -835,23 +836,10 @@ impl<'a> Lexer<'a> {
                         self.step();
                     }
                     self.identifier = self.raw();
-                    self.token = match self.identifier.len() {
-                        4 => {
-                            if strings::eql_comptime_ignore_len(self.identifier, b"true") {
-                                T::t_true
-                            } else {
-                                T::t_identifier
-                            }
-                        }
-                        5 => {
-                            if strings::eql_comptime_ignore_len(self.identifier, b"false") {
-                                T::t_false
-                            } else {
-                                T::t_identifier
-                            }
-                        }
-                        _ => T::t_identifier,
-                    };
+                    self.token = KEYWORDS
+                        .get(self.identifier)
+                        .copied()
+                        .unwrap_or(T::t_identifier);
                 }
 
                 _ => self.unexpected()?,
@@ -866,9 +854,6 @@ impl<'a> Lexer<'a> {
         text: &[u8],
         buf: &mut bun_alloc::ArenaVec<'a, u8>,
     ) -> Result<(), Error> {
-        // PORT NOTE: Zig copied `*buf_` into a local and `defer`-wrote it back.
-        // In Rust we operate on `buf` directly via &mut.
-
         let iterator = strings::CodepointIterator::init(text);
         let mut iter = strings::Cursor::default();
         while iterator.next(&mut iter) {
@@ -917,10 +902,6 @@ impl<'a> Lexer<'a> {
                         c if c == 'v' as CodePoint => {
                             // Vertical tab is invalid JSON
                             // We're going to allow it.
-                            // if (comptime is_json) {
-                            //     lexer.end = start + iter.i - width2;
-                            //     try lexer.syntaxError();
-                            // }
                             buf.push(11);
                             continue;
                         }
@@ -1119,7 +1100,6 @@ impl<'a> Lexer<'a> {
                                 // fixed-length
                             } else {
                                 // Fixed-length
-                                // comptime var j: usize = 0;
                                 let mut j: usize = 0;
                                 while j < 4 {
                                     match hex_digit_value_u32(c3 as u32) {
@@ -1212,7 +1192,7 @@ impl<'a> Lexer<'a> {
             }
         };
 
-        // PORT NOTE: reshaped for borrowck — compute range before borrowing `found` from source.
+        // Compute the range before borrowing `found` from source.
         let range = self.range();
         self.add_range_error(range, format_args!("Unexpected {}", bstr::BStr::new(found)))
     }
@@ -1240,7 +1220,7 @@ impl<'a> Lexer<'a> {
     pub fn range(&self) -> bun_ast::Range {
         bun_ast::Range {
             loc: bun_ast::usize2loc(self.start),
-            len: (self.end - self.start) as i32, // std.math.lossyCast
+            len: (self.end - self.start) as i32,
         }
     }
 
@@ -1289,7 +1269,7 @@ impl<'a> Lexer<'a> {
     }
 }
 
-pub fn is_identifier_part(code_point: CodePoint) -> bool {
+pub(crate) fn is_identifier_part(code_point: CodePoint) -> bool {
     matches!(code_point as u32 as u8 as char,
         '0'..='9'
         | 'a'..='z'
@@ -1299,37 +1279,10 @@ pub fn is_identifier_part(code_point: CodePoint) -> bool {
         | '-'
         | ':'
     ) && (0..=127).contains(&code_point)
-    // PORT NOTE: Zig matched CodePoint directly against char ranges; Rust requires
-    // bounding to ASCII before the byte cast above is sound.
-}
-
-pub fn is_latin1_identifier<B: Copy + Into<u32>>(name: &[B]) -> bool {
-    if name.is_empty() {
-        return false;
-    }
-
-    // Match on the full-width value — Zig switches on u8/u16 directly against char
-    // ranges; truncating to u8 here would incorrectly accept e.g. U+0161 as 'a'.
-    match name[0].into() {
-        0x61..=0x7A | 0x41..=0x5A | 0x24 | 0x31..=0x39 | 0x5F | 0x2D => {}
-        _ => return false,
-    }
-
-    if !name.is_empty() {
-        for &c in &name[1..] {
-            match c.into() {
-                0x30..=0x39 | 0x61..=0x7A | 0x41..=0x5A | 0x24 | 0x5F | 0x2D => {}
-                _ => return false,
-            }
-        }
-    }
-
-    true
+    // The `(0..=127)` bound is required for the byte cast above to be sound.
 }
 
 #[inline]
 fn float64(num: CodePoint) -> f64 {
     num as f64
 }
-
-// ported from: src/interchange/toml/lexer.zig

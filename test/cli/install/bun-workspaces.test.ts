@@ -1981,7 +1981,7 @@ test("matching workspace devDependency and npm peerDependency", async () => {
   expect((await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"))
     .toMatchInlineSnapshot(`
     "{
-      "lockfileVersion": 1,
+      "lockfileVersion": 2,
       "configVersion": 1,
       "workspaces": {
         "": {

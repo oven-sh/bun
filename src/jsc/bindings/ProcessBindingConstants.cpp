@@ -31,6 +31,13 @@
 #ifndef S_IWUSR
 #define S_IWUSR _S_IWRITE
 #endif // S_IWUSR
+// The UCRT only defines the underscore-prefixed _S_IFIFO; whether the plain
+// spelling is visible here otherwise depends on what happened to be defined
+// earlier in the unified source. Node exposes fs.constants.S_IFIFO (4096) on
+// Windows, so pin it to the CRT value instead of relying on header luck.
+#if !defined(S_IFIFO) && defined(_S_IFIFO)
+#define S_IFIFO _S_IFIFO
+#endif // S_IFIFO
 
 #include <uv.h>
 

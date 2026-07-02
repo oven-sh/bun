@@ -1,6 +1,5 @@
-//! Port of `std.Thread.Semaphore` (Zig 0.14.1) on top of Bun's `Mutex` +
-//! `Condition`. A semaphore is an unsigned integer that blocks the calling
-//! thread when it would go negative.
+//! A semaphore on top of Bun's `Mutex` + `Condition`: an unsigned integer
+//! that blocks the calling thread when it would go negative.
 //!
 //! Supports `const fn new()` static initialization and needs no `deinit`.
 //! Only the subset Bun uses is ported (`wait`/`post`); `timedWait` is omitted
@@ -31,12 +30,12 @@ impl Default for Semaphore {
 }
 
 impl Semaphore {
-    /// Const-init with zero permits (Zig: `.{}`).
+    /// Const-init with zero permits.
     pub const fn new() -> Self {
         Self::with_permits(0)
     }
 
-    /// Const-init with `permits` available (Zig: `.{ .permits = n }`).
+    /// Const-init with `permits` available.
     pub const fn with_permits(permits: usize) -> Self {
         Self {
             mutex: Mutex::new(),
@@ -48,7 +47,6 @@ impl Semaphore {
     /// Blocks until a permit is available, then consumes one.
     pub fn wait(&self) {
         self.mutex.lock();
-        // Zig: `defer sem.mutex.unlock()`
         scopeguard::defer! { self.mutex.unlock(); }
 
         // SAFETY: `mutex` is held for every access to `permits` below.
@@ -74,5 +72,3 @@ impl Semaphore {
         self.cond.signal();
     }
 }
-
-// ported from: vendor/zig/lib/std/Thread/Semaphore.zig

@@ -3,7 +3,7 @@
 //! host process — Chrome IS the IPC peer. One fewer hop than WKWebView.
 //!
 //! Parent death → Chrome's pipe read EOFs → Chrome exits. Same lifetime
-//! coupling as HostProcess.zig's socket EOF path.
+//! coupling as HostProcess.rs's socket EOF path.
 //!
 //! fd layout (child):
 //!   3 = Chrome reads CDP commands from us  (parent writes → child reads)
@@ -25,9 +25,9 @@ use std::io::Write as _;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::ZStr;
-use bun_core::{self, strings};
+use bun_core::{self, getenv_z, strings, zstr};
 #[cfg(not(windows))]
-use bun_core::{ZBox, env_var, getenv_z, zstr};
+use bun_core::{ZBox, env_var};
 use bun_jsc::JSGlobalObject;
 #[cfg(not(windows))]
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -47,15 +47,15 @@ use bun_which::which;
 declare_scope!(Chrome, hidden);
 
 pub struct ChromeProcess {
-    // Intrusive refcount (`.deref()` called in on_process_exit); kept raw to
-    // match Zig `*bun.spawn.Process`.
+    // Intrusive refcount (`.deref()` called in on_process_exit); kept raw
+    // because the refcount, not this struct, owns the allocation.
     process: NonNull<Process>,
 }
 
 // PORTING.md §Global mutable state: JS-thread-only singleton ptr → AtomicPtr.
 // Only accessed from the JS thread (exported fns are called from C++ on the
 // mutator thread; on_process_exit runs on the event loop thread which is the
-// same thread). Relaxed ordering matches the Zig non-atomic var.
+// same thread), so Relaxed ordering suffices.
 static INSTANCE: core::sync::atomic::AtomicPtr<ChromeProcess> =
     core::sync::atomic::AtomicPtr::new(ptr::null_mut());
 
@@ -66,7 +66,7 @@ static INSTANCE: core::sync::atomic::AtomicPtr<ChromeProcess> =
 /// The C++ side doesn't touch JS state; EVFILT_PROC → Bun__Chrome__died →
 /// rejectAllAndMarkDead handles promise rejection on the next loop tick.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Chrome__kill() {
+pub(crate) extern "C" fn Bun__Chrome__kill() {
     // SAFETY: JS-thread-only global; see INSTANCE decl.
     unsafe {
         if let Some(i) = INSTANCE
@@ -98,7 +98,7 @@ pub extern "C" fn Bun__Chrome__kill() {
 /// NUL-terminated string. `extra_argv` must be null or point to
 /// `extra_argv_len` valid NUL-terminated string pointers.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__Chrome__ensure(
+pub(crate) unsafe extern "C" fn Bun__Chrome__ensure(
     global: &JSGlobalObject,
     user_data_dir: *const c_char,     // ?[*:0]const u8
     path: *const c_char,              // ?[*:0]const u8
@@ -304,7 +304,7 @@ fn find_playwright_shell() -> Option<ZBox> {
     let cache_dir = resolve_path::join_string_buf_z::<platform::Auto>(&mut dir_buf[..], &parts);
 
     let fd = bun_sys::open(cache_dir, O::RDONLY | O::DIRECTORY, 0).ok()?;
-    // PORT NOTE: `defer fd.close()` — Fd has no Drop; close explicitly on all
+    // `defer fd.close()` — Fd has no Drop; close explicitly on all
     // exit paths via scopeguard.
     let _fd_guard = scopeguard::guard(fd, |fd| fd.close());
 
@@ -324,7 +324,7 @@ fn find_playwright_shell() -> Option<ZBox> {
         if entry.kind != bun_sys::EntryKind::Directory {
             continue;
         }
-        // Zig spec: `bun.DirIterator.iterate(fd, .u8)` — request UTF-8 names
+        // The iterator requests UTF-8 names
         // even on Windows. `slice_u8()` is the cross-platform `&[u8]` borrow.
         let name = entry.name.slice_u8();
         if !name.starts_with(PREFIX) {
@@ -403,8 +403,6 @@ fn spawn(
     stderr_inherit: bool,
 ) -> Result<Fd, bun_core::Error> {
     {
-        // PERF(port): was arena bulk-free — all temp strings now individually heap-allocated.
-
         let chrome = find_chrome(explicit_path).ok_or_else(|| bun_core::err!("ChromeNotFound"))?;
         scoped_log!(
             Chrome,
@@ -451,13 +449,20 @@ fn spawn(
             v.extend_from_slice(d);
             ZBox::from_vec(v)
         } else {
-            // pid_t → u32 cast so {d} formats. Fresh dir per parent process;
-            // multiple Bun.WebView instances in one process share the Chrome.
-            // SAFETY: getpid is always safe.
-            let pid: u32 = unsafe { libc::getpid() } as u32;
-            let mut v = Vec::new();
-            write!(&mut v, "--user-data-dir=/tmp/bun-chrome-{}", pid)
-                .expect("infallible: in-memory write");
+            let mut name_buf = [0u8; 64];
+            let name = bun_paths::fs::FileSystem::tmpname(
+                b"bun-chrome",
+                &mut name_buf,
+                bun_core::fast_random(),
+            )?;
+            let mut dir_buf = path_buffer_pool::get();
+            let dir_parts: [&[u8]; 2] = [bun_resolver::fs::RealFS::tmpdir_path(), name.as_bytes()];
+            let dir =
+                resolve_path::join_string_buf_z::<platform::Auto>(&mut dir_buf[..], &dir_parts);
+            bun_sys::mkdir(dir, 0o700)?;
+            let mut v = Vec::with_capacity(16 + dir.len());
+            v.extend_from_slice(b"--user-data-dir=");
+            v.extend_from_slice(&dir[..]);
             ZBox::from_vec(v)
         };
 
@@ -522,16 +527,14 @@ fn spawn(
             ..SpawnOptions::default()
         };
 
-        // TODO(port): narrow error set — outer Result + inner bun_sys::Result
         // SAFETY: `argv`/`env` are local null-terminated C-string arrays with
         // argv[0] non-null; valid for this call.
         let spawned =
             unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr().cast()) }??;
 
-        // PORT NOTE: reshaped for borrowck — Zig's errdefer stays armed past
-        // this point (and would re-close fds on the WatchFailed path below);
-        // we disarm here and close explicitly on that path instead.
-        // TODO(port): verify Zig errdefer double-close of fds[1] on WatchFailed is intentional/idempotent.
+        // Disarm the cleanup guard here and close each fd exactly once on the
+        // WatchFailed path below; keeping it armed would re-close the
+        // already-closed fds[1] there.
         let fds = scopeguard::ScopeGuard::into_inner(fds);
 
         // Parent doesn't need the child's end. POSIX_SPAWN_CLOEXEC_DEFAULT
@@ -562,8 +565,7 @@ fn spawn(
             }
             Err(e) => {
                 scoped_log!(Chrome, "watch failed: {}", e);
-                // SAFETY: drop the strong ref we hold (Zig: `process.deref()`),
-                // then reclaim the Box (Zig: `bun.destroy(self)`).
+                // SAFETY: drop the strong ref we hold, then reclaim the Box.
                 unsafe {
                     Process::deref(process.as_ptr());
                     drop(bun_core::heap::take(self_ptr));
@@ -580,7 +582,6 @@ fn spawn(
 }
 
 // Implemented in ChromeBackend.cpp. Rejects all pending CDP promises.
-// TODO(port): move to <runtime>_sys
 unsafe extern "C" {
     fn Bun__Chrome__died(signo: i32);
 }
@@ -606,15 +607,8 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
     // Windows roots under %LOCALAPPDATA%; POSIX under $HOME. The subdir
     // names come from each browser's installer — hardcoded, not
     // discoverable. Edge uses the same CDP + file format as Chrome.
-    // NB: do NOT route Windows through bun_core::getenv_z — it is stubbed to
-    // None on cfg(windows) (TODO(port) in bun_core/util.rs), which made
-    // this whole function dead on Windows. Zig's bun.getenvZ walks the env
-    // block case-insensitively and returns a real value; std::env::var is the
-    // working equivalent here (LOCALAPPDATA is always valid Unicode).
     #[cfg(windows)]
-    let root_owned = std::env::var("LOCALAPPDATA").ok()?;
-    #[cfg(windows)]
-    let root: &[u8] = root_owned.as_bytes();
+    let root = getenv_z(zstr!("LOCALAPPDATA"))?;
     #[cfg(not(windows))]
     let root = getenv_z(zstr!("HOME"))?;
 
@@ -708,7 +702,7 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
 /// # Safety
 /// `out_buf` must point to at least `out_cap` writable bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__Chrome__autoDetect(out_buf: *mut u8, out_cap: usize) -> usize {
+pub(crate) unsafe extern "C" fn Bun__Chrome__autoDetect(out_buf: *mut u8, out_cap: usize) -> usize {
     let mut buf: Vec<u8> = Vec::new();
     if read_dev_tools_active_port(&mut buf).is_some() {
         if buf.len() > out_cap {
@@ -722,5 +716,3 @@ pub unsafe extern "C" fn Bun__Chrome__autoDetect(out_buf: *mut u8, out_cap: usiz
     }
     0
 }
-
-// ported from: src/runtime/webview/ChromeProcess.zig

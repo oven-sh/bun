@@ -20,7 +20,7 @@ namespace Inspector {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorTestReporterAgent);
 
-// Zig bindings implementation
+// Rust bindings implementation
 extern "C" {
 
 void Bun__TestReporterAgentEnable(Inspector::InspectorTestReporterAgent* agent);
@@ -76,7 +76,7 @@ void Bun__TestReporterAgentReportTestStart(Inspector::InspectorTestReporterAgent
 }
 
 enum class BunTestStatus : uint8_t {
-    // this enum is kept in sync with zig Debugger.zig `pub const TestStatus`
+    // this enum is kept in sync with `TestStatus` in src/jsc/Debugger.rs
     Pass,
     Fail,
     Timeout,

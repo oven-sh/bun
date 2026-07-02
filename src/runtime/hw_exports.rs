@@ -1,8 +1,7 @@
-//! phase-d: handwritten Zig `@export` / `export fn` C-ABI symbols whose bodies
+//! phase-d: handwritten C-ABI export symbols whose bodies
 //! live in `bun_jsc::VirtualMachine` but whose link names must be emitted from
 //! a crate that *depends on* `bun_jsc` (so the bodies can call back into the
-//! real `VirtualMachine` struct without inverting the crate DAG). Each fn here
-//! is a 1:1 port of the corresponding `src/jsc/VirtualMachine.zig` body.
+//! real `VirtualMachine` struct without inverting the crate DAG).
 //!
 //! Symbols that already have a Rust `#[export_name]` / `#[no_mangle]` elsewhere
 //! are intentionally **not** re-declared here to avoid duplicate-symbol link
@@ -26,7 +25,7 @@ use core::ffi::c_void;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSInternalPromise, JSValue, ZigStackFrame};
 
-// ─── VirtualMachine.zig ──────────────────────────────────────────────────────
+// ─── VirtualMachine ──────────────────────────────────────────────────────────
 //
 // `#[no_mangle] extern "C"` thunks for these are emitted by
 // `src/codegen/generate-host-exports.ts` into `generated_host_exports.rs`;
@@ -42,9 +41,8 @@ pub fn is_main_thread_vm() -> bool {
 /// `export fn Bun__drainMicrotasksFromJS(global, callframe) callconv(jsc.conv) JSValue`
 ///
 /// Returns plain `JSValue` (not `JsResult`) so the generated thunk is a bare
-/// deref+call with no `ExceptionValidationScope` — matching the .zig spec's
-/// bare `callconv(jsc.conv)` body and the prior `#[bun_jsc::host_call]`
-/// rewrite. `drain_microtasks()` runs arbitrary microtasks; wrapping in a
+/// deref+call with no `ExceptionValidationScope`.
+/// `drain_microtasks()` runs arbitrary microtasks; wrapping in a
 /// scope would trip `assert_exception_presence_matches(false)` if one left an
 /// exception pending while we return `UNDEFINED`.
 // HOST_EXPORT(Bun__drainMicrotasksFromJS)
@@ -109,7 +107,7 @@ pub fn set_override_module_run_main_promise(
     }
 }
 
-/// `@export(&setEntryPointEvalResultESM, .{ .name = "Bun__VM__setEntryPointEvalResultESM" })`
+/// Exported as `Bun__VM__setEntryPointEvalResultESM`.
 // HOST_EXPORT(Bun__VM__setEntryPointEvalResultESM, c)
 pub fn set_entry_point_eval_result_esm(this: &mut VirtualMachine, result: JSValue) {
     // allow esm evaluate to set value multiple times
@@ -121,7 +119,7 @@ pub fn set_entry_point_eval_result_esm(this: &mut VirtualMachine, result: JSValu
     }
 }
 
-/// `@export(&setEntryPointEvalResultCJS, .{ .name = "Bun__VM__setEntryPointEvalResultCJS" })`
+/// Exported as `Bun__VM__setEntryPointEvalResultCJS`.
 // HOST_EXPORT(Bun__VM__setEntryPointEvalResultCJS, c)
 pub fn set_entry_point_eval_result_cjs(this: &mut VirtualMachine, value: JSValue) {
     if !this.entry_point_result.value.has() {
@@ -133,13 +131,12 @@ pub fn set_entry_point_eval_result_cjs(this: &mut VirtualMachine, value: JSValue
     }
 }
 
-/// `@export(&specifierIsEvalEntryPoint, .{ .name = "Bun__VM__specifierIsEvalEntryPoint" })`
+/// Exported as `Bun__VM__specifierIsEvalEntryPoint`.
 // HOST_EXPORT(Bun__VM__specifierIsEvalEntryPoint, c)
 pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSValue) -> bool {
     if let Some(eval_source) = this.module_loader.eval_source.as_ref() {
         let global = this.global();
-        // Zig: `specifier.toBunString(this.global) catch @panic("unexpected exception")`
-        // followed by `defer specifier_str.deref()`. `bun_core::String` is
+        // `bun_core::String` is
         // `Copy` with NO `Drop`; `OwnedString` is the RAII wrapper that derefs.
         let specifier_str = bun_core::OwnedString::new(
             bun_jsc::bun_string_jsc::from_js(specifier, global).expect("unexpected exception"),
@@ -193,8 +190,7 @@ pub(crate) mod sql_hooks {
         // SAFETY: `heap` is `&runtime_state().timer` (live for the VM); `timer`
         // is a live intrusive heap node owned by the caller. Route through
         // `All::insert` (NOT the raw `.timers` field) so the lock is taken and
-        // `(*timer).state` / `in_heap` bookkeeping is updated — Zig spec is
-        // `vm.timer.insert(&this.timer)`.
+        // `(*timer).state` / `in_heap` bookkeeping is updated.
         unsafe { (*heap.cast::<crate::timer::All>()).insert(timer) };
     }
     unsafe fn timer_remove(heap: *mut c_void, timer: *mut EventLoopTimer) {
@@ -270,7 +266,7 @@ pub(crate) mod sql_hooks {
 
     /// Declared `extern "Rust"` in `bun_sql_jsc::jsc`; link-time resolved.
     #[unsafe(no_mangle)]
-    pub static __BUN_SQL_RUNTIME_HOOKS: SqlRuntimeHooks = SqlRuntimeHooks {
+    pub(crate) static __BUN_SQL_RUNTIME_HOOKS: SqlRuntimeHooks = SqlRuntimeHooks {
         sql_rare,
         timer_heap,
         timer_insert,
@@ -287,7 +283,7 @@ pub(crate) mod sql_hooks {
     };
 }
 
-// ─── bun.js.zig — entry-point promise reactions (used by `--print`) ──────────
+// ─── entry-point promise reactions (used by `--print`) ───────────────────────
 
 // HOST_EXPORT(Bun__onResolveEntryPointResult)
 pub fn on_resolve_entry_point_result(
@@ -295,9 +291,9 @@ pub fn on_resolve_entry_point_result(
     callframe: &CallFrame,
 ) -> bun_jsc::JsResult<JSValue> {
     let result = callframe.argument(0);
-    // SAFETY: `vals[..len]` is the single stack `result`; `ctype` may be null
-    // (the Zig path passes the per-VM ConsoleObject but only the writers are
-    // read off it, and `null` routes to the VM's stdout/stderr default).
+    // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
+    // `message_with_type_and_level` (it always resolves the per-VM console via
+    // `vm_console(global)`), so null is fine.
     unsafe {
         bun_jsc::ConsoleObject::message_with_type_and_level(
             core::ptr::null_mut(),
@@ -318,9 +314,9 @@ pub fn on_reject_entry_point_result(
     callframe: &CallFrame,
 ) -> bun_jsc::JsResult<JSValue> {
     let result = callframe.argument(0);
-    // SAFETY: `vals[..len]` is the single stack `result`; `ctype` may be null
-    // (the Zig path passes the per-VM ConsoleObject but only the writers are
-    // read off it, and `null` routes to the VM's stdout/stderr default).
+    // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
+    // `message_with_type_and_level` (it always resolves the per-VM console via
+    // `vm_console(global)`), so null is fine.
     unsafe {
         bun_jsc::ConsoleObject::message_with_type_and_level(
             core::ptr::null_mut(),
@@ -335,7 +331,7 @@ pub fn on_reject_entry_point_result(
     bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
 }
 
-// ─── bindgenv2 dispatch shims (GeneratedBindings.zig: `bindgen_*_dispatch*`) ─
+// ─── bindgenv2 dispatch shims (`bindgen_*_dispatch*`) ────────────────────────
 //
 // These satisfy the `extern "C"` refs C++ emits from
 // `Generated*Bindings.cpp`. Each forwards to the real Rust port of the named
@@ -346,7 +342,7 @@ pub fn on_reject_entry_point_result(
 /// # Safety
 /// `arg_str` and `out` must be valid C++ stack locals.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn bindgen_NodeModuleModule_dispatch_stat1(
+pub(crate) unsafe extern "C" fn bindgen_NodeModuleModule_dispatch_stat1(
     _global: *mut JSGlobalObject,
     arg_str: *const bun_core::String,
     out: *mut i32,
@@ -371,12 +367,11 @@ pub fn bindgen_bunobject_dispatch_braces(
     arg_input: *const bun_core::String,
     arg_options: *const crate::api::bun_object::r#gen::BracesOptions,
 ) -> JSValue {
-    // SAFETY: `arg_input`/`arg_options` are valid C++ stack locals (see
-    // GeneratedBindings.zig:203 call site).
-    // Zig spec passes `arg_input.*` (bitwise copy of the ref-counted handle,
-    // **no** refcount bump). `bun_core::String` is `Copy` with no `Drop`, so
-    // a plain deref matches that exactly; `braces` only borrows the bytes via
-    // `to_utf8()` and never derefs the handle.
+    // SAFETY: `arg_input`/`arg_options` are valid C++ stack locals.
+    // The C++ caller retains ownership of the ref-counted handle — we take a
+    // bitwise copy with **no** refcount bump. `bun_core::String` is `Copy`
+    // with no `Drop`, so a plain deref does exactly that; `braces` only
+    // borrows the bytes via `to_utf8()` and never derefs the handle.
     let input = unsafe { *arg_input };
     // SAFETY: `arg_options` points to a `BracesOptions` on the C++ caller's stack.
     let opts = unsafe { *arg_options };
@@ -399,8 +394,7 @@ pub fn bindgen_bunobject_dispatch_gc(
 ) -> bool {
     // SAFETY: `arg_force`/`out` are valid C++ stack locals.
     let force = unsafe { *arg_force };
-    // Spec body (GeneratedBindings.zig:212 → BunObject.zig `gc`):
-    // `vm.garbageCollect(force)` — mimalloc cleanup, then sync `runGC(true)`
+    // `garbage_collect(force)`: mimalloc cleanup, then sync `runGC(true)`
     // when `force`, else `collectAsync()` + `heap.size()`.
     // SAFETY: bun_vm() never null for a Bun-owned global.
     unsafe { *out = global.bun_vm().as_mut().garbage_collect(force) };
@@ -408,7 +402,7 @@ pub fn bindgen_bunobject_dispatch_gc(
 }
 
 /// `fmt_jsc.js_bindings.fmtString(code, formatter) -> bun.String`
-/// (highlighter.test.ts internal — see `src/jsc/fmt_jsc.zig`).
+/// (highlighter.test.ts internal).
 ///
 /// # Safety
 /// `arg_code`, `arg_formatter`, and `out` must be valid C++ stack locals.
@@ -433,8 +427,7 @@ pub fn bindgen_fmt_jsc_dispatch_fmt_string(
             true
         }
         // OOM is the one `JsError` variant that does **not** leave a pending
-        // exception on the VM; the Zig spec explicitly throws here before
-        // signalling failure (`error.OutOfMemory => arg_global.throwOutOfMemory()`).
+        // exception on the VM; throw it explicitly before signalling failure.
         Err(bun_jsc::JsError::OutOfMemory) => {
             let _ = global.throw_out_of_memory();
             false
@@ -451,7 +444,7 @@ pub fn bindgen_fmt_jsc_dispatch_fmt_string(
 /// # Safety
 /// `out` must be a valid C++ stack out-param.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn bindgen_DevServer_dispatchGetDeinitCountForTesting1(
+pub(crate) unsafe extern "C" fn bindgen_DevServer_dispatchGetDeinitCountForTesting1(
     _global: *mut JSGlobalObject,
     out: *mut usize,
 ) -> bool {
@@ -491,11 +484,11 @@ pub fn bindgen_bindgen_test_dispatch_add(
     }
 }
 
-/// `extern struct` mirror of the Zig codegen's optional-arg communication
-/// buffer (GeneratedBindings.zig:164). Field order is {b_set, d_set, d_value,
-/// b_value} — `extern struct` is declaration-ordered, NOT size-sorted.
+/// `#[repr(C)]` mirror of the bindgen optional-arg communication
+/// buffer. Field order is {b_set, d_set, d_value,
+/// b_value} — declaration-ordered, NOT size-sorted.
 #[repr(C)]
-pub struct BindgenTestRequiredAndOptionalArgArguments {
+pub(crate) struct BindgenTestRequiredAndOptionalArgArguments {
     pub b_set: bool,
     pub d_set: bool,
     pub d_value: u8,
@@ -507,7 +500,7 @@ pub struct BindgenTestRequiredAndOptionalArgArguments {
 /// # Safety
 /// `arg_a`, `arg_c`, `buf`, and `out` must be valid C++ stack locals.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn bindgen_Bindgen_test_dispatchRequiredAndOptionalArg1(
+pub(crate) unsafe extern "C" fn bindgen_Bindgen_test_dispatchRequiredAndOptionalArg1(
     _global: *mut JSGlobalObject,
     arg_a: *const bool,
     arg_c: *const i32,
@@ -559,7 +552,7 @@ pub fn bindgen_node_os_cpus(global: &JSGlobalObject) -> bun_jsc::JsResult<JSValu
 /// # Safety
 /// `out` must be a valid C++ stack out-param.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn bindgen_Node_os_dispatchFreemem1(
+pub(crate) unsafe extern "C" fn bindgen_Node_os_dispatchFreemem1(
     _global: *mut JSGlobalObject,
     out: *mut u64,
 ) -> bool {
@@ -612,7 +605,7 @@ pub fn bindgen_node_os_network_interfaces(global: &JSGlobalObject) -> bun_jsc::J
 /// # Safety
 /// `out` must be a valid C++ stack out-param.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn bindgen_Node_os_dispatchRelease1(
+pub(crate) unsafe extern "C" fn bindgen_Node_os_dispatchRelease1(
     _global: *mut JSGlobalObject,
     out: *mut bun_core::String,
 ) -> bool {
@@ -624,7 +617,7 @@ pub unsafe extern "C" fn bindgen_Node_os_dispatchRelease1(
 /// # Safety
 /// `out` must be a valid C++ stack out-param.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn bindgen_Node_os_dispatchTotalmem1(
+pub(crate) unsafe extern "C" fn bindgen_Node_os_dispatchTotalmem1(
     _global: *mut JSGlobalObject,
     out: *mut u64,
 ) -> bool {
@@ -696,7 +689,7 @@ pub fn bindgen_node_os_dispatch_set_priority2(
     )
 }
 
-// ─── js2native bindgen create-callback exports (GeneratedJS2Native.zig) ──────
+// ─── js2native bindgen create-callback exports (GeneratedJS2Native.h) ────────
 //
 // `js2native_bindgen_<ns>_<fn>` returns a freshly-minted `JSFunction` wrapping
 // the C++-side `bindgen_<ns>_js<Fn>` host fn. The C++ side already exports the

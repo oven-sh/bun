@@ -156,3 +156,54 @@ describe("undici", () => {
     // });
   });
 });
+
+describe("undici.request maxRedirections", () => {
+  it("does not follow more redirects than maxRedirections allows", async () => {
+    const hits: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        hits.push(pathname);
+        if (pathname.startsWith("/redirect/")) {
+          const hop = Number(pathname.slice("/redirect/".length));
+          if (hop >= 5) {
+            return Response.json({ done: true, hop });
+          }
+          return new Response(null, {
+            status: 302,
+            headers: { location: `/redirect/${hop + 1}` },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    try {
+      const origin = `http://localhost:${server.port}`;
+
+      // The caller's cap must be enforced: with maxRedirections: 1 only one
+      // redirect may be followed, so the client stops at /redirect/1 instead
+      // of chasing the chain to the end.
+      hits.length = 0;
+      await expect(request(`${origin}/redirect/0`, { maxRedirections: 1 })).rejects.toThrow(
+        "redirected too many times",
+      );
+      expect(hits).toEqual(["/redirect/0", "/redirect/1"]);
+
+      // A cap large enough for the whole chain still reaches the final response.
+      hits.length = 0;
+      const followed = await request(`${origin}/redirect/0`, { maxRedirections: 10 });
+      expect(hits).toEqual(["/redirect/0", "/redirect/1", "/redirect/2", "/redirect/3", "/redirect/4", "/redirect/5"]);
+      expect(followed.statusCode).toBe(200);
+      expect(((await followed.body!.json()) as { done: boolean; hop: number }).hop).toBe(5);
+
+      // Invalid caps are rejected up front instead of being silently ignored.
+      await expect(request(`${origin}/redirect/0`, { maxRedirections: -1 })).rejects.toThrow(
+        "maxRedirections must be a positive number",
+      );
+    } finally {
+      server.stop(true);
+    }
+  });
+});

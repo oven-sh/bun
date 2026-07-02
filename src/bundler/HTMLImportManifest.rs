@@ -51,8 +51,6 @@ use crate::options::{Loader, OutputKind};
 use crate::options_impl::LoaderExt as _;
 use crate::{BundleV2, Chunk, LinkerGraph};
 
-// TODO(port): lifetime — LIFETIMES.tsv has no rows for this file; classified as
-// BORROW_PARAM (transient formatter struct passed by value).
 #[derive(Clone, Copy)]
 pub struct HTMLImportManifest<'a> {
     pub index: u32,
@@ -72,8 +70,6 @@ impl<'a> fmt::Display for HTMLImportManifest<'a> {
             &mut adapter,
         ) {
             Ok(()) => Ok(()),
-            // We use std.fmt.count for this
-            // Zig: error.NoSpaceLeft => unreachable, error.OutOfMemory => return error.OutOfMemory
             Err(_) => Err(fmt::Error),
         }
     }
@@ -99,7 +95,7 @@ fn write_entry_item<W: Write + ?Sized>(
     bun_js_printer::write_json_string::<_, { Encoding::Utf8 }>(path, writer)?;
 
     writer.write_all(b",\"loader\":\"")?;
-    // Zig: @tagName(loader) — strum is configured snake_case to match.
+    // strum is configured snake_case, so this prints the lowercase tag name.
     writer.write_all(<&'static str>::from(loader).as_bytes())?;
     writer.write_all(b"\",\"isEntry\":")?;
     writer.write_all(if kind == OutputKind::EntryPoint {
@@ -138,7 +134,6 @@ pub fn write_escaped_json<W: Write + ?Sized>(
     chunks: &[Chunk],
     writer: &mut W,
 ) -> Result<(), bun_core::Error> {
-    // PERF(port): was stack-fallback (std.heap.stackFallback(4096)).
     let mut bytes: Vec<u8> = Vec::new();
     write(index, graph, linker_graph, chunks, &mut bytes)?;
     bun_js_printer::write_pre_quoted_string::<_, b'"', false, true, { Encoding::Utf8 }>(
@@ -148,7 +143,6 @@ pub fn write_escaped_json<W: Write + ?Sized>(
 }
 
 /// Newtype wrapper produced by [`HTMLImportManifest::format_escaped_json`].
-/// Mirrors Zig's `std.fmt.Alt(HTMLImportManifest, escapedJSONFormatter)`.
 pub struct EscapedJson<'a>(pub HTMLImportManifest<'a>);
 
 impl<'a> fmt::Display for EscapedJson<'a> {
@@ -162,8 +156,6 @@ impl<'a> fmt::Display for EscapedJson<'a> {
             &mut adapter,
         ) {
             Ok(()) => Ok(()),
-            // We use std.fmt.count for this
-            // Zig: error.WriteFailed => unreachable, error.OutOfMemory => return error.WriteFailed
             Err(_) => Err(fmt::Error),
         }
     }
@@ -349,4 +341,41 @@ pub fn write<W: Write + ?Sized>(
     Ok(())
 }
 
-// ported from: src/bundler/HTMLImportManifest.zig
+pub mod html_import_manifest {
+    use crate::Graph::Graph;
+    use crate::{LinkerGraph, chunk::Chunk};
+
+    pub use super::{EscapedJson, HTMLImportManifest};
+
+    #[inline]
+    pub(crate) fn format_escaped_json<'a>(
+        index: u32,
+        graph: &'a Graph,
+        chunks: &'a [Chunk],
+        linker_graph: &'a LinkerGraph,
+    ) -> EscapedJson<'a> {
+        super::HTMLImportManifest {
+            index,
+            graph,
+            chunks,
+            linker_graph,
+        }
+        .format_escaped_json()
+    }
+
+    pub fn write_escaped_json(
+        index: u32,
+        graph: &Graph,
+        linker_graph: &LinkerGraph<'_>,
+        chunks: &[Chunk],
+        w: &mut &mut [u8],
+    ) -> Result<(), core::fmt::Error> {
+        let taken = core::mem::take(w);
+        let mut fbs = bun_io::FixedBufferStream::new_mut(taken);
+        super::write_escaped_json(index, graph, linker_graph, chunks, &mut fbs)
+            .map_err(|_| core::fmt::Error)?;
+        let bun_io::FixedBufferStream { buffer, pos } = fbs;
+        *w = &mut buffer[pos..];
+        Ok(())
+    }
+}

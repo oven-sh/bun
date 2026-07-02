@@ -30,7 +30,7 @@ pub enum Kind {
 impl TryFrom<u8> for Kind {
     type Error = ();
     fn try_from(v: u8) -> Result<Self, ()> {
-        // Mirrors Zig `enum(u8)` int → enum: valid only for declared discriminants.
+        // Int → enum: valid only for declared discriminants.
         Ok(match v {
             0 => Kind::Ready,
             1 => Kind::FileStart,
@@ -50,7 +50,7 @@ impl TryFrom<u8> for Kind {
 /// fd 3 is reachable from test JS via `fs.writeSync(3, ...)`; rejecting
 /// nonsensical lengths up-front prevents both a `5 + len` u32 overflow and
 /// an unbounded allocation.
-pub const MAX_PAYLOAD: u32 = 64 * 1024 * 1024;
+pub(crate) const MAX_PAYLOAD: u32 = 64 * 1024 * 1024;
 
 /// Minimal length-prefixed binary codec. Frames build into a reusable buffer
 /// then flush in a single write so partial reads on the other side never see a
@@ -61,20 +61,20 @@ pub struct Frame {
 }
 
 impl Frame {
-    pub const DEFAULT: Self = Self { buf: Vec::new() };
+    pub(crate) const DEFAULT: Self = Self { buf: Vec::new() };
 
-    pub fn begin(&mut self, kind: Kind) {
+    pub(crate) fn begin(&mut self, kind: Kind) {
         self.buf.clear();
         // reserve header; payload_len patched in send()
         self.buf.extend_from_slice(&[0u8; 4]);
         self.buf.push(kind as u8);
     }
 
-    pub fn u32_(&mut self, v: u32) {
+    pub(crate) fn u32_(&mut self, v: u32) {
         self.buf.extend_from_slice(&v.to_le_bytes());
     }
 
-    pub fn str(&mut self, s: &[u8]) {
+    pub(crate) fn str(&mut self, s: &[u8]) {
         // Never let a single frame exceed `MAX_PAYLOAD` — the receiver treats that
         // as a corrupt-channel signal and closes, which would surface as a spurious
         // worker crash. Truncate the string in place instead. Leave a small
@@ -104,7 +104,7 @@ impl Frame {
 
     /// Finalize the header and return the encoded bytes. Caller hands them to
     /// `Channel.send`. Valid until the next `begin()`.
-    pub fn finish(&mut self) -> &[u8] {
+    pub(crate) fn finish(&mut self) -> &[u8] {
         let payload_len: u32 = u32::try_from(self.buf.len() - 5).unwrap();
         debug_assert!(payload_len <= MAX_PAYLOAD);
         self.buf[0..4].copy_from_slice(&payload_len.to_le_bytes());
@@ -116,12 +116,11 @@ impl Frame {
 
 /// Payload reader; bounds-checked, returns zero/empty on truncation.
 pub struct Reader<'a> {
-    // TODO(port): lifetime — borrowed cursor over caller-owned payload slice
     pub p: &'a [u8],
 }
 
 impl<'a> Reader<'a> {
-    pub fn u32_(&mut self) -> u32 {
+    pub(crate) fn u32_(&mut self) -> u32 {
         if self.p.len() < 4 {
             return 0;
         }
@@ -130,7 +129,7 @@ impl<'a> Reader<'a> {
         v
     }
 
-    pub fn str(&mut self) -> &'a [u8] {
+    pub(crate) fn str(&mut self) -> &'a [u8] {
         let n = self.u32_() as usize;
         if self.p.len() < n {
             return b"";
@@ -140,5 +139,3 @@ impl<'a> Reader<'a> {
         s
     }
 }
-
-// ported from: src/cli/test/parallel/Frame.zig

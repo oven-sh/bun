@@ -5,14 +5,11 @@
 use crate::cli::pm_update_package_json::update_package_json_and_install_catch_error;
 use crate::command;
 
-pub struct PatchCommand;
+pub(crate) struct PatchCommand;
 
 impl PatchCommand {
-    pub fn exec(ctx: command::Context) -> Result<(), bun_core::Error> {
-        // TODO(port): verify enum path for `.patch` (PackageManager subcommand variant)
+    pub(crate) fn exec(ctx: command::Context) -> Result<(), bun_core::Error> {
         update_package_json_and_install_catch_error(ctx, bun_install::Subcommand::Patch)?;
         Ok(())
     }
 }
-
-// ported from: src/cli/patch_command.zig

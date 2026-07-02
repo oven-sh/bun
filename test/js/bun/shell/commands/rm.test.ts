@@ -7,7 +7,7 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -171,3 +171,55 @@ function packagejson() {
   "version": "0.0.0"
 }`;
 }
+
+// Recursive `rm -rf` classifies each entry as a directory from readdir, then
+// later re-opens it by path on a worker thread. If that path is replaced by a
+// symlink between classification and open, the open must not follow the link
+// into an unrelated tree. Each iteration races a batch of directory->symlink
+// swaps against the walker; the file behind the symlink must survive every
+// time. The legitimate case (real directories that are not swapped in time)
+// is exercised by the same loop: those entries are simply deleted.
+test.skipIf(process.platform === "win32")(
+  "recursive rm does not follow a directory entry replaced by a symlink during deletion",
+  async () => {
+    const ENTRIES = 64;
+    const FILLER = 8;
+    const ITERATIONS = 10;
+
+    for (let iter = 0; iter < ITERATIONS; iter++) {
+      const files: Record<string, string> = {
+        "victim/keep.txt": "important",
+        "stash/.keep": "",
+      };
+      for (let i = 0; i < ENTRIES; i++) {
+        for (let j = 0; j < FILLER; j++) {
+          files[`target/d${i}/f${j}.txt`] = "";
+        }
+      }
+      const root = tempDirWithFiles(`rm-swap-${iter}`, files);
+      const victimDir = path.join(root, "victim");
+      const victimFile = path.join(victimDir, "keep.txt");
+      const target = path.join(root, "target");
+
+      // Start the recursive delete on the worker pool, then immediately
+      // replace each subdirectory with a symlink pointing at the victim
+      // directory while the walk is in flight.
+      const running = $`rm -rf ${target}`.nothrow().quiet().run();
+      for (let i = 0; i < ENTRIES; i++) {
+        const entry = path.join(target, `d${i}`);
+        try {
+          renameSync(entry, path.join(root, "stash", `d${i}`));
+          symlinkSync(victimDir, entry);
+        } catch {
+          // The walker may have already deleted this entry; that's fine.
+        }
+      }
+      await running;
+
+      // The contents of the directory behind the symlink must never be
+      // deleted, no matter when the swap landed relative to the walk.
+      expect(existsSync(victimFile)).toBeTrue();
+      expect(existsSync(victimDir)).toBeTrue();
+    }
+  },
+);

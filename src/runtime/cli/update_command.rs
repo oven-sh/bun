@@ -5,12 +5,10 @@ use crate::cli::pm_update_package_json::update_package_json_and_install_catch_er
 use crate::cli::update_interactive_command::UpdateInteractiveCommand;
 use crate::command::Context;
 
-pub struct UpdateCommand;
+pub(crate) struct UpdateCommand;
 
 impl UpdateCommand {
-    pub fn exec(ctx: Context) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        // PORT NOTE: dropped `ctx.allocator` arg — global mimalloc per §Allocators.
+    pub(crate) fn exec(ctx: Context) -> Result<(), bun_core::Error> {
         let cli = CommandLineArguments::parse(Subcommand::Update)?;
 
         if cli.interactive {
@@ -21,5 +19,3 @@ impl UpdateCommand {
         Ok(())
     }
 }
-
-// ported from: src/cli/update_command.zig

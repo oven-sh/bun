@@ -1,8 +1,9 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_be_empty_object(
+// Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
+// `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
+pub(crate) fn to_be_empty_object(
     this: &Expect,
     global: &JSGlobalObject,
     call_frame: &CallFrame,
@@ -39,4 +40,3 @@ pub fn to_be_empty_object(
     )
 }
 
-// ported from: src/test_runner/expect/toBeEmptyObject.zig

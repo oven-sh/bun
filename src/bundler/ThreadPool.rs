@@ -1,4 +1,4 @@
-//! Port of `src/bundler/ThreadPool.zig` — the bundler-side worker pool that
+//! The bundler-side worker pool that
 //! wraps `bun_threading::thread_pool::ThreadPool` and owns the per-thread
 //! [`Worker`] state (mimalloc arena, per-thread `Transpiler` clone, AST store).
 //!
@@ -11,7 +11,7 @@ use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_alloc::Arena as ThreadLocalArena; // Zig: bun.allocators.MimallocArena
+use bun_alloc::Arena as ThreadLocalArena;
 use bun_collections::{ArrayHashMap, MapEntry};
 use bun_core::{self, env_var, output as Output};
 use bun_sys::Fd;
@@ -19,11 +19,11 @@ use bun_threading::{Mutex, thread_pool as ThreadPoolLib};
 
 use crate::cache::{Contents, Entry as CacheEntry, ExternalFreeFunction};
 use crate::linker_context_mod::StmtList;
-// PORT NOTE: `crate::options::Target` is the lower-tier `bun_options_types`
+// `crate::options::Target` is the lower-tier `bun_options_types`
 // enum (re-exported for downstream crates); `BundleOptions.target` is the
 // file-backed `options_impl::Target`. Compare against the latter so
-// `primary.options.target == target` type-checks. TODO(refactor): collapse
-// the two enums into one (see lib.rs `pub mod options` shadow note).
+// `primary.options.target == target` type-checks. (The two enums could be
+// collapsed into one; see lib.rs `pub mod options` shadow note.)
 use crate::BundleV2;
 use crate::options_impl::Target;
 use crate::parse_task::{ContentsOrFd, ParseTask, ParseTaskStage};
@@ -34,7 +34,7 @@ bun_core::declare_scope!(ThreadPool, visible);
 
 /// `std.Thread.Id` — `bun_threading::current_thread_id()` returns `u64` on
 /// every platform (`gettid`/`pthread_threadid_np`/`GetCurrentThreadId`).
-pub type ThreadId = u64;
+pub(crate) type ThreadId = u64;
 
 pub struct ThreadPool {
     /// macOS holds an IORWLock on every file open.
@@ -42,19 +42,18 @@ pub struct ThreadPool {
     /// On Windows, this seemed to be a small performance improvement.
     /// On Linux, this was a performance regression.
     /// In some benchmarks on macOS, this yielded up to a 60% performance improvement in microbenchmarks that load ~10,000 files.
-    // PORT NOTE: Zig left this `undefined` when `!uses_io_pool()`; `Option` makes
-    // that explicit. `ParentRef` (not raw `NonNull`) because the pointee is the
+    // `None` when `!uses_io_pool()`.
+    // `ParentRef` (not raw `NonNull`) because the pointee is the
     // module-static `io_thread_pool::THREAD_POOL`, live while `ref_count > 0`,
     // and all `ThreadPoolLib` driver methods (`schedule`, `warm`,
     // `wake_for_idle_events`) take `&self` — so the safe `Deref` projection is
     // sufficient and the per-read `unsafe { p.as_ref() }` disappears.
     pub io_pool: Option<bun_ptr::ParentRef<ThreadPoolLib::ThreadPool>>,
-    // TODO(port): lifetime — TSV class UNKNOWN. Conditionally owned via
-    // `worker_pool_is_owned`; kept raw so callers (bundle_v2.rs draft) can
-    // dereference for `wake_for_idle_events()` without a borrow on `ThreadPool`.
+    // Conditionally owned via `worker_pool_is_owned`; kept raw so callers
+    // (bundle_v2.rs) can dereference for `wake_for_idle_events()` without a
+    // borrow on `ThreadPool`.
     pub worker_pool: *mut ThreadPoolLib::ThreadPool,
     pub worker_pool_is_owned: bool,
-    // PORT NOTE: Zig had `workers_assignments` + sibling `workers_assignments_lock`.
     // Per PORTING.md §Concurrency ("Mutex<T> owns T"), the lock is folded into
     // the field so `get_worker` can take `&self` — `Worker::get` is entered
     // concurrently from arbitrary worker-pool threads, and a `&mut self` here
@@ -72,8 +71,9 @@ pub struct ThreadPool {
 
 // SAFETY: `ThreadPool` is shared across worker threads; the only mutated
 // field (`workers_assignments`) is guarded by its `bun_threading::Guarded`, and
-// the raw-pointer fields are externally synchronized exactly as in the Zig
-// source.
+// the raw-pointer fields are set during init, before the pool is shared with
+// worker threads, and only read thereafter (mutation in `deinit` happens on the
+// owning thread after the workers are done).
 unsafe impl Send for ThreadPool {}
 // SAFETY: `&ThreadPool` is read concurrently from worker-pool threads via
 // `get_worker(&self)`; the only field mutated under `&self` is
@@ -83,8 +83,7 @@ unsafe impl Sync for ThreadPool {}
 
 impl Default for ThreadPool {
     /// Placeholder so `bundle_v2` can `arena().alloc(ThreadPool::default())`
-    /// before overwriting with [`ThreadPool::init`]. Mirrors Zig's
-    /// `arena.create(ThreadPool)` which yields uninit memory.
+    /// before overwriting with [`ThreadPool::init`].
     fn default() -> Self {
         Self {
             io_pool: None,
@@ -107,9 +106,9 @@ mod io_thread_pool {
         bun_core::RacyCell::new(MaybeUninit::uninit());
     /// Protects initialization and deinitialization of the IO thread pool.
     static MUTEX: Mutex = {
-        // PORT NOTE: `Mutex` derives `Default` but `Default::default()` isn't
-        // `const`. The Zig source used `bun.threading.Mutex{}` (zero-init);
-        // an all-zero `Mutex` is the documented unlocked state on every impl.
+        // `Mutex` derives `Default` but `Default::default()` isn't
+        // `const`. An all-zero `Mutex` is the documented unlocked state on
+        // every impl.
         // SAFETY: `Mutex` is `repr(Rust)` over an atomic / Futex word; zero is
         // the valid initial value (matches `#[derive(Default)]`).
         unsafe { bun_core::ffi::zeroed_unchecked() }
@@ -118,7 +117,7 @@ mod io_thread_pool {
     /// N > 1 means N-1 `ThreadPool`s are using the IO thread pool.
     static REF_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-    pub fn acquire() -> NonNull<ThreadPoolLib::ThreadPool> {
+    pub(super) fn acquire() -> NonNull<ThreadPoolLib::ThreadPool> {
         let mut count = REF_COUNT.load(Ordering::Acquire);
         loop {
             if count == 0 {
@@ -161,21 +160,20 @@ mod io_thread_pool {
             // 2 means initialized and referenced by one `ThreadPool`.
             REF_COUNT.store(2, Ordering::Release);
         } else {
-            // PORT NOTE: Zig fell through to `return &thread_pool` without
-            // bumping the ref count here, which is a latent bug in the source
-            // (the racing acquirer's reference isn't counted). Mirrored.
+            // NOTE: a racing acquirer that reaches here does not bump the ref
+            // count — a latent under-count, preserved intentionally.
         }
         // Just initialized (or observed initialized) above. `UnsafeCell::get` never returns null.
         NonNull::new(THREAD_POOL.get().cast::<ThreadPoolLib::ThreadPool>())
             .expect("UnsafeCell::get is non-null")
     }
 
-    pub fn release() {
+    pub(super) fn release() {
         let old = REF_COUNT.fetch_sub(1, Ordering::Release);
         debug_assert!(old > 1, "IOThreadPool: too many calls to release()");
     }
 
-    pub fn shutdown() -> bool {
+    pub(super) fn shutdown() -> bool {
         // Acquire instead of AcqRel is okay because we only need to ensure that other
         // threads are done using the IO pool if we read 1 from the ref count.
         //
@@ -200,15 +198,13 @@ mod io_thread_pool {
         unsafe {
             (*THREAD_POOL.get()).assume_init_drop();
         }
-        // PORT NOTE: Zig source falls off the end of a `bool`-returning fn here
-        // (`thread_pool = undefined;` is the last statement). Assuming `true`.
         true
     }
 }
 
 impl ThreadPool {
     /// Inherent associated type so call sites that wrote
-    /// `ThreadPool::Worker::get(ctx)` (matching Zig's `ThreadPool.Worker`)
+    /// `ThreadPool::Worker::get(ctx)`
     /// resolve without a separate module path.
     pub type Worker = Worker;
 
@@ -222,17 +218,13 @@ impl ThreadPool {
         // end-to-end.
         worker_pool: Option<NonNull<ThreadPoolLib::ThreadPool>>,
     ) -> Result<ThreadPool, bun_alloc::AllocError> {
-        // PORT NOTE: Spec ThreadPool.zig:85 allocated via the bundle arena
-        // (`v2.arena().create`), so the `false` ownership flag was
-        // harmless — the arena reclaimed it. Here we `heap::alloc` (global
+        // The pool is `heap::alloc`'d (global
         // heap), so `deinit()` must `heap::take` it back; record ownership.
         let owned = worker_pool.is_none();
         let pool: *mut ThreadPoolLib::ThreadPool = match worker_pool {
             Some(p) => p.as_ptr(),
             None => {
                 let cpu_count = bun_core::get_thread_count();
-                // PERF(port): was `v2.arena().create(ThreadPoolLib)` —
-                // using heap::alloc (global mimalloc).
                 let pool = bun_core::heap::into_raw(Box::new(ThreadPoolLib::ThreadPool::init(
                     ThreadPoolLib::Config {
                         max_threads: u32::from(cpu_count),
@@ -267,7 +259,7 @@ impl ThreadPool {
         }
     }
 
-    /// Explicit teardown — Zig callers spell `pool.deinit()` (no Drop on
+    /// Explicit teardown (no Drop on
     /// `ThreadPool` because `Graph.pool` is `NonNull<ThreadPool>` and the arena
     /// owns the storage).
     pub fn deinit(&mut self) {
@@ -347,8 +339,7 @@ impl ThreadPool {
             let ContentsOrFd::Contents(contents) = parse_task.contents_or_fd else {
                 unreachable!()
             };
-            // PORT NOTE: Zig moved the `[]const u8` slice into the cache entry
-            // by value. `cache::Contents` has no borrowed-slice variant; the
+            // `cache::Contents` has no borrowed-slice variant; the
             // contract (see ParseTask.rs `run_with_source_code` defer) is that
             // `entry.deinit()` is *skipped* when `contents_or_fd == .contents`,
             // so an `External` provenance tag (no-op deinit) is the correct
@@ -396,7 +387,7 @@ impl ThreadPool {
         }
     }
 
-    // PORT NOTE: takes `*mut` (Zig: `*ParseTask`) so callers can pass either a
+    // takes `*mut` so callers can pass either a
     // raw heap pointer (e.g. `load.parse_task`) or a `&mut` (auto-coerces).
     pub fn schedule(&self, parse_task: *mut ParseTask) {
         self.schedule_with_options(parse_task, false);
@@ -406,9 +397,9 @@ impl ThreadPool {
         self.schedule_with_options(parse_task, true);
     }
 
-    // PORT NOTE: returns `&'static mut` — the `Worker` is `heap::alloc`'d
+    // returns `&'static mut` — the `Worker` is `heap::alloc`'d
     // below and lives until `Worker::deinit`; detaching from `&self` lets
-    // callers re-borrow `ThreadPool` while holding the worker (Zig: `*Worker`).
+    // callers re-borrow `ThreadPool` while holding the worker.
     // Takes `&self` (not `&mut`) because this is called concurrently from
     // worker-pool threads via `Worker::get`; mutation goes through the
     // `bun_threading::Guarded` on `workers_assignments`.
@@ -417,9 +408,9 @@ impl ThreadPool {
     // pure `current_thread_id() → *mut Worker` re-read after first touch, so
     // every subsequent call from the same thread for the same pool is a TLS
     // load + pointer compare. The lock is only taken on first touch per
-    // `(thread, pool)` pair. Zig (ThreadPool.zig:180) takes the lock on every
-    // call; on a 19 K-module build that's ~100 K contended acquisitions, which
-    // perf attributes ~97 % of the build's futex traffic to.
+    // `(thread, pool)` pair. Taking the lock on every
+    // call would mean ~100 K contended acquisitions on a 19 K-module build —
+    // ~97 % of the build's futex traffic per perf.
     #[inline]
     pub fn get_worker(&self, id: ThreadId) -> &'static mut Worker {
         let (generation, worker) = TLS_WORKER.get();
@@ -507,17 +498,16 @@ static POOL_GENERATION: core::sync::atomic::AtomicU64 = core::sync::atomic::Atom
 /// `deinit_task`/`arena` fields are self-referential); never moved after
 /// `get_worker` boxes it.
 pub struct Worker {
-    /// Thread-local arena. `None` until [`Worker::create`] runs (Zig wrote
-    /// `undefined`); every read site is post-`has_created`.
+    /// Thread-local arena. `None` until [`Worker::create`] runs;
+    /// every read site is post-`has_created`.
     pub heap: Option<ThreadLocalArena>,
 
     /// Thread-local memory arena
     /// All allocations are freed in `deinit` at the very end of bundling.
-    // PORT NOTE: self-referential borrow of `heap` — `BackRef` (not a real
+    // self-referential borrow of `heap` — `BackRef` (not a real
     // `&'self ThreadLocalArena`) so it can be reseated in `create()` without a
     // self-borrow and so call sites read it via safe `Deref` instead of
-    // open-coding a raw deref. Zig stored the `std.mem.Allocator` vtable; here
-    // it's just `&heap`. Dangling until `create()` runs; every read site is
+    // open-coding a raw deref. Dangling until `create()` runs; every read site is
     // post-`has_created`.
     pub arena: bun_ptr::BackRef<ThreadLocalArena>,
 
@@ -549,7 +539,7 @@ pub struct Worker {
 impl Worker {
     /// Reborrow the self-referential `arena` (= `&self.heap`) as a shared
     /// reference. `BackRef` field, so the deref is encapsulated in
-    /// [`bun_ptr::BackRef::get`]; see PORT NOTE on the field.
+    /// [`bun_ptr::BackRef::get`]; see note on the field.
     ///
     /// `arena` is set to `&self.heap` in [`Worker::create`] before any caller
     /// can observe the `Worker`, and is never dangling after that point. The
@@ -571,13 +561,12 @@ impl Worker {
 }
 
 pub struct WorkerData {
-    // TODO(port): lifetime — TSV class ARENA (`&'arena mut bun_ast::Log`); kept
-    // raw because the arena is the sibling field `Worker.heap`.
+    // Kept raw because the pointee's arena
+    // is the sibling field `Worker.heap`, which Rust cannot express as a borrow.
     pub log: *mut bun_ast::Log,
     pub estimated_input_lines_of_code: usize,
-    // PORT NOTE: lifetime erased to `'static` — the inner `&'a Arena` borrows
-    // `Worker.heap`, which Rust can't express on a sibling field. Zig used
-    // `transpiler: Transpiler` with a copied `std.mem.Allocator`.
+    // lifetime erased to `'static` — the inner `&'a Arena` borrows
+    // `Worker.heap`, which Rust can't express on a sibling field.
     //
     // Owned (no `MaybeUninit`): `Transpiler::for_worker` deep-clones every
     // `Drop`-carrying field, so `WorkerData`'s drop (via
@@ -620,8 +609,8 @@ impl Worker {
             // (the bundler thread running an inline parse). `deinit_soon` is
             // also called from the bundler thread (`deinit_without_freeing_arena`
             // iterates `workers_assignments`), so we are on the owning thread
-            // and can tear down synchronously. Zig spec (ThreadPool.zig:232)
-            // silently no-ops here, leaking the Worker — including its
+            // and can tear down synchronously. Skipping teardown here would
+            // leak the Worker — including its
             // `ast_memory_store` mi_heap (every `AstAlloc` buffer the inline
             // parse produced) and `data.transpiler` per `Bun.build()` call.
             //
@@ -668,10 +657,9 @@ impl Worker {
         // and `create()` may overwrite it
         // via `*ast_memory_store = ...`. Dropped exactly once here, *outside*
         // the `has_created` guard so the default-constructed arena is freed
-        // even when `create()` never ran (Zig left it `undefined`; Rust does
-        // not). Ordered before `heap = None` in case the TODO(port) in
-        // `ASTMemoryAllocator::new` ever threads `arena_ref` (= `&self.heap`)
-        // through.
+        // even when `create()` never ran.
+        // Ordered before `heap = None` in case `ASTMemoryAllocator::new`
+        // ever threads `arena_ref` (= `&self.heap`) through.
         unsafe { ManuallyDrop::drop(&mut worker.ast_memory_store) };
         if worker.has_created {
             worker.heap = None;
@@ -683,9 +671,9 @@ impl Worker {
         unsafe { bun_core::heap::destroy(this) };
     }
 
-    // PORT NOTE: returns `&'static mut` (detached) — the `Worker` is
+    // returns `&'static mut` (detached) — the `Worker` is
     // heap-pinned (heap::alloc in `get_worker`) and outlives any `ctx`
-    // borrow; Zig returned `*Worker`. Tying it to `ctx`'s lifetime would
+    // borrow. Tying it to `ctx`'s lifetime would
     // forbid the `worker` ↔ `ctx` re-borrows in `ParseTask::run_*`.
     pub fn get(ctx: &BundleV2<'_>) -> &'static mut Worker {
         // SAFETY: `ctx` is a BACKREF; `graph.pool` is a `NonNull<ThreadPool>`
@@ -715,7 +703,7 @@ impl Worker {
     }
 
     fn create(&mut self, ctx: &BundleV2<'_>) {
-        // PORT NOTE: `bun_perf::trace` takes a generated `PerfEvent` enum, and
+        // `bun_perf::trace` takes a generated `PerfEvent` enum, and
         // the generator hasn't emitted `Bundler.Worker.create` yet (only
         // `_Stub`). Dropped to avoid mis-attributing the span.
         // let _trace = bun_perf::trace("Bundler.Worker.create");
@@ -734,7 +722,7 @@ impl Worker {
         let arena_ref: &'static ThreadLocalArena =
             unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) };
 
-        // Zig: `.{ .arena = this.arena }` then `reset()`. The Rust
+        // The
         // ASTMemoryAllocator owns its bump arena internally and ignores the
         // passed fallback (see ASTMemoryAllocator::new doc).
         *self.ast_memory_store = bun_ast::ASTMemoryAllocator::new(arena_ref);
@@ -742,8 +730,7 @@ impl Worker {
 
         let log: *mut bun_ast::Log = arena_ref.alloc(bun_ast::Log::init());
         self.ctx = bun_ptr::BackRef::from(NonNull::from(ctx).cast::<BundleV2<'static>>());
-        // PERF(port): was `bun.ArenaAllocator.init(this.arena)` — using a
-        // fresh Bump (no nested-arena type yet).
+        // Use a fresh Bump (no nested-arena type yet).
         self.temporary_arena = Some(bun_alloc::Arena::new());
         self.stmt_list = Some(StmtList::init());
         let data = self.data.insert(WorkerData {
@@ -759,9 +746,9 @@ impl Worker {
         bun_core::scoped_log!(ThreadPool, "Worker.create()");
     }
 
-    /// Build a per-worker `Transpiler` from `from` (Zig: `transpiler.* = from.*`).
+    /// Build a per-worker `Transpiler` from `from`.
     ///
-    /// PORT NOTE: reshaped for borrowck — associated fn (no `&mut self`) so
+    /// reshaped for borrowck — associated fn (no `&mut self`) so
     /// callers can borrow `self.data.log` disjointly. The returned value is a
     /// fully-owned `Transpiler` whose `Drop` is sound; `wire_after_move` must
     /// be called once it is at its final address.
@@ -813,5 +800,3 @@ impl Worker {
         }
     }
 }
-
-// ported from: src/bundler/ThreadPool.zig

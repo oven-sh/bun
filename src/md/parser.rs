@@ -1,11 +1,12 @@
 // Sub-modules
 
+use core::cell::Cell;
 use core::ffi::c_void;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 
-// Zig `bun.bit_set.StaticBitSet(256)` resolves to `ArrayBitSet(usize, 256)`
-// (size > @bitSizeOf(usize)). Stable Rust cannot branch a type on a const
+// Stable Rust cannot branch a type on a const
 // generic, so per bit_set.rs guidance we pick `ArrayBitSet` directly. The
 // inline scanner in inlines.rs depends on `is_set()` being real — a no-op
 // stub here makes every byte fall through the fast path and disables all
@@ -19,19 +20,18 @@ use super::types::{
     Align, BlockType, Container, Flags, Mark, NUM_OPENER_STACKS, OFF, OpenerStack, Renderer,
     TABLE_MAXCOLCOUNT, VerbatimLine,
 };
-use crate::RenderOptions; // Zig: `root.RenderOptions` (root.zig → crate lib.rs)
+use crate::RenderOptions;
 
-// Re-exports that Zig nested under `Parser.*` — Rust has no struct-scoped type
-// aliases, so they live at module scope as `parser::EmphDelim` etc.
-pub use super::inlines::{EmphDelim, MAX_EMPH_MATCHES};
+// Rust has no struct-scoped type
+// aliases, so these live at module scope as `parser::EmphDelim` etc.
+pub use super::inlines::{EmphDelim, HtmlScanMemo, MAX_EMPH_MATCHES};
 pub use super::ref_defs::RefDef;
 
 /// Parser context holding all state during parsing.
-// PORT NOTE: `text` is a caller-owned borrow for the parser's lifetime.
+// `text` is a caller-owned borrow for the parser's lifetime.
 // PORTING.md's mechanical-port guidance was "no struct lifetimes", but raw-ptr
 // here would obscure every `ch()` call; one obvious `'a` is the honest mapping.
 pub struct Parser<'a> {
-    // Zig field `std.mem.Allocator` param — dropped; global mimalloc.
     pub text: &'a [u8],
     pub size: OFF,
     pub flags: Flags,
@@ -51,13 +51,25 @@ pub struct Parser<'a> {
     // Dynamic arrays
     pub marks: Vec<Mark>,
     pub containers: Vec<Container>,
-    // TODO(port): Zig uses `ArrayListAlignedUnmanaged(u8, .@"4")` — 4-byte
-    // alignment is load-bearing for `BlockHeader` reinterpretation via
-    // `getBlockHeaderAt`. Wrap in an aligned-vec newtype or store
-    // `Vec<u32>` and byte-view it.
+    // 4-byte alignment is
+    // load-bearing for the `BlockHeader` reinterpretation in
+    // `get_block_header_at`. Here the invariant rests on (a) offsets being
+    // padded to a multiple of 4 by every writer and (b) the global allocator
+    // returning >=16-byte-aligned bases; `get_block_header_at`
+    // debug-asserts it on every access.
     pub block_bytes: Vec<u8>,
     pub buffer: Vec<u8>,
     pub emph_delims: Vec<EmphDelim>,
+    // Scratch storage recycled by compute_bracket_matches (links.rs) so inline
+    // processing does not allocate a bracket-pair map per block.
+    pub bracket_pairs: Vec<(OFF, OFF)>,
+    // Label-frame stack recycled by process_inline_content (inlines.rs) so
+    // blocks with links do not allocate a frame stack per block.
+    pub label_frames: Vec<crate::inlines::LabelFrame>,
+    // Memo of failed closing-delimiter searches in find_html_tag (inlines.rs).
+    // Cell because find_html_tag is a &self query reached from both &self and
+    // &mut self scanners.
+    pub html_scan_memo: Cell<HtmlScanMemo>,
 
     // Number of active containers
     pub n_containers: u32,
@@ -118,28 +130,97 @@ impl Default for BlockHeader {
     }
 }
 
-/// `Parser.Error` in Zig is `bun.JSError || bun.StackOverflow`, i.e. the union
-/// of `{ OutOfMemory, JSError, JSTerminated }` with `{ StackOverflow }`.
-// TODO(port): narrow error set — `bun_jsc::JsError` already covers the first
-// three; could be `enum { Js(JsError), StackOverflow }` instead.
-// TODO(port): thiserror/strum not in workspace deps — derive dropped, hand-roll if needed.
+/// `Parser`'s error type: the union of `{ OutOfMemory, JSError, JSTerminated }`
+/// with the parser-specific `{ StackOverflow, InputTooLarge, TooManyBlocks }`.
+// (`bun_jsc::JsError` covers the first three, but the md crate sits below
+// `bun_jsc` in the layering, so the variants stay flat here.)
 pub type Error = ParserError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ParserError {
     OutOfMemory,
     JSError,
     JSTerminated,
     StackOverflow,
+    /// The input is longer than [`MAX_INPUT_LEN`], so the parser's `u32`
+    /// offset arithmetic cannot address it.
+    InputTooLarge,
+    /// The document needs more than [`MAX_BLOCK_BYTES`] of block metadata,
+    /// so the parser's `u32` block offsets cannot address it.
+    TooManyBlocks,
 }
 
 bun_core::oom_from_alloc!(ParserError);
 
 impl From<ParserError> for bun_core::Error {
-    fn from(_e: ParserError) -> Self {
-        // TODO(port): wire IntoStaticStr → interned tag; bun_core::err! only accepts ident
-        bun_core::err!(ParserError)
+    fn from(e: ParserError) -> Self {
+        bun_core::err!(from e)
     }
+}
+
+/// The longest `OFF`-typed fixed lookahead the parser performs from an
+/// in-bounds offset: the `<![CDATA[` probe in `is_html_block_start_condition`
+/// checks `off + MAX_LOOKAHEAD <= size`. (Probes that add in `usize`, like
+/// `match_html_tag`, cannot wrap and do not bound this.)
+pub(crate) const MAX_LOOKAHEAD: OFF = 1 + crate::line_analysis::CDATA_OPEN.len() as OFF;
+
+/// The largest input `input_size` accepts. Every offset, mark and span
+/// boundary in the parser is an `OFF` (u32), and bounds checks are written as
+/// `off + k <= size` for fixed lookaheads `k`, so the input must leave
+/// [`MAX_LOOKAHEAD`] bytes of headroom below `OFF::MAX` for that arithmetic
+/// never to wrap.
+pub const MAX_INPUT_LEN: usize = (OFF::MAX - MAX_LOOKAHEAD) as usize;
+
+/// The most bytes `block_bytes` may hold: a block's offset into the buffer
+/// is stored as a `u32` (`Container.block_byte_off` and the casts that feed
+/// it), and each new header is written at the end of `block_bytes` rounded
+/// up to its alignment, so the buffer must stop one aligned header short of
+/// `OFF::MAX`.
+pub(crate) const MAX_BLOCK_BYTES: usize =
+    OFF::MAX as usize - (size_of::<BlockHeader>() + align_of::<BlockHeader>());
+
+// The headroom proof: a buffer filled to the cap can still be aligned up and
+// take one more header without leaving `OFF` range.
+const _: () = assert!(
+    ((MAX_BLOCK_BYTES + (align_of::<BlockHeader>() - 1)) & !(align_of::<BlockHeader>() - 1))
+        + size_of::<BlockHeader>()
+        <= OFF::MAX as usize
+);
+
+/// The runtime block-metadata cap checked by [`check_block_bytes_len`]:
+/// always [`MAX_BLOCK_BYTES`] outside of tests, shrinkable only through
+/// [`set_max_block_bytes_for_testing`].
+static BLOCK_BYTES_LIMIT: AtomicUsize = AtomicUsize::new(MAX_BLOCK_BYTES);
+
+/// `bun:internal-for-testing` (`setMaxMarkdownBlockBytesForTesting`): shrink
+/// the block-metadata cap so the `TooManyBlocks` path is reachable without
+/// allocating 4 GiB of headers. The cap can only be lowered, never raised
+/// past [`MAX_BLOCK_BYTES`]. Returns the previous value so callers can
+/// restore it.
+pub fn set_max_block_bytes_for_testing(limit: usize) -> usize {
+    BLOCK_BYTES_LIMIT.swap(limit.min(MAX_BLOCK_BYTES), Ordering::Relaxed)
+}
+
+/// Rejects growing `block_bytes` to `needed` bytes once the parser's u32
+/// block offsets could no longer address it. Every site that grows the
+/// buffer (`append_block_header`, `end_current_block`) checks this before
+/// appending.
+#[inline]
+pub(crate) fn check_block_bytes_len(needed: usize) -> Result<(), ParserError> {
+    if needed > BLOCK_BYTES_LIMIT.load(Ordering::Relaxed) {
+        return Err(ParserError::TooManyBlocks);
+    }
+    Ok(())
+}
+
+/// Callers that size anything from the input length must reject oversized
+/// inputs with this before allocating.
+#[inline]
+pub(crate) fn input_size(text: &[u8]) -> Result<OFF, ParserError> {
+    if text.len() > MAX_INPUT_LEN {
+        return Err(ParserError::InputTooLarge);
+    }
+    Ok(text.len() as OFF)
 }
 
 impl<'a> Parser<'a> {
@@ -148,8 +229,6 @@ impl<'a> Parser<'a> {
         // to a multiple of `align_of::<BlockHeader>()`, and the global allocator returns
         // blocks aligned to at least `align_of::<usize>()`, so the resulting pointer is
         // 4-byte aligned (asserted below). The buffer holds an initialized BlockHeader there.
-        // TODO(port): borrowck — this returns &mut into self.block_bytes while other
-        // &mut self borrows may be live at call sites; may need raw *mut.
         unsafe {
             let ptr = self
                 .block_bytes
@@ -167,8 +246,28 @@ impl<'a> Parser<'a> {
         self.get_block_header_at(off)
     }
 
-    fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Parser<'a> {
-        let size: OFF = OFF::try_from(text.len()).expect("int cast");
+    /// Appends one aligned `BlockHeader` to `block_bytes` and returns its
+    /// byte offset. This is the only way a header is added, so the
+    /// block-metadata cap cannot be forgotten by a new caller.
+    pub(crate) fn append_block_header(
+        &mut self,
+        header: BlockHeader,
+    ) -> Result<usize, ParserError> {
+        let align_mask: usize = align_of::<BlockHeader>() - 1;
+        let aligned = (self.block_bytes.len() + align_mask) & !align_mask;
+        let needed = aligned + size_of::<BlockHeader>();
+        check_block_bytes_len(needed)?;
+        self.block_bytes
+            .reserve(needed.saturating_sub(self.block_bytes.len()));
+        // Zero-fill to `needed`; bytes in [aligned, needed) are immediately
+        // overwritten by the header write below.
+        self.block_bytes.resize(needed, 0);
+        *self.get_block_header_at(aligned) = header;
+        Ok(aligned)
+    }
+
+    fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Result<Parser<'a>, ParserError> {
+        let size = input_size(text)?;
         let mut p = Parser {
             text,
             size,
@@ -188,6 +287,9 @@ impl<'a> Parser<'a> {
             block_bytes: Vec::new(),
             buffer: Vec::new(),
             emph_delims: Vec::new(),
+            bracket_pairs: Vec::new(),
+            label_frames: Vec::new(),
+            html_scan_memo: Cell::new(HtmlScanMemo::EMPTY),
             n_containers: 0,
             current_block: None,
             current_block_lines: Vec::new(),
@@ -208,11 +310,10 @@ impl<'a> Parser<'a> {
             stack_check: StackCheck::init(),
         };
         p.build_mark_char_map();
-        p
+        Ok(p)
     }
 
-    // Zig `fn deinit(self: *Parser)` only frees the `ArrayListUnmanaged` fields.
-    // All of those are now `Vec<_>`, so `Drop` is automatic — no explicit impl.
+    // All owned buffers are `Vec<_>`, so `Drop` is automatic — no explicit impl.
 
     #[inline]
     pub fn ch(&self, off: OFF) -> u8 {
@@ -264,12 +365,10 @@ impl<'a> Parser<'a> {
     // Delegated methods (re-exports)
     // ========================================
     //
-    // In Zig these are `pub const foo = other_mod.foo;` aliases that pull free
-    // functions into `Parser`'s decl namespace so they dispatch as methods
-    // (`parser.foo(...)`). Rust has no decl-aliasing; instead each sibling
+    // Each sibling
     // module defines its own `impl Parser<'_> { ... }` block (multiple `impl`
     // blocks per type within one crate are idiomatic). The list below is kept
-    // as documentation so the .zig ↔ .rs diff stays line-aligned.
+    // as documentation of where each method lives.
     //
     // render_blocks.rs — impl Parser:
     //   enter_block, leave_block, process_code_block, process_html_block,
@@ -293,8 +392,10 @@ impl<'a> Parser<'a> {
     //   find_html_tag
     //
     // links.rs — impl Parser:
-    //   process_link, try_match_bracket_link, label_contains_link,
-    //   process_wiki_link, render_ref_link, find_autolink, render_autolink
+    //   compute_bracket_matches, match_bracket, scan_bracket_close,
+    //   enter_label_span, process_link, try_match_bracket_link,
+    //   label_contains_link, process_wiki_link, find_autolink,
+    //   render_autolink
     //
     // line_analysis.rs — impl Parser:
     //   is_setext_underline, is_hr_line, is_atx_header_line,
@@ -325,18 +426,10 @@ pub fn render_to_html(
     let input = helpers::skip_utf8_bom(text);
 
     let mut html_renderer = HtmlRenderer::init(input, render_opts);
-    // Zig `errdefer html_renderer.deinit()` — Drop handles cleanup on `?`.
 
-    let mut parser = Parser::init(input, flags, html_renderer.renderer());
-    // Zig `defer parser.deinit()` — Drop handles cleanup at scope exit.
+    let mut parser = Parser::init(input, flags, html_renderer.renderer())?;
 
-    // HtmlRenderer never returns JSError/JSTerminated, so OutOfMemory is the only possible error.
-    match parser.process_doc() {
-        Ok(()) => {}
-        Err(ParserError::OutOfMemory) => return Err(ParserError::OutOfMemory),
-        Err(ParserError::JSError) | Err(ParserError::JSTerminated) => unreachable!(),
-        Err(ParserError::StackOverflow) => return Err(ParserError::StackOverflow),
-    }
+    parser.process_doc()?;
     drop(parser);
 
     Ok(html_renderer.to_owned_slice()?)
@@ -355,10 +448,7 @@ pub fn render_with_renderer<'a>(
     let _ = render_options; // Available for renderer implementations; parse layer does not use these.
     let input = helpers::skip_utf8_bom(text);
 
-    let mut p = Parser::init(input, flags, rend);
-    // Zig `defer p.deinit()` — Drop.
+    let mut p = Parser::init(input, flags, rend)?;
 
     p.process_doc()
 }
-
-// ported from: src/md/parser.zig

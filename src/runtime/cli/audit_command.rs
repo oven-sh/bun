@@ -1,8 +1,7 @@
 use bstr::BStr;
-use bun_collections::VecExt;
 use std::io::Write as _;
 
-use bun_ast::{Expr, ExprData};
+use bun_ast::{ExprData, e as E};
 use bun_collections::{StringArrayHashMap, StringHashMap};
 use bun_core::{Global, Output, pretty, prettyln};
 use bun_core::{MutableString, strings};
@@ -18,9 +17,8 @@ use bun_url::URL;
 use crate::cli::Command;
 use crate::cli::package_manager_command::PackageManagerCommand;
 
-// TODO(port): in Zig these `[]const u8` fields borrow from the JSON parse arena (and a few are
-// `allocator.dupe`d). Boxed here to avoid a struct lifetime param; revisit if
-// the extra clones show up in profiling.
+// Boxed to avoid a struct lifetime param; the
+// clones are per-vulnerability, terminal-UI-bound, and not perf-relevant.
 struct VulnerabilityInfo {
     severity: Box<[u8]>,
     title: Box<[u8]>,
@@ -36,7 +34,6 @@ struct PackageInfo {
     dependents: Vec<DependencyPath>,
 }
 
-// In Zig this is `PackageInfo.DependencyPath`; hoisted because Rust has no nested struct types.
 struct DependencyPath {
     path: Vec<Box<[u8]>>,
 }
@@ -49,7 +46,7 @@ struct AuditResult {
 }
 
 impl AuditResult {
-    pub fn init() -> AuditResult {
+    pub(crate) fn init() -> AuditResult {
         AuditResult {
             vulnerable_packages: StringArrayHashMap::default(),
             all_vulnerabilities: Vec::new(),
@@ -59,13 +56,15 @@ impl AuditResult {
 
 // `deinit` body only freed owned fields → Drop is automatic on `StringHashMap`/`Vec`/`Box`.
 
-pub struct AuditCommand;
+pub(crate) struct AuditCommand;
 
 impl AuditCommand {
     // `!noreturn` → `Result<Infallible, _>` so callers can `?`; all Ok paths Global::exit.
-    pub fn exec(ctx: Command::Context) -> Result<core::convert::Infallible, bun_core::Error> {
+    pub(crate) fn exec(
+        ctx: Command::Context,
+    ) -> Result<core::convert::Infallible, bun_core::Error> {
         let cli = CommandLineArguments::parse(Subcommand::Audit)?;
-        // PORT NOTE: `init` consumes `cli`; capture the fields read after it.
+        // Note: `init` consumes `cli`; capture the fields read after it.
         let audit_level = cli.audit_level;
         let production = cli.production;
         let audit_ignore_list = cli.audit_ignore_list;
@@ -84,7 +83,7 @@ impl AuditCommand {
                     } else {
                         Output::err_generic("No package.json was found", ());
                     }
-                    Output::note("Run \"bun init\" to initialize a project");
+                    bun_core::note!("Run \"bun init\" to initialize a project");
                     Global::exit(1);
                 }
 
@@ -107,7 +106,7 @@ impl AuditCommand {
     /// Returns the exit code of the command. 0 if no vulnerabilities were found, 1 if vulnerabilities were found.
     /// The exception is when you pass --json, it will simply return 0 as that was considered a successful "request
     /// for the audit information"
-    pub fn audit(
+    pub(crate) fn audit(
         _ctx: Command::Context,
         pm: &mut PackageManager,
         json_output: bool,
@@ -115,15 +114,13 @@ impl AuditCommand {
         audit_prod_only: bool,
         ignore_list: &[&[u8]],
     ) -> Result<u32, bun_alloc::AllocError> {
-        // TODO(port): comptime `Output.prettyFmt(..., true)` pre-expands ANSI tags at compile time.
-        Output::pretty_error(format_args!(
+        bun_core::pretty_error!(
             "<r><b>bun audit <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
 
-        // PORT NOTE: Zig `pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true)`
-        // is a self-referential split borrow; encapsulated upstream as
+        // Note: a self-referential split borrow; encapsulated upstream as
         // `PackageManager::load_lockfile_from_cwd`.
         {
             let log_level = pm.options.log_level;
@@ -145,21 +142,20 @@ impl AuditCommand {
                 let source =
                     bun_ast::Source::init_path_string(b"audit-response.json", &response_text[..]);
                 let mut log = bun_ast::Log::init();
-                let bump = bun_alloc::Arena::new();
 
-                let expr = match bun_json::parse::<true>(&source, &mut log, &bump) {
+                let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
                     Ok(e) => e,
                     Err(_) => {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<red>error<r>: audit request failed to parse json. Is the registry down?"
-                        ));
+                        );
                         return Ok(1); // If we can't parse then safe to assume a similar failure
                     }
                 };
 
                 // If the response is an empty object, no vulnerabilities
-                if let ExprData::EObject(obj) = &expr.data {
-                    if obj.properties.len_u32() == 0 {
+                if let ExprData::EObjectJSON(obj) = &parsed.root.data {
+                    if obj.get().properties().is_empty() {
                         return Ok(0);
                     }
                 }
@@ -242,9 +238,7 @@ fn build_dependency_tree(
 
             let resolved_name = pkg_names[resolved_pkg_id as usize].slice(buf);
 
-            // PORT NOTE: Zig `getOrPut` then `dupe` key only when not found.
-            // `StringHashMap::get_or_put` always boxes the key on miss, so the
-            // separate `allocator.dupe` is folded in.
+            // `StringHashMap::get_or_put` always boxes the key on miss.
             let result = dependency_tree.get_or_put(resolved_name)?;
             result.value_ptr.push(Box::<[u8]>::from(package_name));
         }
@@ -330,10 +324,10 @@ fn collect_packages_for_audit(
         prod_packages = Some(set);
     }
 
-    // PORT NOTE: reshaped for borrowck — column slices borrow `pm.lockfile`
+    // Note: reshaped for borrowck — column slices borrow `pm.lockfile`
     // immutably for the loop, so resolve `root_id` / `prod_packages` (which
     // need `&mut pm`) above, and split-borrow `pm.options` for the scope lookup
-    // (disjoint from `pm.lockfile`; Zig had no aliasing model).
+    // (disjoint from `pm.lockfile`).
     let options = &pm.options;
     let default_url_hash = options.scope.url_hash;
     let packages = pm.lockfile.packages.slice();
@@ -394,10 +388,8 @@ fn collect_packages_for_audit(
         if !version_exists {
             found_package.versions.push(ver_str);
         }
-        // else: ver_str dropped (Zig: allocator.free)
     }
 
-    // PERF(port): Zig used MutableString with initial capacity 1024.
     let mut body: Vec<u8> = Vec::with_capacity(1024);
     body.push(b'{');
 
@@ -433,20 +425,12 @@ fn send_audit_request(
     body: &[u8],
 ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
     libdeflate::load();
-    let compressor_ptr = libdeflate::Compressor::alloc(6);
-    if compressor_ptr.is_null() {
-        return Err(bun_alloc::AllocError);
-    }
-    // SAFETY: non-null checked above; libdeflate hands back a heap-allocated
-    // compressor that lives until `destroy` (Zig: `*Compressor`).
-    let compressor = unsafe { &mut *compressor_ptr };
+    let mut compressor = libdeflate::OwnedCompressor::new(6).ok_or(bun_alloc::AllocError)?;
 
     let max_compressed_size = compressor.max_bytes_needed(body, libdeflate::Encoding::Gzip);
     let mut compressed_body = Vec::with_capacity(max_compressed_size);
     let _ = compressor.compress_to_vec(body, &mut compressed_body, libdeflate::Encoding::Gzip);
-    // SAFETY: `compressor_ptr` was returned by `Compressor::alloc` and is not
-    // used after this point (Zig: `defer compressor.deinit()`).
-    unsafe { libdeflate::Compressor::destroy(compressor_ptr) };
+    drop(compressor);
     let final_compressed_body = compressed_body;
 
     let mut headers = HeaderBuilder::default();
@@ -487,10 +471,8 @@ fn send_audit_request(
 
     let http_proxy = pm.http_proxy(&url);
 
-    // PORT NOTE: Zig passed `headers.content.ptr.?[0..headers.content.len]`.
     let headers_buf: &[u8] = headers.content.written_slice();
 
-    // PERF(port): Zig used MutableString with initial capacity 1024.
     let mut response_buf = MutableString::init(1024)?;
     // `init_sync` erases lifetimes internally (port-erased raw pointers); all
     // borrowed inputs live on this stack frame past `send_sync()`.
@@ -514,10 +496,10 @@ fn send_audit_request(
     };
 
     if res.status_code >= 400 {
-        Output::pretty_errorln(format_args!(
+        bun_core::pretty_errorln!(
             "<red>error<r>: audit request failed (status {})",
             res.status_code
-        ));
+        );
         Global::crash();
     }
 
@@ -526,7 +508,7 @@ fn send_audit_request(
 
 fn parse_vulnerability(
     package_name: &[u8],
-    vuln: &Expr,
+    vuln: &E::ObjectJSON,
 ) -> Result<VulnerabilityInfo, bun_alloc::AllocError> {
     let mut vulnerability = VulnerabilityInfo {
         severity: Box::<[u8]>::from(b"moderate" as &[u8]),
@@ -537,36 +519,31 @@ fn parse_vulnerability(
         package_name: Box::<[u8]>::from(package_name),
     };
 
-    if let ExprData::EObject(obj) = &vuln.data {
-        let props = obj.properties.slice();
-        for prop in props {
-            if let Some(key) = &prop.key {
-                if let ExprData::EString(key_str) = &key.data {
-                    let field_name: &[u8] = key_str.data.slice();
-                    if let Some(value) = &prop.value {
-                        if let ExprData::EString(val_str) = &value.data {
-                            let field_value: &[u8] = val_str.data.slice();
-                            if field_name == b"severity" {
-                                vulnerability.severity = Box::<[u8]>::from(field_value);
-                            } else if field_name == b"title" {
-                                vulnerability.title = Box::<[u8]>::from(field_value);
-                            } else if field_name == b"url" {
-                                vulnerability.url = Box::<[u8]>::from(field_value);
-                            } else if field_name == b"vulnerable_versions" {
-                                vulnerability.vulnerable_versions = Box::<[u8]>::from(field_value);
-                            } else if field_name == b"id" {
-                                vulnerability.id = Box::<[u8]>::from(field_value);
-                            }
-                        } else if let ExprData::ENumber(num) = &value.data {
-                            if field_name == b"id" {
-                                let mut s: Vec<u8> = Vec::new();
-                                write!(&mut s, "{}", num.value as u64).expect("unreachable");
-                                vulnerability.id = s.into_boxed_slice();
-                            }
-                        }
-                    }
+    for prop in vuln.properties() {
+        let field_name: &[u8] = prop.key.slice();
+        match &prop.value {
+            E::JsonValue::String(val_str) => {
+                let field_value: &[u8] = val_str.slice();
+                if field_name == b"severity" {
+                    vulnerability.severity = Box::<[u8]>::from(field_value);
+                } else if field_name == b"title" {
+                    vulnerability.title = Box::<[u8]>::from(field_value);
+                } else if field_name == b"url" {
+                    vulnerability.url = Box::<[u8]>::from(field_value);
+                } else if field_name == b"vulnerable_versions" {
+                    vulnerability.vulnerable_versions = Box::<[u8]>::from(field_value);
+                } else if field_name == b"id" {
+                    vulnerability.id = Box::<[u8]>::from(field_value);
                 }
             }
+            E::JsonValue::Number(num) => {
+                if field_name == b"id" {
+                    let mut s: Vec<u8> = Vec::new();
+                    write!(&mut s, "{}", num.value() as u64).expect("unreachable");
+                    vulnerability.id = s.into_boxed_slice();
+                }
+            }
+            _ => {}
         }
     }
 
@@ -751,9 +728,8 @@ fn print_enhanced_audit_report(
 ) -> Result<u32, bun_alloc::AllocError> {
     let source = bun_ast::Source::init_path_string(b"audit-response.json", response_text);
     let mut log = bun_ast::Log::init();
-    let bump = bun_alloc::Arena::new();
 
-    let expr = match bun_json::parse::<true>(&source, &mut log, &bump) {
+    let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
         Ok(e) => e,
         Err(_) => {
             let _ = Output::writer().write_all(response_text);
@@ -761,9 +737,10 @@ fn print_enhanced_audit_report(
             return Ok(1);
         }
     };
+    let expr = parsed.root;
 
-    if let ExprData::EObject(obj) = &expr.data {
-        if obj.properties.len_u32() == 0 {
+    if let ExprData::EObjectJSON(obj) = &expr.data {
+        if obj.get().properties().is_empty() {
             prettyln!("<green>No vulnerabilities found<r>");
             return Ok(0);
         }
@@ -773,62 +750,49 @@ fn print_enhanced_audit_report(
 
     let mut vuln_counts = VulnCounts::default();
 
-    if let ExprData::EObject(obj) = &expr.data {
-        let properties = obj.properties.slice();
+    if let ExprData::EObjectJSON(obj) = &expr.data {
+        for prop in obj.get().properties() {
+            let package_name: &[u8] = prop.key.slice();
 
-        for prop in properties {
-            if let Some(key) = &prop.key {
-                if let ExprData::EString(key_str) = &key.data {
-                    let package_name: &[u8] = key_str.data.slice();
+            if let Some(arr) = prop.value.as_array() {
+                for vuln in arr.items() {
+                    if let Some(vuln_obj) = vuln.as_object() {
+                        let vulnerability = parse_vulnerability(package_name, vuln_obj)?;
 
-                    if let Some(value) = &prop.value {
-                        if let ExprData::EArray(arr) = &value.data {
-                            let vulns = arr.items.slice();
-                            for vuln in vulns {
-                                if let ExprData::EObject(_) = &vuln.data {
-                                    let vulnerability = parse_vulnerability(package_name, vuln)?;
-
-                                    if let Some(level) = audit_level {
-                                        if !level.should_include_severity(&vulnerability.severity) {
-                                            continue;
-                                        }
-                                    }
-
-                                    if !ignore_list.is_empty() {
-                                        let mut should_ignore = false;
-                                        for ignored_cve in ignore_list {
-                                            if strings::eql(&vulnerability.id, ignored_cve)
-                                                || strings::index_of(
-                                                    &vulnerability.url,
-                                                    ignored_cve,
-                                                )
-                                                .is_some()
-                                            {
-                                                should_ignore = true;
-                                                break;
-                                            }
-                                        }
-                                        if should_ignore {
-                                            continue;
-                                        }
-                                    }
-
-                                    if vulnerability.severity.as_ref() == b"low" {
-                                        vuln_counts.low += 1;
-                                    } else if vulnerability.severity.as_ref() == b"moderate" {
-                                        vuln_counts.moderate += 1;
-                                    } else if vulnerability.severity.as_ref() == b"high" {
-                                        vuln_counts.high += 1;
-                                    } else if vulnerability.severity.as_ref() == b"critical" {
-                                        vuln_counts.critical += 1;
-                                    } else {
-                                        vuln_counts.moderate += 1;
-                                    }
-
-                                    audit_result.all_vulnerabilities.push(vulnerability);
-                                }
+                        if let Some(level) = audit_level {
+                            if !level.should_include_severity(&vulnerability.severity) {
+                                continue;
                             }
                         }
+
+                        if !ignore_list.is_empty() {
+                            let mut should_ignore = false;
+                            for ignored_cve in ignore_list {
+                                if strings::eql(&vulnerability.id, ignored_cve)
+                                    || strings::index_of(&vulnerability.url, ignored_cve).is_some()
+                                {
+                                    should_ignore = true;
+                                    break;
+                                }
+                            }
+                            if should_ignore {
+                                continue;
+                            }
+                        }
+
+                        if vulnerability.severity.as_ref() == b"low" {
+                            vuln_counts.low += 1;
+                        } else if vulnerability.severity.as_ref() == b"moderate" {
+                            vuln_counts.moderate += 1;
+                        } else if vulnerability.severity.as_ref() == b"high" {
+                            vuln_counts.high += 1;
+                        } else if vulnerability.severity.as_ref() == b"critical" {
+                            vuln_counts.critical += 1;
+                        } else {
+                            vuln_counts.moderate += 1;
+                        }
+
+                        audit_result.all_vulnerabilities.push(vulnerability);
                     }
                 }
             }
@@ -846,7 +810,6 @@ fn print_enhanced_audit_report(
                     dependents: paths,
                 };
             }
-            // TODO(port): Zig pushes a copy of the (POD) struct; cloned here.
             result.value_ptr.vulnerabilities.push(VulnerabilityInfo {
                 severity: vulnerability.severity.clone(),
                 title: vulnerability.title.clone(),
@@ -901,7 +864,6 @@ fn print_enhanced_audit_report(
                             }
                             reversed_items.reverse();
 
-                            // TODO(port): std.mem.join → manual join into Vec<u8>.
                             let mut vuln_pkg_path: Vec<u8> = Vec::new();
                             for (i, item) in reversed_items.iter().enumerate() {
                                 if i > 0 {
@@ -1014,5 +976,3 @@ fn print_enhanced_audit_report(
 
     Ok(0)
 }
-
-// ported from: src/cli/audit_command.zig

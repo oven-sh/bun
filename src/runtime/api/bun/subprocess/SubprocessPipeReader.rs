@@ -19,7 +19,6 @@ use super::readable::Readable;
 use super::{StdioKind, StdioResult, Subprocess};
 
 pub type IOReader = BufferedReader;
-pub type Poll = IOReader;
 
 #[derive(Default)]
 pub enum State {
@@ -29,7 +28,7 @@ pub enum State {
     Err(bun_sys::Error),
 }
 
-// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive, single-thread.
+// Intrusive, single-thread ref-count; `deinit` runs when the last ref drops.
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = PipeReader::deinit, debug_name = "PipeReader")]
 pub struct PipeReader {
@@ -57,7 +56,7 @@ pub struct PipeReader {
 // sites (`self.r#ref()` / `PipeReader::deref(ptr)`) keep working.
 impl PipeReader {
     #[inline]
-    pub fn r#ref(&self) {
+    pub(crate) fn r#ref(&self) {
         // SAFETY: `self` is live; RefCount::ref_ only touches the interior-mutable
         // `ref_count` cell via raw-ptr field projection.
         unsafe { RefCount::<PipeReader>::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
@@ -75,18 +74,18 @@ impl PipeReader {
     /// via `heap::alloc`) with `ref_count > 0`. No `&`/`&mut` borrows of `*this`
     /// may outlive this call on the zero path.
     #[inline]
-    pub unsafe fn deref(this: *mut Self) {
+    pub(crate) unsafe fn deref(this: *mut Self) {
         // SAFETY: caller contract.
         unsafe { RefCount::<PipeReader>::deref(this) };
     }
 }
 
 impl PipeReader {
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         self.reader.memory_cost()
     }
 
-    pub fn has_pending_activity(&self) -> bool {
+    pub(crate) fn has_pending_activity(&self) -> bool {
         if matches!(self.state, State::Pending) {
             return true;
         }
@@ -97,14 +96,14 @@ impl PipeReader {
     ///
     /// # Safety
     /// `this` must point to a live `PipeReader`; may be freed on return (see `deref`).
-    pub unsafe fn detach(this: *mut Self) {
+    pub(crate) unsafe fn detach(this: *mut Self) {
         // SAFETY: `this` is live; raw-ptr field write avoids holding a `&mut` across deref.
         unsafe { (*this).process = None };
         // SAFETY: caller contract — `this` is live with refcount > 0; no borrow of `*this` outlives this call.
         unsafe { PipeReader::deref(this) };
     }
 
-    pub fn create(
+    pub(crate) fn create(
         event_loop: NonNull<EventLoop>,
         process: NonNull<Subprocess<'static>>,
         result: StdioResult,
@@ -122,8 +121,7 @@ impl PipeReader {
         MaxBuf::add_to_pipereader(limit, &mut this.reader.maxbuf);
         #[cfg(windows)]
         {
-            // Zig: `this.reader.source = .{ .pipe = this.stdio_result.buffer }` —
-            // on Windows `StdioResult` is the `WindowsStdioResult` enum and the
+            // On Windows `StdioResult` is the `WindowsStdioResult` enum and the
             // `.buffer` payload is a heap-allocated `uv::Pipe`. Ownership
             // transfers to `reader.source`; `stdio_result` is left `Unavailable`.
             if let StdioResult::Buffer(pipe) = this.stdio_result.take() {
@@ -139,13 +137,13 @@ impl PipeReader {
         }
     }
 
-    pub fn read_all(&mut self) {
+    pub(crate) fn read_all(&mut self) {
         if matches!(self.state, State::Pending) {
             self.reader.read();
         }
     }
 
-    pub fn start(
+    pub(crate) fn start(
         &mut self,
         process: NonNull<Subprocess<'static>>,
         event_loop: NonNull<EventLoop>,
@@ -172,7 +170,6 @@ impl PipeReader {
             // outlives the guard's drop on return.
             let _keepalive = unsafe { ScopedRef::new(std::ptr::from_mut::<PipeReader>(self)) };
 
-            // TODO(port): on POSIX `StdioResult` is `Option<Fd>`; `.unwrap()` mirrors Zig `.?`.
             match self.reader.start(self.stdio_result.unwrap(), true) {
                 bun_sys::Result::Err(err) => {
                     return bun_sys::Result::Err(err);
@@ -185,10 +182,6 @@ impl PipeReader {
                             // will drop the last ref and deinit() closes the handle.
                             return bun_sys::Result::Ok(());
                         }
-                        // PORT NOTE: `PollOrFd` is an enum in the Rust port; the Zig
-                        // `this.reader.handle.poll` field projection becomes a variant
-                        // pattern. `FilePoll` is an opaque vtable-backed handle (Copy)
-                        // with `set_flag` standing in for `poll.flags.insert(...)`.
                         if let Some(poll) = self.reader.handle.get_poll() {
                             poll.set_flag(FilePollFlag::Socket);
                             poll.set_flag(FilePollFlag::Nonblocking);
@@ -205,11 +198,11 @@ impl PipeReader {
     }
 
     // pub const toJS = toReadableStream;
-    pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         self.to_readable_stream(global_object)
     }
 
-    pub fn on_reader_done(&mut self) {
+    pub(crate) fn on_reader_done(&mut self) {
         let owned = self.to_owned_slice();
         self.state = State::Done(owned);
         if let Some(process) = self.process.take() {
@@ -222,7 +215,7 @@ impl PipeReader {
         unsafe { PipeReader::deref(self) };
     }
 
-    pub fn kind(&self, process: &Subprocess<'_>) -> StdioKind {
+    pub(crate) fn kind(&self, process: &Subprocess<'_>) -> StdioKind {
         if let Readable::Pipe(pipe) = process.stdout.get() {
             if core::ptr::eq(pipe.data.as_ptr(), self) {
                 return StdioKind::Stdout;
@@ -238,10 +231,10 @@ impl PipeReader {
         unreachable!("We should be either stdout or stderr");
     }
 
-    pub fn to_owned_slice(&mut self) -> Vec<u8> {
+    pub(crate) fn to_owned_slice(&mut self) -> Vec<u8> {
         if let State::Done(bytes) = core::mem::replace(&mut self.state, State::Pending) {
-            // PORT NOTE: reshaped for borrowck — Zig reads `state.done` in place; here we
-            // take it out and restore Pending (caller immediately overwrites state anyway).
+            // Take the bytes out and restore Pending — the caller immediately
+            // overwrites the state anyway.
             return bytes;
         }
         // we do not use .toOwnedSlice() because we don't want to reallocate memory.
@@ -252,23 +245,25 @@ impl PipeReader {
             return Vec::new();
         }
 
-        // PERF(port): Zig returns `out.items` (len-only slice) without shrinking capacity;
-        // returning the Vec preserves capacity, which is the same intent.
+        // Returning the Vec preserves capacity intentionally.
         out
     }
 
-    pub fn update_ref(&mut self, add: bool) {
+    pub(crate) fn update_ref(&mut self, add: bool) {
         self.reader.update_ref(add);
     }
 
-    pub fn watch(&mut self) {
+    pub(crate) fn watch(&mut self) {
         if !self.reader.is_done() {
             self.reader.watch();
         }
     }
 
-    pub fn to_readable_stream(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        // `defer this.detach()` — detach() = clear `process` backref + deref. The deref
+    pub(crate) fn to_readable_stream(
+        &mut self,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
+        // detach() at scope exit = clear `process` backref + deref. The deref
         // may drop the last ref, so it must run after the result is computed; the backref
         // clear must also wait (from_pipe hands `&mut self.reader` to JS, which may
         // re-enter on_reader_done/on_reader_error and consult `self.process`). Compound
@@ -282,15 +277,15 @@ impl PipeReader {
 
         match &self.state {
             State::Pending => {
-                // PORT NOTE: `_parent` is unused in `from_pipe` (Zig `anytype` discard); pass the
-                // raw ptr instead of `self` so borrowck allows `&mut self.reader` alongside it.
+                // `_parent` is unused in `from_pipe`; pass the raw ptr instead
+                // of `self` so borrowck allows `&mut self.reader` alongside it.
                 let stream = ReadableStream::from_pipe(global_object, this_ptr, &mut self.reader);
                 self.state = State::Done(Vec::new());
                 stream
             }
             State::Done(_) => {
-                // PORT NOTE: reshaped for borrowck — take the payload only in this arm so the
-                // Pending arm above observes `state == Pending` when `from_pipe` reads `self`.
+                // Take the payload only in this arm so the Pending arm above
+                // observes `state == Pending` when `from_pipe` reads `self`.
                 let State::Done(bytes) =
                     core::mem::replace(&mut self.state, State::Done(Vec::new()))
                 else {
@@ -309,12 +304,12 @@ impl PipeReader {
         }
     }
 
-    pub fn to_buffer(&mut self, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_buffer(&mut self, global_this: &JSGlobalObject) -> JSValue {
         match &mut self.state {
             State::Done(bytes) => {
                 let bytes = core::mem::take(bytes);
-                // `defer this.state = .{ .done = &.{} }` — state.done is now empty via take().
-                // PORT NOTE: `MarkedArrayBuffer::from_bytes` takes a borrowed `&mut [u8]`
+                // `state.done` is now empty via `take()`.
+                // `MarkedArrayBuffer::from_bytes` takes a borrowed `&mut [u8]`
                 // with `owns_buffer = true` (freed via mimalloc on the JS side); leak the
                 // boxed slice so JS becomes the owner — same pattern as
                 // `MarkedArrayBuffer::from_string`.
@@ -326,8 +321,8 @@ impl PipeReader {
         }
     }
 
-    pub fn on_reader_error(&mut self, err: bun_sys::Error) {
-        // Zig: if state == .done, free state.done — handled by Drop of the replaced Vec.
+    pub(crate) fn on_reader_error(&mut self, err: bun_sys::Error) {
+        // A previous `State::Done` buffer is freed by Drop of the replaced Vec.
         self.state = State::Err(err);
         if let Some(process) = self.process.take() {
             // `process` backref is valid while set; cleared before deref.
@@ -338,7 +333,7 @@ impl PipeReader {
         unsafe { PipeReader::deref(self) };
     }
 
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         match self.state {
             State::Pending => {
                 self.reader.close();
@@ -348,12 +343,7 @@ impl PipeReader {
         }
     }
 
-    pub fn event_loop(&self) -> &EventLoop {
-        self.event_loop.get()
-    }
-
-    // TODO(port): `loop` is a Rust keyword; renamed to `loop_`. Callers (BufferedReader vtable) must match.
-    pub fn loop_(&self) -> *mut AsyncLoop {
+    pub(crate) fn loop_(&self) -> *mut AsyncLoop {
         // `event_loop.virtual_machine` is set by the time a PipeReader is
         // created. The VM is the per-thread singleton owning `event_loop`, so
         // the `BackRef` invariant (pointee outlives holder) trivially holds.
@@ -405,16 +395,15 @@ impl PipeReader {
             );
         }
 
-        // Zig: if state == .done, free state.done — handled by Drop of `state` when Box drops.
-        // Zig: this.reader.deinit() — handled by Drop of `reader` field when Box drops.
+        // The `state` buffer and `reader` are freed by Drop when the Box drops.
 
         // SAFETY: `this` was created via heap::alloc in `create()`.
         drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
-// `bun.io.BufferedReader.init(@This())` — vtable parent. The Zig spec declares
-// `onReaderDone`/`onReaderError`/`loop`/`eventLoop` (no `onReadChunk`).
+// BufferedReader vtable parent: `onReaderDone`/`onReaderError`/`loop`/
+// `eventLoop` (no `onReadChunk`).
 // `on_reader_done`/`on_reader_error` are tail-position (the reader is finished
 // with `self`), so `&mut *this` autoref is OK.
 bun_io::impl_buffered_reader_parent! {
@@ -445,5 +434,3 @@ bun_io::impl_buffered_reader_parent! {
         sp.on_max_buffer(kind);
     };
 }
-
-// ported from: src/runtime/api/bun/subprocess/SubprocessPipeReader.zig

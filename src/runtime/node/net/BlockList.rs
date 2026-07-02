@@ -45,7 +45,6 @@ static SERIALIZED_REFS: Guarded<Vec<usize>> = Guarded::new(Vec::new());
 use crate::node::util::validators;
 use crate::socket::socket_address::{SocketAddress, sockaddr};
 
-// TODO(port): move to <area>_sys — AF_* constants come from translated-c-headers
 use crate::socket::socket_address::inet::{self, AF_INET, AF_INET6};
 
 /// `&ZStr` → `&str` for `format_args!`. IP presentation strings and AF family
@@ -61,16 +60,10 @@ fn z(s: &ZStr) -> &str {
 #[bun_jsc::JsClass]
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub struct BlockList {
-    // Intrusive thread-safe refcount (Zig: `bun.ptr.ThreadSafeRefCount`).
+    // Intrusive thread-safe refcount.
     // `ref()`/`deref()` (provided by the derive) bump it; hitting zero drops
     // the `Box` via the trait's default destructor.
     ref_count: bun_ptr::ThreadSafeRefCount<BlockList>,
-    // LIFETIMES.tsv: JSC_BORROW → `&JSGlobalObject`. Stored raw because this
-    // struct is a heap-allocated `m_ctx` payload recovered from C++ via
-    // `*mut Self`; a borrowed lifetime param cannot be threaded through that.
-    // TODO(port): lifetime — field is write-only (assigned in constructor,
-    // never read; `deinit` ignores it).
-    _global_this: *const JSGlobalObject,
     // R-2: interior mutability so every host_fn takes `&self`. All access is
     // serialized by `mutex` (held across every read and every `with_mut`), so
     // the `JsCell` single-thread invariant is upheld even though `BlockList`
@@ -90,8 +83,7 @@ pub struct BlockList {
 }
 
 impl BlockList {
-    // Zig: `bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{})`
-    // → trait impl + default destructor (drops the `Box`) provided by
+    // Trait impl + default destructor (drops the `Box`) provided by
     // `#[derive(ThreadSafeRefCounted)]`; inherent forwarders below.
     #[inline]
     pub fn ref_(&self) {
@@ -108,10 +100,9 @@ impl BlockList {
 
     // NOTE: no `#[bun_jsc::host_fn]` — the `#[bun_jsc::JsClass]` derive emits
     // the `${T}Class__construct` C-ABI shim that calls `<Self>::constructor`.
-    pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
+    pub fn constructor(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
         let ptr = bun_core::heap::into_raw(Box::new(Self {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            _global_this: std::ptr::from_ref(global),
             da_rules: JsCell::new(Vec::new()),
             mutex: Mutex::default(),
             estimated_size: AtomicU32::new(0),
@@ -305,13 +296,16 @@ impl BlockList {
                 }
                 Rule::Subnet { network, prefix } => {
                     if let Some(ip_addr) = address.as_v4() {
-                        if let Some(subnet_addr) = network.as_v4() {
+                        if let Some(subnet_addr) = network.as_sin().map(|s| s.addr) {
                             if *prefix == 32 {
                                 if ip_addr == subnet_addr {
                                     return Ok(JSValue::TRUE);
                                 } else {
                                     continue;
                                 }
+                            }
+                            if *prefix == 0 {
+                                return Ok(JSValue::TRUE);
                             }
                             let one: u32 = 1;
                             let mask_addr: u32 =
@@ -323,8 +317,18 @@ impl BlockList {
                             }
                         }
                     }
-                    if let (Some(addr6), Some(net6)) = (address.as_sin6(), network.as_sin6()) {
-                        let ip_addr: u128 = u128::from_ne_bytes(addr6.addr);
+                    if let Some(net6) = network.as_sin6() {
+                        let ip_addr: u128 = if let Some(addr6) = address.as_sin6() {
+                            u128::from_ne_bytes(addr6.addr)
+                        } else if let Some(ip4) = address.as_v4() {
+                            let mut mapped = [0u8; 16];
+                            mapped[10] = 255;
+                            mapped[11] = 255;
+                            mapped[12..16].copy_from_slice(&ip4.to_ne_bytes());
+                            u128::from_ne_bytes(mapped)
+                        } else {
+                            continue;
+                        };
                         let subnet_addr: u128 = u128::from_ne_bytes(net6.addr);
                         if *prefix == 128 {
                             if ip_addr == subnet_addr {
@@ -332,6 +336,9 @@ impl BlockList {
                             } else {
                                 continue;
                             }
+                        }
+                        if *prefix == 0 {
+                            return Ok(JSValue::TRUE);
                         }
                         let one: u128 = 1;
                         let mask_addr = ((one << (*prefix as u32)) - 1) << (128 - *prefix as u32);
@@ -405,7 +412,7 @@ impl BlockList {
             ctx,
             impl_: write_bytes,
         };
-        // Error = `!` (Zig: `error{}`), so no `?` needed.
+        // The writer is infallible, so no `?` needed.
         // Only the address is serialized; deserialize re-derives `*mut Self`
         // via int→ptr cast and never forms `&mut Self` (only `ref_()` +
         // `to_js_ptr`, both `&self`/raw-ptr), so `from_ref` provenance is fine.
@@ -484,7 +491,7 @@ bun_jsc::jsc_host_abi! {
     /// written into the wire buffer. Releases the `+1` taken by
     /// [`BlockList::on_structured_clone_serialize`].
     #[unsafe(no_mangle)]
-    pub unsafe fn BlockList__onStructuredCloneDestroy(ptr: *mut c_void) -> () {
+    pub(crate) unsafe fn BlockList__onStructuredCloneDestroy(ptr: *mut c_void) -> () {
         let addr = ptr as usize;
         {
             let mut refs = SERIALIZED_REFS.lock();
@@ -499,7 +506,7 @@ bun_jsc::jsc_host_abi! {
     }
 }
 
-pub enum Rule {
+pub(crate) enum Rule {
     Addr(sockaddr),
     Range { start: sockaddr, end: sockaddr },
     Subnet { network: sockaddr, prefix: u8 },
@@ -522,5 +529,3 @@ fn _compare_ipv6(l: &inet::sockaddr_in6, r: &inet::sockaddr_in6) -> Ordering {
     let r128 = u128::from_ne_bytes(r.addr).swap_bytes();
     l128.cmp(&r128)
 }
-
-// ported from: src/runtime/node/net/BlockList.zig

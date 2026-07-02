@@ -59,6 +59,12 @@ uint32_t getDigestSize(Hasher* hasher)
     return Bun__CryptoHasherExtern__getDigestSize(hasher);
 }
 
+extern "C" bool Bun__CryptoHasherExtern__isXof(Hasher* hasher);
+bool isXof(Hasher* hasher)
+{
+    return Bun__CryptoHasherExtern__isXof(hasher);
+}
+
 }; // namespace ExternZigHash
 
 namespace StringBytes {

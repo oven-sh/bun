@@ -5,7 +5,7 @@ use bun_js_parser_jsc::ExprJsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, LogJsc};
 use bun_parsers::json;
 
-pub fn create(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     bun_jsc::create_host_function_object(global, &[("parse", __jsc_host_parse, 1)])
 }
 
@@ -17,8 +17,8 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         b"input.jsonc",
         false,
         true,
-        |arena, log, source| {
-            let parse_result = match json::parse_ts_config::<true>(source, log, arena) {
+        |_arena, log, source| {
+            let parsed = match json::ParsedJson::parse_jsonc(source, log) {
                 Ok(v) => v,
                 Err(e) => {
                     if e == bun_core::err!(StackOverflow) {
@@ -28,7 +28,7 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 }
             };
 
-            match parse_result.to_js(global) {
+            match parsed.root.to_js(global) {
                 Ok(v) => Ok(v),
                 Err(ToJSError::OutOfMemory) => Err(JsError::OutOfMemory),
                 Err(ToJSError::JSError) => Err(JsError::Thrown),
@@ -39,5 +39,3 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         },
     )
 }
-
-// ported from: src/runtime/api/JSONCObject.zig

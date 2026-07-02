@@ -7,12 +7,11 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
-// Zig's `bun.WTF.StringImpl` is the *pointer* type `*WTFStringImplStruct`;
-// in Rust that's `bun_core::WTFStringImpl` (= `*mut WTFStringImplStruct`).
+// `bun_core::WTFStringImpl` is the *pointer* type (= `*mut WTFStringImplStruct`).
 use bun_core::WTFStringImpl;
 use bun_jsc::StringJsc as _; // extension trait providing `.to_js()` on `bun_core::String`
 
-pub type Hash = u32;
+pub(crate) type Hash = u32;
 
 /// `std.HashMap(Hash, *RefString, bun.IdentityContext(Hash), 80)`
 // `bun.IdentityContext` is an identity hasher (key is already a hash). The `80`
@@ -29,7 +28,7 @@ pub struct RefString {
     // `impl` is a Rust keyword — renamed to `impl_`.
     pub impl_: WTFStringImpl,
 
-    // Zig field `allocator: std.mem.Allocator` dropped — non-AST crate uses the
+    // No per-instance allocator — non-AST crate uses the
     // global mimalloc allocator (see PORTING.md §Allocators). `destroy` below
     // frees via `heap::take`.
     pub ctx: Option<NonNull<c_void>>,
@@ -38,14 +37,13 @@ pub struct RefString {
 
 impl RefString {
     pub fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        // Zig: `bun.String.init(this.impl).toJS(global)` — wrap the raw
+        // Wrap the raw
         // `WTFStringImpl` pointer without bumping the refcount (`String` has
-        // no `Drop`, so this is the same adopt-then-forget as Zig's init).
+        // no `Drop`, so this is adopt-then-forget).
         bun_core::String::adopt_wtf_impl(self.impl_).to_js(global)
     }
 
     pub fn compute_hash(input: &[u8]) -> u32 {
-        // Zig: `std.hash.XxHash32.hash(0, input)`.
         bun_hash::XxHash32::hash(0, input)
     }
 
@@ -71,7 +69,6 @@ impl RefString {
     }
 
     pub fn leak(&self) -> &[u8] {
-        // Zig: `@setRuntimeSafety(false); return this.ptr[0..this.len];`
         // SAFETY: `ptr` points to a live allocation of `len` bytes for the
         // lifetime of `self` (freed only in `destroy`).
         unsafe { bun_core::ffi::slice(self.ptr, self.len) }
@@ -83,16 +80,14 @@ impl RefString {
 
     /// Called when the underlying `WTF::StringImpl` refcount reaches zero.
     ///
-    /// Zig signature: `pub fn deinit(this: *RefString) void` — frees the byte
-    /// buffer and then `allocator.destroy(this)` (self-destroying). Because
+    /// Frees the byte
+    /// buffer and then the `RefString` itself (self-destroying). Because
     /// `RefString` is heap-allocated and held as `*mut RefString` (see `Map`),
     /// this stays an explicit raw-pointer destroy rather than `impl Drop`.
     ///
     /// SAFETY: `this` must be the unique live reference to a `RefString`
     /// previously allocated via `heap::alloc` (or equivalent). After this
     /// call `this` is dangling.
-    // TODO(port): revisit ownership — intrusive refcount via
-    // WTF::StringImpl; may become `impl Drop` if `RefString` ends up `Box`-owned.
     pub unsafe fn destroy(this: *mut RefString) {
         // SAFETY: caller contract — `this` is the unique live pointer to a
         // `Box<RefString>`-allocated value whose `ptr`/`len` describe a
@@ -100,7 +95,7 @@ impl RefString {
         // below operate on those owned allocations.
         unsafe {
             if let Some(on_before_deinit) = (*this).on_before_deinit {
-                // Zig does `this.ctx.?` — caller guarantees `ctx` is set
+                // Caller guarantees `ctx` is set
                 // whenever `on_before_deinit` is set.
                 on_before_deinit((*this).ctx.unwrap().as_ptr(), this);
             }
@@ -119,5 +114,3 @@ impl RefString {
         }
     }
 }
-
-// ported from: src/jsc/RefString.zig

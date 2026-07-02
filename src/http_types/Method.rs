@@ -3,7 +3,6 @@ use enumset::EnumSet;
 #[allow(non_camel_case_types)]
 #[repr(u8)]
 #[derive(enumset::EnumSetType, Debug)]
-// TODO(port): EnumSetType derive auto-impls Copy/Clone/Eq/PartialEq; verify it coexists with #[repr(u8)] (needed for FFI @intFromEnum)
 pub enum Method {
     ACL = 0,
     BIND = 1,
@@ -15,7 +14,6 @@ pub enum Method {
     HEAD = 7,
     LINK = 8,
     LOCK = 9,
-    /// Zig: `@"M-SEARCH"`
     M_SEARCH = 10,
     MERGE = 11,
     MKACTIVITY = 12,
@@ -45,20 +43,94 @@ pub enum Method {
     UNSUBSCRIBE = 35,
 }
 
-// Zig: `pub const fromJS = Map.fromJS;` and `pub const toJS = @import("../http_jsc/method_jsc.zig").toJS;`
-// Deleted per PORTING.md — to_js/from_js live as extension-trait methods in the `bun_http_jsc` crate.
+// Per PORTING.md, to_js/from_js live as extension-trait methods in the `bun_http_jsc` crate.
 
 pub type Set = EnumSet<Method>;
 
-// PORT NOTE: Zig's private `with_body`/`with_request_body` EnumSet consts are
-// folded directly into `has_body()`/`has_request_body()` as `matches!` —
-// `EnumSet::remove` is not const on stable, and the consts were never read
-// outside those two predicates.
+bun_core::comptime_string_map! {
+    /// The wire form is RFC 9110 case-sensitive uppercase, so the per-request
+    /// hot path hits the uppercase entries; the all-lower entries exist only
+    /// for `new Request("get", …)` JS-side convenience (mixed-case still
+    /// rejects).
+    static METHOD_MAP: Method = {
+        b"ACL" => Method::ACL,
+        b"acl" => Method::ACL,
+        b"BIND" => Method::BIND,
+        b"bind" => Method::BIND,
+        b"CHECKOUT" => Method::CHECKOUT,
+        b"checkout" => Method::CHECKOUT,
+        b"CONNECT" => Method::CONNECT,
+        b"connect" => Method::CONNECT,
+        b"COPY" => Method::COPY,
+        b"copy" => Method::COPY,
+        b"DELETE" => Method::DELETE,
+        b"delete" => Method::DELETE,
+        b"GET" => Method::GET,
+        b"get" => Method::GET,
+        b"HEAD" => Method::HEAD,
+        b"head" => Method::HEAD,
+        b"LINK" => Method::LINK,
+        b"link" => Method::LINK,
+        b"LOCK" => Method::LOCK,
+        b"lock" => Method::LOCK,
+        b"M-SEARCH" => Method::M_SEARCH,
+        b"m-search" => Method::M_SEARCH,
+        b"MERGE" => Method::MERGE,
+        b"merge" => Method::MERGE,
+        b"MKACTIVITY" => Method::MKACTIVITY,
+        b"mkactivity" => Method::MKACTIVITY,
+        b"MKADDRESSBOOK" => Method::MKADDRESSBOOK,
+        b"mkaddressbook" => Method::MKADDRESSBOOK,
+        b"MKCALENDAR" => Method::MKCALENDAR,
+        b"mkcalendar" => Method::MKCALENDAR,
+        b"MKCOL" => Method::MKCOL,
+        b"mkcol" => Method::MKCOL,
+        b"MOVE" => Method::MOVE,
+        b"move" => Method::MOVE,
+        b"NOTIFY" => Method::NOTIFY,
+        b"notify" => Method::NOTIFY,
+        b"OPTIONS" => Method::OPTIONS,
+        b"options" => Method::OPTIONS,
+        b"PATCH" => Method::PATCH,
+        b"patch" => Method::PATCH,
+        b"POST" => Method::POST,
+        b"post" => Method::POST,
+        b"PROPFIND" => Method::PROPFIND,
+        b"propfind" => Method::PROPFIND,
+        b"PROPPATCH" => Method::PROPPATCH,
+        b"proppatch" => Method::PROPPATCH,
+        b"PURGE" => Method::PURGE,
+        b"purge" => Method::PURGE,
+        b"PUT" => Method::PUT,
+        b"put" => Method::PUT,
+        b"QUERY" => Method::QUERY,
+        b"query" => Method::QUERY,
+        b"REBIND" => Method::REBIND,
+        b"rebind" => Method::REBIND,
+        b"REPORT" => Method::REPORT,
+        b"report" => Method::REPORT,
+        b"SEARCH" => Method::SEARCH,
+        b"search" => Method::SEARCH,
+        b"SOURCE" => Method::SOURCE,
+        b"source" => Method::SOURCE,
+        b"SUBSCRIBE" => Method::SUBSCRIBE,
+        b"subscribe" => Method::SUBSCRIBE,
+        b"TRACE" => Method::TRACE,
+        b"trace" => Method::TRACE,
+        b"UNBIND" => Method::UNBIND,
+        b"unbind" => Method::UNBIND,
+        b"UNLINK" => Method::UNLINK,
+        b"unlink" => Method::UNLINK,
+        b"UNLOCK" => Method::UNLOCK,
+        b"unlock" => Method::UNLOCK,
+        b"UNSUBSCRIBE" => Method::UNSUBSCRIBE,
+        b"unsubscribe" => Method::UNSUBSCRIBE,
+    };
+}
 
 impl Method {
-    /// Port of Zig `@tagName(method)` — uppercase HTTP method token. `M_SEARCH`
-    /// renders as `"M-SEARCH"` (the wire form, matching the Zig enum name
-    /// `@"M-SEARCH"`).
+    /// Uppercase HTTP method token. `M_SEARCH` renders as `"M-SEARCH"` (the
+    /// wire form).
     pub const fn as_str(self) -> &'static str {
         match self {
             Method::ACL => "ACL",
@@ -132,96 +204,22 @@ impl Method {
         Self::which(str)
     }
 
-    /// Port of Zig `bun.ComptimeStringMap(Method, …).get`: length-gated, then a
-    /// flat byte-pattern match on the entries of that exact length. Zig builds
-    /// the dispatch at `comptime`; the previous Rust port used a `phf::Map`,
-    /// which costs a SipHash13 round per lookup (`phf_shared::hash` ≈ 0.6 %
-    /// self-time in a Bun.serve hello-world profile, called twice per request).
-    /// The wire form is RFC 9110 case-sensitive uppercase, so the per-request
-    /// hot path takes the upper arm; the all-lower entries exist only for
-    /// `new Request("get", …)` JS-side convenience and match the Zig table
-    /// exactly (mixed-case still rejects).
+    /// Looks up the method in `METHOD_MAP` (length dispatch + constant-length
+    /// word compares; no hashing — a `phf::Map` here cost a SipHash13 round per
+    /// lookup, ≈ 0.6 % self-time in a Bun.serve hello-world profile, called
+    /// twice per request).
     ///
-    /// `#[inline]`: the Zig `ComptimeStringMapWithKeyType` lookup is fully
+    /// `#[inline]`: this lookup should be fully
     /// inlined into `NodeHTTPResponse.createForJS` (no separate symbol in the
     /// release binary). Without the hint LLVM keeps this as a ~600-byte
-    /// out-of-line call because the full match tree looks heavy, even though
+    /// out-of-line call because the full compare tree looks heavy, even though
     /// every per-request caller only ever exercises the len=3 `b"GET"` arm —
-    /// trivially branch-predicted once the outer `match str.len()` is visible
+    /// trivially branch-predicted once the length dispatch is visible
     /// at the call site. Showed up as 8 self-time samples (0.09 %) in the
     /// `server/node-http` bench from the call alone.
     #[inline]
     pub fn which(str: &[u8]) -> Option<Method> {
-        use Method::*;
-        Some(match str.len() {
-            3 => match str {
-                b"GET" | b"get" => GET,
-                b"PUT" | b"put" => PUT,
-                b"ACL" | b"acl" => ACL,
-                _ => return None,
-            },
-            4 => match str {
-                b"POST" | b"post" => POST,
-                b"HEAD" | b"head" => HEAD,
-                b"BIND" | b"bind" => BIND,
-                b"COPY" | b"copy" => COPY,
-                b"LINK" | b"link" => LINK,
-                b"LOCK" | b"lock" => LOCK,
-                b"MOVE" | b"move" => MOVE,
-                _ => return None,
-            },
-            5 => match str {
-                b"PATCH" | b"patch" => PATCH,
-                b"TRACE" | b"trace" => TRACE,
-                b"QUERY" | b"query" => QUERY,
-                b"MERGE" | b"merge" => MERGE,
-                b"MKCOL" | b"mkcol" => MKCOL,
-                b"PURGE" | b"purge" => PURGE,
-                _ => return None,
-            },
-            6 => match str {
-                b"DELETE" | b"delete" => DELETE,
-                b"NOTIFY" | b"notify" => NOTIFY,
-                b"REBIND" | b"rebind" => REBIND,
-                b"REPORT" | b"report" => REPORT,
-                b"SEARCH" | b"search" => SEARCH,
-                b"SOURCE" | b"source" => SOURCE,
-                b"UNBIND" | b"unbind" => UNBIND,
-                b"UNLINK" | b"unlink" => UNLINK,
-                b"UNLOCK" | b"unlock" => UNLOCK,
-                _ => return None,
-            },
-            7 => match str {
-                b"OPTIONS" | b"options" => OPTIONS,
-                b"CONNECT" | b"connect" => CONNECT,
-                _ => return None,
-            },
-            8 => match str {
-                b"CHECKOUT" | b"checkout" => CHECKOUT,
-                b"M-SEARCH" | b"m-search" => M_SEARCH,
-                b"PROPFIND" | b"propfind" => PROPFIND,
-                _ => return None,
-            },
-            9 => match str {
-                b"PROPPATCH" | b"proppatch" => PROPPATCH,
-                b"SUBSCRIBE" | b"subscribe" => SUBSCRIBE,
-                _ => return None,
-            },
-            10 => match str {
-                b"MKACTIVITY" | b"mkactivity" => MKACTIVITY,
-                b"MKCALENDAR" | b"mkcalendar" => MKCALENDAR,
-                _ => return None,
-            },
-            11 => match str {
-                b"UNSUBSCRIBE" | b"unsubscribe" => UNSUBSCRIBE,
-                _ => return None,
-            },
-            13 => match str {
-                b"MKADDRESSBOOK" | b"mkaddressbook" => MKADDRESSBOOK,
-                _ => return None,
-            },
-            _ => return None,
-        })
+        METHOD_MAP.get(str).copied()
     }
 }
 
@@ -265,10 +263,9 @@ impl Optional {
 #[unsafe(no_mangle)]
 /// # Safety
 /// `str` must point to `len` initialised bytes for the duration of the call.
-pub unsafe extern "C" fn Bun__HTTPMethod__from(str: *const u8, len: usize) -> i16 {
+pub(crate) unsafe extern "C" fn Bun__HTTPMethod__from(str: *const u8, len: usize) -> i16 {
     // SAFETY: genuine FFI boundary — C++ caller passes a non-null, byte-aligned
-    // pointer to `len` initialised bytes (Zig signature `[*]const u8`, which is
-    // non-null by construction). The (ptr,len) pair cannot be a `&[u8]` across
+    // pointer to `len` initialised bytes. The (ptr,len) pair cannot be a `&[u8]` across
     // the C ABI, so `from_raw_parts` is irreducible here; the borrow does not
     // outlive this stack frame.
     let slice = unsafe { core::slice::from_raw_parts(str, len) };
@@ -278,11 +275,8 @@ pub unsafe extern "C" fn Bun__HTTPMethod__from(str: *const u8, len: usize) -> i1
     method as i16
 }
 
-// Zig `comptime { _ = Bun__HTTPMethod__from; }` force-reference dropped — Rust links what's `pub`.
-
 // ═══════════════════════════════════════════════════════════════════════
 // HTTPHeaderName — moved from bun_runtime::webcore::FetchHeaders.
-// Source: src/jsc/FetchHeaders.zig
 //
 // `enum(u8)` discriminant crosses the FFI boundary to
 // `WebCore__FetchHeaders__put`/`fastHas`/`fastGet` — order MUST match
@@ -389,17 +383,15 @@ pub enum HeaderName {
     XXSSProtection,
 }
 
-// ported from: src/http_types/Method.zig
-
 #[cfg(test)]
 mod tests {
     use super::Method;
 
     /// Exhaustive parity check for `Method::which`: every variant round-trips
     /// via its uppercase wire form and the all-lower convenience form, and
-    /// nothing else slips through. Guards the length-gated match against
-    /// transcription mistakes (the previous `phf::Map` build would have
-    /// rejected typos at compile time; the open-coded match does not).
+    /// nothing else slips through. Guards `METHOD_MAP` against transcription
+    /// mistakes (a typo'd key or an entry mapped to the wrong variant still
+    /// compiles).
     #[test]
     fn which_roundtrip() {
         for m in enumset::EnumSet::<Method>::all() {
@@ -408,7 +400,7 @@ mod tests {
             let lower = upper.to_ascii_lowercase();
             assert_eq!(Method::which(lower.as_bytes()), Some(m), "lower {lower}");
         }
-        // Mixed case must reject (Zig table has only all-upper / all-lower).
+        // Mixed case must reject (only all-upper / all-lower are accepted).
         assert_eq!(Method::which(b"Get"), None);
         assert_eq!(Method::which(b"OPtions"), None);
         // Out-of-range lengths and unknown tokens.

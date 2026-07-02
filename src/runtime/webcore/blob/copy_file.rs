@@ -22,9 +22,8 @@ use core::ffi::c_int;
 use core::ffi::c_void;
 use core::marker::ConstParamTy;
 
-// Local conversion: `bun_sys::SystemError` -> `bun_jsc::SystemError`. Both mirror
-// the same Zig `jsc.SystemError` extern struct; map field-by-field because the
-// two Rust definitions order their fields differently.
+// Local conversion: `bun_sys::SystemError` -> `bun_jsc::SystemError`. Mapped
+// field-by-field because the two definitions order their fields differently.
 fn to_jsc_system_error(e: &SystemError) -> jsc::SystemError {
     jsc::SystemError {
         errno: e.errno,
@@ -45,7 +44,9 @@ fn to_jsc_system_error(e: &SystemError) -> jsc::SystemError {
 pub struct CopyFile<'a> {
     pub destination_file_store: store::File,
     pub source_file_store: store::File,
-    // TODO(port): lifetime — heap-allocated across threads; Arc vs raw needs review
+    // `StoreRef` is the thread-safe refcounted handle;
+    // it keeps the stores — and the path slices the `File` clones borrow — alive
+    // while this task is on the work pool.
     pub store: Option<StoreRef>,
     pub source_store: Option<StoreRef>,
     pub offset: SizeType,
@@ -60,7 +61,7 @@ pub struct CopyFile<'a> {
     pub read_off: SizeType,
 
     // per LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject
-    // TODO(port): lifetime — this struct is Box-allocated and crosses threads;
+    // TODO(refactor): lifetime — this struct is Box-allocated and crosses threads;
     // `'a` here is unsound in practice. Likely should be *const JSGlobalObject.
     pub global_this: &'a JSGlobalObject,
 
@@ -218,7 +219,6 @@ impl<'a> CopyFile<'a> {
     }
 
     pub fn do_open_file<const WHICH: IOWhich>(&mut self) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let mut path_buf1 = PathBuffer::uninit();
         // open source file first
         // if it fails, we don't want the extra destination file hanging out
@@ -252,7 +252,7 @@ impl<'a> CopyFile<'a> {
 
         if matches!(WHICH, IOWhich::Both | IOWhich::Destination) {
             loop {
-                // PORT NOTE: detach `dest` lifetime from `self` (borrowck) — slice_z
+                // detach `dest` lifetime from `self` (borrowck) — slice_z
                 // copies into path_buf1, so build the ZStr directly from the buffer.
                 let dest_len = {
                     let s = self.destination_file_store.pathlike.path().slice();
@@ -337,8 +337,6 @@ impl<'a> CopyFile<'a> {
             // outlives this guard (dropped before fn return); disjoint fields.
             unsafe { *read_len_slot = *total_written_slot as SizeType };
         }
-        // TODO(refactor): defer captures &mut to disjoint field via raw ptr;
-        // reshape to set read_len at each return site instead.
 
         let mut has_unset_append = false;
 
@@ -504,7 +502,7 @@ impl<'a> CopyFile<'a> {
 
                     self.system_error = Some(
                         bun_sys::Error {
-                            // PORT NOTE: @intCast is identity here (E repr == Error.Int); bare `as` matches Zig @intFromEnum.
+                            // bare `as` is lossless here (E repr == Error.Int).
                             errno: bun_sys::E::EINVAL as bun_sys::ErrorInt,
                             syscall: USE.tag(),
                             ..Default::default()
@@ -516,7 +514,7 @@ impl<'a> CopyFile<'a> {
                 errno => {
                     self.system_error = Some(
                         bun_sys::Error {
-                            // PORT NOTE: @intCast is identity here (E repr == Error.Int); bare `as` matches Zig @intFromEnum.
+                            // bare `as` is lossless here (E repr == Error.Int).
                             errno: errno as bun_sys::ErrorInt,
                             syscall: USE.tag(),
                             ..Default::default()
@@ -591,7 +589,7 @@ impl<'a> CopyFile<'a> {
         let mut dest_buf = PathBuffer::uninit();
 
         loop {
-            // PORT NOTE: reshaped for borrowck — `slice_z(&'a self, &'a mut buf)`
+            // reshaped for borrowck — `slice_z(&'a self, &'a mut buf)`
             // ties the returned `&ZStr` to `self`, which would conflict with
             // the `&mut self` borrow `mkdir_if_not_exists` needs below. The
             // bytes live in `dest_buf`, so capture the length and re-borrow
@@ -781,7 +779,7 @@ impl<'a> CopyFile<'a> {
                 self.destination_file_store.pathlike,
                 PathOrFileDescriptor::Fd(_)
             ) {
-                // (empty in Zig)
+                // nothing to do for the Fd case
             }
 
             let stat: Stat = match stat_ {
@@ -944,22 +942,16 @@ impl<'a> CopyFile<'a> {
     }
 }
 
-impl Drop for CopyFile<'_> {
-    fn drop(&mut self) {
-        if let PathOrFileDescriptor::Path(p) = &self.source_file_store.pathlike {
-            if p.is_string() && self.system_error.is_none() {
-                // TODO(port): the Zig frees the path slice here. In Rust, ownership of
-                // `source_file_store.pathlike.path` should be encoded in the type so
-                // Drop handles it. Verify Store::File path ownership.
-            }
-        }
-        // self.store.?.deref() — Arc drop is automatic
-        // bun.destroy(this) — Box drop is automatic
-    }
-}
+// Ownership is encoded in the types, so cleanup is all field `Drop`:
+// `source_file_store.pathlike` is a `PathLike` clone that is independently
+// droppable — `PathLike::clone` dupes owned string buffers (freed by the
+// clone's own `CowSlice` drop), bumps refs for WTF-backed slices, and only
+// shares the backing for borrowed-string/Buffer variants (whose owner is kept
+// alive by the `source_store` `StoreRef`). Each clone's field `Drop` frees
+// exactly what it owns; the `StoreRef`s release just their Store refcounts on
+// drop. No explicit `Drop` impl is needed.
 
-// Port of `bun.sys.preallocate_supported` / `bun.sys.preallocate_length` (sys.zig).
-// Kept local until bun_sys exports them; values match crate::node::fs.
+// Kept local until bun_sys exports these; values match crate::node::fs.
 #[cfg(not(windows))]
 const PREALLOCATE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "android"));
 #[cfg(not(windows))]
@@ -1000,7 +992,7 @@ pub struct CopyFileWindows<'a> {
     pub mkdirp_if_not_exists: bool,
     pub destination_mode: Option<Mode>,
     // per LIFETIMES.tsv: JSC_BORROW → &jsc::EventLoop
-    // TODO(port): lifetime — heap-allocated and re-entered from libuv callbacks;
+    // TODO(refactor): lifetime — heap-allocated and re-entered from libuv callbacks;
     // likely should be *const jsc::EventLoop.
     pub event_loop: &'a jsc::event_loop::EventLoop,
 
@@ -1037,7 +1029,6 @@ impl Default for ReadWriteLoop {
             must_close_destination_fd: false,
             written: 0,
             read_buf: Vec::new(),
-            // Zig: `.{ .base = undefined, .len = 0 }`
             uv_buf: libuv::uv_buf_t {
                 len: 0,
                 base: core::ptr::null_mut(),
@@ -1046,9 +1037,8 @@ impl Default for ReadWriteLoop {
     }
 }
 
-// PORT NOTE: Zig defines `ReadWriteLoop.start/read` taking both `*ReadWriteLoop` and
-// `*CopyFileWindows`, but in Rust the former is a subobject of the latter, so passing
-// both as `&mut` is aliasing UB. These are hoisted onto `CopyFileWindows` so the
+// `ReadWriteLoop` is a subobject of `CopyFileWindows`, so passing both as
+// `&mut` would be aliasing UB. These are hoisted onto `CopyFileWindows` so the
 // borrow checker can see `self.read_write_loop` / `self.io_request` / `self.event_loop`
 // as disjoint field accesses through a single `&mut self`.
 #[cfg(windows)]
@@ -1061,7 +1051,7 @@ impl<'a> CopyFileWindows<'a> {
 
     fn read_write_loop_read(&mut self) -> bun_sys::Result<()> {
         self.read_write_loop.read_buf.clear();
-        // PORT NOTE: reshaped for borrowck — Zig's `allocatedSlice()` is the full capacity slice.
+        // reshaped for borrowck — use the full capacity slice.
         let cap = self.read_write_loop.read_buf.capacity();
         self.read_write_loop.uv_buf = libuv::uv_buf_t {
             len: cap as libuv::ULONG,
@@ -1146,7 +1136,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
 
     let source_fd = this.read_write_loop.source_fd;
     let destination_fd = this.read_write_loop.destination_fd;
-    // PORT NOTE: reshaped for borrowck — `read_buf.items` is `Vec` len-slice.
+    // reshaped for borrowck — `read_buf.items` is `Vec` len-slice.
     let read_buf = &mut this.read_write_loop.read_buf;
 
     let event_loop = this.event_loop;
@@ -1428,7 +1418,7 @@ impl<'a> CopyFileWindows<'a> {
 
         let mut pathbuf1 = PathBuffer::uninit();
         let mut pathbuf2 = PathBuffer::uninit();
-        // PORT NOTE: capture the raw `self` pointer before borrowing the file
+        // capture the raw `self` pointer before borrowing the file
         // stores. `slice_z` ties the returned `&ZStr` lifetime to `&self`, so
         // `new_path`/`old_path` keep `self.{destination,source}_file_store`
         // borrowed across the `uv_fs_copyfile` call below; taking
@@ -1568,14 +1558,14 @@ impl<'a> CopyFileWindows<'a> {
 
     pub fn throw(&mut self, err: bun_sys::Error) {
         let global_this = self.event_loop.global_ref();
-        // PORT NOTE: `swap()` returns a `&mut JSPromise` into a GC-owned cell (not into
+        // `swap()` returns a `&mut JSPromise` into a GC-owned cell (not into
         // `self`), but its lifetime is elided to `&mut self`. Decay to a raw pointer so
         // borrowck doesn't tie it to `self` across `destroy` below.
         let promise = JSPromise::opaque_mut(self.promise.swap());
         let err_instance = err.to_js_with_async_stack(global_this, promise);
 
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
-        // calls enter() now and exit() on drop (RAII for Zig's `loop.enter(); defer loop.exit();`).
+        // calls enter() now and exit() on drop.
         let _guard = unsafe {
             jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
         };
@@ -1600,7 +1590,7 @@ impl<'a> CopyFileWindows<'a> {
             ) {
                 self.written_bytes = written;
                 let mut pathbuf = PathBuffer::uninit();
-                // PORT NOTE (borrowck): `slice_z` ties the returned `&ZStr` to
+                // Borrowck: `slice_z` ties the returned `&ZStr` to
                 // `&self.destination_file_store`, which would conflict with the
                 // `core::ptr::from_mut(self)` below. Capture the raw C pointer now —
                 // it points either into the stack-local `pathbuf` or into the
@@ -1634,7 +1624,7 @@ impl<'a> CopyFileWindows<'a> {
                 };
 
                 // chmod failed to start - reject the promise to report the error.
-                // PORT NOTE: previously `transmute::<c_int, SystemErrno>(errno)` — wrong on
+                // previously `transmute::<c_int, SystemErrno>(errno)` — wrong on
                 // two counts: `errno` is `u16` (size mismatch with `c_int`), and libuv
                 // negative codes are NOT `SystemErrno` discriminants on Windows. Route
                 // through `Error::from_uv_rc` so `from_libuv` is set and translation is
@@ -1657,11 +1647,11 @@ impl<'a> CopyFileWindows<'a> {
 
     fn resolve_promise(&mut self, written: usize) {
         let global_this = self.event_loop.global_ref();
-        // PORT NOTE: see `throw` — re-type the GC cell via the ZST opaque deref so it
+        // see `throw` — re-type the GC cell via the ZST opaque deref so it
         // outlives `destroy(self)` for borrowck.
         let promise = JSPromise::opaque_mut(self.promise.swap());
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
-        // calls enter() now and exit() on drop (RAII for Zig's `loop.enter(); defer loop.exit();`).
+        // calls enter() now and exit() on drop.
         let _guard = unsafe {
             jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
         };
@@ -1703,7 +1693,7 @@ impl<'a> CopyFileWindows<'a> {
     fn mkdirp(&mut self) {
         bun_sys::syslog!("mkdirp");
         self.mkdirp_if_not_exists = false;
-        // PORT NOTE (borrowck): compute the raw path slice pointer up-front so the
+        // Borrowck: compute the raw path slice pointer up-front so the
         // immutable borrow of `self.destination_file_store` ends before we take
         // `core::ptr::from_mut(self)` for `completion_ctx` below.
         let path: *const [u8] = {
@@ -1739,9 +1729,8 @@ impl<'a> CopyFileWindows<'a> {
         self.event_loop.unref_concurrently();
 
         if let Some(err) = self.err.take() {
-            // PORT NOTE: Zig `var err2 = err; err2.deinit();` freed the borrowed path; in
-            // Rust `bun_sys::Error.path` is an owned `Box<[u8]>` and is dropped with `err`
-            // inside `throw`.
+            // `bun_sys::Error.path` is an owned `Box<[u8]>` and is dropped with
+            // `err` inside `throw`.
             self.throw(err);
             return;
         }
@@ -1833,7 +1822,7 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
         bun_sys::Result::Err(e) => Some(e),
         bun_sys::Result::Ok(()) => None,
     };
-    // PORT NOTE: `bun_event_loop::JsResult` carries the low-tier `ErasedJsError`; shim the
+    // `bun_event_loop::JsResult` carries the low-tier `ErasedJsError`; shim the
     // callback signature to match `ManagedTask::new`'s `fn(*mut T) -> JsResult<()>`.
     fn call_erased(this: *mut CopyFileWindows<'_>) -> bun_event_loop::JsResult<()> {
         // SAFETY: `this` is the heap-allocated `CopyFileWindows` passed to
@@ -1842,14 +1831,10 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
         unsafe { (*this).on_mkdirp_complete() };
         Ok(())
     }
-    // SAFETY: `event_loop` is the JS-thread loop stored at task creation;
-    // the `ConcurrentTask` heap allocation is freed by the loop after dispatch.
-    unsafe {
-        this.event_loop
-            .enqueue_task_concurrent(jsc::ConcurrentTask::create(
-                jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),
-            ));
-    }
+    this.event_loop
+        .enqueue_task_concurrent(jsc::ConcurrentTask::create(
+            jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),
+        ));
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1882,13 +1867,9 @@ fn unsupported_non_regular_file_error() -> SystemError {
         ..SystemError::default()
     }
 }
-// TODO(port): Zig had these as `const` values; SystemError contains bun.String which
-// is not const-constructible in Rust. Using fns here. Consider lazy_static / OnceLock.
+// `SystemError` contains `bun_core::String`, which is not const-constructible,
+// so these are constructor fns instead of `const` values.
 
 pub type CopyFilePromiseTask<'a> =
     jsc::concurrent_promise_task::ConcurrentPromiseTask<'a, CopyFile<'a>>;
-// TODO(port): Zig `CopyFilePromiseTask.EventLoopTask` — exact Rust associated-type
-// path depends on bun_jsc::ConcurrentPromiseTask shape; using `jsc::EventLoopTask` for now.
 pub type CopyFilePromiseTaskEventLoopTask = jsc::EventLoopTask;
-
-// ported from: src/runtime/webcore/blob/copy_file.zig

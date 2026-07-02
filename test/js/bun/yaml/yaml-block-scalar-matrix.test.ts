@@ -5,8 +5,10 @@
 // combinatorial generator (header × chomp × indicator × indent-boundary ×
 // whitespace-position × context × EOL × EOF) plus an adversarial pass for
 // unicode/mixed-EOL/nesting/pathological edges. The "oracle-split" group at
-// the bottom covers inputs where the four parsers disagree 2-2 and locks in
-// Bun's current behavior.
+// the bottom covers inputs where the four reference parsers disagree (the
+// spec is unambiguous; one or more refs deviate from it) and locks in the
+// answer Bun derives from the spec, with the per-ref outputs in the comment
+// column for context.
 
 import { YAML } from "bun";
 import { describe, expect, test } from "bun:test";
@@ -1260,10 +1262,12 @@ describe("block scalar conformance matrix", () => {
   });
 });
 
-// These inputs hit genuine YAML 1.2.2 ambiguities (oracles split 2-2). The
-// expected values lock in Bun's current behavior; if any of these change,
-// it should be a deliberate decision.
-describe("block scalar oracle-split (spec-ambiguous)", () => {
+// On these inputs the four reference parsers disagree (typically 2-2). The
+// spec is unambiguous; one or more refs deviate from it. The expected values
+// lock in the spec-derived answer; the comment column shows what each
+// reference parser produces. If any of these change, re-derive from the spec
+// — don't pick a ref to match.
+describe("block scalar oracle-split (refs disagree)", () => {
   test.each([
     [
       "ws/|/trail-eof/w3",
@@ -1426,7 +1430,10 @@ describe("block scalar oracle-split (spec-ambiguous)", () => {
     [
       "adv/nesting/header-dedented-after-colon",
       "key:\n|\n text\n",
-      { "key": "text\n" },
+      // [199] s-l+block-scalar(n,c) requires s-separate(n+1,c) before `|`;
+      // for `key:` at n=0 the `|` must be at indent ≥ 1. ee/js error, py/ru
+      // accept; Bun now sides with the spec-compliant refs.
+      "__ERR__",
       'ee="__ERR__" js="__ERR__" py={"key":"text\\n"} ru={"key":"text\\n"}',
     ],
     [
@@ -1448,6 +1455,10 @@ describe("block scalar oracle-split (spec-ambiguous)", () => {
       'ee=["a\\n","b c\\n"] js=["a\\n","b c\\n"] py="__ERR__" ru="__ERR__"',
     ],
   ] as const)("%s", (_id, input, expected, _oracles) => {
-    expect(YAML.parse(input)).toEqual(expected);
+    if (expected === "__ERR__") {
+      expect(() => YAML.parse(input)).toThrow();
+    } else {
+      expect(YAML.parse(input)).toEqual(expected);
+    }
   });
 });

@@ -1,0 +1,3 @@
+FROM postgres:15
+COPY init-scripts/postgres-auth/ /docker-entrypoint-initdb.d/
+COPY config/pg_hba_auth.conf /etc/postgresql/pg_hba.conf

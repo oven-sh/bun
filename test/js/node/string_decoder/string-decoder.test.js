@@ -242,6 +242,28 @@ for (const StringDecoder of [FakeStringDecoderCall, RealStringDecoder]) {
   });
 }
 
+// Node's normalizeEncoding() maps every UTF-16LE alias (including the legacy
+// ucs2/ucs-2 spellings) to the canonical name "utf16le", and
+// StringDecoder#encoding exposes the normalized name.
+it("normalizes the encoding name like Node", () => {
+  const inputs = ["utf16le", "utf-16le", "ucs2", "ucs-2", "UTF-16LE", "UCS-2", "utf8", "utf-8", "latin1", "binary"];
+  const normalized = Object.fromEntries(inputs.map(name => [name, new RealStringDecoder(name).encoding]));
+  normalized.default = new RealStringDecoder().encoding;
+  expect(normalized).toEqual({
+    "utf16le": "utf16le",
+    "utf-16le": "utf16le",
+    "ucs2": "utf16le",
+    "ucs-2": "utf16le",
+    "UTF-16LE": "utf16le",
+    "UCS-2": "utf16le",
+    "utf8": "utf8",
+    "utf-8": "utf8",
+    "latin1": "latin1",
+    "binary": "latin1",
+    "default": "utf8",
+  });
+});
+
 it("invalid utf-8 input, pr #3562", () => {
   const decoder = new RealStringDecoder("utf-8");
   let output = "";
@@ -311,5 +333,45 @@ it(
     expect(exitCode).toBe(0);
     // The 2 GiB ASCII scan takes ~15s under debug/ASAN vs ~1s in release.
   },
+  isDebug || isASAN ? 60_000 : undefined,
+);
+
+// StringDecoder.prototype.text(buf, offset) takes the offset as an int32 and
+// previously validated it with `offset > byteLength` where byteLength is
+// unsigned. The comparison promoted the signed offset to unsigned, so for
+// buffers of 2 GiB or more a negative offset slipped past the check and was
+// used directly in pointer arithmetic, decoding memory located before the
+// buffer. A negative offset must yield an empty string without touching the
+// buffer.
+it(
+  "text() with a negative offset on a 2 GiB buffer returns an empty string",
+  async () => {
+    const src = `
+      const { StringDecoder } = require("string_decoder");
+      // Legitimate case: an in-range positive offset still decodes the tail.
+      {
+        const decoder = new StringDecoder("utf8");
+        console.log(JSON.stringify(decoder.text(Buffer.from("hello world"), 6)));
+      }
+      // byteLength must be >= 2**31 for INT32_MIN to pass the old unsigned
+      // comparison (INT32_MIN reinterpreted as uint32 is 2**31). allocUnsafe
+      // is lazily committed, and a rejected offset never reads the buffer, so
+      // this stays cheap.
+      const buf = Buffer.allocUnsafe(2 ** 31 + 16);
+      const decoder = new StringDecoder("utf8");
+      const out = decoder.text(buf, -2147483648);
+      console.log("length:", out.length);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe('"world"\nlength: 0\n');
+    expect(exitCode).toBe(0);
+  },
+  // Allocating a 2 GiB buffer under debug/ASAN is slow even when lazily committed.
   isDebug || isASAN ? 60_000 : undefined,
 );

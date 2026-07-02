@@ -90,11 +90,10 @@ pub struct PEFile {
 
 // PE/COFF on-disk header structs are byte-packed (no padding) per spec, and may
 // live at arbitrary byte offsets inside a `Vec<u8>` image, so `align_of` must be 1
-// for it to be sound to materialize references/pointers to them from the buffer
-// (the Zig original used `*align(1) const T`).
+// for it to be sound to materialize references/pointers to them from the buffer.
 #[repr(C, packed)]
 #[derive(Copy, Clone)]
-pub struct DOSHeader {
+pub(crate) struct DOSHeader {
     pub e_magic: u16,      // Magic number
     pub e_cblp: u16,       // Bytes on last page of file
     pub e_cp: u16,         // Pages in file
@@ -118,7 +117,7 @@ pub struct DOSHeader {
 
 #[repr(C, packed)]
 #[derive(Copy, Clone)]
-pub struct PEHeader {
+pub(crate) struct PEHeader {
     pub signature: u32,               // PE signature
     pub machine: u16,                 // Machine type
     pub number_of_sections: u16,      // Number of sections
@@ -131,7 +130,7 @@ pub struct PEHeader {
 
 #[repr(C, packed)]
 #[derive(Copy, Clone)]
-pub struct OptionalHeader64 {
+pub(crate) struct OptionalHeader64 {
     pub magic: u16,                            // Magic number
     pub major_linker_version: u8,              // Major linker version
     pub minor_linker_version: u8,              // Minor linker version
@@ -166,14 +165,14 @@ pub struct OptionalHeader64 {
 
 #[repr(C, packed)]
 #[derive(Copy, Clone)]
-pub struct DataDirectory {
+pub(crate) struct DataDirectory {
     pub virtual_address: u32,
     pub size: u32,
 }
 
 #[repr(C, packed)]
 #[derive(Copy, Clone)]
-pub struct SectionHeader {
+pub(crate) struct SectionHeader {
     pub name: [u8; 8],                // Section name
     pub virtual_size: u32,            // Virtual size
     pub virtual_address: u32,         // Virtual address
@@ -203,8 +202,7 @@ const BUN_SECTION_NAME: [u8; 8] = [b'.', b'b', b'u', b'n', 0, 0, 0, 0];
 
 // Safe access helpers for unaligned views.
 // All header structs are `#[repr(C, packed)]` (align 1), so a bounds-checked byte
-// pointer into the image can be cast and dereferenced directly — equivalent to the
-// Zig original's `*align(1) const T`.
+// pointer into the image can be cast and dereferenced directly.
 fn view_at_const<T>(buf: &[u8], off: usize) -> Result<*const T, Error> {
     if off + size_of::<T>() > buf.len() {
         return Err(Error::OutOfBounds);
@@ -335,7 +333,6 @@ impl PEFile {
         // 5. Read optional header
         let size_of_optional_header = pe_header.size_of_optional_header;
         let number_of_sections = pe_header.number_of_sections;
-        // PORT NOTE: reshaped for borrowck — drop pe_header borrow before re-borrowing data
         let optional_header = view_at_mut::<OptionalHeader64>(&mut data, optional_header_offset)?;
         // SAFETY: validated bounds above
         let optional_header = unsafe { &mut *optional_header };
@@ -565,7 +562,7 @@ impl PEFile {
         // 2. Re-read PE/Optional (pointers may have moved due to resize in strip)
         let opt = self.get_optional_header_mut()?;
         // SAFETY: opt points into self.data at validated offset
-        // PORT NOTE: reshaped for borrowck — capture needed scalars from opt before re-borrowing self.data
+        // Capture the needed scalars from opt before re-borrowing self.data below.
         let file_alignment = unsafe { (*opt).file_alignment };
         // SAFETY: opt points into self.data at the offset validated by get_optional_header_mut
         let section_alignment = unsafe { (*opt).section_alignment };
@@ -778,8 +775,6 @@ impl PEFile {
 
     /// Write the modified PE file
     pub fn write(&self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
-        // PORT NOTE: Zig used `writer: anytype` (`std.Io.Writer`); std::io::Write
-        // is the canonical Rust equivalent. bun_io has no Write trait.
         writer.write_all(&self.data)?;
         Ok(())
     }
@@ -880,36 +875,6 @@ impl PEFile {
     }
 }
 
-/// Utilities for PE file detection and validation
-pub mod utils {
-    use super::*;
-
-    pub fn is_pe(data: &[u8]) -> bool {
-        if data.len() < size_of::<DOSHeader>() {
-            return false;
-        }
-
-        // SAFETY: bounds-checked above; DOSHeader is #[repr(C)] POD at offset 0
-        let dos = unsafe { ptr::read_unaligned(data.as_ptr().cast::<DOSHeader>()) };
-        if dos.e_magic != DOS_SIGNATURE {
-            return false;
-        }
-
-        let off = dos.e_lfanew as usize;
-        if off < size_of::<DOSHeader>() || off > data.len().saturating_sub(size_of::<PEHeader>()) {
-            return false;
-        }
-
-        // SAFETY: bounds-checked above; PEHeader is #[repr(C)] POD
-        let pe = unsafe { ptr::read_unaligned(data.as_ptr().add(off).cast::<PEHeader>()) };
-        pe.signature == PE_SIGNATURE
-    }
-}
-
-/// Windows-specific external interface for accessing embedded Bun data
-/// This matches the macOS interface but for PE files
-pub const BUN_COMPILED_SECTION_NAME: &str = ".bun";
-
 // External C interface declarations - these are implemented in C++ bindings
 // (src/jsc/bindings/c-bindings.cpp). The C++ code uses Windows PE APIs to
 // directly access the .bun section from the current process memory without
@@ -918,5 +883,3 @@ unsafe extern "C" {
     pub fn Bun__getStandaloneModuleGraphPELength() -> u64;
     pub fn Bun__getStandaloneModuleGraphPEData() -> *mut u8;
 }
-
-// ported from: src/exe_format/pe.zig

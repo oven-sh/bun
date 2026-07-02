@@ -2,5 +2,3 @@
 // required by `bun_ptr::RefCount` and `bun_threading::RawMutex`). Re-export so
 // `bun_safety::ThreadLock` callers keep working.
 pub use bun_core::{ThreadLock, ThreadLockGuard};
-
-// ported from: src/safety/ThreadLock.zig

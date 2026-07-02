@@ -628,9 +628,11 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
 
   // DirectBuild host tool: compile+link in one clang invocation with NO
   // cfg target/arch flags — the tool runs on the build host. cc()/link()
-  // would add --target which breaks cross-compiles.
+  // would add --target which breaks cross-compiles. cfg.hostCc (not cfg.cc):
+  // when cross-compiling for windows, cc is clang-cl and defaults to a
+  // *-windows-msvc triple — host tools must stay plain clang.
   n.rule("dep_host_cc", {
-    command: `${q(cfg.cc)} $flags -o $out $in`,
+    command: `${q(cfg.hostCc)} $flags -o $out $in`,
     description: "host-cc $out",
   });
 
@@ -1372,9 +1374,19 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
   // `rust_eh_personality`. RUSTUP_TOOLCHAIN overrides the directory walk.
   if (cfg.rustToolchain !== undefined) env.RUSTUP_TOOLCHAIN = cfg.rustToolchain;
 
-  if (spec.rustflags && spec.rustflags.length > 0) {
+  // Path remapping (CI reproducibility) — mirrors the C/C++
+  // `-ffile-prefix-map` entries in flags.ts and the same block in rust.ts,
+  // so vendored Rust deps built here (lol-html) don't embed the absolute
+  // checkout path in `file!()`/panic locations/debuginfo either.
+  const rustflags: string[] = [...(spec.rustflags ?? [])];
+  if (cfg.ci) {
+    rustflags.push(`--remap-path-prefix=${cfg.cwd}=.`);
+    rustflags.push(`--remap-path-prefix=${cfg.vendorDir}=vendor`);
+  }
+
+  if (rustflags.length > 0) {
     // The \x1f encoding is deliberate — see cargo's docs on CARGO_ENCODED_RUSTFLAGS.
-    env.CARGO_ENCODED_RUSTFLAGS = spec.rustflags.join("\x1f");
+    env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
   }
 
   // Windows: pin the linker to MSVC's link.exe. Without this, if Git Bash
@@ -1402,7 +1414,7 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
       const llvmArch = cfg.arm64 ? "aarch64" : "x86_64";
       linkArgs.push(`-Clink-arg=-L${join(cfg.androidNdkRuntimeDir, llvmArch)}`);
     }
-    env.CARGO_ENCODED_RUSTFLAGS = [...(spec.rustflags ?? []), ...linkArgs].join("\x1f");
+    env.CARGO_ENCODED_RUSTFLAGS = [...rustflags, ...linkArgs].join("\x1f");
   }
 
   // ─── Emit build node ───

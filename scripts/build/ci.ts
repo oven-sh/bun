@@ -16,6 +16,7 @@ import * as utils from "../utils.mjs";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
 import { BuildError } from "./error.ts";
+import { crossFeaturesJson } from "./features-json.ts";
 
 /** True if running under any CI (env: CI, BUILDKITE, or GITHUB_ACTIONS). */
 export const isCI: boolean = utils.isCI;
@@ -377,10 +378,13 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // Env vars match cmake's (BuildBun.cmake ~1462).
   // No setarch wrapper — cmake doesn't use one for features.mjs either
   // (only for the --revision smoke test).
-  // Cross-compiled binaries can't run on the build host — write a stub.
+  // Cross-compiled binaries can't run on the build host — every field is a
+  // build-time constant, so generate the same payload host-side instead
+  // (the feature list is parsed out of src/analytics/lib.rs; see
+  // features-json.ts).
   if (cfg.crossTarget !== undefined) {
-    console.log("Skipping features.json (cross-compiled binary cannot run on host)");
-    writeFileSync(resolve(buildDir, "features.json"), JSON.stringify({ crossTarget: cfg.crossTarget }));
+    console.log("Generating features.json (host-side; cross-compiled binary cannot run here)...");
+    writeFileSync(resolve(buildDir, "features.json"), crossFeaturesJson(cfg));
   } else {
     console.log("Generating features.json...");
     run([exe, resolve(cfg.cwd, "scripts", "features.mjs")], buildDir, {

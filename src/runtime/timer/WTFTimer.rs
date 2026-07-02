@@ -1,11 +1,10 @@
 //! `WTFTimer` — a timer created by WTF (WebKit) code and invoked by Bun's
 //! event loop. Backs `WTF::RunLoop::TimerBase` on the Bun runloop.
 //!
-//! PORT NOTE (jsc/runtime crate cycle): Zig stores `vm: *VirtualMachine` and reaches the
-//! timer heap via `vm.timer.{remove,update}`. The low-tier
-//! `bun_jsc::VirtualMachine.timer` is a `()` placeholder, so this port
-//! resolves the heap through [`crate::jsc_hooks::runtime_state`] instead —
-//! the same pattern `TimerObjectInternals` uses.
+//! jsc/runtime crate cycle: the low-tier `bun_jsc::VirtualMachine.timer` is a
+//! `()` placeholder, so this module resolves the timer heap through
+//! [`crate::jsc_hooks::runtime_state`] instead — the same pattern
+//! `TimerObjectInternals` uses.
 
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
@@ -25,7 +24,7 @@ const NS_PER_S: i64 = bun_core::time::NS_PER_S as i64;
 
 bun_opaque::opaque_ffi! {
     /// This is `WTF::RunLoop::TimerBase` from WebKit — opaque FFI handle.
-    pub struct RunLoopTimer;
+    pub(crate) struct RunLoopTimer;
 }
 
 impl RunLoopTimer {
@@ -33,14 +32,17 @@ impl RunLoopTimer {
     /// don't need an `unsafe { as_ref() }` just to forward it — `NonNull<T>`
     /// is ABI-identical to `*mut T` and the extern is `safe fn`.
     #[inline]
-    pub fn fire(this: NonNull<RunLoopTimer>) {
+    pub(crate) fn fire(this: NonNull<RunLoopTimer>) {
         WTFTimer__fire(this)
     }
 }
 
 /// A timer created by WTF code and invoked by Bun's event loop.
 pub struct WTFTimer {
-    // TODO(port): lifetime — backref to the owning VirtualMachine; never owned here.
+    // Backref to the owning VirtualMachine (captured from the thread-local VM
+    // in `WTFTimer__create`); never owned here. The C++ `RunLoop::TimerBase`
+    // that owns this wrapper lives on the VM's run loop, so the VM outlives
+    // the timer.
     vm: NonNull<VirtualMachine>,
     // FFI handle into WebKit's RunLoop::TimerBase; owned by C++.
     run_loop_timer: NonNull<RunLoopTimer>,
@@ -60,7 +62,7 @@ bun_event_loop::impl_timer_owner!(WTFTimer; from_timer_ptr => event_loop_timer);
 /// # Safety
 /// `vm` must be the live `VirtualMachine` for the current thread.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn WTFTimer__runIfImminent(vm: *mut VirtualMachine) {
+pub(crate) unsafe extern "C" fn WTFTimer__runIfImminent(vm: *mut VirtualMachine) {
     // SAFETY: per fn contract.
     let el = unsafe { (*vm).event_loop() };
     // SAFETY: `event_loop()` returns the VM's owned EventLoop pointer.
@@ -68,7 +70,7 @@ pub unsafe extern "C" fn WTFTimer__runIfImminent(vm: *mut VirtualMachine) {
 }
 
 impl WTFTimer {
-    /// Spec WTFTimer.zig `run` — fire the underlying `RunLoop::TimerBase`,
+    /// Fire the underlying `RunLoop::TimerBase`,
     /// removing `self` from the timer heap first if it's currently scheduled.
     /// Reached from `bun_jsc::event_loop` via `__bun_run_wtf_timer`
     /// (definer in [`crate::dispatch`]).
@@ -107,8 +109,7 @@ impl WTFTimer {
         }
         // `imminent` is a `BackRef` into the VM's event loop, which outlives this timer.
         let loaded = self.imminent.load(Ordering::SeqCst);
-        // Zig: `(load orelse return false) == this` — null can never equal `this`,
-        // so a single pointer compare suffices.
+        // Null can never equal `this`, so a single pointer compare suffices.
         loaded.cast_const().cast::<WTFTimer>() == ptr::from_ref(self)
     }
 
@@ -117,7 +118,7 @@ impl WTFTimer {
         let _g = self.lock.lock_guard();
         if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
             let next = &self.event_loop_timer.next;
-            // PORT NOTE: bun_event_loop carries a local `Timespec` stub; re-pack
+            // bun_event_loop carries a local `Timespec` stub; re-pack
             // into bun_core::Timespec to call `duration`.
             let until = Timespec {
                 sec: next.sec,
@@ -228,8 +229,7 @@ impl WTFTimer {
         }
     }
 
-    /// Spec WTFTimer.zig `fire` — `EventLoopTimer.fire` dispatch arm body for
-    /// `Tag::WTFTimer`.
+    /// `EventLoopTimer.fire` dispatch arm body for `Tag::WTFTimer`.
     ///
     /// # Safety
     /// `this` is the container of an `EventLoopTimer` just popped from
@@ -271,7 +271,7 @@ impl WTFTimer {
 /// `run_loop_timer` must be a non-null, live `WTF::RunLoop::TimerBase` owned
 /// by the caller for the lifetime of the returned `WTFTimer`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_void {
+pub(crate) unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_void {
     if IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.get() {
         return ptr::null_mut();
     }
@@ -299,7 +299,6 @@ pub unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> 
             },
             run_loop_timer: NonNull::new_unchecked(run_loop_timer),
             repeat: false,
-            // Zig: `@enumFromInt(vm.initial_script_execution_context_identifier)`
             script_execution_context_id: ScriptExecutionContextIdentifier(
                 vm_ref.initial_script_execution_context_identifier as u32,
             ),
@@ -313,7 +312,7 @@ pub unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> 
 /// # Safety
 /// `this` must point at a live `WTFTimer` produced by [`WTFTimer__create`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn WTFTimer__update(this: *mut WTFTimer, seconds: f64, repeat: bool) {
+pub(crate) unsafe extern "C" fn WTFTimer__update(this: *mut WTFTimer, seconds: f64, repeat: bool) {
     // SAFETY: per fn contract.
     unsafe { WTFTimer::update(this, seconds, repeat) };
 }
@@ -322,7 +321,7 @@ pub unsafe extern "C" fn WTFTimer__update(this: *mut WTFTimer, seconds: f64, rep
 /// `this` must be the unique owner of a `WTFTimer` produced by
 /// [`WTFTimer__create`]; it is freed by this call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn WTFTimer__deinit(this: *mut WTFTimer) {
+pub(crate) unsafe extern "C" fn WTFTimer__deinit(this: *mut WTFTimer) {
     // SAFETY: per fn contract.
     unsafe { WTFTimer::deinit(this) };
 }
@@ -330,14 +329,11 @@ pub unsafe extern "C" fn WTFTimer__deinit(this: *mut WTFTimer) {
 /// # Safety
 /// `this` must point at a live `WTFTimer` produced by [`WTFTimer__create`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn WTFTimer__cancel(this: *mut WTFTimer) {
+pub(crate) unsafe extern "C" fn WTFTimer__cancel(this: *mut WTFTimer) {
     // SAFETY: per fn contract.
     unsafe { WTFTimer::cancel(this) };
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     safe fn WTFTimer__fire(this: NonNull<RunLoopTimer>);
 }
-
-// ported from: src/runtime/timer/WTFTimer.zig

@@ -12,7 +12,7 @@ use bun_parsers::json;
 use bun_paths::{self as path, PathBuffer};
 use bun_sys;
 
-pub struct PmPkgCommand;
+pub(crate) struct PmPkgCommand;
 
 /// Process-lifetime arena for `E::Object::put()` / `json::parse` calls.
 /// Route through the shared CLI arena (`MimallocArena` is `Sync`, so this is
@@ -48,7 +48,7 @@ struct PackageJson {
 }
 
 impl PmPkgCommand {
-    pub fn exec(
+    pub(crate) fn exec(
         ctx: &Context,
         pm: &mut PackageManager,
         positionals: &[&[u8]],
@@ -79,6 +79,8 @@ impl PmPkgCommand {
     }
 
     fn print_help() {
+        #[allow(clippy::disallowed_methods)]
+        // help-text const contains <tag> markup that must be tag-walked
         Output::prettyln(format_args!(
             "{}",
             const_format::concatcp!(
@@ -87,7 +89,6 @@ impl PmPkgCommand {
                 "<r>"
             )
         ));
-        // Note: Zig `{{` / `}}` escapes are for std.fmt; Rust raw string keeps literal braces.
         const HELP_TEXT: &str = r#"  Manage data in package.json
 
 <b>Subcommands<r>:
@@ -109,6 +110,8 @@ impl PmPkgCommand {
 
 <b>More info<r>: <magenta>https://bun.com/docs/cli/pm#pkg<r>
 "#;
+        #[allow(clippy::disallowed_methods)]
+        // help-text const contains <tag> markup and literal JSON braces
         Output::pretty(format_args!("{}", HELP_TEXT));
         Output::flush();
     }
@@ -151,27 +154,23 @@ impl PmPkgCommand {
         };
 
         let source = Source::init_path_string(path, &contents[..]);
-        // Zig passes the global allocator; use the process-lifetime CLI arena
+        // Use the process-lifetime CLI arena
         // so the returned `Expr` (which may reference arena-owned nodes)
         // outlives this frame. CLI is one-shot.
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
         // SAFETY: CLI dispatch is single-threaded; no other borrow of
         // `ctx.log` is live while `log` is passed to the JSON parser below.
         let log: &mut Log = unsafe { ctx.log_mut() };
-        // const generics mirror Zig `.{ .is_json, .allow_comments,
-        // .allow_trailing_commas, .guess_indentation = true }` with the
-        // remaining JSONOptions fields at their defaults (false).
-        let result = match json::parse_package_json_utf8_with_opts::<
-            true,  // IS_JSON
-            true,  // ALLOW_COMMENTS
-            true,  // ALLOW_TRAILING_COMMAS
-            false, // IGNORE_LEADING_ESCAPE_SEQUENCES
-            false, // IGNORE_TRAILING_ESCAPE_SEQUENCES
-            false, // JSON_WARN_DUPLICATE_KEYS
-            false, // WAS_ORIGINALLY_MACRO
-            true,  // GUESS_INDENTATION
-        >(&source, log, bump)
-        {
+        let result = match json::parse_package_json_utf8_with_opts(
+            json::JSONOptions {
+                json_warn_duplicate_keys: false,
+                guess_indentation: true,
+                ..json::PACKAGE_JSON_OPTS
+            },
+            &source,
+            log,
+            bump,
+        ) {
             Ok(r) => r,
             Err(e) => {
                 Output::err_generic("Failed to parse package.json: {s}", (e.name(),));
@@ -418,10 +417,7 @@ impl PmPkgCommand {
                         >(pkg_dir, &mut buf, &[bin_path]);
 
                         if !bun_sys::exists_z(full_path) {
-                            Output::warn(format_args!(
-                                "No bin file found at {}",
-                                bstr::BStr::new(bin_path)
-                            ));
+                            bun_core::warn!("No bin file found at {}", bstr::BStr::new(bin_path));
                         }
                     }
                 }
@@ -443,10 +439,10 @@ impl PmPkgCommand {
             })),
             ExprData::ENumber(n) => {
                 let mut v = Vec::new();
-                if n.value.floor() == n.value {
-                    write!(&mut v, "{:.0}", n.value).or_write_failed()?;
+                if n.value().floor() == n.value() {
+                    write!(&mut v, "{:.0}", n.value()).or_write_failed()?;
                 } else {
-                    write!(&mut v, "{}", n.value).or_write_failed()?;
+                    write!(&mut v, "{}", n.value()).or_write_failed()?;
                 }
                 Ok(v.into_boxed_slice())
             }
@@ -533,7 +529,6 @@ impl PmPkgCommand {
                         }
 
                         current = arr.items.slice()[index];
-                        // TODO(port): Expr likely Copy via arena handle; verify.
                     } else {
                         if !matches!(current.data, ExprData::EObject(_)) {
                             return Err(err!("NotFound"));
@@ -572,9 +567,12 @@ impl PmPkgCommand {
         Ok(current)
     }
 
-    fn parse_key_path(key: &[u8]) -> Result<Vec<Box<[u8]>>, Error> {
-        let mut path_parts: Vec<Box<[u8]>> = Vec::new();
-        // errdefer freeing is implicit via Drop on Vec<Box<[u8]>>
+    /// Splits `a.b[0][c]` into `["a", "b", "0", "c"]`. Segments are sub-slices
+    /// of `key`: `E::Object::put` stores keys by reference (no copy into the
+    /// AST arena), so they must outlive the `Expr` tree, which `key` (an argv
+    /// slice) does. Returning owned buffers here would leave dangling keys.
+    fn parse_key_path(key: &[u8]) -> Result<Vec<&[u8]>, Error> {
+        let mut path_parts: Vec<&[u8]> = Vec::new();
 
         let mut parts = key.split(|b| *b == b'.').filter(|s| !s.is_empty());
 
@@ -583,8 +581,7 @@ impl PmPkgCommand {
                 let mut remaining_part = part;
 
                 if first_bracket > 0 {
-                    let prop_name = &part[..first_bracket];
-                    path_parts.push(Box::<[u8]>::from(prop_name));
+                    path_parts.push(&part[..first_bracket]);
                     remaining_part = &part[first_bracket..];
                 }
 
@@ -601,7 +598,7 @@ impl PmPkgCommand {
                         return Err(err!("InvalidPath"));
                     }
 
-                    path_parts.push(Box::<[u8]>::from(index_str));
+                    path_parts.push(index_str);
 
                     remaining_part = &remaining_part[actual_bracket_end + 1..];
                     if remaining_part.is_empty() {
@@ -609,7 +606,7 @@ impl PmPkgCommand {
                     }
                 }
             } else {
-                path_parts.push(Box::<[u8]>::from(part));
+                path_parts.push(part);
             }
         }
 
@@ -621,30 +618,7 @@ impl PmPkgCommand {
             return Err(err!("InvalidRoot"));
         }
 
-        if strings::index_of(key, b"[").is_none() {
-            let mut path_parts: Vec<&[u8]> = Vec::new();
-            for part in key.split(|b| *b == b'.').filter(|s| !s.is_empty()) {
-                path_parts.push(part);
-            }
-
-            if path_parts.is_empty() {
-                return Err(err!("EmptyKey"));
-            }
-
-            if path_parts.len() == 1 {
-                let expr = Self::parse_value(value, parse_json)?;
-                root.data
-                    .e_object_mut()
-                    .unwrap()
-                    .put(dummy_bump(), path_parts[0], expr)?;
-                return Ok(());
-            }
-
-            Self::set_nested_simple(root, &path_parts, value, parse_json)?;
-            return Ok(());
-        }
-
-        let mut path_parts = Self::parse_key_path(key)?;
+        let path_parts = Self::parse_key_path(key)?;
 
         if path_parts.is_empty() {
             return Err(err!("EmptyKey"));
@@ -656,18 +630,15 @@ impl PmPkgCommand {
             root.data
                 .e_object_mut()
                 .unwrap()
-                .put(dummy_bump(), &path_parts[0], expr)?;
+                .put(dummy_bump(), path_parts[0], expr)?;
 
-            // PORT NOTE: Zig's `path_parts[0] = ""` here was an ownership-transfer hack to neuter
-            // the caller's `defer allocator.free(part)`. That defer is gone (Vec<Box<[u8]>> drops
-            // its elements), so the assignment is deleted.
             return Ok(());
         }
 
-        Self::set_nested(root, &mut path_parts, value, parse_json)
+        Self::set_nested(root, &path_parts, value, parse_json)
     }
 
-    fn set_nested_simple(
+    fn set_nested(
         root: &mut Expr,
         path: &[&[u8]],
         value: &[u8],
@@ -679,58 +650,6 @@ impl PmPkgCommand {
 
         let current_key = path[0];
         let remaining_path = &path[1..];
-
-        if remaining_path.is_empty() {
-            let expr = Self::parse_value(value, parse_json)?;
-            root.data
-                .e_object_mut()
-                .unwrap()
-                .put(dummy_bump(), current_key, expr)?;
-            return Ok(());
-        }
-
-        let mut nested_obj = root.get(current_key);
-        if nested_obj.is_none()
-            || !matches!(nested_obj.as_ref().unwrap().data, ExprData::EObject(_))
-        {
-            let new_obj = Expr::init(E::Object::default(), Loc::EMPTY);
-            root.data
-                .e_object_mut()
-                .unwrap()
-                .put(dummy_bump(), current_key, new_obj)?;
-            nested_obj = root.get(current_key);
-        }
-
-        if !matches!(nested_obj.as_ref().unwrap().data, ExprData::EObject(_)) {
-            return Err(err!("ExpectedObject"));
-        }
-
-        let mut nested = nested_obj.unwrap();
-        Self::set_nested_simple(&mut nested, remaining_path, value, parse_json)?;
-        root.data
-            .e_object_mut()
-            .unwrap()
-            .put(dummy_bump(), current_key, nested)?;
-        Ok(())
-    }
-
-    fn set_nested(
-        root: &mut Expr,
-        path: &mut [Box<[u8]>],
-        value: &[u8],
-        parse_json: bool,
-    ) -> Result<(), Error> {
-        if path.is_empty() {
-            return Ok(());
-        }
-
-        // PORT NOTE: Zig's `path[0] = ""` writes were an ownership-transfer hack to neuter the
-        // caller's `defer allocator.free(part)` (manual move semantics). In Zig, `current_key`
-        // is a VALUE copy of the slice descriptor taken before the clear, so `root.get(current_key)`
-        // still sees the original key. That defer is gone in Rust (Drop handles it), so the
-        // clears are deleted and `path` no longer needs interior mutation here.
-        let (head, remaining_path) = path.split_first_mut().unwrap();
-        let current_key: &[u8] = head;
 
         if remaining_path.is_empty() {
             let expr = Self::parse_value(value, parse_json)?;
@@ -776,16 +695,11 @@ impl PmPkgCommand {
             }
 
             if let Some(int_val) = bun_core::fmt::parse_decimal::<i64>(value) {
-                return Ok(Expr::init(
-                    E::Number {
-                        value: int_val as f64,
-                    },
-                    Loc::EMPTY,
-                ));
+                return Ok(Expr::init(E::Number::new(int_val as f64), Loc::EMPTY));
             }
 
             if let Some(float_val) = parse_f64(value) {
-                return Ok(Expr::init(E::Number { value: float_val }, Loc::EMPTY));
+                return Ok(Expr::init(E::Number::new(float_val), Loc::EMPTY));
             }
 
             let temp_source = Source::init_path_string(b"package.json", value);
@@ -887,8 +801,7 @@ impl PmPkgCommand {
             return Ok(false);
         }
         let old_len = old_props.len();
-        // G::Property is !Copy/!Clone in Rust. Zig bitwise-copies each kept
-        // entry and leaves the old buffer to the arena. Mirror that: take the
+        // G::Property is !Copy/!Clone: take the
         // old list, ptr::read kept entries into the new list, then forget the
         // old buffer (CLI is one-shot — leak is intentional, see
         // load_package_json).
@@ -903,7 +816,7 @@ impl PmPkgCommand {
                 }
             }
             // SAFETY: `old` is wrapped in `ManuallyDrop` so each Property is
-            // moved (not duplicated) into `new_props`, matching Zig's value-copy loop.
+            // moved (not duplicated) into `new_props`.
             new_props.append_assume_capacity(unsafe { core::ptr::read(prop) });
         }
         e_obj.properties = new_props;
@@ -939,7 +852,6 @@ impl PmPkgCommand {
         }
 
         let content = writer.ctx.written_without_trailing_zero();
-        // TODO(port): Zig used std.fs.cwd().writeFile; using bun_sys per porting rules (no std::fs).
         let path_z = bun_core::ZBox::from_bytes(path);
         if let Err(e) = bun_sys::File::write_file(bun_sys::Fd::cwd(), path_z.as_zstr(), content) {
             Output::err_generic(
@@ -955,5 +867,3 @@ impl PmPkgCommand {
 // ───── helpers ────────────────────────────────────────────────────────────
 
 use bun_core::fmt::parse_f64;
-
-// ported from: src/cli/pm_pkg_command.zig

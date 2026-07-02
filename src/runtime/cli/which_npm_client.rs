@@ -1,6 +1,5 @@
 #[derive(Copy, Clone)]
-pub struct NPMClient {
-    // TODO(port): verify `bin` is always a static literal (no deinit in Zig source)
+pub(crate) struct NPMClient {
     pub bin: &'static [u8],
     pub tag: Tag,
 }
@@ -23,5 +22,3 @@ impl From<Tag> for &'static str {
         t.as_str()
     }
 }
-
-// ported from: src/cli/which_npm_client.zig

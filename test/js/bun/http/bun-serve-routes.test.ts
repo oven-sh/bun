@@ -108,6 +108,158 @@ describe("HTTP methods", () => {
   });
 });
 
+describe("implicit HEAD for per-method route objects", () => {
+  // HEAD must return the same representation as GET without the body
+  // (RFC 9110 section 9.3.2).
+  test("HEAD is served by the GET handler when no HEAD handler is declared", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/m": { GET: () => new Response("hello-get") },
+        "/*": () => new Response("from-catch-all"),
+      },
+    });
+
+    const get = await fetch(new URL("/m", server.url));
+    expect(await get.text()).toBe("hello-get");
+    expect(get.status).toBe(200);
+
+    const head = await fetch(new URL("/m", server.url), { method: "HEAD" });
+    expect(await head.text()).toBe("");
+    expect(head.headers.get("content-length")).toBe("9");
+    expect(head.status).toBe(200);
+
+    // Other methods still fall through to the next matching route.
+    const post = await fetch(new URL("/m", server.url), { method: "POST" });
+    expect(await post.text()).toBe("from-catch-all");
+  });
+
+  test("HEAD does not 404 when there is no later route to fall through to", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/only-get": { GET: () => new Response("ok") } },
+    });
+
+    const res = await fetch(new URL("/only-get", server.url), { method: "HEAD" });
+    expect(await res.text()).toBe("");
+    expect(res.headers.get("content-length")).toBe("2");
+    expect(res.status).toBe(200);
+  });
+
+  test("the GET handler observes the real request method", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/echo": { GET: req => new Response("body", { headers: { "x-seen-method": req.method } }) },
+      },
+    });
+
+    const res = await fetch(new URL("/echo", server.url), { method: "HEAD" });
+    expect(res.headers.get("x-seen-method")).toBe("HEAD");
+    expect(res.headers.get("content-length")).toBe("4");
+    expect(await res.text()).toBe("");
+    expect(res.status).toBe(200);
+  });
+
+  test("an explicit HEAD handler takes precedence over the GET handler", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/explicit": {
+          GET: () => new Response("get-body"),
+          HEAD: () => new Response(null, { headers: { "x-explicit-head": "1" } }),
+        },
+      },
+    });
+
+    const res = await fetch(new URL("/explicit", server.url), { method: "HEAD" });
+    expect(res.headers.get("x-explicit-head")).toBe("1");
+    expect(res.status).toBe(200);
+  });
+
+  test("an explicit static HEAD Response takes precedence over the GET handler", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/explicit-static": {
+          GET: () => new Response("get-body"),
+          HEAD: new Response(null, { headers: { "x-static-head": "1" } }),
+        },
+      },
+    });
+
+    const res = await fetch(new URL("/explicit-static", server.url), { method: "HEAD" });
+    expect(res.headers.get("x-static-head")).toBe("1");
+    expect(res.status).toBe(200);
+  });
+
+  test("an explicit HEAD handler takes precedence over a static GET Response", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/static-get": {
+          GET: new Response("get-static"),
+          HEAD: () => new Response(null, { headers: { "x-callable-head": "1" } }),
+        },
+      },
+    });
+
+    const head = await fetch(new URL("/static-get", server.url), { method: "HEAD" });
+    expect(head.headers.get("x-callable-head")).toBe("1");
+    expect(head.status).toBe(200);
+
+    const get = await fetch(new URL("/static-get", server.url));
+    expect(await get.text()).toBe("get-static");
+    expect(get.status).toBe(200);
+  });
+
+  test("a static Response for another method does not capture HEAD away from GET", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/mixed": {
+          GET: () => new Response("hello-get"),
+          POST: new Response("static-post-response"),
+        },
+      },
+    });
+
+    const head = await fetch(new URL("/mixed", server.url), { method: "HEAD" });
+    expect(await head.text()).toBe("");
+    expect(head.headers.get("content-length")).toBe("9");
+    expect(head.status).toBe(200);
+
+    const get = await fetch(new URL("/mixed", server.url));
+    expect(await get.text()).toBe("hello-get");
+    const post = await fetch(new URL("/mixed", server.url), { method: "POST" });
+    expect(await post.text()).toBe("static-post-response");
+  });
+
+  test("HEAD is not derived for route objects without a GET handler", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/post-only": { POST: () => new Response("p") } },
+    });
+
+    const res = await fetch(new URL("/post-only", server.url), { method: "HEAD" });
+    expect(res.status).toBe(404);
+  });
+
+  test("HEAD is not derived for a static Response under a non-GET method", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/post-only-static": { POST: new Response("post-only") } },
+    });
+
+    const head = await fetch(new URL("/post-only-static", server.url), { method: "HEAD" });
+    expect(head.status).toBe(404);
+
+    const post = await fetch(new URL("/post-only-static", server.url), { method: "POST" });
+    expect(await post.text()).toBe("post-only");
+    expect(post.status).toBe(200);
+  });
+});
+
 describe("static responses", () => {
   let server: Server;
 
@@ -716,4 +868,105 @@ it("route precedence for mix of method-specific routes and any routes", async ()
   expect(await fetch(new URL("/test/ANY/POST", server.url), { method: "POST" }).then(res => res.text())).toBe(
     "POST /test/ANY/POST",
   );
+});
+
+it("routes absolute-form request targets by path and derives request.url from the Host header", async () => {
+  const seen: { matched: string; url: string }[] = [];
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    routes: {
+      "/admin/secret": req => {
+        seen.push({ matched: "route", url: req.url });
+        return new Response("named route");
+      },
+    },
+    fetch(req) {
+      seen.push({ matched: "fallback", url: req.url });
+      return new Response("fallback");
+    },
+  });
+
+  const hostHeader = `127.0.0.1:${server.port}`;
+
+  // Send an absolute-form request-target (RFC 9112 §3.2.2) over a raw socket;
+  // fetch() always uses origin-form so we have to write the request line ourselves.
+  const responseText = await new Promise<string>((resolve, reject) => {
+    let received = "";
+    Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open(socket) {
+          socket.write(
+            `GET https://spoofed.example/admin/secret HTTP/1.1\r\nHost: ${hostHeader}\r\nConnection: close\r\n\r\n`,
+          );
+        },
+        data(socket, chunk) {
+          received += chunk.toString();
+        },
+        close() {
+          resolve(received);
+        },
+        error(socket, err) {
+          reject(err);
+        },
+      },
+    }).catch(reject);
+  });
+
+  // The named route handles the request, not the catch-all fetch handler.
+  expect(responseText).toContain("named route");
+  expect(responseText).toContain("200");
+  expect(seen).toHaveLength(1);
+  expect(seen[0].matched).toBe("route");
+
+  // request.url is derived from the Host header, not from the authority in the request line.
+  expect(seen[0].url).not.toContain("spoofed.example");
+  const url = new URL(seen[0].url);
+  expect(url.protocol).toBe("http:");
+  expect(url.host).toBe(hostHeader);
+  expect(url.pathname).toBe("/admin/secret");
+
+  // A normal origin-form request still hits the same named route.
+  seen.length = 0;
+  const res = await fetch(new URL("/admin/secret", server.url));
+  expect(await res.text()).toBe("named route");
+  expect(seen).toHaveLength(1);
+  expect(seen[0].matched).toBe("route");
+  expect(new URL(seen[0].url).pathname).toBe("/admin/secret");
+
+  for (const target of ["http://spoofed.example?a=b", "http://spoofed.example?redirect=/elsewhere"]) {
+    seen.length = 0;
+    const rawResponse = await new Promise<string>((resolve, reject) => {
+      let received = "";
+      Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          open(socket) {
+            socket.write(`GET ${target} HTTP/1.1\r\nHost: ${hostHeader}\r\nConnection: close\r\n\r\n`);
+          },
+          data(socket, chunk) {
+            received += chunk.toString();
+          },
+          close() {
+            resolve(received);
+          },
+          error(socket, err) {
+            reject(err);
+          },
+        },
+      }).catch(reject);
+    });
+
+    expect(rawResponse).toContain("fallback");
+    expect(seen).toHaveLength(1);
+    expect(seen[0].matched).toBe("fallback");
+    expect(seen[0].url).not.toContain("spoofed.example");
+    const rawUrl = new URL(seen[0].url);
+    expect(rawUrl.host).toBe(hostHeader);
+    expect(rawUrl.pathname).toBe("/");
+    expect(rawUrl.search).toBe(new URL(target).search);
+  }
 });

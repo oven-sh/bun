@@ -4,12 +4,6 @@
 //!
 //! The JSC-dependent paths are wired against the type identities declared in
 //! `super` (`FFI`, `Function`, `ABIType`, `Step`, `Compiled`).
-//!
-//! TinyCC compile/relocate (`bun_tcc_sys::State` method-ful API) remains
-//! gated; `Function::compile` therefore short-circuits with a `Step::Failed`
-//! when the `tinycc` feature is off (which it always is until
-//! `bun_tcc_sys::tcc` un-gates). The full TCC body is preserved in
-//! `ffi_body.rs` (``) for reference.
 
 use std::ffi::c_void;
 use std::io::Write as _;
@@ -17,43 +11,15 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_collections::StringArrayHashMap;
-use bun_core::{self, ZigString};
 use bun_jsc::{self as jsc, JSGlobalObject, JSPropertyIterator, JSValue, JsResult};
 
-use crate::napi::NapiEnv;
-
 use super::{ABIType, Function};
-
-unsafe extern "C" {
-    /// `JSValue::getOwn` — own-property lookup (no prototype-chain walk).
-    /// Declared locally while `bun_jsc::JSValue::get_own` (JSValue.rs) is gated.
-    fn JSC__JSValue__getOwn(
-        value: JSValue,
-        global: *const JSGlobalObject,
-        name: *const bun_core::String,
-    ) -> JSValue;
-}
-
-/// `JSValue::getOwn` (JSValue.zig:1578) — own-property lookup. Local thin
-/// wrapper while `bun_jsc::JSValue::get_own` stays gated.
-#[inline]
-fn get_own(value: JSValue, global: &JSGlobalObject, key: &[u8]) -> JsResult<Option<JSValue>> {
-    let key_str = bun_core::String::init(ZigString::init(key));
-    // Zig spec opens a `TopExceptionScope` before the FFI call (the C++ side has a
-    // ThrowScope whose dtor sets `m_needExceptionCheck`); a post-hoc `has_exception()`
-    // would assert under `BUN_JSC_validateExceptionChecks=1`.
-    bun_jsc::top_scope!(scope, global);
-    // SAFETY: `global` is live; `key_str` borrows `key` for the call duration.
-    let v = unsafe { JSC__JSValue__getOwn(value, global, &raw const key_str) };
-    scope.return_if_exception()?;
-    if v.is_empty() { Ok(None) } else { Ok(Some(v)) }
-}
 
 // ══════════════════════════════════════════════════════════════════════════
 // Symbol-spec parsing — generate_symbols / generate_symbol_for_function
 // ══════════════════════════════════════════════════════════════════════════
 
-/// `FFI.generateSymbolForFunction` (FFI.zig:1518) — parse one
+/// Parse one
 /// `{ args, returns, threadsafe, ptr }` spec into a `Function`.
 pub fn generate_symbol_for_function(
     global: &JSGlobalObject,
@@ -64,7 +30,7 @@ pub fn generate_symbol_for_function(
 
     let mut abi_types: Vec<ABIType> = Vec::new();
 
-    if let Some(args) = get_own(value, global, b"args")? {
+    if let Some(args) = value.get_own(global, &bun_core::String::static_(b"args"))? {
         if args.is_empty_or_undefined_or_null() || !args.js_type().is_array() {
             return Ok(Some(global.create_error_instance(format_args!(
                 "Expected an object with \"args\" as an array"
@@ -82,10 +48,9 @@ pub fn generate_symbol_for_function(
 
             if val.is_any_int() {
                 let int = val.to_int32();
-                // Zig: `0...ABIType.max` — reject Buffer (20); only the string-label path accepts it.
+                // Reject Buffer (20); only the string-label path accepts it.
                 if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
                     abi_types.push(t);
-                    // PERF(port): was appendAssumeCapacity
                     continue;
                 } else {
                     return Ok(Some(
@@ -108,7 +73,6 @@ pub fn generate_symbol_for_function(
                 ))));
             };
             abi_types.push(abi);
-            // PERF(port): was appendAssumeCapacity
         }
     }
 
@@ -123,7 +87,7 @@ pub fn generate_symbol_for_function(
         if let Some(ret_value) = value.get_truthy(global, b"returns")? {
             if ret_value.is_any_int() {
                 let int = ret_value.to_int32();
-                // Zig: `0...ABIType.max` — reject Buffer (20); only the string-label path accepts it.
+                // Reject Buffer (20); only the string-label path accepts it.
                 if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
                     return_type = t;
                     break 'brk;
@@ -190,7 +154,7 @@ pub fn generate_symbol_for_function(
     Ok(None)
 }
 
-/// `FFI.generateSymbols` (FFI.zig:1662) — iterate own-properties of `object`,
+/// Iterate own-properties of `object`,
 /// parsing each value as a `Function` spec.
 pub fn generate_symbols(
     global: &JSGlobalObject,
@@ -232,7 +196,6 @@ pub fn generate_symbols(
         function.base_name = Some(base_name);
 
         symbols.insert(&key, function);
-        // PERF(port): was putAssumeCapacity
     }
 
     Ok(None)
@@ -243,28 +206,7 @@ pub fn generate_symbols(
 // ══════════════════════════════════════════════════════════════════════════
 
 impl Function {
-    /// `Function.compile` (FFI.zig:1769). Prints the C trampoline source,
-    /// compiles + relocates it via TinyCC, and stores the resulting
-    /// `JSFunctionCall` symbol address in `self.step`.
-    ///
-    /// `bun_tcc_sys::tcc` (the method-ful `State` API) is still gated, so
-    /// this body short-circuits to `Step::Failed` after generating the
-    /// source. The full TCC sequence (`State::init` → `add_symbol` →
-    /// `compile_string` → `relocate` → `get_symbol`) is preserved verbatim
-    /// in `ffi_body.rs:1940-2024` and re-enables once `bun_tcc_sys` un-gates.
-    pub fn compile(&mut self, _napi_env: Option<&NapiEnv>) -> Result<(), bun_core::Error> {
-        let mut source_code: Vec<u8> = Vec::new();
-        self.print_source_code(&mut source_code)?;
-        source_code.push(0);
-
-        // TODO(blocked): bun_tcc_sys::State (compile/relocate/add_symbol/get_symbol)
-        //   — un-gate from `ffi_body.rs` once `bun_tcc_sys::tcc` is real.
-        let _ = source_code;
-        self.fail(b"TinyCC is not available in this build of Bun");
-        Ok(())
-    }
-
-    /// `Function.printSourceCode` (FFI.zig:2007) — emit the C trampoline that
+    /// Emit the C trampoline that
     /// adapts a JSC host-call frame to the native symbol's ABI.
     pub fn print_source_code(
         &self,
@@ -414,7 +356,7 @@ impl Function {
         Ok(())
     }
 
-    /// `Function.printCallbackSourceCode` (FFI.zig:2170) — emit the C
+    /// Emit the C
     /// trampoline that adapts a native call into a JSC `FFI_Callback_call`.
     pub fn print_callback_source_code(
         &self,
@@ -528,5 +470,3 @@ impl Function {
         Ok(())
     }
 }
-
-// ported from: src/runtime/ffi/FFI.zig

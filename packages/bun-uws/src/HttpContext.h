@@ -124,8 +124,8 @@ private:
     /* Minimum allowed receive throughput per second (clients uploading less than 16kB/sec get dropped) */
     static constexpr int HTTP_RECEIVE_THROUGHPUT_BYTES = 16 * 1024;
 
-    /* Not constexpr — the ordinals are linked from Zig (`SocketKind.zig`
-     * @export) so a reorder there can't silently mis-route us. Only ever read
+    /* Not constexpr — the ordinals are linked from `src/uws_sys/SocketKind.rs`
+     * so a reorder there can't silently mis-route us. Only ever read
      * at runtime (listen/adopt). */
     static unsigned char socketKind() { return SSL ? US_SOCKET_KIND_UWS_HTTP_TLS : US_SOCKET_KIND_UWS_HTTP; }
 
@@ -308,6 +308,13 @@ private:
 
             httpResponseData->fromAncientRequest = httpRequest->isAncient();
 
+            /* Per-request framing flags; writeHead only ever sets them, so a
+             * stale true from a previous 204/304 (or close-delimited) response
+             * on this keep-alive socket would strip the next response's body
+             * framing. */
+            httpResponseData->noBodyStatus = false;
+            httpResponseData->closeDelimited = false;
+
             /* Select the router based on SNI (only possible for SSL) */
             auto *selectedRouter = &httpContextData->router;
             if constexpr (SSL) {
@@ -319,7 +326,7 @@ private:
 
             /* Route the method and URL */
             selectedRouter->getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
-            if (!selectedRouter->route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrl())) {
+            if (!selectedRouter->route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting())) {
                 /* We have to force close this socket as we have no handler for it */
                 us_socket_close((us_socket_t *) s, 0, nullptr);
                 return nullptr;

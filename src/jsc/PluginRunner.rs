@@ -1,4 +1,4 @@
-//! Spec PluginRunner.zig — the concrete JSC-aware plugin-resolve hook.
+//! The concrete JSC-aware plugin-resolve hook.
 //!
 //! LAYERING: the static byte helpers (`extract_namespace` / `could_be_plugin`)
 //! live in `bun_bundler::transpiler::PluginRunner` (JSC-free, lowest tier).
@@ -16,11 +16,8 @@ use bun_paths::fs::Path as FsPath;
 use crate::JSGlobalObject;
 use bun_ptr::BackRef;
 
-/// Spec PluginRunner.zig:7.
 pub struct PluginRunner {
     pub global_object: BackRef<JSGlobalObject>,
-    // PORT NOTE: Zig stored `allocator: std.mem.Allocator`; dropped per
-    // PORTING.md (global mimalloc).
 }
 
 // Re-export the JSC-free static helpers so callers in this crate can keep
@@ -47,7 +44,6 @@ impl PluginRunner {
 }
 
 impl PluginResolver for PluginRunner {
-    /// Spec PluginRunner.zig:34 `onResolve`.
     fn on_resolve(
         &self,
         specifier: &[u8],
@@ -88,7 +84,7 @@ impl PluginResolver for PluginRunner {
             return Ok(None);
         }
 
-        // Spec PluginRunner.zig:62 `defer file_path.deref()` — `bun_core::String`
+        // `bun_core::String`
         // is `Copy` (no `Drop`), so RAII-wrap the +1 WTF ref across every
         // remaining `?` / early-return.
         let file_path = OwnedString::new(path_value.to_bun_string(global)?);
@@ -146,15 +142,12 @@ impl PluginResolver for PluginRunner {
 
             break 'brk BunString::init(b"file");
         };
-        // Spec PluginRunner.zig:121 `defer user_namespace.deref()`.
         let user_namespace = OwnedString::new(user_namespace);
 
-        // PORT NOTE: Zig used `std.fmt.allocPrint(this.allocator, …)` and
-        // returned the allocator-owned slice by value inside `Fs.Path`.
         // `FsPath<'static>` borrows, so the formatted buffer is leaked to
-        // model the same caller-owns-forever contract (the Zig path also
-        // never frees these — the linker arena owns them for the build).
-        // PERF(port): was `std.fmt.allocPrint(this.allocator, …)` — profile if hot.
+        // model the caller-owns-forever contract (these are
+        // never freed — the linker arena owns them for the build).
+        // PERF: profile if hot.
         let mut path_buf: Vec<u8> = Vec::new();
         write!(&mut path_buf, "{}", file_path).expect("unreachable");
         let path_static: &'static [u8] = path_buf.leak();

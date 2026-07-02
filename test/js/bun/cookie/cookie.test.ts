@@ -413,3 +413,40 @@ describe("Bun.CookieMap constructor", () => {
     expect(map2.get("cookiekey")).toBe("%E8%AF%BB%E5%86%99%E6%B1%89%E5%AD%97%E5%AD%A6%E4%B8%AD%E6%96%87");
   });
 });
+
+describe("cookie name parsing from Cookie header", () => {
+  test("does not percent-decode cookie names when parsing a Cookie header string", () => {
+    // A cookie literally named "__%48ost-session" must not alias "__Host-session":
+    // browsers enforce __Host-/__Secure- prefix rules on the literal, un-decoded name,
+    // so decoding the name would let an unprotected cookie shadow a protected one.
+    const map = new Bun.CookieMap("__%48ost-session=attacker; __Host-session=legit");
+    expect(map.get("__Host-session")).toBe("legit");
+    expect(map.get("__%48ost-session")).toBe("attacker");
+
+    // A lone encoded name must not surface under the decoded name at all.
+    const only = new Bun.CookieMap("__%48ost-session=attacker");
+    expect(only.get("__Host-session")).toBeNull();
+    expect(only.get("__%48ost-session")).toBe("attacker");
+
+    // Values are still percent-decoded.
+    expect(new Bun.CookieMap("plain=%E8%AF%BB").get("plain")).toBe("读");
+  });
+
+  test("request cookie lookup matches names literally", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/": req =>
+          Response.json({
+            host: req.cookies.get("__Host-session"),
+            raw: req.cookies.get("__%48ost-session"),
+          }),
+      },
+    });
+    const res = await fetch(server.url, {
+      headers: { "Cookie": "__%48ost-session=attacker" },
+    });
+    expect(await res.json()).toEqual({ host: null, raw: "attacker" });
+    expect(res.status).toBe(200);
+  });
+});

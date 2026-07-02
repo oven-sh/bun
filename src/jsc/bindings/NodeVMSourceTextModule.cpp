@@ -5,6 +5,7 @@
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 
+#include "wtf/HashSet.h"
 #include "wtf/Scope.h"
 
 #include "JavaScriptCore/BuiltinNames.h"
@@ -62,7 +63,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     JSValue cachedDataValue = args.at(5);
     WTF::Vector<uint8_t> cachedData;
     if (!cachedDataValue.isUndefined() && !extractCachedData(cachedDataValue, cachedData)) {
-        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataValue);
+        Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataValue);
         return nullptr;
     }
 
@@ -198,6 +199,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     }
 
     m_moduleRecord.set(vm, this, moduleRecord);
+    m_hasTopLevelAwait = node->features() & AwaitFeature;
     m_moduleRequests.clear();
 
     const auto& requests = moduleRecord->requestedModules();
@@ -337,13 +339,15 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
             RETURN_IF_EXCEPTION(scope, {});
 
             ASSERT(specifierValue.isString());
-            ASSERT(moduleNativeValue.isObject());
 
             WTF::String specifier = specifierValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            JSObject* moduleNative = moduleNativeValue.getObject();
-            RETURN_IF_EXCEPTION(scope, {});
-            AbstractModuleRecord* resolvedRecord = uncheckedDowncast<NodeVMModule>(moduleNative)->moduleRecord(globalObject);
+            NodeVMModule* moduleNative = dynamicDowncast<NodeVMModule>(moduleNativeValue);
+            if (!moduleNative) {
+                Bun::ERR::INVALID_THIS(scope, globalObject, "Module"_s);
+                return {};
+            }
+            AbstractModuleRecord* resolvedRecord = moduleNative->moduleRecord(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
             // innerModuleLinking asserts every visited cyclic record is past
@@ -387,8 +391,51 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
         record->setStatus(JSC::CyclicModuleRecord::Status::Unlinked);
 
     UNUSED_PARAM(scriptFetcher);
-    status(Status::Linked);
+    m_linkCalled = true;
+    // Status stays Unlinked: matching Node, only instantiate() flips a
+    // SourceTextModule to "linked" (linkRequests() alone must leave the
+    // module unlinked, and a failed instantiate() must remain retryable).
     return jsUndefined();
+}
+
+// JSC's record->link() walks the whole dependency graph via innerModuleLinking,
+// which calls JSModuleLoader::getImportedModule() for every request of every
+// reachable record and asserts the request is present in that record's
+// loadedModules() (populated by setImportedModule() during link()). When a
+// module is linked *and evaluated* from inside the linker callback of a cyclic
+// graph, instantiate() can run while a dependency is still mid-link(): its
+// loadedModules() is empty, so getImportedModule() would dereference end() —
+// an assert in debug, a segfault in release. Pre-walk the graph the same way
+// and throw a catchable ERR_VM_MODULE_LINK_FAILURE (matching Node) instead.
+//
+// The walk is iterative (an explicit worklist) rather than recursive: a deep
+// linear import chain has graph depth proportional to its length, and we must
+// not add an unguarded native recursion that would overflow the stack before
+// record->link()'s own isSafeToRecurse() guard throws a catchable RangeError.
+static bool isModuleGraphLinked(AbstractModuleRecord* root, String& missingSpecifier)
+{
+    WTF::HashSet<AbstractModuleRecord*> visited;
+    WTF::Vector<AbstractModuleRecord*, 16> worklist;
+    worklist.append(root);
+
+    while (!worklist.isEmpty()) {
+        AbstractModuleRecord* record = worklist.takeLast();
+        if (!visited.add(record).isNewEntry)
+            continue;
+
+        const auto& loaded = record->loadedModules();
+        for (const auto& request : record->requestedModules()) {
+            auto iter = loaded.find(JSC::ModuleMapKey { request.m_specifier.impl(), request.type() });
+            if (iter == loaded.end()) {
+                missingSpecifier = request.m_specifier.string();
+                return false;
+            }
+            if (AbstractModuleRecord* dependency = iter->value.m_module.get())
+                worklist.append(dependency);
+        }
+    }
+
+    return true;
 }
 
 JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
@@ -400,14 +447,34 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
     if (!record)
         return jsUndefined();
 
+    if (!m_linkCalled) {
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, "module is not linked"_s);
+        return {};
+    }
+
     NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
     RETURN_IF_EXCEPTION(scope, {});
     if (nodeVmGlobalObject)
         globalObject = nodeVmGlobalObject;
 
+    String missingSpecifier;
+    if (!isModuleGraphLinked(record, missingSpecifier)) {
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, makeString("request for '"_s, missingSpecifier, "' is not in cache"_s));
+        return {};
+    }
+
+    // A record that never went through link() (e.g. a module with no
+    // dependencies instantiated directly) is still Status::New; record->link
+    // asserts the record is past New, and only the loader's
+    // continueModuleLoading would normally flip it.
+    if (record->status() == JSC::CyclicModuleRecord::Status::New)
+        record->setStatus(JSC::CyclicModuleRecord::Status::Unlinked);
+
     record->link(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
 
+    status(Status::Linked);
+    propagateLinked();
     return jsUndefined();
 }
 
@@ -494,7 +561,6 @@ void NodeVMSourceTextModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(vmModule->m_moduleRequestsArray);
     visitor.append(vmModule->m_cachedExecutable);
     visitor.append(vmModule->m_cachedBytecodeBuffer);
-    visitor.append(vmModule->m_evaluationException);
     visitor.append(vmModule->m_initializeImportMeta);
 }
 

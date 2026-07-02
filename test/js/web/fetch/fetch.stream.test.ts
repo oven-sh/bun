@@ -149,6 +149,31 @@ describe.concurrent("fetch() with streaming", () => {
     await promise;
   });
 
+  it("rejects with ERR_STREAM_CANNOT_PIPE when the request body stream is already locked", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(await req.text());
+      },
+    });
+
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("payload"));
+        controller.close();
+      },
+    });
+    // Lock the stream before fetch consumes it. fetch must reject at the pipe
+    // boundary rather than proceeding as if the stream were usable.
+    stream.getReader();
+
+    const promise = fetch(server.url, { method: "POST", body: stream });
+    await expect(promise).rejects.toMatchObject({
+      code: "ERR_STREAM_CANNOT_PIPE",
+      message: "Stream already used, please create a new one",
+    });
+  });
+
   it("can deflate with and without headers #4478", async () => {
     {
       using server = Bun.serve({

@@ -5,9 +5,9 @@
 
 using namespace JSC;
 
-// Called from Zig (`SecureContext.intern`). Returns the cached JSSecureContext
+// Called from Rust (`SecureContext::intern`). Returns the cached JSSecureContext
 // for `key` (low 64 bits of the config digest) or jsEmpty() if none / GC'd.
-// The full 32-byte digest lives on the Zig SecureContext, so the caller does
+// The full 32-byte digest lives on the Rust SecureContext, so the caller does
 // a content-equality check on hit to handle the (~2⁻⁶⁴) key-collision case.
 extern "C" JSC::EncodedJSValue Bun__SecureContextCache__get(Zig::GlobalObject* global, uint64_t key)
 {

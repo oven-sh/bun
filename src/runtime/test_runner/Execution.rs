@@ -51,8 +51,8 @@ use super::bun_test::{
 use crate::cli::test_command;
 
 // ── local shims for upstream Timespec methods not yet ported ───────────────
-// Zig: `bun.timespec.now(.force_real_time)` etc. — bun_core exposes the
-// generic `now(mode)` form; wrap the convenience names here.
+// bun_core exposes only the generic `now(mode)` form; wrap the convenience
+// names here.
 pub(crate) trait TimespecExt {
     fn now_force_real_time() -> Timespec;
     fn ms_from_now_force_real_time(interval: i64) -> Timespec;
@@ -84,10 +84,9 @@ bun_core::declare_scope!(jest, visible);
 
 pub struct Execution {
     pub groups: Box<[ConcurrentGroup]>,
-    // PORT NOTE: was `pub(self)`; widened so `RefDataValue::sequence` can
+    // was `pub(self)`; widened so `RefDataValue::sequence` can
     // split-borrow `groups`/`sequences` without re-entering `sequences_mut`.
     /// the entries themselves are owned by BunTest, which owns Execution.
-    // Zig: `#sequences` (private field)
     pub sequences: Box<[ExecutionSequence]>,
     pub group_index: usize,
 }
@@ -104,7 +103,7 @@ pub struct ConcurrentGroup {
 }
 
 impl ConcurrentGroup {
-    pub fn init(sequence_start: usize, sequence_end: usize, next_index: usize) -> ConcurrentGroup {
+    pub(crate) fn init(sequence_start: usize, sequence_end: usize, next_index: usize) -> ConcurrentGroup {
         ConcurrentGroup {
             sequence_start,
             sequence_end,
@@ -115,7 +114,7 @@ impl ConcurrentGroup {
         }
     }
 
-    pub fn try_extend(&mut self, next_sequence_start: usize, next_sequence_end: usize) -> bool {
+    pub(crate) fn try_extend(&mut self, next_sequence_start: usize, next_sequence_end: usize) -> bool {
         if self.sequence_end != next_sequence_start {
             return false;
         }
@@ -124,16 +123,13 @@ impl ConcurrentGroup {
         true
     }
 
-    pub fn sequences<'a>(&self, execution: &'a Execution) -> &'a [ExecutionSequence] {
+    pub(crate) fn sequences<'a>(&self, execution: &'a Execution) -> &'a [ExecutionSequence] {
         &execution.sequences[self.sequence_start..self.sequence_end]
     }
 
-    pub fn sequences_mut<'a>(&self, execution: &'a mut Execution) -> &'a mut [ExecutionSequence] {
-        &mut execution.sequences[self.sequence_start..self.sequence_end]
-    }
 
     /// Immutable view of [`Self::sequences`] for read-only callers (e.g. debug dumps).
-    pub fn sequences_const<'a>(&self, execution: &'a Execution) -> &'a [ExecutionSequence] {
+    pub(crate) fn sequences_const<'a>(&self, execution: &'a Execution) -> &'a [ExecutionSequence] {
         &execution.sequences[self.sequence_start..self.sequence_end]
     }
 }
@@ -171,9 +167,9 @@ pub struct FlakyAttempt {
 }
 
 impl ExecutionSequence {
-    pub const MAX_FLAKY_ATTEMPTS: usize = 16;
+    pub(crate) const MAX_FLAKY_ATTEMPTS: usize = 16;
 
-    pub fn init(
+    pub(crate) fn init(
         first_entry: Option<NonNull<ExecutionEntry>>,
         test_entry: Option<NonNull<ExecutionEntry>>,
         retry_count: u32,
@@ -197,7 +193,7 @@ impl ExecutionSequence {
         }
     }
 
-    pub fn flaky_attempts(&self) -> &[FlakyAttempt] {
+    pub(crate) fn flaky_attempts(&self) -> &[FlakyAttempt] {
         &self.flaky_attempts_buf[0..self.flaky_attempt_count]
     }
 
@@ -292,18 +288,14 @@ impl Execution {
         }
     }
 
-    // Zig `deinit` only freed `groups` and `#sequences` via the parent allocator.
-    // Both are now `Box<[T]>` and drop automatically — no explicit Drop impl needed.
+    // `groups` / `sequences` are `Box<[T]>` and drop automatically — no explicit Drop impl needed.
 
-    pub fn load_from_order(&mut self, order: &mut Order::Order) -> JsResult<()> {
+    /// Infallible: the `Vec` → `Box<[T]>` conversion cannot fail.
+    pub fn load_from_order(&mut self, order: &mut Order::Order) {
         debug_assert!(self.groups.is_empty());
         debug_assert!(self.sequences.is_empty());
-        // Zig: bun.safety.CheckedAllocator asserts that order's lists used the same gpa.
-        // In Rust the global allocator is unified — nothing to check.
         self.groups = core::mem::take(&mut order.groups).into_boxed_slice();
         self.sequences = core::mem::take(&mut order.sequences).into_boxed_slice();
-        // TODO(port): narrow error set — Zig `try toOwnedSlice()` was OOM-only; Rust Vec→Box is infallible.
-        Ok(())
     }
 
     pub fn handle_timeout(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
@@ -313,7 +305,7 @@ impl Execution {
         //   kill any dangling processes
         // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
         if let Some(current_group) = self.active_group() {
-            // PORT NOTE: reshaped for borrowck — capture range, drop &mut group, re-borrow sequences
+            // reshaped for borrowck — capture range, drop &mut group, re-borrow sequences
             let (start, end) = (current_group.sequence_start, current_group.sequence_end);
             let sequences = &self.sequences[start..end];
             if sequences.len() == 1 {
@@ -379,7 +371,6 @@ impl Execution {
                     _ => unreachable!(),
                 };
 
-                // Zig: gated on `bun.Environment.ci_assert`.
                 // SAFETY: sequence_ptr points into this.sequences; valid while BunTest is alive.
                 debug_assert!(unsafe { sequence_ptr.as_ref() }.active_entry.is_some());
                 Execution::advance_sequence(buntest_ptr, sequence_ptr, group_ptr);
@@ -393,7 +384,7 @@ impl Execution {
                     }
                 }
                 // this sequence is complete; execute the next sequence
-                // PORT NOTE: re-slice from `this` each iteration via the group's range; carry
+                // re-slice from `this` each iteration via the group's range; carry
                 // `group` as NonNull so no `&mut ConcurrentGroup` aliases `&mut Execution`.
                 loop {
                     // SAFETY: group_ptr points into this.groups (disjoint from this.sequences).
@@ -507,8 +498,7 @@ impl Execution {
         Some((NonNull::from(sequence), NonNull::from(group)))
     }
 
-    /// `sequence` / `group` are carried as `NonNull` (raw-pointer semantics, matching the Zig
-    /// spec's `*ExecutionSequence` / `*ConcurrentGroup`) because they point into
+    /// `sequence` / `group` are carried as `NonNull` (raw-pointer semantics) because they point into
     /// `buntest.execution.{sequences,groups}` and would otherwise alias any live `&mut Execution`.
     fn advance_sequence(
         buntest: NonNull<BunTest>,
@@ -539,7 +529,6 @@ impl Execution {
                 sequence.active_entry = nn(entry.next);
             }
         } else {
-            // Zig: gated on `bun.Environment.ci_assert`.
             debug_assert!(false, "can't call advanceSequence on a completed sequence");
         }
 
@@ -613,8 +602,8 @@ impl Execution {
             let entry = unsafe { entry_ptr.as_ref() };
             scoped_log!(
                 jest,
-                "Running test: \"{}\"",
-                // TODO(port): std.zig.fmtString — escapes string for display; using BStr for now
+                "Running test: {:?}",
+                // `BStr`'s `Debug` impl quotes and escapes for display.
                 bstr::BStr::new(entry.base.name.as_deref().unwrap_or(b"(unnamed)"))
             );
 
@@ -682,7 +671,7 @@ impl Execution {
             if sequence.test_entry.is_some() || sequence.result != Result::Pass {
                 // SAFETY: deref parent BunTest at point-of-use. `sequence` aliases
                 // `buntest.execution.sequences[i]`; `handle_test_completed`'s signature still takes
-                // both `&mut BunTest` and `&mut ExecutionSequence` (TODO(refactor): reshape callee).
+                // both `&mut BunTest` and `&mut ExecutionSequence` (callee could be reshaped to avoid this).
                 test_command::CommandLineReporter::handle_test_completed(
                     unsafe { &mut *buntest.as_ptr() },
                     sequence,
@@ -768,7 +757,7 @@ impl Execution {
         // not exist (https://github.com/oven-sh/bun/issues/23705).
         // Zeroing all entries matches Jest (SnapshotState.clear() on test_retry,
         // jestjs/jest#7493). Concurrent tests never touch the counts map — see
-        // SnapshotInConcurrentGroup in expect.zig.
+        // SnapshotInConcurrentGroup in expect.rs.
         if let Some(runner) = super::jest::Jest::runner() {
             runner.snapshots.reset_counts();
         }
@@ -821,7 +810,7 @@ impl Execution {
     }
 }
 
-pub fn step_group(
+pub(crate) fn step_group(
     buntest_strong: &BunTestPtr,
     global_this: &JSGlobalObject,
     now: &mut Timespec,
@@ -832,7 +821,7 @@ pub fn step_group(
 
     loop {
         // Carry the active group as NonNull so it does not alias `&mut Execution` re-derived
-        // inside step_group_one (Zig spec uses raw `*ConcurrentGroup`).
+        // inside step_group_one.
         let group_ptr: NonNull<ConcurrentGroup> = match this.active_group() {
             Some(g) => NonNull::from(g),
             None => return Ok(StepResult::Complete),
@@ -1081,5 +1070,3 @@ fn step_sequence_one(
         return Ok(None); // run again
     }
 }
-
-// ported from: src/test_runner/Execution.zig

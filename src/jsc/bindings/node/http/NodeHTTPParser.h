@@ -71,7 +71,9 @@ struct StringPtr {
     {
         auto& vm = globalObject->vm();
         if (m_size != 0) {
-            return JSC::jsString(vm, WTF::String::fromUTF8({ m_str, m_size }));
+            // Node.js decodes header names/values, status messages and URLs as
+            // latin1, not UTF-8 (see node_http_parser.cc). Keep the raw bytes.
+            return JSC::jsString(vm, WTF::String(std::span { reinterpret_cast<const Latin1Character*>(m_str), m_size }));
         }
         return jsEmptyString(vm);
     }
@@ -190,6 +192,9 @@ public:
     const char* m_currentBufferData;
     bool m_headersCompleted = false;
     bool m_pendingPause = false;
+    // Set while execute() is running llhttp over a buffer. Owned exclusively
+    // by execute(); finish() must never clear it.
+    bool m_inExecute = false;
     uint64_t m_headerNread = 0;
     uint64_t m_chunkExtensionsNread = 0;
     uint64_t m_maxHttpHeaderSize = 0;

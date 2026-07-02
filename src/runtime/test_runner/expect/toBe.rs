@@ -34,11 +34,9 @@ impl Expect {
 
         // handle failure
         let mut formatter = super::make_formatter(global_this);
-        // `defer formatter.deinit()` — handled by Drop
+        // formatter cleanup handled by Drop
 
-        // Zig: `switch (this.custom_label.isEmpty()) { inline else => |has_custom_label| { ... } }`
-        // The comptime bool is only used to select a literal format string; demote to runtime.
-        // PERF(port): was comptime bool dispatch — profile if hot.
+        // The bool is only used to select a literal format string.
         let has_custom_label = this.custom_label.is_empty();
 
         if not {
@@ -52,8 +50,8 @@ impl Expect {
 
         let signature = Expect::get_signature("toBe", "<green>expected<r>", false);
         if left.jest_deep_equals(right, global_this)? || left.jest_strict_deep_equals(right, global_this)? {
-            // Zig builds `fmt` via comptime `++` on `has_custom_label`; Rust format strings must
-            // be literals, so branch the call instead.
+            // Rust format strings must be literals, so branch the call on
+            // `has_custom_label` instead.
             if !has_custom_label {
                 return this.throw(
                     global_this,
@@ -87,10 +85,10 @@ impl Expect {
             return this.throw(global_this, signature, format_args!("\n\n{}\n", diff_format));
         }
 
-        // PORT NOTE: Zig shares one `*Formatter` across both `toFmt` calls; in Rust the
-        // `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias
-        // the same backing formatter. Use a second formatter for the received value —
-        // `make_formatter` is a trivial struct init with no shared state between values.
+        // The `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters
+        // cannot alias the same backing formatter. Use a second formatter for the
+        // received value — `make_formatter` is a trivial struct init with no shared
+        // state between values.
         let mut formatter2 = super::make_formatter(global_this);
         return this.throw(
             global_this,
@@ -104,4 +102,3 @@ impl Expect {
     }
 }
 
-// ported from: src/test_runner/expect/toBe.zig

@@ -545,3 +545,30 @@ describe("uses `dns.promises` implementations for `util.promisify` factory", () 
     expect(await util.promisify(dns.lookup)("google.com")).toEqual(await dns.promises.lookup("google.com"));
   });
 });
+
+describe("hostnames containing NUL bytes", () => {
+  const hostnameWithNul = "localhost\0.example.invalid";
+
+  it("dns.promises.lookup rejects instead of truncating at the NUL", async () => {
+    await expect(dns_promises.lookup(hostnameWithNul)).rejects.toThrow();
+  });
+
+  it("dns.lookup (callback) passes an error instead of truncating at the NUL", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    dns.lookup(hostnameWithNul, (err, address, family) => {
+      try {
+        expect(err).toBeTruthy();
+        expect(address).toBeUndefined();
+        resolve();
+      } catch (e) {
+        reject(e);
+      }
+    });
+    await promise;
+  });
+
+  it("plain localhost still resolves", async () => {
+    const { address } = await dns_promises.lookup("localhost");
+    expect(["127.0.0.1", "::1"]).toContain(address);
+  });
+});

@@ -31,7 +31,14 @@ impl StorageClass {
         }
     }
 
-    pub const MAP: phf::Map<&'static [u8], StorageClass> = phf::phf_map! {
+    /// Zero-sized handle to [`STORAGE_CLASS_MAP`]; an owned instance is
+    /// identical to the static.
+    pub const MAP: __ComptimeStringMap_STORAGE_CLASS_MAP =
+        __ComptimeStringMap_STORAGE_CLASS_MAP(());
+}
+
+bun_core::comptime_string_map! {
+    pub static STORAGE_CLASS_MAP: StorageClass = {
         b"STANDARD" => StorageClass::STANDARD,
         b"STANDARD_IA" => StorageClass::STANDARD_IA,
         b"INTELLIGENT_TIERING" => StorageClass::INTELLIGENT_TIERING,
@@ -45,5 +52,3 @@ impl StorageClass {
         b"SNOW" => StorageClass::SNOW,
     };
 }
-
-// ported from: src/s3_signing/storage_class.zig

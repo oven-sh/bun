@@ -1,6 +1,6 @@
 import { Subprocess } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, tmpdirSync } from "harness";
 import { join } from "path";
 
@@ -142,6 +142,40 @@ describe("transpiler cache", () => {
       expect(await proc.stdout.text()).toBe("b\n");
     }
   }, 99999999);
+  test("disables the cache instead of falling back to the shared temp directory", () => {
+    writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "no-tmpdir-cache"));
+
+    // Stand-in for the shared, world-writable system temp dir. Pre-create
+    // bun/@t@ inside it the way another local user could on a multi-user host.
+    const shared_tmp = join(temp_dir, "shared-tmp");
+    const shared_cache = join(shared_tmp, "bun", "@t@");
+    mkdirSync(shared_cache, { recursive: true });
+
+    // No per-user cache location is available (no BUN_RUNTIME_TRANSPILER_CACHE_PATH,
+    // no XDG_CACHE_HOME, no HOME) — the only remaining candidate is the shared
+    // temp dir, so the cache must be disabled instead of using it.
+    const a = bunRun(join(temp_dir, "a.js"), {
+      ...env,
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined,
+      XDG_CACHE_HOME: undefined,
+      HOME: undefined,
+      USERPROFILE: undefined,
+      BUN_TMPDIR: undefined,
+      TMPDIR: shared_tmp,
+      TMP: shared_tmp,
+      TEMP: shared_tmp,
+    });
+    expect(a.stdout).toBe("no-tmpdir-cache");
+
+    // No cache entry may be written into (or read back from) a directory that
+    // another local user could own and pre-populate.
+    expect(readdirSync(shared_cache)).toEqual([]);
+
+    // A per-user cache location still works.
+    const b = bunRun(join(temp_dir, "a.js"), env);
+    expect(b.stdout).toBe("no-tmpdir-cache");
+    expect(newCacheCount()).toBe(1);
+  });
   test("works if the cache is not user-readable", () => {
     mkdirSync(cache_dir, { recursive: true });
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "b"));
@@ -227,4 +261,115 @@ describe("transpiler cache", () => {
     expect(run(["--feature=OTHER", "--feature=SUPER_SECRET"])).toBe("enabled");
     expect(newCacheCount()).toBe(0); // cache hit, order doesn't matter
   });
+});
+
+test("rejects cached module records containing out-of-range string indices", () => {
+  // When test isolation is enabled, the runtime transpiler cache stores a
+  // serialized ES module record ("esm_record") alongside the transpiled
+  // output. The string indices inside that record are used to index an
+  // identifier table when the record is converted back into a JSC module
+  // record, so any index beyond the table length (other than the reserved
+  // *-default / *-namespace sentinels near u32::MAX) must be rejected.
+  //
+  // Cache entry layout (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
+  //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8,
+  //   then twelve u64 fields; esm_record_byte_offset @ 78,
+  //   esm_record_byte_length @ 86, esm_record_hash @ 94. Payload follows @ 102.
+  // Serialized module record layout (src/bundler/analyze_transpiled_module.rs,
+  // serialize()):
+  //   [record_kinds_len u32][record_kinds, 1 byte each][pad to 4]
+  //   [buffer_len u32][buffer: u32 string index x buffer_len] ...
+  const ESM_RECORD_BYTE_OFFSET_AT = 78;
+  const ESM_RECORD_BYTE_LENGTH_AT = 86;
+  const ESM_RECORD_HASH_AT = 94;
+  const METADATA_SIZE = 102;
+
+  function corruptModuleRecordStringIndices(file: string): boolean {
+    const data = readFileSync(file);
+    if (data.length < METADATA_SIZE) return false;
+    const esmOff = Number(data.readBigUInt64LE(ESM_RECORD_BYTE_OFFSET_AT));
+    const esmLen = Number(data.readBigUInt64LE(ESM_RECORD_BYTE_LENGTH_AT));
+    if (esmLen === 0 || esmOff + esmLen > data.length) return false;
+
+    const recordKindsLen = data.readUInt32LE(esmOff);
+    const pad = (4 - (recordKindsLen % 4)) % 4;
+    let off = esmOff + 4 + recordKindsLen + pad;
+    const bufferLen = data.readUInt32LE(off);
+    off += 4;
+    if (bufferLen === 0) return false;
+
+    // Point every string index in the record buffer far beyond the identifier
+    // table (but below the reserved sentinel range near u32::MAX).
+    for (let i = 0; i < bufferLen; i++) {
+      data.writeUInt32LE(0x7fffffff, off + i * 4);
+    }
+    // The cache loader skips esm-record content verification when the stored
+    // hash field is zero, so whoever writes the cache file controls exactly
+    // what reaches the module record deserializer.
+    data.writeBigUInt64LE(0n, ESM_RECORD_HASH_AT);
+    writeFileSync(file, data);
+    return true;
+  }
+
+  // An ES module big enough to be eligible for the transpiler cache (>= 4 KiB)
+  // with imports, exports and top-level variables, so its module record
+  // contains string indices of every record kind.
+  const filler = ("// " + "x".repeat(120) + "\n").repeat(120);
+  writeFileSync(
+    join(temp_dir, "big-lib.js"),
+    `import { join } from "node:path";
+export const value = 42;
+let counter = 0;
+export function next() {
+  counter += 1;
+  return join("a", String(counter));
+}
+${filler}`,
+  );
+  writeFileSync(
+    join(temp_dir, "uses-lib.test.js"),
+    `import { test, expect } from "bun:test";
+import { value, next } from "./big-lib.js";
+test("cached module still works", () => {
+  expect(value).toBe(42);
+  expect(next().length).toBeGreaterThan(0);
+});`,
+  );
+
+  const run = () =>
+    Bun.spawnSync({
+      // --isolate enables the isolation source-provider cache, which is the
+      // code path that converts the cached module record back into a JSC
+      // module record.
+      cmd: [bunExe(), "test", "--isolate", "./uses-lib.test.js"],
+      cwd: temp_dir,
+      env,
+    });
+
+  // First run transpiles the module and writes the cache entry, including the
+  // serialized module record.
+  const first = run();
+  expect(first.stderr.toString() + first.stdout.toString()).toContain("1 pass");
+  expect(existsSync(cache_dir)).toBeTrue();
+  expect(first.exitCode).toBe(0);
+
+  // Second run restores from the intact cache entry: the legitimate record is
+  // accepted and the module still works.
+  const second = run();
+  expect(second.stderr.toString() + second.stdout.toString()).toContain("1 pass");
+  expect(second.exitCode).toBe(0);
+
+  // Rewrite the stored module record so every string index is out of range.
+  let corrupted = 0;
+  for (const name of readdirSync(cache_dir)) {
+    if (corruptModuleRecordStringIndices(join(cache_dir, name))) corrupted++;
+  }
+  expect(corrupted).toBeGreaterThanOrEqual(1);
+
+  // Third run: the corrupted record must be rejected with a clean module load
+  // error and a normal (non-signal) process exit.
+  const third = run();
+  expect(third.stderr.toString() + third.stdout.toString()).toContain("parseFromSourceCode failed");
+  expect(third.signalCode).toBeUndefined();
+  expect(third.exitCode).toBe(1);
 });

@@ -137,7 +137,7 @@ function emitLookup(
 
   out.push(`#[inline]`);
   out.push(`#[allow(clippy::all)]`);
-  out.push(`pub fn ${fnName}(key: &[u8]) -> Option<${retTy}> {`);
+  out.push(`pub(crate) fn ${fnName}(key: &[u8]) -> Option<${retTy}> {`);
   out.push(`    match key.len() {`);
   for (const len of lens) {
     const bucket = buckets.get(len)!;

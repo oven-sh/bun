@@ -26,7 +26,6 @@ pub enum Time {
     Milliseconds(CSSNumber) = 2,
 }
 
-// Mirrors Zig's nested `Tag = enum(u8) { seconds = 1, milliseconds = 2 }`.
 const TAG_SECONDS: u16 = 1;
 const TAG_MILLISECONDS: u16 = 2;
 
@@ -54,8 +53,6 @@ impl Time {
             Ok(vv) => match vv {
                 Calc::Value(v) => {
                     let ret: Time = *v;
-                    // redundant allocation
-                    // Zig: vvv.deinit(input.arena()) — Drop handles this; line deleted.
                     return Ok(ret);
                 }
                 // Time is always compatible, so they will always compute to a value.
@@ -68,7 +65,6 @@ impl Time {
         let token = input.next()?.clone();
         match &token {
             Token::Dimension(dim) => {
-                // TODO(port): Zig fn name has a typo (`ASCIII`); verify exact bun_str symbol.
                 if bun_core::strings::eql_case_insensitive_ascii_check_length(b"s", dim.unit) {
                     Ok(Time::Seconds(dim.num.value))
                 } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
@@ -140,7 +136,6 @@ impl Time {
     }
 
     pub fn mul_f32(self, other: f32) -> Time {
-        // Zig arena param dropped (unused).
         match self {
             Time::Seconds(s) => Time::Seconds(s * other),
             Time::Milliseconds(ms) => Time::Milliseconds(ms * other),
@@ -148,18 +143,14 @@ impl Time {
     }
 
     pub fn add_internal(self, other: Time) -> Time {
-        // Zig arena param dropped (forwarded but ultimately unused).
         self.add(other)
     }
 
     pub fn into_calc(self) -> Calc<Time> {
-        // PERF(port): was arena alloc (bun.create) — Calc<V>::Value now owns Box<V>.
         Calc::Value(Box::new(self))
     }
 
     pub fn add(self, other: Self) -> Time {
-        // Zig arena param dropped (unused).
-        // PORT NOTE: Zig passes `void` ctx + free fn; Rust closure captures nothing.
         self.op(other, |a, b| a + b)
     }
 
@@ -168,7 +159,6 @@ impl Time {
     }
 
     pub fn map(self, map_fn: impl Fn(f32) -> f32) -> Time {
-        // PERF(port): was comptime fn-pointer monomorphization — profile if hot.
         match self {
             Time::Seconds(s) => Time::Seconds(map_fn(s)),
             Time::Milliseconds(ms) => Time::Milliseconds(map_fn(ms)),
@@ -183,10 +173,6 @@ impl Time {
     }
 
     pub fn op(self, other: Time, op_fn: impl Fn(f32, f32) -> f32) -> Time {
-        // PORT NOTE: Zig uses `ctx: anytype` + comptime fn-pointer (its closure idiom).
-        // Rust closures capture ctx directly, so the `ctx` param is dropped.
-        // PORT NOTE: reshaped bit-packed `switch_val` into an exhaustive tuple match;
-        // semantics are identical, `unreachable` arm is unnecessary.
         let _ = (self.tag(), TAG_SECONDS, TAG_MILLISECONDS); // keep tag consts referenced
         match (self, other) {
             (Time::Seconds(a), Time::Seconds(b)) => Time::Seconds(op_fn(a, b)),
@@ -197,7 +183,6 @@ impl Time {
     }
 
     pub fn op_to<R>(self, other: Time, op_fn: impl Fn(f32, f32) -> R) -> R {
-        // PORT NOTE: see `op` — ctx param folded into closure; bit-packed switch reshaped.
         match (self, other) {
             (Time::Seconds(a), Time::Seconds(b)) => op_fn(a, b),
             (Time::Milliseconds(a), Time::Milliseconds(b)) => op_fn(a, b),
@@ -206,5 +191,3 @@ impl Time {
         }
     }
 }
-
-// ported from: src/css/values/time.zig

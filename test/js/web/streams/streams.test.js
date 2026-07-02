@@ -670,7 +670,12 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     });
     try {
       let ctrl;
-      const rs = new ReadableStream({ type: "bytes", start(c) { ctrl = c; } });
+      const rs = new ReadableStream({
+        type: "bytes",
+        start(c) {
+          ctrl = c;
+        },
+      });
       const reader = rs.getReader();
       const read = reader.read().catch(() => {});
       releaseNow = () => reader.releaseLock();
@@ -678,7 +683,12 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
       await read;
 
       let ctrl2;
-      const rs2 = new ReadableStream({ type: "bytes", start(c) { ctrl2 = c; } });
+      const rs2 = new ReadableStream({
+        type: "bytes",
+        start(c) {
+          ctrl2 = c;
+        },
+      });
       const byobReader = rs2.getReader({ mode: "byob" });
       const a = byobReader.read(new Uint8Array(4)).catch(() => {});
       const b = byobReader.read(new Uint8Array(4)).catch(() => {});

@@ -11,7 +11,7 @@ use bun_semver::string::Buf as StringBuf;
 use bun_semver::version::VersionInt;
 
 use crate::dependency::{self, TagExt as _};
-use crate::repository::{Repository, RepositoryExt as _};
+use crate::repository::{ParseAppendError, Repository, RepositoryExt as _};
 use crate::versioned_url::VersionedURLType;
 
 pub type Resolution = ResolutionType<u64>;
@@ -968,11 +968,22 @@ pub enum FromTextLockfileError {
     UnexpectedResolution,
     #[error("invalid semver")]
     InvalidSemver,
+    #[error("invalid git subdirectory path")]
+    InvalidPath,
 }
 
 bun_core::oom_from_alloc!(FromTextLockfileError);
 
 bun_core::named_error_set!(FromTextLockfileError);
+
+impl From<ParseAppendError> for FromTextLockfileError {
+    fn from(err: ParseAppendError) -> Self {
+        match err {
+            ParseAppendError::OutOfMemory => FromTextLockfileError::OutOfMemory,
+            ParseAppendError::InvalidPath => FromTextLockfileError::InvalidPath,
+        }
+    }
+}
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum FromPnpmLockfileError {
@@ -980,8 +991,19 @@ pub enum FromPnpmLockfileError {
     OutOfMemory,
     #[error("invalid pnpm lockfile")]
     InvalidPnpmLockfile,
+    #[error("invalid git subdirectory path")]
+    InvalidPath,
 }
 
 bun_core::oom_from_alloc!(FromPnpmLockfileError);
 
 bun_core::named_error_set!(FromPnpmLockfileError);
+
+impl From<ParseAppendError> for FromPnpmLockfileError {
+    fn from(err: ParseAppendError) -> Self {
+        match err {
+            ParseAppendError::OutOfMemory => FromPnpmLockfileError::OutOfMemory,
+            ParseAppendError::InvalidPath => FromPnpmLockfileError::InvalidPath,
+        }
+    }
+}

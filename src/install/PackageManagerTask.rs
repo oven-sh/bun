@@ -152,11 +152,13 @@ impl Id {
         Id((4u64 << 61) | (hasher.final_() & ((1u64 << 61) - 1)))
     }
 
-    pub fn for_git_checkout(url: &[u8], resolved: &[u8]) -> Id {
+    pub fn for_git_checkout(url: &[u8], resolved: &[u8], path: &[u8]) -> Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(url);
         hasher.update(b"@");
         hasher.update(resolved);
+        hasher.update(b":");
+        hasher.update(path);
         Id((5u64 << 61) | (hasher.final_() & ((1u64 << 61) - 1)))
     }
 }
@@ -498,6 +500,7 @@ impl<'a> Task<'a> {
                         git_checkout.name.slice(),
                         git_checkout.url.slice(),
                         git_checkout.resolved.slice(),
+                        git_checkout.path.slice(),
                     ) {
                         Ok(v) => v,
                         Err(err) => {
@@ -678,6 +681,7 @@ pub struct GitCheckoutRequest {
     pub name: StringOrTinyString,
     pub url: StringOrTinyString,
     pub resolved: StringOrTinyString,
+    pub path: StringOrTinyString,
     pub resolution: Resolution,
     // See the note on `GitCloneRequest.env`.
     pub env: &'static dot_env::Map,

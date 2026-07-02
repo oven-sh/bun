@@ -1296,6 +1296,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 let checkout_id = Task::Id::for_git_checkout(
                                     manager.lockfile.str(&res_git.repo),
                                     manager.lockfile.str(&res_git.resolved),
+                                    manager.lockfile.str(&res_git.path),
                                 );
                                 drained_any = true;
                                 C::on_package_download_error_store(
@@ -1317,8 +1318,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             // only enqueued for git resolutions; `value.git` is
                             // the active union arm.
                             let resolved = &clone.res.git().resolved;
-                            let checkout_id =
-                                Task::Id::for_git_checkout(url, manager.lockfile.str(resolved));
+                            let checkout_id = Task::Id::for_git_checkout(
+                                url,
+                                manager.lockfile.str(resolved),
+                                manager.lockfile.str(&clone.res.git().path),
+                            );
                             C::on_package_download_error_store(
                                 extract_ctx,
                                 checkout_id,
@@ -1368,6 +1372,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let dep_name = dep_name_handle.slice(string_buf);
                     let committish = git.committish.slice(string_buf);
                     let repo = git.repo.slice(string_buf);
+                    let path = git.path.slice(string_buf);
 
                     use crate::repository_real::RepositoryExt as _;
                     let resolved = crate::repository_real::Repository::find_commit(
@@ -1379,7 +1384,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         task.id,
                     )?;
 
-                    let checkout_id = Task::Id::for_git_checkout(repo, &resolved);
+                    let checkout_id = Task::Id::for_git_checkout(repo, &resolved, path);
 
                     if manager.has_created_network_task(checkout_id, is_required) {
                         continue;

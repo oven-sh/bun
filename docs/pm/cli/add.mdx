@@ -153,6 +153,18 @@ Bun supports a variety of protocols, including [`github`](https://docs.npmjs.com
 }
 ```
 
+To install a package that lives in a subdirectory of a git monorepo, append the pnpm-style `&path:<subdir>` parameter to the URL fragment:
+
+```json package.json icon="file-json"
+{
+  "dependencies": {
+    "my-pkg": "github:user/monorepo#main&path:packages/my-pkg"
+  }
+}
+```
+
+The `&path:` parameter can be combined with a branch, tag, or commit committish (for example `#v1.2.3&path:packages/my-pkg`). Only the contents of the subdirectory are installed.
+
 ## Tarball dependencies
 
 A package name can correspond to a publicly hosted `.tgz` file. Bun downloads and installs the package from that tarball URL rather than from the package registry.

@@ -312,15 +312,157 @@ pub(crate) fn is_safe_resolved_tag(resolved: &[u8]) -> bool {
             .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
+/// Rejected `&path:` subdirectory (traversal, absolute/drive path, or a
+/// character that cannot round-trip through the git URL fragment).
+pub(crate) struct InvalidPathError;
+
+/// Error from parsing a git/github resolution specifier whose `&path:`
+/// subdirectory may be invalid. `?` on `buf.append` yields `OutOfMemory`;
+/// `?` on `split_path_from_fragment` yields `InvalidPath`.
+#[derive(Debug)]
+pub enum ParseAppendError {
+    OutOfMemory,
+    InvalidPath,
+}
+
+impl From<AllocError> for ParseAppendError {
+    fn from(_: AllocError) -> Self {
+        ParseAppendError::OutOfMemory
+    }
+}
+
+impl From<InvalidPathError> for ParseAppendError {
+    fn from(_: InvalidPathError) -> Self {
+        ParseAppendError::InvalidPath
+    }
+}
+
+/// Split the pnpm-style `&path:<subdir>` suffix out of a git URL fragment,
+/// returning the committish (text before `&path:`) and the validated,
+/// normalized subdirectory (or `None` when absent).
+pub(crate) fn split_path_from_fragment(
+    fragment: &[u8],
+) -> Result<(&[u8], Option<&[u8]>), InvalidPathError> {
+    match strings::index_of(fragment, b"&path:") {
+        Some(idx) => {
+            let raw_path = &fragment[idx + b"&path:".len()..];
+            Ok((&fragment[..idx], Some(normalize_path(raw_path)?)))
+        }
+        None => Ok((fragment, None)),
+    }
+}
+
+/// Strip surrounding slashes and reject anything that could escape the
+/// repository root (`..`, empty segments, absolute/drive paths, backslashes) or
+/// break fragment round-tripping (`#`).
+fn normalize_path(raw: &[u8]) -> Result<&[u8], InvalidPathError> {
+    if strings::contains_char(raw, b'\\') || strings::contains_char(raw, b'#') {
+        return Err(InvalidPathError);
+    }
+
+    let mut p = raw;
+    while let [b'/', rest @ ..] = p {
+        p = rest;
+    }
+    while let [rest @ .., b'/'] = p {
+        p = rest;
+    }
+    if p.is_empty() {
+        return Err(InvalidPathError);
+    }
+
+    if p.len() >= 2 && p[1] == b':' && p[0].is_ascii_alphabetic() {
+        return Err(InvalidPathError);
+    }
+
+    for segment in p.split(|&c| c == b'/') {
+        let mut seg = segment;
+        while let [b' ', rest @ ..] = seg {
+            seg = rest;
+        }
+        while let [rest @ .., b' '] = seg {
+            seg = rest;
+        }
+        if seg.is_empty() || seg == b"." || seg == b".." {
+            return Err(InvalidPathError);
+        }
+    }
+
+    Ok(p)
+}
+
+/// After a git checkout, replace the cache folder's contents with those of
+/// `subdir_path` so downstream package.json reading and node_modules linking see
+/// only the sub-package. Each path segment is opened with `O_NOFOLLOW` first so a
+/// symlinked segment committed into the repo cannot redirect the promotion
+/// outside the checkout; then the subdir is moved aside, the rest of the
+/// checkout is deleted, and the subdir is moved back into `folder_name`.
+pub(crate) fn promote_subdirectory(
+    cache_dir: bun_sys::Fd,
+    folder_name: &[u8],
+    subdir_path: &[u8],
+) -> Result<(), Error> {
+    let nofollow = if cfg!(windows) {
+        0
+    } else {
+        bun_sys::O::NOFOLLOW
+    };
+    {
+        let mut current = bun_sys::Dir::borrow(&cache_dir)
+            .open_at(folder_name)
+            .map_err(Error::from)?;
+        for segment in subdir_path.split(|&c| c == b'/') {
+            if segment.is_empty() {
+                continue;
+            }
+            let next = current
+                .open_at_with(segment, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | nofollow)
+                .map_err(Error::from)?;
+            current.close();
+            current = next;
+        }
+        current.close();
+    }
+
+    let mut subdir_rel = Path::AutoRelPath::from(folder_name).assume_ok();
+    subdir_rel.append(subdir_path).assume_ok();
+
+    let mut tmp_buf = PathBuffer::uninit();
+    let tmp_name =
+        Path::fs::FileSystem::tmpname(b"__subdir__", &mut tmp_buf.0, bun_core::fast_random())
+            .map_err(|_| err!("InstallFailed"))?;
+
+    bun_sys::renameat(cache_dir, subdir_rel.slice_z(), cache_dir, tmp_name).map_err(Error::from)?;
+
+    let cache = bun_sys::Dir::borrow(&cache_dir);
+    if let Err(err) = cache.delete_tree(folder_name) {
+        let _ = cache.delete_tree(tmp_name.as_bytes());
+        return Err(err);
+    }
+
+    let mut folder_rel = Path::AutoRelPath::from(folder_name).assume_ok();
+    if let Err(err) = bun_sys::renameat(cache_dir, tmp_name, cache_dir, folder_rel.slice_z()) {
+        let _ = cache.delete_tree(tmp_name.as_bytes());
+        return Err(Error::from(err));
+    }
+
+    Ok(())
+}
+
 /// Install-tier `Repository` behaviour (parsing, formatting, git CLI exec,
 /// download/checkout). Data struct + buffer-relative `order`/`count`/`clone`/
 /// `eql` are inherent on [`Repository`] (defined in `bun_install_types`).
 /// Re-exported from `bun_install::repository` so existing
 /// `Repository::method(...)` / `repo.method(...)` call sites resolve via UFCS.
 pub trait RepositoryExt: Sized {
-    fn parse_append_git(input: &[u8], buf: &mut StringBuf<'_>) -> Result<Repository, AllocError>;
-    fn parse_append_github(input: &[u8], buf: &mut StringBuf<'_>)
-    -> Result<Repository, AllocError>;
+    fn parse_append_git(
+        input: &[u8],
+        buf: &mut StringBuf<'_>,
+    ) -> Result<Repository, ParseAppendError>;
+    fn parse_append_github(
+        input: &[u8],
+        buf: &mut StringBuf<'_>,
+    ) -> Result<Repository, ParseAppendError>;
     fn create_dependency_name_from_version_literal(
         repository: &Repository,
         string_buf: &[u8],
@@ -357,6 +499,7 @@ pub trait RepositoryExt: Sized {
         name: &[u8],
         url: &[u8],
         resolved: &[u8],
+        subdir_path: &[u8],
     ) -> Result<ExtractData, Error>;
 }
 
@@ -422,17 +565,25 @@ fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
 }
 
 impl RepositoryExt for Repository {
-    fn parse_append_git(input: &[u8], buf: &mut StringBuf<'_>) -> Result<Repository, AllocError> {
+    fn parse_append_git(
+        input: &[u8],
+        buf: &mut StringBuf<'_>,
+    ) -> Result<Repository, ParseAppendError> {
         let mut remain = input;
         if remain.starts_with(b"git+") {
             remain = &remain[b"git+".len()..];
         }
         if let Some(hash) = strings::last_index_of_char(remain, b'#') {
-            return Ok(Repository {
+            let (committish, path) = split_path_from_fragment(&remain[hash + 1..])?;
+            let mut result = Repository {
                 repo: buf.append(&remain[..hash])?,
-                committish: buf.append(&remain[hash + 1..])?,
+                committish: buf.append(committish)?,
                 ..Default::default()
-            });
+            };
+            if let Some(p) = path {
+                result.path = buf.append(p)?;
+            }
+            return Ok(result);
         }
         Ok(Repository {
             repo: buf.append(remain)?,
@@ -443,7 +594,7 @@ impl RepositoryExt for Repository {
     fn parse_append_github(
         input: &[u8],
         buf: &mut StringBuf<'_>,
-    ) -> Result<Repository, AllocError> {
+    ) -> Result<Repository, ParseAppendError> {
         let mut remain = input;
         if remain.starts_with(b"github:") {
             remain = &remain[b"github:".len()..];
@@ -452,8 +603,19 @@ impl RepositoryExt for Repository {
         let mut slash: usize = 0;
         for (i, &c) in remain.iter().enumerate() {
             match c {
-                b'/' => slash = i,
-                b'#' => hash = i,
+                // Only track separators before the fragment: a `&path:<subdir>`
+                // suffix contains `/` that must not be mistaken for the owner/repo
+                // separator.
+                b'/' => {
+                    if hash == 0 {
+                        slash = i;
+                    }
+                }
+                b'#' => {
+                    if hash == 0 {
+                        hash = i;
+                    }
+                }
                 _ => {}
             }
         }
@@ -471,7 +633,11 @@ impl RepositoryExt for Repository {
         };
 
         if hash != 0 {
-            result.committish = buf.append(&remain[hash + 1..])?;
+            let (committish, path) = split_path_from_fragment(&remain[hash + 1..])?;
+            result.committish = buf.append(committish)?;
+            if let Some(p) = path {
+                result.path = buf.append(p)?;
+            }
         }
 
         Ok(result)
@@ -485,25 +651,39 @@ impl RepositoryExt for Repository {
         // Callers (`parse_with_json`) hold a split `StringBuilder`
         // borrow on `string_bytes`, so accept the two pieces directly.
         let buf = string_buf;
-        let repo_name = repository.repo;
-        let repo_name_str = repo_name.slice(buf);
 
-        let name = 'brk: {
-            let mut remain = repo_name_str;
-
-            if let Some(hash_index) = strings::index_of_char(remain, b'#') {
-                remain = &remain[..hash_index as usize];
+        let path_str = repository.path.slice(buf);
+        let name = if !path_str.is_empty() {
+            let mut trimmed = path_str;
+            while let [b'/', rest @ ..] = trimmed {
+                trimmed = rest;
             }
-
-            if remain.is_empty() {
-                break 'brk remain;
+            while let [rest @ .., b'/'] = trimmed {
+                trimmed = rest;
             }
-
-            if let Some(slash_index) = strings::last_index_of_char(remain, b'/') {
-                remain = &remain[slash_index + 1..];
+            if let Some(slash_index) = strings::last_index_of_char(trimmed, b'/') {
+                &trimmed[slash_index + 1..]
+            } else {
+                trimmed
             }
+        } else {
+            'brk: {
+                let mut remain = repository.repo.slice(buf);
 
-            remain
+                if let Some(hash_index) = strings::index_of_char(remain, b'#') {
+                    remain = &remain[..hash_index as usize];
+                }
+
+                if remain.is_empty() {
+                    break 'brk remain;
+                }
+
+                if let Some(slash_index) = strings::last_index_of_char(remain, b'/') {
+                    remain = &remain[slash_index + 1..];
+                }
+
+                remain
+            }
         };
 
         if name.is_empty() {
@@ -829,6 +1009,7 @@ impl RepositoryExt for Repository {
         name: &[u8],
         url: &[u8],
         resolved: &[u8],
+        subdir_path: &[u8],
     ) -> Result<ExtractData, Error> {
         // `cache_dir`/`repo_dir` are borrowed views; only `package_dir` is owned.
         bun_analytics::features::git_dependencies
@@ -852,6 +1033,7 @@ impl RepositoryExt for Repository {
             &mut folder_name_buf[..],
             resolved,
             None,
+            subdir_path,
         )
         .as_bytes();
 
@@ -916,7 +1098,7 @@ impl RepositoryExt for Repository {
                     );
                     return Err(err);
                 }
-                let dir = bun_sys::Dir::borrow(&cache_dir)
+                let mut dir = bun_sys::Dir::borrow(&cache_dir)
                     .open_at(folder_name)
                     .map_err(Error::from)?;
                 let _ = dir.delete_tree(b".git");
@@ -937,6 +1119,28 @@ impl RepositoryExt for Repository {
                         }
                         let _ = git_tag.close(); // close error is non-actionable
                     }
+                }
+
+                if !subdir_path.is_empty() {
+                    if let Err(err) = promote_subdirectory(cache_dir, folder_name, subdir_path) {
+                        dir.close();
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "path \"{}\" not found in repository \"{}\"",
+                                BStr::new(subdir_path),
+                                BStr::new(name)
+                            ),
+                        );
+                        return Err(err);
+                    }
+                    // `promote_subdirectory` renamed the folder in place, so the
+                    // old handle is stale — reopen it at the promoted location.
+                    dir.close();
+                    dir = bun_sys::Dir::borrow(&cache_dir)
+                        .open_at(folder_name)
+                        .map_err(Error::from)?;
                 }
 
                 break 'brk dir;
@@ -1052,6 +1256,11 @@ impl<'a> fmt::Display for StorePathFormatter<'a> {
                 self.repo.committish.fmt_store_path(self.string_buf)
             )?;
         }
+
+        if !self.repo.path.is_empty() {
+            writer.write_str("+path+")?;
+            write!(writer, "{}", self.repo.path.fmt_store_path(self.string_buf))?;
+        }
         Ok(())
     }
 }
@@ -1081,8 +1290,10 @@ impl<'a> fmt::Display for Formatter<'a> {
         }
         write!(writer, "{}", BStr::new(repo))?;
 
+        let mut has_fragment = false;
         if !self.repository.resolved.is_empty() {
             writer.write_str("#")?;
+            has_fragment = true;
             let mut resolved = self.repository.resolved.slice(self.buf);
             if let Some(i) = strings::last_index_of_char(resolved, b'-') {
                 resolved = &resolved[i + 1..];
@@ -1090,10 +1301,23 @@ impl<'a> fmt::Display for Formatter<'a> {
             write!(writer, "{}", BStr::new(resolved))?;
         } else if !self.repository.committish.is_empty() {
             writer.write_str("#")?;
+            has_fragment = true;
             write!(
                 writer,
                 "{}",
                 BStr::new(self.repository.committish.slice(self.buf))
+            )?;
+        }
+
+        if !self.repository.path.is_empty() {
+            if !has_fragment {
+                writer.write_str("#")?;
+            }
+            writer.write_str("&path:")?;
+            write!(
+                writer,
+                "{}",
+                BStr::new(self.repository.path.slice(self.buf))
             )?;
         }
         Ok(())

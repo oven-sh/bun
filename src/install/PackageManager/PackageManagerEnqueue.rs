@@ -287,7 +287,8 @@ pub fn enqueue_git_for_checkout(
     let url = this.lockfile.str_detached(&repository.repo);
     let clone_id = Task::Id::for_git_clone(url);
     let resolved = this.lockfile.str_detached(&repository.resolved);
-    let checkout_id = Task::Id::for_git_checkout(url, resolved);
+    let path = this.lockfile.str_detached(&repository.path);
+    let checkout_id = Task::Id::for_git_checkout(url, resolved, path);
     let checkout_queue = this
         .task_queue
         .get_or_put(checkout_id)
@@ -1242,7 +1243,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     this.lockfile.str(&dep.committish),
                     clone_id,
                 )?;
-                let checkout_id = Task::Id::for_git_checkout(url, &resolved);
+                let checkout_id =
+                    Task::Id::for_git_checkout(url, &resolved, this.lockfile.str(&dep.path));
 
                 let needs_ctx =
                     this.lockfile.buffers.resolutions[id as usize] == invalid_package_id;
@@ -1812,6 +1814,11 @@ pub fn enqueue_git_checkout(
                     .expect("unreachable"),
                     resolved: StringOrTinyString::init_append_if_needed(
                         resolved,
+                        &mut crate::network_task::filename_store_appender(),
+                    )
+                    .expect("unreachable"),
+                    path: StringOrTinyString::init_append_if_needed(
+                        this.lockfile.str(&resolution.git().path),
                         &mut crate::network_task::filename_store_appender(),
                     )
                     .expect("unreachable"),

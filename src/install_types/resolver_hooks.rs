@@ -1009,7 +1009,19 @@ pub struct Repository {
     pub committish: SemverString,
     pub resolved: SemverString,
     pub package_name: SemverString,
+    /// Optional subdirectory within the repository (pnpm-style `#...&path:<subdir>`).
+    /// Empty when the dependency resolves to the repository root.
+    pub path: SemverString,
 }
+
+// Binary-lockfile ABI proof: `Repository` is embedded (via `Value`) in the
+// `#[repr(C)]` resolution column serialized to `bun.lockb`. Adding the `path`
+// handle keeps `Repository` (six align-1 `SemverString` handles) at 48 bytes,
+// which stays within the `VersionedURLType` (64-byte) union arm — so
+// `size_of::<Resolution>()` is unchanged and no `FormatVersion` bump is needed.
+// Older lockfiles read `path` from the previously-zeroed union tail (empty).
+const _: () = assert!(core::mem::size_of::<Repository>() == 48);
+const _: () = assert!(core::mem::align_of::<Repository>() == 1);
 
 // Manual `Clone` so the inherent buffer-relative `clone(&self, buf, builder)`
 // below does not collide with a derived `clone(&self)` at method-resolution
@@ -1031,7 +1043,11 @@ impl Repository {
         if repo_order != Ordering::Equal {
             return repo_order;
         }
-        self.committish.order(rhs.committish, lhs_buf, rhs_buf)
+        let committish_order = self.committish.order(rhs.committish, lhs_buf, rhs_buf);
+        if committish_order != Ordering::Equal {
+            return committish_order;
+        }
+        self.path.order(rhs.path, lhs_buf, rhs_buf)
     }
 
     pub fn count<B: bun_semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) {
@@ -1040,6 +1056,7 @@ impl Repository {
         builder.count(self.committish.slice(buf));
         builder.count(self.resolved.slice(buf));
         builder.count(self.package_name.slice(buf));
+        builder.count(self.path.slice(buf));
     }
 
     /// Re-interns each field
@@ -1052,6 +1069,7 @@ impl Repository {
             committish: builder.append::<SemverString>(self.committish.slice(buf)),
             resolved: builder.append::<SemverString>(self.resolved.slice(buf)),
             package_name: builder.append::<SemverString>(self.package_name.slice(buf)),
+            path: builder.append::<SemverString>(self.path.slice(buf)),
         }
     }
 
@@ -1060,6 +1078,9 @@ impl Repository {
             return false;
         }
         if !self.repo.eql(rhs.repo, lhs_buf, rhs_buf) {
+            return false;
+        }
+        if !self.path.eql(rhs.path, lhs_buf, rhs_buf) {
             return false;
         }
         if self.resolved.is_empty() || rhs.resolved.is_empty() {

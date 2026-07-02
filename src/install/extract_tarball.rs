@@ -512,6 +512,10 @@ impl ExtractTarball {
                     &mut bufs.folder_name_buf,
                     resolved,
                     None,
+                    self.resolution
+                        .github()
+                        .path
+                        .slice(package_manager.lockfile.buffers.string_bytes.as_slice()),
                 )
                 .as_bytes(),
                 ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
@@ -700,6 +704,34 @@ impl ExtractTarball {
                         ),
                     );
                     return Err(bun_core::err!("InstallFailed"));
+                }
+            }
+
+            // A github dependency with a `&path:` subdirectory: replace the
+            // freshly-cached repository with only the sub-package's contents.
+            if self.resolution.tag == ResolutionTag::Github {
+                let subdir_path = self
+                    .resolution
+                    .github()
+                    .path
+                    .slice(package_manager.lockfile.buffers.string_bytes.as_slice());
+                if !subdir_path.is_empty() {
+                    if let Err(err) = crate::repository::promote_subdirectory(
+                        self.cache_dir,
+                        folder_name,
+                        subdir_path,
+                    ) {
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "path \"{}\" not found in repository \"{}\"",
+                                bun_fmt::s(subdir_path),
+                                bun_fmt::s(name),
+                            ),
+                        );
+                        return Err(err);
+                    }
                 }
             }
 

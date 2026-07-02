@@ -1130,6 +1130,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                                 .append(&commit[0..b"github:".len().min(commit.len())])?,
                             resolved: SemverString::default(),
                             package_name: sbuf!().append(actual_name)?,
+                            path: SemverString::default(),
                         }));
                     } else {
                         break 'blk Resolution::init(ResolutionValue::Git(Repository {
@@ -1138,6 +1139,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                             committish: sbuf!().append(commit)?,
                             resolved: SemverString::default(),
                             package_name: sbuf!().append(actual_name)?,
+                            path: SemverString::default(),
                         }));
                     }
                 }

@@ -50,7 +50,7 @@ export function declareZstdCompressedSource(name: string, value: string) {
   }
   const raw = Buffer.from(normalized, "latin1");
   const compressed = Bun.zstdCompressSync(raw, { level: 19 });
-  return `static constexpr const unsigned char ${name}ZstdBytes[${compressed.length}] = {${Array.from(compressed).join(",")}};
+  return `static constexpr const unsigned char ${name}ZstdBytes[${compressed.length}] = {${compressed.join(",")}};
 static constexpr CompressedSourceCode ${name} { ${name}ZstdBytes, ${compressed.length}, ${raw.length} };`;
 }
 

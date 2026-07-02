@@ -2379,7 +2379,10 @@ impl Token {
             Token::OpenParen => b"`(`",
             Token::CloseParen => b"`)",
             Token::Var(r) => &strpool[r.start as usize..r.end as usize],
-            Token::VarArgv(n) => VARARGV_STRINGS[n as usize],
+            // Indices past 9 reach here only from the braced `${N}` form and
+            // have no static spelling; this runs on a parse-error path, so it
+            // must never panic.
+            Token::VarArgv(n) => VARARGV_STRINGS.get(n as usize).copied().unwrap_or(b"${N}"),
             Token::SpecialParam(sp) => match sp {
                 ast::SpecialParam::ExitCode => b"$?",
                 ast::SpecialParam::Pid => b"$$",

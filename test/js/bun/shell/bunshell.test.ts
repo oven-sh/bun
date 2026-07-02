@@ -1002,6 +1002,21 @@ booga"
           const braced = await $`echo ${{ raw: '"[${1}]"' }}`;
           expect(braced.stdout.toString()).toEqual(plain.stdout.toString());
         });
+
+        // `${N}` is the only source of a positional index past 9, and the
+        // `[[ ... ]]` parse errors render the offending token. Rendering must
+        // cover every index the lexer can emit.
+        raw("[[ x $9 ]]")
+          .error("Expected a conditional expression operator, but got: $9")
+          .runAsTest("single-digit positional renders in a parse error");
+        raw("[[ x ${10} ]]")
+          .error("Expected a conditional expression operator, but got: ${N}")
+          .runAsTest("positional past 9 renders in a parse error");
+        raw("echo ${256}")
+          .error(
+            "Unsupported parameter expansion `${...}`. Only the plain `${NAME}` form is supported; `${NAME:-default}` and other parameter expansion operators are not supported yet. Please file an issue on GitHub.",
+          )
+          .runAsTest("positional index past 255 is rejected");
       });
 
       describe("$?", () => {

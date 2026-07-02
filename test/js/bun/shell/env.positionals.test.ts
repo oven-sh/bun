@@ -77,7 +77,7 @@ test("$ argv: standalone: only 10", async () => {
 // only way to address index > 9: `$10` lexes as `$1` then a literal `0`).
 test("$ argv: standalone: $# and ${N}", async () => {
   const script = path.join(import.meta.dir, "fixtures", "positionals3.bun.sh");
-  const { stdout, stderr } = spawn({
+  const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "run", script, "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"],
     stdout: "pipe",
     stdin: "ignore",
@@ -92,6 +92,7 @@ test("$ argv: standalone: $# and ${N}", async () => {
   expect(stdout).toBeDefined();
   const out = await stdout.text();
   expect(out.split("\n")).toEqual(["11", "a", "j", "bxc", "11", ""]);
+  expect(await exited).toBe(0);
 });
 
 test("$ argv: standalone: non-ascii", async () => {

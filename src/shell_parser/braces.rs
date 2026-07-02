@@ -1134,8 +1134,13 @@ fn build_expansion_table(
     }
     let mut brace_stack: SmallVec<[BraceState; MAX_NESTED_BRACES]> = SmallVec::new();
 
+    // Token indices are stored as `u16`. Adjacent text is merged into one
+    // token by the lexer, so only a word with that many brace metacharacters
+    // can overflow. Report it as TooManyBraces, which every caller already
+    // turns into an error; UnexpectedToken is treated as an unreachable
+    // parser bug by the shell's expansion state, which panics on it.
     if tokens.len() > u16::MAX as usize {
-        return Err(ParserError::UnexpectedToken);
+        return Err(ParserError::TooManyBraces);
     }
 
     let mut i: u16 = 0;

@@ -164,4 +164,28 @@ console.log(JSON.stringify(Bun.$.braces("echo {a,b}")));`,
     `);
     expect(exitCode).toBe(0);
   });
+
+  // One group with 40000 alternatives stays under the expander's
+  // 65536-variant cap but produces more than 65535 brace tokens, which
+  // overflows its u16 token indices. That limit was reported as an internal
+  // UnexpectedToken error, which the shell treats as unreachable:
+  //   panic: unexpected error from Braces.expand: UnexpectedToken
+  test("rejects a word with an excessive number of brace tokens instead of crashing", async () => {
+    // Run in a subprocess so an unfixed build aborts the child, not the runner.
+    const word = "{a" + Buffer.alloc(2 * 39999, ",a").toString() + "}";
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "exec", `echo ${word}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: "bun: too many braces in brace expansion\n",
+      exitCode: 1,
+    });
+  });
 });

@@ -1174,10 +1174,14 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
         b"numPolls",
         JSValue::js_number(num_polls as f64),
     );
-    // Only the POSIX tick increments this; on Windows it stays 0.
+    // The field only exists in debug builds (BUN_DEBUG / `bun_debug`), and
+    // only the POSIX tick increments it; report 0 everywhere else.
+    #[cfg(bun_debug)]
     // SAFETY: uws::Loop::get() returns a live process-global loop.
     let nested_dispatch_ticks =
         unsafe { (*uws::Loop::get()).internal_loop_data.nested_dispatch_ticks };
+    #[cfg(not(bun_debug))]
+    let nested_dispatch_ticks = 0;
     result.put(
         global_object,
         b"nestedDispatchTicks",

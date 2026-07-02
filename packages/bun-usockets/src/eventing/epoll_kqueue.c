@@ -355,12 +355,14 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     loop->data.tick_depth++;
 
+#ifdef BUN_DEBUG
     /* A tick starting while an outer ready-poll dispatch is still mid-batch
      * means a poll callback synchronously waited on the event loop. Unlike
      * tick_depth (any re-entry), this counts only mid-dispatch re-entry. */
     if (loop->current_ready_poll < loop->num_ready_polls) {
         loop->data.nested_dispatch_ticks++;
     }
+#endif
 
     struct us_internal_callback_t *timer_callback = (struct us_internal_callback_t*)loop->data.sweep_timer;
 

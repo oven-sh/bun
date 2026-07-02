@@ -364,7 +364,8 @@ export const getEventLoopStats: () => {
   concurrentRef: number;
   numPolls: number;
   /** Ticks entered while an outer poll dispatch was still mid-batch, i.e. a
-   * callback synchronously waited on the event loop. POSIX only (0 on Windows). */
+   * callback synchronously waited on the event loop. Debug builds only, POSIX
+   * only; always 0 in release builds and on Windows. */
   nestedDispatchTicks: number;
 } = $newRustFunction("event_loop.rs", "getActiveTasks", 0);
 

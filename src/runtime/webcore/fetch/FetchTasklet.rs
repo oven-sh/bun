@@ -1622,6 +1622,12 @@ impl FetchTasklet {
         if this.signal_store.body_receive_mode() == BodyReceiveMode::Ignore {
             return;
         }
+        // reader.cancel() on a still-arriving body aborts the fetch so the
+        // connection closes and the server observes the cancellation. A fully
+        // received body is left to drain/cleanup so the socket stays reusable.
+        if this.result.has_more {
+            this.abort_task();
+        }
         this.ignore_remaining_response_body(false);
     }
 
@@ -1772,8 +1778,14 @@ impl FetchTasklet {
         {
             self.schedule_receive_resume();
         }
+        let aborted = self.signal_store.aborted.load(Ordering::Relaxed);
         if let Some(http_) = self.http.as_mut() {
-            http_.enable_response_body_streaming();
+            // An aborted fetch (reader.cancel() on an in-flight body, or an
+            // AbortSignal) is already shutting the connection down; draining
+            // would read the rest of an unbounded body and hold the socket open.
+            if !aborted {
+                http_.enable_response_body_streaming();
+            }
         }
         // we should not keep the process alive if we are ignoring the body
         let _ = self.javascript_vm;

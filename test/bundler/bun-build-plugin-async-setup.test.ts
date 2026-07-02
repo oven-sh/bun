@@ -16,12 +16,10 @@ import { bunEnv, bunExe, tempDir } from "harness";
 describe("Bun.build with an async plugin setup()", () => {
   const entry = `export const hello = "world";\n`;
 
-  test(
-    "returns before a pending setup() promise settles",
-    async () => {
-      using dir = tempDir("bun-build-async-setup", {
-        "entry.js": entry,
-        "build-fixture.ts": /* ts */ `
+  test("returns before a pending setup() promise settles", async () => {
+    using dir = tempDir("bun-build-async-setup", {
+      "entry.js": entry,
+      "build-fixture.ts": /* ts */ `
           let release!: () => void;
           const gate = new Promise<void>(resolve => (release = resolve));
           const order: string[] = [];
@@ -60,33 +58,27 @@ describe("Bun.build with an async plugin setup()", () => {
           }
           console.log(JSON.stringify(order));
         `,
-      });
+    });
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "build-fixture.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-        // Only reached when Bun.build blocks; the non-blocking path exits in
-        // well under a second.
-        timeout: 15_000,
-        killSignal: "SIGKILL",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
-      expect(exitCode === 0 ? JSON.parse(stdout.trim()) : { exitCode, stdout, stderr }).toEqual([
-        "setup:start",
-        "returned",
-        "setup:resume",
-        "built",
-      ]);
-    },
-    30_000,
-  );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build-fixture.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      // Only reached when Bun.build blocks; the non-blocking path exits in
+      // well under a second.
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode === 0 ? JSON.parse(stdout.trim()) : { exitCode, stdout, stderr }).toEqual([
+      "setup:start",
+      "returned",
+      "setup:resume",
+      "built",
+    ]);
+  }, 30_000);
 
   test("still waits for a setup() that suspends on I/O", async () => {
     using dir = tempDir("bun-build-async-setup-io", { "entry.js": entry });

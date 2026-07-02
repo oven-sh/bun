@@ -602,9 +602,8 @@ pub mod js_bundler {
         ) -> JsResult<SetupStep> {
             let plugin = array.get_index(global_this, index)?;
             if !plugin.is_object() {
-                return Err(global_this.throw_invalid_arguments(format_args!(
-                    "Expected plugin to be an object"
-                )));
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("Expected plugin to be an object")));
             }
 
             if let Some(slice) = plugin.get_optional_slice(global_this, b"name")? {
@@ -615,9 +614,8 @@ pub mod js_bundler {
                 }
                 drop(slice);
             } else {
-                return Err(global_this.throw_invalid_arguments(format_args!(
-                    "Expected plugin to have a name"
-                )));
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("Expected plugin to have a name")));
             }
 
             let Some(function) = plugin.get_function(global_this, b"setup")? else {
@@ -1592,9 +1590,16 @@ pub mod js_bundler {
                 }
             }
 
-            let partial = self.partial.take().expect("DeferredBuild resumed after completion");
-            let config =
-                Config::finish_from_js(global_this, self.config_js.get(), partial, self.did_set_target)?;
+            let partial = self
+                .partial
+                .take()
+                .expect("DeferredBuild resumed after completion");
+            let config = Config::finish_from_js(
+                global_this,
+                self.config_js.get(),
+                partial,
+                self.did_set_target,
+            )?;
 
             let event_loop = global_this.bun_vm().event_loop();
             let completion =

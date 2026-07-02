@@ -143,4 +143,44 @@ describe("maxPayload", () => {
       wss.close();
     }
   });
+
+  it("reports CLOSING readyState inside the server error handler", async () => {
+    const wss = new WebSocketServer({ port: 0, maxPayload: MAX });
+    const stateInHandler = Promise.withResolvers<number>();
+
+    wss.on("connection", serverWs => {
+      serverWs.on("error", () => stateInHandler.resolve(serverWs.readyState));
+    });
+
+    const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
+    ws.on("open", () => ws.send(Buffer.alloc(MAX + 1, "A").toString()));
+    ws.on("error", () => {});
+
+    try {
+      // 2 === WebSocket.CLOSING
+      expect(await stateInHandler.promise).toBe(2);
+    } finally {
+      wss.close();
+    }
+  });
+
+  it("keeps the 1009 close code even if the error handler calls close()", async () => {
+    const wss = new WebSocketServer({ port: 0, maxPayload: MAX });
+    const clientClose = Promise.withResolvers<number>();
+
+    wss.on("connection", serverWs => {
+      serverWs.on("error", () => serverWs.close(1000, "ignored"));
+    });
+
+    const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
+    ws.on("open", () => ws.send(Buffer.alloc(MAX + 1, "A").toString()));
+    ws.on("close", code => clientClose.resolve(code));
+    ws.on("error", () => {});
+
+    try {
+      expect(await clientClose.promise).toBe(1009);
+    } finally {
+      wss.close();
+    }
+  });
 });

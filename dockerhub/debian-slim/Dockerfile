@@ -57,6 +57,13 @@ RUN apt-get update -qq \
 
 FROM debian:trixie-slim
 
+# Install CA certificates so tools that verify TLS (e.g. apt over HTTPS on
+# Debian 13) have a trust store. The base image ships none.
+RUN apt-get update -qq \
+    && apt-get install -qq --no-install-recommends ca-certificates \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
 # Disable the runtime transpiler cache by default inside Docker containers.
 # On ephemeral containers, the cache is not useful
 ARG BUN_RUNTIME_TRANSPILER_CACHE_PATH=0

@@ -59,6 +59,8 @@ fn data_to_js_with_check(
     match this {
         ExprData::EArray(e) => array_to_js(e, global, stack_check),
         ExprData::EObject(e) => object_to_js(e, global, stack_check),
+        ExprData::EObjectJSON(e) => object_json_to_js(e, global, stack_check),
+        ExprData::EArrayJSON(e) => array_json_to_js(e, global, stack_check),
         ExprData::EString(e) => string_to_js(e, global),
         ExprData::ENull(_) => Ok(JSValue::NULL),
         ExprData::EUndefined(_) => Ok(JSValue::UNDEFINED),
@@ -143,12 +145,63 @@ pub(crate) fn object_to_js(
     Ok(obj)
 }
 
-/// Serialize UTF-8 bytes to a JS string, transcoding to UTF-16 only when the
-/// bytes are not pure ASCII (`to_utf16_alloc` returns `Ok(None)` for
-/// pure-ASCII, in which case the 8-bit Latin-1 form is kept).
+pub(crate) fn object_json_to_js(
+    this: &E::ObjectJSON,
+    global: &JSGlobalObject,
+    stack_check: StackCheck,
+) -> Result<JSValue, ToJSError> {
+    if !stack_check.is_safe_to_recurse() {
+        return Err(js_err(global.throw_stack_overflow()));
+    }
+    let obj = JSValue::create_empty_object(global, this.properties().len());
+    let _guard = obj.protected();
+    for prop in this.properties().iter() {
+        let key = utf8_bytes_to_js(prop.key.slice(), global)?;
+        let value = json_value_to_js(&prop.value, global, stack_check)?;
+        JSValue::put_to_property_key(obj, global, key, value).map_err(js_err)?;
+    }
+    Ok(obj)
+}
+
+pub(crate) fn array_json_to_js(
+    this: &E::ArrayJSON,
+    global: &JSGlobalObject,
+    stack_check: StackCheck,
+) -> Result<JSValue, ToJSError> {
+    if !stack_check.is_safe_to_recurse() {
+        return Err(js_err(global.throw_stack_overflow()));
+    }
+    let array = JSValue::create_empty_array(global, this.items().len()).map_err(js_err)?;
+    let _guard = array.protected();
+    for (j, item) in this.items().iter().enumerate() {
+        let value = json_value_to_js(item, global, stack_check)?;
+        array.put_index(global, j as u32, value).map_err(js_err)?;
+    }
+    Ok(array)
+}
+
+fn json_value_to_js(
+    value: &E::JsonValue,
+    global: &JSGlobalObject,
+    stack_check: StackCheck,
+) -> Result<JSValue, ToJSError> {
+    Ok(match value {
+        E::JsonValue::Null => JSValue::NULL,
+        E::JsonValue::Boolean(true) => JSValue::TRUE,
+        E::JsonValue::Boolean(false) => JSValue::FALSE,
+        E::JsonValue::Number(n) => number_to_js(*n),
+        E::JsonValue::String(s) => utf8_bytes_to_js(s.slice(), global)?,
+        E::JsonValue::Object(o) => object_json_to_js(o.get(), global, stack_check)?,
+        E::JsonValue::Array(a) => array_json_to_js(a.get(), global, stack_check)?,
+    })
+}
+
 fn utf8_bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
-    let utf16 = strings::to_utf16_alloc(bytes, false, false).map_err(|_| ToJSError::OutOfMemory)?;
-    if let Some(utf16) = utf16 {
+    if bytes.is_empty() {
+        let empty = BunString::EMPTY;
+        return bun_string_jsc::to_js(&empty, global).map_err(js_err);
+    }
+    if let Some(utf16) = strings::wtf8_to_utf16_alloc(bytes) {
         let (mut out, chars) = BunString::create_uninitialized_utf16(utf16.len());
         chars.copy_from_slice(&utf16);
         bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)

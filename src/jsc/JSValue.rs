@@ -2237,6 +2237,16 @@ impl JSValue {
             JSC__JSValue__isSameValue(self, other, global)
         })
     }
+    /// `JSValue.isStrictEqual` (`===` / IsStrictlyEqual semantics).
+    ///
+    /// Differs from SameValue: `NaN !== NaN` and `-0 === +0`.
+    /// Can throw (rope-string resolution).
+    pub fn is_strict_equal(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+        // No encoded-bits fast path: two NaNs share an encoding but NaN !== NaN.
+        host_fn::from_js_host_call_generic(global, || {
+            JSC__JSValue__isStrictEqual(self, other, global)
+        })
+    }
 
     // ── Numeric coercion. ────────────────────
     /// `JSValue.toNumber` — full ECMA `ToNumber` (`+value`); may throw.
@@ -2548,6 +2558,21 @@ impl JSValue {
         }
         JSC__JSValue__getDirectIndex(self, global, i)
     }
+    /// Smallest own present index of a `JSArray` that is `>= start`, or
+    /// `None` when every index from `start` to the end of the array is a
+    /// hole. Walks the array's backing storage (and sparse map) so a run of
+    /// holes is skipped in one call instead of probing each index.
+    /// Asserts `self` is a `JSArray` (`Array` or `DerivedArray`).
+    pub fn next_present_index(self, start: u32) -> Option<u32> {
+        debug_assert!(self.is_cell() && self.js_type().is_array());
+        unsafe extern "C" {
+            safe fn Bun__JSArray__nextPresentIndex(this: JSValue, start: u32) -> u64;
+        }
+        match Bun__JSArray__nextPresentIndex(self, start) {
+            u64::MAX => None,
+            index => Some(index as u32),
+        }
+    }
     /// `JSValue.getNameProperty` — write the value's
     /// `.name` (function/class name) into `ret`. No-op for empty/`undefined`/`null`.
     pub fn get_name_property(
@@ -2652,6 +2677,11 @@ impl JSValue {
 unsafe extern "C" {
     safe fn JSC__JSValue__eqlValue(this: JSValue, other: JSValue) -> bool;
     safe fn JSC__JSValue__isSameValue(
+        this: JSValue,
+        other: JSValue,
+        global: &JSGlobalObject,
+    ) -> bool;
+    safe fn JSC__JSValue__isStrictEqual(
         this: JSValue,
         other: JSValue,
         global: &JSGlobalObject,

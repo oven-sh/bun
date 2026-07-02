@@ -488,6 +488,18 @@ extern "C" BunString Bun__ErrorCode__determineSpecificType(JSC::JSGlobalObject* 
     return Bun::toStringRef(builder.toString());
 }
 
+// Node's ERR_INVALID_ARG_VALUE renders the value with `util.inspect` ('w'),
+// not `determineSpecificType` ("type string ('w')"). Expose the formatter the
+// C++ INVALID_ARG_VALUE overloads use so Rust-side error paths match exactly.
+extern "C" BunString Bun__ErrorCode__inspectForErrorMessage(JSC::JSGlobalObject* globalObject, EncodedJSValue value)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+    WTF::StringBuilder builder;
+    JSValueToStringSafe(globalObject, builder, JSValue::decode(value), true);
+    RETURN_IF_EXCEPTION(scope, Zig::BunStringEmpty);
+    return Bun::toStringRef(builder.toString());
+}
+
 // Port of Node's addNumericalSeparator: groups digits in threes from the right
 // ("18446744073709551616" -> "18_446_744_073_709_551_616").
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L883

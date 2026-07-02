@@ -1146,6 +1146,10 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         }
     }
 
+    // pnpm records `os`/`cpu` for every `packages:` entry whose manifest
+    // declares them, including `file:` folders, tarballs, and git packages.
+    crate::migration::clear_non_registry_platform_constraints(lockfile);
+
     lockfile.resolve(log)?;
 
     lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<false>(manager)?;
@@ -1800,10 +1804,10 @@ fn update_package_json_after_migration(
             };
 
             if let Some(packages_expr) = ws_root.get(b"packages") {
-                if let Some(packages) = packages_expr.as_array() {
+                if let Some(mut packages) = packages_expr.as_array() {
                     let mut paths: Vec<&'static [u8]> = Vec::new();
-                    for package_path in packages.array.items.slice() {
-                        if let Some(package_path_str) = as_string(package_path) {
+                    while let Some(package_path) = packages.next() {
+                        if let Some(package_path_str) = as_string(&package_path) {
                             // Intern (vs. the prior `Box<[u8]>`) so the
                             // `EString` nodes built from these paths below do
                             // not dangle once this function returns and the

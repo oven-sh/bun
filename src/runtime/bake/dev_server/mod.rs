@@ -534,7 +534,7 @@ impl HotReloadEvent {
         }
 
         let mut rest_extra: &[u8] = &self.extra_files;
-        while let Some(str_idx) = bun_core::index_of_char(rest_extra, 0) {
+        while let Some(str_idx) = bun_core::strings::index_of_char_usize(rest_extra, 0) {
             bun_core::handle_oom(self.files.put(&rest_extra[0..str_idx as usize], ()));
             rest_extra = &rest_extra[str_idx as usize + 1..];
         }

@@ -574,14 +574,19 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                 // TODO: variants of the runtime functions
                 let body_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
+                // The wrapper must be a regular function, not an arrow, so that a
+                // top-level `arguments` reference in the CommonJS body binds to the
+                // wrapper's own `arguments` object (Node and esbuild both allow it).
                 let cjs_args = Vec::<Expr>::from_slice(&[Expr::init(
-                    E::Arrow {
-                        args: bun_ast::StoreSlice::new(args.into_bump_slice()),
-                        body: G::FnBody {
-                            stmts: body_stmts,
-                            loc: bun_ast::Loc::EMPTY,
+                    E::Function {
+                        func: G::Fn {
+                            args: bun_ast::StoreSlice::new(args.into_bump_slice()),
+                            body: G::FnBody {
+                                stmts: body_stmts,
+                                loc: bun_ast::Loc::EMPTY,
+                            },
+                            ..Default::default()
                         },
-                        ..Default::default()
                     },
                     bun_ast::Loc::EMPTY,
                 )]);

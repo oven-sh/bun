@@ -69,7 +69,7 @@ impl PluginRunner {
     /// Returns the `namespace:` prefix of `specifier`, or `b""` if it has none
     /// (Windows drive-letter prefixes are not namespaces).
     pub fn extract_namespace(specifier: &[u8]) -> &[u8] {
-        let Some(colon) = bun_core::index_of_char(specifier, b':') else {
+        let Some(colon) = bun_core::strings::index_of_char_usize(specifier, b':') else {
             return b"";
         };
         let colon = colon as usize;
@@ -88,7 +88,7 @@ impl PluginRunner {
     /// Cheap pre-filter that rules
     /// out `./` / `../` / absolute paths before hitting the resolve hook.
     pub fn could_be_plugin(specifier: &[u8]) -> bool {
-        if let Some(last_dot) = bun_core::last_index_of_char(specifier, b'.') {
+        if let Some(last_dot) = bun_core::strings::last_index_of_char(specifier, b'.') {
             let ext = &specifier[last_dot + 1..];
             // '.' followed by either a letter or a non-ascii character
             // maybe there are non-ascii file extensions?
@@ -99,7 +99,8 @@ impl PluginRunner {
                 return true;
             }
         }
-        !bun_paths::is_absolute(specifier) && bun_core::index_of_char(specifier, b':').is_some()
+        !bun_paths::is_absolute(specifier)
+            && bun_core::strings::index_of_char_usize(specifier, b':').is_some()
     }
 }
 
@@ -1883,15 +1884,17 @@ fn parse_data_loader<'a>(
         options::Loader::Jsonc => {
             // We allow importing tsconfig.*.json or jsconfig.*.json with comments
             // These files implicitly become JSONC files, which aligns with the behavior of text editors.
-            match bun_parsers::json::parse_ts_config::<false>(source, log, arena) {
+            match bun_parsers::json::parse_jsonc_into_arena(source, log, arena) {
                 Ok(e) => e,
                 Err(_) => return None,
             }
         }
-        options::Loader::Json => match bun_parsers::json::parse::<false>(source, log, arena) {
-            Ok(e) => e,
-            Err(_) => return None,
-        },
+        options::Loader::Json => {
+            match bun_parsers::json::parse_json_into_arena(source, log, arena) {
+                Ok(e) => e,
+                Err(_) => return None,
+            }
+        }
         options::Loader::Toml => match bun_parsers::toml::TOML::parse(source, log, arena, false) {
             Ok(e) => e,
             Err(_) => return None,
@@ -1910,6 +1913,18 @@ fn parse_data_loader<'a>(
         _ => unsafe { core::hint::unreachable_unchecked() },
     };
     let mut expr = value_expr;
+
+    if !keep_json_and_toml_as_one_statement
+        && matches!(
+            expr.data,
+            bun_ast::ExprData::EObjectJSON(_) | bun_ast::ExprData::EArrayJSON(_)
+        )
+    {
+        expr = match bun_parsers::json::materialize(&expr, source, log, arena) {
+            Ok(e) => e,
+            Err(_) => return None,
+        };
+    }
 
     let mut symbols: Vec<bun_ast::Symbol> = Vec::new();
 

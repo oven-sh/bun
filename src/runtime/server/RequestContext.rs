@@ -2109,8 +2109,12 @@ where
                 stream_log!("returned a promise");
                 this.drain_microtasks();
 
-                match promise.status() {
-                    jsc::js_promise::Status::Pending => {
+                // `MarkHandled` matters for the Rejected arm: the promise
+                // settled before any reaction was attached, so without the
+                // flag the VM would report it as an unhandled rejection even
+                // though handle_reject_stream consumes it here.
+                match promise.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
+                    jsc::PromiseResult::Pending => {
                         stream_log!("promise still Pending");
                         if !this.flags.has_written_status() {
                             response_stream.sink.on_first_write = None;
@@ -2144,7 +2148,7 @@ where
                         ); // TODO: properly propagate exception upwards
                         // the response_stream should be GC'd
                     }
-                    jsc::js_promise::Status::Fulfilled => {
+                    jsc::PromiseResult::Fulfilled(_) => {
                         stream_log!("promise Fulfilled");
                         let mut readable_ref =
                             core::mem::take(&mut this.response_body_readable_stream_ref);
@@ -2154,15 +2158,25 @@ where
                         stream.done(global_this);
                         readable_ref.deinit();
                     }
-                    jsc::js_promise::Status::Rejected => {
+                    jsc::PromiseResult::Rejected(err) => {
                         stream_log!("promise Rejected");
+                        // Consuming the rejection here is what keeps it out of
+                        // the unhandledRejection reporter, so surface it here.
+                        // DEBUG_MODE already reports it in handle_reject_stream.
+                        if !DEBUG_MODE
+                            && let Some(server) = this.server
+                            && !err.is_empty_or_undefined_or_null()
+                        {
+                            // SAFETY: BACKREF; see drain_microtasks() re: the
+                            // const→mut cast.
+                            unsafe {
+                                (*std::ptr::from_ref::<VirtualMachine>((*server).vm()).cast_mut())
+                                    .run_error_handler(err, None);
+                            }
+                        }
                         let mut readable_ref =
                             core::mem::take(&mut this.response_body_readable_stream_ref);
-                        Self::handle_reject_stream(
-                            this,
-                            global_this,
-                            promise.result(global_this.vm()),
-                        );
+                        Self::handle_reject_stream(this, global_this, err);
                         stream.cancel(global_this);
                         readable_ref.deinit();
                     }
@@ -2422,6 +2436,15 @@ where
 
         let resp = this.resp.expect("infallible: resp bound");
         this.set_response(response);
+
+        // `render` drops the body for a null-body status on GET, so HEAD must
+        // not derive framing from that body (or the user headers) either
+        // (RFC 9110 §9.3.2): render the exact metadata+framing GET would.
+        if HTTPStatusText::is_null_body(response.status_code()) {
+            Self::do_render_blob_corked(std::ptr::from_mut::<Self>(this));
+            return;
+        }
+
         let Some(server) = this.server else {
             // server detached?
             this.render_metadata();
@@ -2432,43 +2455,57 @@ where
         };
         // SAFETY: BACKREF
         let global_this = server.global_this();
+
+        // GET strips the handler's Content-Length / Transfer-Encoding and frames
+        // from the body, so HEAD must too (RFC 9110 §9.3.2). Only a bodiless
+        // Response leaves those headers as what GET would have sent (#15355).
+        let body_decides_framing = {
+            let body_value = response.get_body_value();
+            body_value.to_blob_if_possible();
+            !matches!(
+                body_value,
+                Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_)
+            )
+        };
         // `fast_get`/`fast_has` take `&mut self` (FFI shim), so use the `_mut`
         // accessor — `get_fetch_headers()` and `get_init_headers()` alias the
         // same `init.headers` field.
-        if let Some(headers) = response.get_init_headers_mut() {
-            // first respect the headers
-            if !HTTP3 {
-                if let Some(transfer_encoding) =
-                    headers.fast_get(jsc::HTTPHeaderName::TransferEncoding)
-                {
-                    // fastGet() borrows the header map's StringImpl; renderMetadata() ->
-                    // doWriteHeaders() calls fastRemove(.TransferEncoding) and derefs the
-                    // FetchHeaders, freeing that StringImpl before we write it. Clone so
-                    // the bytes outlive renderMetadata().
-                    let transfer_encoding_str = transfer_encoding.to_slice_clone();
+        if !body_decides_framing {
+            if let Some(headers) = response.get_init_headers_mut() {
+                // first respect the headers
+                if !HTTP3 {
+                    if let Some(transfer_encoding) =
+                        headers.fast_get(jsc::HTTPHeaderName::TransferEncoding)
+                    {
+                        // fastGet() borrows the header map's StringImpl; renderMetadata() ->
+                        // doWriteHeaders() calls fastRemove(.TransferEncoding) and derefs the
+                        // FetchHeaders, freeing that StringImpl before we write it. Clone so
+                        // the bytes outlive renderMetadata().
+                        let transfer_encoding_str = transfer_encoding.to_slice_clone();
+                        this.render_metadata();
+                        resp.write_header(b"transfer-encoding", transfer_encoding_str.slice());
+                        this.end_without_body(this.should_close_connection());
+                        return;
+                    }
+                }
+                if let Some(content_length) = headers.fast_get(jsc::HTTPHeaderName::ContentLength) {
+                    // Parse before renderMetadata(): doWriteHeaders() will fastRemove(.ContentLength)
+                    // and deref the FetchHeaders, freeing the borrowed StringImpl.
+                    let content_length_str = content_length.to_slice();
+                    let len: usize = HTTP::parse_content_length(content_length_str.slice());
+                    drop(content_length_str);
+
                     this.render_metadata();
-                    resp.write_header(b"transfer-encoding", transfer_encoding_str.slice());
+                    // SAFETY: FFI handle
+                    resp.write_header_int(b"content-length", len as u64);
                     this.end_without_body(this.should_close_connection());
                     return;
                 }
             }
-            if let Some(content_length) = headers.fast_get(jsc::HTTPHeaderName::ContentLength) {
-                // Parse before renderMetadata(): doWriteHeaders() will fastRemove(.ContentLength)
-                // and deref the FetchHeaders, freeing the borrowed StringImpl.
-                let content_length_str = content_length.to_slice();
-                let len: usize = HTTP::parse_content_length(content_length_str.slice());
-                drop(content_length_str);
-
-                this.render_metadata();
-                // SAFETY: FFI handle
-                resp.write_header_int(b"content-length", len as u64);
-                this.end_without_body(this.should_close_connection());
-                return;
-            }
         }
-        // not content-length or transfer-encoding so we need to respect the body
+        // the body decides the framing (or there is neither a body nor a
+        // handler-supplied Content-Length / Transfer-Encoding header)
         let body_value = response.get_body_value();
-        body_value.to_blob_if_possible();
         match body_value {
             Body::Value::InternalBlob(_) | Body::Value::WTFStringImpl(_) => {
                 let mut blob = body_value.use_as_any_blob_allow_non_utf8_string();
@@ -2698,6 +2735,11 @@ where
                 }
             }
         }
+
+        // A truthy non-Response, non-Error, non-Promise value (object, string,
+        // number, ...). The async twin (`handle_resolve`) reports this via
+        // `render_missing_invalid_response`; do the same on the sync path.
+        ctx.render_missing_invalid_response(response_value);
     }
 
     pub fn handle_resolve_stream(req: &mut Self) {
@@ -2961,6 +3003,16 @@ where
             req.end_already_responded_stream();
             return;
         }
+        // Body bytes were already written: close without the terminating chunk
+        // (RFC 9112 section 7) so the client sees an incomplete message, not a
+        // truncated body that looks like a complete, successful response.
+        if let Some(resp) = req.resp {
+            let state = resp.state();
+            if state.is_http_write_called() && state.is_response_pending() {
+                req.force_close();
+                return;
+            }
+        }
         req.end_stream(req.should_close_connection());
     }
 
@@ -2983,6 +3035,24 @@ where
                 if this.is_aborted_or_ended() {
                     return;
                 }
+                this.run_error_handler(js_err);
+                return;
+            }
+            // The handler returned a Response whose body was already used,
+            // usually the same Response object returned for a second request.
+            // A disturbed body is an error, not a silent empty 200.
+            Body::Value::Used => {
+                if this.is_aborted_or_ended() {
+                    return;
+                }
+                let js_err = global_this
+                    .err(
+                        jsc::ErrorCode::BODY_ALREADY_USED,
+                        format_args!(
+                            "Response body already used. A Response body can only be sent once; create a new Response for each request."
+                        ),
+                    )
+                    .to_js();
                 this.run_error_handler(js_err);
                 return;
             }
@@ -3448,12 +3518,6 @@ where
             self.blob.size()
         };
 
-        status = if status == 200 && size == 0 && !self.blob.is_detached() {
-            204
-        } else {
-            status
-        };
-
         let (content_type, needs_content_type, content_type_needs_free) =
             get_content_type(response.get_init_headers_mut(), &self.blob);
         // NOTE: `MimeType` owns a `Cow<'static, [u8]>`; Drop handles the owned case.
@@ -3664,7 +3728,7 @@ where
         ctx_log!("render");
         self.set_response(response);
 
-        if matches!(response.status_code(), 101 | 103 | 204 | 205 | 304) {
+        if HTTPStatusText::is_null_body(response.status_code()) {
             self.do_render_blob();
             return;
         }

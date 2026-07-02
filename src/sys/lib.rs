@@ -2314,8 +2314,17 @@ mod posix_impl {
         }
     }
 
+    // `syscall` is the JS-facing `err.syscall` tag (`stat`/`lstat`/`fstat`):
+    // node reports the operation name, never the `statx(2)` implementation
+    // detail, and the non-statx fallback below already uses those same tags.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn statx_impl(fd: Fd, path: Option<&ZStr>, flags: c_int, mask: u32) -> Maybe<PosixStat> {
+    fn statx_impl(
+        fd: Fd,
+        path: Option<&ZStr>,
+        flags: c_int,
+        mask: u32,
+        syscall: Tag,
+    ) -> Maybe<PosixStat> {
         use core::sync::atomic::Ordering;
         let mut buf = core::mem::MaybeUninit::<lx::statx>::uninit();
         let pathname: *const c_char = match path {
@@ -2356,7 +2365,7 @@ mod posix_impl {
                 }
                 return Err(Error {
                     errno: raw_errno as _,
-                    syscall: Tag::statx,
+                    syscall,
                     ..Default::default()
                 });
             }
@@ -2400,11 +2409,17 @@ mod posix_impl {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn fstatx(fd: Fd, mask: u32) -> Maybe<PosixStat> {
-        statx_impl(fd, None, libc::AT_EMPTY_PATH, mask)
+        statx_impl(fd, None, libc::AT_EMPTY_PATH, mask, Tag::fstat)
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn statx(path: &ZStr, mask: u32) -> Maybe<PosixStat> {
-        statx_impl(Fd::from_native(libc::AT_FDCWD), Some(path), 0, mask)
+        statx_impl(
+            Fd::from_native(libc::AT_FDCWD),
+            Some(path),
+            0,
+            mask,
+            Tag::stat,
+        )
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn lstatx(path: &ZStr, mask: u32) -> Maybe<PosixStat> {
@@ -2413,6 +2428,7 @@ mod posix_impl {
             Some(path),
             libc::AT_SYMLINK_NOFOLLOW,
             mask,
+            Tag::lstat,
         )
     }
 
@@ -4455,7 +4471,11 @@ fn read_fill_vec(
     let mut total: i64 = 0;
     loop {
         if buf.capacity() == buf.len() {
-            buf.reserve(grow_by);
+            // Fallible (amortized) growth: OOM propagates as ENOMEM instead of
+            // aborting, matching the fallible pre-reservation in the callers.
+            if buf.try_reserve(grow_by).is_err() {
+                return Err(Error::oom());
+            }
         }
         // SAFETY: `read_chunk` writes initialized bytes; we commit exactly what was written.
         let n = read_chunk(unsafe { bun_core::vec::spare_bytes_mut(buf) }, total)?;
@@ -5490,6 +5510,7 @@ pub mod linux {
         pub const ISDIR: u32 = libc::IN_ISDIR;
         pub const ONESHOT: u32 = libc::IN_ONESHOT;
         pub const IGNORED: u32 = libc::IN_IGNORED;
+        pub const Q_OVERFLOW: u32 = libc::IN_Q_OVERFLOW;
         pub const CLOEXEC: c_int = libc::IN_CLOEXEC;
         pub const NONBLOCK: c_int = libc::IN_NONBLOCK;
         use core::ffi::c_int;

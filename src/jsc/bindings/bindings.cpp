@@ -33,6 +33,8 @@
 
 #include "JavaScriptCore/AggregateError.h"
 #include "JavaScriptCore/ArrayBufferView.h"
+#include "JavaScriptCore/ArrayStorage.h"
+#include "JavaScriptCore/SparseArrayValueMap.h"
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CodeBlock.h"
 #include "JavaScriptCore/Completion.h"
@@ -394,10 +396,11 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         }
 
         case AsymmetricMatcherConstructorType::Object: {
-            if (otherProp.isObject()) {
+            // Jest: `typeof other === 'object'` (null matches, functions do not; no instanceof fallback)
+            if (otherProp.isNull() || (otherProp.isObject() && !otherProp.isCallable())) {
                 return AsymmetricMatcherResult::PASS;
             }
-            break;
+            return AsymmetricMatcherResult::FAIL;
         }
 
         case AsymmetricMatcherConstructorType::InstanceOf: {
@@ -2102,11 +2105,12 @@ bool WebCore__FetchHeaders__has(WebCore::FetchHeaders* headers, const ZigString*
     } else
         return result.releaseReturnValue();
 }
-extern "C" void WebCore__FetchHeaders__put(WebCore::FetchHeaders* headers, HTTPHeaderName name, const ZigString* arg2, JSC::JSGlobalObject* global)
+extern "C" void WebCore__FetchHeaders__put(WebCore::FetchHeaders* headers, HTTPHeaderName name, const BunString* arg2, JSC::JSGlobalObject* global)
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
     throwScope.assertNoException(); // can't throw an exception when there's already one.
-    WebCore::propagateException(*global, throwScope, headers->set(name, Zig::toStringCopy(*arg2)));
+    // `toWTFString()` refs a `WTFStringImpl`-tagged value instead of copying it.
+    WebCore::propagateException(*global, throwScope, headers->set(name, arg2->toWTFString()));
 }
 void WebCore__FetchHeaders__remove(WebCore::FetchHeaders* headers, const ZigString* arg1, JSC::JSGlobalObject* global)
 {
@@ -3186,6 +3190,20 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
     JSValue usedStream = JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(usedStream);
+}
+
+[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue ReadableStream__errored(Zig::GlobalObject* globalObject, JSC::EncodedJSValue encodedReason)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto clientData = WebCore::clientData(vm);
+    auto* function = globalObject->getDirect(vm, clientData->builtinNames().createErroredReadableStreamPrivateName()).getObject();
+    JSC::MarkedArgumentBuffer arguments;
+    arguments.append(JSC::JSValue::decode(encodedReason));
+    ASSERT(!arguments.hasOverflowed());
+    JSValue erroredStream = JSC::call(globalObject, function, arguments, "ReadableStream.create"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(erroredStream);
 }
 
 JSC::EncodedJSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigString* arg1,
@@ -5801,6 +5819,14 @@ extern "C" JSC::EncodedJSValue WebCore__AbortSignal__abortReason(WebCore::AbortS
     return JSC::JSValue::encode(abortSignal->reason().getValue(jsNull()));
 }
 
+// Same value the JS `signal.reason` getter returns: lazily materializes the
+// `DOMException` for a common abort reason and caches it, so repeated reads
+// (native or JS) observe the identical object.
+extern "C" JSC::EncodedJSValue WebCore__AbortSignal__jsReason(WebCore::AbortSignal* signal, JSC::JSGlobalObject* globalObject)
+{
+    return JSC::JSValue::encode(signal->jsReason(*globalObject));
+}
+
 extern "C" WebCore::AbortSignalTimeout WebCore__AbortSignal__getTimeout(WebCore::AbortSignal* arg0)
 {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
@@ -6693,6 +6719,72 @@ extern "C" bool Bun__JSArray__contiguousVectorIsStillValid(
     if (butterfly->publicLength() != expectedLength) [[unlikely]]
         return false;
     return reinterpret_cast<const JSC::EncodedJSValue*>(butterfly->contiguous().data()) == expected;
+}
+
+// Smallest own present index of a JSArray that is >= `start`, or UINT64_MAX
+// when every index from `start` to the end of the array is a hole. Mirrors the
+// butterfly walk in JSObject::getOwnIndexedPropertyNames so the caller can skip
+// a run of holes without probing each index of a huge sparse array.
+extern "C" uint64_t Bun__JSArray__nextPresentIndex(
+    JSC::EncodedJSValue encodedValue,
+    uint32_t start)
+{
+    static constexpr uint64_t notFound = std::numeric_limits<uint64_t>::max();
+
+    JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(JSC::JSValue::decode(encodedValue).asCell());
+
+    switch (array->indexingType()) {
+    case ALL_BLANK_INDEXING_TYPES:
+    case ALL_UNDECIDED_INDEXING_TYPES:
+        return notFound;
+
+    case ALL_INT32_INDEXING_TYPES:
+    case ALL_CONTIGUOUS_INDEXING_TYPES: {
+        JSC::Butterfly* butterfly = array->butterfly();
+        unsigned usedLength = butterfly->publicLength();
+        for (unsigned i = start; i < usedLength; ++i) {
+            if (butterfly->contiguous().at(array, i))
+                return i;
+        }
+        return notFound;
+    }
+
+    case ALL_DOUBLE_INDEXING_TYPES: {
+        JSC::Butterfly* butterfly = array->butterfly();
+        unsigned usedLength = butterfly->publicLength();
+        for (unsigned i = start; i < usedLength; ++i) {
+            double value = butterfly->contiguousDouble().at(array, i);
+            // In DoubleShape storage the hole is NaN. A real NaN element can
+            // never be stored there: JSObject::putByIndex / putDirectIndex
+            // convert the array to ContiguousShape first.
+            if (value == value)
+                return i;
+        }
+        return notFound;
+    }
+
+    case ALL_ARRAY_STORAGE_INDEXING_TYPES: {
+        JSC::ArrayStorage* storage = array->butterfly()->arrayStorage();
+        unsigned usedVectorLength = std::min(storage->length(), storage->vectorLength());
+        for (unsigned i = start; i < usedVectorLength; ++i) {
+            if (storage->m_vector[i])
+                return i;
+        }
+
+        uint64_t result = notFound;
+        if (JSC::SparseArrayValueMap* map = storage->m_sparseMap.get()) {
+            for (const auto& entry : *map) {
+                if (entry.key >= start && entry.key < result)
+                    result = entry.key;
+            }
+        }
+        return result;
+    }
+
+    default:
+        ASSERT_NOT_REACHED();
+        return start;
+    }
 }
 
 extern "C" void JSC__ArrayBuffer__ref(JSC::ArrayBuffer* self) { self->ref(); }

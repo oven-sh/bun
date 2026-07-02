@@ -8,6 +8,7 @@
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/Debugger.h>
 #include <utility>
+#include <zstd.h>
 
 #include "InternalModuleRegistryConstants.h"
 #include "wtf/Forward.h"
@@ -115,8 +116,20 @@ JSValue initializeInternalModuleFromDisk(JSGlobalObject* globalObject, VM& vm, c
     return initializeInternalModuleFromDisk(globalObject, vm, moduleId, filename, urlString)
 #else
 
+// The per-module constants in InternalModuleRegistryConstants.h are single
+// zstd frames produced by src/codegen/bundle-modules.ts, decompressed once:
+// requireId caches the module and makeSource keeps the source String alive.
+static WTF::String decompressInternalModuleSource(const InternalModuleRegistryConstants::CompressedSourceCode& compressed)
+{
+    std::span<Latin1Character> out;
+    WTF::String source = WTF::String::createUninitialized(compressed.rawSize, out);
+    size_t decoded = ZSTD_decompress(out.data(), compressed.rawSize, compressed.zstd, compressed.zstdSize);
+    RELEASE_ASSERT(!ZSTD_isError(decoded) && decoded == compressed.rawSize);
+    return source;
+}
+
 #define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, SOURCE, urlString) \
-    return generateModule(globalObject, vm, SOURCE, moduleId, urlString)
+    return generateModule(globalObject, vm, decompressInternalModuleSource(SOURCE), moduleId, urlString)
 #endif
 
 const ClassInfo InternalModuleRegistry::s_info = { "InternalModuleRegistry"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(InternalModuleRegistry) };

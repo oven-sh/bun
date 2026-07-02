@@ -16,7 +16,7 @@ import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP, getJS2NativeRust } from "./generate-js2native";
-import { cap, declareASCIILiteral, writeIfNotChanged } from "./helpers";
+import { cap, declareASCIILiteral, declareZstdCompressedSource, writeIfNotChanged } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 import { define } from "./replacements";
 
@@ -362,10 +362,11 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
 );
 
 // This header is used by InternalModuleRegistry.cpp, and should only be included in that file.
-// It inlines all the strings for the module IDs.
+// It inlines the source of every internal JS module.
 //
-// We cannot use ASCIILiteral's `_s` operator for the module source code because for long
-// strings it fails a constexpr assert. Instead, we do that assert in JS before we format the string
+// In release each source is one zstd frame; keeping ~1.7 MB of raw module
+// source in `.rodata` was the single largest avoidable block in the binary,
+// and a module's source is only ever read once (requireId caches the result).
 if (!debug) {
   writeIfNotChanged(
     path.join(CODEGEN_DIR, "InternalModuleRegistryConstants.h"),
@@ -374,6 +375,17 @@ if (!debug) {
 
 namespace Bun {
 namespace InternalModuleRegistryConstants {
+
+// One entry per internal JS module. \`zstd\` is a single complete zstd frame
+// whose decompressed content is exactly \`rawSize\` ASCII bytes; it is inflated
+// once, on the module's first require, by decompressInternalModuleSource in
+// InternalModuleRegistry.cpp.
+struct CompressedSourceCode {
+  const unsigned char* zstd;
+  unsigned zstdSize;
+  unsigned rawSize;
+};
+
   ${moduleList
     .slice(0, nativeStartIndex)
     .map((id, n) => {
@@ -381,7 +393,7 @@ namespace InternalModuleRegistryConstants {
       if (!out) {
         throw new Error(`Missing output for ${id}`);
       }
-      return declareASCIILiteral(`${idToEnumName(id)}Code`, out);
+      return declareZstdCompressedSource(`${idToEnumName(id)}Code`, out);
     })
     .join("\n")}
 }

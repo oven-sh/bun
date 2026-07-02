@@ -37,6 +37,23 @@ export function declareASCIILiteral(name: string, value: string) {
 static constexpr ASCIILiteral ${name} = ASCIILiteral::fromLiteralUnsafe(${name}Bytes);`;
 }
 
+// Emit a module's source as one zstd frame plus a CompressedSourceCode
+// descriptor; InternalModuleRegistry.cpp decompresses it on the module's
+// first require. rawSize is the length declareASCIILiteral would produce.
+export function declareZstdCompressedSource(name: string, value: string) {
+  const normalized = value + "\n";
+  // The runtime decompresses straight into an 8-bit StringImpl, and the
+  // uncompressed debug path stores these as ASCIILiteral, so the bundled
+  // source must already be ASCII.
+  if (Buffer.byteLength(normalized, "utf8") !== normalized.length) {
+    throw new Error(`${name}: bundled internal-module source must be ASCII`);
+  }
+  const raw = Buffer.from(normalized, "latin1");
+  const compressed = Bun.zstdCompressSync(raw, { level: 19 });
+  return `static constexpr const unsigned char ${name}ZstdBytes[${compressed.length}] = {${Array.from(compressed).join(",")}};
+static constexpr CompressedSourceCode ${name} { ${name}ZstdBytes, ${compressed.length}, ${raw.length} };`;
+}
+
 export function cap(str: string) {
   return str[0].toUpperCase() + str.slice(1);
 }

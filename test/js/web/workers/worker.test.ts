@@ -246,7 +246,8 @@ describe("web worker", () => {
 
   // The bug under test makes the parent's event loop exit before the worker
   // message exchange finishes, so the child exits 0 without ever printing
-  // "done". A true hang is caught by the per-test timeout.
+  // "done". A true hang is bounded by the 30s explicit timeout below; the
+  // fixture itself takes about a second under a debug+ASAN build.
   async function expectEventLoopSurvivesManyMessages(fixture: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.js"), fixture],
@@ -258,11 +259,17 @@ describe("web worker", () => {
     expect(exitCode).toBe(0);
   }
 
-  test("worker with event listeners doesn't close event loop", () =>
-    expectEventLoopSurvivesManyMessages("worker-fixture-many-messages.js"));
+  test(
+    "worker with event listeners doesn't close event loop",
+    () => expectEventLoopSurvivesManyMessages("worker-fixture-many-messages.js"),
+    30_000,
+  );
 
-  test("worker with event listeners doesn't close event loop 2", () =>
-    expectEventLoopSurvivesManyMessages("worker-fixture-many-messages2.js"));
+  test(
+    "worker with event listeners doesn't close event loop 2",
+    () => expectEventLoopSurvivesManyMessages("worker-fixture-many-messages2.js"),
+    30_000,
+  );
 
   test("worker with process.exit", done => {
     const worker = new Worker(new URL("worker-fixture-process-exit.js", import.meta.url), {
@@ -288,9 +295,32 @@ describe("web worker", () => {
     await closed;
     expect(() => terminated.postMessage("after terminate")).not.toThrow();
 
+    // Inside the 'close' handler the worker is still in the Closing state.
+    // The message must be dropped before serialization even there, so a
+    // non-cloneable value cannot reach structured clone and throw.
     const exited = new Worker("data:text/javascript,");
-    await new Promise(resolve => exited.addEventListener("close", resolve, { once: true }));
+    await new Promise<void>((resolve, reject) => {
+      exited.addEventListener(
+        "close",
+        () => {
+          try {
+            exited.postMessage(() => {});
+            resolve();
+          } catch (e) {
+            reject(e);
+          }
+        },
+        { once: true },
+      );
+    });
     expect(() => exited.postMessage("after exit")).not.toThrow();
+
+    // One tick later (Closed) the same holds: no DataCloneError for a
+    // non-cloneable value, and a transferList entry is not detached.
+    expect(() => exited.postMessage(() => {})).not.toThrow();
+    const buffer = new ArrayBuffer(8);
+    expect(() => exited.postMessage(buffer, [buffer])).not.toThrow();
+    expect(buffer.byteLength).toBe(8);
   });
 
   describe("worker event", () => {

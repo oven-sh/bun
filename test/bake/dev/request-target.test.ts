@@ -110,6 +110,12 @@ devTest("absolute-form request-target routes like origin-form", {
       status: "HTTP/1.1 200 OK",
       body: "index route",
     });
+    // The authority ends at '?' (RFC 3986 section 3.2); a '/' inside the
+    // query of an empty-path target is not the start of the path.
+    expect(await rawRequest(dev.port, `GET http://127.0.0.1:${dev.port}?next=/blog/abc HTTP/1.1`)).toEqual({
+      status: "HTTP/1.1 200 OK",
+      body: "index route",
+    });
   },
 });
 

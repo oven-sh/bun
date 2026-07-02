@@ -7153,10 +7153,12 @@ fn extract_pathname_from_url(url: &[u8]) -> &[u8] {
     let pathname = if url.first() == Some(&b'/') {
         url
     } else if let Some(scheme_end) = strings::index_of(url, b"://") {
-        match strings::index_of_char_pos(url, b'/', scheme_end + b"://".len()) {
-            Some(path_start) => &url[path_start..],
+        // The authority ends at the first '/', '?' or '#' (RFC 3986 section
+        // 3.2), so a '/' later in the query is not the start of the path.
+        match strings::index_of_any_pos_comptime(url, b"/?#", scheme_end + b"://".len()) {
+            Some(path_start) if url[path_start] == b'/' => &url[path_start..],
             // `http://host` and `http://host?q` name an empty path, meaning "/"
-            None => b"/",
+            _ => b"/",
         }
     } else {
         return url;

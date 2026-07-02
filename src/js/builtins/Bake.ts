@@ -152,9 +152,7 @@ export async function renderRoutesForProdStatic(
           }
         } else {
           await Promise.all(
-            paramGetter.pages.map(params =>
-              callRouteGenerator(type, noClient, i, layouts, pageModule, params),
-            ),
+            paramGetter.pages.map(params => callRouteGenerator(type, noClient, i, layouts, pageModule, params)),
           );
         }
       } else {

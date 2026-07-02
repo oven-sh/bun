@@ -39,30 +39,34 @@ test("await import('bun')", async () => {
 // store the empty JSValue into the property slot: a later read of the property
 // would hand that empty value to JS and dereference a null cell.
 describe.concurrent("a lazy Bun.* getter that throws reifies the property as undefined", () => {
-  test("Bun.$ / Bun.sql / Bun.SQL / Bun.postgres (builtin module fails to evaluate)", async () => {
-    const names = ["$", "sql", "SQL", "postgres"];
-    const reads = names
-      .map(
-        n =>
-          `try { Bun[${JSON.stringify(n)}]; } catch {} console.log(${JSON.stringify(n)}, typeof Bun[${JSON.stringify(n)}]);`,
-      )
-      .join("\n");
-    // Replacing the global `Error` makes `class ShellError extends Error` (and
-    // `class SQLError extends Error`) in the builtins throw during reification.
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `Error = 1;\n${reads}`],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, signalCode: proc.signalCode, exitCode, reported: stderr.includes("TypeError") }).toEqual({
-      stdout: "$ undefined\nsql undefined\nSQL undefined\npostgres undefined\n",
-      signalCode: null,
-      exitCode: 1,
-      reported: true,
-    });
-  });
+  // Replacing the global `Error` makes `class ShellError extends Error` (and
+  // `class SQLError extends Error`) in the builtins throw during reification;
+  // replacing the global `Symbol` makes their `Symbol(...)` calls throw.
+  test.each(["Error = 1", "Symbol = Bun"])(
+    "Bun.$ / Bun.sql / Bun.SQL / Bun.postgres after `%s` (builtin module fails to evaluate)",
+    async tamper => {
+      const names = ["$", "sql", "SQL", "postgres"];
+      const reads = names
+        .map(
+          n =>
+            `try { Bun[${JSON.stringify(n)}]; } catch {} console.log(${JSON.stringify(n)}, typeof Bun[${JSON.stringify(n)}]);`,
+        )
+        .join("\n");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `${tamper};\n${reads}`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, signalCode: proc.signalCode, exitCode, reported: stderr.includes("TypeError") }).toEqual({
+        stdout: "$ undefined\nsql undefined\nSQL undefined\npostgres undefined\n",
+        signalCode: null,
+        exitCode: 1,
+        reported: true,
+      });
+    },
+  );
 
   test("Bun.redis (Rust getter throws)", async () => {
     await using proc = Bun.spawn({

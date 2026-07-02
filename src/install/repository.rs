@@ -360,7 +360,10 @@ pub(crate) fn split_path_from_fragment(
 /// repository root (`..`, empty segments, absolute/drive paths, backslashes) or
 /// break fragment round-tripping (`#`).
 fn normalize_path(raw: &[u8]) -> Result<&[u8], InvalidPathError> {
-    if strings::contains_char(raw, b'\\') || strings::contains_char(raw, b'#') {
+    if strings::contains_char(raw, b'\\')
+        || strings::contains_char(raw, b'#')
+        || strings::contains_char(raw, 0)
+    {
         return Err(InvalidPathError);
     }
 
@@ -395,12 +398,9 @@ fn normalize_path(raw: &[u8]) -> Result<&[u8], InvalidPathError> {
     Ok(p)
 }
 
-/// After a git checkout, replace the cache folder's contents with those of
-/// `subdir_path` so downstream package.json reading and node_modules linking see
-/// only the sub-package. Each path segment is opened with `O_NOFOLLOW` first so a
-/// symlinked segment committed into the repo cannot redirect the promotion
-/// outside the checkout; then the subdir is moved aside, the rest of the
-/// checkout is deleted, and the subdir is moved back into `folder_name`.
+/// Replace the cache folder's contents with `subdir_path`'s so downstream sees
+/// only the sub-package. Each segment is opened `O_NOFOLLOW` (a symlinked segment
+/// can't redirect outside the checkout); then subdir → temp, rest deleted, back.
 pub(crate) fn promote_subdirectory(
     cache_dir: bun_sys::Fd,
     folder_name: &[u8],
@@ -1128,6 +1128,9 @@ impl RepositoryExt for Repository {
                 if !subdir_path.is_empty() {
                     if let Err(err) = promote_subdirectory(cache_dir, folder_name, subdir_path) {
                         dir.close();
+                        // Drop the partially-promoted cache entry so a later
+                        // install of this `&path:` cannot reuse stale contents.
+                        let _ = bun_sys::Dir::borrow(&cache_dir).delete_tree(folder_name);
                         log.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
@@ -1314,10 +1317,8 @@ impl<'a> fmt::Display for Formatter<'a> {
         }
 
         if !self.repository.path.is_empty() {
-            if !has_fragment {
-                writer.write_str("#")?;
-            }
-            writer.write_str("&path:")?;
+            // pnpm form: `#path:<subdir>` alone, or `&path:<subdir>` after a ref.
+            writer.write_str(if has_fragment { "&path:" } else { "#path:" })?;
             write!(
                 writer,
                 "{}",

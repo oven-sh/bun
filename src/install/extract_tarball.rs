@@ -721,6 +721,9 @@ impl ExtractTarball {
                         folder_name,
                         subdir_path,
                     ) {
+                        // Drop the partially-promoted cache entry so a later
+                        // install of this `&path:` cannot reuse stale contents.
+                        let _ = Dir::borrow(&self.cache_dir).delete_tree(folder_name);
                         log.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,

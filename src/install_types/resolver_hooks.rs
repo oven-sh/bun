@@ -1014,12 +1014,9 @@ pub struct Repository {
     pub path: SemverString,
 }
 
-// Binary-lockfile ABI proof: `Repository` is embedded (via `Value`) in the
-// `#[repr(C)]` resolution column serialized to `bun.lockb`. Adding the `path`
-// handle keeps `Repository` (six align-1 `SemverString` handles) at 48 bytes,
-// which stays within the `VersionedURLType` (64-byte) union arm — so
-// `size_of::<Resolution>()` is unchanged and no `FormatVersion` bump is needed.
-// Older lockfiles read `path` from the previously-zeroed union tail (empty).
+// Binary-lockfile ABI: `Repository` sits in the `#[repr(C)]` `Value` union
+// (largest arm `VersionedURLType` = 64B) in `bun.lockb`, so a 6th 8B handle
+// keeps `Resolution` at 72B — no `FormatVersion` bump (old lockfiles: empty).
 const _: () = assert!(core::mem::size_of::<Repository>() == 48);
 const _: () = assert!(core::mem::align_of::<Repository>() == 1);
 

@@ -173,8 +173,11 @@ impl Id {
         hasher.update(url);
         hasher.update(b"@");
         hasher.update(resolved);
-        hasher.update(b":");
-        hasher.update(path);
+        // Empty path keeps the pre-existing id stable for non-subdir git deps.
+        if !path.is_empty() {
+            hasher.update(b":path:");
+            hasher.update(path);
+        }
         Id((5u64 << 61) | (hasher.final_() & ((1u64 << 61) - 1)))
     }
 }

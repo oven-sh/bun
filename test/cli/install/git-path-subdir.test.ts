@@ -1,7 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+
+beforeAll(() => setDefaultTimeout(1000 * 60 * 5));
 
 // RexSkz/test-git-subfolder-fetch is pnpm's own fixture for this feature: a real
 // monorepo whose packages/ subdirectories have no workspace: cross-deps, so each
@@ -147,8 +149,8 @@ describe("git dependency &path: subdirectory support", () => {
 
       const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(existsSync(join(String(installDir), "node_modules", name))).toBeFalse();
       expect(exitCode).not.toBe(0);
+      expect(existsSync(join(String(installDir), "node_modules", name))).toBeFalse();
     }
   });
 

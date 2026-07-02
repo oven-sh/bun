@@ -2743,16 +2743,18 @@ fn transpile_source_code_inner(
                                     .cast::<bun_resolver::package_json::PackageJSON>()
                             })
                             .or_else(|| {
+                                // Path-less sources (eval, `blob:` URLs) have no
+                                // directory; `read_dir_info` requires an absolute
+                                // path (same guard as the non-cached branch below).
+                                let dir = source.path.name().dir;
+                                if !bun_paths::is_absolute(dir) {
+                                    return None;
+                                }
                                 // SAFETY: per fn contract — `transpiler.
                                 // resolver` is a value field of the VM;
                                 // `read_dir_info` is re-entrant on the JS
                                 // thread and returns a stable cache slot.
-                                match unsafe {
-                                    (*jsc_vm)
-                                        .transpiler
-                                        .resolver
-                                        .read_dir_info(source.path.name().dir)
-                                } {
+                                match unsafe { (*jsc_vm).transpiler.resolver.read_dir_info(dir) } {
                                     Ok(Some(dir_info)) => {
                                         dir_info.package_json().or(dir_info.enclosing_package_json)
                                     }

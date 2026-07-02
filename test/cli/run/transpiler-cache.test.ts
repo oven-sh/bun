@@ -261,6 +261,38 @@ describe("transpiler cache", () => {
     expect(run(["--feature=OTHER", "--feature=SUPER_SECRET"])).toBe("enabled");
     expect(newCacheCount()).toBe(0); // cache hit, order doesn't matter
   });
+  test("cache hit for a source with no filesystem path", () => {
+    // A worker created from an `eval: true` source string loads from a `blob:`
+    // object URL, which has no directory. The source is cache-eligible (it is
+    // above MINIMUM_CACHE_SIZE and CommonJS), so the second identical worker
+    // takes the cache-hit path, which must not walk a package.json directory
+    // for the path-less specifier.
+    writeFileSync(
+      join(temp_dir, "eval-worker.js"),
+      `import { Worker } from "node:worker_threads";
+const src = 'module.exports = "' + Buffer.alloc(6000, "x").toString() + '";';
+const run = () =>
+  new Promise((resolve, reject) => {
+    const w = new Worker(src, { eval: true });
+    w.on("error", reject);
+    w.on("exit", code => (code === 0 ? resolve() : reject(new Error("worker exited with " + code))));
+  });
+await run();
+await run();
+console.log("ok");
+`,
+    );
+    const result = Bun.spawnSync({
+      cmd: [bunExe(), "eval-worker.js"],
+      cwd: temp_dir,
+      env,
+    });
+    expect(result.stdout.toString()).toBe("ok\n");
+    expect(result.exitCode).toBe(0);
+    // The first worker's source was written to the cache; the second hit it.
+    expect(existsSync(cache_dir)).toBeTrue();
+    expect(newCacheCount()).toBe(1);
+  });
 });
 
 test("rejects cached module records containing out-of-range string indices", () => {

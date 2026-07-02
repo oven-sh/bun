@@ -493,6 +493,15 @@ impl<'a> Transpiler<'a> {
                 // disjoint mutable borrows of `cache_bust_buf` across `break`,
                 // so compute `busted` directly instead.
                 let busted: bool = 'name: {
+                    // An entry point longer than a path buffer can't name a real
+                    // file; skip the bust rather than overflow `cache_bust_buf`
+                    // in the unchecked joins below.
+                    if self.fs().top_level_dir.len() + entry_point.len() + b"/../".len()
+                        >= cache_bust_buf.len()
+                    {
+                        break 'name false;
+                    }
+
                     if bun_paths::is_absolute(entry_point) {
                         let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                             entry_point,

@@ -201,60 +201,31 @@ describe("web worker", () => {
     });
   });
 
-  test("worker with event listeners doesn't close event loop", done => {
-    const x = Bun.spawn({
+  // A torn-down event loop makes the child exit without printing "done"; a
+  // hang is bounded by the per-test timeout (no wall-clock race: the fixture
+  // alone takes over a second on debug builds).
+  test("worker with event listeners doesn't close event loop", async () => {
+    await using x = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.js"), "worker-fixture-many-messages.js"],
       env: bunEnv,
       stdio: ["inherit", "pipe", "inherit"],
     });
 
-    const timer = setTimeout(() => {
-      x.kill();
-      done(new Error("timeout"));
-    }, 1000);
-
-    x.exited.then(async code => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        done(new Error("exited with non-zero code"));
-      } else {
-        const text = await new Response(x.stdout).text();
-        if (!text.includes("done")) {
-          console.log({ text });
-          done(new Error("event loop killed early"));
-        } else {
-          done();
-        }
-      }
-    });
+    const [text, exitCode] = await Promise.all([x.stdout.text(), x.exited]);
+    expect(text).toBe("done\n");
+    expect(exitCode).toBe(0);
   });
 
-  test("worker with event listeners doesn't close event loop 2", done => {
-    const x = Bun.spawn({
+  test("worker with event listeners doesn't close event loop 2", async () => {
+    await using x = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.js"), "worker-fixture-many-messages2.js"],
       env: bunEnv,
       stdio: ["inherit", "pipe", "inherit"],
     });
 
-    const timer = setTimeout(() => {
-      x.kill();
-      done(new Error("timeout"));
-    }, 1000);
-
-    x.exited.then(async code => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        done(new Error("exited with non-zero code"));
-      } else {
-        const text = await new Response(x.stdout).text();
-        if (!text.includes("done")) {
-          console.log({ text });
-          done(new Error("event loop killed early"));
-        } else {
-          done();
-        }
-      }
-    });
+    const [text, exitCode] = await Promise.all([x.stdout.text(), x.exited]);
+    expect(text).toBe("done\n");
+    expect(exitCode).toBe(0);
   });
 
   test("worker with process.exit", done => {
@@ -294,6 +265,24 @@ describe("web worker", () => {
       expect(err.type).toBe("error");
       expect(err.message).toBe("5");
       expect(err.error).toBe(null);
+    });
+
+    // A specifier longer than a path buffer used to overflow the entry-point
+    // resolver's directory-cache-bust retry and abort the whole process.
+    test("is fired for a specifier longer than a path buffer", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const w = new Worker(Buffer.alloc(8192, "x").toString());
+w.onerror = e => console.log("worker error:", e.message.includes("ModuleNotFound"));`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("worker error: true\n");
+      expect(exitCode).toBe(0);
     });
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
 
 import { ok } from "node:assert/strict";
 
@@ -212,6 +212,66 @@ describe("WebAssembly.compileStreaming", () => {
   test("doesn't compile a response that isn't valid WebAssembly", async () => {
     const response = await fetch("data:application/wasm,This is not actually Wasm");
     expect(WebAssembly.compileStreaming(response)).rejects.toBeInstanceOf(WebAssembly.CompileError);
+  });
+});
+
+describe("streaming a module whose function body fails validation", () => {
+  // The streaming compiler parses section framing on the main thread and compiles
+  // each function body on a worklist thread, so this error path is distinct from a
+  // malformed header. https://github.com/oven-sh/WebKit/pull/265
+  test("rejects with CompileError instead of crashing", async () => {
+    const fixture = `
+      // 3 functions of type () -> (); the bytes are framing-valid, but the last
+      // function body leaves an i32 on the stack, so it fails validation.
+      const bytes = Uint8Array.from([
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // magic + version
+        0x01, 0x04, 0x01, 0x60, 0x00, 0x00, // type section: 1 type, () -> ()
+        0x03, 0x04, 0x03, 0x00, 0x00, 0x00, // function section: 3 functions of type 0
+        0x0a, 0x0d, 0x03, // code section: 3 bodies
+        0x02, 0x00, 0x0b, // (func)
+        0x03, 0x00, 0x01, 0x0b, // (func nop)
+        0x04, 0x00, 0x41, 0x00, 0x0b, // (func i32.const 0): invalid
+      ]);
+      console.log("validate:", WebAssembly.validate(bytes));
+      const headers = { "Content-Type": "application/wasm" };
+
+      const compiled = await WebAssembly.compileStreaming(new Response(bytes, { headers })).then(
+        () => "resolved",
+        e => e.constructor.name,
+      );
+      console.log("compileStreaming:", compiled);
+
+      // Deliver the code section in a second chunk so the stream turns invalid late.
+      const response = new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(bytes.slice(0, 20));
+            controller.enqueue(bytes.slice(20));
+            controller.close();
+          },
+        }),
+        { headers },
+      );
+      const instantiated = await WebAssembly.instantiateStreaming(response).then(
+        () => "resolved",
+        e => e.constructor.name,
+      );
+      console.log("instantiateStreaming:", instantiated);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "validate: false
+      compileStreaming: CompileError
+      instantiateStreaming: CompileError"
+    `);
+    expect(exitCode).toBe(0);
   });
 });
 

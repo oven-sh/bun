@@ -255,9 +255,6 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamBYOBRead
     if (!stream)
         return throwVMTypeError(lexicalGlobalObject, scope, "ReadableStreamBYOBReader constructor requires a ReadableStream as its first argument"_s);
 
-    // Same as getReader({ mode: "byob" }): materialize a lazy native stream first.
-    stream->materializeIfNeeded(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
     auto* structure = structureForNewTarget(constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
     RETURN_IF_EXCEPTION(scope, {});
     auto* reader = JSReadableStreamBYOBReader::create(vm, structure);

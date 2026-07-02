@@ -1,7 +1,6 @@
 // Async stack recovery for errors created from native code with no JavaScript frames on
-// the stack (event-loop callbacks, promise reaction handlers): walk the pending promise's
-// reaction chain to the async functions awaiting it and use their frames as the error's
-// stack. See AsyncStackTrace.cpp.
+// the stack: walk the pending promise's reaction chain to the async functions awaiting it
+// and use their frames as the error's stack. See AsyncStackTrace.cpp.
 #pragma once
 
 #include "root.h"

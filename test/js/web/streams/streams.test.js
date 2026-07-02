@@ -653,6 +653,45 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     expect(value.byteLength).toBe(10);
   });
 
+  it("a patched Object.prototype.then that releases the reader mid-resolution does not crash", async () => {
+    let releaseNow = null;
+    Object.defineProperty(Object.prototype, "then", {
+      configurable: true,
+      get() {
+        if (releaseNow) {
+          const release = releaseNow;
+          releaseNow = null;
+          try {
+            release();
+          } catch {}
+        }
+        return undefined;
+      },
+    });
+    try {
+      let ctrl;
+      const rs = new ReadableStream({ type: "bytes", start(c) { ctrl = c; } });
+      const reader = rs.getReader();
+      const read = reader.read().catch(() => {});
+      releaseNow = () => reader.releaseLock();
+      ctrl.enqueue(new Uint8Array(8));
+      await read;
+
+      let ctrl2;
+      const rs2 = new ReadableStream({ type: "bytes", start(c) { ctrl2 = c; } });
+      const byobReader = rs2.getReader({ mode: "byob" });
+      const a = byobReader.read(new Uint8Array(4)).catch(() => {});
+      const b = byobReader.read(new Uint8Array(4)).catch(() => {});
+      ctrl2.close();
+      releaseNow = () => byobReader.releaseLock();
+      ctrl2.byobRequest?.respond(0);
+      await Promise.all([a, b]);
+    } finally {
+      delete Object.prototype.then;
+    }
+    expect(true).toBe(true);
+  });
+
   it("new ReadableStreamDefaultReader(lazyNativeStream) materializes it like getReader()", async () => {
     using dir = tempDir("reader-ctor", { "data.txt": "reader-ctor-data" });
     const reader = new ReadableStreamDefaultReader(Bun.file(join(String(dir), "data.txt")).stream());

@@ -71,11 +71,12 @@ export function readableStreamFromAsyncIterator(target, fn) {
       if (closingError) {
         try {
           await iter.throw?.(closingError);
+        } catch {
+          // The iterator's own cleanup failure is subsumed by the original error.
         } finally {
           iter = undefined;
-          // eslint-disable-next-line no-throw-literal
-          throw closingError;
         }
+        throw closingError;
       } else {
         await controller.end();
         if (iter) {

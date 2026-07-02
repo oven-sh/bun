@@ -54,4 +54,3 @@ done: true }` instead of `{ value: undefined, done: true }`. It passes when the 
 runs in isolation and fails only in the full 68-file run (the harness runs every
 file in one realm, unlike the browser WPT runner, so cross-file state can leak); the
 identical failure with the identical message existed in the pre-rewrite baseline.
-Tracked as a follow-up in `specs/PHASE-D-NOTES.md`.

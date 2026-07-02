@@ -68,8 +68,8 @@ Blob,JSON,Array,ArrayBuffer,FormData}` and the `Request`/`Response` body consume
 
 - Edit the `.cpp`/`.h` directly and rebuild with `bun bd`. There is no codegen step for the
   stream classes themselves (only the JSSink classes are generated). For a fast per-TU
-  syntax check without a full build, compile one TU against `compile_commands.json`
-  (`clang++ -fsyntax-only @<flags from build/debug/compile_commands.json> <file.cpp>`).
+  syntax check without a full build, look up the TU's compile command in
+  `build/debug/compile_commands.json` and re-run it with `-fsyntax-only`.
 - Each TU compiles standalone (see `noUnifyDirs` in `scripts/build/unified.ts`): file-local
   `static` helpers are written assuming TU isolation, so don't move them into headers
   without renaming.

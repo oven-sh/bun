@@ -161,17 +161,21 @@ bool readableStreamHasBYOBReader(JSReadableStream* stream)
     return reader && reader->isBYOB();
 }
 
-// ReadableStreamGetNumReadRequests(stream)
+// ReadableStreamGetNumReadRequests(stream). NULL-SAFE by design: resolving a read result
+// runs user JS (a patched Object.prototype.then) that can release the reader between a
+// caller's check and its use, so a missing reader reads as "no pending requests".
 size_t readableStreamGetNumReadRequests(JSReadableStream* stream)
 {
-    ASSERT(readableStreamHasDefaultReader(stream));
+    if (!readableStreamHasDefaultReader(stream)) [[unlikely]]
+        return 0;
     return static_cast<JSReadableStreamDefaultReader*>(stream->m_reader.get())->m_readRequests.size();
 }
 
-// ReadableStreamGetNumReadIntoRequests(stream)
+// ReadableStreamGetNumReadIntoRequests(stream). Null-safe: see readableStreamGetNumReadRequests.
 size_t readableStreamGetNumReadIntoRequests(JSReadableStream* stream)
 {
-    ASSERT(readableStreamHasBYOBReader(stream));
+    if (!readableStreamHasBYOBReader(stream)) [[unlikely]]
+        return 0;
     return static_cast<JSReadableStreamBYOBReader*>(stream->m_reader.get())->m_readIntoRequests.size();
 }
 
@@ -195,12 +199,16 @@ void readableStreamAddReadIntoRequest(VM& vm, JSReadableStream* stream, JSReadIn
     reader->m_readIntoRequests.append(WriteBarrier<JSReadIntoRequest>(vm, reader, readRequest));
 }
 
-// ReadableStreamFulfillReadRequest(stream, chunk, done)
+// ReadableStreamFulfillReadRequest(stream, chunk, done). A user-installed
+// Object.prototype.then can release the reader while an earlier request in the same batch
+// is being resolved; its remaining requests were already rejected, so there is nothing to do.
 void readableStreamFulfillReadRequest(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue chunk, bool done)
 {
-    ASSERT(readableStreamHasDefaultReader(stream));
+    if (!readableStreamHasDefaultReader(stream)) [[unlikely]]
+        return;
     auto* reader = static_cast<JSReadableStreamDefaultReader*>(stream->m_reader.get());
-    ASSERT(!reader->m_readRequests.isEmpty());
+    if (reader->m_readRequests.isEmpty()) [[unlikely]]
+        return;
     JSReadRequest* readRequest = nullptr;
     {
         WTF::Locker locker { reader->cellLock() };
@@ -212,12 +220,15 @@ void readableStreamFulfillReadRequest(JSGlobalObject* globalObject, JSReadableSt
         readRequest->chunkSteps(globalObject, chunk);
 }
 
-// ReadableStreamFulfillReadIntoRequest(stream, chunk, done)
+// ReadableStreamFulfillReadIntoRequest(stream, chunk, done). Null-safe like
+// readableStreamFulfillReadRequest: a reader released mid-batch already rejected these.
 void readableStreamFulfillReadIntoRequest(JSGlobalObject* globalObject, JSReadableStream* stream, JSArrayBufferView* chunk, bool done)
 {
-    ASSERT(readableStreamHasBYOBReader(stream));
+    if (!readableStreamHasBYOBReader(stream)) [[unlikely]]
+        return;
     auto* reader = static_cast<JSReadableStreamBYOBReader*>(stream->m_reader.get());
-    ASSERT(!reader->m_readIntoRequests.isEmpty());
+    if (reader->m_readIntoRequests.isEmpty()) [[unlikely]]
+        return;
     JSReadIntoRequest* readIntoRequest = nullptr;
     {
         WTF::Locker locker { reader->cellLock() };

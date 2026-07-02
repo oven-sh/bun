@@ -97,6 +97,82 @@ it("retries a manifest whose redirect target 500s once", async () => {
   });
 });
 
+// A cross-origin redirect strips Authorization from the in-flight header list
+// (per the fetch spec). That list is bitwise-shared with the task's AsyncHTTP,
+// so the stripped state used to leak into the install retry and the
+// re-requested registry URL went out unauthenticated (401). The retry must
+// restore the original headers along with the original URL.
+it("retries an authorized manifest whose cross-origin redirect target 500s once", async () => {
+  const token = "test-registry-token";
+  const registryUrls: string[] = [];
+  const cdnAuth: (string | null)[] = [];
+  let cdnHits = 0;
+  // A second server on its own port stands in for the CDN the registry
+  // redirects to; a different port makes the redirect cross-origin.
+  await using cdn = Bun.serve({
+    port: 0,
+    fetch(request) {
+      if (new URL(request.url).pathname !== "/cdn/BaR") {
+        return new Response("unexpected", { status: 404 });
+      }
+      cdnAuth.push(request.headers.get("authorization"));
+      if (cdnHits++ === 0) {
+        return new Response("transient", { status: 500 });
+      }
+      return Response.json({
+        name: "BaR",
+        versions: {
+          "0.0.2": { name: "BaR", version: "0.0.2", dist: { tarball: `${root_url}/BaR-0.0.2.tgz` } },
+        },
+        "dist-tags": { latest: "0.0.2" },
+      });
+    },
+  });
+  setHandler(async request => {
+    const { pathname } = new URL(request.url);
+    registryUrls.push(pathname);
+    if (pathname === "/BaR") {
+      // The registry requires the token on every request, including the retry.
+      if (request.headers.get("authorization") !== `Bearer ${token}`) {
+        return new Response("missing authorization", { status: 401 });
+      }
+      return new Response(null, {
+        status: 302,
+        headers: { Location: `http://localhost:${cdn.port}/cdn/BaR` },
+      });
+    }
+    if (pathname === "/BaR-0.0.2.tgz") {
+      return new Response(file(join(import.meta.dir, "bar-0.0.2.tgz")));
+    }
+    return new Response("unexpected", { status: 404 });
+  });
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    `[install]\ncache = false\nregistry = { url = "${root_url}/", token = "${token}" }\nsaveTextLockfile = false\n`,
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { BaR: "0.0.2" } }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  expect(out).toContain("1 package installed");
+  expect(exitCode).toBe(0);
+  // Both registry hits carried the token (the handler 401s otherwise); the
+  // cross-origin CDN hops must NOT have (the spec strips it for that hop).
+  expect(registryUrls).toEqual(["/BaR", "/BaR", "/BaR-0.0.2.tgz"]);
+  expect(cdnAuth).toEqual([null, null]);
+});
+
 // Same bug, sibling retry site (tarball downloads in runTasks): the tarball URL
 // 302-redirects and the target 500s once before serving the archive.
 it("retries a tarball whose redirect target 500s once", async () => {

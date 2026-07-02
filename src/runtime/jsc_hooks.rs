@@ -1048,23 +1048,21 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             // SAFETY: `el` is the live per-thread event loop.
             unsafe { (*el).process_gc_timer() };
             // Note (§Forbidden aliased-&mut): `get_timeout` may fire a
-            // `WTFTimer` JS callback.
-            // A re-entrant `setTimeout`/`clearTimeout` reaches
-            // `timer::All::insert`/`remove` via `runtime_state()` and would
-            // mint a second `&mut timer` if we held `&mut (*state).timer`
-            // across the call. Pass the raw `*mut Self` instead;
-            // `timer::All::get_timeout` forms short-lived `&mut` only around
-            // heap ops that cannot re-enter JS, releasing the borrow before
-            // invoking `fire()`.
+            // `WTFTimer` JS callback. A re-entrant `setTimeout`/
+            // `clearTimeout` reaches `timer::All::insert`/`remove` via
+            // `runtime_state()` and would mint a second `&mut timer` if a
+            // `&mut (*state).timer` were live across the call, so the
+            // receiver is a raw `*mut All`.
             // `get_timeout` reads CLOCK_MONOTONIC to compare against the timer heap; hand that
             // same reading to the tick for the park hook's idle-sweep rate limit. It is lazy,
             // and so is the hook: NOW_NS_UNKNOWN means it took none.
             let mut now: Option<bun_core::Timespec> = None;
-            // SAFETY: `state` is the live per-thread `RuntimeState`; the
-            // `timer` field address is stable for the VM lifetime.
+            // SAFETY: `state` is the live per-thread `RuntimeState` (JS
+            // thread, no outstanding `&mut All`); the `timer` field address
+            // is stable for the VM lifetime.
             let have_timeout = unsafe {
                 timer::All::get_timeout(
-                    &mut (*state).timer,
+                    core::ptr::addr_of_mut!((*state).timer),
                     &mut timespec,
                     has_pending_immediate,
                     quic_next_tick_us,
@@ -1091,12 +1089,13 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         unsafe { (*state).uv_loop.after_poll() };
         // Note (§Forbidden aliased-&mut): `drain_timers` fires user
         // `setTimeout` callbacks which may re-enter `timer::All::insert`/
-        // `remove` via `runtime_state()`. Pass raw `*mut Self` so no
-        // long-lived `&mut (*state).timer` is held across `fire()`;
-        // `drain_timers` forms short-lived `&mut` only around heap pop/peek.
-        // SAFETY: `state` is the live per-thread `RuntimeState`; the `timer`
-        // field address is stable for the VM lifetime.
-        unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
+        // `remove` via `runtime_state()`. The receiver is a raw `*mut All` so
+        // no `&mut (*state).timer` is held across `fire()`; `drain_timers`
+        // forms short-lived `&mut` only around heap pop/peek.
+        // SAFETY: `state` is the live per-thread `RuntimeState` (JS thread,
+        // no outstanding `&mut All`); the `timer` field address is stable for
+        // the VM lifetime.
+        unsafe { timer::All::drain_timers(core::ptr::addr_of_mut!((*state).timer), vm.cast()) };
     }
 
     // SAFETY: per fn contract.
@@ -1194,11 +1193,12 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
             // same reading to the tick for the park hook's idle-sweep rate limit. It is lazy,
             // and so is the hook: NOW_NS_UNKNOWN means it took none.
             let mut now: Option<bun_core::Timespec> = None;
-            // SAFETY: `state` is the live per-thread `RuntimeState`; see
-            // Note on `auto_tick` re: aliased-&mut across `fire()`.
+            // SAFETY: `state` is the live per-thread `RuntimeState` (JS
+            // thread, no outstanding `&mut All`); see Note on `auto_tick`
+            // re: aliased-&mut across `fire()`.
             let have_timeout = unsafe {
                 timer::All::get_timeout(
-                    &mut (*state).timer,
+                    core::ptr::addr_of_mut!((*state).timer),
                     &mut timespec,
                     has_pending_immediate,
                     quic_next_tick_us,
@@ -1222,9 +1222,9 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     {
         // SAFETY: see the matching calls in `auto_tick`.
         unsafe { (*state).uv_loop.after_poll() };
-        // SAFETY: `state` is the live per-thread `RuntimeState`; see Note
-        // on `auto_tick` re: aliased-&mut across `fire()`.
-        unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
+        // SAFETY: `state` is the live per-thread `RuntimeState` (JS thread,
+        // no outstanding `&mut All`); see Note on `auto_tick`.
+        unsafe { timer::All::drain_timers(core::ptr::addr_of_mut!((*state).timer), vm.cast()) };
     }
 
     // SAFETY: per fn contract.

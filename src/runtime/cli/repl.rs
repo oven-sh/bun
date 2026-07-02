@@ -1083,6 +1083,13 @@ impl<'a> Repl<'a> {
     /// Temporarily enable SIGINT delivery during blocking promise waits
     fn enable_signals_during_wait(&mut self) {
         SIGINT_ARMED.store(true, core::sync::atomic::Ordering::Release);
+        if let Some(vm) = self.vm {
+            // `wait_for_promise_or_sigint` refs the loop (see `EventLoop::ref_loop_scoped`),
+            // so `auto_tick` parks in epoll/kqueue instead of polling, and the poll retries
+            // on EINTR. Setting `SIGINT_DURING_WAIT` from the handler is therefore not
+            // observable on its own — the handler must also wake the loop.
+            SIGINT_LOOP.store(vm.uws_loop(), core::sync::atomic::Ordering::Release);
+        }
 
         #[cfg(unix)]
         {
@@ -1108,6 +1115,9 @@ impl<'a> Repl<'a> {
     fn wait_for_promise_or_sigint(vm: &VirtualMachine, promise: *mut jsc::JSPromise) -> bool {
         use core::sync::atomic::Ordering;
         SIGINT_DURING_WAIT.store(false, Ordering::Release);
+        // Park instead of spin while waiting; `sigint_handler` wakes the loop, see
+        // `EventLoop::ref_loop_scoped`'s contract.
+        let _loop_ref = vm.event_loop_shared().ref_loop_scoped();
         while jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending {
             if SIGINT_DURING_WAIT.swap(false, Ordering::AcqRel) {
                 return true;
@@ -1125,6 +1135,7 @@ impl<'a> Repl<'a> {
     /// Restore raw terminal mode after promise wait
     fn disable_signals_during_wait(&mut self) {
         SIGINT_ARMED.store(false, core::sync::atomic::Ordering::Release);
+        SIGINT_LOOP.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
 
         #[cfg(unix)]
         {
@@ -2848,15 +2859,30 @@ impl<'a> Drop for Repl<'a> {
 
 /// The REPL is waiting on a promise and wants SIGINT to cut the wait short (async-signal-safe: atomics only).
 static SIGINT_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-/// A SIGINT arrived during such a wait: stop waiting (the signal itself interrupts the loop's poll). Not a
+/// A SIGINT arrived during such a wait: stop waiting (`sigint_handler` wakes the loop's poll). Not a
 /// VM stop — the VM stays usable.
 static SIGINT_DURING_WAIT: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
+
+/// The uws loop the interrupted `wait_for_promise_or_sigint` is parked in. See
+/// `enable_signals_during_wait`.
+static SIGINT_LOOP: core::sync::atomic::AtomicPtr<bun_uws::Loop> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
 #[cfg(unix)]
 extern "C" fn sigint_handler(_: c_int) {
     if SIGINT_ARMED.load(core::sync::atomic::Ordering::Acquire) {
         SIGINT_DURING_WAIT.store(true, core::sync::atomic::Ordering::Release);
+    }
+    let loop_ = SIGINT_LOOP.load(core::sync::atomic::Ordering::Acquire);
+    if !loop_.is_null() {
+        // Wake the parked `auto_tick` so `wait_for_promise_or_sigint` re-checks
+        // `SIGINT_DURING_WAIT`. `wakeup_raw` takes a raw pointer (the parked
+        // thread holds `&mut Loop`) and bottoms out in an atomic increment
+        // plus a `write()` to the wakeup eventfd — async-signal-safe.
+        // SAFETY: `loop_` is the VM's loop, live while the JS thread is
+        // parked in the wait this handler interrupts.
+        unsafe { bun_uws::Loop::wakeup_raw(loop_) };
     }
 }
 

@@ -262,6 +262,7 @@ describe("transpiler cache", () => {
     expect(newCacheCount()).toBe(0); // cache hit, order doesn't matter
   });
   test("cache hit for a source with no filesystem path", () => {
+    // https://github.com/oven-sh/bun/issues/30429
     // A worker created from an `eval: true` source string loads from a `blob:`
     // object URL, which has no directory. The source is cache-eligible (it is
     // above MINIMUM_CACHE_SIZE and CommonJS), so the second identical worker

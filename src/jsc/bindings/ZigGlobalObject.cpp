@@ -3442,13 +3442,10 @@ void GlobalObject::handleRejectedPromises()
                 continue;
             inflight.index = i + 1;
 
-            // Restore the async context that was active when the promise was
-            // rejected while the "unhandledRejection" event is emitted, like
-            // Node.js does. This mirrors how timers keep the async context
-            // installed while reporting an uncaught exception. Raw entries
-            // were rejected with no async context, so they replay `undefined`;
-            // this matters when the drain itself runs inside a context (it
-            // can be re-entered synchronously from user code).
+            // Emit the event in the context the promise was rejected in, the way
+            // Node exchanges the context frame around this dispatch. Entries
+            // rejected with no context replay `undefined` rather than inherit the
+            // drain's: it can be re-entered synchronously from user code.
             InternalFieldTuple* asyncContextData = nullptr;
             JSC::JSValue restoreAsyncContext;
             if (asyncContext || isAsyncContextTrackingEnabled()) {

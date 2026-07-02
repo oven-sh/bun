@@ -255,15 +255,10 @@ using WebCore::JSBunStandaloneTextSink;
 static constexpr size_t nativeSourceDefaultChunkSize = 256 * 1024;
 static constexpr size_t nativeSourceMaxChunkSize = 2 * 1024 * 1024;
 
-// Shared bound-convention wrapper: target(contextCell, ...callArgs).
-static JSBoundFunction* createBoundHandler(JSGlobalObject* globalObject, JSFunction* target, JSCell* context)
+// Shared bound-convention wrapper: see createStreamsBoundHandler (WebStreamsMisc.cpp).
+static inline JSBoundFunction* createBoundHandler(JSGlobalObject* globalObject, JSFunction* target, JSCell* context)
 {
-    auto& vm = getVM(globalObject);
-    MarkedArgumentBuffer boundArgs;
-    boundArgs.append(context);
-    ASSERT(!boundArgs.hasOverflowed());
-    return JSBoundFunction::create(vm, globalObject, target, jsUndefined(), ArgList(boundArgs), 1, nullptr,
-        makeSource("streamsBoundHandler"_s, SourceOrigin(), SourceTaintedOrigin::Untainted));
+    return createStreamsBoundHandler(globalObject, target, context);
 }
 
 // Queues handler(value, contextCell) — the reaction-convention argument order.

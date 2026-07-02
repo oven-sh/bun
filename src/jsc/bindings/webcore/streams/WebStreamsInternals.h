@@ -139,6 +139,12 @@ QueuingStrategyDict convertQueuingStrategyDict(JSC::JSGlobalObject*, JSC::JSValu
 // (undefined / true / ...) are exempt. Do NOT "optimize" a fulfillment site to skip
 // re-validation on the grounds that the resolution value is internally constructed.
 JSC::JSPromise* promiseFulfilledWith(JSC::JSGlobalObject*, JSC::JSValue); // userJS: no — WebStreamsMisc.cpp
+// [bound-convention] wrapper: target(contextCell, ...callArgs). userJS: no — WebStreamsMisc.cpp
+JSC::JSBoundFunction* createStreamsBoundHandler(JSC::JSGlobalObject*, JSC::JSFunction* target, JSC::JSCell* context);
+// obj.name(...args); returns the EMPTY value when `name` is not callable. userJS: yes — WebStreamsMisc.cpp
+JSC::JSValue invokeOptionalMethod(JSC::JSGlobalObject*, JSC::JSObject*, const JSC::Identifier& name, const JSC::MarkedArgumentBuffer&);
+// error.code === code, swallowing any lookup exception. userJS: yes — WebStreamsMisc.cpp
+bool errorCodeIs(JSC::JSGlobalObject*, JSC::JSValue error, WTF::ASCIILiteral code);
 JSC::JSPromise* promiseResolvedWith(JSC::JSGlobalObject*, JSC::JSValue); // userJS: yes — WebStreamsMisc.cpp
 // "a promise rejected with r" (rejection never does a `then` lookup)
 JSC::JSPromise* promiseRejectedWith(JSC::JSGlobalObject*, JSC::JSValue); // userJS: no — WebStreamsMisc.cpp
@@ -532,6 +538,8 @@ JSC::JSValue consumeDirectStreamToArrayBuffer(JSC::JSGlobalObject*, JSReadableSt
 // (the ReadableStreamTag__tagged coercion path). This is Bun's direct-mode wrapper, NOT the
 // spec's readableStreamFromIterable. Owned by WebStreamsExports.cpp: the tag protocol is that
 // file's surface, and it is this function's only caller.
+// An async-generator-function value is accepted directly (started eagerly). BunAsyncIterableSource.cpp
+bool isNonHostAsyncGeneratorFunction(JSC::JSObject*);
 JSReadableStream* readableStreamFromAsyncIterator(JSC::JSGlobalObject*, JSC::JSValue asyncIterableOrGeneratorFn); // userJS: yes — WebStreamsExports.cpp
 
 } // namespace WebStreams

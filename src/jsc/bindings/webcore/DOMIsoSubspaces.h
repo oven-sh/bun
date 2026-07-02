@@ -281,6 +281,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForDirectStreamController;
     std::unique_ptr<IsoSubspace> m_subspaceForNativeStreamSourceAdapter;
     std::unique_ptr<IsoSubspace> m_subspaceForDirectSinkCloseState;
+    std::unique_ptr<IsoSubspace> m_subspaceForAsyncIteratorSourceOperation;
     std::unique_ptr<IsoSubspace> m_subspaceForReadStreamIntoSinkOperation;
     std::unique_ptr<IsoSubspace> m_subspaceForResumableSinkPumpOperation;
     std::unique_ptr<IsoSubspace> m_subspaceForBunStandaloneTextSink;

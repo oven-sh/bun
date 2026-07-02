@@ -73,6 +73,7 @@ class JSBunStandaloneTextSink; // the standalone Text sink (BunStandaloneTextSin
 class JSOneShotDirectSink; // consumeDirectStreamToArrayBuffer's throwaway controller
 class JSNativeStreamSourceAdapter;
 class JSDirectSinkCloseState;
+class JSAsyncIteratorSourceOperation;
 class JSReadStreamIntoSinkOperation;
 class JSResumableSinkPumpOperation;
 class JSTextEncoderStream;

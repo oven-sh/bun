@@ -9,6 +9,7 @@
 #include "DOMIsoSubspaces.h"
 #include "JSCrossRealmTransformState.h"
 #include "JSDirectSinkCloseState.h"
+#include "JSAsyncIteratorSourceOperation.h"
 #include "JSDirectStreamController.h"
 #include "JSOneShotDirectSink.h"
 #include "JSPullIntoDescriptor.h"

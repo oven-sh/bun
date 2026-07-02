@@ -263,6 +263,50 @@ StreamAsyncContextScope::~StreamAsyncContextScope()
         m_asyncContextData->putInternalField(m_vm, 0, m_previous);
 }
 
+// obj.name(args...) with obj as |this|; the EMPTY value if `name` is not callable.
+JSValue invokeOptionalMethod(JSGlobalObject* globalObject, JSObject* object, const Identifier& name, const MarkedArgumentBuffer& args)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue method = object->get(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!method.isCallable())
+        return {};
+    RELEASE_AND_RETURN(scope, JSC::call(globalObject, method, object, args, "method is not a function"_s));
+}
+
+bool errorCodeIs(JSGlobalObject* globalObject, JSValue error, ASCIILiteral code)
+{
+    auto& vm = getVM(globalObject);
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (!error || !error.isObject())
+        return false;
+    JSValue codeValue = asObject(error)->getIfPropertyExists(globalObject, WebCore::builtinNames(vm).codePublicName());
+    if (catchScope.exception()) [[unlikely]] {
+        catchScope.clearExceptionExceptTermination();
+        return false;
+    }
+    if (!codeValue || !codeValue.isString())
+        return false;
+    String codeString = asString(codeValue)->value(globalObject);
+    if (catchScope.exception()) [[unlikely]] {
+        catchScope.clearExceptionExceptTermination();
+        return false;
+    }
+    return codeString == StringView(code);
+}
+
+// Shared [bound-convention] wrapper: target(contextCell, ...callArgs).
+JSC::JSBoundFunction* createStreamsBoundHandler(JSGlobalObject* globalObject, JSFunction* target, JSCell* context)
+{
+    auto& vm = getVM(globalObject);
+    MarkedArgumentBuffer boundArgs;
+    boundArgs.append(context);
+    ASSERT(!boundArgs.hasOverflowed());
+    return JSBoundFunction::create(vm, globalObject, target, jsUndefined(), ArgList(boundArgs), 1, nullptr,
+        makeSource("streamsBoundHandler"_s, SourceOrigin(), SourceTaintedOrigin::Untainted));
+}
+
 JSPromise* promiseFulfilledWith(JSGlobalObject* globalObject, JSValue value)
 {
     auto& vm = getVM(globalObject);

@@ -79,6 +79,18 @@ class JSDirectStreamController;
     V(onByteTeeReadIntoChunkMicrotask)                         \
     V(onByteTeeReaderClosedRejected)
 
+// owner: BunAsyncIterableSource.cpp. context = the JSAsyncIteratorSourceOperation, EXCEPT
+// onAsyncIterableSourceErrorRethrow / onAsyncIterableSourceErrorSwallowed, whose context is
+// an InternalFieldTuple{op, originalError} (registered on iter.throw()'s settlement).
+#define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_ASYNC_ITERABLE_SOURCE(V) \
+    V(onAsyncIterableSourceNextFulfilled)                              \
+    V(onAsyncIterableSourceFlushFulfilled)                             \
+    V(onAsyncIterableSourceErrored)                                    \
+    V(onAsyncIterableSourceEndFulfilled)                               \
+    V(onAsyncIterableSourceCleanupSettled)                             \
+    V(onAsyncIterableSourceErrorRethrow)                               \
+    V(onAsyncIterableSourceErrorSwallowed)
+
 // owner: JSReadableStreamAsyncIterator.cpp. context = the JSReadableStreamAsyncIterator,
 // EXCEPT onAsyncIteratorReturnAfterOngoingSettled and onAsyncIteratorCancelFulfilled, whose
 // context is an InternalFieldTuple{iterator, value} (the return()/cancel value may be null/undefined).
@@ -210,6 +222,7 @@ class JSDirectStreamController;
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_BYTE_CONTROLLER(V)    \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_OPERATIONS(V)         \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_ASYNC_ITERATOR(V)        \
+    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_ASYNC_ITERABLE_SOURCE(V) \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_PIPE(V)                  \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_WS_OPERATIONS(V)         \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_WS_CONTROLLER(V)         \
@@ -266,12 +279,20 @@ class JSDirectStreamController;
 #define FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_PIPE(V) \
     V(boundPipeAbortAlgorithm)
 
+// owner: BunAsyncIterableSource.cpp — the async-iterable direct source's three methods.
+// Bound context (argument 0) = the JSAsyncIteratorSourceOperation.
+#define FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_ASYNC_ITERABLE_SOURCE(V) \
+    V(boundAsyncIterableSourcePull)                                        \
+    V(boundAsyncIterableSourceCancel)                                      \
+    V(boundAsyncIterableSourceClose)
+
 // THE closed [bound-convention] list.
 #define FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET(V)               \
     FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_BUN_SOURCE(V)        \
     FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_DIRECT_CONTROLLER(V) \
     FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_ONE_SHOT(V)          \
-    FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_PIPE(V)
+    FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_PIPE(V)              \
+    FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_ASYNC_ITERABLE_SOURCE(V)
 
 // The native trampolines behind every handler. Each is DEFINED (JSC_DEFINE_HOST_FUNCTION)
 // in its owner .cpp above; JSStreamsRuntime.cpp only wraps them in shared JSFunctions.
@@ -298,6 +319,7 @@ JSC_DECLARE_HOST_FUNCTION(jsWebStreamsCountQueuingStrategySize);
     V(directStreamControllerStructure, JSDirectStreamController)           \
     V(nativeStreamSourceAdapterStructure, JSNativeStreamSourceAdapter)     \
     V(directSinkCloseStateStructure, JSDirectSinkCloseState)               \
+    V(asyncIteratorSourceOperationStructure, JSAsyncIteratorSourceOperation) \
     V(readStreamIntoSinkOperationStructure, JSReadStreamIntoSinkOperation) \
     V(resumableSinkPumpOperationStructure, JSResumableSinkPumpOperation)   \
     V(standaloneTextSinkStructure, JSBunStandaloneTextSink)                \

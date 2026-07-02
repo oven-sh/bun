@@ -27,6 +27,53 @@ describe.concurrent("Streaming body via", () => {
     expect(chunks).toHaveLength(2);
   });
 
+  test("a hand-written async iterator without return() completes", async () => {
+    // https://github.com/oven-sh/bun/pull/33193: the native converter crashed here.
+    let i = 0;
+    const text = await new Response({
+      [Symbol.asyncIterator]: () => ({
+        next: () => Promise.resolve(i++ === 0 ? { value: "a", done: false } : { done: true }),
+      }),
+    }).text();
+    expect(text).toBe("a");
+  });
+
+  test("an iterator whose next() rejects and has no throw() rejects the body", async () => {
+    const promise = new Response({
+      [Symbol.asyncIterator]: () => ({
+        next: () => Promise.reject(new Error("nrej")),
+        return: () => Promise.resolve({ done: true }),
+      }),
+    }).text();
+    expect(promise).rejects.toThrow("nrej");
+    await promise.catch(() => {});
+  });
+
+  test("an iterator returning thenables (non-native promises) streams", async () => {
+    let n = 0;
+    const iterator = {
+      next() {
+        const i = n++;
+        return {
+          then(resolve: (v: any) => void) {
+            queueMicrotask(() => resolve(i < 3 ? { value: "t" + i, done: false } : { done: true }));
+          },
+        };
+      },
+      return: () => Promise.resolve({ done: true }),
+    };
+    const text = await new Response({ [Symbol.asyncIterator]: () => iterator }).text();
+    expect(text).toBe("t0t1t2");
+  });
+
+  test("a non-object iteration result rejects with a TypeError", async () => {
+    const promise = new Response({
+      [Symbol.asyncIterator]: () => ({ next: async () => undefined as any }),
+    }).text();
+    expect(promise).rejects.toThrow(TypeError);
+    await promise.catch(() => {});
+  });
+
   test("async generator function throws an error but continues to send the headers", async () => {
     const onMessage = mock(async url => {
       const response = await fetch(url);

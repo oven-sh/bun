@@ -27,41 +27,6 @@ namespace WebStreams {
 using namespace JSC;
 using WebCore::JSReadableStream;
 
-// An `async function*` value is not itself async-iterable; ReadableStreamTag__tagged and
-// readableStreamFromAsyncIterator both accept one and start it eagerly.
-static bool isNonHostAsyncGeneratorFunction(JSObject* object)
-{
-    auto* function = dynamicDowncast<JSFunction>(object);
-    return function && !function->isHostFunction() && function->jsExecutable() && function->jsExecutable()->isAsyncGenerator();
-}
-
-// Bun's async-iterable body extension: a DIRECT stream driven by the AsyncIterableStream.ts
-// builtin (yield evaluates to the direct controller; sink backpressure is respected). The
-// spec's ReadableStream.from() semantics (readableStreamFromIterable) are NOT used here.
-JSReadableStream* readableStreamFromAsyncIterator(JSGlobalObject* globalObject, JSValue asyncIterableOrGeneratorFn)
-{
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // The builtin takes (target, fn) and starts the iterator with fn.call(target).
-    JSValue target = jsUndefined();
-    JSValue iteratorFn = asyncIterableOrGeneratorFn;
-    if (JSObject* object = asyncIterableOrGeneratorFn.getObject(); object && !isNonHostAsyncGeneratorFunction(object)) {
-        iteratorFn = object->get(globalObject, vm.propertyNames->asyncIteratorSymbol);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        target = object;
-    }
-    auto* converter = JSC::JSFunction::create(vm, globalObject, asyncIterableStreamReadableStreamFromAsyncIteratorCodeGenerator(vm), globalObject);
-    auto callData = JSC::getCallData(converter);
-    MarkedArgumentBuffer args;
-    args.append(target);
-    args.append(iteratorFn);
-    ASSERT(!args.hasOverflowed());
-    JSValue result = JSC::call(globalObject, converter, callData, jsUndefined(), args);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    RELEASE_AND_RETURN(scope, dynamicDowncast<JSReadableStream>(result));
-}
-
 // Shared brand check of every consumer entry point; throws ERR_INVALID_ARG_TYPE.
 static JSReadableStream* toReadableStream(Zig::GlobalObject* globalObject, ThrowScope& scope, EncodedJSValue encodedStream)
 {

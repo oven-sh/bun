@@ -1,27 +1,19 @@
-//! HTTP/2 connection engine core (RFC 9113). Generic over a `Sink` (no JSC) so the protocol logic
-//! is pure and the JSC binding implements the Sink. Part of the from-scratch rewrite — composes
-//! wire/settings/flow_control/hpack/stream with a SINGLE inbound dispatch and centralized
-//! §4.2/§6 validation. Connection-level framing lives here; stream-level (HEADERS/DATA/RST) and the
-//! outbound request/respond paths build on top of this.
-
-#![allow(dead_code)]
-
-use super::flow_control::{RecvWindow, SendWindow};
-use super::hpack;
-use super::settings::{self, Settings};
-use super::stream::{self, State};
-use super::wire::{self, ErrorCode, FrameHeader, FrameType, SettingId};
-use bun_collections::HashMap;
+super::flow_control::{RecvWindow, SendWindow};
+super::hpack;
+super::settings::{self, Settings};
+super::stream::{self, State};
+super::wire::{self, ErrorCode, FrameHeader, FrameType, SettingId};
+ bun_collections::HashMap
 
 /// Per-stream protocol state tracked by the engine.
-pub struct Stream {
-    pub state: State,
-    pub send_window: SendWindow,
-    pub recv_window: RecvWindow,
+    struct Stream {
+        state: State,
+        send_window: SendWindow,
+        recv_window: RecvWindow,
 }
 
-impl Stream {
-    fn new(initial_send: u32, initial_recv: u32) -> Self {
+     Stream {
+fn new(initial_send: u32, initial_recv: u32) -> Self {
         Stream {
             state: State::Idle,
             send_window: SendWindow::new(initial_send),
@@ -31,7 +23,7 @@ impl Stream {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum WriteResult {
+    enum WriteResult {
     Dropped = -1,
     Queued = 0,
     Sent = 1,

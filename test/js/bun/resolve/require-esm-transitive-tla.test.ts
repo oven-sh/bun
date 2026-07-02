@@ -92,10 +92,10 @@ test("require(esm) failing on TLA does not delete an entry an outer import() own
 // $esmLoadSync runs a plain microtask checkpoint when the load promise is still
 // pending after the module-loader-internal drain; only a graph that genuinely
 // needs the host event loop keeps throwing the "async module" TypeError.
-describe("require(esm) whose top-level await only needs microtasks", () => {
-  async function run(dir: { toString(): string }) {
+describe.concurrent("require(esm) whose top-level await only needs microtasks", () => {
+  async function run(dir: { toString(): string }, entryFile = "entry.cjs") {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "entry.cjs"],
+      cmd: [bunExe(), entryFile],
       env: bunEnv,
       cwd: String(dir),
       stderr: "pipe",
@@ -217,5 +217,34 @@ describe("require(esm) whose top-level await only needs microtasks", () => {
       `,
     });
     expect(await run(dir)).toEqual({ stdout: "threw true", stderr: "", exitCode: 0 });
+  });
+
+  // require() from a module body that is itself inside an outer
+  // InnerModuleEvaluation must NOT run a microtask checkpoint: the global
+  // queue holds async-sibling.mjs's await-resume, whose async parent
+  // (entry.mjs) is still at status Evaluating with no [[CycleRoot]], so
+  // draining it would walk gatherAvailableAncestors into a half-built
+  // record. In that nested case require() keeps throwing instead.
+  test("does not drain while an outer module graph is mid-evaluation", async () => {
+    using dir = tempDir("require-esm-tla-nested-eval", {
+      "async-sibling.mjs": `export const x = await 0;`,
+      "tla.mjs": `export const v = await 0;`,
+      "sync-shim.mjs": `
+        import { createRequire } from "node:module";
+        const require = createRequire(import.meta.url);
+        try { require("./tla.mjs"); console.log("shim unexpected-success"); }
+        catch (e) { console.log("shim threw " + (e instanceof TypeError && e.message.includes("async module"))); }
+      `,
+      "entry.mjs": `
+        import "./async-sibling.mjs";
+        import "./sync-shim.mjs";
+        console.log("entry-done " + (await import("./async-sibling.mjs")).x);
+      `,
+    });
+    expect(await run(dir, "entry.mjs")).toEqual({
+      stdout: "shim threw true\nentry-done 0",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

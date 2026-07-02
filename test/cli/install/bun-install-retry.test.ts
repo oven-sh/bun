@@ -40,6 +40,121 @@ afterEach(async () => {
   await dummyAfterEach();
 });
 
+// Manifest request 302-redirects; the redirect target answers a retryable 500
+// once, then the real packument. The retry used to go out through a URL that
+// was a dangling self-borrow into the first attempt's freed redirect buffer
+// (ASAN: heap-use-after-free in URL::get_port on the HTTP-client thread), so
+// the retries never reached the server. It must restart from the original URL.
+it("retries a manifest whose redirect target 500s once", async () => {
+  const urls: string[] = [];
+  let redirectTargetHits = 0;
+  setHandler(async request => {
+    const { pathname } = new URL(request.url);
+    urls.push(pathname);
+    if (pathname === "/BaR") {
+      return new Response(null, { status: 302, headers: { Location: `${root_url}/redirected/BaR` } });
+    }
+    if (pathname === "/redirected/BaR") {
+      if (redirectTargetHits++ === 0) {
+        return new Response("transient", { status: 500 });
+      }
+      return Response.json({
+        name: "BaR",
+        versions: {
+          "0.0.2": { name: "BaR", version: "0.0.2", dist: { tarball: `${root_url}/BaR-0.0.2.tgz` } },
+        },
+        "dist-tags": { latest: "0.0.2" },
+      });
+    }
+    if (pathname === "/BaR-0.0.2.tgz") {
+      return new Response(file(join(import.meta.dir, "bar-0.0.2.tgz")));
+    }
+    return new Response("unexpected", { status: 404 });
+  });
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { BaR: "0.0.2" } }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  expect(out).toContain("1 package installed");
+  // The retry restarts from the original manifest URL, so the server sees the
+  // whole redirect chain a second time.
+  expect(urls).toEqual(["/BaR", "/redirected/BaR", "/BaR", "/redirected/BaR", "/BaR-0.0.2.tgz"]);
+  expect(await file(join(package_dir, "node_modules", "BaR", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// Same bug, sibling retry site (tarball downloads in runTasks): the tarball URL
+// 302-redirects and the target 500s once before serving the archive.
+it("retries a tarball whose redirect target 500s once", async () => {
+  const urls: string[] = [];
+  let redirectTargetHits = 0;
+  setHandler(async request => {
+    const { pathname } = new URL(request.url);
+    urls.push(pathname);
+    if (pathname === "/BaR") {
+      return Response.json({
+        name: "BaR",
+        versions: {
+          "0.0.2": { name: "BaR", version: "0.0.2", dist: { tarball: `${root_url}/BaR-0.0.2.tgz` } },
+        },
+        "dist-tags": { latest: "0.0.2" },
+      });
+    }
+    if (pathname === "/BaR-0.0.2.tgz") {
+      return new Response(null, { status: 302, headers: { Location: `${root_url}/redirected/BaR-0.0.2.tgz` } });
+    }
+    if (pathname === "/redirected/BaR-0.0.2.tgz") {
+      if (redirectTargetHits++ === 0) {
+        return new Response("transient", { status: 500 });
+      }
+      return new Response(file(join(import.meta.dir, "bar-0.0.2.tgz")));
+    }
+    return new Response("unexpected", { status: 404 });
+  });
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { BaR: "0.0.2" } }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  expect(out).toContain("1 package installed");
+  expect(urls).toEqual([
+    "/BaR",
+    "/BaR-0.0.2.tgz",
+    "/redirected/BaR-0.0.2.tgz",
+    "/BaR-0.0.2.tgz",
+    "/redirected/BaR-0.0.2.tgz",
+  ]);
+  expect(await file(join(package_dir, "node_modules", "BaR", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("retries on 500", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls, undefined, 4));

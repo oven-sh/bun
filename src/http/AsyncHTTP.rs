@@ -769,7 +769,13 @@ impl<'a> AsyncHTTP<'a> {
                 // its `Box<AsyncHTTP>` is reclaimed. Only the state the clone
                 // built up itself during request processing is torn down.
                 {
+                    // After a redirect, `client.url` (and `connected_url`) self-borrow
+                    // `client.redirect`, freed just below. The copy-back into the
+                    // JS-thread original must not hand a retry those dangling slices.
+                    let original_url = (*this).url.clone();
                     let client = &mut (*this).client;
+                    client.url = original_url;
+                    client.connected_url = URL::default();
                     // Clone-owned (allocated after `ptr::read`).
                     drop(core::mem::take(&mut client.redirect));
                     drop(core::mem::take(&mut client.prev_redirect));

@@ -506,6 +506,192 @@ describe.concurrent(() => {
     });
   });
 
+  describe("process.emit lifecycle events", () => {
+    // https://github.com/oven-sh/bun/issues/32227
+    // beforeExit and exit are emitted through the user-replaceable
+    // process.emit property, so a monkey-patched process.emit is invoked as in Node.
+    it("invokes a monkey-patched process.emit for beforeExit and exit without listeners", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const originalEmit = process.emit;
+          process.emit = function (event, ...args) {
+            if (event === "beforeExit" || event === "exit") {
+              console.log("patched:" + event + ":" + args[0]);
+            }
+            return originalEmit.call(this, event, ...args);
+          };
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = stdout
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean);
+      expect({ lines, stderr, exitCode }).toEqual({
+        lines: ["patched:beforeExit:0", "patched:exit:0"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("composes a monkey-patched process.emit with process.on('exit') listeners", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const originalEmit = process.emit;
+          process.emit = function (event, ...args) {
+            if (event === "exit") console.log("patched:exit");
+            return originalEmit.call(this, event, ...args);
+          };
+          process.on("exit", () => console.log("listener:exit"));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = stdout
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean);
+      // The patched emit runs before delegating to the original, which fires the registered listener.
+      expect({ lines, stderr, exitCode }).toEqual({
+        lines: ["patched:exit", "listener:exit"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("forwards the exit code to a monkey-patched process.emit", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const originalEmit = process.emit;
+          process.emit = function (event, ...args) {
+            if (event === "exit") console.log("patched:exit:" + args[0]);
+            return originalEmit.call(this, event, ...args);
+          };
+          process.exitCode = 3;
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = stdout
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean);
+      expect({ lines, stderr, exitCode }).toEqual({ lines: ["patched:exit:3"], stderr: "", exitCode: 3 });
+    });
+
+    it("invokes a monkey-patched process.emit for an explicit process.exit(code)", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const originalEmit = process.emit;
+          process.emit = function (event, ...args) {
+            if (event === "exit") console.log("patched:exit:" + args[0]);
+            return originalEmit.call(this, event, ...args);
+          };
+          process.exit(2);
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = stdout
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean);
+      expect({ lines, stderr, exitCode }).toEqual({ lines: ["patched:exit:2"], stderr: "", exitCode: 2 });
+    });
+
+    it("drains nextTick scheduled by a monkey-patched process.emit during beforeExit", async () => {
+      // A replacement process.emit can schedule process.nextTick work while
+      // handling beforeExit even with no registered beforeExit listener; that
+      // callback must still run before the process exits.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const originalEmit = process.emit;
+          process.emit = function (event, ...args) {
+            if (event === "beforeExit") {
+              process.nextTick(() => console.log("nexttick:ran"));
+              return false;
+            }
+            return originalEmit.call(this, event, ...args);
+          };
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = stdout
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean);
+      expect({ lines, stderr, exitCode }).toEqual({ lines: ["nexttick:ran"], stderr: "", exitCode: 0 });
+    });
+
+    it("invokes a process.emit override defined as an accessor property", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const originalEmit = process.emit;
+          Object.defineProperty(process, "emit", {
+            configurable: true,
+            get() {
+              return function (event, ...args) {
+                if (event === "beforeExit" || event === "exit") {
+                  console.log("accessor:" + event + ":" + args[0]);
+                }
+                return originalEmit.call(this, event, ...args);
+              };
+            },
+          });
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = stdout
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean);
+      expect({ lines, stderr, exitCode }).toEqual({
+        lines: ["accessor:beforeExit:0", "accessor:exit:0"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
   it("process.memoryUsage", () => {
     expect(process.memoryUsage()).toEqual({
       rss: expect.any(Number),

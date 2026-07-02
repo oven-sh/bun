@@ -308,21 +308,21 @@ JSC_DECLARE_HOST_FUNCTION(jsWebStreamsCountQueuingStrategySize);
 
 // The internal (prototype-less) cell classes whose per-global Structure is cached here.
 // V(memberName, ClassName)
-#define FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(V)                         \
-    V(readRequestStructure, JSReadRequest)                                 \
-    V(readIntoRequestStructure, JSReadIntoRequest)                         \
-    V(pullIntoDescriptorStructure, JSPullIntoDescriptor)                   \
-    V(pipeToOperationStructure, JSStreamPipeToOperation)                   \
-    V(teeStateStructure, JSStreamTeeState)                                 \
-    V(crossRealmTransformStateStructure, JSCrossRealmTransformState)       \
-    V(fromIterableContextStructure, JSStreamFromIterableContext)           \
-    V(directStreamControllerStructure, JSDirectStreamController)           \
-    V(nativeStreamSourceAdapterStructure, JSNativeStreamSourceAdapter)     \
-    V(directSinkCloseStateStructure, JSDirectSinkCloseState)               \
+#define FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(V)                           \
+    V(readRequestStructure, JSReadRequest)                                   \
+    V(readIntoRequestStructure, JSReadIntoRequest)                           \
+    V(pullIntoDescriptorStructure, JSPullIntoDescriptor)                     \
+    V(pipeToOperationStructure, JSStreamPipeToOperation)                     \
+    V(teeStateStructure, JSStreamTeeState)                                   \
+    V(crossRealmTransformStateStructure, JSCrossRealmTransformState)         \
+    V(fromIterableContextStructure, JSStreamFromIterableContext)             \
+    V(directStreamControllerStructure, JSDirectStreamController)             \
+    V(nativeStreamSourceAdapterStructure, JSNativeStreamSourceAdapter)       \
+    V(directSinkCloseStateStructure, JSDirectSinkCloseState)                 \
     V(asyncIteratorSourceOperationStructure, JSAsyncIteratorSourceOperation) \
-    V(readStreamIntoSinkOperationStructure, JSReadStreamIntoSinkOperation) \
-    V(resumableSinkPumpOperationStructure, JSResumableSinkPumpOperation)   \
-    V(standaloneTextSinkStructure, JSBunStandaloneTextSink)                \
+    V(readStreamIntoSinkOperationStructure, JSReadStreamIntoSinkOperation)   \
+    V(resumableSinkPumpOperationStructure, JSResumableSinkPumpOperation)     \
+    V(standaloneTextSinkStructure, JSBunStandaloneTextSink)                  \
     V(oneShotDirectSinkStructure, JSOneShotDirectSink)
 
 // Non-destructible: LazyProperty members only (plus the end-of-tick flush list, a

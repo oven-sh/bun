@@ -45,8 +45,7 @@ describe.concurrent("Streaming body via", () => {
         return: () => Promise.resolve({ done: true }),
       }),
     }).text();
-    expect(promise).rejects.toThrow("nrej");
-    await promise.catch(() => {});
+    await expect(promise).rejects.toThrow("nrej");
   });
 
   test("an iterator returning thenables (non-native promises) streams", async () => {
@@ -70,8 +69,7 @@ describe.concurrent("Streaming body via", () => {
     const promise = new Response({
       [Symbol.asyncIterator]: () => ({ next: async () => undefined as any }),
     }).text();
-    expect(promise).rejects.toThrow(TypeError);
-    await promise.catch(() => {});
+    await expect(promise).rejects.toThrow(TypeError);
   });
 
   test("async generator function throws an error but continues to send the headers", async () => {

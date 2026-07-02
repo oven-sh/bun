@@ -6,6 +6,7 @@ use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_core::strings;
 use bun_core::{self, Error, Output, err};
+use bun_paths::path_options::AssumeOk as _;
 use bun_paths::{self as Path, PathBuffer};
 use bun_semver::string::Buf as StringBuf;
 

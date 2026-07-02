@@ -457,8 +457,9 @@ pub mod js_bundler {
     /// [`DeferredBuild`] and continues from the promise's `.then`
     /// continuation.
     pub struct SuspendedPluginSetup {
-        /// The still-pending promise `runSetupFunction` returned.
-        pending: JSValue,
+        /// The still-pending promise `runSetupFunction` returned, kept
+        /// GC-rooted until `build` attaches the `.then` reactions to it.
+        pending: jsc::Strong,
         /// `config.plugins`, snapshotted before any `setup()` ran so a getter
         /// is not re-invoked on resume.
         plugins_array: jsc::Strong,
@@ -559,7 +560,7 @@ pub mod js_bundler {
                             // config parse, from this promise's `.then`
                             // continuation.
                             *suspended = Some(SuspendedPluginSetup {
-                                pending,
+                                pending: jsc::Strong::create(pending, global_this),
                                 plugins_array: jsc::Strong::create(array, global_this),
                                 next_index: index + 1,
                                 length,
@@ -1472,7 +1473,10 @@ pub mod js_bundler {
             let suspended = suspended.expect("from_js returned None without a suspension");
             let result = jsc::JSPromiseStrong::init(global_this);
             let return_value = result.value();
-            let pending = suspended.pending;
+            // `suspended.pending` (the Strong that is GC-rooting the promise)
+            // drops at the end of this block, after `.then` has attached its
+            // reactions.
+            let pending = suspended.pending.get();
             let deferred = bun_core::heap::into_raw(Box::new(DeferredBuild {
                 config_js: jsc::Strong::create(arguments[0], global_this),
                 plugins_array: suspended.plugins_array,

@@ -414,6 +414,7 @@ describe("ALPN survives an SNI-selected SecureContext", () => {
     });
   }
 
+  // https://github.com/oven-sh/bun/issues/17932
   it("still consults the server's ALPNCallback", async () => {
     const seen: { servername: string; protocols: string[] }[] = [];
     const failed = Promise.withResolvers<never>();

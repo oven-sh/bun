@@ -1436,6 +1436,10 @@ impl Interpreter {
         );
 
         if let Err(e) = self.setup_io_before_run() {
+            // Mirror `finish()`'s release ordering: `create_shell_interpreter`
+            // took an event-loop keep-alive ref that nothing else releases
+            // before the GC finalizer, so the loop would idle at +1 forever.
+            self.keep_alive.with_mut(|k| k.disable());
             self.deref_root_shell_and_io_if_needed(true);
             let shellerr = ShellErr::new_sys(&e);
             return Err(throw_shell_err(

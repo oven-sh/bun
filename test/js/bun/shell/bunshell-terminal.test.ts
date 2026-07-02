@@ -162,6 +162,29 @@ describe.skipIf(isWindows)("ShellPromise.terminal", () => {
     expect(() => $`true`.terminal(terminal)).toThrow("terminal is closed");
   });
 
+  test.concurrent("closing the terminal after .terminal() but before await rejects and exits", async () => {
+    const script = [
+      "const t = new Bun.Terminal({ cols: 80, rows: 24 });",
+      "const p = Bun.$`echo hi`.terminal(t);",
+      "t.close();",
+      "let caught = false;",
+      "try { await p } catch { caught = true }",
+      'console.log("caught=" + caught);',
+    ].join("\n");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, signalCode: proc.signalCode, exitCode }).toEqual({
+      stdout: "caught=true\n",
+      signalCode: null,
+      exitCode: 0,
+    });
+  });
+
   test.concurrent(".terminal() rejects a terminal created inline by Bun.spawn", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", ""],

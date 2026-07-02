@@ -45,19 +45,8 @@ impl ReferrerPolicy {
     /// module-level `MAP` static.
     pub const MAP: __ComptimeStringMap_MAP = __ComptimeStringMap_MAP(());
 
-    /// https://w3c.github.io/webappsec-referrer-policy/#default-referrer-policy
-    pub const DEFAULT: ReferrerPolicy = ReferrerPolicy::StrictOriginWhenCrossOrigin;
-
     pub fn as_str(self) -> &'static str {
         self.into()
-    }
-
-    /// The empty policy defers to the policy container's default.
-    pub fn resolve(self) -> ReferrerPolicy {
-        match self {
-            ReferrerPolicy::Empty => Self::DEFAULT,
-            other => other,
-        }
     }
     // to_js lives as an extension-trait method in bun_http_jsc (see PORTING.md §Idiom map).
 }

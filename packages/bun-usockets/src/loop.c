@@ -778,6 +778,20 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         u->on_recv_error(u, ee ? ee : ECONNREFUSED);
                     }
                 }
+                /* sk_err outlives the error queue: disabling IP_RECVERR on
+                 * disconnect purges the queue but not sk_err, and a socket
+                 * whose IP_RECVERR setup failed never queues at all. Consume
+                 * it so EPOLLERR clears instead of closing the socket below. */
+                if (!recv_error_surfaced && !u->closed) {
+                    int so_error = 0;
+                    socklen_t so_error_len = sizeof(so_error);
+                    if (getsockopt(us_poll_fd(p), SOL_SOCKET, SO_ERROR, &so_error, &so_error_len) == 0 && so_error) {
+                        recv_error_surfaced = 1;
+                        if (u->on_recv_error) {
+                            u->on_recv_error(u, so_error);
+                        }
+                    }
+                }
             }
 #endif
 

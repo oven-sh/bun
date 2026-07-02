@@ -1625,7 +1625,12 @@ impl FetchTasklet {
         // reader.cancel() on a still-arriving body aborts the fetch so the
         // connection closes and the server observes the cancellation. A fully
         // received body is left to drain/cleanup so the socket stays reusable.
-        if this.result.has_more {
+        // `result` is replaced wholesale by the HTTP thread under `mutex`, so
+        // read `has_more` under the lock like the other JS-thread callbacks.
+        this.mutex.lock();
+        let has_more = this.result.has_more;
+        this.mutex.unlock();
+        if has_more {
             this.abort_task();
         }
         this.ignore_remaining_response_body(false);
@@ -1772,17 +1777,19 @@ impl FetchTasklet {
         }
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
+        // An aborted fetch (reader.cancel() on an in-flight body, or an
+        // AbortSignal) is already shutting the connection down; don't re-arm the
+        // receive or resume draining, which would read the rest of an unbounded
+        // body and hold the socket open (drain_events resumes before shutdowns).
+        let aborted = self.signal_store.aborted.load(Ordering::Relaxed);
         if self
             .signal_store
             .set_receive_mode_terminal(BodyReceiveMode::Ignore)
+            && !aborted
         {
             self.schedule_receive_resume();
         }
-        let aborted = self.signal_store.aborted.load(Ordering::Relaxed);
         if let Some(http_) = self.http.as_mut() {
-            // An aborted fetch (reader.cancel() on an in-flight body, or an
-            // AbortSignal) is already shutting the connection down; draining
-            // would read the rest of an unbounded body and hold the socket open.
             if !aborted {
                 http_.enable_response_body_streaming();
             }
@@ -2266,7 +2273,12 @@ impl FetchTasklet {
     }
 
     pub(crate) fn abort_task(&mut self) {
-        self.signal_store.aborted.store(true, Ordering::Relaxed);
+        // Idempotent: reader.cancel() and an AbortSignal can both reach here for
+        // the same fetch. Only the first abort enqueues a shutdown; a second
+        // would append a redundant ShutdownMessage for an already-closing socket.
+        if self.signal_store.aborted.swap(true, Ordering::Relaxed) {
+            return;
+        }
         self.tracker.did_cancel(&self.global_this);
 
         if let Some(http_) = self.http.as_mut() {

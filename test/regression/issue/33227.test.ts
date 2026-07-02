@@ -1,10 +1,10 @@
+import { sleep } from "bun";
 import { expect, test } from "bun:test";
 
 // https://github.com/oven-sh/bun/issues/33227
 test("reader.cancel() aborts the fetch and triggers the server's stream cancel", async () => {
   const { promise: sawAbort, resolve: onAbort } = Promise.withResolvers<void>();
   const { promise: sawCancel, resolve: onCancel } = Promise.withResolvers<void>();
-  const { promise: holdOpen } = Promise.withResolvers<void>();
   const encoder = new TextEncoder();
 
   using server = Bun.serve({
@@ -14,14 +14,12 @@ test("reader.cancel() aborts the fetch and triggers the server's stream cancel",
       let count = 0;
       return new Response(
         new ReadableStream({
+          // Stream forever (paced) so the body is always in flight: the unfixed
+          // drain path keeps the connection open and actively reading, so the
+          // server never sees a close unless the cancel actually aborts.
           async pull(controller) {
-            if (count < 8) {
-              controller.enqueue(encoder.encode(`data: ${count++}\n\n`));
-            } else {
-              // Keep the body in-flight (never closes) so the client is
-              // cancelling a response that is still arriving.
-              await holdOpen;
-            }
+            controller.enqueue(encoder.encode(`data: ${count++}\n\n`));
+            await sleep(10);
           },
           cancel() {
             onCancel();

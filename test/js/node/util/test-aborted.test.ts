@@ -5,14 +5,14 @@ import { expect, test } from "bun:test";
 import { getEventListeners } from "events";
 import { aborted } from "util";
 
-test("aborted works when provided a resource that was already aborted", () => {
+test("aborted works when provided a resource that was already aborted", async () => {
   const ac = new AbortController();
   const abortedPromise = aborted(ac.signal, {});
   ac.abort();
 
   expect(ac.signal.aborted).toBe(true);
   expect(getEventListeners(ac.signal, "abort").length).toBe(0);
-  return expect(abortedPromise).resolves.toBeUndefined();
+  await expect(abortedPromise).resolves.toBeUndefined();
 });
 
 test("aborted works when provided a resource that was not already aborted", async () => {
@@ -32,7 +32,7 @@ test("aborted works when provided a resource that was not already aborted", asyn
   expect(ac.signal.aborted).toBe(true);
   expect(getEventListeners(ac.signal, "abort").length).toBe(0);
   delete globalThis.strong;
-  return expect(abortedPromise).resolves.toBeUndefined();
+  await expect(abortedPromise).resolves.toBeUndefined();
 });
 
 test("aborted with gc cleanup", async () => {

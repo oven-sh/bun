@@ -440,14 +440,14 @@ describe.concurrent("Server", () => {
     // Test that HTTPS keep-alive doesn't cause it to re-use the connection on
     // the next attempt, when the next attempt has reject unauthorized enabled
     {
-      expect(
+      await expect(
         async () => await fetch(server.url, { tls: { rejectUnauthorized: true } }).then(res => res.text()),
       ).toThrow("self signed certificate");
     }
 
     {
       using _ = rejectUnauthorizedScope(true);
-      expect(async () => await fetch(server.url).then(res => res.text())).toThrow("self signed certificate");
+      await expect(async () => await fetch(server.url).then(res => res.text())).toThrow("self signed certificate");
     }
 
     {
@@ -574,7 +574,7 @@ test("should be able to await server.stop()", async () => {
   // Wait for the server to stop
   await stopped;
   // Ensure the server is completely stopped
-  expect(async () => await fetch(server.url)).toThrow();
+  await expect(async () => await fetch(server.url)).toThrow();
 });
 
 test("should be able to await server.stop(true) with keep alive", async () => {
@@ -605,12 +605,12 @@ test("should be able to await server.stop(true) with keep alive", async () => {
   await stopped;
 
   // It should fail before the server responds
-  expect(async () => {
+  await expect(async () => {
     await (await responsePromise).text();
   }).toThrow();
 
   // Ensure the server is completely stopped
-  expect(async () => await fetch(server.url)).toThrow();
+  await expect(async () => await fetch(server.url)).toThrow();
 });
 
 test("should be able to async upgrade using custom protocol", async () => {

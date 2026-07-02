@@ -511,10 +511,8 @@ impl HTMLRewriter {
             // to return.
             // SAFETY: out_response is the m_ctx of out_response_value (kept
             // alive on the stack via ensure_still_alive above).
-            if matches!(
-                unsafe { &*(*out_response).get_body_value() },
-                webcore::body::Value::Locked(_)
-            ) {
+            let out_body = unsafe { &*(*out_response).get_body_value() };
+            if matches!(out_body, webcore::body::Value::Locked(_)) {
                 // The suspended rewrite still runs when its handler's promise
                 // settles and its sink still points at `out_response` (and
                 // keeps its JS wrapper alive through a Strong), so the eager
@@ -1067,10 +1065,17 @@ impl BufferOutputSink {
 
         // SAFETY: sink is live (fn safety contract).
         match unsafe { (*sink).phase.get() } {
-            // The suspended `write` completed; `end()` is still owed.
-            RewritePhase::WritePending => unsafe { Self::end_rewrite(sink, true) },
-            // The suspended `end` completed; `done()` already ran.
-            RewritePhase::EndPending => unsafe { (*sink).phase.set(RewritePhase::Done) },
+            RewritePhase::WritePending => {
+                // The suspended `write` completed; `end()` is still owed.
+                // SAFETY: sink is live (fn safety contract); the guard above
+                // is still installed.
+                unsafe { Self::end_rewrite(sink, true) }
+            }
+            RewritePhase::EndPending => {
+                // The suspended `end` completed; `done()` already ran.
+                // SAFETY: sink is live (fn safety contract).
+                unsafe { (*sink).phase.set(RewritePhase::Done) }
+            }
             RewritePhase::Done => unreachable!("resumed a completed HTMLRewriter transform"),
         }
     }

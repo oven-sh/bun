@@ -154,6 +154,9 @@ pub fn handle_rejected_promise(global: &JSGlobalObject, promise: &mut JSPromise)
     }
 
     jsc_vm.unhandled_rejection(global, result, promise.to_js());
+    // The caller emits this event with the promise's async context installed;
+    // GC (and the finalizers it may run) must not observe it.
+    let _scope = crate::ClearedAsyncContextScope::new(global);
     jsc_vm.auto_garbage_collect();
 }
 

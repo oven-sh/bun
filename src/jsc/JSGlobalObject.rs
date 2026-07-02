@@ -1138,6 +1138,17 @@ impl JSGlobalObject {
         });
     }
 
+    /// Installs `context` as the current async context, returning the previous one.
+    pub fn exchange_async_context(&self, context: JSValue) -> JSValue {
+        unsafe extern "C" {
+            safe fn AsyncContextFrame__exchangeAsyncContext(
+                global: &JSGlobalObject,
+                context: JSValue,
+            ) -> JSValue;
+        }
+        AsyncContextFrame__exchangeAsyncContext(self, context)
+    }
+
     pub fn readable_stream_to_array_buffer(&self, value: JSValue) -> JSValue {
         ZigGlobalObject__readableStreamToArrayBuffer(self, value)
     }
@@ -1726,6 +1737,31 @@ unsafe extern "C" {
     ) -> bool;
 
     safe fn ScriptExecutionContextIdentifier__forGlobalObject(global: &JSGlobalObject) -> u32;
+}
+
+/// Clears the current async context for the guard's lifetime, restoring it on drop.
+///
+/// Top-level microtask drains and GC must not observe an installed context: the
+/// propagation machinery assumes the ambient context is undefined there, which is
+/// why `JSNextTickQueue` resets the slot after draining.
+pub struct ClearedAsyncContextScope<'a> {
+    global: &'a JSGlobalObject,
+    previous: JSValue,
+}
+
+impl<'a> ClearedAsyncContextScope<'a> {
+    pub fn new(global: &'a JSGlobalObject) -> Self {
+        Self {
+            global,
+            previous: global.exchange_async_context(JSValue::UNDEFINED),
+        }
+    }
+}
+
+impl Drop for ClearedAsyncContextScope<'_> {
+    fn drop(&mut self) {
+        self.global.exchange_async_context(self.previous);
+    }
 }
 
 impl ScriptExecutionContextIdentifier {

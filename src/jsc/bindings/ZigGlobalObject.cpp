@@ -1084,14 +1084,8 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
         // AsyncLocalStorage context, like Node.js. The event itself is only
         // emitted later (at the end of the tick, from handleRejectedPromises),
         // by which point the context that was live here has been unwound.
-        JSC::JSCell* entry = promise;
-        if (globalObj->isAsyncContextTrackingEnabled()) {
-            if (auto* asyncContextData = globalObj->m_asyncContextData.get()) {
-                JSC::JSValue context = asyncContextData->getInternalField(0);
-                if (!context.isUndefined())
-                    entry = AsyncContextFrame::create(obj->vm(), globalObj->AsyncContextFrameStructure(), promise, context);
-            }
-        }
+        // Wraps the promise in an AsyncContextFrame only when a context is active.
+        JSC::JSCell* entry = AsyncContextFrame::withAsyncContextIfNeeded(obj, promise).asCell();
         globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, entry);
         break;
     }

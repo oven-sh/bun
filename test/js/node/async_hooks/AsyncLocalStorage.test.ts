@@ -1,6 +1,6 @@
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, nodeExe } from "harness";
 import http2 from "http2";
 
 describe("AsyncLocalStorage", () => {
@@ -1153,31 +1153,143 @@ describe("async context passes through", () => {
   });
 });
 
-test("unhandledRejection handlers observe the rejected promise's context", async () => {
-  // unhandledRejection used to always see getStore() === undefined because
-  // the event is emitted at the end of the tick, after the async context
-  // active at rejection time was unwound.
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const { AsyncLocalStorage } = require("node:async_hooks");
-      const als = new AsyncLocalStorage();
+describe("unhandledRejection async context", () => {
+  // Bun replays the context the promise was *rejected* in. Node >= 24 (and Node 22
+  // with --experimental-async-context-frame) does the same; Node 22's default
+  // async_hooks-based AsyncLocalStorage replays the *creation* context instead.
+  // The dual-runtime fixture in async-context/ only covers cases where the two
+  // agree, so this one is bun-only.
+  test("the rejection-time context wins over the creation-time context", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { AsyncLocalStorage } = require("node:async_hooks");
+        const als = new AsyncLocalStorage();
+        const seen = [];
+        process.on("unhandledRejection", reason => {
+          seen.push(reason.message + "=" + JSON.stringify(als.getStore() ?? null));
+          if (seen.length === 2) console.log(seen.join(" "));
+        });
 
-      process.on("unhandledRejection", () => {
-        console.log("unhandledRejection store:", als.getStore());
-      });
+        let rejectCreatedInA;
+        als.run("A", () => { new Promise((_, reject) => { rejectCreatedInA = reject; }); });
+        als.run("B", () => rejectCreatedInA(new Error("created-in-A")));
 
-      als.run(7, () => {
-        new Promise((_, rej) => setTimeout(() => rej(new Error("late")), 10));
-      });`,
-    ],
-    env: bunEnv,
-    stderr: "pipe",
+        let rejectCreatedInC;
+        als.run("C", () => { new Promise((_, reject) => { rejectCreatedInC = reject; }); });
+        rejectCreatedInC(new Error("created-in-C"));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`created-in-A="B" created-in-C=null\n`);
+    expect(exitCode).toBe(0);
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout).toBe("unhandledRejection store: 7\n");
-  expect(exitCode).toBe(0);
+  // Rejections raised inside a context are stored wrapped in an AsyncContextFrame,
+  // so both places that match a promise against the pending list have to unwrap.
+  test("a promise handled in the same tick emits neither unhandledRejection nor rejectionHandled", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { AsyncLocalStorage } = require("node:async_hooks");
+        const als = new AsyncLocalStorage();
+        const events = [];
+        process.on("unhandledRejection", reason => events.push("unhandled:" + reason.message + ":" + als.getStore()));
+        process.on("rejectionHandled", () => events.push("rejectionHandled"));
+
+        let late;
+        als.run("ctx", () => {
+          Promise.reject(new Error("same-tick")).catch(() => {});
+          late = Promise.reject(new Error("late"));
+        });
+        await new Promise(resolve => setImmediate(resolve));
+        late.catch(() => {});
+        await new Promise(resolve => setImmediate(resolve));
+        await new Promise(resolve => setImmediate(resolve));
+        console.log(events.join(","));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("unhandled:late:ctx,rejectionHandled\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // expect(fn).toThrow() drains pending rejections synchronously, so the drain can
+  // run while a context is installed. A promise rejected without one must still
+  // replay "no context" rather than inherit whatever the caller had.
+  test("a contextless rejection drained from inside a context replays an undefined store", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { expect } = require("bun:test");
+        const { AsyncLocalStorage } = require("node:async_hooks");
+        const als = new AsyncLocalStorage();
+        process.on("unhandledRejection", () => {
+          console.log("store:", JSON.stringify(als.getStore() ?? null));
+        });
+
+        Promise.reject(new Error("no-context"));
+        als.run({ id: "X" }, () => {
+          expect(() => { throw new Error("boom"); }).toThrow("boom");
+        });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("store: null\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // --unhandled-rejections=strict routes the rejection into uncaughtException. Node
+  // keeps the promise's context installed across the whole per-mode dispatch
+  // (lib/internal/process/promises.js), so the uncaughtException handler sees it too —
+  // but it drains microtasks outside that window, so a continuation registered with no
+  // context must not pick the store up.
+  test.each([
+    ["bun", bunExe()],
+    ["node", nodeExe()],
+  ])("--unhandled-rejections=strict keeps the context for uncaughtException only (%s)", async (_name, exe) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        exe,
+        "--unhandled-rejections=strict",
+        "-e",
+        `const { AsyncLocalStorage } = require("node:async_hooks");
+        const als = new AsyncLocalStorage();
+
+        let resumeDrainedMicrotask;
+        const pending = new Promise(resolve => { resumeDrainedMicrotask = resolve; });
+        pending.then(() => {
+          console.log("drained microtask store:", als.getStore());
+          process.exit(0);
+        });
+
+        process.on("uncaughtException", () => {
+          console.log("uncaughtException store:", als.getStore());
+          resumeDrainedMicrotask();
+        });
+        als.run(7, () => { Promise.reject(new Error("strict")); });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("uncaughtException store: 7\ndrained microtask store: undefined\n");
+    expect(exitCode).toBe(0);
+  });
 });

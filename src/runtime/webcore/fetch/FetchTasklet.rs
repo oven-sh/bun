@@ -1607,15 +1607,10 @@ impl FetchTasklet {
         if this.signal_store.body_receive_mode() == BodyReceiveMode::Ignore {
             return;
         }
-        // reader.cancel() on a still-arriving body aborts the fetch (server sees
-        // the close); a received body drains/cleans up for reuse. Read `has_more`
-        // under `mutex`: the HTTP thread replaces `result` wholesale.
-        this.mutex.lock();
-        let has_more = this.result.has_more;
-        this.mutex.unlock();
-        if has_more {
-            this.abort_task();
-        }
+        // reader.cancel() / body.cancel() aborts the fetch so the server sees the
+        // close (Node/Deno/browsers abort unconditionally). abort_task() is
+        // idempotent and only touches atomics + schedule_shutdown.
+        this.abort_task();
         this.ignore_remaining_response_body(false);
     }
 

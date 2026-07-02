@@ -31,9 +31,8 @@ pub struct ParsedShellScript {
     pub quiet: Cell<bool>,
     pub cwd: Cell<Option<BunString>>,
     /// `Bun.Terminal` attached via `setTerminal`. Non-owning backref: the
-    /// terminal's JS wrapper holds the intrusive ref and is GC-rooted on this
-    /// wrapper's `terminal` cached-value slot (`values: ["terminal"]` in
-    /// ParsedShellScript.classes.ts), so the pointee outlives the holder.
+    /// terminal's JS wrapper holds the intrusive ref, and `setTerminal` roots
+    /// that wrapper on this wrapper's `terminal` cached-value slot.
     pub terminal: Cell<Option<core::ptr::NonNull<Terminal>>>,
     /// Self-wrapper backref. `.classes.ts` has `finalize: true`, so the weak arm is
     /// sound: codegen calls `finalize()` which flips this to `.Finalized` before sweep.

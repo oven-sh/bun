@@ -17,7 +17,7 @@ export function readableStreamFromAsyncIterator(target, fn) {
 
   var runningAsyncIteratorPromise;
   async function runAsyncIterator(controller) {
-    var closingError: Error | undefined, value, done, immediateTask;
+    var closingError: Error | undefined, value, done;
 
     try {
       while (!cancelled && !done) {
@@ -28,11 +28,12 @@ export function readableStreamFromAsyncIterator(target, fn) {
         }
 
         if ($isPromise(promise) && $peekPromiseStatus(promise) === 1) {
-          clearImmediate(immediateTask);
           ({ value, done } = $peekPromiseSettledValue(promise));
           $assert(!$isPromise(value), "Expected a value, not a promise");
         } else {
-          immediateTask = setImmediate(() => immediateTask && controller?.flush?.(true));
+          // Writes batch while the generator keeps yielding within a tick; the sink layer
+          // delivers them at the end of the tick (HTTP: the response sink's auto-flusher;
+          // JS readers: the direct controller's end-of-tick flush).
           ({ value, done } = await promise);
 
           if (cancelled) {
@@ -47,8 +48,6 @@ export function readableStreamFromAsyncIterator(target, fn) {
           // awaited here, so mark it handled.
           const wrote = controller.write(value);
           if (wrote < 0) {
-            clearImmediate(immediateTask);
-            immediateTask = undefined;
             await controller.flush(true);
           } else if ($isPromise(wrote)) {
             $markPromiseAsHandled(wrote);
@@ -58,8 +57,6 @@ export function readableStreamFromAsyncIterator(target, fn) {
     } catch (e) {
       closingError = e;
     } finally {
-      clearImmediate(immediateTask);
-      immediateTask = undefined;
       // "iter" will be undefined if the stream was closed above.
 
       // Stream was closed before we tried writing to it.

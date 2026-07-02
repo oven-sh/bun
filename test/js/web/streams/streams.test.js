@@ -634,6 +634,41 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     });
   }
 
+  it("a direct stream's buffered write reaches a waiting reader at the end of the tick", async () => {
+    // No explicit flush() and pull never returns: only the controller's end-of-tick
+    // flush can deliver the chunk.
+    const rs = new ReadableStream({
+      type: "direct",
+      pull(c) {
+        c.write("tick");
+        return new Promise(() => {});
+      },
+    });
+    const reader = rs.getReader();
+    const result = await Promise.race([reader.read(), Bun.sleep(1000).then(() => "TIMEOUT")]);
+    expect(result).not.toBe("TIMEOUT");
+    expect(new TextDecoder().decode(result.value)).toBe("tick");
+  });
+
+  it("an async generator Response body delivers each yield to a JS reader as it is produced", async () => {
+    async function* gen() {
+      for (let i = 0; i < 3; i++) {
+        yield `c${i};`;
+        await Bun.sleep(30);
+      }
+    }
+    const reader = new Response(gen()).body.getReader();
+    const chunks = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(new TextDecoder().decode(value));
+    }
+    // Batched-to-one delivery means the end-of-tick flush regressed.
+    expect(chunks.length).toBeGreaterThanOrEqual(3);
+    expect(chunks.join("")).toBe("c0;c1;c2;");
+  });
+
   it("canceling a direct stream's reader settles its pending read", async () => {
     const rs = new ReadableStream({
       type: "direct",

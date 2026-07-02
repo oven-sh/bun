@@ -85,6 +85,13 @@ public:
     JSC::WriteBarrier<JSC::JSPromise> m_closingPromise;
     bool m_calledDone { false };
 
+    // End-of-tick auto-flush (the JS-facing analogue of the HTTP sink's AutoFlusher):
+    // armed by write() when data is buffered below the HWM while a consumer waits; the
+    // deferred task runs right after the current microtask drain and delivers it.
+    bool m_endOfTickFlushArmed { false };
+    void* m_bunVM { nullptr };
+    void armEndOfTickFlush(JSC::JSGlobalObject*);
+
     // Final-chunk-on-close: the NEXT read() delivers m_finalChunk then closes. onPull checks
     // m_finalChunkArmed FIRST.
     JSC::WriteBarrier<JSC::Unknown> m_finalChunk;

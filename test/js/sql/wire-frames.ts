@@ -409,6 +409,34 @@ export function mysqlTextResultSet(
   return Buffer.concat(parts);
 }
 
+// MySQL Binary Protocol Resultset Row (page_protocol_binary_resultset.html#sect_protocol_binary_resultset_row):
+//   Int<1>(0x00 header) String<(column_count + 7 + 2) / 8>(NULL bitmap, bit offset 2)
+//   then each non-NULL value in its column type's binary encoding (callers pass values pre-encoded).
+export function mysqlBinaryResultSetRow(seq: number, values: (Buffer | null)[]): Buffer {
+  const bitmap = Buffer.alloc(Math.floor((values.length + 7 + 2) / 8));
+  values.forEach((value, i) => {
+    if (value === null) bitmap[(i + 2) >> 3] |= 1 << ((i + 2) & 7);
+  });
+  const nonNull = values.filter((value): value is Buffer => value !== null);
+  return mysqlRawPacket(seq, Buffer.concat([Buffer.from([0x00]), bitmap, ...nonNull]));
+}
+
+// MySQL Binary Protocol Resultset (page_protocol_binary_resultset.html), in the CLIENT_DEPRECATE_EOF
+// framing (same shape as the textual resultset): lenenc(column_count) packet, one ColumnDefinition41
+// per column, one binary row packet per row, then an OK packet with the 0xFE header as the terminator.
+export function mysqlBinaryResultSet(
+  startSeq: number,
+  columns: { name: string; type: number }[],
+  rows: (Buffer | null)[][],
+): Buffer {
+  let seq = startSeq;
+  const parts: Buffer[] = [mysqlRawPacket(seq++, mysqlLenencInt(columns.length))];
+  for (const column of columns) parts.push(mysqlColumnDefinition(seq++, column));
+  for (const row of rows) parts.push(mysqlBinaryResultSetRow(seq++, row));
+  parts.push(mysqlOkPacket(seq, 0xfe));
+  return Buffer.concat(parts);
+}
+
 // MySQL COM_STMT_PREPARE_OK — page_protocol_com_stmt_prepare.html#sect_protocol_com_stmt_prepare_response_ok:
 //   Int<1>(0x00) Int<4>(statement_id) Int<2>(num_columns) Int<2>(num_params) Int<1>(0x00) Int<2>(warning_count)
 export function mysqlStmtPrepareOk(seq: number, stmtId: number, numColumns: number, numParams: number): Buffer {

@@ -14,9 +14,11 @@
 // and sends COM_STMT_CLOSE for what it evicts.
 
 import { SQL } from "bun";
+import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
 import {
   listeningServer,
+  mysqlBinaryResultSet,
   mysqlColumnDefinition,
   mysqlErrPacket,
   mysqlHandshakeV10,
@@ -29,6 +31,7 @@ const COM_QUIT = 0x01;
 const COM_STMT_PREPARE = 0x16;
 const COM_STMT_EXECUTE = 0x17;
 const COM_STMT_CLOSE = 0x19;
+const MYSQL_TYPE_LONG = 0x03;
 const MYSQL_TYPE_LONGLONG = 0x08;
 const ER_UNKNOWN_STMT_HANDLER = 1243;
 
@@ -38,13 +41,15 @@ const MAX_CACHED_PREPARED_STATEMENTS = 256;
 
 /**
  * Minimal MySQL server: accepts any auth, answers COM_STMT_PREPARE with a
- * fresh statement id (one `?` parameter, no result columns), COM_STMT_EXECUTE
- * with an empty OK, and records every COM_STMT_CLOSE (which, per protocol, has
- * no response). Executing an id that was closed (or never prepared) answers
- * with ER_UNKNOWN_STMT_HANDLER exactly like a real server, so a client that
- * closes a statement another query still needs fails that query loudly.
+ * fresh statement id (one `?` parameter; one INT result column "c" when
+ * `resultColumn`, none otherwise), COM_STMT_EXECUTE with a one-row binary
+ * resultset (`resultColumn`) or an empty OK, and records every COM_STMT_CLOSE
+ * (which, per protocol, has no response). Executing an id that was closed (or
+ * never prepared) answers with ER_UNKNOWN_STMT_HANDLER exactly like a real
+ * server, so a client that closes a statement another query still needs fails
+ * that query loudly.
  */
-async function statementCountingServer() {
+async function statementCountingServer(opts: { resultColumn?: boolean } = {}) {
   const counters = {
     prepares: 0,
     executes: 0,
@@ -70,13 +75,16 @@ async function statementCountingServer() {
             counters.prepares++;
             const id = nextStatementId++;
             counters.prepared.add(id);
-            // COM_STMT_PREPARE_OK(num_columns = 0, num_params = 1) followed by
-            // the single parameter definition. CLIENT_DEPRECATE_EOF is
-            // negotiated by the handshake above, so no trailing EOF packet.
+            // COM_STMT_PREPARE_OK(num_columns, num_params = 1) followed by the
+            // parameter definition and, when advertised, the result column
+            // definition. CLIENT_DEPRECATE_EOF is negotiated by the handshake
+            // above, so no trailing EOF packets.
+            const columns = opts.resultColumn ? [mysqlColumnDefinition(3, { name: "c", type: MYSQL_TYPE_LONG })] : [];
             socket.write(
               Buffer.concat([
-                mysqlStmtPrepareOk(1, id, 0, 1),
+                mysqlStmtPrepareOk(1, id, columns.length, 1),
                 mysqlColumnDefinition(2, { name: "?", type: MYSQL_TYPE_LONGLONG }),
+                ...columns,
               ]),
             );
             break;
@@ -95,7 +103,15 @@ async function statementCountingServer() {
               break;
             }
             counters.executes++;
-            socket.write(mysqlOkPacket(1));
+            if (opts.resultColumn) {
+              // One INT row ("c" = statement id) so the client materializes a
+              // row object (and caches its JSC Structure on the statement).
+              const value = Buffer.alloc(4);
+              value.writeInt32LE(id, 0);
+              socket.write(mysqlBinaryResultSet(1, [{ name: "c", type: MYSQL_TYPE_LONG }], [[value]]));
+            } else {
+              socket.write(mysqlOkPacket(1));
+            }
             break;
           }
           case COM_STMT_CLOSE: {
@@ -154,6 +170,50 @@ test("MySQL: the prepared-statement cache is capped and evicted statements are c
     // a closed id would have been rejected by the mock and thrown above).
     expect(counters.prepares).toBe(DISTINCT + extra);
     expect(counters.executes).toBe(DISTINCT + extra);
+  } finally {
+    await new Promise<void>(r => server.close(() => r()));
+  }
+}, 30_000);
+
+// The same unbounded cache also leaked client memory: every cached statement
+// roots one JSC Structure (its row shape) through a Strong handle, plus its
+// own metadata, for the connection's lifetime. Eviction must release both.
+test("MySQL: evicting cached statements releases their rooted row Structures (client memory)", async () => {
+  const protectedStructures = () => heapStats().protectedObjectTypeCounts.Structure ?? 0;
+  const { server, port, counters } = await statementCountingServer({ resultColumn: true });
+  try {
+    await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
+
+    // The mock names every result column "c" and returns the statement id (the
+    // warmup's is 1), which also proves the binary row framing is consumed.
+    expect(await sql.unsafe("select ? as warmup", [0])).toEqual([{ c: 1 }]);
+    Bun.gc(true);
+    await Bun.sleep(0);
+    const baseline = protectedStructures();
+
+    const DISTINCT = MAX_CACHED_PREPARED_STATEMENTS + 8;
+    for (let i = 0; i < DISTINCT; i++) {
+      await sql.unsafe(`select ? as c${i}`, [i]);
+    }
+
+    // Statements become evictable once their collected query wrappers drop
+    // them (same convergence loop as the capped-eviction test above).
+    let extra = 0;
+    while (counters.prepares - counters.closed.size > MAX_CACHED_PREPARED_STATEMENTS && extra < 64) {
+      Bun.gc(true);
+      await Bun.sleep(0);
+      await sql.unsafe(`select ? as extra${extra}`, [extra]);
+      extra++;
+    }
+    Bun.gc(true);
+    await Bun.sleep(0);
+
+    expect(counters.closed.size).toBeGreaterThan(0);
+    // Post-GC, only statements still cached may root a Structure (the slack
+    // absorbs unrelated Strong handles created while the test runs). Without
+    // eviction every one of the DISTINCT + extra texts roots its Structure
+    // (and retains its statement) until the connection closes.
+    expect(protectedStructures() - baseline).toBeLessThanOrEqual(MAX_CACHED_PREPARED_STATEMENTS + 16);
   } finally {
     await new Promise<void>(r => server.close(() => r()));
   }

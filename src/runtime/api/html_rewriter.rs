@@ -2669,6 +2669,13 @@ impl WrapperLike for Element {
         self.invalidate();
     }
     fn retarget(&self, raw: *mut Self::Raw) {
+        // A retarget means the element's lol-html backing (including the
+        // attribute buffer) was replaced by the owned copy `into_suspended`
+        // parked on the heap. Any `AttributeIterator` handed to JS before
+        // the handler's `await` still borrows the abandoned buffer, so it
+        // must be detached, exactly like `set_attribute`/`remove_attribute`
+        // do before they invalidate the buffer.
+        self.detach_attribute_iterators();
         self.element.set(raw);
     }
     fn suspended_raw(rewriter: &mut LolRewriter) -> *mut Self::Raw {

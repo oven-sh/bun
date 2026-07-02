@@ -147,6 +147,31 @@ describe("HTMLRewriter", () => {
       expect(await res.text()).toBe('<div id="x" before="1" after="2">inner</div>');
     });
 
+    it("an attribute iterator from before the await is detached", async () => {
+      // The suspension deep-copies the element (and its attribute buffer)
+      // onto the heap. An iterator handed out before the `await` borrows the
+      // abandoned buffer, so it must report done, exactly like an iterator
+      // leaked past a synchronous handler's return.
+      let after;
+      const res = new HTMLRewriter()
+        .on("div", {
+          async element(element) {
+            const before = element.attributes;
+            await setImmediatePromise();
+            expect(before.next()).toEqual({ done: true, value: undefined });
+            // A fresh iterator reads the heap copy's attributes.
+            after = [...element.attributes];
+            element.setAttribute("c", "3");
+          },
+        })
+        .transform(new Response('<div a="1" b="2">x</div>'));
+      expect(await res.text()).toBe('<div a="1" b="2" c="3">x</div>');
+      expect(after).toEqual([
+        ["a", "1"],
+        ["b", "2"],
+      ]);
+    });
+
     it("runs the next handler for the same element after the previous one's await", async () => {
       const order = [];
       const res = new HTMLRewriter()

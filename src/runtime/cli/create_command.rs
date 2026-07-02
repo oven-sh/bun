@@ -779,6 +779,9 @@ impl CreateCommand {
                 let mut package_json_expr = match JSON::parse_utf8(&source, log, &bump) {
                     Ok(e) => e,
                     Err(_) => {
+                        if log.errors > 0 {
+                            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                        }
                         break 'process_package_json;
                     }
                 };

@@ -26,6 +26,18 @@ describe("exit", async () => {
 
     TestBuilder.command`exit 1; exit 2`.exitCode(1).runAsTest("the first exit wins");
 
+    // https://github.com/oven-sh/bun/issues/20368
+    TestBuilder.command /* sh */ `
+echo "Good Bun!"
+exit
+exit 0
+exit 1
+echo "Bad Bun!"
+`
+      .exitCode(0)
+      .stdout("Good Bun!\n")
+      .runAsTest("a bare exit on its own line");
+
     // Not short-circuiting on a status: `exit 0` ends an && chain and
     // `exit 5` ends an || chain, where the status alone would keep going.
     TestBuilder.command`exit 0 && echo never`.exitCode(0).stdout("").runAsTest("exit 0 ends an && chain");

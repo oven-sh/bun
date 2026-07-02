@@ -385,6 +385,51 @@ describe("HTTP/2 upgrade — client disconnect mid-response", () => {
   });
 });
 
+describe("HTTP/2 upgrade — optional mutual TLS", () => {
+  // requestCert: true, rejectUnauthorized: false and a client without a
+  // certificate: the handshake succeeds, the socket is handed to the
+  // application with authorized: false, and 'tlsClientError' must NOT fire.
+  // (Http2SecureServer's default 'tlsClientError' handler destroys the
+  // socket, so a spurious emit here drops every optional-mTLS client.)
+  test("client without a certificate is served and does not emit tlsClientError", async () => {
+    const tlsClientErrors: (Error & { code?: string })[] = [];
+    const h2Server = http2.createSecureServer(
+      {
+        ...TLS,
+        ca: [fs.readFileSync(path.join(FIXTURES_PATH, "ca1-cert.pem"))],
+        requestCert: true,
+        rejectUnauthorized: false,
+      },
+      (_req, res) => {
+        res.writeHead(200);
+        res.end("served");
+      },
+    );
+    h2Server.on("error", () => {});
+    h2Server.on("tlsClientError", err => tlsClientErrors.push(err));
+
+    const netServer = net.createServer(socket => {
+      h2Server.emit("connection", socket);
+    });
+    const port = await new Promise<number>(resolve => {
+      netServer.listen(0, "127.0.0.1", () => resolve((netServer.address() as net.AddressInfo).port));
+    });
+
+    const client = connectClient(port);
+    const result = await request(client, "GET", "/");
+
+    assert.strictEqual(result.status, 200);
+    assert.strictEqual(result.body, "served");
+    assert.deepStrictEqual(
+      tlsClientErrors.map(e => e.code || e.message),
+      [],
+    );
+
+    client.close();
+    netServer.close();
+  });
+});
+
 describe("HTTP/2 upgrade — independent upgrade per connection", () => {
   test("three clients produce three distinct sessions", async () => {
     const sessions: http2.Http2Session[] = [];

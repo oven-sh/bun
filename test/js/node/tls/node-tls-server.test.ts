@@ -823,6 +823,55 @@ it("leaves socket.authorized false unless a client certificate was requested and
   }
 });
 
+it("does not emit 'tlsClientError' for an optional-mTLS handshake that completes", async () => {
+  // requestCert: true with rejectUnauthorized: false is the optional-mTLS
+  // shape: the handshake succeeds and the verification failure is reported
+  // only through socket.authorized / socket.authorizationError. Node never
+  // emits 'tlsClientError' for a connection that also gets 'secureConnection'.
+  const fixtures = join(import.meta.dir, "fixtures");
+  const agent1Key = readFileSync(join(fixtures, "agent1-key.pem"), "utf8");
+  const agent1Cert = readFileSync(join(fixtures, "agent1-cert.pem"), "utf8");
+  const ca1 = readFileSync(join(fixtures, "ca1-cert.pem"), "utf8");
+  // agent3 is issued by ca2, which is not in the server's trust store.
+  const agent3Key = readFileSync(join(fixtures, "agent3-key.pem"), "utf8");
+  const agent3Cert = readFileSync(join(fixtures, "agent3-cert.pem"), "utf8");
+
+  const cases: [label: string, clientCreds: object, authorizationError: string][] = [
+    ["no client certificate", {}, "UNABLE_TO_GET_ISSUER_CERT"],
+    ["unverifiable client certificate", { key: agent3Key, cert: agent3Cert }, "UNABLE_TO_VERIFY_LEAF_SIGNATURE"],
+  ];
+  for (const [, clientCreds, authorizationError] of cases) {
+    const tlsClientErrors: (Error & { code?: string })[] = [];
+    const { promise, resolve, reject } = Promise.withResolvers<{ authorized: boolean; authorizationError: string }>();
+    const server: Server = createServer(
+      { key: agent1Key, cert: agent1Cert, ca: [ca1], requestCert: true, rejectUnauthorized: false },
+      socket => {
+        resolve({ authorized: socket.authorized, authorizationError: socket.authorizationError as string });
+        socket.end("served");
+      },
+    );
+    server.on("tlsClientError", err => tlsClientErrors.push(err));
+    server.on("error", reject);
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ...clientCreds });
+    client.on("error", reject);
+    const received = once(client, "data");
+    try {
+      // 'secureConnection' reached the application with the verify result
+      // on the socket, and the exchange completed.
+      expect(await promise).toEqual({ authorized: false, authorizationError });
+      expect((await received)[0].toString()).toBe("served");
+      // No 'tlsClientError' for a handshake that completed.
+      expect(tlsClientErrors.map(e => e.code || e.message)).toEqual([]);
+    } finally {
+      client.end();
+      await new Promise<void>(done => server.close(() => done()));
+    }
+  }
+});
+
 it("createServer({pfx, requestCert}) verifies client certificates against the pfx-embedded CA", async () => {
   // agent1.pfx bundles agent1's key/cert plus ca1; a server built from it must
   // be able to verify a client certificate signed by that embedded CA.

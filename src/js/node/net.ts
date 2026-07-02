@@ -794,8 +794,11 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       if (verifyError) {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
-        server?.emit("tlsClientError", verifyError, self);
         if (self._rejectUnauthorized) {
+          // Only a rejected peer is reported through 'tlsClientError'; when
+          // rejectUnauthorized is false the handshake completes and the failure
+          // surfaces solely as socket.authorized / socket.authorizationError.
+          server?.emit("tlsClientError", verifyError, self);
           // if we reject we still need to emit secure
           self.emit("secure", self);
           // No error argument: the socket has no 'error' listener yet, so destroy(err)

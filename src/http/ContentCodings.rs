@@ -34,6 +34,26 @@ impl Default for ContentCodings {
     }
 }
 
+/// Map a compressed-coding token (RFC 9110 section 8.4.1: names are
+/// case-insensitive; `x-gzip` is a registered deprecated alias of `gzip`) to
+/// the [`Encoding`] we decode it with. `None` for everything else, including
+/// the `identity` no-op.
+pub(crate) fn token_to_encoding(token: &[u8]) -> Option<Encoding> {
+    if strings::eql_case_insensitive_ascii_check_length(token, b"gzip")
+        || strings::eql_case_insensitive_ascii_check_length(token, b"x-gzip")
+    {
+        Some(Encoding::Gzip)
+    } else if strings::eql_case_insensitive_ascii_check_length(token, b"deflate") {
+        Some(Encoding::Deflate)
+    } else if strings::eql_case_insensitive_ascii_check_length(token, b"br") {
+        Some(Encoding::Brotli)
+    } else if strings::eql_case_insensitive_ascii_check_length(token, b"zstd") {
+        Some(Encoding::Zstd)
+    } else {
+        None
+    }
+}
+
 impl ContentCodings {
     pub const fn new() -> Self {
         Self {
@@ -50,23 +70,12 @@ impl ContentCodings {
     pub fn append_header_value(&mut self, value: &[u8]) -> bool {
         let mut tokens = HeaderValueIterator::init(value);
         while let Some(token) = tokens.next() {
-            // RFC 9110 section 8.4.1: coding names are case-insensitive.
-            // `x-gzip` is a registered deprecated alias of `gzip`.
-            let coding = if strings::eql_case_insensitive_ascii_check_length(token, b"gzip")
-                || strings::eql_case_insensitive_ascii_check_length(token, b"x-gzip")
-            {
-                Encoding::Gzip
-            } else if strings::eql_case_insensitive_ascii_check_length(token, b"deflate") {
-                Encoding::Deflate
-            } else if strings::eql_case_insensitive_ascii_check_length(token, b"br") {
-                Encoding::Brotli
-            } else if strings::eql_case_insensitive_ascii_check_length(token, b"zstd") {
-                Encoding::Zstd
-            } else if strings::eql_case_insensitive_ascii_check_length(token, b"identity") {
-                // "identity" means "no transformation": it contributes no
-                // decoder but doesn't make the rest of the list undecodable.
-                continue;
-            } else {
+            let Some(coding) = token_to_encoding(token) else {
+                if strings::eql_case_insensitive_ascii_check_length(token, b"identity") {
+                    // "identity" means "no transformation": it contributes no
+                    // decoder but doesn't make the rest of the list undecodable.
+                    continue;
+                }
                 self.set_unsupported();
                 return false;
             };

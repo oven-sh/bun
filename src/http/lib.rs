@@ -5043,6 +5043,8 @@ impl<'a> HTTPClient<'a> {
                             .append_header_value(header.value())
                         {
                             self.state.content_encoding_i = header_i as u8;
+                        } else {
+                            self.state.content_encoding_i = u8::MAX;
                         }
                     }
                 }
@@ -5058,23 +5060,9 @@ impl<'a> HTTPClient<'a> {
                     }
                     // RFC 9112 §7: transfer-coding names are case-insensitive.
                     let value = header.value();
-                    if strings::eql_case_insensitive_ascii_check_length(value, b"gzip")
-                        || strings::eql_case_insensitive_ascii_check_length(value, b"x-gzip")
-                    {
+                    if let Some(encoding) = content_codings::token_to_encoding(value) {
                         if !self.flags.disable_decompression {
-                            self.state.transfer_encoding = Encoding::Gzip;
-                        }
-                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"deflate") {
-                        if !self.flags.disable_decompression {
-                            self.state.transfer_encoding = Encoding::Deflate;
-                        }
-                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"br") {
-                        if !self.flags.disable_decompression {
-                            self.state.transfer_encoding = Encoding::Brotli;
-                        }
-                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"zstd") {
-                        if !self.flags.disable_decompression {
-                            self.state.transfer_encoding = Encoding::Zstd;
+                            self.state.transfer_encoding = encoding;
                         }
                     } else if strings::eql_case_insensitive_ascii_check_length(value, b"identity") {
                         self.state.transfer_encoding = Encoding::Identity;

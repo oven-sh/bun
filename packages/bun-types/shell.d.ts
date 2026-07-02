@@ -109,6 +109,38 @@ declare module "bun" {
       env(newEnv: Record<string, string | undefined> | NodeJS.Dict<string> | undefined): this;
 
       /**
+       * Attach a pseudo-terminal (PTY) to the shell.
+       *
+       * The commands the shell spawns receive the terminal's slave on stdin,
+       * stdout, and stderr, so they see `isatty() === true` on all three
+       * (colors, pagers, and full-screen programs work). Builtins like `echo`
+       * write to the terminal too.
+       *
+       * Output goes to the terminal's `data` callback instead of the shell's
+       * buffered `stdout`/`stderr` (which stay empty), mirroring how
+       * `Bun.spawn({ terminal })` returns `null` for `stdout`/`stderr`.
+       * Use `terminal.write()` to send input.
+       *
+       * The terminal is not closed when the shell finishes, so it can be
+       * reused across invocations. Not supported on Windows.
+       *
+       * @param terminal The `Bun.Terminal` to attach
+       *
+       * @example
+       * ```ts
+       * await using terminal = new Bun.Terminal({
+       *   cols: 80,
+       *   rows: 24,
+       *   data(_term, chunk) {
+       *     process.stdout.write(chunk);
+       *   },
+       * });
+       * await $`ls --color=auto`.terminal(terminal);
+       * ```
+       */
+      terminal(terminal: Terminal): this;
+
+      /**
        * By default, the shell writes to the current process's stdout and stderr while also buffering that output.
        *
        * `quiet()` configures the shell to only buffer the output.

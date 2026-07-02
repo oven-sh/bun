@@ -34,6 +34,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_sys::{self, Fd};
 
+use crate::api::bun_terminal_body::Terminal;
 pub use crate::shell::env_map::EnvMap;
 use crate::shell::io::IO;
 use crate::shell::states::assigns::Assigns;
@@ -314,6 +315,17 @@ pub struct Interpreter {
 
     pub root_shell: JsCell<ShellExecEnv>,
     pub root_io: JsCell<IO>,
+
+    /// `Bun.Terminal` attached via `$`...`.terminal()`. When set,
+    /// [`setup_io_before_run`](Self::setup_io_before_run) replaces `root_io`
+    /// with dups of the PTY slave so spawned commands and builtins see a tty.
+    ///
+    /// Non-owning backref, same model as `Subprocess.terminal`: the terminal's
+    /// JS wrapper holds the intrusive ref and is GC-rooted on the
+    /// `ShellInterpreter` wrapper's `terminal` cached-value slot
+    /// (`values: [..., "terminal"]` in Shell.classes.ts) for the run's lifetime.
+    /// Always `None` on the mini event loop (`bun exec`, `.sh` files).
+    pub terminal: Cell<Option<core::ptr::NonNull<Terminal>>>,
 
     pub has_pending_activity: AtomicU32,
     pub started: AtomicBool,
@@ -598,6 +610,9 @@ impl Interpreter {
                 stdout: crate::shell::io::OutKind::Pipe,
                 stderr: crate::shell::io::OutKind::Pipe,
             }),
+            // Set (on the JS event-loop path only) by `create_shell_interpreter`,
+            // alongside `quiet`, before `run()`.
+            terminal: Cell::new(None),
             has_pending_activity: AtomicU32::new(0),
             started: AtomicBool::new(false),
             keep_alive: JsCell::new(bun_io::KeepAlive::default()),
@@ -1168,7 +1183,13 @@ impl Interpreter {
     /// so command output reaches the terminal. On the JS event loop the
     /// `captured` slot is also wired to `_buffered_stdout/err` so
     /// `Bun.$` callers can read it back.
+    ///
+    /// An attached `Bun.Terminal` takes precedence over `quiet`: the PTY slave
+    /// must reach the children's fds regardless of whether output is echoed.
     fn setup_io_before_run(&self) -> bun_sys::Result<()> {
+        if let Some(terminal) = self.terminal.get() {
+            return self.setup_terminal_io(terminal);
+        }
         if self.flags.get().quiet() {
             return Ok(());
         }
@@ -1237,6 +1258,95 @@ impl Interpreter {
             io.stderr = crate::shell::io::OutKind::Fd(crate::shell::io::OutFd {
                 writer: stderr_writer,
                 captured: cap_err,
+            });
+        });
+
+        Ok(())
+    }
+
+    /// Replace `root_io`'s stdin/stdout/stderr with dups of the attached
+    /// terminal's PTY slave, so external commands receive the slave on
+    /// fds 0/1/2 (`Stdio::Fd` → `dup2` in the child) and builtins write into
+    /// the PTY. `captured` stays `None`: output reaches the terminal's `data`
+    /// callback, not the JS-side buffers — the same contract as
+    /// `Bun.spawn({ terminal })`, whose `proc.stdout` is `null`.
+    ///
+    /// The interpreter works on its own dups so tearing down `root_io` never
+    /// closes the terminal's `slave_fd` (and vice versa).
+    fn setup_terminal_io(&self, terminal: core::ptr::NonNull<Terminal>) -> bun_sys::Result<()> {
+        // SAFETY: `terminal` was validated and stored by
+        // `create_shell_interpreter`; its JS wrapper is rooted on the
+        // `ShellInterpreter` wrapper for the lifetime of this run.
+        let slave_fd = bun_ptr::BackRef::from(terminal).get_slave_fd();
+        // `setTerminal` rejected closed terminals, but the user can still
+        // `close()` it between `.terminal(t)` and the first await.
+        if slave_fd == Fd::INVALID {
+            return Err(bun_sys::Error::from_code(
+                bun_sys::E::EBADF,
+                bun_sys::Tag::dup,
+            ));
+        }
+
+        let event_loop = self.event_loop;
+        let interp_ptr: *mut Interpreter = self.as_ctx_ptr();
+
+        log!("Duping terminal slave for stdin/stdout/stderr");
+        let stdin_fd = shell_dup(slave_fd)?;
+        let stdout_fd = match shell_dup(slave_fd) {
+            Ok(fd) => fd,
+            Err(e) => {
+                closefd(stdin_fd);
+                return Err(e);
+            }
+        };
+        let stderr_fd = match shell_dup(slave_fd) {
+            Ok(fd) => fd,
+            Err(e) => {
+                closefd(stdin_fd);
+                closefd(stdout_fd);
+                return Err(e);
+            }
+        };
+
+        let stdin_reader = IOReader::init(stdin_fd, event_loop);
+        // SAFETY: `interp_ptr` is the live `Interpreter` being set up.
+        stdin_reader.set_interp(interp_ptr);
+        // A PTY slave is a tty, so this matches the existing "parent stdout is
+        // a terminal" path: pollable, blocking (IOWriter never flips
+        // O_NONBLOCK, which the children would inherit through the shared
+        // open-file description).
+        let stdout_writer = IOWriter::init(
+            stdout_fd,
+            crate::shell::io_writer::Flags {
+                pollable: is_pollable(stdout_fd),
+                ..Default::default()
+            },
+            event_loop,
+        );
+        // SAFETY: `interp_ptr` is the live `Interpreter` being set up.
+        stdout_writer.set_interp(interp_ptr);
+        let stderr_writer = IOWriter::init(
+            stderr_fd,
+            crate::shell::io_writer::Flags {
+                pollable: is_pollable(stderr_fd),
+                ..Default::default()
+            },
+            event_loop,
+        );
+        // SAFETY: `interp_ptr` is the live `Interpreter` being set up.
+        stderr_writer.set_interp(interp_ptr);
+
+        // Dropping the previous `root_io.stdin` releases the parent-stdin dup
+        // taken in `init`.
+        self.root_io.with_mut(|io| {
+            io.stdin = crate::shell::io::InKind::Fd(stdin_reader);
+            io.stdout = crate::shell::io::OutKind::Fd(crate::shell::io::OutFd {
+                writer: stdout_writer,
+                captured: None,
+            });
+            io.stderr = crate::shell::io::OutKind::Fd(crate::shell::io::OutFd {
+                writer: stderr_writer,
+                captured: None,
             });
         });
 
@@ -3054,7 +3164,7 @@ pub fn create_shell_interpreter(
         )));
     }
 
-    let (shargs, jsobjs, quiet, cwd, export_env) = parsed_shell_script.take(global);
+    let (shargs, jsobjs, quiet, cwd, export_env, terminal) = parsed_shell_script.take(global);
 
     let cwd = cwd.map(bun_core::OwnedString::new);
     let cwd_slice = cwd.as_deref().map(|c| c.to_utf8());
@@ -3094,6 +3204,7 @@ pub fn create_shell_interpreter(
     let js_value = unsafe {
         let it = &*interpreter;
         it.update_flags(|f| f.set_quiet(quiet));
+        it.terminal.set(terminal);
         it.global_this
             .set(std::ptr::from_ref::<crate::jsc::JSGlobalObject>(global).cast_mut());
         it.estimated_size_for_gc
@@ -3106,6 +3217,22 @@ pub fn create_shell_interpreter(
             reject,
         );
         it.this_jsvalue.set(js_value);
+        // Re-root the terminal's JS wrapper on the `ShellInterpreter` wrapper:
+        // the `ParsedShellScript` that was rooting it becomes unreachable as
+        // soon as JS drops its reference (`this.#args = undefined`).
+        if terminal.is_some() {
+            if let Some(terminal_js) =
+                crate::generated_classes::js_ParsedShellScript::terminal_get_cached(
+                    parsed_shell_script_js,
+                )
+            {
+                crate::jsc::generated::JSShellInterpreter::terminal_set_cached(
+                    js_value,
+                    global,
+                    terminal_js,
+                );
+            }
+        }
         it.keep_alive.with_mut(|k| {
             // `bun_vm_ptr()` is the live per-thread VM singleton.
             k.ref_(crate::jsc::VirtualMachineRef::event_loop_ctx(

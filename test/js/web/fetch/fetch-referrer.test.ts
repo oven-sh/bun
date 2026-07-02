@@ -4,7 +4,8 @@
 import { describe, expect, it } from "bun:test";
 import { rmSync } from "fs";
 
-describe("fetch referrer and referrerPolicy", () => {
+// Each test binds its own server and reads only its own `received` map.
+describe.concurrent("fetch referrer and referrerPolicy", () => {
   // Collect the Referer header each request arrives with, keyed by pathname.
   function referrerServer(received: Record<string, string | null>, options: { unix?: string } = {}) {
     return Bun.serve({

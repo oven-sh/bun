@@ -380,6 +380,7 @@ impl Request {
         core::mem::size_of::<Request>()
             + self.request_context.memory_cost()
             + self.url.get().byte_slice().len()
+            + self.size_of_referrer()
             + self.body_value().memory_cost()
     }
 
@@ -500,6 +501,7 @@ impl Request {
         self.reported_estimated_size.set(
             self.body_value().estimated_size()
                 + self.size_of_url()
+                + self.size_of_referrer()
                 + core::mem::size_of::<Request>(),
         );
     }
@@ -848,6 +850,12 @@ impl Request {
     pub fn get_url(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         self.ensure_url()?;
         self.url.get().to_js(global_object)
+    }
+
+    /// The referrer is always set (to the `"about:client"` static by default),
+    /// so unlike the url there is nothing to lazily compute here.
+    pub fn size_of_referrer(&self) -> usize {
+        self.referrer.get().byte_slice().len()
     }
 
     pub fn size_of_url(&self) -> usize {

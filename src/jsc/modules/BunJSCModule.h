@@ -158,12 +158,17 @@ JSC_DEFINE_HOST_FUNCTION(functionDescribeArray, (JSGlobalObject * globalObject, 
         vm, toString("<Butterfly: ", RawPointer(object->butterfly()), "; public length: ", object->getArrayLength(), "; vector length: ", object->getVectorLength(), ">")));
 }
 
+// Zeroes the dead stack the collection machinery is about to be built over;
+// see the definition in bindings.cpp.
+extern "C" void Bun__zeroDeadStackBeforeCollection();
+
 JSC_DECLARE_HOST_FUNCTION(functionGCAndSweep);
 JSC_DEFINE_HOST_FUNCTION(functionGCAndSweep,
     (JSGlobalObject * globalObject, CallFrame*))
 {
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
+    Bun__zeroDeadStackBeforeCollection();
     vm.heap.collectNow(Sync, CollectionScope::Full);
     return JSValue::encode(jsNumber(vm.heap.sizeAfterLastFullCollection()));
 }
@@ -174,6 +179,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFullGC,
 {
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
+    Bun__zeroDeadStackBeforeCollection();
     vm.heap.collectSync(CollectionScope::Full);
     return JSValue::encode(jsNumber(vm.heap.sizeAfterLastFullCollection()));
 }
@@ -184,6 +190,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEdenGC,
 {
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
+    Bun__zeroDeadStackBeforeCollection();
     vm.heap.collectSync(CollectionScope::Eden);
     return JSValue::encode(jsNumber(vm.heap.sizeAfterLastEdenCollection()));
 }

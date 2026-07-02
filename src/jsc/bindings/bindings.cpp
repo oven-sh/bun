@@ -158,6 +158,9 @@
 
 #include <JavaScriptCore/VMInlines.h>
 #include "wtf-bindings.h"
+#include <wtf/StackBounds.h>
+#include <wtf/StackPointer.h>
+#include <wtf/Threading.h>
 
 #if ASSERT_ENABLED
 #include <JavaScriptCore/IntegrityInlines.h>
@@ -4759,6 +4762,60 @@ void JSC__VM__releaseWeakRefs(JSC::VM* arg0)
     arg0->finalizeSynchronousJSExecution();
 }
 
+// Keeps the zero-fill of a dying stack region from being treated as dead
+// stores: the zeroes are what the next conservative GC scan reads.
+ALWAYS_INLINE static void keepStackStores(void* p)
+{
+#if COMPILER(GCC_COMPATIBLE)
+    asm volatile("" ::"r"(p) : "memory");
+#else
+    WTF::compilerFence();
+#endif
+}
+
+// The event loop calls this before each JS dispatch phase (tasks, immediates,
+// I/O, timers). The dispatch frames are built right below the caller, over
+// memory still holding JSValues from earlier, deeper dispatches; any slot the
+// new frames never write (struct padding, unused locals) would hand those stale
+// values to the conservative GC scan as roots, keeping dead objects alive
+// forever. This function's own frame covers that window: zeroing it (plus
+// JSC's lastStackTop-based sanitizer for the deeper region) and returning
+// leaves only zeroes behind for the dispatch frames to be built over.
+// WebKit gets the same effect from sanitizeStackForVM on every JSLock
+// release; Bun holds the API lock for the lifetime of the thread.
+NEVER_INLINE void JSC__VM__sanitizeStack(JSC::VM* vm)
+{
+    // Covers the native dispatch + JS entry frames; see #33044 for the case of
+    // a dead once('connect') listener pinned by padding in a dispatch frame.
+    constexpr size_t dispatchWindowBytes = 4096;
+    JSC::sanitizeStackForVM(*vm);
+    uint64_t window[dispatchWindowBytes / sizeof(uint64_t)];
+    memset(static_cast<void*>(window), 0, sizeof(window));
+    keepStackStores(window);
+}
+
+// Zero the dead stack below the synchronous-GC entry before collecting, so the
+// collector's own call tree (and anything deeper) is not built over stale
+// JSValues from earlier, deeper dispatches. JSC__VM__sanitizeStack covers the
+// dispatch-frame band above the JS frames; this covers the band below them.
+extern "C" NEVER_INLINE SUPPRESS_ASAN void Bun__zeroDeadStackBeforeCollection()
+{
+    constexpr size_t windowBytes = 128 * 1024;
+    const WTF::StackBounds bounds = WTF::Thread::currentSingleton().stack();
+    uint8_t* hi = reinterpret_cast<uint8_t*>(currentStackPointer());
+    uint8_t* lo = hi - windowBytes;
+    uint8_t* limit = static_cast<uint8_t*>(bounds.recursionLimit()) + 4096;
+    if (lo < limit)
+        lo = limit;
+    // High to low, one write per word: the region below the stack pointer may
+    // end below the committed part of the stack on Windows, where pages must
+    // be touched in guard-page order and never skipped.
+    for (uint8_t* p = hi; p > lo;) {
+        p -= sizeof(uint64_t);
+        *reinterpret_cast<volatile uint64_t*>(p) = 0;
+    }
+}
+
 void JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, ZigString* arg2)
 {
     JSValue value = JSValue::decode(JSValue0);
@@ -4909,12 +4966,14 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
     if (sync) {
         vm->clearSourceProviderCaches();
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
+        Bun__zeroDeadStackBeforeCollection();
         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
 #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
         malloc_zone_pressure_relief(nullptr, 0);
 #endif
     } else {
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
+        Bun__zeroDeadStackBeforeCollection();
         vm->heap.collectSync(JSC::CollectionScope::Full);
     }
 

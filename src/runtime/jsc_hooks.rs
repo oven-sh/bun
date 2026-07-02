@@ -904,6 +904,12 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // SAFETY: `el` is the live per-thread event loop.
     unsafe { (*el).run_imminent_gc_timer() };
 
+    // The immediates above ran JS; zero the dead stack again before the poll
+    // so the I/O callbacks' dispatch frames see no stale JSValues
+    // (conservative GC; see `VM::sanitize_stack`).
+    // SAFETY: per fn contract — `vm` is the live per-thread VM.
+    unsafe { &*vm }.jsc_vm().sanitize_stack();
+
     // ── poll the I/O loop with the next-timer deadline ──────────────────
     if state.is_null() {
         // No high-tier state (unit test) — fall back to a non-blocking I/O
@@ -1042,6 +1048,12 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
                 .update_date_header_timer_if_necessary(&*loop_, vm)
         };
     }
+
+    // The immediates above ran JS; zero the dead stack again before the poll
+    // so the I/O callbacks' dispatch frames see no stale JSValues
+    // (conservative GC; see `VM::sanitize_stack`).
+    // SAFETY: per fn contract — `vm` is the live per-thread VM.
+    unsafe { &*vm }.jsc_vm().sanitize_stack();
 
     if state.is_null() {
         // SAFETY: `loop_` is the live per-thread uws loop.

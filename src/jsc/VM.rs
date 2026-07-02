@@ -43,6 +43,7 @@ unsafe extern "C" {
     safe fn JSC__VM__isEntered(vm: &VM) -> bool;
     safe fn JSC__VM__throwError(vm: &VM, global_object: &JSGlobalObject, value: JSValue);
     safe fn JSC__VM__releaseWeakRefs(vm: &VM);
+    safe fn JSC__VM__sanitizeStack(vm: &VM);
     safe fn JSC__VM__drainMicrotasks(vm: &VM);
     safe fn JSC__VM__externalMemorySize(vm: &VM) -> usize;
     safe fn JSC__VM__blockBytesAllocated(vm: &VM) -> usize;
@@ -196,6 +197,16 @@ impl VM {
 
     pub fn release_weak_refs(&self) {
         JSC__VM__releaseWeakRefs(self)
+    }
+
+    /// Zero the dead stack between `VM::lastStackTop` and the caller's stack
+    /// pointer (`JSC::sanitizeStackForVM`), plus the helper's own frame, which
+    /// is the window the caller's next dispatch frames are built in. The event
+    /// loop calls this before dispatching a batch of JS callbacks so those
+    /// frames are not built over stale JSValues the conservative GC scan would
+    /// treat as roots.
+    pub fn sanitize_stack(&self) {
+        JSC__VM__sanitizeStack(self)
     }
 
     pub fn drain_microtasks(&self) {

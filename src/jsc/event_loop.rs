@@ -608,6 +608,13 @@ impl EventLoop {
         let global_vm = self.vm_ref().jsc_vm();
 
         loop {
+            if self.tasks.readable_length() > 0 {
+                // Zero the dead stack before dispatching this batch of tasks,
+                // so their native frames are not built over stale JSValues from
+                // earlier, deeper dispatches (which the conservative GC scan
+                // would keep alive). See `VM::sanitize_stack`.
+                self.vm_ref().jsc_vm().sanitize_stack();
+            }
             while self.tick_with_count(ctx) > 0 {
                 self.tick_concurrent();
                 self.global_ref().handle_rejected_promises();
@@ -645,6 +652,10 @@ impl EventLoop {
         // overlap `&mut self: EventLoop`, which is a value field of the VM).
         let prev = self.vm_ref().suppress_microtask_drain.replace(true);
 
+        if self.tasks.readable_length() > 0 {
+            // Same conservative-GC hygiene as `tick()`: see `VM::sanitize_stack`.
+            self.vm_ref().jsc_vm().sanitize_stack();
+        }
         while self.tick_with_count(vm) > 0 {
             self.tick_concurrent();
         }
@@ -814,6 +825,16 @@ impl EventLoop {
         let mut to_run_now = core::mem::take(unsafe { &mut (*this).immediate_tasks });
         // SAFETY: as above.
         unsafe { (*this).immediate_tasks = core::mem::take(&mut (*this).next_immediate_tasks) };
+
+        if !to_run_now.is_empty() {
+            // The immediate callbacks' dispatch frames are laid over stack
+            // memory dirtied by the earlier (deeper) I/O and timer dispatches.
+            // Zero that dead region first, or padding/spill holes in the new
+            // frames inherit stale JSValues that the conservative GC scan roots
+            // (a once('connect') listener was pinned forever this way, #33044).
+            // SAFETY: `this` is the live per-thread event loop.
+            unsafe { &*this }.vm_ref().jsc_vm().sanitize_stack();
+        }
 
         let mut exception_thrown = false;
         for task in to_run_now.iter() {

@@ -1001,8 +1001,8 @@ impl All {
     /// # Safety
     /// `vm` is the erased `*mut VirtualMachine` for the calling JS thread and
     /// must remain live across any `EventLoopTimer::fire` re-entry.
-    // Forwards `vm` to `__bun_fire_timer` without dereferencing it;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    // `vm` is dereferenced (see `# Safety` above); every call site passes the
+    // live per-thread VM, so the fn stays non-unsafe like its callers expect.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn drain_timers(&mut self, vm: *mut () /* erased *mut VirtualMachine */) {
         // Note (§Forbidden aliased-&mut): fired handlers re-enter `vm.timer`
@@ -1023,12 +1023,24 @@ impl All {
         let this: *mut Self = self;
         let mut now = Timespec { sec: 0, nsec: 0 };
         let mut has_set_now = false;
+        let mut sanitized_stack = false;
         loop {
             // SAFETY: `this` derived from `&mut self`; short-lived exclusive
             // borrow scoped to this `next()` call only — dropped before fire().
             let Some(t) = (unsafe { &mut *this }).next(&mut has_set_now, &mut now) else {
                 break;
             };
+            if !sanitized_stack {
+                sanitized_stack = true;
+                // The timer callbacks' dispatch frames are laid over stack
+                // memory dirtied by the earlier (deeper) dispatches of this
+                // loop iteration; zero it so holes in the new frames cannot
+                // hand stale JSValues to the conservative GC scan (#33044).
+                // SAFETY: `vm` is the live per-thread VM per fn contract.
+                unsafe { &*vm.cast::<bun_jsc::virtual_machine::VirtualMachine>() }
+                    .jsc_vm()
+                    .sanitize_stack();
+            }
             // Note: re-pack into bun_event_loop's local Timespec stub
             // until the lower tier unifies on bun_core::Timespec.
             let el_now = ElTimespec {

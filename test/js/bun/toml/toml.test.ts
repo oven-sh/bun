@@ -442,7 +442,8 @@ describe("robustness", () => {
     // can trip), so unlike OVERFLOW_DEPTH this depth is paid in full: it must
     // stay small enough to be fast in debug builds while still overflowing
     // the JS-conversion recursion at release frame sizes.
-    const path = Array(250_000).fill("a").join(".");
+    const depth = 250_000;
+    const path = Buffer.alloc(depth * 2 - 1, "a.").toString();
     expect(() => TOML.parse(path + " = 1")).toThrow(RangeError);
     expect(() => TOML.parse(`[${path}]`)).toThrow(RangeError);
   });

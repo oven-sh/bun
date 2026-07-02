@@ -653,6 +653,18 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     expect(value.byteLength).toBe(10);
   });
 
+  it("new ReadableStreamDefaultReader(lazyNativeStream) materializes it like getReader()", async () => {
+    using dir = tempDir("reader-ctor", { "data.txt": "reader-ctor-data" });
+    const reader = new ReadableStreamDefaultReader(Bun.file(join(String(dir), "data.txt")).stream());
+    const chunks = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    expect(Buffer.concat(chunks).toString()).toBe("reader-ctor-data");
+  });
+
   it("a queuing strategy size() result is coerced like Node (valueOf)", async () => {
     let calls = 0;
     const rs = new ReadableStream(

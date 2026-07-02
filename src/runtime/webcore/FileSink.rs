@@ -1467,43 +1467,49 @@ impl FileSink {
             return promise_result;
         }
 
-        if !promise_result.is_empty_or_undefined_or_null() {
-            if let Some(promise) = promise_result.as_any_promise() {
-                // `bun_jsc::AnyPromise` (the active raw-ptr variant in
-                // lib.rs) does not yet expose `status()`/`result()`; recover the
-                // underlying `JSPromise` (JSInternalPromise subclasses JSPromise
-                // in C++, so the cast is layout-safe).
-                let js_promise: *mut bun_jsc::JSPromise = match promise {
-                    bun_jsc::AnyPromise::Normal(p) => p,
-                    bun_jsc::AnyPromise::Internal(p) => p.cast::<bun_jsc::JSPromise>(),
-                };
-                // SAFETY: `as_any_promise` returned non-null.
-                match unsafe { (*js_promise).status() } {
-                    bun_jsc::js_promise::Status::Pending => {
-                        self.writer
-                            .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
-                        self.ref_();
-                        // TODO: properly propagate exception upwards
-                        // `JSValue::then` takes already-wrapped C-ABI
-                        // host fns; the `toJSHostFunction` step is the manual
-                        // shims at the bottom of this file.
-                        promise_result.then(
-                            global_this,
-                            std::ptr::from_mut::<FileSink>(self),
-                            on_resolve_stream_shim,
-                            on_reject_stream_shim,
-                        );
-                    }
-                    bun_jsc::js_promise::Status::Fulfilled => {
-                        // These don't ref().
-                        self.handle_resolve_stream(global_this);
-                    }
-                    bun_jsc::js_promise::Status::Rejected => {
-                        // These don't ref().
-                        // SAFETY: `js_promise` is non-null (`as_any_promise`).
-                        let result = unsafe { (*js_promise).result(global_this.vm()) };
-                        self.handle_reject_stream(global_this, result);
-                    }
+        if promise_result.is_empty_or_undefined_or_null() {
+            // `assignToStream` finished synchronously with no promise: a direct
+            // stream whose `pull()` ended the sink inline (everything below is
+            // then a no-op), or one with no `pull` at all, which can never
+            // write. Run the same terminal as a fulfilled pump so the
+            // destination sees EOF (instead of a write end held open forever)
+            // and the controller detaches.
+            self.handle_resolve_stream(global_this);
+        } else if let Some(promise) = promise_result.as_any_promise() {
+            // `bun_jsc::AnyPromise` (the active raw-ptr variant in
+            // lib.rs) does not yet expose `status()`/`result()`; recover the
+            // underlying `JSPromise` (JSInternalPromise subclasses JSPromise
+            // in C++, so the cast is layout-safe).
+            let js_promise: *mut bun_jsc::JSPromise = match promise {
+                bun_jsc::AnyPromise::Normal(p) => p,
+                bun_jsc::AnyPromise::Internal(p) => p.cast::<bun_jsc::JSPromise>(),
+            };
+            // SAFETY: `as_any_promise` returned non-null.
+            match unsafe { (*js_promise).status() } {
+                bun_jsc::js_promise::Status::Pending => {
+                    self.writer
+                        .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
+                    self.ref_();
+                    // TODO: properly propagate exception upwards
+                    // `JSValue::then` takes already-wrapped C-ABI
+                    // host fns; the `toJSHostFunction` step is the manual
+                    // shims at the bottom of this file.
+                    promise_result.then(
+                        global_this,
+                        std::ptr::from_mut::<FileSink>(self),
+                        on_resolve_stream_shim,
+                        on_reject_stream_shim,
+                    );
+                }
+                bun_jsc::js_promise::Status::Fulfilled => {
+                    // These don't ref().
+                    self.handle_resolve_stream(global_this);
+                }
+                bun_jsc::js_promise::Status::Rejected => {
+                    // These don't ref().
+                    // SAFETY: `js_promise` is non-null (`as_any_promise`).
+                    let result = unsafe { (*js_promise).result(global_this.vm()) };
+                    self.handle_reject_stream(global_this, result);
                 }
             }
         }

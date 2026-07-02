@@ -525,6 +525,21 @@ describe("bunshell", () => {
       expect(exitCode).not.toBe(0);
     });
 
+    test("direct ReadableStream with a synchronous pull", async () => {
+      // `pull` writes and ends the sink inline, so `assignToStream` returns
+      // synchronously with no promise; the data must still reach the child.
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          controller.write("sync-direct");
+          controller.end();
+        },
+      });
+      const { stdout, exitCode } = await $`${BUN} -e ${catStdin} < ${stream}`.env(bunEnv).quiet();
+      expect(stdout.toString()).toBe("sync-direct");
+      expect(exitCode).toBe(0);
+    });
+
     test("direct ReadableStream with no pull gives the child EOF", async () => {
       // A direct stream with no `pull` never writes; the child must still see
       // EOF (and the controller must not double-release the sink on GC).

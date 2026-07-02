@@ -46,9 +46,10 @@ describe("spawn stdin ReadableStream edge cases", () => {
   });
 
   test("direct ReadableStream with no pull closes stdin", async () => {
-    // `readDirectStream` with no `pull` must still end the sink: the child
-    // sees EOF instead of hanging, and the controller detaches from the
-    // native sink (otherwise its GC destructor released a ref it never owned).
+    // A direct stream with no `pull` can never write, so the native sink must
+    // still be ended: the child sees EOF instead of hanging, and the
+    // controller detaches (otherwise its GC destructor released a ref it
+    // never owned).
     const proc = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: new ReadableStream({ type: "direct" }),

@@ -85,7 +85,7 @@ const archive = new Bun.Archive({
 });
 ```
 
-The mode is masked to `0o777`, so passing a full `fs.stat()` mode such as `0o100755` resolves to `0o755`. A descriptor must include `data`, and `mode` (when present) must be a non-negative integer; anything else throws a `TypeError`.
+`mode` is validated like the `node:fs` mode argument: a non-negative integer or an octal string such as `"755"`. It is masked to `0o777`, so a full `fs.stat()` mode such as `0o100755` resolves to `0o755`. A descriptor must include `data`, and an invalid `mode` is rejected with an error.
 
 ### Writing Archives to Disk
 
@@ -416,7 +416,7 @@ type ArchiveEntry =
   | Blob
   | Bun.ArrayBufferView
   | ArrayBufferLike
-  | { data: string | Blob | Bun.ArrayBufferView | ArrayBufferLike; mode?: number };
+  | { data: string | Blob | Bun.ArrayBufferView | ArrayBufferLike; mode?: number | string };
 
 type ArchiveInput = Record<string, ArchiveEntry> | Blob | Bun.ArrayBufferView | ArrayBufferLike;
 

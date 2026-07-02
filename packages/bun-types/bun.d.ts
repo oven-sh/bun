@@ -8978,7 +8978,8 @@ declare module "bun" {
 
   /**
    * A single archive entry. Either the file contents directly, or an object
-   * carrying the contents plus an optional Unix file mode.
+   * carrying the contents plus an optional Unix file mode. `mode` is validated
+   * like the `node:fs` mode argument: a non-negative integer or an octal string.
    *
    * @example
    * ```ts
@@ -8988,7 +8989,7 @@ declare module "bun" {
    * });
    * ```
    */
-  type ArchiveEntry = BlobPart | { data: BlobPart; mode?: number };
+  type ArchiveEntry = BlobPart | { data: BlobPart; mode?: number | string };
 
   /**
    * Input data for creating an archive. Can be:

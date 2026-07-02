@@ -305,8 +305,13 @@ describe("Bun.Archive", () => {
       expect(statSync(join(String(dir), "plain.txt")).mode & 0o100).toBe(0);
     });
 
+    test("mode accepts an octal string, matching node:fs", async () => {
+      const archive = new Bun.Archive({ "bin/tool": { data: "x", mode: "755" } });
+      expect(parseTarModes(await archive.bytes()).get("bin/tool")).toBe(0o755);
+    });
+
     test.each([
-      ["a string", "0755"],
+      ["a non-octal string", "not-a-mode"],
       ["a negative number", -1],
       ["a non-integer", 0o755 + 0.5],
       ["NaN", NaN],

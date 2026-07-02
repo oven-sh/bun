@@ -453,25 +453,14 @@ fn get_entry_data_and_perm(
     Ok((get_entry_data(global, value)?, DEFAULT_ENTRY_PERM))
 }
 
-/// Reads the optional `mode` of a `{ data, mode }` entry descriptor. Missing or
-/// undefined → default perm; present must be a non-negative integer and is
-/// masked to `0o777`, matching the bits the extraction path preserves.
+/// Reads the optional `mode` of a `{ data, mode }` entry descriptor through the
+/// same validator as the `node:fs` mode argument (a non-negative integer or an
+/// octal string, masked to `0o777`). Missing/undefined/null → default perm.
 fn resolve_entry_perm(global: &JSGlobalObject, descriptor: JSValue) -> JsResult<u32> {
     let Some(mode_val) = descriptor.get(global, "mode")? else {
         return Ok(DEFAULT_ENTRY_PERM);
     };
-    if !mode_val.is_number() {
-        return Err(
-            global.throw_invalid_arguments(format_args!("Archive: entry mode must be a number"))
-        );
-    }
-    let mode = mode_val.as_number();
-    if !mode.is_finite() || mode < 0.0 || mode.fract() != 0.0 {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "Archive: entry mode must be a non-negative integer"
-        )));
-    }
-    Ok((mode as u32) & 0o777)
+    Ok(crate::node::types::mode_from_js(global, mode_val)?.unwrap_or(DEFAULT_ENTRY_PERM))
 }
 
 /// Static method: Archive.write(path, data, options?)

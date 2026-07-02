@@ -5,9 +5,9 @@ import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
-// setupIOBeforeRun()'s first syscall is a dup of stdout/stderr: on Linux,
-// fcntl(fd, F_DUPFD_CLOEXEC, 0). Fail exactly that with EMFILE for fd 1/2
-// while the SHELL_FAIL_DUP_ARM file exists, leaving Bun's own startup alone.
+// setupIOBeforeRun() dups stdout then stderr; on Linux each dup is
+// fcntl(fd, F_DUPFD_CLOEXEC, 0). While the SHELL_FAIL_DUP_ARM file exists,
+// fail that with EMFILE for every fd named in SHELL_FAIL_DUP_FDS.
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -15,19 +15,23 @@ const SHIM_C = /* c */ `
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 static int (*real_fcntl)(int, int, ...);
 static const char *arm_path;
+static const char *fail_fds;
 static int init_done;
 
 static int should_fail(int fd, int cmd) {
   if (!init_done) {
     real_fcntl = (int (*)(int, int, ...))dlsym(RTLD_NEXT, "fcntl");
     arm_path = getenv("SHELL_FAIL_DUP_ARM");
+    fail_fds = getenv("SHELL_FAIL_DUP_FDS");
     init_done = 1;
   }
-  if (!arm_path || (fd != 1 && fd != 2)) return 0;
+  if (!arm_path || !fail_fds || fd < 0 || fd > 9) return 0;
+  if (!strchr(fail_fds, '0' + fd)) return 0;
   if (cmd != F_DUPFD && cmd != F_DUPFD_CLOEXEC) return 0;
   return access(arm_path, F_OK) == 0;
 }
@@ -90,7 +94,6 @@ console.log(JSON.stringify({ results, interpreters }));
 `;
 
 let shimPath: string;
-let armPath: string;
 let dir: ReturnType<typeof tempDir> | undefined;
 
 beforeAll(async () => {
@@ -100,7 +103,6 @@ beforeAll(async () => {
     "fixture.js": FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
-  armPath = join(String(dir), "arm");
   await using ccProc = Bun.spawn({
     cmd: [cc, "-shared", "-fPIC", "-o", shimPath, join(String(dir), "shim.c"), "-ldl"],
     env: bunEnv,
@@ -117,9 +119,15 @@ afterAll(() => {
   dir?.[Symbol.dispose]();
 });
 
-test.concurrent.skipIf(!isLinux || !cc)(
-  "shell interpreter survives setupIOBeforeRun failure followed by GC",
-  async () => {
+// "12" fails the first dup (stdout). "2" lets the stdout dup succeed and
+// fails the stderr dup, which takes the branch that must close the already
+// dup'd stdout fd before surfacing the error. Both reach the same error path.
+test.concurrent.skipIf(!isLinux || !cc).each([
+  ["stdout", "12"],
+  ["stderr", "2"],
+] as const)(
+  "shell interpreter survives a %s dup failure in setupIOBeforeRun followed by GC",
+  async (which, failFds) => {
     const existing = bunEnv.LD_PRELOAD;
     await using proc = Bun.spawn({
       // If the fixture does crash, skip the debug build's slow symbolized
@@ -130,7 +138,8 @@ test.concurrent.skipIf(!isLinux || !cc)(
       env: {
         ...bunEnv,
         LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath,
-        SHELL_FAIL_DUP_ARM: armPath,
+        SHELL_FAIL_DUP_ARM: join(String(dir), `arm-${which}`),
+        SHELL_FAIL_DUP_FDS: failFds,
       },
       stdout: "pipe",
       stderr: "pipe",

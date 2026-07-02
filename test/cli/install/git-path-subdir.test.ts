@@ -49,6 +49,33 @@ describe("git dependency &path: subdirectory support", () => {
     expect(existsSync(join(String(installDir), "node_modules", SUB_PKG_NAME, "packages"))).toBeFalse();
   });
 
+  test("supports the pnpm #path: form without a committish", async () => {
+    using installDir = tempDir("git-path-nocommittish", {
+      "package.json": JSON.stringify({
+        name: "test-nocommittish",
+        dependencies: {
+          // pnpm's primary documented form: `#path:<subdir>` with no committish.
+          [SUB_PKG_NAME]: `${MONOREPO}#path:${SUB_PATH}`,
+        },
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      env: bunEnv,
+      cwd: String(installDir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+
+    const installedPkgJson = join(String(installDir), "node_modules", SUB_PKG_NAME, "package.json");
+    expect(existsSync(installedPkgJson)).toBeTrue();
+    expect(JSON.parse(readFileSync(installedPkgJson, "utf8")).name).toBe(SUB_PKG_NAME);
+  });
+
   test("lockfile round-trip preserves &path:", async () => {
     using installDir = tempDir("git-path-lockfile", {
       "package.json": JSON.stringify({

@@ -344,13 +344,16 @@ impl From<InvalidPathError> for ParseAppendError {
 pub(crate) fn split_path_from_fragment(
     fragment: &[u8],
 ) -> Result<(&[u8], Option<&[u8]>), InvalidPathError> {
-    match strings::index_of(fragment, b"&path:") {
-        Some(idx) => {
-            let raw_path = &fragment[idx + b"&path:".len()..];
-            Ok((&fragment[..idx], Some(normalize_path(raw_path)?)))
-        }
-        None => Ok((fragment, None)),
+    // pnpm forms: `#path:<subdir>` (no committish, path is the first fragment
+    // parameter) and `#<committish>&path:<subdir>` (parameters joined by `&`).
+    if let Some(raw_path) = strings::without_prefix_if_possible_comptime(fragment, b"path:") {
+        return Ok((b"", Some(normalize_path(raw_path)?)));
     }
+    if let Some(idx) = strings::index_of(fragment, b"&path:") {
+        let raw_path = &fragment[idx + b"&path:".len()..];
+        return Ok((&fragment[..idx], Some(normalize_path(raw_path)?)));
+    }
+    Ok((fragment, None))
 }
 
 /// Strip surrounding slashes and reject anything that could escape the

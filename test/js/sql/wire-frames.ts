@@ -133,6 +133,68 @@ export function pgCommandComplete(tag: string): Buffer {
   return pgRaw("C", Buffer.concat([Buffer.from(tag), Buffer.from([0])]));
 }
 
+// PostgreSQL FE/BE protocol §55.7 ParseComplete: Byte1('1') Int32(4)
+export function pgParseComplete(): Buffer {
+  return pgRaw("1", Buffer.alloc(0));
+}
+
+// PostgreSQL FE/BE protocol §55.7 BindComplete: Byte1('2') Int32(4)
+export function pgBindComplete(): Buffer {
+  return pgRaw("2", Buffer.alloc(0));
+}
+
+// PostgreSQL FE/BE protocol §55.7 CloseComplete: Byte1('3') Int32(4)
+export function pgCloseComplete(): Buffer {
+  return pgRaw("3", Buffer.alloc(0));
+}
+
+// PostgreSQL FE/BE protocol §55.7 ParameterDescription: Byte1('t') Int32(len) Int16(n) Int32[n](type OIDs)
+export function pgParameterDescription(typeOids: number[]): Buffer {
+  const body = Buffer.alloc(2 + 4 * typeOids.length);
+  body.writeInt16BE(typeOids.length, 0);
+  typeOids.forEach((oid, i) => body.writeInt32BE(oid, 2 + 4 * i));
+  return pgRaw("t", body);
+}
+
+/** Read the NUL-terminated String at `offset` in a frontend message body. `end` is the index past the NUL. */
+export function pgReadCString(body: Buffer, offset: number): { value: string; end: number } {
+  const nul = body.indexOf(0, offset);
+  return { value: body.toString("utf-8", offset, nul), end: nul + 1 };
+}
+
+/**
+ * Frame the PostgreSQL frontend (client → server) byte stream
+ * (https://www.postgresql.org/docs/current/protocol-message-formats.html).
+ * The first message of a connection is the untagged StartupMessage
+ * (Int32 length including itself, then the body); every later message is
+ * Byte1(tag) Int32(length including itself but not the tag) body. Invokes
+ * `onStartup` / `onMessage` once per complete message and returns the
+ * unconsumed tail to carry into the next "data" event.
+ */
+export function pgReadFrontendMessages(
+  buffered: Buffer,
+  sawStartup: { value: boolean },
+  onStartup: (body: Buffer) => void,
+  onMessage: (tag: number, body: Buffer) => void,
+): Buffer {
+  while (true) {
+    if (!sawStartup.value) {
+      if (buffered.length < 4) return buffered;
+      const length = buffered.readInt32BE(0);
+      if (buffered.length < length) return buffered;
+      sawStartup.value = true;
+      onStartup(buffered.subarray(4, length));
+      buffered = buffered.subarray(length);
+      continue;
+    }
+    if (buffered.length < 5) return buffered;
+    const length = buffered.readInt32BE(1);
+    if (buffered.length < 1 + length) return buffered;
+    onMessage(buffered[0], buffered.subarray(5, 1 + length));
+    buffered = buffered.subarray(1 + length);
+  }
+}
+
 export type PgRowDescriptionColumn = {
   name: string;
   tableOid?: number;

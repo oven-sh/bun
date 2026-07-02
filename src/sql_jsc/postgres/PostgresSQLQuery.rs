@@ -615,14 +615,11 @@ impl PostgresSQLQuery {
                 .get()
                 .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS)
             {
-                // Zero-allocation hit probe: `get_or_put` below boxes the key
+                // Zero-allocation hit probe: `put_statement` below boxes the key
                 // bytes even when the entry already exists, and a hit (an
-                // already-prepared named statement) is the steady state.
-                let existing_stmt = connection
-                    .statements
-                    .get()
-                    .get(&signature.name[..])
-                    .copied();
+                // already-prepared named statement) is the steady state. A hit
+                // also stamps the entry's LRU clock.
+                let existing_stmt = connection.lookup_statement(&signature.name);
                 if let Some(stmt_ptr) = existing_stmt {
                     this.statement.set(Some(stmt_ptr));
                     // Route the `&mut` through the audited `statement_mut()`
@@ -688,15 +685,11 @@ impl PostgresSQLQuery {
 
                     break 'enqueue;
                 }
-                // `JsCell::with_mut` scopes the `&mut PreparedStatementsMap` to
-                // the `get_or_put` call (single-JS-thread; no re-entry into JS
-                // until after the raw value-slot ptr is captured). Extract the
-                // raw slot ptr while the borrow is live so the remainder of
-                // this block needs no further `&mut` to the map.
-                let entry_value_ptr = match connection.statements.with_mut(|s| {
-                    s.get_or_put(&signature.name)
-                        .map(|e| std::ptr::from_mut::<*mut PostgresSQLStatement>(e.value_ptr))
-                }) {
+                // `put_statement` enforces the statement-cache cap (evicting +
+                // closing LRU idle statements) and hands back the raw slot ptr,
+                // so the remainder of this block needs no further `&mut` to the
+                // map.
+                let entry_value_ptr = match connection.put_statement(&signature.name) {
                     Ok(v) => v,
                     Err(err) => {
                         drop(signature);

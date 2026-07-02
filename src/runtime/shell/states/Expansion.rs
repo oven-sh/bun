@@ -317,14 +317,9 @@ impl Expansion {
             me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
             return;
         }
-        // `brace_expansion_hint` is a static AST property, but an unquoted
-        // `$(...)` whose output IFS-splits flushes the brace prefix out of
-        // `current_out` mid-word, so `{a,b}$(echo x y)` arrives here as just
-        // `y`, with no complete group. `expand` writes `out[0]`
-        // unconditionally; emit the group-less word as its single result
-        // instead, as `braces()` in `BunObject.rs` does. It must be the raw
-        // `current_out` and not `escaped`: the brace lexer consumes backslash
-        // escapes, and nothing downstream puts them back.
+        // An IFS-split `$(...)` can leave zero brace groups here despite
+        // `atom.has_brace_expansion()`, and `expand` indexes `out[0]`. Emit the
+        // word raw, not `escaped`: the brace lexer consumes backslash escapes.
         let expanded: Vec<Vec<u8>> = if count == 0 {
             vec![me.current_out.clone()]
         } else {

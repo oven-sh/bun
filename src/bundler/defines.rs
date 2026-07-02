@@ -140,7 +140,7 @@ pub fn copy_env_for_define(
                 .map
                 .keys()
                 .iter()
-                .any(|k| bun_core::starts_with(k, prefix))
+                .any(|k| bun_core::strings::starts_with(k, prefix))
         } else {
             true
         };
@@ -158,7 +158,7 @@ pub fn copy_env_for_define(
                 let value: &[u8] = &v.value;
 
                 if behavior == DotEnvBehavior::Prefix {
-                    if bun_core::starts_with(k, prefix) {
+                    if bun_core::strings::starts_with(k, prefix) {
                         key_buf.clear();
                         key_buf.extend_from_slice(PROCESS_ENV);
                         key_buf.extend_from_slice(k);
@@ -501,10 +501,6 @@ impl DefineDataExt for DefineData {
             });
         }
 
-        // We dupe `value_str` into `bump` first so every string
-        // slice the JSON lexer hands back already points into the long-lived
-        // arena (the `E::String.data` bytes survive without per-string dup).
-        //
         // `parse_env_json` builds `E::String`/`E::Object` nodes in the
         // thread-local AST `Expr`/`Stmt` stores, so create them now — done
         // lazily here (idempotent no-ops once created) instead of eagerly in

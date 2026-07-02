@@ -748,7 +748,7 @@ pub mod parse_worker {
                 // SAFETY: `resolver` is a live `*mut Resolver`;
                 // `caches` is disjoint from `(*transpiler).options` reborrowed above.
                 let root: Expr = unsafe { &mut (*resolver).caches.json }
-                    .parse_json(log, source, mode, true)?
+                    .parse_json(log, source, mode)?
                     .unwrap_or_else(|| Expr::init(E::Object::default(), Loc::EMPTY));
                 return Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
@@ -2282,7 +2282,12 @@ pub mod parse_worker {
         // above. `BackRef` is `Copy`; the deref to `&BundleV2` is safe.
         let worker_ctx = unsafe { (*worker_raw).ctx };
 
-        let will_close_file_descriptor = matches!(task.contents_or_fd, ContentsOrFd::Fd { .. })
+        // Only close a descriptor this task opened. A valid `file` was borrowed
+        // from the resolver's entry cache (symlink-resolved files cache their fd
+        // there); closing it leaves a stale fd for the next in-process build.
+        let opened_own_fd =
+            matches!(task.contents_or_fd, ContentsOrFd::Fd { file, .. } if !file.is_valid());
+        let will_close_file_descriptor = opened_own_fd
             && entry.fd.is_valid()
             && entry.fd.stdio_tag().is_none()
             && worker_ctx.bun_watcher.is_none();

@@ -1884,15 +1884,17 @@ fn parse_data_loader<'a>(
         options::Loader::Jsonc => {
             // We allow importing tsconfig.*.json or jsconfig.*.json with comments
             // These files implicitly become JSONC files, which aligns with the behavior of text editors.
-            match bun_parsers::json::parse_ts_config::<false>(source, log, arena) {
+            match bun_parsers::json::parse_jsonc_into_arena(source, log, arena) {
                 Ok(e) => e,
                 Err(_) => return None,
             }
         }
-        options::Loader::Json => match bun_parsers::json::parse::<false>(source, log, arena) {
-            Ok(e) => e,
-            Err(_) => return None,
-        },
+        options::Loader::Json => {
+            match bun_parsers::json::parse_json_into_arena(source, log, arena) {
+                Ok(e) => e,
+                Err(_) => return None,
+            }
+        }
         options::Loader::Toml => match bun_parsers::toml::TOML::parse(source, log, arena, false) {
             Ok(e) => e,
             Err(_) => return None,
@@ -1911,6 +1913,18 @@ fn parse_data_loader<'a>(
         _ => unsafe { core::hint::unreachable_unchecked() },
     };
     let mut expr = value_expr;
+
+    if !keep_json_and_toml_as_one_statement
+        && matches!(
+            expr.data,
+            bun_ast::ExprData::EObjectJSON(_) | bun_ast::ExprData::EArrayJSON(_)
+        )
+    {
+        expr = match bun_parsers::json::materialize(&expr, source, log, arena) {
+            Ok(e) => e,
+            Err(_) => return None,
+        };
+    }
 
     let mut symbols: Vec<bun_ast::Symbol> = Vec::new();
 

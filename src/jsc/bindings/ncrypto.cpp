@@ -254,7 +254,12 @@ DataPointer DataPointer::resize(size_t len)
     size_t actual_len = std::min(len_, len);
     auto buf = release();
     if (actual_len == len_) return DataPointer(buf.data, actual_len);
-    buf.data = OPENSSL_realloc(buf.data, actual_len);
+    void* new_data = OPENSSL_realloc(buf.data, actual_len);
+    if (new_data == nullptr) {
+        OPENSSL_clear_free(buf.data, buf.len);
+        return {};
+    }
+    buf.data = new_data;
     buf.len = actual_len;
     return DataPointer(buf);
 }
@@ -399,14 +404,16 @@ bool BignumPointer::setWord(unsigned long w)
     return BN_set_word(bn_.get(), w) == 1;
 }
 
-unsigned long BignumPointer::GetWord(const BIGNUM* bn)
-{ // NOLINT(runtime/int)
-    return BN_get_word(bn);
+std::optional<BN_ULONG> BignumPointer::GetWord(const BIGNUM* bn)
+{
+    BN_ULONG ret = BN_get_word(bn);
+    if (ret == static_cast<BN_ULONG>(-1)) return std::nullopt;
+    return ret;
 }
 
-unsigned long BignumPointer::getWord() const
-{ // NOLINT(runtime/int)
-    if (!bn_) return 0;
+std::optional<BN_ULONG> BignumPointer::getWord() const
+{
+    if (!bn_) return std::nullopt;
     return GetWord(bn_.get());
 }
 
@@ -1578,6 +1585,7 @@ BIOPointer BIOPointer::NewSecMem()
 
 BIOPointer BIOPointer::New(const BIO_METHOD* method)
 {
+    if (method == nullptr) return {};
     return BIOPointer(BIO_new(method));
 }
 
@@ -3134,7 +3142,7 @@ bool SSLCtxPointer::setCipherSuites(WTF::StringView ciphers)
 #ifndef OPENSSL_IS_BORINGSSL
     if (!ctx_) return false;
     auto ciphersUtf8 = ciphers.utf8();
-    return SSL_CTX_set_ciphersuites(ctx_.get(), ciphers.length());
+    return SSL_CTX_set_ciphersuites(ctx_.get(), ciphersUtf8.data());
 #else
     // BoringSSL does not allow API config of TLS 1.3 cipher suites.
     // We treat this as a non-op.
@@ -3427,22 +3435,19 @@ bool CipherCtxPointer::setKeyLength(size_t length)
 bool CipherCtxPointer::setIvLength(size_t length)
 {
     if (!ctx_) return false;
-    return EVP_CIPHER_CTX_ctrl(
-        ctx_.get(), EVP_CTRL_AEAD_SET_IVLEN, length, nullptr);
+    return EVP_CIPHER_CTX_ctrl(ctx_.get(), EVP_CTRL_AEAD_SET_IVLEN, length, nullptr) > 0;
 }
 
 bool CipherCtxPointer::setAeadTag(const Buffer<const char>& tag)
 {
     if (!ctx_) return false;
-    return EVP_CIPHER_CTX_ctrl(
-        ctx_.get(), EVP_CTRL_AEAD_SET_TAG, tag.len, const_cast<char*>(tag.data));
+    return EVP_CIPHER_CTX_ctrl(ctx_.get(), EVP_CTRL_AEAD_SET_TAG, tag.len, const_cast<char*>(tag.data)) > 0;
 }
 
 bool CipherCtxPointer::setAeadTagLength(size_t length)
 {
     if (!ctx_) return false;
-    return EVP_CIPHER_CTX_ctrl(
-        ctx_.get(), EVP_CTRL_AEAD_SET_TAG, length, nullptr);
+    return EVP_CIPHER_CTX_ctrl(ctx_.get(), EVP_CTRL_AEAD_SET_TAG, length, nullptr) > 0;
 }
 
 bool CipherCtxPointer::setPadding(bool padding)
@@ -3519,7 +3524,7 @@ bool CipherCtxPointer::update(const Buffer<const unsigned char>& in,
 bool CipherCtxPointer::getAeadTag(size_t len, unsigned char* out)
 {
     if (!ctx_) return false;
-    return EVP_CIPHER_CTX_ctrl(ctx_.get(), EVP_CTRL_AEAD_GET_TAG, len, out);
+    return EVP_CIPHER_CTX_ctrl(ctx_.get(), EVP_CTRL_AEAD_GET_TAG, len, out) > 0;
 }
 
 // ============================================================================
@@ -4097,7 +4102,6 @@ bool EVPKeyCtxPointer::publicCheck() const
 {
     if (!ctx_) return false;
 #ifndef OPENSSL_IS_BORINGSSL
-    return EVP_PKEY_public_check(ctx_.get()) == 1;
 #if OPENSSL_VERSION_MAJOR >= 3
     return EVP_PKEY_public_check_quick(ctx_.get()) == 1;
 #else
@@ -4875,12 +4879,17 @@ std::pair<WTF::String, WTF::String> X509Name::Iterator::operator*() const
         name_str = WTF::String::fromUTF8(buf);
     }
 
-    unsigned char* value_str;
+    unsigned char* value_str = nullptr;
     int value_str_size = ASN1_STRING_to_UTF8(&value_str, value);
+    if (value_str_size < 0) [[unlikely]] {
+        return { {}, {} };
+    }
+    // ASN1_STRING_to_UTF8 allocates; fromUTF8 copies, so release it here.
+    DataPointer free_value_str(value_str, static_cast<size_t>(value_str_size));
 
     return {
         WTF::move(name_str),
-        WTF::String::fromUTF8(std::span(value_str, value_str_size)),
+        WTF::String::fromUTF8(std::span(value_str, static_cast<size_t>(value_str_size))),
     };
 }
 

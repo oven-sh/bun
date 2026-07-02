@@ -1305,14 +1305,15 @@ pub mod fs {
             });
 
             // if we get this far, it's a real directory, so we can just store the dir name.
-            let dir: &'static [u8] = if !had_handle {
-                if let Some(existing) = in_place {
-                    // SAFETY: `in_place` points to a `DirEntry` inside the BSSMap singleton;
-                    // its `dir` field is DirnameStore-interned (&'static).
-                    unsafe { (*existing).dir }
-                } else {
-                    DirnameStore::instance().append_slice(dir_maybe_trail_slash)?
-                }
+            // An in-place refresh always keeps the slot's existing interned name: callers
+            // spell the same directory with and without a trailing slash, and rewriting
+            // `dir` to the other spelling races every unlocked `Entry::dir()` reader.
+            let dir: &'static [u8] = if let Some(existing) = in_place {
+                // SAFETY: `in_place` points to a `DirEntry` inside the BSSMap singleton;
+                // its `dir` field is DirnameStore-interned (&'static).
+                unsafe { (*existing).dir }
+            } else if !had_handle {
+                DirnameStore::instance().append_slice(dir_maybe_trail_slash)?
             } else {
                 // Intern into DirnameStore so the cache entry never dangles —
                 // `append_slice` is a bump-pointer copy, cost is bounded.

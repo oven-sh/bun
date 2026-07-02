@@ -82,10 +82,12 @@ pub mod caching_sha2_password {
         // SAFETY: engine is null (default).
         unsafe { SHA256::hash(&digest1, &mut digest2, core::ptr::null_mut()) };
 
-        // SHA256(SHA256(SHA256(password)) + nonce)
-        let mut combined = vec![0u8; nonce.len() + digest2.len()];
-        combined[0..nonce.len()].copy_from_slice(nonce);
-        combined[nonce.len()..].copy_from_slice(&digest2);
+        // SHA256(SHA256(SHA256(password)) + nonce): the double hash comes FIRST.
+        // mysql_native_password concatenates the other way around; the server's
+        // Generate_scramble (sha2_password_common.cc) updates digest_stage2 then m_rnd.
+        let mut combined = vec![0u8; digest2.len() + nonce.len()];
+        combined[0..digest2.len()].copy_from_slice(&digest2);
+        combined[digest2.len()..].copy_from_slice(nonce);
         // SAFETY: engine is null (default).
         unsafe { SHA256::hash(&combined, &mut digest3, core::ptr::null_mut()) };
         // `defer bun.default_allocator.free(combined)` → Vec drops at scope exit

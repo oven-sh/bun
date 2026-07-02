@@ -167,9 +167,10 @@ export async function prerender(meta: Bake.RouteMetadata) {
     // TODO: write a lightweight version of PassThrough
     .pipe(new PassThrough());
 
-  const int = new Uint32Array(1);
-  int[0] = meta.styles.length;
-  let rscChunks: Array<BlobPart> = [int.buffer as ArrayBuffer, meta.styles.join("\n")];
+  const int = Buffer.allocUnsafe(4);
+  const styles = meta.styles.join("\n");
+  int.writeUInt32LE(styles.length, 0);
+  let rscChunks: Array<BlobPart> = [int, styles];
   rscPayload.on("data", chunk => rscChunks.push(chunk));
 
   let html;

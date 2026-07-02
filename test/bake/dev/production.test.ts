@@ -540,4 +540,53 @@ export default function IndexPage() {
     // Verify NO JavaScript imports are included in the HTML
     expect(htmlContent).not.toContain('<script type="module"');
   });
+
+  test("prerendered index.rsc encodes the joined stylesheet byte length in its header", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-rsc-css-header", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `import "./styles.css";
+export default function IndexPage() {
+  return <div>Hello World</div>;
+}`,
+      "pages/styles.css": `div { color: red; }`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    const { exitCode } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).env(bunEnv).throws(false);
+    expect(exitCode).toBe(0);
+
+    // The prerendered HTML carries the <link rel="stylesheet"> tags, whose hrefs are exactly
+    // the `meta.styles` list that the RSC header describes. Use them as an independent source
+    // of truth for the expected CSS metadata (a separate code path from the RSC header).
+    const htmlPath = path.join(dir, "dist", "index.html");
+    expect(existsSync(htmlPath)).toBe(true);
+    const html = await Bun.file(htmlPath).text();
+    const hrefs = [...html.matchAll(/<link\b[^>]*\brel="stylesheet"[^>]*>/g)]
+      .map(tag => tag[0].match(/\bhref="([^"]*)"/)?.[1])
+      .filter((href): href is string => !!href);
+    expect(hrefs.length).toBeGreaterThan(0);
+    const expectedCss = hrefs.join("\n");
+
+    // index.rsc layout: [0..4) little-endian uint32 = byte length of the CSS metadata, then
+    // that many bytes of CSS, then the React flight (RSC) payload. The header must be the byte
+    // length of the joined stylesheet string (matching render()), not the number of entries.
+    const rscPath = path.join(dir, "dist", "index.rsc");
+    expect(existsSync(rscPath)).toBe(true);
+    const buf = Buffer.from(await Bun.file(rscPath).arrayBuffer());
+
+    const header = buf.readUInt32LE(0);
+    expect(header).toBe(Buffer.byteLength(expectedCss));
+
+    // The CSS metadata decodes to exactly the stylesheet list, and the RSC payload after it is
+    // intact (React flight rows start with a numeric id like "0:").
+    expect(buf.toString("utf8", 4, 4 + header)).toBe(expectedCss);
+    expect(buf.toString("utf8", 4 + header)).toMatch(/^\d+:/);
+  }, 60_000);
 });

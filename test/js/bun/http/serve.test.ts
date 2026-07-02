@@ -1879,7 +1879,7 @@ it("should support promise returned from error", async () => {
   {
     const resp = await fetch(new URL("async-fulfilled", url));
     expect(resp.status).toBe(200);
-    expect(resp.text()).resolves.toBe("Async fulfilled");
+    await expect(resp.text()).resolves.toBe("Async fulfilled");
   }
 
   {
@@ -1890,7 +1890,7 @@ it("should support promise returned from error", async () => {
   {
     const resp = await fetch(new URL("async-pending", url));
     expect(resp.status).toBe(200);
-    expect(resp.text()).resolves.toBe("Async pending");
+    await expect(resp.text()).resolves.toBe("Async pending");
   }
 
   {

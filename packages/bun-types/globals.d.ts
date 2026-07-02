@@ -2070,10 +2070,13 @@ interface BunFetchRequestInit extends RequestInit {
   /**
    * The maximum number of redirects to follow when `redirect` is `"follow"`.
    * If the response chain redirects more than this many times, the request
-   * rejects with a "too many redirects" error.
+   * rejects with a `TypeError` whose `code` is `"TooManyRedirects"`.
    * Not part of the Fetch API specification.
    *
-   * @default 126
+   * The default matches the limit the Fetch specification mandates.
+   * The maximum accepted value is 126.
+   *
+   * @default 20
    * @example
    * ```js
    * const response = await fetch("https://example.com/", { maxRedirects: 3 });

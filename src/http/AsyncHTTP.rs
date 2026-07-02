@@ -14,8 +14,8 @@ use bun_picohttp as picohttp;
 
 use crate::headers::{self, Headers};
 use crate::{
-    FetchRedirect, Flags, HTTPClient, HTTPRequestBody, HTTPVerboseLevel, InternalState, Method,
-    Signals, ThreadlocalAsyncHTTP,
+    DEFAULT_REDIRECT_COUNT, FetchRedirect, Flags, HTTPClient, HTTPRequestBody, HTTPVerboseLevel,
+    InternalState, Method, Signals, ThreadlocalAsyncHTTP,
 };
 use crate::{HTTPClientResult, HTTPClientResultCallback};
 
@@ -186,9 +186,7 @@ fn make_client<'a>(
         url,
         connected_url: URL::default(),
         verbose: HTTPVerboseLevel::None,
-        // Note: DEFAULT_REDIRECT_COUNT (= 127) is crate-private in lib.rs;
-        // duplicated as a literal here.
-        remaining_redirect_count: 127,
+        remaining_redirect_count: DEFAULT_REDIRECT_COUNT,
         allow_retry: false,
         h2_retries: 0,
         redirect_type,
@@ -531,6 +529,8 @@ impl<'a> AsyncHTTP<'a> {
             this.client.flags.disable_decompression = val;
         }
         if let Some(val) = options.max_redirects {
+            // +1: the stored budget includes the terminal check; see
+            // `DEFAULT_REDIRECT_COUNT`. Clamped to 126 so the result fits `i8`.
             this.client.remaining_redirect_count = (val.min(126) + 1) as i8;
         }
         if let Some(val) = options.disable_keepalive {

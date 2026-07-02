@@ -559,7 +559,10 @@ export default function IndexPage() {
       }),
     });
 
-    const { exitCode } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).env(bunEnv).throws(false);
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).env(bunEnv).throws(false);
+    if (exitCode !== 0) {
+      expect(stderr.toString()).toBe("");
+    }
     expect(exitCode).toBe(0);
 
     // The prerendered HTML carries the <link rel="stylesheet"> tags, whose hrefs are exactly

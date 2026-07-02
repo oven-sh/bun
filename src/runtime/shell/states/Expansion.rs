@@ -282,6 +282,29 @@ impl Expansion {
     /// fully-expanded word with `{`/`,`/`}` markers preserved by
     /// `expand_simple_no_io`) and push each variant as a separate argv word.
     fn do_brace_expand(me: &mut Expansion) {
+        if !Self::brace_expand_current_out(me) {
+            return;
+        }
+
+        let node = me.node;
+        let atom = node.get();
+        if atom.has_glob_expansion() {
+            // brace + glob composes. Keep
+            // `current_out` (the original pattern, e.g. `src/*.{ts,tsx}`) so
+            // the glob walker brace-expands and globs it; its matches are
+            // appended after the literal brace variants already pushed above.
+            me.state = ExpansionState::Glob;
+        } else {
+            me.current_out.clear();
+            me.state = ExpansionState::Done;
+        }
+    }
+
+    /// Brace-expand `current_out`, pushing each variant into `out` as its own
+    /// argv word. `current_out` and `meta_offsets` are left for the caller to
+    /// reset, since the brace + glob path re-reads them. Returns `false` after
+    /// setting [`ExpansionState::Err`] when the word cannot be expanded.
+    fn brace_expand_current_out(me: &mut Expansion) -> bool {
         use bun_shell_parser::braces;
         // Only the `{`/`,`/`}` bytes recorded in `meta_offsets` (written
         // by literal BraceBegin/Comma/BraceEnd atoms) are brace-expansion
@@ -315,11 +338,11 @@ impl Expansion {
         if count > MAX_BRACE_EXPANSIONS {
             let msg = format!("too many brace expansions ({count} > {MAX_BRACE_EXPANSIONS})");
             me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
-            return;
+            return false;
         }
-        // An IFS-split `$(...)` can leave zero brace groups here despite
-        // `atom.has_brace_expansion()`, and `expand` indexes `out[0]`. Emit the
-        // word raw, not `escaped`: the brace lexer consumes backslash escapes.
+        // A field split can leave zero brace groups in this word (the group may
+        // sit across the split), and `expand` indexes `out[0]`. Emit the word
+        // raw, not `escaped`: the brace lexer consumes backslash escapes.
         let expanded: Vec<Vec<u8>> = if count == 0 {
             vec![me.current_out.clone()]
         } else {
@@ -337,7 +360,7 @@ impl Expansion {
                     let msg = "too many braces in brace expansion".to_string();
                     me.state =
                         ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
-                    return;
+                    return false;
                 }
                 // An unexpected token from brace expansion is a parser bug.
                 panic!("unexpected error from Braces.expand: {e:?}");
@@ -354,19 +377,7 @@ impl Expansion {
             }
             me.out.buf.extend_from_slice(&s);
         }
-
-        let node = me.node;
-        let atom = node.get();
-        if atom.has_glob_expansion() {
-            // brace + glob composes. Keep
-            // `current_out` (the original pattern, e.g. `src/*.{ts,tsx}`) so
-            // the glob walker brace-expands and globs it; its matches are
-            // appended after the literal brace variants already pushed above.
-            me.state = ExpansionState::Glob;
-        } else {
-            me.current_out.clear();
-            me.state = ExpansionState::Done;
-        }
+        true
     }
 
     /// Build the pattern handed to the glob walker from `current_out`,
@@ -577,6 +588,11 @@ impl Expansion {
         if s.is_empty() {
             return;
         }
+        // Each field completed here is a finished word the end-of-walk brace
+        // expansion never sees (only the final field stays in `current_out`),
+        // so it has to be brace-expanded as it is flushed. Otherwise the word's
+        // recorded metacharacter offsets are discarded along with it.
+        let has_brace = me.node.get().has_brace_expansion();
         // Split on runs of spaces — each run is a word boundary.
         let mut prev_ws = false;
         let mut a = 0usize;
@@ -591,7 +607,15 @@ impl Expansion {
             if c == b' ' {
                 prev_ws = true;
                 me.current_out.extend_from_slice(&s[a..i]);
-                Self::push_current_out(me);
+                if has_brace {
+                    if !Self::brace_expand_current_out(me) {
+                        return;
+                    }
+                    me.current_out.clear();
+                    me.meta_offsets.clear();
+                } else {
+                    Self::push_current_out(me);
+                }
             }
         }
         me.current_out.extend_from_slice(&s[a..]);
@@ -640,7 +664,11 @@ impl Expansion {
                 Self::post_subshell_expansion(me, stdout);
             }
             me.word_idx += 1;
-            me.state = ExpansionState::Walking;
+            // Brace expansion of a word completed by the field split can fail;
+            // keep that error rather than resuming the walk.
+            if !matches!(me.state, ExpansionState::Err(_)) {
+                me.state = ExpansionState::Walking;
+            }
             me.child_script = None;
         }
         interp.deinit_node(child);

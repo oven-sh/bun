@@ -128,12 +128,15 @@ describe("brace + glob composition", () => {
   });
 });
 
-// An unquoted `$(...)` whose output contains whitespace is IFS-split, which
-// flushes the already-assembled prefix of the word out of `current_out` mid
-// assembly. When that flush took the word's only complete `{...}` group with
-// it, `do_brace_expand` tokenized the leftover fragment to zero brace groups
-// and `braces::expand` indexed an empty output slice:
+// An unquoted `$(...)` whose output contains whitespace is IFS-split. Each
+// field the split completes is flushed out of `current_out` mid assembly, and
+// only the final field was ever brace-expanded, so a flushed field silently
+// lost the `{...}` group it carried. When the word's *only* group went with it,
+// `do_brace_expand` tokenized the remainder to zero groups and `braces::expand`
+// indexed an empty output slice:
 //   panic: index out of bounds: the len is 0 but the index is 0
+// Every field is now brace-expanded as it is flushed, so the word expands the
+// same way whichever side of the split its group lands on.
 describe.concurrent("brace expansion after an IFS-split command substitution", () => {
   async function run(script: string) {
     await using proc = Bun.spawn({
@@ -146,18 +149,17 @@ describe.concurrent("brace expansion after an IFS-split command substitution", (
     return { stdout, stderr, exitCode };
   }
 
-  // Each of these panicked. Run in a subprocess so an unfixed build aborts
-  // the child, not the test runner. The surviving fragment has no complete
-  // brace group, so the word is emitted literally (the same `count == 0`
-  // contract `$.braces()` already applies to a group-less input).
-  test("group entirely in the flushed prefix", async () => {
+  // Run in a subprocess so an unfixed build aborts the child, not the runner.
+  test("group entirely in the flushed field", async () => {
     expect(await run("echo {a,b}$(echo x y)")).toEqual({
-      stdout: "{a,b}x y\n",
+      stdout: "ax bx y\n",
       stderr: "",
       exitCode: 0,
     });
   });
 
+  // The group straddles the split, so neither field holds a complete one and
+  // both are emitted literally.
   test("split lands inside the group, before the comma", async () => {
     expect(await run("echo {$(echo a b),c}")).toEqual({
       stdout: "{a b,c}\n",
@@ -174,7 +176,7 @@ describe.concurrent("brace expansion after an IFS-split command substitution", (
     });
   });
 
-  // A group that survives the split still expands.
+  // Already worked: the group rides on the final field.
   test("group entirely after the split still expands", async () => {
     expect(await run("echo $(echo x y){a,b}")).toEqual({
       stdout: "x ya yb\n",
@@ -182,6 +184,46 @@ describe.concurrent("brace expansion after an IFS-split command substitution", (
       exitCode: 0,
     });
   });
+
+  // Same root cause, without the panic: the flushed field used to leak its
+  // braces into argv literally (`{a,b}x yc yd`).
+  test("a group on each side of the split", async () => {
+    expect(await run("echo {a,b}$(echo x y){c,d}")).toEqual({
+      stdout: "ax bx yc yd\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Each variant is its own argv word, not one word containing a space.
+  test("the expanded fields are separate argv words", async () => {
+    expect(await run(`printf "[%s]" {a,b}$(echo x y); echo`)).toEqual({
+      stdout: "[ax][bx][y]\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A quoted substitution is not field-split, so the whole word stays intact.
+  test("a quoted substitution is not split", async () => {
+    expect(await run(`echo {a,b}"$(echo x y)"`)).toEqual({
+      stdout: "ax y bx y\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// `braces::expand` round-trips its input through the brace lexer, which
+// consumes backslash escapes. `calculate_expanded_amount` returning 0 is what
+// lets `$.braces()` hand back the raw word instead, so a word with no brace
+// group must never be routed through `expand`.
+test("$.braces preserves escapes in a word with no brace group", () => {
+  expect(Bun.$.braces("a\\{b")).toEqual(["a\\{b"]);
+  expect(Bun.$.braces("a\\,b")).toEqual(["a\\,b"]);
+  // With a group present the lexer does consume them, which is why the
+  // group-less word cannot take the same path.
+  expect(Bun.$.braces("a\\{b{c,d}")).toEqual(["a{bc", "a{bd"]);
 });
 
 // $.braces() recursed once per `{` group (parse_atom <-> parse_expansion /

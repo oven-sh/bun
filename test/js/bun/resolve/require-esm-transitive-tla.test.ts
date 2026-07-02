@@ -247,4 +247,30 @@ describe.concurrent("require(esm) whose top-level await only needs microtasks", 
       exitCode: 0,
     });
   });
+
+  // A .then() queued before the require runs inside the checkpoint and can
+  // import() the very module being required. The registry entry must survive
+  // the throw so both importers share one evaluation and one namespace.
+  test("an import() attached inside the checkpoint shares the require's entry", async () => {
+    using dir = tempDir("require-esm-tla-drain-import-identity", {
+      "timer.mjs": `
+        globalThis.evals = (globalThis.evals || 0) + 1;
+        export const x = await new Promise(r => setTimeout(r, 1));
+      `,
+      "entry.cjs": `
+        const log = [];
+        Promise.resolve().then(() => { log.push("cb-in-drain"); globalThis.p = import("./timer.mjs"); });
+        try { require("./timer.mjs"); log.push("req-ok"); } catch (e) { log.push("req-threw"); }
+        log.push("p-attached " + (globalThis.p !== undefined));
+        globalThis.p.then(m1 => import("./timer.mjs").then(m2 => {
+          console.log(log.join("|") + "|sameNs " + (m1 === m2) + "|evals " + globalThis.evals);
+        }));
+      `,
+    });
+    expect(await run(dir)).toEqual({
+      stdout: "cb-in-drain|req-threw|p-attached true|sameNs true|evals 1",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

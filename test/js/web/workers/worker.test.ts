@@ -268,20 +268,31 @@ describe("web worker", () => {
     });
 
     // A specifier longer than a path buffer used to overflow the entry-point
-    // resolver's directory-cache-bust retry and abort the whole process.
+    // resolver's directory-cache-bust retry and abort the whole process. The
+    // relative spelling overflows the join with the working directory, and the
+    // absolute one (with backslashes) overflows the dirname normalization.
     test("is fired for a specifier longer than a path buffer", async () => {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "-e",
-          `const w = new Worker(Buffer.alloc(8192, "x").toString());
-w.onerror = e => console.log("worker error:", e.message.includes("ModuleNotFound"));`,
+          `function spawn(specifier) {
+  return new Promise(resolve => {
+    const w = new Worker(specifier);
+    w.onerror = e => resolve(e.message);
+  });
+}
+const sep = String.fromCharCode(92);
+const relative = await spawn(Buffer.alloc(8192, "x").toString());
+console.log("relative:", relative.includes("ModuleNotFound"));
+const absolute = await spawn("/" + Buffer.alloc(8192, "a" + sep + "b/").toString() + "x");
+console.log("absolute errored:", typeof absolute === "string");`,
         ],
         env: bunEnv,
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).toBe("worker error: true\n");
+      expect(stdout).toBe("relative: true\nabsolute errored: true\n");
       expect(exitCode).toBe(0);
     });
   });

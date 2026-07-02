@@ -493,20 +493,17 @@ impl<'a> Transpiler<'a> {
                 // disjoint mutable borrows of `cache_bust_buf` across `break`,
                 // so compute `busted` directly instead.
                 let busted: bool = 'name: {
-                    // An entry point longer than a path buffer can't name a real
-                    // file; skip the bust rather than overflow `cache_bust_buf`
-                    // in the unchecked joins below.
-                    if self.fs().top_level_dir.len() + entry_point.len() + b"/../".len()
-                        >= cache_bust_buf.len()
-                    {
-                        break 'name false;
-                    }
-
                     if bun_paths::is_absolute(entry_point) {
                         let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                             entry_point,
                         );
                         if !dir.is_empty() {
+                            // A dirname longer than the path buffer can't name a
+                            // cached directory; skip the bust rather than overflow
+                            // `cache_bust_buf` in `normalize_slashes_only`.
+                            if dir.len() > cache_bust_buf.len() {
+                                break 'name false;
+                            }
                             // Normalized with trailing slash
                             let buster_name = bun_paths::string_paths::normalize_slashes_only(
                                 &mut cache_bust_buf[..],
@@ -524,6 +521,15 @@ impl<'a> Transpiler<'a> {
                     // `".."` needs no platform separator rewrite.
                     let parts: [&[u8]; 2] = [entry_point, b".."];
                     let top_level_dir = self.fs().top_level_dir;
+
+                    // An entry point too long to join onto `top_level_dir` can't
+                    // name a real file; skip the bust rather than overflow
+                    // `cache_bust_buf` in the unchecked join below.
+                    if top_level_dir.len() + entry_point.len() + b"/../".len()
+                        >= cache_bust_buf.len()
+                    {
+                        break 'name false;
+                    }
 
                     let buster_name = bun_paths::resolve_path::join_abs_string_buf_z::<
                         bun_paths::platform::Auto,

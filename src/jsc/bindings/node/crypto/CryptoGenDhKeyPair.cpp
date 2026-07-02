@@ -68,10 +68,8 @@ ncrypto::EVPKeyCtxPointer DhKeyPairJobCtx::setup()
         }
 
         keyParams = ncrypto::EVPKeyPointer::NewDH(WTF::move(dh));
-    } else if (std::get_if<int>(&m_prime)) {
+    } else if (int* primeLength = std::get_if<int>(&m_prime)) {
         auto paramCtx = ncrypto::EVPKeyCtxPointer::NewFromID(EVP_PKEY_DH);
-
-        int* primeLength = std::get_if<int>(&m_prime);
         if (!paramCtx.initForParamgen() || !paramCtx.setDhParameters(*primeLength, m_generator)) {
             m_opensslError = ERR_get_error();
             return {};

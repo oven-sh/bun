@@ -1467,23 +1467,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSValue::ZERO);
     }
 
-    // Serialize the `Referer` request header from the resolved referrer and
-    // policy. An explicit user-set `Referer` header wins: the spec appends
-    // unconditionally, but only because in browsers `Referer` is a forbidden
-    // header name that can never already be present, and RFC 9110 makes
-    // `Referer` a singleton field.
-    if url_type == URLType::Remote {
-        let referrer_utf8 = request_referrer.to_utf8();
-        if let Some(referer_value) =
-            referrer::determine_referer_header(referrer_utf8.slice(), referrer_policy, &url)
-        {
-            let request_headers = headers.get_or_insert_with(Headers::default);
-            if request_headers.get(b"referer").is_none() {
-                request_headers.append(b"Referer", &referer_value);
-            }
-        }
-    }
-
     if proxy.is_some() && !unix_socket_path.slice().is_empty() {
         let err = ctx.to_type_error(
             jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -1696,6 +1679,26 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             None,
             any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
         ));
+    }
+
+    // Serialize the `Referer` request header from the resolved referrer and
+    // policy. Must come after the body Content-Type fallback above, which only
+    // fires while `headers` is still `None`.
+    //
+    // An explicit user-set `Referer` header wins: the spec appends
+    // unconditionally, but only because in browsers `Referer` is a forbidden
+    // header name that can never already be present, and RFC 9110 makes
+    // `Referer` a singleton field.
+    {
+        let referrer_utf8 = request_referrer.to_utf8();
+        if let Some(referer_value) =
+            referrer::determine_referer_header(referrer_utf8.slice(), referrer_policy, &url)
+        {
+            let request_headers = headers.get_or_insert_with(Headers::default);
+            if request_headers.get(b"referer").is_none() {
+                request_headers.append(b"Referer", &referer_value);
+            }
+        }
     }
 
     // `body` is mutated in place for the sendfile/readfile paths and then

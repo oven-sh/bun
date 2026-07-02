@@ -70,36 +70,46 @@ pub fn determine_referer_header(
     if referrer == CLIENT_SERIALIZED {
         return None;
     }
-
-    let referrer_url = ZigURL::parse(referrer);
-    // "Strip url for use as a referrer" returns no referrer for local schemes
-    // (`about:`, `blob:`, `data:`). A referrer without a `scheme://` authority
-    // cannot produce a meaningful Referer either.
-    let scheme = referrer_url.protocol;
-    if scheme.is_empty() || scheme == b"about" || scheme == b"blob" || scheme == b"data" {
+    // "Strip url for use as a referrer" step 2: the local schemes yield no
+    // referrer. Matched on the normalized href rather than on the parsed
+    // scheme because `ZigURL` only recognizes a scheme spelled `scheme://`,
+    // so the browser form `blob:https://origin/uuid` parses as `blob:https`.
+    if strings::has_prefix_comptime(referrer, b"about:")
+        || strings::has_prefix_comptime(referrer, b"blob:")
+        || strings::has_prefix_comptime(referrer, b"data:")
+    {
         return None;
     }
 
+    let referrer_url = ZigURL::parse(referrer);
+    // A referrer with no `scheme://` authority cannot produce a Referer.
+    let scheme = referrer_url.protocol;
+    if scheme.is_empty() {
+        return None;
+    }
+
+    let referrer_host = strip_userinfo(referrer_url.host);
+    let request_host = strip_userinfo(request_url.host);
+
     // The stripped referrer URL: `scheme "://" host[":" port] path ["?" query]`.
-    // On a normalized href, `ZigURL.host` is hostname[:port] (credentials
-    // excluded) and `ZigURL.pathname` is path + query (fragment excluded), so
-    // this is the spec's "strip url for use as a referrer": credentials and
-    // the fragment are dropped.
-    let origin_len = scheme.len() + b"://".len() + referrer_url.host.len();
+    // `ZigURL.pathname` is path + query with the fragment excluded, so together
+    // with the credential-stripped host this is the spec's "strip url for use
+    // as a referrer".
+    let origin_len = scheme.len() + b"://".len() + referrer_host.len();
     let mut value: Vec<u8> = Vec::with_capacity(origin_len + referrer_url.pathname.len());
     value.extend_from_slice(scheme);
     value.extend_from_slice(b"://");
-    value.extend_from_slice(referrer_url.host);
-    // `pathname` always begins with `/`, so `value[..origin_len + 1]` is the
-    // origin-only form ("set url's path to the empty string" serializes as
-    // origin + "/").
+    value.extend_from_slice(referrer_host);
+    // `pathname` always begins with `/`, so truncating to `origin_len` and
+    // pushing a `/` yields the origin-only form ("set url's path to the empty
+    // string" serializes as origin + "/").
     value.extend_from_slice(referrer_url.pathname);
 
-    let same_origin = scheme == request_url.protocol && referrer_url.host == request_url.host;
+    let same_origin = scheme == request_url.protocol && referrer_host == request_host;
     // "referrerURL is a potentially trustworthy URL and request's current URL
     // is not a potentially trustworthy URL" -- the strict/downgrade guard.
-    let downgrade =
-        is_potentially_trustworthy(&referrer_url) && !is_potentially_trustworthy(request_url);
+    let downgrade = is_potentially_trustworthy(scheme, strip_userinfo(referrer_url.hostname))
+        && !is_potentially_trustworthy(request_url.protocol, strip_userinfo(request_url.hostname));
 
     let send_full = match policy {
         ReferrerPolicy::NoReferrer => return None,
@@ -147,18 +157,30 @@ pub fn determine_referer_header(
     Some(value)
 }
 
+/// `ZigURL::parse` only splits off credentials when a `:` precedes the `@`, so
+/// a URL with a username but no password keeps `user@` inside `host` and
+/// `hostname`. Userinfo ends at the authority's last `@` (any `@` within it is
+/// percent-encoded in a normalized href).
+fn strip_userinfo(host: &[u8]) -> &[u8] {
+    match strings::last_index_of_char(host, b'@') {
+        Some(at) => &host[at + 1..],
+        None => host,
+    }
+}
+
 /// https://w3c.github.io/webappsec-secure-contexts/#is-origin-trustworthy
 ///
-/// `url` must come from a WHATWG-normalized href, so IPv4 loopbacks are
-/// canonical dotted quads (`127.x.y.z`) and the IPv6 loopback serializes as
+/// `hostname` must come from a WHATWG-normalized href, so an IPv4 loopback is a
+/// canonical dotted quad (`127.x.y.z`) and the IPv6 loopback serializes as
 /// `[::1]`.
-fn is_potentially_trustworthy(url: &ZigURL<'_>) -> bool {
-    if url.is_https() || url.protocol == b"wss" || url.is_file() {
+fn is_potentially_trustworthy(scheme: &[u8], hostname: &[u8]) -> bool {
+    if scheme == b"https" || scheme == b"wss" || scheme == b"file" {
         return true;
     }
-    let host = url.hostname;
-    host == b"localhost"
-        || strings::ends_with_comptime(host, b".localhost")
-        || strings::has_prefix_comptime(host, b"127.")
-        || host == b"[::1]"
+    hostname == b"localhost"
+        || strings::ends_with_comptime(hostname, b".localhost")
+        // Only an IPv4 address in 127/8 is loopback; a domain name whose first
+        // label happens to be `127` is not.
+        || (strings::has_prefix_comptime(hostname, b"127.") && strings::is_ip_address(hostname))
+        || hostname == b"[::1]"
 }

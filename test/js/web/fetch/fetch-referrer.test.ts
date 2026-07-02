@@ -126,6 +126,16 @@ describe("fetch referrer and referrerPolicy", () => {
     await fetch(`${base}/client`, { referrer: "about:client", referrerPolicy: "unsafe-url" });
     // local schemes are stripped to "no referrer"
     await fetch(`${base}/blank`, { referrer: "about:blank", referrerPolicy: "unsafe-url" });
+    await fetch(`${base}/data`, { referrer: "data:text/plain,hi", referrerPolicy: "unsafe-url" });
+    // both blob: forms: bun's own object URLs and the browser origin form
+    await fetch(`${base}/blob`, {
+      referrer: "blob:550e8400-e29b-41d4-a716-446655440000",
+      referrerPolicy: "unsafe-url",
+    });
+    await fetch(`${base}/blob-origin`, {
+      referrer: "blob:https://origin.example/550e8400-e29b-41d4-a716-446655440000",
+      referrerPolicy: "unsafe-url",
+    });
 
     expect(received).toEqual({
       "/none": null,
@@ -133,6 +143,9 @@ describe("fetch referrer and referrerPolicy", () => {
       "/empty": null,
       "/client": null,
       "/blank": null,
+      "/data": null,
+      "/blob": null,
+      "/blob-origin": null,
     });
   });
 
@@ -145,6 +158,12 @@ describe("fetch referrer and referrerPolicy", () => {
       referrer: "https://user:pw@app.example:8443/a/b?x=1#f",
       referrerPolicy: "unsafe-url",
     });
+    // a username with no password, with and without a port
+    await fetch(`${base}/user-port`, {
+      referrer: "https://alice@app.example:8443/a/b",
+      referrerPolicy: "unsafe-url",
+    });
+    await fetch(`${base}/user-only`, { referrer: "https://alice@app.example/a/b", referrerPolicy: "unsafe-url" });
     // a stripped referrer longer than 4096 falls back to the origin
     await fetch(`${base}/long`, {
       referrer: "https://app.example/" + Buffer.alloc(5000, "a").toString(),
@@ -153,8 +172,45 @@ describe("fetch referrer and referrerPolicy", () => {
 
     expect(received).toEqual({
       "/cred": "https://app.example:8443/a/b?x=1",
+      "/user-port": "https://app.example:8443/a/b",
+      "/user-only": "https://app.example/a/b",
       "/long": "https://app.example/",
     });
+  });
+
+  // A Referer must never displace the Content-Type that fetch() derives from
+  // the body when the caller passed no headers of their own.
+  it("fetch() keeps the body-derived Content-Type when it sends a Referer", async () => {
+    const received: Record<string, string | null> = {};
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        received[new URL(req.url).pathname] = req.headers.get("content-type");
+        return new Response("ok");
+      },
+    });
+    const base = `http://127.0.0.1:${server.port}`;
+    const referrer = "https://app.example/page";
+    const blob = () => new Blob(["{}"], { type: "application/json" });
+    const formData = () => {
+      const form = new FormData();
+      form.append("k", "v");
+      return form;
+    };
+
+    await fetch(`${base}/form-data`, { method: "POST", body: formData(), referrer, referrerPolicy: "unsafe-url" });
+    await fetch(`${base}/blob`, { method: "POST", body: blob(), referrer, referrerPolicy: "unsafe-url" });
+    // the same requests with no referrer, as the baseline
+    await fetch(`${base}/form-data-baseline`, { method: "POST", body: formData() });
+    await fetch(`${base}/blob-baseline`, { method: "POST", body: blob() });
+
+    // the multipart boundary is random per request, so compare only the rest
+    expect(received["/form-data"]).toStartWith("multipart/form-data; boundary=");
+    expect(received["/form-data"]?.replace(/boundary=.*$/, "")).toBe(
+      received["/form-data-baseline"]!.replace(/boundary=.*$/, ""),
+    );
+    expect(received["/blob"]).toStartWith("application/json");
+    expect(received["/blob"]).toBe(received["/blob-baseline"]);
   });
 
   it("an explicit Referer header wins over the referrer option", async () => {
@@ -208,6 +264,9 @@ describe("fetch referrer and referrerPolicy", () => {
       await fetch(`${base}/nrwd`, { unix, referrer, referrerPolicy: "no-referrer-when-downgrade" });
       await fetch(`${base}/strict-origin`, { unix, referrer, referrerPolicy: "strict-origin" });
       await fetch(`${base}/socwo`, { unix, referrer, referrerPolicy: "strict-origin-when-cross-origin" });
+      // a domain whose first label is "127" is not an IPv4 loopback, so this is
+      // still a downgrade
+      await fetch(`http://127.example.com/domain-127`, { unix, referrer, referrerPolicy: "strict-origin" });
       // the non-strict equivalents still send it
       await fetch(`${base}/origin`, { unix, referrer, referrerPolicy: "origin" });
       await fetch(`${base}/unsafe-url`, { unix, referrer, referrerPolicy: "unsafe-url" });
@@ -216,11 +275,29 @@ describe("fetch referrer and referrerPolicy", () => {
         "/nrwd": null,
         "/strict-origin": null,
         "/socwo": null,
+        "/domain-127": null,
         "/origin": "https://secure.example/",
         "/unsafe-url": "https://secure.example/page?q=1",
       });
     } finally {
       rmSync(unix, { force: true });
     }
+  });
+
+  // A real 127/8 loopback target IS potentially trustworthy, so an https
+  // referrer is not a downgrade and the strict policies still send it.
+  it("an IPv4 loopback target is potentially trustworthy", async () => {
+    const received: Record<string, string | null> = {};
+    await using server = referrerServer(received);
+    const base = `http://127.0.0.1:${server.port}`;
+    const referrer = "https://secure.example/page?q=1";
+
+    await fetch(`${base}/strict-origin`, { referrer, referrerPolicy: "strict-origin" });
+    await fetch(`${base}/nrwd`, { referrer, referrerPolicy: "no-referrer-when-downgrade" });
+
+    expect(received).toEqual({
+      "/strict-origin": "https://secure.example/",
+      "/nrwd": "https://secure.example/page?q=1",
+    });
   });
 });

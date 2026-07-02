@@ -1265,8 +1265,9 @@ impl Request {
                         if crate::webcore::ReadableStream::is_readable_stream(body_) {
                             match value.get(global_this, "keepalive") {
                                 Ok(Some(keepalive)) if keepalive.to_boolean() => {
-                                    bail!(Err(global_this
-                                        .throw_type_error(format_args!("keepalive"))));
+                                    bail!(Err(
+                                        global_this.throw_type_error(format_args!("keepalive"))
+                                    ));
                                 }
                                 Ok(_) => {}
                                 Err(e) => bail!(Err(e)),

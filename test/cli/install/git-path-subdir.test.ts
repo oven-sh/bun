@@ -3,18 +3,19 @@ import { existsSync, readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
-// nicolo-ribaudo/babel-polyfills is a real monorepo with packages/ subdirectories.
-// Pinned to a specific commit for reproducibility.
-const MONOREPO = "github:nicolo-ribaudo/babel-polyfills";
-const MONOREPO_GIT_URL = "git+https://github.com/nicolo-ribaudo/babel-polyfills.git";
-const COMMIT = "67d188090d3e94d9b03babc518e5fcdbc43ac206";
-const SUB_PATH = "packages/babel-helper-define-polyfill-provider";
-const SUB_PATH_2 = "packages/babel-plugin-polyfill-corejs2";
-const SUB_PKG_NAME = "@babel/helper-define-polyfill-provider";
-const SUB_PKG_NAME_2 = "babel-plugin-polyfill-corejs2";
+// RexSkz/test-git-subfolder-fetch is pnpm's own fixture for this feature: a real
+// monorepo whose packages/ subdirectories have no workspace: cross-deps, so each
+// sub-package installs standalone. Pinned to a commit for reproducibility.
+const MONOREPO = "github:RexSkz/test-git-subfolder-fetch";
+const MONOREPO_GIT_URL = "git+https://github.com/RexSkz/test-git-subfolder-fetch.git";
+const COMMIT = "2b42a57a945f19f8ffab8ecbd2021fdc2c58ee22";
+const SUB_PATH = "packages/simple-shared-data";
+const SUB_PATH_2 = "packages/simple-express-server";
+const SUB_PKG_NAME = "@my-namespace/simple-shared-data";
+const SUB_PKG_NAME_2 = "@my-namespace/simple-express-server";
 
 describe("git dependency &path: subdirectory support", () => {
-  test("installs sub-packages from monorepo via &path: (git+https URL)", async () => {
+  test("installs two sub-packages of the same repo+commit via &path:", async () => {
     using installDir = tempDir("git-path-install", {
       "package.json": JSON.stringify({
         name: "test-project",
@@ -34,26 +35,18 @@ describe("git dependency &path: subdirectory support", () => {
     });
 
     const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(0);
 
-    const installedPkgJson = join(
-      String(installDir),
-      "node_modules",
-      "@babel",
-      "helper-define-polyfill-provider",
-      "package.json",
-    );
+    const installedPkgJson = join(String(installDir), "node_modules", SUB_PKG_NAME, "package.json");
     expect(existsSync(installedPkgJson)).toBeTrue();
-
-    const pkg = JSON.parse(readFileSync(installedPkgJson, "utf8"));
-    expect(pkg.name).toBe(SUB_PKG_NAME);
+    expect(JSON.parse(readFileSync(installedPkgJson, "utf8")).name).toBe(SUB_PKG_NAME);
 
     const installedPkgJson2 = join(String(installDir), "node_modules", SUB_PKG_NAME_2, "package.json");
     expect(existsSync(installedPkgJson2)).toBeTrue();
+    expect(JSON.parse(readFileSync(installedPkgJson2, "utf8")).name).toBe(SUB_PKG_NAME_2);
 
-    const pkg2 = JSON.parse(readFileSync(installedPkgJson2, "utf8"));
-    expect(pkg2.name).toBe(SUB_PKG_NAME_2);
-
-    expect(exitCode).toBe(0);
+    // Only the subdirectory's contents should be installed, not the whole repo.
+    expect(existsSync(join(String(installDir), "node_modules", SUB_PKG_NAME, "packages"))).toBeFalse();
   });
 
   test("lockfile round-trip preserves &path:", async () => {
@@ -82,8 +75,7 @@ describe("git dependency &path: subdirectory support", () => {
     expect(lockContents).toContain("&path:");
     expect(lockContents).toContain(SUB_PATH);
 
-    const nmDir = join(String(installDir), "node_modules");
-    rmSync(nmDir, { recursive: true, force: true });
+    rmSync(join(String(installDir), "node_modules"), { recursive: true, force: true });
 
     await using proc2 = Bun.spawn({
       cmd: [bunExe(), "install", "--frozen-lockfile"],
@@ -94,20 +86,11 @@ describe("git dependency &path: subdirectory support", () => {
     });
 
     const [, , exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
-
-    const installedPkgJson = join(
-      String(installDir),
-      "node_modules",
-      "@babel",
-      "helper-define-polyfill-provider",
-      "package.json",
-    );
-    expect(existsSync(installedPkgJson)).toBeTrue();
-
-    const pkg = JSON.parse(readFileSync(installedPkgJson, "utf8"));
-    expect(pkg.name).toBe(SUB_PKG_NAME);
-
     expect(exitCode2).toBe(0);
+
+    const installedPkgJson = join(String(installDir), "node_modules", SUB_PKG_NAME, "package.json");
+    expect(existsSync(installedPkgJson)).toBeTrue();
+    expect(JSON.parse(readFileSync(installedPkgJson, "utf8")).name).toBe(SUB_PKG_NAME);
   });
 
   test("path traversal is rejected", async () => {
@@ -161,13 +144,10 @@ describe("git dependency &path: subdirectory support", () => {
     });
 
     const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(0);
 
     const installedPkgJson = join(String(installDir), "node_modules", "is-number", "package.json");
     expect(existsSync(installedPkgJson)).toBeTrue();
-
-    const pkg = JSON.parse(readFileSync(installedPkgJson, "utf8"));
-    expect(pkg.name).toBe("is-number");
-
-    expect(exitCode).toBe(0);
+    expect(JSON.parse(readFileSync(installedPkgJson, "utf8")).name).toBe("is-number");
   });
 });

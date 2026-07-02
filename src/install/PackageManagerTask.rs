@@ -143,6 +143,22 @@ impl Id {
         Id(hasher.final_())
     }
 
+    /// Tarball task id that also distinguishes a git subdirectory. A github
+    /// dependency's tarball URL is keyed by repo+commit only, so two `&path:`
+    /// sub-packages of the same commit would otherwise collide on one
+    /// download+extract task and only one subdirectory would be installed. An
+    /// empty `subpath` reproduces [`for_tarball`] exactly for backward compat.
+    pub fn for_tarball_with_subpath(url: &[u8], subpath: &[u8]) -> Id {
+        let mut hasher = Wyhash11::init(0);
+        hasher.update(b"tarball:");
+        hasher.update(url);
+        if !subpath.is_empty() {
+            hasher.update(b":path:");
+            hasher.update(subpath);
+        }
+        Id(hasher.final_())
+    }
+
     // These cannot change:
     // We persist them to the filesystem.
     pub fn for_git_clone(url: &[u8]) -> Id {

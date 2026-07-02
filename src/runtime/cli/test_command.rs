@@ -3228,6 +3228,12 @@ impl TestCommand {
                 // Process event loop while bun_test tests are running
                 vm.event_loop_ref().tick();
 
+                // This drive loop keeps ticking until `Phase::Done` (a
+                // JS-visible condition) regardless of whether JS has anything
+                // refing the loop. Hold a loop ref for the duration so
+                // `auto_tick` parks on the next timer-heap deadline rather
+                // than busy-spinning when a test awaits an unref'd timer.
+                let _loop_ref = vm.event_loop_shared().ref_loop_scoped();
                 let mut prev_unhandled_count = vm.unhandled_error_counter;
                 while buntest.phase != bun_test::Phase::Done {
                     if buntest.wants_wakeup {

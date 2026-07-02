@@ -2433,6 +2433,10 @@ impl VirtualMachine {
         if self.is_watcher_enabled() {
             // accessed here (no overlapping `&mut EventLoop`).
             self.event_loop_mut().perform_gc();
+            // See `EventLoop::ref_loop_scoped` — this drive loop keeps
+            // ticking until the module promise settles, so ref the loop so
+            // `auto_tick` parks on timer deadlines instead of spinning.
+            let _loop_ref = self.event_loop_shared().ref_loop_scoped();
             loop {
                 let Some(p) = self.pending_internal_promise else {
                     break;
@@ -3615,31 +3619,6 @@ impl VirtualMachine {
         self.event_loop_mut().enqueue_task_concurrent(task);
     }
 
-    /// `cond` is `&Cell<bool>` (not `&mut bool`): the re-entrant
-    /// `tick()/auto_tick()` calls run JS that flips the flag through an
-    /// independently-captured handle, so the read must not be `noalias`.
-    /// `Cell` is `!Freeze`, which suppresses the LLVM `noalias`/`readonly`
-    /// attributes and forces a real reload on every `.get()` — no raw-pointer
-    /// laundering needed for the condition.
-    pub fn wait_for(&mut self, cond: &core::cell::Cell<bool>) {
-        // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
-        // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` is
-        // LLVM-`noalias`, but `tick()/auto_tick()` re-enter JS which reaches
-        // `self` again via `VirtualMachine::get()`. Launder `self` so each
-        // access goes through an opaque address.
-        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        while !cond.get() {
-            // SAFETY: `this` is the unique live VM; each deref is a momentary
-            // access only (no borrow held across the re-entrant call).
-            unsafe { (*this).event_loop_mut().tick() };
-            if !cond.get() {
-                // SAFETY: as above — momentary deref of the unique live VM,
-                // no borrow held across the re-entrant call.
-                unsafe { (*this).auto_tick() };
-            }
-        }
-    }
-
     /// Ticks the event loop until no tasks keep it alive.
     pub fn wait_for_tasks(&mut self) {
         while self.is_event_loop_alive() {
@@ -4620,6 +4599,9 @@ impl VirtualMachine {
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
             self.event_loop_mut().perform_gc();
+            // See `EventLoop::ref_loop_scoped` — park instead of spin while
+            // waiting on the module promise.
+            let _loop_ref = self.event_loop_shared().ref_loop_scoped();
             loop {
                 let Some(p) = self.pending_internal_promise else {
                     break;

@@ -234,6 +234,20 @@ impl Drop for EventLoopEnterGuard {
     }
 }
 
+/// Keeps the uSockets loop ref'd for the guard's lifetime. Construct via
+/// [`EventLoop::ref_loop_scoped`], whose docs carry the full contract.
+#[must_use = "dropping immediately releases the loop ref, reintroducing the busy-spin"]
+pub struct LoopRefGuard(*mut uws::Loop);
+
+impl Drop for LoopRefGuard {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: the loop is the per-thread singleton, live for the VM
+        // lifetime; balances the `ref_()` in `ref_loop_scoped`.
+        unsafe { (*self.0).unref() };
+    }
+}
+
 impl EventLoop {
     /// Before your code enters JavaScript at the top of the event loop, call
     /// `loop.enter()`. If running a single callback, prefer `runCallback` instead.
@@ -953,13 +967,61 @@ impl EventLoop {
         self.vm_ref().as_mut().auto_tick_active();
     }
 
+    /// Hold a uSockets-loop ref for the lifetime of the returned guard.
+    ///
+    /// Condition-gated drivers (`wait_for_promise`, the `bun:test` drive
+    /// loop, the entry-point/preload loaders) tick `auto_tick` until a
+    /// JS-visible condition is satisfied, independently of whether JS has
+    /// anything refing the loop. Without this ref `auto_tick` takes its
+    /// `!is_active()` branch — a non-blocking pump that busy-spins the driver
+    /// on POSIX and on Windows never runs due timers (`uv_run` skips them
+    /// when the loop has no ref'd handles). With the ref, `auto_tick`'s
+    /// active branch parks in epoll/kqueue (`uv_run(UV_RUN_ONCE)` on Windows)
+    /// until the next timer-heap deadline — or **indefinitely** when the heap
+    /// is empty, which is the normal state while awaiting an external event.
+    ///
+    /// # Contract
+    /// While the guard is held, every exit condition of the guarded loop must
+    /// be observable through something that wakes the uws loop: a task
+    /// enqueued on this `EventLoop`, a heap timer, an I/O event, or an
+    /// explicit [`Self::wakeup`] paired with the flag store. A bare
+    /// cross-thread or signal-handler flag flip is NOT sufficient — before
+    /// this ref existed the non-blocking pump observed such flips within
+    /// microseconds (see `sigint_handler` in `cli/repl.rs`, which wakes the
+    /// loop after setting `execution_forbidden`).
+    ///
+    /// The ref also makes [`VirtualMachine::is_event_loop_alive`] and
+    /// `is_event_loop_alive_excluding_immediates` report true for the guard's
+    /// scope. That is intentional and has one JS-visible consequence: an
+    /// unref'd `setImmediate` is only cleared-without-running when the loop
+    /// looks dead, so one scheduled inside a guarded driver (a `bun:test`
+    /// test body, a preload, a synchronously-required ESM module) now runs.
+    /// This matches Node, whose `node:test` runner refs the loop for the same
+    /// reason.
+    ///
+    /// Liveness-gated drivers (the main run loop via `auto_tick_active`,
+    /// `wait_for_tasks`) must NOT use this — their exit condition is
+    /// precisely that nothing refs the loop.
+    pub fn ref_loop_scoped(&self) -> LoopRefGuard {
+        let loop_ = self.usockets_loop();
+        // SAFETY: `usockets_loop()` returns the live per-thread uws loop;
+        // `ref_()` bumps `num_polls` + `active` (POSIX) / `active_handles`
+        // (Windows).
+        unsafe { (*loop_).ref_() };
+        LoopRefGuard(loop_)
+    }
+
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
     /// `promise` settles or execution is forbidden.
+    ///
+    /// Holds a loop ref, so `execution_forbidden` must be paired with a loop
+    /// wakeup to be observed — see [`Self::ref_loop_scoped`]'s contract.
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) {
         let jsc_vm = self.vm_ref().jsc_vm();
         if promise.status() != PromiseStatus::Pending {
             return;
         }
+        let _loop_ref = self.ref_loop_scoped();
         while promise.status() == PromiseStatus::Pending {
             if jsc_vm.execution_forbidden() {
                 break;
@@ -1159,6 +1221,7 @@ impl EventLoop {
             .expect("worker is not initialized");
         match promise.status() {
             PromiseStatus::Pending => {
+                let _loop_ref = self.ref_loop_scoped();
                 while !worker.has_requested_terminate()
                     && promise.status() == PromiseStatus::Pending
                 {

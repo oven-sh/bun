@@ -985,6 +985,25 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
     });
   });
 
+  test.skipIf(isWindows)("SIGINT interrupts an await that never settles", async () => {
+    // `wait_for_promise` refs the event loop, so `auto_tick` parks in
+    // epoll/kqueue rather than polling. SIGINT only sets `execution_forbidden`,
+    // so the handler must also wake the loop or the REPL never notices.
+    await withTerminalRepl(async ({ send, waitFor, proc }) => {
+      // The timer only fires from inside the parked wait, so its output proves
+      // the REPL reached the state this test is about before we interrupt.
+      // The sentinel is assembled at runtime so waitFor matches the timer's
+      // output rather than the terminal's echo of this line.
+      send("setTimeout(() => console.log('par' + 'ked'), 1); await new Promise(() => {})\n");
+      await waitFor("\nparked");
+      proc.kill("SIGINT");
+      await waitFor(/\u276f|> /);
+      // The prompt is usable again
+      send("1 + 1\n");
+      await waitFor("2");
+    });
+  });
+
   test("Ctrl+D exits on empty line", async () => {
     await withTerminalRepl(async ({ terminal, proc }) => {
       terminal.write("\x04"); // Ctrl+D

@@ -38,6 +38,7 @@
 #include "JavaScriptCore/JSModuleLoader.h"
 #include "JavaScriptCore/CyclicModuleRecord.h"
 #include "JavaScriptCore/ModuleRegistryEntry.h"
+#include <wtf/text/StringBuilder.h>
 #include "JavaScriptCore/JSModuleNamespaceObject.h"
 #include "JavaScriptCore/JSModuleNamespaceObjectInlines.h"
 #include "JavaScriptCore/JSModuleRecord.h"
@@ -717,6 +718,35 @@ static bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
         return cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluated && !cyclic->evaluationError();
     // SyntheticModuleRecord is "evaluated" once linked (it has an environment).
     return record->moduleEnvironmentMayBeNull() != nullptr;
+}
+
+// Module specifiers suspended on their own top-level await (EvaluatingAsync,
+// syntactic TLA, no pending async dependency), NUL-joined, for the
+// unsettled-TLA warning. Empty BunString when nothing is stalled.
+extern "C" BunString Bun__findStalledTopLevelAwait(JSC::JSGlobalObject* globalObject)
+{
+    WTF::StringBuilder builder;
+    for (auto& [key, entry] : globalObject->moduleLoader()->moduleMap()) {
+        if (!key.first || !entry)
+            continue;
+        auto* record = entry->record();
+        if (!record || !record->hasTLA())
+            continue;
+        auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
+        if (!cyclic || cyclic->status() != JSC::CyclicModuleRecord::Status::EvaluatingAsync)
+            continue;
+        // EvaluatingAsync only because it awaits a dependency: that dependency
+        // is the real culprit, skip this one.
+        if (auto pending = record->pendingAsyncDependencies(); pending && *pending > 0)
+            continue;
+        // NUL separator: it cannot appear in a module specifier/path.
+        if (!builder.isEmpty())
+            builder.append('\0');
+        builder.append(String { key.first });
+    }
+    if (builder.isEmpty())
+        return BunStringEmpty;
+    return Bun::toStringRef(builder.toString());
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

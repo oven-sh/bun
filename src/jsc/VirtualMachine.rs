@@ -1041,6 +1041,24 @@ impl VirtualMachine {
             || !el.next_immediate_tasks.is_empty()
     }
 
+    /// Whether anything could still wake the loop and settle a pending module
+    /// promise. Unlike `is_event_loop_alive`, ignores `unhandled_error_counter`
+    /// so ref'd work (e.g. a timer that will resolve the await) isn't miscounted.
+    pub fn has_pending_loop_work(&self) -> bool {
+        let el = self.event_loop_shared();
+        let active = self
+            .platform_loop_opt()
+            .map(|h| h.is_active())
+            .unwrap_or(false);
+        active
+            || self.active_tasks > 0
+            || el.tasks.readable_length() > 0
+            || el.has_pending_refs()
+            || !el.concurrent_tasks.is_empty()
+            || !el.immediate_tasks.is_empty()
+            || !el.next_immediate_tasks.is_empty()
+    }
+
     pub fn wakeup(&mut self) {
         self.event_loop_mut().wakeup();
     }
@@ -2232,6 +2250,77 @@ impl VirtualMachine {
         self.event_loop_mut().wait_for_promise(promise);
     }
 
+    /// Like [`wait_for_promise`](Self::wait_for_promise) but returns (promise
+    /// possibly still `Pending`) once nothing could settle it
+    /// (`!has_pending_loop_work`), instead of spinning on an unsettled TLA.
+    pub fn wait_for_module_promise(&mut self, promise: *mut JSInternalPromise) {
+        // Read as a raw ptr (Copy) so it doesn't borrow `self` across the
+        // `&mut self` calls (`tick`, `auto_tick`) below.
+        let jsc_vm = self.jsc_vm;
+        // SAFETY: `promise` is a live JSC heap cell tracked by the VM (caller
+        // just obtained it from `reload_entry_point`).
+        while crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Pending {
+            // SAFETY: `jsc_vm` is the live per-thread JSC VM (set in `init`).
+            if unsafe { &*jsc_vm }.execution_forbidden() {
+                return;
+            }
+            self.event_loop_mut().tick();
+            if crate::JSPromise::status_ptr(promise) != crate::js_promise::Status::Pending {
+                return;
+            }
+            // Nothing left that could settle the promise: return instead of
+            // busy-spinning (see `has_pending_loop_work`).
+            if !self.has_pending_loop_work() {
+                return;
+            }
+            self.auto_tick();
+        }
+    }
+
+    /// True when the entry module's evaluation promise is still pending, i.e.
+    /// (once the loop has drained) an unsettled top-level await.
+    pub fn entry_point_evaluation_is_pending(&self) -> bool {
+        match self.pending_internal_promise {
+            Some(p) => crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending,
+            None => false,
+        }
+    }
+
+    /// Print Node's "Detected unsettled top-level await" warning to stderr,
+    /// naming the stalled module(s) from the JSC module registry (falling back
+    /// to the entry path in eval mode).
+    pub fn report_unsettled_top_level_await(&self) {
+        unsafe extern "C" {
+            fn Bun__findStalledTopLevelAwait(global: *mut JSGlobalObject) -> bun_core::String;
+        }
+        // SAFETY: `self.global` is the live per-thread global object.
+        let stalled = unsafe { Bun__findStalledTopLevelAwait(self.global) };
+        let stalled_utf8 = stalled.to_utf8();
+        let slice = stalled_utf8.slice();
+        let warn = |module: &[u8]| {
+            bun_core::pretty_errorln!(
+                "<r><yellow>Warning<r><d>:<r> Detected unsettled top-level await at <b>{}<r>",
+                bstr::BStr::new(module),
+            );
+        };
+        if !slice.is_empty() {
+            // The C++ helper NUL-joins multiple stalled specifiers (NUL can't
+            // appear in a path); print one warning per module, matching Node.
+            for module in slice.split(|&b| b == b'\0') {
+                warn(module);
+            }
+        } else if !self.main().is_empty() {
+            warn(self.main());
+        } else {
+            bun_core::pretty_errorln!(
+                "<r><yellow>Warning<r><d>:<r> Detected unsettled top-level await"
+            );
+        }
+        bun_core::Output::flush();
+        drop(stalled_utf8);
+        stalled.deref();
+    }
+
     /// `eventLoop().autoTick()` — dispatched through the runtime hook
     /// (needs `Timer::All` for the poll timeout).
     #[inline]
@@ -2434,7 +2523,9 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
-            self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            // Returns with the promise still pending if the loop drains, so the
+            // caller can detect an unsettled top-level await (warn + exit 13).
+            self.wait_for_module_promise(promise);
         }
 
         Ok(self.pending_internal_promise.unwrap_or(promise))

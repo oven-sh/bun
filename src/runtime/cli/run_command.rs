@@ -1581,54 +1581,78 @@ impl Run {
                 vm.auto_tick_active();
             }
 
-            if ctx.runtime_options.eval.eval_and_print {
-                let to_print: JSValue = 'brk: {
-                    let result = vm
-                        .entry_point_result
-                        .value
-                        .get()
-                        .unwrap_or(JSValue::UNDEFINED);
-                    if let Some(promise) = result.as_any_promise() {
-                        match promise.status() {
-                            PromiseStatus::Pending => {
-                                // C-ABI shims are emitted by
-                                // `generate-host-exports.ts` into
-                                // `crate::generated_host_exports` under their
-                                // link name (`Bun__on…EntryPointResult`).
-                                result.then2(
-                                    vm.global(),
-                                    JSValue::UNDEFINED,
-                                    crate::generated_host_exports::Bun__onResolveEntryPointResult,
-                                    crate::generated_host_exports::Bun__onRejectEntryPointResult,
-                                );
-                                vm.tick();
-                                vm.auto_tick_active();
-                                while vm.is_event_loop_alive() {
-                                    vm.tick();
-                                    vm.auto_tick_active();
-                                }
-                                break 'brk result;
-                            }
-                            _ => break 'brk promise.result(vm.jsc_vm()),
-                        }
-                    }
-                    result
-                };
-                // SAFETY: `vals[..1]` is the single stack `to_print`; null
-                // `ctype` routes to the VM's stdout/stderr default.
-                unsafe {
-                    bun_jsc::ConsoleObject::message_with_type_and_level(
-                        ::core::ptr::null_mut(),
-                        bun_jsc::ConsoleObject::MessageType::Log,
-                        bun_jsc::ConsoleObject::MessageLevel::Log,
-                        vm.global(),
-                        &raw const to_print,
-                        1,
-                    );
-                }
+            // A settled entry prints its `--print` value before `beforeExit`
+            // (Node's order: value then beforeExit output); a pending/rejected
+            // entry prints nothing (a bogus `Promise { <pending> }`; reported below).
+            let eval_and_print = ctx.runtime_options.eval.eval_and_print;
+            let printed = eval_and_print && entry_point_print_ok(vm);
+            if printed {
+                print_eval_result(vm);
             }
 
             vm.on_before_exit();
+
+            // A `beforeExit` handler may resolve the entry's await (a bare
+            // `resolve()` queues a microtask `is_event_loop_alive()` ignores);
+            // drain it, and re-run the loop if the resumed body schedules work.
+            while vm.entry_point_evaluation_is_pending() {
+                vm.tick();
+                if !vm.is_event_loop_alive() {
+                    break;
+                }
+                while vm.is_event_loop_alive() {
+                    vm.tick();
+                    vm.auto_tick_active();
+                }
+                vm.on_before_exit();
+            }
+
+            // A `beforeExit` handler that just resolved the TLA prints its value
+            // now (a still-pending/rejected entry is reported below instead).
+            if eval_and_print && !printed && entry_point_print_ok(vm) {
+                print_eval_result(vm);
+            }
+
+            // The entry promise is pre-marked handled, so report it here:
+            // pending (unsettled TLA) → exit 13; late-rejected (resumed body
+            // threw) → exit 1, gated so an initial-load rejection isn't redone.
+            if let Some(p) = vm.pending_internal_promise {
+                // SAFETY: `p` is a live JSC heap cell tracked by the VM.
+                match bun_jsc::JSPromise::status_ptr(p) {
+                    PromiseStatus::Pending => {
+                        vm.report_unsettled_top_level_await();
+                        if vm.exit_handler.exit_code == 0 {
+                            vm.exit_handler.exit_code = 13;
+                        }
+                    }
+                    PromiseStatus::Rejected
+                        if vm.pending_internal_promise_reported_at != vm.hot_reload_counter =>
+                    {
+                        vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
+                        // `on_before_exit` set `exit_on_uncaught_exception`, which
+                        // hard-exits before a user `uncaughtException` handler;
+                        // clear it so the throw reaches it (Node: handler -> 0).
+                        vm.exit_on_uncaught_exception = false;
+                        // SAFETY: `p` is a live JSC heap cell; `vm.jsc_vm` set in `init`.
+                        let result = unsafe { &mut *p }.result(unsafe { &mut *vm.jsc_vm });
+                        let global = vm.global;
+                        // SAFETY: `global` valid for VM lifetime. `uncaught_exception`
+                        // runs a user handler (exit 0) and sets exit_code = 1 itself
+                        // when unhandled.
+                        let _ = vm.uncaught_exception(unsafe { &*global }, result, true);
+                        // SAFETY: `p` is a live JSC heap cell.
+                        unsafe { &mut *p }.set_handled();
+                    }
+                    _ => {}
+                }
+            }
+
+            // An `uncaughtException` handler above may have scheduled async work
+            // (e.g. a timer); drain it, mirroring the initial-load path.
+            while vm.is_event_loop_alive() {
+                vm.tick();
+                vm.auto_tick_active();
+            }
         }
 
         if log_has_msgs(vm) {
@@ -1655,6 +1679,61 @@ impl Run {
         crate::webcore::bake_response::fix_dead_code_elimination();
         bun_crash_handler::fix_dead_code_elimination();
         vm.global_exit();
+    }
+}
+
+/// Whether the entry module's `--print` value is ready to print: the entry
+/// promise is absent (e.g. patched runMain) or fulfilled. A pending (unsettled
+/// TLA) or rejected entry prints nothing; it is reported (exit 13 / 1) instead.
+fn entry_point_print_ok(vm: &VirtualMachine) -> bool {
+    vm.pending_internal_promise
+        .is_none_or(|p| bun_jsc::JSPromise::status_ptr(p) == PromiseStatus::Fulfilled)
+}
+
+/// Print the `--print`/`-p` eval result: the entry module's completion value,
+/// unwrapping the pipeline promise (draining the loop if it is still pending).
+fn print_eval_result(vm: &mut VirtualMachine) {
+    let to_print: JSValue = 'brk: {
+        let result = vm
+            .entry_point_result
+            .value
+            .get()
+            .unwrap_or(JSValue::UNDEFINED);
+        if let Some(promise) = result.as_any_promise() {
+            match promise.status() {
+                PromiseStatus::Pending => {
+                    // C-ABI shims are emitted by `generate-host-exports.ts` into
+                    // `crate::generated_host_exports` under their link name.
+                    result.then2(
+                        vm.global(),
+                        JSValue::UNDEFINED,
+                        crate::generated_host_exports::Bun__onResolveEntryPointResult,
+                        crate::generated_host_exports::Bun__onRejectEntryPointResult,
+                    );
+                    vm.tick();
+                    vm.auto_tick_active();
+                    while vm.is_event_loop_alive() {
+                        vm.tick();
+                        vm.auto_tick_active();
+                    }
+                    break 'brk result;
+                }
+                _ => break 'brk promise.result(vm.jsc_vm()),
+            }
+        }
+        result
+    };
+    // SAFETY: `vals[..1]` is the single stack `to_print`; null `ctype` routes
+    // to the VM's stdout/stderr default.
+    unsafe {
+        bun_jsc::ConsoleObject::message_with_type_and_level(
+            ::core::ptr::null_mut(),
+            bun_jsc::ConsoleObject::MessageType::Log,
+            bun_jsc::ConsoleObject::MessageLevel::Log,
+            vm.global(),
+            &raw const to_print,
+            1,
+        );
     }
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -292,8 +292,46 @@ console.log("absolute errored:", typeof absolute === "string");`,
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).toBe("relative: true\nabsolute errored: true\n");
-      expect(exitCode).toBe(0);
+      // Asserted as one object so a crash surfaces the panic text from stderr.
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "relative: true\nabsolute errored: true\n",
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    });
+
+    // In a compiled binary the specifier is first matched against the embedded
+    // standalone module graph, which joins `./`-relative specifiers into a path
+    // buffer before the resolver sees them.
+    test("is fired for a specifier longer than a path buffer in a compiled binary", async () => {
+      using dir = tempDir("worker-compile-long-specifier", {
+        "entry.ts": `const w = new Worker("./" + Buffer.alloc(8192, "x").toString());
+w.onerror = () => console.log("worker error");`,
+      });
+
+      const out = path.join(String(dir), "compiled");
+      const build = Bun.spawnSync({
+        cmd: [bunExe(), "build", "--compile", path.join(String(dir), "entry.ts"), "--outfile", out],
+        env: bunEnv,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      expect(build.stderr.toString()).not.toContain("error:");
+      expect(build.exitCode).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [isWindows ? `${out}.exe` : out],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "worker error\n",
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
     });
   });
 });

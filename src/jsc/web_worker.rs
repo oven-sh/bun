@@ -1561,11 +1561,15 @@ unsafe fn resolve_entry_point_specifier<'s>(
             'try_from_extension: {
                 let mut pathbuf = bun_paths::path_buffer_pool::get();
                 let base_path = graph.base_public_path_with_default_suffix();
-                let base = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Loose>(
-                    base_path,
-                    &mut pathbuf[..],
-                    &[str],
-                );
+                // A specifier too long to join into a path buffer can't name an
+                // embedded file; `usable_len` keeps room for the `.js` the
+                // `./foo` arm appends in place below.
+                let usable_len = pathbuf.len() - b".js".len();
+                let Some(base) = bun_paths::resolve_path::join_abs_string_buf_checked::<
+                    bun_paths::platform::Loose,
+                >(base_path, &mut pathbuf[..usable_len], &[str]) else {
+                    break 'try_from_extension;
+                };
                 let base_len = base.len();
                 let extname_len = bun_paths::extension(base).len();
                 // `extname` cannot be held as a sub-slice of `pathbuf` while

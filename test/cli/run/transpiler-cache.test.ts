@@ -288,8 +288,16 @@ console.log("ok");
       cwd: temp_dir,
       env,
     });
-    expect(result.stdout.toString()).toBe("ok\n");
-    expect(result.exitCode).toBe(0);
+    // Asserted as one object so a crash surfaces the panic text from stderr.
+    expect({
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+      exitCode: result.exitCode,
+    }).toEqual({
+      stdout: "ok\n",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
     // The first worker's source was written to the cache; the second hit it.
     expect(existsSync(cache_dir)).toBeTrue();
     expect(newCacheCount()).toBe(1);

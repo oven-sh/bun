@@ -1438,9 +1438,10 @@ impl FileSink {
         let signal_ptr: *mut *mut c_void =
             unsafe { (&raw mut (*self.signal.as_ptr()).ptr).cast::<*mut c_void>() };
         // No per-wrapper +1 for the controller (only the transient `_guard`
-        // above): the JS builtins always call `controller.end()`/`.close()`
-        // (`${controller}__end/close` → `controller->detach()` → m_sinkPtr=null)
-        // before GC, so the controller's dtor never reaches `finalize`.
+        // above): every completion path, JS (`controller.end()/.close()` →
+        // `controller->detach()`) or native (`detach_js_controller` at every
+        // native terminal), nulls its `m_sinkPtr` before the create-time ref
+        // is released, so the controller's dtor never reaches `finalize`.
         let promise_result = JSSink::assign_to_stream(global_this, stream.value, self, signal_ptr);
 
         if promise_result.to_error().is_some() {

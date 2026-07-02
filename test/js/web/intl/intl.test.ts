@@ -12,9 +12,11 @@
 // first Intl call of any kind), the root collation (coll/root.res, ucadata.icu
 // → the first localeCompare), the >100 KB CJK collation tailorings (coll/zh,
 // ko, ja), the brkitr/*.dict break dictionaries (cjdict alone is 2 MB), en*,
-// and every *.brk break RULE. The Collator and Segmenter cases below therefore
-// exercise RAW items today — they exist so that if keep-raw.txt ever changes,
-// the decompressed output is already pinned to the uncompressed ground truth.
+// and every *.brk break RULE. So the CJK Collator cases and every Segmenter
+// case below exercise RAW items today, while the small-locale Collator cases
+// (de, fr, ru, ar, th, ...) exercise COMPRESSED tailorings. Either way, if
+// keep-raw.txt ever changes, the output is already pinned to the
+// uncompressed ground truth.
 //
 // Snapshots are the ground truth: they capture uncompressed-ICU output. If a
 // decompressed item is wrong, the snapshot diff shows exactly which locale/tree.
@@ -359,23 +361,21 @@ describe("exhaustive locale sweep (every compressed item)", () => {
   // different subset (Apple's may omit break dictionaries entirely). So they
   // share the snapshot gate even though they aren't snapshot tests.
 
-  // coll/<loc>.res: loading every locale's collation tailoring proves none of
-  // them is corrupt. Most locales legitimately inherit the root order, so the
-  // invariants are: a second Collator for the same locale must agree with the
-  // first (the decompress hook caches each decoded item for the process
-  // lifetime, so a bad cached decode shows up as the two disagreeing — the
-  // same property the "repeat calls" test below pins for DisplayNames), and
-  // a meaningful number of locales must still DIFFER from each other (sv/da
-  // sort å after z, cs has the 'ch' digraph, zh/ja/ko have CJK tailorings, …).
+  // coll/<loc>.res: load every locale's collation tailoring. No per-locale
+  // assertion can catch a corrupt tailoring: a single deterministic Collator
+  // is self-consistent even over garbage data, and on a bad bundle ICU falls
+  // back to the root collation rather than throwing. The invariant that CAN
+  // fail is the aggregate: root fallback makes every locale produce the SAME
+  // order, so a meaningful number of them must still DIFFER (sv/da sort å
+  // after z, cs has the "ch" digraph, zh/ja/ko tailor CJK, ...). The orders
+  // themselves are pinned by the de/zh/ko/ja snapshots above.
   snapshotIf(`coll/ — ${locales.length} locales, valid tailored sort`, () => {
     const probe = ["ch", "c", "h", "i", "å", "ä", "ö", "z", "a", "ñ", "n", "ー", "あ", "ア", "가", "하", "中", "一"];
     const orders = new Set<string>();
     for (const loc of locales) {
-      const sorted = probe.toSorted(new Intl.Collator(loc).compare);
-      expect(probe.toSorted(new Intl.Collator(loc).compare)).toEqual(sorted);
       // "|" never appears in a probe element, so distinct orderings cannot
       // collide (the probe holds both "ch" and the separate "c" / "h").
-      orders.add(sorted.join("|"));
+      orders.add(probe.toSorted(new Intl.Collator(loc).compare).join("|"));
     }
     expect(orders.size).toBeGreaterThan(10);
   });

@@ -25,7 +25,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -382,9 +382,10 @@ for (const tc of invalidEncodingCases) {
 output += `});\n`;
 
 const committedPath = join(import.meta.dir, "toml-test-suite.test.ts");
-const outPath = checkMode
-  ? join(mkdtempSync(join(tmpdir(), "toml-suite-check-")), "toml-test-suite.test.ts")
-  : committedPath;
+// The --check comparand must sit beside the committed file: prettier 3 also
+// honors .gitignore, whose bare `tmp` rule matches os.tmpdir() on Linux and
+// makes prettier silently skip the file there instead of formatting it.
+const outPath = checkMode ? join(import.meta.dir, "toml-test-suite.check.ts") : committedPath;
 writeFileSync(outPath, output);
 // Same prettier invocation as the repo's `bun run prettier` script, pinned to
 // the repo config so output is byte-stable wherever it is written.
@@ -396,6 +397,7 @@ execFileSync(
 );
 if (checkMode) {
   const fresh = readFileSync(outPath, "utf8");
+  rmSync(outPath);
   const committed = readFileSync(committedPath, "utf8");
   if (fresh !== committed) {
     console.error(`MISMATCH: ${committedPath} is stale; regenerate it.`);

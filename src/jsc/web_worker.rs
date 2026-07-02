@@ -1113,12 +1113,9 @@ impl WebWorker {
 
         self.flush_logs(vm);
         log!("[{}] event loop start", self.execution_context_id);
-        // dispatchOnline flips the C++ state to Running (so parent postMessage
-        // posts directly instead of queuing) and posts the parent-side 'open'
-        // task. The parent may already have observed 'open' and Running
-        // earlier, from Worker::drainToParent, if the worker posted a message
-        // during module evaluation (Node: 'online' precedes any 'message');
-        // Worker::dispatchOpenIfNeeded dedupes the two sites.
+        // dispatchOnline flips the C++ state to Running and posts the parent's
+        // 'open' task. The parent may have done both already (drainToParent, if
+        // the worker posted during module evaluation); dispatchOpenIfNeeded dedupes.
         // `cpp_worker` is the opaque C++-owned handle round-tripped via `safe fn`;
         // `vm.global()` yields the live `&JSGlobalObject` published in start_vm.
         WebWorker__dispatchOnline(self.cpp_worker, vm.global());

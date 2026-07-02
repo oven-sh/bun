@@ -175,9 +175,14 @@ test("an 'online' handler that runs during module evaluation can call getHeapSna
     Atomics.notify(new Int32Array(sab), 0);
   });
   worker.on("error", reject);
-  const stream = (await promise) as Readable;
-  expect(stream.constructor.name).toBe("HeapSnapshotStream");
-  await worker.terminate();
+  try {
+    const stream = (await promise) as Readable;
+    expect(stream.constructor.name).toBe("HeapSnapshotStream");
+  } finally {
+    // The worker sits in Atomics.wait until terminated; terminate it even if
+    // the assertions fail so it cannot outlive this test.
+    await worker.terminate();
+  }
 });
 
 test("all worker_threads module properties are present", () => {

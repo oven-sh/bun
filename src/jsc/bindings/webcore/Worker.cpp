@@ -516,8 +516,11 @@ void Worker::dispatchErrorWithMessage(WTF::String message)
     postTaskToParent([protectedThis = Ref { *this }, message = message.isolatedCopy()](ScriptExecutionContext& context) {
         // A worker whose entry point fails to load or evaluate posts this
         // before dispatchOnline() ever runs; Node still emits 'online' first.
-        if (protectedThis->dispatchOpenIfNeeded())
-            defaultGlobalObject(context.jsGlobalObject())->drainMicrotasks();
+        if (protectedThis->dispatchOpenIfNeeded()) {
+            // Nullable for the same reason as in drainToParent().
+            if (auto* globalObject = defaultGlobalObject(context.jsGlobalObject()))
+                globalObject->drainMicrotasks();
+        }
         ErrorEvent::Init init;
         init.message = message;
 
@@ -556,8 +559,11 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
 
     return postTaskToParent([protectedThis = Ref { *this }, serialized, errorCode = WTF::move(errorCode).isolatedCopy()](ScriptExecutionContext& context) {
         // See dispatchErrorWithMessage: 'online' precedes a module-load error.
-        if (protectedThis->dispatchOpenIfNeeded())
-            defaultGlobalObject(context.jsGlobalObject())->drainMicrotasks();
+        if (protectedThis->dispatchOpenIfNeeded()) {
+            // Nullable for the same reason as in drainToParent().
+            if (auto* zigGlobalObject = defaultGlobalObject(context.jsGlobalObject()))
+                zigGlobalObject->drainMicrotasks();
+        }
         auto* globalObject = context.globalObject();
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -608,8 +614,11 @@ bool Worker::dispatchExit(int32_t exitCode)
             // called process.exit() or failed to load) still started, so Node
             // emits 'online' before 'exit'. No-op once 'open' has fired, and
             // suppressed by dispatchEvent() after terminate().
-            if (protectedThis->dispatchOpenIfNeeded())
-                defaultGlobalObject(context.jsGlobalObject())->drainMicrotasks();
+            if (protectedThis->dispatchOpenIfNeeded()) {
+                // Nullable for the same reason as in drainToParent().
+                if (auto* globalObject = defaultGlobalObject(context.jsGlobalObject()))
+                    globalObject->drainMicrotasks();
+            }
 
             // Closing → dispatch 'close' → Closed. The split lets 'close'/'exit'
             // handlers observe threadId == -1 and isOnline() == false while

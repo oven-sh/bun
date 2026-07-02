@@ -31,14 +31,14 @@ async function dlopenInWorker(execArgv: string[]): Promise<any> {
   }
 }
 
-test("worker execArgv --no-addons disables process.dlopen inside the worker", async () => {
+test.concurrent("worker execArgv --no-addons disables process.dlopen inside the worker", async () => {
   expect(await dlopenInWorker(["--no-addons"])).toEqual({
     execArgv: ["--no-addons"],
     error: "Cannot load native addon because loading addons is disabled.",
   });
 });
 
-test("worker without --no-addons can call process.dlopen", async () => {
+test.concurrent("worker without --no-addons can call process.dlopen", async () => {
   const result = await dlopenInWorker([]);
   // dlopen ran: it fails because the path doesn't exist, not because addons
   // are disabled for the worker.

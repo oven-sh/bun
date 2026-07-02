@@ -400,7 +400,8 @@ describe("fetch() decodes multiple Content-Encoding codings", () => {
   // A truncated inner stream must reject, not resolve with garbage: the gzip
   // layer decodes fine but the brotli stream inside it is cut short. The
   // error can surface on fetch() itself (the body is buffered before the
-  // promise resolves) or on the body read.
+  // promise resolves) or on the body read, and it must be the decoder's
+  // truncation error, not some unrelated failure.
   it.concurrent("rejects when an inner coding's stream is truncated", async () => {
     const brotli = brotliCompressSync(payload);
     const body = gzipSync(brotli.subarray(0, brotli.length - 8));
@@ -411,7 +412,9 @@ describe("fetch() decodes multiple Content-Encoding codings", () => {
     await once(server.listen(0), "listening");
     try {
       const { port } = server.address() as import("node:net").AddressInfo;
-      await expect(fetch(`http://127.0.0.1:${port}/`).then(res => res.text())).rejects.toThrow();
+      await expect(fetch(`http://127.0.0.1:${port}/`).then(res => res.text())).rejects.toThrow(
+        /BrotliDecompressionError/,
+      );
     } finally {
       server.close();
     }

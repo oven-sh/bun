@@ -1,19 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// `Bun.build({ plugins })` used to run each plugin's `setup()` during
-// synchronous config parsing and, when `setup()` returned a promise that was
-// still pending, spin the whole event loop (`waitForPromise`) until it
-// settled. Synchronously re-entering the event loop from inside whatever
-// callback called `Bun.build` is the bug class tracked in
-// https://github.com/oven-sh/bun/issues/33261: a nested tick run from inside
-// a ready-poll dispatch can clobber the shared ready-poll batch and lose
-// one-shot events. It was also a deterministic hang on its own, because the
-// nested loop blocks the very JS frame that would have settled the promise.
-//
-// `Bun.build` now returns without blocking: the remaining plugins and the
-// rest of the config parse run in the pending promise's `.then` continuation.
-describe("Bun.build with an async plugin setup()", () => {
+// https://github.com/oven-sh/bun/issues/33261
+// `Bun.build` must not block the event loop on a pending plugin setup()
+// promise; it resumes config parsing in that promise's `.then` continuation.
+describe.concurrent("Bun.build with an async plugin setup()", () => {
   const entry = `export const hello = "world";\n`;
 
   test("returns before a pending setup() promise settles", async () => {

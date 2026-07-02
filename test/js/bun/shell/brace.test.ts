@@ -167,14 +167,20 @@ console.log(JSON.stringify(Bun.$.braces("echo {a,b}")));`,
 
   // One group with 40000 alternatives stays under the expander's
   // 65536-variant cap but produces more than 65535 brace tokens, which
-  // overflows its u16 token indices. That limit was reported as an internal
-  // UnexpectedToken error, which the shell treats as unreachable:
-  //   panic: unexpected error from Braces.expand: UnexpectedToken
+  // overflows its u16 token indices.
   test("rejects a word with an excessive number of brace tokens instead of crashing", async () => {
     // Run in a subprocess so an unfixed build aborts the child, not the runner.
-    const word = "{a" + Buffer.alloc(2 * 39999, ",a").toString() + "}";
+    // The word is built inside the child: it is far too long for argv on Windows.
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "exec", `echo ${word}`],
+      cmd: [
+        bunExe(),
+        "-e",
+        [
+          `const word = "{a" + Buffer.alloc(2 * 39999, ",a").toString() + "}";`,
+          "const { exitCode, stderr } = await Bun.$`echo ${{ raw: word }}`.quiet().nothrow();",
+          `console.log(JSON.stringify({ exitCode, stderr: stderr.toString() }));`,
+        ].join("\n"),
+      ],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -182,10 +188,7 @@ console.log(JSON.stringify(Bun.$.braces("echo {a,b}")));`,
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "",
-      stderr: "bun: too many braces in brace expansion\n",
-      exitCode: 1,
-    });
+    expect(stdout).toBe('{"exitCode":1,"stderr":"bun: too many braces in brace expansion\\n"}\n');
+    expect(exitCode).toBe(0);
   });
 });

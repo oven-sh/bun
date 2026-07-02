@@ -142,6 +142,11 @@ extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, 
     return true;
 }
 
+extern "C" bool ReadableStream__is(JSC::EncodedJSValue value)
+{
+    return !!dynamicDowncast<JSReadableStream>(JSValue::decode(value));
+}
+
 extern "C" bool ReadableStream__isDisturbed(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
@@ -165,11 +170,19 @@ extern "C" void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStrea
         return;
 
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // The native caller cannot observe VM exception state, so nothing may stay pending
+    // here (a termination does, by design).
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue reason = WebCore::createDOMException(globalObject, WebCore::ExceptionCode::AbortError);
-    RETURN_IF_EXCEPTION(scope, void());
+    if (catchScope.exception()) [[unlikely]] {
+        catchScope.clearExceptionExceptTermination();
+        return;
+    }
     auto* result = readableStreamCancel(globalObject, stream, reason);
-    RETURN_IF_EXCEPTION(scope, void());
+    if (catchScope.exception()) [[unlikely]] {
+        catchScope.clearExceptionExceptTermination();
+        return;
+    }
     markPromiseAsHandled(vm, result);
 }
 
@@ -180,9 +193,13 @@ extern "C" void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleRea
         return;
 
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // See ReadableStream__cancel: never return to the native caller with a pending exception.
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* result = readableStreamCancel(globalObject, stream, JSValue::decode(reason));
-    RETURN_IF_EXCEPTION(scope, void());
+    if (catchScope.exception()) [[unlikely]] {
+        catchScope.clearExceptionExceptTermination();
+        return;
+    }
     markPromiseAsHandled(vm, result);
 }
 

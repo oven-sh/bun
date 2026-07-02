@@ -188,7 +188,10 @@ type ThrownCheck = (e: unknown, context: string, description?: string) => void;
 const checkThrownJs =
   (ctor: any): ThrownCheck =>
   (e: any, context, description) => {
-    if (!(e instanceof Object) || !("name" in e) || !("message" in e) || !("stack" in e)) {
+    // Mirrors testharness.js assert_throws_js_impl: an error-like object (name + message)
+    // of the right constructor. It deliberately does NOT require a `stack` property:
+    // engines may omit it for errors created with no JavaScript frames on the stack.
+    if (!(e instanceof Object) || !("name" in e) || !("message" in e)) {
       fail(`${context}: ${description ?? ""} threw ${format_value(e)}, not an error type`);
     }
     if (!(e instanceof ctor)) {

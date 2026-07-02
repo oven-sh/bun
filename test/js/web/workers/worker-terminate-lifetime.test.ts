@@ -82,6 +82,84 @@ test(
   timeout,
 );
 
+// Regression: nested-worker startup read several fields (transform options,
+// env map, proxy slots, standalone graph, hot-reload) through the PARENT
+// worker's VirtualMachine pointer on the child thread, long after `new
+// Worker()` returned. Nothing pinned the parent worker's VM across that
+// window (its poll ref only prevents the parent LOOP from draining), so a
+// worker that spawned a nested Worker and then called process.exit() freed
+// its VM on its own thread while the child was still reading it — a
+// cross-thread heap-use-after-free in VirtualMachine::init_worker. Everything
+// the child needs is now snapshotted by value at Worker creation time on the
+// creating thread.
+test(
+  "worker that spawns a nested worker and immediately exits does not UAF its VM",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        for (let i = 0; i < ${rounds}; i++) {
+          // The middle worker spawns a nested worker and exits before the
+          // nested worker's thread has finished booting its VM.
+          const middle = new Worker(
+            'data:text/javascript,new Worker("data:text/javascript,"); process.exit(0);'
+          );
+          await new Promise(r => middle.addEventListener("close", r, { once: true }));
+        }
+        console.log("ok");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// Same use-after-free as above, reached via terminate() from the grandparent
+// instead of process.exit() inside the middle worker. postMessage after the
+// nested `new Worker` guarantees the middle has already spawned its child
+// (whose thread is still booting) by the time terminate() tears it down.
+test(
+  "terminating a worker that just spawned a nested worker does not UAF its VM",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        for (let i = 0; i < ${rounds}; i++) {
+          const middle = new Worker(
+            'data:text/javascript,new Worker("data:text/javascript,"); postMessage("spawned");'
+          );
+          await new Promise(r => middle.addEventListener("message", r, { once: true }));
+          middle.terminate();
+          await new Promise(r => middle.addEventListener("close", r, { once: true }));
+        }
+        console.log("ok");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
 // Regression: WebWorker__dispatchExit deref'd the C++ Worker on the worker
 // thread; if that was the last ref, ~Worker → ~EventTarget ran there and
 // EventListenerMap::releaseAssertOrSetThreadUID tripped because the listener

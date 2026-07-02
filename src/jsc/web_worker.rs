@@ -57,6 +57,12 @@
 //! down (only the main thread waits). When a parent context is gone before
 //! the close task posts, the thread-held `Worker` ref is intentionally
 //! leaked (see `Worker::dispatchExit`).
+//!
+//! Because a worker parent may tear down while a nested child is still in
+//! `startVM()`, NOTHING on the worker thread may dereference the parent's
+//! `VirtualMachine`. Every parent-derived input is snapshotted by value in
+//! `create()` on the parent's own thread — see the "Snapshot of the parent
+//! VM" field group below.
 
 use crate::JsCell;
 use core::cell::Cell;
@@ -79,20 +85,38 @@ pub struct WebWorker {
     /// The owning C++ `WebCore::Worker`. Never null; this struct is freed by
     /// `~Worker`, so the pointer cannot dangle.
     cpp_worker: *mut c_void,
-    /// Parent `jsc.VirtualMachine`. Read on the worker thread by `startVM()`
-    /// (transform options, env, proxy storage, standalone graph) and on the
-    /// parent thread by `setRef()` / `releaseParentPollRef()`.
-    ///
-    /// Validity: when the parent is the main thread, `globalExit()` calls
-    /// `terminateAllAndWait()` before freeing anything, so this stays valid
-    /// through `startVM()` even with `{ref:false}`/`.unref()`. When the parent
-    /// is itself a worker, nothing joins us on its exit — the nested-worker
-    /// "Known gap" in the file header. When `parent_poll_ref` is held (the
-    /// default), the parent's loop stays alive until the close task runs.
-    // `BackRef` (not `&'a VirtualMachine`) because the struct is FFI-owned and
-    // crosses threads; the backref invariant (parent outlives child via
-    // `parent_poll_ref`) is documented above.
-    parent: bun_ptr::BackRef<VirtualMachine>,
+    // ---- Snapshot of the parent VM (taken in `create()`, parent thread) ----
+    // The worker thread must NEVER dereference the parent `VirtualMachine`.
+    // When the parent is the main thread, `globalExit()` joins every worker
+    // before freeing anything — but a WORKER parent's own `shutdown()` frees
+    // its VM with nothing pinning it (`parent_poll_ref` only keeps the
+    // parent's LOOP from draining; it cannot survive the parent's
+    // `process.exit()` / `terminate()`), so a cross-thread read during the
+    // child's `startVM()` is a use-after-free. Everything `startVM()` needs
+    // is therefore copied by value below, in `create()`, where the parent VM
+    // is provably alive (we are running on its thread).
+    /// Whether the parent VM is itself a worker. `create()`/`setRef()` use
+    /// this to decide whether `parent_poll_ref` may be released on `.unref()`.
+    parent_is_worker: bool,
+    /// Refcounted handle on the parent's transform options. The pointee is
+    /// fully owned data, so the `Arc` alone keeps it alive past the parent
+    /// VM; `start_vm()` deref-clones it.
+    transform_options: std::sync::Arc<bun_options_types::schema::api::TransformOptions>,
+    /// `'static` process-global compile graph (`None` outside `--compile`).
+    standalone_module_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
+    hot_reload: u8,
+    /// Proxy-env refs taken (under the parent's storage lock) in `create()`;
+    /// moved into the worker VM's `proxy_env_storage` by `start_vm()`.
+    /// Written once at construction, taken once on the worker thread; if
+    /// `start_vm()` never runs, the field `Drop` in `destroy()` releases them.
+    proxy_env: JsCell<jsc::rare_data::ProxyEnvSlots>,
+    /// Deep copy of the parent's env map (`clone_with_allocator`: owned
+    /// `Box<[u8]>` keys/values, nothing borrowed from the parent) taken in
+    /// `create()`, so the worker sees the env as of `new Worker()`. Same
+    /// write-once / take-once / `Drop`-if-unused lifecycle as `proxy_env`;
+    /// once taken, `start_vm()` `heap::into_raw`s it into `worker_env_map`.
+    env_map: JsCell<Option<Box<bun_dotenv::Map>>>,
+
     execution_context_id: u32,
     mini: bool,
     eval_mode: bool,
@@ -171,9 +195,10 @@ pub struct WebWorker {
     /// `Arena` (`bumpalo::Bump`) does not run `Drop` (so the inner
     /// `HashTable` would leak), and `clone_with_allocator()` does not route
     /// through the arena allocator anyway — own them as `Box`es
-    /// here instead. `start_vm()` `heap::alloc`s and stores the pointers;
-    /// `shutdown()` step 5 `heap::take`s after `vm.destroy()` (loader
-    /// first, then map — `Loader<'static>` borrows `*map`).
+    /// here instead. `start_vm()` `heap::into_raw`s the `env_map` snapshot
+    /// (and a `Loader` over it) and stores the pointers; `shutdown()` step 5
+    /// `heap::take`s after `vm.destroy()` (loader first, then map —
+    /// `Loader<'static>` borrows `*map`).
     worker_env_map: Cell<*mut bun_dotenv::Map>,
     worker_env_loader: Cell<*mut bun_dotenv::Loader<'static>>,
     /// Set by `exit()` so that `spin()`'s error paths don't clobber an explicit
@@ -526,11 +551,36 @@ impl WebWorker {
         }
 
         let store_fd = parent_ref.transpiler.resolver.store_fd;
+        let parent_is_worker = parent_ref.worker_ref().is_some();
+
+        // Proxy-env values may be RefCountedEnvValue bytes owned by the
+        // parent's proxy_env_storage. We need a consistent snapshot of
+        // (storage slots + env.map entries) so every slice we copy is backed
+        // by a ref we hold. The storage lock serialises against
+        // Bun__setEnvValue — it covers both the slot swap and the map.put,
+        // so cloneFrom and cloneWithAllocator see the same state.
+        let mut proxy_env = jsc::rare_data::ProxyEnvSlots::default();
+        let mut env_map = Box::new(bun_dotenv::Map::default());
+        {
+            let parent_slots = parent_ref.proxy_env_storage.lock();
+            proxy_env.clone_from(&parent_slots);
+            // `env_loader()` is the parent-owned `DotEnv::Loader` set in
+            // `Transpiler::init`; the clone is deep (owned `Box<[u8]>`s).
+            *env_map = bun_core::handle_oom(parent_ref.env_loader().map.clone_with_allocator());
+        }
+        // Ensure map entries point at the exact bytes we hold refs on.
+        proxy_env.sync_into(&mut env_map);
 
         let worker = bun_core::heap::into_raw(Box::new(WebWorker {
             cpp_worker,
-            // `parent` is the calling thread's live VM; non-null by FFI contract.
-            parent: bun_ptr::BackRef::from(NonNull::new(parent).expect("parent VM")),
+            parent_is_worker,
+            transform_options: std::sync::Arc::clone(
+                &parent_ref.transpiler.options.transform_options,
+            ),
+            standalone_module_graph: parent_ref.standalone_module_graph,
+            hot_reload: parent_ref.hot_reload,
+            proxy_env: JsCell::new(proxy_env),
+            env_map: JsCell::new(Some(env_map)),
             execution_context_id: this_context_id,
             mini,
             eval_mode,
@@ -568,9 +618,10 @@ impl WebWorker {
         // Keep the parent's event loop alive until the close task releases this.
         // If the user passed `{ ref: false }` we skip — they've opted out of the
         // worker keeping the process alive. Exception: a nested worker (parent is
-        // itself a worker, not joined on exit) must hold the parent-loop keepalive
-        // regardless, because the child holds a non-owning `BackRef` to the parent VM.
-        if !default_unref || parent_ref.worker_ref().is_some() {
+        // itself a worker) must hold the parent-loop keepalive regardless —
+        // nothing joins a worker parent on exit, so this is the only thing that
+        // keeps the parent's loop around to receive the child's close task.
+        if !default_unref || parent_is_worker {
             // `worker` is a fresh heap allocation; not yet shared.
             // `bun_io::js_vm_ctx()` resolves to this (parent) thread's loop.
             worker_ref.with_parent_poll_ref(|p| p.ref_(bun_io::js_vm_ctx()));
@@ -646,12 +697,13 @@ impl WebWorker {
         // `this` is a valid heap allocation owned by C++ `WebCore::Worker`
         // (alive while JSWorker holds its Ref) — `ParentRef` invariant holds.
         // `bun_io::js_vm_ctx()` resolves to this (parent) thread's loop, which
-        // IS `this.parent`'s loop.
+        // IS the parent VM's loop.
         let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
         // A nested worker (parent is itself a worker) must keep the parent-loop
-        // keepalive even on `.unref()`: the child holds a non-owning `BackRef` to
-        // the parent VM and worker parents aren't joined on exit.
-        let parent_is_worker = this.parent.get().worker_ref().is_some();
+        // keepalive even on `.unref()`: worker parents aren't joined on exit,
+        // so this is the only thing keeping the parent's loop around to
+        // receive the child's close task.
+        let parent_is_worker = this.parent_is_worker;
         this.with_parent_poll_ref(|poll| {
             if value {
                 poll.ref_(bun_io::js_vm_ctx());
@@ -715,14 +767,6 @@ impl WebWorker {
         this.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
     }
 
-    /// Non-owning back-reference to the parent VM. See field doc for validity
-    /// (`parent_poll_ref` keeps the parent loop alive until the close task
-    /// runs).
-    #[inline]
-    pub fn parent_vm(&self) -> bun_ptr::BackRef<VirtualMachine> {
-        self.parent
-    }
-
     #[inline]
     pub fn execution_context_id(&self) -> u32 {
         self.execution_context_id
@@ -740,6 +784,13 @@ impl WebWorker {
     #[inline]
     pub fn mini(&self) -> bool {
         self.mini
+    }
+
+    /// `hot_reload` mode inherited from the parent VM (snapshotted in
+    /// `create()`; the parent VM must never be read from the worker thread).
+    #[inline]
+    pub fn hot_reload(&self) -> u8 {
+        self.hot_reload
     }
 
     // =========================================================================
@@ -829,18 +880,14 @@ impl WebWorker {
 
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
 
-        // `parent` is a `BackRef` and outlives this worker while
-        // `parent_poll_ref` is held (see file header). The parent VM runs
-        // concurrently on its own thread, so we must NOT materialise a
-        // `&mut VirtualMachine` here — a
-        // `&mut` would assert uniqueness we don't have. All uses
-        // below are read-only (clone of transform_options, locked read of
-        // proxy_env_storage / env.map, copy of standalone_module_graph),
-        // so a shared reference is sufficient.
-        let parent = self.parent.get();
-        // Deref-clone out of the `Arc` — worker mutates `allow_addons` below
-        // and passes the owned struct as `args` to the new VM.
-        let mut transform_options = (*parent.transpiler.options.transform_options).clone();
+        // Every parent-derived input below was snapshotted by value in
+        // `create()` on the parent thread (see the field group doc); the
+        // parent VM is never dereferenced from this thread — a worker
+        // parent's `shutdown()` may already have freed it.
+        //
+        // Deref-clone out of the snapshot `Arc` — worker mutates `allow_addons`
+        // below and passes the owned struct as `args` to the new VM.
+        let mut transform_options = (*self.transform_options).clone();
 
         if let Some(exec_argv) = self.exec_argv() {
             // Parse `execArgv` with the
@@ -864,27 +911,14 @@ impl WebWorker {
         // worker-thread only field; no other thread reads `arena`.
         self.arena.set(Some(bun_alloc::Arena::new()));
 
-        // Proxy-env values may be RefCountedEnvValue bytes owned by the
-        // parent's proxy_env_storage. We need a consistent snapshot of
-        // (storage slots + env.map entries) so every slice we copy is backed
-        // by a ref we hold. The parent's storage.lock serialises against
-        // Bun__setEnvValue on the main thread — it covers both the slot swap
-        // and the map.put, so cloneFrom and cloneWithAllocator see the same
-        // state.
-        let mut temp_proxy_slots = jsc::rare_data::ProxyEnvSlots::default();
-
-        // Box Map/Loader on the global heap and hand ownership to the VM via
-        // `transpiler.env`; reclaimed in `vm.destroy()` in `shutdown()`.
-        let mut map = Box::new(bun_dotenv::Map::default());
-        {
-            let parent_slots = parent.proxy_env_storage.lock();
-            temp_proxy_slots.clone_from(&parent_slots);
-            // SAFETY: `parent.transpiler.env` is the parent-owned `DotEnv::Loader`
-            // set in `Transpiler::init`; valid while `parent` lives. Read-only.
-            *map = parent.env_loader().map.clone_with_allocator()?;
-        }
-        // Ensure map entries point at the exact bytes we hold refs on.
-        temp_proxy_slots.sync_into(&mut map);
+        // Take ownership of the env snapshot captured in `create()` on the
+        // parent thread. `with_mut(take)` / `replace(None)` leave the cells
+        // empty so the field `Drop` in `destroy()` is a no-op on this path.
+        let mut temp_proxy_slots = self.proxy_env.with_mut(core::mem::take);
+        let map = self
+            .env_map
+            .replace(None)
+            .expect("env snapshot is taken exactly once, in start_vm");
 
         // `Loader<'static>` borrows `map` for its lifetime. Both are `heap::alloc`'d
         // and stashed on `self` so `shutdown()` step 5 reclaims them on every
@@ -917,7 +951,7 @@ impl WebWorker {
                 args: transform_options,
                 env_loader: NonNull::new(loader_ptr),
                 store_fd: self.store_fd,
-                graph: parent.standalone_module_graph,
+                graph: self.standalone_module_graph,
                 ..Default::default()
             },
         )?;
@@ -970,7 +1004,7 @@ impl WebWorker {
             let b = &mut (*vm).transpiler;
             b.resolver.env_loader = NonNull::new(b.env);
 
-            if let Some(graph) = parent.standalone_module_graph {
+            if let Some(graph) = self.standalone_module_graph {
                 (hooks.apply_standalone_runtime_flags)(b, graph);
             }
         }

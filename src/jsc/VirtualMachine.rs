@@ -3690,16 +3690,16 @@ impl VirtualMachine {
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
         vm_ref.worker = Some(std::ptr::from_ref::<crate::web_worker::WebWorker>(worker).cast());
-        // `parent_vm()` is a `BackRef`; the parent outlives this worker while
-        // `parent_poll_ref` is held (see web_worker.rs file header).
-        let parent = worker.parent_vm();
-        vm_ref.standalone_module_graph = parent.standalone_module_graph;
-        // The worker's resolver also
+        // `vm_ref.standalone_module_graph` was already set to `opts.graph` by
+        // `Self::init`. The worker's resolver also
         // needs the standalone graph, otherwise embedded `/$bunfs/...` specifiers
         // (e.g. a `new Worker("./worker.ts")` entry point inside a compiled
         // executable) resolve against the real filesystem and fail.
         vm_ref.transpiler.resolver.standalone_module_graph = opts.graph;
-        vm_ref.hot_reload = parent.hot_reload;
+        // Snapshotted from the parent VM in `WebWorker::create()`. The parent
+        // VM must never be dereferenced here: we are on the worker thread, and
+        // a worker parent's `shutdown()` may already have freed it.
+        vm_ref.hot_reload = worker.hot_reload();
         vm_ref.initial_script_execution_context_identifier = worker.execution_context_id() as i32;
         vm_ref.transpiler.resolver.store_fd = opts.store_fd;
         if opts.graph.is_none() {

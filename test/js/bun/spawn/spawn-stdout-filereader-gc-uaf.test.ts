@@ -173,22 +173,12 @@ test.skipIf(isWindows)(
   60_000,
 );
 
-// Third member of the same family: FileReader::on_reader_done. Its p.run()
-// resolves the pending pull with Done and drains microtasks, so the user's
-// {done: true} read handler runs synchronously inside on_reader_done, before
-// on_reader_done's own tail (on_close + the across-read release). The pin
-// added there (the same bracket on_read_chunk and on_reader_error already
-// have) guarantees the source cannot be downgraded or freed during that JS.
-//
-// This asserts the lifetime invariant directly: inside the handler the
-// wrapper must be Strong-protected both before and after the most aggressive
-// teardown reachable from there (cancel + dropping every JS reference + a
-// full synchronous GC). protectedBefore >= 1 is the precondition proving the
-// handler really ran inside on_reader_done's window (the across-read ref has
-// not been released yet); protectedAfter >= 1 / aliveAfter >= 1 is the
-// invariant. `cat` holds the pipe open until its stdin EOFs, so the read is
-// armed before the pipe can reach EOF: no fixed sleeps.
-// Windows uses libuv for pipe I/O; the path under test is POSIX.
+// Asserts the on_reader_done lifetime invariant: the source must stay
+// Strong-protected across the user JS its p.run() drains, because the rest
+// of the function still reads `self` after that JS returns.
+// protectedBefore >= 1 proves the handler ran inside that window (the
+// across-read ref, released only at on_reader_done's tail, is still held);
+// protectedAfter / aliveAfter >= 1 is the invariant. POSIX-only (libuv).
 test.skipIf(isWindows)(
   "resolving the pending read from FileReader::on_reader_done keeps the source pinned through its own tail",
   async () => {
@@ -276,7 +266,6 @@ test.skipIf(isWindows)(
     expect(result.aliveAfter).toBeGreaterThanOrEqual(1);
     expect(exitCode).toBe(0);
   },
-  30_000,
 );
 
 // Asserts the lifetime invariant rather than racing for the crash: the actual

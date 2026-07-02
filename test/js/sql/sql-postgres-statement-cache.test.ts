@@ -297,28 +297,37 @@ describe("postgres: statement cache against a real server", async () => {
     // creating one.
     const statementCount = async () =>
       Number((await sql`select count(*)::int as n from pg_prepared_statements`.simple())[0].n);
+    // A statement is only evictable once its (collected) query wrapper stops
+    // referencing it, and eviction only runs when a new distinct text is
+    // inserted, so converge by collecting + inserting. `tag` must not repeat
+    // across calls: only a text that is not already cached triggers eviction.
+    const convergeUnderCap = async (tag: string) => {
+      let extra = 0;
+      while ((await statementCount()) > MAX_CACHED_PREPARED_STATEMENTS && extra < 64) {
+        Bun.gc(true);
+        await Bun.sleep(0);
+        await sql.unsafe(`select $1::text as ${tag}${extra}`, [String(extra)]);
+        extra++;
+      }
+      return statementCount();
+    };
 
     const DISTINCT = MAX_CACHED_PREPARED_STATEMENTS + 44;
     for (let i = 0; i < DISTINCT; i++) {
       expect(await sql.unsafe(`select $1::text as c${i}`, [String(i)])).toEqual([{ [`c${i}`]: String(i) }]);
     }
 
-    let extra = 0;
-    while ((await statementCount()) > MAX_CACHED_PREPARED_STATEMENTS && extra < 64) {
-      Bun.gc(true);
-      await Bun.sleep(0);
-      await sql.unsafe(`select $1::text as extra${extra}`, [String(extra)]);
-      extra++;
-    }
-    const settled = await statementCount();
+    const settled = await convergeUnderCap("extra");
     expect(settled).toBeGreaterThan(0);
     expect(settled).toBeLessThanOrEqual(MAX_CACHED_PREPARED_STATEMENTS);
 
-    // Texts whose statements were evicted re-prepare transparently.
+    // Texts whose statements were evicted re-prepare transparently. The count
+    // exceeds the cap again while their (not yet collected) query wrappers pin
+    // them, so it must re-converge, proving re-prepared entries are evictable.
     for (let i = 0; i < DISTINCT; i++) {
       expect(await sql.unsafe(`select $1::text as c${i}`, [String(i)])).toEqual([{ [`c${i}`]: String(i) }]);
     }
-    expect(await statementCount()).toBeLessThanOrEqual(MAX_CACHED_PREPARED_STATEMENTS);
+    expect(await convergeUnderCap("again")).toBeLessThanOrEqual(MAX_CACHED_PREPARED_STATEMENTS);
   }, 40_000);
 });
 

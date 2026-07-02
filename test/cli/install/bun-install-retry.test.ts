@@ -87,6 +87,7 @@ it("retries a manifest whose redirect target 500s once", async () => {
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
   expect(out).toContain("1 package installed");
+  expect(exitCode).toBe(0);
   // The retry restarts from the original manifest URL, so the server sees the
   // whole redirect chain a second time.
   expect(urls).toEqual(["/BaR", "/redirected/BaR", "/BaR", "/redirected/BaR", "/BaR-0.0.2.tgz"]);
@@ -94,7 +95,6 @@ it("retries a manifest whose redirect target 500s once", async () => {
     name: "bar",
     version: "0.0.2",
   });
-  expect(exitCode).toBe(0);
 });
 
 // Same bug, sibling retry site (tarball downloads in runTasks): the tarball URL
@@ -141,6 +141,7 @@ it("retries a tarball whose redirect target 500s once", async () => {
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
   expect(out).toContain("1 package installed");
+  expect(exitCode).toBe(0);
   expect(urls).toEqual([
     "/BaR",
     "/BaR-0.0.2.tgz",
@@ -152,7 +153,6 @@ it("retries a tarball whose redirect target 500s once", async () => {
     name: "bar",
     version: "0.0.2",
   });
-  expect(exitCode).toBe(0);
 });
 
 it("retries on 500", async () => {

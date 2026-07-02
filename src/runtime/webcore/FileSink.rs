@@ -1490,7 +1490,6 @@ impl FileSink {
                     self.writer
                         .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
                     self.ref_();
-                    // TODO: properly propagate exception upwards
                     // `JSValue::then` takes already-wrapped C-ABI
                     // host fns; the `toJSHostFunction` step is the manual
                     // shims at the bottom of this file.

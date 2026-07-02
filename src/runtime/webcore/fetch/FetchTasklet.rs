@@ -1608,8 +1608,7 @@ impl FetchTasklet {
             return;
         }
         // reader.cancel() / body.cancel() aborts the fetch so the server sees the
-        // close (Node/Deno/browsers abort unconditionally). abort_task() is
-        // idempotent and only touches atomics + schedule_shutdown.
+        // close (Node/Deno/browsers abort unconditionally). abort_task() is idempotent.
         this.abort_task();
         this.ignore_remaining_response_body(false);
     }

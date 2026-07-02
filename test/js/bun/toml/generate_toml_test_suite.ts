@@ -326,12 +326,17 @@ function expectTomlEqual(parsed: unknown, expected: unknown): void {
 }
 `;
 
-output += `\ndescribe("toml-test/valid", () => {\n`;
+output += `\n// Each case also asserts that parse(stringify(parse(input))) produces the same
+// value: stringify must never emit a document its own parse rejects or reads
+// back differently. The TOML text may change (date/times come back as quoted
+// strings), but the JS value is a fixed point after one lap.
+describe("toml-test/valid", () => {\n`;
 for (const tc of validCases) {
   output += `  test(${jsString(tc.name)}, () => {\n`;
   output += `    const input: string = ${jsString(tc.input)};\n`;
   output += `    const expected: any = ${valueToJS(tc.expected, 2)};\n`;
   output += `    expectTomlEqual(TOML.parse(input), expected);\n`;
+  output += `    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);\n`;
   output += `  });\n\n`;
 }
 output += `});\n`;

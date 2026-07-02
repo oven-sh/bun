@@ -697,3 +697,89 @@ describe("TOML.stringify", () => {
     expect(TOML.parse(TOML.stringify({ ok: true }))).toEqual({ ok: true });
   });
 });
+
+// The TOML.stringify suite above covers parse(stringify(jsValue)). These cover
+// the other direction, stringify of a value produced by parse (read, modify,
+// write back), where the four date/time types lose their TOML type.
+describe("stringify(parse) round-trips", () => {
+  test("all four date/time types become quoted strings on the way back out", () => {
+    // parse returns a date/time literal as the string of its source text, so
+    // stringify sees a plain string and must quote it. The TOML type changes,
+    // but the JS value is a fixed point after one stringify/parse lap.
+    const cases: [string, string][] = [
+      ["d = 1979-05-27T07:32:00Z", 'd = "1979-05-27T07:32:00Z"\n'],
+      ["d = 1979-05-27T07:32:00", 'd = "1979-05-27T07:32:00"\n'],
+      ["d = 1979-05-27", 'd = "1979-05-27"\n'],
+      ["d = 07:32:00", 'd = "07:32:00"\n'],
+    ];
+    for (const [doc, requoted] of cases) {
+      const once = TOML.parse(doc);
+      expect(TOML.stringify(once)).toBe(requoted);
+      expect(TOML.parse(TOML.stringify(once))).toEqual(once as any);
+    }
+  });
+
+  test("a date literal and a string of the same text are indistinguishable after parse", () => {
+    // This is why the previous test cannot preserve the TOML type: both
+    // documents produce the identical JS value, so stringify has nothing to go on.
+    expect(TOML.parse("a = 1979-05-27")).toEqual({ a: "1979-05-27" });
+    expect(TOML.parse('a = "1979-05-27"')).toEqual({ a: "1979-05-27" });
+  });
+
+  test("nan, inf, -inf, and signed zero round-trip as values, not just as text", () => {
+    // toEqual treats NaN as NaN and -0 as 0, so assert with Object.is.
+    for (const x of [NaN, Infinity, -Infinity, -0, 0]) {
+      expect(Object.is(TOML.parse(TOML.stringify({ x })).x, x)).toBe(true);
+    }
+  });
+
+  test("2 ** 53 is the first integral double emitted in float form", () => {
+    // TOML.parse rejects a bare integer one past Number.MAX_SAFE_INTEGER (the
+    // "losslessly represented" test above), so stringify's `.0` suffix at this
+    // boundary is what keeps its own output reparseable.
+    expect(TOML.stringify({ x: Number.MAX_SAFE_INTEGER })).toBe("x = 9007199254740991\n");
+    expect(TOML.stringify({ x: 2 ** 53 })).toBe("x = 9007199254740992.0\n");
+    expect(TOML.stringify({ x: -Number.MAX_SAFE_INTEGER })).toBe("x = -9007199254740991\n");
+    expect(TOML.stringify({ x: -(2 ** 53) })).toBe("x = -9007199254740992.0\n");
+    for (const x of [Number.MAX_SAFE_INTEGER, 2 ** 53, -Number.MAX_SAFE_INTEGER, -(2 ** 53)]) {
+      expect(TOML.parse(TOML.stringify({ x }))).toEqual({ x });
+    }
+    // Without the suffix, the same digits are not reparseable at all.
+    expect(() => TOML.parse("x = 9007199254740992")).toThrow(SyntaxError);
+  });
+
+  test("float extremes round-trip exactly and the exponent form is valid TOML", () => {
+    for (const x of [Number.MAX_VALUE, Number.MIN_VALUE, Number.EPSILON, 1e-7, 1e-300, 0.1, 1 / 3]) {
+      expect(Object.is(TOML.parse(TOML.stringify({ x })).x, x)).toBe(true);
+    }
+    // JSC's shortest repr picks exponent form here; TOML allows `int-part exp`.
+    expect(TOML.stringify({ x: 1e-7 })).toBe("x = 1e-7\n");
+    expect(TOML.stringify({ x: Number.MAX_VALUE })).toBe("x = 1.7976931348623157e+308\n");
+    expect(TOML.stringify({ x: Number.MIN_VALUE })).toBe("x = 5e-324\n");
+  });
+
+  test("stringify(parse(doc)) is a fixed point on a multi-type document", () => {
+    const doc = [
+      'title = "ex"',
+      "n = 5",
+      "f = 2.5",
+      "b = true",
+      "dt = 1979-05-27T07:32:00Z",
+      "ld = 1979-05-27",
+      "lt = 07:32:00",
+      "arr = [1, 2, 3]",
+      "mixed = [1, 'two', [3]]",
+      "[tbl]",
+      "k = 'v'",
+      "[[aot]]",
+      "x = 1",
+      "[[aot]]",
+      "x = 2",
+    ].join("\n");
+    const once = TOML.parse(doc);
+    expect(TOML.parse(TOML.stringify(once))).toEqual(once as any);
+    // The emitted text is stable after one lap: a second stringify/parse
+    // produces the identical document.
+    expect(TOML.stringify(TOML.parse(TOML.stringify(once)))).toBe(TOML.stringify(once));
+  });
+});

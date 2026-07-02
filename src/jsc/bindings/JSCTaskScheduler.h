@@ -20,6 +20,13 @@ public:
     static void onScheduleWorkSoon(WebCore::JSVMClientData* clientData, JSC::DeferredWorkTimer::Ticket ticket, JSC::DeferredWorkTimer::Task&& task);
     static void onCancelPendingWork(WebCore::JSVMClientData* clientData, JSC::DeferredWorkTimer::Ticket ticket);
 
+    // Pending work added with WorkType::AtSomePoint does not hold an event loop
+    // ref because it may never be scheduled (e.g. Atomics.waitAsync). Call this
+    // once such work is guaranteed to get scheduled (the wasm streaming compiler
+    // received its last byte): the ticket targeting `target` then keeps the
+    // event loop alive until it is scheduled or cancelled.
+    static void refEventLoopForPendingWork(WebCore::JSVMClientData* clientData, JSC::JSObject* target);
+
 public:
     Lock m_lock;
     UncheckedKeyHashSet<Ref<JSC::DeferredWorkTimer::TicketData>> m_pendingTicketsKeepingEventLoopAlive;

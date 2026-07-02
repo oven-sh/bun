@@ -1,5 +1,6 @@
 #include "config.h"
 #include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/DeferredWorkTimerInlines.h>
 #include "JSCTaskScheduler.h"
 #include "BunClientData.h"
 
@@ -52,6 +53,24 @@ void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, T
 {
     auto* job = new JSCDeferredWorkTask(*ticket, WTF::move(task));
     Bun__queueJSCDeferredWorkTaskConcurrently(clientData->bunVM, job);
+}
+
+void JSCTaskScheduler::refEventLoopForPendingWork(WebCore::JSVMClientData* clientData, JSC::JSObject* target)
+{
+    auto& scheduler = clientData->deferredWorkTimer;
+    Locker<Lock> holder { scheduler.m_lock };
+
+    Vector<Ref<TicketData>, 1> ticketsToPromote;
+    for (auto& pendingTicket : scheduler.m_pendingTicketsOther) {
+        if (!pendingTicket->isCancelled() && pendingTicket->target() == target)
+            ticketsToPromote.append(pendingTicket.copyRef());
+    }
+
+    for (auto& pendingTicket : ticketsToPromote) {
+        scheduler.m_pendingTicketsOther.remove(pendingTicket);
+        Bun__eventLoop__incrementRefConcurrently(clientData->bunVM, 1);
+        scheduler.m_pendingTicketsKeepingEventLoopAlive.add(WTF::move(pendingTicket));
+    }
 }
 
 void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, Ticket ticket)

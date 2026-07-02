@@ -2,6 +2,7 @@
 
 #include "JSDOMWrapper.h"
 #include "JavaScriptCore/WasmStreamingCompiler.h"
+#include <JavaScriptCore/JSPromise.h>
 #include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
@@ -22,11 +23,18 @@ public:
     static void destroy(JSC::JSCell*);
 
     DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
     }
+
+    // The promise WebAssembly.{compile,instantiate}Streaming() returned. It is
+    // the target of the compiler's DeferredWorkTimer ticket; finalize() uses it
+    // to make that ticket keep the event loop alive while compilation finishes.
+    JSC::JSPromise* promise() const { return m_promise.get(); }
+    void setPromise(JSC::VM& vm, JSC::JSPromise* promise) { m_promise.set(vm, this, promise); }
 
     // static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -42,6 +50,9 @@ protected:
     JSWasmStreamingCompiler(JSC::Structure*, JSDOMGlobalObject&, Ref<JSC::Wasm::StreamingCompiler>&&);
 
     void finishCreation(JSC::VM&);
+
+private:
+    JSC::WriteBarrier<JSC::JSPromise> m_promise;
 };
 class JSWasmStreamingCompilerOwner final : public JSC::WeakHandleOwner {
 public:

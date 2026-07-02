@@ -774,32 +774,30 @@ it("should not hang after destroy", async () => {
   }
 }, 120_000);
 
-// `pending` is `!_handle || connecting`, and Node only detaches `_handle` in
-// Socket.prototype._destroy. The native close callback (which fires as soon as
-// the transport fully closes, i.e. before the 'end' event is delivered when our
-// writable side already finished) must not detach it early, or a live,
-// connected socket reports the pre-connection `pending === true` state.
+// Like Node, `_handle` must stay attached until _destroy. The native close
+// callback fires before 'end' is delivered here (our FIN already went out);
+// detaching there made a live socket report the pre-connection pending state.
 it("keeps `pending` false on a live socket after the peer half-closes", async () => {
   const { promise, resolve, reject } = Promise.withResolvers<{ atEnd: unknown; atClose: unknown }>();
   const server = createServer({ allowHalfOpen: true }, socket => {
-    // Finish our writable side first so the peer's FIN fully closes the
-    // transport before the 'end' event reaches JS.
+    // End our writable side first so the peer's FIN fully closes the transport.
     socket.end("hi");
     socket.on("error", reject);
     socket.resume();
+    let atEnd: { pending: boolean; destroyed: boolean } | undefined;
+    socket.once("close", () => {
+      if (!atEnd) return reject(new Error("server socket closed before 'end'"));
+      resolve({ atEnd, atClose: { pending: socket.pending, destroyed: socket.destroyed } });
+    });
     socket.on("end", () => {
-      const atEnd = { pending: socket.pending, destroyed: socket.destroyed };
-      socket.once("close", () => {
-        resolve({ atEnd, atClose: { pending: socket.pending, destroyed: socket.destroyed } });
-      });
+      atEnd = { pending: socket.pending, destroyed: socket.destroyed };
     });
   });
   try {
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
     const client = connect({ port: server.address().port, host: "127.0.0.1", allowHalfOpen: true });
     client.on("error", reject);
-    // Only half-close after the server's FIN arrived, so its writable side is
-    // already finished when ours shuts the transport down.
+    // Half-close only once the server's FIN arrives, i.e. its side is finished.
     client.on("end", () => client.end("bye"));
     client.resume();
     expect(await promise).toEqual({

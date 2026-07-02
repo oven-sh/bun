@@ -1355,7 +1355,15 @@ impl SendQueue {
         }
         debug_assert!(!self.write_in_progress);
         self.write_in_progress = true;
-        let fd = self.queue[0].handle.as_ref().map(|h| h.fd);
+        // SCM_RIGHTS rides with the FIRST byte of the message (libuv clears
+        // `req->send_handle` after the first successful write for the same
+        // reason): once any bytes went out, continuations must not re-attach
+        // the fd or every partial-write chunk dups it into the receiver again.
+        let fd = if self.queue[0].data.cursor == 0 {
+            self.queue[0].handle.as_ref().map(|h| h.fd)
+        } else {
+            None
+        };
         // `_write` re-slices `self.queue[0]` internally so we never hand a
         // borrow of `self` into a `&mut self` method (PORTING.md aliased-&mut).
         self._write(fd);
@@ -1395,8 +1403,9 @@ impl SendQueue {
             self.update_ref(&global_this);
             return;
         } else if n > 0 && n < i32::try_from(first.data.list.len()).expect("int cast") {
-            // the item was partially sent; update the cursor and wait for writable to send the rest
-            // (if we tried to send a handle, a partial write means the handle wasn't sent yet.)
+            // the item was partially sent; update the cursor and wait for writable to send the rest.
+            // The handle (if any) already went out with the first chunk's ancillary data;
+            // continue_send only attaches it while cursor == 0.
             first.data.cursor += usize::try_from(n).expect("int cast");
             self.update_ref(&global_this);
             return;

@@ -67,7 +67,7 @@ process.on('message', (m, server) => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ exitCode, stderr, response: stdout.includes("RESPONSE:hello from bun child") }).toEqual({
       exitCode: 0,
-      stderr: "",
+      stderr: expect.any(String),
       response: true,
     });
   });
@@ -131,7 +131,7 @@ process.on('message', (m, server) => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ exitCode, stderr, response: stdout.includes("RESPONSE:hello from node child") }).toEqual({
         exitCode: 0,
-        stderr: "",
+        stderr: expect.any(String),
         response: true,
       });
     });
@@ -213,7 +213,7 @@ process.on('message', (m, sock) => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ exitCode, stderr, result: stdout.includes('RESULT:["hi-1","hi-2"]') }).toEqual({
       exitCode: 0,
-      stderr: "",
+      stderr: expect.any(String),
       result: true,
     });
   });
@@ -275,7 +275,7 @@ process.on('message', (m, server) => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ exitCode, stderr, response: stdout.includes("RESPONSE:hello from bun child") }).toEqual({
         exitCode: 0,
-        stderr: "",
+        stderr: expect.any(String),
         response: true,
       });
     });

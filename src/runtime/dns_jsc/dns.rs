@@ -2612,24 +2612,51 @@ pub mod internal {
     }
 
     // re-order result to interleave ipv4 and ipv6 (also pack into a single allocation)
-    fn process_results(info: *mut AddrInfo) -> Box<[ResultEntry]> {
+    pub(crate) fn process_results(info: *mut AddrInfo) -> Box<[ResultEntry]> {
         let mut count: usize = 0;
+        let mut n_first: usize = 0;
+        let first_family = if info.is_null() {
+            netc::AF_UNSPEC
+        } else {
+            // SAFETY: info is a live addrinfo node; freed by caller after we return.
+            unsafe { (*info).ai_family }
+        };
         let mut info_: *mut AddrInfo = info;
         while !info_.is_null() {
             count += 1;
             // SAFETY: info_ walks the libc-allocated addrinfo list; freed by caller after we return.
-            info_ = unsafe { (*info_).ai_next };
+            unsafe {
+                if (*info_).ai_family == first_family {
+                    n_first += 1;
+                }
+                info_ = (*info_).ai_next;
+            }
         }
+        let n_other = count - n_first;
 
         let mut results: Box<[MaybeUninit<ResultEntry>]> = Box::new_uninit_slice(count);
 
-        // copy results
-        let mut i: usize = 0;
+        // Copy results, interleaving address families (RFC 8305 §4): alternate
+        // between the first entry's family and the rest, preserving resolver order
+        // within each family, so a run of unroutable same-family addresses cannot
+        // occupy every concurrent connection attempt (#33278).
+        let mut i_first: usize = 0;
+        let mut i_other: usize = 0;
         info_ = info;
         while !info_.is_null() {
-            // SAFETY: info_ is a valid addrinfo node (counted above); results[i] is a
-            // MaybeUninit slot we fully initialize in this iteration.
+            // SAFETY: info_ is a valid addrinfo node (counted above); the slot
+            // mapping is a bijection over 0..count, so every results[i] is a
+            // MaybeUninit slot fully initialized exactly once.
             unsafe {
+                let i = if (*info_).ai_family == first_family {
+                    let i = i_first;
+                    i_first += 1;
+                    if i < n_other { 2 * i } else { n_other + i }
+                } else {
+                    let j = i_other;
+                    i_other += 1;
+                    if j < n_first { 2 * j + 1 } else { n_first + j }
+                };
                 let entry = results[i].as_mut_ptr();
                 (*entry).info = *info_;
                 // Always initialize `addr`: assume_init() below requires every byte written.
@@ -2646,33 +2673,12 @@ pub mod internal {
                 } else {
                     (*entry).addr = bun_core::ffi::zeroed();
                 }
-                i += 1;
                 info_ = (*info_).ai_next;
             }
         }
 
         // SAFETY: every slot 0..count was written above
         let mut results: Box<[ResultEntry]> = unsafe { results.assume_init() };
-
-        // sort (interleave ipv4 and ipv6)
-        let mut want = netc::AF_INET6 as usize;
-        'outer: for idx in 0..count {
-            if results[idx].info.ai_family as usize == want {
-                continue;
-            }
-            for j in (idx + 1)..count {
-                if results[j].info.ai_family as usize == want {
-                    results.swap(idx, j);
-                    want = if want == netc::AF_INET6 as usize {
-                        netc::AF_INET as usize
-                    } else {
-                        netc::AF_INET6 as usize
-                    };
-                }
-            }
-            // the rest of the list is all one address family
-            break 'outer;
-        }
 
         // set up pointers
         for idx in 0..count {
@@ -3310,6 +3316,88 @@ pub mod internal {
 }
 
 pub use internal::Request as InternalDNSRequest;
+
+/// `bun:internal-for-testing` bridge — see `src/js/internal-for-testing.ts`.
+pub mod testing_apis {
+    use super::*;
+
+    /// Probe for `internal::process_results`: builds a synthetic getaddrinfo
+    /// chain from an array of address families (4 | 6) and returns
+    /// `family * 1000 + originalIndex` in the packed/interleaved result order.
+    #[bun_jsc::host_fn]
+    pub fn getaddrinfo_interleave(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let families = frame.argument(0);
+        let len = families.get_length(global)? as usize;
+
+        let mut addrs: Vec<SockaddrStorage> = (0..len).map(|_| bun_core::ffi::zeroed()).collect();
+        let mut nodes: Vec<AddrInfo> = (0..len).map(|_| bun_core::ffi::zeroed()).collect();
+        for i in 0..len {
+            let family = families.get_index(global, i as u32)?.to_int32();
+            let node = &mut nodes[i];
+            // Stash the original index in the port so the caller can verify
+            // that resolver order is preserved within each family.
+            match family {
+                4 => {
+                    // SAFETY: sockaddr_in fits in the zeroed sockaddr_storage.
+                    let sa = unsafe { &mut *(&raw mut addrs[i]).cast::<netc::sockaddr_in>() };
+                    sa.sin_family = netc::AF_INET as _;
+                    sa.sin_port = i as u16;
+                    node.ai_family = netc::AF_INET;
+                    node.ai_addrlen = size_of::<netc::sockaddr_in>() as _;
+                }
+                6 => {
+                    // SAFETY: sockaddr_in6 fits in the zeroed sockaddr_storage.
+                    let sa = unsafe { &mut *(&raw mut addrs[i]).cast::<netc::sockaddr_in6>() };
+                    sa.sin6_family = netc::AF_INET6 as _;
+                    sa.sin6_port = i as u16;
+                    node.ai_family = netc::AF_INET6;
+                    node.ai_addrlen = size_of::<netc::sockaddr_in6>() as _;
+                }
+                other => {
+                    return Err(global.throw(format_args!("family must be 4 or 6, got {other}")));
+                }
+            }
+            node.ai_addr = (&raw mut addrs[i]).cast::<Sockaddr>();
+        }
+        let base = nodes.as_mut_ptr();
+        for i in 0..len.saturating_sub(1) {
+            // SAFETY: i and i + 1 are in-bounds; the Vec is never reallocated.
+            unsafe { (*base.add(i)).ai_next = base.add(i + 1) };
+        }
+
+        let results = internal::process_results(if len == 0 {
+            ptr::null_mut()
+        } else {
+            nodes.as_mut_ptr()
+        });
+
+        // Walk the rebuilt ai_next chain (not the slice) so the intrusive
+        // pointer fixup is exercised too.
+        let out = JSValue::create_empty_array(global, results.len())?;
+        let mut p: *const AddrInfo = if results.is_empty() {
+            ptr::null()
+        } else {
+            &raw const results[0].info
+        };
+        let mut idx: u32 = 0;
+        while !p.is_null() {
+            // SAFETY: p walks the chain inside the live `results` allocation.
+            let encoded = unsafe {
+                if (*p).ai_family == netc::AF_INET {
+                    4000 + i32::from((*(*p).ai_addr.cast::<netc::sockaddr_in>()).sin_port)
+                } else {
+                    6000 + i32::from((*(*p).ai_addr.cast::<netc::sockaddr_in6>()).sin6_port)
+                }
+            };
+            out.put_index(global, idx, JSValue::js_number_from_int32(encoded))?;
+            idx += 1;
+            // SAFETY: same as above.
+            p = unsafe { (*p).ai_next };
+        }
+        Ok(out)
+    }
+}
+pub use testing_apis as testing_ap_is;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Resolver — JSC-exposed `dns.Resolver` (m_ctx payload of JSDNSResolver)

@@ -32,10 +32,7 @@ describe("exit", async () => {
 
     TestBuilder.command`exit 5 || echo never`.exitCode(5).stdout("").runAsTest("exit 5 ends an || chain");
 
-    TestBuilder.command`false || exit 3; echo never`
-      .exitCode(3)
-      .stdout("")
-      .runAsTest("from the right side of ||");
+    TestBuilder.command`false || exit 3; echo never`.exitCode(3).stdout("").runAsTest("from the right side of ||");
 
     TestBuilder.command`if true; then exit 7; echo never; fi; echo never2`
       .exitCode(7)
@@ -85,10 +82,7 @@ describe("exit", async () => {
       .stdout("cs=sub\nafter\n")
       .runAsTest("command substitution");
 
-    TestBuilder.command`echo a; exit 5 | cat; echo b`
-      .exitCode(0)
-      .stdout("a\nb\n")
-      .runAsTest("pipeline element");
+    TestBuilder.command`echo a; exit 5 | cat; echo b`.exitCode(0).stdout("a\nb\n").runAsTest("pipeline element");
 
     TestBuilder.command`(if true; then exit 2; fi; echo never); echo after`
       .exitCode(0)

@@ -58,6 +58,12 @@ impl Stmt {
                 me.base.shell,
             )
         };
+        // Every command in a script body or an `if` branch is spawned as a
+        // Stmt, so refusing to run one here is what unwinds the enclosing list.
+        // `Binary` spawns its right side directly, and checks separately.
+        if let Some(code) = interp.as_stmt(this).base.exit_requested() {
+            return interp.child_done(parent, this, code);
+        }
         if idx >= len {
             return interp.child_done(parent, this, last.unwrap_or(0));
         }

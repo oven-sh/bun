@@ -4,7 +4,7 @@
 //! `parent: NodeId` and the `*mut ShellExecEnv` (which may be owned or
 //! borrowed — see field doc) are stored here.
 
-use crate::shell::interpreter::{NodeId, ShellExecEnv, StateKind};
+use crate::shell::interpreter::{ExitCode, NodeId, ShellExecEnv, StateKind};
 
 pub struct Base {
     pub kind: StateKind,
@@ -48,6 +48,13 @@ impl Base {
         // runs on one thread) and the trampoline only holds one `&mut` at a
         // time.
         unsafe { &mut *self.shell }
+    }
+
+    /// `Some(status)` once `exit` ran in this node's execution context: stop
+    /// walking children and unwind with it. See `ShellExecEnv::exit_requested`.
+    #[inline]
+    pub fn exit_requested(&self) -> Option<ExitCode> {
+        self.shell().exit_requested
     }
 }
 

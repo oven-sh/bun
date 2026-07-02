@@ -45,6 +45,12 @@ impl Binary {
         };
         let n = node.get();
 
+        // Checked before the short-circuit below: `exit 0 && echo hi` must not
+        // run the right-hand side even though the left side succeeded.
+        if let Some(code) = interp.as_binary(this).base.exit_requested() {
+            return interp.child_done(parent, this, code);
+        }
+
         if let Some(right) = right_exit {
             return interp.child_done(parent, this, right);
         }

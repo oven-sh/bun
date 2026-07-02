@@ -98,17 +98,21 @@ function EINVAL(syscall) {
 let dns;
 
 function newHandle(type, lookup) {
+  let isDefaultLookup = false;
   if (lookup === undefined) {
     if (dns === undefined) {
       dns = require("node:dns");
     }
 
     lookup = dns.lookup;
+    isDefaultLookup = true;
   } else {
     validateFunction(lookup, "lookup");
   }
 
-  const handle = {};
+  const handle = {
+    isDefaultLookup
+  } as any;
   if (type === "udp4") {
     handle.lookup = FunctionPrototypeBind.$call(lookup4, handle, lookup);
   } else if (type === "udp6") {
@@ -596,7 +600,11 @@ Socket.prototype.send = function (buffer, offset, length, port, address, callbac
   };
 
   if (!connected) {
-    state.handle.lookup(address, afterDns);
+    if (state.handle.isDefaultLookup && isIP(address)) {
+      process.nextTick(afterDns, null, address);
+    } else {
+      state.handle.lookup(address, afterDns);
+    }
   } else {
     afterDns(null, null);
   }

@@ -800,6 +800,17 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
                     break;
             }
         }
+        // Top-level await kept the load pending. Its remaining continuations
+        // (await of a non-promise, thenables, Promise.all, nested async fns)
+        // are plain microtasks: a checkpoint settles them without the event loop.
+        vm.drainMicrotasks();
+        RETURN_IF_EXCEPTION(scope, {});
+        if (promise->status() == JSPromise::Status::Fulfilled)
+            break;
+        if (promise->status() == JSPromise::Status::Rejected) {
+            scope.throwException(globalObject, promise->result());
+            return {};
+        }
         // Only drop the entry we created. If the entry already existed (an
         // outer import() is mid-load, or the module is EvaluatingAsync from a
         // prior import), removing it would force a second evaluation and a

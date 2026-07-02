@@ -1279,7 +1279,12 @@ impl FrameworkRouter {
     pub fn match_slow(&self, path: &[u8], params: &mut MatchedParams) -> Option<RouteIndex> {
         params.params = BoundedArray::default();
 
-        debug_assert!(path[0] == b'/');
+        // Every route pattern starts with '/', so anything else cannot match.
+        // Callers feed this request-targets and HMR/JS-provided patterns, which
+        // are not guaranteed to be origin-form.
+        if path.first() != Some(&b'/') {
+            return None;
+        }
         if let Some(static_route) = self.static_routes.get(path) {
             return Some(*static_route);
         }

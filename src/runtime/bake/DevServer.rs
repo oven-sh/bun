@@ -5217,7 +5217,11 @@ impl From<framework_router::OpaqueFileIdOptional> for OpaqueFileIdOrOptional {
 
 fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) {
     let mut params: framework_router::MatchedParams = Default::default();
-    if let Some(route_index) = dev.router.match_slow(req.url(), &mut params) {
+    // The raw request-target includes the query string and may be in
+    // absolute-form (`GET http://host/path`, RFC 9112 section 3.2.2); the
+    // router only understands origin-form pathnames.
+    let pathname = extract_pathname_from_url(req.url());
+    if let Some(route_index) = dev.router.match_slow(pathname, &mut params) {
         let route_bundle_index = dev
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
             .expect("oom");
@@ -7139,29 +7143,33 @@ fn new_route_params_for_bundle_promise(
     )
 }
 
-// TODO: this is shitty
+/// Extracts the origin-form pathname (no query string or fragment) from either
+/// a full URL (`scheme://host/path?q`) or a raw HTTP request-target. Targets
+/// with no path (`CONNECT host:port`, `OPTIONS *`) are returned unchanged, so
+/// they never start with `/` and never match a route.
 fn extract_pathname_from_url(url: &[u8]) -> &[u8] {
-    // Extract pathname from URL (remove protocol, host, query, hash)
-    let mut pathname = if let Some(proto_end) = strings::index_of(url, b"://") {
-        &url[proto_end + 3..]
-    } else {
+    // An origin-form target is already a pathname; scanning it for "://" would
+    // mangle paths that embed a URL, like "/proxy/https://example.com".
+    let pathname = if url.first() == Some(&b'/') {
         url
+    } else if let Some(scheme_end) = strings::index_of(url, b"://") {
+        match strings::index_of_char_pos(url, b'/', scheme_end + b"://".len()) {
+            Some(path_start) => &url[path_start..],
+            // `http://host` and `http://host?q` name an empty path, meaning "/"
+            None => b"/",
+        }
+    } else {
+        return url;
     };
 
-    if let Some(path_start) = strings::index_of_char(pathname, b'/') {
-        let path_with_query = &pathname[path_start as usize..];
-        // Remove query string and hash
-        let query_index = strings::index_of_char(path_with_query, b'?')
-            .map(|i| i as usize)
-            .unwrap_or(path_with_query.len());
-        let hash_index = strings::index_of_char(path_with_query, b'#')
-            .map(|i| i as usize)
-            .unwrap_or(path_with_query.len());
-        let end = query_index.min(hash_index);
-        pathname = &path_with_query[..end];
-    }
-
-    pathname
+    // Remove query string and hash
+    let query_index = strings::index_of_char(pathname, b'?')
+        .map(|i| i as usize)
+        .unwrap_or(pathname.len());
+    let hash_index = strings::index_of_char(pathname, b'#')
+        .map(|i| i as usize)
+        .unwrap_or(pathname.len());
+    &pathname[..query_index.min(hash_index)]
 }
 
 // Type aliases referenced throughout (Phase B will resolve to real paths)

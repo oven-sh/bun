@@ -1150,7 +1150,7 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
     // fields and call &-methods on it for the duration of this host fn.
     let vm_ref = global_object.bun_vm();
     let event_loop = vm_ref.event_loop_shared();
-    let result = JSValue::create_empty_object(global_object, 3);
+    let result = JSValue::create_empty_object(global_object, 4);
     result.put(
         global_object,
         b"activeTasks",
@@ -1173,6 +1173,15 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
         global_object,
         b"numPolls",
         JSValue::js_number(num_polls as f64),
+    );
+    // Only the POSIX tick increments this; on Windows it stays 0.
+    // SAFETY: uws::Loop::get() returns a live process-global loop.
+    let nested_dispatch_ticks =
+        unsafe { (*uws::Loop::get()).internal_loop_data.nested_dispatch_ticks };
+    result.put(
+        global_object,
+        b"nestedDispatchTicks",
+        JSValue::js_number(nested_dispatch_ticks as f64),
     );
     Ok(result)
 }

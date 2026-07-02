@@ -55,6 +55,8 @@ pub struct InternalLoopData {
     // Higher tier (`bun_runtime`) casts this back when reading.
     pub jsc_vm: *const c_void,
     pub tick_depth: c_int,
+    /// See `nested_dispatch_ticks` in `loop_data.h` (oven-sh/bun#33261).
+    pub nested_dispatch_ticks: c_int,
 }
 
 impl InternalLoopData {

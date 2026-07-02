@@ -588,5 +588,5 @@ export default function IndexPage() {
     // intact (React flight rows start with a numeric id like "0:").
     expect(buf.toString("utf8", 4, 4 + header)).toBe(expectedCss);
     expect(buf.toString("utf8", 4 + header)).toMatch(/^\d+:/);
-  }, 60_000);
+  });
 });

@@ -90,7 +90,7 @@ export async function render(
     // is presented, to avoid a flash of unstyled content.
     const int = Buffer.allocUnsafe(4);
     const str = meta.styles.join("\n");
-    int.writeUInt32LE(str.length, 0);
+    int.writeUInt32LE(Buffer.byteLength(str), 0);
     rscPayload.write(int);
     rscPayload.write(str);
   }
@@ -169,7 +169,7 @@ export async function prerender(meta: Bake.RouteMetadata) {
 
   const int = Buffer.allocUnsafe(4);
   const styles = meta.styles.join("\n");
-  int.writeUInt32LE(styles.length, 0);
+  int.writeUInt32LE(Buffer.byteLength(styles), 0);
   let rscChunks: Array<BlobPart> = [int, styles];
   rscPayload.on("data", chunk => rscChunks.push(chunk));
 

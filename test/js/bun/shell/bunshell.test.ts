@@ -563,10 +563,7 @@ describe("bunshell", () => {
           throw new Error("source failed mid-stream");
         },
       });
-      const { stdout, stderr, exitCode } = await $`${BUN} -e ${catStdin} < ${stream}`
-        .env(bunEnv)
-        .quiet()
-        .nothrow();
+      const { stdout, stderr, exitCode } = await $`${BUN} -e ${catStdin} < ${stream}`.env(bunEnv).quiet().nothrow();
       // The child got the data written before the failure, then EOF.
       expect(stdout.toString()).toBe("first-chunk");
       expect(stderr.toString()).toContain("ReadableStream redirected to stdin errored");
@@ -582,10 +579,7 @@ describe("bunshell", () => {
           await Bun.sleep(0);
         },
       });
-      const { exitCode } = await $`${BUN} -e ${"process.exit(7)"} < ${stream}`
-        .env(bunEnv)
-        .quiet()
-        .nothrow();
+      const { exitCode } = await $`${BUN} -e ${"process.exit(7)"} < ${stream}`.env(bunEnv).quiet().nothrow();
       Bun.gc(true);
       expect(exitCode).toBe(7);
     });

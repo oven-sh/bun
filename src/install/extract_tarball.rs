@@ -51,7 +51,7 @@ impl ExtractTarball {
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!(
-                        "Integrity check failed<r> for tarball: {}",
+                        "Integrity check failed for tarball: {}",
                         bun_fmt::s(self.name.slice()),
                     ),
                 );

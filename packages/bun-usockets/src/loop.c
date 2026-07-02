@@ -744,15 +744,15 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             }
 
 #if defined(__linux__)
-            /* On Linux with IP_RECVERR, EPOLLERR fires when an ICMP error
-             * (port unreachable, host unreachable, TTL exceeded, ...) is
-             * queued on the socket's error queue. For an *unconnected* UDP
-             * socket regular recvmmsg does NOT dequeue these — only
-             * recvmsg(MSG_ERRQUEUE) does — so EPOLLERR stays level-triggered
-             * until we drain it explicitly. Do that here, surfacing each
-             * errno via on_recv_error; the socket stays open. On other
-             * platforms (kqueue EV_ERROR, Windows) an error event is fatal —
-             * preserve close-on-error there. */
+            /* On Linux, connected UDP sockets have IP_RECVERR armed (see
+             * bsd_connect_udp_socket), so EPOLLERR fires with the ICMP error
+             * (port unreachable, host unreachable, TTL exceeded, ...) sitting
+             * on the socket's error queue, where only recvmsg(MSG_ERRQUEUE)
+             * dequeues it — EPOLLERR stays level-triggered until we drain it
+             * explicitly. Do that here, surfacing each errno via
+             * on_recv_error; the socket stays open. On other platforms (kqueue
+             * EV_ERROR, Windows) an error event is fatal — preserve
+             * close-on-error there. */
             int recv_error_surfaced = 0;
             int recv_would_block_only = 0;
             if (error) {

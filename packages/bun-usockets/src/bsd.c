@@ -1507,21 +1507,6 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     }
 #endif
 
-#if defined(__linux__)
-    /* Linux suppresses ICMP errors (port unreachable, host unreachable, TTL
-     * exceeded, etc.) on unconnected UDP sockets by default. Enabling
-     * IP_RECVERR/IPV6_RECVERR surfaces them as errors on the next send/recv,
-     * rather than silently dropping them. Matches libuv. */
-#ifdef IP_RECVERR
-    setsockopt(listenFd, IPPROTO_IP, IP_RECVERR, &enabled, sizeof(enabled));
-#endif
-#ifdef IPV6_RECVERR
-    if (listenAddr->ai_family == AF_INET6) {
-        setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVERR, &enabled, sizeof(enabled));
-    }
-#endif
-#endif
-
     /* We bind here as well */
     if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen)) {
         if (err != NULL) {
@@ -1541,6 +1526,28 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
         *err = 0;
     }
     return listenFd;
+}
+
+/* Linux drops ICMP errors (port unreachable, host unreachable, TTL exceeded)
+ * on unconnected UDP sockets unless IP_RECVERR is set, and node relies on that:
+ * only a connected socket has a peer to attribute the error to. Disabling it
+ * purges whatever the kernel already queued. */
+static void bsd_udp_socket_set_recverr(LIBUS_SOCKET_DESCRIPTOR fd, int enabled) {
+#if defined(__linux__)
+#ifdef IP_RECVERR
+    setsockopt(fd, IPPROTO_IP, IP_RECVERR, &enabled, sizeof(enabled));
+#endif
+#ifdef IPV6_RECVERR
+    int domain = AF_INET;
+    socklen_t domain_len = sizeof(domain);
+    if (getsockopt(fd, SOL_SOCKET, SO_DOMAIN, &domain, &domain_len) == 0 && domain == AF_INET6) {
+        setsockopt(fd, IPPROTO_IPV6, IPV6_RECVERR, &enabled, sizeof(enabled));
+    }
+#endif
+#else
+    (void) fd;
+    (void) enabled;
+#endif
 }
 
 int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port) {
@@ -1566,6 +1573,7 @@ int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int por
     for (struct addrinfo *rp = result; rp != NULL; rp = rp->ai_next) {
         if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) {
             freeaddrinfo(result);
+            bsd_udp_socket_set_recverr(fd, 1);
             return 0;
         }
     }
@@ -1591,6 +1599,7 @@ int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
     errno == EAFNOSUPPORT
 #endif
     ) {
+        bsd_udp_socket_set_recverr(fd, 0);
         return 0;
     } else {
         return -1;

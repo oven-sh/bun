@@ -1,7 +1,7 @@
 import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 
-import { disableAggressiveGCScope } from "harness";
+import { bunEnv, bunExe, disableAggressiveGCScope } from "harness";
 import path from "path";
 import { nodeDataCases } from "./testdata";
 
@@ -302,5 +302,70 @@ describe("bind()", () => {
     // The in-flight first bind must still complete normally.
     await listening;
     expect(onError).not.toHaveBeenCalled();
+  });
+});
+
+// An unconnected socket has no single peer, so node never reports ICMP errors
+// on one: sending to a peer that has gone away is a no-op, and nothing listens
+// for 'error'.
+describe("ICMP errors on an unconnected socket", () => {
+  test("a vanished peer does not emit 'error'", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const dgram = require("node:dgram");
+          // No 'error' listener, which is what node's contract allows.
+          const socket = dgram.createSocket("udp4");
+          socket.bind(0, "127.0.0.1", () => {
+            // Bind and close a probe to get a port nothing is listening on. It
+            // is bound after 'socket' so the kernel cannot hand it the same one.
+            const probe = dgram.createSocket("udp4");
+            probe.bind(0, "127.0.0.1", () => {
+              const deadPort = probe.address().port;
+              probe.close(() => {
+                let sent = 0;
+                const tick = () => {
+                  socket.send("ping", deadPort, "127.0.0.1");
+                  if (++sent === 20) {
+                    console.log("sent " + sent);
+                    socket.close();
+                    return;
+                  }
+                  setImmediate(tick);
+                };
+                tick();
+              });
+            });
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("ECONNREFUSED");
+    expect(stdout.trim()).toBe("sent 20");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a vanished peer does not poison the next send()", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "dgram-unconnected-icmp-fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("ECONNREFUSED");
+    expect(JSON.parse(stdout)).toEqual({
+      sendErrors: [],
+      received: ["live-0", "live-1", "live-2", "live-3", "live-4"],
+    });
+    expect(exitCode).toBe(0);
   });
 });

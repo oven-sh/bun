@@ -40,6 +40,8 @@
 
 namespace WebCore {
 
+class JSDirectStreamController;
+
 // [reaction-convention] handlers, grouped by the .cpp that OWNS the body.
 // Signature of every entry:  name(JSC::JSValue resolutionValue, contextCell at argument(1)).
 
@@ -301,7 +303,8 @@ JSC_DECLARE_HOST_FUNCTION(jsWebStreamsCountQueuingStrategySize);
     V(standaloneTextSinkStructure, JSBunStandaloneTextSink)                \
     V(oneShotDirectSinkStructure, JSOneShotDirectSink)
 
-// Non-destructible: LazyProperty members only.
+// Non-destructible: LazyProperty members only (plus the end-of-tick flush list, a
+// WriteBarrier container mutated and visited under this cell's lock).
 class JSStreamsRuntime final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -315,6 +318,13 @@ public:
     // The one accessor everything uses: `defaultGlobalObject(global)->streamsRuntime()`
     // behind a free function so streams .cpp files do not include ZigGlobalObject.h.
     static JSStreamsRuntime* from(JSC::JSGlobalObject*);
+
+    // End-of-tick flush service for JS-facing direct controllers: the runtime (a
+    // global-lifetime, non-destructible cell) is the only pointer registered with the
+    // event loop's deferred task queue; armed controllers are rooted by m_endOfTickFlushes.
+    void armEndOfTickFlush(JSC::JSGlobalObject*, JSDirectStreamController*);
+    WTF::Vector<JSC::WriteBarrier<JSDirectStreamController>> m_endOfTickFlushes;
+    bool m_endOfTickFlushTaskRegistered { false };
 
     DECLARE_INFO;
     // visitChildrenImpl MUST visit: EVERY m_<handler> LazyProperty (both macro lists), the

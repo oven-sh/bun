@@ -1,6 +1,8 @@
 #include "config.h"
 #include "JSStreamsRuntime.h"
 
+#include "WebStreamsInternals.h"
+
 #include "BunStandaloneTextSink.h"
 #include "BunStreamSource.h"
 #include "DOMClientIsoSubspaces.h"
@@ -117,6 +119,69 @@ void JSStreamsRuntime::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 #define WEB_STREAMS_VISIT_STRUCTURE(memberName, ClassName) thisObject->m_##memberName.visit(visitor);
     FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_VISIT_STRUCTURE)
 #undef WEB_STREAMS_VISIT_STRUCTURE
+
+    {
+        WTF::Locker locker { thisObject->cellLock() };
+        for (auto& controller : thisObject->m_endOfTickFlushes)
+            visitor.append(controller);
+    }
+}
+
+// See src/jsc/event_loop.rs. The deferred queue runs right after every microtask drain; the
+// runtime cell (global lifetime, non-destructible) is the only pointer it ever holds for streams.
+extern "C" bool Bun__EventLoop__postDeferredTask(void* bunVM, void* ctx, bool (*task)(void*));
+
+extern "C" bool Bun__StreamsRuntime__endOfTickFlush(void* ctx)
+{
+    auto* runtime = static_cast<JSStreamsRuntime*>(ctx);
+    auto* globalObject = runtime->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    WTF::Vector<JSC::WriteBarrier<JSDirectStreamController>> pending;
+    {
+        WTF::Locker locker { runtime->cellLock() };
+        pending = std::exchange(runtime->m_endOfTickFlushes, {});
+    }
+    // Keep the queue entry registered while draining: controllers armed by user JS running
+    // inside onFlush land in the fresh list and are picked up by the "stay registered" return.
+    JSC::MarkedArgumentBuffer live;
+    for (auto& barrier : pending)
+        live.append(barrier.get());
+    for (unsigned i = 0; i < live.size(); i++) {
+        auto* controller = uncheckedDowncast<JSDirectStreamController>(live.at(i));
+        controller->m_endOfTickFlushArmed = false;
+        if (controller->m_closed || !controller->m_stream)
+            continue;
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        controller->onFlush(globalObject);
+        if (scope.exception()) [[unlikely]] {
+            // There is no JS caller: error the stream like a throwing flush() would.
+            JSC::JSValue error = Bun::WebStreams::takeAbruptCompletion(globalObject, scope);
+            if (error)
+                controller->handleError(globalObject, error);
+            scope.clearExceptionExceptTermination();
+        }
+    }
+    bool keepRegistered;
+    {
+        WTF::Locker locker { runtime->cellLock() };
+        keepRegistered = !runtime->m_endOfTickFlushes.isEmpty();
+        runtime->m_endOfTickFlushTaskRegistered = keepRegistered;
+    }
+    return keepRegistered;
+}
+
+void JSStreamsRuntime::armEndOfTickFlush(JSGlobalObject* globalObject, JSDirectStreamController* controller)
+{
+    auto& vm = JSC::getVM(globalObject);
+    {
+        WTF::Locker locker { cellLock() };
+        m_endOfTickFlushes.append(JSC::WriteBarrier<JSDirectStreamController>(vm, this, controller));
+    }
+    vm.writeBarrier(this, controller);
+    if (m_endOfTickFlushTaskRegistered)
+        return;
+    m_endOfTickFlushTaskRegistered = true;
+    Bun__EventLoop__postDeferredTask(bunVM(globalObject), this, &Bun__StreamsRuntime__endOfTickFlush);
 }
 
 JSFunction* JSStreamsRuntime::byteLengthQueuingStrategySizeFunction(const Zig::GlobalObject*)

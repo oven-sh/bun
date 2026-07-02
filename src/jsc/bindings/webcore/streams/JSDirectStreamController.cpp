@@ -36,21 +36,13 @@ static constexpr auto directControllerClosedMessage = "ReadableStreamDirectContr
 
 const ClassInfo JSDirectStreamController::s_info = { "DirectStreamController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDirectStreamController) };
 
-// See src/jsc/event_loop.rs — the queue that runs right after every microtask drain.
-extern "C" bool Bun__EventLoop__postDeferredTask(void* bunVM, void* ctx, bool (*task)(void*));
-extern "C" bool Bun__EventLoop__unregisterDeferredTask(void* bunVM, void* ctx);
-
 JSDirectStreamController::JSDirectStreamController(VM& vm, Structure* structure, DirectSinkKind sinkKind)
     : Base(vm, structure)
 {
     m_sinkKind = sinkKind;
 }
 
-JSDirectStreamController::~JSDirectStreamController()
-{
-    if (m_endOfTickFlushArmed && m_bunVM)
-        Bun__EventLoop__unregisterDeferredTask(m_bunVM, this);
-}
+JSDirectStreamController::~JSDirectStreamController() = default;
 
 void JSDirectStreamController::destroy(JSCell* cell)
 {
@@ -67,39 +59,18 @@ JSDirectStreamController* JSDirectStreamController::create(VM& vm, Structure* st
 {
     auto* cell = new (NotNull, allocateCell<JSDirectStreamController>(vm)) JSDirectStreamController(vm, structure, sinkKind);
     cell->finishCreation(vm);
-    cell->m_bunVM = bunVM(cell->globalObject());
     return cell;
 }
 
-extern "C" bool Bun__DirectStreamController__endOfTickFlush(void* ctx)
-{
-    auto* controller = static_cast<JSDirectStreamController*>(ctx);
-    controller->m_endOfTickFlushArmed = false;
-    if (controller->m_closed || !controller->m_stream)
-        return false;
-    auto* globalObject = controller->globalObject();
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    controller->onFlush(globalObject);
-    if (scope.exception()) [[unlikely]] {
-        // No JS caller to surface it to: error the stream with it, like a throwing flush would.
-        if (JSValue error = takeAbruptCompletion(globalObject, scope))
-            controller->handleError(globalObject, error);
-        scope.clearExceptionExceptTermination();
-    }
-    return false;
-}
-
-// Deliver buffered data to a waiting reader at the end of this tick; a no-op when nothing
-// is buffered, nobody waits, or the sink already delivered (HWM / explicit flush / end).
+// Deliver buffered data to a waiting reader at the end of this tick via the runtime's
+// deferred-task service (JSStreamsRuntime.cpp); a no-op there if the data was already taken.
+// A write made inside pull() runs before the read that triggered it is recorded, so arming
+// does not require a waiting consumer.
 void JSDirectStreamController::armEndOfTickFlush(JSGlobalObject* globalObject)
 {
     if (m_endOfTickFlushArmed || m_closed || !m_stream)
         return;
-    // A write made inside pull() runs before the read that triggered it is recorded, so do
-    // not require a waiting consumer here: onFlush() no-ops at the end of the tick if the
-    // data was already taken (HWM, explicit flush, end) or nobody is waiting.
-    Bun__EventLoop__postDeferredTask(bunVM(globalObject), this, &Bun__DirectStreamController__endOfTickFlush);
+    JSStreamsRuntime::from(globalObject)->armEndOfTickFlush(globalObject, this);
     m_endOfTickFlushArmed = true;
 }
 

@@ -89,7 +89,6 @@ public:
     // armed by write() when data is buffered below the HWM while a consumer waits; the
     // deferred task runs right after the current microtask drain and delivers it.
     bool m_endOfTickFlushArmed { false };
-    void* m_bunVM { nullptr };
     void armEndOfTickFlush(JSC::JSGlobalObject*);
 
     // Final-chunk-on-close: the NEXT read() delivers m_finalChunk then closes. onPull checks

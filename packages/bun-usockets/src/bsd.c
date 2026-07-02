@@ -672,6 +672,34 @@ int bsd_socket_get_tos(LIBUS_SOCKET_DESCRIPTOR fd) {
     return tos;
 }
 
+int bsd_socket_buffer_size(LIBUS_SOCKET_DESCRIPTOR fd, int is_recv, int size, int *out) {
+    int option = is_recv ? SO_RCVBUF : SO_SNDBUF;
+    if (size != 0) {
+#ifdef _WIN32
+        int err = setsockopt(fd, SOL_SOCKET, option, (const char *) &size, sizeof(size));
+#else
+        int err = setsockopt(fd, SOL_SOCKET, option, &size, sizeof(size));
+#endif
+        if (err) {
+            return err;
+        }
+        *out = size;
+        return 0;
+    }
+    int value = 0;
+    socklen_t len = sizeof(value);
+#ifdef _WIN32
+    int err = getsockopt(fd, SOL_SOCKET, option, (char *) &value, (int *) &len);
+#else
+    int err = getsockopt(fd, SOL_SOCKET, option, &value, &len);
+#endif
+    if (err) {
+        return err;
+    }
+    *out = value;
+    return 0;
+}
+
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
     // Linux TCP_CORK has the same underlying corking mechanism as with MSG_MORE
 #ifdef TCP_CORK
@@ -1402,6 +1430,105 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
     return listenFd;
 }
 
+
+/* Receive-path options every UDP socket needs, whether freshly created or
+ * adopted from an existing fd: destination-address and TOS reporting for
+ * recvmmsg, Windows ICMP-reset suppression, and Linux IP_RECVERR. */
+static void bsd_apply_udp_recv_options(LIBUS_SOCKET_DESCRIPTOR fd, int family) {
+    /* We need destination address for udp packets in both ipv6 and ipv4 */
+
+/* On FreeBSD this option seems to be called like so */
+#ifndef IPV6_RECVPKTINFO
+#define IPV6_RECVPKTINFO IPV6_PKTINFO
+#endif
+
+    int enabled = 1;
+    if (setsockopt(fd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &enabled, sizeof(enabled)) == -1) {
+        if (errno == ENOPROTOOPT || errno == EINVAL) {
+#if defined(IP_PKTINFO)
+            setsockopt(fd, IPPROTO_IP, IP_PKTINFO, &enabled, sizeof(enabled));
+#elif defined(IP_RECVDSTADDR)
+            setsockopt(fd, IPPROTO_IP, IP_RECVDSTADDR, &enabled, sizeof(enabled));
+#endif
+        }
+    }
+
+    /* These are used for getting the ECN */
+    if (setsockopt(fd, IPPROTO_IPV6, IPV6_RECVTCLASS, &enabled, sizeof(enabled)) == -1) {
+        if (errno == ENOPROTOOPT || errno == EINVAL) {
+            setsockopt(fd, IPPROTO_IP, IP_RECVTOS, &enabled, sizeof(enabled));
+        }
+    }
+
+#if defined(_WIN32)
+    /* By default Winsock reports ICMP "port unreachable" from a previous
+     * sendto as WSAECONNRESET on the next recv. bsd_recvmmsg already swallows
+     * it, but disabling the report at the source means a queued ICMP can't
+     * race ahead of a real packet in WSARecvFrom either. */
+    {
+        DWORD off = 0, br;
+        WSAIoctl(fd, SIO_UDP_CONNRESET, &off, sizeof(off), NULL, 0, &br, NULL, NULL);
+#ifdef SIO_UDP_NETRESET
+        WSAIoctl(fd, SIO_UDP_NETRESET, &off, sizeof(off), NULL, 0, &br, NULL, NULL);
+#endif
+    }
+#endif
+
+#if defined(__linux__)
+    /* Linux suppresses ICMP errors (port unreachable, host unreachable, TTL
+     * exceeded, etc.) on unconnected UDP sockets by default. Enabling
+     * IP_RECVERR/IPV6_RECVERR surfaces them as errors on the next send/recv,
+     * rather than silently dropping them. Matches libuv. */
+#ifdef IP_RECVERR
+    setsockopt(fd, IPPROTO_IP, IP_RECVERR, &enabled, sizeof(enabled));
+#endif
+#ifdef IPV6_RECVERR
+    if (family == AF_INET6) {
+        setsockopt(fd, IPPROTO_IPV6, IPV6_RECVERR, &enabled, sizeof(enabled));
+    }
+#endif
+#endif
+}
+
+/* Prepares an externally created UDP fd for adoption by us_create_udp_socket_from_fd:
+ * non-blocking + the shared receive-path options. Returns 0 on success or -1 with
+ * the error in errno (WSAGetLastError on Windows). */
+int bsd_prepare_adopted_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
+    /* Refuse to adopt anything that isn't a datagram socket. */
+    int sock_type = 0;
+    socklen_t type_len = sizeof(sock_type);
+    if (getsockopt(fd, SOL_SOCKET, SO_TYPE, (char *) &sock_type, (socklen_t *) &type_len)) {
+        return -1;
+    }
+    if (sock_type != SOCK_DGRAM) {
+#ifdef _WIN32
+        WSASetLastError(WSAEINVAL);
+#endif
+        errno = EINVAL;
+        return -1;
+    }
+    struct sockaddr_storage ss;
+    socklen_t len = sizeof(ss);
+    if (getsockname(fd, (struct sockaddr *) &ss, (socklen_t *) &len)) {
+        return -1;
+    }
+    /* Only INET datagram sockets: the recv options, address getters and send
+     * destinations all assume AF_INET/AF_INET6. */
+    if (ss.ss_family != AF_INET && ss.ss_family != AF_INET6) {
+#ifdef _WIN32
+        WSASetLastError(WSAEINVAL);
+#endif
+        errno = EINVAL;
+        return -1;
+    }
+    apple_no_sigpipe(fd);
+    if (bsd_set_nonblocking(fd) == LIBUS_SOCKET_ERROR) {
+        return -1;
+    }
+    bsd_apply_udp_recv_options(fd, ss.ss_family);
+    return 0;
+}
+
 LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err) {
     if (err != NULL) {
         *err = 0;
@@ -1468,59 +1595,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     }
 #endif
 
-    /* We need destination address for udp packets in both ipv6 and ipv4 */
-
-/* On FreeBSD this option seems to be called like so */
-#ifndef IPV6_RECVPKTINFO
-#define IPV6_RECVPKTINFO IPV6_PKTINFO
-#endif
-
-    int enabled = 1;
-    if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &enabled, sizeof(enabled)) == -1) {
-        if (errno == ENOPROTOOPT || errno == EINVAL) {
-#if defined(IP_PKTINFO)
-            setsockopt(listenFd, IPPROTO_IP, IP_PKTINFO, &enabled, sizeof(enabled));
-#elif defined(IP_RECVDSTADDR)
-            setsockopt(listenFd, IPPROTO_IP, IP_RECVDSTADDR, &enabled, sizeof(enabled));
-#endif
-        }
-    }
-
-    /* These are used for getting the ECN */
-    if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVTCLASS, &enabled, sizeof(enabled)) == -1) {
-        if (errno == ENOPROTOOPT || errno == EINVAL) {
-            setsockopt(listenFd, IPPROTO_IP, IP_RECVTOS, &enabled, sizeof(enabled));
-        }
-    }
-
-#if defined(_WIN32)
-    /* By default Winsock reports ICMP "port unreachable" from a previous
-     * sendto as WSAECONNRESET on the next recv. bsd_recvmmsg already swallows
-     * it, but disabling the report at the source means a queued ICMP can't
-     * race ahead of a real packet in WSARecvFrom either. */
-    {
-        DWORD off = 0, br;
-        WSAIoctl(listenFd, SIO_UDP_CONNRESET, &off, sizeof(off), NULL, 0, &br, NULL, NULL);
-#ifdef SIO_UDP_NETRESET
-        WSAIoctl(listenFd, SIO_UDP_NETRESET, &off, sizeof(off), NULL, 0, &br, NULL, NULL);
-#endif
-    }
-#endif
-
-#if defined(__linux__)
-    /* Linux suppresses ICMP errors (port unreachable, host unreachable, TTL
-     * exceeded, etc.) on unconnected UDP sockets by default. Enabling
-     * IP_RECVERR/IPV6_RECVERR surfaces them as errors on the next send/recv,
-     * rather than silently dropping them. Matches libuv. */
-#ifdef IP_RECVERR
-    setsockopt(listenFd, IPPROTO_IP, IP_RECVERR, &enabled, sizeof(enabled));
-#endif
-#ifdef IPV6_RECVERR
-    if (listenAddr->ai_family == AF_INET6) {
-        setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVERR, &enabled, sizeof(enabled));
-    }
-#endif
-#endif
+    bsd_apply_udp_recv_options(listenFd, listenAddr->ai_family);
 
     /* We bind here as well */
     if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen)) {

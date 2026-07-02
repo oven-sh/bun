@@ -1,7 +1,7 @@
 import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 
-import { disableAggressiveGCScope } from "harness";
+import { disableAggressiveGCScope, isWindows } from "harness";
 import path from "path";
 import { nodeDataCases } from "./testdata";
 
@@ -205,6 +205,20 @@ describe("unref()", () => {
   test("call before bind() does not hang", async () => {
     expect([path.join(import.meta.dir, "dgram-unref-hang-fixture.ts")]).toRun();
   });
+
+  // The last ref()/unref() before bind wins, like Node's always-present handle.
+  test("ref() after unref() before bind() keeps the socket ref'd", async () => {
+    expect([path.join(import.meta.dir, "dgram-ref-after-unref-fixture.ts")]).toRun();
+  });
+});
+
+// Cluster-shared dgram descriptors are POSIX-only (Windows reports ENOTSUP).
+describe.skipIf(isWindows)("cluster", () => {
+  // The shared wrap's close(cb) must invoke cb (Node's HandleWrap contract) or
+  // cluster's disconnect refcount never reaches zero and the worker hangs.
+  test("worker.disconnect() with a shared socket lets the worker exit", async () => {
+    expect([path.join(import.meta.dir, "dgram-cluster-disconnect-fixture.ts")]).toRun();
+  });
 });
 
 describe("after close()", () => {
@@ -303,4 +317,107 @@ describe("bind()", () => {
     await listening;
     expect(onError).not.toHaveBeenCalled();
   });
+});
+
+// The duplicate-adoption guard must trip synchronously: libuv reports EEXIST
+// from the second uv_udp_open() of the same descriptor even in the same tick.
+test.skipIf(isWindows)("bind({ fd }) rejects a same-tick duplicate adoption", async () => {
+  const { _createSocketHandle } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  const wrap = _createSocketHandle("127.0.0.1", 0, "udp4");
+  expect(typeof wrap).not.toBe("number");
+
+  const first = createSocket("udp4");
+  const second = createSocket("udp4");
+  const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+  first.on("listening", onListening);
+  first.bind({ fd: wrap.fd });
+  expect(() => second.bind({ fd: wrap.fd })).toThrowWithCode(Error, "EEXIST");
+  await listening;
+  first.close();
+  second.close();
+  wrap.close();
+});
+
+// The same guard lives in the native layer so `Bun.udpSocket({ fd })` cannot
+// adopt (and later double-close) a descriptor a live socket already owns.
+test.skipIf(isWindows)("Bun.udpSocket({ fd }) rejects a descriptor a live socket already adopted", async () => {
+  const { _createSocketHandle } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  const wrap = _createSocketHandle("127.0.0.1", 0, "udp4");
+  const socket = createSocket("udp4");
+  const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+  socket.on("listening", onListening);
+  socket.bind({ fd: wrap.fd });
+  await listening;
+
+  await expect(() => Bun.udpSocket({ fd: wrap.fd })).toThrowWithCodeAsync(Error, "EEXIST");
+
+  socket.close();
+  wrap.close();
+});
+
+// Node throws an ErrnoException from the option setters of an unbound socket;
+// the error carries the syscall name and code, not a bare `Error`.
+test("setBroadcast()/setMulticastLoopback() before bind() throw EBADF", () => {
+  const socket = createSocket("udp4");
+  for (const method of ["setBroadcast", "setMulticastLoopback"] as const) {
+    expect(() => socket[method](true)).toThrowWithCode(Error, "EBADF");
+    expect(() => socket[method](true)).toThrow(`${method} EBADF`);
+  }
+  socket.close();
+});
+
+// An oversized datagram fails send(2) with EMSGSIZE; on the connected path no
+// address/port is known, so the error must match Node's bare `send <code>`.
+test.skipIf(isWindows)("connected send() failure reports Node's error shape", async () => {
+  const receiver = createSocket("udp4");
+  const { promise: receiverBound, resolve: onReceiverBound } = Promise.withResolvers<void>();
+  receiver.bind(0, "127.0.0.1", onReceiverBound);
+  await receiverBound;
+
+  const socket = createSocket("udp4");
+  const { promise: bound, resolve: onBound } = Promise.withResolvers<void>();
+  socket.bind(0, "127.0.0.1", onBound);
+  await bound;
+  const { promise: connected, resolve: onConnected } = Promise.withResolvers<void>();
+  socket.connect(receiver.address().port, "127.0.0.1", onConnected);
+  await connected;
+
+  const err: any = await new Promise(resolve => socket.send(Buffer.alloc(70000), resolve));
+  socket.close();
+  receiver.close();
+  expect(err).not.toBeNull();
+  expect({ syscall: err.syscall, code: err.code, message: err.message, address: err.address, port: err.port }).toEqual({
+    syscall: "send",
+    code: "EMSGSIZE",
+    message: "send EMSGSIZE",
+    address: undefined,
+    port: undefined,
+  });
+});
+
+test("unconnected socket does not emit ICMP unreachable errors like Node", async () => {
+  // Reserve a port, then close it so datagrams sent there trigger ICMP
+  // port-unreachable replies on loopback.
+  const target = createSocket("udp4");
+  await new Promise<void>(resolve => target.bind(0, "127.0.0.1", resolve));
+  const deadPort = target.address().port;
+  await new Promise<void>(resolve => target.close(resolve));
+
+  const source = createSocket("udp4");
+  const errors: Error[] = [];
+  source.on("error", err => errors.push(err));
+
+  try {
+    // Several sends with event-loop turns in between so any queued ICMP error
+    // would have been read back and surfaced before the next send.
+    for (let i = 0; i < 5; i++) {
+      await new Promise<void>((resolve, reject) =>
+        source.send("hello", deadPort, "127.0.0.1", err => (err ? reject(err) : resolve())),
+      );
+      await Bun.sleep(10);
+    }
+    expect(errors).toEqual([]);
+  } finally {
+    source.close();
+  }
 });

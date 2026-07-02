@@ -230,6 +230,9 @@ export const exposedInternals = {
   "internal/streams/add-abort-signal": require("internal/streams/add-abort-signal"),
   "internal/async_context_frame": require("internal/async_context_frame"),
   "internal/async_hooks": require("internal/async_hooks"),
+  "internal/dgram": require("internal/dgram"),
+  // internalBinding() is served by the registered "internal/test/binding"
+  // module (src/js/internal/test/binding.ts), not from here.
 };
 
 export const fs = require("node:fs/promises").$data;

@@ -114,6 +114,14 @@ int us_udp_socket_set_broadcast(struct us_udp_socket_t *s, int enabled) {
     return bsd_socket_broadcast(us_poll_fd(&s->p), enabled);
 }
 
+int us_udp_socket_buffer_size(struct us_udp_socket_t *s, int is_recv, int size, int *out) {
+    return bsd_socket_buffer_size(us_poll_fd(&s->p), is_recv, size, out);
+}
+
+LIBUS_SOCKET_DESCRIPTOR us_udp_socket_fd(struct us_udp_socket_t *s) {
+    return us_poll_fd(&s->p);
+}
+
 int us_udp_socket_set_ttl_unicast(struct us_udp_socket_t *s, int ttl) {
     return bsd_socket_ttl_unicast(us_poll_fd(&s->p), ttl);
 }
@@ -197,6 +205,66 @@ struct us_udp_socket_t *us_create_udp_socket(
     udp->on_close = close_cb;
     udp->on_recv_error = recv_error_cb;
     udp->next = NULL;
+
+    return (struct us_udp_socket_t *) udp;
+}
+
+struct us_udp_socket_t *us_create_udp_socket_from_fd(
+    struct us_loop_t *loop,
+    void (*data_cb)(struct us_udp_socket_t *, void *, int),
+    void (*drain_cb)(struct us_udp_socket_t *),
+    void (*close_cb)(struct us_udp_socket_t *),
+    void (*recv_error_cb)(struct us_udp_socket_t *, int),
+    LIBUS_SOCKET_DESCRIPTOR fd,
+    int *err,
+    void *user
+) {
+    if (bsd_prepare_adopted_udp_socket(fd)) {
+        if (err != NULL) {
+#ifdef _WIN32
+            *err = WSAGetLastError();
+#else
+            *err = errno;
+#endif
+        }
+        return 0;
+    }
+
+    int ext_size = 0;
+    int fallthrough = 0;
+
+    struct us_poll_t *p = us_create_poll(loop, fallthrough, sizeof(struct us_udp_socket_t) + ext_size);
+    us_poll_init(p, fd, POLL_TYPE_UDP);
+
+    struct us_udp_socket_t *udp = (struct us_udp_socket_t *)p;
+
+    /* Get and store the port once */
+    struct bsd_addr_t tmp = {0};
+    bsd_local_addr(fd, &tmp);
+    udp->port = bsd_addr_get_port(&tmp);
+    udp->loop = loop;
+
+    udp->user = user;
+
+    udp->closed = 0;
+    udp->connected = 0;
+    udp->on_data = data_cb;
+    udp->on_drain = drain_cb;
+    udp->on_close = close_cb;
+    udp->on_recv_error = recv_error_cb;
+    udp->next = NULL;
+
+    /* Unlike us_create_udp_socket we don't own the adopted fd, so on failure
+     * only the poll is freed and the caller keeps the descriptor. */
+    if (us_poll_start_rc((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE) != 0) {
+        int saved_errno = errno;
+        us_poll_free((struct us_poll_t *) udp, loop);
+        if (err) {
+            *err = saved_errno;
+        }
+        errno = saved_errno;
+        return 0;
+    }
 
     return (struct us_udp_socket_t *) udp;
 }

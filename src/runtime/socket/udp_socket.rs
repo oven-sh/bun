@@ -86,8 +86,10 @@ extern "C" fn on_close(socket: *mut uws::udp::Socket) {
 }
 
 extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int) {
-    // Only called on Linux, and only for connected sockets: IP_RECVERR is armed
-    // in bsd_connect_udp_socket. loop.c guards the recv-on-error path with
+    // Only called on Linux. loop.c surfaces the errno here when EPOLLERR fires:
+    // from the IP_RECVERR error queue (armed on connect in bsd_connect_udp_socket)
+    // or from SO_ERROR when that queue is already empty, e.g. right after a
+    // disconnect purged it. The recv-on-error path is guarded with
     // #if defined(__linux__) to preserve the pre-existing close-on-error
     // behavior on kqueue/Windows (where an error event is a fatal socket
     // condition, not a drainable error queue).

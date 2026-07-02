@@ -332,6 +332,52 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("worker exit: 0");
 });
 
+test.skipIf(isWindows)("round-robin accepted sockets honor allowHalfOpen after the client's FIN", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  cluster.on("listening", (w, address) => {
+    const c = net.connect({ host: "127.0.0.1", port: address.port, allowHalfOpen: true });
+    let buf = "";
+    c.on("data", d => (buf += d));
+    c.on("connect", () => {
+      c.write("ping");
+      // Half-close: the worker's reply comes after our FIN.
+      c.end();
+    });
+    c.on("end", () => {
+      console.log("client got:", buf);
+      worker.kill();
+      process.exit(0);
+    });
+    c.on("error", e => {
+      console.log("client error:", e.code);
+      process.exit(1);
+    });
+  });
+} else {
+  // The reply is written a tick after 'end': with allowHalfOpen the adopted
+  // fd must keep its writable half open instead of being closed on the FIN.
+  net
+    .createServer({ allowHalfOpen: true }, socket => {
+      let buf = "";
+      socket.on("data", d => (buf += d));
+      socket.on("end", () => {
+        setTimeout(() => socket.end("pong:" + buf), 50);
+      });
+    })
+    .listen(0, "127.0.0.1");
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("client got: pong:ping");
+});
+
 test("round-robin accepted sockets honor the server's highWaterMark", () => {
   const dir = tempDirWithFiles("bun-test", {
     "main.ts": `

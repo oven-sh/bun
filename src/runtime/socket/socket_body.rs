@@ -547,11 +547,15 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // `LIBUS_SOCKET_DESCRIPTOR` is `c_int` on POSIX, `SOCKET`
                 // (`usize`) on Windows; `Fd::native()` is `c_int` / HANDLE
                 // (`*mut c_void`) respectively; cast to bridge the Rust-side `usize` alias.
+                // Pass `flags` like the Host/Unix arms: an adopted fd
+                // (cluster RR handoff, IPC net.Socket) must honor the
+                // caller's half-open semantics instead of the C default.
                 let s = group.from_fd(
                     kind,
                     ssl_ctx,
                     core::mem::size_of::<*mut c_void>() as c_int,
                     f.native() as uws::LIBUS_SOCKET_DESCRIPTOR,
+                    flags,
                     false,
                 );
                 if s.is_null() {

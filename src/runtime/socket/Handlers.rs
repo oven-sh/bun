@@ -574,6 +574,14 @@ impl SocketConfig {
         // On any `?` below, `result` drops and `Handlers::Drop` unprotects its
         // JSValues — no manual error-path cleanup needed.
 
+        // These options apply to every connection shape: an adopted fd
+        // (cluster round-robin handoff, IPC-passed net.Socket) and a unix
+        // path rely on allowHalfOpen exactly like a hostname connect.
+        result.exclusive = generated.exclusive;
+        result.allow_half_open = generated.allow_half_open;
+        result.reuse_port = generated.reuse_port;
+        result.ipv6_only = generated.ipv6_only;
+
         if result.fd.is_some() {
             // If a user passes a file descriptor then prefer it over hostname or unix
         } else if let Some(unix) = generated.unix_.get() {
@@ -613,10 +621,6 @@ impl SocketConfig {
                     }
                 },
             });
-            result.exclusive = generated.exclusive;
-            result.allow_half_open = generated.allow_half_open;
-            result.reuse_port = generated.reuse_port;
-            result.ipv6_only = generated.ipv6_only;
         } else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Expected either \"hostname\" or \"unix\""

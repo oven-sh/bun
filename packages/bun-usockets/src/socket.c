@@ -392,7 +392,7 @@ struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned cha
         return 0;
     }
 
-    return us_socket_from_fd(group, kind, NULL, socket_ext_size, fds[0], 0);
+    return us_socket_from_fd(group, kind, NULL, socket_ext_size, fds[0], 0, 0);
 #endif
 }
 
@@ -409,7 +409,7 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
     return written < 0 ? 0 : written;
 }
 
-struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc) {
+struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int options, int ipc) {
     /* Works on every backend: the libuv eventing registers raw SOCKETs via
      * uv_poll_init_socket (see eventing/libuv.c), which is how all Windows
      * sockets are polled already. */
@@ -428,7 +428,10 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->timeout = 255;
     s->long_timeout = 255;
     s->flags.low_prio_state = 0;
-    s->flags.allow_half_open = 0;
+    /* Same contract as connect/listen (context.c): the adopter decides
+     * half-open handling; an fd from cluster/IPC must not be closed by the
+     * C layer on the peer's FIN when the JS layer asked for half-open. */
+    s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN) != 0;
     s->flags.is_paused = 0;
     s->flags.is_ipc = ipc;
     s->flags.is_closed = 0;

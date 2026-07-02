@@ -1473,6 +1473,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     None,
                     core::mem::size_of::<*mut IPC::SendQueue>() as core::ffi::c_int,
                     posix_ipc_fd.native(),
+                    0,
                     true,
                 );
             if !raw_socket.is_null() {

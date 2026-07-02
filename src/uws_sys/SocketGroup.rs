@@ -304,6 +304,7 @@ impl SocketGroup {
         ssl_ctx: Option<*mut SslCtx>,
         socket_ext_size: c_int,
         fd: LIBUS_SOCKET_DESCRIPTOR,
+        options: c_int,
         ipc: bool,
     ) -> *mut us_socket_t {
         // SAFETY: forwarding to C.
@@ -314,6 +315,7 @@ impl SocketGroup {
                 ssl_ctx.unwrap_or(ptr::null_mut()),
                 socket_ext_size,
                 fd,
+                options,
                 ipc as c_int,
             )
         }
@@ -409,6 +411,7 @@ unsafe extern "C" {
         ssl_ctx: *mut SslCtx,
         socket_ext_size: c_int,
         fd: LIBUS_SOCKET_DESCRIPTOR,
+        options: c_int,
         ipc: c_int,
     ) -> *mut us_socket_t;
     fn us_socket_pair(

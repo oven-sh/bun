@@ -80,6 +80,9 @@ impl Binary {
         {
             let me = interp.as_binary_mut(this);
             me.currently_executing = None;
+            // The right operand of `a && b` / `a || b` sees `a`'s exit
+            // status in `$?`.
+            me.base.shell_mut().last_exit_code = exit_code;
             if me.left.is_none() {
                 me.left = Some(exit_code);
             } else {

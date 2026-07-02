@@ -588,6 +588,7 @@ impl Interpreter {
                 __cwd: cwd_arr,
                 cwd_fd,
                 async_pids: SmolList::default(),
+                last_exit_code: 0,
             }),
             root_io: JsCell::new(IO {
                 stdin: crate::shell::io::InKind::Fd(stdin_reader),
@@ -1733,6 +1734,51 @@ impl Interpreter {
             }
         }
     }
+
+    /// Number of positional parameters (`$#`): how many `N >= 1` resolve to a
+    /// value in [`Self::append_var_argv`]. `$0` (the program name) is not
+    /// counted, matching POSIX.
+    ///
+    /// `command_ctx` must be null or point to a live `ContextData` that
+    /// outlives this call.
+    // `*mut T` sig shared with `append_var_argv`; the body's internal deref is SAFETY-commented.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn var_argv_count(
+        event_loop: EventLoopHandle,
+        command_ctx: *mut bun_options_types::context::ContextData,
+    ) -> usize {
+        match event_loop {
+            EventLoopHandle::Js { .. } => {
+                let vm_ptr = event_loop
+                    .bun_vm()
+                    .cast::<bun_jsc::virtual_machine::VirtualMachine>();
+                if vm_ptr.is_null() {
+                    return 0;
+                }
+                // SAFETY: `bun_vm()` on a JS event loop returns the live
+                // `*VirtualMachine` owning that loop.
+                let vm = unsafe { &*vm_ptr };
+                let mut count = usize::from(!vm.main().is_empty());
+                count += if let Some(worker_ptr) = vm.worker {
+                    // SAFETY: `vm.worker` is set in `VirtualMachine::initWorker`
+                    // to a live `*WebWorker` for the worker's lifetime.
+                    let worker = unsafe { &*worker_ptr.cast::<bun_jsc::web_worker::WebWorker>() };
+                    worker.argv().len()
+                } else {
+                    vm.argv.len()
+                };
+                count
+            }
+            EventLoopHandle::Mini(_) => {
+                if command_ctx.is_null() {
+                    return 0;
+                }
+                // SAFETY: `command_ctx` is the process-global `ContextData`
+                // (see `init`); it outlives the interpreter.
+                unsafe { &*command_ctx }.passthrough.len()
+            }
+        }
+    }
 }
 
 /// Moves the captured stdout/stderr
@@ -1793,6 +1839,13 @@ pub struct ShellExecEnv {
     pub __cwd: Vec<u8>,
     pub cwd_fd: Fd,
     pub async_pids: SmolList<PidT, 4>,
+    /// What `$?` expands to: the exit status of the most recently completed
+    /// statement / `&&`-`||` operand in this exec env. Written by
+    /// `Stmt::child_done` and `Binary::child_done`. Starts at 0 and is
+    /// inherited (copied, not shared) by `dupe_for_subshell`, so a command
+    /// substitution or subshell sees the parent's value but never writes it
+    /// back — which is also POSIX behavior.
+    pub last_exit_code: ExitCode,
 }
 
 pub enum Bufio {
@@ -1958,6 +2011,7 @@ impl ShellExecEnv {
             __cwd: self.__cwd.clone(),
             cwd_fd: dupedfd,
             async_pids: SmolList::default(),
+            last_exit_code: self.last_exit_code,
         });
         Ok(bun_core::heap::into_raw(duped))
     }

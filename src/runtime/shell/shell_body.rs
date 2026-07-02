@@ -529,6 +529,8 @@ pub mod test {
         CloseParen,
         Var(&'a [u8]),
         VarArgv(u8),
+        /// The single byte naming the special parameter (`?`, `$`, `#`).
+        SpecialParam(u8),
         Text(&'a [u8]),
         SingleQuotedText(&'a [u8]),
         DoubleQuotedText(&'a [u8]),
@@ -544,6 +546,7 @@ pub mod test {
             match the_token {
                 Token::Var(txt) => TestToken::Var(&buf[txt.start as usize..txt.end as usize]),
                 Token::VarArgv(int) => TestToken::VarArgv(int),
+                Token::SpecialParam(sp) => TestToken::SpecialParam(sp.as_byte()),
                 Token::Text(txt) => TestToken::Text(&buf[txt.start as usize..txt.end as usize]),
                 Token::SingleQuotedText(txt) => {
                     TestToken::SingleQuotedText(&buf[txt.start as usize..txt.end as usize])
@@ -620,6 +623,11 @@ pub mod test {
                     w.write_char('}')
                 }
                 T::VarArgv(n) => write!(w, "{{\"VarArgv\":{}}}", n),
+                T::SpecialParam(c) => {
+                    w.write_str("{\"SpecialParam\":")?;
+                    encode_json_string(w, core::slice::from_ref(c))?;
+                    w.write_char('}')
+                }
                 T::Text(s) => {
                     w.write_str("{\"Text\":")?;
                     encode_json_string(w, s)?;

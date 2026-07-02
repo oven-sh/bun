@@ -327,6 +327,55 @@ const foo = "bar123; rm -rf /tmp";
 await $`FOO=${foo} bun -e 'console.log(process.env.FOO)'`; // bar123; rm -rf /tmp\n
 ```
 
+### Reading variables
+
+Read a variable with `$NAME` or `${NAME}`. The braced form is for when the
+name would otherwise run into the characters that follow it:
+
+```sh
+FOO=bar
+echo ${FOO}baz # barbaz
+echo $FOObaz   # reads the variable "FOObaz"
+```
+
+<Note>
+
+Inside the `$` template literal, `${...}` is JavaScript interpolation, so it
+never reaches the shell as syntax. To pass a literal `${NAME}` to the shell
+from JavaScript, use the `{ raw: string }` escape hatch (see `$.escape` under
+Utilities):
+
+```js
+import { $ } from "bun";
+
+await $`FOO=bar; echo ${{ raw: "${FOO}baz" }}`; // barbaz\n
+```
+
+In a `.sh` file run with `bun`, `${NAME}` works as written. The other
+parameters below have no meaning in a JavaScript template literal and can be
+written directly.
+
+</Note>
+
+These POSIX special parameters are also supported:
+
+| Parameter         | Expands to                                           |
+| ----------------- | ---------------------------------------------------- |
+| `$?` / `${?}`     | Exit status of the most recently completed command   |
+| `$$` / `${$}`     | PID of the current process                           |
+| `$#` / `${#}`     | Number of positional parameters                      |
+| `$0`…`$9`, `${N}` | Positional parameters (`${N}` is required past `$9`) |
+
+```js
+import { $ } from "bun";
+
+await $`false; echo $?`; // 1\n
+```
+
+Parameter expansion operators such as `${NAME:-default}`, and the special
+parameters `$!`, `$*`, `$@`, and `$-`, are not implemented yet. They are
+reported as a parse error rather than silently expanding to literal text.
+
 ### Changing the environment variables
 
 By default, all commands use `process.env` as their environment variables.

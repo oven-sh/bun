@@ -181,9 +181,9 @@ pub enum HardcodedModule {
     /// `bun:internal-for-testing`.
     #[strum(serialize = "internal:cluster/RoundRobinHandle")]
     InternalClusterRoundRobinHandle,
-    /// node's `internal/test/binding` (`internalBinding('udp_wrap')` shim);
-    /// gated like `bun:internal-for-testing`.
-    #[strum(serialize = "internal:test/binding")]
+    /// Node.js-internal testing shim (`require('internal/test/binding')`),
+    /// gated behind '--expose-internals' like `bun:internal-for-testing`.
+    #[strum(serialize = "internal/test/binding")]
     InternalTestBinding,
 }
 
@@ -203,7 +203,7 @@ bun_core::comptime_string_map! {
         b"bun:wrap" => HardcodedModule::BunWrap,
         b"bun:internal-for-testing" => HardcodedModule::BunInternalForTesting,
         b"internal:cluster/RoundRobinHandle" => HardcodedModule::InternalClusterRoundRobinHandle,
-        b"internal:test/binding" => HardcodedModule::InternalTestBinding,
+        b"internal/test/binding" => HardcodedModule::InternalTestBinding,
         // Node.js
         b"node:assert" => HardcodedModule::NodeAssert,
         b"node:assert/strict" => HardcodedModule::NodeAssertStrict,
@@ -717,15 +717,7 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
             node_only_prefix: false,
         },
     ),
-    (
-        b"internal/test/binding",
-        Alias {
-            path: zstr!("internal:test/binding"),
-            tag: import_record::Tag::Builtin,
-            node_builtin: false,
-            node_only_prefix: false,
-        },
-    ),
+    entry!("internal/test/binding"),
     (
         b"ffi",
         Alias {

@@ -3485,8 +3485,7 @@ fn get_hardcoded_module(
             Some(js_synthetic_module(b"node:zlib/iter", specifier))
         }
         HardcodedModule::BunInternalForTesting
-        | HardcodedModule::InternalClusterRoundRobinHandle
-        | HardcodedModule::InternalTestBinding => {
+        | HardcodedModule::InternalClusterRoundRobinHandle => {
             // Gated behind `--expose-internals` (release) / always-on (debug).
             if !bun_core::env::IS_DEBUG {
                 let allowed = bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
@@ -3495,8 +3494,23 @@ fn get_hardcoded_module(
                     return None;
                 }
             }
+            // Both variants' names are the registry's canonical specifiers.
             let name: &'static str = hardcoded.into();
             Some(js_synthetic_module(name.as_bytes(), specifier))
+        }
+        HardcodedModule::InternalTestBinding => {
+            // Gated behind `--expose-internals` (release) / always-on (debug),
+            // same as `bun:internal-for-testing`. The tag key uses the
+            // generated `internal:`-prefixed canonical specifier (see
+            // `generated_resolved_source_tag.rs`).
+            if !bun_core::env::IS_DEBUG {
+                let allowed = bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
+                    .load(core::sync::atomic::Ordering::Relaxed);
+                if !allowed {
+                    return None;
+                }
+            }
+            Some(js_synthetic_module(b"internal:test/binding", specifier))
         }
         HardcodedModule::BunWrap => {
             // `Runtime.Runtime.sourceCode()` — the bundler's CJS-interop

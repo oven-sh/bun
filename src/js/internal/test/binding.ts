@@ -1,8 +1,12 @@
-// Minimal stand-in for node's lib/internal/test/binding.js, exposed (gated
-// like bun:internal-for-testing) so vendored node tests that declare
-// `--expose-internals` can run. Only the surface those tests use is
-// implemented.
+// `require('internal/test/binding')` — Node.js-internal testing shim used by
+// the vendored node test suite. Resolution is gated like
+// `bun:internal-for-testing`: release builds require `--expose-internals`
+// (or BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING); debug builds always allow it.
+// See HardcodedModule::InternalTestBinding.
+
 const clusterRawBind = $newRustFunction("node_cluster_binding.rs", "clusterRawBind", 4);
+
+const agent = require("internal/trace_events");
 
 let fs;
 
@@ -37,18 +41,26 @@ function bindInternal(self, address, port, flags, type) {
   return 0;
 }
 
-const bindings = {
-  udp_wrap: { UDP },
-};
-
-function internalBinding(name) {
-  const binding = bindings[name];
-  if (binding === undefined) {
-    const error = new Error(`No such binding: ${name}`);
-    error.code = "ERR_INVALID_MODULE";
-    throw error;
+function internalBinding(name: string) {
+  switch (name) {
+    case "trace_events":
+      return {
+        trace: agent.trace,
+        isTraceCategoryEnabled: agent.isTraceCategoryEnabled,
+        getCategoryEnabledBuffer: agent.getCategoryEnabledBuffer,
+      };
+    case "constants":
+      return {
+        trace: {
+          TRACE_EVENT_PHASE_NESTABLE_ASYNC_BEGIN: 98,
+          TRACE_EVENT_PHASE_NESTABLE_ASYNC_END: 101,
+        },
+      };
+    case "udp_wrap":
+      return { UDP };
+    default:
+      throw new Error(`internalBinding("${name}") is not implemented in Bun`);
   }
-  return binding;
 }
 
 export default { internalBinding };

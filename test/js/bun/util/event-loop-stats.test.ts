@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
 import { getEventLoopStats } from "bun:internal-for-testing";
+import { expect, test } from "bun:test";
 import { isWindows } from "harness";
 
 // `nestedDispatchTicks` counts event-loop ticks that began while an outer

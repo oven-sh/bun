@@ -254,30 +254,27 @@ describe("zlib.brotli", () => {
         [zlib.constants.BROTLI_PARAM_LGBLOCK]: 16,
       },
     });
-    const firstChunk = Promise.withResolvers();
     const finished = Promise.withResolvers();
-    let inputEnded = false;
     let chunksBeforeEnd = 0;
-    brotliStream.on("data", () => {
-      if (!inputEnded) chunksBeforeEnd++;
-      firstChunk.resolve();
-    });
+    brotliStream.on("data", () => chunksBeforeEnd++);
     brotliStream.on("end", () => finished.resolve());
-    brotliStream.on("error", err => {
-      firstChunk.reject(err);
-      finished.reject(err);
-    });
+    brotliStream.on("error", err => finished.reject(err));
 
-    // Push incompressible data WITHOUT ending the stream. A streaming encoder
-    // emits compressed output from these writes alone; one that waits for the
-    // entire input stays silent until end(), so `firstChunk` never resolves.
-    for (let i = 0; i < 4; i++) brotliStream.write(crypto.randomBytes(512 * 1024));
-    await firstChunk.promise;
+    // Push incompressible data WITHOUT ending the stream, awaiting each write so
+    // the native encoder has processed it. A streaming encoder emits compressed
+    // output from these writes alone; one that waits for the entire input stays
+    // silent until end(), leaving `chunksBeforeEnd` at 0.
+    await Promise.all(
+      Array.from({ length: 4 }, () => {
+        const { promise, resolve } = Promise.withResolvers();
+        brotliStream.write(crypto.randomBytes(512 * 1024), resolve);
+        return promise;
+      }),
+    );
+    expect(chunksBeforeEnd).toBeGreaterThan(0);
 
-    inputEnded = true;
     brotliStream.end();
     await finished.promise;
-    expect(chunksBeforeEnd).toBeGreaterThan(0);
   });
 
   it("should accept params", async () => {
@@ -620,30 +617,27 @@ describe("zlib.zstd", () => {
 
   it("streaming encode doesn't wait for entire input", async () => {
     const zstdStream = zlib.createZstdCompress();
-    const firstChunk = Promise.withResolvers();
     const finished = Promise.withResolvers();
-    let inputEnded = false;
     let chunksBeforeEnd = 0;
-    zstdStream.on("data", () => {
-      if (!inputEnded) chunksBeforeEnd++;
-      firstChunk.resolve();
-    });
+    zstdStream.on("data", () => chunksBeforeEnd++);
     zstdStream.on("end", () => finished.resolve());
-    zstdStream.on("error", err => {
-      firstChunk.reject(err);
-      finished.reject(err);
-    });
+    zstdStream.on("error", err => finished.reject(err));
 
-    // Push incompressible data WITHOUT ending the stream. A streaming encoder
-    // emits compressed output from these writes alone; one that waits for the
-    // entire input stays silent until end(), so `firstChunk` never resolves.
-    for (let i = 0; i < 4; i++) zstdStream.write(crypto.randomBytes(512 * 1024));
-    await firstChunk.promise;
+    // Push incompressible data WITHOUT ending the stream, awaiting each write so
+    // the native encoder has processed it. A streaming encoder emits compressed
+    // output from these writes alone; one that waits for the entire input stays
+    // silent until end(), leaving `chunksBeforeEnd` at 0.
+    await Promise.all(
+      Array.from({ length: 4 }, () => {
+        const { promise, resolve } = Promise.withResolvers();
+        zstdStream.write(crypto.randomBytes(512 * 1024), resolve);
+        return promise;
+      }),
+    );
+    expect(chunksBeforeEnd).toBeGreaterThan(0);
 
-    inputEnded = true;
     zstdStream.end();
     await finished.promise;
-    expect(chunksBeforeEnd).toBeGreaterThan(0);
   });
 });
 

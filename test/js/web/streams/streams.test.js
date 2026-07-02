@@ -634,6 +634,21 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     });
   }
 
+  it("canceling a direct stream's reader settles its pending read", async () => {
+    const rs = new ReadableStream({
+      type: "direct",
+      async pull() {
+        await new Promise(() => {});
+      },
+    });
+    const reader = rs.getReader();
+    const read = reader.read();
+    await reader.cancel("bye");
+    // https://github.com/oven-sh/bun/pull/33193: this read hung forever.
+    const result = await read;
+    expect(result.done).toBe(true);
+  });
+
   it("releasing a direct stream's reader during an async pull does not crash close", async () => {
     const rs = new ReadableStream({
       type: "direct",

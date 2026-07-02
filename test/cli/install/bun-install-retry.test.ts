@@ -40,11 +40,8 @@ afterEach(async () => {
   await dummyAfterEach();
 });
 
-// Manifest request 302-redirects; the redirect target answers a retryable 500
-// once, then the real packument. The retry used to go out through a URL that
-// was a dangling self-borrow into the first attempt's freed redirect buffer
-// (ASAN: heap-use-after-free in URL::get_port on the HTTP-client thread), so
-// the retries never reached the server. It must restart from the original URL.
+// Manifest request 302-redirects and the redirect target answers a retryable
+// 500 once. The install retry must restart from the original manifest URL.
 it("retries a manifest whose redirect target 500s once", async () => {
   const urls: string[] = [];
   let redirectTargetHits = 0;
@@ -97,11 +94,9 @@ it("retries a manifest whose redirect target 500s once", async () => {
   });
 });
 
-// A cross-origin redirect strips Authorization from the in-flight header list
-// (per the fetch spec). That list is bitwise-shared with the task's AsyncHTTP,
-// so the stripped state used to leak into the install retry and the
-// re-requested registry URL went out unauthenticated (401). The retry must
-// restore the original headers along with the original URL.
+// A cross-origin redirect strips Authorization from the request (per the fetch
+// spec). The install retry restarts from the original registry URL and must
+// carry the original headers, including Authorization, again.
 it("retries an authorized manifest whose cross-origin redirect target 500s once", async () => {
   const token = "test-registry-token";
   const registryUrls: string[] = [];
@@ -173,7 +168,7 @@ it("retries an authorized manifest whose cross-origin redirect target 500s once"
   expect(cdnAuth).toEqual([null, null]);
 });
 
-// Same bug, sibling retry site (tarball downloads in runTasks): the tarball URL
+// Sibling retry site (tarball downloads in runTasks): the tarball URL
 // 302-redirects and the target 500s once before serving the archive.
 it("retries a tarball whose redirect target 500s once", async () => {
   const urls: string[] = [];

@@ -779,8 +779,10 @@ impl<'a> AsyncHTTP<'a> {
                     // `header_entries` is bitwise-shared with the original (see the
                     // comment above), so it must never be dropped or reallocated
                     // here. It was cloned from `request_headers` at init and only
-                    // ever shrinks (`ordered_remove`), so its capacity is enough.
-                    debug_assert!(
+                    // ever shrinks (`ordered_remove`), so its capacity is enough;
+                    // the unchecked append below would corrupt the shared heap
+                    // allocation otherwise, so keep this assertion in release too.
+                    assert!(
                         (*this).client.header_entries.capacity() >= (*this).request_headers.len()
                     );
                     (*this).client.header_entries.clear_retaining_capacity();

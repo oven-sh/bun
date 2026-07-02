@@ -531,12 +531,9 @@ pub(crate) fn braces(
         return bun_str.to_js(global);
     }
 
-    if expansion_count == 0 {
-        return bun_string_jsc::to_js_array(global, &[brace_str]);
-    }
-
     // Hard cap before preallocation: `calculate_expanded_amount` saturates to
     // `u32::MAX`, so a tiny nested input can otherwise request a huge `Vec`.
+    // It never returns 0, so `expanded_strings` below is never empty.
     const MAX_BRACE_EXPANSIONS: u32 = 65536;
     if expansion_count > MAX_BRACE_EXPANSIONS {
         return Err(global.throw_pretty(format_args!(

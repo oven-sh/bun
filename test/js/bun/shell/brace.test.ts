@@ -128,6 +128,70 @@ describe("brace + glob composition", () => {
   });
 });
 
+// An unquoted command substitution's output is field-split: every field but
+// the last ends the word being built. Those words never reach the end-of-walk
+// brace expansion, so `echo {a,b}$(echo x y)` (1) emitted `{a,b}x` literally
+// and (2) left the expander a trailing word with no brace group, for which it
+// sized its output buffer at zero elements and then wrote index 0, aborting
+// the process. Each case runs the shell in a subprocess so a crash cannot
+// take down the test runner.
+describe("brace expansion + command substitution", () => {
+  async function run(source: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const cases: [cmd: string, stdout: string][] = [
+    // the field split completes `{a,b}x`: it is brace-expanded like any other word
+    ["echo {a,b}$(echo x y)", "ax bx y\n"],
+    ["echo {a,b}$(echo x y z)", "ax bx y z\n"],
+    ["echo {a,b}$(echo x y){c,d}", "ax bx yc yd\n"],
+    // the group sits entirely in the last field (already worked)
+    ["echo $(echo x y){a,b}", "x ya yb\n"],
+    // a group cut in half by a field boundary never closes: both halves stay literal
+    ["echo {a,$(echo x y)}", "{a,x y}\n"],
+    ["echo {a,$(echo x y),b}", "{a,x y,b}\n"],
+  ];
+  for (const [cmd, expected] of cases) {
+    test.concurrent(cmd, async () => {
+      const { stdout, exitCode } = await run(`process.stdout.write(await Bun.$\`${cmd}\`.text())`);
+      expect({ stdout, exitCode }).toEqual({ stdout: expected, exitCode: 0 });
+    });
+  }
+
+  test.concurrent("each field is a separate brace-expanded argument", async () => {
+    const { stdout, exitCode } = await run(
+      [
+        // under `bun -e`, argv[1] is already the first user argument
+        `const print = "console.log(JSON.stringify(process.argv.slice(1)))";`,
+        "process.stdout.write(await Bun.$`${process.execPath} -e ${print} {a,b}$(echo x y)`.text());",
+      ].join("\n"),
+    );
+    expect(stdout).toBe('["ax","bx","y"]\n');
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a word with too many brace tokens is an error, not a crash", async () => {
+    // One group with 40000 alternatives overflows the expander's u16 token
+    // indices (> 65535 tokens) while staying under its 65536-variant cap.
+    const { stdout, exitCode } = await run(
+      [
+        `const word = "{" + Array(40000).fill("a").join(",") + "}";`,
+        "const r = await Bun.$`echo ${{ raw: word }}`.quiet().nothrow();",
+        `console.log(r.exitCode, JSON.stringify(r.stderr.toString()));`,
+      ].join("\n"),
+    );
+    expect(stdout).toBe('1 "bun: too many braces in brace expansion\\n"\n');
+    expect(exitCode).toBe(0);
+  });
+});
+
 // $.braces() recursed once per `{` group (parse_atom <-> parse_expansion /
 // expand_nested), so a word made of tens of thousands of nested braces drove
 // the parser that many native stack frames deep. The parser now rejects words

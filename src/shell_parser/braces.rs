@@ -1070,6 +1070,9 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// Number of words the token stream expands to. Never returns 0: a word with
+/// no brace group expands to itself, and [`expand`] always writes `out[0]`,
+/// so the `out` slice sized from this must have at least one element.
 pub fn calculate_expanded_amount(tokens: &[Token]) -> u32 {
     #[derive(Copy, Clone)]
     struct StackEntry {
@@ -1111,7 +1114,9 @@ pub fn calculate_expanded_amount(tokens: &[Token]) -> u32 {
         }
     }
 
-    variant_count
+    // `total` is always >= 1, so `variant_count` is 0 only when there is no
+    // top-level brace group at all.
+    variant_count.max(1)
 }
 
 fn build_expansion_table_alloc(tokens: &mut [Token]) -> Result<Vec<ExpansionVariant>, ParserError> {
@@ -1134,8 +1139,11 @@ fn build_expansion_table(
     }
     let mut brace_stack: SmallVec<[BraceState; MAX_NESTED_BRACES]> = SmallVec::new();
 
+    // Token indices are stored as `u16`. Adjacent text is merged into one
+    // token by the lexer, so only a word with this many brace metacharacters
+    // can overflow: report it as such instead of an internal parser error.
     if tokens.len() > u16::MAX as usize {
-        return Err(ParserError::UnexpectedToken);
+        return Err(ParserError::TooManyBraces);
     }
 
     let mut i: u16 = 0;

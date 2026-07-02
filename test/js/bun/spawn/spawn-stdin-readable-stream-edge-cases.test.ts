@@ -83,6 +83,32 @@ describe("spawn stdin ReadableStream edge cases", () => {
     ).toThrow("'stdin' ReadableStream is locked");
   });
 
+  // Only stdin can be pumped from a stream. Every entry point that can hand one
+  // to a child runs the same validation, so a bare stream and a Request or
+  // Response body are rejected with the same message. A bare stream used to be
+  // accepted for stdout and silently turned into a pipe nothing ever read.
+  const pullStream = () =>
+    new ReadableStream({
+      async pull(controller) {
+        await Bun.sleep(0);
+        controller.close();
+      },
+    });
+  test.each([
+    ["bare stream", () => pullStream()],
+    ["Response body", () => new Response(pullStream())],
+    ["Request body", () => new Request("http://x", { method: "POST", body: pullStream() })],
+  ])("ReadableStream is rejected for stdout (%s)", (_label, make) => {
+    expect(() =>
+      spawn({
+        cmd: [bunExe(), "-e", "process.exit(0)"],
+        stdin: "ignore",
+        stdout: make() as any,
+        env: bunEnv,
+      }),
+    ).toThrow("ReadableStream cannot be used for stdout yet");
+  });
+
   test("ReadableStream with exception in pull", async () => {
     let pullCount = 0;
     const stream = new ReadableStream({

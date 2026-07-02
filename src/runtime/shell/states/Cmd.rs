@@ -776,7 +776,7 @@ impl Cmd {
                             STDERR_NO as i32,
                         )?;
                     }
-                } else if let Some(mut rstream) =
+                } else if let Some(rstream) =
                     crate::webcore::ReadableStream::from_js(jsval, global)?
                 {
                     if !flags.stdin() {
@@ -784,21 +784,14 @@ impl Cmd {
                             "ReadableStream can only be redirected to stdin"
                         )));
                     }
-                    if let Some(blob) = rstream.to_any_blob(global) {
-                        // File/Bytes streams that are already complete can skip the
-                        // async pipe path.
-                        stdio[STDIN_NO].extract_blob(global, blob, STDIN_NO as i32)?;
-                    } else {
-                        if rstream.is_disturbed(global) {
-                            return Err(global
-                                .err(
-                                    crate::jsc::ErrorCode::INVALID_STATE,
-                                    format_args!("ReadableStream has already been used"),
-                                )
-                                .throw());
-                        }
-                        stdio[STDIN_NO] = Stdio::ReadableStream(rstream);
-                    }
+                    // Shared with `Bun.spawn`: blob fast-path + the
+                    // disturbed/locked validation live in one place.
+                    stdio[STDIN_NO].extract_readable_stream(
+                        global,
+                        rstream,
+                        STDIN_NO as i32,
+                        false,
+                    )?;
                 } else if let Some(req) = jsval.as_::<crate::webcore::Response>() {
                     // SAFETY: `as_` returns a live JSC-owned `*mut Response`.
                     let req = unsafe { &mut *req };
@@ -957,6 +950,38 @@ impl Cmd {
     pub fn buffered_input_close(&mut self) {
         if let Exec::Subproc(sub) = &mut self.exec {
             sub.buffered_closed.close_stdin();
+        }
+    }
+
+    /// The ReadableStream redirected to this command's stdin failed after the
+    /// pump started (its `pull()` rejected / the stream errored), so the child
+    /// only saw a truncated stdin. Mirror how output IO errors surface: note
+    /// it on the captured stderr and make the command fail unless the child
+    /// already produced a failing exit code of its own.
+    pub fn on_stdin_stream_rejected(&mut self) {
+        log!("cmd stdin stream rejected");
+        const MSG: &[u8] = b"bun: ReadableStream redirected to stdin errored\n";
+        match &self.io.stderr {
+            IoOutKind::Fd(fd) => {
+                // SAFETY: single-threaded; the captured `Vec<u8>` lives in the
+                // owning `ShellExecEnv` and no other borrow of it is live here.
+                if let Some(captured) = unsafe { fd.captured_mut() } {
+                    captured.append_slice(MSG);
+                }
+            }
+            IoOutKind::Pipe => {
+                // Same destination `close_out` uses for piped/captured stderr.
+                let shell_buf = self.base.shell_mut().buffered_stderr();
+                if !shell_buf.is_null() {
+                    // SAFETY: `shell_buf` points into `ShellExecEnv::_buffered_*`,
+                    // which `base.shell` keeps live for the command's duration.
+                    unsafe { (*shell_buf).append_slice(MSG) };
+                }
+            }
+            IoOutKind::Ignore => {}
+        }
+        if self.exit_code.is_none() {
+            self.exit_code = Some(1);
         }
     }
 

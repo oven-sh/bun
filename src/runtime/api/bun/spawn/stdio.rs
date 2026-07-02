@@ -513,42 +513,7 @@ impl Stdio {
         }
 
         if let Some(stream_) = webcore::ReadableStream::from_js(value, global)? {
-            let mut stream = stream_;
-            if let Some(blob) = stream.to_any_blob(global) {
-                return out_stdio.extract_blob(global, blob, i);
-            }
-
-            let name: &'static [u8] = match i {
-                0 => b"stdin",
-                1 => b"stdout",
-                2 => b"stderr",
-                _ => {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "ReadableStream cannot be used for stdio[{i}] yet"
-                    )));
-                }
-            };
-
-            if is_sync {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "'{}' ReadableStream cannot be used in sync mode",
-                    bstr::BStr::new(name),
-                )));
-            }
-
-            if stream.is_disturbed(global) {
-                return Err(global
-                    .err(
-                        jsc::ErrorCode::INVALID_STATE,
-                        format_args!(
-                            "'{}' ReadableStream has already been used",
-                            bstr::BStr::new(name),
-                        ),
-                    )
-                    .throw());
-            }
-            *out_stdio = Stdio::ReadableStream(stream);
-            return Ok(());
+            return out_stdio.extract_readable_stream(global, stream_, i, is_sync);
         }
 
         if let Some(array_buffer) = value.as_array_buffer(global) {
@@ -573,6 +538,70 @@ impl Stdio {
         Err(global.throw_invalid_arguments(format_args!(
             "stdio must be an array of 'inherit', 'ignore', or null"
         )))
+    }
+
+    /// Validate a `ReadableStream` destined for a spawned process's stdio and
+    /// store it. Shared by `Bun.spawn`'s option extraction and the shell's
+    /// `cmd < ${stream}` redirect so the two cannot drift.
+    ///
+    /// Streams that are really an already-complete Blob/File take the blob
+    /// fast-path. Disturbed (already read from) and locked (a reader is held)
+    /// streams are rejected up front: `assignToStream` could not pump either,
+    /// and that failure would otherwise surface only asynchronously, after the
+    /// child is already running with an empty stdin.
+    pub fn extract_readable_stream(
+        &mut self,
+        global: &JSGlobalObject,
+        stream: webcore::ReadableStream,
+        i: i32,
+        is_sync: bool,
+    ) -> JsResult<()> {
+        let mut stream = stream;
+        if let Some(blob) = stream.to_any_blob(global) {
+            return self.extract_blob(global, blob, i);
+        }
+
+        let name: &'static [u8] = match i {
+            0 => b"stdin",
+            1 => b"stdout",
+            2 => b"stderr",
+            _ => {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "ReadableStream cannot be used for stdio[{i}] yet"
+                )));
+            }
+        };
+
+        if is_sync {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "'{}' ReadableStream cannot be used in sync mode",
+                bstr::BStr::new(name),
+            )));
+        }
+
+        if stream.is_disturbed(global) {
+            return Err(global
+                .err(
+                    jsc::ErrorCode::INVALID_STATE,
+                    format_args!(
+                        "'{}' ReadableStream has already been used",
+                        bstr::BStr::new(name),
+                    ),
+                )
+                .throw());
+        }
+
+        if stream.is_locked(global) {
+            return Err(global
+                .err(
+                    jsc::ErrorCode::INVALID_STATE,
+                    format_args!("'{}' ReadableStream is locked", bstr::BStr::new(name)),
+                )
+                .throw());
+        }
+
+        *self = Stdio::ReadableStream(stream);
+        Ok(())
     }
 
     pub fn extract_blob(

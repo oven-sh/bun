@@ -763,6 +763,11 @@ export function readDirectStream(stream, sink, underlyingSource) {
   var close = $readDirectStreamOnClose.bind(state);
 
   if (!underlyingSource.pull) {
+    // Nothing will ever write. End the sink so its destination sees EOF and
+    // the controller detaches from the native sink (otherwise the controller
+    // is never started/ended/detached, the destination never gets EOF, and
+    // the controller's GC destructor releases a ref it does not own).
+    sink.end();
     close();
     return;
   }

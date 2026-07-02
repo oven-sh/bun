@@ -772,14 +772,10 @@ impl ShellSubprocess {
         unsafe { *out_subproc = subprocess };
 
         let stdin_is_readable_stream = matches!(stdio0, Stdio::ReadableStream(_));
-        let mut stdin_assign_error = JSValue::ZERO;
-        let stdin = match Writable::init(
-            stdio0,
-            event_loop,
-            subprocess,
-            spawn_stdin,
-            &mut stdin_assign_error,
-        ) {
+        let WritableInit {
+            writable: stdin,
+            assign_error: stdin_assign_error,
+        } = match Writable::init(stdio0, event_loop, subprocess, spawn_stdin) {
             Ok(w) => w,
             Err(WritableInitError::UnexpectedCreatingStdin) => {
                 panic!("unexpected error while creating stdin");
@@ -887,14 +883,15 @@ impl ShellSubprocess {
             }
         }
 
-        if stdin_assign_error != JSValue::ZERO {
-            // assignToStream failed (e.g. a direct ReadableStream whose pull()
-            // threw synchronously). Return a shell error instead of panicking so
-            // the user sees the failure; tear down the child the same way other
-            // post-spawn start failures do. This check must run after watch() so
-            // try_kill() can actually signal the child on POSIX (kill() is a
-            // no-op while the poller is still detached).
+        if let Some(stdin_assign_error) = stdin_assign_error {
+            // assignToStream failed synchronously (e.g. a direct ReadableStream
+            // whose pull() threw). Fail the command instead of panicking. This
+            // check must run after watch() so try_kill() can actually signal
+            // the child on POSIX (kill() is a no-op while the poller is still
+            // detached). Kill before stringifying the thrown value: that runs
+            // user JS (toString / Symbol.toPrimitive).
             stdin_assign_error.ensure_still_alive();
+            let _ = subproc.try_kill(SignalCode::SIGTERM as i32);
             let global =
                 JSGlobalObject::opaque_ref(event_loop.global_object().cast::<JSGlobalObject>());
             let msg = match stdin_assign_error.to_bun_string(global) {
@@ -911,27 +908,9 @@ impl ShellSubprocess {
                     "Failed to pipe ReadableStream to stdin".to_string()
                 }
             };
-            let _ = subproc.try_kill(SignalCode::SIGTERM as i32);
-            // assign_to_stream already created a JSReadableFileSinkController
-            // holding a raw `m_sinkPtr` to the FileSink. In the success path the
-            // JS builtins call `controller.end()/.close()` → `detach()` →
-            // `m_sinkPtr = null` before GC, so the controller's dtor never
-            // reaches `FileSink::finalize`. In the synchronous-error path that
-            // detach never happens, so the controller's dtor WILL call
-            // `finalize()` → `deref()` on the sink. If we dropped the
-            // `FileSinkPtr` here (via `abort_after_failed_start`), the sink
-            // would be freed and the later GC finalize would UAF (Bun.spawn's
-            // equivalent error path in api/bun/subprocess/Writable.rs handles
-            // this the same way). Forget the `FileSinkPtr` so the controller
-            // owns the remaining +1 and frees the sink on GC. (ManuallyDrop
-            // rather than mem::forget — clippy rejects forget on types with
-            // Drop fields.)
-            if let Writable::Pipe(_) = &subproc.stdin {
-                let _ = core::mem::ManuallyDrop::new(core::mem::replace(
-                    &mut subproc.stdin,
-                    Writable::Ignore,
-                ));
-            }
+            // `assign_to_stream` detached the JS controller on its error path,
+            // so dropping `subproc.stdin`'s `FileSinkPtr` (inside
+            // `abort_after_failed_start`) releases the only ref.
             Self::abort_after_failed_start(subprocess);
             return Err(ShellErr::Custom(msg.into_bytes().into_boxed_slice()));
         }
@@ -980,6 +959,10 @@ impl ShellSubprocess {
 
         let stdin_is_pipe = matches!(self.stdin, Writable::Pipe(_));
         if let Writable::Pipe(pipe) = &mut self.stdin {
+            // Read before `on_attached_process_exit` tears the sink down: set by
+            // `FileSink::handle_reject_stream` when the source stream errored /
+            // its pump promise rejected after assignment succeeded.
+            let stream_rejected = pipe.stream_rejected.get();
             // Let the FileSink (ReadableStream → stdin) know the child is gone so
             // it cancels/closes the upstream ReadableStream and stops writing to a
             // dead pipe.
@@ -995,6 +978,11 @@ impl ShellSubprocess {
             // SAFETY: cmd_parent backref outlives subprocess.
             let cmd = unsafe { self.cmd_parent.cmd_mut() };
             if matches!(cmd.exec, crate::shell::states::cmd::Exec::Subproc(_)) {
+                if stream_rejected {
+                    // The redirected stream failed after the pump started: the
+                    // child only saw a truncated stdin. Don't report success.
+                    cmd.on_stdin_stream_rejected();
+                }
                 cmd.buffered_input_close();
             }
         }
@@ -1048,6 +1036,21 @@ impl ShellSubprocess {
 pub enum WritableInitError {
     #[error("UnexpectedCreatingStdin")]
     UnexpectedCreatingStdin,
+}
+
+/// Result of [`Writable::init`].
+///
+/// `assign_error` is `Some(thrown_value)` when the stdio was a
+/// `ReadableStream` and `FileSink::assign_to_stream` failed synchronously
+/// (e.g. a direct stream whose `pull()` threw). The `writable` is still a
+/// live `Writable::Pipe` so the caller can finish wiring the subprocess and
+/// then tear it down through the same `abort_after_failed_start()` path as
+/// the other post-spawn start failures — but only *after* `watch()`, so the
+/// child can actually be signalled.
+#[must_use]
+pub struct WritableInit {
+    pub writable: Writable,
+    pub assign_error: Option<JSValue>,
 }
 
 pub enum Writable {
@@ -1123,8 +1126,22 @@ impl Writable {
         event_loop: EventLoopHandle,
         subprocess: *mut Subprocess,
         result: StdioResult,
+    ) -> Result<WritableInit, WritableInitError> {
+        let mut assign_error = None;
+        let writable = Self::init_impl(stdio, event_loop, subprocess, result, &mut assign_error)?;
+        Ok(WritableInit {
+            writable,
+            assign_error,
+        })
+    }
+
+    fn init_impl(
+        stdio: Stdio,
+        event_loop: EventLoopHandle,
+        subprocess: *mut Subprocess,
+        result: StdioResult,
         // Written only by the ReadableStream arms (assign_to_stream failure).
-        out_assign_error: &mut JSValue,
+        out_assign_error: &mut Option<JSValue>,
     ) -> Result<Writable, WritableInitError> {
         assert_stdio_result!(result);
 
@@ -1171,16 +1188,11 @@ impl Writable {
                             );
                             // SAFETY: `pipe_ptr` is live with refcount 1.
                             let assign_result = unsafe { (*pipe_ptr).assign_to_stream(rs, global) };
-                            // On failure assign_to_stream returns the JSC::Exception, so
-                            // to_error() yields the thrown value for any throw (Error,
-                            // string, null, ...).
-                            if let Some(err) = assign_result.to_error() {
-                                // Surface to the caller; a still-valid Writable is returned
-                                // so spawn_maybe_sync_impl can tear down the subprocess via
-                                // the same abort_after_failed_start() path it uses for
-                                // other post-spawn start failures.
-                                *out_assign_error = err;
-                            }
+                            // On failure assign_to_stream returns the JSC::Exception (and
+                            // has already detached the JS controller), so to_error()
+                            // yields the thrown value for any throw (Error, string,
+                            // null, ...).
+                            *out_assign_error = assign_result.to_error();
                         }
 
                         // SAFETY: `create_with_pipe` returns non-null with one
@@ -1322,15 +1334,10 @@ impl Writable {
                     });
 
                     let assign_result = pipe.assign_to_stream(rs, global);
-                    // On failure assign_to_stream returns the JSC::Exception, so to_error()
-                    // yields the thrown value for any throw (Error, string, null, ...).
-                    if let Some(err) = assign_result.to_error() {
-                        // Surface to the caller; a still-valid Writable is returned so
-                        // spawn_maybe_sync_impl can tear down the subprocess via the
-                        // same abort_after_failed_start() path it uses for other
-                        // post-spawn start failures.
-                        *out_assign_error = err;
-                    }
+                    // On failure assign_to_stream returns the JSC::Exception (and has
+                    // already detached the JS controller), so to_error() yields the
+                    // thrown value for any throw (Error, string, null, ...).
+                    *out_assign_error = assign_result.to_error();
 
                     // SAFETY: `create` returns non-null with one owned ref; `adopt`
                     // takes it over.

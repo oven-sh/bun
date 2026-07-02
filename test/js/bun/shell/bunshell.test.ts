@@ -525,6 +525,71 @@ describe("bunshell", () => {
       expect(exitCode).not.toBe(0);
     });
 
+    test("direct ReadableStream with no pull gives the child EOF", async () => {
+      // A direct stream with no `pull` never writes; the child must still see
+      // EOF (and the controller must not double-release the sink on GC).
+      const stream = new ReadableStream({ type: "direct" });
+      const { stdout, exitCode } = await $`${BUN} -e ${catStdin} < ${stream}`.env(bunEnv).quiet();
+      Bun.gc(true);
+      expect(stdout.toString()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("rejects locked ReadableStream", async () => {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("data"));
+          controller.close();
+        },
+      });
+      // `getReader()` locks but does not disturb the stream; without the lock
+      // check this would fail asynchronously after the child already ran.
+      stream.getReader();
+      expect(async () => {
+        await $`${BUN} -e ${catStdin} < ${stream}`.env(bunEnv).quiet().throws(true);
+      }).toThrow("ReadableStream is locked");
+    });
+
+    test("stream that errors mid-pump fails the command", async () => {
+      let pulls = 0;
+      const stream = new ReadableStream({
+        async pull(controller) {
+          pulls++;
+          if (pulls === 1) {
+            controller.enqueue(new TextEncoder().encode("first-chunk"));
+            await Bun.sleep(0);
+            return;
+          }
+          throw new Error("source failed mid-stream");
+        },
+      });
+      const { stdout, stderr, exitCode } = await $`${BUN} -e ${catStdin} < ${stream}`
+        .env(bunEnv)
+        .quiet()
+        .nothrow();
+      // The child got the data written before the failure, then EOF.
+      expect(stdout.toString()).toBe("first-chunk");
+      expect(stderr.toString()).toContain("ReadableStream redirected to stdin errored");
+      expect(exitCode).toBe(1);
+    });
+
+    test("child exiting before the stream completes does not hang", async () => {
+      // The child never reads stdin and exits while the source is still
+      // producing; the shell must cancel the stream and finish.
+      const stream = new ReadableStream({
+        async pull(controller) {
+          controller.enqueue(new TextEncoder().encode("spam ".repeat(1024)));
+          await Bun.sleep(0);
+        },
+      });
+      const { exitCode } = await $`${BUN} -e ${"process.exit(7)"} < ${stream}`
+        .env(bunEnv)
+        .quiet()
+        .nothrow();
+      Bun.gc(true);
+      expect(exitCode).toBe(7);
+    });
+
     test("builtin rejects ReadableStream with a clear error", async () => {
       const stream = new ReadableStream({
         start(controller) {

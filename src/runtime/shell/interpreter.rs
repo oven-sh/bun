@@ -1661,122 +1661,173 @@ impl Interpreter {
         command_ctx: *mut bun_options_types::context::ContextData,
         vm_args_utf8: &mut Vec<bun_core::ZigStringSlice>,
     ) {
-        let mut int = original_int;
-        match event_loop {
-            EventLoopHandle::Js { .. } => {
-                if int == 0 {
+        // `$0` is the program name, not a positional parameter.
+        if original_int == 0 {
+            match event_loop {
+                EventLoopHandle::Js { .. } => {
                     if let Ok(p) = bun_core::self_exe_path() {
                         out.extend_from_slice(p.as_bytes());
                     }
-                    return;
                 }
-                int -= 1;
+                EventLoopHandle::Mini(_) => {
+                    if command_ctx.is_null() {
+                        return;
+                    }
+                    // SAFETY: `command_ctx` is the process-global `ContextData`
+                    // (see `init`); it outlives the interpreter.
+                    if let Some(last) = unsafe { &*command_ctx }.positionals.last() {
+                        out.extend_from_slice(last);
+                    }
+                }
+            }
+            return;
+        }
 
-                let vm_ptr = event_loop
-                    .bun_vm()
-                    .cast::<bun_jsc::virtual_machine::VirtualMachine>();
-                if vm_ptr.is_null() {
-                    return;
-                }
-                // SAFETY: `bun_vm()` on a JS event loop returns the live
-                // `*VirtualMachine` owning that loop.
-                let vm = unsafe { &*vm_ptr };
-                let main = vm.main();
+        let mut idx = usize::from(original_int) - 1;
+        // SAFETY: the borrows do not escape this call, and `command_ctx` is
+        // null or live per this function's contract.
+        match unsafe { Self::positional_args(event_loop, command_ctx) } {
+            PositionalArgs::None => {}
+            PositionalArgs::Js { main, rest } => {
                 if !main.is_empty() {
-                    if int == 0 {
+                    if idx == 0 {
                         out.extend_from_slice(main);
                         return;
                     }
-                    int -= 1;
+                    idx -= 1;
                 }
-
-                if let Some(worker_ptr) = vm.worker {
-                    // SAFETY: `vm.worker` is set in `VirtualMachine::initWorker`
-                    // to a live `*WebWorker` for the worker's lifetime.
-                    let worker = unsafe { &*worker_ptr.cast::<bun_jsc::web_worker::WebWorker>() };
-                    let argv = worker.argv();
-                    if int as usize >= argv.len() {
-                        return;
+                match rest {
+                    JsPositionals::Worker(argv) => {
+                        if idx >= argv.len() {
+                            return;
+                        }
+                        if vm_args_utf8.len() != argv.len() {
+                            vm_args_utf8.reserve(argv.len());
+                            for arg in argv {
+                                // SAFETY: each `WTFStringImpl` in `argv` is a live
+                                // `*WTF::StringImpl` borrowed from `worker.argv`.
+                                vm_args_utf8.push(unsafe { (**arg).to_utf8() });
+                            }
+                        }
+                        out.extend_from_slice(vm_args_utf8[idx].slice());
                     }
-                    if vm_args_utf8.len() != argv.len() {
-                        vm_args_utf8.reserve(argv.len());
-                        for arg in argv {
-                            // SAFETY: each `WTFStringImpl` in `argv` is a live
-                            // `*WTF::StringImpl` borrowed from `worker.argv`.
-                            vm_args_utf8.push(unsafe { (**arg).to_utf8() });
+                    JsPositionals::Vm(argv) => {
+                        if let Some(arg) = argv.get(idx) {
+                            out.extend_from_slice(arg);
                         }
                     }
-                    out.extend_from_slice(vm_args_utf8[int as usize].slice());
-                    return;
-                }
-
-                if (int as usize) < vm.argv.len() {
-                    out.extend_from_slice(&vm.argv[int as usize]);
                 }
             }
-            EventLoopHandle::Mini(_) => {
-                if command_ctx.is_null() {
-                    return;
+            PositionalArgs::Mini(passthrough) => {
+                if let Some(arg) = passthrough.get(idx) {
+                    out.extend_from_slice(arg);
                 }
-                // SAFETY: `command_ctx` is the process-global `ContextData`
-                // (see `init`); it outlives the interpreter.
-                let ctx = unsafe { &*command_ctx };
-                if int as usize > ctx.passthrough.len() {
-                    return;
-                }
-                if int == 0 {
-                    if let Some(last) = ctx.positionals.last() {
-                        out.extend_from_slice(last);
-                    }
-                    return;
-                }
-                out.extend_from_slice(&ctx.passthrough[int as usize - 1]);
             }
         }
     }
 
-    /// Number of positional parameters (`$#`): how many `N >= 1` resolve to a
-    /// value in [`Self::append_var_argv`]. `$0` (the program name) is not
-    /// counted, matching POSIX.
+    /// Number of positional parameters (`$#`). Counts the same
+    /// [`PositionalArgs`] source [`Self::append_var_argv`] indexes into, so the
+    /// count cannot drift from the range of `$N` that actually resolves. `$0`
+    /// (the program name) is not counted, matching POSIX.
     ///
     /// `command_ctx` must be null or point to a live `ContextData` that
     /// outlives this call.
-    // `*mut T` sig shared with `append_var_argv`; the body's internal deref is SAFETY-commented.
+    // `*mut T` sig shared with `append_var_argv`; the deref is SAFETY-commented.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn var_argv_count(
         event_loop: EventLoopHandle,
         command_ctx: *mut bun_options_types::context::ContextData,
     ) -> usize {
+        // SAFETY: the borrows do not escape this call, and `command_ctx` is
+        // null or live per this function's contract.
+        unsafe { Self::positional_args(event_loop, command_ctx) }.len()
+    }
+
+    /// Resolve where `$1`…`$N` come from for this event loop.
+    ///
+    /// # Safety
+    /// `command_ctx` must be null or point to a live `ContextData`. The
+    /// returned lifetime is unbounded: the borrows must not outlive the VM or
+    /// `ContextData` they point into.
+    unsafe fn positional_args<'a>(
+        event_loop: EventLoopHandle,
+        command_ctx: *mut bun_options_types::context::ContextData,
+    ) -> PositionalArgs<'a> {
         match event_loop {
             EventLoopHandle::Js { .. } => {
                 let vm_ptr = event_loop
                     .bun_vm()
                     .cast::<bun_jsc::virtual_machine::VirtualMachine>();
                 if vm_ptr.is_null() {
-                    return 0;
+                    return PositionalArgs::None;
                 }
                 // SAFETY: `bun_vm()` on a JS event loop returns the live
                 // `*VirtualMachine` owning that loop.
                 let vm = unsafe { &*vm_ptr };
-                let mut count = usize::from(!vm.main().is_empty());
-                count += if let Some(worker_ptr) = vm.worker {
-                    // SAFETY: `vm.worker` is set in `VirtualMachine::initWorker`
-                    // to a live `*WebWorker` for the worker's lifetime.
-                    let worker = unsafe { &*worker_ptr.cast::<bun_jsc::web_worker::WebWorker>() };
-                    worker.argv().len()
-                } else {
-                    vm.argv.len()
+                let rest = match vm.worker {
+                    Some(worker_ptr) => {
+                        // SAFETY: `vm.worker` is set in `VirtualMachine::initWorker`
+                        // to a live `*WebWorker` for the worker's lifetime.
+                        let worker =
+                            unsafe { &*worker_ptr.cast::<bun_jsc::web_worker::WebWorker>() };
+                        JsPositionals::Worker(worker.argv())
+                    }
+                    None => JsPositionals::Vm(&vm.argv),
                 };
-                count
+                PositionalArgs::Js {
+                    main: vm.main(),
+                    rest,
+                }
             }
             EventLoopHandle::Mini(_) => {
                 if command_ctx.is_null() {
-                    return 0;
+                    return PositionalArgs::None;
                 }
                 // SAFETY: `command_ctx` is the process-global `ContextData`
                 // (see `init`); it outlives the interpreter.
-                unsafe { &*command_ctx }.passthrough.len()
+                let ctx = unsafe { &*command_ctx };
+                PositionalArgs::Mini(&ctx.passthrough)
             }
+        }
+    }
+}
+
+/// Where the shell's positional parameters `$1`…`$N` come from. Resolved in one
+/// place so indexing ([`Interpreter::append_var_argv`]) and counting (`$#`,
+/// [`Interpreter::var_argv_count`]) cannot disagree about the range.
+///
+/// `$0` is the program name, not a positional, so it is not represented here.
+enum PositionalArgs<'a> {
+    None,
+    /// `$1` is `main` when it is non-empty; `rest` continues the list.
+    Js {
+        main: &'a [u8],
+        rest: JsPositionals<'a>,
+    },
+    /// `$N` is `passthrough[N - 1]`.
+    Mini(&'a [Box<[u8]>]),
+}
+
+/// The tail of [`PositionalArgs::Js`]: a worker's argv (still WTF strings,
+/// converted lazily) or the VM's.
+enum JsPositionals<'a> {
+    Worker(&'a [bun_core::WTFStringImpl]),
+    Vm(&'a [Box<[u8]>]),
+}
+
+impl PositionalArgs<'_> {
+    fn len(&self) -> usize {
+        match self {
+            PositionalArgs::None => 0,
+            PositionalArgs::Js { main, rest } => {
+                usize::from(!main.is_empty())
+                    + match rest {
+                        JsPositionals::Worker(argv) => argv.len(),
+                        JsPositionals::Vm(argv) => argv.len(),
+                    }
+            }
+            PositionalArgs::Mini(passthrough) => passthrough.len(),
         }
     }
 }

@@ -719,6 +719,9 @@ ZIG_DECL JSC::EncodedJSValue Bun__Timer__setImmediate(JSC::JSGlobalObject* globa
 BUN_DECLARE_HOST_FUNCTION(BunServe__onResolvePlugins);
 BUN_DECLARE_HOST_FUNCTION(BunServe__onRejectPlugins);
 
+BUN_DECLARE_HOST_FUNCTION(Bun__JSBundler__onResolvePluginSetup);
+BUN_DECLARE_HOST_FUNCTION(Bun__JSBundler__onRejectPluginSetup);
+
 #endif
 
 #ifdef __cplusplus

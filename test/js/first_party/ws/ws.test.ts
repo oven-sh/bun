@@ -1019,4 +1019,29 @@ describe("maxPayload", () => {
       httpServer.close();
     }
   });
+
+  it("emits the server 'error' event before 'close'", async () => {
+    const wss = new WebSocketServer({ port: 0, maxPayload: MAX });
+    const order: string[] = [];
+    const serverClosed = Promise.withResolvers<void>();
+
+    wss.on("connection", serverWs => {
+      serverWs.on("error", () => order.push("error"));
+      serverWs.on("close", () => {
+        order.push("close");
+        serverClosed.resolve();
+      });
+    });
+
+    const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
+    ws.on("open", () => ws.send(Buffer.alloc(MAX + 1, "A").toString()));
+    ws.on("error", () => {});
+
+    try {
+      await serverClosed.promise;
+      expect(order).toEqual(["error", "close"]);
+    } finally {
+      wss.close();
+    }
+  });
 });

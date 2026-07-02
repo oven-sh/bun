@@ -854,8 +854,14 @@ class BunWebSocketMocked extends EventEmitter {
       if (byteLength > maxPayload) {
         const error = new RangeError("Max payload size exceeded");
         error.code = "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH";
-        this.close(1009, "");
-        this.emit("error", error);
+        // Emit "error" before close so listeners see error then close (ws
+        // order); native close() dispatches "close" synchronously. finally
+        // still sends the 1009 frame if an unhandled "error" throws.
+        try {
+          this.emit("error", error);
+        } finally {
+          this.close(1009, "");
+        }
         return;
       }
     }

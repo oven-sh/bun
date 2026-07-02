@@ -265,12 +265,14 @@ describe("pending streaming compilation keeps the process alive", () => {
         stderr: "pipe",
       });
 
-      // stderr is drained concurrently (debug builds write benign warnings there).
+      // stderr is drained concurrently (debug builds write benign warnings
+      // there) and only included in the assertion when the child did not exit
+      // cleanly, so failures show what went wrong.
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, exitCode, rejection: exitCode === 1 ? stderr : "" }).toEqual({
+      expect({ stdout, exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
         stdout: "settled\n",
         exitCode: 0,
-        rejection: "",
+        stderr: "",
       });
     },
     60_000,

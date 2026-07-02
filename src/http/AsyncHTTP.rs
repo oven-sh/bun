@@ -781,8 +781,7 @@ impl<'a> AsyncHTTP<'a> {
                     // here. It was cloned from `request_headers` at init and only
                     // ever shrinks (`ordered_remove`), so its capacity is enough.
                     debug_assert!(
-                        (*this).client.header_entries.capacity()
-                            >= (*this).request_headers.len()
+                        (*this).client.header_entries.capacity() >= (*this).request_headers.len()
                     );
                     (*this).client.header_entries.clear_retaining_capacity();
                     (*this)

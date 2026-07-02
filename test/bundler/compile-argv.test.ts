@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -173,6 +173,37 @@ describe("bundler", () => {
     run: {
       args: ["user-arg1", "user-arg2"],
       stdout: /SUCCESS: user arguments properly passed with exec argv present/,
+    },
+  });
+
+  // A compiled standalone whose *own* CLI accepts `-p` / `-e` / `--print` /
+  // `--eval` must not be treated as a `bun -p ...` one-shot invocation. The
+  // one-shot heuristic scans raw argv and, when it fires, disables the
+  // concurrent JIT and parallel GC markers for the whole process lifetime.
+  itBundled("compile/AppOwnedEvalFlagsNotOneShot", {
+    compile: true,
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        const args = process.argv.slice(2);
+        if (!args.includes("-p")) {
+          console.error("FAIL: -p not found in argv:", args);
+          process.exit(1);
+        }
+        console.log("SUCCESS: app received -p");
+      `,
+    },
+    run: {
+      args: ["-p", "3000"],
+      env: { BUN_JSC_dumpOptions: "2" },
+      stdout: /SUCCESS: app received -p/,
+      validate({ stderr }) {
+        // `dumpOptions=2` prints every JSC::Option to stderr. The one-shot
+        // path flips `useConcurrentJIT` off; a compiled standalone must keep
+        // it at its default (`true`) regardless of what the app's argv holds.
+        expect(stderr).toContain("useConcurrentJIT=true");
+        expect(stderr).not.toContain("useConcurrentJIT=false");
+      },
     },
   });
 

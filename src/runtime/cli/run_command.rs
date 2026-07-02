@@ -1139,6 +1139,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     ) -> Result<(), bun_core::Error> {
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
+        // argv belongs to the embedded application, not to bun's CLI — tell
+        // `bun_jsc` so its raw-argv heuristics (one-shot `-e`/`-p` detection)
+        // don't misfire on the app's own flags.
+        bun_jsc::set_is_standalone_executable();
         bun_jsc::initialize(false);
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
         bun_ast::initialize_store();

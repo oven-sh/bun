@@ -556,6 +556,19 @@ pub mod process_auto_killer;
 #[path = "WorkTask.rs"]
 pub mod work_task;
 
+/// Set once by `boot_standalone` (before [`initialize`]) when this process is
+/// a `bun build --compile` executable. In that mode `argv` belongs to the
+/// embedded application, not to bun's own CLI, so raw-argv heuristics like
+/// [`is_one_shot_eval_invocation`] must be suppressed.
+static IS_STANDALONE_EXECUTABLE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Called by the standalone-executable boot path before [`initialize`].
+#[inline]
+pub fn set_is_standalone_executable() {
+    IS_STANDALONE_EXECUTABLE.store(true, core::sync::atomic::Ordering::Relaxed);
+}
+
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
 pub fn initialize(eval_mode: bool) {
     // The counter lives in `bun_core` so this crate doesn't depend on
@@ -588,6 +601,13 @@ pub fn initialize(eval_mode: bool) {
 /// <file>` is *not* treated as one-shot (it may start a server), so server
 /// workloads keep the default multi-threaded JIT/GC configuration.
 fn is_one_shot_eval_invocation() -> bool {
+    // A `bun build --compile` standalone owns its argv; `-e` / `-p` there are
+    // the embedded application's flags, not bun's. Without this guard a
+    // compiled app that accepts `-p` / `--print` (etc.) as its own option
+    // would silently get `useConcurrentJIT=false` + `numberOfGCMarkers=1`.
+    if IS_STANDALONE_EXECUTABLE.load(core::sync::atomic::Ordering::Relaxed) {
+        return false;
+    }
     for arg in bun_core::argv().iter().skip(1) {
         if arg == b"-e" || arg == b"--eval" || arg == b"-p" || arg == b"--print" {
             return true;

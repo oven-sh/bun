@@ -2009,6 +2009,11 @@ pub fn to_executable(
     // later reassignments; capturing by `&mut` conflicts with later uses. Explicit
     // `if fd != Fd::INVALID { fd.close(); }` calls are inserted at every return below
     // (both error and success paths).
+    if fd == Fd::INVALID {
+        return Ok(CompileResult::fail_fmt(format_args!(
+            "failed to create temporary file for standalone executable"
+        )));
+    }
     debug_assert!(fd.kind() == bun_sys::FdKind::System);
 
     #[cfg(unix)]

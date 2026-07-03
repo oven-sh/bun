@@ -7562,6 +7562,10 @@ fn get_fd_path_freebsd_linuxulator<'a>(
 /// fd → absolute path. Linux: readlink `/proc/self/fd/N`;
 /// macOS: `fcntl(F_GETPATH)`; Windows: `GetFinalPathNameByHandle`.
 pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a mut [u8]> {
+    // Guard against invalid fd to avoid readlink(/proc/self/fd/-2147483648) → ENOENT.
+    if fd == Fd::INVALID || fd == Fd::invalid() {
+        return Err(Error::from_code(E::EBADF, Tag::readlink));
+    }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // Fast path: a previous call already proved this is

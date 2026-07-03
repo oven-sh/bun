@@ -303,6 +303,202 @@ describe("HTMLRewriter", () => {
     });
   });
 
+  describe("transform() accepts a JavaScript-backed ReadableStream body", () => {
+    // https://github.com/oven-sh/bun/issues/14216
+    // https://github.com/oven-sh/bun/issues/11758
+    const encode = s => new TextEncoder().encode(s);
+
+    function rewriter() {
+      return new HTMLRewriter().on("p", {
+        element(element) {
+          element.setInnerContent("bye");
+        },
+      });
+    }
+
+    function streamOf(...chunks) {
+      return new ReadableStream({
+        start(controller) {
+          for (const chunk of chunks) controller.enqueue(chunk);
+          controller.close();
+        },
+      });
+    }
+
+    it("single Uint8Array chunk", async () => {
+      const transformed = rewriter().transform(new Response(streamOf(encode("<p>hi</p>"))));
+      expect(await transformed.text()).toBe("<p>bye</p>");
+    });
+
+    it("single string chunk", async () => {
+      // readableStreamToArrayBuffer hands a single string chunk back as a
+      // Uint8Array view rather than an ArrayBuffer, so this exercises a
+      // different branch than the binary chunk above.
+      const transformed = rewriter().transform(new Response(streamOf("<p>hi</p>")));
+      expect(await transformed.text()).toBe("<p>bye</p>");
+    });
+
+    it("an element split across chunk boundaries", async () => {
+      const transformed = rewriter().transform(
+        new Response(streamOf(encode("<p>h"), encode("i</"), encode("p><p>two</p>"))),
+      );
+      expect(await transformed.text()).toBe("<p>bye</p><p>bye</p>");
+    });
+
+    it("mixed string and binary chunks", async () => {
+      const transformed = rewriter().transform(new Response(streamOf("<p>a</p>", encode("<p>b</p>"))));
+      expect(await transformed.text()).toBe("<p>bye</p><p>bye</p>");
+    });
+
+    it("empty stream", async () => {
+      let endCalls = 0;
+      const transformed = new HTMLRewriter()
+        .onDocument({
+          end() {
+            endCalls++;
+          },
+        })
+        .transform(new Response(streamOf()));
+      expect(await transformed.text()).toBe("");
+      expect(endCalls).toBe(1);
+    });
+
+    it("a direct stream", async () => {
+      const body = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          controller.write("<p>hi</p>");
+          controller.close();
+        },
+      });
+      expect(await rewriter().transform(new Response(body)).text()).toBe("<p>bye</p>");
+    });
+
+    it("a stream that only produces chunks after transform() returns", async () => {
+      // start() stays pending across transform(), so the rewriter has to take
+      // the asynchronous path instead of buffering everything up front.
+      const { promise: gate, resolve: openGate } = Promise.withResolvers();
+      const body = new ReadableStream({
+        async start(controller) {
+          await gate;
+          controller.enqueue(encode("<p>hi</p>"));
+          controller.close();
+        },
+      });
+      const text = rewriter().transform(new Response(body)).text();
+      openGate();
+      expect(await text).toBe("<p>bye</p>");
+    });
+
+    it("every way of reading the transformed response", async () => {
+      const read = {
+        text: response => response.text(),
+        arrayBuffer: async response => new TextDecoder().decode(await response.arrayBuffer()),
+        bytes: async response => new TextDecoder().decode(await response.bytes()),
+        blob: response => response.blob().then(blob => blob.text()),
+        json: response => response.json().then(value => JSON.stringify(value)),
+        getReader: async response => {
+          const reader = response.body.getReader();
+          const parts = [];
+          for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+            parts.push(new TextDecoder().decode(chunk.value));
+          }
+          return parts.join("");
+        },
+        readableStreamToText: response => Bun.readableStreamToText(response.body),
+      };
+
+      const html = '<p>hi</p><p data-x="1">there</p>';
+      const expected = '<p>bye</p><p data-x="1">bye</p>';
+      for (const [name, consume] of Object.entries(read)) {
+        const transformed = rewriter().transform(new Response(streamOf(encode(html))));
+        if (name === "json") {
+          // Not valid JSON — but it must fail as a JSON parse error, which
+          // still proves the transformed bytes reached the parser.
+          await expect(consume(transformed)).rejects.toThrow(/JSON/i);
+          continue;
+        }
+        expect({ [name]: await consume(transformed) }).toEqual({ [name]: expected });
+      }
+    });
+
+    it("element handlers observe the streamed document", async () => {
+      const tags = [];
+      const transformed = new HTMLRewriter()
+        .on("*", {
+          element(element) {
+            tags.push(element.tagName);
+          },
+        })
+        .transform(new Response(streamOf(encode("<div><p>hi</p></div>"))));
+      expect(await transformed.text()).toBe("<div><p>hi</p></div>");
+      expect(tags).toEqual(["div", "p"]);
+    });
+
+    it("a stream that errors rejects the transformed body", async () => {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encode("<p>hi</p>"));
+          controller.error(new Error("upstream boom"));
+        },
+      });
+      const transformed = rewriter().transform(new Response(body));
+      // Must reject rather than resolve with the truncated document.
+      await expect(transformed.text()).rejects.toThrow("upstream boom");
+    });
+
+    it("a stream that errors after transform() returns rejects the transformed body", async () => {
+      const { promise: gate, resolve: openGate } = Promise.withResolvers();
+      const body = new ReadableStream({
+        async start(controller) {
+          await gate;
+          controller.error(new Error("late boom"));
+        },
+      });
+      const text = rewriter().transform(new Response(body)).text();
+      openGate();
+      await expect(text).rejects.toThrow("late boom");
+    });
+
+    it("a chunk that is neither a string nor a view throws", async () => {
+      const transform = () => rewriter().transform(new Response(streamOf(42)));
+      // The underlying TypeError must surface, not "Failed to pipe stream".
+      expect(transform).toThrow(TypeError);
+      expect(transform).not.toThrow("Failed to pipe stream");
+    });
+
+    it("reusing the transformed response's source stream throws", async () => {
+      const response = new Response(streamOf(encode("<p>hi</p>")));
+      expect(await rewriter().transform(response).text()).toBe("<p>bye</p>");
+      expect(() => rewriter().transform(response)).toThrow();
+    });
+
+    it("served over Bun.serve", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch() {
+          const body = new ReadableStream({
+            start(controller) {
+              controller.enqueue(encode("<b>hello world</b>"));
+              controller.close();
+            },
+          });
+          return new HTMLRewriter()
+            .on("b", {
+              element(element) {
+                element.before("<h1>", { html: true });
+                element.after("</h1>", { html: true });
+                element.removeAndKeepContent();
+              },
+            })
+            .transform(new Response(body, { headers: { "content-type": "text/html" } }));
+        },
+      });
+      const response = await fetch(server.url);
+      expect(await response.text()).toBe("<h1>hello world</h1>");
+    });
+  });
+
   it("HTMLRewriter: async replacement using fetch + Bun.serve", async () => {
     await gcTick();
     let content;
@@ -946,12 +1142,12 @@ const payloads = [
   {
     name: "direct",
     data: getStream("direct", "none"),
-    test: it.todo,
+    test: it,
   },
   {
     name: "default",
     data: getStream("default", "none"),
-    test: it.todo,
+    test: it,
   },
   {
     name: "file",

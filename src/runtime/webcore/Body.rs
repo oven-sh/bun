@@ -1,6 +1,5 @@
 //! https://developer.mozilla.org/en-US/docs/Web/API/Body
 
-use bun_collections::VecExt;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -18,7 +17,6 @@ use bun_http_types::MimeType::MimeType;
 use crate::jsc::HTTPHeaderName;
 pub use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
-use crate::webcore::sink::{self, ArrayBufferSink};
 use bun_core::{MutableString, String as BunString, ZigString};
 use bun_core::{WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
 use bun_jsc::ZigStringJsc as _;
@@ -1635,9 +1633,6 @@ impl Value {
 // JSC-integration: extract / BodyMixin (host-fn methods) / ValueBufferer.
 // ────────────────────────────────────────────────────────────────────────────
 
-// `sink::JSSink<T>` is a free generic (inherent associated types are unstable).
-type ArrayBufferJSSink = sink::JSSink<ArrayBufferSink>;
-
 // https://github.com/WebKit/webkit/blob/main/Source/WebCore/Modules/fetch/FetchBody.cpp#L45
 pub(crate) fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Body> {
     let body_value = Value::from_js(global_this, value)?;
@@ -2235,7 +2230,6 @@ pub struct ValueBufferer<'a> {
     pub ctx: *mut c_void,
     pub on_finished_buffering: ValueBuffererCallback,
 
-    pub js_sink: Option<Box<ArrayBufferJSSink>>,
     pub byte_stream: Option<NonNull<ByteStream>>,
     // readable stream strong ref to keep byte stream alive
     pub readable_stream_ref: webcore::readable_stream::Strong,
@@ -2254,13 +2248,6 @@ impl<'a> Drop for ValueBufferer<'a> {
             bun_ptr::BackRef::from(byte_stream).unpipe_without_deref();
         }
         self.readable_stream_ref.deinit();
-
-        if let Some(mut buffer_stream) = self.js_sink.take() {
-            buffer_stream.detach_self(self.global);
-            // The wrapper is a `Box<JSSink<ArrayBufferSink>>`; dropping it
-            // frees the box and runs `Vec<u8>`'s Drop.
-            drop(buffer_stream);
-        }
     }
 }
 
@@ -2273,7 +2260,6 @@ impl<'a> ValueBufferer<'a> {
         Self {
             ctx,
             on_finished_buffering: on_finish,
-            js_sink: None,
             byte_stream: None,
             readable_stream_ref: Default::default(),
             global,
@@ -2415,7 +2401,7 @@ impl<'a> ValueBufferer<'a> {
         let Some(sink) = Self::take_ctx(args.ptr[args.len - 1]) else {
             return Ok(JSValue::UNDEFINED);
         };
-        sink.handle_resolve_stream(true);
+        sink.handle_resolve_stream(args.ptr[0], true);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -2433,12 +2419,6 @@ impl<'a> ValueBufferer<'a> {
     }
 
     fn handle_reject_stream(&mut self, err: JSValue, is_async: bool) {
-        if let Some(mut wrapper) = self.js_sink.take() {
-            wrapper.detach_self(self.global);
-            // see `Drop` impl — dropping the Box frees the wrapper
-            // and runs `Vec<u8>`'s Drop.
-            drop(wrapper);
-        }
         // `jsc::strong::Optional` owns a GC root; `ptr::read`-duplicating it would
         // double-deinit. Transfer the single owner directly to the callback; the callback
         // (or its returned `ValueError`'s Drop) is responsible for releasing it.
@@ -2446,15 +2426,64 @@ impl<'a> ValueBufferer<'a> {
         (self.on_finished_buffering)(self.ctx, b"", Some(ValueError::JSValue(ref_)), is_async);
     }
 
-    fn handle_resolve_stream(&mut self, is_async: bool) {
-        if let Some(wrapper) = &self.js_sink {
-            let bytes = wrapper.sink.bytes.slice();
+    /// `resolved_value` is what `readableStreamToArrayBuffer` fulfilled with: an
+    /// `ArrayBuffer`, or a `Uint8Array` when the stream yielded a single string
+    /// chunk. It stays rooted for the whole call (reaction argument frame, or
+    /// this frame's stack), and `on_finished_buffering` copies the bytes out.
+    fn handle_resolve_stream(&mut self, resolved_value: JSValue, is_async: bool) {
+        if let Some(array_buffer) = resolved_value.as_array_buffer(self.global) {
+            let bytes = array_buffer.slice();
             bun_core::scoped_log!(BodyValueBufferer, "handleResolveStream {}", bytes.len());
             (self.on_finished_buffering)(self.ctx, bytes, None, is_async);
         } else {
-            bun_core::scoped_log!(BodyValueBufferer, "handleResolveStream no sink");
+            bun_core::scoped_log!(BodyValueBufferer, "handleResolveStream no buffer");
             (self.on_finished_buffering)(self.ctx, b"", None, is_async);
         }
+    }
+
+    /// Buffer a JS-backed stream (`new ReadableStream({...})` or a `type:
+    /// "direct"` stream) through `readableStreamToArrayBuffer` — the same path
+    /// `new Response(stream).arrayBuffer()` takes. Only the JS runtime knows how
+    /// to drive these sources; `byte_stream`'s native pipe cannot.
+    ///
+    /// `stream` is GC-rooted by the caller's `readable_stream_ref`.
+    fn buffer_js_readable_stream(&mut self, stream: ReadableStream) -> crate::Result<()> {
+        let global = self.global;
+
+        let promise_value = global.readable_stream_to_array_buffer(stream.value);
+        if promise_value.is_empty() {
+            // The builtin threw (e.g. the stream yielded a chunk that is neither
+            // a string nor a view); the exception is pending on the VM.
+            return Err(crate::Error::JSError);
+        }
+        promise_value.ensure_still_alive();
+
+        // Unreachable: the C++ wrapper throws a TypeError when the builtin
+        // hands back anything other than a promise, caught by `is_empty` above.
+        let Some(promise) = promise_value.as_any_promise() else {
+            return Err(crate::Error::InvalidStream);
+        };
+        match promise.unwrap(global.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
+            jsc::PromiseResult::Pending => {
+                // The +1 the owner took for this in-flight buffering doubles as
+                // the cell's ref: settling consumes it via `on_finished_buffering`,
+                // and a promise GC'd without settling releases it through
+                // `Bun__NativePromiseContext__destroy`.
+                let cell = crate::api::NativePromiseContext::create(
+                    global,
+                    std::ptr::from_mut::<Self>(self),
+                );
+                promise_value.then_with_value(
+                    global,
+                    cell,
+                    Bun__BodyValueBufferer__onResolveStream,
+                    Bun__BodyValueBufferer__onRejectStream,
+                );
+            }
+            jsc::PromiseResult::Fulfilled(value) => self.handle_resolve_stream(value, false),
+            jsc::PromiseResult::Rejected(err) => self.handle_reject_stream(err, false),
+        }
+        Ok(())
     }
 
     fn buffer_locked_body_value(
@@ -2499,9 +2528,7 @@ impl<'a> ValueBufferer<'a> {
                 | webcore::readable_stream::Source::File(_) => unreachable!(),
                 webcore::readable_stream::Source::JavaScript
                 | webcore::readable_stream::Source::Direct => {
-                    // this is broken right now
-                    // return self.create_js_sink(stream);
-                    return Err(crate::Error::UnsupportedStreamType);
+                    return self.buffer_js_readable_stream(stream);
                 }
                 webcore::readable_stream::Source::Bytes(byte_stream_ptr) => {
                     // BACKREF: see `Source::bytes()` — payload owned by the

@@ -755,6 +755,9 @@ impl BufferOutputSink {
             // ref taken for the in-flight bufferer.
             unsafe { BufferOutputSink::deref(sink) };
             return Ok(match buffering_error {
+                // The bufferer entered JS and it threw: that exception is
+                // already pending on the VM, so surface it instead of masking it.
+                crate::Error::JSError => return Err(jsc::JsError::Thrown),
                 crate::Error::StreamAlreadyUsed => {
                     let err = system_error(
                         "ERR_STREAM_ALREADY_FINISHED",

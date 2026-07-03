@@ -1718,8 +1718,6 @@ describe("pipeTo from a byte source", () => {
   });
 });
 
-
-
 // Async stack frames on stream errors created inside native reactions (no JS frames of
 // their own): the `for await` and `pipeTo` awaiters must get the awaiting function's frames.
 function serveStalledBody() {

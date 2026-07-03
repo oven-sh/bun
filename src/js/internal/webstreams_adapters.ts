@@ -49,6 +49,7 @@ class ReadableFromWeb extends Readable {
   #closed;
   #pendingChunks;
   #stream;
+  #reading;
 
   constructor(options, stream) {
     const { objectMode, highWaterMark, encoding, signal } = options;
@@ -62,6 +63,7 @@ class ReadableFromWeb extends Readable {
     this.#reader = undefined;
     this.#stream = stream;
     this.#closed = false;
+    this.#reading = false;
   }
 
   #drainPending() {
@@ -95,6 +97,19 @@ class ReadableFromWeb extends Readable {
 
   async _read() {
     $debug("ReadableFromWeb _read()", this.__id);
+    // Readable calls _read() again as soon as push() is called, but #pump()
+    // pushes many chunks per call. Two pumps hold two read requests on the same
+    // reader, and readMany() drains the queue into whichever settles first.
+    if (this.#reading) return;
+    this.#reading = true;
+    try {
+      await this.#pump();
+    } finally {
+      this.#reading = false;
+    }
+  }
+
+  async #pump() {
     var stream = this.#stream,
       reader = this.#reader;
     if (stream) {

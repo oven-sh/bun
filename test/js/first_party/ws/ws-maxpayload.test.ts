@@ -7,7 +7,7 @@ import { WebSocket, WebSocketServer } from "ws";
 // https://github.com/oven-sh/bun/issues/33284
 // The `ws` WebSocketServer `maxPayload` option was ignored under Bun: oversized
 // frames were delivered to the message handler instead of being rejected.
-describe("maxPayload", () => {
+describe.concurrent("maxPayload", () => {
   const MAX = 4096;
 
   it("rejects an oversized text message with a RangeError and a 1009 close", async () => {

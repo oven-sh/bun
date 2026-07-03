@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
- * Regenerates `src/linker.order`, the lld `--symbol-ordering-file` that packs
- * bun's startup-hot functions together in `.text`.
+ * Regenerates `linker.order` next door, the lld `--symbol-ordering-file` that
+ * packs bun's startup-hot functions together in `.text`.
  *
  * Why it exists: a `bun -e 'console.log(1)'` only executes ~8.5 MB worth of
  * pages, but they are scattered over a 50 MB `.text`, and Linux faults in 64 KB
@@ -47,7 +47,7 @@ function arg(name: string, fallback: string): string {
 }
 
 const buildDir = resolve(repoRoot, arg("build-dir", "build/release"));
-const outPath = resolve(repoRoot, arg("out", "src/linker.order"));
+const outPath = resolve(repoRoot, arg("out", "scripts/orderfile/linker.order"));
 
 if (process.platform !== "linux") {
   console.error("error: the order file is an ELF linker input; generate it on linux");

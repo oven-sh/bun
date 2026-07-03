@@ -1309,15 +1309,16 @@ export const linkerFlags: Flag[] = [
   },
   {
     // Same goal as keep-text-section-prefix, without needing a PGO profile:
-    // src/linker.order lists the functions bun actually executes while starting
-    // up, and lld sorts their input sections to the front of `.text`. Starting
-    // up only touches ~8.5 MB of pages, but they are scattered over a ~50 MB
-    // `.text` and the kernel faults in 64 KB around each one, so the binary
-    // ends up with ~27 MB resident for `bun -e 'console.log(1)'`. Packing them
-    // together halves that (33.1 MB -> 21.8 MB RSS on linux-x64) for a
-    // byte-identical binary. Symbols lld cannot find are skipped, so a stale
-    // file only costs some of the win — regenerate with `bun run orderfile`.
-    flag: c => [`-Wl,--symbol-ordering-file=${c.cwd}/src/linker.order`, "-Wl,--no-warn-symbol-ordering"],
+    // scripts/orderfile/linker.order lists the functions bun actually executes
+    // while starting up, and lld sorts their input sections to the front of
+    // `.text`. Starting up only touches ~8.5 MB of pages, but they are scattered
+    // over a ~50 MB `.text` and the kernel faults in 64 KB around each one, so
+    // the binary ends up with ~27 MB resident for `bun -e 'console.log(1)'`.
+    // Packing them together cuts that by a third (33.1 MB -> 20.7 MB RSS on
+    // linux-x64) for a byte-identical binary. Symbols lld cannot find are
+    // skipped, so a stale file only costs some of the win — regenerate it with
+    // `bun run orderfile`.
+    flag: c => [`-Wl,--symbol-ordering-file=${c.cwd}/scripts/orderfile/linker.order`, "-Wl,--no-warn-symbol-ordering"],
     when: c => c.linux && c.release,
     desc: "Sort startup-hot functions to the front of .text (cuts resident binary pages)",
   },
@@ -1419,7 +1420,7 @@ export function linkDepends(cfg: Config): string[] {
   if (cfg.darwin) return [join(cfg.cwd, "src/symbols.txt")];
   // linux: ELF dynamic-list + version script, plus the release symbol ordering file
   const linux = [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
-  if (cfg.release) linux.push(join(cfg.cwd, "src/linker.order"));
+  if (cfg.release) linux.push(join(cfg.cwd, "scripts/orderfile/linker.order"));
   return linux;
 }
 

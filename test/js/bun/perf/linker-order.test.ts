@@ -3,10 +3,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * src/linker.order is the lld `--symbol-ordering-file` for the linux release
- * link: it lists the functions bun executes while starting up so they land
- * together at the front of `.text`, which is worth ~12 MB of resident binary
- * pages on a `bun -e 'console.log(1)'` (see scripts/orderfile/generate.ts).
+ * scripts/orderfile/linker.order is the lld `--symbol-ordering-file` for the
+ * linux release link: it lists the functions bun executes while starting up so
+ * they land together at the front of `.text`, which is worth ~12 MB of resident
+ * binary pages on a `bun -e 'console.log(1)'` (see scripts/orderfile/generate.ts).
  *
  * Nothing in the build fails if this file rots. lld skips names it cannot
  * resolve, and we pass --no-warn-symbol-ordering, so a truncated or malformed
@@ -14,7 +14,7 @@ import { join } from "node:path";
  * are what notices.
  */
 const repoRoot = join(import.meta.dir, "..", "..", "..", "..");
-const orderFilePath = join(repoRoot, "src", "linker.order");
+const orderFilePath = join(repoRoot, "scripts", "orderfile", "linker.order");
 const flagsPath = join(repoRoot, "scripts", "build", "flags.ts");
 
 // lld's parser (args::getLines) trims each line, drops empty ones, and treats a
@@ -25,7 +25,7 @@ const symbols = existsSync(orderFilePath)
       .filter(line => line.trim().length > 0 && !line.startsWith("#"))
   : [];
 
-describe("src/linker.order", () => {
+describe("linker.order", () => {
   it("exists", () => {
     expect(existsSync(orderFilePath)).toBe(true);
   });
@@ -55,8 +55,8 @@ describe("src/linker.order", () => {
 
   it("is wired into the linux release link", () => {
     const flags = readFileSync(flagsPath, "utf8");
-    expect(flags).toContain("-Wl,--symbol-ordering-file=${c.cwd}/src/linker.order");
+    expect(flags).toContain("--symbol-ordering-file=${c.cwd}/scripts/orderfile/linker.order");
     // linkDepends() is what makes ninja relink when the file changes.
-    expect(flags).toMatch(/linkDepends[\s\S]*src\/linker\.order/);
+    expect(flags).toMatch(/linkDepends[\s\S]*scripts\/orderfile\/linker\.order/);
   });
 });

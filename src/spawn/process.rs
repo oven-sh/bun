@@ -3595,7 +3595,7 @@ mod spawn_process_body {
             }
         }
 
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        #[cfg(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos")))]
         fn wait_linux_signalfd(
             child: libc::pid_t,
             ppid: libc::pid_t,

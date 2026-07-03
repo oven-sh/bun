@@ -1923,6 +1923,17 @@ restart:
              * these through TLSWrap's onerror; dropping them leaves the peer's
              * "you are not authenticated" indistinguishable from a clean
              * end-of-connection. */
+            /* Deliver what this read already decrypted first: a peer can put
+             * application data and the fatal record in one segment, and both
+             * the ZERO_RETURN sibling above and Node's ClearOut hand the
+             * plaintext to the consumer before reporting. */
+            ssl_flush_pending_session(s);
+            ssl_flush_pending_keylog(s);
+            if (ssl_gone(s)) return NULL;
+            if (read) {
+              s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
+              if (!s || ssl_gone(s)) return NULL;
+            }
             struct us_bun_verify_error_t verify_error = {
                 .error = -71, .code = "EPROTO", .reason = reason};
             us_dispatch_ssl_error(s, verify_error);

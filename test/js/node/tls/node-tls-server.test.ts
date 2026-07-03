@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
 import { tls as cert1, isDebug } from "harness";
-import { AddressInfo, connect as netConnect } from "net";
+import { AddressInfo, connect as netConnect, createServer as netCreateServer } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
 import { tmpdir } from "os";
@@ -1358,6 +1358,68 @@ describe("tls.Server post-handshake TLS errors", () => {
     } finally {
       client.destroy();
       raw.destroy();
+      server.close();
+    }
+    await once(server, "close");
+  });
+
+  it("delivers data decrypted alongside a fatal record before reporting the error", async () => {
+    // A peer can put application data and the record that fails in one segment.
+    // Node's ClearOut pushes each decrypted chunk to the consumer before it
+    // reports, so the plaintext must not be dropped on the way to the error.
+    const events: string[] = [];
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+    const server = createServer(COMMON_CERT, socket => {
+      socket.on("data", chunk => events.push(`data:${chunk}`));
+      socket.on("error", err => {
+        events.push(`error:${err.code}`);
+        resolve(events);
+      });
+      socket.on("close", () => reject(new Error(`closed without an 'error': ${events}`)));
+      // The client waits for this, so the server's handshake has provably
+      // completed and its flight is flushed before the relay splices anything.
+      socket.write("hello");
+    });
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const serverPort = (server.address() as AddressInfo).port;
+
+    // A plain TCP relay, so one client record and one corrupt record reach the
+    // server in a single recv() and the server's SSL_read loop decrypts the
+    // first before the second fails.
+    let spliceCorruptRecord = false;
+    const relay = netCreateServer(downstream => {
+      const upstream = netConnect(serverPort, "127.0.0.1");
+      upstream.pipe(downstream);
+      downstream.on("data", chunk => {
+        if (!spliceCorruptRecord) return void upstream.write(chunk);
+        spliceCorruptRecord = false;
+        const payload = Buffer.alloc(32, 0xab);
+        const corrupt = Buffer.concat([Buffer.from([0x17, 0x03, 0x03, 0x00, payload.length]), payload]);
+        upstream.write(Buffer.concat([chunk, corrupt]));
+      });
+      downstream.on("error", () => {});
+      upstream.on("error", () => {});
+    });
+    relay.listen(0, "127.0.0.1");
+    await once(relay, "listening");
+
+    const client = connect({
+      port: (relay.address() as AddressInfo).port,
+      host: "127.0.0.1",
+      rejectUnauthorized: false,
+    });
+    client.on("error", () => {});
+    await once(client, "data");
+    spliceCorruptRecord = true;
+    client.write("ping");
+
+    try {
+      expect(await promise).toEqual(["data:ping", "error:ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC"]);
+    } finally {
+      client.destroy();
+      relay.close();
       server.close();
     }
     await once(server, "close");

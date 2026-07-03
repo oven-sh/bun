@@ -231,7 +231,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let vm_ptr = global.bun_vm_ptr();
         let vm = global.bun_vm().as_mut();
 
-        debug_assert!(vm.event_loop_handle.is_some());
+        debug_assert!(!vm.event_loop_handle_ptr().is_null());
 
         // Decode all BunString inputs into UTF-8 slices. The underlying
         // JavaScript strings may be Latin1 or UTF-16; `String.to_utf8()` either

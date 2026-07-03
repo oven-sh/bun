@@ -311,9 +311,11 @@ impl<'a> GlobalJS<'a> {
             return &*vm.uv_loop();
         }
         #[cfg(not(windows))]
-        // SAFETY: `event_loop_handle` is set during VM init and never freed before the VM.
-        unsafe {
-            &*vm.event_loop_handle.expect("event_loop_handle is null")
+        {
+            let handle = vm.event_loop_handle_ptr();
+            assert!(!handle.is_null(), "event_loop_handle is null");
+            // SAFETY: set during VM init, never freed before the VM; JS thread.
+            unsafe { &*handle }
         }
     }
 

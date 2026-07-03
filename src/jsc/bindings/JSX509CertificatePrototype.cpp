@@ -313,7 +313,7 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckHost, (JSGlobalObject * 
     // Node returns the subject name that matched, which differs from the query
     // for wildcard SAN entries and for case-insensitive matches.
     if (peerName) {
-        auto matched = WTF::String::fromUTF8WithLatin1Fallback(peerName.span());
+        auto matched = WTF::String::fromUTF8ReplacingInvalidSequences(peerName.span());
         return JSValue::encode(jsString(vm, WTF::move(matched)));
     }
     return JSValue::encode(hostString);

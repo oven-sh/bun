@@ -1,6 +1,6 @@
 import { S3Client } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
 
 // S3 object keys are raw byte strings: `\` is a legal character and names a
 // different object than `/` does. Both must survive into the signed request.
@@ -80,6 +80,11 @@ test("presign distinguishes a backslash from a slash", () => {
   expect(s3.presign("a/b").split("?")[0]).toBe("http://s3.example.com/bucket/a/b");
 });
 
+// Every S3 key argument is parsed as a path-like, and that parser rejects anything
+// over PATH_MAX before the signer runs. macOS sets PATH_MAX to the same 1024 bytes
+// S3 allows, so over-long keys die one layer earlier there than on Linux.
+const tooLongCode = isMacOS ? "ENAMETOOLONG" : "ERR_S3_INVALID_PATH";
+
 // The 1024-byte S3 key limit holds whatever the key is made of, rather than
 // varying with how many of its bytes percent-encode. A space triples in length,
 // a letter does not, so the accepted pair spans the encoder's whole range.
@@ -98,7 +103,7 @@ test.each([
   const key = Buffer.alloc(length, fill).toString();
 
   if (encodedByte === null) {
-    expect(() => s3.presign(key)).toThrow(expect.objectContaining({ code: "ERR_S3_INVALID_PATH" }));
+    expect(() => s3.presign(key)).toThrow(expect.objectContaining({ code: tooLongCode }));
   } else {
     expect(s3.presign(key).split("?")[0]).toBe(`http://s3.example.com/bucket/${encodedByte.repeat(length)}`);
   }

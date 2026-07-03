@@ -7,19 +7,33 @@ Hard constraint: every row is performance-NEUTRAL or an IMPROVEMENT. No exceptio
 
 ## THE VERDICT, FIRST
 
+> **⚠️ SUPERSEDED IN PART. W1 (embedded-js-zstd), the single largest item below,
+> was REJECTED by @Jarred-Sumner: "bad idea. don't do this!" (oven-sh/bun#33250,
+> CHANGES_REQUESTED, PR closed unmerged). It had been implemented and CI-measured
+> at -1.33 to -1.34 MB on all 15 platforms, so the bytes were real; the design
+> was not wanted. Every total below that includes W1 is therefore wrong. See
+> §D "REJECTED BY A MAINTAINER" for the corrected arithmetic. Treat the whole
+> `†` lazy-decompress class as suspect until the specific objection is known.**
+
 - **Linux Tier A alone (oven-sh/bun only, zero perf cost, zero regression): 4.68 MB.**
-  96% of the gap from one repo with zero policy decisions.
+  ~~96% of the gap from one repo with zero policy decisions.~~
+  **Corrected: 3.69 MB once W1's 0.995 is removed.**
 - **Linux Tier A + Tier B (one batched oven-sh/WebKit rebuild + one pin bump): 6.46 MB.**
-  **The linux target IS REACHED, with 1.60 MB of margin, using ZERO Tier-C feature
-  removals.** SYNTHESIS2's 0.65 MB shortfall is gone; wave 3 found **+2.24 MB of new,
-  skeptic-surviving, zero-tradeoff money** (+1.645 Tier A, +0.595 Tier B).
+  **Corrected: 5.47 MB. The linux target (4.86) is still reachable, but only with
+  Tier B, and the 1.60 MB of margin is now 0.61 MB.**
 - **Windows: trivially reached from 5 small cross-platform Tier-A PRs**
   (W1+EJ1 1.34 + libarchive 0.25 + CP-1 0.17 + image-codecs 0.17 + any one more).
-  /GS- (1.45 W) is pure margin, not required.
-- The single finding that changed the answer is **W1 (embedded-js-zstd, +0.995 MB
-  net)** — I re-derived it myself on the shipped binary with the shipped codec
-  (158 arrays, 1,756,925 B → 387,811 B zstd-19, saving 1,369,114 B), independently
-  of both the unit and its skeptic. Three independent byte-exact derivations.
+  **Corrected: without W1 this is no longer trivial. The PRs actually merged so
+  far total -0.94 MB against a 2.00 MB need; roughly 1.1 MB more of Tier A must
+  ship.** /GS- measured at -0.69 MB (not 1.45 — `flags.ts` only reaches bun's own
+  code and the deps bun compiles, not the WebKit prebuilt), so it is no longer
+  "pure margin" either.
+- ~~The single finding that changed the answer is **W1 (embedded-js-zstd)**~~ —
+  the bytes were real and independently re-derived three times, but the design
+  was rejected. **The honest post-mortem: a finding is not money until a
+  maintainer wants the design, and a skeptic pass that only audits the BYTES
+  will never catch that.** Every wave verified W1's arithmetic; none of them
+  asked whether bun wants module source on the heap.
 
 ## Provenance
 Every wave-3 row below survived an independent adversarial skeptic who re-derived
@@ -268,6 +282,25 @@ Recommend NO on C5 (rtree), C6 (windows /FIXED — wave 2 already said no), C7
 # D. DISCARDED — across all three waves, one line each
 The dead-end list is as valuable as the proposals. Do NOT re-chase anything here.
 
+## REJECTED BY A MAINTAINER (the bytes were real; the design was not wanted)
+- **W1 / embedded-js-zstd — store the 161 internal JS module sources as per-module
+  zstd frames, decompress on first require.** Implemented, tested, and CI-measured
+  at **-1.33 to -1.34 MB on all 15 platforms** (`bun-linux-x64` 73.37 → 72.05,
+  `bun-windows-x64` 76.17 → 74.83). @Jarred-Sumner, CHANGES_REQUESTED on
+  oven-sh/bun#33250: **"bad idea. don't do this!"** PR closed unmerged.
+  The most likely objection, and the one structural difference from the ICU
+  decompress hook that DOES ship: `bun_icu_maybe_decompress` caches each decoded
+  item **per process** (a static HashMap keyed by the `.rodata` address), so every
+  VM shares one copy; W1 decompressed **per `globalObject`**, so N Workers pay N
+  copies of up to ~1.7 MB, and the pages go from file-backed+shareable to anonymous.
+  **Corrected arithmetic:** Linux Tier A 4.68 → **3.69**; Linux Tier A+B 6.46 →
+  **5.47** (still clears the 4.86 need, with 0.61 MB of margin instead of 1.60);
+  Windows is no longer trivially reached and needs ~1.1 MB more Tier A on top of
+  the ~0.94 MB already in flight.
+  **Carry-forward:** treat every `†` lazy-decompress row (cli-assets-zstd 0.22,
+  brotli 0.225, W5 jsbuiltins 0.26) as suspect until the exact objection is known.
+  The generalizable lesson is in §E.11.
+
 ## REFUTED by a skeptic (do NOT implement)
 - `w3-weird-ideas/W4` + `w3-binary-archaeology/P4` — NOBITS the `.bun` section: `elf.rs:355-364` writes 8 FILE bytes at `.bun`'s `sh_offset`, which a NOBITS section does not own; the kernel maps NOBITS as zeros → EVERY `bun build --compile` binary silently fails to load its module graph. (The CORRECT fix is ci-audit P1's alignment drop — Tier-A row 26.)
 - `w3-cpp-compile-flags/P1` windows `/FIXED` at **0.63 MB** — off by 3.7× (the census counted 276K LLVM switch jump-table slots that have ZERO PE base relocations because COFF jump tables are 4-byte self-relative). The REAL number, read off the real `bun.exe`'s `.reloc`, is **181,760 B = 0.173**. And wave 2 ALREADY measured it and said "No."
@@ -411,6 +444,20 @@ The dead-end list is as valuable as the proposals. Do NOT re-chase anything here
     `cfg.linux && cfg.x64 && !cfg.baseline` ONLY — on windows it IS LTO'd under
     relaxed aliasing, the exact alias-analysis combination the linux comment
     blames); (d) nothing else — every other door is closed above.
+
+11. **The lesson this whole effort actually paid for: a finding is not money
+    until a maintainer wants the DESIGN, and a skeptic pass that only audits the
+    BYTES will never catch that.** W1 survived three waves, an adversarial
+    skeptic, an independent byte-exact re-derivation, a full implementation, and
+    a CI measurement on 15 platforms. Every one of those checks asked "are the
+    bytes real?" and the answer was yes, every time. Not one of them asked "does
+    bun want module source living on the heap?" — and that was the only question
+    that mattered. It was rejected in five words. The same blind spot produced
+    the earlier ICU over-claim: 3.3 MB of real bytes that were real *because*
+    they were deliberately left raw, which `keep-raw.txt` said in writing and
+    nobody read. **Before measuring anything, find the decision log and the
+    owner. If a design changes a memory/ownership shape, price that first and
+    the bytes second.**
 
 ---
 *Every Tier-A row is a literal, copy-pasteable change with an exact file and

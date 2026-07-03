@@ -18,9 +18,9 @@
 // other checks to ensure that AsyncLocalStorage has virtually no impact on performance when not in
 // use. But the nature of this approach makes the implementation *itself* very low-impact on performance.
 //
-// AsyncContextData is an immutable array managed in here, formatted [key, value, key, value] where
-// each key is an AsyncLocalStorage object and the value is the associated value. There are a ton of
-// calls to $assert which will verify this invariant (only during bun-debug)
+// AsyncContextData is an array managed in here, formatted [key, value, key, value] where each key is
+// an AsyncLocalStorage object and the value is the associated value. It is copy-on-write, so that a
+// captured context keeps its bindings; disable() is the one exception, see the comment there.
 //
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
 const cleanupLater = $newCppFunction("NodeAsyncHooks.cpp", "jsCleanupLater", 0);
@@ -68,14 +68,55 @@ function get(): ReadonlyArray<any> | undefined {
 }
 
 function set(contextValue: ReadonlyArray<any> | undefined) {
+  // disable() empties its frame in place, so a context captured before it can
+  // be handed back here zero-length. Everything else expects undefined instead.
+  if (contextValue !== undefined && contextValue.length === 0) contextValue = undefined;
   $assert(assertValidAsyncContextArray(contextValue));
   $debug("set", debugFormatContextValue(contextValue));
   return $putInternalField($asyncContext, 0, contextValue);
 }
 
-class AsyncLocalStorage {
-  #disabled = false;
+// Storages live at even indices. A plain indexOf() would also match a storage
+// that was passed as a *value*, which sits at an odd index.
+function indexOfStorage(context: ReadonlyArray<any>, storage: AsyncLocalStorage): number {
+  for (var i = 0, { length } = context; i < length; i += 2) {
+    if (context[i] === storage) return i;
+  }
+  return -1;
+}
 
+// Object.is, without routing through a user-replaceable global.
+function sameValue(a, b): boolean {
+  if (a === b) return a !== 0 || 1 / a === 1 / b;
+  return a !== a && b !== b;
+}
+
+// Copy-on-write, like node's `new AsyncContextFrame(storage, value)`: contexts
+// already captured elsewhere (pending ticks, promise reactions) keep their bindings.
+function bindStorage(storage: AsyncLocalStorage, value: unknown) {
+  const context = get();
+  if (!context) {
+    set([storage, value]);
+    return;
+  }
+  const i = indexOfStorage(context, storage);
+  const clone = context.slice();
+  if (i > -1) clone[i + 1] = value;
+  else clone.push(storage, value);
+  set(clone);
+}
+
+function unbindStorage(storage: AsyncLocalStorage) {
+  const context = get();
+  if (!context) return;
+  const i = indexOfStorage(context, storage);
+  if (i < 0) return;
+  const clone = context.slice();
+  clone.splice(i, 2);
+  set(clone);
+}
+
+class AsyncLocalStorage {
   constructor() {
     setAsyncHooksEnabled(true);
 
@@ -110,128 +151,57 @@ class AsyncLocalStorage {
 
   enterWith(store) {
     cleanupLater();
-    // we must renable it when asyncLocalStorage.enterWith() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
-    this.#disabled = false;
-    var context = get();
-    if (!context) {
-      set([this, store]);
-      return;
-    }
-    var { length } = context;
-    $assert(length > 0);
-    $assert(length % 2 === 0);
-    for (var i = 0; i < length; i += 2) {
-      if (context[i] === this) {
-        $assert(length > i + 1);
-        const clone = context.slice();
-        clone[i + 1] = store;
-        set(clone);
-        return;
-      }
-    }
-    set(context.concat(this, store));
-    $assert(this.getStore() === store);
+    bindStorage(this, store);
+    $assert(sameValue(this.getStore(), store));
   }
 
   exit(cb, ...args) {
     return this.run(undefined, cb, ...args);
   }
 
-  // This function is litered with $asserts to ensure that everything that
-  // is assumed to be true is *actually* true.
   run(store_value, callback, ...args) {
     $debug("run " + (this as any).__id__);
-    var context = get() as any[]; // we make sure to .slice() before mutating
-    var hasPrevious = false;
-    var previous_value;
-    var i = 0;
-    var contextWasAlreadyInit = !context;
-    // we must renable it when asyncLocalStorage.run() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
-    const wasDisabled = this.#disabled;
-    this.#disabled = false;
-    if (contextWasAlreadyInit) {
-      set((context = [this, store_value]));
-    } else {
-      // it's safe to mutate context now that it was cloned
-      context = context!.slice();
-      i = context.indexOf(this);
-      if (i > -1) {
-        $assert(i % 2 === 0);
-        hasPrevious = true;
-        previous_value = context[i + 1];
-        context[i + 1] = store_value;
-      } else {
-        i = context.length;
-        context.push(this, store_value);
-        $assert(i % 2 === 0);
-        $assert(context.length % 2 === 0);
-      }
-      set(context);
+    const context = get();
+    const i = context ? indexOfStorage(context, this) : -1;
+    const hasPrevious = i > -1;
+    const previous_value = hasPrevious ? context![i + 1] : undefined;
+
+    // node does not open a frame when the store is already this value, so
+    // enterWith()/disable() calls the callback makes are not rolled back.
+    if (sameValue(previous_value, store_value)) {
+      return callback(...args);
     }
-    $assert(i > -1, "i was not set");
-    $assert(this.getStore() === store_value, "run: store_value was not set");
+
+    bindStorage(this, store_value);
+    $assert(sameValue(this.getStore(), store_value), "run: store_value was not set");
     try {
       return callback(...args);
     } finally {
-      // Note: early `return` will prevent `throw` above from working. I think...
-      // Set AsyncContextFrame to undefined if we are out of context values
-      if (!wasDisabled) {
-        var context2 = get()! as any[]; // we make sure to .slice() before mutating
-        if (context2 === context && contextWasAlreadyInit) {
-          $assert(context2.length === 2, "context was mutated without copy");
-          set(undefined);
-        } else {
-          context2 = context2.slice(); // array is cloned here
-          $assert(context2[i] === this);
-          if (hasPrevious) {
-            context2[i + 1] = previous_value;
-            set(context2);
-          } else {
-            // i wonder if this is a fair assert to make
-            context2.splice(i, 2);
-            $assert(context2.length % 2 === 0);
-            set(context2.length ? context2 : undefined);
-          }
-        }
-        $assert(
-          this.getStore() === previous_value,
-          "run: previous_value",
-          Bun.inspect(previous_value),
-          "was not restored, i see",
-          this.getStore(),
-        );
-      }
+      // The callback may have swapped or spliced the context out from under us
+      // (nested run(), enterWith(), disable()), so `i` is no longer trustworthy.
+      if (hasPrevious) bindStorage(this, previous_value);
+      else unbindStorage(this);
     }
   }
 
   disable() {
     $debug("disable " + (this as any).__id__);
-    // In this case, we actually do want to mutate the context state
-    if (this.#disabled) return;
-    this.#disabled = true;
-    var context = get() as any[];
-    if (context) {
-      var { length } = context;
-      for (var i = 0; i < length; i += 2) {
-        if (context[i] === this) {
-          context.splice(i, 2);
-          set(context.length ? context : undefined);
-          break;
-        }
-      }
-    }
+    // Mirrors node's AsyncContextFrame.disable(): the current context is edited
+    // in place, so contexts already captured from it also drop the store.
+    const context = get() as any[];
+    if (!context) return;
+    const i = indexOfStorage(context, this);
+    if (i < 0) return;
+    context.splice(i, 2);
+    set(context);
   }
 
   getStore() {
     $debug("getStore " + (this as any).__id__);
-    // disabled AsyncLocalStorage always returns undefined https://nodejs.org/api/async_context.html#asynclocalstoragedisable
-    if (this.#disabled) return;
-    var context = get();
+    const context = get();
     if (!context) return;
-    var { length } = context;
-    for (var i = 0; i < length; i += 2) {
-      if (context[i] === this) return context[i + 1];
-    }
+    const i = indexOfStorage(context, this);
+    if (i > -1) return context[i + 1];
   }
 
   // Node.js internal function. In Bun's implementation, calling this is not

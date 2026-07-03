@@ -1459,6 +1459,7 @@ pub enum ParseError {
     InvalidDependencyVersion,
     InvalidPackageResolution,
     UnexpectedResolution,
+    InvalidPath,
 }
 
 bun_core::oom_from_alloc!(ParseError);
@@ -2363,6 +2364,17 @@ pub fn parse_into_binary_lockfile(
                         format_args!("Invalid package version: {}", bstr::BStr::new(res_str)),
                     );
                     return Err(ParseError::InvalidSemver);
+                }
+                Err(crate::resolution::FromTextLockfileError::InvalidPath) => {
+                    log.add_error_fmt(
+                        source,
+                        item_loc(source, key_loc, res_info_idx),
+                        format_args!(
+                            "Invalid git subdirectory path: {}",
+                            bstr::BStr::new(res_str)
+                        ),
+                    );
+                    return Err(ParseError::InvalidPath);
                 }
             };
 

@@ -143,6 +143,22 @@ impl Id {
         Id(hasher.final_())
     }
 
+    /// Tarball task id that also distinguishes a git subdirectory. A github
+    /// dependency's tarball URL is keyed by repo+commit only, so two `&path:`
+    /// sub-packages of the same commit would otherwise collide on one
+    /// download+extract task and only one subdirectory would be installed. An
+    /// empty `subpath` reproduces [`for_tarball`] exactly for backward compat.
+    pub fn for_tarball_with_subpath(url: &[u8], subpath: &[u8]) -> Id {
+        let mut hasher = Wyhash11::init(0);
+        hasher.update(b"tarball:");
+        hasher.update(url);
+        if !subpath.is_empty() {
+            hasher.update(b":path:");
+            hasher.update(subpath);
+        }
+        Id(hasher.final_())
+    }
+
     // These cannot change:
     // We persist them to the filesystem.
     pub fn for_git_clone(url: &[u8]) -> Id {
@@ -152,11 +168,16 @@ impl Id {
         Id((4u64 << 61) | (hasher.final_() & ((1u64 << 61) - 1)))
     }
 
-    pub fn for_git_checkout(url: &[u8], resolved: &[u8]) -> Id {
+    pub fn for_git_checkout(url: &[u8], resolved: &[u8], path: &[u8]) -> Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(url);
         hasher.update(b"@");
         hasher.update(resolved);
+        // Empty path keeps the pre-existing id stable for non-subdir git deps.
+        if !path.is_empty() {
+            hasher.update(b":path:");
+            hasher.update(path);
+        }
         Id((5u64 << 61) | (hasher.final_() & ((1u64 << 61) - 1)))
     }
 }
@@ -498,6 +519,7 @@ impl<'a> Task<'a> {
                         git_checkout.name.slice(),
                         git_checkout.url.slice(),
                         git_checkout.resolved.slice(),
+                        git_checkout.path.slice(),
                     ) {
                         Ok(v) => v,
                         Err(err) => {
@@ -678,6 +700,7 @@ pub struct GitCheckoutRequest {
     pub name: StringOrTinyString,
     pub url: StringOrTinyString,
     pub resolved: StringOrTinyString,
+    pub path: StringOrTinyString,
     pub resolution: Resolution,
     // See the note on `GitCloneRequest.env`.
     pub env: &'static dot_env::Map,

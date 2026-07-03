@@ -1366,6 +1366,18 @@ pub fn parse_with_tag(
             }
             let hash_index = strings::last_index_of_char(input, b'#');
 
+            let mut committish_bytes: &[u8] = b"";
+            let mut path_bytes: Option<&[u8]> = None;
+            if let Some(index) = hash_index {
+                match crate::repository::split_path_from_fragment(&input[index + 1..]) {
+                    Ok((committish, path)) => {
+                        committish_bytes = committish;
+                        path_bytes = path;
+                    }
+                    Err(_) => return None,
+                }
+            }
+
             Some(Version {
                 literal: sliced.value(),
                 value: Value {
@@ -1378,8 +1390,13 @@ pub fn parse_with_tag(
                                 input
                             })
                             .value(),
-                        committish: if let Some(index) = hash_index {
-                            sliced.sub(&input[index + 1..]).value()
+                        committish: if committish_bytes.is_empty() {
+                            String::from(b"")
+                        } else {
+                            sliced.sub(committish_bytes).value()
+                        },
+                        path: if let Some(p) = path_bytes {
+                            sliced.sub(p).value()
                         } else {
                             String::from(b"")
                         },
@@ -1399,7 +1416,14 @@ pub fn parse_with_tag(
             // to create String objects that point to the original buffer
             let owner_str: &[u8] = info.user().unwrap_or(b"");
             let repo_str: &[u8] = info.project();
-            let committish_str: &[u8] = info.committish().unwrap_or(b"");
+            let raw_committish_str: &[u8] = info.committish().unwrap_or(b"");
+
+            // Split the pnpm-style `&path:<subdir>` suffix off the committish.
+            let (committish_str, path_str) =
+                match crate::repository::split_path_from_fragment(raw_committish_str) {
+                    Ok(v) => v,
+                    Err(_) => return None,
+                };
 
             // Find owner in dependency string
             let owner_idx = strings::index_of(dependency, owner_str);
@@ -1431,6 +1455,17 @@ pub fn parse_with_tag(
                 String::from(b"")
             };
 
+            // Find path in dependency string
+            let path = if let Some(p) = path_str {
+                if let Some(idx) = strings::index_of(dependency, p) {
+                    sliced.sub(&dependency[idx..idx + p.len()]).value()
+                } else {
+                    String::from(b"")
+                }
+            } else {
+                String::from(b"")
+            };
+
             Some(Version {
                 literal: sliced.value(),
                 value: Value {
@@ -1438,6 +1473,7 @@ pub fn parse_with_tag(
                         owner,
                         repo,
                         committish,
+                        path,
                         ..Default::default()
                     }),
                 },

@@ -181,7 +181,7 @@ pub mod layout_asserts {
     pin!(crate::ExternalSlice<u8>, size = 8, align = 4); // u32 off + u32 len
     pin!(crate::ExternalStringMap, size = 16, align = 4);
     pin!(crate::integrity::Integrity, size = 65, align = 1); // u8 tag + [64]u8
-    pin!(crate::repository::Repository, size = 40, align = 1); // 5 × String
+    pin!(crate::repository::Repository, size = 48, align = 1); // 6 × String
     pin!(crate::bin::Value, size = 16, align = 4); // union: [String;2] | ExternalSlice
     pin!(crate::bin::Bin, size = 20, align = 4);
     pin!(bun_semver::Version, size = 56, align = 8); // 3×u64 + Tag(2×ExternalString)

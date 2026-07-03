@@ -163,7 +163,8 @@ pub fn detect_and_load_other_lockfile<'a>(
                     | MigratePnpmLockfileError::PnpmLockfileInvalidOverride
                     | MigratePnpmLockfileError::PnpmLockfileInvalidPatchedDependency
                     | MigratePnpmLockfileError::PnpmLockfileMissingCatalogEntry
-                    | MigratePnpmLockfileError::PnpmLockfileUnresolvableDependency => {
+                    | MigratePnpmLockfileError::PnpmLockfileUnresolvableDependency
+                    | MigratePnpmLockfileError::InvalidPath => {
                         // These errors are continuable - log the error but don't exit
                         // The install will continue with a fresh install instead of migration
                         if log.has_errors() {
@@ -1257,6 +1258,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                                 committish: commit,
                                                 resolved: commit,
                                                 package_name: dep_name,
+                                                path: Default::default(),
                                             }))
                                         }
                                         DepTag::Github => {
@@ -1285,6 +1287,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                                 committish: commit,
                                                 resolved: commit,
                                                 package_name: dep_name,
+                                                path: Default::default(),
                                             }))
                                         }
                                     };

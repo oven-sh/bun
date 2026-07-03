@@ -184,7 +184,15 @@ pub fn enqueue_tarball_for_download(
     task_context: TaskCallbackContext,
     patch_name_and_version_hash: Option<u64>,
 ) -> Result<(), EnqueueTarballForDownloadError> {
-    let task_id = Task::Id::for_tarball(url);
+    // A github tarball URL is keyed by repo+commit only; distinguish the git
+    // subdirectory so distinct `&path:` sub-packages of the same commit stay on
+    // separate download+extract tasks (matches the resolution-phase task id).
+    let res = this.lockfile.packages.get(package_id as usize).resolution;
+    let task_id = if res.tag == ResolutionTag::Github {
+        Task::Id::for_tarball_with_subpath(url, this.lockfile.str(&res.github().path))
+    } else {
+        Task::Id::for_tarball(url)
+    };
     let task_queue = this.task_queue.get_or_put(task_id)?;
     if !task_queue.found_existing {
         *task_queue.value_ptr = TaskCallbackList::default();
@@ -287,7 +295,8 @@ pub fn enqueue_git_for_checkout(
     let url = this.lockfile.str_detached(&repository.repo);
     let clone_id = Task::Id::for_git_clone(url);
     let resolved = this.lockfile.str_detached(&repository.resolved);
-    let checkout_id = Task::Id::for_git_checkout(url, resolved);
+    let path = this.lockfile.str_detached(&repository.path);
+    let checkout_id = Task::Id::for_git_checkout(url, resolved, path);
     let checkout_queue = this
         .task_queue
         .get_or_put(checkout_id)
@@ -1242,7 +1251,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     this.lockfile.str(&dep.committish),
                     clone_id,
                 )?;
-                let checkout_id = Task::Id::for_git_checkout(url, &resolved);
+                let checkout_id =
+                    Task::Id::for_git_checkout(url, &resolved, this.lockfile.str(&dep.path));
 
                 let needs_ctx =
                     this.lockfile.buffers.resolutions[id as usize] == invalid_package_id;
@@ -1311,14 +1321,18 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             let res = Resolution::init(ResolutionTagged::Github(*dep));
 
             // First: see if we already loaded the github package in-memory
-            if let Some(pkg_id) = this.lockfile.get_package_id(name_hash, None, &res) {
+            let gpid = this.lockfile.get_package_id(name_hash, None, &res);
+            if let Some(pkg_id) = gpid {
                 success_fn(this, id, pkg_id);
                 return Ok(());
             }
 
             let url = this.alloc_github_url(dep);
-            // url is Box<[u8]>; dropped at scope end
-            let task_id = Task::Id::for_tarball(&url);
+            // url is Box<[u8]>; dropped at scope end. The tarball URL is keyed by
+            // repo+commit only, so include the subdirectory in the task id to keep
+            // distinct `&path:` sub-packages of the same commit on separate
+            // download+extract tasks.
+            let task_id = Task::Id::for_tarball_with_subpath(&url, this.lockfile.str(&dep.path));
 
             if cfg!(debug_assertions) {
                 bun_output::scoped_log!(
@@ -1812,6 +1826,11 @@ pub fn enqueue_git_checkout(
                     .expect("unreachable"),
                     resolved: StringOrTinyString::init_append_if_needed(
                         resolved,
+                        &mut crate::network_task::filename_store_appender(),
+                    )
+                    .expect("unreachable"),
+                    path: StringOrTinyString::init_append_if_needed(
+                        this.lockfile.str(&resolution.git().path),
                         &mut crate::network_task::filename_store_appender(),
                     )
                     .expect("unreachable"),

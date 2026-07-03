@@ -136,6 +136,8 @@ pub enum MigratePnpmLockfileError {
     PnpmLockfileMissingCatalogEntry,
     #[error("PnpmLockfileUnresolvableDependency")]
     PnpmLockfileUnresolvableDependency,
+    #[error("InvalidPath")]
+    InvalidPath,
 }
 
 bun_core::oom_from_alloc!(MigratePnpmLockfileError);
@@ -169,6 +171,7 @@ impl From<resolution::FromPnpmLockfileError> for MigratePnpmLockfileError {
         match e {
             resolution::FromPnpmLockfileError::OutOfMemory => Self::OutOfMemory,
             resolution::FromPnpmLockfileError::InvalidPnpmLockfile => Self::InvalidPnpmLockfile,
+            resolution::FromPnpmLockfileError::InvalidPath => Self::InvalidPath,
         }
     }
 }

@@ -573,6 +573,13 @@ impl<'a> ByteCursor<'a> {
         }
     }
 
+    fn put_subdir_hash(&mut self, subdir_path: &[u8]) {
+        if !subdir_path.is_empty() {
+            self.put(b"+p");
+            self.put_u64_hex16::<true>(Semver::semver_string::Builder::string_hash(subdir_path));
+        }
+    }
+
     /// NUL-terminate and hand back the borrowed `ZStr`.
     #[inline(always)]
     fn finish_z(self) -> &'a ZStr {
@@ -586,11 +593,13 @@ pub fn cached_git_folder_name_print<'a>(
     buf: &'a mut [u8],
     resolved: &[u8],
     patch_hash: Option<u64>,
+    subdir_path: &[u8],
 ) -> &'a ZStr {
     let mut w = ByteCursor::new(buf);
     w.put(b"@G@");
     w.put(resolved);
     w.put_patch_hash(patch_hash);
+    w.put_subdir_hash(subdir_path);
     w.finish_z()
 }
 
@@ -599,10 +608,12 @@ pub fn cached_git_folder_name(
     repository: &Repository,
     patch_hash: Option<u64>,
 ) -> &'static ZStr {
+    let string_buf = this.lockfile.buffers.string_bytes.as_slice();
     cached_git_folder_name_print(
         cached_package_folder_name_buf(),
         this.lockfile.str(&repository.resolved),
         patch_hash,
+        repository.path.slice(string_buf),
     )
 }
 
@@ -622,6 +633,7 @@ pub fn cached_git_folder_name_print_auto(
         w.put(repository.committish.slice(string_buf));
         w.put_cache_version(Some(CacheVersion::CURRENT));
         w.put_patch_hash(patch_hash);
+        w.put_subdir_hash(repository.path.slice(string_buf));
         return w.finish_z();
     }
 
@@ -632,12 +644,14 @@ pub fn cached_github_folder_name_print<'a>(
     buf: &'a mut [u8],
     resolved: &[u8],
     patch_hash: Option<u64>,
+    subdir_path: &[u8],
 ) -> &'a ZStr {
     let mut w = ByteCursor::new(buf);
     w.put(b"@GH@");
     w.put(resolved);
     w.put_cache_version(Some(CacheVersion::CURRENT));
     w.put_patch_hash(patch_hash);
+    w.put_subdir_hash(subdir_path);
     w.finish_z()
 }
 
@@ -646,10 +660,12 @@ pub fn cached_github_folder_name(
     repository: &Repository,
     patch_hash: Option<u64>,
 ) -> &'static ZStr {
+    let string_buf = this.lockfile.buffers.string_bytes.as_slice();
     cached_github_folder_name_print(
         cached_package_folder_name_buf(),
         this.lockfile.str(&repository.resolved),
         patch_hash,
+        repository.path.slice(string_buf),
     )
 }
 
@@ -741,6 +757,7 @@ fn cached_github_folder_name_print_guess<'a>(
     w.put(repository.committish.slice(string_buf));
     w.put_cache_version(Some(CacheVersion::CURRENT));
     w.put_patch_hash(patch_hash);
+    w.put_subdir_hash(repository.path.slice(string_buf));
     w.finish_z()
 }
 

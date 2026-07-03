@@ -3485,6 +3485,179 @@ it("Expect: 100-Continue matches case-insensitively like Node.js", async () => {
   }
 });
 
+describe("a final response to an unanswered Expect: 100-continue", () => {
+  // The client withholds the announced body until it sees the 100 Continue, so
+  // a final status instead of it leaves the connection unframed: Node's
+  // writeHead clears shouldKeepAlive, which answers Connection: close and ends
+  // the socket - otherwise the next request is read as the unsent body.
+  const expectHead = "POST /upload HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 36\r\n\r\n";
+
+  // Reads the socket as a sequence of protocol units: until(needle) resolves
+  // with the bytes up to and including needle, and every failure event
+  // (error, premature close) rejects the pending read.
+  async function dial(server: Server) {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const socket = connect(port, "127.0.0.1");
+
+    let buffer = "";
+    let received = "";
+    let waiter: { needle: string; resolve: (chunk: string) => void; reject: (err: Error) => void } | null = null;
+    const check = () => {
+      if (!waiter) return;
+      const at = buffer.indexOf(waiter.needle);
+      if (at === -1) return;
+      const cut = at + waiter.needle.length;
+      const { resolve } = waiter;
+      waiter = null;
+      const out = buffer.slice(0, cut);
+      buffer = buffer.slice(cut);
+      resolve(out);
+    };
+    const fail = (err: Error) => {
+      const pending = waiter;
+      waiter = null;
+      pending?.reject(err);
+    };
+    socket.on("data", chunk => {
+      buffer += chunk;
+      received += chunk;
+      check();
+    });
+    socket.on("error", fail);
+    socket.on("end", () => fail(new Error(`server closed the connection; buffered: ${JSON.stringify(buffer)}`)));
+
+    return {
+      socket,
+      received: () => received,
+      until(needle: string) {
+        const { promise, resolve, reject } = Promise.withResolvers<string>();
+        waiter = { needle, resolve, reject };
+        check();
+        return promise;
+      },
+    };
+  }
+
+  it("closes the connection after a 417 instead of reading the next request as the unsent body", async () => {
+    let keepAliveInHandler: boolean | undefined;
+    const server = createServer((req, res) => res.end("SECOND"));
+    server.on("checkContinue", (req, res) => {
+      res.writeHead(417);
+      keepAliveInHandler = res.shouldKeepAlive;
+      res.end();
+    });
+    const { socket, until, received } = await dial(server);
+    try {
+      // Pipeline the request the client would send next on a reusable
+      // connection: its bytes must not be consumed as the rejected body.
+      socket.write(expectHead + "GET /second HTTP/1.1\r\nHost: x\r\n\r\n");
+
+      const head = await until("\r\n\r\n");
+      expect(head).toContain("HTTP/1.1 417 Expectation Failed");
+      expect(head).toContain("Connection: close");
+      expect(head).not.toContain("keep-alive");
+      expect(keepAliveInHandler).toBe(false);
+
+      // The server must send FIN on its own; the client never half-closes.
+      await once(socket, "end");
+      expect(received()).not.toContain("SECOND");
+      expect(received().match(/HTTP\/1\.1 \d{3}/g)).toEqual(["HTTP/1.1 417"]);
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  });
+
+  it("closes the connection when the status is set without writeHead()", async () => {
+    const server = createServer();
+    server.on("checkContinue", (req, res) => {
+      res.statusCode = 417;
+      res.end();
+    });
+    const { socket, until } = await dial(server);
+    try {
+      socket.write(expectHead);
+      const head = await until("\r\n\r\n");
+      expect(head).toContain("HTTP/1.1 417 Expectation Failed");
+      expect(head).toContain("Connection: close");
+      expect(head).not.toContain("keep-alive");
+      await once(socket, "end");
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  });
+
+  it("closes the connection even when the final status is a 2xx", async () => {
+    // Node does not gate this on the status code: any final response without a
+    // preceding writeContinue() leaves the announced body unsent.
+    const server = createServer();
+    server.on("checkContinue", (req, res) => {
+      res.writeHead(200);
+      res.end("nope");
+    });
+    const { socket, until } = await dial(server);
+    try {
+      socket.write(expectHead);
+      const head = await until("\r\n\r\n");
+      expect(head).toContain("HTTP/1.1 200 OK");
+      expect(head).toContain("Connection: close");
+      expect(head).not.toContain("keep-alive");
+      await once(socket, "end");
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  });
+
+  it("keeps the connection reusable once writeContinue() was sent", async () => {
+    const server = createServer((req, res) => res.end("SECOND"));
+    server.on("checkContinue", (req, res) => {
+      res.writeContinue();
+      req.resume();
+      req.on("end", () => res.end("first"));
+    });
+    const { socket, until } = await dial(server);
+    try {
+      socket.write("POST /one HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n");
+      expect(await until("\r\n\r\n")).toContain("HTTP/1.1 100 Continue");
+
+      socket.write("hello");
+      const head = await until("\r\n\r\n");
+      expect(head).toContain("HTTP/1.1 200 OK");
+      expect(head).toContain("Connection: keep-alive");
+      expect(await until("first")).toBe("first");
+
+      socket.write("GET /two HTTP/1.1\r\nHost: x\r\n\r\n");
+      expect(await until("SECOND")).toContain("HTTP/1.1 200 OK");
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  });
+
+  it("keeps the connection reusable for a non-100 expectation's 417", async () => {
+    // Only a 100-continue expectation withholds the request body, so the
+    // default 417 for any other expectation still leaves the connection framed.
+    const server = createServer((req, res) => res.end("SECOND"));
+    const { socket, until } = await dial(server);
+    try {
+      socket.write("GET /one HTTP/1.1\r\nHost: x\r\nExpect: meoww\r\n\r\n");
+      const head = await until("\r\n\r\n");
+      expect(head).toContain("HTTP/1.1 417 Expectation Failed");
+      expect(head).toContain("Connection: keep-alive");
+
+      socket.write("GET /two HTTP/1.1\r\nHost: x\r\n\r\n");
+      expect(await until("SECOND")).toContain("HTTP/1.1 200 OK");
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  });
+});
+
 it("the over-limit 503 advertises Connection: close, not keep-alive", async () => {
   // Node sets maxRequestsOnConnectionReached unconditionally
   // (maxRequestsPerSocket <= count), so the dropRequest 503 carries

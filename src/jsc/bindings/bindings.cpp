@@ -4145,8 +4145,14 @@ bool JSC__JSValue__isIterable(JSC::EncodedJSValue JSValue, JSC::JSGlobalObject* 
 
 void JSC__JSValue__forEach(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, void* ctx, void (*ArgFn3)(JSC::VM* arg0, JSC::JSGlobalObject* arg1, void* arg2, JSC::EncodedJSValue JSValue3))
 {
+    JSC::JSValue iterable = JSC::JSValue::decode(JSValue0);
+    // An empty JSValue reports isCell() with a null cell, which forEachInIterable
+    // dereferences before it checks anything. Make it throw instead of crashing.
+    if (!iterable) [[unlikely]]
+        iterable = JSC::jsUndefined();
+
     JSC::forEachInIterable(
-        arg1, JSC::JSValue::decode(JSValue0),
+        arg1, iterable,
         [ArgFn3, ctx](JSC::VM& vm, JSC::JSGlobalObject* global, JSC::JSValue value) -> void {
             ArgFn3(&vm, global, ctx, JSC::JSValue::encode(value));
         });
@@ -4701,8 +4707,14 @@ CPP_DECL double Bun__JSValue__toNumber(JSC::EncodedJSValue JSValue0, JSC::JSGlob
 
 JSC::EncodedJSValue JSC__JSValue__getErrorsProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* global)
 {
+    // User code can delete `errors` or redefine it as an accessor, so getDirect
+    // may return an empty JSValue (a null cell). Never hand that back to Rust.
     JSC::JSObject* obj = JSC::JSValue::decode(JSValue0).getObject();
-    return JSC::JSValue::encode(obj->getDirect(global->vm(), global->vm().propertyNames->errors));
+    if (!obj) [[unlikely]]
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
+    JSC::JSValue errors = obj->getDirect(global->vm(), global->vm().propertyNames->errors);
+    return JSC::JSValue::encode(errors ? errors : JSC::jsUndefined());
 }
 
 [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSValue__jsTDZValue()

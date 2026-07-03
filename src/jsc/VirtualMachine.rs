@@ -4800,12 +4800,51 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) {
+        self.print_errorlike_object_at_depth(
+            value,
+            exception,
+            exception_list,
+            formatter,
+            writer,
+            allow_ansi_color,
+            allow_side_effects,
+            0,
+        );
+    }
+
+    /// `depth` is how many `AggregateError.errors` levels deep we already are;
+    /// past the limit the AggregateError is printed as an ordinary error so a
+    /// cyclic `errors` can't recurse forever.
+    fn print_errorlike_object_at_depth(
+        &mut self,
+        value: JSValue,
+        exception: Option<&Exception>,
+        exception_list: Option<&mut ExceptionList>,
+        formatter: &mut crate::console_object::Formatter,
+        writer: &mut bun_core::io::Writer,
+        allow_ansi_color: bool,
+        allow_side_effects: bool,
+        depth: u8,
+    ) {
+        // `new AggregateError([new AggregateError([...])])` nesting this deep is
+        // pathological; past it, print the AggregateError itself.
+        const MAX_AGGREGATE_ERROR_DEPTH: u8 = 8;
+
         // Note: the post-print stack/exception_list block is handled at the
         // tail instead of via a drop guard (the body has no early-`?` returns
         // once the AggregateError branch is taken).
         let global_ref = self.global();
 
-        if value.is_aggregate_error(global_ref) {
+        // `getErrorsProperty` is `getDirect` (own data prop, no getters, nothrow).
+        // User code can delete or overwrite it, so anything but an array falls
+        // through and prints the AggregateError itself instead of being iterated.
+        let errors = if value.is_aggregate_error(global_ref) && depth < MAX_AGGREGATE_ERROR_DEPTH {
+            value.get_errors_property(global_ref)
+        } else {
+            JSValue::UNDEFINED
+        };
+
+        if errors.is_array() {
             // Note: `JSValue::for_each` takes a C-ABI fn
             // pointer + erased ctx, so thread the captures through a struct.
             // The C trampoline erases lifetimes via `*mut c_void`; round-trip
@@ -4817,6 +4856,7 @@ impl VirtualMachine {
                 exception_list: *mut ExceptionList,
                 allow_ansi_color: bool,
                 allow_side_effects: bool,
+                depth: u8,
             }
             extern "C" fn agg_iter(
                 _vm: *mut crate::VM,
@@ -4841,7 +4881,7 @@ impl VirtualMachine {
                 // SAFETY: `ctx.writer` borrows the caller's stack local,
                 // live across the synchronous `for_each` call.
                 let writer = unsafe { &mut *ctx.writer };
-                vm.print_errorlike_object(
+                vm.print_errorlike_object_at_depth(
                     next_value,
                     None,
                     exception_list,
@@ -4849,6 +4889,7 @@ impl VirtualMachine {
                     writer,
                     ctx.allow_ansi_color,
                     ctx.allow_side_effects,
+                    ctx.depth,
                 );
             }
             let mut ctx = AggCtx {
@@ -4859,11 +4900,9 @@ impl VirtualMachine {
                     .unwrap_or(core::ptr::null_mut()),
                 allow_ansi_color,
                 allow_side_effects,
+                depth: depth + 1,
             };
-            // `getErrorsProperty` is
-            // `getDirect` (own data prop, nothrow); `for_each` may throw, in
-            // which case the error is swallowed.
-            let errors = value.get_errors_property(global_ref);
+            // Note: `for_each` may throw, in which case the error is swallowed.
             let _ = errors.for_each(global_ref, (&raw mut ctx).cast(), agg_iter);
             return;
         }

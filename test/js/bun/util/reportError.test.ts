@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 test("reportError", () => {
@@ -121,4 +121,109 @@ test("native error printer handles lone surrogates in message and stack frame na
   // Printer must not have crashed: normal uncaught-error exit (1), no signal.
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(1);
+});
+
+// `AggregateError.prototype.errors` is an own data property, so user code can
+// delete it or swap it for something that is not an array. The printer used to
+// hand whatever `getDirect` returned straight to JSC's `forEachInIterable`:
+// a deleted `errors` yields an empty JSValue (a null cell), which segfaults at
+// address 0x5 reading `JSCell::m_type`.
+describe("native error printer with a broken AggregateError.errors", () => {
+  const mutations: [name: string, source: string][] = [
+    ["deleted", `Reflect.deleteProperty(e, "errors");`],
+    ["number", `e.errors = 5;`],
+    ["undefined", `e.errors = undefined;`],
+    ["non-iterable object", `e.errors = {};`],
+    ["accessor", `Object.defineProperty(e, "errors", { get: () => [] });`],
+    ["self-referential", `e.errors = [e];`],
+  ];
+
+  const fixture = (mutation: string, raise: string) =>
+    `const e = new AggregateError([], "AGG_MARKER"); ${mutation} ${raise}`;
+
+  describe.each([
+    ["uncaught throw", `throw e;`],
+    ["unhandled rejection", `Promise.reject(e);`],
+  ])("%s", (_entry, raise) => {
+    test.each(mutations)("prints the AggregateError when errors is %s", async (_name, mutation) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture(mutation, raise)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+
+      // The error must still reach the user rather than vanishing into the
+      // AggregateError fast path.
+      expect({ stdout, stderr: stderr.includes("AggregateError: AGG_MARKER") }).toEqual({
+        stdout: "",
+        stderr: true,
+      });
+      // Printer must not have crashed: normal uncaught-error exit (1), no signal.
+      expect(proc.signalCode).toBeNull();
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  test("bun test reports an unhandled rejection with a deleted errors property", async () => {
+    using dir = tempDir("aggregate-error-errors", {
+      "agg.test.ts": `
+        import { test } from "bun:test";
+        test("t", () => {
+          const e = new AggregateError([], "AGG_MARKER");
+          Reflect.deleteProperty(e, "errors");
+          Promise.reject(e);
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "agg.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The rejection is attributed to the test, so it fails rather than crashing
+    // the runner.
+    expect({
+      aggregate: stderr.includes("AggregateError: AGG_MARKER"),
+      failed: stderr.includes("1 fail"),
+      stdout,
+    }).toEqual({ aggregate: true, failed: true, stdout: expect.stringContaining("bun test") });
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(1);
+  });
+
+  test("a well-formed errors array is still unwrapped down to the leaf error", async () => {
+    const fixture = `
+      let e = new Error("LEAF_MARKER");
+      for (let i = 0; i < 5; i++) e = new AggregateError([e], "level-" + i);
+      throw e;
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Each AggregateError level prints its children, not itself.
+    expect({
+      leaf: stderr.includes("error: LEAF_MARKER"),
+      aggregate: stderr.includes("AggregateError:"),
+      stdout,
+    }).toEqual({ leaf: true, aggregate: false, stdout: "" });
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(1);
+  });
 });

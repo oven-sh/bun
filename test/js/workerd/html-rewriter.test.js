@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { once } from "events";
 import fs from "fs";
-import { gcTick, tls, tmpdirSync } from "harness";
+import { gcTick, tempDir, tls, tmpdirSync } from "harness";
 import { createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
@@ -385,6 +385,56 @@ describe("HTMLRewriter", () => {
       await setImmediatePromise();
       await setImmediatePromise();
       expect(later).toBe(0);
+    });
+
+    // A suspended transform hands back a Response whose body is still pending.
+    // Every consumer of that body has to get the bytes once the rewrite
+    // finishes, not just `.text()`.
+    describe("consumers of a still-pending output body", () => {
+      const suspending = () =>
+        new HTMLRewriter()
+          .on("p", {
+            async element(element) {
+              await setImmediatePromise();
+              element.setInnerContent("new");
+            },
+          })
+          .transform(new Response("<p>old</p>"));
+
+      it(".text()", async () => {
+        expect(await suspending().text()).toBe("<p>new</p>");
+      });
+
+      it(".blob()", async () => {
+        expect(await (await suspending().blob()).text()).toBe("<p>new</p>");
+      });
+
+      it(".arrayBuffer()", async () => {
+        const buf = await suspending().arrayBuffer();
+        expect(new TextDecoder().decode(buf)).toBe("<p>new</p>");
+      });
+
+      it(".body reader drains the bytes", async () => {
+        const reader = suspending().body.getReader();
+        const chunks = [];
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+        expect(new TextDecoder().decode(Buffer.concat(chunks))).toBe("<p>new</p>");
+      });
+
+      it("new Response(res.body).text()", async () => {
+        expect(await new Response(suspending().body).text()).toBe("<p>new</p>");
+      });
+
+      it("Bun.write(file, res)", async () => {
+        using dir = tempDir("hr-pending-body", {});
+        const out = path.join(String(dir), "out.html");
+        await Bun.write(out, suspending());
+        expect(await Bun.file(out).text()).toBe("<p>new</p>");
+      });
     });
 
     it("transform(ArrayBuffer) throws the ArrayBuffer wording", () => {

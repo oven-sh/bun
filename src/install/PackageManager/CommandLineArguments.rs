@@ -123,6 +123,9 @@ const SHARED_PARAMS: &[ParamType] = &[
         "--os <STR>...                         Override operating system for optional dependencies (e.g., linux, darwin, * for all)"
     ),
     clap::param!("-h, --help                            Print this help menu"),
+    clap::param!(
+        "--build-from-source               Force native modules to be compiled from source instead of using prebuilt binaries"
+    ),
 ];
 
 pub static INSTALL_PARAMS: &[ParamType] = concat_params![
@@ -1049,6 +1052,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         cli.no_summary = args.flag(b"--no-summary");
         cli.ca = args.options(b"--ca");
         cli.lockfile_only = args.flag(b"--lockfile-only");
+        if args.flag(b"--build-from-source") {
+            // Override the env var so subsequent code reading
+            // BUN_FEATURE_FLAG_FORCE_BUILD_FROM_SOURCE sees the flag.
+            std::env::set_var("BUN_FEATURE_FLAG_FORCE_BUILD_FROM_SOURCE", "1");
+        }
 
         if let Some(linker) = args.option(b"--linker") {
             cli.node_linker = Some(match Options::NodeLinker::from_str(linker) {

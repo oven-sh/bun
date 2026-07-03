@@ -271,15 +271,16 @@ declare module "bun:sqlite" {
      * It is safe to call this method multiple times. If the database is already
      * closed, this is a no-op.
      *
-     * @example
-     * ```ts
-     * db.close();
-     * ```
      * Garbage collecting the database closes the connection once every statement
      * prepared from it has been collected too. Unlike an explicit `close()`,
      * garbage collection does not finalize outstanding statements.
      *
      * Internally, this finalizes outstanding statements and calls `sqlite3_close_v2`.
+     *
+     * @example
+     * ```ts
+     * db.close();
+     * ```
      */
     close(
       /**

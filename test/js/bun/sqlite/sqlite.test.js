@@ -1414,7 +1414,7 @@ it("should dispose AND throw an error if the database is in use", () => {
 });
 
 describe("close() with a statement still alive", () => {
-  it("makes every statement entry point throw", () => {
+  it("makes the statement throw instead of reading the closed database", () => {
     const db = new Database(":memory:");
     db.exec("CREATE TABLE foo (name TEXT)");
     db.exec("INSERT INTO foo (name) VALUES ('foo')");
@@ -1426,11 +1426,29 @@ describe("close() with a statement still alive", () => {
     expect(() => prepared.get()).toThrow("Database has closed");
     expect(() => prepared.all()).toThrow("Database has closed");
     expect(() => prepared.values()).toThrow("Database has closed");
+    expect(() => prepared.raw()).toThrow("Database has closed");
     expect(() => prepared.run()).toThrow("Database has closed");
     expect(() => [...prepared]).toThrow("Database has closed");
     expect(() => prepared.columnTypes).toThrow("Database has closed");
     expect(() => prepared.declaredTypes).toThrow("Database has closed");
     expect(() => prepared.paramsCount).toThrow("Database has closed");
+    expect(() => prepared.safeIntegers()).toThrow("Database has closed");
+    expect(() => JSON.stringify(prepared)).toThrow("Database has closed");
+  });
+
+  it("leaves the statement inspectable, the way finalize() does", () => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE foo (name TEXT)");
+    const prepared = db.prepare("SELECT * FROM foo");
+    expect(prepared.all()).toEqual([]);
+
+    db.close();
+
+    // Neither reads the closed database: columnNames is cached from the last
+    // execution, and toString() is how Symbol.toStringTag renders a statement.
+    expect(prepared.columnNames).toEqual(["name"]);
+    expect(prepared.toString()).toBe("");
+    expect(() => Bun.inspect(prepared)).not.toThrow();
   });
 
   it("releases the database file", () => {

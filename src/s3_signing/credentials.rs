@@ -490,7 +490,12 @@ impl S3Credentials {
         let service_name: &str = "s3";
 
         let aws_content_hash: &[u8] = content_hash.unwrap_or(b"UNSIGNED-PAYLOAD");
-        let mut tmp_buffer = [0u8; 4096];
+        // Holds the canonical request, whose largest part is `normalized_path`. `host`
+        // and `extra_path` split the endpoint between them, so one endpoint budget
+        // covers both; the rest leaves room for the headers and the session token.
+        const MAX_CANONICAL_REQUEST_LEN: usize =
+            MAX_ENDPOINT_LEN + MAX_BUCKET_LEN + MAX_ENCODED_KEY_LEN + 4096;
+        let mut tmp_buffer = [0u8; MAX_CANONICAL_REQUEST_LEN];
 
         let authorization: Box<[u8]> = 'brk: {
             // we hash the hash so we need 2 buffers

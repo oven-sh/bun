@@ -81,13 +81,14 @@ test("presign distinguishes a backslash from a slash", () => {
 });
 
 // The 1024-byte S3 key limit holds whatever the key is made of, rather than
-// varying with how many of its bytes percent-encode.
+// varying with how many of its bytes percent-encode. A space triples in length,
+// a letter does not, so the accepted pair spans the encoder's whole range.
 test.each([
-  ["a", 1024, true],
-  ["a", 1025, false],
-  [" ", 1024, true],
-  [" ", 1025, false],
-])("a %j key of %i bytes is accepted: %j", (fill, length, accepted) => {
+  ["a", 1024, "a"],
+  ["a", 1025, null],
+  [" ", 1024, "%20"],
+  [" ", 1025, null],
+])("a %j key of %i bytes signs as %j per byte", (fill, length, encodedByte) => {
   const s3 = new S3Client({
     accessKeyId: "key",
     secretAccessKey: "secret",
@@ -96,11 +97,28 @@ test.each([
   });
   const key = Buffer.alloc(length, fill).toString();
 
-  if (accepted) {
-    expect(s3.presign(key)).toStartWith("http://s3.example.com/bucket/");
-  } else {
+  if (encodedByte === null) {
     expect(() => s3.presign(key)).toThrow(expect.objectContaining({ code: "ERR_S3_INVALID_PATH" }));
+  } else {
+    expect(s3.presign(key).split("?")[0]).toBe(`http://s3.example.com/bucket/${encodedByte.repeat(length)}`);
   }
+});
+
+// The canonical request the signature is computed over embeds the whole encoded
+// key, so its buffer has to keep up with the key buffer. A session token lands in
+// the same buffer and is what used to push it over.
+test("a maximal key signs alongside a session token", () => {
+  const s3 = new S3Client({
+    accessKeyId: "key",
+    secretAccessKey: "secret",
+    bucket: "bucket",
+    region: "us-east-1",
+    sessionToken: Buffer.alloc(2000, "t").toString(),
+    endpoint: "http://s3.example.com",
+  });
+  const key = Buffer.alloc(1024, " ").toString();
+
+  expect(s3.presign(key).split("?")[0]).toBe(`http://s3.example.com/bucket/${"%20".repeat(1024)}`);
 });
 
 test.each(["evil.example.com/other", "evil.example.com\\other"])(

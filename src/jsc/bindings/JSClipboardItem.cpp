@@ -191,7 +191,8 @@ JSC_DEFINE_HOST_FUNCTION(clipboardItemConstructorConstruct, (JSC::JSGlobalObject
             return JSC::JSValue::encode(throwTypeError(lexicalGlobalObject, scope, makeString("\""_s, type, "\" is not a valid MIME type"_s)));
         JSC::JSValue value = itemsObject->get(lexicalGlobalObject, name);
         RETURN_IF_EXCEPTION(scope, {});
-        types.append(WTF::move(type));
+        // Spec: `types` holds the serialization of the parsed MIME type.
+        types.append(type.convertToASCIILowercase());
         values.append(value);
     }
     if (values.hasOverflowed()) [[unlikely]]

@@ -149,6 +149,13 @@ describe("ClipboardItem", () => {
     expect(new ClipboardItem(items).types).toEqual(["text/plain"]);
   });
 
+  test("MIME types are normalized to their lowercased serialization", async () => {
+    const item = new ClipboardItem({ "TeXt/PlAiN": "upper" });
+    expect(item.types).toEqual(["text/plain"]);
+    expect(await (await item.getType("text/plain")).text()).toBe("upper");
+    expect(ClipboardItem.supports("TEXT/PLAIN")).toBe(true);
+  });
+
   test("types is frozen and preserves insertion order; presentationStyle defaults", () => {
     const item = new ClipboardItem({ "text/plain": "a", "text/html": "<b>a</b>" }, { presentationStyle: "inline" });
     expect(item.types).toEqual(["text/plain", "text/html"]);
@@ -329,10 +336,10 @@ describe("clipboard events", () => {
   // `navigator.clipboard`), failures fire nothing, and "cut" never auto-fires.
   test("copy/paste fire at navigator.clipboard on success, and only on success", async () => {
     // Save before attaching listeners so the save itself is not recorded.
-    let saved: string | null = null;
+    let saved: ClipboardItem[] = [];
     let unavailable = false;
     try {
-      saved = await navigator.clipboard.readText();
+      saved = await navigator.clipboard.read();
     } catch {
       unavailable = true;
     }
@@ -383,7 +390,7 @@ describe("clipboard events", () => {
       navigator.clipboard.removeEventListener("copy", record);
       navigator.clipboard.removeEventListener("paste", record);
       navigator.clipboard.removeEventListener("cut", record);
-      if (saved !== null) await navigator.clipboard.writeText(saved).catch(() => {});
+      if (saved.length > 0) await navigator.clipboard.write(saved).catch(() => {});
     }
   });
 });
@@ -437,9 +444,9 @@ describe("readText / writeText", () => {
   });
 
   test("round-trips text, or rejects with NotAllowedError where there is no system clipboard", async () => {
-    let saved: string | null = null;
+    let saved: ClipboardItem[] = [];
     try {
-      saved = await navigator.clipboard.readText();
+      saved = await navigator.clipboard.read();
     } catch (e) {
       // No reachable clipboard here (e.g. headless Linux with no display):
       // the spec'd failure is a "NotAllowedError" DOMException for both.
@@ -468,9 +475,9 @@ describe("readText / writeText", () => {
       await navigator.clipboard.writeText("");
       expect(await navigator.clipboard.readText()).toBe("");
     } finally {
-      // Put the machine's text back so running this locally doesn't clobber
-      // the developer's clipboard.
-      if (saved !== null) await navigator.clipboard.writeText(saved).catch(() => {});
+      // Put the machine's clipboard back so running this locally doesn't
+      // clobber the developer's clipboard.
+      if (saved.length > 0) await navigator.clipboard.write(saved).catch(() => {});
     }
   });
 });

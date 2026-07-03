@@ -355,18 +355,20 @@ fn write_blobs(global: &JSGlobalObject, mimes: JSValue, blobs: JSValue) -> JsRes
 }
 
 /// Why the platform clipboard is unreachable; each variant carries the
-/// actionable message its `NotAllowedError` rejects with. Only the
-/// helper-program backend constructs the display/helper variants.
+/// actionable message its `NotAllowedError` rejects with. The display and
+/// helper variants only exist on the helper-program platforms.
 #[derive(Clone, Copy)]
-#[cfg_attr(any(target_os = "macos", windows), allow(dead_code))]
 enum Unavailable {
     /// The platform clipboard service failed.
     Platform,
-    /// Helper platforms: neither `$WAYLAND_DISPLAY` nor `$DISPLAY` is set.
+    /// Neither `$WAYLAND_DISPLAY` nor `$DISPLAY` is set.
+    #[cfg(not(any(target_os = "macos", windows)))]
     NoDisplay,
-    /// Helper platforms: a display exists, but no helper program is installed.
+    /// A display exists, but no helper program is installed.
+    #[cfg(not(any(target_os = "macos", windows)))]
     NoHelper,
-    /// Helper platforms: every installed helper failed, hung, or crashed.
+    /// Every installed helper failed, hung, or crashed.
+    #[cfg(not(any(target_os = "macos", windows)))]
     HelperFailed,
 }
 
@@ -374,12 +376,15 @@ impl Unavailable {
     fn message(self) -> &'static [u8] {
         match self {
             Unavailable::Platform => b"The system clipboard is not available.",
+            #[cfg(not(any(target_os = "macos", windows)))]
             Unavailable::NoDisplay => {
                 b"The clipboard requires a Wayland or X11 display, but neither $WAYLAND_DISPLAY nor $DISPLAY is set."
             }
+            #[cfg(not(any(target_os = "macos", windows)))]
             Unavailable::NoHelper => {
                 b"No clipboard helper was found. Install `wl-clipboard` (Wayland), `xclip`, or `xsel` (X11)."
             }
+            #[cfg(not(any(target_os = "macos", windows)))]
             Unavailable::HelperFailed => {
                 b"The clipboard helper program failed to access the clipboard."
             }
@@ -739,22 +744,9 @@ mod platform {
         has_display(env_var::DISPLAY::get())
     }
 
-    /// `timeout(1)` guards against a hung selection owner blocking a helper
-    /// (and this job's promise) forever; skipped if coreutils is not there.
-    fn timeout_prefix() -> Option<&'static [u8]> {
-        static FOUND: std::sync::OnceLock<Option<&'static [u8]>> = std::sync::OnceLock::new();
-        *FOUND.get_or_init(|| {
-            const CANDIDATES: [&[u8]; 2] = [b"/usr/bin/timeout\0", b"/bin/timeout\0"];
-            CANDIDATES.into_iter().find_map(|zpath| {
-                let path = &zpath[..zpath.len() - 1];
-                bun_sys::exists_z(bun_core::ZStr::from_buf(zpath, path.len())).then_some(path)
-            })
-        })
-    }
-
-    /// One helper invocation, classified. `timeout(1)` and the `/bin/sh`
-    /// write wrapper report a missing helper as exit 127/126 and a hung one
-    /// as exit 124; no clipboard helper uses those for a real answer.
+    /// One helper invocation, classified. The `/bin/sh` watchdog wrapper
+    /// reports a missing helper as exit 127/126 and a hung one as 124; no
+    /// clipboard helper uses those for a real answer.
     enum HelperRun {
         NotInstalled,
         TimedOut,
@@ -834,34 +826,65 @@ mod platform {
         list
     }
 
-    /// `None` ⇔ the helper could not be spawned at all (not installed).
-    fn spawn_helper(
-        argv: Vec<Box<[u8]>>,
-        stdout: spawn_sync::SyncStdio,
+    /// POSIX single-quoting: every byte is literal inside `'…'` except `'`,
+    /// which becomes `'\''`.
+    fn shell_quote_into(command: &mut Vec<u8>, word: &[u8]) {
+        command.push(b'\'');
+        for &byte in word {
+            if byte == b'\'' {
+                command.extend_from_slice(b"'\\''");
+            } else {
+                command.push(byte);
+            }
+        }
+        command.push(b'\'');
+    }
+
+    /// Runs one helper through `/bin/sh` with a 10s watchdog (a hung X11
+    /// selection owner would otherwise block forever): a killed helper
+    /// surfaces as exit 124 and a missing one as 127, both for `classify`.
+    /// `None` ⇔ `/bin/sh` itself could not be spawned.
+    fn run_helper(
+        argv: &[Box<[u8]>],
+        redirect_from: Option<&[u8]>,
+        capture_stdout: bool,
     ) -> Option<spawn_sync::Result> {
+        let mut command = Vec::<u8>::with_capacity(192);
+        for (i, part) in argv.iter().enumerate() {
+            if i > 0 {
+                command.push(b' ');
+            }
+            shell_quote_into(&mut command, part);
+        }
+        if let Some(path) = redirect_from {
+            command.extend_from_slice(b" < ");
+            shell_quote_into(&mut command, path);
+        }
+        command.extend_from_slice(
+            b" & c=$!; { sleep 10; kill \"$c\"; } 2>/dev/null & w=$!; wait \"$c\"; s=$?; kill \"$w\" 2>/dev/null; [ \"$s\" -ge 128 ] && s=124; exit \"$s\"",
+        );
+        let stdio = |capture: bool| {
+            if capture {
+                spawn_sync::SyncStdio::Buffer
+            } else {
+                spawn_sync::SyncStdio::Ignore
+            }
+        };
         spawn_sync::spawn(&spawn_sync::Options {
-            argv,
+            argv: vec![
+                Box::from(b"/bin/sh".as_slice()),
+                Box::from(b"-c".as_slice()),
+                command.into_boxed_slice(),
+            ],
             cwd: Box::from(b".".as_slice()),
             stdin: spawn_sync::SyncStdio::Ignore,
-            stdout,
+            stdout: stdio(capture_stdout),
             stderr: spawn_sync::SyncStdio::Ignore,
             envp: None,
             ..Default::default()
         })
         .ok()
         .and_then(|result| result.ok())
-    }
-
-    /// The helper argv, wrapped in `timeout 10` when available.
-    fn helper_argv(argv: Vec<Box<[u8]>>) -> Vec<Box<[u8]>> {
-        let Some(timeout) = timeout_prefix() else {
-            return argv;
-        };
-        let mut wrapped: Vec<Box<[u8]>> = Vec::with_capacity(argv.len() + 2);
-        wrapped.push(Box::from(timeout));
-        wrapped.push(Box::from(b"10".as_slice()));
-        wrapped.extend(argv);
-        wrapped
     }
 
     pub(super) fn read_type(mime: Mime) -> Result<Option<Vec<u8>>, Unavailable> {
@@ -872,9 +895,8 @@ mod platform {
         let mut ran = 0usize;
         let mut clean_failures = 0usize;
         for argv in list {
-            let Some(result) = spawn_helper(helper_argv(argv), spawn_sync::SyncStdio::Buffer)
-            else {
-                continue; // not installed
+            let Some(result) = run_helper(&argv, None, true) else {
+                continue; // `/bin/sh` unavailable
             };
             match classify(result) {
                 HelperRun::Succeeded(stdout) => return Ok(Some(stdout)),
@@ -897,20 +919,6 @@ mod platform {
         Ok(None)
     }
 
-    /// POSIX single-quoting: every byte is literal inside `'…'` except `'`,
-    /// which becomes `'\''`.
-    fn shell_quote_into(command: &mut Vec<u8>, word: &[u8]) {
-        command.push(b'\'');
-        for &byte in word {
-            if byte == b'\'' {
-                command.extend_from_slice(b"'\\''");
-            } else {
-                command.push(byte);
-            }
-        }
-        command.push(b'\'');
-    }
-
     pub(super) fn write_types(items: &[(Mime, &[u8])]) -> Result<(), Unavailable> {
         // The C++ layer rejects multi-representation items on the helper
         // platforms (the one-shot helpers can only own one).
@@ -931,19 +939,7 @@ mod platform {
         let mut ran = 0usize;
         let mut wrote = false;
         for argv in list {
-            let mut command = Vec::<u8>::from(b"exec".as_slice());
-            for part in &helper_argv(argv) {
-                command.push(b' ');
-                shell_quote_into(&mut command, part);
-            }
-            command.extend_from_slice(b" < ");
-            shell_quote_into(&mut command, &temp_path);
-            let sh: Vec<Box<[u8]>> = vec![
-                Box::from(b"/bin/sh".as_slice()),
-                Box::from(b"-c".as_slice()),
-                command.into_boxed_slice(),
-            ];
-            let Some(result) = spawn_helper(sh, spawn_sync::SyncStdio::Ignore) else {
+            let Some(result) = run_helper(&argv, Some(&temp_path), false) else {
                 continue;
             };
             match classify(result) {
@@ -985,8 +981,14 @@ mod platform {
             )
             .as_bytes(),
         );
-        let file = File::openat(Fd::cwd(), &path, O::WRONLY | O::CREAT | O::EXCL, 0o600).ok()?;
-        file.write_all(bytes).ok()?;
+        let Ok(file) = File::openat(Fd::cwd(), &path, O::WRONLY | O::CREAT | O::EXCL, 0o600) else {
+            return None;
+        };
+        if file.write_all(bytes).is_err() {
+            drop(file);
+            unlink_temp_file(&path);
+            return None;
+        }
         Some(path)
     }
 

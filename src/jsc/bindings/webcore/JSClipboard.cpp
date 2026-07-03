@@ -62,7 +62,9 @@ extern "C" bool Bun__Clipboard__blobNeedsToReadFile(JSC::EncodedJSValue blob);
 
 bool clipboardSupportsType(const WTF::String& type)
 {
-    auto typeString = Bun::toString(type);
+    // MIME types are compared by their lowercased serialization.
+    auto lowered = type.convertToASCIILowercase();
+    auto typeString = Bun::toString(lowered);
     return Bun__Clipboard__supportsType(&typeString);
 }
 

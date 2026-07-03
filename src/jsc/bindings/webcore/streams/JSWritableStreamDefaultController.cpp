@@ -29,9 +29,8 @@ using namespace JSC;
 
 // WebIDL "invoke a callback function" with a Promise<T> return type: an abrupt completion is
 // converted into a rejected promise (a completion-record conversion), never a synchronous throw.
-static JSC::JSPromise* invokePromiseReturningMethod(JSC::JSGlobalObject* globalObject, JSC::JSObject* method, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer& args)
+static JSC::JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* method, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer& args)
 {
-    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSValue result;
     JSC::JSValue thrown;
@@ -53,9 +52,8 @@ static JSC::JSPromise* invokePromiseReturningMethod(JSC::JSGlobalObject* globalO
 // The [[writeAlgorithm]] dispatch. The reachable SinkKind set on a writable default
 // controller is {JavaScript, Nothing, Transform} (CrossRealm: transferable streams are not
 // implemented, so setUpCrossRealmTransformWritable never creates one).
-static JSC::JSPromise* performWriteAlgorithm(JSC::JSGlobalObject* globalObject, JSWritableStreamDefaultController* controller, JSC::JSValue chunk)
+static JSC::JSPromise* performWriteAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSWritableStreamDefaultController* controller, JSC::JSValue chunk)
 {
-    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     switch (controller->m_algorithms.kind) {
     case SinkKind::JavaScript: {
@@ -69,7 +67,7 @@ static JSC::JSPromise* performWriteAlgorithm(JSC::JSGlobalObject* globalObject, 
             JSC::throwOutOfMemoryError(globalObject, scope);
             return nullptr;
         }
-        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, writeMethod, controller->m_algorithms.underlyingObject.get(), args));
+        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, writeMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SinkKind::Nothing:
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
@@ -83,9 +81,8 @@ static JSC::JSPromise* performWriteAlgorithm(JSC::JSGlobalObject* globalObject, 
 }
 
 // The [[closeAlgorithm]] dispatch. Same reachable kind set as the write dispatch.
-static JSC::JSPromise* performCloseAlgorithm(JSC::JSGlobalObject* globalObject, JSWritableStreamDefaultController* controller)
+static JSC::JSPromise* performCloseAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSWritableStreamDefaultController* controller)
 {
-    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     switch (controller->m_algorithms.kind) {
     case SinkKind::JavaScript: {
@@ -97,7 +94,7 @@ static JSC::JSPromise* performCloseAlgorithm(JSC::JSGlobalObject* globalObject, 
             JSC::throwOutOfMemoryError(globalObject, scope);
             return nullptr;
         }
-        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, closeMethod, controller->m_algorithms.underlyingObject.get(), args));
+        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, closeMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SinkKind::Nothing:
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
@@ -111,9 +108,8 @@ static JSC::JSPromise* performCloseAlgorithm(JSC::JSGlobalObject* globalObject, 
 }
 
 // The [[abortAlgorithm]] dispatch. Same reachable kind set as the write dispatch.
-static JSC::JSPromise* performAbortAlgorithm(JSC::JSGlobalObject* globalObject, JSWritableStreamDefaultController* controller, JSC::JSValue reason)
+static JSC::JSPromise* performAbortAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSWritableStreamDefaultController* controller, JSC::JSValue reason)
 {
-    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     switch (controller->m_algorithms.kind) {
     case SinkKind::JavaScript: {
@@ -126,7 +122,7 @@ static JSC::JSPromise* performAbortAlgorithm(JSC::JSGlobalObject* globalObject, 
             JSC::throwOutOfMemoryError(globalObject, scope);
             return nullptr;
         }
-        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, abortMethod, controller->m_algorithms.underlyingObject.get(), args));
+        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, abortMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SinkKind::Nothing:
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
@@ -300,7 +296,7 @@ JSPromise* JSWritableStreamDefaultController::abortSteps(JSGlobalObject* globalO
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSPromise* result = performAbortAlgorithm(globalObject, this, reason);
+    JSPromise* result = performAbortAlgorithm(vm, globalObject, this, reason);
     RETURN_IF_EXCEPTION(scope, nullptr);
     writableStreamDefaultControllerClearAlgorithms(this);
     return result;
@@ -581,7 +577,7 @@ void writableStreamDefaultControllerProcessClose(JSGlobalObject* globalObject, J
         controller->m_queue.dequeueValue(locker);
     }
     ASSERT(controller->m_queue.isEmpty());
-    JSPromise* sinkClosePromise = performCloseAlgorithm(globalObject, controller);
+    JSPromise* sinkClosePromise = performCloseAlgorithm(vm, globalObject, controller);
     RETURN_IF_EXCEPTION(scope, );
     writableStreamDefaultControllerClearAlgorithms(controller);
     auto* runtime = JSStreamsRuntime::from(globalObject);
@@ -593,7 +589,7 @@ void writableStreamDefaultControllerProcessWrite(JSGlobalObject* globalObject, J
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     writableStreamMarkFirstWriteRequestInFlight(vm, controller->m_stream.get());
-    JSPromise* sinkWritePromise = performWriteAlgorithm(globalObject, controller, chunk);
+    JSPromise* sinkWritePromise = performWriteAlgorithm(vm, globalObject, controller, chunk);
     RETURN_IF_EXCEPTION(scope, );
     auto* runtime = JSStreamsRuntime::from(globalObject);
     sinkWritePromise->performPromiseThenWithContext(vm, globalObject, runtime->onWSSinkWriteFulfilled(), runtime->onWSSinkWriteRejected(), jsUndefined(), controller);

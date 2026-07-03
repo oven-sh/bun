@@ -1,6 +1,16 @@
-// Streaming throughput (MB/s) for Web Streams: 64 KiB chunks, 32 MiB per pass.
-// Not mitata: each scenario is timed end-to-end over the whole payload so the
-// number is directly comparable across runtimes (best of RUNS passes).
+// Web Streams throughput: 64 KiB chunks, 32 MiB per pass, best of RUNS passes,
+// timed end-to-end so numbers are directly comparable across runtimes.
+//
+// Two source families:
+// - "shared chunk" scenarios enqueue the SAME Uint8Array object every time.
+//   Default streams pass chunks by reference (no engine copies them), so these
+//   rows measure per-chunk machinery overhead only; they are reported as
+//   chunks/sec (with ns/chunk), NOT MB/s, because no payload bytes move.
+// - "fresh buffers" scenarios allocate and fill a new chunk per enqueue (what a
+//   socket or file source produces), so their MB/s is bounded by real memory
+//   work and is meaningful as throughput.
+// Consumer scenarios (arrayBuffer/text/readableStreamTo*) always materialize
+// their output, so they report MB/s.
 const CHUNK = 64 * 1024;
 const CHUNKS = 512; // 32 MiB
 const RUNS = 5;
@@ -13,6 +23,17 @@ const byteSource = () => {
   return new ReadableStream({
     pull(c) {
       if (i++ < CHUNKS) c.enqueue(chunk);
+      else c.close();
+    },
+  });
+};
+// A fresh, written-to buffer per chunk: the shape real byte sources (sockets,
+// files) produce. Bounded by allocation + memory-touch bandwidth.
+const freshSource = () => {
+  let i = 0;
+  return new ReadableStream({
+    pull(c) {
+      if (i++ < CHUNKS) c.enqueue(new Uint8Array(CHUNK).fill(i & 0xff));
       else c.close();
     },
   });
@@ -53,14 +74,30 @@ const drain = async rs => {
   }
 };
 
+// Scenario names listed here are reference-passing ("shared chunk") and are
+// reported as chunks/sec instead of MB/s.
+const SHARED_CHUNK_SCENARIOS = new Set([
+  "reader.read() loop (shared chunk)",
+  "for await (shared chunk)",
+  "pipeTo(WritableStream) (shared chunk)",
+  "pipeThrough(TransformStream) (shared chunk)",
+  "tee + drain both (shared chunk)",
+]);
+
 const scenarios = {
-  "reader.read() loop": () => drain(byteSource()),
-  "for await": async () => {
+  "reader.read() loop (shared chunk)": () => drain(byteSource()),
+  "reader.read() loop (fresh buffers)": () => drain(freshSource()),
+  "for await (shared chunk)": async () => {
     let n = 0;
     for await (const c of byteSource()) n += c.length;
     return n;
   },
-  "pipeTo(WritableStream)": async () => {
+  "for await (fresh buffers)": async () => {
+    let n = 0;
+    for await (const c of freshSource()) n += c.length;
+    return n;
+  },
+  "pipeTo(WritableStream) (shared chunk)": async () => {
     let n = 0;
     await byteSource().pipeTo(
       new WritableStream({
@@ -71,9 +108,26 @@ const scenarios = {
     );
     return n;
   },
-  "pipeThrough(TransformStream)": () => drain(byteSource().pipeThrough(new TransformStream())),
-  "tee + drain both": async () => {
+  "pipeTo(WritableStream) (fresh buffers)": async () => {
+    let n = 0;
+    await freshSource().pipeTo(
+      new WritableStream({
+        write(c) {
+          n += c.length;
+        },
+      }),
+    );
+    return n;
+  },
+  "pipeThrough(TransformStream) (shared chunk)": () => drain(byteSource().pipeThrough(new TransformStream())),
+  "pipeThrough(TransformStream) (fresh buffers)": () => drain(freshSource().pipeThrough(new TransformStream())),
+  "tee + drain both (shared chunk)": async () => {
     const [a, b] = byteSource().tee();
+    const [x] = await Promise.all([drain(a), drain(b)]);
+    return x;
+  },
+  "tee + drain both (fresh buffers)": async () => {
+    const [a, b] = freshSource().tee();
     const [x] = await Promise.all([drain(a), drain(b)]);
     return x;
   },
@@ -134,6 +188,15 @@ for (const [name, fn] of Object.entries(scenarios)) {
     await fn();
     best = Math.min(best, performance.now() - t0);
   }
-  const mbps = BYTES / 1024 / 1024 / (best / 1000);
-  console.log(`${name.padEnd(42)} ${mbps.toFixed(0).padStart(6)} MB/s  (${best.toFixed(1)} ms)`);
+  if (SHARED_CHUNK_SCENARIOS.has(name)) {
+    // Reference-passing: no payload bytes move, so MB/s would be misleading.
+    const chunksPerSec = CHUNKS / (best / 1000);
+    const nsPerChunk = (best * 1e6) / CHUNKS;
+    console.log(
+      `${name.padEnd(46)} ${(chunksPerSec / 1e6).toFixed(2).padStart(6)} M chunks/s  (${nsPerChunk.toFixed(0)} ns/chunk, ${best.toFixed(1)} ms)`,
+    );
+  } else {
+    const mbps = BYTES / 1024 / 1024 / (best / 1000);
+    console.log(`${name.padEnd(46)} ${mbps.toFixed(0).padStart(6)} MB/s  (${best.toFixed(1)} ms)`);
+  }
 }

@@ -46,9 +46,8 @@ static WebCore::JSReadableByteStreamController* byteControllerOf(JSReadableStrea
 
 // Detaches [[readIntoRequests]] before dispatch ("set to an empty list, then iterate"): once
 // the requests leave the visited deque the MarkedArgumentBuffer is their only root.
-static void detachReadIntoRequests(JSGlobalObject* globalObject, JSReadableStreamBYOBReader* reader, MarkedArgumentBuffer& out)
+static void detachReadIntoRequests(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStreamBYOBReader* reader, MarkedArgumentBuffer& out)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     {
         WTF::Locker locker { reader->cellLock() };
@@ -66,7 +65,7 @@ void readableStreamBYOBReaderErrorReadIntoRequests(JSGlobalObject* globalObject,
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     MarkedArgumentBuffer readIntoRequests;
-    detachReadIntoRequests(globalObject, reader, readIntoRequests);
+    detachReadIntoRequests(vm, globalObject, reader, readIntoRequests);
     RETURN_IF_EXCEPTION(scope, void());
     for (size_t i = 0; i < readIntoRequests.size(); ++i) {
         uncheckedDowncast<WebCore::JSReadIntoRequest>(readIntoRequests.at(i))->errorSteps(globalObject, error);
@@ -115,9 +114,8 @@ struct BYOBReadArguments {
     JSC::JSArrayBufferView* view { nullptr };
     uint64_t min { 1 };
 };
-static BYOBReadArguments convertBYOBReadArguments(JSGlobalObject* globalObject, JSValue viewValue, JSValue options)
+static BYOBReadArguments convertBYOBReadArguments(JSC::VM& vm, JSGlobalObject* globalObject, JSValue viewValue, JSValue options)
 {
-    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     BYOBReadArguments result;
     result.view = dynamicDowncast<JSArrayBufferView>(viewValue);
@@ -230,9 +228,8 @@ template<> void JSReadableStreamBYOBReaderConstructor::finishCreation(VM& vm, JS
     m_instanceStructure.set(vm, this, getDOMStructure<JSReadableStreamBYOBReader>(vm, globalObject));
 }
 
-static Structure* structureForNewTarget(JSReadableStreamBYOBReaderConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
+static Structure* structureForNewTarget(JSC::VM& vm, JSReadableStreamBYOBReaderConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
     if (newTarget == constructor) [[likely]]
         return constructor->instanceStructure();
 
@@ -255,7 +252,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamBYOBRead
     if (!stream)
         return throwVMTypeError(lexicalGlobalObject, scope, "ReadableStreamBYOBReader constructor requires a ReadableStream as its first argument"_s);
 
-    auto* structure = structureForNewTarget(constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
+    auto* structure = structureForNewTarget(vm, constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
     RETURN_IF_EXCEPTION(scope, {});
     auto* reader = JSReadableStreamBYOBReader::create(vm, structure);
     setUpReadableStreamBYOBReader(lexicalGlobalObject, reader, stream);
@@ -405,7 +402,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBReaderPrototypeFunction_read, (JSGl
     BYOBReadArguments arguments;
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        arguments = convertBYOBReadArguments(lexicalGlobalObject, callFrame->argument(0), callFrame->argument(1));
+        arguments = convertBYOBReadArguments(vm, lexicalGlobalObject, callFrame->argument(0), callFrame->argument(1));
         if (catchScope.exception()) [[unlikely]] {
             JSValue thrown = takeAbruptCompletion(lexicalGlobalObject, catchScope);
             if (thrown.isEmpty())

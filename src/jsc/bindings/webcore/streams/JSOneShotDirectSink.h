@@ -54,6 +54,8 @@ public:
     // The capability promise consumeDirectStreamToArrayBuffer returned; end()/close() settle
     // it (and the onConsumeDirectToArrayBufferPull* reactions settle it on the pull's promise).
     JSC::WriteBarrier<JSC::JSPromise> m_capabilityPromise;
+    // The underlying source's optional close() method, invoked by end()/close().
+    JSC::WriteBarrier<JSC::Unknown> m_closeFunction;
     // Set by end()/close(): later write()/end()/close()/flush() calls are no-ops.
     bool m_closed { false };
     // true ⇒ resolve with a Uint8Array (toBytes); false ⇒ an ArrayBuffer (toArrayBuffer).

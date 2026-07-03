@@ -140,9 +140,8 @@ void JSReadableStreamAsyncIterator::visitChildrenImpl(JSCell* cell, Visitor& vis
 
 // "Get the next iteration result": the read request's chunk/close/error steps
 // (JSReadRequest.cpp, AsyncIterator kind) settle the fresh promise carried at field 1.
-static JSPromise* runAsyncIteratorNextSteps(JSGlobalObject* globalObject, JSReadableStreamAsyncIterator* iterator)
+static JSPromise* runAsyncIteratorNextSteps(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStreamAsyncIterator* iterator)
 {
-    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (iterator->m_isFinished) {
@@ -168,9 +167,8 @@ static JSPromise* runAsyncIteratorNextSteps(JSGlobalObject* globalObject, JSRead
 }
 
 // "Asynchronous iterator return", wrapped per Web IDL: the result fulfills with { value, done: true }.
-static JSPromise* runAsyncIteratorReturnSteps(JSGlobalObject* globalObject, JSReadableStreamAsyncIterator* iterator, JSValue value)
+static JSPromise* runAsyncIteratorReturnSteps(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStreamAsyncIterator* iterator, JSValue value)
 {
-    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (iterator->m_isFinished) {
@@ -224,7 +222,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamAsyncIteratorPrototypeFunction_next, (J
         return JSValue::encode(chained);
     }
 
-    auto* promise = runAsyncIteratorNextSteps(globalObject, iterator);
+    auto* promise = runAsyncIteratorNextSteps(vm, globalObject, iterator);
     RETURN_IF_EXCEPTION(scope, {});
     iterator->m_ongoingPromise.set(vm, iterator, promise);
     return JSValue::encode(promise);
@@ -251,7 +249,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamAsyncIteratorPrototypeFunction_return, 
         return JSValue::encode(chained);
     }
 
-    auto* promise = runAsyncIteratorReturnSteps(globalObject, iterator, value);
+    auto* promise = runAsyncIteratorReturnSteps(vm, globalObject, iterator, value);
     RETURN_IF_EXCEPTION(scope, {});
     iterator->m_ongoingPromise.set(vm, iterator, promise);
     return JSValue::encode(promise);
@@ -267,7 +265,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIteratorNextAfterOngoingSett
     auto* iterator = dynamicDowncast<JSReadableStreamAsyncIterator>(callFrame->argument(1));
     if (!iterator)
         return JSValue::encode(jsUndefined());
-    auto* promise = runAsyncIteratorNextSteps(globalObject, iterator);
+    auto* promise = runAsyncIteratorNextSteps(vm, globalObject, iterator);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(promise);
 }
@@ -280,7 +278,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIteratorReturnAfterOngoingSe
     if (!context)
         return JSValue::encode(jsUndefined());
     auto* iterator = uncheckedDowncast<JSReadableStreamAsyncIterator>(context->getInternalField(0));
-    auto* promise = runAsyncIteratorReturnSteps(globalObject, iterator, context->getInternalField(1));
+    auto* promise = runAsyncIteratorReturnSteps(vm, globalObject, iterator, context->getInternalField(1));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(promise);
 }

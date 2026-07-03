@@ -30,9 +30,8 @@ using namespace JSC;
 
 // WebIDL "invoke a callback function" with a Promise<T> return type: an abrupt completion is
 // converted into a rejected promise (a completion-record conversion), never a synchronous throw.
-static JSC::JSPromise* invokePromiseReturningMethod(JSC::JSGlobalObject* globalObject, JSC::JSObject* method, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer& args)
+static JSC::JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* method, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer& args)
 {
-    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSValue result;
     JSC::JSValue thrown;
@@ -53,9 +52,8 @@ static JSC::JSPromise* invokePromiseReturningMethod(JSC::JSGlobalObject* globalO
 
 // The [[pullAlgorithm]] dispatch. ByteTeeBranch is byte-controller-only and CrossRealm sources
 // are never created (transferable streams are unimplemented); the switch is total over SourceKind.
-static JSC::JSPromise* performDefaultControllerPullAlgorithm(JSC::JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller)
+static JSC::JSPromise* performDefaultControllerPullAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller)
 {
-    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     switch (controller->m_algorithms.kind) {
     case SourceKind::JavaScript: {
@@ -69,7 +67,7 @@ static JSC::JSPromise* performDefaultControllerPullAlgorithm(JSC::JSGlobalObject
             return nullptr;
         }
         StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
-        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, pullMethod, controller->m_algorithms.underlyingObject.get(), args));
+        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, pullMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SourceKind::Nothing:
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
@@ -90,9 +88,8 @@ static JSC::JSPromise* performDefaultControllerPullAlgorithm(JSC::JSGlobalObject
 }
 
 // The [[cancelAlgorithm]] dispatch. Same reachable kind set as the pull dispatch.
-static JSC::JSPromise* performDefaultControllerCancelAlgorithm(JSC::JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSC::JSValue reason)
+static JSC::JSPromise* performDefaultControllerCancelAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSC::JSValue reason)
 {
-    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     switch (controller->m_algorithms.kind) {
     case SourceKind::JavaScript: {
@@ -106,7 +103,7 @@ static JSC::JSPromise* performDefaultControllerCancelAlgorithm(JSC::JSGlobalObje
             return nullptr;
         }
         StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
-        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, cancelMethod, controller->m_algorithms.underlyingObject.get(), args));
+        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, cancelMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SourceKind::Nothing:
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
@@ -292,7 +289,7 @@ JSPromise* JSReadableStreamDefaultController::cancelSteps(JSGlobalObject* global
         WTF::Locker locker { cellLock() };
         m_queue.resetQueue(locker);
     }
-    JSPromise* result = performDefaultControllerCancelAlgorithm(globalObject, this, reason);
+    JSPromise* result = performDefaultControllerCancelAlgorithm(vm, globalObject, this, reason);
     RETURN_IF_EXCEPTION(scope, nullptr);
     readableStreamDefaultControllerClearAlgorithms(this);
     return result;
@@ -471,7 +468,7 @@ void readableStreamDefaultControllerCallPullIfNeeded(JSGlobalObject* globalObjec
     }
     ASSERT(!controller->m_pullAgain);
     controller->m_pulling = true;
-    JSPromise* pullPromise = performDefaultControllerPullAlgorithm(globalObject, controller);
+    JSPromise* pullPromise = performDefaultControllerPullAlgorithm(vm, globalObject, controller);
     RETURN_IF_EXCEPTION(scope, void());
     auto* runtime = JSStreamsRuntime::from(globalObject);
     pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onRSDefaultControllerPullFulfilled(), runtime->onRSDefaultControllerPullRejected(), jsUndefined(), controller);

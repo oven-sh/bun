@@ -37,9 +37,8 @@ static JSReadableStreamDefaultController* transformReadableController(JSTransfor
 
 // WebIDL callback invoke returning Promise<undefined>: an abrupt completion becomes a
 // rejected promise (a sanctioned completion-record catch). Returns nullptr on VM termination.
-static JSPromise* invokePromiseReturningMethod(JSGlobalObject* globalObject, JSObject* method, JSValue thisValue, const MarkedArgumentBuffer& args)
+static JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* method, JSValue thisValue, const MarkedArgumentBuffer& args)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue result;
     JSValue thrown;
@@ -59,9 +58,8 @@ static JSPromise* invokePromiseReturningMethod(JSGlobalObject* globalObject, JSO
 }
 
 // [[flushAlgorithm]] dispatch (needed only by the default sink close algorithm below).
-static JSPromise* performFlushAlgorithm(JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller)
+static JSPromise* performFlushAlgorithm(JSC::VM& vm, JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     switch (controller->m_transformerKind) {
     case TransformerKind::JavaScript:
@@ -69,7 +67,7 @@ static JSPromise* performFlushAlgorithm(JSGlobalObject* globalObject, JSTransfor
             MarkedArgumentBuffer args;
             args.append(controller);
             ASSERT(!args.hasOverflowed());
-            RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, method, controller->m_transformer.get(), args));
+            RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, method, controller->m_transformer.get(), args));
         }
         break;
     case TransformerKind::Identity:
@@ -83,16 +81,15 @@ static JSPromise* performFlushAlgorithm(JSGlobalObject* globalObject, JSTransfor
 }
 
 // [[cancelAlgorithm]] dispatch. The TextEncoder/TextDecoder kinds have no cancel algorithm.
-static JSPromise* performCancelAlgorithm(JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller, JSValue reason)
+static JSPromise* performCancelAlgorithm(JSC::VM& vm, JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller, JSValue reason)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (controller->m_transformerKind == TransformerKind::JavaScript) {
         if (auto* method = controller->m_cancelMethod.get()) {
             MarkedArgumentBuffer args;
             args.append(reason);
             ASSERT(!args.hasOverflowed());
-            RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, method, controller->m_transformer.get(), args));
+            RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, method, controller->m_transformer.get(), args));
         }
     }
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
@@ -239,7 +236,7 @@ JSPromise* transformStreamDefaultSinkAbortAlgorithm(JSGlobalObject* globalObject
     auto* finishPromise = JSPromise::create(vm, globalObject->promiseStructure());
     controller->m_finishPromise.set(vm, controller, finishPromise);
 
-    auto* cancelPromise = performCancelAlgorithm(globalObject, controller, reason);
+    auto* cancelPromise = performCancelAlgorithm(vm, globalObject, controller, reason);
     RETURN_IF_EXCEPTION(scope, nullptr);
     transformStreamDefaultControllerClearAlgorithms(controller);
 
@@ -259,7 +256,7 @@ JSPromise* transformStreamDefaultSinkCloseAlgorithm(JSGlobalObject* globalObject
     auto* finishPromise = JSPromise::create(vm, globalObject->promiseStructure());
     controller->m_finishPromise.set(vm, controller, finishPromise);
 
-    auto* flushPromise = performFlushAlgorithm(globalObject, controller);
+    auto* flushPromise = performFlushAlgorithm(vm, globalObject, controller);
     RETURN_IF_EXCEPTION(scope, nullptr);
     transformStreamDefaultControllerClearAlgorithms(controller);
 
@@ -278,7 +275,7 @@ JSPromise* transformStreamDefaultSourceCancelAlgorithm(JSGlobalObject* globalObj
     auto* finishPromise = JSPromise::create(vm, globalObject->promiseStructure());
     controller->m_finishPromise.set(vm, controller, finishPromise);
 
-    auto* cancelPromise = performCancelAlgorithm(globalObject, controller, reason);
+    auto* cancelPromise = performCancelAlgorithm(vm, globalObject, controller, reason);
     RETURN_IF_EXCEPTION(scope, nullptr);
     transformStreamDefaultControllerClearAlgorithms(controller);
 

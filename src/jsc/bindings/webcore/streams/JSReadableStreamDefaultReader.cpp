@@ -52,9 +52,8 @@ static WebCore::JSReadableByteStreamController* byteControllerOf(JSReadableStrea
 
 // Detaches [[readRequests]] before dispatch ("set to an empty list, then iterate"): once the
 // requests leave the visited deque the MarkedArgumentBuffer is their only root.
-static void detachReadRequests(JSGlobalObject* globalObject, JSReadableStreamDefaultReader* reader, MarkedArgumentBuffer& out)
+static void detachReadRequests(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStreamDefaultReader* reader, MarkedArgumentBuffer& out)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     {
         WTF::Locker locker { reader->cellLock() };
@@ -72,7 +71,7 @@ void readableStreamDefaultReaderErrorReadRequests(JSGlobalObject* globalObject, 
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     MarkedArgumentBuffer readRequests;
-    detachReadRequests(globalObject, reader, readRequests);
+    detachReadRequests(vm, globalObject, reader, readRequests);
     RETURN_IF_EXCEPTION(scope, void());
     for (size_t i = 0; i < readRequests.size(); ++i) {
         uncheckedDowncast<WebCore::JSReadRequest>(readRequests.at(i))->errorSteps(globalObject, error);
@@ -153,9 +152,8 @@ void readableStreamDefaultReaderRelease(JSGlobalObject* globalObject, JSReadable
 }
 
 // The `{value, size, done}` readMany result shape.
-static JSObject* createReadManyResult(JSGlobalObject* globalObject, JSValue value, double size, bool done)
+static JSObject* createReadManyResult(JSC::VM& vm, JSGlobalObject* globalObject, JSValue value, double size, bool done)
 {
-    auto& vm = getVM(globalObject);
     auto* result = constructEmptyObject(globalObject);
     result->putDirect(vm, vm.propertyNames->value, value);
     result->putDirect(vm, WebCore::builtinNames(vm).sizePublicName(), jsNumber(size));
@@ -171,9 +169,8 @@ static JSObject* createReadManyResult(JSGlobalObject* globalObject, JSValue valu
 // Appends every queued chunk to `into` at `base`, runs the close-if-requested /
 // pull-if-needed step, resets the queue, and returns the PRE-drain [[queueTotalSize]]
 // (the pull decision runs against it, matching the readMany contract).
-static double drainQueueEntriesInto(JSGlobalObject* globalObject, JSReadableStream* stream, JSArray* into, unsigned base)
+static double drainQueueEntriesInto(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* stream, JSArray* into, unsigned base)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool isByte = stream->m_controllerKind == ControllerKind::Byte;
     ASSERT(isByte || stream->m_controllerKind == ControllerKind::Default);
@@ -229,9 +226,8 @@ static double drainQueueEntriesInto(JSGlobalObject* globalObject, JSReadableStre
     return size;
 }
 
-static JSValue drainQueueForReadMany(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue headChunk)
+static JSValue drainQueueForReadMany(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* stream, JSValue headChunk)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool isByte = stream->m_controllerKind == ControllerKind::Byte;
     size_t queueLength = isByte ? byteControllerOf(stream)->m_queue.size() : defaultControllerOf(stream)->m_queue.size();
@@ -242,9 +238,9 @@ static JSValue drainQueueForReadMany(JSGlobalObject* globalObject, JSReadableStr
         values->putDirectIndex(globalObject, 0, headChunk);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    double size = drainQueueEntriesInto(globalObject, stream, values, base);
+    double size = drainQueueEntriesInto(vm, globalObject, stream, values, base);
     RETURN_IF_EXCEPTION(scope, {});
-    return createReadManyResult(globalObject, values, size, false);
+    return createReadManyResult(vm, globalObject, values, size, false);
 }
 
 // The buffered-consumer pump step: bulk-appends everything queued to `chunks`; when the
@@ -270,7 +266,7 @@ ConsumerFillStep readableStreamDefaultReaderFillFromQueue(JSGlobalObject* global
         bool isByte = stream->m_controllerKind == ControllerKind::Byte;
         bool queueEmpty = isByte ? byteControllerOf(stream)->m_queue.isEmpty() : defaultControllerOf(stream)->m_queue.isEmpty();
         if (!queueEmpty) {
-            drainQueueEntriesInto(globalObject, stream, chunks, chunks->length());
+            drainQueueEntriesInto(vm, globalObject, stream, chunks, chunks->length());
             RETURN_IF_EXCEPTION(scope, ConsumerFillStep::Done);
             continue;
         }
@@ -289,23 +285,21 @@ ConsumerFillStep readableStreamDefaultReaderFillFromQueue(JSGlobalObject* global
     }
 }
 
-static JSValue emptyDoneReadManyResult(JSGlobalObject* globalObject)
+static JSValue emptyDoneReadManyResult(JSC::VM& vm, JSGlobalObject* globalObject)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* values = constructEmptyArray(globalObject, nullptr, 0);
     RETURN_IF_EXCEPTION(scope, {});
-    return createReadManyResult(globalObject, values, 0, true);
+    return createReadManyResult(vm, globalObject, values, 0, true);
 }
 
 // The onReadManyPullFulfilled continuation: `result` is the `{value, done}` the spec pull
 // resolved, prepended to whatever that pull enqueued.
-static JSValue readManyAfterPull(JSGlobalObject* globalObject, JSReadableStreamDefaultReader* reader, JSValue result)
+static JSValue readManyAfterPull(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStreamDefaultReader* reader, JSValue result)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!result.isObject()) [[unlikely]]
-        RELEASE_AND_RETURN(scope, emptyDoneReadManyResult(globalObject));
+        RELEASE_AND_RETURN(scope, emptyDoneReadManyResult(vm, globalObject));
     JSValue chunk = asObject(result)->get(globalObject, vm.propertyNames->value);
     RETURN_IF_EXCEPTION(scope, {});
     JSValue done = asObject(result)->get(globalObject, vm.propertyNames->done);
@@ -317,7 +311,7 @@ static JSValue readManyAfterPull(JSGlobalObject* globalObject, JSReadableStreamD
             values->putDirectIndex(globalObject, 0, chunk);
             RETURN_IF_EXCEPTION(scope, {});
         }
-        return createReadManyResult(globalObject, values, 0, true);
+        return createReadManyResult(vm, globalObject, values, 0, true);
     }
     // The reader can have been released by the user pull that produced the chunk.
     auto* stream = reader->m_stream.get();
@@ -326,19 +320,18 @@ static JSValue readManyAfterPull(JSGlobalObject* globalObject, JSReadableStreamD
         RETURN_IF_EXCEPTION(scope, {});
         values->putDirectIndex(globalObject, 0, chunk);
         RETURN_IF_EXCEPTION(scope, {});
-        return createReadManyResult(globalObject, values, 1, false);
+        return createReadManyResult(vm, globalObject, values, 1, false);
     }
-    RELEASE_AND_RETURN(scope, drainQueueForReadMany(globalObject, stream, chunk));
+    RELEASE_AND_RETURN(scope, drainQueueForReadMany(vm, globalObject, stream, chunk));
 }
 
 // The onReadManyDirectPullFulfilled continuation: maps the direct pump's `{done, value}`
 // into the readMany result shape.
-static JSValue readManyAfterDirectPull(JSGlobalObject* globalObject, JSValue result)
+static JSValue readManyAfterDirectPull(JSC::VM& vm, JSGlobalObject* globalObject, JSValue result)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!result.isObject()) [[unlikely]]
-        RELEASE_AND_RETURN(scope, emptyDoneReadManyResult(globalObject));
+        RELEASE_AND_RETURN(scope, emptyDoneReadManyResult(vm, globalObject));
     JSValue chunk = asObject(result)->get(globalObject, vm.propertyNames->value);
     RETURN_IF_EXCEPTION(scope, {});
     JSValue done = asObject(result)->get(globalObject, vm.propertyNames->done);
@@ -351,7 +344,7 @@ static JSValue readManyAfterDirectPull(JSGlobalObject* globalObject, JSValue res
         values->putDirectIndex(globalObject, 0, chunk);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    return createReadManyResult(globalObject, values, isDone ? 0 : 1, !!isDone);
+    return createReadManyResult(vm, globalObject, values, isDone ? 0 : 1, !!isDone);
 }
 
 // Bun `reader.readMany()`: `{value, size, done}` synchronously, or a promise of one.
@@ -401,7 +394,7 @@ JSValue readableStreamDefaultReaderReadMany(JSGlobalObject* globalObject, JSRead
         bool isByte = stream->m_controllerKind == ControllerKind::Byte;
         bool queueIsEmpty = isByte ? byteControllerOf(stream)->m_queue.isEmpty() : defaultControllerOf(stream)->m_queue.isEmpty();
         if (!queueIsEmpty)
-            RELEASE_AND_RETURN(scope, drainQueueForReadMany(globalObject, stream, JSValue()));
+            RELEASE_AND_RETURN(scope, drainQueueForReadMany(vm, globalObject, stream, JSValue()));
         if (stream->m_state == ReadableStreamState::Closed)
             break;
         // Queue empty, readable: one spec pull, continued by onReadManyPullFulfilled.
@@ -418,7 +411,7 @@ JSValue readableStreamDefaultReaderReadMany(JSGlobalObject* globalObject, JSRead
         return result;
     }
     }
-    RELEASE_AND_RETURN(scope, emptyDoneReadManyResult(globalObject));
+    RELEASE_AND_RETURN(scope, emptyDoneReadManyResult(vm, globalObject));
 }
 
 } // namespace WebStreams
@@ -739,14 +732,14 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadManyPullFulfilled, (JSGlobalO
     auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(callFrame->argument(1));
     if (!reader) [[unlikely]]
         return JSValue::encode(jsUndefined());
-    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::WebStreams::readManyAfterPull(globalObject, reader, callFrame->argument(0))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::WebStreams::readManyAfterPull(vm, globalObject, reader, callFrame->argument(0))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadManyDirectPullFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::WebStreams::readManyAfterDirectPull(globalObject, callFrame->argument(0))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::WebStreams::readManyAfterDirectPull(vm, globalObject, callFrame->argument(0))));
 }
 
 } // namespace WebCore

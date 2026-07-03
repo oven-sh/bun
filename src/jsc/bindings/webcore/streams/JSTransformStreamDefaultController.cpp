@@ -37,9 +37,8 @@ static JSReadableStreamDefaultController* transformReadableController(JSTransfor
 
 // WebIDL callback invoke returning Promise<undefined>: an abrupt completion becomes a
 // rejected promise (a sanctioned completion-record catch). Returns nullptr on VM termination.
-static JSPromise* invokePromiseReturningMethod(JSGlobalObject* globalObject, JSObject* method, JSValue thisValue, const MarkedArgumentBuffer& args)
+static JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* method, JSValue thisValue, const MarkedArgumentBuffer& args)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue result;
     JSValue thrown;
@@ -60,9 +59,8 @@ static JSPromise* invokePromiseReturningMethod(JSGlobalObject* globalObject, JSO
 
 // The default [[transformAlgorithm]]: enqueue the chunk unchanged; the enqueue's abrupt
 // completion becomes a rejected promise (a sanctioned completion-record catch).
-static JSPromise* defaultTransformAlgorithm(JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller, JSValue chunk)
+static JSPromise* defaultTransformAlgorithm(JSC::VM& vm, JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller, JSValue chunk)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thrown;
     {
@@ -79,9 +77,8 @@ static JSPromise* defaultTransformAlgorithm(JSGlobalObject* globalObject, JSTran
 }
 
 // The [[transformAlgorithm]] dispatch; the switch is total over TransformerKind.
-static JSPromise* performTransformAlgorithm(JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller, JSValue chunk)
+static JSPromise* performTransformAlgorithm(JSC::VM& vm, JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller, JSValue chunk)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     switch (controller->m_transformerKind) {
     case TransformerKind::JavaScript:
@@ -93,7 +90,7 @@ static JSPromise* performTransformAlgorithm(JSGlobalObject* globalObject, JSTran
                 throwOutOfMemoryError(globalObject, scope);
                 return nullptr;
             }
-            RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, transformMethod, controller->m_transformer.get(), args));
+            RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, transformMethod, controller->m_transformer.get(), args));
         }
         break;
     case TransformerKind::Identity:
@@ -103,7 +100,7 @@ static JSPromise* performTransformAlgorithm(JSGlobalObject* globalObject, JSTran
     case TransformerKind::TextDecoder:
         RELEASE_AND_RETURN(scope, textDecoderStreamTransform(globalObject, uncheckedDowncast<JSTextDecoderStream>(controller->m_algorithmContext.get()), controller, chunk));
     }
-    RELEASE_AND_RETURN(scope, defaultTransformAlgorithm(globalObject, controller, chunk));
+    RELEASE_AND_RETURN(scope, defaultTransformAlgorithm(vm, globalObject, controller, chunk));
 }
 
 } // namespace WebStreams
@@ -397,7 +394,7 @@ JSPromise* transformStreamDefaultControllerPerformTransform(JSGlobalObject* glob
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSPromise* transformPromise = performTransformAlgorithm(globalObject, controller, chunk);
+    JSPromise* transformPromise = performTransformAlgorithm(vm, globalObject, controller, chunk);
     RETURN_IF_EXCEPTION(scope, nullptr);
     auto* result = JSPromise::create(vm, globalObject->promiseStructure());
     auto* runtime = JSStreamsRuntime::from(globalObject);

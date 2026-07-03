@@ -1826,7 +1826,7 @@ describe("Bun.readableStreamTo* on an already used stream", () => {
     test(`${consumer} rejects after the stream was consumed by a Bun helper`, async () => {
       const stream = makeStream();
       await Bun.readableStreamToText(stream);
-      expect(Bun[consumer](stream)).rejects.toThrow("ReadableStream has already been used");
+      await expect(Bun[consumer](stream)).rejects.toThrow("ReadableStream has already been used");
     });
   }
 
@@ -1835,19 +1835,19 @@ describe("Bun.readableStreamTo* on an already used stream", () => {
     const reader = stream.getReader();
     while (!(await reader.read()).done) {}
     reader.releaseLock();
-    expect(Bun.readableStreamToText(stream)).rejects.toThrow("ReadableStream has already been used");
+    await expect(Bun.readableStreamToText(stream)).rejects.toThrow("ReadableStream has already been used");
   });
 
   test("rejects after the stream was cancelled", async () => {
     const stream = makeStream();
     await stream.cancel();
-    expect(Bun.readableStreamToArrayBuffer(stream)).rejects.toThrow("ReadableStream has already been used");
+    await expect(Bun.readableStreamToArrayBuffer(stream)).rejects.toThrow("ReadableStream has already been used");
   });
 
   test("still reports a locked stream as locked", async () => {
     const stream = makeStream();
     const reader = stream.getReader();
-    expect(Bun.readableStreamToText(stream)).rejects.toThrow("ReadableStream is locked");
+    await expect(Bun.readableStreamToText(stream)).rejects.toThrow("ReadableStream is locked");
     reader.releaseLock();
   });
 
@@ -1876,7 +1876,7 @@ describe("text consumers reject strings over the string allocation limit", () =>
       if (!caught) throw new Error("expected an out-of-memory error");
       console.log(caught.message);
     `;
-    const proc = Bun.spawn({ cmd: [process.execPath, "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout, stderr, exitCode };
   };

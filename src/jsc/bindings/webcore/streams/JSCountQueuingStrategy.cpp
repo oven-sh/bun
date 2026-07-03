@@ -109,9 +109,8 @@ template<> void JSCountQueuingStrategyConstructor::finishCreation(VM& vm, JSDOMG
     m_instanceStructure.set(vm, this, getDOMStructure<JSCountQueuingStrategy>(vm, globalObject));
 }
 
-static Structure* structureForNewTarget(JSCountQueuingStrategyConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
+static Structure* structureForNewTarget(JSC::VM& vm, JSCountQueuingStrategyConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
     if (newTarget == constructor) [[likely]]
         return constructor->instanceStructure();
 
@@ -123,9 +122,8 @@ static Structure* structureForNewTarget(JSCountQueuingStrategyConstructor* const
 }
 
 // `QueuingStrategyInit init` — `highWaterMark` is a required `unrestricted double` member.
-static double convertQueuingStrategyInit(JSGlobalObject* globalObject, JSValue init)
+static double convertQueuingStrategyInit(JSC::VM& vm, JSGlobalObject* globalObject, JSValue init)
 {
-    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!init.isObject()) {
         if (!init.isUndefinedOrNull()) {
@@ -153,10 +151,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCountQueuingStrategyCo
     if (callFrame->argumentCount() < 1)
         return throwVMError(lexicalGlobalObject, scope, createNotEnoughArgumentsError(lexicalGlobalObject));
 
-    double highWaterMark = convertQueuingStrategyInit(lexicalGlobalObject, callFrame->uncheckedArgument(0));
+    double highWaterMark = convertQueuingStrategyInit(vm, lexicalGlobalObject, callFrame->uncheckedArgument(0));
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto* structure = structureForNewTarget(constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
+    auto* structure = structureForNewTarget(vm, constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(JSCountQueuingStrategy::create(vm, structure, highWaterMark));
 }

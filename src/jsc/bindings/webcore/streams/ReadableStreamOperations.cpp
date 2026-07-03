@@ -83,9 +83,8 @@ static JSReadableStreamReaderBase* teeReader(JSStreamTeeState* teeState)
 
 // [reaction-convention] deferral: runs handler(value, context) as its own microtask,
 // carrying the current async context, without allocating a promise.
-static void queueReactionJob(JSGlobalObject* globalObject, JSFunction* handler, JSValue value, JSValue context)
+static void queueReactionJob(JSC::VM& vm, JSGlobalObject* globalObject, JSFunction* handler, JSValue value, JSValue context)
 {
-    auto& vm = getVM(globalObject);
     JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
     if (asyncContext.isEmpty())
         asyncContext = jsUndefined();
@@ -95,12 +94,11 @@ static void queueReactionJob(JSGlobalObject* globalObject, JSFunction* handler, 
 
 // "Let startPromise be a promise resolved with startResult. Upon fulfillment / rejection of
 // startPromise, ...". A non-object startResult cannot be a thenable, so no promise is needed.
-static void reactToStartResult(JSGlobalObject* globalObject, JSValue startResult, JSFunction* onFulfilled, JSFunction* onRejected, JSCell* context)
+static void reactToStartResult(JSC::VM& vm, JSGlobalObject* globalObject, JSValue startResult, JSFunction* onFulfilled, JSFunction* onRejected, JSCell* context)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!startResult.isObject()) {
-        queueReactionJob(globalObject, onFulfilled, startResult, context);
+        queueReactionJob(vm, globalObject, onFulfilled, startResult, context);
         return;
     }
     auto* startPromise = promiseResolvedWith(globalObject, startResult);
@@ -113,9 +111,8 @@ static void reactToStartResult(JSGlobalObject* globalObject, JSValue startResult
 // then iterate". A MarkedArgumentBuffer is the only GC-visible holder once the requests
 // leave the visited deque.
 template<typename Reader>
-static void detachReadRequests(JSGlobalObject* globalObject, Reader* reader, MarkedArgumentBuffer& out)
+static void detachReadRequests(JSC::VM& vm, JSGlobalObject* globalObject, Reader* reader, MarkedArgumentBuffer& out)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     {
         WTF::Locker locker { reader->cellLock() };
@@ -257,7 +254,7 @@ void readableStreamClose(JSGlobalObject* globalObject, JSReadableStream* stream)
         return;
     auto* defaultReader = static_cast<JSReadableStreamDefaultReader*>(reader);
     MarkedArgumentBuffer readRequests;
-    detachReadRequests(globalObject, defaultReader, readRequests);
+    detachReadRequests(vm, globalObject, defaultReader, readRequests);
     RETURN_IF_EXCEPTION(scope, void());
     for (size_t i = 0; i < readRequests.size(); ++i) {
         uncheckedDowncast<JSReadRequest>(readRequests.at(i))->closeSteps(globalObject);
@@ -355,7 +352,7 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
     if (reader && reader->isBYOB()) {
         auto* byobReader = static_cast<JSReadableStreamBYOBReader*>(reader);
         MarkedArgumentBuffer readIntoRequests;
-        detachReadRequests(globalObject, byobReader, readIntoRequests);
+        detachReadRequests(vm, globalObject, byobReader, readIntoRequests);
         RETURN_IF_EXCEPTION(scope, nullptr);
         for (size_t i = 0; i < readIntoRequests.size(); ++i) {
             uncheckedDowncast<JSReadIntoRequest>(readIntoRequests.at(i))->closeSteps(globalObject, nullptr);
@@ -573,9 +570,8 @@ JSReadableStreamBYOBReader* acquireReadableStreamBYOBReader(JSGlobalObject* glob
 
 // SetUpReadableStreamDefaultController steps 1-8. The caller populated the controller's
 // algorithm slots; the start reaction (steps 10-12) is registered by the caller.
-static void installDefaultController(JSGlobalObject* globalObject, JSReadableStream* stream, JSReadableStreamDefaultController* controller, double highWaterMark)
+static void installDefaultController(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* stream, JSReadableStreamDefaultController* controller, double highWaterMark)
 {
-    auto& vm = getVM(globalObject);
     ASSERT(stream->m_controllerKind == ControllerKind::None && !stream->m_controller);
     controller->m_stream.set(vm, controller, stream);
     {
@@ -596,8 +592,8 @@ void setUpReadableStreamDefaultController(JSGlobalObject* globalObject, JSReadab
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
-    installDefaultController(globalObject, stream, controller, highWaterMark);
-    RELEASE_AND_RETURN(scope, reactToStartResult(globalObject, startResult, runtime->onRSDefaultControllerStartFulfilled(), runtime->onRSDefaultControllerStartRejected(), controller));
+    installDefaultController(vm, globalObject, stream, controller, highWaterMark);
+    RELEASE_AND_RETURN(scope, reactToStartResult(vm, globalObject, startResult, runtime->onRSDefaultControllerStartFulfilled(), runtime->onRSDefaultControllerStartRejected(), controller));
 }
 
 void setUpReadableStreamDefaultControllerFromUnderlyingSource(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue underlyingSource, const UnderlyingSourceDict& dict, double highWaterMark, JSObject* sizeAlgorithm)
@@ -617,7 +613,7 @@ void setUpReadableStreamDefaultControllerFromUnderlyingSource(JSGlobalObject* gl
     if (sizeAlgorithm)
         controller->m_strategySizeAlgorithm.set(vm, controller, sizeAlgorithm);
 
-    installDefaultController(globalObject, stream, controller, highWaterMark);
+    installDefaultController(vm, globalObject, stream, controller, highWaterMark);
 
     JSValue startResult = jsUndefined();
     if (dict.start) {
@@ -628,13 +624,12 @@ void setUpReadableStreamDefaultControllerFromUnderlyingSource(JSGlobalObject* gl
         startResult = JSC::call(globalObject, dict.start, callData, underlyingSource, args);
         RETURN_IF_EXCEPTION(scope, void());
     }
-    RELEASE_AND_RETURN(scope, reactToStartResult(globalObject, startResult, runtime->onRSDefaultControllerStartFulfilled(), runtime->onRSDefaultControllerStartRejected(), controller));
+    RELEASE_AND_RETURN(scope, reactToStartResult(vm, globalObject, startResult, runtime->onRSDefaultControllerStartFulfilled(), runtime->onRSDefaultControllerStartRejected(), controller));
 }
 
 // SetUpReadableByteStreamController steps 1-13.
-static void installByteController(JSGlobalObject* globalObject, JSReadableStream* stream, JSReadableByteStreamController* controller, double highWaterMark, std::optional<uint64_t> autoAllocateChunkSize)
+static void installByteController(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* stream, JSReadableByteStreamController* controller, double highWaterMark, std::optional<uint64_t> autoAllocateChunkSize)
 {
-    auto& vm = getVM(globalObject);
     ASSERT(stream->m_controllerKind == ControllerKind::None && !stream->m_controller);
     if (autoAllocateChunkSize)
         ASSERT(*autoAllocateChunkSize > 0);
@@ -660,8 +655,8 @@ void setUpReadableByteStreamController(JSGlobalObject* globalObject, JSReadableS
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
-    installByteController(globalObject, stream, controller, highWaterMark, autoAllocateChunkSize);
-    RELEASE_AND_RETURN(scope, reactToStartResult(globalObject, startResult, runtime->onRSByteControllerStartFulfilled(), runtime->onRSByteControllerStartRejected(), controller));
+    installByteController(vm, globalObject, stream, controller, highWaterMark, autoAllocateChunkSize);
+    RELEASE_AND_RETURN(scope, reactToStartResult(vm, globalObject, startResult, runtime->onRSByteControllerStartFulfilled(), runtime->onRSByteControllerStartRejected(), controller));
 }
 
 void setUpReadableByteStreamControllerFromUnderlyingSource(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue underlyingSource, const UnderlyingSourceDict& dict, double highWaterMark)
@@ -683,7 +678,7 @@ void setUpReadableByteStreamControllerFromUnderlyingSource(JSGlobalObject* globa
         throwTypeError(globalObject, scope, "autoAllocateChunkSize must be greater than 0"_s);
         return;
     }
-    installByteController(globalObject, stream, controller, highWaterMark, dict.autoAllocateChunkSize);
+    installByteController(vm, globalObject, stream, controller, highWaterMark, dict.autoAllocateChunkSize);
 
     JSValue startResult = jsUndefined();
     if (dict.start) {
@@ -694,7 +689,7 @@ void setUpReadableByteStreamControllerFromUnderlyingSource(JSGlobalObject* globa
         startResult = JSC::call(globalObject, dict.start, callData, underlyingSource, args);
         RETURN_IF_EXCEPTION(scope, void());
     }
-    RELEASE_AND_RETURN(scope, reactToStartResult(globalObject, startResult, runtime->onRSByteControllerStartFulfilled(), runtime->onRSByteControllerStartRejected(), controller));
+    RELEASE_AND_RETURN(scope, reactToStartResult(vm, globalObject, startResult, runtime->onRSByteControllerStartFulfilled(), runtime->onRSByteControllerStartRejected(), controller));
 }
 
 // CreateReadableStream(startAlgorithm, pullAlgorithm, cancelAlgorithm[, highWaterMark[, sizeAlgorithm]])
@@ -738,9 +733,8 @@ JSReadableStream* createReadableByteStream(JSGlobalObject* globalObject, SourceK
 
 // GetMethod(value, propertyName): a [[Get]] on the boxed value (GetV — legal on primitives),
 // yielding undefined for undefined/null and a TypeError only for a non-callable value.
-static JSValue getMethodOnValue(JSGlobalObject* globalObject, JSValue value, PropertyName propertyName, ASCIILiteral notCallableMessage)
+static JSValue getMethodOnValue(JSC::VM& vm, JSGlobalObject* globalObject, JSValue value, PropertyName propertyName, ASCIILiteral notCallableMessage)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue method = value.get(globalObject, propertyName);
     RETURN_IF_EXCEPTION(scope, {});
@@ -756,15 +750,14 @@ static JSValue getMethodOnValue(JSGlobalObject* globalObject, JSValue value, Pro
 // GetIterator(obj, ASYNC). JSC's getAsyncIterator requires an object, but GetIterator does not:
 // primitives (a string) are valid sync iterables here, so ReadableStream.from("ab") must stream
 // its code points. The sync fallback wraps the sync iterator in JSC's AsyncFromSyncIterator.
-static IterationRecord getIteratorAsync(JSGlobalObject* globalObject, JSValue iterable)
+static IterationRecord getIteratorAsync(JSC::VM& vm, JSGlobalObject* globalObject, JSValue iterable)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue asyncMethod = getMethodOnValue(globalObject, iterable, vm.propertyNames->asyncIteratorSymbol, "@@asyncIterator must be a function"_s);
+    JSValue asyncMethod = getMethodOnValue(vm, globalObject, iterable, vm.propertyNames->asyncIteratorSymbol, "@@asyncIterator must be a function"_s);
     RETURN_IF_EXCEPTION(scope, {});
     if (asyncMethod.isUndefined()) {
-        JSValue syncMethod = getMethodOnValue(globalObject, iterable, vm.propertyNames->iteratorSymbol, "@@iterator must be a function"_s);
+        JSValue syncMethod = getMethodOnValue(vm, globalObject, iterable, vm.propertyNames->iteratorSymbol, "@@iterator must be a function"_s);
         RETURN_IF_EXCEPTION(scope, {});
         if (syncMethod.isUndefined()) {
             throwTypeError(globalObject, scope, "The argument to ReadableStream.from() is not iterable: it has no @@asyncIterator or @@iterator method"_s);
@@ -801,7 +794,7 @@ JSReadableStream* readableStreamFromIterable(JSGlobalObject* globalObject, JSVal
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* domGlobalObject = defaultGlobalObject(globalObject);
 
-    IterationRecord iteratorRecord = getIteratorAsync(globalObject, asyncIterable);
+    IterationRecord iteratorRecord = getIteratorAsync(vm, globalObject, asyncIterable);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     auto* context = WebCore::JSStreamFromIterableContext::create(vm, runtime->fromIterableContextStructure(domGlobalObject));
@@ -922,9 +915,8 @@ static EncodedJSValue fromIterableCancelFulfilled(JSGlobalObject* globalObject, 
 
 // Bun: `$structuredCloneForStream(chunk)` — the shared native host function installed as a
 // private static global; the default tee's cloneForBranch2 path is its only caller here.
-static JSValue structuredCloneChunk(JSGlobalObject* globalObject, JSValue chunk)
+static JSValue structuredCloneChunk(JSC::VM& vm, JSGlobalObject* globalObject, JSValue chunk)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* domGlobalObject = defaultGlobalObject(globalObject);
     JSValue cloneFunction = domGlobalObject->get(globalObject, WebCore::builtinNames(vm).structuredCloneForStreamPrivateName());
@@ -989,7 +981,7 @@ static EncodedJSValue defaultTeeChunkStepsMicrotask(JSGlobalObject* globalObject
         JSValue cloneResult;
         {
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            cloneResult = structuredCloneChunk(globalObject, chunk2);
+            cloneResult = structuredCloneChunk(vm, globalObject, chunk2);
             if (catchScope.exception()) [[unlikely]] {
                 JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
                 if (thrown.isEmpty())
@@ -1073,18 +1065,16 @@ std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSGloba
 }
 
 // ReadableByteStreamTee's forwardReaderError(thisReader).
-static void byteTeeForwardReaderError(JSGlobalObject* globalObject, JSStreamTeeState* teeState, JSReadableStreamReaderBase* thisReader)
+static void byteTeeForwardReaderError(JSC::VM& vm, JSGlobalObject* globalObject, JSStreamTeeState* teeState, JSReadableStreamReaderBase* thisReader)
 {
-    auto& vm = getVM(globalObject);
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* context = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), teeState, thisReader);
     thisReader->m_closedPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReturnUndefined(), runtime->onByteTeeReaderClosedRejected(), jsUndefined(), context);
 }
 
 // ReadableByteStreamTee's pullWithDefaultReader.
-static void byteTeePullWithDefaultReader(JSGlobalObject* globalObject, JSStreamTeeState* teeState)
+static void byteTeePullWithDefaultReader(JSC::VM& vm, JSGlobalObject* globalObject, JSStreamTeeState* teeState)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* reader = teeReader(teeState);
@@ -1096,7 +1086,7 @@ static void byteTeePullWithDefaultReader(JSGlobalObject* globalObject, JSStreamT
         auto* defaultReader = acquireReadableStreamDefaultReader(globalObject, teeState->m_stream.get());
         RETURN_IF_EXCEPTION(scope, void());
         teeState->m_reader.set(vm, teeState, defaultReader);
-        byteTeeForwardReaderError(globalObject, teeState, defaultReader);
+        byteTeeForwardReaderError(vm, globalObject, teeState, defaultReader);
         RETURN_IF_EXCEPTION(scope, void());
         reader = defaultReader;
     }
@@ -1105,9 +1095,8 @@ static void byteTeePullWithDefaultReader(JSGlobalObject* globalObject, JSStreamT
 }
 
 // ReadableByteStreamTee's pullWithBYOBReader(view, forBranch2).
-static void byteTeePullWithBYOBReader(JSGlobalObject* globalObject, JSStreamTeeState* teeState, JSArrayBufferView* view, bool forBranch2)
+static void byteTeePullWithBYOBReader(JSC::VM& vm, JSGlobalObject* globalObject, JSStreamTeeState* teeState, JSArrayBufferView* view, bool forBranch2)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* reader = teeReader(teeState);
@@ -1119,7 +1108,7 @@ static void byteTeePullWithBYOBReader(JSGlobalObject* globalObject, JSStreamTeeS
         auto* byobReader = acquireReadableStreamBYOBReader(globalObject, teeState->m_stream.get());
         RETURN_IF_EXCEPTION(scope, void());
         teeState->m_reader.set(vm, teeState, byobReader);
-        byteTeeForwardReaderError(globalObject, teeState, byobReader);
+        byteTeeForwardReaderError(vm, globalObject, teeState, byobReader);
         RETURN_IF_EXCEPTION(scope, void());
         reader = byobReader;
     }
@@ -1147,9 +1136,9 @@ JSPromise* byteTeePullAlgorithm(JSGlobalObject* globalObject, JSStreamTeeState* 
     auto* byobRequest = readableByteStreamControllerGetBYOBRequest(globalObject, byteControllerOf(branchStream));
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!byobRequest)
-        byteTeePullWithDefaultReader(globalObject, teeState);
+        byteTeePullWithDefaultReader(vm, globalObject, teeState);
     else
-        byteTeePullWithBYOBReader(globalObject, teeState, byobRequest->m_view.get(), !!branch);
+        byteTeePullWithBYOBReader(vm, globalObject, teeState, byobRequest->m_view.get(), !!branch);
     RETURN_IF_EXCEPTION(scope, nullptr);
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
@@ -1314,7 +1303,7 @@ std::pair<JSReadableStream*, JSReadableStream*> readableByteStreamTee(JSGlobalOb
     byteControllerOf(branch2)->m_algorithms.teeBranchIndex = 1;
     teeState->m_branch2.set(vm, teeState, branch2);
 
-    byteTeeForwardReaderError(globalObject, teeState, reader);
+    byteTeeForwardReaderError(vm, globalObject, teeState, reader);
     RETURN_IF_EXCEPTION(scope, failure);
     return { branch1, branch2 };
 }

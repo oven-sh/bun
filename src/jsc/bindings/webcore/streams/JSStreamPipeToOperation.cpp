@@ -109,9 +109,8 @@ static void registerPipeReaction(JSGlobalObject* globalObject, JSPromise* promis
 
 // [reaction-convention] deferral: runs handler(value, context) as its own microtask,
 // carrying the current async context, without allocating a promise.
-static void queuePipeReactionJob(JSGlobalObject* globalObject, JSFunction* handler, JSValue value, JSValue context)
+static void queuePipeReactionJob(JSC::VM& vm, JSGlobalObject* globalObject, JSFunction* handler, JSValue value, JSValue context)
 {
-    auto& vm = getVM(globalObject);
     JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
     if (asyncContext.isEmpty())
         asyncContext = jsUndefined();
@@ -145,9 +144,8 @@ static void pipeToLoopStep(JSGlobalObject* globalObject, JSStreamPipeToOperation
 // The pipe's signal abort algorithm: START both actions back-to-back, then wait for ALL of
 // them. The wait-for-all latch is an InternalFieldTuple{op, remaining fulfillments};
 // the FIRST rejection finalizes with its reason (finalize is idempotent).
-static void startPipeAbortBothActions(JSGlobalObject* globalObject, JSStreamPipeToOperation* op, JSValue error)
+static void startPipeAbortBothActions(JSC::VM& vm, JSGlobalObject* globalObject, JSStreamPipeToOperation* op, JSValue error)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSPromise* actions[2] = { nullptr, nullptr };
     unsigned actionCount = 0;
@@ -173,12 +171,10 @@ static void startPipeAbortBothActions(JSGlobalObject* globalObject, JSStreamPipe
     if (!actionCount)
         RELEASE_AND_RETURN(scope, op->finalize(globalObject));
     op->m_shutdownActionPromise.set(vm, op, actions[0]);
+    op->m_pendingShutdownActions = static_cast<uint8_t>(actionCount);
     auto* runtime = JSStreamsRuntime::from(globalObject);
-    JSObject* context = op;
-    if (actionCount > 1)
-        context = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), op, jsNumber(actionCount));
     for (unsigned i = 0; i < actionCount; i++)
-        registerPipeReaction(globalObject, actions[i], runtime->onPipeShutdownActionFulfilled(), runtime->onPipeShutdownActionRejected(), context);
+        registerPipeReaction(globalObject, actions[i], runtime->onPipeShutdownActionFulfilled(), runtime->onPipeShutdownActionRejected(), op);
 }
 
 // spec "shutdown with an action" step 4: perform the pending action exactly once.
@@ -203,7 +199,7 @@ static void performPipeShutdownAction(JSGlobalObject* globalObject, JSStreamPipe
         actionPromise = writableStreamDefaultWriterCloseWithErrorPropagation(globalObject, op->m_writer.get());
         break;
     case JSStreamPipeToOperation::ShutdownAction::AbortBoth:
-        RELEASE_AND_RETURN(scope, startPipeAbortBothActions(globalObject, op, error));
+        RELEASE_AND_RETURN(scope, startPipeAbortBothActions(vm, globalObject, op, error));
     }
     RETURN_IF_EXCEPTION(scope, );
     op->m_shutdownActionPromise.set(vm, op, actionPromise);
@@ -280,7 +276,7 @@ void JSStreamPipeToOperation::shutdownWithAction(JSGlobalObject* globalObject, S
         }
         // Step 3.2's write-drain wait is ALWAYS a reaction ("In parallel"): with no pending
         // write, defer so no shutdown effect is observable inside the pipeTo() call.
-        queuePipeReactionJob(globalObject, JSStreamsRuntime::from(globalObject)->onPipeWritesFinishedForShutdown(), jsUndefined(), this);
+        queuePipeReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onPipeWritesFinishedForShutdown(), jsUndefined(), this);
         return;
     }
     performPipeShutdownAction(globalObject, this);
@@ -455,29 +451,20 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onPipeChunkDeferredWrite, (JSGlobal
     return JSValue::encode(writePromise);
 }
 
-// [reaction-convention] shutdown-action settlement. The context is either the op cell (a
-// single action) or the AbortBoth wait-for-all latch InternalFieldTuple{op, remaining}.
-static JSStreamPipeToOperation* pipeOpFromShutdownActionContext(JSValue contextValue)
-{
-    if (auto* latch = dynamicDowncast<InternalFieldTuple>(contextValue))
-        return dynamicDowncast<JSStreamPipeToOperation>(latch->getInternalField(0));
-    return dynamicDowncast<JSStreamPipeToOperation>(contextValue);
-}
-
+// [reaction-convention] shutdown-action settlement. The context is the op cell; the
+// AbortBoth wait-for-all is the op's m_pendingShutdownActions counter.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onPipeShutdownActionFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue contextValue = callFrame->argument(1);
-    if (auto* latch = dynamicDowncast<InternalFieldTuple>(contextValue)) {
-        int32_t remaining = latch->getInternalField(1).asInt32() - 1;
-        latch->putInternalField(vm, 1, jsNumber(remaining));
-        if (remaining > 0)
-            return JSValue::encode(jsUndefined());
-    }
-    auto* op = pipeOpFromShutdownActionContext(contextValue);
+    auto* op = dynamicDowncast<JSStreamPipeToOperation>(callFrame->argument(1));
     if (!op) [[unlikely]]
         return JSValue::encode(jsUndefined());
+    if (op->m_pendingShutdownActions > 1) {
+        op->m_pendingShutdownActions--;
+        return JSValue::encode(jsUndefined());
+    }
+    op->m_pendingShutdownActions = 0;
     op->onShutdownActionFulfilled(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
@@ -489,9 +476,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onPipeShutdownActionRejected, (JSGl
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* op = pipeOpFromShutdownActionContext(callFrame->argument(1));
+    auto* op = dynamicDowncast<JSStreamPipeToOperation>(callFrame->argument(1));
     if (!op) [[unlikely]]
         return JSValue::encode(jsUndefined());
+    op->m_pendingShutdownActions = 0;
     op->onShutdownActionRejected(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());

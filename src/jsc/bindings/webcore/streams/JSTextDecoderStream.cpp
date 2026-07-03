@@ -118,9 +118,8 @@ template<> void JSTextDecoderStreamConstructor::finishCreation(VM& vm, JSDOMGlob
     m_instanceStructure.set(vm, this, getDOMStructure<JSTextDecoderStream>(vm, globalObject));
 }
 
-static Structure* structureForNewTarget(JSTextDecoderStreamConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
+static Structure* structureForNewTarget(JSC::VM& vm, JSTextDecoderStreamConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
     if (newTarget == constructor) [[likely]]
         return constructor->instanceStructure();
 
@@ -138,7 +137,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextDecoderStreamConst
     auto* constructor = uncheckedDowncast<JSTextDecoderStreamConstructor>(callFrame->jsCallee());
     auto& names = builtinNames(vm);
 
-    auto* structure = structureForNewTarget(constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
+    auto* structure = structureForNewTarget(vm, constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
     RETURN_IF_EXCEPTION(scope, {});
     auto* stream = JSTextDecoderStream::create(vm, structure);
 
@@ -149,8 +148,9 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextDecoderStreamConst
     JSValue label = callFrame->argumentCount() >= 1 ? callFrame->uncheckedArgument(0) : jsNontrivialString(vm, "utf-8"_s);
     bool fatal = false;
     bool ignoreBOM = false;
-    if (callFrame->argumentCount() >= 2) {
-        JSValue options = callFrame->uncheckedArgument(1);
+    JSValue options = callFrame->argument(1);
+    // Web IDL: `optional TextDecoderOptions options = {}` — undefined/null mean defaults.
+    if (!options.isUndefinedOrNull()) {
         JSValue fatalValue = options.get(lexicalGlobalObject, names.fatalPublicName());
         RETURN_IF_EXCEPTION(scope, {});
         fatal = fatalValue.toBoolean(lexicalGlobalObject);
@@ -329,9 +329,8 @@ using WebCore::JSTextDecoderStream;
 
 // `decoder.decode(input, { stream })` on the wrapped TextDecoder. Runs no user JS: the
 // method lives on the TextDecoder's internal prototype. Empty return = it threw.
-static JSValue invokeDecode(JSGlobalObject* globalObject, JSObject* decoder, JSValue input, bool streaming)
+static JSValue invokeDecode(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* decoder, JSValue input, bool streaming)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& names = WebCore::builtinNames(vm);
 
@@ -363,7 +362,7 @@ static JSPromise* decodeAndEnqueue(JSGlobalObject* globalObject, JSTextDecoderSt
     JSValue thrown;
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        decoded = invokeDecode(globalObject, stream->m_decoder.get(), input, streaming);
+        decoded = invokeDecode(vm, globalObject, stream->m_decoder.get(), input, streaming);
         if (catchScope.exception()) [[unlikely]]
             thrown = takeAbruptCompletion(globalObject, catchScope);
     }

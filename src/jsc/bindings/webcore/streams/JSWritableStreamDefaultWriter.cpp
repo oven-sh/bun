@@ -253,9 +253,8 @@ template<> void JSWritableStreamDefaultWriterConstructor::finishCreation(VM& vm,
     m_instanceStructure.set(vm, this, getDOMStructure<JSWritableStreamDefaultWriter>(vm, globalObject));
 }
 
-static Structure* structureForNewTarget(JSWritableStreamDefaultWriterConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
+static Structure* structureForNewTarget(JSC::VM& vm, JSWritableStreamDefaultWriterConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
     if (newTarget == constructor) [[likely]]
         return constructor->instanceStructure();
 
@@ -276,7 +275,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWritableStreamDefaultW
     if (!stream)
         return throwVMTypeError(lexicalGlobalObject, scope, "WritableStreamDefaultWriter constructor requires a WritableStream as its first argument"_s);
 
-    auto* structure = structureForNewTarget(constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
+    auto* structure = structureForNewTarget(vm, constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
     RETURN_IF_EXCEPTION(scope, {});
     auto* writer = JSWritableStreamDefaultWriter::create(vm, structure);
     setUpWritableStreamDefaultWriter(lexicalGlobalObject, writer, stream);

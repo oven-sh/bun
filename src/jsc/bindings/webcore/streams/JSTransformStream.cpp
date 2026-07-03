@@ -117,9 +117,8 @@ template<> void JSTransformStreamConstructor::finishCreation(VM& vm, JSDOMGlobal
     m_instanceStructure.set(vm, this, getDOMStructure<JSTransformStream>(vm, globalObject));
 }
 
-static Structure* structureForNewTarget(JSTransformStreamConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
+static Structure* structureForNewTarget(JSC::VM& vm, JSTransformStreamConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
     if (newTarget == constructor) [[likely]]
         return constructor->instanceStructure();
 
@@ -149,7 +148,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTransformStreamConstru
     auto readableStrategy = convertQueuingStrategyDict(lexicalGlobalObject, callFrame->argument(2));
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto* structure = structureForNewTarget(constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
+    auto* structure = structureForNewTarget(vm, constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
     RETURN_IF_EXCEPTION(scope, {});
     auto* stream = JSTransformStream::create(vm, structure);
 

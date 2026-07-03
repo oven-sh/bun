@@ -97,9 +97,8 @@ struct ConvertedQueuingStrategy {
     bool rawHighWaterMarkIsNumber { false };
 };
 
-static ConvertedQueuingStrategy convertQueuingStrategy(JSGlobalObject* globalObject, JSValue strategy)
+static ConvertedQueuingStrategy convertQueuingStrategy(JSC::VM& vm, JSGlobalObject* globalObject, JSValue strategy)
 {
-    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ConvertedQueuingStrategy result;
     if (strategy.isUndefinedOrNull())
@@ -142,9 +141,8 @@ struct ConvertedUnderlyingSource {
     BunUnderlyingSourceType type { BunUnderlyingSourceType::None };
 };
 
-static ConvertedUnderlyingSource convertUnderlyingSource(JSGlobalObject* globalObject, JSValue underlyingSource)
+static ConvertedUnderlyingSource convertUnderlyingSource(JSC::VM& vm, JSGlobalObject* globalObject, JSValue underlyingSource)
 {
-    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ConvertedUnderlyingSource result;
     if (underlyingSource.isUndefinedOrNull())
@@ -213,9 +211,8 @@ struct ConvertedStreamPipeOptions {
     JSC::JSObject* signal { nullptr };
 };
 
-static ConvertedStreamPipeOptions convertStreamPipeOptions(JSGlobalObject* globalObject, JSValue options)
+static ConvertedStreamPipeOptions convertStreamPipeOptions(JSC::VM& vm, JSGlobalObject* globalObject, JSValue options)
 {
-    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ConvertedStreamPipeOptions result;
     if (options.isUndefinedOrNull())
@@ -312,9 +309,8 @@ template<> void JSReadableStreamConstructor::finishCreation(VM& vm, JSDOMGlobalO
     m_instanceStructure.set(vm, this, getDOMStructure<JSReadableStream>(vm, globalObject));
 }
 
-static Structure* structureForNewTarget(JSReadableStreamConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
+static Structure* structureForNewTarget(JSC::VM& vm, JSReadableStreamConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
     if (newTarget == constructor) [[likely]]
         return constructor->instanceStructure();
 
@@ -339,14 +335,14 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamConstruc
         return throwVMTypeError(lexicalGlobalObject, scope, "ReadableStream constructor takes an object as first argument"_s);
 
     // WebIDL converts the strategy ARGUMENT before the constructor steps convert the source.
-    auto strategy = convertQueuingStrategy(lexicalGlobalObject, callFrame->argument(1));
+    auto strategy = convertQueuingStrategy(vm, lexicalGlobalObject, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto* structure = structureForNewTarget(constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
+    auto* structure = structureForNewTarget(vm, constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
     RETURN_IF_EXCEPTION(scope, {});
     auto* stream = JSReadableStream::create(vm, structure);
 
-    auto source = convertUnderlyingSource(lexicalGlobalObject, underlyingSource);
+    auto source = convertUnderlyingSource(vm, lexicalGlobalObject, underlyingSource);
     RETURN_IF_EXCEPTION(scope, {});
 
     initializeReadableStream(stream);
@@ -605,7 +601,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_pipeThrough, (JSGloba
     if (!transformWritable)
         return throwVMTypeError(lexicalGlobalObject, scope, "The transform's 'writable' property must be a WritableStream"_s);
 
-    auto options = convertStreamPipeOptions(lexicalGlobalObject, callFrame->argument(1));
+    auto options = convertStreamPipeOptions(vm, lexicalGlobalObject, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
 
     if (isReadableStreamLocked(stream))
@@ -634,7 +630,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_pipeTo, (JSGlobalObje
     {
         // WebIDL: a promise-returning operation turns an argument-conversion failure into a rejection.
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        options = convertStreamPipeOptions(lexicalGlobalObject, callFrame->argument(1));
+        options = convertStreamPipeOptions(vm, lexicalGlobalObject, callFrame->argument(1));
         if (catchScope.exception()) [[unlikely]] {
             JSValue thrown = takeAbruptCompletion(lexicalGlobalObject, catchScope);
             if (thrown.isEmpty())

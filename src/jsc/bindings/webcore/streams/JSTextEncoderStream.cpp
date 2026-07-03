@@ -115,9 +115,8 @@ template<> void JSTextEncoderStreamConstructor::finishCreation(VM& vm, JSDOMGlob
     m_instanceStructure.set(vm, this, getDOMStructure<JSTextEncoderStream>(vm, globalObject));
 }
 
-static Structure* structureForNewTarget(JSTextEncoderStreamConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
+static Structure* structureForNewTarget(JSC::VM& vm, JSTextEncoderStreamConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
     if (newTarget == constructor) [[likely]]
         return constructor->instanceStructure();
 
@@ -134,7 +133,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextEncoderStreamConst
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* constructor = uncheckedDowncast<JSTextEncoderStreamConstructor>(callFrame->jsCallee());
 
-    auto* structure = structureForNewTarget(constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
+    auto* structure = structureForNewTarget(vm, constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
     RETURN_IF_EXCEPTION(scope, {});
     auto* stream = JSTextEncoderStream::create(vm, structure);
 
@@ -288,9 +287,8 @@ using WebCore::JSTextEncoderStream;
 
 // `encoder.encode(chunk)` / `encoder.flush()` on the TextEncoderStreamEncoder cell. Runs no
 // user JS: the method lives on the encoder's internal prototype. Empty return = it threw.
-static JSValue invokeEncoderMethod(JSGlobalObject* globalObject, JSObject* encoder, const Identifier& methodName, const MarkedArgumentBuffer& args)
+static JSValue invokeEncoderMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* encoder, const Identifier& methodName, const MarkedArgumentBuffer& args)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue method = encoder->get(globalObject, methodName);
     RETURN_IF_EXCEPTION(scope, {});
@@ -322,7 +320,7 @@ JSPromise* textEncoderStreamTransform(JSGlobalObject* globalObject, JSTextEncode
         MarkedArgumentBuffer args;
         args.append(chunk);
         ASSERT(!args.hasOverflowed());
-        buffer = invokeEncoderMethod(globalObject, stream->m_encoder.get(), builtinNames(vm).encodePublicName(), args);
+        buffer = invokeEncoderMethod(vm, globalObject, stream->m_encoder.get(), builtinNames(vm).encodePublicName(), args);
         if (catchScope.exception()) [[unlikely]]
             thrown = takeAbruptCompletion(globalObject, catchScope);
     }
@@ -342,7 +340,7 @@ JSPromise* textEncoderStreamFlush(JSGlobalObject* globalObject, JSTextEncoderStr
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     MarkedArgumentBuffer noArguments;
-    JSValue buffer = invokeEncoderMethod(globalObject, stream->m_encoder.get(), builtinNames(vm).flushPublicName(), noArguments);
+    JSValue buffer = invokeEncoderMethod(vm, globalObject, stream->m_encoder.get(), builtinNames(vm).flushPublicName(), noArguments);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     enqueueIfNonEmptyView(globalObject, controller, buffer);

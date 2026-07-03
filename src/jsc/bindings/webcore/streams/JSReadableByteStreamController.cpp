@@ -39,9 +39,8 @@ namespace WebStreams {
 using namespace JSC;
 
 // Construct(%ArrayBuffer%, « byteLength »): null return ⇒ an exception is pending.
-static JSC::JSArrayBuffer* constructArrayBuffer(JSC::JSGlobalObject* globalObject, size_t byteLength)
+static JSC::JSArrayBuffer* constructArrayBuffer(JSC::VM& vm, JSC::JSGlobalObject* globalObject, size_t byteLength)
 {
-    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     RefPtr<JSC::ArrayBuffer> buffer = JSC::ArrayBuffer::tryCreate(byteLength, 1);
     if (!buffer) [[unlikely]] {
@@ -52,9 +51,8 @@ static JSC::JSArrayBuffer* constructArrayBuffer(JSC::JSGlobalObject* globalObjec
 }
 
 // CloneArrayBuffer(buffer, byteOffset, byteLength, %ArrayBuffer%): null ⇒ exception pending.
-static JSC::JSArrayBuffer* cloneArrayBuffer(JSC::JSGlobalObject* globalObject, JSC::JSArrayBuffer* buffer, size_t byteOffset, size_t byteLength)
+static JSC::JSArrayBuffer* cloneArrayBuffer(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSArrayBuffer* buffer, size_t byteOffset, size_t byteLength)
 {
-    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     RefPtr<JSC::ArrayBuffer> cloned = JSC::ArrayBuffer::tryCreate(buffer->impl()->span().subspan(byteOffset, byteLength));
     if (!cloned) [[unlikely]] {
@@ -106,9 +104,8 @@ static JSC::JSArrayBufferView* constructViewOfType(JSC::JSGlobalObject* globalOb
 
 // WebIDL "invoke a callback function" with a Promise<T> return type: an abrupt completion is
 // converted into a rejected promise (a completion-record conversion), never a synchronous throw.
-static JSC::JSPromise* invokePromiseReturningMethod(JSC::JSGlobalObject* globalObject, JSC::JSObject* method, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer& args)
+static JSC::JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* method, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer& args)
 {
-    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSValue result;
     JSC::JSValue thrown;
@@ -129,9 +126,8 @@ static JSC::JSPromise* invokePromiseReturningMethod(JSC::JSGlobalObject* globalO
 
 // The [[pullAlgorithm]] dispatch. The reachable kind set on a byte controller is exactly
 // {JavaScript, Nothing, ByteTeeBranch}; the switch is total over SourceKind.
-static JSC::JSPromise* performByteControllerPullAlgorithm(JSC::JSGlobalObject* globalObject, JSReadableByteStreamController* controller)
+static JSC::JSPromise* performByteControllerPullAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSReadableByteStreamController* controller)
 {
-    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     switch (controller->m_algorithms.kind) {
     case SourceKind::JavaScript: {
@@ -145,7 +141,7 @@ static JSC::JSPromise* performByteControllerPullAlgorithm(JSC::JSGlobalObject* g
             return nullptr;
         }
         StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
-        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, pullMethod, controller->m_algorithms.underlyingObject.get(), args));
+        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, pullMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SourceKind::Nothing:
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
@@ -163,9 +159,8 @@ static JSC::JSPromise* performByteControllerPullAlgorithm(JSC::JSGlobalObject* g
 }
 
 // The [[cancelAlgorithm]] dispatch. Same reachable kind set as the pull dispatch.
-static JSC::JSPromise* performByteControllerCancelAlgorithm(JSC::JSGlobalObject* globalObject, JSReadableByteStreamController* controller, JSC::JSValue reason)
+static JSC::JSPromise* performByteControllerCancelAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSReadableByteStreamController* controller, JSC::JSValue reason)
 {
-    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     switch (controller->m_algorithms.kind) {
     case SourceKind::JavaScript: {
@@ -179,7 +174,7 @@ static JSC::JSPromise* performByteControllerCancelAlgorithm(JSC::JSGlobalObject*
             return nullptr;
         }
         StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
-        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(globalObject, cancelMethod, controller->m_algorithms.underlyingObject.get(), args));
+        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, cancelMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SourceKind::Nothing:
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
@@ -368,7 +363,7 @@ JSPromise* JSReadableByteStreamController::cancelSteps(JSGlobalObject* globalObj
         WTF::Locker locker { cellLock() };
         m_queue.resetQueue(locker);
     }
-    JSPromise* result = performByteControllerCancelAlgorithm(globalObject, this, reason);
+    JSPromise* result = performByteControllerCancelAlgorithm(vm, globalObject, this, reason);
     RETURN_IF_EXCEPTION(scope, nullptr);
     readableByteStreamControllerClearAlgorithms(this);
     return result;
@@ -392,7 +387,7 @@ void JSReadableByteStreamController::pullSteps(JSGlobalObject* globalObject, JSR
             // "Let buffer be Construct(%ArrayBuffer%, « autoAllocateChunkSize »)" is
             // interpreted as a completion record: an abrupt completion goes to the error steps.
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            buffer = constructArrayBuffer(globalObject, static_cast<size_t>(m_autoAllocateChunkSize));
+            buffer = constructArrayBuffer(vm, globalObject, static_cast<size_t>(m_autoAllocateChunkSize));
             if (catchScope.exception()) [[unlikely]] {
                 bufferAbruptCompletion = takeAbruptCompletion(globalObject, catchScope);
                 if (bufferAbruptCompletion.isEmpty()) [[unlikely]]
@@ -605,7 +600,7 @@ void readableByteStreamControllerCallPullIfNeeded(JSGlobalObject* globalObject, 
     }
     ASSERT(!controller->m_pullAgain);
     controller->m_pulling = true;
-    JSPromise* pullPromise = performByteControllerPullAlgorithm(globalObject, controller);
+    JSPromise* pullPromise = performByteControllerPullAlgorithm(vm, globalObject, controller);
     RETURN_IF_EXCEPTION(scope, void());
     auto* runtime = JSStreamsRuntime::from(globalObject);
     pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onRSByteControllerPullFulfilled(), runtime->onRSByteControllerPullRejected(), jsUndefined(), controller);
@@ -788,7 +783,7 @@ void readableByteStreamControllerEnqueueClonedChunkToQueue(JSGlobalObject* globa
         // CloneArrayBuffer is interpreted as a completion record: an abrupt completion errors
         // the controller and is then rethrown.
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        cloneResult = cloneArrayBuffer(globalObject, buffer, byteOffset, byteLength);
+        cloneResult = cloneArrayBuffer(vm, globalObject, buffer, byteOffset, byteLength);
         if (catchScope.exception()) [[unlikely]] {
             JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
             if (thrown.isEmpty()) [[unlikely]]

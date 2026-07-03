@@ -123,9 +123,8 @@ bool canCopyDataBlockBytes(JSArrayBuffer* toBuffer, size_t toIndex, JSArrayBuffe
 // [[Get]]s of the real conversion and throws the mandated TypeErrors.
 
 // WebIDL: a non-nullish, non-object value cannot be converted to a dictionary.
-static bool checkDictionaryReceiver(JSGlobalObject* globalObject, JSValue value, ASCIILiteral message)
+static bool checkDictionaryReceiver(JSC::VM& vm, JSGlobalObject* globalObject, JSValue value, ASCIILiteral message)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (value.isUndefinedOrNull())
         return false;
@@ -137,9 +136,8 @@ static bool checkDictionaryReceiver(JSGlobalObject* globalObject, JSValue value,
 }
 
 // A present callback-typed member must be callable; returns the empty JSValue when absent.
-static JSValue getCallbackMember(JSGlobalObject* globalObject, JSObject* object, JSC::PropertyName propertyName, ASCIILiteral message)
+static JSValue getCallbackMember(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* object, JSC::PropertyName propertyName, ASCIILiteral message)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = object->get(globalObject, propertyName);
     RETURN_IF_EXCEPTION(scope, {});
@@ -158,17 +156,17 @@ UnderlyingSinkDict convertUnderlyingSinkDict(JSGlobalObject* globalObject, JSVal
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& names = WebCore::builtinNames(vm);
     UnderlyingSinkDict result {};
-    bool isObject = checkDictionaryReceiver(globalObject, underlyingSink, "The underlying sink must be an object"_s);
+    bool isObject = checkDictionaryReceiver(vm, globalObject, underlyingSink, "The underlying sink must be an object"_s);
     RETURN_IF_EXCEPTION(scope, result);
     if (!isObject)
         return result;
     auto* sinkObject = asObject(underlyingSink);
 
-    result.abort = getCallbackMember(globalObject, sinkObject, builtinNames(vm).abortPublicName(), "The underlying sink's 'abort' property must be a function"_s);
+    result.abort = getCallbackMember(vm, globalObject, sinkObject, builtinNames(vm).abortPublicName(), "The underlying sink's 'abort' property must be a function"_s);
     RETURN_IF_EXCEPTION(scope, result);
-    result.close = getCallbackMember(globalObject, sinkObject, names.closePublicName(), "The underlying sink's 'close' property must be a function"_s);
+    result.close = getCallbackMember(vm, globalObject, sinkObject, names.closePublicName(), "The underlying sink's 'close' property must be a function"_s);
     RETURN_IF_EXCEPTION(scope, result);
-    result.start = getCallbackMember(globalObject, sinkObject, names.startPublicName(), "The underlying sink's 'start' property must be a function"_s);
+    result.start = getCallbackMember(vm, globalObject, sinkObject, names.startPublicName(), "The underlying sink's 'start' property must be a function"_s);
     RETURN_IF_EXCEPTION(scope, result);
 
     // `type` is `any`: presence alone is recorded (the constructor's RangeError).
@@ -176,7 +174,7 @@ UnderlyingSinkDict convertUnderlyingSinkDict(JSGlobalObject* globalObject, JSVal
     RETURN_IF_EXCEPTION(scope, result);
     result.hasType = !type.isUndefined();
 
-    result.write = getCallbackMember(globalObject, sinkObject, names.writePublicName(), "The underlying sink's 'write' property must be a function"_s);
+    result.write = getCallbackMember(vm, globalObject, sinkObject, names.writePublicName(), "The underlying sink's 'write' property must be a function"_s);
     RETURN_IF_EXCEPTION(scope, result);
     return result;
 }
@@ -187,15 +185,15 @@ TransformerDict convertTransformerDict(JSGlobalObject* globalObject, JSValue tra
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& names = WebCore::builtinNames(vm);
     TransformerDict result {};
-    bool isObject = checkDictionaryReceiver(globalObject, transformer, "The transformer must be an object"_s);
+    bool isObject = checkDictionaryReceiver(vm, globalObject, transformer, "The transformer must be an object"_s);
     RETURN_IF_EXCEPTION(scope, result);
     if (!isObject)
         return result;
     auto* transformerObject = asObject(transformer);
 
-    result.cancel = getCallbackMember(globalObject, transformerObject, names.cancelPublicName(), "The transformer's 'cancel' property must be a function"_s);
+    result.cancel = getCallbackMember(vm, globalObject, transformerObject, names.cancelPublicName(), "The transformer's 'cancel' property must be a function"_s);
     RETURN_IF_EXCEPTION(scope, result);
-    result.flush = getCallbackMember(globalObject, transformerObject, builtinNames(vm).flushPublicName(), "The transformer's 'flush' property must be a function"_s);
+    result.flush = getCallbackMember(vm, globalObject, transformerObject, builtinNames(vm).flushPublicName(), "The transformer's 'flush' property must be a function"_s);
     RETURN_IF_EXCEPTION(scope, result);
 
     // `readableType` / `writableType` are `any`: presence alone triggers the RangeError.
@@ -203,9 +201,9 @@ TransformerDict convertTransformerDict(JSGlobalObject* globalObject, JSValue tra
     RETURN_IF_EXCEPTION(scope, result);
     result.hasReadableType = !readableType.isUndefined();
 
-    result.start = getCallbackMember(globalObject, transformerObject, names.startPublicName(), "The transformer's 'start' property must be a function"_s);
+    result.start = getCallbackMember(vm, globalObject, transformerObject, names.startPublicName(), "The transformer's 'start' property must be a function"_s);
     RETURN_IF_EXCEPTION(scope, result);
-    result.transform = getCallbackMember(globalObject, transformerObject, builtinNames(vm).transformPublicName(), "The transformer's 'transform' property must be a function"_s);
+    result.transform = getCallbackMember(vm, globalObject, transformerObject, builtinNames(vm).transformPublicName(), "The transformer's 'transform' property must be a function"_s);
     RETURN_IF_EXCEPTION(scope, result);
 
     JSValue writableType = transformerObject->get(globalObject, builtinNames(vm).writableTypePublicName());
@@ -220,7 +218,7 @@ QueuingStrategyDict convertQueuingStrategyDict(JSGlobalObject* globalObject, JSV
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& names = WebCore::builtinNames(vm);
     QueuingStrategyDict result {};
-    bool isObject = checkDictionaryReceiver(globalObject, strategy, "The queuing strategy must be an object"_s);
+    bool isObject = checkDictionaryReceiver(vm, globalObject, strategy, "The queuing strategy must be an object"_s);
     RETURN_IF_EXCEPTION(scope, result);
     if (!isObject)
         return result;
@@ -234,7 +232,7 @@ QueuingStrategyDict convertQueuingStrategyDict(JSGlobalObject* globalObject, JSV
         result.highWaterMark = value;
     }
 
-    result.size = getCallbackMember(globalObject, strategyObject, vm.propertyNames->size, "The queuing strategy's 'size' property must be a function"_s);
+    result.size = getCallbackMember(vm, globalObject, strategyObject, vm.propertyNames->size, "The queuing strategy's 'size' property must be a function"_s);
     RETURN_IF_EXCEPTION(scope, result);
     return result;
 }

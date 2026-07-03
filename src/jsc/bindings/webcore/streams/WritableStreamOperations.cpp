@@ -35,9 +35,8 @@ static void clearPendingAbortRequest(JSWritableStream* stream)
 
 // SetUpWritableStreamDefaultController, minus reacting to the start result. The algorithm
 // slots and the size algorithm were already populated on `controller` by the caller.
-static void setUpWritableStreamDefaultControllerBeforeStart(JSGlobalObject* globalObject, JSWritableStream* stream, JSWritableStreamDefaultController* controller, double highWaterMark)
+static void setUpWritableStreamDefaultControllerBeforeStart(JSC::VM& vm, JSGlobalObject* globalObject, JSWritableStream* stream, JSWritableStreamDefaultController* controller, double highWaterMark)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT(!stream->m_controller);
@@ -62,9 +61,8 @@ static void setUpWritableStreamDefaultControllerBeforeStart(JSGlobalObject* glob
 
 // "Let startPromise be a promise resolved with startResult; upon fulfillment / rejection…".
 // A non-thenable primitive needs no promise: the fulfillment handler is queued directly.
-static void reactToWritableControllerStart(JSGlobalObject* globalObject, JSWritableStreamDefaultController* controller, JSValue startResult)
+static void reactToWritableControllerStart(JSC::VM& vm, JSGlobalObject* globalObject, JSWritableStreamDefaultController* controller, JSValue startResult)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
     if (startResult.isObject()) {
@@ -480,9 +478,9 @@ void setUpWritableStreamDefaultController(JSGlobalObject* globalObject, JSWritab
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    setUpWritableStreamDefaultControllerBeforeStart(globalObject, stream, controller, highWaterMark);
+    setUpWritableStreamDefaultControllerBeforeStart(vm, globalObject, stream, controller, highWaterMark);
     RETURN_IF_EXCEPTION(scope, );
-    RELEASE_AND_RETURN(scope, reactToWritableControllerStart(globalObject, controller, startResult));
+    RELEASE_AND_RETURN(scope, reactToWritableControllerStart(vm, globalObject, controller, startResult));
 }
 
 void setUpWritableStreamDefaultControllerFromUnderlyingSink(JSGlobalObject* globalObject, JSWritableStream* stream, JSValue underlyingSink, const UnderlyingSinkDict& underlyingSinkDict, double highWaterMark, JSObject* sizeAlgorithm)
@@ -505,7 +503,7 @@ void setUpWritableStreamDefaultControllerFromUnderlyingSink(JSGlobalObject* glob
 
     // The user `start` must observe a fully wired controller, so it runs between the two
     // halves of SetUpWritableStreamDefaultController; its exception is rethrown.
-    setUpWritableStreamDefaultControllerBeforeStart(globalObject, stream, controller, highWaterMark);
+    setUpWritableStreamDefaultControllerBeforeStart(vm, globalObject, stream, controller, highWaterMark);
     RETURN_IF_EXCEPTION(scope, );
 
     JSValue startResult = jsUndefined();
@@ -518,7 +516,7 @@ void setUpWritableStreamDefaultControllerFromUnderlyingSink(JSGlobalObject* glob
         startResult = JSC::call(globalObject, underlyingSinkDict.start, callData, underlyingSink, args);
         RETURN_IF_EXCEPTION(scope, );
     }
-    RELEASE_AND_RETURN(scope, reactToWritableControllerStart(globalObject, controller, startResult));
+    RELEASE_AND_RETURN(scope, reactToWritableControllerStart(vm, globalObject, controller, startResult));
 }
 
 } // namespace WebStreams

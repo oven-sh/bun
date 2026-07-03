@@ -121,9 +121,8 @@ static size_t byteLengthOf(JSValue value)
     return 0;
 }
 
-static JSValue callArrayBufferSinkMethod(JSGlobalObject* globalObject, JSObject* sink, const Identifier& name, MarkedArgumentBuffer& args)
+static JSValue callArrayBufferSinkMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* sink, const Identifier& name, MarkedArgumentBuffer& args)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue function = sink->get(globalObject, name);
     RETURN_IF_EXCEPTION(scope, {});
@@ -132,12 +131,13 @@ static JSValue callArrayBufferSinkMethod(JSGlobalObject* globalObject, JSObject*
 
 static JSValue writeToArrayBufferSink(JSGlobalObject* globalObject, JSDirectStreamController* controller, JSValue chunk)
 {
+    auto& vm = getVM(globalObject);
     JSObject* sink = controller->m_arrayBufferSink.get();
     if (!sink) [[unlikely]]
         return jsUndefined();
     MarkedArgumentBuffer args;
     args.append(chunk);
-    return callArrayBufferSinkMethod(globalObject, sink, builtinNames(getVM(globalObject)).writePublicName(), args);
+    return callArrayBufferSinkMethod(vm, globalObject, sink, builtinNames(vm).writePublicName(), args);
 }
 
 static JSValue writeToTextSink(JSGlobalObject* globalObject, JSDirectStreamController* controller, JSValue chunk)
@@ -222,13 +222,13 @@ static JSValue writeToDirectSink(JSGlobalObject* globalObject, JSDirectStreamCon
     return {};
 }
 
-static String finishTextSink(JSGlobalObject* globalObject, JSDirectStreamController* controller)
+static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
 {
     auto& accumulator = controller->m_textAccumulator;
     if (!accumulator.hasString && !accumulator.hasBuffer)
         return emptyString();
 
-    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    auto scope = DECLARE_THROW_SCOPE(vm);
     // Pure-string rope: the ONLY arm of the direct Text sink that strips a leading BOM.
     if (accumulator.hasString && !accumulator.hasBuffer) {
         if (Bun::WebStreams::exceedsStringLimit(accumulator.rope.length())) [[unlikely]] {
@@ -271,14 +271,13 @@ static String finishTextSink(JSGlobalObject* globalObject, JSDirectStreamControl
     return String::fromUTF8ReplacingInvalidSequences(bytes.span());
 }
 
-static JSValue endTextSink(JSGlobalObject* globalObject, JSDirectStreamController* controller)
+static JSValue endTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (controller->m_calledDone)
         return jsEmptyString(vm);
     controller->m_calledDone = true;
-    String result = finishTextSink(globalObject, controller);
+    String result = finishTextSink(vm, globalObject, controller);
     // The accumulated payload must not stay alive on the controller (it lives as long
     // as the stream); the result string owns everything it needs.
     {
@@ -293,9 +292,9 @@ static JSValue endTextSink(JSGlobalObject* globalObject, JSDirectStreamControlle
     return resultString;
 }
 
-static JSValue endArraySink(JSGlobalObject* globalObject, JSDirectStreamController* controller)
+static JSValue endArraySink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
 {
-    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (controller->m_calledDone) [[unlikely]] {
         JSArray* empty = constructEmptyArray(globalObject, nullptr);
         RETURN_IF_EXCEPTION(scope, {});
@@ -313,31 +312,31 @@ static JSValue endArraySink(JSGlobalObject* globalObject, JSDirectStreamControll
 }
 
 // `sink.end()`. May throw; the ArrayBufferSink slot is only cleared on success.
-static JSValue endDirectSink(JSGlobalObject* globalObject, JSDirectStreamController* controller)
+static JSValue endDirectSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
 {
-    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    auto scope = DECLARE_THROW_SCOPE(vm);
     switch (controller->m_sinkKind) {
     case DirectSinkKind::ArrayBuffer: {
         JSObject* sink = controller->m_arrayBufferSink.get();
         if (!sink) [[unlikely]]
             return jsUndefined();
         MarkedArgumentBuffer args;
-        JSValue flushed = callArrayBufferSinkMethod(globalObject, sink, builtinNames(getVM(globalObject)).endPublicName(), args);
+        JSValue flushed = callArrayBufferSinkMethod(vm, globalObject, sink, builtinNames(vm).endPublicName(), args);
         RETURN_IF_EXCEPTION(scope, {});
         controller->m_arrayBufferSink.clear();
         return flushed;
     }
     case DirectSinkKind::Text:
-        RELEASE_AND_RETURN(scope, endTextSink(globalObject, controller));
+        RELEASE_AND_RETURN(scope, endTextSink(vm, globalObject, controller));
     case DirectSinkKind::Array:
-        RELEASE_AND_RETURN(scope, endArraySink(globalObject, controller));
+        RELEASE_AND_RETURN(scope, endArraySink(vm, globalObject, controller));
     }
     RELEASE_ASSERT_NOT_REACHED();
     return {};
 }
 
 // `sink.flush()`: only the ArrayBuffer sink produces bytes; the Text/Array sinks return 0.
-static JSValue flushDirectSink(JSGlobalObject* globalObject, JSDirectStreamController* controller)
+static JSValue flushDirectSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
 {
     switch (controller->m_sinkKind) {
     case DirectSinkKind::ArrayBuffer: {
@@ -345,7 +344,7 @@ static JSValue flushDirectSink(JSGlobalObject* globalObject, JSDirectStreamContr
         if (!sink) [[unlikely]]
             return jsNumber(0);
         MarkedArgumentBuffer args;
-        return callArrayBufferSinkMethod(globalObject, sink, builtinNames(getVM(globalObject)).flushPublicName(), args);
+        return callArrayBufferSinkMethod(vm, globalObject, sink, builtinNames(vm).flushPublicName(), args);
     }
     case DirectSinkKind::Text:
     case DirectSinkKind::Array:
@@ -356,7 +355,7 @@ static JSValue flushDirectSink(JSGlobalObject* globalObject, JSDirectStreamContr
 }
 
 // `sink.close(error)`: the Text/Array sinks fulfill their closing promise with the partial result.
-static void closeDirectSinkForError(JSGlobalObject* globalObject, JSDirectStreamController* controller, JSValue error)
+static void closeDirectSinkForError(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller, JSValue error)
 {
     switch (controller->m_sinkKind) {
     case DirectSinkKind::ArrayBuffer: {
@@ -366,25 +365,24 @@ static void closeDirectSinkForError(JSGlobalObject* globalObject, JSDirectStream
         controller->m_arrayBufferSink.clear();
         MarkedArgumentBuffer args;
         args.append(error);
-        callArrayBufferSinkMethod(globalObject, sink, builtinNames(getVM(globalObject)).closePublicName(), args);
+        callArrayBufferSinkMethod(vm, globalObject, sink, builtinNames(vm).closePublicName(), args);
         return;
     }
     case DirectSinkKind::Text:
         if (!controller->m_calledDone)
-            endTextSink(globalObject, controller);
+            endTextSink(vm, globalObject, controller);
         return;
     case DirectSinkKind::Array:
         if (!controller->m_calledDone)
-            endArraySink(globalObject, controller);
+            endArraySink(vm, globalObject, controller);
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
 // The Bun-only `underlyingSource.close(reason)` lifecycle callback; the call is swallowed.
-static void callUnderlyingSourceClose(JSGlobalObject* globalObject, JSDirectStreamController* controller, JSValue reason)
+static void callUnderlyingSourceClose(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller, JSValue reason)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* underlyingSource = controller->m_underlyingSource.get();
     if (!underlyingSource)
@@ -411,7 +409,7 @@ void JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue
 
     if (!m_closed) {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        closeDirectSinkForError(globalObject, this, error);
+        closeDirectSinkForError(vm, globalObject, this, error);
         if (catchScope.exception()) [[unlikely]] {
             if (takeAbruptCompletion(globalObject, catchScope).isEmpty())
                 return;
@@ -419,7 +417,7 @@ void JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue
     }
     m_closed = true;
 
-    callUnderlyingSourceClose(globalObject, this, error);
+    callUnderlyingSourceClose(vm, globalObject, this, error);
     RETURN_IF_EXCEPTION(scope, );
 
     if (auto* pendingRead = m_pendingRead.get()) {
@@ -579,13 +577,13 @@ void JSDirectStreamController::onClose(JSGlobalObject* globalObject, JSValue rea
     // No "Closing" stream state exists: m_closed set here is what blocks re-entry.
     m_closed = true;
 
-    callUnderlyingSourceClose(globalObject, this, reason);
+    callUnderlyingSourceClose(vm, globalObject, this, reason);
     RETURN_IF_EXCEPTION(scope, );
 
     JSValue flushed;
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        flushed = endDirectSink(globalObject, this);
+        flushed = endDirectSink(vm, globalObject, this);
         if (catchScope.exception()) [[unlikely]] {
             JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
             if (!thrown)
@@ -655,7 +653,7 @@ void JSDirectStreamController::onFlush(JSGlobalObject* globalObject)
 
     if (auto* pendingRead = m_pendingRead.get()) {
         m_pendingRead.clear();
-        JSValue flushed = flushDirectSink(globalObject, this);
+        JSValue flushed = flushDirectSink(vm, globalObject, this);
         RETURN_IF_EXCEPTION(scope, );
         if (byteLengthOf(flushed)) {
             // A non-promise read request at the head is the active consumer: deliver the
@@ -683,7 +681,7 @@ void JSDirectStreamController::onFlush(JSGlobalObject* globalObject)
     }
 
     if (readableStreamGetNumReadRequests(stream) > 0) {
-        JSValue flushed = flushDirectSink(globalObject, this);
+        JSValue flushed = flushDirectSink(vm, globalObject, this);
         RETURN_IF_EXCEPTION(scope, );
         if (byteLengthOf(flushed))
             RELEASE_AND_RETURN(scope, readableStreamFulfillReadRequest(globalObject, stream, flushed, false));
@@ -770,9 +768,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectError, (JSGlobalObject *
 }
 
 // Installs write/end/close/flush/error as detachable OWN JSBoundFunction properties.
-static void installDirectControllerMethods(JSGlobalObject* globalObject, JSDirectStreamController* controller)
+static void installDirectControllerMethods(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto& names = builtinNames(vm);
@@ -835,7 +832,7 @@ void setUpDirectStreamController(JSC::JSGlobalObject* globalObject, JSReadableSt
         options->putDirect(vm, builtinNames(vm).asUint8ArrayPublicName(), jsBoolean(true), 0);
         MarkedArgumentBuffer startArgs;
         startArgs.append(options);
-        WebCore::callArrayBufferSinkMethod(globalObject, sink, builtinNames(vm).startPublicName(), startArgs);
+        WebCore::callArrayBufferSinkMethod(vm, globalObject, sink, builtinNames(vm).startPublicName(), startArgs);
         RETURN_IF_EXCEPTION(scope, );
         break;
     }
@@ -852,7 +849,7 @@ void setUpDirectStreamController(JSC::JSGlobalObject* globalObject, JSReadableSt
     }
     }
 
-    WebCore::installDirectControllerMethods(globalObject, controller);
+    WebCore::installDirectControllerMethods(vm, globalObject, controller);
     RETURN_IF_EXCEPTION(scope, );
 
     stream->m_controller.set(vm, stream, controller);

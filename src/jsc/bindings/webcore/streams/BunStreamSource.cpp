@@ -271,9 +271,8 @@ static void queueStreamsMicrotask(JSGlobalObject* globalObject, JSFunction* hand
 }
 
 // object.<name>(...args) with a real [[Get]], as the replaced builtins did.
-static JSValue invokeMethod(JSGlobalObject* globalObject, JSObject* object, const Identifier& name, const MarkedArgumentBuffer& args)
+static JSValue invokeMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* object, const Identifier& name, const MarkedArgumentBuffer& args)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue method = object->get(globalObject, name);
     RETURN_IF_EXCEPTION(scope, {});
@@ -293,9 +292,8 @@ static JSValue wrapWithAsyncContext(JSGlobalObject* globalObject, JSReadableStre
 }
 
 // The generated JSSink controller's C++ start(readableStream, onPull, onClose) registration.
-static void startJSSinkController(JSGlobalObject* globalObject, JSObject* sink, JSValue streamValue, JSValue onPull, JSValue onClose)
+static void startJSSinkController(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* sink, JSValue streamValue, JSValue onPull, JSValue onClose)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 #define BUN_START_JSSINK_CONTROLLER(ControllerType)                                              \
     if (auto* controller = dynamicDowncast<WebCore::ControllerType>(sink)) {                     \
@@ -317,9 +315,8 @@ static void startJSSinkController(JSGlobalObject* globalObject, JSObject* sink, 
 }
 
 // ReadableStream.prototype.cancel semantics; the result promise is only ever markAsHandled'd.
-static void publicStreamCancelIgnoringResult(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue reason)
+static void publicStreamCancelIgnoringResult(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* stream, JSValue reason)
 {
-    auto& vm = getVM(globalObject);
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSPromise* promise = nullptr;
     if (isReadableStreamLocked(stream))
@@ -351,9 +348,8 @@ static void nativeStorePendingView(JSC::VM& vm, JSNativeStreamSourceAdapter* ada
         adapter->m_pendingView.clear();
 }
 
-static bool nativeCloserFlag(JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
+static bool nativeCloserFlag(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* closer = uncheckedDowncast<JSArray>(adapter->m_closer.get());
     JSValue flag = closer->getIndex(globalObject, 0);
@@ -383,9 +379,8 @@ static void nativeSourceSever(JSGlobalObject* globalObject, JSNativeStreamSource
 }
 
 // The queued callClose job body: close the controller if the consumer is still alive, then sever.
-static void nativeSourceCallClose(JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
+static void nativeSourceCallClose(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
-    auto& vm = getVM(globalObject);
     auto* controller = adapter->m_controller.get();
     if (controller && readableStreamDefaultControllerCanCloseOrEnqueue(controller)) {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -420,9 +415,8 @@ static JSC::JSUint8Array* uint8Subarray(JSGlobalObject* globalObject, JSC::JSUin
 }
 
 // Reuse the pending view only when its BACKING BUFFER is large enough.
-static JSC::JSUint8Array* nativeGetInternalBuffer(JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
+static JSC::JSUint8Array* nativeGetInternalBuffer(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSObject* pending = adapter->m_pendingView.get()) {
         auto* view = uncheckedDowncast<JSC::JSUint8Array>(pending);
@@ -436,9 +430,8 @@ static JSC::JSUint8Array* nativeGetInternalBuffer(JSGlobalObject* globalObject, 
 }
 
 // Decodes one pull result. Returns the value to store as the pending view (a view or undefined).
-static JSValue nativeDecodePullResult(JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSReadableStreamDefaultController* controller, JSValue result, JSC::JSUint8Array* view, bool isClosed)
+static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSReadableStreamDefaultController* controller, JSValue result, JSC::JSUint8Array* view, bool isClosed)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (result.isNumber()) {
         double written = result.asNumber();
@@ -506,7 +499,7 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
     MarkedArgumentBuffer startArgs;
     startArgs.append(jsNumber(static_cast<double>(autoAllocateChunkSize)));
     ASSERT(!startArgs.hasOverflowed());
-    JSValue startResult = invokeMethod(globalObject, handle, builtinNames(vm).startPublicName(), startArgs);
+    JSValue startResult = invokeMethod(vm, globalObject, handle, builtinNames(vm).startPublicName(), startArgs);
     RETURN_IF_EXCEPTION(scope, );
 
     double chunkSize = 0;
@@ -517,7 +510,7 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
         chunkSize = startResult.toNumber(globalObject);
         RETURN_IF_EXCEPTION(scope, );
         MarkedArgumentBuffer noArgs;
-        drainValue = invokeMethod(globalObject, handle, builtinNames(vm).drainPublicName(), noArgs);
+        drainValue = invokeMethod(vm, globalObject, handle, builtinNames(vm).drainPublicName(), noArgs);
         RETURN_IF_EXCEPTION(scope, );
     }
 
@@ -584,9 +577,8 @@ JSValue nativeSourceStart(JSGlobalObject* globalObject, JSReadableStreamDefaultC
     return jsUndefined();
 }
 
-static JSPromise* nativeSourcePullImpl(JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSReadableStreamDefaultController* controller)
+static JSPromise* nativeSourcePullImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSReadableStreamDefaultController* controller)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!adapter->m_controller)
         adapter->m_controller = JSC::Weak<JSReadableStreamDefaultController>(controller);
@@ -606,28 +598,28 @@ static JSPromise* nativeSourcePullImpl(JSGlobalObject* globalObject, JSNativeStr
 
     if (JSObject* pendingObject = adapter->m_pendingView.get()) {
         MarkedArgumentBuffer noArgs;
-        JSValue drained = invokeMethod(globalObject, handle, builtinNames(vm).drainPublicName(), noArgs);
+        JSValue drained = invokeMethod(vm, globalObject, handle, builtinNames(vm).drainPublicName(), noArgs);
         RETURN_IF_EXCEPTION(scope, nullptr);
         bool isTruthy = drained.toBoolean(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (isTruthy) {
-            bool isClosed = nativeCloserFlag(globalObject, adapter);
+            bool isClosed = nativeCloserFlag(vm, globalObject, adapter);
             RETURN_IF_EXCEPTION(scope, nullptr);
-            JSValue newView = nativeDecodePullResult(globalObject, adapter, controller, drained, uncheckedDowncast<JSC::JSUint8Array>(pendingObject), isClosed);
+            JSValue newView = nativeDecodePullResult(vm, globalObject, adapter, controller, drained, uncheckedDowncast<JSC::JSUint8Array>(pendingObject), isClosed);
             RETURN_IF_EXCEPTION(scope, nullptr);
             nativeStorePendingView(vm, adapter, newView);
             return nullptr;
         }
     }
 
-    auto* view = nativeGetInternalBuffer(globalObject, adapter);
+    auto* view = nativeGetInternalBuffer(vm, globalObject, adapter);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     MarkedArgumentBuffer pullArgs;
     pullArgs.append(view);
     pullArgs.append(closer);
     ASSERT(!pullArgs.hasOverflowed());
-    JSValue result = invokeMethod(globalObject, handle, builtinNames(vm).pullPublicName(), pullArgs);
+    JSValue result = invokeMethod(vm, globalObject, handle, builtinNames(vm).pullPublicName(), pullArgs);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     if (auto* pullPromise = dynamicDowncast<JSPromise>(result)) {
@@ -636,9 +628,9 @@ static JSPromise* nativeSourcePullImpl(JSGlobalObject* globalObject, JSNativeStr
         return pullPromise;
     }
 
-    bool isClosed = nativeCloserFlag(globalObject, adapter);
+    bool isClosed = nativeCloserFlag(vm, globalObject, adapter);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    JSValue newView = nativeDecodePullResult(globalObject, adapter, controller, result, view, isClosed);
+    JSValue newView = nativeDecodePullResult(vm, globalObject, adapter, controller, result, view, isClosed);
     RETURN_IF_EXCEPTION(scope, nullptr);
     nativeStorePendingView(vm, adapter, newView);
     if (adapter->m_closed)
@@ -655,7 +647,7 @@ JSPromise* nativeSourcePull(JSGlobalObject* globalObject, JSReadableStreamDefaul
     JSPromise* asyncResult = nullptr;
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        asyncResult = nativeSourcePullImpl(globalObject, adapter, controller);
+        asyncResult = nativeSourcePullImpl(vm, globalObject, adapter, controller);
         if (catchScope.exception()) [[unlikely]] {
             thrown = takeAbruptCompletion(globalObject, catchScope);
             if (thrown.isEmpty())
@@ -682,12 +674,12 @@ JSPromise* nativeSourceCancel(JSGlobalObject* globalObject, JSReadableStreamDefa
             MarkedArgumentBuffer updateRefArgs;
             updateRefArgs.append(jsBoolean(false));
             ASSERT(!updateRefArgs.hasOverflowed());
-            invokeMethod(globalObject, handle, builtinNames(vm).updateRefPublicName(), updateRefArgs);
+            invokeMethod(vm, globalObject, handle, builtinNames(vm).updateRefPublicName(), updateRefArgs);
             if (!catchScope.exception()) {
                 MarkedArgumentBuffer cancelArgs;
                 cancelArgs.append(reason);
                 ASSERT(!cancelArgs.hasOverflowed());
-                invokeMethod(globalObject, handle, builtinNames(vm).cancelPublicName(), cancelArgs);
+                invokeMethod(vm, globalObject, handle, builtinNames(vm).cancelPublicName(), cancelArgs);
             }
         }
         if (!catchScope.exception())
@@ -721,26 +713,24 @@ static void nativeSourceOnClose(JSGlobalObject* globalObject, JSNativeStreamSour
     nativeSourceSever(globalObject, adapter);
 }
 
-static void nativeSourcePullFulfilled(JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSValue result)
+static void nativeSourcePullFulfilled(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSValue result)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* controller = adapter->m_controller.get();
     JSC::JSUint8Array* view = nullptr;
     if (JSObject* pendingObject = adapter->m_pendingView.get())
         view = uncheckedDowncast<JSC::JSUint8Array>(pendingObject);
-    bool isClosed = nativeCloserFlag(globalObject, adapter);
+    bool isClosed = nativeCloserFlag(vm, globalObject, adapter);
     RETURN_IF_EXCEPTION(scope, );
-    JSValue newView = nativeDecodePullResult(globalObject, adapter, controller, result, view, isClosed);
+    JSValue newView = nativeDecodePullResult(vm, globalObject, adapter, controller, result, view, isClosed);
     RETURN_IF_EXCEPTION(scope, );
     nativeStorePendingView(vm, adapter, newView);
     if (adapter->m_closed)
         adapter->m_pendingView.clear();
 }
 
-static void nativeSourcePullRejected(JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSValue error)
+static void nativeSourcePullRejected(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSValue error)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     adapter->m_pendingView.clear();
     adapter->m_closed = true;
@@ -756,9 +746,8 @@ static void nativeSourcePullRejected(JSGlobalObject* globalObject, JSNativeStrea
 //                       The native-sink path
 
 // readDirectStreamOnClose: the state-mutation half runs only when a stream is provided.
-static void readDirectStreamCloseImpl(JSGlobalObject* globalObject, JSDirectSinkCloseState* state, JSValue streamValue, JSValue reason)
+static void readDirectStreamCloseImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectSinkCloseState* state, JSValue streamValue, JSValue reason)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     // The sink closed (or is closing): end() detaches the controller cell from the native
     // sink so a later GC of the cell cannot release a reference it does not own.
@@ -766,7 +755,7 @@ static void readDirectStreamCloseImpl(JSGlobalObject* globalObject, JSDirectSink
         state->m_sinkController.clear();
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         MarkedArgumentBuffer noArgs;
-        invokeMethod(globalObject, sinkController, builtinNames(vm).endPublicName(), noArgs);
+        invokeMethod(vm, globalObject, sinkController, builtinNames(vm).endPublicName(), noArgs);
         if (catchScope.exception()) [[unlikely]]
             catchScope.clearExceptionExceptTermination();
     }
@@ -830,12 +819,12 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
     bool pullIsTruthy = pull.toBoolean(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (!pullIsTruthy) {
-        readDirectStreamCloseImpl(globalObject, state, jsUndefined(), jsUndefined());
+        readDirectStreamCloseImpl(vm, globalObject, state, jsUndefined(), jsUndefined());
         RETURN_IF_EXCEPTION(scope, {});
         return jsUndefined();
     }
     if (!pull.isCallable()) {
-        readDirectStreamCloseImpl(globalObject, state, jsUndefined(), jsUndefined());
+        readDirectStreamCloseImpl(vm, globalObject, state, jsUndefined(), jsUndefined());
         RETURN_IF_EXCEPTION(scope, {});
         throwTypeError(globalObject, scope, "pull is not a function"_s);
         return {};
@@ -851,7 +840,7 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
     MarkedArgumentBuffer startArgs;
     startArgs.append(startOptions);
     ASSERT(!startArgs.hasOverflowed());
-    invokeMethod(globalObject, sinkController, builtinNames(vm).startPublicName(), startArgs);
+    invokeMethod(vm, globalObject, sinkController, builtinNames(vm).startPublicName(), startArgs);
     RETURN_IF_EXCEPTION(scope, {});
 
     auto* closeBound = createBoundHandler(globalObject, runtime->boundReadDirectStreamOnClose(), state);
@@ -860,7 +849,7 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
     RETURN_IF_EXCEPTION(scope, {});
     JSValue onClose = wrapWithAsyncContext(globalObject, stream, closeBound);
     RETURN_IF_EXCEPTION(scope, {});
-    startJSSinkController(globalObject, sinkController, stream, onPull, onClose);
+    startJSSinkController(vm, globalObject, sinkController, stream, onPull, onClose);
     RETURN_IF_EXCEPTION(scope, {});
 
     stream->m_lockedWithoutReader = true;
@@ -905,40 +894,36 @@ using WebCore::JSReadStreamIntoSinkOperation;
 
 static void rsisIssueRead(JSGlobalObject*, JSReadStreamIntoSinkOperation*);
 static void rsisFinish(JSGlobalObject*, JSReadStreamIntoSinkOperation*);
-static void rsisAbrupt(JSGlobalObject*, JSReadStreamIntoSinkOperation*, JSValue error);
+static void rsisAbrupt(JSC::VM&, JSGlobalObject*, JSReadStreamIntoSinkOperation*, JSValue error);
 
-static JSValue rsisSinkWrite(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue chunk)
+static JSValue rsisSinkWrite(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue chunk)
 {
-    auto& vm = getVM(globalObject);
     MarkedArgumentBuffer args;
     args.append(chunk);
     ASSERT(!args.hasOverflowed());
-    return invokeMethod(globalObject, op->m_sink.get(), builtinNames(vm).writePublicName(), args);
+    return invokeMethod(vm, globalObject, op->m_sink.get(), builtinNames(vm).writePublicName(), args);
 }
 
-static JSValue rsisSinkFlushPending(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
+static JSValue rsisSinkFlushPending(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
 {
-    auto& vm = getVM(globalObject);
     MarkedArgumentBuffer args;
     args.append(jsBoolean(true));
     ASSERT(!args.hasOverflowed());
-    return invokeMethod(globalObject, op->m_sink.get(), builtinNames(vm).flushPublicName(), args);
+    return invokeMethod(vm, globalObject, op->m_sink.get(), builtinNames(vm).flushPublicName(), args);
 }
 
-static JSValue rsisSinkEnd(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
+static JSValue rsisSinkEnd(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
 {
-    auto& vm = getVM(globalObject);
     MarkedArgumentBuffer noArgs;
-    return invokeMethod(globalObject, op->m_sink.get(), builtinNames(vm).endPublicName(), noArgs);
+    return invokeMethod(vm, globalObject, op->m_sink.get(), builtinNames(vm).endPublicName(), noArgs);
 }
 
-static void rsisSinkClose(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue error)
+static void rsisSinkClose(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue error)
 {
-    auto& vm = getVM(globalObject);
     MarkedArgumentBuffer args;
     args.append(error);
     ASSERT(!args.hasOverflowed());
-    invokeMethod(globalObject, op->m_sink.get(), builtinNames(vm).closePublicName(), args);
+    invokeMethod(vm, globalObject, op->m_sink.get(), builtinNames(vm).closePublicName(), args);
 }
 
 static JSReadStreamIntoSinkOperation* rsisOpFromContext(JSValue context)
@@ -950,9 +935,8 @@ static JSReadStreamIntoSinkOperation* rsisOpFromContext(JSValue context)
 
 // Runs one synchronous segment of the pump; an abrupt completion becomes the pump's catch path.
 template<typename Body>
-static void rsisRunCatching(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, const Body& body)
+static void rsisRunCatching(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, const Body& body)
 {
-    auto& vm = getVM(globalObject);
     JSValue thrown;
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -964,13 +948,12 @@ static void rsisRunCatching(JSGlobalObject* globalObject, JSReadStreamIntoSinkOp
         }
     }
     if (!thrown.isEmpty())
-        rsisAbrupt(globalObject, op, thrown);
+        rsisAbrupt(vm, globalObject, op, thrown);
 }
 
 // The pump's `finally`: release the reader (unless the throw path orphaned it) and detach.
-static void rsisFinally(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
+static void rsisFinally(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (auto* reader = op->m_reader.get()) {
         {
@@ -1003,28 +986,27 @@ static void rsisFinish(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperati
     auto scope = DECLARE_THROW_SCOPE(vm);
     op->m_didClose = true;
     auto* result = op->m_result.get();
-    JSValue endResult = rsisSinkEnd(globalObject, op);
+    JSValue endResult = rsisSinkEnd(vm, globalObject, op);
     RETURN_IF_EXCEPTION(scope, );
-    rsisFinally(globalObject, op);
+    rsisFinally(vm, globalObject, op);
     RETURN_IF_EXCEPTION(scope, );
     RELEASE_AND_RETURN(scope, resolvePromise(globalObject, result, endResult));
 }
 
 // The pump's `catch (e)`: the reader is deliberately orphaned, never released.
-static void rsisAbrupt(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue error)
+static void rsisAbrupt(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue error)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     op->m_didThrow = true;
     op->m_reader.clear();
     auto* result = op->m_result.get();
     if (auto* stream = op->m_stream.get())
-        publicStreamCancelIgnoringResult(globalObject, stream, error);
+        publicStreamCancelIgnoringResult(vm, globalObject, stream, error);
     JSValue rejectionValue = error;
     if (op->m_sink && !op->m_didClose) {
         op->m_didClose = true;
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        rsisSinkClose(globalObject, op, error);
+        rsisSinkClose(vm, globalObject, op, error);
         if (catchScope.exception()) [[unlikely]] {
             JSValue secondError = takeAbruptCompletion(globalObject, catchScope);
             if (secondError.isEmpty())
@@ -1038,7 +1020,7 @@ static void rsisAbrupt(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperati
             rejectionValue = createAggregateError(vm, globalObject->errorStructure(ErrorType::AggregateError), errors, String(), jsUndefined());
         }
     }
-    rsisFinally(globalObject, op);
+    rsisFinally(vm, globalObject, op);
     RETURN_IF_EXCEPTION(scope, );
     RELEASE_AND_RETURN(scope, rejectPromise(globalObject, result, rejectionValue));
 }
@@ -1046,14 +1028,13 @@ static void rsisAbrupt(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperati
 // One sink.write(chunk). `wrote < 0` = HTTP-sink backpressure: register the flush continuation
 // (its context carries the unwritten batch tail) and suspend. A Promise `wrote` is
 // deliberately NOT awaited, only marked as handled.
-static std::optional<bool> rsisWriteChunk(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue chunk, JSObject* batchValues, unsigned nextIndex, unsigned length)
+static std::optional<bool> rsisWriteChunk(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue chunk, JSObject* batchValues, unsigned nextIndex, unsigned length)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue wrote = rsisSinkWrite(globalObject, op, chunk);
+    JSValue wrote = rsisSinkWrite(vm, globalObject, op, chunk);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     if (wrote.isNumber() && wrote.asNumber() < 0) {
-        JSValue flushed = rsisSinkFlushPending(globalObject, op);
+        JSValue flushed = rsisSinkFlushPending(vm, globalObject, op);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         JSPromise* flushPromise = dynamicDowncast<JSPromise>(flushed);
         if (!flushPromise) {
@@ -1083,14 +1064,13 @@ static std::optional<bool> rsisWriteChunk(JSGlobalObject* globalObject, JSReadSt
 }
 
 // Writes values[start..length); false = suspended on backpressure (or an exception is pending).
-static bool rsisWriteChunkArrayFrom(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSObject* values, unsigned start, unsigned length)
+static bool rsisWriteChunkArrayFrom(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSObject* values, unsigned start, unsigned length)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     for (unsigned i = start; i < length; i++) {
         JSValue chunk = values->getIndex(globalObject, i);
         RETURN_IF_EXCEPTION(scope, false);
-        auto step = rsisWriteChunk(globalObject, op, chunk, values, i + 1, length);
+        auto step = rsisWriteChunk(vm, globalObject, op, chunk, values, i + 1, length);
         RETURN_IF_EXCEPTION(scope, false);
         if (!step.value_or(false))
             return false;
@@ -1109,9 +1089,8 @@ static void rsisAfterBatch(JSGlobalObject* globalObject, JSReadStreamIntoSinkOpe
 }
 
 // Resumes after `await sink.flush(true)`: the batch tail (if any), then the read loop.
-static void rsisContinueAfterFlush(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSArray* tail)
+static void rsisContinueAfterFlush(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSArray* tail)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (op->m_didClose) {
         RELEASE_AND_RETURN(scope, rsisFinish(globalObject, op));
@@ -1119,16 +1098,15 @@ static void rsisContinueAfterFlush(JSGlobalObject* globalObject, JSReadStreamInt
     if (!tail) {
         RELEASE_AND_RETURN(scope, rsisIssueRead(globalObject, op));
     }
-    bool completed = rsisWriteChunkArrayFrom(globalObject, op, tail, 0, tail->length());
+    bool completed = rsisWriteChunkArrayFrom(vm, globalObject, op, tail, 0, tail->length());
     RETURN_IF_EXCEPTION(scope, );
     if (!completed)
         return;
     RELEASE_AND_RETURN(scope, rsisAfterBatch(globalObject, op));
 }
 
-static void rsisRegisterAndStart(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
+static void rsisRegisterAndStart(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     {
         auto* stream = op->m_stream.get();
@@ -1137,7 +1115,7 @@ static void rsisRegisterAndStart(JSGlobalObject* globalObject, JSReadStreamIntoS
         RETURN_IF_EXCEPTION(scope, );
         JSValue onClose = wrapWithAsyncContext(globalObject, stream, onCloseBound);
         RETURN_IF_EXCEPTION(scope, );
-        startJSSinkController(globalObject, op->m_sink.get(), stream, jsUndefined(), onClose);
+        startJSSinkController(vm, globalObject, op->m_sink.get(), stream, jsUndefined(), onClose);
         RETURN_IF_EXCEPTION(scope, );
         double rawHighWaterMark = stream->m_bunHighWaterMark;
         auto* startOptions = constructEmptyObject(globalObject);
@@ -1145,15 +1123,14 @@ static void rsisRegisterAndStart(JSGlobalObject* globalObject, JSReadStreamIntoS
         MarkedArgumentBuffer startArgs;
         startArgs.append(startOptions);
         ASSERT(!startArgs.hasOverflowed());
-        invokeMethod(globalObject, op->m_sink.get(), builtinNames(vm).startPublicName(), startArgs);
+        invokeMethod(vm, globalObject, op->m_sink.get(), builtinNames(vm).startPublicName(), startArgs);
         RETURN_IF_EXCEPTION(scope, );
     }
     op->m_started = true;
 }
 
-static void rsisContinueWithMany(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue many)
+static void rsisContinueWithMany(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue many)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* manyObject = many.getObject();
     if (!manyObject) [[unlikely]] {
@@ -1168,7 +1145,7 @@ static void rsisContinueWithMany(JSGlobalObject* globalObject, JSReadStreamIntoS
         RELEASE_AND_RETURN(scope, rsisFinish(globalObject, op));
     }
     if (!op->m_started) {
-        rsisRegisterAndStart(globalObject, op);
+        rsisRegisterAndStart(vm, globalObject, op);
         RETURN_IF_EXCEPTION(scope, );
     }
     JSValue valuesValue = manyObject->get(globalObject, vm.propertyNames->value);
@@ -1182,7 +1159,7 @@ static void rsisContinueWithMany(JSGlobalObject* globalObject, JSReadStreamIntoS
         RETURN_IF_EXCEPTION(scope, );
     }
     if (length) {
-        bool completed = rsisWriteChunkArrayFrom(globalObject, op, values, 0, length);
+        bool completed = rsisWriteChunkArrayFrom(vm, globalObject, op, values, 0, length);
         RETURN_IF_EXCEPTION(scope, );
         if (!completed)
             return;
@@ -1203,9 +1180,8 @@ static void rsisIssueRead(JSGlobalObject* globalObject, JSReadStreamIntoSinkOper
     readPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadStreamIntoSinkReadFulfilled(), runtime->onReadStreamIntoSinkRejected(), jsUndefined(), op);
 }
 
-static void rsisHandleReadResult(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue iterationResult)
+static void rsisHandleReadResult(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue iterationResult)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* resultObject = iterationResult.getObject();
     if (!resultObject) [[unlikely]] {
@@ -1221,7 +1197,7 @@ static void rsisHandleReadResult(JSGlobalObject* globalObject, JSReadStreamIntoS
     }
     JSValue chunk = resultObject->get(globalObject, vm.propertyNames->value);
     RETURN_IF_EXCEPTION(scope, );
-    auto step = rsisWriteChunk(globalObject, op, chunk, nullptr, 0, 0);
+    auto step = rsisWriteChunk(vm, globalObject, op, chunk, nullptr, 0, 0);
     RETURN_IF_EXCEPTION(scope, );
     if (!step.value_or(false))
         return;
@@ -1229,9 +1205,8 @@ static void rsisHandleReadResult(JSGlobalObject* globalObject, JSReadStreamIntoS
     RELEASE_AND_RETURN(scope, rsisAfterBatch(globalObject, op));
 }
 
-static void rsisBegin(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
+static void rsisBegin(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = op->m_stream.get();
     stream->materializeIfNeeded(globalObject);
@@ -1244,13 +1219,13 @@ static void rsisBegin(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperatio
     RETURN_IF_EXCEPTION(scope, );
     if (auto* manyPromise = dynamicDowncast<JSPromise>(many)) {
         // The sink may abort before readMany settles (#6758): start it now.
-        rsisRegisterAndStart(globalObject, op);
+        rsisRegisterAndStart(vm, globalObject, op);
         RETURN_IF_EXCEPTION(scope, );
         auto* runtime = WebCore::JSStreamsRuntime::from(globalObject);
         manyPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadStreamIntoSinkReadManyFulfilled(), runtime->onReadStreamIntoSinkRejected(), jsUndefined(), op);
         return;
     }
-    RELEASE_AND_RETURN(scope, rsisContinueWithMany(globalObject, op, many));
+    RELEASE_AND_RETURN(scope, rsisContinueWithMany(vm, globalObject, op, many));
 }
 
 JSPromise* readStreamIntoSink(JSGlobalObject* globalObject, JSReadableStream* stream, JSObject* sink)
@@ -1264,17 +1239,16 @@ JSPromise* readStreamIntoSink(JSGlobalObject* globalObject, JSReadableStream* st
     op->m_sink.set(vm, op, sink);
     auto* result = JSPromise::create(vm, globalObject->promiseStructure());
     op->m_result.set(vm, op, result);
-    rsisRunCatching(globalObject, op, [&] {
-        rsisBegin(globalObject, op);
+    rsisRunCatching(vm, globalObject, op, [&] {
+        rsisBegin(vm, globalObject, op);
     });
     RETURN_IF_EXCEPTION(scope, nullptr);
     return result;
 }
 
 // readStreamIntoSinkOnClose(op, stream, reason) — the JSSink onClose [bound-convention] body.
-static void readStreamIntoSinkOnCloseImpl(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue streamValue, JSValue reason)
+static void readStreamIntoSinkOnCloseImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue streamValue, JSValue reason)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     // The sink closed underneath the pump (which may stay suspended forever): end() FIRST,
     // before the fallible cancel below, so the controller cell always detaches from the
@@ -1282,7 +1256,7 @@ static void readStreamIntoSinkOnCloseImpl(JSGlobalObject* globalObject, JSReadSt
     if (JSObject* sink = op->m_sink.get()) {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         MarkedArgumentBuffer noArgs;
-        invokeMethod(globalObject, sink, builtinNames(vm).endPublicName(), noArgs);
+        invokeMethod(vm, globalObject, sink, builtinNames(vm).endPublicName(), noArgs);
         if (catchScope.exception()) [[unlikely]]
             catchScope.clearExceptionExceptTermination();
     }
@@ -1303,12 +1277,11 @@ static void readStreamIntoSinkOnCloseImpl(JSGlobalObject* globalObject, JSReadSt
 
 using WebCore::JSResumableSinkPumpOperation;
 
-static void resumableIssueRead(JSGlobalObject*, JSResumableSinkPumpOperation*);
-static void resumableEnd(JSGlobalObject*, JSResumableSinkPumpOperation*, JSValue error, bool hasError);
+static void resumableIssueRead(JSC::VM&, JSGlobalObject*, JSResumableSinkPumpOperation*);
+static void resumableEnd(JSC::VM&, JSGlobalObject*, JSResumableSinkPumpOperation*, JSValue error, bool hasError);
 
-static void resumableReleaseReader(JSGlobalObject* globalObject, JSResumableSinkPumpOperation* op)
+static void resumableReleaseReader(JSC::VM& vm, JSGlobalObject* globalObject, JSResumableSinkPumpOperation* op)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (auto* reader = op->m_reader.get()) {
         {
@@ -1337,39 +1310,36 @@ static void resumableReleaseReader(JSGlobalObject* globalObject, JSResumableSink
     op->m_stream.clear();
 }
 
-static void resumableEnd(JSGlobalObject* globalObject, JSResumableSinkPumpOperation* op, JSValue error, bool hasError)
+static void resumableEnd(JSC::VM& vm, JSGlobalObject* globalObject, JSResumableSinkPumpOperation* op, JSValue error, bool hasError)
 {
-    auto& vm = getVM(globalObject);
     if (JSObject* sink = op->m_sink.get()) {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         MarkedArgumentBuffer args;
         if (hasError)
             args.append(error);
         ASSERT(!args.hasOverflowed());
-        invokeMethod(globalObject, sink, builtinNames(vm).endPublicName(), args);
+        invokeMethod(vm, globalObject, sink, builtinNames(vm).endPublicName(), args);
         if (catchScope.exception()) [[unlikely]] {
             if (takeAbruptCompletion(globalObject, catchScope).isEmpty())
                 return;
         }
     }
-    resumableReleaseReader(globalObject, op);
+    resumableReleaseReader(vm, globalObject, op);
 }
 
 // The drain loop's catch: sticky error, public cancel, end(error) on a fresh microtask.
-static void resumableHandleAbrupt(JSGlobalObject* globalObject, JSResumableSinkPumpOperation* op, JSValue error)
+static void resumableHandleAbrupt(JSC::VM& vm, JSGlobalObject* globalObject, JSResumableSinkPumpOperation* op, JSValue error)
 {
-    auto& vm = getVM(globalObject);
     op->m_error.set(vm, op, error);
     op->m_closed = true;
     if (auto* stream = op->m_stream.get())
-        publicStreamCancelIgnoringResult(globalObject, stream, error);
+        publicStreamCancelIgnoringResult(vm, globalObject, stream, error);
     queueStreamsMicrotask(globalObject, WebCore::JSStreamsRuntime::from(globalObject)->onResumableSinkEndMicrotask(), error, op);
     op->m_reading = false;
 }
 
-static void resumableHandleReadResult(JSGlobalObject* globalObject, JSResumableSinkPumpOperation* op, JSValue iterationResult)
+static void resumableHandleReadResult(JSC::VM& vm, JSGlobalObject* globalObject, JSResumableSinkPumpOperation* op, JSValue iterationResult)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* resultObject = iterationResult.getObject();
     if (!resultObject) [[unlikely]] {
@@ -1393,17 +1363,17 @@ static void resumableHandleReadResult(JSGlobalObject* globalObject, JSResumableS
             MarkedArgumentBuffer args;
             args.append(chunk);
             ASSERT(!args.hasOverflowed());
-            invokeMethod(globalObject, op->m_sink.get(), builtinNames(vm).writePublicName(), args);
+            invokeMethod(vm, globalObject, op->m_sink.get(), builtinNames(vm).writePublicName(), args);
             RETURN_IF_EXCEPTION(scope, );
         }
         op->m_reading = false;
-        RELEASE_AND_RETURN(scope, resumableEnd(globalObject, op, jsUndefined(), false));
+        RELEASE_AND_RETURN(scope, resumableEnd(vm, globalObject, op, jsUndefined(), false));
     }
     if (hasChunk) {
         MarkedArgumentBuffer args;
         args.append(chunk);
         ASSERT(!args.hasOverflowed());
-        JSValue wrote = invokeMethod(globalObject, op->m_sink.get(), builtinNames(vm).writePublicName(), args);
+        JSValue wrote = invokeMethod(vm, globalObject, op->m_sink.get(), builtinNames(vm).writePublicName(), args);
         RETURN_IF_EXCEPTION(scope, );
         // write() runs user code that may synchronously cancel the pump and release the
         // reader; re-validate before issuing the next read through it.
@@ -1418,12 +1388,11 @@ static void resumableHandleReadResult(JSGlobalObject* globalObject, JSResumableS
             return;
         }
     }
-    RELEASE_AND_RETURN(scope, resumableIssueRead(globalObject, op));
+    RELEASE_AND_RETURN(scope, resumableIssueRead(vm, globalObject, op));
 }
 
-static void resumableIssueRead(JSGlobalObject* globalObject, JSResumableSinkPumpOperation* op)
+static void resumableIssueRead(JSC::VM& vm, JSGlobalObject* globalObject, JSResumableSinkPumpOperation* op)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* domGlobalObject = defaultGlobalObject(globalObject);
     auto* runtime = WebCore::JSStreamsRuntime::from(globalObject);
@@ -1434,16 +1403,15 @@ static void resumableIssueRead(JSGlobalObject* globalObject, JSResumableSinkPump
     readPromise->performPromiseThenWithContext(vm, globalObject, runtime->onResumableSinkReadFulfilled(), runtime->onResumableSinkReadRejected(), jsUndefined(), op);
 }
 
-static void resumableDrain(JSGlobalObject* globalObject, JSResumableSinkPumpOperation* op)
+static void resumableDrain(JSC::VM& vm, JSGlobalObject* globalObject, JSResumableSinkPumpOperation* op)
 {
-    auto& vm = getVM(globalObject);
     if (!op->m_error.get().isEmpty() || op->m_closed || op->m_reading)
         return;
     op->m_reading = true;
     JSValue thrown;
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        resumableIssueRead(globalObject, op);
+        resumableIssueRead(vm, globalObject, op);
         if (catchScope.exception()) [[unlikely]] {
             thrown = takeAbruptCompletion(globalObject, catchScope);
             if (thrown.isEmpty())
@@ -1451,13 +1419,12 @@ static void resumableDrain(JSGlobalObject* globalObject, JSResumableSinkPumpOper
         }
     }
     if (!thrown.isEmpty())
-        resumableHandleAbrupt(globalObject, op, thrown);
+        resumableHandleAbrupt(vm, globalObject, op, thrown);
 }
 
 // resumableSinkCancel(unused, reason): the native side invokes it as (undefined, reason).
-static void resumableCancelImpl(JSGlobalObject* globalObject, JSResumableSinkPumpOperation* op, JSValue reason)
+static void resumableCancelImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSResumableSinkPumpOperation* op, JSValue reason)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (op->m_closed)
         return;
@@ -1469,12 +1436,11 @@ static void resumableCancelImpl(JSGlobalObject* globalObject, JSResumableSinkPum
         readableStreamCancel(globalObject, stream, reason);
         RETURN_IF_EXCEPTION(scope, );
     }
-    RELEASE_AND_RETURN(scope, resumableReleaseReader(globalObject, op));
+    RELEASE_AND_RETURN(scope, resumableReleaseReader(vm, globalObject, op));
 }
 
-static void resumableSetup(JSGlobalObject* globalObject, JSResumableSinkPumpOperation* op)
+static void resumableSetup(JSC::VM& vm, JSGlobalObject* globalObject, JSResumableSinkPumpOperation* op)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = op->m_stream.get();
     JSObject* sink = op->m_sink.get();
@@ -1487,7 +1453,7 @@ static void resumableSetup(JSGlobalObject* globalObject, JSResumableSinkPumpOper
     MarkedArgumentBuffer startArgs;
     startArgs.append(startOptions);
     ASSERT(!startArgs.hasOverflowed());
-    invokeMethod(globalObject, sink, builtinNames(vm).startPublicName(), startArgs);
+    invokeMethod(vm, globalObject, sink, builtinNames(vm).startPublicName(), startArgs);
     RETURN_IF_EXCEPTION(scope, );
 
     stream->materializeIfNeeded(globalObject);
@@ -1505,10 +1471,10 @@ static void resumableSetup(JSGlobalObject* globalObject, JSResumableSinkPumpOper
     handlerArgs.append(drainBound);
     handlerArgs.append(cancelBound);
     ASSERT(!handlerArgs.hasOverflowed());
-    invokeMethod(globalObject, sink, builtinNames(vm).setHandlersPublicName(), handlerArgs);
+    invokeMethod(vm, globalObject, sink, builtinNames(vm).setHandlersPublicName(), handlerArgs);
     RETURN_IF_EXCEPTION(scope, );
 
-    RELEASE_AND_RETURN(scope, resumableDrain(globalObject, op));
+    RELEASE_AND_RETURN(scope, resumableDrain(vm, globalObject, op));
 }
 
 JSValue assignStreamIntoResumableSink(JSGlobalObject* globalObject, JSReadableStream* stream, JSObject* resumableSink)
@@ -1524,7 +1490,7 @@ JSValue assignStreamIntoResumableSink(JSGlobalObject* globalObject, JSReadableSt
     JSValue thrown;
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        resumableSetup(globalObject, op);
+        resumableSetup(vm, globalObject, op);
         if (catchScope.exception()) [[unlikely]] {
             thrown = takeAbruptCompletion(globalObject, catchScope);
             if (thrown.isEmpty())
@@ -1561,7 +1527,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onNativePullFulfilled, (JSGlobalObj
     JSValue thrown;
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        Bun::WebStreams::nativeSourcePullFulfilled(globalObject, adapter, result);
+        Bun::WebStreams::nativeSourcePullFulfilled(vm, globalObject, adapter, result);
         if (catchScope.exception()) [[unlikely]] {
             thrown = takeAbruptCompletion(globalObject, catchScope);
             if (thrown.isEmpty())
@@ -1583,7 +1549,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onNativePullRejected, (JSGlobalObje
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* adapter = uncheckedDowncast<JSNativeStreamSourceAdapter>(callFrame->argument(1));
-    Bun::WebStreams::nativeSourcePullRejected(globalObject, adapter, callFrame->argument(0));
+    Bun::WebStreams::nativeSourcePullRejected(vm, globalObject, adapter, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -1593,7 +1559,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onNativeSourceCallCloseMicrotask, (
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* adapter = uncheckedDowncast<JSNativeStreamSourceAdapter>(callFrame->argument(1));
-    Bun::WebStreams::nativeSourceCallClose(globalObject, adapter);
+    Bun::WebStreams::nativeSourceCallClose(vm, globalObject, adapter);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -1604,8 +1570,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadStreamIntoSinkReadManyFulfill
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* op = uncheckedDowncast<JSReadStreamIntoSinkOperation>(callFrame->argument(1));
     JSValue many = callFrame->argument(0);
-    Bun::WebStreams::rsisRunCatching(globalObject, op, [&] {
-        Bun::WebStreams::rsisContinueWithMany(globalObject, op, many);
+    Bun::WebStreams::rsisRunCatching(vm, globalObject, op, [&] {
+        Bun::WebStreams::rsisContinueWithMany(vm, globalObject, op, many);
     });
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
@@ -1617,8 +1583,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadStreamIntoSinkReadFulfilled, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* op = uncheckedDowncast<JSReadStreamIntoSinkOperation>(callFrame->argument(1));
     JSValue iterationResult = callFrame->argument(0);
-    Bun::WebStreams::rsisRunCatching(globalObject, op, [&] {
-        Bun::WebStreams::rsisHandleReadResult(globalObject, op, iterationResult);
+    Bun::WebStreams::rsisRunCatching(vm, globalObject, op, [&] {
+        Bun::WebStreams::rsisHandleReadResult(vm, globalObject, op, iterationResult);
     });
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
@@ -1633,8 +1599,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadStreamIntoSinkFlushFulfilled,
     JSArray* tail = nullptr;
     if (auto* tuple = dynamicDowncast<InternalFieldTuple>(context))
         tail = uncheckedDowncast<JSArray>(tuple->getInternalField(1));
-    Bun::WebStreams::rsisRunCatching(globalObject, op, [&] {
-        Bun::WebStreams::rsisContinueAfterFlush(globalObject, op, tail);
+    Bun::WebStreams::rsisRunCatching(vm, globalObject, op, [&] {
+        Bun::WebStreams::rsisContinueAfterFlush(vm, globalObject, op, tail);
     });
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
@@ -1645,7 +1611,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadStreamIntoSinkRejected, (JSGl
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* op = Bun::WebStreams::rsisOpFromContext(callFrame->argument(1));
-    Bun::WebStreams::rsisAbrupt(globalObject, op, callFrame->argument(0));
+    Bun::WebStreams::rsisAbrupt(vm, globalObject, op, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -1659,7 +1625,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onResumableSinkReadFulfilled, (JSGl
     JSValue thrown;
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        Bun::WebStreams::resumableHandleReadResult(globalObject, op, iterationResult);
+        Bun::WebStreams::resumableHandleReadResult(vm, globalObject, op, iterationResult);
         if (catchScope.exception()) [[unlikely]] {
             thrown = takeAbruptCompletion(globalObject, catchScope);
             if (thrown.isEmpty())
@@ -1667,7 +1633,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onResumableSinkReadFulfilled, (JSGl
         }
     }
     if (!thrown.isEmpty())
-        Bun::WebStreams::resumableHandleAbrupt(globalObject, op, thrown);
+        Bun::WebStreams::resumableHandleAbrupt(vm, globalObject, op, thrown);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -1677,7 +1643,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onResumableSinkReadRejected, (JSGlo
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* op = uncheckedDowncast<JSResumableSinkPumpOperation>(callFrame->argument(1));
-    Bun::WebStreams::resumableHandleAbrupt(globalObject, op, callFrame->argument(0));
+    Bun::WebStreams::resumableHandleAbrupt(vm, globalObject, op, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -1687,7 +1653,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onResumableSinkEndMicrotask, (JSGlo
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* op = uncheckedDowncast<JSResumableSinkPumpOperation>(callFrame->argument(1));
-    Bun::WebStreams::resumableEnd(globalObject, op, callFrame->argument(0), true);
+    Bun::WebStreams::resumableEnd(vm, globalObject, op, callFrame->argument(0), true);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -1719,7 +1685,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundReadDirectStreamOnClose, (JSGl
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* state = uncheckedDowncast<JSDirectSinkCloseState>(callFrame->argument(0));
-    Bun::WebStreams::readDirectStreamCloseImpl(globalObject, state, callFrame->argument(1), callFrame->argument(2));
+    Bun::WebStreams::readDirectStreamCloseImpl(vm, globalObject, state, callFrame->argument(1), callFrame->argument(2));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -1729,7 +1695,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundReadStreamIntoSinkOnClose, (JS
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* op = uncheckedDowncast<JSReadStreamIntoSinkOperation>(callFrame->argument(0));
-    Bun::WebStreams::readStreamIntoSinkOnCloseImpl(globalObject, op, callFrame->argument(1), callFrame->argument(2));
+    Bun::WebStreams::readStreamIntoSinkOnCloseImpl(vm, globalObject, op, callFrame->argument(1), callFrame->argument(2));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -1739,7 +1705,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundResumableSinkDrain, (JSGlobalO
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* op = uncheckedDowncast<JSResumableSinkPumpOperation>(callFrame->argument(0));
-    Bun::WebStreams::resumableDrain(globalObject, op);
+    Bun::WebStreams::resumableDrain(vm, globalObject, op);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -1749,7 +1715,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundResumableSinkCancel, (JSGlobal
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* op = uncheckedDowncast<JSResumableSinkPumpOperation>(callFrame->argument(0));
-    Bun::WebStreams::resumableCancelImpl(globalObject, op, callFrame->argument(2));
+    Bun::WebStreams::resumableCancelImpl(vm, globalObject, op, callFrame->argument(2));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }

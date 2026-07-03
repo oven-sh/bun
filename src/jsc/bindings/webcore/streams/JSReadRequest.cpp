@@ -43,9 +43,8 @@ static JSReadableByteStreamController* byteControllerOf(JSReadableStream* stream
 
 // [reaction-convention] deferral: runs handler(value, context) as its own microtask,
 // carrying the current async context, without allocating a promise.
-static void queueReactionJob(JSGlobalObject* globalObject, JSFunction* handler, JSValue value, JSValue context)
+static void queueReactionJob(JSC::VM& vm, JSGlobalObject* globalObject, JSFunction* handler, JSValue value, JSValue context)
 {
-    auto& vm = getVM(globalObject);
     JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
     if (asyncContext.isEmpty())
         asyncContext = jsUndefined();
@@ -115,9 +114,9 @@ void JSReadRequest::chunkSteps(JSGlobalObject* globalObject, JSValue chunk)
     case ReadRequestKind::PipeTo:
         RELEASE_AND_RETURN(scope, pipeToReadRequestChunkSteps(globalObject, uncheckedDowncast<JSStreamPipeToOperation>(m_context.get()), chunk));
     case ReadRequestKind::DefaultTee:
-        return queueReactionJob(globalObject, JSStreamsRuntime::from(globalObject)->onDefaultTeeReadChunkMicrotask(), chunk, m_context.get());
+        return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onDefaultTeeReadChunkMicrotask(), chunk, m_context.get());
     case ReadRequestKind::ByteTee:
-        return queueReactionJob(globalObject, JSStreamsRuntime::from(globalObject)->onByteTeeReadChunkMicrotask(), chunk, m_context.get());
+        return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onByteTeeReadChunkMicrotask(), chunk, m_context.get());
     case ReadRequestKind::AsyncIterator: {
         auto* context = uncheckedDowncast<InternalFieldTuple>(m_context.get());
         auto* promise = uncheckedDowncast<JSPromise>(context->getInternalField(1));
@@ -281,7 +280,7 @@ void JSReadIntoRequest::chunkSteps(JSGlobalObject* globalObject, JSArrayBufferVi
         RELEASE_AND_RETURN(scope, resolvePromise(globalObject, promise, result));
     }
     case ReadIntoRequestKind::ByteTee:
-        return queueReactionJob(globalObject, JSStreamsRuntime::from(globalObject)->onByteTeeReadIntoChunkMicrotask(), chunk, m_context.get());
+        return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onByteTeeReadIntoChunkMicrotask(), chunk, m_context.get());
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

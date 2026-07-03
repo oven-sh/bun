@@ -128,6 +128,9 @@ public:
     // (an error value of `undefined` is legal).
     JSC::WriteBarrier<JSC::Unknown> m_shutdownError;
     bool m_hasShutdownError { false };
+    // "shutdown with an action" wait-for-all latch: the number of action promises still
+    // pending (AbortBoth registers two). The last settlement proceeds.
+    uint8_t m_pendingShutdownActions { 0 };
     // The pending-abort action: which spec action shutdownWithAction is to perform once the
     // pending writes drain (onWritesFinishedForShutdown). No closures.
     ShutdownAction m_pendingShutdownAction { ShutdownAction::None };

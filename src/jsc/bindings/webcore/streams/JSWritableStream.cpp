@@ -118,9 +118,8 @@ template<> void JSWritableStreamConstructor::finishCreation(VM& vm, JSDOMGlobalO
     m_instanceStructure.set(vm, this, getDOMStructure<JSWritableStream>(vm, globalObject));
 }
 
-static Structure* structureForNewTarget(JSWritableStreamConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
+static Structure* structureForNewTarget(JSC::VM& vm, JSWritableStreamConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
     if (newTarget == constructor) [[likely]]
         return constructor->instanceStructure();
 
@@ -148,7 +147,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWritableStreamConstruc
     auto strategy = convertQueuingStrategyDict(lexicalGlobalObject, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto* structure = structureForNewTarget(constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
+    auto* structure = structureForNewTarget(vm, constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
     RETURN_IF_EXCEPTION(scope, {});
     auto* stream = JSWritableStream::create(vm, structure);
 

@@ -59,11 +59,7 @@ describe.each([true, false])("peer sends FIN: %p", sendFin => {
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "completed", exitCode: 0 });
       expect(stderr).not.toContain("S3Error");

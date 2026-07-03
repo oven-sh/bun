@@ -218,7 +218,14 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
 /** A release config for a unix target, resolved the way the CI lane does. */
 function resolveUnixRelease(os: "linux" | "freebsd"): Config {
   return resolveConfig(
-    { os, arch: "x64", ...(os === "linux" ? { abi: "gnu" as const } : {}), buildType: "Release", ci: true, buildkite: false },
+    {
+      os,
+      arch: "x64",
+      ...(os === "linux" ? { abi: "gnu" as const } : {}),
+      buildType: "Release",
+      ci: true,
+      buildkite: false,
+    },
     mockToolchain({ cc: "/fake/llvm/bin/clang", cxx: "/fake/llvm/bin/clang++", ld: "/fake/llvm/bin/ld.lld" }),
   );
 }

@@ -794,6 +794,59 @@ describe("mock()", () => {
 
     expect(bar()()).toBe(true);
   });
+
+  describe("used as a constructor", () => {
+    test("returns a new object when there is no implementation", () => {
+      const fn = jest.fn();
+      expect(typeof new fn()).toBe("object");
+      expect(typeof Reflect.construct(fn, [])).toBe("object");
+      expect(fn).toHaveBeenCalledTimes(2);
+    });
+
+    test.each([
+      ["undefined", undefined],
+      ["a string", "a string"],
+      ["a number", 1234],
+      ["a boolean", true],
+      ["a symbol", Symbol.iterator],
+      ["a bigint", 1234n],
+      ["null", null],
+    ])("ignores an implementation returning %s", (_label, returnValue) => {
+      const fn = jest.fn(() => returnValue);
+      expect(typeof new fn()).toBe("object");
+      expect(typeof Reflect.construct(fn, [])).toBe("object");
+      expect(fn()).toBe(returnValue);
+    });
+
+    test("returns the object an implementation returns", () => {
+      const returnValue = { a: 1 };
+      const fn = jest.fn(() => returnValue);
+      expect(new fn()).toBe(returnValue);
+      expect(Reflect.construct(fn, [])).toBe(returnValue);
+    });
+
+    test("passes the new object as `this` to the implementation", () => {
+      const fn = jest.fn(function (value) {
+        this.value = value;
+      });
+      const instance = new fn(42);
+      expect(instance).toEqual({ value: 42 });
+      expect(fn.mock.contexts[0]).toBe(instance);
+    });
+
+    test("mockReturnValue with a primitive still returns an object", () => {
+      const fn = jest.fn();
+      fn.mockReturnValue("nope");
+      expect(typeof new fn()).toBe("object");
+      expect(fn()).toBe("nope");
+    });
+
+    test("Reflect.construct honors an explicit newTarget", () => {
+      class Target {}
+      const fn = jest.fn();
+      expect(Reflect.construct(fn, [], Target)).toBeInstanceOf(Target);
+    });
+  });
 });
 
 describe("spyOn", () => {

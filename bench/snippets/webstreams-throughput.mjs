@@ -112,17 +112,26 @@ const version = typeof Bun !== "undefined" ? `bun ${Bun.revision.slice(0, 9)}` :
 console.log(
   `# webstreams throughput — ${version} — ${CHUNKS} x ${CHUNK / 1024} KiB = ${BYTES / 1024 / 1024} MiB per pass, best of ${RUNS}`,
 );
+const rss = () => process.memoryUsage.rss();
 for (const [name, fn] of Object.entries(scenarios)) {
   // Collect between scenarios so no scenario pays the previous one's GC debt.
   globalThis.Bun?.gc(true);
+  const rssBefore = rss();
   // warmup
   if ((await fn()) !== BYTES) throw new Error(`${name}: wrong byte count`);
   let best = Infinity;
+  let peakRss = rssBefore;
   for (let i = 0; i < RUNS; i++) {
     const t0 = performance.now();
     await fn();
     best = Math.min(best, performance.now() - t0);
+    peakRss = Math.max(peakRss, rss());
   }
+  globalThis.Bun?.gc(true);
+  const settled = Math.max(0, (rss() - rssBefore) / 1024 / 1024);
+  const peak = Math.max(0, (peakRss - rssBefore) / 1024 / 1024);
   const mbps = BYTES / 1024 / 1024 / (best / 1000);
-  console.log(`${name.padEnd(42)} ${mbps.toFixed(0).padStart(6)} MB/s  (${best.toFixed(1)} ms)`);
+  console.log(
+    `${name.padEnd(42)} ${mbps.toFixed(0).padStart(6)} MB/s  (${best.toFixed(1)} ms)  peak RSS +${peak.toFixed(1)} MB  settled +${settled.toFixed(1)} MB`,
+  );
 }

@@ -404,15 +404,19 @@ impl HTMLRewriter {
     #[expect(clippy::boxed_local)]
     pub fn finalize(self: Box<Self>) {}
 
+    /// `sync_only_noun` is `Some("string" | "ArrayBuffer")` when the caller
+    /// needs the rewrite to finish before `transform()` returns; a handler that
+    /// would suspend then fails the rewrite instead.
     pub fn begin_transform(
         &self,
         global: &JSGlobalObject,
         response: &mut Response,
+        sync_only_noun: Option<&'static str>,
     ) -> JsResult<JSValue> {
         let new_context = Rc::clone(&self.context);
         // SAFETY: `response` is a live `Response` whose JS wrapper is on
         // the caller's stack (see `transform_`).
-        unsafe { BufferOutputSink::init(new_context, global, response) }
+        unsafe { BufferOutputSink::init(new_context, global, response, sync_only_noun) }
     }
 
     pub fn transform_(
@@ -435,7 +439,7 @@ impl HTMLRewriter {
             }
             // SAFETY: `response` is the live m_ctx of `response_value` (kept
             // alive on the caller's stack), never null.
-            let out = self.begin_transform(global, unsafe { &mut *response })?;
+            let out = self.begin_transform(global, unsafe { &mut *response }, None)?;
             // Check if the returned value is an error and throw it properly
             if let Some(err) = out.to_error() {
                 return Err(global.throw_value(err));
@@ -474,8 +478,14 @@ impl HTMLRewriter {
                 Response::finalize(unsafe { Box::from_raw(r) })
             });
 
+            let noun = if kind == ResponseKind::String {
+                "string"
+            } else {
+                "ArrayBuffer"
+            };
             // SAFETY: `resp` is a live `heap::into_raw` allocation, never null.
-            let out_response_value = self.begin_transform(global, unsafe { &mut *resp })?;
+            let out_response_value =
+                self.begin_transform(global, unsafe { &mut *resp }, Some(noun))?;
             // Check if the returned value is an error and throw it properly
             if let Some(err) = out_response_value.to_error() {
                 return Err(global.throw_value(err));
@@ -487,7 +497,7 @@ impl HTMLRewriter {
                 return Ok(out_response_value);
             };
 
-            let out_guard = scopeguard::guard((out_response_value, out_response), |(v, r)| {
+            let _out_guard = scopeguard::guard((out_response_value, out_response), |(v, r)| {
                 // `Response.js.dangerouslySetPtr(v, null)` — null out the JS
                 // wrapper's `m_ctx` so its GC finalize is a no-op, then finalize
                 // the native side ourselves.
@@ -505,32 +515,9 @@ impl HTMLRewriter {
                 }
             });
 
-            // `transform(string)` / `transform(ArrayBuffer)` must produce the
-            // result synchronously. A body still `Locked` here means an async
-            // content handler suspended the rewrite; there is nothing sound
-            // to return.
-            // SAFETY: out_response is the m_ctx of out_response_value (kept
-            // alive on the stack via ensure_still_alive above).
-            let out_body = unsafe { &*(*out_response).get_body_value() };
-            if matches!(out_body, webcore::body::Value::Locked(_)) {
-                // The suspended rewrite still runs when its handler's promise
-                // settles and its sink still points at `out_response` (and
-                // keeps its JS wrapper alive through a Strong), so the eager
-                // finalize above would be a use-after-free. Disarm it: the
-                // orphaned Response is collected normally once the rewrite
-                // completes and the sink drops.
-                let _ = scopeguard::ScopeGuard::into_inner(out_guard);
-                return Err(global.throw_type_error(format_args!(
-                    "HTMLRewriter.transform() cannot synchronously return a {} because a content \
-                     handler returned a Promise that did not resolve within a microtask. Pass a \
-                     Response instead and await its body",
-                    if kind == ResponseKind::String {
-                        "string"
-                    } else {
-                        "ArrayBuffer"
-                    }
-                )));
-            }
+            // The body is never still `Locked` here: `sync_only_noun` makes a
+            // handler that would suspend fail the rewrite instead, and `init`
+            // rethrows that as the synchronous TypeError above.
 
             // SAFETY: out_response is the m_ctx of out_response_value (kept alive
             // on the stack via ensure_still_alive above).
@@ -711,6 +698,11 @@ pub struct BufferOutputSink {
     /// and that same lol-html call returning -- a purely native window -- so
     /// it never needs a GC root.
     handler_error: Cell<JSValue>,
+    /// Set for `transform(string)` / `transform(ArrayBuffer)`, which must
+    /// produce their result before `transform()` returns. Holds the noun for
+    /// the error message. A handler that would suspend fails the whole rewrite
+    /// instead, so no handler outlives the throw.
+    sync_only_noun: Cell<Option<&'static str>>,
     /// Which lol-html call still has to run (or finish).
     phase: Cell<RewritePhase>,
     /// Handed from the suspending [`handler_callback`] to
@@ -746,6 +738,7 @@ impl BufferOutputSink {
         context: Rc<RefCell<LOLHTMLContext>>,
         global: &JSGlobalObject,
         original: *mut Response,
+        sync_only_noun: Option<&'static str>,
     ) -> JsResult<JSValue> {
         let sink = bun_core::heap::into_raw(Box::new(BufferOutputSink {
             ref_count: Cell::new(1),
@@ -757,6 +750,7 @@ impl BufferOutputSink {
             response_value: StrongOptional::empty(),
             body_value_bufferer: None,
             handler_error: Cell::new(JSValue::ZERO),
+            sync_only_noun: Cell::new(sync_only_noun),
             phase: Cell::new(RewritePhase::WritePending),
             pending_suspension: Cell::new(None),
             suspended_wrapper: Cell::new(core::ptr::null_mut()),
@@ -1654,17 +1648,22 @@ where
         return HandlerOutcome::Continue;
     };
 
-    // An `async` handler's promise settles through the microtask queue even
+    // An `async` handler's promise settles through a microtask checkpoint even
     // when its body never truly awaits (`async element(el) { el.remove() }`),
-    // so drain the microtask queue ONCE — never the event loop — before
-    // deciding. A promise that is still pending afterwards is waiting on I/O
-    // or a timer; that is the one case that has to suspend the rewrite
-    // instead of nesting the whole event loop inside lol-html's `write()`.
+    // so run ONE checkpoint — nextTick + microtasks, never the event loop —
+    // before deciding. A promise still pending afterwards is waiting on I/O or
+    // a timer; that is the one case that has to suspend the rewrite instead of
+    // nesting the whole event loop inside lol-html's `write()`.
+    //
+    // A termination landing in the checkpoint (`worker.terminate()`) must keep
+    // its exception pending and abort the rewrite, never be recorded as a
+    // handler error.
     if promise.status() == jsc::js_promise::Status::Pending {
-        global.vm().drain_microtasks();
-        // Microtasks that ran during the drain can leave a JS exception
-        // pending; don't let it escape through the host-function wrapper.
-        scope.clear_exception();
+        if global.drain_microtasks_and_next_ticks().is_err()
+            || !global.clear_exception_except_termination()
+        {
+            return HandlerOutcome::Stop;
+        }
     }
 
     match promise.status() {
@@ -1682,6 +1681,23 @@ where
                 debug_assert!(false, "HTMLRewriter handler ran outside a rewrite");
                 return HandlerOutcome::Stop;
             };
+
+            // `transform(string)` / `transform(ArrayBuffer)` must hand back the
+            // result before `transform()` returns. Fail the whole rewrite here
+            // rather than suspend: a suspension would keep lexing the rest of
+            // the input and run later handlers against a Response nobody can
+            // reach, and a post-throw rejection would be swallowed.
+            // SAFETY: `sink` is the live BufferOutputSink for this rewrite.
+            if let Some(noun) = unsafe { (*sink).sync_only_noun.get() } {
+                let err = global.create_type_error_instance(format_args!(
+                    "HTMLRewriter.transform() cannot synchronously return a {noun} because a \
+                     content handler returned a Promise that did not resolve within a microtask. \
+                     Pass a Response instead and await its body"
+                ));
+                record_handler_error(global, err);
+                return HandlerOutcome::Stop;
+            }
+
             // Hand the wrapper to the suspension: it has to stay valid across
             // the handler's `await` (the post-`await` code keeps mutating the
             // unit), so disarm the guard here. `begin_suspension` re-points
@@ -2171,25 +2187,27 @@ impl_wrapper_like!(EndTag, RawEndTag, end_tag, suspended_end_tag);
 // ───────────────────────── AttributeIterator ─────────────────────────────
 
 /// The JS `AttributeIterator` heap-boxes one of these over `Element::attributes`
-/// (the Rust crate exposes a slice, not a boxed iterator like the C API did).
-/// Lifetimes are erased; `Element` detaches every iterator before invalidation.
-type RawAttributeIterator = core::slice::Iter<'static, lol_html::html_content::Attribute<'static>>;
-
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = AttributeIterator::destroy_on_zero)]
 pub struct AttributeIterator {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
-    // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub iterator: Cell<*mut RawAttributeIterator>,
+    /// Non-owning backref to the `Element` wrapper that handed this iterator
+    /// out. Reading the attributes through it (rather than caching a
+    /// `slice::Iter` into the attribute buffer) means a suspension, which
+    /// re-points the element at lol-html's heap-parked copy, re-points this
+    /// iterator too. The element keeps a `+1` on us and nulls this in
+    /// `detach()`, so it never dangles. R-2: `Cell` so host-fns take `&self`.
+    element: Cell<*const Element>,
+    /// Index of the next attribute to yield.
+    index: Cell<usize>,
 }
 
 impl AttributeIterator {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    /// `CellRefCounted::destroy` target — detach the lol-html iterator before
-    /// freeing the Box.
+    /// `CellRefCounted::destroy` target.
     ///
     /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
     /// whose generated trait `destroy` upholds the sole-owner contract.
@@ -2201,14 +2219,10 @@ impl AttributeIterator {
         }
     }
 
+    /// Drop the backref. The element owns our `+1` and clears it here, so the
+    /// raw pointer is never read after the element stops tracking us.
     fn detach(&self) {
-        let iterator = self.iterator.replace(core::ptr::null_mut());
-        if !iterator.is_null() {
-            // SAFETY: `iterator` was `heap::into_raw`'d in
-            // `Element::get_attributes`; the Cell is its sole owner and was
-            // nulled above, so this runs at most once.
-            unsafe { bun_core::heap::destroy(iterator) };
-        }
+        self.element.set(core::ptr::null());
     }
 
     pub fn finalize(self: Box<Self>) {
@@ -2227,9 +2241,18 @@ impl AttributeIterator {
         let done_label = bun_core::ZigString::init(b"done");
         let value_label = bun_core::ZigString::init(b"value");
 
-        let Some(attribute) = cell_get(&self.iterator).and_then(|it| it.next()) else {
-            // Exhausted or already detached: free the boxed iterator eagerly
-            // (a no-op once the Cell is null), matching the c-api path.
+        // SAFETY: a non-null backref means the `Element` still tracks this
+        // iterator in `attribute_iterators` (it nulls the backref in `detach`,
+        // which every path that frees it runs first), so the allocation is
+        // live. `&`, never `&mut`: Element's host-fns take `&self`.
+        let element: Option<&Element> = unsafe { self.element.get().as_ref() };
+
+        // Detached (the handler returned, or an attribute was mutated), the
+        // element itself is gone, or we ran off the end of the buffer.
+        let attribute = element
+            .and_then(|el| cell_get(&el.element))
+            .and_then(|raw| raw.attributes().get(self.index.get()));
+        let Some(attribute) = attribute else {
             self.detach();
             return JSValue::create_object2(
                 global_object,
@@ -2239,6 +2262,7 @@ impl AttributeIterator {
                 JSValue::UNDEFINED,
             );
         };
+        self.index.set(self.index.get() + 1);
 
         let value = attribute.value();
         let name = attribute.name();
@@ -2615,24 +2639,20 @@ impl Element {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_attributes(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(el) = cell_get(&self.element) else {
+        if cell_get(&self.element).is_none() {
             return Ok(JSValue::UNDEFINED);
-        };
+        }
 
-        // `cell_get`'s erased `'static` carries through `attributes()`. The
-        // boxed iterator never outlives the real attribute buffer: it is
-        // tracked below and detached in `invalidate()` (when the handler
-        // returns) and before any attribute mutation.
-        let attrs: &'static [lol_html::html_content::Attribute<'static>] = el.attributes();
-        let iter = bun_core::heap::into_raw(Box::new(attrs.iter()));
+        // The iterator reads attributes back through `self` on every `next()`,
+        // so it follows a retarget (suspension) and never caches a borrow into
+        // the attribute buffer.
         let attr_iter = bun_core::heap::into_raw(Box::new(AttributeIterator {
             ref_count: Cell::new(1),
-            iterator: Cell::new(iter),
+            element: Cell::new(std::ptr::from_ref(self)),
+            index: Cell::new(0),
         }));
-        // Track this iterator so we can detach it when the handler returns.
-        // lol-html's attribute slice borrows from the element's token buffer
-        // which is freed after the callback; leaking the iterator to JS
-        // without detaching it would be a use-after-free.
+        // Track this iterator so we can detach it when the handler returns or
+        // an attribute mutation invalidates it.
         // SAFETY: attr_iter is a fresh heap::alloc allocation (refcount==1).
         unsafe { (*attr_iter).ref_() };
         // R-2: `with_mut` — closure does not call into JS (push only).
@@ -2669,13 +2689,11 @@ impl WrapperLike for Element {
         self.invalidate();
     }
     fn retarget(&self, raw: *mut Self::Raw) {
-        // A retarget means the element's lol-html backing (including the
-        // attribute buffer) was replaced by the owned copy `into_suspended`
-        // parked on the heap. Any `AttributeIterator` handed to JS before
-        // the handler's `await` still borrows the abandoned buffer, so it
-        // must be detached, exactly like `set_attribute`/`remove_attribute`
-        // do before they invalidate the buffer.
-        self.detach_attribute_iterators();
+        // The element's lol-html backing (including the attribute buffer) was
+        // replaced by the owned copy `into_suspended` parked on the heap.
+        // `AttributeIterator` reads through this same cell on every `next()`,
+        // so iterators handed out before the handler's `await` keep working,
+        // resuming at the same index into the copied buffer.
         self.element.set(raw);
     }
     fn suspended_raw(rewriter: &mut LolRewriter) -> *mut Self::Raw {

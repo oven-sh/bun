@@ -147,29 +147,48 @@ describe("HTMLRewriter", () => {
       expect(await res.text()).toBe('<div id="x" before="1" after="2">inner</div>');
     });
 
-    it("an attribute iterator from before the await is detached", async () => {
-      // The suspension deep-copies the element (and its attribute buffer)
-      // onto the heap. An iterator handed out before the `await` borrows the
-      // abandoned buffer, so it must report done, exactly like an iterator
-      // leaked past a synchronous handler's return.
-      let after;
+    it("an attribute iterator from before the await keeps working", async () => {
+      // The suspension deep-copies the element (and its attribute buffer) onto
+      // the heap. The iterator reads attributes back through the element on
+      // every next(), so it follows the copy and resumes at the same index
+      // instead of silently reporting done.
+      let partial, rest, fresh;
       const res = new HTMLRewriter()
         .on("div", {
           async element(element) {
-            const before = element.attributes;
+            const it = element.attributes;
+            partial = it.next().value;
             await setImmediatePromise();
-            expect(before.next()).toEqual({ done: true, value: undefined });
-            // A fresh iterator reads the heap copy's attributes.
-            after = [...element.attributes];
+            rest = [...it];
+            fresh = [...element.attributes];
             element.setAttribute("c", "3");
           },
         })
         .transform(new Response('<div a="1" b="2">x</div>'));
       expect(await res.text()).toBe('<div a="1" b="2" c="3">x</div>');
-      expect(after).toEqual([
+      expect(partial).toEqual(["a", "1"]);
+      // Resumes mid-iteration against the parked copy.
+      expect(rest).toEqual([["b", "2"]]);
+      expect(fresh).toEqual([
         ["a", "1"],
         ["b", "2"],
       ]);
+    });
+
+    it("a for..of over attributes with an await in the body visits all of them", async () => {
+      const seen = [];
+      const res = new HTMLRewriter()
+        .on("div", {
+          async element(element) {
+            for (const [name, value] of element.attributes) {
+              await setImmediatePromise();
+              seen.push(`${name}=${value}`);
+            }
+          },
+        })
+        .transform(new Response('<div a="1" b="2" c="3">x</div>'));
+      expect(await res.text()).toBe('<div a="1" b="2" c="3">x</div>');
+      expect(seen).toEqual(["a=1", "b=2", "c=3"]);
     });
 
     it("runs the next handler for the same element after the previous one's await", async () => {
@@ -321,6 +340,63 @@ describe("HTMLRewriter", () => {
         })
         .transform("<div>old</div>");
       expect(out).toBe("<div>sync enough</div>");
+    });
+
+    // The suspend decision runs one microtask checkpoint, which drains
+    // process.nextTick before the promise jobs (Node ordering), so a handler
+    // that completes via nextTick is still "synchronous enough".
+    for (const [label, schedule] of [
+      ["process.nextTick", "process.nextTick(r)"],
+      ["queueMicrotask", "queueMicrotask(r)"],
+    ]) {
+      it(`transform(string) stays synchronous for a handler awaiting ${label}`, () => {
+        const out = new HTMLRewriter()
+          .on("div", {
+            async element(element) {
+              await new Promise(r => eval(schedule));
+              element.setInnerContent("ok");
+            },
+          })
+          .transform("<div>old</div>");
+        expect(out).toBe("<div>ok</div>");
+      });
+    }
+
+    // transform(string) must fail atomically: the throw means the whole
+    // rewrite failed, so no later handler may run against the orphaned output
+    // and no post-throw rejection may be swallowed.
+    it("transform(string) throwing runs no later handlers", async () => {
+      let later = 0;
+      expect(() =>
+        new HTMLRewriter()
+          .on("a", {
+            async element() {
+              await setImmediatePromise();
+            },
+          })
+          .on("b", {
+            element() {
+              later++;
+            },
+          })
+          .transform("<a></a><b></b>"),
+      ).toThrow("cannot synchronously return a string");
+      // Give the orphaned rewrite every chance to resume and run `b`.
+      await setImmediatePromise();
+      await setImmediatePromise();
+      expect(later).toBe(0);
+    });
+
+    it("transform(ArrayBuffer) throws the ArrayBuffer wording", () => {
+      expect(() =>
+        new HTMLRewriter()
+          .on("div", {
+            async element() {
+              await setImmediatePromise();
+            },
+          })
+          .transform(new TextEncoder().encode("<div></div>")),
+      ).toThrow("cannot synchronously return a ArrayBuffer");
     });
 
     // The response body is still a pending/locked value when the client goes

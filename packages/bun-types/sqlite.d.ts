@@ -264,24 +264,30 @@ declare module "bun:sqlite" {
     /**
      * Close the database connection.
      *
+     * Statements prepared from this database are finalized, so the database file
+     * is released immediately. Using one of them afterwards, or running a new
+     * query, throws `Database has closed`.
+     *
      * It is safe to call this method multiple times. If the database is already
-     * closed, this is a no-op. Running queries after the database has been
-     * closed throws an error.
+     * closed, this is a no-op.
      *
      * @example
      * ```ts
      * db.close();
      * ```
-     * This is called automatically when the database instance is garbage collected.
+     * Garbage collecting the database closes the connection once every statement
+     * prepared from it has been collected too. Unlike an explicit `close()`,
+     * garbage collection does not finalize outstanding statements.
      *
-     * Internally, this calls `sqlite3_close_v2`.
+     * Internally, this finalizes outstanding statements and calls `sqlite3_close_v2`.
      */
     close(
       /**
-       * If `true`, throw an error if the database is in use
+       * If `true`, throw an error if any prepared statements are still open
        * @default false
        *
-       * When `true`, this calls `sqlite3_close` instead of `sqlite3_close_v2`.
+       * When `true`, this calls `sqlite3_close` instead of `sqlite3_close_v2`, and
+       * outstanding statements are left alone rather than finalized.
        *
        * Learn more in the [sqlite3 documentation](https://www.sqlite.org/c3ref/close.html).
        *

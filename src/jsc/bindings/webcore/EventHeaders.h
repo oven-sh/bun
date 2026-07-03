@@ -72,8 +72,8 @@
 // #include "BlobEvent.h"
 // #include "JSBlobEvent.h"
 // #endif
-// #include "ClipboardEvent.h"
-// #include "JSClipboardEvent.h"
+#include "ClipboardEvent.h"
+#include "JSClipboardEvent.h"
 #include "CloseEvent.h"
 #include "JSCloseEvent.h"
 // #include "CompositionEvent.h"

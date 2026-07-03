@@ -127,8 +127,8 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForApplePayShippingContactSelectedEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForApplePayShippingMethodSelectedEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForApplePayValidateMerchantEvent;
-    // std::unique_ptr<IsoSubspace> m_subspaceForClipboard;
-    // std::unique_ptr<IsoSubspace> m_subspaceForClipboardItem;
+    std::unique_ptr<IsoSubspace> m_subspaceForClipboard;
+    std::unique_ptr<IsoSubspace> m_subspaceForClipboardItem;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMCache;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMCacheStorage;
     // std::unique_ptr<IsoSubspace> m_subspaceForContactsManager;
@@ -437,7 +437,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForBroadcastChannel;
     // std::unique_ptr<IsoSubspace> m_subspaceForCDATASection;
     // std::unique_ptr<IsoSubspace> m_subspaceForCharacterData;
-    // std::unique_ptr<IsoSubspace> m_subspaceForClipboardEvent;
+    std::unique_ptr<IsoSubspace> m_subspaceForClipboardEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForComment;
     // std::unique_ptr<IsoSubspace> m_subspaceForCompositionEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForCustomElementRegistry;

@@ -48,7 +48,7 @@
 // #endif
 #include "BroadcastChannel.h"
 #include "../../../runtime/webview/JSWebView.h"
-// #include "Clipboard.h"
+#include "Clipboard.h"
 // #include "DOMApplicationCache.h"
 // #include "DOMWindow.h"
 // #include "DedicatedWorkerGlobalScope.h"
@@ -61,7 +61,7 @@
 // #include "IDBRequest.h"
 // #include "IDBTransaction.h"
 #include "JSBroadcastChannel.h"
-// #include "JSClipboard.h"
+#include "JSClipboard.h"
 // #include "JSDOMApplicationCache.h"
 // #include "JSDOMWindow.h"
 // #include "JSDedicatedWorkerGlobalScope.h"

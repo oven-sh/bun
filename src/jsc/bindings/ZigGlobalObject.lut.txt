@@ -42,11 +42,14 @@
   ResolveMessage                  GlobalObject::m_JSResolveMessage                     ClassStructure
   Response                        GlobalObject::m_JSResponse                           ClassStructure
   TextDecoder                     GlobalObject::m_JSTextDecoder                        ClassStructure
+  ClipboardItem                   GlobalObject::m_JSClipboardItemClassStructure        ClassStructure
 
   AbortController                 AbortControllerConstructorCallback                   PropertyCallback
   AbortSignal                     AbortSignalConstructorCallback                       PropertyCallback
   BroadcastChannel                BroadcastChannelConstructorCallback                  PropertyCallback
   ByteLengthQueuingStrategy       ByteLengthQueuingStrategyConstructorCallback         PropertyCallback
+  Clipboard                       ClipboardConstructorCallback                         PropertyCallback
+  ClipboardEvent                  ClipboardEventConstructorCallback                    PropertyCallback
   CloseEvent                      CloseEventConstructorCallback                        PropertyCallback
   CompressionStream               CompressionStreamConstructorCallback                 PropertyCallback
   CountQueuingStrategy            CountQueuingStrategyConstructorCallback              PropertyCallback

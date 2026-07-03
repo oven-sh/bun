@@ -141,6 +141,7 @@ void JSDirectSinkCloseState::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_underlyingSource);
+    visitor.append(thisObject->m_sinkController);
     visitor.append(thisObject->m_closePromise);
 }
 
@@ -758,6 +759,16 @@ static void readDirectStreamCloseImpl(JSGlobalObject* globalObject, JSDirectSink
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // The sink closed (or is closing): end() detaches the controller cell from the native
+    // sink so a later GC of the cell cannot release a reference it does not own.
+    if (JSObject* sinkController = state->m_sinkController.get()) {
+        state->m_sinkController.clear();
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        MarkedArgumentBuffer noArgs;
+        invokeMethod(globalObject, sinkController, Identifier::fromString(vm, "end"_s), noArgs);
+        if (catchScope.exception()) [[unlikely]]
+            catchScope.clearExceptionExceptTermination();
+    }
     JSObject* underlyingSource = state->m_underlyingSource.get();
     state->m_underlyingSource.clear();
     if (underlyingSource) {
@@ -811,6 +822,7 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
 
     auto* state = WebCore::JSDirectSinkCloseState::create(vm, runtime->directSinkCloseStateStructure(domGlobalObject));
     state->m_underlyingSource.set(vm, state, underlyingSource);
+    state->m_sinkController.set(vm, state, sinkController);
 
     JSValue pull = underlyingSource->get(globalObject, Identifier::fromString(vm, "pull"_s));
     RETURN_IF_EXCEPTION(scope, {});
@@ -1274,6 +1286,15 @@ static void readStreamIntoSinkOnCloseImpl(JSGlobalObject* globalObject, JSReadSt
         }
     }
     op->m_didClose = true;
+    // The sink closed underneath the pump (which may stay suspended forever): end() now so
+    // the controller cell detaches from the native sink instead of being collected attached.
+    if (JSObject* sink = op->m_sink.get()) {
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        MarkedArgumentBuffer noArgs;
+        invokeMethod(globalObject, sink, Identifier::fromString(vm, "end"_s), noArgs);
+        if (catchScope.exception()) [[unlikely]]
+            catchScope.clearExceptionExceptTermination();
+    }
 }
 
 //                       assignStreamIntoResumableSink — the ResumableSink pump

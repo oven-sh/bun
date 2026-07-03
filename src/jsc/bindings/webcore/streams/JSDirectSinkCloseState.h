@@ -21,8 +21,9 @@ public:
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
     DECLARE_INFO;
-    // visitChildrenImpl MUST visit BOTH: m_underlyingSource, m_closePromise. (An unvisited
-    // m_closePromise is a premature collection of the promise handed to Rust.)
+    // visitChildrenImpl MUST visit ALL THREE: m_underlyingSource, m_sinkController,
+    // m_closePromise. (An unvisited m_closePromise is a premature collection of the
+    // promise handed to Rust.)
     DECLARE_VISIT_CHILDREN;
 
     template<typename, JSC::SubspaceAccess mode>
@@ -36,6 +37,9 @@ public:
 
     // the direct stream's user underlyingSource (its `cancel` runs from onClose).
     JSC::WriteBarrier<JSC::JSObject> m_underlyingSource;
+    // the JS sink controller driving the source; onClose must end() it so the cell
+    // detaches from the native sink before it can be collected.
+    JSC::WriteBarrier<JSC::JSObject> m_sinkController;
     // the close-capability promise returned to the caller when `pull` returned synchronously
     // without closing; initially null, armed by readDirectStream, resolved by onClose.
     JSC::WriteBarrier<JSC::JSPromise> m_closePromise;

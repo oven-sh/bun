@@ -80,6 +80,29 @@ test("presign distinguishes a backslash from a slash", () => {
   expect(s3.presign("a/b").split("?")[0]).toBe("http://s3.example.com/bucket/a/b");
 });
 
+// The 1024-byte S3 key limit holds whatever the key is made of, rather than
+// varying with how many of its bytes percent-encode.
+test.each([
+  ["a", 1024, true],
+  ["a", 1025, false],
+  [" ", 1024, true],
+  [" ", 1025, false],
+])("a %j key of %i bytes is accepted: %j", (fill, length, accepted) => {
+  const s3 = new S3Client({
+    accessKeyId: "key",
+    secretAccessKey: "secret",
+    bucket: "bucket",
+    endpoint: "http://s3.example.com",
+  });
+  const key = Buffer.alloc(length, fill).toString();
+
+  if (accepted) {
+    expect(s3.presign(key)).toStartWith("http://s3.example.com/bucket/");
+  } else {
+    expect(() => s3.presign(key)).toThrow(expect.objectContaining({ code: "ERR_S3_INVALID_PATH" }));
+  }
+});
+
 test.each(["evil.example.com/other", "evil.example.com\\other"])(
   "a virtual-hosted bucket name containing a path separator (%j) is rejected",
   bucket => {

@@ -374,11 +374,16 @@ impl S3Credentials {
             return Err(SignError::InvalidPath);
         }
 
-        // A 1024-byte key can percent-encode to 3x that. Bucket names are unreserved
-        // characters only, so their 63-byte limit is also their encoded bound.
+        // The key limit is enforced on the raw bytes so it doesn't depend on how much
+        // of the key percent-encodes, which expands a byte to at most 3. Bucket names
+        // are unreserved characters only, so their limit is also their encoded bound.
+        const MAX_KEY_LEN: usize = 1024;
         const MAX_BUCKET_LEN: usize = 63;
-        const MAX_ENCODED_KEY_LEN: usize = 1024 * 3;
+        const MAX_ENCODED_KEY_LEN: usize = MAX_KEY_LEN * 3;
         const MAX_ENDPOINT_LEN: usize = 2048;
+        if path.len() > MAX_KEY_LEN {
+            return Err(SignError::InvalidPath);
+        }
         let mut normalized_path_buffer =
             [0u8; MAX_ENDPOINT_LEN + MAX_BUCKET_LEN + MAX_ENCODED_KEY_LEN + 2];
         let mut path_buffer = [0u8; MAX_ENCODED_KEY_LEN];

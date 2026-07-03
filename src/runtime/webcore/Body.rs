@@ -2447,8 +2447,6 @@ impl<'a> ValueBufferer<'a> {
     /// "direct"` stream) through `readableStreamToArrayBuffer` — the same path
     /// `new Response(stream).arrayBuffer()` takes. Only the JS runtime knows how
     /// to drive these sources; `byte_stream`'s native pipe cannot.
-    ///
-    /// `stream` is GC-rooted by the caller's `readable_stream_ref`.
     fn buffer_js_readable_stream(&mut self, stream: ReadableStream) -> crate::Result<()> {
         let global = self.global;
 
@@ -2461,6 +2459,12 @@ impl<'a> ValueBufferer<'a> {
             scope.assert_exception_presence_matches(value.is_empty());
             value
         };
+        // Release the GC root `buffer_locked_body_value` took. The builtin owns
+        // the stream through its own reader now, and whatever drives the source
+        // keeps the returned promise alive. Rooting it here also roots the
+        // promise chain — and so the `NativePromiseContext` cell — forever, so
+        // an abandoned transform could never be collected. See `set_promise`.
+        self.readable_stream_ref.deinit();
         if promise_value.is_empty() {
             // The builtin threw (e.g. the stream yielded a chunk that is neither
             // a string nor a view); the exception is pending on the VM.

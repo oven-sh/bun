@@ -1,3 +1,4 @@
+import { heapStats } from "bun:jsc";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { once } from "events";
 import fs from "fs";
@@ -498,6 +499,39 @@ describe("HTMLRewriter", () => {
         })
         .transform(new Response(body));
       expect(await transformed.text()).toBe("<a>x</a><zzz>y</zzz>");
+    });
+
+    it("does not leak a transform whose source stream never settles", async () => {
+      // The bufferer must not hold a Strong to the source: the stream reaches
+      // the promise chain, which reaches the NativePromiseContext cell holding
+      // the sink's refcount, so rooting it means an abandoned transform can
+      // never be collected.
+      const abandon = () => {
+        const body = new ReadableStream({
+          pull() {
+            return new Promise(() => {});
+          },
+        });
+        rewriter().transform(new Response(body));
+      };
+      // BufferOutputSink's ref is released on the event loop, so drain between
+      // collections rather than measuring straight after Bun.gc().
+      const settle = async () => {
+        for (let i = 0; i < 5; i++) {
+          Bun.gc(true);
+          await Bun.sleep(1);
+        }
+      };
+      const live = () => heapStats().objectTypeCounts.Response ?? 0;
+
+      for (let i = 0; i < 10; i++) abandon(); // warm up lazy structures
+      await settle();
+      const before = live();
+      for (let i = 0; i < 200; i++) abandon();
+      await settle();
+      // Pre-fix this grew by exactly 200 (one leaked sink per transform, each
+      // pinning its output Response).
+      expect(live() - before).toBeLessThan(20);
     });
 
     // Resolves with "" instead: the `.body` getter builds a ByteStream the

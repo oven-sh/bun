@@ -294,6 +294,10 @@ it("process.versions", () => {
   expect(process.versions).toHaveProperty("usockets");
   expect(process.versions).toHaveProperty("uwebsockets");
   expect(process.versions.usockets).toBe(process.versions.uwebsockets);
+
+  // Node.js exposes the bundled SQLite version here; Bun should too.
+  expect(process.versions).toHaveProperty("sqlite");
+  expect(process.versions.sqlite).toMatch(/^3\.\d+\.\d+$/);
 });
 
 it("process.config", () => {

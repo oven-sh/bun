@@ -855,7 +855,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const canary = partial.canary ?? true;
   const canaryRevision = canary ? "1" : "0";
 
-  // Static SQLite: off on Apple (uses system), on elsewhere
+  // Whether bun:sqlite links the bundled sqlite3 directly (LAZY_LOAD_SQLITE=0)
+  // or dlopens the system library at runtime (the macOS default). The bundled
+  // sqlite3.c is compiled on every platform regardless — node:sqlite always
+  // uses it (see scripts/build/deps/sqlite.ts).
   const staticSqlite = partial.staticSqlite ?? !darwin;
 
   // Static libatomic: on by default. Arch/Manjaro don't ship libatomic.a —

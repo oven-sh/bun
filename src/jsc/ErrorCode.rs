@@ -717,9 +717,11 @@ impl ErrorCode {
     pub const TRACE_EVENTS_CATEGORY_REQUIRED: ErrorCode = ErrorCode(329);
     /// `ERR_TRACE_EVENTS_UNAVAILABLE` (instanceof Error)
     pub const TRACE_EVENTS_UNAVAILABLE: ErrorCode = ErrorCode(330);
+    /// `ERR_SQLITE_ERROR` (instanceof Error)
+    pub const SQLITE_ERROR: ErrorCode = ErrorCode(331);
 
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 331;
+    pub const COUNT: u16 = 332;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1094,6 +1096,7 @@ impl ErrorCode {
     pub const ERR_SECRETS_INTERACTION_REQUIRED: ErrorCode = ErrorCode::SECRETS_INTERACTION_REQUIRED;
     pub const ERR_HTTP2_GOAWAY_SESSION: ErrorCode = ErrorCode::HTTP2_GOAWAY_SESSION;
     pub const ERR_PROXY_TUNNEL: ErrorCode = ErrorCode::PROXY_TUNNEL;
+    pub const ERR_SQLITE_ERROR: ErrorCode = ErrorCode::SQLITE_ERROR;
 
     // NOTE: `ERR_SYSTEM_ERROR` / `ERR_CHILD_CLOSED_BEFORE_REPLY` intentionally
     // do NOT live here. They belong to the unrelated enum
@@ -1442,6 +1445,7 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_INVALID_BUFFER_SIZE",
     "ERR_TRACE_EVENTS_CATEGORY_REQUIRED",
     "ERR_TRACE_EVENTS_UNAVAILABLE",
+    "ERR_SQLITE_ERROR",
 ];
 
 // ──────────────────────────────────────────────────────────────────────────

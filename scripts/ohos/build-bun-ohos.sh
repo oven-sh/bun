@@ -157,6 +157,35 @@ sync_webkit() {
     ok "WebKit 同步完成 ($(echo "$webkit_commit" | head -c 12))"
 }
 
+# ─── 代码生成（codegen）───────────────────────────────────────────────────────
+run_codegen() {
+    info "检查 codegen 产物..."
+    local codegen_dir="${BUILD_DIR}/codegen"
+    local json_rs="${codegen_dir}/json_byte_class.rs"
+    if [ -f "$json_rs" ]; then
+        ok "codegen 已就绪 ($(basename "$json_rs"))"
+        return 0
+    fi
+
+    info "运行 codegen (json_byte_class.rs)..."
+    mkdir -p "$codegen_dir"
+
+    # 直接运行 jsonByteClass 生成器（ninja configure 不生成这个文件，
+    # 需要从源码直接调用生成脚本）
+    cd "$CI_SRC"
+    if ! "$BUN" scripts/build/jsonByteClass.ts --codegen-dir="$codegen_dir" 2>&1; then
+        err "codegen 失败"
+        return 1
+    fi
+
+    # 验证
+    if [ ! -f "$json_rs" ]; then
+        err "codegen 失败: $json_rs 未生成"
+        return 1
+    fi
+    ok "codegen 完成 ($(wc -l < "$json_rs") lines)"
+}
+
 # ─── 编译 ─────────────────────────────────────────────────────────────────────
 run_build() {
     info "开始编译 (ninja -C ${BUILD_DIR} bun)"
@@ -246,6 +275,7 @@ main() {
             ;;
         ninja-only)
             pre_check
+            run_codegen
             run_build
             ;;
         deploy-only)
@@ -259,6 +289,7 @@ main() {
             pre_check
             sync_source
             sync_webkit
+            run_codegen
             run_build
             deploy_artifact
             ;;

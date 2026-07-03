@@ -1071,8 +1071,6 @@ static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi
 {
     auto* globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, message);
@@ -1082,15 +1080,23 @@ static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi
         js_message.isString() && (js_code.isEmpty() || js_code.isString()),
         napi_string_expected);
 
+    // napi_create_error and friends must succeed even when a VM-level exception
+    // is already pending (matching Node.js behavior). Our operations (getString
+    // on already-validated strings, createErrorWithCode) do not consult
+    // vm.m_exception and run correctly in its presence. We only detect a NEW
+    // exception that appeared when there was none before.
+    JSC::Exception* preExistingException = vm.exception();
+
     auto wtf_code = js_code.isEmpty() ? WTF::String() : js_code.getString(globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
     auto wtf_message = js_message.getString(globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
 
     *result = toNapi(
         createErrorWithCode(vm, globalObject, wtf_code, wtf_message, type),
         globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
+
+    if (!preExistingException && vm.exception()) {
+        return napi_set_last_error(env, napi_pending_exception);
+    }
     return napi_set_last_error(env, napi_ok);
 }
 

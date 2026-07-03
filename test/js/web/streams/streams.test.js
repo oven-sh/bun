@@ -1721,7 +1721,9 @@ describe("pipeTo from a byte source", () => {
 // Async stack frames on stream errors created inside native reactions (no JS frames of
 // their own): the `for await` and `pipeTo` awaiters must get the awaiting function's frames.
 function serveStalledBody() {
-  // One flushed chunk, then the body stalls (the test force-closes the connection).
+  // One flushed chunk, then the body stalls until the test releases it (a pull left
+  // parked at process exit would leave the aborted request's native sink alive).
+  const { promise: parked, resolve: unpark } = Promise.withResolvers();
   const server = Bun.serve({
     port: 0,
     idleTimeout: 0,
@@ -1732,18 +1734,19 @@ function serveStalledBody() {
           async pull(c) {
             c.write("part1");
             await c.flush();
-            await new Promise(() => {});
+            await parked;
+            c.end();
           },
         }),
         { headers: { "Content-Length": "100000" } },
       );
     },
   });
-  return server;
+  return { server, unpark };
 }
 
 test("for await over a stream that errors natively includes async stack frames", async () => {
-  const server = serveStalledBody();
+  const { server, unpark } = serveStalledBody();
   async function level2() {
     const res = await fetch(server.url);
     const iterator = res.body[Symbol.asyncIterator]();
@@ -1762,6 +1765,8 @@ test("for await over a stream that errors natively includes async stack frames",
   } catch (e) {
     caught = e;
   } finally {
+    unpark();
+    await Bun.sleep(0);
     server.stop(true);
   }
   expect(caught).toBeDefined();
@@ -1770,7 +1775,7 @@ test("for await over a stream that errors natively includes async stack frames",
 });
 
 test("pipeTo from a stream that errors natively includes async stack frames", async () => {
-  const server = serveStalledBody();
+  const { server, unpark } = serveStalledBody();
   async function level2() {
     const res = await fetch(server.url);
     await res.body.pipeTo(
@@ -1790,6 +1795,8 @@ test("pipeTo from a stream that errors natively includes async stack frames", as
   } catch (e) {
     caught = e;
   } finally {
+    unpark();
+    await Bun.sleep(0);
     server.stop(true);
   }
   expect(caught).toBeDefined();

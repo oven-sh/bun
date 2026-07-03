@@ -18,11 +18,13 @@ const orderFilePath = join(repoRoot, "scripts", "orderfile", "linker.order");
 const flagsPath = join(repoRoot, "scripts", "build", "flags.ts");
 
 // lld's parser (args::getLines) trims each line, drops empty ones, and treats a
-// leading '#' as a comment. Everything else is taken as a symbol name.
+// leading '#' as a comment. Everything else is taken as a symbol name. Trim the
+// same way it does, so a CRLF checkout doesn't read as 30k malformed symbols.
 const symbols = existsSync(orderFilePath)
   ? readFileSync(orderFilePath, "utf8")
       .split("\n")
-      .filter(line => line.trim().length > 0 && !line.startsWith("#"))
+      .map(line => line.trim())
+      .filter(line => line.length > 0 && !line.startsWith("#"))
   : [];
 
 describe("linker.order", () => {

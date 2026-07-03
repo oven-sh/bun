@@ -365,15 +365,24 @@ impl S3Credentials {
         let path = normalize_name(path);
         let bucket = normalize_name(bucket);
 
+        // Checked before encoding: `\` survives encode_uri_component as `%5C`, so
+        // the `/` test below would no longer catch it.
+        let bucket_has_separator = bucket.contains(&b'/') || bucket.contains(&b'\\');
+
         // if we allow path.len == 0 it will list the bucket for now we disallow
         if !ALLOW_EMPTY_PATH && path.is_empty() {
             return Err(SignError::InvalidPath);
         }
 
-        // 1024 max key size and 63 max bucket name
-        let mut normalized_path_buffer = [0u8; 1024 + 63 + 2];
-        let mut path_buffer = [0u8; 1024];
-        let mut bucket_buffer = [0u8; 63];
+        // A 1024-byte key can percent-encode to 3x that. Bucket names are unreserved
+        // characters only, so their 63-byte limit is also their encoded bound.
+        const MAX_BUCKET_LEN: usize = 63;
+        const MAX_ENCODED_KEY_LEN: usize = 1024 * 3;
+        const MAX_ENDPOINT_LEN: usize = 2048;
+        let mut normalized_path_buffer =
+            [0u8; MAX_ENDPOINT_LEN + MAX_BUCKET_LEN + MAX_ENCODED_KEY_LEN + 2];
+        let mut path_buffer = [0u8; MAX_ENCODED_KEY_LEN];
+        let mut bucket_buffer = [0u8; MAX_BUCKET_LEN];
         let bucket = encode_uri_component::<false>(bucket, &mut bucket_buffer)
             .map_err(|_| SignError::InvalidPath)?;
         let path = encode_uri_component::<false>(path, &mut path_buffer)
@@ -386,7 +395,7 @@ impl S3Credentials {
         let mut extra_path: &[u8] = b"";
         let host: Box<[u8]> = 'brk_host: {
             if !self.endpoint.is_empty() {
-                if self.endpoint.len() >= 2048 {
+                if self.endpoint.len() >= MAX_ENDPOINT_LEN {
                     return Err(SignError::InvalidEndpoint);
                 }
                 let mut host: &[u8] = &self.endpoint;
@@ -402,10 +411,10 @@ impl S3Credentials {
                     if bucket.is_empty() {
                         return Err(SignError::InvalidEndpoint);
                     }
-                    // The bucket is interpolated into the host; a `/` (or `\`,
-                    // which encode_uri_component normalizes to `/`) would let a
-                    // crafted bucket redirect the signed request to another host.
-                    if bucket.contains(&b'/') {
+                    // The bucket is interpolated into the host; a path separator
+                    // would let a crafted bucket redirect the signed request to
+                    // another host.
+                    if bucket_has_separator {
                         return Err(SignError::InvalidEndpoint);
                     }
                     // default to https://<BUCKET_NAME>.s3.<REGION>.amazonaws.com/
@@ -1178,11 +1187,12 @@ pub fn encode_uri_component<'b, const ENCODE_SLASH: bool>(
             }
             // All other characters need to be percent-encoded
             _ => {
-                if !ENCODE_SLASH && (c == b'/' || c == b'\\') {
+                // `\` is a legal S3 key byte distinct from `/`; it percent-encodes.
+                if !ENCODE_SLASH && c == b'/' {
                     if written >= buffer.len() {
                         return Err(EncodeError::BufferTooSmall);
                     }
-                    buffer[written] = if c == b'\\' { b'/' } else { c };
+                    buffer[written] = c;
                     written += 1;
                     continue;
                 }

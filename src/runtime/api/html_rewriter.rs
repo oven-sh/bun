@@ -16,6 +16,7 @@ use bun_jsc::{
 // owner of the `on_quiet_unhandled_rejection_handler_capture_value` assoc fn.
 use bun_jsc::virtual_machine::VirtualMachine;
 
+use crate::api::NativePromiseContext;
 use crate::webcore::response::HeadersRef;
 use crate::webcore::{self, Response};
 use bun_core::String as BunString;
@@ -1153,13 +1154,19 @@ impl BufferOutputSink {
 
         // No JS has run (so no GC can have happened) between
         // `handler_callback` recording `promise` and here: the lol-html
-        // unwind in between is pure native code. Once attached, the
-        // reactions (and `sink`, smuggled as their context argument) are
-        // rooted on the promise itself.
+        // unwind in between is pure native code.
         suspension.promise.ensure_still_alive();
-        suspension.promise.then(
+
+        // The reactions' context is a GC-managed cell holding the sink's `+1`,
+        // not a raw pointer: a promise collected without ever settling takes
+        // the cell with it, and its destructor abandons the parked rewrite
+        // instead of leaking it (`SuspensionContext::abandon`).
+        // SAFETY: the `ref_()` above is the `+1` this context now owns.
+        let ctx = unsafe { SuspensionContext::new(sink) };
+        let cell = NativePromiseContext::create(&global, ctx);
+        suspension.promise.then_with_value(
             &global,
-            sink,
+            cell,
             Bun__HTMLRewriter__onHandlerResolve,
             Bun__HTMLRewriter__onHandlerReject,
         );
@@ -1293,11 +1300,68 @@ bun_jsc::jsc_host_abi! {
     }
 }
 
+/// The `.then()` context for one suspension, wrapped in a GC-managed
+/// `NativePromiseContext` cell rather than passed as a raw pointer. If the
+/// handler's promise is collected without ever settling (a handler that awaits
+/// a promise nothing will resolve), the cell's destructor reaches
+/// [`Self::abandon`] instead of leaking the parked rewrite forever.
+///
+/// Holds the `+1` on `sink` that the settling reaction (or `abandon`) releases.
+#[repr(align(8))]
+pub struct SuspensionContext {
+    sink: *mut BufferOutputSink,
+}
+
+impl SuspensionContext {
+    /// Consumes one ref on `sink`.
+    ///
+    /// # Safety
+    /// `sink` must be live with a `+1` transferred to the returned context.
+    unsafe fn new(sink: *mut BufferOutputSink) -> *mut Self {
+        bun_core::heap::into_raw(Box::new(Self { sink }))
+    }
+
+    /// Reclaim the sink from a settling reaction's context argument. `None` if
+    /// the cell was already taken (it can only be taken once).
+    fn take(cell: JSValue) -> Option<*mut BufferOutputSink> {
+        let ctx = NativePromiseContext::take::<Self>(cell)?;
+        // SAFETY: `take` hands back the pointer `new` leaked, exactly once.
+        let this = unsafe { bun_core::heap::take(ctx.as_ptr()) };
+        Some(this.sink)
+    }
+
+    /// The promise was collected without settling: the rewrite can never
+    /// continue. Fail the output body and release everything the suspension
+    /// parked. Runs from the event loop, not the GC sweep (see
+    /// `DeferredDerefTask`), so touching the JSC heap is safe here.
+    ///
+    /// # Safety
+    /// `this` must be the live context the GC'd cell owned.
+    pub(crate) unsafe fn abandon(this: *mut Self) {
+        // SAFETY: fn contract — `this` is the leaked `new` allocation.
+        let sink = unsafe { bun_core::heap::take(this) }.sink;
+        // SAFETY: the context held a `+1` on `sink`; `adopt` consumes it.
+        let _sink_guard = unsafe { bun_ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
+        // SAFETY: `sink` is live for this scope (the ref above).
+        unsafe {
+            BufferOutputSink::release_suspended_wrapper(sink);
+            (*sink).phase.set(RewritePhase::Done);
+            BufferOutputSink::deliver_body_error(
+                sink,
+                webcore::body::ValueError::Message(BunString::static_(
+                    "HTMLRewriter content handler returned a Promise that will never settle",
+                )),
+            );
+        }
+    }
+}
+
 fn on_handler_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments();
-    let sink: *mut BufferOutputSink = args[args.len() - 1].as_promise_ptr();
-    // SAFETY: `begin_suspension` took a +1 on `sink` for this reaction;
-    // `adopt` releases it on scope exit.
+    let Some(sink) = SuspensionContext::take(args[args.len() - 1]) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: the context held a `+1` on `sink`; `adopt` releases it.
     let _sink_guard = unsafe { bun_ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
     // The handler's post-`await` code already ran (as earlier reactions on
     // the same promise), so the parked unit is done being mutated: detach
@@ -1313,7 +1377,9 @@ fn on_handler_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
 fn on_handler_reject(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments();
     let reason = args[0];
-    let sink: *mut BufferOutputSink = args[args.len() - 1].as_promise_ptr();
+    let Some(sink) = SuspensionContext::take(args[args.len() - 1]) else {
+        return Ok(JSValue::UNDEFINED);
+    };
     // SAFETY: see `on_handler_resolve`.
     let _sink_guard = unsafe { bun_ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
     // The handler failed. Don't resume: `Drop` destroys the suspended

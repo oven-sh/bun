@@ -120,3 +120,67 @@ test.skipIf(isDebug)(
   },
   15_000,
 );
+
+// A suspension parks the sink (+1), the rewritable unit's JS wrapper (+1), a
+// Strong on the output Response, and the boxed lol-html rewriter. All of it is
+// owned by the handler's promise reaction, so it is released only when that
+// promise settles.
+test("suspended rewrites release their parked state once the handler settles", async () => {
+  const suspendingRewrites = async (count: number) => {
+    for (let i = 0; i < count; i++) {
+      await new HTMLRewriter()
+        .on("p", {
+          async element(element) {
+            await new Promise(r => setTimeout(r, 0));
+            element.setInnerContent("x");
+          },
+        })
+        .transform(new Response("<p>y</p>"))
+        .text();
+    }
+  };
+
+  const counts = () => {
+    Bun.gc(true);
+    const { objectTypeCounts, protectedObjectTypeCounts } = heapStats();
+    return {
+      responses: objectTypeCounts.Response ?? 0,
+      functions: protectedObjectTypeCounts.Function ?? 0,
+    };
+  };
+
+  await suspendingRewrites(40);
+  const before = counts();
+  await suspendingRewrites(120);
+  const after = counts();
+
+  // Each leaked suspension would pin one Response (the Strong on the sink's
+  // output) and the handler's protected closure.
+  expect(after.responses - before.responses).toBeLessThan(30);
+  expect(after.functions - before.functions).toBeLessThan(30);
+});
+
+// A handler that awaits a promise nothing will ever resolve: the promise is
+// collected unsettled, so the GC-managed reaction context is collected with it
+// and abandons the parked rewrite instead of leaking it forever.
+test("a never-settling handler promise fails the body instead of leaking", async () => {
+  const res = new HTMLRewriter()
+    .on("p", {
+      async element() {
+        await new Promise(() => {});
+      },
+    })
+    .transform(new Response("<p>x</p>"));
+
+  const body = res.text().then(
+    v => ({ ok: v }),
+    e => ({ err: e.message }),
+  );
+  // Collect the unreachable, never-settling promise.
+  for (let i = 0; i < 3; i++) {
+    Bun.gc(true);
+    await new Promise(r => setTimeout(r, 1));
+  }
+
+  expect(await body).toEqual({ err: "HTMLRewriter content handler returned a Promise that will never settle" });
+});

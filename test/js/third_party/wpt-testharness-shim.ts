@@ -31,7 +31,8 @@ import { isASAN } from "harness";
 
 /** How the runner receives each WPT subtest. `run` resolves on PASS and
  * rejects on FAIL; a rejection whose Error.name is "WPTTimeout" is a hang. */
-export type Registrar = (name: string, run: () => Promise<void>) => void;
+export type SubtestKind = "test" | "promise_test" | "async_test";
+export type Registrar = (name: string, run: () => Promise<void>, kind?: SubtestKind) => void;
 
 let registrar: Registrar = () => {
   throw new Error("wpt testharness-shim: setRegistrar() was not called");
@@ -46,7 +47,14 @@ export function setRegistrar(r: Registrar) {
 // in record mode, journaled — instead of bun killing the body mid-flight.
 // ASAN/debug builds run several times slower, so they get 3x; that can only
 // reduce false TIMEOUTs. 1500 * 3 = 4500ms leaves 500ms for cleanups.
-export const SUBTEST_TIMEOUT_MS = 1500 * (isASAN ? 3 : 1);
+export let SUBTEST_TIMEOUT_MS = 1500 * (isASAN ? 3 : 1);
+// WPT's `// META: timeout=long` multiplies the budget; idlharness's `idl_test
+// setup` runs every member subtest inline, so it needs the long budget.
+export function setSubtestTimeout(ms: number): number {
+  const prev = SUBTEST_TIMEOUT_MS;
+  SUBTEST_TIMEOUT_MS = ms;
+  return prev;
+}
 
 // ---------------------------------------------------------------------------
 // assertion helpers (semantics follow upstream resources/testharness.js)
@@ -172,6 +180,47 @@ function assert_object_equals(actual: any, expected: any, description?: string) 
     stack.pop();
   }
   check(actual, expected);
+}
+
+function assert_own_property(object: any, property_name: any, description?: string) {
+  if (!Object.prototype.hasOwnProperty.call(object, property_name)) {
+    fail(`assert_own_property: ${description ?? ""} expected property ${format_value(property_name)} missing`);
+  }
+}
+
+function assert_inherits(object: any, property_name: any, description?: string) {
+  const d = description ?? "";
+  const isObj = (typeof object === "object" && object !== null) || typeof object === "function";
+  if (!isObj) fail(`assert_inherits: ${d} provided value is not an object`);
+  if (!("hasOwnProperty" in object)) fail(`assert_inherits: ${d} provided value has no hasOwnProperty method`);
+  if (Object.prototype.hasOwnProperty.call(object, property_name)) {
+    fail(`assert_inherits: ${d} property ${format_value(property_name)} found on object expected in prototype chain`);
+  }
+  if (!(property_name in object)) {
+    fail(`assert_inherits: ${d} property ${format_value(property_name)} not found in prototype chain`);
+  }
+}
+
+function assert_class_string(object: any, class_string: string, description?: string) {
+  const actual = {}.toString.call(object);
+  const expected = `[object ${class_string}]`;
+  if (!Object.is(actual, expected)) {
+    fail(`assert_class_string: ${description ?? ""} expected ${format_value(expected)} but got ${format_value(actual)}`);
+  }
+}
+
+function assert_regexp_match(actual: any, expected: RegExp, description?: string) {
+  if (!expected.test(actual)) {
+    fail(`assert_regexp_match: ${description ?? ""} expected ${String(expected)} but got ${format_value(actual)}`);
+  }
+}
+
+function assert_in_array(actual: any, expected: any[], description?: string) {
+  if (expected.indexOf(actual) === -1) {
+    fail(
+      `assert_in_array: ${description ?? ""} value ${format_value(actual)} not in array ${format_value(expected)}`,
+    );
+  }
 }
 
 function assert_greater_than(actual: any, expected: any, description?: string) {
@@ -451,7 +500,7 @@ function runSubtest(fn: (t: WPTTest) => unknown, name: string, requireThenable: 
 // Function-constructor parameter instead. WPT's sync test() also accepts
 // (name) or (fn) alone, but the vendored streams files always pass (fn, name).
 const registerSubtest = (requireThenable: boolean) => (fn: (t: WPTTest) => unknown, name: string) =>
-  registrar(name, () => runSubtest(fn, name, requireThenable));
+  registrar(name, () => runSubtest(fn, name, requireThenable), requireThenable ? "promise_test" : "test");
 
 export const wptTest = registerSubtest(false);
 
@@ -463,9 +512,38 @@ g.promise_test = registerSubtest(true);
 
 // async_test(fn, name): the body runs synchronously and the subtest completes
 // when t.done() fires (or a step throws, which marks it failed and done).
-g.async_test = (fn: (t: WPTTest) => unknown, name: string) => {
-  registrar(name, () => {
-    const t = new WPTTest(name);
+// async_test(fn, name) runs the body and completes on t.done(); the upstream
+// single-argument form async_test(name) creates and RETURNS the Test object so
+// the caller can drive it manually with t.step()/t.done() (idlharness does this
+// for every member test).
+g.async_test = (fnOrName: ((t: WPTTest) => unknown) | string, name?: string) => {
+  if (typeof fnOrName === "string") {
+    const t = new WPTTest(fnOrName);
+    registrar(
+      fnOrName,
+      () =>
+        runToDrained(() =>
+        withTimeout(
+          t,
+          (async () => {
+            try {
+              await t.donePromise;
+              await macrotask();
+              t.throwIfStepFailed();
+            } finally {
+              await t.runCleanups();
+            }
+          })(),
+        ),
+      ),
+      "async_test",
+    );
+    return t;
+  }
+  const fn = fnOrName;
+  const testName = name!;
+  registrar(testName, () => {
+    const t = new WPTTest(testName);
     return runToDrained(() =>
       withTimeout(
         t,
@@ -482,7 +560,8 @@ g.async_test = (fn: (t: WPTTest) => unknown, name: string) => {
         })(),
       ),
     );
-  });
+  }, "async_test");
+  return undefined;
 };
 
 g.step_timeout = (fn: (...a: any[]) => unknown, timeout: number, ...args: any[]) => setTimeout(fn, timeout, ...args);
@@ -494,6 +573,11 @@ g.assert_false = assert_false;
 g.assert_array_equals = assert_array_equals;
 g.assert_object_equals = assert_object_equals;
 g.assert_greater_than = assert_greater_than;
+g.assert_own_property = assert_own_property;
+g.assert_inherits = assert_inherits;
+g.assert_class_string = assert_class_string;
+g.assert_regexp_match = assert_regexp_match;
+g.assert_in_array = assert_in_array;
 g.assert_unreached = assert_unreached;
 g.assert_throws_js = assert_throws_js;
 g.assert_throws_exactly = assert_throws_exactly;

@@ -30,7 +30,8 @@ the whole process and is therefore never executed, in either mode.
 
 | | subtests | pass | fail | timeout | crash | pass % |
 |---|---|---|---|---|---|---|
-| **total** | **1174** | **1174** | 0 | 0 | 0 | **100%** |
+| **total** | **1402** | **1402** | 0 | 0 | 0 | **100%** |
+| idlharness (WebIDL surface) | 228 | 228 | 0 | 0 | 0 | 100% |
 | piping | 229 | 229 | 0 | 0 | 0 | 100% |
 | queuing-strategies (top level) | 20 | 20 | 0 | 0 | 0 | 100% |
 | readable-byte-streams | 248 | 248 | 0 | 0 | 0 | 100% |
@@ -39,6 +40,15 @@ the whole process and is therefore never executed, in either mode.
 | writable-streams | 196 | 196 | 0 | 0 | 0 | 100% |
 
 `expectations.json` is empty: every subtest passes, none are marked expected-fail.
+
+`idlharness.any.js` (the WebIDL surface-shape harness: interface-object descriptors,
+prototype layout, method `length`/`name`, `@@toStringTag`, brand checks) runs with the
+vendored `resources/idlharness.js` + `resources/webidl2/lib/webidl2.js` +
+`interfaces/{streams,dom}.idl` from the same WPT commit. It is executed through a
+registrar with upstream testharness semantics (its member subtests are registered
+dynamically from inside its own setup `promise_test`, and its `test()` bodies rely on
+running synchronously at registration), and every collected subtest is adjudicated
+against `expectations.json` individually.
 
 For comparison, the pre-rewrite implementation recorded with the same harness on the
 same machine one day earlier: **971/1174 (82.7%)**, with 191 assertion failures, 10

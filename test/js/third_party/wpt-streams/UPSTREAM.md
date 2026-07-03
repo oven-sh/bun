@@ -26,6 +26,12 @@ git -C /tmp/wpt checkout 1cfa3004f4ac74aa007591529aba9e9246b1f1bf
   `rs-test-templates.js`).
 - `common/gc.js` — provides `garbageCollect()`; included by the
   garbage-collection tests via `// META: script=/common/gc.js`.
+- `resources/idlharness.js`, `resources/webidl2/lib/webidl2.js`,
+  `interfaces/streams.idl`, `interfaces/dom.idl` — the WebIDL harness, parser, and
+  IDL definitions `streams/idlharness.any.js` needs. The runner resolves the
+  `// META: script=/resources/WebIDLParser.js` server alias to the webidl2 bundle
+  and serves `/interfaces/<spec>.idl` fetches from the vendored files
+  (`fetch_spec` in `wpt-streams.test.ts`).
 
 Vendored file contents must never be modified. All adaptation lives in
 `../wpt-testharness-shim.ts` / `wpt-streams.test.ts`.
@@ -34,7 +40,6 @@ Vendored file contents must never be modified. All adaptation lives in
 
 | Path | Reason |
 | --- | --- |
-| `streams/idlharness.any.js` | Needs `/resources/idlharness.js` + WebIDL machinery; IDL-shape coverage, not behavior |
 | `streams/transferable/**` | Requires `postMessage` stream transfer (windows/workers/service workers); Bun does not support transferable streams — out of scope by design |
 | `streams/readable-streams/owning-type*.tentative.any.js` (3 files) | `.tentative` — the `type: 'owning'` proposal is not part of the standard; two also need `MessageChannel` transfer / `VideoFrame` |
 | `streams/*/*.window.js`, `streams/**/*.html` | Require a browser `Window`/`Document`/dedicated worker (`queuing-strategies-size-function-per-global.window.js`, `read-task-handling.window.js`, `cross-realm-crash.window.js`, `invalid-realm.tentative.window.js`, the html crashtests, `global.html`) |

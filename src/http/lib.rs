@@ -819,17 +819,33 @@ const CONNECTION_HEADER: picohttp::Header = picohttp::Header::new(b"Connection",
 const ACCEPT_HEADER: picohttp::Header = picohttp::Header::new(b"Accept", b"*/*");
 
 const ACCEPT_ENCODING_NO_COMPRESSION: &[u8] = b"identity";
+#[cfg_attr(target_env = "ohos", allow(dead_code))]
 const ACCEPT_ENCODING_COMPRESSION: &[u8] = b"gzip, deflate, br, zstd";
+const ACCEPT_ENCODING_COMPRESSION_NO_BROTLI: &[u8] = b"gzip, deflate, zstd";
+#[cfg_attr(target_env = "ohos", allow(dead_code))]
 const ACCEPT_ENCODING_HEADER_COMPRESSION: picohttp::Header =
     picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_COMPRESSION);
+const ACCEPT_ENCODING_HEADER_COMPRESSION_NO_BROTLI: picohttp::Header =
+    picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_COMPRESSION_NO_BROTLI);
 const ACCEPT_ENCODING_HEADER_NO_COMPRESSION: picohttp::Header =
     picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_NO_COMPRESSION);
 
+#[cfg(not(target_env = "ohos"))]
 const ACCEPT_ENCODING_HEADER: picohttp::Header = if FeatureFlags::DISABLE_COMPRESSION_IN_HTTP_CLIENT
 {
     ACCEPT_ENCODING_HEADER_NO_COMPRESSION
 } else {
     ACCEPT_ENCODING_HEADER_COMPRESSION
+};
+
+// OHOS: Cloudflare CDN truncates Brotli responses >64KB from npmjs.org,
+// causing tarball integrity failures. Disable `br` to use gzip/zstd instead.
+#[cfg(target_env = "ohos")]
+const ACCEPT_ENCODING_HEADER: picohttp::Header = if FeatureFlags::DISABLE_COMPRESSION_IN_HTTP_CLIENT
+{
+    ACCEPT_ENCODING_HEADER_NO_COMPRESSION
+} else {
+    ACCEPT_ENCODING_HEADER_COMPRESSION_NO_BROTLI
 };
 
 fn get_user_agent_header() -> picohttp::Header {

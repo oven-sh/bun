@@ -1053,9 +1053,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         cli.ca = args.options(b"--ca");
         cli.lockfile_only = args.flag(b"--lockfile-only");
         if args.flag(b"--build-from-source") {
-            // Override the env var so subsequent code reading
-            // BUN_FEATURE_FLAG_FORCE_BUILD_FROM_SOURCE sees the flag.
-            std::env::set_var("BUN_FEATURE_FLAG_FORCE_BUILD_FROM_SOURCE", "1");
+            // SAFETY: CLI argument parsing runs single-threaded before any
+            // subprocess/thread creation, so set_var is safe here.
+            unsafe { std::env::set_var("BUN_FEATURE_FLAG_FORCE_BUILD_FROM_SOURCE", "1"); }
         }
 
         if let Some(linker) = args.option(b"--linker") {

@@ -10,8 +10,17 @@ if (mode !== "clear" && mode !== "refresh" && mode !== "repeat") {
 }
 
 // ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
-// run far higher under bun-asan; widen the threshold to avoid false positives.
-const isASAN = process.execPath.includes("bun-asan");
+// run far higher under it; widen the threshold to avoid false positives. Probe
+// the runtime, not the binary name: `bun bd` is ASAN too, but named bun-debug.
+const isASAN = detectASAN();
+
+function detectASAN() {
+  try {
+    const { isASANEnabled } = require("bun:internal-for-testing");
+    if (typeof isASANEnabled === "function") return isASANEnabled();
+  } catch {}
+  return process.execPath.includes("bun-asan");
+}
 
 const BATCH = 2_000;
 

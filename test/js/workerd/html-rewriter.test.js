@@ -259,6 +259,11 @@ describe("HTMLRewriter", () => {
     // generic "The rewriter has been stopped."
     it("a throwing handler on a streaming input surfaces the real error", async () => {
       const encoder = new TextEncoder();
+      // The body must still be incomplete when `transform()` runs, or the
+      // rewrite finishes inline and the handler throws synchronously instead
+      // (also correct, but a different code path). Hold the tail back until
+      // `transform()` has returned rather than racing the loopback.
+      const transformCalled = Promise.withResolvers();
       await using server = Bun.serve({
         port: 0,
         fetch: () =>
@@ -266,7 +271,7 @@ describe("HTMLRewriter", () => {
             new ReadableStream({
               async start(controller) {
                 controller.enqueue(encoder.encode("<div>"));
-                await setImmediatePromise();
+                await transformCalled.promise;
                 controller.enqueue(encoder.encode("x</div>"));
                 controller.close();
               },
@@ -281,6 +286,7 @@ describe("HTMLRewriter", () => {
           },
         })
         .transform(upstream);
+      transformCalled.resolve();
       await expect(res.text()).rejects.toThrow("boom");
     });
 

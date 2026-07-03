@@ -12,8 +12,7 @@ use bun_jsc::{
 // Note: `bun_jsc::VirtualMachine` is a *module* re-export
 // (`pub use self::virtual_machine as VirtualMachine;`). The struct lives at
 // `bun_jsc::virtual_machine::VirtualMachine` — import that directly so the
-// name resolves as a type at `&mut VirtualMachine` annotations and as the
-// owner of the `on_quiet_unhandled_rejection_handler_capture_value` assoc fn.
+// name resolves as a type at `&mut VirtualMachine` annotations.
 use bun_jsc::virtual_machine::VirtualMachine;
 
 use crate::api::NativePromiseContext;
@@ -2394,10 +2393,9 @@ pub struct Element {
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
     pub element: Cell<*mut RawElement>,
-    /// AttributeIterator instances created by `getAttributes()` that borrow
-    /// from `element`. They must be detached in `invalidate()` when the
-    /// handler returns so that JS cannot dereference the freed lol-html
-    /// attribute buffer.
+    /// AttributeIterator instances handed out by `getAttributes()`. Each holds
+    /// a non-owning backref to this `Element` plus a `+1` we own; `invalidate()`
+    /// nulls those backrefs when the handler returns, so none can outlive us.
     /// R-2: `JsCell` (non-Copy `Vec`) — pushed/drained from `&self` host-fns
     /// (`get_attributes`, `set_attribute`, `remove_attribute`). The `with_mut`
     /// closures do not call into JS, so the short `&mut Vec` borrow cannot
@@ -2433,10 +2431,10 @@ impl Element {
         bun_ptr::finalize_js_box_noop(self);
     }
 
-    /// Detach every `AttributeIterator` we handed to JS. Called when the
-    /// underlying attribute buffer is about to become invalid — either because
-    /// the handler is returning, or because `setAttribute` / `removeAttribute`
-    /// is about to mutate the `Vec<Attribute>` the iterators borrow from.
+    /// End every `AttributeIterator` we handed to JS: null its backref to us
+    /// and release our `+1`. Called when the handler is returning (we are about
+    /// to stop being a valid target) or when `setAttribute` / `removeAttribute`
+    /// is about to renumber the attributes their index refers into.
     fn detach_attribute_iterators(&self) {
         // R-2: take the Vec out of the cell, drain on the stack — no `&mut`
         // projection of `self` is held across `detach()`/`deref()` (which do
@@ -2453,9 +2451,8 @@ impl Element {
     }
 
     /// Called by `handler_callback` when the handler returns. The underlying
-    /// `*LOLHTML.Element` (and the attribute buffer any `AttributeIterator`
-    /// borrows from) is only valid during handler execution, so we must null
-    /// it out here along with any iterators we handed to JS.
+    /// `*LOLHTML.Element` is only valid during handler execution, so null it
+    /// out here, and end the iterators that read through it.
     pub fn invalidate(&self) {
         self.element.set(core::ptr::null_mut());
         self.detach_attribute_iterators();
@@ -2548,8 +2545,8 @@ impl Element {
             return Ok(JSValue::UNDEFINED);
         };
 
-        // Mutating the attribute Vec (push → possible realloc) invalidates the
-        // slice::Iter any live AttributeIterator borrows from.
+        // A push shifts what the index any live AttributeIterator holds refers
+        // to, so end their iteration rather than let them repeat or skip one.
         self.detach_attribute_iterators();
 
         let name_slice = name_.to_slice();
@@ -2574,8 +2571,8 @@ impl Element {
             return Ok(JSValue::UNDEFINED);
         };
 
-        // Vec::remove shifts trailing elements and shrinks len, leaving any
-        // live slice::Iter's end pointer past the new end.
+        // `Vec::remove` shifts the trailing attributes down, so a live
+        // AttributeIterator's index would skip the one that took this slot.
         self.detach_attribute_iterators();
 
         let name_slice = name.to_slice();
@@ -2759,9 +2756,9 @@ impl Element {
     }
 }
 
-// `Element` is the one wrapper whose `detach` has to do more than null out
-// the raw pointer: the `AttributeIterator`s it handed to JS borrow the same
-// lol-html attribute buffer and must be detached with it (see `invalidate`).
+// `Element` is the one wrapper whose `detach` has to do more than null out the
+// raw pointer: it also ends the `AttributeIterator`s it handed to JS, which
+// hold a backref to it and read through it (see `invalidate`).
 impl WrapperLike for Element {
     type Raw = RawElement;
     fn init(v: *mut Self::Raw) -> *mut Self {

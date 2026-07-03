@@ -2,14 +2,16 @@ use crate::node::BlobOrStringOrBuffer as JSArgument;
 use bun_collections::VecExt as _;
 use bun_core::OwnedString;
 use bun_jsc::{
-    self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue,
-    JsRef, JsResult,
+    self as jsc, CallFrame, ErrorCode, JSArray, JSGlobalObject, JSPromise, JSPropertyIterator,
+    JSValue, JsRef, JsResult,
 };
 
 use super::js_valkey::{JSValkeyClient, SubscriptionCtx};
 use super::protocol_jsc as protocol;
 use super::valkey;
-use super::valkey_command_body::{Args as CommandArgs, Command, Meta as CommandMeta};
+use super::valkey_command_body::{
+    Args as CommandArgs, Command, Meta as CommandMeta, PendingSubscription,
+};
 
 type Slice = bun_jsc::ZigStringSlice;
 
@@ -125,6 +127,7 @@ fn send_cmd(
             args,
             meta,
         },
+        None,
     ) {
         Ok(p) => Ok(promise_to_js(p)),
         Err(err) => send_err_to_js(global, err_msg, &err),
@@ -470,7 +473,7 @@ impl JSValkeyClient {
         let checked_meta = cmd.meta.check(&cmd);
         cmd.meta = checked_meta;
         // Send command with slices directly
-        let promise = match this.send(global, frame.this(), &cmd) {
+        let promise = match this.send(global, frame.this(), &cmd, None) {
             Ok(p) => p,
             Err(err) => {
                 return send_err_to_js(global, "Failed to send command", &err);
@@ -1651,6 +1654,12 @@ impl JSValkeyClient {
             return Err(global.throw_invalid_argument_type("subscribe", "listener", "function"));
         }
 
+        // The listener is wired into the receive-handler map only once the server confirms
+        // the subscription (see `SubscriptionCtx::register_subscription`), so a SUBSCRIBE
+        // that fails leaves no listener behind. That also means the channel list has to be
+        // snapshotted here, out of reach of the caller.
+        let subscribed_channels: jsc::Strong;
+
         // The first argument given is the channel or may be an array of channels.
         if channel_or_many.is_array() {
             if channel_or_many.get_length(global)? == 0 {
@@ -1659,6 +1668,7 @@ impl JSValkeyClient {
                 )));
             }
             redis_channels.ensure_total_capacity(channel_or_many.get_length(global)? as usize);
+            let snapshot = jsc::Strong::create(JSArray::create_empty(global, 0)?, global);
 
             let mut array_iter = channel_or_many.array_iterator(global)?;
             while let Some(channel_arg) = array_iter.next()? {
@@ -1670,31 +1680,16 @@ impl JSValkeyClient {
                     ));
                 };
                 redis_channels.push(channel);
-
-                // What we do here is add our receive handler. Notice that this doesn't really do anything until the
-                // "SUBSCRIBE" command is sent to redis and we get a response.
-                //
-                // This is less-than-ideal, still, because this assumes a happy path. What happens if
-                // the SUBSCRIBE command fails? We have no way to roll back the addition of the
-                // handler.
-                this._subscription_ctx.get().upsert_receive_handler(
-                    global,
-                    channel_arg,
-                    handler_callback,
-                )?;
+                snapshot.get().push(global, channel_arg)?;
             }
+            subscribed_channels = snapshot;
         } else if channel_or_many.is_string() {
             // It is a single string channel
             let Some(channel) = from_js(global, channel_or_many)? else {
                 return Err(global.throw_invalid_argument_type("subscribe", "channel", "string"));
             };
             redis_channels.push(channel);
-
-            this._subscription_ctx.get().upsert_receive_handler(
-                global,
-                channel_or_many,
-                handler_callback,
-            )?;
+            subscribed_channels = jsc::Strong::create(channel_or_many, global);
         } else {
             return Err(global.throw_invalid_argument_type(
                 "subscribe",
@@ -1703,20 +1698,19 @@ impl JSValkeyClient {
             ));
         }
 
+        let pending_subscription = Box::new(PendingSubscription {
+            channels: subscribed_channels,
+            listener: jsc::Strong::create(handler_callback, global),
+        });
+
         let command = Command {
             command: b"SUBSCRIBE",
             args: CommandArgs::Args(&redis_channels),
             meta: CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST,
         };
-        let promise = match this.send(global, frame.this(), &command) {
+        let promise = match this.send(global, frame.this(), &command, Some(pending_subscription)) {
             Ok(p) => p,
-            Err(err) => {
-                // If we catch an error, we need to clean up any handlers we may have added and fall out of subscription mode
-                this._subscription_ctx
-                    .get()
-                    .clear_all_receive_handlers(global)?;
-                return send_err_to_js(global, "Failed to send SUBSCRIBE command", &err);
-            }
+            Err(err) => return send_err_to_js(global, "Failed to send SUBSCRIBE command", &err),
         };
 
         Ok(promise_to_js(promise))

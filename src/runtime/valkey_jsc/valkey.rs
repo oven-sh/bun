@@ -448,6 +448,7 @@ impl ValkeyClient {
                 .write_item(command::PromisePair {
                     meta: cmd.meta,
                     promise: cmd.promise,
+                    pending_subscription: cmd.pending_subscription,
                 })
                 .unwrap_or_oom();
             self.write_buffer
@@ -923,10 +924,6 @@ impl ValkeyClient {
             }
             RESPValue::Push(push) => {
                 let p = self.parent();
-                let sub_count = p
-                    ._subscription_ctx
-                    .get()
-                    .channels_subscribed_to_count(&global_this)?;
 
                 if let Some(msg_type) = protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
                     match msg_type {
@@ -935,6 +932,21 @@ impl ValkeyClient {
                             Ok(SubscribeHandled::Handled)
                         }
                         protocol::SubscriptionPushMessage::Subscribe => {
+                            // Wire up the listener now that the server has confirmed the
+                            // subscription, and count the channels only afterwards.
+                            let pending = pair
+                                .as_deref()
+                                .and_then(|req_pair| req_pair.pending_subscription.as_ref());
+                            if let Some(pending) = pending {
+                                p._subscription_ctx
+                                    .get()
+                                    .register_subscription(&global_this, pending)?;
+                            }
+                            let sub_count = p
+                                ._subscription_ctx
+                                .get()
+                                .channels_subscribed_to_count(&global_this)?;
+
                             p.add_subscription();
                             self.on_valkey_subscribe(value);
 
@@ -1327,6 +1339,7 @@ impl ValkeyClient {
             .write_item(command::PromisePair {
                 meta: offline_cmd.meta,
                 promise: offline_cmd.promise,
+                pending_subscription: offline_cmd.pending_subscription,
             })
             .unwrap_or_oom();
         let data = offline_cmd.serialized_data;
@@ -1363,6 +1376,7 @@ impl ValkeyClient {
         &mut self,
         command: &Command,
         mut promise: command::Promise,
+        pending_subscription: Option<Box<command::PendingSubscription>>,
     ) -> Result<(), crate::Error> {
         let can_pipeline = command
             .meta
@@ -1389,7 +1403,7 @@ impl ValkeyClient {
             || can_pipeline
         {
             // We serialize the bytes in here, so we don't need to worry about the lifetime of the Command itself.
-            let entry = command::Entry::create(command, promise)?;
+            let entry = command::Entry::create(command, promise, pending_subscription)?;
             self.queue.write_item(entry)?;
 
             // If we're connected and using auto pipelining, schedule a flush
@@ -1414,6 +1428,7 @@ impl ValkeyClient {
         let cmd_pair = command::PromisePair {
             meta: command.meta,
             promise,
+            pending_subscription,
         };
 
         // Add to queue with command type
@@ -1427,6 +1442,7 @@ impl ValkeyClient {
         &mut self,
         global_this: &JSGlobalObject,
         command: &Command,
+        pending_subscription: Option<Box<command::PendingSubscription>>,
     ) -> Result<*mut JSPromise, crate::Error> {
         // FIX: Check meta before using it for routing decisions
         let mut checked_command = *command;
@@ -1449,7 +1465,7 @@ impl ValkeyClient {
             // Handle disconnected state with offline queue
             match self.status {
                 Status::Connected => {
-                    self.enqueue(&checked_command, promise)?;
+                    self.enqueue(&checked_command, promise, pending_subscription)?;
 
                     // Schedule auto-flushing to process this command if pipelining is enabled
                     if self.flags.enable_auto_pipelining
@@ -1465,7 +1481,7 @@ impl ValkeyClient {
                 Status::Connecting | Status::Disconnected => {
                     // Only queue if offline queue is enabled
                     if self.flags.enable_offline_queue {
-                        self.enqueue(&checked_command, promise)?;
+                        self.enqueue(&checked_command, promise, pending_subscription)?;
                     } else {
                         let _ = promise.reject(
                             global_this,

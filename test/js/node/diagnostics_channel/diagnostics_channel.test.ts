@@ -53,7 +53,10 @@ describe("Channel", () => {
     const onMessageHandler: any = mustCall(() => unsubscribe(name, onMessageHandler));
 
     subscribe(name, onMessageHandler);
-    subscribe(name, mustCall(() => {}));
+    subscribe(
+      name,
+      mustCall(() => {}),
+    );
 
     // This must not throw.
     channel(name).publish(data);

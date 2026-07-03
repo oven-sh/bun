@@ -589,9 +589,14 @@ enum RewritePhase {
 
 /// Recorded by [`handler_callback`] when a handler returned a still-pending
 /// promise, consumed by [`BufferOutputSink::begin_suspension`] immediately
-/// after the lol-html call returns `Err(Suspended)`. Only ever `Some` inside
-/// that purely-native window, so `promise` needs no GC root: no JS runs (and
-/// therefore no GC can happen) between the two points.
+/// after the lol-html call returns `Err(Suspended)`.
+///
+/// `promise` is `protect()`ed for that window. The window is pure native code
+/// (the lol-html unwind), so today no GC can observe it unrooted, but that
+/// property is owned by a vendored patch rather than by this file, and JSC's
+/// rule is "rooted whenever a safepoint is reachable", not "rooted whenever JS
+/// runs". One `gcProtect` per suspension buys the invariant outright.
+/// `begin_suspension` adopts the protection into a [`ProtectedJSValue`].
 struct PendingSuspension {
     /// The JS wrapper handed to the suspending handler. It must stay usable
     /// across the handler's `await` so the post-`await` code can keep
@@ -602,7 +607,8 @@ struct PendingSuspension {
     retarget: unsafe fn(*mut core::ffi::c_void, *mut LolRewriter),
     /// `(*wrapper).detach()` + release the ref [`handler_callback`] took.
     release: unsafe fn(*mut core::ffi::c_void),
-    /// The still-pending promise the handler returned.
+    /// The still-pending promise the handler returned. Carries a `protect()`
+    /// that `begin_suspension` adopts and releases.
     promise: JSValue,
 }
 
@@ -642,6 +648,12 @@ unsafe fn release_wrapper<Z: WrapperLike>(wrapper: *mut core::ffi::c_void) {
 /// one lol-html `write()`/`end()`/`resume()` call, restoring the previous
 /// one on drop. LIFO so a handler body that synchronously runs a nested
 /// `transform()` nests correctly.
+///
+/// Why ambient rather than captured: the element/document closures are built in
+/// `build_settings` from a `LOLHTMLContext` that exists before any sink does
+/// (the sink's `init` takes the context), and `Element::on_end_tag_` builds its
+/// closure at handler-run time from `&self`, with no sink anywhere in scope.
+/// Threading a sink to that one site would mean a sink field on every `Element`.
 struct ActiveSinkGuard {
     prev: Option<NonNull<core::ffi::c_void>>,
 }
@@ -692,12 +704,12 @@ pub struct BufferOutputSink {
     pub response: *mut Response, // BORROW_FIELD: kept alive by response_value Strong
     pub response_value: StrongOptional,
     pub body_value_bufferer: Option<webcore::body::ValueBufferer<'static>>,
-    /// An exception thrown (or rejection captured) by a content handler
-    /// during the lol-html call currently on the stack. The sink owns it (it
-    /// has to outlive `transform()` now that a handler can suspend the
-    /// rewrite), but it is only ever non-empty between a handler setting it
-    /// and that same lol-html call returning -- a purely native window -- so
-    /// it never needs a GC root.
+    /// An exception thrown (or rejection captured) by a content handler during
+    /// the lol-html call currently on the stack. The sink owns it (it has to
+    /// outlive `transform()` now that a handler can suspend the rewrite), and
+    /// `protect()`s it while held: the window is native-only today, but it is a
+    /// heap slot the conservative stack scan never sees, so root it rather than
+    /// lean on an invariant a vendored patch could change.
     handler_error: Cell<JSValue>,
     /// Set for `transform(string)` / `transform(ArrayBuffer)`, which must
     /// produce their result before `transform()` returns. Holds the noun for
@@ -720,15 +732,19 @@ impl BufferOutputSink {
 
     /// Record a handler's exception for the enclosing lol-html call to pick
     /// up once it returns. Overwrites (the last failure wins, matching the
-    /// previous capture-slot behavior).
+    /// previous capture-slot behavior). Roots `err` until it is taken.
     fn set_handler_error(&self, err: JSValue) {
-        self.handler_error.set(err);
+        err.protect();
+        let prev = self.handler_error.replace(err);
+        prev.unprotect();
     }
 
     /// Take (and clear) the handler error recorded during the lol-html call
-    /// that just returned.
+    /// that just returned, handing the caller an unrooted value to consume
+    /// within its own frame (where the conservative stack scan covers it).
     fn take_handler_error(&self) -> Option<JSValue> {
         let err = self.handler_error.replace(JSValue::ZERO);
+        err.unprotect();
         (!err.is_empty()).then_some(err)
     }
 
@@ -1152,10 +1168,9 @@ impl BufferOutputSink {
             (*sink).ref_();
         }
 
-        // No JS has run (so no GC can have happened) between
-        // `handler_callback` recording `promise` and here: the lol-html
-        // unwind in between is pure native code.
-        suspension.promise.ensure_still_alive();
+        // Adopt the protection `handler_callback` took; once `then_with_value`
+        // attaches, the reaction roots the promise and this can go.
+        let promise = jsc::ProtectedJSValue::adopt(suspension.promise);
 
         // The reactions' context is a GC-managed cell holding the sink's `+1`,
         // not a raw pointer: a promise collected without ever settling takes
@@ -1164,7 +1179,7 @@ impl BufferOutputSink {
         // SAFETY: the `ref_()` above is the `+1` this context now owns.
         let ctx = unsafe { SuspensionContext::new(sink) };
         let cell = NativePromiseContext::create(&global, ctx);
-        suspension.promise.then_with_value(
+        promise.value().then_with_value(
             &global,
             cell,
             Bun__HTMLRewriter__onHandlerResolve,
@@ -1400,6 +1415,9 @@ fn on_handler_reject(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
 impl Drop for BufferOutputSink {
     fn drop(&mut self) {
         // bytes, body_value_bufferer, context (Rc), response_value (Strong) drop automatically.
+        // An error recorded but never taken (a throwing `init()`) still holds
+        // its protect.
+        self.handler_error.replace(JSValue::ZERO).unprotect();
         if !self.rewriter.is_null() {
             // SAFETY: rewriter heap-allocated by init() and not yet freed
             // (the sink is its sole owner for its whole life).
@@ -1741,10 +1759,18 @@ where
         }
         jsc::js_promise::Status::Pending => {
             let Some(sink) = active_sink(global) else {
-                // Content handlers only ever run from inside a sink's
-                // lol-html call, which installs itself; fail loudly rather
-                // than dangle the wrapper.
+                // Content handlers only ever run from inside a sink's lol-html
+                // call, which installs the guard. Reaching here means a new
+                // entry point forgot it; record a real error (not a
+                // compiled-out assert + silent `Stop`, which would drop the
+                // handler's result on the floor in release builds).
                 debug_assert!(false, "HTMLRewriter handler ran outside a rewrite");
+                record_handler_error(
+                    global,
+                    global.create_type_error_instance(format_args!(
+                        "HTMLRewriter content handler ran outside of a rewrite"
+                    )),
+                );
                 return HandlerOutcome::Stop;
             };
 
@@ -1771,6 +1797,9 @@ where
             // detaches + derefs it once the promise settles, which runs AFTER
             // the handler's own post-`await` continuations.
             let wrapper = scopeguard::ScopeGuard::into_inner(guard);
+            // Root the promise for the native window between here and
+            // `begin_suspension`, which adopts the protection.
+            result.protect();
             // SAFETY: `sink` is the live BufferOutputSink whose lol-html call
             // is on this native stack (installed by `ActiveSinkGuard`).
             unsafe {

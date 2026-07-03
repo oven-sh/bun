@@ -1999,7 +1999,7 @@
  }
  
  // NOTE: this opaque Debug implementation is required to make
-@@ -992,4 +1122,557 @@ mod tests {
+@@ -992,4 +1122,608 @@ mod tests {
              );
          }
      }
@@ -2523,6 +2523,57 @@
 +            let (order, out) = eof_order("hello<div attr");
 +            assert_eq!(order, ["text-last"]);
 +            assert_eq!(out, "hello<div attr");
++        }
++
++        // `resume_dispatch` step 2 re-serializes the parked token, but only
++        // when emission is enabled. A handler suspending inside content an
++        // outer handler removed must not resurrect that content.
++        #[test]
++        fn suspension_inside_removed_content_emits_nothing() {
++            let (out, n) = drive(
++                &["a<div>b<span>c</span>d</div>e"],
++                Settings {
++                    element_content_handlers: vec![
++                        element!("div", |el| {
++                            el.remove();
++                            Ok(())
++                        }),
++                        // Runs against content that is being removed.
++                        element!("span", |_| SUSPEND()),
++                    ],
++                    document_content_handlers: vec![doc_text!(|_| SUSPEND())],
++                    ..Settings::new()
++                },
++                |_| {},
++            );
++            assert_eq!(out, "ae");
++            assert!(n > 0, "the handlers must actually have suspended");
++        }
++
++        // `emit_raw_without_token`'s flush hoist: `<![CDATA[` in foreign
++        // content is the only lexeme that reaches it.
++        #[test]
++        fn text_suspension_around_cdata() {
++            let chunks = Rc::new(RefCell::new(Vec::new()));
++            let c = chunks.clone();
++            let (out, n) = drive(
++                &["<svg><foo>a<![CDATA[b]]>c</foo></svg>"],
++                Settings {
++                    document_content_handlers: vec![doc_text!(move |t| {
++                        c.borrow_mut().push(t.as_str().to_owned());
++                        SUSPEND()
++                    })],
++                    ..Settings::new()
++                },
++                |_| {},
++            );
++            assert_eq!(out, "<svg><foo>a<![CDATA[b]]>c</foo></svg>");
++            assert!(n > 0);
++            assert!(
++                chunks.borrow().iter().any(|t| t == "a"),
++                "expected a text chunk 'a' before the CDATA, got {:?}",
++                chunks.borrow()
++            );
 +        }
 +
 +        // A text handler that suspends on the last chunk, flushed from inside

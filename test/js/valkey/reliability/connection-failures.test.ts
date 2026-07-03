@@ -521,6 +521,7 @@ describe("Valkey: close() during auto-reconnect", () => {
       expect(await settled).toEqual({ rejected: true, code: "ERR_REDIS_CONNECTION_CLOSED" });
       expect(closes).toBe(1);
     } finally {
+      client.close();
       close();
     }
   });
@@ -541,7 +542,7 @@ describe("Valkey: close() during auto-reconnect", () => {
       expect(await until(() => closes >= 1)).toBe(true);
 
       client.close();
-      await delay(50);
+      await until(() => closes >= 2, 200);
       expect(closes).toBe(1);
     } finally {
       client.close();

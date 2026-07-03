@@ -91,8 +91,6 @@ test.each(["evil.example.com/other", "evil.example.com\\other"])(
       virtualHostedStyle: true,
     });
 
-    expect(() => s3.presign("object.txt")).toThrow(
-      expect.objectContaining({ code: "ERR_S3_INVALID_ENDPOINT" }),
-    );
+    expect(() => s3.presign("object.txt")).toThrow(expect.objectContaining({ code: "ERR_S3_INVALID_ENDPOINT" }));
   },
 );

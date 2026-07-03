@@ -20,6 +20,16 @@
  *   bun run orderfile                      # uses build/release
  *   bun run orderfile -- --build-dir=build/release-lto
  *
+ * Generating against the profile you ship is worth ~1 MB of RSS: the LTO build
+ * linked with a file generated from the plain release build lands at 22.6 MB,
+ * and at 21.6 MB with its own.
+ *
+ * Re-running against a build that already has an order file converges rather
+ * than drifting: a cold function only ever gets listed because it shares a page
+ * with a hot one, and once the hot functions are packed together those cold
+ * neighbours stop being touched and drop out. Hot functions always own at least
+ * one touched page, so they are never lost.
+ *
  * Linux only — it is the `--symbol-ordering-file` input for the ELF link, and
  * the tracer depends on /proc/self/maps.
  */
@@ -29,6 +39,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dir, "..", "..");
+const HEADER_WORDS = 2; // must match pagetrace.c: page size, count
 
 function arg(name: string, fallback: string): string {
   const hit = process.argv.find(a => a.startsWith(`--${name}=`));
@@ -66,10 +77,7 @@ try {
   const tracer = join(scratch, "pagetrace.so");
   const cc = process.env.CC || "cc";
   const build = run([cc, "-O2", "-shared", "-fPIC", "-o", tracer, join(import.meta.dir, "pagetrace.c"), "-ldl"]);
-  if (build.status !== 0) {
-    console.error(`error: failed to build the tracer with ${cc}\n${build.stderr}`);
-    process.exit(1);
-  }
+  if (build.status !== 0) throw new Error(`failed to build the tracer with ${cc}\n${build.stderr}`);
 
   // ── Representative workloads ──────────────────────────────────────────────
   // Order matters: earlier workloads get the densest placement, so the plain
@@ -98,7 +106,7 @@ try {
     { name: "bun test", args: ["test", join(fixtures, "tests", "example.test.ts")] },
   ];
 
-  const traces: { name: string; pages: BigUint64Array }[] = [];
+  const traces: { name: string; pageSize: number; pages: BigUint64Array }[] = [];
   for (const [i, workload] of workloads.entries()) {
     const out = join(scratch, `trace-${i}.bin`);
     const r = run([bunProfile, ...workload.args], {
@@ -107,26 +115,26 @@ try {
       BUN_PAGETRACE_OUT: out,
       BUN_DEBUG_QUIET_LOGS: "1",
     });
-    if (r.status !== 0) {
-      console.error(`error: workload "${workload.name}" exited ${r.status}\n${r.stderr}`);
-      process.exit(1);
-    }
+    if (r.status !== 0) throw new Error(`workload "${workload.name}" exited ${r.status}\n${r.stderr}`);
+
     const raw = readFileSync(out);
-    const count = Number(new BigUint64Array(raw.buffer, raw.byteOffset, 1)[0]);
-    if (count === 0) {
-      console.error(`error: workload "${workload.name}" recorded no faults — is LD_PRELOAD working?`);
-      process.exit(1);
-    }
-    traces.push({ name: workload.name, pages: new BigUint64Array(raw.buffer, raw.byteOffset + 8, count) });
+    const header = new BigUint64Array(raw.buffer, raw.byteOffset, HEADER_WORDS);
+    const pageSize = Number(header[0]);
+    const capacity = raw.byteLength / 8 - HEADER_WORDS;
+    // The tracer's counter keeps climbing past MAX_HITS if a run ever overflows.
+    const count = Math.min(Number(header[1]), capacity);
+    if (count === 0) throw new Error(`workload "${workload.name}" recorded no faults — is LD_PRELOAD working?`);
+    traces.push({
+      name: workload.name,
+      pageSize,
+      pages: new BigUint64Array(raw.buffer, raw.byteOffset + HEADER_WORDS * 8, count),
+    });
   }
 
   // ── Symbol table ──────────────────────────────────────────────────────────
   const nm = process.env.NM || (existsSync("/usr/bin/llvm-nm") ? "llvm-nm" : "nm");
   const symbols = run([nm, "--defined-only", "-S", "--numeric-sort", bunProfile]);
-  if (symbols.status !== 0) {
-    console.error(`error: ${nm} failed on ${bunProfile}\n${symbols.stderr}`);
-    process.exit(1);
-  }
+  if (symbols.status !== 0) throw new Error(`${nm} failed on ${bunProfile}\n${symbols.stderr}`);
 
   // `t`/`T` only: ordering `.rodata.*` separates constants from the mergeable
   // string/constant pools they sit next to, which costs more pages than it saves.
@@ -141,12 +149,9 @@ try {
     ends.push(address + parseInt(m[2], 16));
     names.push(m[4]);
   }
-  if (!starts.length) {
-    console.error(`error: ${nm} reported no sized functions — is ${bunProfile} stripped?`);
-    process.exit(1);
-  }
+  if (!starts.length) throw new Error(`${nm} reported no sized functions — is ${bunProfile} stripped?`);
 
-  /** Index of the last symbol starting at or before `page`. */
+  /** Index of the last symbol starting at or before `page`, or -1. */
   function lowerBound(page: number): number {
     let lo = 0;
     let hi = starts.length - 1;
@@ -170,11 +175,11 @@ try {
       const page = Number(raw);
       if (visited.has(page)) continue;
       visited.add(page);
-      // Symbols overlapping [page, page + 4096). Walk back far enough to catch
-      // a function that started earlier and spans into this page.
-      let i = lowerBound(page);
+      // Symbols overlapping [page, page + pageSize). Walk back far enough to
+      // catch a function that started earlier and spans into this page.
+      let i = Math.max(0, lowerBound(page));
       while (i > 0 && starts[i - 1] + 0x100000 > page) i--;
-      for (; i < starts.length && starts[i] < page + 4096; i++) {
+      for (; i < starts.length && starts[i] < page + trace.pageSize; i++) {
         if (ends[i] <= page || seen.has(names[i])) continue;
         seen.add(names[i]);
         order.push(names[i]);

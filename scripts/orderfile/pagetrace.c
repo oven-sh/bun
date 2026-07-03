@@ -8,13 +8,12 @@
 //
 // The record is streamed into an mmap(MAP_SHARED) window over the output file
 // so it survives whatever exit path the traced program takes — bun does not
-// run atexit handlers. Layout: u64 count, then `count` u64 page addresses in
-// first-touch order.
+// run atexit handlers. Layout: u64 page size, u64 count, then `count` u64 page
+// addresses in first-touch order.
 //
 //   cc -O2 -shared -fPIC -o pagetrace.so pagetrace.c -ldl
-//   BUN_PAGETRACE_BIN=build/release/bun-profile \
-//   BUN_PAGETRACE_OUT=/tmp/trace.bin \
-//   LD_PRELOAD=./pagetrace.so build/release/bun-profile -e 'console.log(1)'
+//   BUN_PAGETRACE_BIN=build/release/bun-profile BUN_PAGETRACE_OUT=/tmp/trace.bin
+//     LD_PRELOAD=./pagetrace.so build/release/bun-profile -e 'console.log(1)'
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -28,12 +27,14 @@
 
 #define MAX_REGIONS 8
 #define MAX_HITS (1 << 20)
+#define HEADER_WORDS 2 // record[0] = page size, record[1] = count
 
 static struct {
     uintptr_t start, end;
 } regions[MAX_REGIONS];
 static int region_count = 0;
-static uint64_t *record = NULL; // record[0] = count, record[1..] = page addresses
+static uint64_t *record = NULL;
+static uintptr_t page_size = 4096;
 static int armed = 0;
 
 static int in_traced_region(uintptr_t page)
@@ -45,20 +46,18 @@ static int in_traced_region(uintptr_t page)
 
 static void on_fault(int sig, siginfo_t *si, void *ucontext)
 {
-    (void)sig;
     (void)ucontext;
-    uintptr_t page = (uintptr_t)si->si_addr & ~(uintptr_t)0xfff;
+    uintptr_t page = (uintptr_t)si->si_addr & ~(page_size - 1);
+    // Not ours, or we cannot re-map it: restore the default disposition so the
+    // re-executed instruction produces a real crash instead of spinning here.
     if (!in_traced_region(page)) {
-        // Not ours: restore the default handler and let the real crash happen.
-        signal(SIGSEGV, SIG_DFL);
+        signal(sig, SIG_DFL);
         return;
     }
-    uint64_t n = record[0];
-    if (n < MAX_HITS - 1) {
-        record[1 + n] = page;
-        record[0] = n + 1;
-    }
-    mprotect((void *)page, 4096, PROT_READ | PROT_EXEC);
+    // Faults arrive on whichever thread touched the page; bun has several.
+    uint64_t n = __atomic_fetch_add(&record[1], 1, __ATOMIC_RELAXED);
+    if (n < MAX_HITS) record[HEADER_WORDS + n] = page;
+    if (mprotect((void *)page, page_size, PROT_READ | PROT_EXEC) != 0) signal(sig, SIG_DFL);
 }
 
 // Bun installs its own SIGSEGV/SIGBUS handlers (crash reporter, JIT traps).
@@ -82,18 +81,23 @@ __attribute__((constructor(101))) static void pagetrace_init(void)
     const char *out = getenv("BUN_PAGETRACE_OUT");
     if (!binary || !out) return;
 
+    long reported = sysconf(_SC_PAGESIZE);
+    if (reported > 0) page_size = (uintptr_t)reported;
+
+    size_t bytes = (size_t)(HEADER_WORDS + MAX_HITS) * 8;
     int fd = open(out, O_CREAT | O_TRUNC | O_RDWR, 0644);
     if (fd < 0) return;
-    if (ftruncate(fd, (off_t)MAX_HITS * 8) != 0) {
+    if (ftruncate(fd, (off_t)bytes) != 0) {
         close(fd);
         return;
     }
-    record = mmap(NULL, (size_t)MAX_HITS * 8, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    record = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     close(fd);
     if (record == MAP_FAILED) {
         record = NULL;
         return;
     }
+    record[0] = page_size;
 
     FILE *maps = fopen("/proc/self/maps", "r");
     if (!maps) return;

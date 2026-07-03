@@ -103,6 +103,16 @@ JSVMClientData::~JSVMClientData()
     if (vmHandle)
         Bun__VmHandle__release(std::exchange(vmHandle, nullptr));
 }
+
+void JSVMClientData::registerBuiltinNames(VM& vm)
+{
+    // Intentionally leaked. BuiltinNames::appendExternalName() stores the private symbols
+    // by pointer in the VM's private-name set, and the Identifiers that own those symbols
+    // live in this object, so it has to stay alive for as long as the VM does; the only
+    // caller's VM is thread-local and never destroyed either.
+    new BunBuiltinNames(vm);
+}
+
 void JSVMClientData::create(VM* vm, void* bunVM, bool isWorkerVM)
 {
     auto provider = WebCore::createBuiltinsSourceProvider();

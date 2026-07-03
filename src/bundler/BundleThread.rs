@@ -24,6 +24,9 @@ pub struct BuildResult {
     pub output_files: Vec<crate::options::OutputFile>,
     pub metafile: Option<Box<[u8]>>,
     pub metafile_markdown: Option<Box<[u8]>>,
+    /// `(InternalModuleRegistry id, JSC cache entry)` for each JS builtin the bundle can
+    /// reach, for `--compile --bytecode` to embed. Empty otherwise.
+    pub builtin_bytecode: Vec<(u32, Box<[u8]>)>,
 }
 
 pub enum BundleV2Result {

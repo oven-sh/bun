@@ -159,6 +159,8 @@ impl BuildCommand {
         } else {
             options::CompileMode::None
         };
+        this_transpiler.options.compile_target_is_host =
+            ctx.bundler_options.compile_target.is_default();
 
         if this_transpiler.options.source_map == options::SourceMapOption::External
             && ctx.bundler_options.outdir.is_empty()
@@ -587,7 +589,10 @@ impl BuildCommand {
         let opt_transform_only = this_transpiler.options.transform_only;
         let env_ptr = this_transpiler.env;
 
-        let mut output_files: Vec<options::OutputFile> = 'brk: {
+        let (mut output_files, builtin_bytecode): (
+            Vec<options::OutputFile>,
+            Vec<(u32, Box<[u8]>)>,
+        ) = 'brk: {
             if ctx.bundler_options.transform_only {
                 this_transpiler.options.import_path_format = options::ImportPathFormat::Relative;
                 this_transpiler.options.allow_runtime = false;
@@ -607,7 +612,7 @@ impl BuildCommand {
                     }
                 }
 
-                break 'brk result.output_files.into_vec();
+                break 'brk (result.output_files.into_vec(), Vec::new());
             }
 
             if ctx.bundler_options.outdir.is_empty()
@@ -736,7 +741,7 @@ impl BuildCommand {
                 }
             }
 
-            break 'brk build_result.output_files;
+            break 'brk (build_result.output_files, build_result.builtin_bytecode);
         };
 
         if ctx.bundler_options.compile && !ctx.bundler_options.compile_assets.is_empty() {
@@ -914,6 +919,7 @@ impl BuildCommand {
                         }
                         flags
                     },
+                    &builtin_bytecode,
                 ) {
                     Ok(r) => r,
                     Err(err) => {

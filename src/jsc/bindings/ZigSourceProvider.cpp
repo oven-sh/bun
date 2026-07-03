@@ -6,6 +6,7 @@
 #include "MimallocWTFMalloc.h"
 #include "BunAnalyzeTranspiledModule.h"
 
+#include "BunClientData.h"
 #include "ZigGlobalObject.h"
 #include "wtf/Assertions.h"
 
@@ -183,17 +184,21 @@ extern "C" void CachedBytecode__deref(JSC::CachedBytecode* cachedBytecode)
     cachedBytecode->deref();
 }
 
-static JSC::VM& getVMForBytecodeCache()
+JSC::VM& vmForBytecodeCache()
 {
-    static thread_local JSC::VM* vmForBytecodeCache = nullptr;
-    if (!vmForBytecodeCache) {
+    static thread_local JSC::VM* cachedVM = nullptr;
+    if (!cachedVM) {
         const auto heapSize = JSC::HeapType::Small;
         auto vmPtr = JSC::VM::tryCreate(heapSize);
         vmPtr->refSuppressingSaferCPPChecking();
-        vmForBytecodeCache = vmPtr.get();
+        cachedVM = vmPtr.get();
         vmPtr->heap.acquireAccess();
+        // Chunk bytecode parses as ordinary JS, but the builtins parse in builtin mode and
+        // need Bun's `@`-private names registered or the lexer rejects them. Only the names:
+        // this VM has no Bun VirtualMachine to hang the rest of the client data off.
+        WebCore::JSVMClientData::registerBuiltinNames(*cachedVM);
     }
-    return *vmForBytecodeCache;
+    return *cachedVM;
 }
 
 extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
@@ -201,7 +206,7 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProv
     std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
     JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
 
-    JSC::VM& vm = getVMForBytecodeCache();
+    JSC::VM& vm = vmForBytecodeCache();
 
     JSC::JSLockHolder locker(vm);
     LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
@@ -236,7 +241,7 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* s
     std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
 
     JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
-    JSC::VM& vm = getVMForBytecodeCache();
+    JSC::VM& vm = vmForBytecodeCache();
 
     JSC::JSLockHolder locker(vm);
     LexicallyScopedFeatures lexicallyScopedFeatures = NoLexicallyScopedFeatures;

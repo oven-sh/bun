@@ -70,7 +70,7 @@ describe("maxBuffer caps the buffer while the child is still writing", () => {
     }
   `;
 
-  test("Bun.spawnSync", () => {
+  test.concurrent("Bun.spawnSync", () => {
     const proc = Bun.spawnSync([bunExe(), "-e", firehose], {
       maxBuffer,
       killSignal: 0,
@@ -81,8 +81,8 @@ describe("maxBuffer caps the buffer while the child is still writing", () => {
     expect(proc.stderr.length).toBe(0);
   });
 
-  test("Bun.spawn", async () => {
-    const proc = Bun.spawn([bunExe(), "-e", firehose], {
+  test.concurrent("Bun.spawn", async () => {
+    await using proc = Bun.spawn([bunExe(), "-e", firehose], {
       maxBuffer,
       killSignal: 0,
       stdio: ["ignore", "pipe", "pipe"],

@@ -1040,10 +1040,12 @@ impl JSValkeyClient {
         self.ref_();
         let _d = deref_guard(self);
 
-        // An armed retry means `disconnect()` has no socket to close, so the
-        // timer would reopen the connection. Cancelling it leaves the queued
-        // commands and the pending `connect()` promise with nobody to settle them.
-        let retry_armed = self.reconnect_timer.get().state == Timer::State::ACTIVE;
+        // A retry armed with no socket: `disconnect()` finds nothing to close, so
+        // cancelling the timer leaves the queued commands and the pending
+        // `connect()` promise with nobody to settle them. Run that close path here.
+        // With a socket (an explicit `connect()` can arm-and-connect) it runs itself.
+        let retry_armed = self.reconnect_timer.get().state == Timer::State::ACTIVE
+            && self.client.get().status == valkey::Status::Disconnected;
         self.stop_reconnect_timer();
         self.client_mut().disconnect();
         if retry_armed {

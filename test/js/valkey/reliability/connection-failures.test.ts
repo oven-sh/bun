@@ -450,8 +450,10 @@ describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
 describe("Valkey: close() during auto-reconnect", () => {
   type Conn = { id: number; socket: net.Socket; open: boolean };
 
-  // Minimal RESP3 mock that records every connection the client opens.
-  function mockRedisServer() {
+  // Minimal RESP3 mock that records every connection the client opens. A
+  // connection `helloOk` rejects never gets a handshake reply, so the client
+  // stays in its "connecting" state on it.
+  function mockRedisServer(helloOk: (id: number) => boolean = () => true) {
     const conns: Conn[] = [];
     const server = net.createServer(socket => {
       const conn: Conn = { id: conns.length + 1, socket, open: true };
@@ -461,7 +463,7 @@ describe("Valkey: close() during auto-reconnect", () => {
         conn.open = false;
       });
       socket.on("data", data => {
-        if (data.includes("HELLO")) socket.write("+OK\r\n");
+        if (data.includes("HELLO") && helloOk(conn.id)) socket.write("+OK\r\n");
       });
     });
 
@@ -546,6 +548,37 @@ describe("Valkey: close() during auto-reconnect", () => {
       expect(closes).toBe(1);
     } finally {
       client.close();
+    }
+  });
+
+  test("close() during a reconnect attempt reports the close exactly once", async () => {
+    // Only the first connection gets a handshake reply, so the explicit connect()
+    // below leaves the client connecting with the retry timer still armed. The
+    // socket close reports the close, so close() must not report it again.
+    const { conns, port, close } = await mockRedisServer(id => id === 1);
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: true });
+    let closes = 0;
+    client.onclose = () => closes++;
+
+    try {
+      await client.connect();
+      expect(client.connected).toBe(true);
+
+      conns[0].socket.destroy();
+      expect(await until(() => !client.connected)).toBe(true);
+
+      const reconnecting = client.connect();
+      reconnecting.catch(() => {}); // settled by close() below
+      expect(await until(() => conns.length >= 2)).toBe(true);
+
+      client.close();
+
+      await until(() => closes >= 2, 200);
+      expect(closes).toBe(1);
+      await expect(reconnecting).rejects.toThrow(/connection closed/i);
+    } finally {
+      client.close();
+      close();
     }
   });
 });

@@ -36,7 +36,7 @@
 import { afterAll, test as bunTest, describe, expect } from "bun:test";
 import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
-import { SUBTEST_TIMEOUT_MS, setRegistrar, setSubtestTimeout, wptTest } from "../wpt-testharness-shim";
+import { setRegistrar, setSubtestTimeout, SUBTEST_TIMEOUT_MS, wptTest } from "../wpt-testharness-shim";
 import expectations from "./expectations.json";
 
 const ROOT = import.meta.dir;

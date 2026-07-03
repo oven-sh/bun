@@ -1037,10 +1037,20 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn js_disconnect(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        if self.client.get().status == valkey::Status::Disconnected {
-            return Ok(JSValue::UNDEFINED);
-        }
+        self.ref_();
+        let _d = deref_guard(self);
+
+        // An armed retry means `disconnect()` has no socket to close, so the
+        // timer would reopen the connection. Cancelling it leaves the queued
+        // commands and the pending `connect()` promise with nobody to settle them.
+        let retry_armed = self.reconnect_timer.get().state == Timer::State::ACTIVE;
+        self.stop_reconnect_timer();
         self.client_mut().disconnect();
+        if retry_armed {
+            self.client_fail(b"Connection closed", protocol::RedisError::ConnectionClosed)?;
+            self.notify_close()?;
+            self.update_poll_ref();
+        }
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1385,9 +1395,7 @@ impl JSValkeyClient {
     // Callback for when Valkey client needs to reconnect
     pub fn on_valkey_reconnect(&self) {
         // Schedule reconnection using our safe timer methods
-        if self.reconnect_timer.get().state == Timer::State::ACTIVE {
-            self.remove_timer(&self.reconnect_timer);
-        }
+        self.stop_reconnect_timer();
 
         let delay_ms = self.client.get().get_reconnect_delay();
         if delay_ms > 0 {
@@ -1407,8 +1415,6 @@ impl JSValkeyClient {
 
     // Callback for when Valkey client closes
     pub fn on_valkey_close(&self) -> JsTerminatedResult<()> {
-        let global_object = self.global_object;
-
         let self_ptr = self.as_ctx_ptr();
         let _defer = scopeguard::guard(self_ptr, |p| {
             // SAFETY: `p` was `self.as_ctx_ptr()`; the socket dispatch path
@@ -1419,6 +1425,15 @@ impl JSValkeyClient {
                 JSValkeyClient::deref(p);
             }
         });
+
+        self.notify_close()
+    }
+
+    /// Reject the pending `connect()` promise and invoke `onclose`. Split out so
+    /// `js_disconnect` can settle the same state without the `deref` that
+    /// balances `connect()`'s socket keep-alive ref.
+    fn notify_close(&self) -> JsTerminatedResult<()> {
+        let global_object = self.global_object;
 
         let Some(this_jsvalue) = self.this_value.get().try_get() else {
             return Ok(());
@@ -1558,6 +1573,10 @@ impl JSValkeyClient {
         if self.timer.get().state == Timer::State::ACTIVE {
             self.remove_timer(&self.timer);
         }
+        self.stop_reconnect_timer();
+    }
+
+    fn stop_reconnect_timer(&self) {
         if self.reconnect_timer.get().state == Timer::State::ACTIVE {
             self.remove_timer(&self.reconnect_timer);
         }

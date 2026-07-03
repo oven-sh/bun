@@ -1487,8 +1487,12 @@ impl ValkeyClient {
     }
 
     /// Close the Valkey connection
+    ///
+    /// The caller cancels the reconnect timer; `is_reconnecting` is cleared here
+    /// so a reconnect that is already in flight stops retrying.
     pub fn disconnect(&mut self) {
         self.flags.is_manually_closed = true;
+        self.flags.is_reconnecting = false;
         self.unregister_auto_flusher();
         if self.status == Status::Connected || self.status == Status::Connecting {
             self.close();

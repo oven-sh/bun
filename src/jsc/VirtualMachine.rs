@@ -4773,6 +4773,36 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) {
+        self.print_errorlike_object_at_depth(
+            value,
+            exception,
+            exception_list,
+            formatter,
+            writer,
+            allow_ansi_color,
+            allow_side_effects,
+            0,
+        );
+    }
+
+    /// `depth` counts the `AggregateError.errors` levels already unwrapped. Past
+    /// the cap the AggregateError prints as an ordinary error, so a cyclic
+    /// `errors` (`e.errors = [e]`) can't recurse until the native stack dies.
+    fn print_errorlike_object_at_depth(
+        &mut self,
+        value: JSValue,
+        exception: Option<&Exception>,
+        exception_list: Option<&mut ExceptionList>,
+        formatter: &mut crate::console_object::Formatter,
+        writer: &mut bun_core::io::Writer,
+        allow_ansi_color: bool,
+        allow_side_effects: bool,
+        depth: u8,
+    ) {
+        // Nesting `new AggregateError([new AggregateError([...])])` this deep is
+        // pathological; past it, print the AggregateError itself.
+        const MAX_AGGREGATE_ERROR_DEPTH: u8 = 8;
+
         // Note: the post-print stack/exception_list block is handled at the
         // tail instead of via a drop guard (the body has no early-`?` returns
         // once the AggregateError branch is taken).
@@ -4783,7 +4813,7 @@ impl VirtualMachine {
         // `print_error_from_maybe_private_data`.
         let mut exception_list = exception_list;
 
-        if value.is_aggregate_error(global_ref) {
+        if value.is_aggregate_error(global_ref) && depth < MAX_AGGREGATE_ERROR_DEPTH {
             // `getErrorsProperty` is `getDirect` (own slot, nothrow): it
             // returns empty when the own `errors` property is absent (deleted
             // or never installed), the raw GetterSetter cell when redefined
@@ -4804,6 +4834,7 @@ impl VirtualMachine {
                     exception_list: *mut ExceptionList,
                     allow_ansi_color: bool,
                     allow_side_effects: bool,
+                    depth: u8,
                 }
                 extern "C" fn agg_iter(
                     _vm: *mut crate::VM,
@@ -4828,7 +4859,7 @@ impl VirtualMachine {
                     // SAFETY: `ctx.writer` borrows the caller's stack local,
                     // live across the synchronous `for_each` call.
                     let writer = unsafe { &mut *ctx.writer };
-                    vm.print_errorlike_object(
+                    vm.print_errorlike_object_at_depth(
                         next_value,
                         None,
                         exception_list,
@@ -4836,6 +4867,7 @@ impl VirtualMachine {
                         writer,
                         ctx.allow_ansi_color,
                         ctx.allow_side_effects,
+                        ctx.depth,
                     );
                 }
                 let mut ctx = AggCtx {
@@ -4847,6 +4879,7 @@ impl VirtualMachine {
                         .unwrap_or(core::ptr::null_mut()),
                     allow_ansi_color,
                     allow_side_effects,
+                    depth: depth + 1,
                 };
                 if errors
                     .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)

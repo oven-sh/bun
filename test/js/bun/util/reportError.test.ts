@@ -144,6 +144,17 @@ const tamperedAggregateErrors = [
     "poisoned array iterator",
     'const e = new AggregateError([new Error("inner")], "agg_boom"); Object.defineProperty(Array.prototype, Symbol.iterator, { value() { throw new Error("poisoned"); } }); throw e;',
   ],
+  // A cyclic `errors` is an array, so it clears the shape check above: the
+  // printer recurses into itself once per level until the native stack dies.
+  ["self-referential errors array", 'const e = new AggregateError([], "agg_boom"); e.errors = [e]; throw e;'],
+  [
+    "mutually recursive errors arrays",
+    'const a = new AggregateError([], "agg_boom"); const b = new AggregateError([a], "agg_inner"); a.errors = [b]; throw a;',
+  ],
+  [
+    "unhandled rejection with self-referential errors",
+    'const e = new AggregateError([], "agg_boom"); e.errors = [e]; Promise.reject(e);',
+  ],
 ] as const;
 
 test.each(tamperedAggregateErrors)(
@@ -179,6 +190,32 @@ test("uncaught AggregateError with intact `errors` still prints each sub-error",
   expect(stderr).toContain("inner_a");
   expect(stderr).toContain("inner_b");
   expect(stdout).toBe("");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(1);
+});
+
+// The depth cap that stops a cyclic `errors` must stay clear of any nesting a
+// real program produces.
+test("uncaught AggregateError nested several levels deep still unwraps to the leaf error", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      'let e = new Error("leaf_marker"); for (let i = 0; i < 5; i++) e = new AggregateError([e], "level_" + i); throw e;',
+    ],
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Each level prints its children, so only the leaf surfaces. (`stderr` echoes
+  // the source line, so match on the printed error header, not the bare name.)
+  expect({
+    leaf: stderr.includes("error: leaf_marker"),
+    cappedEarly: stderr.includes("AggregateError: level_"),
+    stdout,
+  }).toEqual({ leaf: true, cappedEarly: false, stdout: "" });
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(1);
 });

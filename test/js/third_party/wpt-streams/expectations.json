@@ -1,5 +1,3 @@
 {
-  "failures": {
-    "streams/readable-byte-streams/templated.any.js :: ReadableStream with byte source (empty) BYOB reader: canceling via the reader should cause the reader to act closed": "FAIL: assert_equals: read()ing from the reader should give a done result expected (undefined) undefined but got (object) object \"\" (Uint8Array)"
-  }
+  "failures": {}
 }

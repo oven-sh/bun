@@ -141,25 +141,32 @@ function assert_array_equals(actual: any, expected: any, description?: string) {
   }
 }
 
+// Byte-for-byte port of upstream testharness.js's assert_object_equals: walk the
+// ACTUAL object's enumerable properties and recurse whenever actual[p] is a non-null
+// object (regardless of expected[p]'s type), then require expected's properties to
+// exist on actual. Browsers and Node run the suite under exactly these semantics.
 function assert_object_equals(actual: any, expected: any, description?: string) {
+  if (typeof actual !== "object" || actual === null) {
+    fail(`assert_object_equals: ${description ?? ""} value is ${format_value(actual)}, expected object`);
+  }
   const stack: unknown[] = [];
   function check(a: any, e: any) {
-    if (typeof a !== "object" || a === null || typeof e !== "object" || e === null) {
-      return void assert_equals(a, e, description);
-    }
-    if (stack.includes(a)) fail(`assert_object_equals: ${description ?? ""} circular reference`);
     stack.push(a);
-    const aKeys = Object.keys(a);
-    const eKeys = Object.keys(e);
-    for (const k of aKeys) {
-      if (!Object.prototype.hasOwnProperty.call(e, k)) {
-        fail(`assert_object_equals: ${description ?? ""} unexpected property "${k}"`);
+    for (const p in a) {
+      if (!Object.prototype.hasOwnProperty.call(e, p)) {
+        fail(`assert_object_equals: ${description ?? ""} unexpected property "${p}"`);
       }
-      check(a[k], e[k]);
+      if (typeof a[p] === "object" && a[p] !== null) {
+        if (!stack.includes(a[p])) check(a[p], e[p]);
+      } else if (!Object.is(a[p], e[p])) {
+        fail(
+          `assert_object_equals: ${description ?? ""} property "${p}" expected ${format_value(e[p])} got ${format_value(a[p])}`,
+        );
+      }
     }
-    for (const k of eKeys) {
-      if (!Object.prototype.hasOwnProperty.call(a, k)) {
-        fail(`assert_object_equals: ${description ?? ""} missing property "${k}"`);
+    for (const p in e) {
+      if (!Object.prototype.hasOwnProperty.call(a, p)) {
+        fail(`assert_object_equals: ${description ?? ""} expected property "${p}" missing`);
       }
     }
     stack.pop();

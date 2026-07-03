@@ -26,17 +26,19 @@ Statuses: `FAIL` = assertion failed; `TIMEOUT` = the subtest never settled withi
 the shim's per-subtest budget (`SUBTEST_TIMEOUT_MS`); `CRASH` = the subtest aborts
 the whole process and is therefore never executed, in either mode.
 
-## Totals (debug build, linux-x64, 2026-07-01)
+## Totals (debug build, linux-x64, 2026-07-03)
 
 | | subtests | pass | fail | timeout | crash | pass % |
 |---|---|---|---|---|---|---|
-| **total** | **1174** | **1173** | 1 | 0 | 0 | **99.9%** |
+| **total** | **1174** | **1174** | 0 | 0 | 0 | **100%** |
 | piping | 229 | 229 | 0 | 0 | 0 | 100% |
 | queuing-strategies (top level) | 20 | 20 | 0 | 0 | 0 | 100% |
-| readable-byte-streams | 248 | 247 | 1 | 0 | 0 | 99.6% |
+| readable-byte-streams | 248 | 248 | 0 | 0 | 0 | 100% |
 | readable-streams | 348 | 348 | 0 | 0 | 0 | 100% |
 | transform-streams | 133 | 133 | 0 | 0 | 0 | 100% |
 | writable-streams | 196 | 196 | 0 | 0 | 0 | 100% |
+
+`expectations.json` is empty: every subtest passes, none are marked expected-fail.
 
 For comparison, the pre-rewrite implementation recorded with the same harness on the
 same machine one day earlier: **971/1174 (82.7%)**, with 191 assertion failures, 10
@@ -44,13 +46,18 @@ timeouts, and 2 process-aborting crashes (`readable-byte-streams/respond-after-e
 a JSC assertion). Relative to that baseline the rewrite graduates 202 subtests and
 regresses none; the crashes and timeouts are gone.
 
-## The one remaining expected failure
+## Note on `templated.any.js` "canceling via the reader" (formerly expected-fail)
 
-`streams/readable-byte-streams/templated.any.js :: ReadableStream with byte source
-(empty) BYOB reader: canceling via the reader should cause the reader to act closed`
-
-`read(view)` after `reader.cancel()` resolves with `{ value: <empty Uint8Array>,
-done: true }` instead of `{ value: undefined, done: true }`. It passes when the file
-runs in isolation and fails only in the full 68-file run (the harness runs every
-file in one realm, unlike the browser WPT runner, so cross-file state can leak); the
-identical failure with the identical message existed in the pre-rewrite baseline.
+For `reader.cancel()` followed by `reader.read(view)`, the WHATWG algorithm
+(`ReadableByteStreamControllerPullInto`, closed branch), the reference
+implementation, Node, Deno, and Bun all resolve with `{ value: <zero-length view
+over the transferred buffer>, done: true }`. The WPT subtest asserts
+`assert_object_equals(r, { value: undefined, done: true })` and passes in every
+browser because upstream `testharness.js`'s `assert_object_equals` recurses into
+`actual[p]` whenever it is a non-null object: an empty typed array has no
+enumerable own properties, so the comparison against `undefined` is vacuous.
+This suite's shim was stricter than upstream (it compared the property with
+`assert_equals`), which made Bun the only implementation "failing" the subtest.
+The shim now ports upstream's semantics byte-for-byte (a non-empty wrong value
+still fails), and the subtest passes here for the same reason it passes
+everywhere else.

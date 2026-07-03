@@ -69,7 +69,7 @@ function confirmingRedis(): TCPSocketListener {
   });
 }
 
-test("a subscribe() rejected before it is sent does not register its listener", async () => {
+test.concurrent("a subscribe() rejected before it is sent does not register its listener", async () => {
   using server = confirmingRedis();
 
   // With the offline queue disabled the first subscribe is rejected while the connection
@@ -105,7 +105,51 @@ test("a subscribe() rejected before it is sent does not register its listener", 
   }
 });
 
-test("a subscribe() rejected before it is sent does not keep the event loop alive", async () => {
+test.concurrent("a subscribe() abandoned by a closing connection does not register its listener", async () => {
+  const { promise: sawSubscribe, resolve: onSawSubscribe } = Promise.withResolvers<void>();
+  let subscribesSeen = 0;
+  using server = scriptedRedis((command, args, write) => {
+    if (command === "HELLO") return write(HELLO_REPLY);
+    if (command !== "SUBSCRIBE") return;
+    // Leave the first SUBSCRIBE on the wire, unanswered.
+    if (subscribesSeen++ === 0) return void onSawSubscribe();
+    write(pushSubscribe(args[0], 1));
+    write(pushMessage(args[0], "hi"));
+  });
+
+  const redis = new RedisClient(`redis://127.0.0.1:${server.port}`, { autoReconnect: false });
+  const received: string[] = [];
+  const { promise: delivered, resolve: onDelivered } = Promise.withResolvers<void>();
+  const listener = (message: string) => {
+    received.push(message);
+    onDelivered();
+  };
+
+  try {
+    const pending = redis.subscribe("ch", listener);
+    await sawSubscribe;
+    redis.close();
+
+    let rejected: Error | undefined;
+    try {
+      await pending;
+    } catch (error) {
+      rejected = error as Error;
+    }
+    expect(rejected?.message).toBe("Connection closed");
+
+    // Same as above: the SUBSCRIBE never got its confirmation, so it must not have left a
+    // listener behind for the next one to duplicate.
+    await redis.connect();
+    expect(await redis.subscribe("ch", listener)).toBe(1);
+    await delivered;
+    expect(received).toEqual(["hi"]);
+  } finally {
+    redis.close();
+  }
+});
+
+test.concurrent("a subscribe() rejected before it is sent does not keep the event loop alive", async () => {
   using server = confirmingRedis();
 
   // The client is deliberately never closed: it holds no subscription and no pending
@@ -143,7 +187,7 @@ test("a subscribe() rejected before it is sent does not keep the event loop aliv
   });
 });
 
-test("mutating the channel array after subscribe() does not change what gets registered", async () => {
+test.concurrent("mutating the channel array after subscribe() does not change what gets registered", async () => {
   using server = confirmingRedis();
 
   const redis = new RedisClient(`redis://127.0.0.1:${server.port}`, { autoReconnect: false });

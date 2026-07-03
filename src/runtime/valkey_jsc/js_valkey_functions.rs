@@ -1654,10 +1654,9 @@ impl JSValkeyClient {
             return Err(global.throw_invalid_argument_type("subscribe", "listener", "function"));
         }
 
-        // The listener is wired into the receive-handler map only once the server confirms
-        // the subscription (see `SubscriptionCtx::register_subscription`), so a SUBSCRIBE
-        // that fails leaves no listener behind. That also means the channel list has to be
-        // snapshotted here, out of reach of the caller.
+        // The listener is registered only once the server confirms the subscription (see
+        // `SubscriptionCtx::register_subscription`), so a failed SUBSCRIBE leaves nothing
+        // behind, and the channel list has to be snapshotted out of the caller's reach.
         let subscribed_channels: jsc::Strong;
 
         // The first argument given is the channel or may be an array of channels.

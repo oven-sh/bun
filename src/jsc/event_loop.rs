@@ -957,8 +957,13 @@ impl EventLoop {
         #[cfg(windows)]
         {
             if let Some(loop_) = self.uws_loop {
-                // SAFETY: uws_loop is a valid live uws::Loop handle
-                unsafe { (*loop_.as_ptr()).wakeup() };
+                // Cross-thread, like the POSIX arm: call the thread-safe
+                // `us_wakeup_loop` extern on the raw pointer, not
+                // `WindowsLoop::wakeup(&mut self)` whose autoref would form a
+                // second `&mut Loop` to the singleton (mirrors `WindowsWaker`).
+                // SAFETY: `loop_` is the live per-VM uws loop; the extern
+                // routes to the thread-safe `uv_async_send`.
+                unsafe { uws::us_wakeup_loop(loop_.as_ptr()) };
             }
             return;
         }

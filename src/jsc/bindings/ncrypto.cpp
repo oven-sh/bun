@@ -1988,6 +1988,14 @@ const EVP_MD* getDigestByName(const WTF::StringView name)
     //     return EVP_ripemd160();
     // }
 
+    // BoringSSL ships these EVP_MDs but leaves them out of its digest-by-name table.
+    if (WTF::equalIgnoringASCIICase(name, "blake2b256"_s)) {
+        return EVP_blake2b256();
+    }
+    if (WTF::equalIgnoringASCIICase(name, "blake2b512"_s)) {
+        return EVP_blake2b512();
+    }
+
     auto nameUtf8 = name.utf8();
     return EVP_get_digestbyname(nameUtf8.data());
 }

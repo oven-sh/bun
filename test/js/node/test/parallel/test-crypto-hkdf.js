@@ -218,6 +218,8 @@ algorithms.forEach(([ hash, secret, salt, info, length ]) => {
 
 if (!hasOpenSSL3) {
   const kKnownUnsupported = ['shake128', 'shake256'];
+  // BoringSSL ships no EVP_MD for BLAKE2s, so HMAC-derived KDFs cannot use it.
+  if (typeof Bun !== 'undefined') kKnownUnsupported.push('blake2s256');
   getHashes()
     .filter((hash) => !kKnownUnsupported.includes(hash))
     .forEach((hash) => {

@@ -160,6 +160,55 @@ describe("crypto.getCurves", () => {
   });
 });
 
+describe("crypto.getHashes", () => {
+  it("lists the same digests createHash resolves names against", () => {
+    expect(crypto.getHashes()).toEqual([...CryptoHasher.algorithms]);
+  });
+
+  it("lists the digests BoringSSL's EVP_MD table leaves out", () => {
+    const hashes = crypto.getHashes();
+    expect(hashes).toContain("blake2b256");
+    expect(hashes).toContain("blake2b512");
+    expect(hashes).toContain("blake2s256");
+    expect(hashes).toContain("shake128");
+    expect(hashes).toContain("shake256");
+  });
+
+  for (const algorithm of CryptoHasher.algorithms) {
+    it(`every listed digest constructs: ${algorithm}`, () => {
+      // the "hello world" digests are pinned per-algorithm in the CryptoHasher suite above
+      expect(crypto.createHash(algorithm).update("hello world").digest("hex")).toBe(
+        CryptoHasher.hash(algorithm, "hello world").toString("hex"),
+      );
+    });
+  }
+});
+
+describe("crypto.createHmac", () => {
+  // known answers computed with python's hmac + hashlib.blake2b
+  const message = "The quick brown fox jumps over the lazy dog";
+
+  it("blake2b512", () => {
+    expect(crypto.createHmac("blake2b512", "key").update(message).digest("hex")).toBe(
+      "92294f92c0dfb9b00ec9ae8bd94d7e7d8a036b885a499f149dfe2fd2199394aaaf6b8894a1730cccb2cd050f9bcf5062a38b51b0dab33207f8ef35ae2c9df51b",
+    );
+  });
+
+  it("blake2b256", () => {
+    expect(crypto.createHmac("blake2b256", "key").update(message).digest("hex")).toBe(
+      "bb3e1cd6f38b5df1cb87983ec29d6116587c1b9bf6e5cd167ac7f2bc741d3817",
+    );
+  });
+});
+
+describe("crypto.hkdfSync", () => {
+  it("blake2b512", () => {
+    expect(Buffer.from(crypto.hkdfSync("blake2b512", "key", "salt", "info", 8)).toString("hex")).toBe(
+      "b3b27a54dac96f48",
+    );
+  });
+});
+
 describe("crypto", () => {
   for (let Hash of HashClasses) {
     for (let [input, label] of [

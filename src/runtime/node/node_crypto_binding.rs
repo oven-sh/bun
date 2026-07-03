@@ -1,10 +1,7 @@
 //! `node:crypto` native binding — `pbkdf2`/`scrypt`/`random*`/`timingSafeEqual`
 //! plus the `ExternCryptoJob` / `CryptoJob<Ctx>` work-pool plumbing.
 
-use core::ffi::{c_char, c_void};
-
 use bun_boringssl as boringssl;
-use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
 use bun_jsc::{
     self as jsc, AnyTaskJob, AnyTaskJobCtx, ArrayBuffer, CallFrame, JSGlobalObject, JSValue,
     JsResult, StrongOptional,
@@ -728,6 +725,7 @@ mod _impl {
     use bun_jsc::{ErrorCode, JSFunction, JSType};
 
     use crate::crypto::create_crypto_error;
+    use crate::crypto::evp::{self, AlgorithmExt as _};
     use crate::crypto::pbkdf2::{self, PBKDF2};
 
     impl Scrypt {
@@ -1189,44 +1187,12 @@ mod _impl {
             .throw())
     }
 
-    extern "C" fn for_each_hash(
-        _: *const boringssl::c::EVP_MD,
-        maybe_from: *const c_char,
-        _: *const c_char,
-        ctx: *mut c_void,
-    ) {
-        if maybe_from.is_null() {
-            return;
-        }
-        // SAFETY: ctx was `&mut CaseInsensitiveAsciiStringArrayHashMap<()>` cast in `get_hashes`.
-        let hashes: &mut CaseInsensitiveAsciiStringArrayHashMap<()> =
-            unsafe { bun_ptr::callback_ctx::<CaseInsensitiveAsciiStringArrayHashMap<()>>(ctx) };
-        // SAFETY: `maybe_from` is non-null (checked above) and points to a NUL-terminated C string
-        // from BoringSSL's static tables.
-        let from_bytes = unsafe { bun_core::ffi::cstr(maybe_from) }.to_bytes();
-        bun_core::handle_oom(hashes.put(from_bytes, ()));
-    }
-
+    /// Enumerates the digest registry `createHash` resolves names against (what
+    /// `Bun.CryptoHasher.algorithms` reports). BoringSSL's `EVP_MD_do_all_sorted`
+    /// table omits every digest Bun implements outside BoringSSL.
     #[bun_jsc::host_fn]
     fn get_hashes(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        let mut hashes: CaseInsensitiveAsciiStringArrayHashMap<()> =
-            CaseInsensitiveAsciiStringArrayHashMap::new();
-
-        // Perf idea (dylan-conway): cache the names
-        // SAFETY: `for_each_hash` matches the expected callback signature; `&mut hashes` is valid
-        // for the duration of the call.
-        unsafe {
-            boringssl::c::EVP_MD_do_all_sorted(for_each_hash, (&raw mut hashes).cast::<c_void>());
-        }
-
-        let array = JSValue::create_empty_array(global, hashes.count())?;
-
-        for (i, hash) in hashes.keys().iter().enumerate() {
-            let str = jsc::bun_string_jsc::create_utf8_for_js(global, hash)?;
-            array.put_index(global, u32::try_from(i).expect("int cast"), str)?;
-        }
-
-        Ok(array)
+        jsc::bun_string_jsc::to_js_array(global, evp::Algorithm::names())
     }
 
     #[bun_jsc::host_fn]

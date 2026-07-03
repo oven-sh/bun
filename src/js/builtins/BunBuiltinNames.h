@@ -72,6 +72,7 @@ using namespace JSC;
     macro(controller) \
     macro(createCommonJSModule) \
     macro(createEmptyReadableStream) \
+    macro(createErroredReadableStream) \
     macro(createFIFO) \
     macro(createInternalModuleById) \
     macro(createNativeReadableStream) \
@@ -214,6 +215,7 @@ using namespace JSC;
     macro(underlyingSource) \
     macro(url) \
     macro(view) \
+    macro(vmErrorDecorated) \
     macro(warning) \
     macro(writable) \
     macro(write) \

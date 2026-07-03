@@ -208,80 +208,92 @@ impl Bin {
         buf: &mut bun_semver::string::Buf,
         extern_strings: &mut Vec<ExternalString>,
     ) -> Result<Bin, AllocError> {
-        if let ExprData::EObject(o) = &bin_expr.data {
-            let props = o.properties.slice();
-            match props.len() {
-                0 => {}
-                1 => {
-                    let Some(bin_name) =
-                        props[0].key.as_ref().and_then(Expr::as_utf8_string_literal)
-                    else {
-                        return Ok(Bin::default());
-                    };
-                    let Some(value) = props[0]
-                        .value
-                        .as_ref()
-                        .and_then(Expr::as_utf8_string_literal)
-                    else {
-                        return Ok(Bin::default());
-                    };
-
-                    return Ok(Bin {
-                        tag: Tag::NamedFile,
-                        _padding_tag: [0; 3],
-                        value: Value {
-                            named_file: [buf.append(bin_name)?, buf.append(value)?],
-                        },
-                    });
-                }
-                _ => {
-                    let current_len = extern_strings.len();
-                    let num_props: usize = props.len() * 2;
-                    extern_strings
-                        .try_reserve_exact(
-                            (current_len + num_props).saturating_sub(extern_strings.len()),
+        match &bin_expr.data {
+            ExprData::EObject(o) => {
+                let props = o.properties.slice();
+                return Self::parse_append_object(
+                    props.len(),
+                    props.iter().map(|prop| {
+                        (
+                            prop.key.as_ref().and_then(Expr::as_utf8_string_literal),
+                            prop.value.as_ref().and_then(Expr::as_utf8_string_literal),
                         )
-                        .map_err(|_| AllocError)?;
-                    // Push incrementally so a bailout leaves only the slots
-                    // actually written. The returned `Bin` is `Tag::None` on
-                    // bailout so the slots are never indexed either way.
-                    let mut i: usize = 0;
-                    for bin_prop in props {
-                        let Some(key_str) =
-                            bin_prop.key.as_ref().and_then(Expr::as_utf8_string_literal)
-                        else {
-                            return Ok(Bin::default());
-                        };
-                        let Some(value_str) = bin_prop
-                            .value
-                            .as_ref()
-                            .and_then(Expr::as_utf8_string_literal)
-                        else {
-                            return Ok(Bin::default());
-                        };
-                        extern_strings.push(buf.append_external(key_str)?);
-                        i += 1;
-                        extern_strings.push(buf.append_external(value_str)?);
-                        i += 1;
-                    }
-                    debug_assert!(i == num_props);
-                    let new = &extern_strings[current_len..current_len + num_props];
-                    return Ok(Bin {
-                        tag: Tag::Map,
-                        _padding_tag: [0; 3],
-                        value: Value {
-                            map: ExternalStringList::init(extern_strings.as_slice(), new),
-                        },
-                    });
-                }
+                    }),
+                    buf,
+                    extern_strings,
+                );
             }
-        } else if let Some(str_) = bin_expr.as_utf8_string_literal() {
+            ExprData::EObjectJSON(o) => {
+                let rows = o.get().properties();
+                return Self::parse_append_object(
+                    rows.len(),
+                    rows.iter()
+                        .map(|row| (Some(row.key.slice()), row.value.as_str())),
+                    buf,
+                    extern_strings,
+                );
+            }
+            _ => {}
+        }
+        if let Some(str_) = bin_expr.as_utf8_string_literal() {
             if !str_.is_empty() {
                 return Ok(Bin {
                     tag: Tag::File,
                     _padding_tag: [0; 3],
                     value: Value {
                         file: buf.append(str_)?,
+                    },
+                });
+            }
+        }
+        Ok(Bin::default())
+    }
+
+    fn parse_append_object<'a>(
+        len: usize,
+        mut pairs: impl Iterator<Item = (Option<&'a [u8]>, Option<&'a [u8]>)>,
+        buf: &mut bun_semver::string::Buf,
+        extern_strings: &mut Vec<ExternalString>,
+    ) -> Result<Bin, AllocError> {
+        match len {
+            0 => {}
+            1 => {
+                let Some((Some(bin_name), Some(value))) = pairs.next() else {
+                    return Ok(Bin::default());
+                };
+                return Ok(Bin {
+                    tag: Tag::NamedFile,
+                    _padding_tag: [0; 3],
+                    value: Value {
+                        named_file: [buf.append(bin_name)?, buf.append(value)?],
+                    },
+                });
+            }
+            _ => {
+                let current_len = extern_strings.len();
+                let num_props: usize = len * 2;
+                extern_strings
+                    .try_reserve_exact(
+                        (current_len + num_props).saturating_sub(extern_strings.len()),
+                    )
+                    .map_err(|_| AllocError)?;
+                let mut i: usize = 0;
+                for (key_str, value_str) in pairs {
+                    let (Some(key_str), Some(value_str)) = (key_str, value_str) else {
+                        return Ok(Bin::default());
+                    };
+                    extern_strings.push(buf.append_external(key_str)?);
+                    i += 1;
+                    extern_strings.push(buf.append_external(value_str)?);
+                    i += 1;
+                }
+                debug_assert!(i == num_props);
+                let new = &extern_strings[current_len..current_len + num_props];
+                return Ok(Bin {
+                    tag: Tag::Map,
+                    _padding_tag: [0; 3],
+                    value: Value {
+                        map: ExternalStringList::init(extern_strings.as_slice(), new),
                     },
                 });
             }

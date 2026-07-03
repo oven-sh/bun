@@ -1101,7 +1101,9 @@ describe("HEAD requests #15355", () => {
     //
     // Passing duplicate header entries makes FetchHeaders combine them via
     // makeString(), producing a fresh StringImpl owned solely by the map so the
-    // remove actually frees it. `Malloc=1` routes bmalloc through the system
+    // remove actually frees it. The bodies are null so this stays on the
+    // fastGet path: HEAD only reads the handler-supplied framing headers for a
+    // bodiless Response. `Malloc=1` routes bmalloc through the system
     // allocator so ASAN-enabled builds observe the use-after-free; release
     // builds fall through and validate the header values round-trip.
     test("transfer-encoding / content-length whose StringImpl is held only by the header map", async () => {
@@ -1115,14 +1117,14 @@ describe("HEAD requests #15355", () => {
               port: 0,
               fetch(req) {
                 if (req.url.endsWith("/te")) {
-                  return new Response("hello", {
+                  return new Response(null, {
                     headers: [
                       ["Transfer-Encoding", "gzip"],
                       ["Transfer-Encoding", "chunked"],
                     ],
                   });
                 }
-                return new Response("hello", {
+                return new Response(null, {
                   headers: [
                     ["Content-Length", "1"],
                     ["Content-Length", "2"],

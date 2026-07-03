@@ -233,7 +233,6 @@ pub enum BorderSideWidth {
 }
 
 impl BorderSideWidth {
-    // blocked_on: Length::is_compatible
     pub fn is_compatible(&self, browsers: &Browsers) -> bool {
         match self {
             BorderSideWidth::Length(len) => len.is_compatible(browsers),
@@ -543,7 +542,6 @@ bitflags::bitflags! {
     }
 }
 
-// blocked_on: PropertyIdTag variant name verification (PascalCase mapping)
 impl BorderProperty {
     pub(crate) fn try_from_property_id(property_id: PropertyIdTag) -> Option<Self> {
         // An explicit match over every PropertyIdTag whose name starts

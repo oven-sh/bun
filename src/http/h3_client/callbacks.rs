@@ -261,6 +261,19 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
     let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
     stream.body_buffer.extend_from_slice(slice);
     stream.session_mut().deliver(stream, fin != 0);
+
+    let Some(stream) = stream_of(s) else { return };
+    if fin != 0 || stream.read_paused {
+        return;
+    }
+    let Some(client) = stream.client else { return };
+    if super::client_session::client_mut(client)
+        .signals
+        .is_receive_paused()
+    {
+        stream.read_paused = true;
+        s.want_read(false);
+    }
 }
 
 extern "C" fn on_stream_writable(s: *mut quic::Stream) {

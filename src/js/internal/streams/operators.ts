@@ -1,11 +1,8 @@
 "use strict";
 
-const { validateAbortSignal, validateInteger, validateObject } = require("internal/validators");
+const { validateAbortSignal, validateFunction, validateInteger, validateObject } = require("internal/validators");
 const { kWeakHandler, kResistStopPropagation } = require("internal/shared");
 const { finished } = require("internal/streams/end-of-stream");
-const staticCompose = require("internal/streams/compose");
-const { addAbortSignalNoValidate } = require("internal/streams/add-abort-signal");
-const { isWritable, isNodeStream } = require("internal/streams/utils");
 
 const MathFloor = Math.floor;
 const PromiseResolve = Promise.$resolve.bind(Promise);
@@ -18,32 +15,8 @@ const ObjectDefineProperty = Object.defineProperty;
 const kEmpty = Symbol("kEmpty");
 const kEof = Symbol("kEof");
 
-function compose(stream, options) {
-  if (options != null) {
-    validateObject(options, "options");
-  }
-  if (options?.signal != null) {
-    validateAbortSignal(options.signal, "options.signal");
-  }
-
-  if (isNodeStream(stream) && !isWritable(stream)) {
-    throw $ERR_INVALID_ARG_VALUE("stream", stream, "must be writable");
-  }
-
-  const composedStream = staticCompose(this, stream);
-
-  if (options?.signal) {
-    // Not validating as we already validated before
-    addAbortSignalNoValidate(options.signal, composedStream);
-  }
-
-  return composedStream;
-}
-
 function map(fn, options) {
-  if (typeof fn !== "function") {
-    throw $ERR_INVALID_ARG_TYPE("fn", ["Function", "AsyncFunction"], fn);
-  }
+  validateFunction(fn, "fn");
   if (options != null) {
     validateObject(options, "options");
   }
@@ -192,9 +165,7 @@ async function some(fn, options = undefined) {
 }
 
 async function every(fn, options = undefined) {
-  if (typeof fn !== "function") {
-    throw $ERR_INVALID_ARG_TYPE("fn", ["Function", "AsyncFunction"], fn);
-  }
+  validateFunction(fn, "fn");
   // https://en.wikipedia.org/wiki/De_Morgan's_laws
   return !(await some.$call(
     this,
@@ -213,9 +184,7 @@ async function find(fn, options) {
 }
 
 async function forEach(fn, options) {
-  if (typeof fn !== "function") {
-    throw $ERR_INVALID_ARG_TYPE("fn", ["Function", "AsyncFunction"], fn);
-  }
+  validateFunction(fn, "fn");
   async function forEachFn(value, options) {
     await fn(value, options);
     return kEmpty;
@@ -225,9 +194,7 @@ async function forEach(fn, options) {
 }
 
 function filter(fn, options) {
-  if (typeof fn !== "function") {
-    throw $ERR_INVALID_ARG_TYPE("fn", ["Function", "AsyncFunction"], fn);
-  }
+  validateFunction(fn, "fn");
   async function filterFn(value, options) {
     if (await fn(value, options)) {
       return value;
@@ -248,9 +215,7 @@ class ReduceAwareErrMissingArgs extends TypeError {
 }
 
 async function reduce(reducer, initialValue, options) {
-  if (typeof reducer !== "function") {
-    throw $ERR_INVALID_ARG_TYPE("reducer", ["Function", "AsyncFunction"], reducer);
-  }
+  validateFunction(reducer, "reducer");
   if (options != null) {
     validateObject(options, "options");
   }
@@ -397,7 +362,6 @@ export default {
     flatMap,
     map,
     take,
-    compose,
   },
   promiseReturningOperators: {
     every,

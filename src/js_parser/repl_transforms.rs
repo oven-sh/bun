@@ -133,7 +133,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // Hoist as: var funcName;
                     // Inner: this.funcName = funcName; function funcName() {}
                     if let Some(name_loc) = func.func.name {
-                        let name_ref = name_loc.ref_.expect("infallible: ref bound");
+                        let name_ref = name_loc.ref_;
                         hoisted_stmts.push(self.s(
                             S::Local {
                                 kind: S::Kind::KVar,
@@ -198,7 +198,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // Hoist as: var ClassName; (use var so it persists to vm context)
                     // Inner: ClassName = class ClassName {}
                     if let Some(name_loc) = class.class.class_name {
-                        let name_ref = name_loc.ref_.expect("infallible: ref bound");
+                        let name_ref = name_loc.ref_;
                         hoisted_stmts.push(self.s(
                             S::Local {
                                 kind: S::Kind::KVar,
@@ -276,7 +276,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // `items` is an arena-owned `StoreSlice<ClauseItem>` valid for 'a.
                     let import_items: &[bun_ast::ClauseItem] = import_data.items.slice();
 
-                    if import_data.star_name_loc.is_some() {
+                    if !import_data.star_name_loc.is_empty() {
                         // import * as X from 'mod' -> var X = await import('mod')
                         hoisted_stmts.push(self.s(
                             S::Local {
@@ -320,7 +320,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     } else if let Some(default_name) = import_data.default_name {
                         // import X from 'mod' -> var X = (await import('mod')).default
                         // import X, { a } from 'mod' -> var __ns = await import('mod'); var X = __ns.default; var a = __ns.a;
-                        let default_ref = default_name.ref_.expect("infallible: ref bound");
+                        let default_ref = default_name.ref_;
                         hoisted_stmts.push(self.s(
                             S::Local {
                                 kind: S::Kind::KVar,
@@ -574,7 +574,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
         // For each named import: var name; name = __ns.originalName;
         for item in import_items.iter() {
-            let item_ref = item.name.ref_.expect("infallible: ref bound");
+            let item_ref = item.name.ref_;
             hoisted_stmts.push(self.s(
                 S::Local {
                     kind: S::Kind::KVar,

@@ -1,7 +1,7 @@
 import { FileSystemRouter } from "bun";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {
@@ -691,4 +691,130 @@ it("does not match a dynamic route whose static segment merely collides on lengt
   expect(router.match(`/${routeSegment}/42`)?.name).toBe(`/${routeSegment}/[id]`);
   // A different segment that only collides on (length, 32-bit hash) must not.
   expect(router.match(`/${attackSegment}/42`)).toBeNull();
+});
+
+it("match() does not panic on a leading '?' or a path that percent-decodes to empty", async () => {
+  // URLPath::parse assumed the decoded pathname was non-empty and had a leading
+  // byte to skip. A bare query string ("?", "?foo") makes the path slice end at 0
+  // while the start is hardcoded to 1, and "%PUBLIC_URL%" (which the fault-tolerant
+  // decoder consumes entirely) yields an empty decoded pathname; either case used
+  // to trigger a slice bounds panic. Run in a subprocess so a panic is observable
+  // as a nonzero exit / missing stdout instead of killing the test runner.
+  using dir = tempDir("fsr-degenerate-path", {
+    "pages/index.tsx": "export default 1;",
+  });
+
+  const code = /* ts */ `
+    const router = new Bun.FileSystemRouter({
+      dir: ${JSON.stringify(path.join(String(dir), "pages"))},
+      style: "nextjs",
+      fileExtensions: [".tsx"],
+    });
+    const out = {};
+    for (const input of ["?", "?foo=bar", "%PUBLIC_URL%", "%PUBLIC_URL%?x=1"]) {
+      const m = router.match(input);
+      out[input] = m ? { name: m.name, query: m.query } : null;
+    }
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    "?": { name: "/", query: {} },
+    "?foo=bar": { name: "/", query: { foo: "bar" } },
+    "%PUBLIC_URL%": { name: "/", query: {} },
+    "%PUBLIC_URL%?x=1": { name: "/", query: { x: "1" } },
+  });
+  expect(exitCode).toBe(0);
+});
+
+it("reload() while Bun.build() resolves the same directory", async () => {
+  // The router's route-load loop and Bun.build's entry-point resolution (which
+  // runs on the bundler thread) share the process-global directory-entry cache.
+  // Run in a subprocess so a crash is observable as a signal instead of taking
+  // down the test runner.
+  const files: Record<string, string> = {
+    "fixture.ts": /* ts */ `
+      import path from "path";
+      const pagesDir = path.join(import.meta.dir, "pages");
+      const entrypoints: string[] = [];
+      for (let i = 1; i <= 40; i++) {
+        entrypoints.push(path.join(pagesDir, "p" + i + ".tsx"));
+        entrypoints.push(path.join(pagesDir, "sub", "s" + i + ".tsx"));
+      }
+      const router = new Bun.FileSystemRouter({
+        dir: pagesDir,
+        style: "nextjs",
+        fileExtensions: [".tsx"],
+      });
+      const builds = Array.from({ length: 4 }, () =>
+        Bun.build({ entrypoints, target: "bun", throw: false }),
+      );
+      let matches = 0;
+      for (let i = 0; i < 50; i++) {
+        router.reload();
+        const m = router.match("/p7");
+        if (m && m.filePath.endsWith("p7.tsx")) matches++;
+      }
+      const results = await Promise.all(builds);
+      console.log("matches", matches, "builds-ok", results.every(r => r.success));
+    `,
+  };
+  for (let i = 1; i <= 40; i++) {
+    files[`pages/p${i}.tsx`] = `export default ${i};\n`;
+    files[`pages/sub/s${i}.tsx`] = `export default ${i};\n`;
+  }
+  using dir = tempDir("fsr-reload-build-race", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(normalizeBunSnapshot(stdout, String(dir))).toBe("matches 50 builds-ok true");
+  expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+}, 60_000);
+
+it("loads routes from a directory already cached by Bun.build()", async () => {
+  // The resolver caches the directory name without a trailing slash while the
+  // router spells it with one; loading routes out of the already-populated
+  // entry cache must accept either spelling. Run in a subprocess so a crash is
+  // observable as a nonzero exit instead of taking down the test runner.
+  using dir = tempDir("fsr-prewarmed-entry-cache", {
+    "fixture.ts": /* ts */ `
+      import path from "path";
+      const pagesDir = path.join(import.meta.dir, "pages");
+      await Bun.build({ entrypoints: [path.join(pagesDir, "a.tsx")], target: "bun", throw: false });
+      const router = new Bun.FileSystemRouter({
+        dir: pagesDir,
+        style: "nextjs",
+        fileExtensions: [".tsx"],
+      });
+      console.log(Object.keys(router.routes).sort().join(" "), router.match("/b")?.name);
+    `,
+    "pages/a.tsx": "export default 1;\n",
+    "pages/b.tsx": "export default 2;\n",
+    "pages/sub/c.tsx": "export default 3;\n",
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(normalizeBunSnapshot(stdout, String(dir))).toBe("/a /b /sub/c /b");
+  expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
 });

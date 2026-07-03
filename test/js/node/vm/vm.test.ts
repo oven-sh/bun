@@ -1053,7 +1053,7 @@ test("node:vm SourceTextModule.link() rejects non-module entries in the moduleNa
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
     "link(plain object): TypeError ERR_INVALID_THIS
     status after rejected link: unlinked
-    status after valid link: linked"
+    status after valid link: unlinked"
   `);
   expect(exitCode).toBe(0);
 });

@@ -102,11 +102,11 @@ fn run_async<A: FsArgument>(
 
     if A::HAVE_ABORT_SIGNAL {
         if let Some(signal) = args.signal() {
-            if let Some(reason) = signal.reason_if_aborted(global) {
+            if let Some(abort_error) = signal.node_abort_error_if_aborted(global) {
                 let promise =
                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                         global,
-                        reason.to_js(global),
+                        abort_error,
                     );
                 args.unprotect();
                 drop(args);

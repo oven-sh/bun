@@ -273,7 +273,7 @@ it("process.versions", () => {
   // These are the ACTUAL commits built into bun (not derived values, so
   // bumping a dep requires updating this test too).
   const expectedVersions = {
-    boringssl: "0c5fce43b7ed5eb6001487ee48ac65766f5ddcd1",
+    boringssl: "1a41b9025c2c0a37edd07ff10f6944f03e028522",
     libarchive: "ded82291ab41d5e355831b96b0e1ff49e24d8939",
     mimalloc: "afb41757285694f832e7a2f164d35f5717457f96",
     picohttpparser: "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
@@ -426,7 +426,7 @@ describe.concurrent(() => {
     });
 
     let [out, exited] = await Promise.all([new Response(subprocess.stdout).text(), subprocess.exited]);
-    expect(out.trim()).toEqual("v24.3.0");
+    expect(out.trim()).toEqual("v26.3.0");
     expect(exited).toBe(0);
   });
 
@@ -784,6 +784,43 @@ describe.concurrent(() => {
       expect(() => Object.keys(process.env)).not.toThrow();
       expect(() => Object.getOwnPropertyDescriptors(process.env)).not.toThrow();
     });
+
+    // The get trap used to uppercase every string key, so inherited
+    // Object.prototype methods and own as-is props came back undefined —
+    // node's process-env trace fixture crashed on
+    // `process.env.hasOwnProperty('BAZ')`.
+    it("windows process.env exposes prototype methods and own props alongside case-insensitive vars", () => {
+      process.env.BUN_TEST_ENV_PROXY = "value";
+      try {
+        // Case-insensitive env-var access still wins.
+        expect(process.env.bun_test_env_proxy).toBe("value");
+        expect(process.env.Bun_Test_Env_Proxy).toBe("value");
+        // Inherited Object.prototype methods are callable, like node.
+        expect(typeof process.env.hasOwnProperty).toBe("function");
+        expect(process.env.hasOwnProperty("BUN_TEST_ENV_PROXY")).toBe(true);
+        expect(process.env.hasOwnProperty("BUN_TEST_ENV_PROXY_MISSING")).toBe(false);
+        expect(typeof process.env.toString).toBe("function");
+        expect("hasOwnProperty" in process.env).toBe(true);
+        // Own as-is properties (toJSON powers JSON.stringify(process.env)).
+        expect(typeof process.env.toJSON).toBe("function");
+        expect(JSON.parse(JSON.stringify(process.env)).BUN_TEST_ENV_PROXY).toBe("value");
+        // toJSON must keep the original-case key names, not the canonical
+        // UPPERCASE storage keys (children echoing their env over IPC or
+        // JSON.stringify must see the same casing the parent saw).
+        process.env.Bun_Test_Env_Proxy_Mixed = "mixed";
+        try {
+          const json = JSON.parse(JSON.stringify(process.env));
+          expect(json.Bun_Test_Env_Proxy_Mixed).toBe("mixed");
+          expect(json.BUN_TEST_ENV_PROXY_MIXED).toBeUndefined();
+        } finally {
+          delete process.env.Bun_Test_Env_Proxy_Mixed;
+        }
+        // Enumeration still works and sees the var.
+        expect(Object.keys(process.env)).toContain("BUN_TEST_ENV_PROXY");
+      } finally {
+        delete process.env.BUN_TEST_ENV_PROXY;
+      }
+    });
   }
 
   it("catches exceptions with process.setUncaughtExceptionCaptureCallback", async () => {
@@ -804,6 +841,62 @@ describe.concurrent(() => {
   it("catches exceptions with process.on('unhandledRejection', fn)", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUnhandledRejection.js")]);
     expect(await proc.exited).toBe(42);
+  });
+
+  it("delivers many unhandledRejections in order, including ones queued from the handler", async () => {
+    // Pins the observable behaviour: order is preserved, late .catch()
+    // suppresses delivery, and a rejection raised from inside the handler is
+    // also delivered.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const N = 1000;
+          const seen = [];
+          let nestedSeen = false;
+          process.on("unhandledRejection", reason => {
+            if (reason === "nested") { nestedSeen = true; return; }
+            seen.push(reason);
+            if (reason === 0) Promise.reject("nested");
+          });
+          for (let i = 0; i < N; i++) Promise.reject(i);
+          // This one is handled before the checkpoint runs — must NOT be delivered.
+          Promise.reject("handled").catch(() => {});
+          await new Promise(r => setImmediate(r));
+          await new Promise(r => setImmediate(r));
+          if (seen.length !== N) throw new Error("count " + seen.length);
+          for (let i = 0; i < N; i++) if (seen[i] !== i) throw new Error("order at " + i + " got " + seen[i]);
+          if (seen.includes("handled")) throw new Error("handled promise was delivered");
+          if (!nestedSeen) throw new Error("rejection from inside handler was dropped");
+
+          // A handler that .catch()es a *later* still-pending rejection must
+          // suppress both 'unhandledRejection' AND 'rejectionHandled' for it.
+          let spuriousRejectionHandled = 0;
+          let lateUnhandled = false;
+          process.on("rejectionHandled", () => spuriousRejectionHandled++);
+          let pLate;
+          process.removeAllListeners("unhandledRejection");
+          process.on("unhandledRejection", reason => {
+            if (reason === "early") pLate.catch(() => {});
+            if (reason === "late") lateUnhandled = true;
+          });
+          Promise.reject("early");
+          pLate = Promise.reject("late");
+          await new Promise(r => setImmediate(r));
+          await new Promise(r => setImmediate(r));
+          if (lateUnhandled) throw new Error("late promise got unhandledRejection");
+          if (spuriousRejectionHandled !== 0)
+            throw new Error("spurious rejectionHandled fired " + spuriousRejectionHandled + "x");
+          console.log("ok");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
   });
 
   it("aborts when the uncaughtException handler throws", async () => {
@@ -1175,10 +1268,10 @@ it.each(["stdin", "stdout", "stderr"])("%s stream accessor should handle excepti
 });
 
 it("process.versions", () => {
-  expect(process.versions.node).toEqual("24.3.0");
-  expect(process.versions.v8).toEqual("13.6.233.10-node.18");
+  expect(process.versions.node).toEqual("26.3.0");
+  expect(process.versions.v8).toEqual("14.6.202.34-node.20");
   expect(process.versions.napi).toEqual("10");
-  expect(process.versions.modules).toEqual("137");
+  expect(process.versions.modules).toEqual("147");
 });
 
 // On Windows, env var names are case-insensitive. The proxy-related vars

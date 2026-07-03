@@ -21,128 +21,10 @@ use bun_threading::Mutex;
 // edition-2024 forbids fn params shadowing statics).
 bun_core::define_scoped_log!(debug, Fs, hidden);
 
-// ── BOM ──────────────────────────────────────────────────────────────────────
-// A `BOM` enum also
-// lives in `bun_core::immutable::unicode_draft` but that module is private
-// (`mod unicode_draft` — no `pub use` of `BOM` yet); the resolver needs it for
-// `read_file_with_handle_and_allocator` so the enum is duplicated here. The
-// UTF-16→UTF-8 transcode goes through `strings::to_utf8_alloc` (re-exported
-// from `bun_core::strings`, simdutf-backed) — no C++ is reimplemented.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum BOM {
-    Utf8,
-    Utf16Le,
-    Utf16Be,
-    Utf32Le,
-    Utf32Be,
-}
-
-impl BOM {
-    pub const UTF8_BYTES: [u8; 3] = [0xef, 0xbb, 0xbf];
-    pub const UTF16_LE_BYTES: [u8; 2] = [0xff, 0xfe];
-    pub const UTF16_BE_BYTES: [u8; 2] = [0xfe, 0xff];
-    pub const UTF32_LE_BYTES: [u8; 4] = [0xff, 0xfe, 0x00, 0x00];
-    pub const UTF32_BE_BYTES: [u8; 4] = [0x00, 0x00, 0xfe, 0xff];
-
-    pub fn detect(bytes: &[u8]) -> Option<BOM> {
-        if bytes.len() < 3 {
-            return None;
-        }
-        if bytes.starts_with(&Self::UTF8_BYTES) {
-            return Some(BOM::Utf8);
-        }
-        if bytes.starts_with(&Self::UTF16_LE_BYTES) {
-            // if (bytes.len > 4 and eqlComptimeIgnoreLen(bytes[2..], utf32_le_bytes[2..]))
-            //   return .utf32_le;
-            return Some(BOM::Utf16Le);
-        }
-        // if (eqlComptimeIgnoreLen(bytes, utf16_be_bytes)) return .utf16_be;
-        // if (bytes.len > 4 and eqlComptimeIgnoreLen(bytes, utf32_le_bytes)) return .utf32_le;
-        None
-    }
-
-    pub fn header(self) -> &'static [u8] {
-        match self {
-            BOM::Utf8 => &Self::UTF8_BYTES,
-            BOM::Utf16Le => &Self::UTF16_LE_BYTES,
-            BOM::Utf16Be => &Self::UTF16_BE_BYTES,
-            BOM::Utf32Le => &Self::UTF32_LE_BYTES,
-            BOM::Utf32Be => &Self::UTF32_BE_BYTES,
-        }
-    }
-
-    pub fn tag_name(self) -> &'static str {
-        match self {
-            BOM::Utf8 => "utf8",
-            BOM::Utf16Le => "utf16_le",
-            BOM::Utf16Be => "utf16_be",
-            BOM::Utf32Le => "utf32_le",
-            BOM::Utf32Be => "utf32_be",
-        }
-    }
-
-    /// `removeAndConvertToUTF8AndFree` — if a re-encode is needed, free the input
-    /// and the caller replaces it with the new return.
-    pub fn remove_and_convert_to_utf8_and_free(self, mut bytes: Vec<u8>) -> Vec<u8> {
-        match self {
-            BOM::Utf8 => {
-                let n = Self::UTF8_BYTES.len();
-                bytes.copy_within(n.., 0);
-                bytes.truncate(bytes.len() - n);
-                bytes
-            }
-            BOM::Utf16Le => {
-                // `trimmed` is `&[u8]` at offset 2 of a `Vec<u8>` allocation; its
-                // alignment is not guaranteed ≥ 2, so reinterpreting it as `&[u16]`
-                // is UB. Route through the
-                // byte-level helper which copies into an aligned `Vec<u16>` first.
-                let trimmed = &bytes[Self::UTF16_LE_BYTES.len()..];
-                let out = strings::to_utf8_alloc_from_le_bytes(trimmed);
-                drop(bytes);
-                out
-            }
-            _ => {
-                // TODO: this needs to re-encode, for now we just remove the BOM
-                let n = self.header().len();
-                bytes.copy_within(n.., 0);
-                bytes.truncate(bytes.len() - n);
-                bytes
-            }
-        }
-    }
-
-    /// `removeAndConvertToUTF8WithoutDealloc` — required for `use_shared_buffer`.
-    /// We cannot free `list`'s pointer; the returned slice always points to
-    /// `list.as_ptr()`. `list` may be grown.
-    pub fn remove_and_convert_to_utf8_without_dealloc<'a>(self, list: &'a mut Vec<u8>) -> &'a [u8] {
-        match self {
-            BOM::Utf8 => {
-                let n = Self::UTF8_BYTES.len();
-                let len = list.len();
-                list.copy_within(n.., 0);
-                &list[..len - n]
-            }
-            BOM::Utf16Le => {
-                // See `remove_and_convert_to_utf8_and_free` — `&list[2..]` has no
-                // u16-alignment guarantee, so use the byte-level transcode helper.
-                let out = strings::to_utf8_alloc_from_le_bytes(&list[Self::UTF16_LE_BYTES.len()..]);
-                // `clear` keeps capacity (the "without_dealloc" contract);
-                // `extend_from_slice` grows only if needed — safe equivalent of
-                // the prior reserve/`set_len`/`copy_from_slice` open-coding.
-                list.clear();
-                list.extend_from_slice(&out);
-                &list[..]
-            }
-            _ => {
-                // TODO: this needs to re-encode, for now we just remove the BOM
-                let n = self.header().len();
-                let len = list.len();
-                list.copy_within(n.., 0);
-                &list[..len - n]
-            }
-        }
-    }
-}
+// `bun.strings.BOM` — BOM detection + UTF-16-LE-to-UTF-8 re-encoding
+// (simdutf-backed). The canonical implementation lives in
+// `bun_core::strings`; `bun_resolver::fs_full::BOM` re-exports it.
+pub use bun_core::strings::BOM;
 
 pub(crate) mod preallocate {
     pub(crate) mod counts {
@@ -382,9 +264,9 @@ impl Default for EntryCache {
 // `cache` / `need_stat` are lazily populated by `Entry::kind` /
 // `Entry::symlink` while callers hold a shared
 // `&Entry`. `EntryCache` is `Copy`, so `Cell` gives us safe
-// `.get()/.set()` through `&self` — `RealFS.entries_mutex` serializes access
-// across threads (the `unsafe impl Sync for Entry` below opts back in under
-// that external-locking discipline).
+// `.get()/.set()` through `&self` — the per-entry `mutex` serializes every
+// rewrite of these `Cell`s across threads (the `unsafe impl Sync for Entry`
+// below opts back in under that external-locking discipline).
 pub struct Entry {
     pub cache: core::cell::Cell<EntryCache>,
     pub dir: &'static [u8],
@@ -416,7 +298,7 @@ impl Entry {
     }
 
     /// Update a single cache field. Read-modify-write is fine: callers hold
-    /// `RealFS.entries_mutex` so no torn writes; `EntryCache` is `Copy`.
+    /// the per-entry `mutex` so no torn writes; `EntryCache` is `Copy`.
     #[inline(always)]
     pub fn set_cache_fd(&self, fd: Fd) {
         let mut c = self.cache.get();
@@ -469,26 +351,32 @@ impl Entry {
     ///
     /// # Safety
     /// `fs` must point to a live `EntryKindResolver` (the process-global
-    /// `RealFS` singleton in practice) and the caller must hold
-    /// `RealFS.entries_mutex` so the `&mut *fs` reborrow is exclusive for the
-    /// duration of the call.
-    // `Entry` lives in the EntryStore BSSMap singleton; all access is
-    // serialized through `RealFS.entries_mutex`. `fs` is `*mut` so the
-    // call site does not require a second exclusive `&mut RealFS` borrow while a
-    // `&mut Entry` (borrowed out of `RealFS.entries`) is live. Mutation of the
-    // lazily-populated `need_stat` / `cache` goes through `Cell`. Generic over
-    // `R: EntryKindResolver` so this block is independent of which `RealFS`
-    // copy `fs` points at (see file-top comment).
+    /// `RealFS` singleton in practice). `resolve_kind` must not re-enter
+    /// this entry's `mutex` (it only performs syscalls and string interning).
+    // `Entry` lives in the EntryStore BSSMap singleton. The lazy-stat rewrite
+    // of `need_stat` / `cache` is serialized on the per-entry `mutex` here
+    // (double-checked: the cached fast path stays lock-free). `fs` is `*mut`
+    // so the call site does not require a second exclusive `&mut RealFS`
+    // borrow while a `&mut Entry` (borrowed out of `RealFS.entries`) is live.
+    // Generic over `R: EntryKindResolver` so this block is independent of
+    // which `RealFS` copy `fs` points at (see file-top comment).
     pub unsafe fn kind<R: EntryKindResolver>(&self, fs: *mut R, store_fd: bool) -> EntryKind {
         if self.need_stat.get() {
-            self.need_stat.set(false);
-            // This is technically incorrect, but we are choosing not to handle errors here
-            // SAFETY: `fs` points at the process-global RealFS singleton; caller holds
-            // `entries_mutex` so the `&mut` is exclusive for the duration of this call.
-            match unsafe { &mut *fs }.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd)
-            {
-                Ok(c) => self.cache.set(c),
-                Err(_) => return self.cache().kind,
+            let _guard = self.mutex.lock_guard();
+            if self.need_stat.get() {
+                self.need_stat.set(false);
+                // This is technically incorrect, but we are choosing not to handle errors here
+                // SAFETY: `fs` points at the process-global RealFS singleton; `resolve_kind`
+                // only does syscalls + string interning, so the short `&mut` cannot alias.
+                match unsafe { &mut *fs }.resolve_kind(
+                    self.dir,
+                    self.base(),
+                    self.cache().fd,
+                    store_fd,
+                ) {
+                    Ok(c) => self.cache.set(c),
+                    Err(_) => return self.cache().kind,
+                }
             }
         }
         self.cache().kind
@@ -497,23 +385,28 @@ impl Entry {
     ///
     /// # Safety
     /// `fs` must point to a live `EntryKindResolver` (the process-global
-    /// `RealFS` singleton in practice) and the caller must hold
-    /// `RealFS.entries_mutex` so the `&mut *fs` reborrow is exclusive for the
-    /// duration of the call.
+    /// `RealFS` singleton in practice). See [`Entry::kind`].
     pub unsafe fn symlink<R: EntryKindResolver>(
         &self,
         fs: *mut R,
         store_fd: bool,
     ) -> &'static [u8] {
         if self.need_stat.get() {
-            self.need_stat.set(false);
-            // This error can happen if the file was deleted between the time the directory
-            // was scanned and the time it was read
-            // SAFETY: see the note on `Entry::kind`.
-            match unsafe { &mut *fs }.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd)
-            {
-                Ok(c) => self.cache.set(c),
-                Err(_) => return b"",
+            let _guard = self.mutex.lock_guard();
+            if self.need_stat.get() {
+                self.need_stat.set(false);
+                // This error can happen if the file was deleted between the time the directory
+                // was scanned and the time it was read
+                // SAFETY: see the note on `Entry::kind`.
+                match unsafe { &mut *fs }.resolve_kind(
+                    self.dir,
+                    self.base(),
+                    self.cache().fd,
+                    store_fd,
+                ) {
+                    Ok(c) => self.cache.set(c),
+                    Err(_) => return b"",
+                }
             }
         }
         self.cache().symlink.as_bytes()
@@ -565,7 +458,7 @@ pub struct DifferentCase<'a> {
 // `entry` is a RAW `*mut Entry`. A safe
 // `&self → &mut Entry` accessor would let two `get()` calls produce coexisting
 // aliased `&mut Entry` (PORTING.md §Forbidden). Callers `unsafe { &mut *entry }`
-// at each write site under `entries_mutex`.
+// at each write site under the per-entry `Entry.mutex`.
 pub struct EntryLookup<'a> {
     pub entry: *mut Entry,
     pub diff_case: Option<DifferentCase<'static>>,
@@ -593,8 +486,8 @@ impl<'a> EntryLookup<'a> {
     // (zero callers). `Entry`'s only mutable state (`cache`) is `Cell`-backed,
     // so all mutation goes through `entry().set_cache*()` on a shared borrow;
     // no `&mut Entry` escape hatch is needed. Write sites that bypass the
-    // accessor go through the raw `self.entry` field directly under
-    // `entries_mutex` (see struct doc above).
+    // accessor go through the raw `self.entry` field directly under the
+    // per-entry `Entry.mutex` (see struct doc above).
 }
 
 /// `DirEntry` companion items: the entry map, the global entry store, and the
@@ -1775,13 +1668,14 @@ impl RealFS {
         };
 
         // if we get this far, it's a real directory, so we can just store the dir name.
-        let dir: &'static [u8] = if !had_handle {
-            if let Some(existing) = in_place {
-                // SAFETY: in_place points to BSSMap-owned DirEntry
-                unsafe { (*existing).dir }
-            } else {
-                DirnameStore::instance().append(dir_maybe_trail_slash)?
-            }
+        // An in-place refresh always keeps the slot's existing interned name: callers
+        // spell the same directory with and without a trailing slash, and rewriting
+        // `dir` to the other spelling races every unlocked `Entry::dir()` reader.
+        let dir: &'static [u8] = if let Some(existing) = in_place {
+            // SAFETY: in_place points to BSSMap-owned DirEntry
+            unsafe { (*existing).dir }
+        } else if !had_handle {
+            DirnameStore::instance().append(dir_maybe_trail_slash)?
         } else {
             // Intern into DirnameStore so the cache entry never dangles — `append` is a
             // bump-pointer copy and dedups against the singleton, so cost is bounded.

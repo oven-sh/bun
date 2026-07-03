@@ -21,15 +21,6 @@ impl Signature {
 
     // No explicit `Drop` impl needed: the `Box<[T]>` fields free the four owned slices automatically.
 
-    pub fn hash(&self) -> u64 {
-        // `Int4` (= u32) is `NoUninit`; safe `&[u32]` → `&[u8]` view.
-        let fields_bytes: &[u8] = bun_core::cast_slice(&self.fields[..]);
-        let mut hasher = bun_wyhash::Wyhash::init(0);
-        hasher.update(&self.name);
-        hasher.update(fields_bytes);
-        hasher.final_()
-    }
-
     // JSError (from QueryBindingIterator /
     // Tag::from_js), OOM, and InvalidQueryBinding are collapsed to the
     // crate-wide `bun_core::Error`.

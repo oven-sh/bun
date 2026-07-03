@@ -126,6 +126,8 @@ bun_core::comptime_string_map! {
         b"sha3-512" => Algorithm::Sha3_512,
         b"shake128" => Algorithm::Shake128,
         b"shake256" => Algorithm::Shake256,
+        b"shake-128" => Algorithm::Shake128,
+        b"shake-256" => Algorithm::Shake256,
         b"ripemd160" => Algorithm::Ripemd160,
         b"blake2b256" => Algorithm::Blake2b256,
         b"blake2b512" => Algorithm::Blake2b512,
@@ -154,12 +156,7 @@ bun_core::comptime_string_map! {
 // b"rsa-sha512" => .@"RSA-SHA512",
 // b"rsa-ripemd160" => .@"RSA-RIPEMD160",
 
-/// Case-sensitive name → `Algorithm`.
-pub(crate) fn lookup(bytes: &[u8]) -> Option<Algorithm> {
-    ALGORITHM_MAP.get(bytes).copied()
-}
-
-/// ASCII-case-insensitive `lookup`.
+/// ASCII-case-insensitive name → `Algorithm`.
 pub(crate) fn lookup_ignore_case(bytes: &[u8]) -> Option<Algorithm> {
     ALGORITHM_MAP.get_ascii_case_insensitive(bytes).copied()
 }

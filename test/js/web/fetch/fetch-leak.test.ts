@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as COMMON_CERT, gc, isASAN, isCI } from "harness";
+import { bunEnv, bunExe, tls as COMMON_CERT, gc, isASAN, isCI, isDebug } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { join } from "node:path";
@@ -143,7 +143,9 @@ describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "strea
       }
       expect(last).toBeLessThan(first * 10);
     },
-    20 * 1000,
+    // The URLSearchParams variant URL-encodes the 2MB body on each of the 500
+    // requests - pure throughput that a debug build cannot fit in 20s.
+    isDebug ? 120 * 1000 : 20 * 1000,
   );
 });
 
@@ -234,6 +236,337 @@ test("fetch(data:) with percent-encoding does not leak", async () => {
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 }, 60000);
+
+test("fetch() compress option does not leak bodies or compressor state", async () => {
+  // Exercises:
+  //  - all four encodings
+  //  - the custom-level path (allocates a temporary libdeflate compressor that
+  //    must be freed each call)
+  //  - a small body (HTTP-thread LibdeflateState shared_buffer fast path)
+  //  - a ~700 KiB body (zlib-streaming slow path → per-request Vec, freed in
+  //    on_async_http_callback_raw)
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    async fetch(req) {
+      // Drain the body so the request completes; don't decompress (server-side
+      // allocator noise would mask the client-side signal we're measuring).
+      await req.arrayBuffer();
+      return new Response();
+    },
+  });
+
+  const script = /* js */ `
+    const url = process.env.SERVER;
+    const small = Buffer.alloc(32 * 1024, "abcdefghij");
+    // > 512 KiB shared buffer → slow path; large enough that the compressed
+    // output also spans multiple socket writes.
+    const big = Buffer.alloc(700 * 1024, "abcdefghij");
+    const opts = [
+      { compress: "gzip" },
+      { compress: "deflate" },
+      { compress: "br" },
+      { compress: "zstd" },
+      // custom level → temp libdeflate compressor alloc/free each call
+      { compress: { encoding: "gzip", level: 1 } },
+    ];
+
+    async function round() {
+      const promises = [];
+      for (const opt of opts) {
+        promises.push(fetch(url, { method: "POST", body: small, ...opt }).then(r => r.arrayBuffer()));
+        promises.push(fetch(url, { method: "POST", body: big,   ...opt }).then(r => r.arrayBuffer()));
+      }
+      await Promise.all(promises);
+    }
+
+    // Warm up: HTTP-thread LibdeflateState (lazy compressor + 512 KiB
+    // shared_buffer) is allocated once here and stays for the process.
+    for (let i = 0; i < 10; i++) await round();
+    Bun.gc(true);
+    const baseline = process.memoryUsage.rss();
+
+    for (let i = 0; i < 80; i++) await round();
+    Bun.gc(true);
+    const final = process.memoryUsage.rss();
+
+    const deltaMB = (final - baseline) / 1024 / 1024;
+    console.log(JSON.stringify({ baselineMB: (baseline / 1024 / 1024) | 0, finalMB: (final / 1024 / 1024) | 0, deltaMB: Math.round(deltaMB) }));
+    // 80 rounds × 5 encodings × ~700 KiB bodies → a per-request leak of the
+    // body or compressor state would grow RSS by hundreds of MB.
+    if (deltaMB > ${isASAN ? 256 : 32}) {
+      throw new Error("fetch({compress}) leaked " + Math.round(deltaMB) + " MB over 80 rounds");
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", "-e", script],
+    env: { ...bunEnv, SERVER: server.url.href },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  console.log(stdout.trim());
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+}, 60000);
+
+// Response-side: a compressed body that arrives across many packets bypasses
+// the libdeflate one-shot fast path (InternalState.rs:256) and allocates a
+// boxed streaming Decompressor (zlib/brotli/zstd FFI handle) per request,
+// freed via Drop on InternalState::reset(). Dripping the body over chunked
+// transfer encoding forces handle_response_body_chunked_encoding_from_multiple_packets.
+// Paired with compress: on the request side so the same loop covers the
+// multi-write send of a large compressed request body too.
+test("fetch() does not leak streaming decompressor state across fragmented compressed responses", async () => {
+  const script = /* js */ `
+    import { createServer } from "node:net";
+    import { gzipSync, brotliCompressSync, zstdCompressSync } from "node:zlib";
+
+    const plain = Buffer.alloc(64 * 1024, "abcdefghij");
+    const bodies = {
+      gzip: gzipSync(plain),
+      br: brotliCompressSync(plain),
+      zstd: zstdCompressSync(plain),
+    };
+    // ~700 KiB request body → compressed output exceeds the 512 KiB shared
+    // buffer and spans multiple socket writes.
+    const reqBody = Buffer.alloc(700 * 1024, "abcdefghij");
+
+    const server = createServer(sock => {
+      let buf = "";
+      sock.on("data", async chunk => {
+        buf += chunk.toString("latin1");
+        // Drain the request: headers + (chunked) body terminator.
+        if (!buf.includes("\\r\\n\\r\\n")) return;
+        const isChunked = /transfer-encoding:\\s*chunked/i.test(buf);
+        if (isChunked && !buf.includes("\\r\\n0\\r\\n\\r\\n")) return;
+        if (!isChunked) {
+          const m = buf.match(/content-length:\\s*(\\d+)/i);
+          const need = m ? Number(m[1]) : 0;
+          const bodyStart = buf.indexOf("\\r\\n\\r\\n") + 4;
+          if (buf.length - bodyStart < need) return;
+        }
+        const enc = buf.match(/x-want:\\s*(\\w+)/i)[1];
+        const body = bodies[enc];
+        sock.write(
+          "HTTP/1.1 200 OK\\r\\n" +
+          "Content-Encoding: " + enc + "\\r\\n" +
+          "Transfer-Encoding: chunked\\r\\n" +
+          "Connection: close\\r\\n\\r\\n",
+        );
+        // Drip in small chunks so the client's Decompressor sees many
+        // update_buffers()/read_all() cycles before the final flush.
+        for (let i = 0; i < body.length; i += 256) {
+          const piece = body.subarray(i, i + 256);
+          sock.write(piece.length.toString(16) + "\\r\\n");
+          sock.write(piece);
+          sock.write("\\r\\n");
+          // Yield so chunks land in separate packets.
+          await new Promise(r => setImmediate(r));
+        }
+        sock.end("0\\r\\n\\r\\n");
+      });
+      sock.on("error", () => {});
+    }).listen(0, "127.0.0.1");
+    await new Promise(r => server.once("listening", r));
+    const url = "http://127.0.0.1:" + server.address().port + "/";
+
+    async function round() {
+      const promises = [];
+      for (const enc of ["gzip", "br", "zstd"]) {
+        promises.push(
+          fetch(url, {
+            method: "POST",
+            body: reqBody,
+            compress: enc,
+            headers: { "x-want": enc },
+          }).then(async r => {
+            const got = Buffer.from(await r.arrayBuffer());
+            if (!got.equals(plain)) throw new Error(enc + " round-trip mismatch (" + got.length + ")");
+          }),
+        );
+      }
+      await Promise.all(promises);
+    }
+
+    for (let i = 0; i < 10; i++) await round();
+    Bun.gc(true);
+    const baseline = process.memoryUsage.rss();
+
+    for (let i = 0; i < 60; i++) await round();
+    Bun.gc(true);
+    const final = process.memoryUsage.rss();
+
+    server.close();
+    const deltaMB = (final - baseline) / 1024 / 1024;
+    console.log(JSON.stringify({ baselineMB: (baseline / 1024 / 1024) | 0, finalMB: (final / 1024 / 1024) | 0, deltaMB: Math.round(deltaMB) }));
+    // 60 rounds × 3 encodings = 180 streaming Decompressor handles + 180
+    // ~700 KiB compressed request bodies. A leaked boxed zlib/brotli/zstd
+    // reader or an un-freed compressed body Vec would grow RSS by >100 MB.
+    if (deltaMB > ${isASAN ? 256 : 32}) {
+      throw new Error("fragmented compressed fetch leaked " + Math.round(deltaMB) + " MB over 60 rounds");
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  console.log(stdout.trim());
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+}, 60000);
+
+// fetch.rs 'extract_proxy: jsc::URL::href_from_js() returns a +1 WTFStringImpl
+// ref into a bun_core::String, which is Copy and has no Drop. Without wrapping
+// in OwnedString the +1 is never released, leaking one WTFStringImpl (≈ the
+// proxy URL's byte length) per fetch({proxy}) call. Both the string form
+// (proxy: "http://...") and the object form (proxy: {url: "http://..."}) go
+// through href_from_js at separate call sites.
+describe.each(["string", "object"])("fetch({proxy}) %s form does not leak the proxy href WTFStringImpl", form => {
+  test.concurrent(
+    "RSS stays bounded",
+    async () => {
+      // Target a non-existent blob: URL so each fetch() parses the proxy option
+      // (where the leak occurs) then rejects synchronously in the blob registry
+      // lookup, with no network I/O.
+      const script = /* js */ `
+        // ~256 KiB path so each leaked WTFStringImpl shows up in RSS well above
+        // allocator noise. Build a FRESH proxy string per iteration: reusing one
+        // JS string would make href_from_js return the same StringImpl every
+        // call (only the refcount grows, RSS stays flat) and hide the leak.
+        const pad = Buffer.alloc(256 * 1024, "a").toString();
+
+        async function hit(i) {
+          const proxyUrl = "http://127.0.0.1:1/" + i + "/" + pad;
+          const opts = ${form === "string" ? `{ proxy: proxyUrl }` : `{ proxy: { url: proxyUrl } }`};
+          // 41-byte blob: URL (5 + 36-char UUID) so ZigURL::is_blob() matches
+          // and fetch rejects from the blob registry with no FetchTasklet.
+          try { await fetch("blob:00000000-0000-0000-0000-000000000000", opts); } catch {}
+        }
+
+        // Warm up (JIT, allocator page commit).
+        for (let i = 0; i < 20; i++) await hit(-i);
+        Bun.gc(true);
+        const baseline = process.memoryUsage.rss();
+
+        const ITERS = 150;
+        for (let i = 0; i < ITERS; i++) await hit(i);
+        Bun.gc(true);
+        const final = process.memoryUsage.rss();
+
+        const deltaMB = (final - baseline) / 1024 / 1024;
+        console.log(JSON.stringify({
+          form: ${JSON.stringify(form)},
+          baselineMB: (baseline / 1024 / 1024) | 0,
+          finalMB: (final / 1024 / 1024) | 0,
+          deltaMB: Math.round(deltaMB * 10) / 10,
+        }));
+        // 150 × 256 KiB ≈ 37 MiB leaked when the +1 is dropped on the floor
+        // (measured ~43 MiB on debug+ASAN); with the deref in place the delta
+        // is URL-size-independent noise (~10 MiB on debug+ASAN, ~0 on release).
+        if (deltaMB > 20) {
+          throw new Error("fetch({proxy}) leaked " + deltaMB.toFixed(1) + " MB over " + ITERS + " iterations");
+        }
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--smol", "-e", script],
+        env: {
+          ...bunEnv,
+          // ASAN quarantine retains freed allocations; this path churns several
+          // 256 KiB buffers per iteration, which would dominate the RSS delta
+          // and mask the real signal. Disable quarantine in the child so only
+          // never-freed memory shows up.
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      console.log(stdout.trim());
+      if (exitCode !== 0) console.error(stderr);
+      expect({ stdout: stdout.includes("deltaMB"), stderr, exitCode }).toEqual({
+        stdout: true,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    90000,
+  );
+});
+
+// fetch.rs url_type != Remote: url_string carries a +1 WTFStringImpl ref
+// (create_format for blob:, file_url_from_string → Bun::toStringRef for file:)
+// that was passed to Response::init as url_string.clone() (inherent clone()
+// does dupe_ref(), so +2). Response::init adopts one ref; the local +1 was
+// never released, leaking one StringImpl ≈ "file://<path>".length per call.
+test.concurrent(
+  "fetch(file://...) does not leak the response url WTFStringImpl",
+  async () => {
+    // The leaked impl is "file://<resolved abs path>", and fetch_impl decodes
+    // url.path into a stack PathBuffer that is 1024 bytes on macOS/BSD, 4096 on
+    // Linux, ~98 KiB on Windows. Use a ~900-byte path so decode_into succeeds on
+    // every platform and url_string is actually assigned, with enough iterations
+    // for the small per-call leak to show in RSS.
+    const script = /* js */ `
+    const pad = Buffer.alloc(900, "a").toString();
+    // Windows strips the leading "/" then asserts is_absolute_windows() in
+    // PosixToWinNormalizer under debug_assertions, which needs a drive letter.
+    const prefix = process.platform === "win32" ? "file:///C:/" : "file:///";
+    async function hit(i) {
+      // Fresh path per iteration so each leaked ref pins a distinct impl.
+      // The file does not exist; the Response is created (with url_string set)
+      // and the lazy Blob body is never read, so no fs I/O happens.
+      await fetch(prefix + i + pad);
+    }
+    for (let i = 0; i < 200; i++) { try { await hit(-i); } catch {} }
+    Bun.gc(true);
+    const baseline = process.memoryUsage.rss();
+
+    const ITERS = 20000;
+    for (let i = 0; i < ITERS; i++) {
+      try { await hit(i); } catch {}
+      if ((i & 1023) === 0) Bun.gc(true);
+    }
+    Bun.gc(true);
+    const final = process.memoryUsage.rss();
+
+    const deltaMB = (final - baseline) / 1024 / 1024;
+    console.log(JSON.stringify({
+      baselineMB: (baseline / 1024 / 1024) | 0,
+      finalMB: (final / 1024 / 1024) | 0,
+      deltaMB: Math.round(deltaMB * 10) / 10,
+    }));
+    // ~0.9 KiB × 20000 ≈ 18 MiB raw leak (measured ~32 MiB on debug+ASAN)
+    // when the extra ref is dropped on the floor; ~12 MiB noise with the fix.
+    if (deltaMB > 20) {
+      throw new Error("fetch(file://) leaked " + deltaMB.toFixed(1) + " MB over " + ITERS + " iterations");
+    }
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", script],
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    console.log(stdout.trim());
+    if (exitCode !== 0) console.error(stderr);
+    expect({ stdout: stdout.includes("deltaMB"), stderr, exitCode }).toEqual({
+      stdout: true,
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  120000,
+);
 
 // Regression for src/runtime/webcore/fetch/FetchTasklet.zig:601,614 —
 // Holder.resolve/reject use `self.promise.swap()` which *consumes* (clears)

@@ -777,6 +777,11 @@ impl NTSTATUS {
     /// that has already been POSIX-delete-pended).
     pub const FILE_DELETED: NTSTATUS = NTSTATUS(0xC000_0123);
     pub const SHARING_VIOLATION: NTSTATUS = NTSTATUS(0xC000_0043);
+    /// `STATUS_CANNOT_DELETE` — the file has `FILE_ATTRIBUTE_READONLY` (and the
+    /// filesystem rejected `FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE`), or a
+    /// memory-mapped section exists for the file. Returned by
+    /// `NtSetInformationFile(FileDispositionInformation)`.
+    pub const CANNOT_DELETE: NTSTATUS = NTSTATUS(0xC000_0121);
     pub const OBJECT_PATH_SYNTAX_BAD: NTSTATUS = NTSTATUS(0xC000_003B);
     pub const NO_MORE_FILES: NTSTATUS = NTSTATUS(0x8000_0006);
     pub const NO_SUCH_FILE: NTSTATUS = NTSTATUS(0xC000_000F);

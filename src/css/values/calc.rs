@@ -851,12 +851,6 @@ impl<V: CalcValue> Calc<V> {
             }
         }
 
-        // blocked_on: values/length.rs un-gate — until Length is real,
-        // `atan2(10px, 5px)` (and any other length-dimension pair) falls
-        // through to the CSSNumber path below and errors with `invalid_value`
-        // instead of producing `Angle::Rad(atan2(10,5))`. Tracked as a known
-        // incompleteness; no behaviour stub is added because a partial
-        // dimension matcher would mis-reduce mixed-unit lengths.
         if let Ok(v) = try_parse_atan2_args::<C, Length>(input, ctx) {
             return Ok(v);
         }

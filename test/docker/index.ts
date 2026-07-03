@@ -31,6 +31,98 @@ export interface ServiceInfo {
   users?: Record<string, string>;
 }
 
+const serviceMeta: Record<ServiceName, { ports: number[]; tls?: ServiceInfo["tls"]; users?: ServiceInfo["users"] }> = {
+  postgres_plain: { ports: [5432] },
+  postgres_tls: {
+    ports: [5432],
+    tls: {
+      cert: join(__dirname, "../js/sql/docker-tls/server.crt"),
+      key: join(__dirname, "../js/sql/docker-tls/server.key"),
+    },
+  },
+  postgres_auth: {
+    ports: [5432],
+    users: {
+      bun_sql_test: "",
+      bun_sql_test_md5: "bun_sql_test_md5",
+      bun_sql_test_scram: "bun_sql_test_scram",
+    },
+  },
+  mysql_plain: { ports: [3306] },
+  mysql_native_password: { ports: [3306] },
+  mysql_tls: {
+    ports: [3306],
+    tls: {
+      ca: join(__dirname, "../js/sql/mysql-tls/ssl/ca.pem"),
+      cert: join(__dirname, "../js/sql/mysql-tls/ssl/server-cert.pem"),
+      key: join(__dirname, "../js/sql/mysql-tls/ssl/server-key.pem"),
+    },
+  },
+  redis_plain: { ports: [6379] },
+  redis_unified: {
+    ports: [6379, 6380],
+    tls: {
+      cert: join(__dirname, "../js/valkey/docker-unified/server.crt"),
+      key: join(__dirname, "../js/valkey/docker-unified/server.key"),
+    },
+    users: {
+      default: "",
+      testuser: "test123",
+      readonly: "readonly",
+      writeonly: "writeonly",
+    },
+  },
+  minio: { ports: [9000, 9001] },
+  autobahn: { ports: [9002] },
+  squid: { ports: [3128] },
+};
+
+function serviceFromEnv(service: ServiceName): ServiceInfo | null {
+  const raw = process.env["BUN_TEST_SERVICE_" + service];
+  if (!raw) return null;
+
+  const meta = serviceMeta[service];
+  const ports: Record<number, number> = {};
+  const colon = raw.indexOf(":");
+  let host: string;
+
+  if (colon === -1) {
+    host = raw;
+    for (const p of meta.ports) ports[p] = p;
+  } else {
+    host = raw.slice(0, colon);
+    if (!host) {
+      throw new Error(`BUN_TEST_SERVICE_${service}: missing host in "${raw}"`);
+    }
+    const spec = raw.slice(colon + 1);
+    if (spec.includes("=")) {
+      for (const pair of spec.split(",")) {
+        const m = /^(\d+)=(\d+)$/.exec(pair);
+        if (!m) {
+          throw new Error(`BUN_TEST_SERVICE_${service}: malformed port mapping "${pair}" in "${raw}"`);
+        }
+        ports[Number(m[1])] = Number(m[2]);
+      }
+      for (const p of meta.ports) if (!(p in ports)) ports[p] = p;
+    } else {
+      if (!/^\d+$/.test(spec)) {
+        throw new Error(`BUN_TEST_SERVICE_${service}: malformed port spec "${spec}" in "${raw}"`);
+      }
+      if (meta.ports.length !== 1) {
+        throw new Error(
+          `BUN_TEST_SERVICE_${service}: single port in "${raw}" is ambiguous for a ${meta.ports.length}-port service; use cport=hport pairs`,
+        );
+      }
+      ports[meta.ports[0]] = Number(spec);
+    }
+  }
+
+  const info: ServiceInfo = { host, ports };
+  if (meta.tls) info.tls = meta.tls;
+  if (meta.users) info.users = meta.users;
+  return info;
+}
+
 interface DockerComposeOptions {
   projectName?: string;
   composeFile?: string;
@@ -40,6 +132,7 @@ class DockerComposeHelper {
   private projectName: string;
   private composeFile: string;
   private upPromises: Map<ServiceName, Promise<void>> = new Map();
+  private composeStarted = false;
 
   constructor(options: DockerComposeOptions = {}) {
     this.projectName =
@@ -158,6 +251,8 @@ class DockerComposeHelper {
         `Failed to start service ${service}: ${stderr}\n` + `--- ps ---\n${ps.stdout}\n--- logs ---\n${logs.stdout}`,
       );
     }
+
+    this.composeStarted = true;
   }
 
   async port(service: ServiceName, targetPort: number): Promise<number> {
@@ -251,6 +346,9 @@ class DockerComposeHelper {
   }
 
   async ensure(service: ServiceName): Promise<ServiceInfo> {
+    const viaEnv = serviceFromEnv(service);
+    if (viaEnv) return viaEnv;
+
     const viaCoordinator = await this.ensureViaCoordinator(service);
     if (viaCoordinator !== null) {
       return viaCoordinator;
@@ -270,84 +368,16 @@ class DockerComposeHelper {
       throw error;
     }
 
+    const meta = serviceMeta[service];
     const info: ServiceInfo = {
       host: this.testHost,
       ports: {},
     };
-
-    // Get ports based on service type
-    switch (service) {
-      case "postgres_plain":
-      case "postgres_tls":
-      case "postgres_auth":
-        info.ports[5432] = await this.port(service, 5432);
-
-        if (service === "postgres_tls") {
-          info.tls = {
-            cert: join(__dirname, "../js/sql/docker-tls/server.crt"),
-            key: join(__dirname, "../js/sql/docker-tls/server.key"),
-          };
-        }
-
-        if (service === "postgres_auth") {
-          info.users = {
-            bun_sql_test: "",
-            bun_sql_test_md5: "bun_sql_test_md5",
-            bun_sql_test_scram: "bun_sql_test_scram",
-          };
-        }
-        break;
-
-      case "mysql_plain":
-      case "mysql_native_password":
-      case "mysql_tls":
-        info.ports[3306] = await this.port(service, 3306);
-
-        if (service === "mysql_tls") {
-          info.tls = {
-            ca: join(__dirname, "../js/sql/mysql-tls/ssl/ca.pem"),
-            cert: join(__dirname, "../js/sql/mysql-tls/ssl/server-cert.pem"),
-            key: join(__dirname, "../js/sql/mysql-tls/ssl/server-key.pem"),
-          };
-        }
-        break;
-
-      case "redis_plain":
-        info.ports[6379] = await this.port(service, 6379);
-        break;
-
-      case "redis_unified":
-        info.ports[6379] = await this.port(service, 6379);
-        info.ports[6380] = await this.port(service, 6380);
-        // For Redis unix socket, we need to use docker volume mapping
-        // This won't work as expected without additional configuration
-        // info.socketPath = "/tmp/redis/redis.sock";
-        info.tls = {
-          cert: join(__dirname, "../js/valkey/docker-unified/server.crt"),
-          key: join(__dirname, "../js/valkey/docker-unified/server.key"),
-        };
-        info.users = {
-          default: "",
-          testuser: "test123",
-          readonly: "readonly",
-          writeonly: "writeonly",
-        };
-        break;
-
-      case "minio":
-        info.ports[9000] = await this.port(service, 9000);
-        info.ports[9001] = await this.port(service, 9001);
-        break;
-
-      case "autobahn":
-        info.ports[9002] = await this.port(service, 9002);
-        // Docker compose --wait should handle readiness
-        break;
-
-      case "squid":
-        info.ports[3128] = await this.port(service, 3128);
-        break;
+    for (const p of meta.ports) {
+      info.ports[p] = await this.port(service, p);
     }
+    if (meta.tls) info.tls = meta.tls;
+    if (meta.users) info.users = meta.users;
 
     return info;
   }
@@ -427,6 +457,9 @@ class DockerComposeHelper {
 
   async down(): Promise<void> {
     if (process.env.BUN_KEEP_DOCKER === "1") {
+      return;
+    }
+    if (!this.composeStarted) {
       return;
     }
 

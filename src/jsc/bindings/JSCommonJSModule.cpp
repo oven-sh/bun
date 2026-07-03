@@ -161,8 +161,16 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         globalObject->putDirect(vm, Identifier::fromString(vm, "__filename"_s), filename, 0);
         globalObject->putDirect(vm, Identifier::fromString(vm, "__dirname"_s), dirname, 0);
 
-        JSValue result = JSC::evaluate(globalObject, code, jsUndefined());
-        RETURN_IF_EXCEPTION(scope, false);
+        // The 3-arg JSC::evaluate overload catches the exception into a
+        // discarded NakedPtr (Completion.h), so a require() failure or any
+        // throw in an eval-entry body would vanish and the process would
+        // exit 0 silently. Use the out-param overload and rethrow.
+        WTF::NakedPtr<JSC::Exception> returnedException;
+        JSValue result = JSC::evaluate(globalObject, code, jsUndefined(), returnedException);
+        if (returnedException) [[unlikely]] {
+            scope.throwException(globalObject, returnedException.get());
+            return false;
+        }
         ASSERT(result);
 
         Bun__VM__setEntryPointEvalResultCJS(globalObject->bunVM(), JSValue::encode(result));
@@ -170,8 +178,15 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         RELEASE_AND_RETURN(scope, true);
     }
 
-    JSValue fnValue = JSC::evaluate(globalObject, code, jsUndefined());
-    RETURN_IF_EXCEPTION(scope, false);
+    // Same out-param pattern as the eval-entry path above: the 3-arg
+    // overload would swallow the exception, leaving the misleading
+    // "function wrapper" TypeError below instead of the real error.
+    WTF::NakedPtr<JSC::Exception> wrapperException;
+    JSValue fnValue = JSC::evaluate(globalObject, code, jsUndefined(), wrapperException);
+    if (wrapperException) [[unlikely]] {
+        scope.throwException(globalObject, wrapperException.get());
+        return false;
+    }
     ASSERT(fnValue);
 
     JSObject* fn = fnValue.getObject();

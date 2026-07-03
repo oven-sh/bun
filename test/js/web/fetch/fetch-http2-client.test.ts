@@ -99,7 +99,11 @@ async function withRawH2Server(
   };
   const server = nodetls.createServer({ ...tls, ALPNProtocols: ["h2"] }, socket => {
     const connIndex = state.connections++;
-    closed.push(once(socket, "close"));
+    // Track teardown with a promise that resolves on "close" even when the
+    // client tears the connection down abortively (RST → ECONNRESET emits an
+    // "error" first). `once(socket, "close")` would reject in that case,
+    // making allClosed() throw and leaving unhandled rejections behind.
+    closed.push(new Promise(resolve => socket.once("close", resolve)));
     const conn: RawConn = {
       socket,
       settings: () => socket.write(frame(4, 0, 0)),
@@ -1529,6 +1533,62 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stderr).toBe("");
         expect(stdout.trim()).toBe("200 2.0");
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
+  test.each([
+    ["small (shared-buffer fast path)", 32 * 1024],
+    ["large (zlib-streaming spill path)", 600 * 1024],
+  ])("compress: gzip request body over h2 — %s", async (_, size) => {
+    await withH2Server(
+      (req, res) => {
+        const chunks: Buffer[] = [];
+        req.on("data", c => chunks.push(c));
+        req.on("end", () => {
+          const raw = Buffer.concat(chunks);
+          res.writeHead(200, {
+            "x-recv-len": String(raw.length),
+            "x-recv-encoding": req.headers["content-encoding"] ?? "",
+            "x-recv-content-length": req.headers["content-length"] ?? "",
+          });
+          res.end(zlib.gunzipSync(raw));
+        });
+      },
+      async url => {
+        await using proc = await spawnCapped({
+          cmd: [
+            bunExe(),
+            "--no-warnings",
+            "-e",
+            `const payload = Buffer.alloc(${size}, "abcdefghij");
+             const r = await fetch("${url}", {
+               method: "POST",
+               body: payload,
+               compress: "gzip",
+               protocol: "http2",
+               tls: { rejectUnauthorized: false },
+             });
+             const decoded = Buffer.from(await r.arrayBuffer());
+             console.log(JSON.stringify({
+               recvLen: Number(r.headers.get("x-recv-len")),
+               encoding: r.headers.get("x-recv-encoding"),
+               contentLength: r.headers.get("x-recv-content-length"),
+               match: decoded.equals(payload),
+             }));`,
+          ],
+          env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        const out = JSON.parse(stdout.trim());
+        expect(out.encoding).toBe("gzip");
+        expect(out.recvLen).toBeLessThan(size);
+        expect(out.contentLength).toBe(String(out.recvLen));
+        expect(out.match).toBe(true);
         expect(exitCode).toBe(0);
       },
     );

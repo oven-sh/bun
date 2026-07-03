@@ -504,6 +504,20 @@ impl JSValue {
     pub fn js_number(n: f64) -> JSValue {
         JSC__JSValue__jsNumberFromDouble(n)
     }
+    /// `JSC::purifyNaN` (PureNaN.h) — canonicalizes every NaN to the one
+    /// payload that is safe to NaN-box. Required before boxing any `f64`
+    /// whose bit pattern comes from outside the engine (FFI memory, native
+    /// addons, wire formats): other NaN payloads collide with the JSValue
+    /// tag space and decode as forged cells or immediates.
+    #[inline]
+    pub fn purify_nan(n: f64) -> f64 {
+        if n.is_nan() {
+            // `PNaNAsBits` in PureNaN.h; not `f64::NAN`, whose bit pattern
+            // is not guaranteed.
+            return f64::from_bits(0x7ff8_0000_0000_0000);
+        }
+        n
+    }
     /// `JSValue::jsDoubleNumber` (JSCJSValueInlines.h) — boxes an `f64`
     /// *always* as a double-encoded immediate (no int32 fast path). Required
     /// when the consumer round-trips through `f64::to_bits` / `as_number` and
@@ -1210,7 +1224,7 @@ impl JSValue {
         match self.get(global, property)? {
             Some(v) if !v.is_undefined_or_null() => {
                 if !v.is_string() {
-                    return Err(global.throw_invalid_argument_type_value(property, b"string", v));
+                    return Err(global.throw_invalid_property_type(property, "string", v));
                 }
                 Ok(Some(v.to_slice(global)?))
             }
@@ -1641,8 +1655,6 @@ impl JSValue {
         this_value: JSValue,
         args: &[JSValue],
     ) -> JsResult<JSValue> {
-        // Note: debug-only event-loop bookkeeping is
-        // omitted while VirtualMachine.rs is gated; restore when it un-gates.
         host_fn::from_js_host_call(global, || {
             // SAFETY: `global` is live; `args` is a contiguous slice of valid
             // JSValues for the duration of the call.
@@ -2225,6 +2237,16 @@ impl JSValue {
             JSC__JSValue__isSameValue(self, other, global)
         })
     }
+    /// `JSValue.isStrictEqual` (`===` / IsStrictlyEqual semantics).
+    ///
+    /// Differs from SameValue: `NaN !== NaN` and `-0 === +0`.
+    /// Can throw (rope-string resolution).
+    pub fn is_strict_equal(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+        // No encoded-bits fast path: two NaNs share an encoding but NaN !== NaN.
+        host_fn::from_js_host_call_generic(global, || {
+            JSC__JSValue__isStrictEqual(self, other, global)
+        })
+    }
 
     // ── Numeric coercion. ────────────────────
     /// `JSValue.toNumber` — full ECMA `ToNumber` (`+value`); may throw.
@@ -2536,6 +2558,21 @@ impl JSValue {
         }
         JSC__JSValue__getDirectIndex(self, global, i)
     }
+    /// Smallest own present index of a `JSArray` that is `>= start`, or
+    /// `None` when every index from `start` to the end of the array is a
+    /// hole. Walks the array's backing storage (and sparse map) so a run of
+    /// holes is skipped in one call instead of probing each index.
+    /// Asserts `self` is a `JSArray` (`Array` or `DerivedArray`).
+    pub fn next_present_index(self, start: u32) -> Option<u32> {
+        debug_assert!(self.is_cell() && self.js_type().is_array());
+        unsafe extern "C" {
+            safe fn Bun__JSArray__nextPresentIndex(this: JSValue, start: u32) -> u64;
+        }
+        match Bun__JSArray__nextPresentIndex(self, start) {
+            u64::MAX => None,
+            index => Some(index as u32),
+        }
+    }
     /// `JSValue.getNameProperty` — write the value's
     /// `.name` (function/class name) into `ret`. No-op for empty/`undefined`/`null`.
     pub fn get_name_property(
@@ -2640,6 +2677,11 @@ impl JSValue {
 unsafe extern "C" {
     safe fn JSC__JSValue__eqlValue(this: JSValue, other: JSValue) -> bool;
     safe fn JSC__JSValue__isSameValue(
+        this: JSValue,
+        other: JSValue,
+        global: &JSGlobalObject,
+    ) -> bool;
+    safe fn JSC__JSValue__isStrictEqual(
         this: JSValue,
         other: JSValue,
         global: &JSGlobalObject,

@@ -1,5 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+
+// Every test spawns a `bun test` child (some of which sleep for seconds by design) and
+// they all run concurrently, so the default 5s per-test timeout is too tight on CI.
+setDefaultTimeout(60_000);
 
 async function runTestFile(files: Record<string, string>, env: NodeJS.Dict<string> = bunEnv) {
   using dir = tempDir("expect-resolves-rejects", files);
@@ -730,6 +734,42 @@ test("argument error", async () => {
     const output = stdout + stderr;
     expect(output).toContain(" 1 pass");
     expect(output).toContain(" 0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/14670 — `Bun.$` returns a lazy promise subclass
+  // that only starts when its own `.then` is called, so the deferral must adopt the
+  // subject with `Promise.resolve` semantics (native reactions on its internal slots
+  // would never start it and the matcher would never settle).
+  test("lazy thenable subjects (Bun.$, Promise subclasses) start and settle", async () => {
+    const { stderr, exitCode } = await runTestFile({
+      "fixture.test.ts": `import { test, expect } from "bun:test";
+import { $ } from "bun";
+test("rejects on a failing command", async () => {
+  await expect($\`exit 1\`.quiet()).rejects.toThrow();
+});
+test("resolves on a succeeding command", async () => {
+  await expect($\`echo hi\`.quiet().text()).resolves.toBe("hi\\n");
+});
+test("un-awaited rejects on a failing command", () => {
+  expect($\`exit 1\`.quiet()).rejects.toThrow();
+});
+test("promise subclass with an overridden then", async () => {
+  let adopted = false;
+  class Lazy extends Promise {
+    then(onFulfilled, onRejected) {
+      adopted = true;
+      return super.then(onFulfilled, onRejected);
+    }
+  }
+  const subject = new Lazy(resolve => queueMicrotask(() => resolve(7)));
+  await expect(subject).resolves.toBe(7);
+  expect(adopted).toBe(true);
+});
+`,
+    });
+    expect(stderr).toContain(" 4 pass");
+    expect(stderr).toContain(" 0 fail");
     expect(exitCode).toBe(0);
   });
 });

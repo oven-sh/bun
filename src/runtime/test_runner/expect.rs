@@ -3819,9 +3819,22 @@ impl Expect {
             JSValue::js_number_from_int32(SettlePhase::Invoke as i32),
         )?;
 
+        // Adopt the subject through the generic promise-resolve path: a promise subclass
+        // or thenable (e.g. `Bun.$`'s lazy ShellPromise) is adopted via its own `.then` —
+        // which is what starts it — while reactions attached directly to its internal
+        // slots (`then2`) never would. A plain promise adopts natively (fast path).
+        let tracked = js_promise::JSPromise::create(global_this);
+        let tracked_js = tracked.to_js();
+        if tracked.resolve(global_this, subject).is_err() {
+            return Err(JsError::Terminated);
+        }
+        if global_this.has_exception() {
+            // A hostile `then` getter threw during the adoption.
+            return Err(JsError::Thrown);
+        }
         // The reaction only runs on a later microtask, so it can never observe a missing
         // registration; from here on it owns the release the guard above was armed for.
-        subject.then2(
+        tracked_js.then2(
             global_this,
             ctx,
             Bun__Expect__onSubjectResolve,

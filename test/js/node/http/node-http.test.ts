@@ -3493,8 +3493,8 @@ describe("a final response to an unanswered Expect: 100-continue", () => {
   const expectHead = "POST /upload HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 36\r\n\r\n";
 
   // Reads the socket as a sequence of protocol units: until(needle) resolves
-  // with the bytes up to and including needle, and every failure event
-  // (error, premature close) rejects the pending read.
+  // with the bytes up to and including needle, and every failure event rejects
+  // the pending read rather than leaving it to hang.
   async function dial(server: Server) {
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
@@ -3526,7 +3526,8 @@ describe("a final response to an unanswered Expect: 100-continue", () => {
       check();
     });
     socket.on("error", fail);
-    socket.on("end", () => fail(new Error(`server closed the connection; buffered: ${JSON.stringify(buffer)}`)));
+    socket.on("end", () => fail(new Error(`server sent FIN mid-read; buffered: ${JSON.stringify(buffer)}`)));
+    socket.on("close", () => fail(new Error(`socket closed mid-read; buffered: ${JSON.stringify(buffer)}`)));
 
     return {
       socket,

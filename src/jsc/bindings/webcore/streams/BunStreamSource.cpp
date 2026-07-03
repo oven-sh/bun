@@ -1275,6 +1275,16 @@ static void readStreamIntoSinkOnCloseImpl(JSGlobalObject* globalObject, JSReadSt
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // The sink closed underneath the pump (which may stay suspended forever): end() FIRST,
+    // before the fallible cancel below, so the controller cell always detaches from the
+    // native sink instead of being collected attached (its destructor would over-release).
+    if (JSObject* sink = op->m_sink.get()) {
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        MarkedArgumentBuffer noArgs;
+        invokeMethod(globalObject, sink, Identifier::fromString(vm, "end"_s), noArgs);
+        if (catchScope.exception()) [[unlikely]]
+            catchScope.clearExceptionExceptTermination();
+    }
     if (!op->m_didThrow && !op->m_didClose) {
         auto* stream = dynamicDowncast<JSReadableStream>(streamValue);
         if (stream && stream->m_state != ReadableStreamState::Closed) {
@@ -1286,15 +1296,6 @@ static void readStreamIntoSinkOnCloseImpl(JSGlobalObject* globalObject, JSReadSt
         }
     }
     op->m_didClose = true;
-    // The sink closed underneath the pump (which may stay suspended forever): end() now so
-    // the controller cell detaches from the native sink instead of being collected attached.
-    if (JSObject* sink = op->m_sink.get()) {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        MarkedArgumentBuffer noArgs;
-        invokeMethod(globalObject, sink, Identifier::fromString(vm, "end"_s), noArgs);
-        if (catchScope.exception()) [[unlikely]]
-            catchScope.clearExceptionExceptTermination();
-    }
 }
 
 //                       assignStreamIntoResumableSink — the ResumableSink pump

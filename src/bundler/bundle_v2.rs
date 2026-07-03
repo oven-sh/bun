@@ -3809,8 +3809,8 @@ pub mod bv2_impl {
             &mut self,
             reachable_files: &[Index],
         ) -> Vec<(u32, Box<[u8]>)> {
-            use bun_resolve_builtins::HardcodedModule;
             use crate::bundle_v2::dispatch as jsc;
+            use bun_resolve_builtins::HardcodedModule;
 
             let cfg = HardcodedModule::Cfg::default();
             let import_records = self.graph.ast.items_import_records();

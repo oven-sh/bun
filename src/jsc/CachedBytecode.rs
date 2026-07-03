@@ -190,12 +190,7 @@ pub(crate) fn __bun_jsc_generate_builtin_module_bytecode(module_id: u32) -> Opti
     let mut ptr: Option<NonNull<u8>> = None;
     // SAFETY: out-params are valid for write.
     let ok = unsafe {
-        Bun__generateBuiltinModuleBytecode(
-            module_id,
-            &raw mut ptr,
-            &raw mut size,
-            &raw mut handle,
-        )
+        Bun__generateBuiltinModuleBytecode(module_id, &raw mut ptr, &raw mut size, &raw mut handle)
     };
     if !ok {
         return None;

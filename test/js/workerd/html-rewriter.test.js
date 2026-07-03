@@ -470,7 +470,31 @@ describe("HTMLRewriter", () => {
     it("reusing the transformed response's source stream throws", async () => {
       const response = new Response(streamOf(encode("<p>hi</p>")));
       expect(await rewriter().transform(response).text()).toBe("<p>bye</p>");
-      expect(() => rewriter().transform(response)).toThrow();
+      expect(() => rewriter().transform(response)).toThrow("Response body already used");
+    });
+
+    // Resolves with "" instead: the `.body` getter builds a ByteStream the
+    // producer is never told about, so done() closes it empty. Pre-existing and
+    // not specific to JS sources — a fetch body that is still mid-stream when
+    // transform() returns does the same thing on main (#19305, and #6068 for
+    // the Bun.serve shape, which hangs). Un-skip once the output side is fixed.
+    it.todo(".body of a transform whose source is still pending", async () => {
+      const { promise: gate, resolve: openGate } = Promise.withResolvers();
+      const body = new ReadableStream({
+        async start(controller) {
+          await gate;
+          controller.enqueue(encode("<p>hi</p>"));
+          controller.close();
+        },
+      });
+      const transformed = rewriter().transform(new Response(body));
+      const reader = transformed.body.getReader();
+      openGate();
+      const parts = [];
+      for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+        parts.push(new TextDecoder().decode(chunk.value));
+      }
+      expect(parts.join("")).toBe("<p>bye</p>");
     });
 
     it("served over Bun.serve", async () => {

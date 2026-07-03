@@ -910,13 +910,13 @@ impl VirtualMachine {
     #[inline(always)]
     #[allow(clippy::mut_from_ref)]
     pub fn platform_loop_opt(&self) -> Option<&mut PlatformEventLoop> {
-        // SAFETY: when non-null, `event_loop_handle` was set in `init()` /
-        // `ensure_waker()` to the live per-VM uws/uv loop and remains valid
-        // for the VM lifetime. JS-thread-only per `unsafe impl Sync`.
         let handle = self.event_loop_handle_ptr();
         if handle.is_null() {
             None
         } else {
+            // SAFETY: non-null `event_loop_handle` was set in `init()` /
+            // `ensure_waker()` to the live per-VM uws/uv loop and remains
+            // valid for the VM lifetime. JS-thread-only per `unsafe impl Sync`.
             Some(unsafe { &mut *handle })
         }
     }

@@ -165,7 +165,9 @@ describe("chacha20-poly1305", () => {
   const key = Buffer.from("808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f", "hex");
   const iv = Buffer.from("070000004041424344454647", "hex");
   const aad = Buffer.from("50515253c0c1c2c3c4c5c6c7", "hex");
-  const plaintext = Buffer.from("Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.");
+  const plaintext = Buffer.from(
+    "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.",
+  );
   const ciphertext = Buffer.from(
     "d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d6" +
       "3dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b36" +
@@ -319,9 +321,7 @@ describe("chacha20-poly1305", () => {
       const decipher = crypto.createDecipheriv("chacha20-poly1305", key, iv, { authTagLength });
       decipher.setAAD(aad);
       decipher.setAuthTag(tag);
-      expect(Buffer.concat([decipher.update(out), decipher.final()]).toString("utf8")).toBe(
-        plaintext.toString("utf8"),
-      );
+      expect(Buffer.concat([decipher.update(out), decipher.final()]).toString("utf8")).toBe(plaintext.toString("utf8"));
     }
   });
 

@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// Every S3 PUT/DELETE answers with a zero-length body, and any endpoint behind a
-// load balancer is free to answer it with `Connection: close`. The client must
-// treat `Content-Length: 0` as a complete response instead of reading the body
-// until EOF, whether or not the peer closes the socket right away.
+// Every S3 PUT/DELETE answers with a zero-length body, and any endpoint behind
+// a load balancer may reply with `Connection: close`. The client must treat
+// `Content-Length: 0` as complete rather than reading to EOF, FIN or not.
 function fixture(op: "write" | "delete", sendFin: boolean) {
   return `
 import net from "node:net";

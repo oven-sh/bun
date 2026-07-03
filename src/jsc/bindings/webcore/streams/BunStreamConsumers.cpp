@@ -572,7 +572,6 @@ static JSObject* createAlreadyUsedError(JSGlobalObject* globalObject)
     return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: ReadableStream has already been used"_s);
 }
 
-
 // The one shared `BunTextAccumulator` write arm (createTextStream.write, RSI:1411-1441).
 static JSValue textAccumulatorWrite(JSGlobalObject* globalObject, JSC::JSObject* owner, BunTextAccumulator& accumulator, JSValue chunk)
 {

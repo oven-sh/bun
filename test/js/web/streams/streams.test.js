@@ -1806,13 +1806,21 @@ test("pipeTo from a stream that errors natively includes async stack frames", as
 
 // https://github.com/oven-sh/bun/issues/6860
 describe("Bun.readableStreamTo* on an already used stream", () => {
-  const consumers = ["readableStreamToText", "readableStreamToArrayBuffer", "readableStreamToBytes", "readableStreamToJSON", "readableStreamToArray", "readableStreamToBlob"];
-  const makeStream = () => new ReadableStream({
-    start(c) {
-      c.enqueue(new TextEncoder().encode('"hello"'));
-      c.close();
-    },
-  });
+  const consumers = [
+    "readableStreamToText",
+    "readableStreamToArrayBuffer",
+    "readableStreamToBytes",
+    "readableStreamToJSON",
+    "readableStreamToArray",
+    "readableStreamToBlob",
+  ];
+  const makeStream = () =>
+    new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode('"hello"'));
+        c.close();
+      },
+    });
 
   for (const consumer of consumers) {
     test(`${consumer} rejects after the stream was consumed by a Bun helper`, async () => {

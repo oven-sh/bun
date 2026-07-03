@@ -160,25 +160,28 @@ sync_webkit() {
 # ─── 代码生成（codegen）───────────────────────────────────────────────────────
 run_codegen() {
     info "检查 codegen 产物..."
-    local codegen_dir="${BUILD_DIR}/codegen"
-    local json_rs="${codegen_dir}/json_byte_class.rs"
+    local json_rs="${BUILD_DIR}/codegen/json_byte_class.rs"
     if [ -f "$json_rs" ]; then
         ok "codegen 已就绪 ($(basename "$json_rs"))"
         return 0
     fi
 
-    info "运行 codegen (json_byte_class.rs)..."
-    mkdir -p "$codegen_dir"
-
-    # 直接运行 jsonByteClass 生成器（ninja configure 不生成这个文件，
-    # 需要从源码直接调用生成脚本）
+    info "运行 configure (含 codegen)..."
     cd "$CI_SRC"
-    if ! "$BUN" scripts/build/jsonByteClass.ts --codegen-dir="$codegen_dir" 2>&1; then
-        err "codegen 失败"
+    "$BUN" scripts/build.ts \
+        --config-file="${BUILD_DIR}/configure.json" \
+        --build-dir="$BUILD_DIR" \
+        --os=ohos \
+        --arch=aarch64 \
+        --target=aarch64-linux-ohos \
+        --ohos-sysroot="$OHOS_SYSROOT" \
+        --ohos-cross-libs="$OHOS_CROSS_LIBS" \
+        --ohos-icu="$OHOS_ICU" \
+        --webkit=local \
+        --configure-only 2>&1 || {
+        err "configure 失败"
         return 1
-    fi
-
-    # 验证
+    }
     if [ ! -f "$json_rs" ]; then
         err "codegen 失败: $json_rs 未生成"
         return 1

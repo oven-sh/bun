@@ -494,6 +494,32 @@ describe("spawn() failure lifecycle", () => {
       killed: false,
     });
   });
+
+  // `close` only fires once every stdio stream has closed, so materializing the
+  // streams of a failed spawn must not leave it unfired.
+  it.each([
+    ["default stdio", undefined],
+    ["an extra pipe", ["pipe", "pipe", "pipe", "pipe"]],
+  ])("close still fires after the stdio streams are materialized (%s)", async (_label, stdio) => {
+    const child = spawn("bun-definitely-not-a-real-binary", [], { stdio } as any);
+    void child.stdin;
+    void child.stdout;
+    void child.stderr;
+    void child.stdio;
+
+    const { error, summary } = await lifecycleOf(child);
+
+    expect(error.code).toBe("ENOENT");
+    expect(error.errno).toBeLessThan(0);
+    expect(summary).toEqual({
+      events: ["error", "close"],
+      whenErrored: { exitCode: error.errno, signalCode: null },
+      closeArgs: [error.errno, null],
+      exitCode: error.errno,
+      signalCode: null,
+      killed: false,
+    });
+  });
 });
 
 describe("execFile()", () => {

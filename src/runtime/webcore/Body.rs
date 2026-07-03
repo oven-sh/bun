@@ -2428,17 +2428,19 @@ impl<'a> ValueBufferer<'a> {
 
     /// `resolved_value` is what `readableStreamToArrayBuffer` fulfilled with: an
     /// `ArrayBuffer`, or a `Uint8Array` when the stream yielded a single string
-    /// chunk. It stays rooted for the whole call (reaction argument frame, or
-    /// this frame's stack), and `on_finished_buffering` copies the bytes out.
+    /// chunk.
+    ///
+    /// The bytes are copied into `stream_buffer` first. The single-chunk fast
+    /// path hands back the *user's own* ArrayBuffer, and the consumer tokenizes
+    /// the slice in place while re-entering user JS, which can detach it
+    /// (`ArrayBuffer.prototype.transfer`) and free the backing store mid-read.
     fn handle_resolve_stream(&mut self, resolved_value: JSValue, is_async: bool) {
         if let Some(array_buffer) = resolved_value.as_array_buffer(self.global) {
-            let bytes = array_buffer.slice();
-            bun_core::scoped_log!(BodyValueBufferer, "handleResolveStream {}", bytes.len());
-            (self.on_finished_buffering)(self.ctx, bytes, None, is_async);
-        } else {
-            bun_core::scoped_log!(BodyValueBufferer, "handleResolveStream no buffer");
-            (self.on_finished_buffering)(self.ctx, b"", None, is_async);
+            let _ = self.stream_buffer.write(array_buffer.slice());
         }
+        let bytes = self.stream_buffer.list.as_slice();
+        bun_core::scoped_log!(BodyValueBufferer, "handleResolveStream {}", bytes.len());
+        (self.on_finished_buffering)(self.ctx, bytes, None, is_async);
     }
 
     /// Buffer a JS-backed stream (`new ReadableStream({...})` or a `type:
@@ -2450,7 +2452,15 @@ impl<'a> ValueBufferer<'a> {
     fn buffer_js_readable_stream(&mut self, stream: ReadableStream) -> crate::Result<()> {
         let global = self.global;
 
-        let promise_value = global.readable_stream_to_array_buffer(stream.value);
+        // The builtin's C++ wrapper returns under a `ThrowScope`, so its
+        // simulated throw has to be observed here; a bare `is_empty()` check is
+        // invisible to `validateExceptionChecks` and trips the next scope.
+        let promise_value = {
+            bun_jsc::validation_scope!(scope, global);
+            let value = global.readable_stream_to_array_buffer(stream.value);
+            scope.assert_exception_presence_matches(value.is_empty());
+            value
+        };
         if promise_value.is_empty() {
             // The builtin threw (e.g. the stream yielded a chunk that is neither
             // a string nor a view); the exception is pending on the VM.

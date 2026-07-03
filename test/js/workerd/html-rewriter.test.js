@@ -473,6 +473,33 @@ describe("HTMLRewriter", () => {
       expect(() => rewriter().transform(response)).toThrow("Response body already used");
     });
 
+    it("does not rewrite out of the source buffer a handler can detach", async () => {
+      // readableStreamToArrayBuffer's single-chunk fast path returns the user's
+      // own ArrayBuffer. lol-html tokenizes its input in place and dispatches
+      // handlers mid-scan, so a handler that mutates (or transfers, then frees)
+      // that buffer must not be able to reach into the bytes still being parsed.
+      let chunk;
+      const body = new ReadableStream({
+        start(controller) {
+          chunk = encode("<a>x</a><zzz>y</zzz>");
+          controller.enqueue(chunk);
+          controller.close();
+        },
+      });
+      const transformed = new HTMLRewriter()
+        .on("a", {
+          element() {
+            // overwrite "<zzz>" (not yet tokenized) with "<qqq>"
+            chunk.set(encode("qqq"), 9);
+            // and drop the backing store the rewriter would be reading
+            chunk.buffer.transfer();
+            Bun.gc(true);
+          },
+        })
+        .transform(new Response(body));
+      expect(await transformed.text()).toBe("<a>x</a><zzz>y</zzz>");
+    });
+
     // Resolves with "" instead: the `.body` getter builds a ByteStream the
     // producer is never told about, so done() closes it empty. Pre-existing and
     // not specific to JS sources — a fetch body that is still mid-stream when

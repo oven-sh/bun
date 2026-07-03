@@ -1,4 +1,3 @@
-
 // Web IDL: `new TextDecoderStream(label, options)` treats undefined/null options as {}.
 test("TextDecoderStream accepts undefined and null options", () => {
   for (const options of [undefined, null]) {

@@ -1508,6 +1508,29 @@ describe("close() with a statement still alive", () => {
     expect(() => prepared.all({ $a: "x", $b: "y" })).toThrow("Database has closed");
   });
 
+  // db.run() prepares its statements internally, so once close() finalizes the
+  // tracked ones, that internal statement is the last thing holding the
+  // connection open and finalizing it frees the sqlite3* mid-call.
+  it.each(["INSERT INTO t VALUES ($a)", "INSERT INTO t VALUES ($a); INSERT INTO t VALUES (2)"])(
+    "rejects db.run(%p) when a binding getter closes the database",
+    sql => {
+      const db = new Database(":memory:");
+      db.exec("CREATE TABLE t (a INT)");
+      const keepalive = db.prepare("SELECT 1");
+
+      expect(() =>
+        db.run(sql, {
+          get $a() {
+            db.close();
+            return 1;
+          },
+        }),
+      ).toThrow("Database has closed");
+
+      expect(() => keepalive.get()).toThrow("Database has closed");
+    },
+  );
+
   it("stays safe when the statement is garbage collected afterwards", async () => {
     const db = new Database(":memory:");
     db.exec("CREATE TABLE foo (name TEXT)");

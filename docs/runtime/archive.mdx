@@ -1,9 +1,9 @@
 ---
 title: Archive
-description: Create and extract tar archives with Bun's fast native implementation
+description: Create and extract tar and zip archives with Bun's fast native implementation
 ---
 
-`Bun.Archive` is Bun's native API for tar archives. It creates archives from in-memory data, extracts archives to disk, and reads archive contents without extraction.
+`Bun.Archive` is Bun's native API for tar and zip archives. It creates archives from in-memory data, streams entries into an archive one at a time, extracts archives to disk, and reads archive contents without extraction.
 
 ## Quickstart
 
@@ -18,6 +18,16 @@ const archive = new Bun.Archive({
 
 // Write to disk
 await Bun.write("bundle.tar", archive);
+```
+
+**Build a zip one entry at a time, streaming from disk:**
+
+```ts
+const archive = new Bun.Archive(undefined, { format: "zip" });
+await archive.append("app.js", Bun.file("./dist/app.js"));
+await archive.append("video.mp4", Bun.file("./video.mp4"));
+
+await Bun.Archive.write("bundle.zip", archive);
 ```
 
 **Extract an archive:**
@@ -294,9 +304,26 @@ Supported glob patterns (subset of [Bun.Glob](/docs/api/glob) syntax):
 
 See [Bun.Glob](/docs/api/glob) for the full glob syntax including escaping and advanced patterns.
 
+## Formats
+
+`Bun.Archive` writes tar (the default) and zip. Reading auto-detects tar, tar.gz, and zip, so you never pass a format when you are reading an existing archive.
+
+```ts
+// tar (default)
+const tar = new Bun.Archive({ "hello.txt": "Hello, World!" });
+
+// zip
+const zip = new Bun.Archive({ "hello.txt": "Hello, World!" }, { format: "zip" });
+await Bun.write("bundle.zip", zip);
+
+// Reading detects the format from the bytes
+const archive = new Bun.Archive(await Bun.file("bundle.zip").bytes());
+console.log(await archive.files());
+```
+
 ## Compression
 
-Bun.Archive creates uncompressed tar archives by default. Use `{ compress: "gzip" }` to enable gzip compression:
+tar archives are uncompressed unless you pass `{ compress: "gzip" }`, which gzips the finished archive. zip archives deflate each entry by default; pass `{ compress: "store" }` to turn that off.
 
 ```ts
 // Default: uncompressed tar
@@ -311,13 +338,73 @@ const compressed = new Bun.Archive({ "hello.txt": "Hello, World!" }, { compress:
 
 // Gzip with custom level (1-12)
 const maxCompression = new Bun.Archive({ "hello.txt": "Hello, World!" }, { compress: "gzip", level: 12 });
+
+// zip: deflate by default, at level 1-9
+const fastZip = new Bun.Archive({ "hello.txt": "Hello, World!" }, { format: "zip", level: 1 });
+
+// zip: no compression
+const storedZip = new Bun.Archive({ "hello.txt": "Hello, World!" }, { format: "zip", compress: "store" });
 ```
 
 The `options` argument accepts:
 
-- No options or `undefined` - Uncompressed tar (default)
-- `{ compress: "gzip" }` - Enable gzip compression at level 6
-- `{ compress: "gzip", level: number }` - Gzip with custom level 1-12 (1 = fastest, 12 = smallest)
+- `{ format: "tar" | "zip" }` - Container format (default `"tar"`)
+- `{ compress: "gzip" }` - Gzip the finished tar archive (tar only)
+- `{ compress: "deflate" | "store" }` - Per-entry zip compression (zip only; `"deflate"` is the default)
+- `{ level: number }` - 1-12 for gzip, 1-9 for deflate (default 6)
+- `{ maxMemory: number }` - Bytes buffered before spilling to disk (see below)
+
+## Appending Entries
+
+`append()` adds one more entry to an archive you are building, without holding the entry's contents in memory first. Pass a `Bun.file()` and it streams from disk a chunk at a time, so you can add a file larger than available memory:
+
+```ts
+const archive = new Bun.Archive(undefined, { format: "zip" });
+
+await archive.append("README.md", "# Hello");
+await archive.append("dist/app.js", Bun.file("./dist/app.js"));
+await archive.append("video.mp4", Bun.file("./video.mp4")); // streamed, never buffered
+
+await Bun.Archive.write("bundle.zip", archive);
+```
+
+Appends run in call order, so `Promise.all()` over a list of files produces a deterministic archive:
+
+```ts
+const archive = new Bun.Archive();
+await Promise.all(paths.map(path => archive.append(path, Bun.file(path))));
+```
+
+Rules:
+
+- Only archives you build can be appended to: one created from an object, or from no data at all. Appending to an `Archive` that wraps existing archive data throws.
+- An archive is closed the first time its bytes are read (`bytes()`, `blob()`, `files()`, `extract()`, `Bun.write()`). `append()` after that throws.
+- Reading an archive while an `append()` is still pending throws. Await your appends first.
+- If an `append()` rejects, the entry was left half-written: the archive is truncated and can no longer be used.
+- Entries are written with mode `0644` and the current time as their modification time.
+
+## Spilling Large Archives to Disk
+
+While you build an archive, its bytes are buffered in memory. Once they exceed `maxMemory` (64 MB by default), Bun writes the rest to a temporary file instead, so building an archive bigger than RAM does not run you out of memory:
+
+```ts
+// Spill after 8 MB instead of 64 MB
+const archive = new Bun.Archive(undefined, { format: "zip", maxMemory: 8 * 1024 * 1024 });
+
+for await (const path of new Bun.Glob("**/*").scan(".")) {
+  await archive.append(path, Bun.file(path));
+}
+
+// Never materializes the whole archive in memory
+await Bun.Archive.write("everything.zip", archive);
+```
+
+- `maxMemory: Infinity` never spills.
+- `maxMemory: 0` always writes to disk.
+- The temporary file lives in the system temp directory and is removed once the archive is garbage collected. On Linux and macOS it is unlinked the moment it is created, so a crash cannot leave it behind.
+- On Linux and macOS a spilled archive is memory-mapped when it is read back, so `extract()`, `files()`, `Bun.write()`, and `Bun.Archive.write()` stream it from the page cache. On Windows it is read back into memory.
+- `bytes()` always returns a copy of the whole archive, so it defeats the purpose of spilling.
+- `{ compress: "gzip" }` buffers the compressed tar in memory. For archives larger than memory, prefer `format: "zip"` or an uncompressed tar.
 
 ## Examples
 
@@ -404,10 +491,14 @@ type ArchiveInput =
   | ArrayBufferLike;
 
 type ArchiveOptions = {
-  /** Compression algorithm. Currently only "gzip" is supported. */
-  compress?: "gzip";
-  /** Compression level 1-12 (default 6 when gzip is enabled). */
+  /** Container format to write. Reading auto-detects tar, tar.gz, and zip. */
+  format?: "tar" | "zip";
+  /** "gzip" for tar; "deflate" (default) or "store" for zip. */
+  compress?: "gzip" | "deflate" | "store";
+  /** Compression level: 1-12 for gzip, 1-9 for deflate (default 6). */
   level?: number;
+  /** Bytes buffered before spilling to a temp file (default 64 MB). */
+  maxMemory?: number;
 };
 
 interface ArchiveExtractOptions {
@@ -418,11 +509,17 @@ interface ArchiveExtractOptions {
 class Archive {
   /**
    * Create an Archive from input data
-   * @param data - Files to archive (as object) or existing archive data (as bytes/blob)
-   * @param options - Compression options. Uncompressed by default.
-   *                  Pass { compress: "gzip" } to enable compression.
+   * @param data - Files to archive (as object), existing archive data (as bytes/blob),
+   *               or nothing, for an empty archive to append() to
+   * @param options - Format and compression options. Uncompressed tar by default.
    */
-  constructor(data: ArchiveInput, options?: ArchiveOptions);
+  constructor(data?: ArchiveInput, options?: ArchiveOptions);
+
+  /**
+   * Stream one more entry into an archive that is still being built.
+   * Only valid before the archive's bytes are first read.
+   */
+  append(path: string, data: string | Blob | Bun.ArrayBufferView | ArrayBufferLike): Promise<void>;
 
   /**
    * Extract archive to a directory

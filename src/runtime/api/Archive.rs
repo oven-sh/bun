@@ -1,10 +1,23 @@
-//! `Bun.Archive` — tar/tgz pack + extract over libarchive.
+//! `Bun.Archive` — tar/tar.gz/zip pack + extract over libarchive.
+//!
+//! An archive created from an object (or from nothing) stays *open* behind a
+//! live libarchive writer until the first read of its bytes, so entries can be
+//! streamed in one at a time with [`Archive::append`]. The writer's output is
+//! buffered in memory up to `maxMemory` bytes and spills to a temporary file
+//! beyond that, which keeps peak memory bounded for archives larger than RAM.
 
+use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::ffi::CString;
 
+use super::archive_builder::{BuildError, Builder, FILETYPE_REGULAR, SinkOutput};
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
-use crate::webcore::blob::{Store as BlobStore, StoreRef};
+#[cfg(unix)]
+use crate::webcore::BlobStoreExt as _;
+use crate::webcore::blob::store::Data as BlobData;
+use crate::webcore::blob::{MAX_SIZE as BLOB_MAX_SIZE, Store as BlobStore, StoreRef};
+use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{self, Output, ZBox};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
@@ -20,16 +33,40 @@ use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 use bun_libarchive as libarchive;
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
 
-/// libarchive `AE_IFREG` (== `S_IFREG`). The Rust `bun_libarchive::lib` port
-/// does not yet expose `FileType`, so mirror the constant locally.
-const FILETYPE_REGULAR: u32 = 0o100000;
+/// Bytes of archive output held in memory before spilling to a temporary file.
+const DEFAULT_MAX_MEMORY: u64 = 64 * 1024 * 1024;
 
-/// Compression options for the archive
+/// Container format written by `new Archive(...)`. Reading auto-detects both.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum Format {
+    #[default]
+    Tar,
+    Zip,
+}
+
+/// How the archive's bytes are compressed.
 #[derive(Clone, Copy, Default)]
 pub(crate) enum Compression {
     #[default]
     None,
+    /// tar: gzip the finished archive (libdeflate, levels 1-12).
     Gzip(GzipOptions),
+    /// zip: per-entry deflate (zlib, levels 1-9).
+    Deflate(u8),
+    /// zip: per-entry "stored", i.e. no compression.
+    Store,
+}
+
+impl Compression {
+    /// The post-filter applied to the finished archive bytes, if any. Only tar
+    /// has one: zip compresses each entry as libarchive writes it.
+    #[inline]
+    fn gzip(self) -> Option<GzipOptions> {
+        match self {
+            Compression::Gzip(options) => Some(options),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -44,23 +81,52 @@ impl Default for GzipOptions {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct Options {
+    pub format: Format,
+    pub compress: Compression,
+    pub max_memory: u64,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            format: Format::Tar,
+            compress: Compression::None,
+            max_memory: DEFAULT_MAX_MEMORY,
+        }
+    }
+}
+
+/// An archive is either still being written to, finished (its bytes live in a
+/// `Blob.Store`), or poisoned by a failed `append()`.
+enum State {
+    /// `None` while a work-pool task owns the builder for an in-flight append.
+    Building(Option<Builder>),
+    Done(StoreRef),
+    /// An `append()` failed part-way through an entry, so the archive stream is
+    /// truncated and can never be completed.
+    Failed,
+}
+
+/// One `append()` call waiting for the in-flight one to finish. Appends are
+/// serialized because a single libarchive writer owns the output stream.
+struct PendingAppend {
+    path: ZBox,
+    source: AppendSource,
+    promise: JSPromiseStrong,
+}
+
 // Hand-written JS class glue (not the `#[bun_jsc::JsClass]` derive): Archive
 // needs a custom `finalize` and no constructor, which the proc-macro does not
 // expose.
 #[repr(C)]
 pub struct Archive {
-    /// The underlying data for the archive - uses Blob.Store for thread-safe ref counting
-    store: StoreRef,
-    /// Compression settings for this archive
-    compress: Compression,
-}
-
-impl Archive {
-    /// Borrow the backing `StoreRef`.
-    #[inline]
-    pub fn store_ref(&self) -> &StoreRef {
-        &self.store
-    }
+    state: RefCell<State>,
+    options: Options,
+    queue: RefCell<VecDeque<PendingAppend>>,
+    /// True while a work-pool task owns the builder.
+    appending: Cell<bool>,
 }
 
 // `jsc.Codegen.JSArchive` — codegen already emits `js_Archive`
@@ -80,7 +146,8 @@ impl Archive {
     pub fn finalize(self: Box<Self>) {
         jsc::mark_binding();
         drop(self);
-        // store.deref() happens via Arc<BlobStore>::drop
+        // store.deref() happens via Arc<BlobStore>::drop; an unfinished
+        // `Builder` closes and removes its spill file in `Drop`.
     }
 
     /// Pretty-print for console.log
@@ -93,30 +160,50 @@ impl Archive {
         F: bun_jsc::ConsoleFormatter,
         W: core::fmt::Write,
     {
-        let data = self.store.shared_view();
         let fmt_err = |_: core::fmt::Error| crate::Error::FormatError;
+        let size_options = bun_core::fmt::SizeFormatterOptions::default();
 
-        writeln!(
-            writer,
-            "Archive ({}) {{",
-            bun_core::fmt::size(data.len(), bun_core::fmt::SizeFormatterOptions::default()),
-        )
-        .map_err(fmt_err)?;
+        // Reading an unfinished archive would have to close its writer, so
+        // report the entries written so far instead of parsing the bytes back.
+        let (header, label, count) = match &*self.state.borrow() {
+            State::Done(store) => {
+                let data = store.shared_view();
+                (
+                    format!(
+                        "Archive ({})",
+                        bun_core::fmt::size(data.len(), size_options)
+                    ),
+                    "files",
+                    count_files_in_archive(data),
+                )
+            }
+            State::Building(builder) => (
+                // No size: libarchive holds a whole block back, so the sink's
+                // byte count says nothing useful until the archive is closed.
+                "Archive (open)".to_string(),
+                "entries",
+                builder.as_ref().map_or(0, Builder::entries),
+            ),
+            State::Failed => ("Archive (failed)".to_string(), "files", 0),
+        };
 
+        writeln!(writer, "{header} {{").map_err(fmt_err)?;
         {
             let mut formatter = formatter.indented();
             formatter.write_indent(writer).map_err(fmt_err)?;
             write!(
                 writer,
-                "{}",
-                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>files<d>:<r> "),
+                "{}{}{}",
+                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
+                label,
+                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<d>:<r> "),
             )
             .map_err(fmt_err)?;
             formatter
                 .print_as::<W, ENABLE_ANSI_COLORS>(
                     jsc::FormatTag::Double,
                     writer,
-                    JSValue::js_number(f64::from(count_files_in_archive(data))),
+                    JSValue::js_number(f64::from(count)),
                     jsc::JSType::NumberObject,
                 )
                 .map_err(|_| crate::Error::JSError)?;
@@ -129,10 +216,11 @@ impl Archive {
     }
 }
 
-/// Configure archive for reading tar/tar.gz
+/// Configure archive for reading tar/tar.gz/zip
 fn configure_archive_reader(archive: &libarchive::lib::Archive) {
     let _ = archive.read_support_format_tar();
     let _ = archive.read_support_format_gnutar();
+    let _ = archive.read_support_format_zip();
     let _ = archive.read_support_filter_gzip();
     let _ = archive.read_set_options(c"read_concatenated_archives");
 }
@@ -167,118 +255,399 @@ fn count_files_in_archive(data: &[u8]) -> u32 {
 }
 
 impl Archive {
-    /// Constructor: new Archive(data, options?)
+    /// Constructor: new Archive(data?, options?)
     /// Creates an Archive from either:
     /// - An object { [path: string]: Blob | string | ArrayBufferView | ArrayBufferLike }
     /// - A Blob, ArrayBufferView, or ArrayBufferLike (assumes it's already a valid archive)
+    /// - Nothing, producing an empty archive to `append()` to
     /// Options:
-    /// - compress: "gzip" - Enable gzip compression
-    /// - level: number (1-12) - Compression level (default 6)
-    /// When no options are provided, no compression is applied
+    /// - format: "tar" | "zip" - Container format (default "tar")
+    /// - compress: "gzip" (tar) | "deflate" | "store" (zip)
+    /// - level: number - Compression level
+    /// - maxMemory: number - Bytes buffered before spilling to a temp file
     // NOTE: `#[bun_jsc::host_fn]` has no `constructor` kind yet; the
     // `JsClass` derive emits a `constructor` shim that calls this directly.
     pub fn constructor(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Archive>> {
         let [data_arg, options_arg] = callframe.arguments_as_array::<2>();
-        if data_arg.is_empty() {
-            return Err(
-                global.throw_invalid_arguments(format_args!("new Archive() requires an argument"))
-            );
-        }
+        let options = parse_archive_options(global, options_arg)?;
 
-        // Parse compression options
-        let compress = parse_compression_options(global, options_arg)?;
+        // An omitted argument opens an empty archive to append to.
+        if data_arg.is_empty() || data_arg.is_undefined() {
+            let builder = open_builder(global, options)?;
+            return Ok(Archive::new(State::Building(Some(builder)), options));
+        }
 
         // For Blob/Archive, ref the existing store (zero-copy)
         if let Some(blob) = blob_from_js(data_arg) {
             if let Some(store) = blob.store.get().as_ref() {
                 // StoreRef::clone == store.ref()
-                return Ok(Box::new(Archive {
-                    store: store.clone(),
-                    compress,
-                }));
+                return Ok(Archive::new(State::Done(store.clone()), options));
             }
         }
 
         // For ArrayBuffer/TypedArray, copy the data
         if let Some(array_buffer) = data_arg.as_array_buffer(global) {
             let data: Vec<u8> = array_buffer.slice().to_vec();
-            return Ok(create_archive(data, compress));
+            return Ok(Archive::new(State::Done(BlobStore::init(data)), options));
         }
 
-        // For plain objects, build a tarball
+        // For plain objects, open a writer and pack the object's entries into it.
         if data_arg.is_object() {
-            let data = build_tarball_from_object(global, data_arg)?;
-            return Ok(create_archive(data, compress));
+            let mut builder = open_builder(global, options)?;
+            if let Err(err) = add_object_entries(global, &mut builder, data_arg) {
+                // A JS exception from property iteration: the builder's `Drop`
+                // closes the writer and removes any spill file.
+                return Err(err);
+            }
+            return Ok(Archive::new(State::Building(Some(builder)), options));
         }
 
         Err(global.throw_invalid_arguments(format_args!(
             "Expected an object, Blob, TypedArray, or ArrayBuffer"
         )))
     }
-}
 
-/// Parse compression options from JS value
-/// Returns .none if no compression specified, caller must handle defaults
-fn parse_compression_options(
-    global: &JSGlobalObject,
-    options_arg: JSValue,
-) -> JsResult<Compression> {
-    // No options provided means no compression (caller handles defaults)
-    if options_arg.is_undefined_or_null() {
-        return Ok(Compression::None);
+    fn new(state: State, options: Options) -> Box<Archive> {
+        Box::new(Archive {
+            state: RefCell::new(state),
+            options,
+            queue: RefCell::new(VecDeque::new()),
+            appending: Cell::new(false),
+        })
     }
 
+    /// The finished archive bytes, closing the writer on first use.
+    ///
+    /// Also the entry point `Bun.write(path, archive)` reaches through
+    /// `Blob::write_file_internal`, so it must leave the `Archive` in a state
+    /// where every other read works too.
+    pub fn blob_store(&self, global: &JSGlobalObject) -> JsResult<StoreRef> {
+        let builder = {
+            let mut state = self.state.borrow_mut();
+            match &mut *state {
+                State::Done(store) => return Ok(store.clone()),
+                State::Failed => return Err(self.throw_failed(global)),
+                State::Building(slot) => {
+                    if slot.is_none() || !self.queue.borrow().is_empty() {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "Archive.append() is still in progress: await it before reading the archive"
+                        )));
+                    }
+                    slot.take().expect("checked above")
+                }
+            }
+        };
+
+        let store = match builder.close().and_then(output_to_store) {
+            Ok(store) => store,
+            Err(err) => {
+                *self.state.borrow_mut() = State::Failed;
+                return Err(throw_build_error(global, err));
+            }
+        };
+        *self.state.borrow_mut() = State::Done(store.clone());
+        Ok(store)
+    }
+
+    fn throw_failed(&self, global: &JSGlobalObject) -> jsc::JsError {
+        global.throw_invalid_arguments(format_args!(
+            "Archive.append() failed earlier, so this archive can no longer be used"
+        ))
+    }
+
+    /// Instance method: archive.append(path, data)
+    /// Streams one more entry into an archive that is still open. Resolves when
+    /// the entry has been written; rejects (and poisons the archive) on failure.
+    #[bun_jsc::host_fn(method)]
+    pub fn append(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let [path_arg, data_arg] = callframe.arguments_as_array::<2>();
+
+        match &*self.state.borrow() {
+            State::Done(_) => {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Archive.append() is only available before the archive is read; it cannot append to existing archive data"
+                )));
+            }
+            State::Failed => return Err(self.throw_failed(global)),
+            State::Building(_) => {}
+        }
+
+        if !path_arg.is_string() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Archive.append: first argument must be a string path"
+            )));
+        }
+        let path_slice = path_arg.to_slice(global)?;
+        if path_slice.slice().is_empty() {
+            return Err(global
+                .throw_invalid_arguments(format_args!("Archive.append: path must not be empty")));
+        }
+        let path = ZBox::from_bytes(path_slice.slice());
+        let source = parse_append_source(global, data_arg)?;
+
+        let promise = JSPromiseStrong::init(global);
+        let value = promise.value();
+        self.queue.borrow_mut().push_back(PendingAppend {
+            path,
+            source,
+            promise,
+        });
+        self.pump(global, callframe.this());
+        Ok(value)
+    }
+
+    /// Start the next queued append, if the builder is free.
+    fn pump(&self, global: &JSGlobalObject, this: JSValue) {
+        if self.appending.get() {
+            return;
+        }
+        let Some(job) = self.queue.borrow_mut().pop_front() else {
+            return;
+        };
+
+        let builder = match &mut *self.state.borrow_mut() {
+            State::Building(slot) => slot.take(),
+            State::Done(_) | State::Failed => None,
+        };
+        let Some(builder) = builder else {
+            reject_pending(global, job, "Archive is no longer writable");
+            return;
+        };
+
+        let task = AppendTask::create_with_promise(
+            global,
+            AppendContext {
+                archive: jsc::Strong::create(this, global),
+                builder: Some(builder),
+                path: job.path,
+                source: job.source,
+                mtime: now_seconds(),
+                result: Ok(()),
+            },
+            job.promise,
+        );
+        self.appending.set(true);
+        AppendTask::schedule(task);
+    }
+
+    /// Called on the JS thread once an append task finishes: take the builder
+    /// back and start the next queued entry.
+    fn finish_append(&self, global: &JSGlobalObject, this: JSValue, builder: Option<Builder>) {
+        self.appending.set(false);
+        match builder {
+            Some(builder) => {
+                *self.state.borrow_mut() = State::Building(Some(builder));
+                self.pump(global, this);
+            }
+            None => {
+                *self.state.borrow_mut() = State::Failed;
+                self.drain_queue(global);
+            }
+        }
+    }
+
+    fn drain_queue(&self, global: &JSGlobalObject) {
+        loop {
+            let Some(job) = self.queue.borrow_mut().pop_front() else {
+                return;
+            };
+            reject_pending(
+                global,
+                job,
+                "Archive.append() failed earlier, so this archive can no longer be used",
+            );
+        }
+    }
+}
+
+fn reject_pending(global: &JSGlobalObject, job: PendingAppend, message: &str) {
+    let mut promise = job.promise;
+    let error = global.create_error_instance(format_args!("{message}"));
+    let _ = promise.swap().reject(global, Ok(error));
+}
+
+/// Seconds since the epoch, for entry mtimes.
+fn now_seconds() -> i64 {
+    i64::try_from(bun_core::time::milli_timestamp() / 1000).unwrap_or(0)
+}
+
+fn open_builder(global: &JSGlobalObject, options: Options) -> JsResult<Builder> {
+    Builder::open(options).map_err(|err| throw_build_error(global, err))
+}
+
+fn throw_build_error(global: &JSGlobalObject, err: BuildError) -> jsc::JsError {
+    match err {
+        BuildError::Sys(sys_err) => global.throw_value(sys_err.to_js(global)),
+        BuildError::OutOfMemory => global.throw_value(global.create_out_of_memory_error()),
+        BuildError::EntryChangedSize => global.throw_invalid_arguments(format_args!(
+            "Archive.append: the file changed size while it was being added"
+        )),
+        BuildError::Libarchive(stage) => {
+            global.throw_invalid_arguments(format_args!("Failed to create archive: {stage}"))
+        }
+    }
+}
+
+fn build_error_to_js(global: &JSGlobalObject, err: BuildError) -> JSValue {
+    match err {
+        BuildError::Sys(sys_err) => sys_err.to_js(global),
+        BuildError::OutOfMemory => global.create_out_of_memory_error(),
+        BuildError::EntryChangedSize => global.create_error_instance(format_args!(
+            "Archive.append: the file changed size while it was being added"
+        )),
+        BuildError::Libarchive(stage) => {
+            global.create_error_instance(format_args!("Failed to create archive: {stage}"))
+        }
+    }
+}
+
+/// Turn a closed builder's output into a `Blob.Store`.
+///
+/// A spilled archive is memory-mapped copy-on-write on POSIX, so reading it
+/// back (`extract()`, `Bun.write()`, `files()`) streams from the page cache
+/// instead of allocating a second copy. Windows has no mapping helper in
+/// `bun_sys`, so it reads the file back into memory.
+fn output_to_store(output: SinkOutput) -> Result<StoreRef, BuildError> {
+    match output {
+        SinkOutput::Memory(bytes) => Ok(BlobStore::init(bytes)),
+        SinkOutput::Spilled(file) => {
+            #[cfg(unix)]
+            {
+                if file.len() == 0 {
+                    return Ok(BlobStore::init(Vec::new()));
+                }
+                let mapping = file.mmap()?;
+                // The mapping owns the pages; dropping `file` closes the
+                // descriptor of the already-unlinked temp file.
+                drop(file);
+                Ok(BlobStore::init_mmap(mapping))
+            }
+            #[cfg(not(unix))]
+            {
+                let bytes = file.read_to_vec()?;
+                Ok(BlobStore::init(bytes))
+            }
+        }
+    }
+}
+
+/// Parse `{ format, compress, level, maxMemory }`.
+fn parse_archive_options(global: &JSGlobalObject, options_arg: JSValue) -> JsResult<Options> {
+    let mut options = Options::default();
+    if options_arg.is_empty() || options_arg.is_undefined_or_null() {
+        return Ok(options);
+    }
     if !options_arg.is_object() {
         return Err(
             global.throw_invalid_arguments(format_args!("Archive: options must be an object"))
         );
     }
 
-    // Check for compress option
-    if let Some(compress_val) = options_arg.get_truthy(global, "compress")? {
-        // compress must be "gzip"
-        if !compress_val.is_string() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Archive: compress option must be a string"
-            )));
+    if let Some(format_val) = options_arg.get_truthy(global, "format")? {
+        if !format_val.is_string() {
+            return Err(global
+                .throw_invalid_arguments(format_args!("Archive: format option must be a string")));
         }
-
-        let compress_str = compress_val.to_slice(global)?;
-        // Drop handles compress_str.deinit()
-
-        if compress_str.slice() != b"gzip" {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Archive: compress option must be \"gzip\""
-            )));
-        }
-
-        // Parse level option (1-12, default 6)
-        let mut level: u8 = 6;
-        if let Some(level_val) = options_arg.get_truthy(global, "level")? {
-            if !level_val.is_number() {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("Archive: level must be a number"))
-                );
-            }
-            let level_num = level_val.to_int64();
-            if level_num < 1 || level_num > 12 {
+        let format_str = format_val.to_slice(global)?;
+        options.format = match format_str.slice() {
+            b"tar" => Format::Tar,
+            b"zip" => Format::Zip,
+            _ => {
                 return Err(global.throw_invalid_arguments(format_args!(
-                    "Archive: level must be between 1 and 12"
+                    "Archive: format must be \"tar\" or \"zip\""
                 )));
             }
-            level = u8::try_from(level_num).expect("int cast");
-        }
-
-        return Ok(Compression::Gzip(GzipOptions { level }));
+        };
     }
 
-    // No compress option specified in options object means no compression
-    Ok(Compression::None)
+    options.compress = parse_compression(global, options_arg, options.format)?;
+
+    if let Some(max_memory_val) = options_arg.get_truthy(global, "maxMemory")? {
+        if !max_memory_val.is_number() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("Archive: maxMemory must be a number"))
+            );
+        }
+        let max_memory = max_memory_val.as_number();
+        if max_memory.is_nan() || max_memory < 0.0 {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Archive: maxMemory must be a non-negative number"
+            )));
+        }
+        options.max_memory = if max_memory.is_infinite() {
+            u64::MAX
+        } else {
+            max_memory as u64
+        };
+    }
+
+    Ok(options)
 }
 
-fn create_archive(data: Vec<u8>, compress: Compression) -> Box<Archive> {
-    let store = BlobStore::init(data);
-    Box::new(Archive { store, compress })
+fn parse_compression(
+    global: &JSGlobalObject,
+    options_arg: JSValue,
+    format: Format,
+) -> JsResult<Compression> {
+    let compress = options_arg.get_truthy(global, "compress")?;
+    let Some(compress_val) = compress else {
+        // zip entries are deflated by default, matching every other zip writer;
+        // tar is uncompressed unless asked otherwise.
+        return Ok(match format {
+            Format::Tar => Compression::None,
+            Format::Zip => Compression::Deflate(parse_level(global, options_arg, 1, 9, 6)?),
+        });
+    };
+    if !compress_val.is_string() {
+        return Err(global
+            .throw_invalid_arguments(format_args!("Archive: compress option must be a string")));
+    }
+    let compress_str = compress_val.to_slice(global)?;
+
+    match (format, compress_str.slice()) {
+        (Format::Tar, b"gzip") => Ok(Compression::Gzip(GzipOptions {
+            level: parse_level(global, options_arg, 1, 12, 6)?,
+        })),
+        (Format::Zip, b"deflate") => {
+            Ok(Compression::Deflate(parse_level(global, options_arg, 1, 9, 6)?))
+        }
+        (Format::Zip, b"store") => Ok(Compression::Store),
+        (Format::Tar, b"deflate" | b"store") => Err(global.throw_invalid_arguments(format_args!(
+            "Archive: compress: \"{}\" requires format: \"zip\"",
+            bstr::BStr::new(compress_str.slice()),
+        ))),
+        (Format::Zip, b"gzip") => Err(global.throw_invalid_arguments(format_args!(
+            "Archive: compress: \"gzip\" is not supported with format: \"zip\"; use \"deflate\" or \"store\""
+        ))),
+        (Format::Tar, _) => Err(global.throw_invalid_arguments(format_args!(
+            "Archive: compress option must be \"gzip\""
+        ))),
+        (Format::Zip, _) => Err(global.throw_invalid_arguments(format_args!(
+            "Archive: compress option must be \"deflate\" or \"store\""
+        ))),
+    }
+}
+
+fn parse_level(
+    global: &JSGlobalObject,
+    options_arg: JSValue,
+    min: i64,
+    max: i64,
+    default: u8,
+) -> JsResult<u8> {
+    let Some(level_val) = options_arg.get_truthy(global, "level")? else {
+        return Ok(default);
+    };
+    if !level_val.is_number() {
+        return Err(global.throw_invalid_arguments(format_args!("Archive: level must be a number")));
+    }
+    let level = level_val.to_int64();
+    if level < min || level > max {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Archive: level must be between {min} and {max}"
+        )));
+    }
+    Ok(u8::try_from(level).expect("int cast"))
 }
 
 /// `JSValue::as_::<Blob>()` shim — kept as a free fn. Returns a shared
@@ -289,49 +658,18 @@ fn blob_from_js(value: JSValue) -> Option<&'static Blob> {
     value.as_class_ref::<Blob>()
 }
 
-/// Shared helper that builds tarball bytes from a JS object
-fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<Vec<u8>> {
-    use libarchive::lib;
-
+/// Write every `{ path: contents }` pair of a JS object into `builder`.
+fn add_object_entries(
+    global: &JSGlobalObject,
+    builder: &mut Builder,
+    obj: JSValue,
+) -> JsResult<()> {
     let Some(js_obj) = obj.get_object() else {
         return Err(global.throw_invalid_arguments(format_args!("Expected an object")));
     };
 
-    // Set up archive first
-    let mut growing_buffer = lib::GrowingBuffer::init();
-    // errdefer growing_buffer.deinit() — handled by Drop on Vec<u8>
+    let mtime = now_seconds();
 
-    let archive = lib::WriteArchive::new();
-    let archive_ref: &lib::Archive = &archive;
-
-    if archive_ref.write_set_format_pax_restricted() != lib::Result::Ok {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "Failed to create tarball: ArchiveFormatError"
-        )));
-    }
-
-    // `archive` is a live `archive_write_new()` handle (see `Archive::write_new`
-    // above); `growing_buffer` is stack-local and outlives all callback invocations
-    // (the archive is closed before this fn returns).
-    let open_rc = lib::archive_write_open2(
-        &archive,
-        (&raw mut growing_buffer).cast(),
-        Some(lib::GrowingBuffer::open_callback),
-        Some(lib::GrowingBuffer::write_callback),
-        Some(lib::GrowingBuffer::close_callback),
-        None,
-    );
-    if open_rc != 0 {
-        return Err(global
-            .throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveOpenError")));
-    }
-
-    let entry = lib::OwnedEntry::new();
-    let entry_ref: &lib::Entry = &entry;
-
-    let now_secs: isize = isize::try_from(bun_core::time::milli_timestamp() / 1000).unwrap_or(0);
-
-    // Iterate over object properties and write directly to archive
     let mut iter = jsc::JSPropertyIterator::init(
         global,
         js_obj,
@@ -348,68 +686,24 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
             continue;
         }
 
-        // Get the key as a null-terminated string
         let key_slice = key.to_utf8();
-        let key_str = ZBox::from_vec_with_nul(key_slice.slice().to_vec());
-        // defer free(key_str)/key_slice.deinit() — handled by Drop
+        let path = ZBox::from_bytes(key_slice.slice());
 
-        // Get data - use view for Blob/ArrayBuffer, convert for strings
+        // Use a view for Blob/ArrayBuffer, convert for strings.
         let data_slice = get_entry_data(global, value)?;
-        // defer data_slice.deinit() — handled by Drop
 
-        // Write entry to archive
-        let data = data_slice.slice();
-        let _ = entry_ref.clear();
-        // Same platform split as `pack_command::add_archive_entry`: the process
-        // locale is always "C", so libarchive's locale-keyed pax writer is only
-        // lossless with raw bytes on POSIX and with the UTF-8 form on Windows.
-        #[cfg(windows)]
-        entry_ref.set_pathname_utf8(key_str.as_zstr());
-        #[cfg(not(windows))]
-        entry_ref.set_pathname(key_str.as_zstr());
-        entry_ref.set_size(i64::try_from(data.len()).expect("int cast"));
-        entry_ref.set_filetype(FILETYPE_REGULAR);
-        entry_ref.set_perm(0o644);
-        entry_ref.set_mtime(now_secs, 0);
-
-        // `Warn` means the header was still written (libarchive fell back to a
-        // per-entry binary hdrcharset for a name its locale machinery could not
-        // convert); only `Failed`/`Fatal` mean no header was produced.
-        if !archive_ref.write_header(entry_ref).succeeded() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Failed to create tarball: ArchiveHeaderError"
-            )));
-        }
-        if archive_ref.write_data(data) < 0 {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Failed to create tarball: ArchiveWriteError"
-            )));
-        }
-        if archive_ref.write_finish_entry() != lib::Result::Ok {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Failed to create tarball: ArchiveFinishEntryError"
-            )));
-        }
+        builder
+            .add_bytes(&path, data_slice.slice(), mtime)
+            .map_err(|err| throw_build_error(global, err))?;
     }
 
-    if archive_ref.write_close() != lib::Result::Ok {
-        return Err(global
-            .throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveCloseError")));
-    }
-
-    match growing_buffer.to_owned_slice() {
-        Ok(v) => Ok(v),
-        Err(_) => {
-            Err(global
-                .throw_invalid_arguments(format_args!("Failed to create tarball: OutOfMemory")))
-        }
-    }
+    Ok(())
 }
 
 /// Returns data as a ZigString.Slice (handles ownership automatically via deinit)
 fn get_entry_data(global: &JSGlobalObject, value: JSValue) -> JsResult<ZigStringSlice> {
     // For Blob, use sharedView (no copy needed). The backing store outlives
-    // the returned slice for the duration of the caller's tarball build.
+    // the returned slice for the duration of the caller's archive build.
     if let Some(blob) = blob_from_js(value) {
         return Ok(ZigStringSlice::from_utf8_never_free(blob.shared_view()));
     }
@@ -423,11 +717,87 @@ fn get_entry_data(global: &JSGlobalObject, value: JSValue) -> JsResult<ZigString
     value.to_slice(global)
 }
 
+/// Where one `append()`ed entry's bytes come from. Every variant is `Send`: the
+/// bytes are copied, the `Blob.Store` is atomically refcounted, or the data is
+/// streamed from a path on the work-pool thread.
+pub(crate) enum AppendSource {
+    Bytes(Vec<u8>),
+    /// An in-memory Blob: hold a ref instead of copying.
+    Store {
+        store: StoreRef,
+        offset: usize,
+        len: usize,
+    },
+    /// A `Bun.file()`: streamed from disk a chunk at a time.
+    File {
+        path: ZBox,
+        offset: u64,
+        len: Option<u64>,
+    },
+}
+
+fn parse_append_source(global: &JSGlobalObject, value: JSValue) -> JsResult<AppendSource> {
+    if value.is_empty() {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Archive.append requires 2 arguments (path, data)"
+        )));
+    }
+
+    if value.is_string() {
+        let slice = value.to_slice(global)?;
+        return Ok(AppendSource::Bytes(slice.slice().to_vec()));
+    }
+
+    if let Some(blob) = blob_from_js(value) {
+        let Some(store) = blob.store.get().as_ref().cloned() else {
+            return Ok(AppendSource::Bytes(Vec::new()));
+        };
+        match &store.data {
+            BlobData::Bytes(_) => {
+                let view = store.shared_view();
+                let offset = usize::try_from(blob.offset.get())
+                    .unwrap_or(usize::MAX)
+                    .min(view.len());
+                let len = usize::try_from(blob.size.get())
+                    .unwrap_or(usize::MAX)
+                    .min(view.len() - offset);
+                return Ok(AppendSource::Store { store, offset, len });
+            }
+            BlobData::File(file) => match &file.pathlike {
+                PathOrFileDescriptor::Path(path) => {
+                    let declared = blob.size.get();
+                    return Ok(AppendSource::File {
+                        path: ZBox::from_bytes(path.slice()),
+                        offset: blob.offset.get(),
+                        len: (declared < BLOB_MAX_SIZE).then_some(declared),
+                    });
+                }
+                PathOrFileDescriptor::Fd(_) => {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "Archive.append: file descriptor-backed files are not supported; read the bytes first"
+                    )));
+                }
+            },
+            BlobData::S3(_) => {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Archive.append: S3 files are not supported; await file.bytes() first"
+                )));
+            }
+        }
+    }
+
+    if let Some(array_buffer) = value.as_array_buffer(global) {
+        return Ok(AppendSource::Bytes(array_buffer.slice().to_vec()));
+    }
+
+    Err(global.throw_invalid_arguments(format_args!(
+        "Archive.append: expected a string, Blob, TypedArray, or ArrayBuffer"
+    )))
+}
+
 /// Static method: Archive.write(path, data, options?)
 /// Creates and writes an archive to disk in one operation.
 /// For Archive instances, uses the archive's compression settings unless overridden by options.
-/// Options:
-///   - gzip: { level?: number } - Override compression settings
 #[bun_jsc::host_fn]
 pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let [path_arg, data_arg, options_arg] = callframe.arguments_as_array::<3>();
@@ -446,21 +816,16 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
 
     let path_slice = path_arg.to_slice(global)?;
 
-    // Parse options for compression override
-    let options_compress = parse_compression_options(global, options_arg)?;
+    let options = parse_archive_options(global, options_arg)?;
 
     // For Archive instances, use options override or archive's compression settings
     if let Some(archive) = data_arg.as_class_ref::<Archive>() {
-        let compress = if !matches!(options_compress, Compression::None) {
-            options_compress
-        } else {
-            archive.compress
-        };
+        let gzip = options.compress.gzip().or(archive.options.compress.gzip());
         return start_write_task(
             global,
-            WriteData::Store(archive.store.clone()),
+            WriteData::Store(archive.blob_store(global)?),
             path_slice.slice(),
-            compress,
+            gzip,
         );
     }
 
@@ -471,7 +836,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
                 global,
                 WriteData::Store(store.clone()),
                 path_slice.slice(),
-                options_compress,
+                options.compress.gzip(),
             );
         }
     }
@@ -483,18 +848,23 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
             global,
             WriteData::Owned(data),
             path_slice.slice(),
-            options_compress,
+            options.compress.gzip(),
         );
     }
 
-    // For plain objects, build a tarball with options compression
+    // For plain objects, pack them and write the result
     if data_arg.is_object() {
-        let data = build_tarball_from_object(global, data_arg)?;
+        let mut builder = open_builder(global, options)?;
+        add_object_entries(global, &mut builder, data_arg)?;
+        let store = builder
+            .close()
+            .and_then(output_to_store)
+            .map_err(|err| throw_build_error(global, err))?;
         return start_write_task(
             global,
-            WriteData::Owned(data),
+            WriteData::Store(store),
             path_slice.slice(),
-            options_compress,
+            options.compress.gzip(),
         );
     }
 
@@ -537,7 +907,8 @@ impl Archive {
             }
         }
 
-        start_extract_task(global, &self.store, path_slice.slice(), glob_patterns)
+        let store = self.blob_store(global)?;
+        start_extract_task(global, &store, path_slice.slice(), glob_patterns)
     }
 }
 
@@ -617,14 +988,26 @@ impl Archive {
     /// Returns Promise<Blob> with the archive data (compressed if gzip was set in options)
     #[bun_jsc::host_fn(method)]
     pub fn blob(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        start_blob_task(global, &self.store, self.compress, BlobOutputType::Blob)
+        let store = self.blob_store(global)?;
+        start_blob_task(
+            global,
+            &store,
+            self.options.compress.gzip(),
+            BlobOutputType::Blob,
+        )
     }
 
     /// Instance method: archive.bytes()
     /// Returns Promise<Uint8Array> with the archive data (compressed if gzip was set in options)
     #[bun_jsc::host_fn(method)]
     pub fn bytes(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        start_blob_task(global, &self.store, self.compress, BlobOutputType::Bytes)
+        let store = self.blob_store(global)?;
+        start_blob_task(
+            global,
+            &store,
+            self.options.compress.gzip(),
+            BlobOutputType::Bytes,
+        )
     }
 
     /// Instance method: archive.files(glob?)
@@ -640,7 +1023,8 @@ impl Archive {
             glob_patterns = parse_pattern_arg(global, glob_arg, b"Archive.files", b"glob")?;
         }
 
-        start_files_task(global, &self.store, glob_patterns)
+        let store = self.blob_store(global)?;
+        start_files_task(global, &store, glob_patterns)
     }
 }
 
@@ -693,7 +1077,16 @@ impl<C: TaskContext> Taskable for AsyncTask<C> {
 }
 
 impl<C: TaskContext> AsyncTask<C> {
+    #[inline]
     fn create(global: &JSGlobalObject, ctx: C) -> Result<*mut Self, bun_alloc::AllocError> {
+        Ok(Self::create_with_promise(
+            global,
+            ctx,
+            JSPromiseStrong::init(global),
+        ))
+    }
+
+    fn create_with_promise(global: &JSGlobalObject, ctx: C, promise: JSPromiseStrong) -> *mut Self {
         // `bun_vm_ptr()` returns `*mut VirtualMachine` with write provenance; valid for
         // process lifetime. Do NOT launder `bun_vm()` (a `&VirtualMachine`) through
         // `*const _ as *mut _` — that derives a writeable pointer from a shared
@@ -701,7 +1094,7 @@ impl<C: TaskContext> AsyncTask<C> {
         let vm: *mut VirtualMachine = global.bun_vm_ptr();
         let this = Box::new(AsyncTask {
             ctx,
-            promise: JSPromiseStrong::init(global),
+            promise,
             vm,
             task: WorkPoolTask {
                 callback: Self::run_callback,
@@ -714,7 +1107,7 @@ impl<C: TaskContext> AsyncTask<C> {
         // SAFETY: raw was just produced by heap::alloc; not yet shared. Keep the event
         // loop alive until `run_from_js` unrefs after the threadpool work completes.
         unsafe { (*raw).keep_alive.ref_(bun_io::js_vm_ctx()) };
-        Ok(raw)
+        raw
     }
 
     fn schedule(this: *mut Self) {
@@ -855,6 +1248,7 @@ impl ExtractContext {
                 close_handles: true,
                 log: false,
                 npm: false,
+                zip: true,
             },
         ) {
             Ok(c) => c,
@@ -915,7 +1309,7 @@ enum BlobResult {
 
 pub struct BlobContext {
     store: StoreRef,
-    compress: Compression,
+    gzip: Option<GzipOptions>,
     output_type: BlobOutputType,
     result: BlobResult,
 }
@@ -924,12 +1318,12 @@ impl TaskContext for BlobContext {
     const TAG: TaskTag = task_tag::ArchiveBlobTask;
 
     fn run(&mut self) {
-        self.result = match &self.compress {
-            Compression::Gzip(opts) => match compress_gzip(self.store.shared_view(), opts.level) {
+        self.result = match &self.gzip {
+            Some(opts) => match compress_gzip(self.store.shared_view(), opts.level) {
                 Ok(data) => BlobResult::Compressed(data),
                 Err(e) => BlobResult::Err(e.into()),
             },
-            Compression::None => BlobResult::Uncompressed,
+            None => BlobResult::Uncompressed,
         };
     }
 
@@ -985,7 +1379,7 @@ pub type BlobTask = AsyncTask<BlobContext>;
 fn start_blob_task(
     global: &JSGlobalObject,
     store: &StoreRef,
-    compress: Compression,
+    gzip: Option<GzipOptions>,
     output_type: BlobOutputType,
 ) -> JsResult<JSValue> {
     let store = store.clone();
@@ -995,7 +1389,7 @@ fn start_blob_task(
         global,
         BlobContext {
             store,
-            compress,
+            gzip,
             output_type,
             result: BlobResult::Uncompressed,
         },
@@ -1028,7 +1422,7 @@ enum WriteData {
 pub struct WriteContext {
     data: WriteData,
     path: ZBox,
-    compress: Compression,
+    gzip: Option<GzipOptions>,
     result: WriteResult,
 }
 
@@ -1057,17 +1451,17 @@ impl WriteContext {
             WriteData::Store(s) => s.shared_view(),
         };
         let compressed_buf;
-        let data_to_write: &[u8] = match &self.compress {
-            Compression::Gzip(opts) => {
+        let data_to_write: &[u8] = match &self.gzip {
+            Some(opts) => {
                 compressed_buf = match compress_gzip(source_data, opts.level) {
                     Ok(v) => v,
                     Err(e) => return WriteResult::Err(e.into()),
                 };
                 &compressed_buf
             }
-            Compression::None => source_data,
+            None => source_data,
         };
-        // `defer if (compress != .none) free(data_to_write)` — handled by `compressed_buf: Vec<u8>` Drop.
+        // `defer if (gzip) free(data_to_write)` — handled by `compressed_buf: Vec<u8>` Drop.
 
         let file = match bun_sys::File::openat(
             Fd::cwd(),
@@ -1092,9 +1486,9 @@ fn start_write_task(
     global: &JSGlobalObject,
     data: WriteData,
     path: &[u8],
-    compress: Compression,
+    gzip: Option<GzipOptions>,
 ) -> JsResult<JSValue> {
-    let path_z = ZBox::from_vec_with_nul(path.to_vec());
+    let path_z = ZBox::from_bytes(path);
 
     // Ref store if using store reference — already done by caller via Arc::clone into WriteData::Store.
     // errdefer store.deref / free(data.owned) — handled by WriteData Drop on early return.
@@ -1104,7 +1498,7 @@ fn start_write_task(
         WriteContext {
             data,
             path: path_z,
-            compress,
+            gzip,
             result: WriteResult::Success,
         },
     )?;
@@ -1314,6 +1708,79 @@ fn start_files_task(
     FilesTask::schedule(task);
     Ok(promise_js)
 }
+
+// ============================================================================
+// Append task
+// ============================================================================
+
+pub struct AppendContext {
+    /// Roots the owning `Archive` JS object so its payload outlives the task.
+    /// Only touched on the JS thread (`run_from_js`).
+    archive: jsc::Strong,
+    /// Moved out of the `Archive` for the duration of the task and handed back
+    /// in `run_from_js`. `None` once handed back.
+    builder: Option<Builder>,
+    path: ZBox,
+    source: AppendSource,
+    mtime: i64,
+    result: Result<(), BuildError>,
+}
+
+// SAFETY: `archive` is a JSC handle that is created, read and dropped only on
+// the JS thread; `run` (the work-pool half) never touches it. Everything else
+// in the context is `Send`.
+unsafe impl Send for AppendContext {}
+
+impl TaskContext for AppendContext {
+    const TAG: TaskTag = task_tag::ArchiveAppendTask;
+
+    fn run(&mut self) {
+        let AppendContext {
+            builder,
+            path,
+            source,
+            mtime,
+            result,
+            ..
+        } = self;
+        let Some(builder) = builder.as_mut() else {
+            return;
+        };
+        *result = match source {
+            AppendSource::Bytes(data) => builder.add_bytes(path, data, *mtime),
+            AppendSource::Store { store, offset, len } => {
+                let view = store.shared_view();
+                let offset = (*offset).min(view.len());
+                let end = offset.saturating_add(*len).min(view.len());
+                builder.add_bytes(path, &view[offset..end], *mtime)
+            }
+            AppendSource::File {
+                path: source_path,
+                offset,
+                len,
+            } => builder.add_file(path, source_path, *offset, *len, *mtime),
+        };
+    }
+
+    fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult> {
+        let failed = self.result.is_err();
+        // A failed entry leaves a truncated stream behind: drop the builder so
+        // the archive can never be completed.
+        let builder = if failed { None } else { self.builder.take() };
+
+        let this = self.archive.get();
+        if let Some(archive) = this.as_class_ref::<Archive>() {
+            archive.finish_append(global, this, builder);
+        }
+
+        Ok(match core::mem::replace(&mut self.result, Ok(())) {
+            Ok(()) => PromiseResult::Resolve(JSValue::UNDEFINED),
+            Err(err) => PromiseResult::Reject(build_error_to_js(global, err)),
+        })
+    }
+}
+
+pub type AppendTask = AsyncTask<AppendContext>;
 
 // ============================================================================
 // Helpers

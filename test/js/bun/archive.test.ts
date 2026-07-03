@@ -171,11 +171,12 @@ describe("Bun.Archive", () => {
       expect(archive).toBeInstanceOf(Bun.Archive);
     });
 
-    test("throws with no arguments", () => {
-      expect(() => {
-        // @ts-expect-error - testing runtime behavior
-        new Bun.Archive();
-      }).toThrow();
+    test("creates an empty, appendable archive with no arguments", async () => {
+      const archive = new Bun.Archive();
+      expect(archive).toBeInstanceOf(Bun.Archive);
+
+      await archive.append("a.txt", "a");
+      expect((await archive.files()).size).toBe(1);
     });
 
     test("throws with invalid input type (number)", () => {
@@ -1904,6 +1905,300 @@ describe("Bun.Archive", () => {
       const readArchive = new Bun.Archive(await bunFile.bytes());
       const files = await readArchive.files();
       expect(await files.get("test.txt")!.text()).toBe("test content");
+    });
+  });
+
+  describe("zip format", () => {
+    test("writes a zip with the PK local file header magic", async () => {
+      const archive = new Bun.Archive({ "hello.txt": "Hello, World!" }, { format: "zip" });
+      const bytes = await archive.bytes();
+
+      expect(Array.from(bytes.subarray(0, 4))).toEqual([0x50, 0x4b, 0x03, 0x04]);
+    });
+
+    // libarchive zero-pads writes up to its 10240-byte default block, which is
+    // what tar wants and what a zip must not have.
+    test("is not padded to libarchive's block size", async () => {
+      const empty = await new Bun.Archive(undefined, { format: "zip" }).bytes();
+      expect(empty.length).toBe(22); // just the end-of-central-directory record
+
+      const small = await new Bun.Archive({ "a.txt": "a" }, { format: "zip" }).bytes();
+      expect(small.length).toBeLessThan(1024);
+
+      // tar keeps its block padding.
+      expect((await new Bun.Archive({ "a.txt": "a" }).bytes()).length).toBe(10240);
+    });
+
+    test("round-trips through files()", async () => {
+      const zip = await new Bun.Archive(
+        {
+          "hello.txt": "Hello, World!",
+          "nested/data.json": JSON.stringify({ foo: "bar" }),
+        },
+        { format: "zip" },
+      ).bytes();
+
+      const files = await new Bun.Archive(zip).files();
+      expect([...files.keys()].sort()).toEqual(["hello.txt", "nested/data.json"]);
+      expect(await files.get("hello.txt")!.text()).toBe("Hello, World!");
+      expect(await files.get("nested/data.json")!.text()).toBe(JSON.stringify({ foo: "bar" }));
+    });
+
+    test("extracts to disk", async () => {
+      using dir = tempDir("archive-zip-extract", {});
+      const zip = await new Bun.Archive({ "a.txt": "a", "dir/b.txt": "b" }, { format: "zip" }).bytes();
+
+      const count = await new Bun.Archive(zip).extract(String(dir));
+      expect(count).toBeGreaterThanOrEqual(2);
+      expect(await Bun.file(join(String(dir), "a.txt")).text()).toBe("a");
+      expect(await Bun.file(join(String(dir), "dir", "b.txt")).text()).toBe("b");
+    });
+
+    // libarchive's stored-zip reader signals end-of-entry with ARCHIVE_OK and a
+    // null data block, which used to trip a null-pointer slice in extract().
+    test("extracts an uncompressed (stored) zip", async () => {
+      using dir = tempDir("archive-zip-stored-extract", {});
+      const zip = await new Bun.Archive({ "c.txt": "stored entry" }, { format: "zip", compress: "store" }).bytes();
+
+      const count = await new Bun.Archive(zip).extract(String(dir));
+      expect(count).toBe(1);
+      expect(await Bun.file(join(String(dir), "c.txt")).text()).toBe("stored entry");
+    });
+
+    test("deflate is the default and store is larger", async () => {
+      const content = "compress me ".repeat(4096);
+      const deflated = await new Bun.Archive({ "big.txt": content }, { format: "zip" }).bytes();
+      const stored = await new Bun.Archive({ "big.txt": content }, { format: "zip", compress: "store" }).bytes();
+
+      expect(deflated.length).toBeLessThan(stored.length);
+      expect(stored.length).toBeGreaterThan(content.length);
+
+      // Both are still readable.
+      for (const bytes of [deflated, stored]) {
+        const files = await new Bun.Archive(bytes).files();
+        expect(await files.get("big.txt")!.text()).toBe(content);
+      }
+    });
+
+    test("deflate level affects compression ratio", async () => {
+      const content = Buffer.alloc(256 * 1024, "abcdefghij").toString();
+      const level1 = await new Bun.Archive({ "big.txt": content }, { format: "zip", level: 1 }).bytes();
+      const level9 = await new Bun.Archive({ "big.txt": content }, { format: "zip", level: 9 }).bytes();
+
+      expect(level9.length).toBeLessThanOrEqual(level1.length);
+    });
+
+    test("the zip the real unzip(1) would read is also what Bun reads back", async () => {
+      using dir = tempDir("archive-zip-write", {});
+      const path = join(String(dir), "out.zip");
+      await Bun.Archive.write(path, { "x.txt": "x" }, { format: "zip" });
+
+      const bytes = await Bun.file(path).bytes();
+      expect(Array.from(bytes.subarray(0, 2))).toEqual([0x50, 0x4b]);
+      const files = await new Bun.Archive(bytes).files();
+      expect(await files.get("x.txt")!.text()).toBe("x");
+    });
+
+    test("rejects gzip with zip and deflate with tar", () => {
+      expect(() => new Bun.Archive({ "a.txt": "a" }, { format: "zip", compress: "gzip" })).toThrow();
+      // @ts-expect-error - deflate requires format: "zip"
+      expect(() => new Bun.Archive({ "a.txt": "a" }, { compress: "deflate" })).toThrow();
+      // @ts-expect-error - unknown format
+      expect(() => new Bun.Archive({ "a.txt": "a" }, { format: "7z" })).toThrow();
+    });
+  });
+
+  describe("archive.append()", () => {
+    test("appends to an empty archive", async () => {
+      const archive = new Bun.Archive();
+      await archive.append("hello.txt", "Hello, World!");
+      await archive.append("bytes.bin", new Uint8Array([1, 2, 3]));
+      await archive.append("blob.txt", new Blob(["from a blob"]));
+
+      const files = await archive.files();
+      expect([...files.keys()].sort()).toEqual(["blob.txt", "bytes.bin", "hello.txt"]);
+      expect(await files.get("hello.txt")!.text()).toBe("Hello, World!");
+      expect(await files.get("blob.txt")!.text()).toBe("from a blob");
+      expect(new Uint8Array(await files.get("bytes.bin")!.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+    });
+
+    test("appends on top of the object form", async () => {
+      const archive = new Bun.Archive({ "package.json": "{}" });
+      await archive.append("README.md", "# Hello");
+
+      const files = await archive.files();
+      expect([...files.keys()].sort()).toEqual(["README.md", "package.json"]);
+    });
+
+    test("appends into a zip", async () => {
+      const archive = new Bun.Archive(undefined, { format: "zip" });
+      await archive.append("a.txt", "a");
+      await archive.append("b.txt", "b");
+
+      const bytes = await archive.bytes();
+      expect(Array.from(bytes.subarray(0, 4))).toEqual([0x50, 0x4b, 0x03, 0x04]);
+      const files = await new Bun.Archive(bytes).files();
+      expect(await files.get("b.txt")!.text()).toBe("b");
+    });
+
+    test("streams a Bun.file() from disk", async () => {
+      using dir = tempDir("archive-append-file", { "source.bin": "" });
+      const sourcePath = join(String(dir), "source.bin");
+      const content = Buffer.alloc(3 * 1024 * 1024, "xyz");
+      await Bun.write(sourcePath, content);
+
+      const archive = new Bun.Archive();
+      await archive.append("copied.bin", Bun.file(sourcePath));
+
+      const files = await archive.files();
+      const copied = Buffer.from(await files.get("copied.bin")!.arrayBuffer());
+      expect(copied.length).toBe(content.length);
+      expect(copied.equals(content)).toBe(true);
+    });
+
+    test("respects a sliced Bun.file()", async () => {
+      using dir = tempDir("archive-append-slice", { "source.txt": "0123456789" });
+      const sourcePath = join(String(dir), "source.txt");
+
+      const archive = new Bun.Archive();
+      await archive.append("slice.txt", Bun.file(sourcePath).slice(2, 6));
+
+      const files = await archive.files();
+      expect(await files.get("slice.txt")!.text()).toBe("2345");
+    });
+
+    test("preserves order under Promise.all", async () => {
+      const archive = new Bun.Archive();
+      await Promise.all(Array.from({ length: 16 }, (_, i) => archive.append(`f${i}.txt`, String(i))));
+
+      const files = await archive.files();
+      expect([...files.keys()]).toEqual(Array.from({ length: 16 }, (_, i) => `f${i}.txt`));
+    });
+
+    test("throws after the archive has been read", async () => {
+      const archive = new Bun.Archive({ "a.txt": "a" });
+      await archive.bytes();
+
+      expect(() => archive.append("b.txt", "b")).toThrow(/cannot append to existing archive data/);
+    });
+
+    test("throws on an archive created from existing data", async () => {
+      const tar = await new Bun.Archive({ "a.txt": "a" }).bytes();
+      const archive = new Bun.Archive(tar);
+
+      expect(() => archive.append("b.txt", "b")).toThrow();
+    });
+
+    test("throws when reading while an append is still pending", async () => {
+      const archive = new Bun.Archive();
+      const pending = archive.append("a.txt", "a");
+
+      expect(() => archive.bytes()).toThrow(/still in progress/);
+      await pending;
+      expect((await archive.bytes()).length).toBeGreaterThan(0);
+    });
+
+    test("rejects a missing Bun.file() and poisons the archive", async () => {
+      using dir = tempDir("archive-append-missing", {});
+      const archive = new Bun.Archive();
+      await archive.append("ok.txt", "ok");
+
+      await expect(archive.append("gone.bin", Bun.file(join(String(dir), "nope.bin")))).rejects.toThrow(
+        /ENOENT|no such file/i,
+      );
+      // The entry was half-written, so every later read fails too.
+      expect(() => archive.bytes()).toThrow(/can no longer be used/);
+    });
+
+    test("rejects every queued append once one fails", async () => {
+      using dir = tempDir("archive-append-queue-fail", {});
+      const archive = new Bun.Archive();
+
+      // Both settle in the same turn, so attach handlers before awaiting either.
+      const [failing, queued] = await Promise.allSettled([
+        archive.append("gone.bin", Bun.file(join(String(dir), "nope.bin"))),
+        archive.append("never.txt", "never"),
+      ]);
+
+      expect(failing.status).toBe("rejected");
+      expect((failing as PromiseRejectedResult).reason.message).toMatch(/ENOENT|no such file/i);
+      expect(queued.status).toBe("rejected");
+      expect((queued as PromiseRejectedResult).reason.message).toMatch(/can no longer be used/);
+    });
+
+    test("rejects a non-string path", () => {
+      const archive = new Bun.Archive();
+      // @ts-expect-error - path must be a string
+      expect(() => archive.append(123, "a")).toThrow();
+      expect(() => archive.append("", "a")).toThrow();
+    });
+
+    test("rejects unsupported entry data", () => {
+      const archive = new Bun.Archive();
+      // @ts-expect-error - numbers are not valid entry data
+      expect(() => archive.append("a.txt", 123)).toThrow();
+    });
+  });
+
+  describe("spilling to disk", () => {
+    // Spilled output goes to a temp file and is mapped back in, so it has to
+    // describe exactly the same archive as the purely in-memory path.
+    test("maxMemory: 0 produces the same archive as the in-memory path", async () => {
+      const files = { "a.txt": "a".repeat(5000), "b.txt": "b".repeat(5000) };
+      const spilled = await new Bun.Archive(files, { maxMemory: 0 }).bytes();
+      const buffered = await new Bun.Archive(files, { maxMemory: Infinity }).bytes();
+
+      expect(spilled.length).toBe(buffered.length);
+      const entries = await new Bun.Archive(spilled).files();
+      expect([...entries.keys()]).toEqual(["a.txt", "b.txt"]);
+      expect(await entries.get("a.txt")!.text()).toBe(files["a.txt"]);
+      expect(await entries.get("b.txt")!.text()).toBe(files["b.txt"]);
+    });
+
+    test("a spilled archive still extracts, lists, and writes", async () => {
+      using dir = tempDir("archive-spill", {});
+      const archive = new Bun.Archive(undefined, { format: "zip", maxMemory: 0 });
+      await archive.append("a.txt", "a");
+      await archive.append("dir/b.txt", "b");
+
+      const files = await archive.files();
+      expect([...files.keys()].sort()).toEqual(["a.txt", "dir/b.txt"]);
+
+      const out = join(String(dir), "out.zip");
+      await Bun.Archive.write(out, archive);
+      expect(await Bun.file(out).exists()).toBe(true);
+
+      const extractDir = join(String(dir), "extracted");
+      expect(await new Bun.Archive(await Bun.file(out).bytes()).extract(extractDir)).toBeGreaterThanOrEqual(2);
+      expect(await Bun.file(join(extractDir, "a.txt")).text()).toBe("a");
+    });
+
+    test("Bun.write accepts a spilled archive", async () => {
+      using dir = tempDir("archive-spill-write", {});
+      const out = join(String(dir), "out.tar");
+      const archive = new Bun.Archive({ "a.txt": "hello" }, { maxMemory: 0 });
+
+      await Bun.write(out, archive);
+      const files = await new Bun.Archive(await Bun.file(out).bytes()).files();
+      expect(await files.get("a.txt")!.text()).toBe("hello");
+    });
+
+    test("a 12MB archive spills and round-trips", async () => {
+      const chunk = Buffer.alloc(1024 * 1024, "z").toString();
+      const archive = new Bun.Archive(undefined, { maxMemory: 1024 * 1024 });
+      for (let i = 0; i < 12; i++) {
+        await archive.append(`chunk-${i}.txt`, chunk);
+      }
+
+      const files = await archive.files();
+      expect(files.size).toBe(12);
+      expect((await files.get("chunk-11.txt")!.text()).length).toBe(chunk.length);
+    });
+
+    test("rejects an invalid maxMemory", () => {
+      expect(() => new Bun.Archive({}, { maxMemory: -1 })).toThrow();
+      // @ts-expect-error - maxMemory must be a number
+      expect(() => new Bun.Archive({}, { maxMemory: "lots" })).toThrow();
     });
   });
 

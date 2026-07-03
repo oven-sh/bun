@@ -8987,15 +8987,27 @@ declare module "bun" {
   type ArchiveInput = Record<string, BlobPart> | Blob | ArrayBufferView | ArrayBufferLike;
 
   /**
-   * Compression format for archive output.
-   * Only `"gzip"` is supported.
+   * Container format written by `new Bun.Archive()`.
+   * Reading auto-detects tar, tar.gz, and zip regardless of this option.
+   *
+   * @default "tar"
    */
-  type ArchiveCompression = "gzip";
+  type ArchiveFormat = "tar" | "zip";
+
+  /**
+   * Compression for archive output.
+   *
+   * - `"gzip"` compresses the finished tar archive (`format: "tar"` only).
+   * - `"deflate"` compresses each zip entry (`format: "zip"` only, the default).
+   * - `"store"` writes zip entries uncompressed (`format: "zip"` only).
+   */
+  type ArchiveCompression = "gzip" | "deflate" | "store";
 
   /**
    * Options for creating an Archive instance.
    *
-   * By default, archives are not compressed. Use `{ compress: "gzip" }` to enable compression.
+   * tar archives are uncompressed unless `{ compress: "gzip" }` is passed.
+   * zip archives deflate each entry unless `{ compress: "store" }` is passed.
    *
    * @example
    * ```ts
@@ -9005,26 +9017,46 @@ declare module "bun" {
    * // Enable gzip with default level (6)
    * new Bun.Archive(data, { compress: "gzip" });
    *
-   * // Specify compression level
-   * new Bun.Archive(data, { compress: "gzip", level: 9 });
+   * // A deflated zip
+   * new Bun.Archive(data, { format: "zip" });
    * ```
    */
   interface ArchiveOptions {
     /**
+     * Container format to write.
+     *
+     * @default "tar"
+     */
+    format?: ArchiveFormat;
+    /**
      * Compression algorithm to use.
-     * Only `"gzip"` is supported.
-     * If not specified, no compression is applied.
+     *
+     * With `format: "tar"` the only valid value is `"gzip"`, and tar archives
+     * are uncompressed when it is omitted.
+     *
+     * With `format: "zip"` the valid values are `"deflate"` (the default) and
+     * `"store"`.
      */
     compress?: ArchiveCompression;
     /**
-     * Compression level (1-12). Only applies when `compress` is set.
-     * - 1: Fastest compression, lowest ratio
-     * - 6: Default balance of speed and ratio
-     * - 12: Best compression ratio, slowest
+     * Compression level. `1` is fastest, the maximum is smallest.
+     *
+     * The range is 1-12 for `"gzip"` and 1-9 for `"deflate"`. Ignored when no
+     * compression is used.
      *
      * @default 6
      */
     level?: number;
+    /**
+     * Bytes of archive output to keep in memory before spilling to a temporary
+     * file. The temporary file is removed when the archive is garbage collected.
+     *
+     * Set to `Infinity` to never spill, or to `0` to always write to disk. Only
+     * applies to archives you build (from an object, or with `append()`).
+     *
+     * @default 64 * 1024 * 1024
+     */
+    maxMemory?: number;
   }
 
   /**
@@ -9064,10 +9096,11 @@ declare module "bun" {
   }
 
   /**
-   * Create and extract tar archives, with optional gzip compression.
+   * Create and extract tar and zip archives.
    *
-   * `Bun.Archive` builds an archive from in-memory data, or wraps an existing
-   * archive so you can extract it to disk or memory.
+   * `Bun.Archive` builds an archive from in-memory data, streams entries into
+   * one with `append()`, or wraps an existing archive so you can extract it to
+   * disk or memory. Reading auto-detects tar, tar.gz, and zip.
    *
    * @example
    * **Create an archive from an object:**
@@ -9156,7 +9189,7 @@ declare module "bun" {
      * const archive = new Bun.Archive(await response.blob());
      * ```
      */
-    constructor(data: ArchiveInput, options?: ArchiveOptions);
+    constructor(data?: ArchiveInput, options?: ArchiveOptions);
 
     /**
      * Create an archive and write it to disk in one operation.
@@ -9324,6 +9357,46 @@ declare module "bun" {
      * ```
      */
     files(glob?: string | readonly string[]): Promise<Map<string, File>>;
+
+    /**
+     * Add one more entry to an archive that is still being built, streaming its
+     * contents rather than buffering them.
+     *
+     * Only archives created from an object, or from no data at all, can be
+     * appended to, and only until their bytes are first read (by `bytes()`,
+     * `blob()`, `files()`, `extract()`, or `Bun.write()`). Appending to an
+     * `Archive` wrapping existing archive data throws.
+     *
+     * Appends are applied in call order. Passing a `Bun.file()` reads it from
+     * disk a chunk at a time, so a file larger than memory can be added. If an
+     * `append()` rejects, the archive is left truncated and can no longer be used.
+     *
+     * Entries are written with mode `0644` and the current time as their
+     * modification time.
+     *
+     * @param path - Path of the entry inside the archive
+     * @param data - Entry contents
+     * @returns A promise that resolves once the entry has been written
+     *
+     * @example
+     * **Build a zip without holding it in memory:**
+     * ```ts
+     * const archive = new Bun.Archive(undefined, { format: "zip" });
+     * for (const path of paths) {
+     *   await archive.append(path, Bun.file(path));
+     * }
+     * await Bun.Archive.write("bundle.zip", archive);
+     * ```
+     *
+     * @example
+     * **Append to an archive seeded from an object:**
+     * ```ts
+     * const archive = new Bun.Archive({ "package.json": pkg });
+     * await archive.append("README.md", "# Hello");
+     * const bytes = await archive.bytes();
+     * ```
+     */
+    append(path: string, data: string | Blob | Bun.ArrayBufferView | ArrayBufferLike): Promise<void>;
   }
 
   /**

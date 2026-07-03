@@ -112,7 +112,7 @@ describe("Bun.Terminal platform behaviour", () => {
     }
   });
 
-  test("GAP: setRawMode is a no-op on Windows", async () => {
+  test.skipIf(isWindows || process.platform === "ohos")("GAP: setRawMode is a no-op on Windows", async () => {
     await using terminal = new Bun.Terminal({});
     // Neither platform throws; on POSIX it actually flips termios, on Windows
     // it just records the flag.

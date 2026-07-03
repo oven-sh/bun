@@ -918,6 +918,20 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
     let master_fd_desc = Fd::from_native(master_fd);
     let slave_fd_desc = Fd::from_native(slave_fd);
 
+    // OHOS: openpty may not propagate the initial winsize to the slave.
+    // Set it explicitly on the slave so child's TIOCGWINSZ sees it.
+    #[cfg(target_env = "ohos")]
+    {
+        const TIOCSWINSZ: c_ulong = 0x5414;
+        unsafe {
+            libc::ioctl(
+                slave_fd,
+                TIOCSWINSZ as _,
+                &raw const winsize,
+            );
+        }
+    }
+
     // Configure sensible terminal defaults matching node-pty behavior.
     // These are "cooked mode" defaults that most terminal applications expect.
     match sys::posix::tcgetattr(slave_fd) {

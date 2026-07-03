@@ -1,5 +1,6 @@
 import { file, spawn, version } from "bun";
 import { describe, expect, test } from "bun:test";
+import { randomFillSync } from "crypto";
 import { bunEnv, bunExe, exampleSite } from "harness";
 
 const exampleServer = exampleSite("http");
@@ -35,6 +36,9 @@ const bufferTypes = [
   Float32Array,
   Float64Array,
 ];
+
+// crypto.getRandomValues() only accepts integer-typed views of at most 65536 bytes.
+const fillRandom = <T>(buffer: T): T => randomFillSync(buffer as any) as T;
 
 const utf8 = [
   {
@@ -82,11 +86,11 @@ for (const { body, fn } of bodyTypes) {
           },
           {
             label: "small buffer",
-            buffer: () => crypto.getRandomValues(new bufferType(1_000)),
+            buffer: () => fillRandom(new bufferType(1_000)),
           },
           {
             label: "large buffer",
-            buffer: () => crypto.getRandomValues(new bufferType(1_000_000)),
+            buffer: () => fillRandom(new bufferType(1_000_000)),
           },
         ];
         describe(bufferType.name, () => {

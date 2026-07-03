@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
+import { randomFillSync } from "node:crypto";
 import { join } from "node:path";
 import { brotliDecompressSync, gunzipSync, inflateSync, zstdDecompressSync } from "node:zlib";
 
@@ -209,7 +210,8 @@ describe("fetch compress option", () => {
         });
       },
     });
-    const big = crypto.getRandomValues(Buffer.alloc(600 * 1024));
+    // crypto.getRandomValues() is capped at 65536 bytes per the WebCrypto spec.
+    const big = randomFillSync(Buffer.alloc(600 * 1024));
     const res = await fetch(server.url, {
       method: "POST",
       body: big,

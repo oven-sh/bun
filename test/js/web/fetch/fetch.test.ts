@@ -51,9 +51,6 @@ afterAll(() => {
   httpsServer.stop();
 });
 
-const payload = new Uint8Array(1024 * 1024 * 2);
-crypto.getRandomValues(payload);
-
 it("new Request(invalid url) throws", () => {
   expect(() => new Request("http")).toThrow();
   expect(() => new Request("")).toThrow();

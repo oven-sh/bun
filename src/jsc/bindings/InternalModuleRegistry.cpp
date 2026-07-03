@@ -9,9 +9,9 @@
 #include <JavaScriptCore/Debugger.h>
 #include <utility>
 
-#include "InternalModuleRegistryConstants.h"
 #include "wtf/Forward.h"
 
+#include "BuiltinModuleBytecode.h"
 #include "NativeModuleImpl.h"
 namespace Bun {
 
@@ -29,27 +29,29 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 #endif
 }
 
-// The `INTERNAL_MODULE_REGISTRY_GENERATE` macro handles inlining code to compile and run a
-// JS builtin that acts as a module. In debug mode, we use a different implementation that reads
-// from the developer's filesystem. This allows reloading code without recompiling bindings.
-
-JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, const String& SOURCE, const String& moduleName, const String& urlString)
+// Compiles and runs a JS builtin that acts as a module. The source, the `builtin://` origin
+// and the module name all come from `BuiltinModuleBytecode.cpp` so that this and the
+// bytecode cache generator build an identical SourceCode — a mismatch would silently turn
+// every cache lookup into a miss. Debug builds read the source off disk, which is what lets
+// you edit `src/js` without relinking.
+JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, unsigned moduleId)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto&& origin = SourceOrigin(WTF::URL(urlString));
-    SourceCode source = JSC::makeSource(SOURCE, origin, JSC::SourceTaintedOrigin::Untainted, moduleName);
+    String moduleName = builtinModuleName(moduleId);
+    SourceCode source = builtinModuleSourceCode(vm, moduleId, builtinModuleSource(moduleId));
     maybeAddCodeCoverage(vm, source);
+
+    // `bun build --compile --bytecode` embeds a cache entry for every builtin the app can
+    // reach. When it is absent or stale we fall through to parsing, which is what every
+    // other build does.
+    UnlinkedFunctionExecutable* unlinkedExecutable = decodeBuiltinModuleBytecode(globalObject, vm, source, moduleName, moduleId);
+    if (!unlinkedExecutable)
+        unlinkedExecutable = createBuiltinModuleExecutable(vm, source, moduleName);
+
     JSFunction* func
         = JSFunction::create(
             vm, globalObject,
-            createBuiltinExecutable(
-                vm, source,
-                Identifier::fromString(vm, moduleName),
-                ImplementationVisibility::Public,
-                ConstructorKind::None,
-                ConstructAbility::CannotConstruct,
-                InlineAttribute::None)
-                ->link(vm, nullptr, source),
+            unlinkedExecutable->link(vm, nullptr, source),
             static_cast<JSC::JSGlobalObject*>(globalObject));
 
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -96,28 +98,6 @@ ALWAYS_INLINE JSC::JSValue generateNativeModule(
     ASSERT(defaultValue);
     return defaultValue;
 }
-
-#ifdef BUN_DYNAMIC_JS_LOAD_PATH
-JSValue initializeInternalModuleFromDisk(JSGlobalObject* globalObject, VM& vm, const WTF::String& moduleName, WTF::String fileBase, const WTF::String& urlString)
-{
-    WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, WTF::move(fileBase));
-    if (auto contents = WTF::FileSystemImpl::readEntireFile(file)) {
-        auto string = WTF::String::fromUTF8(contents.value());
-        return generateModule(globalObject, vm, string, moduleName, urlString);
-    } else {
-        printf("\nFATAL: bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
-               "Please re-compile Bun to continue.\n\n",
-            moduleName.utf8().span().data(), file.utf8().span().data());
-        CRASH();
-    }
-}
-#define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, SOURCE, urlString) \
-    return initializeInternalModuleFromDisk(globalObject, vm, moduleId, filename, urlString)
-#else
-
-#define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, SOURCE, urlString) \
-    return generateModule(globalObject, vm, SOURCE, moduleId, urlString)
-#endif
 
 const ClassInfo InternalModuleRegistry::s_info = { "InternalModuleRegistry"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(InternalModuleRegistry) };
 
@@ -190,5 +170,3 @@ JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsCreateInternalModuleById, (JS
 }
 
 } // namespace Bun
-
-#undef INTERNAL_MODULE_REGISTRY_GENERATE

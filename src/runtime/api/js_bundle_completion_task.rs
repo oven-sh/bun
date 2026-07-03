@@ -278,7 +278,11 @@ impl JSBundleCompletionTask {
     }
 
     /// Port of `JSBundleCompletionTask.doCompilation`.
-    fn do_compilation(&mut self, output_files: &mut Vec<OutputFile>) -> CompileResult {
+    fn do_compilation(
+        &mut self,
+        output_files: &mut Vec<OutputFile>,
+        builtin_bytecode: &[(u32, Box<[u8]>)],
+    ) -> CompileResult {
         let compile_options = self
             .config
             .compile
@@ -424,6 +428,7 @@ impl JSBundleCompletionTask {
                 Some(&compile_options.executable_path.list)
             },
             flags,
+            builtin_bytecode,
         ) {
             Ok(r) => r,
             Err(err) => {
@@ -579,12 +584,15 @@ impl JSBundleCompletionTask {
         // `&mut output_files` from inside `self.result`. Temporarily move the
         // Vec out via `take` so the method gets a disjoint `&mut self`.
         if matches!(this.result, BundleV2Result::Value(_)) && this.config.compile.is_some() {
-            let mut output_files = match &mut this.result {
-                BundleV2Result::Value(build) => core::mem::take(&mut build.output_files),
+            let (mut output_files, builtin_bytecode) = match &mut this.result {
+                BundleV2Result::Value(build) => (
+                    core::mem::take(&mut build.output_files),
+                    core::mem::take(&mut build.builtin_bytecode),
+                ),
                 // SAFETY: arm checked above.
                 _ => unsafe { core::hint::unreachable_unchecked() },
             };
-            let compile_result = this.do_compilation(&mut output_files);
+            let compile_result = this.do_compilation(&mut output_files, &builtin_bytecode);
             // `defer compile_result.deinit()` — `CompileResult` is a Rust enum
             // with owned `Vec<u8>` payloads; drops at end of scope.
 
@@ -897,6 +905,10 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.output_format = config.format;
         transpiler.options.bytecode = config.bytecode;
         transpiler.options.compile = config.compile.is_some();
+        transpiler.options.compile_target_is_host = config
+            .compile
+            .as_ref()
+            .is_some_and(|compile| compile.compile_target.is_default());
 
         // For compile mode, set the public_path to the target-specific base path
         // This ensures embedded resources like yoga.wasm are correctly found

@@ -11,13 +11,44 @@ use core::ptr::NonNull;
 /// caller's stack would be a Stacked-Borrows violation. With `Cell` the whole
 /// re-entrancy path is `&MaxBuf`-only and the aliasing question disappears.
 pub struct MaxBuf {
-    /// `false` after subprocess finalize.
-    pub owned_by_subprocess: Cell<bool>,
+    /// The owning `Subprocess` (plus how to notify it), or `.none` after
+    /// subprocess finalize. See [`OwningSubprocess`]. Private: `dispatch_overflow`
+    /// reads the stored `on_max_buffer` fn from it and calls it, so letting safe
+    /// code write this field would bypass the `unsafe` `create_for_subprocess`
+    /// contract. Only ever touched inside this module.
+    owned_by_subprocess: Cell<OwningSubprocess>,
     /// `false` after pipereader finalize.
     pub owned_by_reader: Cell<bool>,
     /// If this goes negative, `on_max_buffer` is called on the subprocess.
     pub remaining_bytes: Cell<i64>,
     // (once both are cleared, it is freed)
+}
+
+/// The owning `Subprocess` of a [`MaxBuf`], carried on the `MaxBuf` itself so
+/// the overflow kill survives the pipe being handed to a `FileReader` (whose
+/// own vtable has no subprocess back-reference) when stdout/stderr is read as a
+/// `ReadableStream`. Erased (`NonNull<()>`) because `Subprocess` lives in the
+/// downstream `bun_runtime` crate; `on_max_buffer` recovers the concrete type.
+#[derive(Copy, Clone)]
+pub enum OwningSubprocess {
+    /// Subprocess has disowned this `MaxBuf` (finalize / spawn error / overflow).
+    None,
+    /// Live back-pointer to the subprocess plus the fn that kills it — the same
+    /// `BufferedReaderParentLink::on_max_buffer_overflow` dispatch, reached from
+    /// the `MaxBuf` instead of the reader's vtable.
+    Owned {
+        ptr: NonNull<()>,
+        on_max_buffer: unsafe fn(NonNull<()>, NonNull<MaxBuf>),
+    },
+}
+
+impl OwningSubprocess {
+    fn is_some(self) -> bool {
+        matches!(self, OwningSubprocess::Owned { .. })
+    }
+    fn is_none(self) -> bool {
+        matches!(self, OwningSubprocess::None)
+    }
 }
 
 // TODO(refactor): LIFETIMES.tsv classifies the caller fields (Subprocess.{stdout,stderr}_maxbuf,
@@ -39,20 +70,28 @@ impl MaxBuf {
         unsafe { this.as_ref() }
     }
 
-    pub fn create_for_subprocess(ptr: &mut Option<NonNull<MaxBuf>>, initial: Option<i64>) {
+    /// # Safety
+    /// `owner.ptr` must stay live until `remove_from_subprocess` clears it (on
+    /// finalize, spawn error, or overflow); on overflow `owner.on_max_buffer` is
+    /// called with it. The pairing cannot be checked here, hence `unsafe`.
+    pub unsafe fn create_for_subprocess(
+        owner: OwningSubprocess,
+        ptr: &mut Option<NonNull<MaxBuf>>,
+        initial: Option<i64>,
+    ) {
         let Some(initial) = initial else {
             *ptr = None;
             return;
         };
         *ptr = Some(bun_core::heap::into_raw_nn(Box::new(MaxBuf {
-            owned_by_subprocess: Cell::new(true),
+            owned_by_subprocess: Cell::new(owner),
             owned_by_reader: Cell::new(false),
             remaining_bytes: Cell::new(initial),
         })));
     }
 
     fn disowned(&self) -> bool {
-        !self.owned_by_subprocess.get() && !self.owned_by_reader.get()
+        self.owned_by_subprocess.get().is_none() && !self.owned_by_reader.get()
     }
 
     /// Module-private teardown. Safe `fn` because the precondition is the
@@ -72,8 +111,8 @@ impl MaxBuf {
     pub fn remove_from_subprocess(ptr: &mut Option<NonNull<MaxBuf>>) {
         let Some(this_nn) = *ptr else { return };
         let this = Self::live(&this_nn);
-        debug_assert!(this.owned_by_subprocess.get());
-        this.owned_by_subprocess.set(false);
+        debug_assert!(this.owned_by_subprocess.get().is_some());
+        this.owned_by_subprocess.set(OwningSubprocess::None);
         *ptr = None;
         if this.disowned() {
             MaxBuf::destroy(this_nn);
@@ -128,7 +167,22 @@ impl MaxBuf {
         let delta = i64::try_from(bytes).unwrap_or(0);
         let remaining = this.remaining_bytes.get().checked_sub(delta).unwrap_or(-1);
         this.remaining_bytes.set(remaining);
-        remaining < 0 && this.owned_by_subprocess.get()
+        remaining < 0 && this.owned_by_subprocess.get().is_some()
+    }
+
+    /// Kill the owning subprocess after an overflow. The
+    /// `BufferedReaderParentLink::on_max_buffer_overflow` handler calls this; the
+    /// dispatch fn is read off the `MaxBuf` (not the reader), so it fires whether
+    /// the pipe is still read by its `SubprocessPipeReader` or by a `FileReader`.
+    pub fn dispatch_overflow(this: NonNull<MaxBuf>) {
+        if let OwningSubprocess::Owned { ptr, on_max_buffer } =
+            Self::live(&this).owned_by_subprocess.get()
+        {
+            // SAFETY: `ptr`/`on_max_buffer` were paired in `create_for_subprocess`
+            // and cleared in `remove_from_subprocess`; the subprocess outlives its
+            // `MaxBuf` slot, so `ptr` is live while the variant is `Owned`.
+            unsafe { on_max_buffer(ptr, this) };
+        }
     }
 }
 

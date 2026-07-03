@@ -51,6 +51,70 @@ describe("yes is killed", () => {
   });
 });
 
+describe("maxBuffer kills the child when stdout/stderr is read as a stream", () => {
+  // The child writes 8 MiB — far above `maxBuffer` and the OS pipe buffer, so it
+  // blocks on backpressure long before it finishes. Reading the stream *before*
+  // `await proc.exited` exercises the path where the pipe's BufferedReader has
+  // been transferred to a FileReader (whose vtable has no Subprocess
+  // back-reference), so the kill must dispatch through MaxBuf's own subprocess
+  // back-pointer. Without the fix the child is never killed, runs to completion,
+  // and the stream resolves with the full 8 MiB (> 1 MiB, exit code 0) — the
+  // SIGTERM / size assertions then fail promptly instead of the test hanging.
+  const producer = "for(let i=0;i<8192;i++)process.stdout.write(Buffer.alloc(1024,120))";
+  const producerErr = "for(let i=0;i<8192;i++)process.stderr.write(Buffer.alloc(1024,120))";
+
+  test.concurrent("new Response(proc.stdout).text()", async () => {
+    const proc = Bun.spawn([bunExe(), "-e", producer], {
+      maxBuffer: 1000,
+      stdout: "pipe",
+    });
+    const text = await new Response(proc.stdout).text();
+    await proc.exited;
+    expect(text.length).toBeGreaterThan(0);
+    expect(text.length).toBeLessThan(1_000_000);
+    expect(proc.signalCode).toBe("SIGTERM");
+    expect(proc.exitCode).toBe(null);
+  });
+
+  test.concurrent("proc.stdout.text()", async () => {
+    const proc = Bun.spawn([bunExe(), "-e", producer], {
+      maxBuffer: 1000,
+      stdout: "pipe",
+    });
+    const text = await proc.stdout.text();
+    await proc.exited;
+    expect(text.length).toBeGreaterThan(0);
+    expect(text.length).toBeLessThan(1_000_000);
+    expect(proc.signalCode).toBe("SIGTERM");
+    expect(proc.exitCode).toBe(null);
+  });
+
+  test.concurrent("new Response(proc.stderr).text()", async () => {
+    const proc = Bun.spawn([bunExe(), "-e", producerErr], {
+      maxBuffer: 1000,
+      stderr: "pipe",
+    });
+    const text = await new Response(proc.stderr).text();
+    await proc.exited;
+    expect(text.length).toBeGreaterThan(0);
+    expect(text.length).toBeLessThan(1_000_000);
+    expect(proc.signalCode).toBe("SIGTERM");
+    expect(proc.exitCode).toBe(null);
+  });
+
+  test.concurrent("under-limit streaming read returns full output", async () => {
+    const proc = Bun.spawn([bunExe(), "-e", "process.stdout.write(Buffer.alloc(500,120))"], {
+      maxBuffer: 1000,
+      stdout: "pipe",
+    });
+    const text = await new Response(proc.stdout).text();
+    await proc.exited;
+    expect(text.length).toBe(500);
+    expect(proc.signalCode).toBe(null);
+    expect(proc.exitCode).toBe(0);
+  });
+});
+
 describe("maxBuffer infinity does not limit the number of bytes", () => {
   const sample = "this is a long example string\n";
   const sample_repeat_count = 10000;

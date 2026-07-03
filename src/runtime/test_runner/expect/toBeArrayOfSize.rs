@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
+use super::ready_or_defer;
 
 // Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
 // `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
@@ -13,7 +14,6 @@ pub(crate) fn to_be_array_of_size(
     // post-match guard instead.
     let this = this.post_match_guard(global);
 
-    let this_value = frame.this();
     let _arguments = frame.arguments_old::<1>();
     let arguments = &_arguments.ptr[0.._arguments.len];
 
@@ -21,8 +21,8 @@ pub(crate) fn to_be_array_of_size(
         return Err(global.throw_invalid_arguments(format_args!("toBeArrayOfSize() requires 1 argument")));
     }
 
-    let value: JSValue = this.get_value(global, this_value, "toBeArrayOfSize", "")?;
-
+    // Argument validation stays ahead of `get_value`: a `Deferred` result has already
+    // registered a pending deferral, so nothing fallible may sit between it and its unwrap.
     let size = arguments[0];
     size.ensure_still_alive();
 
@@ -31,6 +31,7 @@ pub(crate) fn to_be_array_of_size(
     }
 
     this.increment_expect_call_counter();
+    let value = ready_or_defer!(this.get_value(global, frame, "toBeArrayOfSize", "")?);
 
     let not = this.flags.get().not();
     let mut pass = value.js_type().is_array()

@@ -1,5 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
+use super::ready_or_defer;
 
 // Matches ' ' and '\t'..'\r' (0x09–0x0D) — includes VT (0x0B), which Rust's
 // u8::is_ascii_whitespace does not.
@@ -16,7 +17,7 @@ pub(crate) fn to_equal_ignoring_whitespace(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     let (this, value, not) =
-        this.matcher_prelude(global, frame.this(), "toEqualIgnoringWhitespace", "<green>expected<r>")?;
+        ready_or_defer!(this.matcher_prelude(global, frame, "toEqualIgnoringWhitespace", "<green>expected<r>")?);
 
     let arguments_ = frame.arguments_old::<1>(); let arguments: &[JSValue] = arguments_.slice();
 

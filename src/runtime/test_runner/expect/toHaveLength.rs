@@ -2,6 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
 use super::get_signature;
+use super::ready_or_defer;
 
 pub(crate) fn to_have_length(
     this: &Expect,
@@ -9,7 +10,7 @@ pub(crate) fn to_have_length(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     let (this, value, not) =
-        this.matcher_prelude(global, frame.this(), "toHaveLength", "<green>expected<r>")?;
+        ready_or_defer!(this.matcher_prelude(global, frame, "toHaveLength", "<green>expected<r>")?);
 
     let arguments_ = frame.arguments_old::<1>();
     let arguments = arguments_.slice();

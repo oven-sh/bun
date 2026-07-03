@@ -7,9 +7,10 @@
 // next unrelated timer happens to wake the loop.
 //
 // The drop happens when a poll callback re-enters `us_loop_run_bun_tick`
-// (e.g. `expect(p).resolves` → `waitForPromise` → `autoTick`), which
-// overwrites the shared `loop->ready_polls` / `num_ready_polls` /
-// `current_ready_poll` while the outer dispatch is still mid-iteration.
+// (e.g. an `HTMLRewriter.transform` with an async handler → `waitForPromise`
+// → `autoTick`), which overwrites the shared `loop->ready_polls` /
+// `num_ready_polls` / `current_ready_poll` while the outer dispatch is
+// still mid-iteration.
 // The outer loop resumes with the inner tick's indices and silently skips
 // its own remaining events.
 //
@@ -20,7 +21,7 @@
 // Fix: register the pidfd level-triggered (no EPOLLONESHOT). A pidfd stays
 // readable from process exit until close, so a dropped ready_polls slot is
 // harmless — the next epoll_wait returns it again.
-import { expect, test } from "bun:test";
+import { test } from "bun:test";
 import { isLinux } from "harness";
 
 // pidfd path is Linux-only; macOS/FreeBSD use EVFILT_PROC which is keyed
@@ -45,16 +46,23 @@ test.skipIf(!isLinux)(
         stderr: "ignore",
         onExit() {
           // First onExit to run forces a synchronous nested tick of the
-          // main uws loop. Bun.sleep(1) resolves via the timer queue, which
-          // only drains inside autoTick() AFTER us_loop_run_bun_tick — so
-          // waitForPromise must enter autoTick → epoll_wait to resolve it.
+          // main uws loop. HTMLRewriter's synchronous transform() with an
+          // async element handler must waitForPromise on Bun.sleep(1), which
+          // resolves via the timer queue that only drains inside autoTick()
+          // AFTER us_loop_run_bun_tick — so it enters autoTick → epoll_wait.
           // That overwrites the outer dispatch's ready_polls state; any
           // sibling pidfd events queued after this one in the outer batch
           // are dropped. With EPOLLONESHOT those pidfds are now disarmed in
           // the kernel with no re-arm path.
           if (!nested) {
             nested = true;
-            expect(Bun.sleep(1)).resolves.toBe(undefined);
+            new HTMLRewriter()
+              .on("p", {
+                async element() {
+                  await Bun.sleep(1);
+                },
+              })
+              .transform("<p>x</p>");
           }
           resolve();
         },

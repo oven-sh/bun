@@ -155,6 +155,22 @@ pub struct ExecutionSequence {
     pub started_at: Timespec,
     /// Number of expect() calls observed in this sequence.
     pub expect_call_count: u32,
+    /// Deferred matcher promises (`.resolves`/`.rejects`, async `toThrow`, async custom
+    /// matchers) registered on this sequence that have not settled yet. The sequence does
+    /// not complete while this is nonzero (see [`Execution::finish_sequence`]). Like
+    /// `expect_call_count`, this is only tracked when the owning sequence is resolvable
+    /// (`get_current_state_data()` with `entry_data: Some`); `test.concurrent` groups
+    /// cannot resolve a single sequence, so per-test tracking degrades the same way.
+    pub pending_matcher_promises: u32,
+    /// Generation for `pending_matcher_promises`: captured by [`Self::register_matcher_promise`],
+    /// checked by [`Self::settle_matcher_promise`]. Monotonic for the lifetime of the slot
+    /// (bumped by the timeout-abandon path and by every retry/repeat `reset_sequence`), so a
+    /// settlement from an abandoned or previous attempt never touches a later attempt's counter.
+    pub matcher_epoch: u32,
+    /// The sequence ran out of entries while `pending_matcher_promises > 0`: completion
+    /// was deferred and is driven by `step_deferred_completion` once the promises settle
+    /// or the per-test timeout fires.
+    pub completion_deferred: bool,
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
     pub expect_assertions: ExpectAssertions,
     pub maybe_skip: bool,
@@ -188,6 +204,9 @@ impl ExecutionSequence {
             executing: false,
             started_at: Timespec::EPOCH,
             expect_call_count: 0,
+            pending_matcher_promises: 0,
+            matcher_epoch: 0,
+            completion_deferred: false,
             expect_assertions: ExpectAssertions::NotSet,
             maybe_skip: false,
         }
@@ -195,6 +214,30 @@ impl ExecutionSequence {
 
     pub(crate) fn flaky_attempts(&self) -> &[FlakyAttempt] {
         &self.flaky_attempts_buf[0..self.flaky_attempt_count]
+    }
+
+    /// Count a deferred matcher promise (`.resolves`, async `toThrow`, async custom matcher)
+    /// so the sequence does not complete until it settles. Returns the epoch the settle
+    /// reaction must hand back to [`Self::settle_matcher_promise`].
+    pub fn register_matcher_promise(&mut self) -> u32 {
+        self.pending_matcher_promises += 1;
+        self.matcher_epoch
+    }
+
+    /// Release one registration made at `epoch`. Returns whether the caller must wake the
+    /// runner (via `RefDataValue::Start` — a parked sequence has `active_entry == None`, so
+    /// `get_current_and_valid_execution_sequence` rejects `Execution` refdata for it).
+    /// Stale settlements (abandoned by the per-test timeout, or from a previous retry/repeat
+    /// attempt of this slot) fail the epoch check and are ignored.
+    pub fn settle_matcher_promise(&mut self, epoch: u32) -> bool {
+        if epoch != self.matcher_epoch {
+            return false;
+        }
+        // The epoch matched, so this registration was neither abandoned nor reset away and
+        // is still counted; a promise reaction settles at most once.
+        debug_assert!(self.pending_matcher_promises > 0);
+        self.pending_matcher_promises -= 1;
+        self.pending_matcher_promises == 0 && self.completion_deferred
     }
 
     fn entry_mode(&self) -> ScopeMode {
@@ -533,48 +576,81 @@ impl Execution {
         }
 
         if sequence.active_entry.is_none() {
-            // just completed the sequence
-            let test_failed = sequence.result.is_fail();
-            let test_passed = sequence.result.is_pass(PendingIs::PendingIsPass);
-
-            // Handle retry logic: if test failed and we have retries remaining, retry it
-            if test_failed && sequence.remaining_retry_count > 0 {
-                if sequence.flaky_attempt_count < ExecutionSequence::MAX_FLAKY_ATTEMPTS {
-                    let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
-                        0
-                    } else {
-                        sequence.started_at.since_now_force_real_time()
-                    };
-                    sequence.flaky_attempts_buf[sequence.flaky_attempt_count] = FlakyAttempt {
-                        result: sequence.result,
-                        elapsed_ns,
-                    };
-                    sequence.flaky_attempt_count += 1;
-                }
-                sequence.remaining_retry_count -= 1;
-                Execution::reset_sequence(sequence);
+            // The sequence ran out of entries; it only completes once every deferred matcher
+            // promise has settled. `step_deferred_completion` finishes it (or times it out).
+            // While parked here `active_entry` is None, so an `Execution` refdata can never
+            // re-step it (`get_current_and_valid_execution_sequence` rejects it as outdated):
+            // the settle reaction must wake the runner with `RefDataValue::Start`.
+            if sequence.pending_matcher_promises > 0 {
+                group_log::log(format_args!(
+                    "advanceSequence: deferring completion; {} pending matcher promise(s)",
+                    sequence.pending_matcher_promises
+                ));
+                sequence.completion_deferred = true;
                 return;
             }
-
-            // Handle repeat logic: if test passed and we have repeats remaining, repeat it
-            if test_passed && sequence.remaining_repeat_count > 0 {
-                sequence.remaining_repeat_count -= 1;
-                Execution::reset_sequence(sequence);
-                return;
-            }
-
-            // Only report the final result after all retries/repeats are done
-            Execution::on_sequence_completed(buntest, sequence);
-
-            // No more retries or repeats; mark sequence as complete
-            // SAFETY: group_ptr points into `buntest.execution.groups`, disjoint from `sequence`.
-            let group = unsafe { &mut *group_ptr.as_ptr() };
-            if group.remaining_incomplete_entries == 0 {
-                debug_assert!(false); // remaining_incomplete_entries should never go below 0
-                return;
-            }
-            group.remaining_incomplete_entries -= 1;
+            Execution::finish_sequence(buntest, sequence_ptr, group_ptr);
         }
+    }
+
+    /// Retry/repeat handling, final reporting, and group accounting for a sequence with no
+    /// entries left and no pending matcher promises. Reached from [`Execution::advance_sequence`]
+    /// (immediate completion) and `step_deferred_completion` (deferred completion).
+    ///
+    /// `sequence_ptr` / `group_ptr` carry the same raw-pointer contract as `advance_sequence`.
+    fn finish_sequence(
+        buntest: NonNull<BunTest>,
+        sequence_ptr: NonNull<ExecutionSequence>,
+        group_ptr: NonNull<ConcurrentGroup>,
+    ) {
+        // SAFETY: sequence_ptr / group_ptr point into disjoint fields of `buntest.execution`
+        // (`sequences` vs `groups`); no `&mut Execution` is live in this scope.
+        let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
+        debug_assert!(sequence.active_entry.is_none());
+        debug_assert!(!sequence.executing);
+        sequence.completion_deferred = false;
+
+        // just completed the sequence
+        let test_failed = sequence.result.is_fail();
+        let test_passed = sequence.result.is_pass(PendingIs::PendingIsPass);
+
+        // Handle retry logic: if test failed and we have retries remaining, retry it
+        if test_failed && sequence.remaining_retry_count > 0 {
+            if sequence.flaky_attempt_count < ExecutionSequence::MAX_FLAKY_ATTEMPTS {
+                let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
+                    0
+                } else {
+                    sequence.started_at.since_now_force_real_time()
+                };
+                sequence.flaky_attempts_buf[sequence.flaky_attempt_count] = FlakyAttempt {
+                    result: sequence.result,
+                    elapsed_ns,
+                };
+                sequence.flaky_attempt_count += 1;
+            }
+            sequence.remaining_retry_count -= 1;
+            Execution::reset_sequence(sequence);
+            return;
+        }
+
+        // Handle repeat logic: if test passed and we have repeats remaining, repeat it
+        if test_passed && sequence.remaining_repeat_count > 0 {
+            sequence.remaining_repeat_count -= 1;
+            Execution::reset_sequence(sequence);
+            return;
+        }
+
+        // Only report the final result after all retries/repeats are done
+        Execution::on_sequence_completed(buntest, sequence);
+
+        // No more retries or repeats; mark sequence as complete
+        // SAFETY: group_ptr points into `buntest.execution.groups`, disjoint from `sequence`.
+        let group = unsafe { &mut *group_ptr.as_ptr() };
+        if group.remaining_incomplete_entries == 0 {
+            debug_assert!(false); // remaining_incomplete_entries should never go below 0
+            return;
+        }
+        group.remaining_incomplete_entries -= 1;
     }
 
     fn on_group_started(global_this: &JSGlobalObject) {
@@ -638,6 +714,9 @@ impl Execution {
     fn on_entry_completed(_entry: NonNull<ExecutionEntry>) {}
 
     fn on_sequence_completed(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
+        // A sequence never completes with unsettled matcher promises: `finish_sequence` is
+        // gated on the counter, and the timeout path abandons them (epoch bump + zero) first.
+        debug_assert_eq!(sequence.pending_matcher_promises, 0);
         let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
             0
         } else {
@@ -742,6 +821,7 @@ impl Execution {
         // Preserve retry/repeat counts and flaky attempt history across reset
         let saved_flaky_attempt_count = sequence.flaky_attempt_count;
         let saved_flaky_attempts_buf = sequence.flaky_attempts_buf;
+        let saved_matcher_epoch = sequence.matcher_epoch;
         *sequence = ExecutionSequence::init(
             sequence.first_entry,
             sequence.test_entry,
@@ -750,6 +830,10 @@ impl Execution {
         );
         sequence.flaky_attempt_count = saved_flaky_attempt_count;
         sequence.flaky_attempts_buf = saved_flaky_attempts_buf;
+        // The epoch stays monotonic across attempts: `init` zeroed `pending_matcher_promises`,
+        // so any matcher promise registered by a previous attempt must fail the epoch check
+        // instead of decrementing (and corrupting) this attempt's counter when it settles.
+        sequence.matcher_epoch = saved_matcher_epoch.wrapping_add(1);
 
         // Snapshot counters are keyed by full test name and incremented on every
         // toMatchSnapshot() call. Without this reset, retries / repeats would
@@ -988,6 +1072,10 @@ fn step_sequence_one(
     }
 
     let Some(next_item_ptr) = sequence.active_entry else {
+        // Completion was deferred on pending matcher promises; wait / time out / finish it.
+        if sequence.completion_deferred {
+            return Ok(step_deferred_completion(buntest_ptr, sequence_ptr, group, now));
+        }
         // Sequence is complete - either because:
         // 1. It ran out of entries (normal completion)
         // 2. All retry/repeat attempts have been exhausted
@@ -1069,4 +1157,50 @@ fn step_sequence_one(
         Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
         return Ok(None); // run again
     }
+}
+
+/// A sequence whose entries all completed while matcher promises were still pending
+/// (`ExecutionSequence::completion_deferred`) is held open here. The test's own deadline still
+/// applies: if it expires first, the pending promises are abandoned and the sequence completes
+/// through the normal timeout path. Returns `None` when the sequence should be stepped again.
+///
+/// `sequence_ptr` / `group` carry the same raw-pointer contract as `advance_sequence`.
+fn step_deferred_completion(
+    buntest_ptr: NonNull<BunTest>,
+    sequence_ptr: NonNull<ExecutionSequence>,
+    group: NonNull<ConcurrentGroup>,
+    now: &Timespec,
+) -> Option<AdvanceSequenceStatus> {
+    let _g = group_begin!();
+    // SAFETY: sequence_ptr points into `buntest.execution.sequences`; unique live `&mut` here.
+    let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
+    debug_assert!(sequence.active_entry.is_none());
+    debug_assert!(!sequence.executing);
+
+    if sequence.pending_matcher_promises > 0 {
+        let Some(test_entry_ptr) = sequence.test_entry else {
+            // No test entry to derive a deadline from; wait for the promises to settle.
+            return Some(AdvanceSequenceStatus::Execute { timeout: Timespec::EPOCH });
+        };
+        // SAFETY: arena-owned entry, alive for lifetime of BunTest
+        let test_entry = unsafe { test_entry_ptr.as_ref() };
+        if !test_entry.evaluate_timeout(sequence, now) {
+            group_log::log(format_args!(
+                "runOne: no more entries; waiting for {} pending matcher promise(s)",
+                sequence.pending_matcher_promises
+            ));
+            return Some(AdvanceSequenceStatus::Execute { timeout: test_entry.timespec });
+        }
+        // The per-test timeout fired first: abandon the pending promises and fail as a
+        // timeout. Bumping the epoch invalidates the abandoned registrations, so a late
+        // settlement fails `settle_matcher_promise`'s epoch check instead of decrementing a
+        // counter it is no longer part of (this attempt's, or a retry's after `reset_sequence`).
+        sequence.matcher_epoch = sequence.matcher_epoch.wrapping_add(1);
+        sequence.pending_matcher_promises = 0;
+    }
+
+    group_log::log(format_args!("runOne: deferred completion; all matcher promises settled"));
+    Execution::finish_sequence(buntest_ptr, sequence_ptr, group);
+    // finish_sequence may have reset the sequence for a retry/repeat; step it again either way.
+    None
 }

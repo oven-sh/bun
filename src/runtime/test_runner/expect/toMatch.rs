@@ -2,6 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::JSValueTestExt;
 
 use super::Expect;
+use super::ready_or_defer;
 
 pub(crate) fn to_match(
     this: &Expect,
@@ -9,7 +10,7 @@ pub(crate) fn to_match(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     let (this, value, not) =
-        this.matcher_prelude(global, frame.this(), "toMatch", "<green>expected<r>")?;
+        ready_or_defer!(this.matcher_prelude(global, frame, "toMatch", "<green>expected<r>")?);
 
     let arguments: &[JSValue] = frame.arguments();
 

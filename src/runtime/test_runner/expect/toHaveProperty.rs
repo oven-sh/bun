@@ -3,6 +3,7 @@ use bun_core::ZigString;
 
 use super::DiffFormatter;
 use super::Expect;
+use super::ready_or_defer;
 
 pub(crate) fn to_have_property(
     this: &Expect,
@@ -12,7 +13,6 @@ pub(crate) fn to_have_property(
     // `defer this.postMatch(globalThis)` — guard owns `this` and calls post_match on drop.
     let this = scopeguard::guard(this, |this| this.post_match(global));
 
-    let this_value = frame.this();
     let _arguments = frame.arguments_old::<2>();
     let arguments: &[JSValue] = _arguments.slice();
 
@@ -31,12 +31,12 @@ pub(crate) fn to_have_property(
         ev.ensure_still_alive();
     }
 
-    let value: JSValue = this.get_value(
+    let value: JSValue = ready_or_defer!(this.get_value(
         global,
-        this_value,
+        frame,
         "toHaveProperty",
         "<green>path<r><d>, <r><green>value<r>",
-    )?;
+    )?);
 
     if !expected_property_path.is_string() && !expected_property_path.is_iterable(global)? {
         return Err(global.throw(format_args!("Expected path must be a string or an array")));

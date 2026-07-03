@@ -2,6 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
 use super::get_signature;
+use super::ready_or_defer;
 
 // Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
 // `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
@@ -14,7 +15,6 @@ pub(crate) fn to_be_instance_of(
     // Run the matcher body in an inner closure so `this` is released when it returns,
     // then call `post_match` exactly once on every exit path (success or throw).
     let res = (|| -> JsResult<JSValue> {
-    let this_value = frame.this();
     // Collapsed `arguments_old(1)` + ptr/len slice into a single &[JSValue].
     let arguments_ = frame.arguments_old::<1>(); let arguments: &[JSValue] = arguments_.slice();
 
@@ -38,7 +38,7 @@ pub(crate) fn to_be_instance_of(
     expected_value.ensure_still_alive();
 
     let value: JSValue =
-        this.get_value(global, this_value, "toBeInstanceOf", "<green>expected<r>")?;
+        ready_or_defer!(this.get_value(global, frame, "toBeInstanceOf", "<green>expected<r>")?);
 
     let not = this.flags.get().not();
     let mut pass = value.is_instance_of(global, expected_value)?;

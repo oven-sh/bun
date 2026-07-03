@@ -3909,6 +3909,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestThen;
     } else if (handler == Bun__TestScope__Describe2__bunTestCatch) {
         return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestCatch;
+    } else if (handler == Bun__Expect__onSubjectResolve) {
+        return GlobalObject::PromiseFunctions::Bun__Expect__onSubjectResolve;
+    } else if (handler == Bun__Expect__onSubjectReject) {
+        return GlobalObject::PromiseFunctions::Bun__Expect__onSubjectReject;
     } else if (handler == Bun__BodyValueBufferer__onResolveStream) {
         return GlobalObject::PromiseFunctions::Bun__BodyValueBufferer__onResolveStream;
     } else if (handler == Bun__BodyValueBufferer__onRejectStream) {

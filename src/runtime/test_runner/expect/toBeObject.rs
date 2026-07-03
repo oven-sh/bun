@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
+use super::ready_or_defer;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
@@ -15,9 +16,10 @@ impl Expect {
         // (incl. `?` early-returns) is covered without a raw `*mut Expect`.
         let result = (|| -> JsResult<JSValue> {
         let this_value = frame.this();
-        let value: JSValue = this.get_value(global, this_value, "toBeObject", "")?;
+        let value = this.get_value(global, frame, "toBeObject", "")?;
 
         this.increment_expect_call_counter();
+        let value = ready_or_defer!(value);
 
         let not = this.flags.get().not();
         let pass = value.is_object() != not;

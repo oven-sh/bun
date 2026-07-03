@@ -1,6 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::DiffFormatter;
-use super::{get_signature, Expect};
+use super::{get_signature, ready_or_defer, Expect};
 
 pub(crate) fn to_match_object(
     this: &Expect,
@@ -8,7 +8,7 @@ pub(crate) fn to_match_object(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     let (this, received_object, not) =
-        this.matcher_prelude(global, frame.this(), "toMatchObject", "<green>expected<r>")?;
+        ready_or_defer!(this.matcher_prelude(global, frame, "toMatchObject", "<green>expected<r>")?);
     let args_buf = frame.arguments_old::<1>();
     let args = args_buf.slice();
 

@@ -3,7 +3,7 @@ use core::ffi::c_void;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 use bun_core::strings;
 
-use super::{get_signature, Expect};
+use super::{get_signature, ready_or_defer, Expect};
 
 struct ExpectedEntry<'a> {
     global_this: &'a JSGlobalObject,
@@ -37,7 +37,7 @@ pub(crate) fn to_contain_equal(
 ) -> JsResult<JSValue> {
     let this_value = frame.this();
     let (this, value, not) =
-        this.matcher_prelude(global, this_value, "toContainEqual", "<green>expected<r>")?;
+        ready_or_defer!(this.matcher_prelude(global, frame, "toContainEqual", "<green>expected<r>")?);
     let arguments_ = frame.arguments_old::<1>();
     let arguments = arguments_.slice();
 

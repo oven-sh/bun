@@ -3,6 +3,7 @@ use core::ffi::c_void;
 use bun_jsc::{CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult, VM};
 
 use super::Expect;
+use super::ready_or_defer;
 
 // Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
 // `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
@@ -11,7 +12,7 @@ pub(crate) fn to_be_empty(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let (_this, value, not) = this.matcher_prelude(global, frame.this(), "toBeEmpty", "")?;
+    let (_this, value, not) = ready_or_defer!(this.matcher_prelude(global, frame, "toBeEmpty", "")?);
     let mut pass;
     let mut formatter = super::make_formatter(global);
     // `defer formatter.deinit()` — handled by Drop.

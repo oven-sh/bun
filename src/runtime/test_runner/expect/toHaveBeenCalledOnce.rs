@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
+use super::ready_or_defer;
 
 pub(crate) fn to_have_been_called_once(
     this: &Expect,
@@ -8,13 +9,13 @@ pub(crate) fn to_have_been_called_once(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
-    let (this, calls, _value) = this.mock_prologue(
+    let (this, calls, _value) = ready_or_defer!(this.mock_prologue(
         global,
-        frame.this(),
+        frame,
         "toHaveBeenCalledOnce",
         "<green>expected<r>",
         super::mock::MockKind::Calls,
-    )?;
+    )?);
 
     let calls_length = calls.get_length(global)?;
     let mut pass = calls_length == 1;

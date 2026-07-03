@@ -9,6 +9,7 @@ use super::Expect;
 use super::ExpectAny;
 use super::expect_any_js;
 use super::get_signature;
+use super::ready_or_defer;
 
 pub(crate) fn to_throw(
     this: &Expect,
@@ -20,7 +21,6 @@ pub(crate) fn to_throw(
     // runs on every exit path (Ok and Err alike).
     let this = scopeguard::guard(this, |t| t.post_match(global));
 
-    let this_value = frame.this();
     let arguments = frame.arguments_as_array::<1>();
 
     this.increment_expect_call_counter();
@@ -58,10 +58,10 @@ pub(crate) fn to_throw(
 
     let not = this.flags.get().not();
 
-    let (result_, return_value_from_function) = this.get_value_as_to_throw(
-        global,
-        this.get_value(global, this_value, "toThrow", "<green>expected<r>")?,
-    )?;
+    let received = ready_or_defer!(this.get_value(global, frame, "toThrow", "<green>expected<r>")?);
+    // Deferred while the promise returned by the received function is still pending.
+    let (result_, return_value_from_function) =
+        ready_or_defer!(this.get_value_as_to_throw(global, frame, received)?);
 
     let did_throw = result_.is_some();
 

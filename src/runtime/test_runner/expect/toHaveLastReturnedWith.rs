@@ -4,6 +4,7 @@ use bun_jsc::console_object::Formatter;
 
 use super::DiffFormatter;
 use super::Expect;
+use super::ready_or_defer;
 
 pub(crate) fn to_have_last_returned_with(
     this: &Expect,
@@ -12,13 +13,13 @@ pub(crate) fn to_have_last_returned_with(
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
     let expected = callframe.arguments_as_array::<1>()[0];
-    let (this, returns, _value) = this.mock_prologue(
+    let (this, returns, _value) = ready_or_defer!(this.mock_prologue(
         global_this,
-        callframe.this(),
+        callframe,
         "toHaveBeenLastReturnedWith",
         "<green>expected<r>",
         super::mock::MockKind::Returns,
-    )?;
+    )?);
 
     let calls_count = u32::try_from(returns.get_length(global_this)?).unwrap();
     let mut pass = false;

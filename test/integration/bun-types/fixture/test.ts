@@ -173,6 +173,45 @@ expectType(expect<string>(undefined, "Fail message")).is<import("bun:test").Matc
 expectType(expect("", "Fail message")).is<import("bun:test").Matchers<string>>();
 expectType(expect<string>("", "Fail message")).is<import("bun:test").Matchers<string>>();
 
+// matchers return `void`, except through `.resolves`/`.rejects` (and async `toThrow`),
+// where they return a `Promise<void>` that must be awaited
+expectType(expect(1).toBe(1)).is<void>();
+expectType(expect(1).not.toBe(2)).is<void>();
+expectType(expect(Promise.resolve(1)).resolves).is<import("bun:test").Matchers<number, Promise<void>>>();
+expectType(expect(Promise.resolve(1)).rejects).is<import("bun:test").Matchers<unknown, Promise<void>>>();
+expectType(expect(Promise.resolve(1)).resolves.toBe(1)).is<Promise<void>>();
+expectType(expect(Promise.resolve(1)).resolves.not.toBe(2)).is<Promise<void>>();
+expectType(expect(Promise.reject(new Error())).rejects.toThrow()).is<Promise<void>>();
+expectType(expect(Promise.reject(new Error())).rejects.toBeInstanceOf(Error)).is<Promise<void>>();
+expectType(expect(() => {}).toThrow()).is<void>();
+expectType(expect(() => {}).not.toThrow()).is<void>();
+expectType(expect(() => {}).toThrowError()).is<void>();
+// a sync function that only throws is inferred as `() => never` — still a synchronous assertion
+expectType(
+  expect(() => {
+    throw new Error("x");
+  }).toThrow("x"),
+).is<void>();
+expectType(
+  expect(() => {
+    throw new Error("x");
+  }).toThrowError("x"),
+).is<void>();
+expectType(
+  expect((): never => {
+    throw new Error("x");
+  }).toThrow(),
+).is<void>();
+expectType(expect(async () => {}).toThrow()).is<Promise<void>>();
+expectType(expect(async () => {}).toThrowError()).is<Promise<void>>();
+// `.not` preserves the subject type, so async subjects stay asynchronous through it
+expectType(expect(async () => {}).not.toThrow()).is<Promise<void>>();
+expectType(expect(async () => {}).not.toThrowError()).is<Promise<void>>();
+expectType(expect(() => {}).toThrowErrorMatchingSnapshot()).is<void>();
+expectType(expect(() => {}).toThrowErrorMatchingInlineSnapshot()).is<void>();
+expectType(expect(async () => {}).toThrowErrorMatchingSnapshot()).is<Promise<void>>();
+expectType(expect(async () => {}).toThrowErrorMatchingInlineSnapshot()).is<Promise<void>>();
+
 describe("Matcher Overload Type Tests", () => {
   const num = 1;
   const str = "hello";
@@ -410,6 +449,17 @@ declare const setOfStrings: Set<string>;
 /** 1. **/ expect(setOfStrings).toBe(new Set()); // this is inferrable to Set<string> so this should pass
 /** 2. **/ expect(setOfStrings).toBe(new Set<string>()); // exact, so we are happy!
 /** 3. **/ expect(setOfStrings).toBe<Set<string>>(new Set()); // happy! We opted out of type safety for this expectation
+
+// Custom matchers declared with the documented single-type-parameter form must
+// keep merging into `Matchers`, and remain reachable through `.resolves`/`.rejects`
+declare module "bun:test" {
+  interface Matchers<T> {
+    toBeWithinRange(floor: number, ceiling: number): void;
+  }
+}
+expectType(expect(3).toBeWithinRange(0, 5)).is<void>();
+expect(Promise.resolve(3)).resolves.toBeWithinRange(0, 5);
+expect(Promise.reject(3)).rejects.toBeWithinRange(0, 5);
 
 // Cases for #24591
 declare const unknownMatchers: Matchers<unknown>;

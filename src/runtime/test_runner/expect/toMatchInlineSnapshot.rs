@@ -2,6 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::ZigString;
 
 use super::Expect;
+use super::ready_or_defer;
 
 pub(crate) fn to_match_inline_snapshot(
     this: &Expect,
@@ -13,7 +14,6 @@ pub(crate) fn to_match_inline_snapshot(
     // overlapping with the deferred call (matches toThrowErrorMatchingInlineSnapshot.rs).
     let this = scopeguard::guard(this, |this| this.post_match(global));
 
-    let this_value = frame.this();
     let arguments_ = frame.arguments_old::<2>(); let arguments: &[JSValue] = arguments_.slice();
 
     this.increment_expect_call_counter();
@@ -81,12 +81,12 @@ pub(crate) fn to_match_inline_snapshot(
 
     let expected_slice: Option<&[u8]> = if has_expected { Some(expected.slice()) } else { None };
 
-    let value = this.get_value(
+    let value = ready_or_defer!(this.get_value(
         global,
-        this_value,
+        frame,
         "toMatchInlineSnapshot",
         "<green>properties<r><d>, <r>hint",
-    )?;
+    )?);
     Expect::inline_snapshot(
         &**this,
         global,

@@ -526,10 +526,13 @@ describe("Valkey: close() during auto-reconnect", () => {
   });
 
   test("close() after the retries are exhausted does not report a second close", async () => {
-    // Nothing listens on this port, so every attempt is refused and the client
-    // gives up after one retry. The timer is no longer armed by then, so close()
-    // must not re-run the close path.
-    const client = new RedisClient("redis://127.0.0.1:12345", { autoReconnect: true, maxRetries: 1 });
+    // Take a port and give it straight back, so every attempt is refused and the
+    // client gives up after one retry. The timer is no longer armed by then, so
+    // close() must not re-run the close path.
+    const { port, close } = await mockRedisServer();
+    close();
+
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: true, maxRetries: 1 });
     let closes = 0;
     client.onclose = () => closes++;
 

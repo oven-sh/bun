@@ -2984,6 +2984,13 @@ pub fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
 /// silently degrades to the full untrimmed trace.
 #[inline(always)]
 pub fn return_address() -> usize {
+    // Miri cannot execute `frame_address`'s inline asm, and an address read out
+    // of a register is not a pointer it can dereference. 0 = "no trim", the
+    // same value the arches without an asm! mapping return. `cfg!` rather than
+    // `#[cfg]` so the read below stays compiled (and `PC_OFFSET` live).
+    if cfg!(miri) {
+        return 0;
+    }
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
         let fp = debug::frame_address();

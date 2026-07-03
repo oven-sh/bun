@@ -423,9 +423,19 @@ fn parse_to_rows(
     opts: JSONOptions,
 ) -> Result<ParsedJson, bun_core::Error> {
     if source.contents.is_empty() {
-        let tape = Box::new(E::JsonTape::empty());
+        let mut tape = Box::new(E::JsonTape::empty());
         let root = Expr::init(
-            E::ObjectJSON::new(&tape, 0, 0, true, bun_ast::Loc::EMPTY),
+            // SAFETY: the tape's own pointer; `ParsedJson` keeps it alive, and
+            // an empty span never dereferences it anyway.
+            unsafe {
+                E::ObjectJSON::new(
+                    core::ptr::NonNull::from(&mut *tape),
+                    0,
+                    0,
+                    true,
+                    bun_ast::Loc::EMPTY,
+                )
+            },
             bun_ast::Loc { start: 0 },
         );
         return Ok(ParsedJson {
@@ -450,7 +460,17 @@ fn parse_to_rows_in(
     if source.contents.is_empty() {
         let tape = arena.alloc(E::JsonTape::empty_in(tape_alloc));
         return Ok(Expr::init(
-            E::ObjectJSON::new(tape, 0, 0, true, bun_ast::Loc::EMPTY),
+            // SAFETY: the arena-allocated tape's own pointer; it lives until the
+            // arena resets, and an empty span never dereferences it anyway.
+            unsafe {
+                E::ObjectJSON::new(
+                    core::ptr::NonNull::from(tape),
+                    0,
+                    0,
+                    true,
+                    bun_ast::Loc::EMPTY,
+                )
+            },
             bun_ast::Loc { start: 0 },
         ));
     }

@@ -221,12 +221,19 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     let parsed_color: css::CssColorParseResult = 'brk: {
         if args[0].is_number() {
             let number: i64 = args[0].to_int64();
-            // u32 bit layout, LSB-first: blue, green, red, alpha (one byte each).
-            let int: u32 = number.rem_euclid(u32::MAX as i64).unsigned_abs() as u32;
+            // The color is the low 32 bits, LSB-first: blue, green, red,
+            // alpha (one byte each).
+            let int: u32 = number as u32;
             let blue = (int & 0xff) as u8;
             let green = ((int >> 8) & 0xff) as u8;
             let red = ((int >> 16) & 0xff) as u8;
-            let alpha = ((int >> 24) & 0xff) as u8;
+            // A 24-bit 0xRRGGBB number has no alpha byte and means an opaque
+            // color; only values wider than 24 bits carry alpha in the top byte.
+            let alpha = if int > 0x00ff_ffff {
+                (int >> 24) as u8
+            } else {
+                255
+            };
 
             break 'brk Ok(CssColor::Rgba(RGBA {
                 alpha,

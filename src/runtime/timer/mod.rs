@@ -1,14 +1,5 @@
 //! Timer subsystem: setTimeout/setInterval/setImmediate scheduling and the
 //! event-loop timer heap.
-//!
-//! Structs + state machines are real. JS-facing method bodies
-//! (`set_timeout`/`clear_timer`/`warn_invalid_countdown`/etc.) remain
-//! ``-gated on `bun_jsc` (commented out in Cargo.toml).
-//! `All::insert`/`remove`/`update`/`get_timeout`/`drain_timers` — the surface
-//! `EventLoop::auto_tick` blocks on — are real.
-//!
-//! Full earlier drafts are preserved gated under ` mod *_draft`
-//! so this file can be diffed against `Timer.rs` once `bun_jsc` is green.
 
 use bun_collections::ArrayHashMap;
 use bun_core::{Timespec, TimespecMockMode};
@@ -34,7 +25,7 @@ use crate::jsc::JSValue;
 // ─── JS-facing surface (`impl All { set_timeout / clear_* / … }`) ────────────
 // Named `timer` so codegen (`generated_js2native.rs`) resolves
 // `crate::timer::timer::internal_bindings::timer_clock_ms` per the
-// `$zig(Timer.zig, …)` → `crate::<dir>::<file>` path-mapping.
+// `$rust(Timer.rs, …)` → `crate::<dir>::<file>` path-mapping.
 
 #[path = "Timer.rs"]
 pub mod timer;
@@ -549,9 +540,7 @@ impl EventLoopDelayMonitor {
     }
 }
 
-// ─── TimerObjectInternals / TimeoutObject / ImmediateObject (struct-only) ───
-// `Flags` is the real packed-u32 state machine; method bodies that touch
-// `bun_jsc::JsRef`/`Debugger` stay gated.
+// ─── TimerObjectInternals / TimeoutObject / ImmediateObject ─────────────────
 
 pub mod timer_object_internals;
 pub use timer_object_internals::{Flags as TimerFlags, TimerObjectInternals};
@@ -1245,12 +1234,6 @@ impl All {
         }
     }
 }
-
-// ─── JS-facing surface (gated on bun_jsc) ────────────────────────────────────
-// `set_timeout`/`set_interval`/`set_immediate`/`sleep`/`clear_*` and the
-// host_fn export thunks all need `JSGlobalObject::bun_vm()`,
-// `JSValue::to_number()`, `bun_core::String::transfer_to_js()`, etc.
-// Kept gated until `bun_jsc.workspace = true` is re-enabled.
 
 // ─── enums / value types ─────────────────────────────────────────────────────
 

@@ -10,7 +10,7 @@ import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { NODEJS_ABI_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
+import { NODEJS_ABI_VERSION, NODEJS_V8_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
 import { resolveMacosSdkPath } from "./macos-sdk.ts";
@@ -61,6 +61,7 @@ export interface Host {
 const versionDefaults = {
   nodejsVersion: NODEJS_VERSION,
   nodejsAbiVersion: NODEJS_ABI_VERSION,
+  nodejsV8Version: NODEJS_V8_VERSION,
   webkitVersion: WEBKIT_VERSION,
 };
 
@@ -143,6 +144,12 @@ export interface Config {
   tinycc: boolean;
   valgrind: boolean;
   fuzzilli: boolean;
+  /**
+   * Compile usockets bsd_* syscall fault-injection hooks. Runtime-armed via
+   * `bun:internal-for-testing` socketFaultInjection; disarmed cost is one
+   * acquire atomic load per syscall, zero when compiled out.
+   */
+  socketFaultInjection: boolean;
   /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
   unifiedSources: boolean;
   /**
@@ -307,6 +314,7 @@ export interface Config {
   /** Node.js compat version. Default in versions.ts; override to test a bump. */
   nodejsVersion: string;
   nodejsAbiVersion: string;
+  nodejsV8Version: string;
   /** WebKit commit. Default in versions.ts; override to test a WebKit branch. */
   webkitVersion: string;
 }
@@ -334,6 +342,7 @@ export interface PartialConfig {
   tinycc?: boolean;
   valgrind?: boolean;
   fuzzilli?: boolean;
+  socketFaultInjection?: boolean;
   unifiedSources?: boolean;
   archiveDeps?: boolean;
   timeTrace?: boolean;
@@ -368,6 +377,7 @@ export interface PartialConfig {
   // Version pins (defaults in versions.ts).
   nodejsVersion?: string;
   nodejsAbiVersion?: string;
+  nodejsV8Version?: string;
   webkitVersion?: string;
 }
 
@@ -860,6 +870,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
 
   const valgrind = partial.valgrind ?? false;
   const fuzzilli = partial.fuzzilli ?? false;
+  // Default follows asan: on for local debug (Linux / arm64 macOS) and CI
+  // release-asan, off everywhere else. The fuzz tests are most useful when
+  // memory errors are detectable, and the disarmed-hot-path cost (one acquire
+  // atomic load) is acceptable in asan builds but not in shipped release.
+  const socketFaultInjection = partial.socketFaultInjection ?? asan;
 
   // ─── Paths ───
   const cwd = findRepoRoot();
@@ -1019,6 +1034,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // to test a branch before bumping the pinned default.
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
+  const nodejsV8Version = partial.nodejsV8Version ?? versionDefaults.nodejsV8Version;
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
   // ─── macOS SDK ───
@@ -1121,6 +1137,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     tinycc,
     valgrind,
     fuzzilli,
+    socketFaultInjection,
     unifiedSources: partial.unifiedSources ?? true,
     archiveDeps: partial.archiveDeps ?? false,
     timeTrace: partial.timeTrace ?? false,
@@ -1180,6 +1197,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     version,
     revision,
     nodejsVersion,
+    nodejsV8Version,
     nodejsAbiVersion,
     canaryRevision,
     webkitVersion,
@@ -1444,6 +1462,9 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.baseline) features.push("baseline");
   if (cfg.valgrind) features.push("valgrind");
   if (cfg.fuzzilli) features.push("fuzzilli");
+  if (cfg.socketFaultInjection !== cfg.asan) {
+    features.push(`socket-fault-injection:${cfg.socketFaultInjection ? "on" : "off"}`);
+  }
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);

@@ -360,6 +360,7 @@ impl MySQLConnection {
             bun_uws::SocketKind::MysqlTls,
             ssl_ctx,
             sni,
+            true, // is_client
             ext_size,
             ext_size,
         ) else {
@@ -815,12 +816,10 @@ impl MySQLConnection {
 
                             match response.status {
                                 Auth::caching_sha2_password::FastAuthStatus::SUCCESS => {
-                                    debug!("success auth");
-                                    self.set_status(ConnectionState::Connected);
-
-                                    self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
-                                    self.queue.mark_as_ready_for_query();
-                                    self.advance();
+                                    // fast_auth_success only acknowledges the cached scramble; the
+                                    // server always follows it with the OK/ERR packet that concludes
+                                    // auth, so stay in Authenticating and let the arms above consume it.
+                                    debug!("fast auth success, awaiting OK");
                                 }
                                 Auth::caching_sha2_password::FastAuthStatus::CONTINUE_AUTH => {
                                     bun_core::scoped_log!(MySQLConnection, "continue auth");

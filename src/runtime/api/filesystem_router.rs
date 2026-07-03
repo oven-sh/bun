@@ -7,11 +7,11 @@ pub mod kind_enum {
     pub(crate) const DYNAMIC: &[u8] = b"dynamic";
 
     pub(crate) fn classify(name: &[u8]) -> &'static [u8] {
-        if bun_core::contains(name, b"[[...") {
+        if bun_core::strings::contains(name, b"[[...") {
             OPTIONAL_CATCH_ALL
-        } else if bun_core::contains(name, b"[...") {
+        } else if bun_core::strings::contains(name, b"[...") {
             CATCH_ALL
-        } else if bun_core::contains(name, b"[") {
+        } else if bun_core::strings::contains(name, b"[") {
             DYNAMIC
         } else {
             EXACT
@@ -386,8 +386,18 @@ impl FileSystemRouter {
         };
 
         if let Some(dir_ref) = root_dir_info {
-            if let Some(entries) = dir_ref.get_entries_const() {
-                'outer: for &entry_ptr in entries.data.values() {
+            // Snapshot the cached `DirEntry`'s entry pointers under `entries_mutex`
+            // (other threads rewrite the map in place under that lock), then drop
+            // the guard: `bust_dir_cache` / the recursion below re-acquire it.
+            let entry_ptrs: Vec<*mut Fs::Entry> = {
+                let _entries_lock = Fs::FileSystem::instance().fs.entries_mutex.lock_guard();
+                match dir_ref.get_entries_const() {
+                    Some(entries) => entries.data.values().copied().collect(),
+                    None => Vec::new(),
+                }
+            };
+            {
+                'outer: for entry_ptr in entry_ptrs {
                     // BACKREF: `entry_ptr` is a `*mut Entry` into the process-static
                     // EntryStore; the store outlives this loop. Wrap once so the
                     // shared-only reads below are safe `Deref`s.
@@ -405,8 +415,8 @@ impl FileSystemRouter {
                     let kind = {
                         let fs_impl = &mut vm.transpiler.fs_mut().fs;
                         // SAFETY: `entry_ptr` is a live `*mut Entry` in the process-static
-                        // EntryStore (checked non-null above); no shared `&Entry` is live
-                        // here. entries_mutex held; fs_impl is the process-global RealFS.
+                        // EntryStore (checked non-null above); the lazy-stat rewrite is
+                        // serialized on `Entry.mutex`; fs_impl is the process-global RealFS.
                         unsafe { (&*entry_ptr).kind(fs_impl, false) }
                     };
                     if kind == Fs::EntryKind::Dir {

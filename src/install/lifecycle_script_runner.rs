@@ -35,7 +35,7 @@ bun_output::declare_scope!(Script, visible);
 // `RunCommand::replace_package_manager_run` is a thin re-export.
 // ──────────────────────────────────────────────────────────────────────────
 
-const BUN_BIN_NAME: &[u8] = if cfg!(debug_assertions) {
+const BUN_BIN_NAME: &[u8] = if bun_core::env::IS_DEBUG {
     b"bun-debug"
 } else {
     b"bun"

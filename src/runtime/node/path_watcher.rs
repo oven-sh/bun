@@ -246,12 +246,11 @@ impl EventType {
 
 /// Per-handler duplicate suppression.
 ///
-/// The predicate is intentionally identical to `win_watcher.rs`
-/// so POSIX and Windows agree on which bursts are coalesced.
-/// It suppresses only when, within the same millisecond, *both* the hash and
-/// the event type match the previous emission — arguably too aggressive, but
-/// changing it here would diverge from Windows; fixing all three together is
-/// a separate change.
+/// Suppresses only exact duplicates: same path hash *and* same event type
+/// within a 1ms window. Distinct files changed in the same millisecond must
+/// each emit — node delivers both (see test/js/node/test/parallel
+/// fs-watch tests that write two files back-to-back). Kept identical to
+/// `win_watcher.rs` so POSIX and Windows agree on which bursts are coalesced.
 #[derive(Default)]
 pub(crate) struct ChangeEvent {
     #[cfg(not(windows))]
@@ -266,8 +265,10 @@ pub(crate) struct ChangeEvent {
 impl ChangeEvent {
     fn should_emit(&mut self, hash: u64, timestamp: i64, event_type: EventType) -> bool {
         let time_diff = timestamp - self.timestamp;
-        if (self.timestamp == 0 || time_diff > 1)
-            || (self.event_type_ != event_type && self.hash != hash)
+        if self.timestamp == 0
+            || time_diff > 1
+            || self.event_type_ != event_type
+            || self.hash != hash
         {
             self.timestamp = timestamp;
             self.event_type_ = event_type;
@@ -301,6 +302,28 @@ impl PathWatcher {
                     is_file,
                 );
             }
+        }
+    }
+
+    /// Like [`emit`](Self::emit), but without per-handler duplicate suppression.
+    /// The `IN_IGNORED` retiring a deleted inode's wd lands in the same
+    /// millisecond as its `IN_DELETE_SELF`, with the same path and type, so
+    /// `should_emit` would fold the two into one; node (libuv) delivers both.
+    /// Caller holds `manager.mutex`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn emit_unsuppressed(&mut self, event_type: EventType, rel_path: &[u8], is_file: bool) {
+        for &ctx in self.handlers.keys() {
+            (FSWatcher::ON_PATH_UPDATE)(Some(ctx), event_type.to_event(rel_path.into()), is_file);
+        }
+    }
+
+    /// The shared inotify queue overflowed and events were lost; every handler
+    /// gets `('change', null)`. No duplicate suppression — a loss signal must
+    /// always be delivered. Caller holds `manager.mutex`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn emit_overflow(&mut self) {
+        for &ctx in self.handlers.keys() {
+            (FSWatcher::ON_PATH_UPDATE)(Some(ctx), Event::NoFilename(EventType::Change), false);
         }
     }
 
@@ -921,14 +944,52 @@ impl Linux {
                 i += core::mem::size_of::<InotifyEvent>() + ev.name_len as usize;
                 let wd = ev.watch_descriptor;
 
-                // Kernel retired this wd (rm_watch, or the watched inode is gone).
+                // Queue hit fs.inotify.max_queued_events and the kernel dropped
+                // events (wd == -1 matches no watch). Every watcher on this fd
+                // is affected — notify all, like node on Windows does.
+                if ev.mask & IN::Q_OVERFLOW != 0 {
+                    // SAFETY: holding manager.mutex.
+                    let watchers = unsafe { &*manager.watchers.get() };
+                    for &w in watchers.values() {
+                        // SAFETY: w live under manager.mutex.
+                        unsafe { (*w).emit_overflow() };
+                        let _ = handle_oom(touched.get_or_put(w));
+                    }
+                    continue;
+                }
+
+                // Kernel retired this wd: `remove_watch` issued an explicit
+                // `inotify_rm_watch` (it deletes the `wd_map` entry first, so no
+                // owners remain to notify) or the watched inode is gone. libuv
+                // turns the latter into one more "rename" after IN_DELETE_SELF,
+                // so a deleted watch root reports two. Recursive sub-wds stay
+                // silent; their parent directory's IN_DELETE already reported it.
                 if ev.mask & IN::IGNORED != 0 {
                     // SAFETY: holding manager.mutex; exclusive access to `wd_map`.
                     let wd_map = unsafe { &mut (*plat).wd_map };
                     if let Some(owners) = wd_map.get_mut(&wd) {
                         for o in owners.drain(..) {
+                            // SAFETY: o.watcher live under manager.mutex. `path` is
+                            // read through the raw pointer (a separate ZBox heap
+                            // allocation) so the slice is not derived from the
+                            // `&mut` formed below, as in the dispatch loop.
+                            let (w_is_file, w_recursive, w_path): (bool, bool, &[u8]) = unsafe {
+                                (
+                                    (*o.watcher).is_file,
+                                    (*o.watcher).recursive,
+                                    &*std::ptr::from_ref::<[u8]>((*o.watcher).path.as_bytes()),
+                                )
+                            };
                             // SAFETY: o.watcher live under manager.mutex.
                             let w = unsafe { &mut *o.watcher };
+                            if o.subpath.as_bytes().is_empty() && (w_is_file || !w_recursive) {
+                                w.emit_unsuppressed(
+                                    EventType::Rename,
+                                    path::basename(w_path),
+                                    w_is_file,
+                                );
+                                let _ = handle_oom(touched.get_or_put(o.watcher));
+                            }
                             if let Some(idx) = w.platform.wds.iter().position(|&x| x == wd) {
                                 w.platform.wds.swap_remove(idx);
                             }
@@ -1020,7 +1081,16 @@ impl Linux {
                     let rel: &[u8] = if watcher_is_file {
                         path::basename(watcher_path)
                     } else if owner_subpath.is_empty() {
-                        name
+                        if name.is_empty() && !watcher_recursive {
+                            // A nameless event on the root wd is about the watched
+                            // directory itself (IN_DELETE_SELF, IN_MOVE_SELF,
+                            // IN_ATTRIB); libuv reports basename(watched path),
+                            // same as for a file. node's recursive watcher uses
+                            // root-relative paths instead, so those keep "".
+                            path::basename(watcher_path)
+                        } else {
+                            name
+                        }
                     } else if name.is_empty() {
                         owner_subpath
                     } else {
@@ -1054,11 +1124,28 @@ impl Linux {
                             &[watcher_path, owner_subpath, name],
                         );
                         // Borrowck: `rel` may borrow `path_buf`,
-                        // which `walk_and_add` also borrows. Own it for the call.
+                        // which `walk_subtree` also borrows. Own it for the call.
                         let rel_owned: Box<[u8]> = Box::from(rel);
                         // These may rehash `wd_map`; `owners` is re-fetched next iteration.
                         let _ = Linux::add_one(manager, watcher, child_abs, &rel_owned);
-                        Linux::walk_and_add(manager, watcher, child_abs, &rel_owned);
+                        // Entries created inside the new directory before our watch
+                        // attached never get their own IN_CREATE on this fd. Walk the
+                        // subtree: watch nested directories and synthesize a "rename"
+                        // for every discovered entry, like node's recursive watcher
+                        // does when it scans a newly added folder
+                        // (lib/internal/fs/recursive_watch.js). An entry created after
+                        // the watch attached may emit twice; per-handler ChangeEvent
+                        // coalescing absorbs back-to-back duplicates.
+                        walk_subtree::<false>(
+                            child_abs,
+                            &rel_owned,
+                            &mut |abs, entry_rel, entry_is_file| {
+                                if !entry_is_file {
+                                    let _ = Linux::add_one(manager, watcher, abs, entry_rel);
+                                }
+                                watcher.emit(EventType::Rename, entry_rel, entry_is_file);
+                            },
+                        );
                     }
 
                     oi += 1;

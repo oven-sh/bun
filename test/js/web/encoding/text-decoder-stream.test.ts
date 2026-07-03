@@ -135,6 +135,21 @@ import { readableStreamFromArray } from "harness";
     }).toThrow(RangeError);
   });
 
+  // https://encoding.spec.whatwg.org/#dom-textdecoderstream: same label rules
+  // as TextDecoder, including the `replacement` rejection.
+  test("constructing with a replacement-encoding label should throw", () => {
+    expect(() => {
+      new TextDecoderStream("replacement");
+    }).toThrow(RangeError);
+  });
+
+  test("legacy single-byte encodings decode through the stream", async () => {
+    // "Привет" in ISO-8859-5, split mid-word.
+    const input = readableStreamFromArray([new Uint8Array([0xbf, 0xe0, 0xd8]), new Uint8Array([0xd2, 0xd5, 0xe2])]);
+    const output = input.pipeThrough(new TextDecoderStream("iso-8859-5"));
+    expect((await Bun.readableStreamToArray(output)).join("")).toBe("Привет");
+  });
+
   test("constructing with a non-stringifiable encoding should throw", () => {
     expect(() => {
       new TextDecoderStream({

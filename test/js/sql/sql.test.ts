@@ -1,7 +1,6 @@
 import { $, randomUUIDv7, sql, SQL } from "bun";
 import { afterAll, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
-import * as net from "node:net";
 import path from "path";
 const postgres = (...args) => new SQL(...args);
 
@@ -16,6 +15,7 @@ function rel(filename: string) {
 // Use docker-compose infrastructure
 import * as dockerCompose from "../../docker/index.ts";
 import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
+import { neverAnsweringServer } from "./wire-frames";
 
 if (isDockerEnabled()) {
   describe("PostgreSQL tests", async () => {
@@ -2952,12 +2952,15 @@ if (isDockerEnabled()) {
     //   ]
     // })
 
+    // Fault-injection test: requires a server that refuses / drops / sends malformed
+    // frames, which a healthy container will not do on demand. DO NOT COPY THIS
+    // PATTERN — anything a real server can produce belongs in describeWithContainer.
+    // All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+    // Buffer.alloc frame construction here.
     test.each(["connect_timeout", "connectTimeout", "connectionTimeout", "connection_timeout"] as const)(
       "connection timeout key %p throws",
       async key => {
-        const server = net.createServer().listen();
-
-        const port = (server.address() as import("node:net").AddressInfo).port;
+        const { port, server } = await neverAnsweringServer();
 
         const sql = postgres({ port, host: "127.0.0.1", [key]: 0.2 });
 
@@ -12501,9 +12504,71 @@ CREATE TABLE ${table_name} (
         expect(e.message).toContain("65535");
       }
     });
+    // A simple-query response can contain several result sets. The first one
+    // here has zero columns (a real zero-column Postgres table), which caches a
+    // zero-property row Structure when its DataRow is materialized. The next
+    // RowDescription widens the field list to three named columns; the cached
+    // structure must be invalidated so the second result set's rows are built
+    // with the new column layout instead of writing the new cells past the
+    // inline capacity of an empty object. Runs in a subprocess because a
+    // regression corrupts the JS heap of the process that parses the response.
+    test("result set following a zero-column result set uses its own column layout", async () => {
+      const tableName = `t_${randomUUIDv7("hex").replaceAll("-", "")}`;
+      const fixtureDir = tempDirWithFiles("pg-zero-column-then-wide", {
+        "fixture.ts": `
+import { SQL } from "bun";
+
+const sql = new SQL({ url: process.env.DATABASE_URL!, max: 1, idleTimeout: 5, connectionTimeout: 5 });
+try {
+  await sql\`CREATE TEMPORARY TABLE ${tableName} ()\`.simple();
+  await sql\`INSERT INTO ${tableName} DEFAULT VALUES\`.simple();
+  // First result set: zero columns, one row. Second result set: three named
+  // columns, one row.
+  const result = await sql\`SELECT * FROM ${tableName}; SELECT '1' AS a, '2' AS b, '3' AS c\`.simple();
+  console.log("SECOND_RESULT_SET " + JSON.stringify(result[1]));
+  console.log("SECOND_RESULT_SET_KEYS " + Object.keys(result[1][0]).sort().join(","));
+} finally {
+  await sql\`DROP TABLE IF EXISTS ${tableName}\`.simple().catch(() => {});
+  await sql.close().catch(() => {});
+}
+console.log("FIXTURE_DONE");
+`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.ts"],
+        cwd: fixtureDir,
+        env: { ...bunEnv, DATABASE_URL: process.env.DATABASE_URL },
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 10_000,
+        killSignal: "SIGKILL",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const filteredStderr = stderr
+        .split(/\r?\n/)
+        .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+        .join("\n");
+
+      // The second result set must expose all three named columns with their
+      // values; reusing the zero-property structure from the first result set
+      // would yield a row object with no own properties.
+      expect(stdout).toContain('SECOND_RESULT_SET [{"a":"1","b":"2","c":"3"}]');
+      expect(stdout).toContain("SECOND_RESULT_SET_KEYS a,b,c");
+      expect(stdout).toContain("FIXTURE_DONE");
+      expect(filteredStderr).toBe("");
+      expect(exitCode).toBe(0);
+    }, 30_000);
   }); // Close "PostgreSQL tests" describe
 } // Close if (isDockerEnabled())
 
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
+//
 // A malicious or buggy Postgres server can send a text-format json[]/jsonb[]
 // DataRow whose array literal contains an unquoted element starting with 'f' or
 // 't' that is not exactly "false"/"true". The array parser must reject it;
@@ -12511,79 +12576,9 @@ CREATE TABLE ${table_name} (
 // blocking the JS thread. The fixture runs in a subprocess so a regression
 // shows up as a killed child instead of a hung test file.
 test("text-format json[] with a malformed boolean literal returns an error instead of looping", async () => {
-  const fixtureDir = tempDirWithFiles("pg-json-array-bool-literal", {
-    "fixture.ts": `
-import { SQL } from "bun";
-import net from "node:net";
-
-function pkt(type, body) {
-  const header = Buffer.alloc(5);
-  header.write(type, 0);
-  header.writeInt32BE(body.length + 4, 1);
-  return Buffer.concat([header, body]);
-}
-const int16 = n => { const b = Buffer.alloc(2); b.writeInt16BE(n, 0); return b; };
-const int32 = n => { const b = Buffer.alloc(4); b.writeInt32BE(n, 0); return b; };
-const cstr = s => Buffer.concat([Buffer.from(s), Buffer.from([0])]);
-
-// Single column "x" of type json[] (oid 199), format 0 (text).
-const rowDescription = pkt("T", Buffer.concat([
-  int16(1),
-  cstr("x"), int32(0), int16(0), int32(199), int16(-1), int32(-1), int16(0),
-]));
-function dataRow(text) {
-  const value = Buffer.from(text);
-  return pkt("D", Buffer.concat([int16(1), int32(value.length), value]));
-}
-const authenticationOk = pkt("R", int32(0));
-const readyForQuery = pkt("Z", Buffer.from("I"));
-const commandComplete = pkt("C", cstr("SELECT 1"));
-
-async function run(arrayText) {
-  const server = net.createServer(socket => {
-    let startup = true;
-    socket.on("data", data => {
-      if (startup) {
-        startup = false;
-        socket.write(Buffer.concat([authenticationOk, readyForQuery]));
-        return;
-      }
-      if (data[0] !== 0x51 /* 'Q' */) return;
-      socket.write(Buffer.concat([rowDescription, dataRow(arrayText), commandComplete, readyForQuery]));
-    });
-    socket.on("error", () => {});
-  });
-  await new Promise(r => server.listen(0, "127.0.0.1", () => r()));
-  const port = server.address().port;
-  const sql = new SQL({
-    url: "postgres://u@127.0.0.1:" + port + "/db",
-    max: 1,
-    idleTimeout: 5,
-    connectionTimeout: 5,
-  });
-  try {
-    const rows = await sql\`select x\`.simple();
-    console.log("ROWS " + arrayText + " => " + JSON.stringify(rows[0] && rows[0].x));
-  } catch (e) {
-    console.log("REJECTED " + arrayText + " => " + (e.code || e.message));
-  } finally {
-    await sql.close().catch(() => {});
-    await new Promise(r => server.close(() => r()));
-  }
-}
-
-// Malformed boolean literals: must error, not spin forever.
-await run("{falsy}");
-await run("{truthy}");
-// Well-formed booleans in a json[] must still parse.
-await run("{false,true}");
-console.log("FIXTURE_DONE");
-`,
-  });
-
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture.ts"],
-    cwd: fixtureDir,
+    cmd: [bunExe(), path.join(import.meta.dir, "sql-postgres-json-array-bool-literal.fixture.ts")],
+    cwd: import.meta.dir,
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
@@ -12601,123 +12596,6 @@ console.log("FIXTURE_DONE");
   expect(stdout).toContain("REJECTED {falsy} => ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT");
   expect(stdout).toContain("REJECTED {truthy} => ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT");
   expect(stdout).toContain("ROWS {false,true} => [false,true]");
-  expect(stdout).toContain("FIXTURE_DONE");
-  expect(filteredStderr).toBe("");
-  expect(exitCode).toBe(0);
-}, 30_000);
-
-// A simple-query response can contain several result sets. The first one here
-// has zero columns, which caches a zero-property row Structure when its
-// DataRow is materialized. The next RowDescription widens the field list to
-// three named columns; the cached structure must be invalidated so the second
-// result set's rows are built with the new column layout instead of writing
-// the new cells past the inline capacity of an empty object. Runs in a
-// subprocess because a regression corrupts the JS heap of the process that
-// parses the response.
-test("result set following a zero-column result set uses its own column layout", async () => {
-  const fixtureDir = tempDirWithFiles("pg-zero-column-then-wide", {
-    "fixture.ts": `
-import { SQL } from "bun";
-import net from "node:net";
-
-function pkt(type, body) {
-  const header = Buffer.alloc(5);
-  header.write(type, 0);
-  header.writeInt32BE(body.length + 4, 1);
-  return Buffer.concat([header, body]);
-}
-const int16 = n => { const b = Buffer.alloc(2); b.writeInt16BE(n, 0); return b; };
-const int32 = n => { const b = Buffer.alloc(4); b.writeInt32BE(n, 0); return b; };
-const cstr = s => Buffer.concat([Buffer.from(s), Buffer.from([0])]);
-
-function rowDescription(names) {
-  const fields = Buffer.concat(
-    names.map(name =>
-      Buffer.concat([cstr(name), int32(0), int16(0), int32(25), int16(-1), int32(-1), int16(0)]),
-    ),
-  );
-  return pkt("T", Buffer.concat([int16(names.length), fields]));
-}
-function dataRow(values) {
-  const cols = Buffer.concat(
-    values.map(v => {
-      const bytes = Buffer.from(v);
-      return Buffer.concat([int32(bytes.length), bytes]);
-    }),
-  );
-  return pkt("D", Buffer.concat([int16(values.length), cols]));
-}
-const authenticationOk = pkt("R", int32(0));
-const readyForQuery = pkt("Z", Buffer.from("I"));
-const commandComplete = tag => pkt("C", cstr(tag));
-
-const server = net.createServer(socket => {
-  let startup = true;
-  socket.on("data", data => {
-    if (startup) {
-      startup = false;
-      socket.write(Buffer.concat([authenticationOk, readyForQuery]));
-      return;
-    }
-    if (data[0] !== 0x51 /* 'Q' */) return;
-    // First result set: zero columns, one row. Second result set: three named
-    // columns, one row.
-    socket.write(
-      Buffer.concat([
-        rowDescription([]),
-        dataRow([]),
-        commandComplete("SELECT 1"),
-        rowDescription(["a", "b", "c"]),
-        dataRow(["1", "2", "3"]),
-        commandComplete("SELECT 1"),
-        readyForQuery,
-      ]),
-    );
-  });
-  socket.on("error", () => {});
-});
-await new Promise(r => server.listen(0, "127.0.0.1", () => r()));
-const port = server.address().port;
-
-const sql = new SQL({
-  url: "postgres://u@127.0.0.1:" + port + "/db",
-  max: 1,
-  idleTimeout: 5,
-  connectionTimeout: 5,
-});
-try {
-  const result = await sql\`select; select 1 as a, 2 as b, 3 as c\`.simple();
-  console.log("SECOND_RESULT_SET " + JSON.stringify(result[1]));
-  console.log("SECOND_RESULT_SET_KEYS " + Object.keys(result[1][0]).sort().join(","));
-} finally {
-  await sql.close().catch(() => {});
-  await new Promise(r => server.close(() => r()));
-}
-console.log("FIXTURE_DONE");
-`,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture.ts"],
-    cwd: fixtureDir,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: 10_000,
-    killSignal: "SIGKILL",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const filteredStderr = stderr
-    .split(/\r?\n/)
-    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-    .join("\n");
-
-  // The second result set must expose all three named columns with their
-  // values; reusing the zero-property structure from the first result set
-  // would yield a row object with no own properties.
-  expect(stdout).toContain('SECOND_RESULT_SET [{"a":"1","b":"2","c":"3"}]');
-  expect(stdout).toContain("SECOND_RESULT_SET_KEYS a,b,c");
   expect(stdout).toContain("FIXTURE_DONE");
   expect(filteredStderr).toBe("");
   expect(exitCode).toBe(0);
@@ -12760,6 +12638,86 @@ test("rejects Postgres connection options containing null bytes", async () => {
   await ok.close();
 });
 
+// Native createInstance argument validation (src/sql_jsc/shared/
+// ConnectionCtorArgs.rs / QueryCtorArgs.rs, and the Postgres null-byte guard
+// in PostgresSQLConnection.rs). Every error here is thrown by the native
+// parser before any socket is created, so no server needs to be listening:
+// the address below is never dialed.
+describe("shared createInstance validation (no server)", () => {
+  const base = { adapter: "postgres", hostname: "127.0.0.1", port: 1, max: 1 } as const;
+
+  // Credentials are written into the NUL-delimited Postgres StartupMessage as
+  // `key\0value\0`; a NUL byte inside one would inject extra parameters, so
+  // the native parser must refuse it before connecting. The rejection is an
+  // ERR_INVALID_ARG_TYPE TypeError, matching the MySQL adapter and the Zig
+  // reference (`PostgresSQLConnection.zig` `throwInvalidArguments`). `path`
+  // is guarded the same way natively, but the JS layer drops it via
+  // `existsSync` before it ever reaches createInstance.
+  test.concurrent.each(["username", "password", "database"] as const)(
+    "rejects %s containing null bytes",
+    async field => {
+      await using sql = new SQL({ ...base, username: "u", [field]: "a\0b" });
+      // `Query` is a lazy thenable, so collect the rejection explicitly.
+      const err: any = await sql`select 1`.then(
+        () => null,
+        e => e,
+      );
+      expect(err?.message).toBe(`${field} must not contain null bytes`);
+      expect(err?.code).toBe("ERR_INVALID_ARG_TYPE");
+      expect(err instanceof TypeError).toBe(true);
+    },
+  );
+
+  test.concurrent("SSL_CTX creation failure throws the structured BoringSSL error", async () => {
+    // An unparseable CA makes `SSL_CTX` creation fail synchronously inside
+    // createInstance, before any socket exists. The failure carries
+    // `code: "ERR_BORINGSSL"` like the MySQL adapter and the Zig reference
+    // (`err.toJS(globalObject)`).
+    await using sql = new SQL({ ...base, username: "u", tls: { ca: "not a pem" } });
+    const err: any = await sql`select 1`.then(
+      () => null,
+      e => e,
+    );
+    expect(err?.message).toBe("Invalid CA");
+    expect(err?.code).toBe("ERR_BORINGSSL");
+  });
+
+  test.concurrent.each(["postgres", "mysql"] as const)(
+    "%s: rejects tls that is neither a boolean nor an object",
+    async adapter => {
+      // A truthy non-boolean/non-object upgrades sslMode to `require` in JS and
+      // reaches the native parser as-is. The constructor throws synchronously,
+      // and createPooledConnectionHandle defers onClose via process.nextTick so
+      // the pending query rejects cleanly instead of hanging (see #32145).
+      await using sql = new SQL({ ...base, adapter, username: "u", tls: 1 as any });
+      const err: any = await sql`select 1`.then(
+        () => null,
+        e => e,
+      );
+      expect(err?.message).toBe("tls must be a boolean or an object");
+    },
+  );
+
+  test.concurrent("rejects simple queries with parameters", async () => {
+    await using sql = new SQL({ ...base, username: "u" });
+    // Query-handle creation fails before the pool ever connects.
+    const err: any = await sql
+      .unsafe("select $1", [1])
+      .simple()
+      .then(
+        () => null,
+        e => e,
+      );
+    expect(err?.message).toBe("simple query cannot have parameters");
+  });
+});
+
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
+//
 // A Postgres server controls two independent column counts: the
 // RowDescription's field list (which sizes the per-row cell buffer and the
 // cached row Structure) and each DataRow's own column count. When a DataRow
@@ -12772,90 +12730,9 @@ test("rejects Postgres connection options containing null bytes", async () => {
 // Runs in a subprocess because a regression corrupts the JS heap of the
 // process that parses the response.
 test("data row that omits columns declared in the row description yields nulls for the missing columns", async () => {
-  const fixtureDir = tempDirWithFiles("pg-short-data-row", {
-    "fixture.ts": `
-import { SQL } from "bun";
-import net from "node:net";
-
-function pkt(type, body) {
-  const header = Buffer.alloc(5);
-  header.write(type, 0);
-  header.writeInt32BE(body.length + 4, 1);
-  return Buffer.concat([header, body]);
-}
-const int16 = n => { const b = Buffer.alloc(2); b.writeInt16BE(n, 0); return b; };
-const int32 = n => { const b = Buffer.alloc(4); b.writeInt32BE(n, 0); return b; };
-const cstr = s => Buffer.concat([Buffer.from(s), Buffer.from([0])]);
-
-// 62 text columns (oid 25, format 0) that all share the same name "c", so the
-// cached row Structure has a single property and the other 61 fields are
-// duplicates.
-const COLUMNS = 62;
-const rowDescription = pkt("T", Buffer.concat([
-  int16(COLUMNS),
-  ...Array.from({ length: COLUMNS }, () =>
-    Buffer.concat([cstr("c"), int32(0), int16(0), int32(25), int16(-1), int32(-1), int16(0)]),
-  ),
-]));
-function dataRow(values) {
-  const cols = Buffer.concat(
-    values.map(v => {
-      const bytes = Buffer.from(v);
-      return Buffer.concat([int32(bytes.length), bytes]);
-    }),
-  );
-  return pkt("D", Buffer.concat([int16(values.length), cols]));
-}
-const authenticationOk = pkt("R", int32(0));
-const readyForQuery = pkt("Z", Buffer.from("I"));
-const commandComplete = pkt("C", cstr("SELECT 1"));
-
-async function run(label, rowValues) {
-  const server = net.createServer(socket => {
-    let startup = true;
-    socket.on("data", data => {
-      if (startup) {
-        startup = false;
-        socket.write(Buffer.concat([authenticationOk, readyForQuery]));
-        return;
-      }
-      if (data[0] !== 0x51 /* 'Q' */) return;
-      socket.write(Buffer.concat([rowDescription, dataRow(rowValues), commandComplete, readyForQuery]));
-    });
-    socket.on("error", () => {});
-  });
-  await new Promise(r => server.listen(0, "127.0.0.1", () => r()));
-  const port = server.address().port;
-  const sql = new SQL({
-    url: "postgres://u@127.0.0.1:" + port + "/db",
-    max: 1,
-    idleTimeout: 5,
-    connectionTimeout: 5,
-  });
-  try {
-    const rows = await sql\`select c\`.simple();
-    console.log(label + " " + JSON.stringify(rows[0]));
-  } catch (e) {
-    console.log(label + "_ERROR " + (e.code || e.message));
-  } finally {
-    await sql.close().catch(() => {});
-    await new Promise(r => server.close(() => r()));
-  }
-}
-
-// The DataRow declares zero of the 62 described columns: the row's single
-// named property must come back as null and nothing else may be written.
-await run("EMPTY_ROW", []);
-// A DataRow that supplies all 62 declared columns still resolves the duplicate
-// column name following the established "last one wins" rule.
-await run("FULL_ROW", Array.from({ length: COLUMNS }, (_, i) => "v" + i));
-console.log("FIXTURE_DONE");
-`,
-  });
-
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture.ts"],
-    cwd: fixtureDir,
+    cmd: [bunExe(), path.join(import.meta.dir, "sql-postgres-short-data-row.fixture.ts")],
+    cwd: import.meta.dir,
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

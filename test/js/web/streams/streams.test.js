@@ -1803,3 +1803,116 @@ test("pipeTo from a stream that errors natively includes async stack frames", as
   expect(caught.stack).toContain("at async level2");
   expect(caught.stack).toContain("at async level1");
 });
+
+// https://github.com/oven-sh/bun/issues/6860
+describe("Bun.readableStreamTo* on an already used stream", () => {
+  const consumers = ["readableStreamToText", "readableStreamToArrayBuffer", "readableStreamToBytes", "readableStreamToJSON", "readableStreamToArray", "readableStreamToBlob"];
+  const makeStream = () => new ReadableStream({
+    start(c) {
+      c.enqueue(new TextEncoder().encode('"hello"'));
+      c.close();
+    },
+  });
+
+  for (const consumer of consumers) {
+    test(`${consumer} rejects after the stream was consumed by a Bun helper`, async () => {
+      const stream = makeStream();
+      await Bun.readableStreamToText(stream);
+      expect(Bun[consumer](stream)).rejects.toThrow("ReadableStream has already been used");
+    });
+  }
+
+  test("rejects after the stream was consumed through a reader", async () => {
+    const stream = makeStream();
+    const reader = stream.getReader();
+    while (!(await reader.read()).done) {}
+    reader.releaseLock();
+    expect(Bun.readableStreamToText(stream)).rejects.toThrow("ReadableStream has already been used");
+  });
+
+  test("rejects after the stream was cancelled", async () => {
+    const stream = makeStream();
+    await stream.cancel();
+    expect(Bun.readableStreamToArrayBuffer(stream)).rejects.toThrow("ReadableStream has already been used");
+  });
+
+  test("still reports a locked stream as locked", async () => {
+    const stream = makeStream();
+    const reader = stream.getReader();
+    expect(Bun.readableStreamToText(stream)).rejects.toThrow("ReadableStream is locked");
+    reader.releaseLock();
+  });
+
+  test("new Response(stream) after consumption still throws", async () => {
+    const stream = makeStream();
+    await Bun.readableStreamToText(stream);
+    expect(() => new Response(stream).arrayBuffer()).toThrow();
+  });
+});
+
+// Text assembly past the string limit must throw a catchable out-of-memory error, never
+// abort the process. The synthetic allocation limit makes the path testable without
+// multi-gigabyte inputs; a subprocess isolates the lowered limit.
+describe("text consumers reject strings over the string allocation limit", () => {
+  const runInSubprocess = async source => {
+    const script = `
+      import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+      setSyntheticAllocationLimitForTesting(32 * 1024 * 1024);
+      const big = "x".repeat(8 * 1024 * 1024);
+      let caught;
+      try {
+        ${source}
+      } catch (e) {
+        caught = e;
+      }
+      if (!caught) throw new Error("expected an out-of-memory error");
+      console.log(caught.message);
+    `;
+    const proc = Bun.spawn({ cmd: [process.execPath, "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+
+  test("Bun.readableStreamToText", async () => {
+    const { stdout, stderr, exitCode } = await runInSubprocess(`
+      const stream = new ReadableStream({
+        start(c) {
+          for (let i = 0; i < 6; i++) c.enqueue(big);
+          c.close();
+        },
+      });
+      await Bun.readableStreamToText(stream);
+    `);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "Out of memory", exitCode: 0 });
+  });
+
+  test("direct stream text sink", async () => {
+    const { stdout, stderr, exitCode } = await runInSubprocess(`
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(c) {
+          for (let i = 0; i < 6; i++) c.write(big);
+          c.end();
+        },
+      });
+      await Bun.readableStreamToText(stream);
+    `);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "Out of memory", exitCode: 0 });
+  });
+
+  test("mixed string and binary chunks", async () => {
+    const { stdout, stderr, exitCode } = await runInSubprocess(`
+      const stream = new ReadableStream({
+        start(c) {
+          for (let i = 0; i < 6; i++) {
+            c.enqueue(big);
+            c.enqueue(new Uint8Array(1));
+          }
+          c.close();
+        },
+      });
+      await Bun.readableStreamToText(stream);
+    `);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "Out of memory", exitCode: 0 });
+  });
+});

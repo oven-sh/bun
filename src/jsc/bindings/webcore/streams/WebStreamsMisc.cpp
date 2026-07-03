@@ -164,7 +164,7 @@ UnderlyingSinkDict convertUnderlyingSinkDict(JSGlobalObject* globalObject, JSVal
         return result;
     auto* sinkObject = asObject(underlyingSink);
 
-    result.abort = getCallbackMember(globalObject, sinkObject, Identifier::fromString(vm, "abort"_s), "The underlying sink's 'abort' property must be a function"_s);
+    result.abort = getCallbackMember(globalObject, sinkObject, builtinNames(vm).abortPublicName(), "The underlying sink's 'abort' property must be a function"_s);
     RETURN_IF_EXCEPTION(scope, result);
     result.close = getCallbackMember(globalObject, sinkObject, names.closePublicName(), "The underlying sink's 'close' property must be a function"_s);
     RETURN_IF_EXCEPTION(scope, result);
@@ -195,20 +195,20 @@ TransformerDict convertTransformerDict(JSGlobalObject* globalObject, JSValue tra
 
     result.cancel = getCallbackMember(globalObject, transformerObject, names.cancelPublicName(), "The transformer's 'cancel' property must be a function"_s);
     RETURN_IF_EXCEPTION(scope, result);
-    result.flush = getCallbackMember(globalObject, transformerObject, Identifier::fromString(vm, "flush"_s), "The transformer's 'flush' property must be a function"_s);
+    result.flush = getCallbackMember(globalObject, transformerObject, builtinNames(vm).flushPublicName(), "The transformer's 'flush' property must be a function"_s);
     RETURN_IF_EXCEPTION(scope, result);
 
     // `readableType` / `writableType` are `any`: presence alone triggers the RangeError.
-    JSValue readableType = transformerObject->get(globalObject, Identifier::fromString(vm, "readableType"_s));
+    JSValue readableType = transformerObject->get(globalObject, builtinNames(vm).readableTypePublicName());
     RETURN_IF_EXCEPTION(scope, result);
     result.hasReadableType = !readableType.isUndefined();
 
     result.start = getCallbackMember(globalObject, transformerObject, names.startPublicName(), "The transformer's 'start' property must be a function"_s);
     RETURN_IF_EXCEPTION(scope, result);
-    result.transform = getCallbackMember(globalObject, transformerObject, Identifier::fromString(vm, "transform"_s), "The transformer's 'transform' property must be a function"_s);
+    result.transform = getCallbackMember(globalObject, transformerObject, builtinNames(vm).transformPublicName(), "The transformer's 'transform' property must be a function"_s);
     RETURN_IF_EXCEPTION(scope, result);
 
-    JSValue writableType = transformerObject->get(globalObject, Identifier::fromString(vm, "writableType"_s));
+    JSValue writableType = transformerObject->get(globalObject, builtinNames(vm).writableTypePublicName());
     RETURN_IF_EXCEPTION(scope, result);
     result.hasWritableType = !writableType.isUndefined();
     return result;

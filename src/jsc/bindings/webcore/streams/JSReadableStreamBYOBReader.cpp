@@ -131,7 +131,7 @@ static BYOBReadArguments convertBYOBReadArguments(JSGlobalObject* globalObject, 
         throwTypeError(globalObject, scope, "ReadableStreamBYOBReader.prototype.read options must be an object"_s);
         return result;
     }
-    JSValue minValue = asObject(options)->get(globalObject, Identifier::fromString(vm, "min"_s));
+    JSValue minValue = asObject(options)->get(globalObject, builtinNames(vm).minPublicName());
     RETURN_IF_EXCEPTION(scope, result);
     if (minValue.isUndefined())
         return result;

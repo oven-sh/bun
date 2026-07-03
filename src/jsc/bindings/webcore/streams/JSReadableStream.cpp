@@ -226,17 +226,17 @@ static ConvertedStreamPipeOptions convertStreamPipeOptions(JSGlobalObject* globa
     }
     auto* optionsObject = asObject(options);
 
-    JSValue preventAbort = optionsObject->get(globalObject, Identifier::fromString(vm, "preventAbort"_s));
+    JSValue preventAbort = optionsObject->get(globalObject, builtinNames(vm).preventAbortPublicName());
     RETURN_IF_EXCEPTION(scope, result);
     if (!preventAbort.isUndefined())
         result.preventAbort = preventAbort.toBoolean(globalObject);
 
-    JSValue preventCancel = optionsObject->get(globalObject, Identifier::fromString(vm, "preventCancel"_s));
+    JSValue preventCancel = optionsObject->get(globalObject, builtinNames(vm).preventCancelPublicName());
     RETURN_IF_EXCEPTION(scope, result);
     if (!preventCancel.isUndefined())
         result.preventCancel = preventCancel.toBoolean(globalObject);
 
-    JSValue preventClose = optionsObject->get(globalObject, Identifier::fromString(vm, "preventClose"_s));
+    JSValue preventClose = optionsObject->get(globalObject, builtinNames(vm).preventClosePublicName());
     RETURN_IF_EXCEPTION(scope, result);
     if (!preventClose.isUndefined())
         result.preventClose = preventClose.toBoolean(globalObject);
@@ -307,7 +307,7 @@ template<> void JSReadableStreamConstructor::finishCreation(VM& vm, JSDOMGlobalO
     putDirect(vm, vm.propertyNames->prototype, JSReadableStream::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 
     auto* fromFunction = JSFunction::create(vm, &globalObject, 1, "from"_s, jsReadableStreamStaticFunction_from, ImplementationVisibility::Public, NoIntrinsic);
-    putDirect(vm, Identifier::fromString(vm, "from"_s), fromFunction, 0);
+    putDirect(vm, vm.propertyNames->from, fromFunction, 0);
 
     m_instanceStructure.set(vm, this, getDOMStructure<JSReadableStream>(vm, globalObject));
 }
@@ -685,7 +685,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_values, (JSGlobalObje
     if (!options.isUndefinedOrNull()) {
         if (!options.isObject())
             return throwVMTypeError(lexicalGlobalObject, scope, "values() options must be an object"_s);
-        JSValue preventCancelValue = asObject(options)->get(lexicalGlobalObject, Identifier::fromString(vm, "preventCancel"_s));
+        JSValue preventCancelValue = asObject(options)->get(lexicalGlobalObject, builtinNames(vm).preventCancelPublicName());
         RETURN_IF_EXCEPTION(scope, {});
         if (!preventCancelValue.isUndefined())
             preventCancel = preventCancelValue.toBoolean(lexicalGlobalObject);

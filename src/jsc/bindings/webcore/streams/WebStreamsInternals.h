@@ -32,6 +32,8 @@
 #include <utility>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
+#include "helpers.h"
+#include <wtf/text/StringImpl.h>
 
 namespace WebCore {
 class MessagePort;
@@ -40,6 +42,15 @@ class AbortSignal;
 
 namespace Bun {
 namespace WebStreams {
+
+// Building a string past this limit would abort the process inside WTF; text consumers
+// check it and throw a catchable out-of-memory error instead. Mirrors the predicate
+// Bun's string constructors use (helpers.h), including the synthetic limit that
+// `bun:internal-for-testing` can lower.
+inline bool exceedsStringLimit(size_t length)
+{
+    return length > Bun__stringSyntheticAllocationLimit || length > WTF::StringImpl::MaxLength;
+}
 
 // Reduce noise: every class name below is a WebCore JS cell (StreamsForward.h).
 using WebCore::JSCrossRealmTransformState;

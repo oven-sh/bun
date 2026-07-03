@@ -12,6 +12,7 @@
 #include "JSAsyncIteratorSourceOperation.h"
 #include "JSDirectStreamController.h"
 #include "JSOneShotDirectSink.h"
+#include "JSReadableStreamIntoArrayOperation.h"
 #include "JSPullIntoDescriptor.h"
 #include "JSReadRequest.h"
 #include "JSReadStreamIntoSinkOperation.h"

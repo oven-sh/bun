@@ -323,7 +323,8 @@ JSC_DECLARE_HOST_FUNCTION(jsWebStreamsCountQueuingStrategySize);
     V(readStreamIntoSinkOperationStructure, JSReadStreamIntoSinkOperation)   \
     V(resumableSinkPumpOperationStructure, JSResumableSinkPumpOperation)     \
     V(standaloneTextSinkStructure, JSBunStandaloneTextSink)                  \
-    V(oneShotDirectSinkStructure, JSOneShotDirectSink)
+    V(oneShotDirectSinkStructure, JSOneShotDirectSink)                       \
+    V(intoArrayOperationStructure, JSReadableStreamIntoArrayOperation)
 
 // Non-destructible: LazyProperty members only (plus the end-of-tick flush list, a
 // WriteBarrier container mutated and visited under this cell's lock).

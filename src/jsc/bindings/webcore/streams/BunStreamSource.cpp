@@ -1,3 +1,4 @@
+#include "BunClientData.h"
 #include "config.h"
 #include "BunStreamSource.h"
 
@@ -367,10 +368,10 @@ static void nativeSourceSever(JSGlobalObject* globalObject, JSNativeStreamSource
     if (JSObject* handle = adapter->m_handle.get()) {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         PutPropertySlot onCloseSlot(handle, false);
-        handle->methodTable()->put(handle, globalObject, Identifier::fromString(vm, "onClose"_s), jsUndefined(), onCloseSlot);
+        handle->methodTable()->put(handle, globalObject, builtinNames(vm).onClosePublicName(), jsUndefined(), onCloseSlot);
         if (!catchScope.exception()) {
             PutPropertySlot onDrainSlot(handle, false);
-            handle->methodTable()->put(handle, globalObject, Identifier::fromString(vm, "onDrain"_s), jsUndefined(), onDrainSlot);
+            handle->methodTable()->put(handle, globalObject, builtinNames(vm).onDrainPublicName(), jsUndefined(), onDrainSlot);
         }
         if (catchScope.exception()) [[unlikely]] {
             if (takeAbruptCompletion(globalObject, catchScope).isEmpty())
@@ -505,7 +506,7 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
     MarkedArgumentBuffer startArgs;
     startArgs.append(jsNumber(static_cast<double>(autoAllocateChunkSize)));
     ASSERT(!startArgs.hasOverflowed());
-    JSValue startResult = invokeMethod(globalObject, handle, Identifier::fromString(vm, "start"_s), startArgs);
+    JSValue startResult = invokeMethod(globalObject, handle, builtinNames(vm).startPublicName(), startArgs);
     RETURN_IF_EXCEPTION(scope, );
 
     double chunkSize = 0;
@@ -516,7 +517,7 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
         chunkSize = startResult.toNumber(globalObject);
         RETURN_IF_EXCEPTION(scope, );
         MarkedArgumentBuffer noArgs;
-        drainValue = invokeMethod(globalObject, handle, Identifier::fromString(vm, "drain"_s), noArgs);
+        drainValue = invokeMethod(globalObject, handle, builtinNames(vm).drainPublicName(), noArgs);
         RETURN_IF_EXCEPTION(scope, );
     }
 
@@ -552,10 +553,10 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
     auto* onDrainBound = createBoundHandler(globalObject, runtime->boundOnNativeSourceDrain(), adapter);
     RETURN_IF_EXCEPTION(scope, );
     PutPropertySlot onCloseSlot(handle, false);
-    handle->methodTable()->put(handle, globalObject, Identifier::fromString(vm, "onClose"_s), onCloseBound, onCloseSlot);
+    handle->methodTable()->put(handle, globalObject, builtinNames(vm).onClosePublicName(), onCloseBound, onCloseSlot);
     RETURN_IF_EXCEPTION(scope, );
     PutPropertySlot onDrainSlot(handle, false);
-    handle->methodTable()->put(handle, globalObject, Identifier::fromString(vm, "onDrain"_s), onDrainBound, onDrainSlot);
+    handle->methodTable()->put(handle, globalObject, builtinNames(vm).onDrainPublicName(), onDrainBound, onDrainSlot);
     RETURN_IF_EXCEPTION(scope, );
 
     auto* controller = WebCore::JSReadableStreamDefaultController::create(vm, WebCore::getDOMStructure<WebCore::JSReadableStreamDefaultController>(vm, *domGlobalObject));
@@ -605,7 +606,7 @@ static JSPromise* nativeSourcePullImpl(JSGlobalObject* globalObject, JSNativeStr
 
     if (JSObject* pendingObject = adapter->m_pendingView.get()) {
         MarkedArgumentBuffer noArgs;
-        JSValue drained = invokeMethod(globalObject, handle, Identifier::fromString(vm, "drain"_s), noArgs);
+        JSValue drained = invokeMethod(globalObject, handle, builtinNames(vm).drainPublicName(), noArgs);
         RETURN_IF_EXCEPTION(scope, nullptr);
         bool isTruthy = drained.toBoolean(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -626,7 +627,7 @@ static JSPromise* nativeSourcePullImpl(JSGlobalObject* globalObject, JSNativeStr
     pullArgs.append(view);
     pullArgs.append(closer);
     ASSERT(!pullArgs.hasOverflowed());
-    JSValue result = invokeMethod(globalObject, handle, Identifier::fromString(vm, "pull"_s), pullArgs);
+    JSValue result = invokeMethod(globalObject, handle, builtinNames(vm).pullPublicName(), pullArgs);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     if (auto* pullPromise = dynamicDowncast<JSPromise>(result)) {
@@ -681,12 +682,12 @@ JSPromise* nativeSourceCancel(JSGlobalObject* globalObject, JSReadableStreamDefa
             MarkedArgumentBuffer updateRefArgs;
             updateRefArgs.append(jsBoolean(false));
             ASSERT(!updateRefArgs.hasOverflowed());
-            invokeMethod(globalObject, handle, Identifier::fromString(vm, "updateRef"_s), updateRefArgs);
+            invokeMethod(globalObject, handle, builtinNames(vm).updateRefPublicName(), updateRefArgs);
             if (!catchScope.exception()) {
                 MarkedArgumentBuffer cancelArgs;
                 cancelArgs.append(reason);
                 ASSERT(!cancelArgs.hasOverflowed());
-                invokeMethod(globalObject, handle, Identifier::fromString(vm, "cancel"_s), cancelArgs);
+                invokeMethod(globalObject, handle, builtinNames(vm).cancelPublicName(), cancelArgs);
             }
         }
         if (!catchScope.exception())
@@ -765,14 +766,14 @@ static void readDirectStreamCloseImpl(JSGlobalObject* globalObject, JSDirectSink
         state->m_sinkController.clear();
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         MarkedArgumentBuffer noArgs;
-        invokeMethod(globalObject, sinkController, Identifier::fromString(vm, "end"_s), noArgs);
+        invokeMethod(globalObject, sinkController, builtinNames(vm).endPublicName(), noArgs);
         if (catchScope.exception()) [[unlikely]]
             catchScope.clearExceptionExceptTermination();
     }
     JSObject* underlyingSource = state->m_underlyingSource.get();
     state->m_underlyingSource.clear();
     if (underlyingSource) {
-        JSValue cancelFunction = underlyingSource->get(globalObject, Identifier::fromString(vm, "cancel"_s));
+        JSValue cancelFunction = underlyingSource->get(globalObject, builtinNames(vm).cancelPublicName());
         RETURN_IF_EXCEPTION(scope, );
         bool hasCancel = cancelFunction.toBoolean(globalObject);
         if (hasCancel) {
@@ -824,7 +825,7 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
     state->m_underlyingSource.set(vm, state, underlyingSource);
     state->m_sinkController.set(vm, state, sinkController);
 
-    JSValue pull = underlyingSource->get(globalObject, Identifier::fromString(vm, "pull"_s));
+    JSValue pull = underlyingSource->get(globalObject, builtinNames(vm).pullPublicName());
     RETURN_IF_EXCEPTION(scope, {});
     bool pullIsTruthy = pull.toBoolean(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -846,11 +847,11 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
     double rawHighWaterMark = stream->m_bunHighWaterMark;
     double highWaterMark = (std::isnan(rawHighWaterMark) || rawHighWaterMark < 64) ? 64 : rawHighWaterMark;
     auto* startOptions = constructEmptyObject(globalObject);
-    startOptions->putDirect(vm, Identifier::fromString(vm, "highWaterMark"_s), jsNumber(highWaterMark));
+    startOptions->putDirect(vm, builtinNames(vm).highWaterMarkPublicName(), jsNumber(highWaterMark));
     MarkedArgumentBuffer startArgs;
     startArgs.append(startOptions);
     ASSERT(!startArgs.hasOverflowed());
-    invokeMethod(globalObject, sinkController, Identifier::fromString(vm, "start"_s), startArgs);
+    invokeMethod(globalObject, sinkController, builtinNames(vm).startPublicName(), startArgs);
     RETURN_IF_EXCEPTION(scope, {});
 
     auto* closeBound = createBoundHandler(globalObject, runtime->boundReadDirectStreamOnClose(), state);
@@ -912,7 +913,7 @@ static JSValue rsisSinkWrite(JSGlobalObject* globalObject, JSReadStreamIntoSinkO
     MarkedArgumentBuffer args;
     args.append(chunk);
     ASSERT(!args.hasOverflowed());
-    return invokeMethod(globalObject, op->m_sink.get(), Identifier::fromString(vm, "write"_s), args);
+    return invokeMethod(globalObject, op->m_sink.get(), builtinNames(vm).writePublicName(), args);
 }
 
 static JSValue rsisSinkFlushPending(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
@@ -921,14 +922,14 @@ static JSValue rsisSinkFlushPending(JSGlobalObject* globalObject, JSReadStreamIn
     MarkedArgumentBuffer args;
     args.append(jsBoolean(true));
     ASSERT(!args.hasOverflowed());
-    return invokeMethod(globalObject, op->m_sink.get(), Identifier::fromString(vm, "flush"_s), args);
+    return invokeMethod(globalObject, op->m_sink.get(), builtinNames(vm).flushPublicName(), args);
 }
 
 static JSValue rsisSinkEnd(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
 {
     auto& vm = getVM(globalObject);
     MarkedArgumentBuffer noArgs;
-    return invokeMethod(globalObject, op->m_sink.get(), Identifier::fromString(vm, "end"_s), noArgs);
+    return invokeMethod(globalObject, op->m_sink.get(), builtinNames(vm).endPublicName(), noArgs);
 }
 
 static void rsisSinkClose(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue error)
@@ -937,7 +938,7 @@ static void rsisSinkClose(JSGlobalObject* globalObject, JSReadStreamIntoSinkOper
     MarkedArgumentBuffer args;
     args.append(error);
     ASSERT(!args.hasOverflowed());
-    invokeMethod(globalObject, op->m_sink.get(), Identifier::fromString(vm, "close"_s), args);
+    invokeMethod(globalObject, op->m_sink.get(), builtinNames(vm).closePublicName(), args);
 }
 
 static JSReadStreamIntoSinkOperation* rsisOpFromContext(JSValue context)
@@ -1140,11 +1141,11 @@ static void rsisRegisterAndStart(JSGlobalObject* globalObject, JSReadStreamIntoS
         RETURN_IF_EXCEPTION(scope, );
         double rawHighWaterMark = stream->m_bunHighWaterMark;
         auto* startOptions = constructEmptyObject(globalObject);
-        startOptions->putDirect(vm, Identifier::fromString(vm, "highWaterMark"_s), jsNumber(std::isnan(rawHighWaterMark) ? 0 : rawHighWaterMark));
+        startOptions->putDirect(vm, builtinNames(vm).highWaterMarkPublicName(), jsNumber(std::isnan(rawHighWaterMark) ? 0 : rawHighWaterMark));
         MarkedArgumentBuffer startArgs;
         startArgs.append(startOptions);
         ASSERT(!startArgs.hasOverflowed());
-        invokeMethod(globalObject, op->m_sink.get(), Identifier::fromString(vm, "start"_s), startArgs);
+        invokeMethod(globalObject, op->m_sink.get(), builtinNames(vm).startPublicName(), startArgs);
         RETURN_IF_EXCEPTION(scope, );
     }
     op->m_started = true;
@@ -1281,7 +1282,7 @@ static void readStreamIntoSinkOnCloseImpl(JSGlobalObject* globalObject, JSReadSt
     if (JSObject* sink = op->m_sink.get()) {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         MarkedArgumentBuffer noArgs;
-        invokeMethod(globalObject, sink, Identifier::fromString(vm, "end"_s), noArgs);
+        invokeMethod(globalObject, sink, builtinNames(vm).endPublicName(), noArgs);
         if (catchScope.exception()) [[unlikely]]
             catchScope.clearExceptionExceptTermination();
     }
@@ -1345,7 +1346,7 @@ static void resumableEnd(JSGlobalObject* globalObject, JSResumableSinkPumpOperat
         if (hasError)
             args.append(error);
         ASSERT(!args.hasOverflowed());
-        invokeMethod(globalObject, sink, Identifier::fromString(vm, "end"_s), args);
+        invokeMethod(globalObject, sink, builtinNames(vm).endPublicName(), args);
         if (catchScope.exception()) [[unlikely]] {
             if (takeAbruptCompletion(globalObject, catchScope).isEmpty())
                 return;
@@ -1392,7 +1393,7 @@ static void resumableHandleReadResult(JSGlobalObject* globalObject, JSResumableS
             MarkedArgumentBuffer args;
             args.append(chunk);
             ASSERT(!args.hasOverflowed());
-            invokeMethod(globalObject, op->m_sink.get(), Identifier::fromString(vm, "write"_s), args);
+            invokeMethod(globalObject, op->m_sink.get(), builtinNames(vm).writePublicName(), args);
             RETURN_IF_EXCEPTION(scope, );
         }
         op->m_reading = false;
@@ -1402,7 +1403,7 @@ static void resumableHandleReadResult(JSGlobalObject* globalObject, JSResumableS
         MarkedArgumentBuffer args;
         args.append(chunk);
         ASSERT(!args.hasOverflowed());
-        JSValue wrote = invokeMethod(globalObject, op->m_sink.get(), Identifier::fromString(vm, "write"_s), args);
+        JSValue wrote = invokeMethod(globalObject, op->m_sink.get(), builtinNames(vm).writePublicName(), args);
         RETURN_IF_EXCEPTION(scope, );
         // write() runs user code that may synchronously cancel the pump and release the
         // reader; re-validate before issuing the next read through it.
@@ -1482,11 +1483,11 @@ static void resumableSetup(JSGlobalObject* globalObject, JSResumableSinkPumpOper
     // The sink's start runs FIRST, even if acquiring the reader throws.
     double rawHighWaterMark = stream->m_bunHighWaterMark;
     auto* startOptions = constructEmptyObject(globalObject);
-    startOptions->putDirect(vm, Identifier::fromString(vm, "highWaterMark"_s), jsNumber(std::isnan(rawHighWaterMark) ? 0 : rawHighWaterMark));
+    startOptions->putDirect(vm, builtinNames(vm).highWaterMarkPublicName(), jsNumber(std::isnan(rawHighWaterMark) ? 0 : rawHighWaterMark));
     MarkedArgumentBuffer startArgs;
     startArgs.append(startOptions);
     ASSERT(!startArgs.hasOverflowed());
-    invokeMethod(globalObject, sink, Identifier::fromString(vm, "start"_s), startArgs);
+    invokeMethod(globalObject, sink, builtinNames(vm).startPublicName(), startArgs);
     RETURN_IF_EXCEPTION(scope, );
 
     stream->materializeIfNeeded(globalObject);
@@ -1504,7 +1505,7 @@ static void resumableSetup(JSGlobalObject* globalObject, JSResumableSinkPumpOper
     handlerArgs.append(drainBound);
     handlerArgs.append(cancelBound);
     ASSERT(!handlerArgs.hasOverflowed());
-    invokeMethod(globalObject, sink, Identifier::fromString(vm, "setHandlers"_s), handlerArgs);
+    invokeMethod(globalObject, sink, builtinNames(vm).setHandlersPublicName(), handlerArgs);
     RETURN_IF_EXCEPTION(scope, );
 
     RELEASE_AND_RETURN(scope, resumableDrain(globalObject, op));

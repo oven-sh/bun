@@ -71,6 +71,7 @@ class JSStreamsRuntime;
 class JSDirectStreamController;
 class JSBunStandaloneTextSink; // the standalone Text sink (BunStandaloneTextSink.h)
 class JSOneShotDirectSink; // consumeDirectStreamToArrayBuffer's throwaway controller
+class JSReadableStreamIntoArrayOperation; // the array pump's reader/chunks/result state
 class JSNativeStreamSourceAdapter;
 class JSDirectSinkCloseState;
 class JSAsyncIteratorSourceOperation;

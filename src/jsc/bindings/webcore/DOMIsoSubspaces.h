@@ -286,6 +286,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForResumableSinkPumpOperation;
     std::unique_ptr<IsoSubspace> m_subspaceForBunStandaloneTextSink;
     std::unique_ptr<IsoSubspace> m_subspaceForOneShotDirectSink;
+    std::unique_ptr<IsoSubspace> m_subspaceForReadableStreamIntoArrayOperation;
     std::unique_ptr<IsoSubspace> m_subspaceForReadableStreamAsyncIterator;
     std::unique_ptr<IsoSubspace> m_subspaceForReadableStreamReaderBase;
     std::unique_ptr<IsoSubspace> m_subspaceForReadableStreamBYOBReader;

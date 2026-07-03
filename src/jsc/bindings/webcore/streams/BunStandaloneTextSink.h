@@ -28,13 +28,29 @@ namespace WebStreams {
 // inside its ONE `Locker { cellLock() }` scope and proves that with the AbstractLocker
 // parameter (cellLock() is non-recursive — see StreamQueue.h's discipline comment).
 struct BunTextAccumulator {
-    // the pure-string fast-path rope.
-    WTF::StringBuilder rope;
+    // the pure-string fast-path rope. RecordOverflow: an append past
+    // StringImpl::MaxLength must surface as a catchable out-of-memory error at the
+    // write site, never as the default policy's process abort.
+    WTF::StringBuilder rope { WTF::OverflowPolicy::RecordOverflow };
     // string + typed-array-view pieces (the mixed path).
     WTF::Vector<JSC::WriteBarrier<JSC::Unknown>> pieces;
     double estimatedLength { 0 };
     bool hasString { false };
     bool hasBuffer { false };
+
+    // Releases everything accumulated. Called as soon as the final result string has
+    // been materialized so a long-lived owner (the direct stream's controller) does
+    // not retain the whole payload until it is collected. Takes the owning cell's
+    // lock like visit(): `pieces` is a barrier container.
+    void reset(const WTF::AbstractLocker&)
+    {
+        pieces.clear();
+        pieces.shrinkToFit();
+        rope.clear();
+        estimatedLength = 0;
+        hasString = false;
+        hasBuffer = false;
+    }
 
     // Appends every barrier in `pieces`. Called from the OWNING cell's visitChildrenImpl,
     // inside that cell's single cellLock() scope.

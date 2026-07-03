@@ -393,7 +393,7 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
     }
     case ControllerKind::NativeSink: {
         auto* sinkController = stream->m_controller.get();
-        JSValue closeFunction = sinkController->getIfPropertyExists(globalObject, Identifier::fromString(vm, "close"_s));
+        JSValue closeFunction = sinkController->getIfPropertyExists(globalObject, builtinNames(vm).closePublicName());
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (!closeFunction || !closeFunction.isCallable()) {
             throwTypeError(globalObject, scope, "The stream's native sink controller has no close method"_s);
@@ -489,7 +489,7 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
         if (stream->m_nativePtr && controller->m_algorithms.kind == SourceKind::Native) {
             auto* adapter = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
             if (auto* handle = adapter->m_handle.get()) {
-                JSValue updateRef = handle->getIfPropertyExists(globalObject, Identifier::fromString(vm, "updateRef"_s));
+                JSValue updateRef = handle->getIfPropertyExists(globalObject, builtinNames(vm).updateRefPublicName());
                 RETURN_IF_EXCEPTION(scope, void());
                 if (updateRef && updateRef.isCallable()) {
                     auto callData = JSC::getCallData(updateRef);

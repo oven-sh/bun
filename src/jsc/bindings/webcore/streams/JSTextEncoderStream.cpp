@@ -288,11 +288,11 @@ using WebCore::JSTextEncoderStream;
 
 // `encoder.encode(chunk)` / `encoder.flush()` on the TextEncoderStreamEncoder cell. Runs no
 // user JS: the method lives on the encoder's internal prototype. Empty return = it threw.
-static JSValue invokeEncoderMethod(JSGlobalObject* globalObject, JSObject* encoder, const ASCIILiteral& methodName, const MarkedArgumentBuffer& args)
+static JSValue invokeEncoderMethod(JSGlobalObject* globalObject, JSObject* encoder, const Identifier& methodName, const MarkedArgumentBuffer& args)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue method = encoder->get(globalObject, Identifier::fromString(vm, methodName));
+    JSValue method = encoder->get(globalObject, methodName);
     RETURN_IF_EXCEPTION(scope, {});
     auto callData = getCallData(method);
     if (callData.type == CallData::Type::None) [[unlikely]] {
@@ -322,7 +322,7 @@ JSPromise* textEncoderStreamTransform(JSGlobalObject* globalObject, JSTextEncode
         MarkedArgumentBuffer args;
         args.append(chunk);
         ASSERT(!args.hasOverflowed());
-        buffer = invokeEncoderMethod(globalObject, stream->m_encoder.get(), "encode"_s, args);
+        buffer = invokeEncoderMethod(globalObject, stream->m_encoder.get(), builtinNames(vm).encodePublicName(), args);
         if (catchScope.exception()) [[unlikely]]
             thrown = takeAbruptCompletion(globalObject, catchScope);
     }
@@ -342,7 +342,7 @@ JSPromise* textEncoderStreamFlush(JSGlobalObject* globalObject, JSTextEncoderStr
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     MarkedArgumentBuffer noArguments;
-    JSValue buffer = invokeEncoderMethod(globalObject, stream->m_encoder.get(), "flush"_s, noArguments);
+    JSValue buffer = invokeEncoderMethod(globalObject, stream->m_encoder.get(), builtinNames(vm).flushPublicName(), noArguments);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     enqueueIfNonEmptyView(globalObject, controller, buffer);

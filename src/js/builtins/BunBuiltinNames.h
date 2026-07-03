@@ -22,19 +22,39 @@ using namespace JSC;
 
 // Keep this list sorted.
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
+    macro(abort) \
     macro(AbortSignal) \
+    macro(arrayBuffer) \
+    macro(asUint8Array) \
+    macro(blob) \
     macro(Buffer) \
+    macro(bytes) \
+    macro(drain) \
+    macro(encode) \
+    macro(flush) \
+    macro(json) \
     macro(Loader) \
+    macro(min) \
+    macro(onClose) \
+    macro(onDrain) \
+    macro(preventAbort) \
+    macro(preventCancel) \
+    macro(preventClose) \
     macro(ReadableByteStreamController) \
     macro(ReadableStream) \
     macro(ReadableStreamBYOBReader) \
     macro(ReadableStreamBYOBRequest) \
     macro(ReadableStreamDefaultController) \
     macro(ReadableStreamDefaultReader) \
+    macro(readableType) \
+    macro(setHandlers) \
     macro(SQL) \
+    macro(text) \
     macro(TextEncoderStreamEncoder) \
+    macro(transform) \
     macro(TransformStream) \
     macro(TransformStreamDefaultController) \
+    macro(updateRef) \
     macro(WritableStream) \
     macro(WritableStreamDefaultController) \
     macro(WritableStreamDefaultWriter) \
@@ -168,6 +188,7 @@ using namespace JSC;
     macro(vmErrorDecorated) \
     macro(warning) \
     macro(writable) \
+    macro(writableType) \
     macro(write) \
     macro(writer) \
     macro(written) \

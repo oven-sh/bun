@@ -304,6 +304,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResumableSinkPumpOperation;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunStandaloneTextSink;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForOneShotDirectSink;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamIntoArrayOperation;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamAsyncIterator;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamReaderBase;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamBYOBReader;

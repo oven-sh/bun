@@ -185,7 +185,7 @@ static void asyncIterFinishWithError(JSGlobalObject* globalObject, JSAsyncIterat
     if (iterator) {
         MarkedArgumentBuffer args;
         args.append(error);
-        thrown = invokeOptionalMethod(globalObject, iterator, Identifier::fromString(vm, "throw"_s), args);
+        thrown = invokeOptionalMethod(globalObject, iterator, vm.propertyNames->throwKeyword, args);
         if (scope.exception()) [[unlikely]] {
             // The iterator's own cleanup failure is subsumed by the original error.
             scope.clearExceptionExceptTermination();
@@ -263,7 +263,7 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
             // The HTTP sink reports backpressure with a negative return: wait for the drain.
             MarkedArgumentBuffer flushArgs;
             flushArgs.append(jsBoolean(true));
-            JSValue flushed = invokeOptionalMethod(globalObject, controller, Identifier::fromString(vm, "flush"_s), flushArgs);
+            JSValue flushed = invokeOptionalMethod(globalObject, controller, builtinNames(vm).flushPublicName(), flushArgs);
             if (scope.exception()) [[unlikely]]
                 goto abrupt;
             JSPromise* flushPromise = asPromise(flushed);
@@ -491,7 +491,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourceCancel, (JS
     // an injected throw (which would surface as an uncatchable rejection).
     if (reason.toBoolean(globalObject)) {
         args.append(reason);
-        result = invokeOptionalMethod(globalObject, iterator, Identifier::fromString(vm, "throw"_s), args);
+        result = invokeOptionalMethod(globalObject, iterator, vm.propertyNames->throwKeyword, args);
     } else
         result = invokeOptionalMethod(globalObject, iterator, vm.propertyNames->returnKeyword, args);
     RETURN_IF_EXCEPTION(scope, {});
@@ -570,7 +570,7 @@ JSReadableStream* readableStreamFromAsyncIterator(JSGlobalObject* globalObject, 
     source->putDirect(vm, names.pullPublicName(), pullFunction, 0);
     auto* cancelFunction = createStreamsBoundHandler(globalObject, runtime->boundAsyncIterableSourceCancel(), op);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    source->putDirect(vm, Identifier::fromString(vm, "cancel"_s), cancelFunction, 0);
+    source->putDirect(vm, builtinNames(vm).cancelPublicName(), cancelFunction, 0);
     auto* closeFunction = createStreamsBoundHandler(globalObject, runtime->boundAsyncIterableSourceClose(), op);
     RETURN_IF_EXCEPTION(scope, nullptr);
     source->putDirect(vm, names.closePublicName(), closeFunction, 0);

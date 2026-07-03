@@ -583,11 +583,15 @@ function spawnSync(file, args, options) {
   const outputStdout = typeof stdout === "number" ? null : stdout;
   const outputStderr = typeof stderr === "number" ? null : stderr;
 
+  // Node's `output` is 1:1 with the stdio array; slots the parent never reads are null.
+  const output = [null, outputStdout, outputStderr];
+  for (let i = 3; i < bunStdio.length; i++) output[i] = null;
+
   const result = {
     signal: signalCode ?? null,
     status: exitCode,
     // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
-    output: [null, outputStdout, outputStderr],
+    output,
     pid,
   };
 
@@ -1476,9 +1480,13 @@ class ChildProcess extends EventEmitter {
         this.#handle = null;
         ex.syscall = "spawn " + this.spawnfile;
         ex.spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
+        const errno = (ex as SystemError).errno ?? -1;
         process.nextTick(() => {
+          // A spawn that never ran reports the negative errno as its exit code,
+          // and `signalCode` stays null because nothing killed it.
+          this.exitCode = errno;
           this.emit("error", ex);
-          this.emit("close", (ex as SystemError).errno ?? -1);
+          this.#maybeClose();
         });
         if (exCode === "EMFILE" || exCode === "ENFILE") {
           // emfile/enfile error; in this case node does not initialize stdio streams.
@@ -1787,7 +1795,7 @@ function normalizeStdio(stdio): string[] {
       case "inherit":
         return ["inherit", "inherit", "inherit"];
       default:
-        throw ERR_INVALID_OPT_VALUE("stdio", stdio);
+        throw $ERR_INVALID_ARG_VALUE("stdio", stdio);
     }
   } else if ($isJSArray(stdio)) {
     // Validate if each is a valid stdio type
@@ -1801,7 +1809,7 @@ function normalizeStdio(stdio): string[] {
 
     return processedStdio;
   } else {
-    throw ERR_INVALID_OPT_VALUE("stdio", stdio);
+    throw $ERR_INVALID_ARG_VALUE("stdio", stdio);
   }
 }
 
@@ -2056,12 +2064,6 @@ function genericNodeError(message, errorProperties) {
 function ERR_UNKNOWN_SIGNAL(name) {
   const err = new TypeError(`Unknown signal: ${name}`);
   err.code = "ERR_UNKNOWN_SIGNAL";
-  return err;
-}
-
-function ERR_INVALID_OPT_VALUE(name, value) {
-  const err = new TypeError(`The value "${value}" is invalid for option "${name}"`);
-  err.code = "ERR_INVALID_OPT_VALUE";
   return err;
 }
 

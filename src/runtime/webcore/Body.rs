@@ -2435,6 +2435,9 @@ impl<'a> ValueBufferer<'a> {
     /// the slice in place while re-entering user JS, which can detach it
     /// (`ArrayBuffer.prototype.transfer`) and free the backing store mid-read.
     fn handle_resolve_stream(&mut self, resolved_value: JSValue, is_async: bool) {
+        // Only the `Source::Bytes` pipe appends to `stream_buffer`, and a bufferer
+        // drives exactly one source, so this is the sole writer on this path.
+        debug_assert!(self.stream_buffer.list.is_empty());
         if let Some(array_buffer) = resolved_value.as_array_buffer(self.global) {
             let _ = self.stream_buffer.write(array_buffer.slice());
         }

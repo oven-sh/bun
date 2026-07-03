@@ -501,6 +501,59 @@ describe("HTMLRewriter", () => {
       expect(await transformed.text()).toBe("<a>x</a><zzz>y</zzz>");
     });
 
+    // The bufferer drops its GC root on the source once the builtin owns it, so
+    // a live transform is kept alive only by whatever can still settle the
+    // stream. That holds because settling needs the controller, and the
+    // controller holds the stream. Each case hides the stream from userland and
+    // collects hard before letting it finish.
+    describe("a source the bufferer no longer roots still completes", () => {
+      const cases = {
+        "controller held only by a timer": () =>
+          new ReadableStream({
+            start(controller) {
+              setTimeout(() => {
+                controller.enqueue(encode("<p>hi</p>"));
+                controller.close();
+              }, 1);
+            },
+          }),
+        "controller escaping to an outer scope": () => {
+          let escaped;
+          const stream = new ReadableStream({
+            start(controller) {
+              escaped = controller;
+            },
+          });
+          queueMicrotask(() => {
+            escaped.enqueue(encode("<p>hi</p>"));
+            escaped.close();
+          });
+          return stream;
+        },
+        "controller reachable only from a pending pull": () =>
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              await Bun.sleep(1);
+              controller.write("<p>hi</p>");
+              controller.close();
+            },
+          }),
+      };
+
+      for (const [name, makeStream] of Object.entries(cases)) {
+        it(name, async () => {
+          const transformed = rewriter().transform(new Response(makeStream()));
+          // Collect aggressively while the source is still in flight.
+          for (let i = 0; i < 3; i++) {
+            Bun.gc(true);
+            await Bun.sleep(1);
+          }
+          expect(await transformed.text()).toBe("<p>bye</p>");
+        });
+      }
+    });
+
     it("does not leak a transform whose source stream never settles", async () => {
       // The bufferer must not hold a Strong to the source: the stream reaches
       // the promise chain, which reaches the NativePromiseContext cell holding

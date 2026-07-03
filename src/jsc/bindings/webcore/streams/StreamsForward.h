@@ -169,7 +169,7 @@ enum class ReadRequestKind : uint8_t {
     PipeTo, // context = the JSStreamPipeToOperation
     DefaultTee, // context = the JSStreamTeeState
     ByteTee, // context = the JSStreamTeeState (byte tee's default-reader read request)
-    AsyncIterator, // context = the JSReadableStreamAsyncIterator
+    AsyncIterator, // context = InternalFieldTuple{asyncIterator, inner read promise}
 };
 
 // JSReadIntoRequest::m_kind (the BYOB parallel of ReadRequestKind).

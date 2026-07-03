@@ -1717,3 +1717,84 @@ describe("pipeTo from a byte source", () => {
     expect(closed).toBe(true);
   });
 });
+
+
+
+// Async stack frames on stream errors created inside native reactions (no JS frames of
+// their own): the `for await` and `pipeTo` awaiters must get the awaiting function's frames.
+function serveStalledBody() {
+  // One flushed chunk, then the body stalls (the test force-closes the connection).
+  const server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    async fetch() {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(c) {
+            c.write("part1");
+            await c.flush();
+            await new Promise(() => {});
+          },
+        }),
+        { headers: { "Content-Length": "100000" } },
+      );
+    },
+  });
+  return server;
+}
+
+test("for await over a stream that errors natively includes async stack frames", async () => {
+  const server = serveStalledBody();
+  async function level2() {
+    const res = await fetch(server.url);
+    const iterator = res.body[Symbol.asyncIterator]();
+    await iterator.next();
+    // The connection dies while the loop below is awaiting the next chunk, so the
+    // error is created from a native callback with no JavaScript frames of its own.
+    server.stop(true);
+    while (!(await iterator.next()).done) {}
+  }
+  async function level1() {
+    await level2();
+  }
+  let caught;
+  try {
+    await level1();
+  } catch (e) {
+    caught = e;
+  } finally {
+    server.stop(true);
+  }
+  expect(caught).toBeDefined();
+  expect(caught.stack).toContain("at async level2");
+  expect(caught.stack).toContain("at async level1");
+});
+
+test("pipeTo from a stream that errors natively includes async stack frames", async () => {
+  const server = serveStalledBody();
+  async function level2() {
+    const res = await fetch(server.url);
+    await res.body.pipeTo(
+      new WritableStream({
+        write() {
+          server.stop(true);
+        },
+      }),
+    );
+  }
+  async function level1() {
+    await level2();
+  }
+  let caught;
+  try {
+    await level1();
+  } catch (e) {
+    caught = e;
+  } finally {
+    server.stop(true);
+  }
+  expect(caught).toBeDefined();
+  expect(caught.stack).toContain("at async level2");
+  expect(caught.stack).toContain("at async level1");
+});

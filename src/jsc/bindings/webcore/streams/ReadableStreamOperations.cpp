@@ -11,6 +11,7 @@
 #include "JSReadRequest.h"
 #include "JSReadableByteStreamController.h"
 #include "JSReadableStream.h"
+#include "JSReadableStreamAsyncIterator.h"
 #include "JSReadableStreamBYOBReader.h"
 #include "JSReadableStreamBYOBRequest.h"
 #include "JSReadableStreamDefaultController.h"
@@ -282,13 +283,42 @@ void readableStreamError(JSGlobalObject* globalObject, JSReadableStream* stream,
     if (!reader)
         return;
     // Errors created inside our own promise reactions have no JavaScript frames; borrow
-    // the awaiting async function's frames from the promise user code is blocked on.
+    // the awaiting async function's frames from the promise user code is blocked on:
+    // reader.read() and byobReader.read(view) promises, the async iterator's ongoing
+    // (Web IDL-transformed) promise for `for await`, and pipeTo()'s returned promise.
     JSPromise* awaited = reader->m_closedPromise.get();
     if (!reader->isBYOB()) {
         auto* defaultReader = static_cast<JSReadableStreamDefaultReader*>(reader);
         WTF::Locker locker { defaultReader->cellLock() };
         for (auto& request : defaultReader->m_readRequests) {
-            if (request->kind() == ReadRequestKind::Promise) {
+            JSPromise* found = nullptr;
+            switch (request->kind()) {
+            case ReadRequestKind::Promise:
+                found = dynamicDowncast<JSPromise>(request->m_context.get());
+                break;
+            case ReadRequestKind::AsyncIterator:
+                if (auto* tuple = dynamicDowncast<JSC::InternalFieldTuple>(request->m_context.get())) {
+                    if (auto* iterator = dynamicDowncast<JSReadableStreamAsyncIterator>(tuple->getInternalField(0)))
+                        found = iterator->m_ongoingPromise.get();
+                }
+                break;
+            case ReadRequestKind::PipeTo:
+                if (auto* op = dynamicDowncast<JSStreamPipeToOperation>(request->m_context.get()))
+                    found = op->m_promise.get();
+                break;
+            default:
+                break;
+            }
+            if (found) {
+                awaited = found;
+                break;
+            }
+        }
+    } else {
+        auto* byobReader = static_cast<JSReadableStreamBYOBReader*>(reader);
+        WTF::Locker locker { byobReader->cellLock() };
+        for (auto& request : byobReader->m_readIntoRequests) {
+            if (request->kind() == ReadIntoRequestKind::Promise) {
                 if (auto* promise = dynamicDowncast<JSPromise>(request->m_context.get())) {
                     awaited = promise;
                     break;

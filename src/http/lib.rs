@@ -5233,10 +5233,13 @@ impl<'a> HTTPClient<'a> {
             return Ok(ShouldContinue::ContinueStreaming);
         }
 
+        // RFC 9112 §6.3: framing is decided by Transfer-Encoding and
+        // Content-Length alone. `Connection: close` says the socket won't be
+        // reused, not that the body runs to EOF, so `Content-Length: 0` is a
+        // complete response either way.
         if self.method.has_body()
             && (content_length.is_none()
                 || content_length.unwrap() > 0
-                || !self.state.flags.allow_keepalive
                 || self.state.transfer_encoding == Encoding::Chunked
                 || is_server_sent_events)
         {

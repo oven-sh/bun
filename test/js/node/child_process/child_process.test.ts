@@ -421,6 +421,10 @@ describe("spawn()", () => {
         code: "ERR_INVALID_ARG_VALUE",
         message: "The argument 'stdio' is invalid. Received 5",
       });
+      expect(() => spawnSync(bunExe(), ["-v"], { stdio: 5 as any })).toThrow({
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "The argument 'stdio' is invalid. Received 5",
+      });
     });
   });
 });

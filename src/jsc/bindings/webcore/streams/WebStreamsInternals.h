@@ -128,6 +128,8 @@ bool isNonNegativeNumber(JSC::JSValue); // userJS: no — WebStreamsMisc.cpp
 // (Runs no JS, but DETACHES `buffer`: callers must re-read any cached view length/vector()
 // of the SOURCE buffer afterward.)
 JSC::JSArrayBuffer* transferArrayBuffer(JSC::JSGlobalObject*, JSC::JSArrayBuffer*); // userJS: no — WebStreamsMisc.cpp
+RefPtr<JSC::ArrayBuffer> transferArrayBufferImpl(JSC::JSGlobalObject*, JSC::ArrayBuffer&); // userJS: no — WebStreamsMisc.cpp
+bool canTransferArrayBuffer(JSC::ArrayBuffer&); // userJS: no — WebStreamsMisc.cpp
 // spec CanTransferArrayBuffer(O) — pure.
 bool canTransferArrayBuffer(JSC::JSArrayBuffer*); // userJS: no — WebStreamsMisc.cpp
 // spec CloneAsUint8Array(O) — allocation-throws only.
@@ -135,7 +137,7 @@ JSC::JSUint8Array* cloneAsUint8Array(JSC::JSGlobalObject*, JSC::JSArrayBufferVie
 // spec StructuredClone(v): use the EXISTING WebCore::structuredCloneForStream
 // (src/jsc/bindings/webcore/StructuredClone.h). No streams-local duplicate is declared.
 // spec CanCopyDataBlockBytes(toBuffer, toIndex, fromBuffer, fromIndex, count) — pure.
-bool canCopyDataBlockBytes(JSC::JSArrayBuffer* toBuffer, size_t toIndex, JSC::JSArrayBuffer* fromBuffer, size_t fromIndex, size_t count); // userJS: no — WebStreamsMisc.cpp
+bool canCopyDataBlockBytes(JSC::ArrayBuffer& toBuffer, size_t toIndex, JSC::ArrayBuffer& fromBuffer, size_t fromIndex, size_t count); // userJS: no — WebStreamsMisc.cpp
 
 // The WebIDL dictionary conversions (alphabetical member order; real [[Get]]s; TypeError on
 // a present-but-not-callable member; ReadableStreamType TypeError on an unknown `type`).
@@ -310,8 +312,8 @@ void readableByteStreamControllerClose(JSC::JSGlobalObject*, JSReadableByteStrea
 void readableByteStreamControllerCommitPullIntoDescriptor(JSC::JSGlobalObject*, JSReadableStream*, JSPullIntoDescriptor*); // userJS: yes (fulfill dispatch) — JSReadableByteStreamController.cpp
 JSC::JSArrayBufferView* readableByteStreamControllerConvertPullIntoDescriptor(JSC::JSGlobalObject*, JSPullIntoDescriptor*); // userJS: no (intrinsic view construction only) — JSReadableByteStreamController.cpp
 void readableByteStreamControllerEnqueue(JSC::JSGlobalObject*, JSReadableByteStreamController*, JSC::JSArrayBufferView* chunk); // userJS: yes; throws — JSReadableByteStreamController.cpp
-void readableByteStreamControllerEnqueueChunkToQueue(JSC::VM&, JSReadableByteStreamController*, JSC::JSArrayBuffer*, size_t byteOffset, size_t byteLength); // userJS: no — JSReadableByteStreamController.cpp
-void readableByteStreamControllerEnqueueClonedChunkToQueue(JSC::JSGlobalObject*, JSReadableByteStreamController*, JSC::JSArrayBuffer*, size_t byteOffset, size_t byteLength); // userJS: yes (a takeAbruptCompletion catch site; errors the controller then rethrows) — JSReadableByteStreamController.cpp
+void readableByteStreamControllerEnqueueChunkToQueue(JSReadableByteStreamController*, RefPtr<JSC::ArrayBuffer>&&, size_t byteOffset, size_t byteLength); // userJS: no — JSReadableByteStreamController.cpp
+void readableByteStreamControllerEnqueueClonedChunkToQueue(JSC::JSGlobalObject*, JSReadableByteStreamController*, JSC::ArrayBuffer&, size_t byteOffset, size_t byteLength); // userJS: yes (a takeAbruptCompletion catch site; errors the controller then rethrows) — JSReadableByteStreamController.cpp
 void readableByteStreamControllerEnqueueDetachedPullIntoToQueue(JSC::JSGlobalObject*, JSReadableByteStreamController*, JSPullIntoDescriptor*); // userJS: yes; throws — JSReadableByteStreamController.cpp
 void readableByteStreamControllerError(JSC::JSGlobalObject*, JSReadableByteStreamController*, JSC::JSValue error); // userJS: yes — JSReadableByteStreamController.cpp
 void readableByteStreamControllerFillHeadPullIntoDescriptor(JSReadableByteStreamController*, size_t size, JSPullIntoDescriptor*); // userJS: no — JSReadableByteStreamController.cpp

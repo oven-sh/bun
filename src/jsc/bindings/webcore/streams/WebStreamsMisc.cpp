@@ -68,6 +68,30 @@ bool canTransferArrayBuffer(JSArrayBuffer* object)
     return buffer->isDetachable();
 }
 
+bool canTransferArrayBuffer(JSC::ArrayBuffer& buffer)
+{
+    return !buffer.isDetached() && buffer.isDetachable();
+}
+
+// spec TransferArrayBuffer(O) at the impl level: detach O (and every view over it) and
+// return a fresh ArrayBuffer over the same block. No JSArrayBuffer wrapper is created —
+// callers hand out views over the impl, and JSC materializes a wrapper only if user code
+// reads `.buffer`.
+RefPtr<JSC::ArrayBuffer> transferArrayBufferImpl(JSGlobalObject* globalObject, JSC::ArrayBuffer& buffer)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(!buffer.isDetached());
+    if (!buffer.isDetachable()) [[unlikely]] {
+        throwTypeError(globalObject, scope, "Cannot transfer an ArrayBuffer that is not detachable"_s);
+        return nullptr;
+    }
+    JSC::ArrayBufferContents contents;
+    bool transferred = buffer.transferTo(vm, contents);
+    ASSERT_UNUSED(transferred, transferred);
+    return JSC::ArrayBuffer::create(WTF::move(contents));
+}
+
 // spec TransferArrayBuffer(O): detach O and return a fresh ArrayBuffer over the same block.
 JSArrayBuffer* transferArrayBuffer(JSGlobalObject* globalObject, JSArrayBuffer* object)
 {
@@ -102,10 +126,10 @@ JSUint8Array* cloneAsUint8Array(JSGlobalObject* globalObject, JSArrayBufferView*
 }
 
 // spec CanCopyDataBlockBytes(toBuffer, toIndex, fromBuffer, fromIndex, count). Non-throwing leaf.
-bool canCopyDataBlockBytes(JSArrayBuffer* toBuffer, size_t toIndex, JSArrayBuffer* fromBuffer, size_t fromIndex, size_t count)
+bool canCopyDataBlockBytes(JSC::ArrayBuffer& toBuffer, size_t toIndex, JSC::ArrayBuffer& fromBuffer, size_t fromIndex, size_t count)
 {
-    ArrayBuffer* to = toBuffer->impl();
-    ArrayBuffer* from = fromBuffer->impl();
+    ArrayBuffer* to = &toBuffer;
+    ArrayBuffer* from = &fromBuffer;
     if (to == from)
         return false;
     if (to->isDetached() || from->isDetached())

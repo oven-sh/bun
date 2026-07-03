@@ -9,23 +9,24 @@
 #include "root.h"
 #include "StreamsForward.h"
 
+#include <JavaScriptCore/ArrayBuffer.h>
+#include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/TypedArrayType.h>
 
 namespace WebCore {
 
-class JSPullIntoDescriptor final : public JSC::JSNonFinalObject {
+class JSPullIntoDescriptor final : public JSC::JSDestructibleObject {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr JSC::DestructionMode needsDestruction = JSC::DoesNotNeedDestruction;
+    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
 
     static JSPullIntoDescriptor* create(JSC::VM&, JSC::Structure*);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
+    static void destroy(JSC::JSCell*);
 
     DECLARE_INFO;
-    // visitChildrenImpl MUST visit: m_buffer.
-    DECLARE_VISIT_CHILDREN;
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -39,8 +40,10 @@ public:
     // "element size" (1..8) — DERIVED from m_viewConstructor, never stored separately.
     size_t elementSize() const { return JSC::elementSize(m_viewConstructor); }
 
-    // "buffer" — mutated in place by TransferArrayBuffer / respond paths.
-    JSC::WriteBarrier<JSC::JSArrayBuffer> m_buffer;
+    // "buffer" — the ArrayBuffer IMPL, not a JSArrayBuffer wrapper cell: internal transfers
+    // move the contents without allocating GC cells or re-reporting extra memory; a wrapper
+    // only ever exists lazily if user code reads `.buffer` off a view we hand out.
+    RefPtr<JSC::ArrayBuffer> m_buffer;
     // "buffer byte length"
     size_t m_bufferByteLength { 0 };
     // "byte offset"
@@ -59,6 +62,7 @@ public:
 
 private:
     JSPullIntoDescriptor(JSC::VM&, JSC::Structure*);
+    ~JSPullIntoDescriptor();
     void finishCreation(JSC::VM&);
 };
 

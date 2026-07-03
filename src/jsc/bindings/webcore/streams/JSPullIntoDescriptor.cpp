@@ -22,6 +22,13 @@ JSPullIntoDescriptor::JSPullIntoDescriptor(VM& vm, Structure* structure)
 {
 }
 
+JSPullIntoDescriptor::~JSPullIntoDescriptor() = default;
+
+void JSPullIntoDescriptor::destroy(JSCell* cell)
+{
+    static_cast<JSPullIntoDescriptor*>(cell)->~JSPullIntoDescriptor();
+}
+
 void JSPullIntoDescriptor::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
@@ -50,15 +57,5 @@ GCClient::IsoSubspace* JSPullIntoDescriptor::subspaceForImpl(VM& vm)
         [](auto& spaces, auto&& space) { spaces.m_subspaceForPullIntoDescriptor = std::forward<decltype(space)>(space); });
 }
 
-DEFINE_VISIT_CHILDREN(JSPullIntoDescriptor);
-
-template<typename Visitor>
-void JSPullIntoDescriptor::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSPullIntoDescriptor>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_buffer);
-}
 
 } // namespace WebCore

@@ -28,6 +28,7 @@
 #include "root.h"
 #include "StreamsForward.h"
 
+#include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSCell.h>
@@ -50,9 +51,11 @@ struct ValueWithSize {
     double size; // "size" — a double, never an integer
 };
 
-// One entry of a readable byte stream queue.
+// One entry of a readable byte stream queue. The buffer is the ArrayBuffer IMPL (always a
+// transferred, exclusively-owned block): no JSArrayBuffer wrapper cell exists for it unless
+// user code reads `.buffer` off a view handed out over it.
 struct ByteQueueEntry {
-    JSC::WriteBarrier<JSC::JSArrayBuffer> buffer; // "buffer" — always a transferred (owned) ArrayBuffer
+    RefPtr<JSC::ArrayBuffer> buffer; // "buffer"
     size_t byteOffset; // "byte offset"
     size_t byteLength; // "byte length"
 };
@@ -198,7 +201,7 @@ private:
     template<typename Visitor>
     static void visitEntry(Visitor& visitor, ValueWithSize& entry) { visitor.append(entry.value); }
     template<typename Visitor>
-    static void visitEntry(Visitor& visitor, ByteQueueEntry& entry) { visitor.append(entry.buffer); }
+    static void visitEntry(Visitor&, ByteQueueEntry&) { } // RefPtr impl: nothing for the GC
 
     // Backing container. 4 inline entries covers the common shallow queue.
     WTF::Deque<Entry, 4> m_queue;

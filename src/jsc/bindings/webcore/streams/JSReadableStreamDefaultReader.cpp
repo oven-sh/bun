@@ -183,18 +183,19 @@ static double drainQueueEntriesInto(JSC::VM& vm, JSGlobalObject* globalObject, J
     for (unsigned i = 0; i < queueLength; ++i) {
         JSValue chunk;
         if (isByte) {
-            JSC::JSArrayBuffer* buffer = nullptr;
+            RefPtr<JSC::ArrayBuffer> buffer;
             size_t byteOffset = 0;
             size_t byteLength = 0;
             {
                 WTF::Locker locker { byteController->cellLock() };
                 auto& entry = byteController->m_queue.first();
-                buffer = entry.buffer.get();
+                buffer = WTF::move(entry.buffer);
                 byteOffset = entry.byteOffset;
                 byteLength = entry.byteLength;
                 byteController->m_queue.removeFirst(locker);
             }
-            chunk = JSUint8Array::create(globalObject, globalObject->typedArrayStructure(TypeUint8, buffer->impl()->isResizableOrGrowableShared()), buffer->impl(), byteOffset, byteLength);
+            bool resizable = buffer->isResizableOrGrowableShared();
+            chunk = JSUint8Array::create(globalObject, globalObject->typedArrayStructure(TypeUint8, resizable), WTF::move(buffer), byteOffset, byteLength);
             RETURN_IF_EXCEPTION(scope, size);
         } else {
             WTF::Locker locker { defaultController->cellLock() };

@@ -588,10 +588,9 @@ impl Expansion {
         if s.is_empty() {
             return;
         }
-        // Each field completed here is a finished word the end-of-walk brace
-        // expansion never sees (only the final field stays in `current_out`),
-        // so it has to be brace-expanded as it is flushed. Otherwise the word's
-        // recorded metacharacter offsets are discarded along with it.
+        // Each flushed field is a finished word the end-of-walk brace expansion
+        // never sees (only the final field stays in `current_out`), so it must
+        // be brace-expanded here or its `meta_offsets` are discarded with it.
         let has_brace = me.node.get().has_brace_expansion();
         // Split on runs of spaces — each run is a word boundary.
         let mut prev_ws = false;

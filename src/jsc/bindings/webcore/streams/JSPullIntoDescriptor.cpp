@@ -57,5 +57,4 @@ GCClient::IsoSubspace* JSPullIntoDescriptor::subspaceForImpl(VM& vm)
         [](auto& spaces, auto&& space) { spaces.m_subspaceForPullIntoDescriptor = std::forward<decltype(space)>(space); });
 }
 
-
 } // namespace WebCore

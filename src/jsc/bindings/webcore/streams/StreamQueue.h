@@ -201,7 +201,7 @@ private:
     template<typename Visitor>
     static void visitEntry(Visitor& visitor, ValueWithSize& entry) { visitor.append(entry.value); }
     template<typename Visitor>
-    static void visitEntry(Visitor&, ByteQueueEntry&) { } // RefPtr impl: nothing for the GC
+    static void visitEntry(Visitor&, ByteQueueEntry&) {} // RefPtr impl: nothing for the GC
 
     // Backing container. 4 inline entries covers the common shallow queue.
     WTF::Deque<Entry, 4> m_queue;

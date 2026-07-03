@@ -1372,3 +1372,559 @@ it("ReadableStream BYOB read pending at cancel() resolves with undefined", async
   expect(value).toBeUndefined();
   await reader.closed;
 });
+
+// Per the WHATWG Streams spec, a byte stream transfers (detaches) the
+// caller-supplied ArrayBuffer when it is handed to the controller.
+// https://github.com/oven-sh/bun/issues/32402
+describe("ReadableStream byte source detaches supplied ArrayBuffers", () => {
+  it("BYOB read() detaches the supplied view and its buffer", async () => {
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        controller.byobRequest.view[0] = 42;
+        controller.byobRequest.respond(1);
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const view = new Uint8Array(1);
+    const originalBuffer = view.buffer;
+
+    const { done, value } = await reader.read(view);
+
+    // The supplied view and its backing buffer are detached.
+    expect(view.byteLength).toBe(0);
+    expect(originalBuffer.byteLength).toBe(0);
+    expect(() => new Uint8Array(originalBuffer)).toThrow(TypeError);
+
+    // The resolved value is a fresh view over the transferred buffer and
+    // carries the byte the source wrote.
+    expect(done).toBe(false);
+    expect(value).toBeInstanceOf(Uint8Array);
+    expect(value.byteLength).toBe(1);
+    expect(value[0]).toBe(42);
+    expect(value.buffer).not.toBe(originalBuffer);
+    expect(value.buffer.byteLength).toBe(1);
+  });
+
+  it("BYOB read() satisfied synchronously from the queue detaches the view", async () => {
+    let controller;
+    const stream = new ReadableStream({
+      type: "bytes",
+      start(c) {
+        controller = c;
+      },
+    });
+    controller.enqueue(new Uint8Array([1, 2, 3, 4]));
+
+    const reader = stream.getReader({ mode: "byob" });
+    const view = new Uint8Array(4);
+    const originalBuffer = view.buffer;
+
+    const { value } = await reader.read(view);
+
+    expect(view.byteLength).toBe(0);
+    expect(originalBuffer.byteLength).toBe(0);
+    expect(Array.from(value)).toEqual([1, 2, 3, 4]);
+    expect(value.buffer).not.toBe(originalBuffer);
+  });
+
+  it("BYOB read() on a closed stream detaches the view", async () => {
+    const stream = new ReadableStream({
+      type: "bytes",
+      start(controller) {
+        controller.close();
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const view = new Uint8Array(4);
+    const originalBuffer = view.buffer;
+
+    const { done, value } = await reader.read(view);
+
+    expect(done).toBe(true);
+    expect(originalBuffer.byteLength).toBe(0);
+    expect(value).toBeInstanceOf(Uint8Array);
+    expect(value.byteLength).toBe(0);
+  });
+
+  it("byobRequest.respondWithNewView() detaches both the read view and the new view", async () => {
+    let newViewBuffer;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        const newView = new Uint8Array(controller.byobRequest.view.byteLength);
+        newView[0] = 7;
+        newViewBuffer = newView.buffer;
+        controller.byobRequest.respondWithNewView(newView);
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const view = new Uint8Array(4);
+    const originalBuffer = view.buffer;
+
+    const { value } = await reader.read(view);
+
+    expect(originalBuffer.byteLength).toBe(0);
+    expect(newViewBuffer.byteLength).toBe(0);
+    expect(Array.from(value)).toEqual([7, 0, 0, 0]);
+    expect(value.buffer).not.toBe(originalBuffer);
+    expect(value.buffer).not.toBe(newViewBuffer);
+  });
+
+  it("controller.enqueue() detaches the enqueued chunk's buffer", async () => {
+    let controller;
+    const stream = new ReadableStream({
+      type: "bytes",
+      start(c) {
+        controller = c;
+      },
+    });
+    const chunk = new Uint8Array([9, 8, 7]);
+    const chunkBuffer = chunk.buffer;
+    controller.enqueue(chunk);
+    controller.close();
+
+    expect(chunk.byteLength).toBe(0);
+    expect(chunkBuffer.byteLength).toBe(0);
+
+    const bytes = await readableStreamToBytes(stream);
+    expect(Array.from(bytes)).toEqual([9, 8, 7]);
+  });
+
+  it("enqueue() with a waiting default reader detaches the chunk and delivers its bytes", async () => {
+    let controller;
+    const stream = new ReadableStream({
+      type: "bytes",
+      start(c) {
+        controller = c;
+      },
+    });
+    const reader = stream.getReader();
+    const readPromise = reader.read();
+
+    const chunk = new Uint8Array([5, 6, 7]);
+    const chunkBuffer = chunk.buffer;
+    controller.enqueue(chunk);
+
+    expect(chunkBuffer.byteLength).toBe(0);
+
+    const { value } = await readPromise;
+    expect(value).toBeInstanceOf(Uint8Array);
+    expect(Array.from(value)).toEqual([5, 6, 7]);
+  });
+
+  it("byobRequest.respond() detaches the view vended through byobRequest", async () => {
+    let vendoredView;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        vendoredView = controller.byobRequest.view;
+        vendoredView[0] = 42;
+        controller.byobRequest.respond(1);
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const { value } = await reader.read(new Uint8Array(1));
+
+    // The buffer the source wrote into is detached and no longer aliases the
+    // buffer the reader receives.
+    expect(vendoredView.byteLength).toBe(0);
+    expect(value.buffer).not.toBe(vendoredView.buffer);
+    expect(value[0]).toBe(42);
+  });
+
+  it("byobRequest.respond() detaches the vended view even on a partial respond", async () => {
+    let vendoredView;
+    let byteLengthAfterPartialRespond;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        vendoredView = controller.byobRequest.view;
+        // Uint32Array element is 4 bytes; respond(2) is a partial fill.
+        controller.byobRequest.respond(2);
+        // The transfer happens in respond() itself, so the view is already
+        // detached here, before the pull-into is committed.
+        byteLengthAfterPartialRespond = vendoredView.byteLength;
+        controller.error(new Error("stop"));
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    await reader.read(new Uint32Array(1)).then(
+      () => {},
+      () => {},
+    );
+
+    expect(byteLengthAfterPartialRespond).toBe(0);
+  });
+
+  it("byobRequest.respond() with an out-of-range value throws without detaching", async () => {
+    let threw;
+    let vendoredView;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        vendoredView = controller.byobRequest.view;
+        try {
+          controller.byobRequest.respond(999);
+        } catch (e) {
+          threw = e;
+        }
+        controller.error(new Error("stop"));
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    await reader.read(new Uint8Array(4)).then(
+      () => {},
+      () => {},
+    );
+
+    expect(threw).toBeInstanceOf(RangeError);
+    // A rejected respond must not detach the buffer.
+    expect(vendoredView.byteLength).toBe(4);
+  });
+
+  it("byobRequest.respond(0) on a readable stream throws without detaching", async () => {
+    let threw;
+    let vendoredView;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        vendoredView = controller.byobRequest.view;
+        try {
+          controller.byobRequest.respond(0);
+        } catch (e) {
+          threw = e;
+        }
+        controller.error(new Error("stop"));
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    await reader.read(new Uint8Array(4)).then(
+      () => {},
+      () => {},
+    );
+
+    expect(threw).toBeInstanceOf(TypeError);
+    expect(vendoredView.byteLength).toBe(4);
+  });
+
+  it("byobRequest.respondWithNewView() with a zero-length view throws without detaching", async () => {
+    let threw;
+    let vendoredView;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        vendoredView = controller.byobRequest.view;
+        try {
+          controller.byobRequest.respondWithNewView(new Uint8Array(vendoredView.buffer, 0, 0));
+        } catch (e) {
+          threw = e;
+        }
+        controller.error(new Error("stop"));
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    await reader.read(new Uint8Array(4)).then(
+      () => {},
+      () => {},
+    );
+
+    expect(threw).toBeInstanceOf(TypeError);
+    expect(vendoredView.byteLength).toBe(4);
+  });
+
+  it("read() rejects (does not throw) for a SharedArrayBuffer-backed view", async () => {
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        controller.byobRequest.respond(1);
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const sabView = new Uint8Array(new SharedArrayBuffer(4));
+
+    // Must return a promise and reject, not throw synchronously.
+    const result = reader.read(sabView);
+    expect(result).toBeInstanceOf(Promise);
+    await expect(result).rejects.toThrow(TypeError);
+  });
+
+  it("read() rejects (does not throw) for a WebAssembly.Memory-backed view", async () => {
+    const memory = new WebAssembly.Memory({ initial: 1 });
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        controller.byobRequest.respond(1);
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const view = new Uint8Array(memory.buffer, 0, 4);
+
+    const result = reader.read(view);
+    expect(result).toBeInstanceOf(Promise);
+    await expect(result).rejects.toThrow(TypeError);
+    // The memory must not have been detached by the failed transfer.
+    expect(memory.buffer.byteLength).toBeGreaterThan(0);
+  });
+
+  it("enqueue() throws synchronously for a SharedArrayBuffer-backed chunk", () => {
+    let controller;
+    const stream = new ReadableStream({
+      type: "bytes",
+      start(c) {
+        controller = c;
+      },
+    });
+    expect(() => controller.enqueue(new Uint8Array(new SharedArrayBuffer(4)))).toThrow(
+      "Cannot transfer a SharedArrayBuffer",
+    );
+  });
+
+  it("enqueue() while a BYOB pull-into is pending detaches the vended view", async () => {
+    let vendoredView;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        vendoredView = controller.byobRequest.view;
+        controller.enqueue(new Uint8Array([42]));
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const { value } = await reader.read(new Uint8Array(1));
+
+    // The source enqueued instead of responding; the pending descriptor's buffer
+    // (which byobRequest.view was vended over) must still be detached.
+    expect(vendoredView.byteLength).toBe(0);
+    expect(value.buffer).not.toBe(vendoredView.buffer);
+    expect(value[0]).toBe(42);
+  });
+
+  it("respondWithNewView() exceeding the remaining space throws without detaching", async () => {
+    let threw;
+    let newBuffer;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        // Partial fill: elementSize 4, bytesFilled becomes 2.
+        controller.byobRequest.respond(2);
+        newBuffer = new ArrayBuffer(16);
+        // byteOffset 6 matches byteOffset(4) + bytesFilled(2); byteLength 7 makes
+        // bytesFilled(2) + 7 exceed the descriptor's byteLength (8).
+        try {
+          controller.byobRequest.respondWithNewView(new Uint8Array(newBuffer, 6, 7));
+        } catch (e) {
+          threw = e;
+        }
+        controller.error(new Error("stop"));
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    await reader.read(new Uint32Array(new ArrayBuffer(16), 4, 2)).then(
+      () => {},
+      () => {},
+    );
+
+    expect(threw).toBeInstanceOf(RangeError);
+    expect(newBuffer.byteLength).toBe(16);
+  });
+
+  it("respondWithNewView() backed by a differently-sized buffer throws without detaching", async () => {
+    let threw;
+    let newBuffer;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        // The descriptor's buffer is 16 bytes; a view backed by a 6-byte buffer
+        // does not match and must be rejected before the transfer.
+        newBuffer = new ArrayBuffer(6);
+        try {
+          controller.byobRequest.respondWithNewView(new Uint8Array(newBuffer, 4, 2));
+        } catch (e) {
+          threw = e;
+        }
+        controller.error(new Error("stop"));
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    await reader.read(new Uint32Array(new ArrayBuffer(16), 4, 2)).then(
+      () => {},
+      () => {},
+    );
+
+    expect(threw).toBeInstanceOf(RangeError);
+    expect(newBuffer.byteLength).toBe(6);
+  });
+
+  it("respond() with a non-zero value on a closed stream throws without detaching", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    let threw;
+    let byteLengthAfter;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        const byobRequest = controller.byobRequest;
+        const vendoredView = byobRequest.view;
+        controller.close();
+        try {
+          byobRequest.respond(5);
+        } catch (e) {
+          threw = e;
+        }
+        byteLengthAfter = vendoredView.byteLength;
+        resolve();
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    reader.read(new Uint8Array(4)).then(
+      () => {},
+      () => {},
+    );
+    await promise;
+
+    expect(threw).toBeInstanceOf(TypeError);
+    expect(byteLengthAfter).toBe(4);
+  });
+
+  it("respondWithNewView() with a non-zero view on a closed stream throws without detaching", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    let threw;
+    let newBuffer;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        const byobRequest = controller.byobRequest;
+        controller.close();
+        newBuffer = new ArrayBuffer(4);
+        try {
+          byobRequest.respondWithNewView(new Uint8Array(newBuffer));
+        } catch (e) {
+          threw = e;
+        }
+        resolve();
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    reader.read(new Uint8Array(4)).then(
+      () => {},
+      () => {},
+    );
+    await promise;
+
+    expect(threw).toBeInstanceOf(TypeError);
+    expect(newBuffer.byteLength).toBe(4);
+  });
+
+  it("respondWithNewView() works after the source transfers the vended buffer out", async () => {
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        // Canonical pattern: transfer the vended buffer away, fill it, respond
+        // with a view over the transferred buffer. The descriptor's own buffer
+        // is now detached, but the new view is the same size.
+        const view = controller.byobRequest.view;
+        const newBuffer = view.buffer.transfer();
+        new Uint8Array(newBuffer)[0] = 42;
+        controller.byobRequest.respondWithNewView(new Uint8Array(newBuffer));
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const { value } = await reader.read(new Uint8Array(4));
+
+    expect(value).toBeInstanceOf(Uint8Array);
+    expect(Array.from(value)).toEqual([42, 0, 0, 0]);
+  });
+
+  it("a failed enqueue while a BYOB pull-into is pending leaves the vended view usable", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    let threw;
+    let byteLengthAfter;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        const vendoredView = controller.byobRequest.view;
+        try {
+          // Non-transferable chunk: the enqueue must throw without detaching the
+          // pending descriptor's buffer or invalidating the byobRequest.
+          controller.enqueue(new Uint8Array(new SharedArrayBuffer(4)));
+        } catch (e) {
+          threw = e;
+        }
+        byteLengthAfter = vendoredView.byteLength;
+        // The byobRequest survived the failed enqueue, so a normal respond works.
+        vendoredView[0] = 7;
+        controller.byobRequest.respond(1);
+        resolve();
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const [{ value }] = await Promise.all([reader.read(new Uint8Array(4)), promise]);
+
+    expect(threw).toBeInstanceOf(TypeError);
+    expect(byteLengthAfter).toBe(4);
+    expect(value[0]).toBe(7);
+  });
+
+  it("enqueue after the source detached the vended buffer throws but keeps the byobRequest usable", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    let threw;
+    let recovered;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        const byobRequest = controller.byobRequest;
+        // The source detaches the descriptor's buffer itself, then enqueues a
+        // valid chunk. The enqueue must throw (the descriptor buffer is detached)
+        // before invalidating the byobRequest, so the source can still recover.
+        byobRequest.view.buffer.transfer();
+        try {
+          controller.enqueue(new Uint8Array([1]));
+        } catch (e) {
+          threw = e;
+        }
+        try {
+          byobRequest.respondWithNewView(new Uint8Array(4));
+          recovered = true;
+        } catch (e) {
+          recovered = e;
+        }
+        resolve();
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const [{ value }] = await Promise.all([reader.read(new Uint8Array(4)), promise]);
+
+    expect(threw).toBeInstanceOf(TypeError);
+    expect(recovered).toBe(true);
+    expect(value.byteLength).toBe(4);
+  });
+
+  it("respondWithNewView() reads the supplied view's buffer only once", async () => {
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        const goodBuffer = new ArrayBuffer(4);
+        new Uint8Array(goodBuffer)[0] = 9;
+        const badBuffer = new ArrayBuffer(64);
+        const view = new Uint8Array(goodBuffer);
+        // A tampered `.buffer` getter must not open a check-vs-use gap: the
+        // buffer whose size is validated must be the buffer that is transferred.
+        let reads = 0;
+        Object.defineProperty(view, "buffer", {
+          configurable: true,
+          get() {
+            return reads++ === 0 ? goodBuffer : badBuffer;
+          },
+        });
+        controller.byobRequest.respondWithNewView(view);
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const { value } = await reader.read(new Uint8Array(4));
+
+    // If the second read (badBuffer, 64 bytes) were transferred, value.buffer
+    // would be 64 bytes; the single read keeps it at the validated 4.
+    expect(value.byteLength).toBe(4);
+    expect(value.buffer.byteLength).toBe(4);
+    expect(value[0]).toBe(9);
+  });
+});

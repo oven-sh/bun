@@ -209,6 +209,7 @@ using namespace JSC;
     macro(textEncoderStreamTransform) \
     macro(toClass) \
     macro(toNamespacedPath) \
+    macro(transferArrayBuffer) \
     macro(transformAlgorithm) \
     macro(underlyingByteSource) \
     macro(underlyingSink) \

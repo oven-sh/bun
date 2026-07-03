@@ -213,6 +213,7 @@ export function readableByteStreamControllerPull(controller) {
     }
     const pullIntoDescriptor: PullIntoDescriptor = {
       buffer,
+      bufferByteLength: buffer.byteLength,
       byteOffset: 0,
       byteLength: $getByIdDirectPrivate(controller, "autoAllocateChunkSize"),
       bytesFilled: 0,
@@ -280,11 +281,9 @@ export function readableByteStreamControllerCallPullIfNeeded(controller) {
 }
 
 export function transferBufferToCurrentRealm(buffer) {
-  // FIXME: Determine what should be done here exactly (what is already existing in current
-  // codebase and what has to be added). According to spec, Transfer operation should be
-  // performed in order to transfer buffer to current realm. For the moment, simply return
-  // received buffer.
-  return buffer;
+  // Spec operation TransferArrayBuffer: detach the buffer and return a new one
+  // that owns the same bytes. $transferArrayBuffer is a non-overridable native.
+  return $transferArrayBuffer(buffer);
 }
 
 export function readableStreamReaderKind(reader) {
@@ -300,6 +299,11 @@ export function readableByteStreamControllerEnqueue(controller, chunk) {
   $assert(!$getByIdDirectPrivate(controller, "closeRequested"));
   $assert($getByIdDirectPrivate(stream, "state") === $streamReadable);
 
+  // Spec (ReadableByteStreamControllerEnqueue): the chunk's buffer is transferred
+  // (detached) below. Read its geometry first, since detaching zeroes it.
+  const byteOffset = chunk.byteOffset;
+  const byteLength = chunk.byteLength;
+
   switch (
     $getByIdDirectPrivate(stream, "reader") ? $readableStreamReaderKind($getByIdDirectPrivate(stream, "reader")) : 0
   ) {
@@ -309,13 +313,12 @@ export function readableByteStreamControllerEnqueue(controller, chunk) {
         $readableByteStreamControllerEnqueueChunk(
           controller,
           $transferBufferToCurrentRealm(chunk.buffer),
-          chunk.byteOffset,
-          chunk.byteLength,
+          byteOffset,
+          byteLength,
         );
       else {
         $assert(!$getByIdDirectPrivate(controller, "queue").content.size());
-        const transferredView =
-          chunk.constructor === Uint8Array ? chunk : new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+        const transferredView = new Uint8Array($transferBufferToCurrentRealm(chunk.buffer), byteOffset, byteLength);
         $readableStreamFulfillReadRequest(stream, transferredView, false);
       }
       break;
@@ -323,12 +326,22 @@ export function readableByteStreamControllerEnqueue(controller, chunk) {
 
     /* BYOB */
     case 2: {
-      $readableByteStreamControllerEnqueueChunk(
-        controller,
-        $transferBufferToCurrentRealm(chunk.buffer),
-        chunk.byteOffset,
-        chunk.byteLength,
-      );
+      // Spec step 7: transfer the chunk's buffer first. This is the fallible
+      // step (a non-transferable chunk throws here), and it must run before the
+      // pending descriptor is touched so a failed enqueue has no side effects.
+      const transferredBuffer = $transferBufferToCurrentRealm(chunk.buffer);
+      // Spec step 8: a pending pull-into's buffer (the one vended through
+      // byobRequest) is transferred too, detaching any view the source kept.
+      // The transfer (step 8.d, which throws on an already-detached buffer per
+      // step 8.b) must run before invalidating the byobRequest (step 8.c), so a
+      // source that detached the buffer itself can still recover via it.
+      const pendingPullIntos = $getByIdDirectPrivate(controller, "pendingPullIntos");
+      if (pendingPullIntos?.isNotEmpty()) {
+        const firstDescriptor = pendingPullIntos.peek();
+        firstDescriptor.buffer = $transferBufferToCurrentRealm(firstDescriptor.buffer);
+        $readableByteStreamControllerInvalidateBYOBRequest(controller);
+      }
+      $readableByteStreamControllerEnqueueChunk(controller, transferredBuffer, byteOffset, byteLength);
       $readableByteStreamControllerProcessPullDescriptors(controller);
       break;
     }
@@ -345,8 +358,8 @@ export function readableByteStreamControllerEnqueue(controller, chunk) {
       $readableByteStreamControllerEnqueueChunk(
         controller,
         $transferBufferToCurrentRealm(chunk.buffer),
-        chunk.byteOffset,
-        chunk.byteLength,
+        byteOffset,
+        byteLength,
       );
       break;
     }
@@ -368,13 +381,39 @@ export function readableByteStreamControllerRespondWithNewView(controller, view)
 
   let firstDescriptor: PullIntoDescriptor | undefined = $getByIdDirectPrivate(controller, "pendingPullIntos").peek();
 
+  // Capture byteLength before any transfer detaches the view (which zeroes it),
+  // and the buffer once so the size check and the transfer below operate on the
+  // same object even if the view's buffer getter was tampered with.
+  const viewByteLength = view.byteLength;
+  const viewBuffer = view.buffer;
+
+  // Validate before transferring so an invalid response does not detach the buffer
+  // (matches the spec, which validates before TransferArrayBuffer).
+  if ($getByIdDirectPrivate($getByIdDirectPrivate(controller, "controlledReadableStream"), "state") === $streamClosed) {
+    if (viewByteLength !== 0) throw new TypeError("view.byteLength must be 0 when the readable byte stream is closed");
+  } else if (viewByteLength === 0) {
+    throw new TypeError("view.byteLength must be greater than 0");
+  }
+
   if (firstDescriptor!.byteOffset + firstDescriptor!.bytesFilled !== view.byteOffset)
     throw new RangeError("Invalid value for view.byteOffset");
 
-  if (firstDescriptor!.byteLength < view.byteLength) throw $ERR_INVALID_ARG_VALUE("view", view);
+  // Spec step 8: the new view must be backed by a buffer the same size as the
+  // descriptor's, otherwise its byteOffset/byteLength geometry would no longer
+  // fit. Compare against the cached length so this still works when the caller
+  // transferred the descriptor's buffer out before responding.
+  if (firstDescriptor!.bufferByteLength !== viewBuffer.byteLength)
+    throw new RangeError("Invalid value for view.buffer");
 
-  firstDescriptor!.buffer = view.buffer;
-  $readableByteStreamControllerRespondInternal(controller, view.byteLength);
+  // Account for bytes already filled (spec step 9); an oversized view must be
+  // rejected before the transfer below so it is not detached on failure. Spec
+  // and Node throw a RangeError here, matching respond().
+  if (firstDescriptor!.bytesFilled + viewByteLength > firstDescriptor!.byteLength)
+    throw new RangeError("bytesWritten value is too great");
+
+  // Spec: transfer the supplied view's buffer, detaching it.
+  firstDescriptor!.buffer = $transferBufferToCurrentRealm(viewBuffer);
+  $readableByteStreamControllerRespondInternal(controller, viewByteLength);
 }
 
 export function readableByteStreamControllerRespond(controller, bytesWritten) {
@@ -384,6 +423,21 @@ export function readableByteStreamControllerRespond(controller, bytesWritten) {
     throw new RangeError("bytesWritten has an incorrect value");
 
   $assert($getByIdDirectPrivate(controller, "pendingPullIntos").isNotEmpty());
+
+  const firstDescriptor = $getByIdDirectPrivate(controller, "pendingPullIntos").peek();
+  // Validate before transferring so an invalid respond does not detach the buffer
+  // (matches the spec, which validates before TransferArrayBuffer).
+  if ($getByIdDirectPrivate($getByIdDirectPrivate(controller, "controlledReadableStream"), "state") === $streamClosed) {
+    if (bytesWritten !== 0) throw new TypeError("bytesWritten must be 0 when the readable byte stream is closed");
+  } else {
+    if (bytesWritten === 0) throw new TypeError("bytesWritten must be greater than 0");
+    if (firstDescriptor.bytesFilled + bytesWritten > firstDescriptor.byteLength)
+      throw new RangeError("bytesWritten value is too great");
+  }
+
+  // Spec (ReadableByteStreamControllerRespond step 6): transfer the descriptor's
+  // buffer, detaching the view that was vended through byobRequest.
+  firstDescriptor.buffer = $transferBufferToCurrentRealm(firstDescriptor.buffer);
 
   $readableByteStreamControllerRespondInternal(controller, bytesWritten);
 }
@@ -401,8 +455,9 @@ export function readableByteStreamControllerRespondInternal(controller, bytesWri
 }
 
 export function readableByteStreamControllerRespondInReadableState(controller, bytesWritten, pullIntoDescriptor) {
-  if (pullIntoDescriptor.bytesFilled + bytesWritten > pullIntoDescriptor.byteLength)
-    throw new RangeError("bytesWritten value is too great");
+  // Both callers (respond/respondWithNewView) already rejected an over-fill
+  // before transferring, so this is a spec Assert, not a reachable throw.
+  $assert(pullIntoDescriptor.bytesFilled + bytesWritten <= pullIntoDescriptor.byteLength);
 
   $assert(
     $getByIdDirectPrivate(controller, "pendingPullIntos").isEmpty() ||
@@ -422,7 +477,6 @@ export function readableByteStreamControllerRespondInReadableState(controller, b
     $readableByteStreamControllerEnqueueChunk(controller, remainder, 0, remainder.byteLength);
   }
 
-  pullIntoDescriptor.buffer = $transferBufferToCurrentRealm(pullIntoDescriptor.buffer);
   pullIntoDescriptor.bytesFilled -= remainderSize;
   $readableByteStreamControllerCommitDescriptor(
     $getByIdDirectPrivate(controller, "controlledReadableStream"),
@@ -432,7 +486,6 @@ export function readableByteStreamControllerRespondInReadableState(controller, b
 }
 
 export function readableByteStreamControllerRespondInClosedState(controller, firstDescriptor) {
-  firstDescriptor.buffer = $transferBufferToCurrentRealm(firstDescriptor.buffer);
   $assert(firstDescriptor.bytesFilled === 0);
 
   if ($readableStreamHasBYOBReader($getByIdDirectPrivate(controller, "controlledReadableStream"))) {
@@ -611,10 +664,27 @@ export function readableByteStreamControllerPullInto(controller, view) {
   // name has already been met before.
   const ctor = view.constructor;
 
+  // Spec (ReadableByteStreamControllerPullInto): transfer the view's buffer up
+  // front so every path below uses the detached buffer and the caller's view is
+  // always detached. Read the geometry first, since detaching zeroes it.
+  const byteOffset = view.byteOffset;
+  const byteLength = view.byteLength;
+
+  // TransferArrayBuffer throws for non-transferable buffers (SharedArrayBuffer,
+  // WebAssembly.Memory). read() must surface that as a rejected promise, not a
+  // synchronous throw, so convert the abrupt completion here.
+  let transferredBuffer;
+  try {
+    transferredBuffer = $transferBufferToCurrentRealm(view.buffer);
+  } catch (e) {
+    return Promise.$reject(e);
+  }
+
   const pullIntoDescriptor: PullIntoDescriptor = {
-    buffer: view.buffer,
-    byteOffset: view.byteOffset,
-    byteLength: view.byteLength,
+    buffer: transferredBuffer,
+    bufferByteLength: transferredBuffer.byteLength,
+    byteOffset,
+    byteLength,
     bytesFilled: 0,
     elementSize,
     ctor,
@@ -623,7 +693,6 @@ export function readableByteStreamControllerPullInto(controller, view) {
 
   var pending = $getByIdDirectPrivate(controller, "pendingPullIntos");
   if (pending?.isNotEmpty()) {
-    pullIntoDescriptor.buffer = $transferBufferToCurrentRealm(pullIntoDescriptor.buffer);
     pending.push(pullIntoDescriptor);
     return $readableStreamAddReadIntoRequest(stream);
   }
@@ -646,7 +715,6 @@ export function readableByteStreamControllerPullInto(controller, view) {
     }
   }
 
-  pullIntoDescriptor.buffer = $transferBufferToCurrentRealm(pullIntoDescriptor.buffer);
   $getByIdDirectPrivate(controller, "pendingPullIntos").push(pullIntoDescriptor);
   const promise = $readableStreamAddReadIntoRequest(stream);
   $readableByteStreamControllerCallPullIfNeeded(controller);
@@ -675,6 +743,14 @@ interface PullIntoDescriptor {
    * An {@link ArrayBuffer}
    */
   buffer: ArrayBuffer;
+
+  /**
+   * A positive integer representing the initial byte length of {@link buffer}.
+   * Cached at creation so the buffer-size check in respondWithNewView survives
+   * the caller detaching {@link buffer} (e.g. transferring it out before
+   * responding), matching the spec's "buffer byte length" descriptor field.
+   */
+  bufferByteLength: number;
 
   /**
    * A nonnegative integer byte offset into the {@link buffer} where the

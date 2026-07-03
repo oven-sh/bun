@@ -37,7 +37,7 @@ process.exit(0);
 }
 
 describe.each([true, false])("peer sends FIN: %p", sendFin => {
-  test.each(["write", "delete"] as const)(
+  test.concurrent.each(["write", "delete"] as const)(
     "S3Client.%s() resolves on a Content-Length: 0 + Connection: close response",
     async op => {
       using dir = tempDir("s3-connection-close", { "fixture.ts": fixture(op, sendFin) });

@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
 import { tls as cert1, isDebug } from "harness";
-import { AddressInfo } from "net";
+import { AddressInfo, connect as netConnect } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
 import { tmpdir } from "os";
@@ -1317,4 +1317,47 @@ it("tls.connect honors secureOptions when negotiating the protocol version", asy
     server.close();
   }
   await once(server, "close");
+});
+
+describe("tls.Server post-handshake TLS errors", () => {
+  it("reports a corrupted record on the accepted socket instead of closing cleanly", async () => {
+    // A record that cannot be authenticated fails SSL_read after the handshake
+    // completed. Node reports those through TLSWrap's onerror; swallowing one
+    // hides a protocol failure behind an ordinary end-of-connection.
+    const { promise, resolve, reject } = Promise.withResolvers<any>();
+    const server = createServer(COMMON_CERT, socket => {
+      socket.on("error", resolve);
+      socket.on("close", () => reject(new Error("accepted socket closed without an 'error'")));
+      // The client waits for this before corrupting the stream, so the server's
+      // handshake has provably completed by then.
+      socket.write("hello");
+    });
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    const raw = netConnect((server.address() as AddressInfo).port, "127.0.0.1");
+    const client = connect({ socket: raw, rejectUnauthorized: false });
+    raw.on("error", () => {});
+    client.on("error", () => {});
+    client.once("data", () => {
+      // A TLS1.3 application_data record whose payload cannot authenticate.
+      const payload = Buffer.alloc(32, 0xab);
+      raw.write(Buffer.concat([Buffer.from([0x17, 0x03, 0x03, 0x00, payload.length]), payload]));
+    });
+
+    try {
+      const error = await promise;
+      expect({ code: error?.code, library: error?.library, reason: error?.reason }).toEqual({
+        code: "ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC",
+        library: "SSL routines",
+        reason: "DECRYPTION_FAILED_OR_BAD_RECORD_MAC",
+      });
+    } finally {
+      client.destroy();
+      raw.destroy();
+      server.close();
+    }
+    await once(server, "close");
+  });
 });

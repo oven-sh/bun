@@ -221,6 +221,30 @@ pub(crate) unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     s
 }
 
+/// A fatal SSL error surfaced after the handshake already completed: a received
+/// fatal alert (under TLS 1.3 a server's mTLS rejection lands here, because the
+/// client finishes its handshake one flight earlier) or a protocol violation.
+/// Mirrors Node's `TLSWrap::ClearOut` → `onerror`, which reports these on the
+/// socket instead of letting them pass as a clean end-of-connection. Only
+/// `bun_socket_tls` sockets reach this; every other kind already tears the
+/// connection down through its own error path.
+///
+/// # Safety
+/// `openssl.c` must pass a live, non-null `s` whose ext slot holds a valid
+/// `*mut TLSSocket`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn us_dispatch_ssl_error(s: *mut us_socket_t, err: us_bun_verify_error_t) {
+    let s_ref = us_socket_t::opaque_mut(s);
+    if s_ref.kind() != SocketKind::BunSocketTls {
+        return;
+    }
+    type TLSSocket = super::NewSocket<true>;
+    let Some(tls) = *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() else {
+        return;
+    };
+    let _ = TLSSocket::on_ssl_error(tls, err);
+}
+
 /// A new (resumable) TLS session is ready. BoringSSL's new-session callback
 /// parks the serialized session while `SSL_read`/`SSL_do_handshake` runs;
 /// `ssl_flush_pending_session()` dispatches it here once that stack has

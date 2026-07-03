@@ -1903,7 +1903,32 @@ restart:
         }
 
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
+          /* ssl_park_fatal_reason handles the handshake-pending side and always
+           * clears the queue, so a completed handshake must capture the reason
+           * on the stack first and dispatch it right here instead. */
+          char reason[US_SSL_FATAL_ERROR_REASON_MAX];
+          reason[0] = 0;
+          if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) {
+            unsigned long ssl_queue_err = ERR_peek_last_error();
+            if (ssl_queue_err != 0) {
+              ERR_error_string_n(ssl_queue_err, reason, sizeof(reason));
+            }
+          }
           ssl_park_fatal_reason(s);
+          if (reason[0]) {
+            /* The SSL library failed once the handshake was already done: a
+             * received fatal alert (TLS 1.3 delivers the server's mTLS
+             * rejection here, because the client finished one flight earlier)
+             * or a protocol violation such as a bad record MAC. Node reports
+             * these through TLSWrap's onerror; dropping them leaves the peer's
+             * "you are not authenticated" indistinguishable from a clean
+             * end-of-connection. */
+            struct us_bun_verify_error_t verify_error = {
+                .error = -71, .code = "EPROTO", .reason = reason};
+            us_dispatch_ssl_error(s, verify_error);
+            /* The JS error handler may have destroyed the socket. */
+            if (ssl_gone(s)) return NULL;
+          }
         }
         ssl_close(s, 0, NULL);
         loop_ssl_data->ssl_last_fatal_error[0] = 0;

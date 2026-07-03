@@ -131,9 +131,10 @@ db.close(true);
 Using a statement after the database it came from was closed throws `Database has closed`.
 
 <Note>
-  The connection is released automatically when the database is garbage collected. Unlike an explicit `close()`, that
-  does not finalize outstanding statements, which keep working until they are finalized or collected themselves.
-  `close()` is safe to call multiple times and has no effect after the first.
+  Garbage collecting the database closes the connection only once every statement prepared from it has been collected
+  too. Unlike an explicit `close()`, garbage collection does not finalize outstanding statements, so they keep working,
+  and the database file stays open, until then. `close()` is safe to call multiple times and has no effect after the
+  first.
 </Note>
 
 ### `using` statement

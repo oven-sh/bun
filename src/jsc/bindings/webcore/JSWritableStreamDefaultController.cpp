@@ -108,6 +108,7 @@ template<> FunctionExecutable* JSWritableStreamDefaultControllerDOMConstructor::
 
 static const HashTableValue JSWritableStreamDefaultControllerPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsWritableStreamDefaultControllerConstructor, 0 } },
+    { "signal"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinAccessorType, writableStreamDefaultControllerSignalCodeGenerator, 0 } },
     { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, writableStreamDefaultControllerErrorCodeGenerator, 0 } },
 };
 

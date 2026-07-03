@@ -180,7 +180,13 @@ export function setUpWritableStreamDefaultWriter(writer, stream) {
 }
 
 export function writableStreamAbort(stream, reason) {
-  const state = $getByIdDirectPrivate(stream, "state");
+  let state = $getByIdDirectPrivate(stream, "state");
+  if (state === "closed" || state === "errored") return Promise.$resolve();
+
+  const controller = $getByIdDirectPrivate(stream, "controller");
+  $signalAbort($getByIdDirectPrivate(controller, "signal"), reason);
+
+  state = $getByIdDirectPrivate(stream, "state");
   if (state === "closed" || state === "errored") return Promise.$resolve();
 
   const pendingAbortRequest = $getByIdDirectPrivate(stream, "pendingAbortRequest");
@@ -565,6 +571,7 @@ export function setUpWritableStreamDefaultController(
 
   $resetQueue($getByIdDirectPrivate(controller, "queue"));
 
+  $putByIdDirectPrivate(controller, "signal", $createAbortSignal());
   $putByIdDirectPrivate(controller, "started", -1);
   $putByIdDirectPrivate(controller, "startAlgorithm", startAlgorithm);
   $putByIdDirectPrivate(controller, "strategySizeAlgorithm", sizeAlgorithm);

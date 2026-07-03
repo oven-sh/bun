@@ -11,6 +11,7 @@ import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness
 import { mkfifo } from "mkfifo";
 import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { ReadableStream as WebReadableStream } from "node:stream/web";
 
 it("TransformStream", async () => {
   // https://developer.mozilla.org/en-US/docs/Web/API/TransformStream
@@ -481,6 +482,275 @@ it("exists globally", () => {
   expect(typeof WritableStreamDefaultWriter).toBe("function");
   expect(typeof ByteLengthQueuingStrategy).toBe("function");
   expect(typeof CountQueuingStrategy).toBe("function");
+});
+
+// https://github.com/oven-sh/bun/issues/32529
+describe("ReadableStream.from", () => {
+  it("is exposed on the global and node:stream/web constructors", () => {
+    expect(typeof ReadableStream.from).toBe("function");
+    expect(ReadableStream.from.length).toBe(1);
+    expect(ReadableStream.from.name).toBe("from");
+    // node:stream/web re-exports the same constructor as the global
+    expect(WebReadableStream).toBe(ReadableStream);
+    expect(typeof WebReadableStream.from).toBe("function");
+  });
+
+  it("creates a stream from a sync iterable (array)", async () => {
+    const stream = ReadableStream.from([1, 2, 3]);
+    expect(stream).toBeInstanceOf(ReadableStream);
+    const out = [];
+    for await (const chunk of stream) out.push(chunk);
+    expect(out).toEqual([1, 2, 3]);
+  });
+
+  it("creates a stream from a string", async () => {
+    const out = [];
+    for await (const chunk of ReadableStream.from("abc")) out.push(chunk);
+    expect(out).toEqual(["a", "b", "c"]);
+  });
+
+  it("creates a stream from an async generator", async () => {
+    async function* gen() {
+      yield "a";
+      yield "b";
+      yield "c";
+    }
+    const out = [];
+    for await (const chunk of ReadableStream.from(gen())) out.push(chunk);
+    expect(out).toEqual(["a", "b", "c"]);
+  });
+
+  it("enqueues null and undefined chunks without skipping them", async () => {
+    async function* gen() {
+      yield 1;
+      yield undefined;
+      yield null;
+      yield 4;
+    }
+    const out = [];
+    for await (const chunk of ReadableStream.from(gen())) out.push(chunk);
+    expect(out).toEqual([1, undefined, null, 4]);
+  });
+
+  it("awaits promise values yielded by a sync iterable", async () => {
+    const out = [];
+    for await (const chunk of ReadableStream.from([Promise.resolve("x"), Promise.resolve("y")])) out.push(chunk);
+    expect(out).toEqual(["x", "y"]);
+  });
+
+  it("prefers Symbol.asyncIterator over Symbol.iterator", async () => {
+    const obj = {
+      [Symbol.iterator]() {
+        return { next: () => ({ value: "sync", done: false }) };
+      },
+      async *[Symbol.asyncIterator]() {
+        yield "async1";
+        yield "async2";
+      },
+    };
+    const out = [];
+    for await (const chunk of ReadableStream.from(obj)) out.push(chunk);
+    expect(out).toEqual(["async1", "async2"]);
+  });
+
+  it("does not start iterating until the stream is read", async () => {
+    let started = false;
+    async function* gen() {
+      started = true;
+      yield 1;
+    }
+    const stream = ReadableStream.from(gen());
+    expect(started).toBe(false);
+    const reader = stream.getReader();
+    await reader.read();
+    expect(started).toBe(true);
+    reader.releaseLock();
+  });
+
+  it("calls iterator.return with the reason when cancelled", async () => {
+    let returnedWith = Symbol("unset");
+    const iterable = {
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+      async next() {
+        return { value: 1, done: false };
+      },
+      async return(value) {
+        returnedWith = value;
+        return { value, done: true };
+      },
+    };
+    const reader = ReadableStream.from(iterable).getReader();
+    await reader.read();
+    await reader.cancel("my-reason");
+    expect(returnedWith).toBe("my-reason");
+  });
+
+  it("propagates errors thrown by the iterator", async () => {
+    async function* gen() {
+      yield 1;
+      throw new Error("boom");
+    }
+    const out = [];
+    let error;
+    try {
+      for await (const chunk of ReadableStream.from(gen())) out.push(chunk);
+    } catch (e) {
+      error = e;
+    }
+    expect(out).toEqual([1]);
+    expect(error?.message).toBe("boom");
+  });
+
+  // The async-from-sync iterator adaptation awaits the value of every result, so a
+  // rejected promise value must surface rather than being swallowed.
+  it("surfaces a rejected promise value from a sync iterator's done result", async () => {
+    const err = new Error("late-done");
+    const iterable = {
+      [Symbol.iterator]() {
+        let i = 0;
+        return {
+          next() {
+            return i++ === 0 ? { value: "a", done: false } : { done: true, value: Promise.reject(err) };
+          },
+        };
+      },
+    };
+    const out = [];
+    let caught;
+    try {
+      for await (const chunk of ReadableStream.from(iterable)) out.push(chunk);
+    } catch (e) {
+      caught = e;
+    }
+    expect(out).toEqual(["a"]);
+    expect(caught).toBe(err);
+  });
+
+  it("rejects cancel() when a sync iterator's return() yields a rejected promise value", async () => {
+    const err = new Error("ret-reject");
+    const iterable = {
+      [Symbol.iterator]() {
+        return {
+          next() {
+            return { value: 1, done: false };
+          },
+          return() {
+            return { value: Promise.reject(err), done: true };
+          },
+        };
+      },
+    };
+    const reader = ReadableStream.from(iterable).getReader();
+    await reader.read();
+    let caught;
+    try {
+      await reader.cancel("x");
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBe(err);
+  });
+
+  // A native async iterator's done result must close the stream without reading
+  // its value, unlike the sync (CreateAsyncFromSyncIterator) adaptation above.
+  it("does not read the value of an async iterator's done result", async () => {
+    let reads = 0;
+    let i = 0;
+    const iterable = {
+      [Symbol.asyncIterator]() {
+        return {
+          next() {
+            if (i++ === 0) return Promise.resolve({ value: "a", done: false });
+            return Promise.resolve({
+              done: true,
+              get value() {
+                reads++;
+                return undefined;
+              },
+            });
+          },
+        };
+      },
+    };
+    const out = [];
+    for await (const chunk of ReadableStream.from(iterable)) out.push(chunk);
+    expect(out).toEqual(["a"]);
+    expect(reads).toBe(0);
+  });
+
+  it.each([123, true, {}, Symbol("x"), 10n])("throws ERR_ARG_NOT_ITERABLE for %p", value => {
+    let err;
+    try {
+      ReadableStream.from(value);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_ARG_NOT_ITERABLE");
+  });
+
+  it.each([null, undefined])("throws a TypeError for %p", value => {
+    expect(() => ReadableStream.from(value)).toThrow(TypeError);
+  });
+
+  // A null-prototype object is not iterable; describing it must not throw a raw
+  // "Cannot convert ... to primitive value" and must still report the code.
+  it("throws ERR_ARG_NOT_ITERABLE for a null-prototype object", () => {
+    let err;
+    try {
+      ReadableStream.from(Object.create(null));
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_ARG_NOT_ITERABLE");
+  });
+
+  it("throws ERR_INVALID_STATE when the iterator method returns a non-object", () => {
+    let err;
+    try {
+      ReadableStream.from({ [Symbol.asyncIterator]: () => 5 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_INVALID_STATE");
+  });
+
+  it("rejects reads with ERR_INVALID_STATE when next() returns a non-object", async () => {
+    const stream = ReadableStream.from({ [Symbol.asyncIterator]: () => ({ next: () => 5 }) });
+    let err;
+    try {
+      await stream.getReader().read();
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_INVALID_STATE");
+  });
+
+  it("rejects cancel() with ERR_INVALID_STATE when return() returns a non-object", async () => {
+    const iterable = {
+      [Symbol.iterator]() {
+        return {
+          next: () => ({ value: 1, done: false }),
+          return: () => 5,
+        };
+      },
+    };
+    const reader = ReadableStream.from(iterable).getReader();
+    await reader.read();
+    let err;
+    try {
+      await reader.cancel("x");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_INVALID_STATE");
+  });
 });
 
 it("new Response(stream).body", async () => {

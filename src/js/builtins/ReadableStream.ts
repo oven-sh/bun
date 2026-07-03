@@ -106,6 +106,84 @@ export function initializeReadableStream(
   return this;
 }
 
+// https://streams.spec.whatwg.org/#rs-from
+// https://streams.spec.whatwg.org/#readable-stream-from-iterable
+$overriddenName = "from";
+export function from(this, iterable) {
+  const Symbol = globalThis.Symbol;
+
+  let iterator;
+  // `sync` marks an iterator obtained via Symbol.iterator, which CreateAsyncFromSyncIterator
+  // adapts: its next()/return() results are validated and their values awaited before use.
+  let sync = false;
+
+  // GetIterator(iterable, async): reading Symbol.asyncIterator first means a null or
+  // undefined argument throws the same TypeError as Node before any sync fallback.
+  let method = iterable[Symbol.asyncIterator];
+  if (!$isUndefinedOrNull(method)) {
+    if (!$isCallable(method)) throw new TypeError("ReadableStream.from: Symbol.asyncIterator is not a function");
+    iterator = method.$call(iterable);
+  } else {
+    method = iterable[Symbol.iterator];
+    if ($isUndefinedOrNull(method)) {
+      // String() keeps a Symbol argument reporting ERR_ARG_NOT_ITERABLE (a template
+      // literal would throw on Symbols); the try guards null-prototype objects and
+      // throwing toString/Symbol.toPrimitive so they report the code, not a raw
+      // "Cannot convert ... to primitive value" TypeError.
+      let described;
+      try {
+        described = String(iterable);
+      } catch {
+        described = "The argument";
+      }
+      throw $ERR_ARG_NOT_ITERABLE(described + " must be iterable");
+    }
+    if (!$isCallable(method)) throw new TypeError("ReadableStream.from: Symbol.iterator is not a function");
+    iterator = method.$call(iterable);
+    sync = true;
+  }
+
+  if (!$isObject(iterator)) throw $ERR_INVALID_STATE_TypeError("The iterator method must return an object");
+
+  // The next method is captured once, mirroring GetIteratorFromMethod.
+  const nextMethod = iterator.next;
+
+  async function pull(controller) {
+    const result = nextMethod.$call(iterator);
+    const iterResult = sync ? result : await result;
+    if (!$isObject(iterResult))
+      throw $ERR_INVALID_STATE_TypeError(
+        "The promise returned by the iterator.next() method must fulfill with an object",
+      );
+    if (iterResult.done) {
+      // A native async iterator's value is not read on the done path (per
+      // ReadableStreamFromIterable), but CreateAsyncFromSyncIterator always
+      // awaits a sync iterator's value, so a rejected promise still surfaces.
+      if (sync) await iterResult.value;
+      controller.close();
+    } else {
+      controller.enqueue(sync ? await iterResult.value : iterResult.value);
+    }
+  }
+
+  async function cancel(reason) {
+    const returnMethod = iterator.return;
+    if ($isUndefinedOrNull(returnMethod)) return;
+    if (!$isCallable(returnMethod)) throw new TypeError("ReadableStream.from: iterator.return is not a function");
+    const result = returnMethod.$call(iterator, reason);
+    const iterResult = sync ? result : await result;
+    if (!$isObject(iterResult))
+      throw $ERR_INVALID_STATE_TypeError(
+        "The promise returned by the iterator.return() method must fulfill with an object",
+      );
+    // Same async-from-sync adaptation: await the value so a rejected promise
+    // rejects cancel() rather than leaking as an unhandled rejection.
+    if (sync) await iterResult.value;
+  }
+
+  return new ReadableStream({ pull, cancel }, { highWaterMark: 0 });
+}
+
 $linkTimeConstant;
 export function readableStreamToArray(stream: ReadableStream): Promise<unknown[]> {
   if (!$isReadableStream(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "ReadableStream", typeof stream);

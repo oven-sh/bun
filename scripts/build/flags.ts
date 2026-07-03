@@ -1307,6 +1307,20 @@ export const linkerFlags: Flag[] = [
     when: c => c.linux && c.release && !!c.pgoUse && !c.asan && !c.valgrind,
     desc: "Keep .text.hot/.text.unlikely prefixes from the PGO profile (cluster hot startup .text)",
   },
+  {
+    // Same goal as keep-text-section-prefix, without needing a PGO profile:
+    // src/linker.order lists the functions bun actually executes while starting
+    // up, and lld sorts their input sections to the front of `.text`. Starting
+    // up only touches ~8.5 MB of pages, but they are scattered over a ~50 MB
+    // `.text` and the kernel faults in 64 KB around each one, so the binary
+    // ends up with ~27 MB resident for `bun -e 'console.log(1)'`. Packing them
+    // together halves that (33.1 MB -> 21.8 MB RSS on linux-x64) for a
+    // byte-identical binary. Symbols lld cannot find are skipped, so a stale
+    // file only costs some of the win — regenerate with `bun run orderfile`.
+    flag: c => [`-Wl,--symbol-ordering-file=${c.cwd}/src/linker.order`, "-Wl,--no-warn-symbol-ordering"],
+    when: c => c.linux && c.release,
+    desc: "Sort startup-hot functions to the front of .text (cuts resident binary pages)",
+  },
 
   // ─── Symbols / exports ───
   // These reference files on disk — linkDepends() lists the same paths
@@ -1403,8 +1417,10 @@ export function linkDepends(cfg: Config): string[] {
   if (cfg.freebsd) return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker-freebsd.lds")];
   if (cfg.windows) return [join(cfg.cwd, "src/symbols.def")];
   if (cfg.darwin) return [join(cfg.cwd, "src/symbols.txt")];
-  // linux: ELF dynamic-list + version script
-  return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
+  // linux: ELF dynamic-list + version script, plus the release symbol ordering file
+  const linux = [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
+  if (cfg.release) linux.push(join(cfg.cwd, "src/linker.order"));
+  return linux;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

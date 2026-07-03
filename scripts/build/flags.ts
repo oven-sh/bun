@@ -1273,8 +1273,10 @@ export const linkerFlags: Flag[] = [
       // gnu (not both): `both` also emits the legacy SysV `.hash` (16 KB,
       // measured by relink), which exists only for pre-2006 dynamic linkers.
       // glibc has preferred `.gnu.hash` since 2.5 and our floor is 2.17.
-      // The FreeBSD entry below MUST stay `both`: FreeBSD 13's rtld-elf
-      // reads only the SysV table (GNU hash landed in FreeBSD 14).
+      // The FreeBSD entry below stays `both` on purpose: freebsdVersion is
+      // overridable below the 14.3 default, nothing here is validated on
+      // FreeBSD hardware, and `both` is a strict superset of `gnu` — it can
+      // only cost size, never correctness.
       "-Wl,--hash-style=gnu",
       "-Wl,--build-id=sha1",
     ],

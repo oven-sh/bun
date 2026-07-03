@@ -215,13 +215,23 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
   });
 });
 
-/** A release config for a unix target, resolved the way the CI lane does. */
+/**
+ * A release config for a unix target, resolved the way the CI lane does.
+ *
+ * freebsd passes an explicit fake sysroot for the same reason
+ * resolveWindowsCross passes a fake winsysroot: without one, resolveConfig
+ * falls back to detectFreebsdSysroot(), which probes the filesystem and
+ * throws when nothing is there. Only the Linux build image provisions
+ * /opt/freebsd-sysroot, so this test would otherwise pass there and throw on
+ * the darwin and Windows test agents. An explicit path is used verbatim, so
+ * it never has to exist.
+ */
 function resolveUnixRelease(os: "linux" | "freebsd"): Config {
   return resolveConfig(
     {
       os,
       arch: "x64",
-      ...(os === "linux" ? { abi: "gnu" as const } : {}),
+      ...(os === "linux" ? { abi: "gnu" as const } : { freebsdSysroot: "/fake/freebsd-sysroot" }),
       buildType: "Release",
       ci: true,
       buildkite: false,
@@ -248,9 +258,9 @@ describe("release binary-size flags", () => {
     expect(linux).toContain("-Wl,--hash-style=gnu");
     expect(linux).not.toContain("-Wl,--hash-style=both");
 
-    // FreeBSD 13's rtld-elf reads only the SysV table (GNU hash landed in
-    // FreeBSD 14), so its entry must keep emitting both. This is the one
-    // platform the hash-style change is deliberately not applied to.
+    // FreeBSD deliberately keeps both: freebsdVersion is overridable below
+    // the 14.3 default, nothing here is validated on FreeBSD hardware, and
+    // `both` is a strict superset of `gnu`, so it can only cost size.
     expect(computeFlags(resolveUnixRelease("freebsd")).ldflags).toContain("-Wl,--hash-style=both");
   });
 });

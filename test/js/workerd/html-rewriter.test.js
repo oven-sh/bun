@@ -550,7 +550,7 @@ describe("HTMLRewriter", () => {
             },
           })
           .transform(new TextEncoder().encode("<div></div>")),
-      ).toThrow("cannot synchronously return a ArrayBuffer");
+      ).toThrow("cannot synchronously return an ArrayBuffer");
     });
 
     // A rejection the handler neither awaits nor returns is the user's to

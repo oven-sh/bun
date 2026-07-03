@@ -479,10 +479,11 @@ impl HTMLRewriter {
                 Response::finalize(unsafe { Box::from_raw(r) })
             });
 
+            // Carries its own article: "an ArrayBuffer", not "a ArrayBuffer".
             let noun = if kind == ResponseKind::String {
-                "string"
+                "a string"
             } else {
-                "ArrayBuffer"
+                "an ArrayBuffer"
             };
             // SAFETY: `resp` is a live `heap::into_raw` allocation, never null.
             let out_response_value =
@@ -713,8 +714,8 @@ pub struct BufferOutputSink {
     handler_error: Cell<JSValue>,
     /// Set for `transform(string)` / `transform(ArrayBuffer)`, which must
     /// produce their result before `transform()` returns. Holds the noun for
-    /// the error message. A handler that would suspend fails the whole rewrite
-    /// instead, so no handler outlives the throw.
+    /// the error message, article included. A handler that would suspend fails
+    /// the whole rewrite instead, so no handler outlives the throw.
     sync_only_noun: Cell<Option<&'static str>>,
     /// Which lol-html call still has to run (or finish).
     phase: Cell<RewritePhase>,
@@ -1782,7 +1783,7 @@ where
             // SAFETY: `sink` is the live BufferOutputSink for this rewrite.
             if let Some(noun) = unsafe { (*sink).sync_only_noun.get() } {
                 let err = global.create_type_error_instance(format_args!(
-                    "HTMLRewriter.transform() cannot synchronously return a {noun} because a \
+                    "HTMLRewriter.transform() cannot synchronously return {noun} because a \
                      content handler returned a Promise that did not resolve within a microtask. \
                      Pass a Response instead and await its body"
                 ));

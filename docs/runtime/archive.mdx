@@ -393,14 +393,21 @@ Rules:
 
 ```ts
 const archive = new Bun.Archive(undefined, { format: "zip" });
-const done = Bun.write("everything.zip", new Response(archive.stream()));
+
+const writer = Bun.file("everything.zip").writer();
+const writing = (async () => {
+  for await (const chunk of archive.stream()) writer.write(chunk);
+  await writer.end();
+})();
 
 for await (const path of new Bun.Glob("**/*").scan(".")) {
   await archive.append(path, Bun.file(path)); // parks when the writer falls behind
 }
 archive.end();
-await done;
+await writing;
 ```
+
+Drain the stream incrementally, as above, for the memory bound to hold. A consumer that asks for the whole thing at once, like `new Response(archive.stream()).bytes()`, buffers the entire archive by definition.
 
 Streaming a zip straight to an HTTP client, where the socket provides the backpressure:
 

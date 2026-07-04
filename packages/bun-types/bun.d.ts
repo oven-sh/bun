@@ -9413,13 +9413,18 @@ declare module "bun" {
      * **Stream a zip to a file without holding it in memory:**
      * ```ts
      * const archive = new Bun.Archive(undefined, { format: "zip" });
-     * const done = Bun.write("bundle.zip", new Response(archive.stream()));
+     *
+     * const writer = Bun.file("bundle.zip").writer();
+     * const writing = (async () => {
+     *   for await (const chunk of archive.stream()) writer.write(chunk);
+     *   await writer.end();
+     * })();
      *
      * for (const path of paths) {
      *   await archive.append(path, Bun.file(path));
      * }
      * archive.end();
-     * await done;
+     * await writing;
      * ```
      *
      * @example

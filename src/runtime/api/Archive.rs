@@ -362,6 +362,12 @@ impl Archive {
                 State::Streamed => return Err(self.throw_streamed(global)),
                 State::Failed => return Err(self.throw_failed(global)),
                 State::Building(slot) => {
+                    // stream() owns the output. Closing the builder here would
+                    // hand these bytes to the caller and leave the consumer
+                    // waiting on an end-of-stream that never arrives.
+                    if self.is_streaming() {
+                        return Err(self.throw_streamed(global));
+                    }
                     if slot.is_none() || !self.queue.borrow().is_empty() {
                         return Err(global.throw_invalid_arguments(format_args!(
                             "Archive.append() is still in progress: await it before reading the archive"
@@ -391,7 +397,7 @@ impl Archive {
 
     fn throw_streamed(&self, global: &JSGlobalObject) -> jsc::JsError {
         global.throw_invalid_arguments(format_args!(
-            "Archive.stream() consumed this archive's bytes; there is nothing left to read"
+            "Archive.stream() owns this archive's bytes; there is nothing left to read"
         ))
     }
 
@@ -620,7 +626,14 @@ impl Archive {
             return false;
         }
         // SAFETY: see `push_to_stream`.
-        unsafe { &*out.bytes }.buffer.get().len() >= STREAM_HIGH_WATER_MARK
+        let bytes = unsafe { &*out.bytes };
+        // A `buffer_action` consumer (`new Response(stream).bytes()`) accumulates
+        // into `buffer` and never drains it, so parking against its length would
+        // park forever: only the push this task would make can unpark it.
+        if bytes.buffer_action.get().is_some() {
+            return false;
+        }
+        bytes.buffer.get().len() >= STREAM_HIGH_WATER_MARK
     }
 
     fn park_append(&self, task: *mut AppendTask) {

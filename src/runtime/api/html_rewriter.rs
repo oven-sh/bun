@@ -1716,9 +1716,6 @@ macro_rules! impl_wrapper_like {
     };
 }
 
-/// Record a content handler's exception / rejection on the sink whose
-/// lol-html call is on the stack, so `transform()` (sync) or the output body
-/// (async) surfaces it instead of lol-html's generic "stopped" message.
 /// The value an `Exception` cell wraps. Handing the cell itself to
 /// `JSPromise::reject` asserts, and a `Locked` body can now reject with any
 /// handler error, so unwrap at the point of capture. `to_error` falls back to
@@ -1728,6 +1725,10 @@ fn exception_value(exc: NonNull<jsc::Exception>) -> JSValue {
     cell.to_error().unwrap_or(cell)
 }
 
+/// Record a content handler's exception / rejection on the sink whose lol-html
+/// call is on the stack, so `transform()` (sync) or the output body (async)
+/// surfaces it instead of lol-html's generic "stopped" message.
+///
 /// Takes the sink explicitly rather than re-deriving it from `global`: a caller
 /// that has already established there is none would otherwise silently drop the
 /// error.
@@ -1811,7 +1812,6 @@ where
             // the real error instead of lol-html's generic "stopped" message.
             if let Some(exc) = scope.exception() {
                 // SAFETY: `sink` is the live sink for this rewrite.
-                // SAFETY: `sink` is the live sink for this rewrite.
                 unsafe { record_handler_error(sink, exception_value(exc)) };
             }
             // Clear the exception from the scope to prevent assertion failures
@@ -1824,7 +1824,6 @@ where
 
     // Check if there's an exception that was thrown but not caught by the error union
     if let Some(exc) = scope.exception() {
-        // SAFETY: `sink` is the live sink for this rewrite.
         // SAFETY: `sink` is the live sink for this rewrite.
         unsafe { record_handler_error(sink, exception_value(exc)) };
         // Clear the exception to prevent assertion failures

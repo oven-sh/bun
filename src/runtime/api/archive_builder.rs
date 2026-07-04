@@ -392,12 +392,18 @@ impl Builder {
         Ok(())
     }
 
-    fn write_data(&mut self, data: &[u8]) -> Result<(), BuildError> {
-        if data.is_empty() {
-            return Ok(());
-        }
-        if self.archive().write_data(data) < 0 {
-            return Err(self.fail("ArchiveWriteError"));
+    /// `archive_write_data` clamps its length to `INT_MAX` and returns the count
+    /// it actually took, so a single call cannot be assumed to consume the whole
+    /// slice: an entry over 2 GiB would otherwise be silently NUL-padded out to
+    /// the size its header declared.
+    fn write_data(&mut self, mut data: &[u8]) -> Result<(), BuildError> {
+        while !data.is_empty() {
+            let written = self.archive().write_data(data);
+            if written <= 0 {
+                return Err(self.fail("ArchiveWriteError"));
+            }
+            let written = usize::try_from(written).expect("int cast").min(data.len());
+            data = &data[written..];
         }
         Ok(())
     }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "path";
 
@@ -2213,7 +2213,9 @@ describe("Bun.Archive", () => {
     // entry out to the size its header declared, pushing every NUL byte through
     // the sink: a failed append of a 600MB file used to write 600MB of zeros to
     // a throwaway spill file before the promise settled.
-    test.skipIf(isWindows)("a source that fails mid-read does not pad the entry out", async () => {
+    // Skipped on macOS: the trick below needs fstat(dir).st_size > 0 so the read
+    // loop runs at least once, and POSIX leaves a directory's st_size undefined.
+    test.skipIf(isWindows || isMacOS)("a source that fails mid-read does not pad the entry out", async () => {
       using dir = tempDir("archive-append-unreadable", {});
       const archive = new Bun.Archive();
 

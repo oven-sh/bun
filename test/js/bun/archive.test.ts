@@ -2379,6 +2379,41 @@ describe("Bun.Archive", () => {
       expect((consumer as PromiseRejectedResult).reason.message).toMatch(/ENOENT|no such file/i);
     });
 
+    // The sibling of the test above: a getReader() consumer leaves ByteStream by a
+    // different branch than the buffered one, and it has already taken a chunk, so
+    // the failure arrives after the stream has started producing.
+    test("a failed append fails a getReader() consumer that already took a chunk", async () => {
+      using dir = tempDir("archive-stream-fail-reader", {});
+      const archive = new Bun.Archive();
+      const reader = archive.stream().getReader();
+
+      const gotChunk = Promise.withResolvers<void>();
+      let received = 0;
+      const consuming = (async () => {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) return "clean done";
+          received += value.length;
+          gotChunk.resolve();
+        }
+      })();
+
+      await archive.append("ok.txt", Buffer.alloc(64 * 1024, "a"));
+      await gotChunk.promise; // the consumer is past its first read
+      expect(received).toBeGreaterThan(0);
+
+      const [append, consumer] = await Promise.allSettled([
+        archive.append("gone.bin", Bun.file(join(String(dir), "nope.bin"))),
+        consuming,
+      ]);
+
+      expect(append.status).toBe("rejected");
+      expect((append as PromiseRejectedResult).reason.message).toMatch(/ENOENT|no such file/i);
+      // Not a clean `done`: that would hand back a truncated archive.
+      expect(consumer.status).toBe("rejected");
+      expect((consumer as PromiseRejectedResult).reason.message).toMatch(/ENOENT|no such file/i);
+    });
+
     // gzip is a post-filter over the finished bytes, and nothing post-filters
     // what goes to the stream, so it must not silently emit a raw tar.
     test("rejects stream() on a gzip archive", () => {

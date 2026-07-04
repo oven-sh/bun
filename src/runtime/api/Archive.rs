@@ -1392,10 +1392,6 @@ impl PromiseResult {
     }
 }
 
-/// Context must provide:
-///   - `run` — runs on thread pool, stores result in `self`
-///   - `run_from_js` — returns value to resolve/reject
-///   - `Drop` — cleanup
 /// What `AsyncTask` does once `step_from_js` returns.
 pub enum Step {
     /// Put the task back on the work pool for another `run()`.
@@ -1406,6 +1402,10 @@ pub enum Step {
     Settle(PromiseResult),
 }
 
+/// Context must provide:
+///   - `run` — runs on thread pool, stores result in `self`
+///   - `run_from_js` — returns value to resolve/reject
+///   - `Drop` — cleanup
 pub trait TaskContext: Send {
     /// Dispatch tag for this context's `AsyncTask<Self>` variant.
     const TAG: TaskTag;

@@ -31,7 +31,8 @@ public:
 
     DECLARE_INFO;
     // visitChildrenImpl MUST visit: m_stream, m_byobRequest, every barrier inside
-    // m_algorithms, and the TWO barrier containers m_queue and m_pendingPullIntos.
+    // m_algorithms, and the barrier container m_pendingPullIntos (m_queue entries hold
+    // ArrayBuffer impls via RefPtr, so the queue has nothing for the GC).
     //   cellLock() is NON-RECURSIVE (StreamQueue.h). This visitChildrenImpl takes
     //   `Locker locker { cellLock() }` exactly ONCE, and inside that ONE scope both
     //   iterates m_pendingPullIntos and calls m_queue.visit(locker, visitor) (StreamQueue

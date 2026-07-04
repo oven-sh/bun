@@ -1,5 +1,5 @@
-// JSPullIntoDescriptor — the spec's pull-into descriptor as a small, non-destructible GC
-// cell. It is a cell (not a plain struct in a Vector) because user code can mutate
+// JSPullIntoDescriptor — the spec's pull-into descriptor as a small, destructible GC cell
+// (its buffer is a RefPtr to the ArrayBuffer impl). It is a cell (not a plain struct in a Vector) because user code can mutate
 // [[pendingPullIntos]] reentrantly from inside respond()/respondWithNewView()/enqueue();
 // holding a JSPullIntoDescriptor* across user JS is never a UAF — but the code must still
 // RE-VALIDATE that the descriptor is still relevant afterward.

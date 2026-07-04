@@ -127,11 +127,9 @@ bool isNonNegativeNumber(JSC::JSValue); // userJS: no — WebStreamsMisc.cpp
 // spec TransferArrayBuffer(O). Throws TypeError on a non-transferable buffer.
 // (Runs no JS, but DETACHES `buffer`: callers must re-read any cached view length/vector()
 // of the SOURCE buffer afterward.)
-JSC::JSArrayBuffer* transferArrayBuffer(JSC::JSGlobalObject*, JSC::JSArrayBuffer*); // userJS: no — WebStreamsMisc.cpp
 RefPtr<JSC::ArrayBuffer> transferArrayBufferImpl(JSC::JSGlobalObject*, JSC::ArrayBuffer&); // userJS: no — WebStreamsMisc.cpp
 bool canTransferArrayBuffer(JSC::ArrayBuffer&); // userJS: no — WebStreamsMisc.cpp
 // spec CanTransferArrayBuffer(O) — pure.
-bool canTransferArrayBuffer(JSC::JSArrayBuffer*); // userJS: no — WebStreamsMisc.cpp
 // spec CloneAsUint8Array(O) — allocation-throws only.
 JSC::JSUint8Array* cloneAsUint8Array(JSC::JSGlobalObject*, JSC::JSArrayBufferView*); // userJS: no — WebStreamsMisc.cpp
 // spec StructuredClone(v): use the EXISTING WebCore::structuredCloneForStream

@@ -58,16 +58,6 @@ bool isNonNegativeNumber(JSValue value)
     return number >= 0;
 }
 
-// spec CanTransferArrayBuffer(O). Non-throwing leaf. JSC's `isDetachable()` is the fork's
-// [[ArrayBufferDetachKey]]-is-undefined test (false for Wasm/pinned/locked/shared buffers).
-bool canTransferArrayBuffer(JSArrayBuffer* object)
-{
-    ArrayBuffer* buffer = object->impl();
-    if (buffer->isDetached())
-        return false;
-    return buffer->isDetachable();
-}
-
 bool canTransferArrayBuffer(JSC::ArrayBuffer& buffer)
 {
     return !buffer.isDetached() && buffer.isDetachable();
@@ -90,23 +80,6 @@ RefPtr<JSC::ArrayBuffer> transferArrayBufferImpl(JSGlobalObject* globalObject, J
     bool transferred = buffer.transferTo(vm, contents);
     ASSERT_UNUSED(transferred, transferred);
     return JSC::ArrayBuffer::create(WTF::move(contents));
-}
-
-// spec TransferArrayBuffer(O): detach O and return a fresh ArrayBuffer over the same block.
-JSArrayBuffer* transferArrayBuffer(JSGlobalObject* globalObject, JSArrayBuffer* object)
-{
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    ArrayBuffer* buffer = object->impl();
-    ASSERT(!buffer->isDetached());
-    if (!buffer->isDetachable()) [[unlikely]] {
-        throwTypeError(globalObject, scope, "Cannot transfer an ArrayBuffer that is not detachable"_s);
-        return nullptr;
-    }
-    ArrayBufferContents contents;
-    bool transferred = buffer->transferTo(vm, contents);
-    ASSERT_UNUSED(transferred, transferred);
-    RELEASE_AND_RETURN(scope, JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), ArrayBuffer::create(WTF::move(contents))));
 }
 
 // spec CloneAsUint8Array(O): CloneArrayBuffer(O.[[ViewedArrayBuffer]], O.[[ByteOffset]],

@@ -104,7 +104,9 @@ function stopCoverage() {
   notimpl("stopCoverage");
 }
 function serialize(arg1) {
-  return jsc.serialize(arg1, { binaryType: "nodebuffer" });
+  // Node's DefaultSerializer tags Buffer separately from Uint8Array, so a Buffer
+  // survives a serialize/deserialize round-trip as a Buffer.
+  return jsc.serialize(arg1, { binaryType: "nodebuffer", preserveBuffers: true });
 }
 
 function getDefaultHeapSnapshotPath() {

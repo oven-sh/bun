@@ -29,9 +29,15 @@ declare module "bun:jsc" {
    * Internally, this uses the serialization format from WebKit/Safari.
    *
    * @param value The value to serialize, usually an object or array
+   * @param options.preserveBuffers When `true`, `Buffer` values are recorded as `Buffer` so that
+   * `deserialize` returns them as `Buffer` instead of `Uint8Array`. Defaults to `false`, which
+   * matches the structured clone algorithm. `node:v8`'s `serialize` enables it.
    * @returns A SharedArrayBuffer that can be sent to another Bun instance
    */
-  function serialize(value: any, options?: { binaryType?: "arraybuffer" }): SharedArrayBuffer;
+  function serialize(
+    value: any,
+    options?: { binaryType?: "arraybuffer"; preserveBuffers?: boolean },
+  ): SharedArrayBuffer;
 
   /**
    * Serializes a JavaScript value into a binary representation that can be sent to another Bun instance.
@@ -39,9 +45,12 @@ declare module "bun:jsc" {
    * Internally, this uses the serialization format from WebKit/Safari.
    *
    * @param value The value to serialize, usually an object or array
+   * @param options.preserveBuffers When `true`, `Buffer` values are recorded as `Buffer` so that
+   * `deserialize` returns them as `Buffer` instead of `Uint8Array`. Defaults to `false`, which
+   * matches the structured clone algorithm. `node:v8`'s `serialize` enables it.
    * @returns A Buffer that can be sent to another Bun instance
    */
-  function serialize(value: any, options?: { binaryType: "nodebuffer" }): Buffer;
+  function serialize(value: any, options?: { binaryType: "nodebuffer"; preserveBuffers?: boolean }): Buffer;
 
   /**
    * Converts an ArrayBuffer or Buffer to a JavaScript value compatible with the HTML Structured Clone Algorithm.

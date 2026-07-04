@@ -163,6 +163,19 @@ describe("bun:jsc", () => {
     expect(deserialize(deserialize(nested))).toStrictEqual({ a: 1 });
   });
 
+  it("serialize (preserveBuffers) keeps Buffer instances as Buffer", () => {
+    const value = { buf: Buffer.from("hi"), u8: new Uint8Array([1]) };
+
+    const withoutOption = deserialize(serialize(value));
+    expect(Buffer.isBuffer(withoutOption.buf)).toBe(false);
+    expect(withoutOption.buf).toBeInstanceOf(Uint8Array);
+
+    const withOption = deserialize(serialize(value, { preserveBuffers: true }));
+    expect(Buffer.isBuffer(withOption.buf)).toBe(true);
+    expect(withOption.buf.toString()).toBe("hi");
+    expect(Buffer.isBuffer(withOption.u8)).toBe(false);
+  });
+
   it("serialize GC test", () => {
     for (let i = 0; i < 1000; i++) {
       serialize({ a: 1 });

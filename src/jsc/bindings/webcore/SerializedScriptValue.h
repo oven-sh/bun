@@ -108,6 +108,11 @@ enum class SerializationForStorage : bool { No,
     Yes };
 enum class SerializationForCrossProcessTransfer : bool { No,
     Yes };
+// node:v8's serializer records which Uint8Arrays were Buffers so that
+// v8.deserialize() hands them back as Buffers. structuredClone() and
+// postMessage() must not do this: both produce plain Uint8Arrays in Node.
+enum class SerializationPreserveBuffers : bool { No,
+    Yes };
 
 using ArrayBufferContentsArray = Vector<JSC::ArrayBufferContents>;
 #if ENABLE(WEBASSEMBLY)
@@ -123,7 +128,7 @@ public:
     static SYSV_ABI void writeBytesForBun(CloneSerializer*, const uint8_t*, uint32_t);
     static SYSV_ABI bool isTransferable(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
 
-    WEBCORE_EXPORT static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, Vector<RefPtr<MessagePort>>&, SerializationForStorage = SerializationForStorage::No, SerializationContext = SerializationContext::Default, SerializationForCrossProcessTransfer = SerializationForCrossProcessTransfer::No);
+    WEBCORE_EXPORT static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, Vector<RefPtr<MessagePort>>&, SerializationForStorage = SerializationForStorage::No, SerializationContext = SerializationContext::Default, SerializationForCrossProcessTransfer = SerializationForCrossProcessTransfer::No, SerializationPreserveBuffers = SerializationPreserveBuffers::No);
     // WEBCORE_EXPORT static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, SerializationForStorage = SerializationForStorage::No, SerializationContext = SerializationContext::Default);
 
     WEBCORE_EXPORT static RefPtr<SerializedScriptValue> create(JSC::JSGlobalObject&, JSC::JSValue, SerializationForStorage = SerializationForStorage::No, SerializationErrorMode = SerializationErrorMode::Throwing, SerializationContext = SerializationContext::Default, SerializationForCrossProcessTransfer = SerializationForCrossProcessTransfer::No);
@@ -198,7 +203,7 @@ private:
     //         Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>&& = {}, Vector<WebCodecsVideoFrameData>&& = {}
     // #endif
     //     );
-    static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, Vector<RefPtr<MessagePort>>&, SerializationForStorage, SerializationErrorMode, SerializationContext, SerializationForCrossProcessTransfer);
+    static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, Vector<RefPtr<MessagePort>>&, SerializationForStorage, SerializationErrorMode, SerializationContext, SerializationForCrossProcessTransfer, SerializationPreserveBuffers);
     WEBCORE_EXPORT SerializedScriptValue(Vector<unsigned char>&&, std::unique_ptr<ArrayBufferContentsArray>&& = nullptr
 #if ENABLE(WEB_RTC)
         ,

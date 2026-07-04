@@ -109,6 +109,7 @@
 
 #include "ZigGlobalObject.h"
 #include "blob.h"
+#include "JSBuffer.h"
 #include "ZigGeneratedClasses.h"
 #include "JSX509Certificate.h"
 #include "ncrypto.h"
@@ -276,6 +277,11 @@ enum ArrayBufferViewSubtag {
     BigInt64ArrayTag = 10,
     BigUint64ArrayTag = 11,
     Float16ArrayTag = 12,
+
+    // bun subtags start at 255 and decrease with each addition. Written only when
+    // SerializationPreserveBuffers::Yes; readers that predate it reject the subtag
+    // (typedArrayElementSize returns 0) rather than misreading the payload.
+    Bun__NodeBufferTag = 255,
 };
 
 // static bool isTypeExposedToGlobalObject(JSC::JSGlobalObject& globalObject, SerializationTag tag)
@@ -374,6 +380,7 @@ static unsigned typedArrayElementSize(ArrayBufferViewSubtag tag)
     case Int8ArrayTag:
     case Uint8ArrayTag:
     case Uint8ClampedArrayTag:
+    case Bun__NodeBufferTag:
         return 1;
     case Int16ArrayTag:
     case Uint16ArrayTag:
@@ -702,6 +709,10 @@ static constexpr unsigned StringDataIs8BitFlag = 0x80000000;
  *    ArrayBufferTransferTag <value:uint32_t>
  *    SharedArrayBufferTag <value:uint32_t>
  *
+ * ArrayBufferViewSubtag :-
+ *    One of the JS typed array subtags, or Bun__NodeBufferTag for a node:v8
+ *    payload whose Uint8Array was a Buffer.
+ *
  * CryptoKeyHMAC :-
  *    <keySize:uint32_t> <keyData:byte{keySize}> CryptoAlgorithmIdentifierTag // Algorithm tag inner hash function.
  *
@@ -940,7 +951,7 @@ public:
 #endif
         Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers,
         Vector<void*>& serializedBlockListRefs,
-        SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer)
+        SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer, SerializationPreserveBuffers preserveBuffers)
     {
         CloneSerializer serializer(lexicalGlobalObject, messagePorts, arrayBuffers,
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
@@ -957,7 +968,7 @@ public:
             wasmModules,
             wasmMemoryHandles,
 #endif
-            out, context, sharedBuffers, forStorage, forTransfer);
+            out, context, sharedBuffers, forStorage, forTransfer, preserveBuffers);
         auto code = serializer.serialize(value);
         serializedBlockListRefs = WTF::move(serializer.m_serializedBlockListRefs);
         return code;
@@ -1046,7 +1057,7 @@ private:
         WasmModuleArray& wasmModules,
         WasmMemoryHandleArray& wasmMemoryHandles,
 #endif
-        Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers, SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer)
+        Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers, SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer, SerializationPreserveBuffers preserveBuffers)
         : CloneBase(lexicalGlobalObject)
         , m_buffer(out)
         , m_emptyIdentifier(Identifier::fromString(lexicalGlobalObject->vm(), emptyString()))
@@ -1062,6 +1073,7 @@ private:
 #endif
         , m_forStorage(forStorage)
         , m_forTransfer(forTransfer)
+        , m_preserveBuffers(preserveBuffers)
     {
         write(CurrentVersion);
         fillTransferMap(messagePorts, m_transferredMessagePorts);
@@ -1340,6 +1352,12 @@ private:
         return JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(arrayBuffer.sharingMode()), &arrayBuffer);
     }
 
+    bool isPreservedNodeBuffer(JSObject* obj)
+    {
+        return m_preserveBuffers == SerializationPreserveBuffers::Yes
+            && JSBuffer__isBuffer(m_lexicalGlobalObject, JSValue::encode(obj));
+    }
+
     bool dumpArrayBufferView(JSObject* obj, SerializationReturnCode& code)
     {
         VM& vm = m_lexicalGlobalObject->vm();
@@ -1351,7 +1369,7 @@ private:
         else if (obj->inherits<JSInt8Array>())
             write(Int8ArrayTag);
         else if (obj->inherits<JSUint8Array>())
-            write(Uint8ArrayTag);
+            write(isPreservedNodeBuffer(obj) ? Bun__NodeBufferTag : Uint8ArrayTag);
         else if (obj->inherits<JSInt16Array>())
             write(Int16ArrayTag);
         else if (obj->inherits<JSUint16Array>())
@@ -1913,7 +1931,7 @@ private:
                     dummyModules,
                     dummyMemoryHandles,
 #endif
-                    serializedKey, SerializationContext::Default, dummySharedBuffers, m_forStorage, m_forTransfer);
+                    serializedKey, SerializationContext::Default, dummySharedBuffers, m_forStorage, m_forTransfer, m_preserveBuffers);
                 rawKeySerializer.write(key);
                 Vector<uint8_t> wrappedKey;
 
@@ -2677,6 +2695,7 @@ private:
 #endif
     SerializationForStorage m_forStorage;
     SerializationForCrossProcessTransfer m_forTransfer;
+    SerializationPreserveBuffers m_preserveBuffers;
 };
 
 SYSV_ABI void SerializedScriptValue::writeBytesForBun(CloneSerializer* ctx, const uint8_t* data, uint32_t size)
@@ -3782,6 +3801,21 @@ private:
         case Uint8ArrayTag:
             arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Uint8Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
             return true;
+        case Bun__NodeBufferTag: {
+            // Buffer's plain structure cannot describe a view over a resizable or growable-shared
+            // buffer; JSArrayBufferView::ConstructionContext asserts on the mismatch.
+            auto* globalObject = defaultGlobalObject(m_globalObject);
+            auto* structure = arrayBuffer->isResizableOrGrowableShared()
+                ? globalObject->JSResizableOrGrowableSharedBufferSubclassStructure()
+                : globalObject->JSBufferSubclassStructure();
+            RefPtr<Uint8Array> impl = Uint8Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length);
+            if (!impl) {
+                arrayBufferView = jsNull();
+                return true;
+            }
+            arrayBufferView = JSC::JSUint8Array::create(vm, structure, WTF::move(impl));
+            return true;
+        }
         case Uint8ClampedArrayTag:
             arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Uint8ClampedArray::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
             return true;
@@ -6081,7 +6115,7 @@ static bool canDetachRTCDataChannels(const Vector<Ref<RTCDataChannel>>& channels
 RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSC::JSGlobalObject& globalObject, JSC::JSValue value, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext serializationContext, SerializationForCrossProcessTransfer forTransfer)
 {
     Vector<RefPtr<MessagePort>> dummyPorts;
-    auto result = create(globalObject, value, {}, dummyPorts, forStorage, throwExceptions, serializationContext, forTransfer);
+    auto result = create(globalObject, value, {}, dummyPorts, forStorage, throwExceptions, serializationContext, forTransfer, SerializationPreserveBuffers::No);
     // auto result = create(globalObject, value, {}, forStorage, throwExceptions, serializationContext);
     if (result.hasException())
         return nullptr;
@@ -6093,18 +6127,19 @@ RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSC::JSGlobalObject&
 //     return create(globalObject, value, WTF::move(transferList), messagePorts, forStorage, SerializationErrorMode::NonThrowing, serializationContext);
 // }
 
-ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& globalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationForStorage forStorage, SerializationContext serializationContext, SerializationForCrossProcessTransfer forTransfer)
+ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& globalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationForStorage forStorage, SerializationContext serializationContext, SerializationForCrossProcessTransfer forTransfer, SerializationPreserveBuffers preserveBuffers)
 {
-    return create(globalObject, value, WTF::move(transferList), messagePorts, forStorage, SerializationErrorMode::Throwing, serializationContext, forTransfer);
+    return create(globalObject, value, WTF::move(transferList), messagePorts, forStorage, SerializationErrorMode::Throwing, serializationContext, forTransfer, preserveBuffers);
 }
 
 // ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& lexicalGlobalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext context)
-ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& lexicalGlobalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext context, SerializationForCrossProcessTransfer forTransfer)
+ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& lexicalGlobalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext context, SerializationForCrossProcessTransfer forTransfer, SerializationPreserveBuffers preserveBuffers)
 {
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Fast path optimization: for postMessage/structuredClone with pure strings and no transfers
+    // Fast path optimization: for postMessage/structuredClone with pure strings and no transfers.
+    // None of the fast paths can reach an ArrayBufferView, so preserveBuffers does not disqualify them.
     const bool canUseFastPath = (context == SerializationContext::WorkerPostMessage || context == SerializationContext::WindowPostMessage || context == SerializationContext::Default)
         && forStorage == SerializationForStorage::No
         && forTransfer == SerializationForCrossProcessTransfer::No
@@ -6463,7 +6498,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         wasmModules,
         wasmMemoryHandles,
 #endif
-        buffer, context, *sharedBuffers, serializedBlockListRefs, forStorage, forTransfer);
+        buffer, context, *sharedBuffers, serializedBlockListRefs, forStorage, forTransfer, preserveBuffers);
 
     auto releaseSerializedBlockListRefs = [&] {
         for (auto* ptr : serializedBlockListRefs)

@@ -813,6 +813,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
     JSValue value = callFrame->argument(0);
     JSValue optionsObject = callFrame->argument(1);
     bool asNodeBuffer = false;
+    auto preserveBuffers = SerializationPreserveBuffers::No;
     if (optionsObject.isObject()) {
         JSC::JSObject* options = optionsObject.getObject();
         auto binaryTypeValue = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "binaryType"_s));
@@ -826,11 +827,16 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
             asNodeBuffer = binaryTypeValue.toWTFString(globalObject) == "nodebuffer"_s;
             RETURN_IF_EXCEPTION(throwScope, {});
         }
+
+        auto preserveBuffersValue = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "preserveBuffers"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (preserveBuffersValue && preserveBuffersValue.toBoolean(globalObject))
+            preserveBuffers = SerializationPreserveBuffers::Yes;
     }
 
     Vector<JSC::Strong<JSC::JSObject>> transferList;
     Vector<RefPtr<MessagePort>> dummyPorts;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(transferList), dummyPorts, SerializationForStorage::Yes);
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(transferList), dummyPorts, SerializationForStorage::Yes, SerializationContext::Default, SerializationForCrossProcessTransfer::No, preserveBuffers);
     EXCEPTION_ASSERT(serialized.hasException() == !!throwScope.exception());
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());

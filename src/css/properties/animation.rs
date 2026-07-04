@@ -184,8 +184,7 @@ impl Animation {
             wrote_any = true;
         }
 
-        if !self.timing_function.is_ease() || name_str.is_some_and(|n| EasingFunction::is_ident(n))
-        {
+        if !self.timing_function.is_ease() || name_str.is_some_and(EasingFunction::is_ident) {
             space!();
             self.timing_function.to_css(dest)?;
             wrote_any = true;
@@ -415,9 +414,9 @@ impl AnimationIterationCount {
     }
 
     // Port of `css.DeriveToCss(@This()).toCss`.
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
-            AnimationIterationCount::Number(n) => CSSNumberFns::to_css(*n, dest),
+            AnimationIterationCount::Number(n) => CSSNumberFns::to_css(n, dest),
             AnimationIterationCount::Infinite => dest.write_str(b"infinite"),
         }
     }

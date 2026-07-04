@@ -89,8 +89,8 @@ describe("util.debuglog", () => {
 
   test("a non-function callback is ignored", async () => {
     const result = await run(`require("util").debuglog("ignored", 42)("x");`, "ignored");
-    expect(result.exitCode).toBe(0);
     expect(result.stderr.trim()).toMatch(/^IGNORED \d+: x$/);
+    expect(result.exitCode).toBe(0);
   });
 
   test("NODE_DEBUG=http warns that it can expose sensitive data", async () => {

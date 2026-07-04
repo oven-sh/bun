@@ -124,7 +124,7 @@ describe("util.styleText", () => {
     const cleared = { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: undefined, NODE_DISABLE_COLORS: undefined };
     const colorized = JSON.stringify("\u001b[36mhi\u001b[39m");
 
-    test.each([
+    test.concurrent.each([
       ["NO_COLOR", { NO_COLOR: "1" }, `"hi"`],
       ["NODE_DISABLE_COLORS", { NODE_DISABLE_COLORS: "1" }, `"hi"`],
       ["FORCE_COLOR", { FORCE_COLOR: "1" }, colorized],

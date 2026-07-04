@@ -3,7 +3,7 @@ const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
 const { promisify } = require("internal/promisify");
-const { validateString, validateOneOf, validateBoolean } = require("internal/validators");
+const { validateString, validateOneOf, validateBoolean, validateObject } = require("internal/validators");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
 
@@ -60,21 +60,53 @@ function emitWarningIfNeeded(set) {
   }
 }
 
-function debuglog(set) {
-  set = set.toUpperCase();
+function debuglogImpl(enabled, set) {
   if (!debugs[set]) {
-    if (debugEnvRegex.test(set)) {
-      var pid = process.pid;
+    let impl;
+    if (enabled) {
+      const pid = process.pid;
       emitWarningIfNeeded(set);
-      debugs[set] = function () {
-        var msg = format.$apply(cjs_exports, arguments);
+      impl = function debug() {
+        const msg = format.$apply(cjs_exports, arguments);
         console.error("%s %d: %s", set, pid, msg);
       };
     } else {
-      debugs[set] = function () {};
+      impl = function debug() {};
     }
+    Object.defineProperty(impl, "enabled", {
+      __proto__: null,
+      value: enabled,
+      configurable: true,
+      enumerable: true,
+    });
+    debugs[set] = impl;
   }
   return debugs[set];
+}
+
+function debuglog(set, cb) {
+  set = set.toUpperCase();
+  const enabled = debugEnvRegex.test(set);
+  // The implementation is created eagerly so that the NODE_DEBUG=http warning
+  // is emitted when node:http requires this, the way node:_http_client does.
+  const impl = debuglogImpl(enabled, set);
+  let notified = false;
+  const logger = function debuglogWrapper() {
+    if (!notified) {
+      notified = true;
+      if (typeof cb === "function") cb(impl);
+    }
+    return impl.$apply(undefined, arguments);
+  };
+  Object.defineProperty(logger, "enabled", {
+    __proto__: null,
+    get() {
+      return enabled;
+    },
+    configurable: true,
+    enumerable: true,
+  });
+  return logger;
 }
 
 function isBoolean(arg) {
@@ -213,19 +245,33 @@ var toUSVString = input => {
   return (input + "").toWellFormed();
 };
 
-function styleText(format, text, { validateStream = true, stream = process.stdout } = {}) {
+// internal/streams/utils pulls in the whole stream machinery and
+// internal/util/colors requires node:tty, so neither loads until a caller
+// actually asks styleText to look at a stream.
+let lazyStreamUtils;
+let lazyUtilColors;
+
+// The options are read the way node's lib/util.js reads them today, so that
+// `{ stream: null }` falls back to process.stdout rather than throwing.
+function styleText(format, text, options) {
+  const validateStream = options?.validateStream ?? true;
+
   validateString(text, "text");
+  if (options !== undefined) {
+    validateObject(options, "options");
+  }
   validateBoolean(validateStream, "options.validateStream");
 
   let skipColorize;
   if (validateStream) {
+    const stream = options?.stream ?? process.stdout;
+    lazyStreamUtils ??= require("internal/streams/utils");
+    const { isReadableStream, isWritableStream, isNodeStream } = lazyStreamUtils;
     if (!isReadableStream(stream) && !isWritableStream(stream) && !isNodeStream(stream)) {
       throw $ERR_INVALID_ARG_TYPE("stream", ["ReadableStream", "WritableStream", "Stream"], stream);
     }
 
-    // Lazy to avoid a require cycle (colors -> tty -> ... -> util).
     lazyUtilColors ??= require("internal/util/colors");
-    // If the stream is falsy or should not be colorized, skip colorizing.
     skipColorize = !lazyUtilColors.shouldColorize(stream);
   }
 

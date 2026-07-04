@@ -290,7 +290,11 @@ impl PathWatcher {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn emit_overflow(&mut self) {
         for &ctx in self.handlers.keys() {
-            (FSWatcher::ON_PATH_UPDATE)(Some(ctx), Event::NoFilename(WatchEventKind::Change), false);
+            (FSWatcher::ON_PATH_UPDATE)(
+                Some(ctx),
+                Event::NoFilename(WatchEventKind::Change),
+                false,
+            );
         }
     }
 
@@ -1556,4 +1560,3 @@ impl Kqueue {
 // ────────────────────────────────────────────────────────────────────────────────
 // Windows stub
 // ────────────────────────────────────────────────────────────────────────────────
-

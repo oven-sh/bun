@@ -425,7 +425,14 @@ const cases: Case[] = [
     strictBug: "reports equal",
     looseBug: "reports equal",
   },
-  { name: "a WeakMap and a WeakSet", a: () => new WeakMap(), b: () => new WeakSet(), strict: false, loose: false },
+  {
+    name: "a WeakMap and a WeakSet",
+    a: () => new WeakMap(),
+    b: () => new WeakSet(),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
 
   // Typed arrays and buffers.
   {

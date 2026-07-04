@@ -2,19 +2,15 @@
 //!
 //! An archive created from an object (or from nothing) stays *open* behind a
 //! live libarchive writer until the first read of its bytes, so entries can be
-//! streamed in one at a time with [`Archive::append`]. The writer's output is
-//! buffered in memory up to `maxMemory` bytes and spills to a temporary file
-//! beyond that, which keeps peak memory bounded for archives larger than RAM.
+//! streamed in one at a time with [`Archive::append`].
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::ffi::CString;
 
-use super::archive_builder::{BuildError, Builder, FILETYPE_REGULAR, SinkOutput};
+use super::archive_builder::{BuildError, Builder, FILETYPE_REGULAR};
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
-#[cfg(unix)]
-use crate::webcore::BlobStoreExt as _;
 use crate::webcore::blob::store::Data as BlobData;
 use crate::webcore::blob::{MAX_SIZE as BLOB_MAX_SIZE, Store as BlobStore, StoreRef};
 use crate::webcore::node_types::PathOrFileDescriptor;
@@ -32,9 +28,6 @@ use bun_jsc::{
 use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 use bun_libarchive as libarchive;
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
-
-/// Bytes of archive output held in memory before spilling to a temporary file.
-const DEFAULT_MAX_MEMORY: u64 = 64 * 1024 * 1024;
 
 /// Container format written by `new Archive(...)`. Reading auto-detects both.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -89,7 +82,6 @@ pub(crate) struct Options {
     /// `Deflate` both have no gzip post-filter, so `Archive.write()` cannot
     /// tell an explicit "no gzip" from an omitted option without this.
     pub compress_given: bool,
-    pub max_memory: u64,
 }
 
 impl Default for Options {
@@ -98,7 +90,6 @@ impl Default for Options {
             format: Format::Tar,
             compress: Compression::None,
             compress_given: false,
-            max_memory: DEFAULT_MAX_MEMORY,
         }
     }
 }
@@ -269,7 +260,6 @@ impl Archive {
     /// - format: "tar" | "zip" - Container format (default "tar")
     /// - compress: "gzip" (tar) | "deflate" | "store" (zip)
     /// - level: number - Compression level
-    /// - maxMemory: number - Bytes buffered before spilling to a temp file
     // NOTE: `#[bun_jsc::host_fn]` has no `constructor` kind yet; the
     // `JsClass` derive emits a `constructor` shim that calls this directly.
     pub fn constructor(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Archive>> {
@@ -342,8 +332,8 @@ impl Archive {
             }
         };
 
-        let store = match builder.close().and_then(output_to_store) {
-            Ok(store) => store,
+        let store = match builder.close() {
+            Ok(bytes) => BlobStore::init(bytes),
             Err(err) => {
                 *self.state.borrow_mut() = State::Failed;
                 return Err(throw_build_error(global, err));
@@ -496,37 +486,7 @@ fn throw_build_error(global: &JSGlobalObject, err: BuildError) -> jsc::JsError {
     global.throw_value(build_error_to_js(global, err))
 }
 
-/// Turn a closed builder's output into a `Blob.Store`.
-///
-/// A spilled archive is memory-mapped copy-on-write on POSIX, so reading it
-/// back (`extract()`, `Bun.write()`, `files()`) streams from the page cache
-/// instead of allocating a second copy. Windows has no mapping helper in
-/// `bun_sys`, so it reads the file back into memory.
-fn output_to_store(output: SinkOutput) -> Result<StoreRef, BuildError> {
-    match output {
-        SinkOutput::Memory(bytes) => Ok(BlobStore::init(bytes)),
-        SinkOutput::Spilled(file) => {
-            #[cfg(unix)]
-            {
-                if file.len() == 0 {
-                    return Ok(BlobStore::init(Vec::new()));
-                }
-                let mapping = file.mmap()?;
-                // The mapping owns the pages; dropping `file` closes the
-                // descriptor of the already-unlinked temp file.
-                drop(file);
-                Ok(BlobStore::init_mmap(mapping))
-            }
-            #[cfg(not(unix))]
-            {
-                let bytes = file.read_to_vec()?;
-                Ok(BlobStore::init(bytes))
-            }
-        }
-    }
-}
-
-/// Parse `{ format, compress, level, maxMemory }`.
+/// Parse `{ format, compress, level }`.
 fn parse_archive_options(global: &JSGlobalObject, options_arg: JSValue) -> JsResult<Options> {
     let mut options = Options::default();
     if options_arg.is_empty() || options_arg.is_undefined_or_null() {
@@ -560,25 +520,6 @@ fn parse_archive_options(global: &JSGlobalObject, options_arg: JSValue) -> JsRes
     let compress_val = options_arg.get_truthy(global, "compress")?;
     options.compress_given = compress_val.is_some();
     options.compress = parse_compression(global, options_arg, compress_val, options.format)?;
-
-    if let Some(max_memory_val) = options_arg.get_truthy(global, "maxMemory")? {
-        if !max_memory_val.is_number() {
-            return Err(
-                global.throw_invalid_arguments(format_args!("Archive: maxMemory must be a number"))
-            );
-        }
-        let max_memory = max_memory_val.as_number();
-        if max_memory.is_nan() || max_memory < 0.0 {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Archive: maxMemory must be a non-negative number"
-            )));
-        }
-        options.max_memory = if max_memory.is_infinite() {
-            u64::MAX
-        } else {
-            max_memory as u64
-        };
-    }
 
     Ok(options)
 }
@@ -930,13 +871,12 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
     if data_arg.is_object() {
         let mut builder = open_builder(global, options)?;
         add_object_entries(global, &mut builder, data_arg)?;
-        let store = builder
+        let bytes = builder
             .close()
-            .and_then(output_to_store)
             .map_err(|err| throw_build_error(global, err))?;
         return start_write_task(
             global,
-            WriteData::Store(store),
+            WriteData::Owned(bytes),
             path_slice.slice(),
             options.compress.gzip(),
         );

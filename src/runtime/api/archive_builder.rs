@@ -1,12 +1,11 @@
-//! The incremental side of `Bun.Archive`: a live libarchive writer whose
-//! output spills from memory to a temporary file once it grows past
-//! `maxMemory`, plus the entry sources `Archive.append()` can stream from.
+//! The incremental side of `Bun.Archive`: a live libarchive writer whose output
+//! accumulates in a [`Sink`], plus the entry sources `Archive.append()` can
+//! stream from.
 
 use core::ffi::{c_int, c_void};
 
 use bun_core::ZBox;
 use bun_libarchive::lib;
-use bun_resolver::fs::{FileSystem, RealFS};
 use bun_sys;
 
 use super::archive::{Compression, Format, Options};
@@ -30,7 +29,7 @@ const STREAM_CHUNK_SIZE: usize = 256 * 1024;
 pub(crate) enum BuildError {
     /// A libarchive call failed; the payload is the stage that failed.
     Libarchive(&'static str),
-    /// An I/O error while spilling output, or while reading a file entry.
+    /// An I/O error while reading a file entry.
     Sys(bun_sys::Error),
     OutOfMemory,
     /// A file shrank between `stat` and the end of the copy loop, so fewer
@@ -45,185 +44,32 @@ impl From<bun_sys::Error> for BuildError {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Spill sink
+// Sink
 // ──────────────────────────────────────────────────────────────────────────
 
-/// The temporary file an oversized archive spills into.
-///
-/// On POSIX the file is unlinked the instant it is created, so a crash can
-/// never leave it behind and nothing has to clean it up; the open descriptor
-/// keeps the inode alive. Windows cannot unlink an open file, so the path is
-/// kept and removed once the descriptor closes.
-pub(crate) struct SpillFile {
-    file: Option<bun_sys::File>,
-    path: ZBox,
-    len: u64,
-}
-
-impl SpillFile {
-    fn create() -> Result<SpillFile, bun_sys::Error> {
-        // `PathBuffer` is ~96 KB on Windows, so take it from the pool rather
-        // than the stack.
-        let mut name_buf = bun_paths::path_buffer_pool::get();
-        let name = FileSystem::tmpname(b"bun-archive", &mut name_buf[..], bun_core::fast_random())
-            .map_err(|_| bun_sys::Error::new(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open))?;
-        let joined = bun_paths::resolve_path::join_abs_string_z::<bun_paths::platform::Auto>(
-            RealFS::platform_temp_dir(),
-            &[name.as_bytes()],
-        );
-        #[allow(unused_mut)]
-        let mut path = ZBox::from_bytes(joined.as_bytes());
-        let file = bun_sys::File::open(
-            path.as_zstr(),
-            bun_sys::O::CREAT | bun_sys::O::EXCL | bun_sys::O::RDWR | bun_sys::O::CLOEXEC,
-            0o600,
-        )?;
-
-        // POSIX: drop the name now so a crash cannot leave the file behind. The
-        // open descriptor keeps the inode alive. If the unlink fails, keep the
-        // path so `Drop` removes it instead.
-        #[cfg(unix)]
-        if bun_sys::unlink(path.as_zstr()).is_ok() {
-            path = ZBox::from_bytes(b"");
-        }
-
-        Ok(SpillFile {
-            file: Some(file),
-            path,
-            len: 0,
-        })
-    }
-
-    fn write(&mut self, data: &[u8]) -> Result<(), bun_sys::Error> {
-        let Some(file) = &self.file else {
-            return Err(bun_sys::Error::new(bun_sys::E::EBADF, bun_sys::Tag::write));
-        };
-        file.write_all(data)?;
-        self.len += data.len() as u64;
-        Ok(())
-    }
-
-    #[cfg(unix)]
-    #[inline]
-    pub(crate) fn len(&self) -> u64 {
-        self.len
-    }
-
-    /// Read the whole spill file back into memory. Only needed on platforms
-    /// without a `bun_sys` file-mapping helper.
-    #[cfg(not(unix))]
-    pub(crate) fn read_to_vec(&self) -> Result<Vec<u8>, bun_sys::Error> {
-        let Some(file) = &self.file else {
-            return Err(bun_sys::Error::new(bun_sys::E::EBADF, bun_sys::Tag::read));
-        };
-        bun_sys::set_file_offset(file.fd(), 0)?;
-        let len = usize::try_from(self.len).unwrap_or(usize::MAX);
-        let mut out: Vec<u8> = Vec::new();
-        out.try_reserve_exact(len)
-            .map_err(|_| bun_sys::Error::new(bun_sys::E::ENOMEM, bun_sys::Tag::read))?;
-        out.resize(len, 0);
-        let mut read = 0usize;
-        while read < len {
-            let n = file.read_all(&mut out[read..])?;
-            if n == 0 {
-                break;
-            }
-            read += n;
-        }
-        out.truncate(read);
-        Ok(out)
-    }
-
-    /// Map the spill file copy-on-write. The caller owns the mapping and must
-    /// release it with `munmap` (`Blob.Store::init_mmap` wires that up).
-    #[cfg(unix)]
-    pub(crate) fn mmap(&self) -> Result<&'static mut [u8], bun_sys::Error> {
-        let Some(file) = &self.file else {
-            return Err(bun_sys::Error::new(bun_sys::E::EBADF, bun_sys::Tag::mmap));
-        };
-        let len = usize::try_from(self.len)
-            .map_err(|_| bun_sys::Error::new(bun_sys::E::EINVAL, bun_sys::Tag::mmap))?;
-        let ptr = bun_sys::mmap(
-            core::ptr::null_mut(),
-            len,
-            libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_PRIVATE,
-            file.fd(),
-            0,
-        )?;
-        // SAFETY: `mmap` returned a mapping of exactly `len` readable bytes.
-        Ok(unsafe { core::slice::from_raw_parts_mut(ptr, len) })
-    }
-
-    /// Close the descriptor and remove the backing file. A no-op for the path
-    /// on POSIX, where it was unlinked at creation.
-    fn discard(&mut self) {
-        drop(self.file.take());
-        if !self.path.is_empty() {
-            let _ = bun_sys::unlink(self.path.as_zstr());
-            self.path = ZBox::from_bytes(b"");
-        }
-    }
-}
-
-impl Drop for SpillFile {
-    fn drop(&mut self) {
-        self.discard();
-    }
-}
-
-/// What a finished [`Builder`] produced.
-pub(crate) enum SinkOutput {
-    Memory(Vec<u8>),
-    Spilled(SpillFile),
-}
-
-/// libarchive's write sink: buffers in memory until the archive would exceed
-/// `max_memory` bytes, then streams everything to a [`SpillFile`].
-pub(crate) struct SpillSink {
-    max_memory: u64,
+/// Where libarchive's output goes. Bytes accumulate here until the owning
+/// `Archive` takes them, either all at once when the archive is read, or a
+/// chunk at a time when it is being streamed.
+pub(crate) struct Sink {
     buf: Vec<u8>,
-    spill: Option<SpillFile>,
     /// Set by the write callback, which can only report failure as `-1`.
     error: Option<BuildError>,
 }
 
-impl SpillSink {
-    fn new(max_memory: u64) -> SpillSink {
-        SpillSink {
-            max_memory,
+impl Sink {
+    fn new() -> Sink {
+        Sink {
             buf: Vec::new(),
-            spill: None,
             error: None,
         }
     }
 
     fn push(&mut self, data: &[u8]) -> Result<(), BuildError> {
-        if let Some(spill) = &mut self.spill {
-            spill.write(data)?;
-            return Ok(());
-        }
-        if self.buf.len() as u64 + data.len() as u64 > self.max_memory {
-            let mut spill = SpillFile::create()?;
-            spill.write(&self.buf)?;
-            // Release the buffer's capacity, not just its length.
-            self.buf = Vec::new();
-            spill.write(data)?;
-            self.spill = Some(spill);
-            return Ok(());
-        }
         self.buf
             .try_reserve(data.len())
             .map_err(|_| BuildError::OutOfMemory)?;
         self.buf.extend_from_slice(data);
         Ok(())
-    }
-
-    fn take_output(&mut self) -> SinkOutput {
-        match self.spill.take() {
-            Some(file) => SinkOutput::Spilled(file),
-            None => SinkOutput::Memory(core::mem::take(&mut self.buf)),
-        }
     }
 
     unsafe extern "C" fn open_callback(_a: *mut lib::Archive, _client_data: *mut c_void) -> c_int {
@@ -236,9 +82,9 @@ impl SpillSink {
         buff: *const c_void,
         length: usize,
     ) -> lib::la_ssize_t {
-        // SAFETY: `client_data` is the `*mut SpillSink` registered with
+        // SAFETY: `client_data` is the `*mut Sink` registered with
         // `archive_write_open2`; libarchive never calls back concurrently.
-        let this = unsafe { bun_core::callback_ctx::<SpillSink>(client_data) };
+        let this = unsafe { bun_core::callback_ctx::<Sink>(client_data) };
         if buff.is_null() || length == 0 {
             return 0;
         }
@@ -271,9 +117,9 @@ pub(crate) struct Builder {
     /// `Option` only so `Drop` can free the archive (which flushes through the
     /// write callback) before the sink it writes into is destroyed.
     archive: Option<lib::WriteArchive>,
-    /// Heap-owned `SpillSink`; this pointer is what libarchive hands back to
-    /// the write callback. Destroyed by `Drop`, after `archive`.
-    sink: *mut SpillSink,
+    /// Heap-owned `Sink`; this pointer is what libarchive hands back to the
+    /// write callback. Destroyed by `Drop`, after `archive`.
+    sink: *mut Sink,
     entry: lib::OwnedEntry,
     entries: u32,
     closed: bool,
@@ -292,8 +138,8 @@ impl Drop for Builder {
                 // Without poisoning it, `archive_write_free` runs a normal close,
                 // and closing while an entry is half-written makes tar pad that
                 // entry out to its declared size: a failed `append()` of a 600 MB
-                // file would write 600 MB of NULs into the sink (spilling them to
-                // a temp file) before the promise settles.
+                // file would write 600 MB of NULs into the sink before the
+                // promise settles.
                 archive.write_fail();
             }
         }
@@ -308,7 +154,7 @@ impl Drop for Builder {
 
 impl Builder {
     pub(crate) fn open(options: Options) -> Result<Builder, BuildError> {
-        let sink = bun_core::heap::into_raw(Box::new(SpillSink::new(options.max_memory)));
+        let sink = bun_core::heap::into_raw(Box::new(Sink::new()));
         // From here on `sink` is owned by the `Builder` we return, or freed on
         // the error paths below.
         let guard = scopeguard::guard((), |()| {
@@ -323,9 +169,9 @@ impl Builder {
         let rc = lib::archive_write_open2(
             &archive,
             sink.cast(),
-            Some(SpillSink::open_callback),
-            Some(SpillSink::write_callback),
-            Some(SpillSink::close_callback),
+            Some(Sink::open_callback),
+            Some(Sink::write_callback),
+            Some(Sink::close_callback),
             None,
         );
         if rc != 0 {
@@ -349,7 +195,7 @@ impl Builder {
     }
 
     #[inline]
-    fn sink_mut(&mut self) -> &mut SpillSink {
+    fn sink_mut(&mut self) -> &mut Sink {
         // SAFETY: see `sink`; `&mut self` proves no other borrow is live.
         unsafe { &mut *self.sink }
     }
@@ -359,7 +205,7 @@ impl Builder {
         self.entries
     }
 
-    /// Prefer the sink's own error (a spill `write()` failure) over the generic
+    /// Prefer the sink's own error (an allocation failure) over the generic
     /// libarchive stage error, since the sink is the real cause.
     fn fail(&mut self, stage: &'static str) -> BuildError {
         self.sink_mut()
@@ -472,14 +318,14 @@ impl Builder {
     }
 
     /// Close the writer and take its output. Consumes the builder.
-    pub(crate) fn close(mut self) -> Result<SinkOutput, BuildError> {
+    pub(crate) fn close(mut self) -> Result<Vec<u8>, BuildError> {
         if !self.closed {
             if self.archive().write_close() != lib::Result::Ok {
                 return Err(self.fail("ArchiveCloseError"));
             }
             self.closed = true;
         }
-        Ok(self.sink_mut().take_output())
+        Ok(core::mem::take(&mut self.sink_mut().buf))
     }
 }
 

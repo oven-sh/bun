@@ -357,7 +357,6 @@ The `options` argument accepts:
 - `{ compress: "gzip" }` - Gzip the finished tar archive (tar only)
 - `{ compress: "deflate" | "store" }` - Per-entry zip compression (zip only; `"deflate"` is the default)
 - `{ level: number }` - 1-12 for gzip, 1-9 for deflate (default 6)
-- `{ maxMemory: number }` - Bytes buffered before spilling to disk (see below)
 
 ## Appending Entries
 
@@ -387,29 +386,6 @@ Rules:
 - Reading an archive while an `append()` is still pending throws. Await your appends first.
 - If an `append()` rejects, the entry was left half-written: the archive is truncated and can no longer be used.
 - Entries are written with mode `0644` and the current time as their modification time.
-
-## Spilling Large Archives to Disk
-
-While you build an archive, its bytes are buffered in memory. Once they exceed `maxMemory` (64 MB by default), Bun writes the rest to a temporary file instead, so building an archive bigger than RAM does not run you out of memory:
-
-```ts
-// Spill after 8 MB instead of 64 MB
-const archive = new Bun.Archive(undefined, { format: "zip", maxMemory: 8 * 1024 * 1024 });
-
-for await (const path of new Bun.Glob("**/*").scan(".")) {
-  await archive.append(path, Bun.file(path));
-}
-
-// Never materializes the whole archive in memory
-await Bun.Archive.write("everything.zip", archive);
-```
-
-- `maxMemory: Infinity` never spills.
-- `maxMemory: 0` always writes to disk.
-- The temporary file lives in the system temp directory and is removed once the archive is garbage collected. On Linux and macOS it is unlinked the moment it is created, so a crash cannot leave it behind.
-- On Linux and macOS a spilled archive is memory-mapped when it is read back, so `extract()`, `files()`, `Bun.write()`, and `Bun.Archive.write()` stream it from the page cache. On Windows it is read back into memory.
-- `bytes()` always returns a copy of the whole archive, so it defeats the purpose of spilling.
-- `{ compress: "gzip" }` buffers the compressed tar in memory. For archives larger than memory, prefer `format: "zip"` or an uncompressed tar.
 
 ## Examples
 
@@ -514,8 +490,6 @@ type ArchiveOptions = {
   compress?: "gzip" | "deflate" | "store";
   /** Compression level: 1-12 for gzip, 1-9 for deflate (default 6). */
   level?: number;
-  /** Bytes buffered before spilling to a temp file (default 64 MB). */
-  maxMemory?: number;
 };
 
 interface ArchiveExtractOptions {

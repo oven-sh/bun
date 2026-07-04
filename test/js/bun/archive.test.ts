@@ -2212,7 +2212,7 @@ describe("Bun.Archive", () => {
     // Abandoning a libarchive writer mid-entry makes its normal close pad the
     // entry out to the size its header declared, pushing every NUL byte through
     // the sink: a failed append of a 600MB file used to write 600MB of zeros to
-    // a throwaway spill file before the promise settled.
+    // a throwaway buffer before the promise settled.
     // Skipped on macOS: the trick below needs fstat(dir).st_size > 0 so the read
     // loop runs at least once, and POSIX leaves a directory's st_size undefined.
     test.skipIf(isWindows || isMacOS)("a source that fails mid-read does not pad the entry out", async () => {
@@ -2275,68 +2275,6 @@ describe("Bun.Archive", () => {
       const archive = new Bun.Archive();
       // @ts-expect-error - numbers are not valid entry data
       expect(() => archive.append("a.txt", 123)).toThrow();
-    });
-  });
-
-  describe.concurrent("spilling to disk", () => {
-    // Spilled output goes to a temp file and is mapped back in, so it has to
-    // describe exactly the same archive as the purely in-memory path.
-    test("maxMemory: 0 produces the same archive as the in-memory path", async () => {
-      const files = { "a.txt": Buffer.alloc(5000, "a").toString(), "b.txt": Buffer.alloc(5000, "b").toString() };
-      const spilled = await new Bun.Archive(files, { maxMemory: 0 }).bytes();
-      const buffered = await new Bun.Archive(files, { maxMemory: Infinity }).bytes();
-
-      expect(spilled.length).toBe(buffered.length);
-      const entries = await new Bun.Archive(spilled).files();
-      expect([...entries.keys()]).toEqual(["a.txt", "b.txt"]);
-      expect(await entries.get("a.txt")!.text()).toBe(files["a.txt"]);
-      expect(await entries.get("b.txt")!.text()).toBe(files["b.txt"]);
-    });
-
-    test("a spilled archive still extracts, lists, and writes", async () => {
-      using dir = tempDir("archive-spill", {});
-      const archive = new Bun.Archive(undefined, { format: "zip", maxMemory: 0 });
-      await archive.append("a.txt", "a");
-      await archive.append("dir/b.txt", "b");
-
-      const files = await archive.files();
-      expect([...files.keys()].sort()).toEqual(["a.txt", "dir/b.txt"]);
-
-      const out = join(String(dir), "out.zip");
-      await Bun.Archive.write(out, archive);
-      expect(await Bun.file(out).exists()).toBe(true);
-
-      const extractDir = join(String(dir), "extracted");
-      expect(await new Bun.Archive(await Bun.file(out).bytes()).extract(extractDir)).toBeGreaterThanOrEqual(2);
-      expect(await Bun.file(join(extractDir, "a.txt")).text()).toBe("a");
-    });
-
-    test("Bun.write accepts a spilled archive", async () => {
-      using dir = tempDir("archive-spill-write", {});
-      const out = join(String(dir), "out.tar");
-      const archive = new Bun.Archive({ "a.txt": "hello" }, { maxMemory: 0 });
-
-      await Bun.write(out, archive);
-      const files = await new Bun.Archive(await Bun.file(out).bytes()).files();
-      expect(await files.get("a.txt")!.text()).toBe("hello");
-    });
-
-    test("a 12MB archive spills and round-trips", async () => {
-      const chunk = Buffer.alloc(1024 * 1024, "z").toString();
-      const archive = new Bun.Archive(undefined, { maxMemory: 1024 * 1024 });
-      for (let i = 0; i < 12; i++) {
-        await archive.append(`chunk-${i}.txt`, chunk);
-      }
-
-      const files = await archive.files();
-      expect(files.size).toBe(12);
-      expect((await files.get("chunk-11.txt")!.text()).length).toBe(chunk.length);
-    });
-
-    test("rejects an invalid maxMemory", () => {
-      expect(() => new Bun.Archive({}, { maxMemory: -1 })).toThrow();
-      // @ts-expect-error - maxMemory must be a number
-      expect(() => new Bun.Archive({}, { maxMemory: "lots" })).toThrow();
     });
   });
 

@@ -9047,16 +9047,6 @@ declare module "bun" {
      * @default 6
      */
     level?: number;
-    /**
-     * Bytes of archive output to keep in memory before spilling to a temporary
-     * file. The temporary file is removed when the archive is garbage collected.
-     *
-     * Set to `Infinity` to never spill, or to `0` to always write to disk. Only
-     * applies to archives you build (from an object, or with `append()`).
-     *
-     * @default 64 * 1024 * 1024
-     */
-    maxMemory?: number;
   }
 
   /**

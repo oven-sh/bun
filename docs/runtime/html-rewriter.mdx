@@ -163,6 +163,11 @@ does not need the event loop, including `process.nextTick` and already-resolved
 Promises) still works with `transform(string)`. Pass a `Response` whenever a
 handler might await real work.
 
+<Warning>
+  `.clone()` of the returned `Response` does not work yet while the rewrite is still in progress: both branches hang.
+  Buffer the output first (for example with `.arrayBuffer()`) if you need two consumers.
+</Warning>
+
 ### CSS Selector Support
 
 The `on()` method supports a wide range of CSS selectors:
@@ -345,13 +350,15 @@ When transforming a Response:
 
 ## Error Handling
 
-`transform()` itself throws for problems it can see right away:
+Which channel an error takes is decided by the overload you called, never by
+timing. `transform()` itself throws for:
 
 - Invalid selector syntax in the `on()` method
 - Invalid input types (for example, passing a Symbol)
-- Body already used errors
-- An async handler on a `string` / `ArrayBuffer` input that needs the event loop
-  (see [Element Handlers](#element-handlers))
+- Body already used errors, and input bodies that have already failed or aborted
+- Anything a content handler raises on a `string` / `ArrayBuffer` input, since
+  those have to produce their result before `transform()` returns — including a
+  handler that needs the event loop (see [Element Handlers](#element-handlers))
 
 ```ts
 try {
@@ -361,8 +368,8 @@ try {
 }
 ```
 
-Everything the rewrite discovers while it runs surfaces on the output body
-instead, because `transform(response)` returns before the rewrite finishes:
+For a `Response` input, `transform()` returns before the rewrite finishes, so
+everything the rewrite discovers surfaces on the output body instead:
 
 - An error thrown by a content handler, or a rejected Promise one returned
 - Malformed or truncated input
@@ -376,6 +383,11 @@ try {
   console.error("the rewrite failed:", error);
 }
 ```
+
+A rejection from a Promise a handler creates but neither returns nor awaits
+reaches neither channel: like any detached rejection, it goes to the
+process-global `unhandledRejection` path. Earlier versions of Bun could surface
+it from `transform()` itself.
 
 ---
 

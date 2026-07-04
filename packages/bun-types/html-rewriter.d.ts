@@ -171,7 +171,7 @@ declare class HTMLRewriter {
    * @param input - The HTML to transform
    * @returns A new {@link Response} with the transformed HTML
    */
-  transform(input: Response | Blob | Bun.BufferSource): Response;
+  transform(input: Response): Response;
   /**
    * Transform HTML content
    *
@@ -185,10 +185,13 @@ declare class HTMLRewriter {
   /**
    * Transform HTML content
    *
-   * @param input - The HTML to transform as a {@link ArrayBuffer}
+   * Every {@link Bun.BufferSource} (a TypedArray, DataView, or ArrayBuffer)
+   * produces an `ArrayBuffer`, not a `Response`.
+   *
+   * @param input - The HTML to transform as bytes
    * @returns A new {@link ArrayBuffer} with the transformed HTML
    * @throws {TypeError} If a content handler returns a Promise that needs the
    * event loop to turn. See {@link transform} for `string` inputs.
    */
-  transform(input: ArrayBuffer): ArrayBuffer;
+  transform(input: Bun.BufferSource): ArrayBuffer;
 }

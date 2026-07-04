@@ -538,6 +538,22 @@ describe("HTMLRewriter", () => {
         expect(await new Response(suspending().body).text()).toBe("<p>new</p>");
       });
 
+      // `Value::tee` builds a ByteStream, tees it, and leaves both branches on
+      // a `PendingValue` nothing settles, so a clone of a still-pending body
+      // never completes. Pre-existing in `tee`, but a suspended transform is
+      // what makes a pending output body the common case. Pinned as a hang so
+      // the day `tee` is fixed, this test fails and gets promoted.
+      it(".clone() does not work yet: both branches hang", async () => {
+        const res = suspending();
+        const clone = res.clone();
+        const raced = await Promise.race([
+          clone.text().then(() => "resolved"),
+          res.text().then(() => "original resolved"),
+          new Promise(r => setTimeout(() => r("hung"), 250)),
+        ]);
+        expect(raced).toBe("hung");
+      });
+
       it("Bun.write(file, res)", async () => {
         using dir = tempDir("hr-pending-body", {});
         const out = path.join(String(dir), "out.html");
@@ -558,29 +574,39 @@ describe("HTMLRewriter", () => {
       ).toThrow("cannot synchronously return an ArrayBuffer");
     });
 
-    // A rejection the handler neither awaits nor returns is the user's to
-    // handle, exactly as for a sync handler. It must reach unhandledRejection
-    // rather than being hijacked into transform()'s result.
+    // A rejection from a Promise a handler creates but neither returns nor
+    // awaits is the user's to handle. Main's nested event loop hijacked it into
+    // `transform()`'s synchronous throw (swallowing unrelated rejections with
+    // exit 0); now it reaches the process-global unhandledRejection path.
+    //
+    // Fixture note: it has to be a real-await handler on a Response. A sync
+    // handler on a string input behaves the same pre- and post-PR, so that
+    // shape pins nothing.
     it("a detached rejection inside a handler reaches unhandledRejection", async () => {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "-e",
-          `process.on("unhandledRejection", e => { console.log("UNHANDLED:" + e.message); process.exit(0); });
-           const out = new HTMLRewriter()
-             .on("p", { element(e) { (async () => { throw new Error("detached"); })(); e.setInnerContent("ok"); } })
-             .transform("<p>x</p>");
-           console.log("OUT:" + out);
-           setTimeout(() => { console.log("NONE"); process.exit(1); }, 500);`,
+          `const r = new HTMLRewriter()
+             .on("p", { async element(e) {
+               (async () => { throw new Error("detached"); })();
+               await Bun.sleep(5);
+               e.setInnerContent("ok");
+             } })
+             .transform(new Response("<p>x</p>"));
+           console.log("BODY:" + (await r.text()));`,
         ],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim().split("\n"), exitCode }).toEqual({
-        stdout: ["OUT:<p>ok</p>", "UNHANDLED:detached"],
-        exitCode: 0,
+      // The rewrite itself succeeds; the detached rejection is reported and
+      // takes the process down, rather than being captured by transform().
+      expect({ stdout: stdout.trim(), reported: stderr.includes("detached"), exitCode }).toEqual({
+        stdout: "BODY:<p>ok</p>",
+        reported: true,
+        exitCode: 1,
       });
     });
 

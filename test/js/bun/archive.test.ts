@@ -2186,6 +2186,22 @@ describe("Bun.Archive", () => {
       expect(() => archive.bytes()).toThrow(/can no longer be used/);
     });
 
+    // Promise.all() rejects with whichever rejection settles first, so the
+    // failing append has to be delivered before the cascade it triggers,
+    // otherwise the docs' recommended pattern reports "failed earlier" and
+    // hides the ENOENT.
+    test("Promise.all over appends reports the entry that actually failed", async () => {
+      using dir = tempDir("archive-append-all", {});
+      const archive = new Bun.Archive();
+
+      await expect(
+        Promise.all([
+          archive.append("gone.bin", Bun.file(join(String(dir), "nope.bin"))),
+          archive.append("later.txt", "x"),
+        ]),
+      ).rejects.toThrow(/ENOENT|no such file/i);
+    });
+
     test("rejects every queued append once one fails", async () => {
       using dir = tempDir("archive-append-queue-fail", {});
       const archive = new Bun.Archive();

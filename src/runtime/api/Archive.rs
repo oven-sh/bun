@@ -282,12 +282,17 @@ impl Archive {
             return Ok(Archive::new(State::Building(Some(builder)), options));
         }
 
-        // For Blob/Archive, ref the existing store (zero-copy)
+        // For a Blob, ref the existing store (zero-copy). An empty Blob has no
+        // store at all, and is still archive data: it must not fall through to
+        // the object form below and be packed as an empty object literal.
         if let Some(blob) = blob_from_js(data_arg) {
-            if let Some(store) = blob.store.get().as_ref() {
-                // StoreRef::clone == store.ref()
-                return Ok(Archive::new(State::Done(store.clone()), options));
-            }
+            // StoreRef::clone == store.ref()
+            let store = blob
+                .store
+                .get()
+                .as_ref()
+                .map_or_else(|| BlobStore::init(Vec::new()), StoreRef::clone);
+            return Ok(Archive::new(State::Done(store), options));
         }
 
         // For ArrayBuffer/TypedArray, copy the data
@@ -439,8 +444,9 @@ impl Archive {
                 self.pump(global, this);
             }
             None => {
+                // The queue is drained in `AppendContext::after_settled`, once
+                // this append's own rejection has been delivered.
                 *self.state.borrow_mut() = State::Failed;
-                self.drain_queue(global);
             }
         }
     }
@@ -553,8 +559,11 @@ fn parse_archive_options(global: &JSGlobalObject, options_arg: JSValue) -> JsRes
         };
     }
 
-    options.compress_given = options_arg.get_truthy(global, "compress")?.is_some();
-    options.compress = parse_compression(global, options_arg, options.format)?;
+    // One `[[Get]]`: a getter or Proxy trap on `compress` must not be able to
+    // return different values to `compress_given` and `compress`.
+    let compress_val = options_arg.get_truthy(global, "compress")?;
+    options.compress_given = compress_val.is_some();
+    options.compress = parse_compression(global, options_arg, compress_val, options.format)?;
 
     if let Some(max_memory_val) = options_arg.get_truthy(global, "maxMemory")? {
         if !max_memory_val.is_number() {
@@ -581,9 +590,9 @@ fn parse_archive_options(global: &JSGlobalObject, options_arg: JSValue) -> JsRes
 fn parse_compression(
     global: &JSGlobalObject,
     options_arg: JSValue,
+    compress: Option<JSValue>,
     format: Format,
 ) -> JsResult<Compression> {
-    let compress = options_arg.get_truthy(global, "compress")?;
     let Some(compress_val) = compress else {
         // zip entries are deflated by default, matching every other zip writer;
         // tar is uncompressed unless asked otherwise.
@@ -1109,6 +1118,9 @@ pub trait TaskContext: Send {
     /// Runs on thread pool. Stores its result on `self`.
     fn run(&mut self);
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult>;
+    /// Runs once this task's own promise has settled. A context that settles
+    /// *other* promises does it here, so its own rejection is observed first.
+    fn after_settled(&mut self, _global: &JSGlobalObject) {}
 }
 
 /// Generic async task that handles all the boilerplate for thread pool tasks.
@@ -1226,7 +1238,9 @@ impl<C: TaskContext> AsyncTask<C> {
                 return promise.reject(global, Ok(global.take_exception(e)));
             }
         };
-        result.fulfill(global, promise)
+        result.fulfill(global, promise)?;
+        owned.ctx.after_settled(global);
+        Ok(())
     }
 }
 
@@ -1826,6 +1840,17 @@ impl TaskContext for AppendContext {
             Ok(()) => PromiseResult::Resolve(JSValue::UNDEFINED),
             Err(err) => PromiseResult::Reject(build_error_to_js(global, err)),
         })
+    }
+
+    /// Reject the appends that were queued behind this one, now that its own
+    /// rejection has been delivered. `Promise.all()` over a list of appends
+    /// therefore reports the entry that actually failed, not the cascade.
+    fn after_settled(&mut self, global: &JSGlobalObject) {
+        if let Some(archive) = self.archive.get().as_class_ref::<Archive>() {
+            if matches!(&*archive.state.borrow(), State::Failed) {
+                archive.drain_queue(global);
+            }
+        }
     }
 }
 

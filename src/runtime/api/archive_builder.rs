@@ -6,7 +6,6 @@ use core::ffi::{c_int, c_void};
 
 use bun_core::ZBox;
 use bun_libarchive::lib;
-use bun_paths::PathBuffer;
 use bun_resolver::fs::{FileSystem, RealFS};
 use bun_sys;
 
@@ -63,13 +62,11 @@ pub(crate) struct SpillFile {
 
 impl SpillFile {
     fn create() -> Result<SpillFile, bun_sys::Error> {
-        let mut name_buf = PathBuffer::uninit();
-        let name = FileSystem::tmpname(
-            b"bun-archive",
-            name_buf.0.as_mut_slice(),
-            bun_core::fast_random(),
-        )
-        .map_err(|_| bun_sys::Error::new(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open))?;
+        // `PathBuffer` is ~96 KB on Windows, so take it from the pool rather
+        // than the stack.
+        let mut name_buf = bun_paths::path_buffer_pool::get();
+        let name = FileSystem::tmpname(b"bun-archive", &mut name_buf[..], bun_core::fast_random())
+            .map_err(|_| bun_sys::Error::new(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open))?;
         let joined = bun_paths::resolve_path::join_abs_string_z::<bun_paths::platform::Auto>(
             RealFS::platform_temp_dir(),
             &[name.as_bytes()],

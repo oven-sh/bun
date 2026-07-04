@@ -68,11 +68,11 @@ File contents can be:
 
 - **Strings** - Text content
 - **Blobs** - Binary data
-- **`Bun.file()`** - Read from disk, a chunk at a time
+- **`Bun.file()`** - Read from disk synchronously, in chunks, while the constructor runs
 - **ArrayBufferViews** (such as `Uint8Array`) - Raw bytes
 - **ArrayBuffers** - Raw binary data
 
-`Bun.file()` entries are read synchronously while the constructor runs. To build an archive out of large files without blocking, use [`append()`](#appending-entries) instead.
+A `Bun.file()` entry is never buffered whole, but it does block the constructor. To add large files without blocking, use [`append()`](#appending-entries) instead.
 
 ```ts
 const data = "binary data";

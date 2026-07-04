@@ -1043,6 +1043,24 @@ describe("Bun.Archive", () => {
       }).toThrow();
     });
 
+    // Store/deflate have no gzip post-filter, so an explicit `compress` has to be
+    // distinguishable from an omitted one.
+    test("an explicit compress overrides the archive's gzip, an omitted one inherits it", async () => {
+      using dir = tempDir("archive-write-compress-override", {});
+      const gzipMagic = async (p: string) => Array.from((await Bun.file(p).bytes()).subarray(0, 2));
+
+      const inherited = join(String(dir), "inherited.tar.gz");
+      await Bun.Archive.write(inherited, new Bun.Archive({ "f.txt": "x" }, { compress: "gzip" }));
+      expect(await gzipMagic(inherited)).toEqual([0x1f, 0x8b]);
+
+      const overridden = join(String(dir), "overridden.tar");
+      await Bun.Archive.write(overridden, new Bun.Archive({ "f.txt": "x" }, { compress: "gzip" }), {
+        format: "zip",
+        compress: "store",
+      });
+      expect(await gzipMagic(overridden)).not.toEqual([0x1f, 0x8b]);
+    });
+
     test("throws with invalid gzip option", async () => {
       using dir = tempDir("archive-write-invalid-gzip", {});
       const archivePath = join(String(dir), "test.tar");
@@ -1908,7 +1926,7 @@ describe("Bun.Archive", () => {
     });
   });
 
-  describe("Bun.file() entries", () => {
+  describe.concurrent("Bun.file() entries", () => {
     test("the object form streams a Bun.file() instead of writing an empty entry", async () => {
       using dir = tempDir("archive-objform-file", {
         "a.txt": "from disk",
@@ -1952,7 +1970,7 @@ describe("Bun.Archive", () => {
     });
   });
 
-  describe("zip format", () => {
+  describe.concurrent("zip format", () => {
     test("writes a zip with the PK local file header magic", async () => {
       const archive = new Bun.Archive({ "hello.txt": "Hello, World!" }, { format: "zip" });
       const bytes = await archive.bytes();
@@ -2010,7 +2028,7 @@ describe("Bun.Archive", () => {
     });
 
     test("deflate is the default and store is larger", async () => {
-      const content = "compress me ".repeat(4096);
+      const content = Buffer.alloc(48 * 1024, "compress me ").toString();
       const deflated = await new Bun.Archive({ "big.txt": content }, { format: "zip" }).bytes();
       const stored = await new Bun.Archive({ "big.txt": content }, { format: "zip", compress: "store" }).bytes();
 
@@ -2052,7 +2070,7 @@ describe("Bun.Archive", () => {
     });
   });
 
-  describe("archive.append()", () => {
+  describe.concurrent("archive.append()", () => {
     test("appends to an empty archive", async () => {
       const archive = new Bun.Archive();
       await archive.append("hello.txt", "Hello, World!");
@@ -2177,6 +2195,13 @@ describe("Bun.Archive", () => {
       expect(() => archive.append("", "a")).toThrow();
     });
 
+    // libarchive takes entry names as NUL-terminated C strings, so "a\0b.txt"
+    // would silently become "a".
+    test("rejects an entry path with an embedded NUL", () => {
+      expect(() => new Bun.Archive().append("foo\u0000bar.txt", "x")).toThrow(/NUL byte/);
+      expect(() => new Bun.Archive({ "baz\u0000qux.txt": "y" })).toThrow(/NUL byte/);
+    });
+
     test("rejects unsupported entry data", () => {
       const archive = new Bun.Archive();
       // @ts-expect-error - numbers are not valid entry data
@@ -2184,11 +2209,11 @@ describe("Bun.Archive", () => {
     });
   });
 
-  describe("spilling to disk", () => {
+  describe.concurrent("spilling to disk", () => {
     // Spilled output goes to a temp file and is mapped back in, so it has to
     // describe exactly the same archive as the purely in-memory path.
     test("maxMemory: 0 produces the same archive as the in-memory path", async () => {
-      const files = { "a.txt": "a".repeat(5000), "b.txt": "b".repeat(5000) };
+      const files = { "a.txt": Buffer.alloc(5000, "a").toString(), "b.txt": Buffer.alloc(5000, "b").toString() };
       const spilled = await new Bun.Archive(files, { maxMemory: 0 }).bytes();
       const buffered = await new Bun.Archive(files, { maxMemory: Infinity }).bytes();
 

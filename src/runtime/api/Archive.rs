@@ -85,6 +85,10 @@ impl Default for GzipOptions {
 pub(crate) struct Options {
     pub format: Format,
     pub compress: Compression,
+    /// Whether `compress` came from the caller. `Compression::Store` and
+    /// `Deflate` both have no gzip post-filter, so `Archive.write()` cannot
+    /// tell an explicit "no gzip" from an omitted option without this.
+    pub compress_given: bool,
     pub max_memory: u64,
 }
 
@@ -93,6 +97,7 @@ impl Default for Options {
         Self {
             format: Format::Tar,
             compress: Compression::None,
+            compress_given: false,
             max_memory: DEFAULT_MAX_MEMORY,
         }
     }
@@ -376,11 +381,7 @@ impl Archive {
             )));
         }
         let path_slice = path_arg.to_slice(global)?;
-        if path_slice.slice().is_empty() {
-            return Err(global
-                .throw_invalid_arguments(format_args!("Archive.append: path must not be empty")));
-        }
-        let path = ZBox::from_bytes(path_slice.slice());
+        let path = entry_path(global, path_slice.slice())?;
         let source = parse_append_source(global, data_arg)?;
 
         let promise = JSPromiseStrong::init(global);
@@ -558,6 +559,7 @@ fn parse_archive_options(global: &JSGlobalObject, options_arg: JSValue) -> JsRes
         };
     }
 
+    options.compress_given = options_arg.get_truthy(global, "compress")?.is_some();
     options.compress = parse_compression(global, options_arg, options.format)?;
 
     if let Some(max_memory_val) = options_arg.get_truthy(global, "maxMemory")? {
@@ -685,7 +687,7 @@ fn add_object_entries(
         }
 
         let key_slice = key.to_utf8();
-        let path = ZBox::from_bytes(key_slice.slice());
+        let path = entry_path(global, key_slice.slice())?;
 
         // `Bun.file()` has no bytes in memory; stream it off disk.
         if let Some(blob) = blob_from_js(value) {
@@ -708,6 +710,23 @@ fn add_object_entries(
     }
 
     Ok(())
+}
+
+/// libarchive takes entry names as NUL-terminated C strings, so an embedded NUL
+/// would silently truncate the name (`"a\0b.txt"` becomes `"a"`).
+fn entry_path(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<ZBox> {
+    if bytes.is_empty() {
+        return Err(
+            global.throw_invalid_arguments(format_args!("Bun.Archive: path must not be empty"))
+        );
+    }
+    if bytes.contains(&0) {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Bun.Archive: path must not contain a NUL byte: {}",
+            bun_core::fmt::quote(bytes),
+        )));
+    }
+    Ok(ZBox::from_bytes(bytes))
 }
 
 /// Where a file-backed blob's bytes live on disk. `None` for an in-memory blob,
@@ -850,10 +869,13 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
 
     // For Archive instances, use options override or archive's compression settings
     if let Some(archive) = data_arg.as_class_ref::<Archive>() {
-        let gzip = options
-            .compress
-            .gzip()
-            .or_else(|| archive.options.compress.gzip());
+        // `format`/`compress` cannot change an archive that is already built,
+        // but an explicit `compress` still decides whether to gzip the result.
+        let gzip = if options.compress_given {
+            options.compress.gzip()
+        } else {
+            archive.options.compress.gzip()
+        };
         return start_write_task(
             global,
             WriteData::Store(archive.blob_store(global)?),

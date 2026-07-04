@@ -113,6 +113,7 @@ describe("css", () => {
       "/styles.module.css": `
         .playAnim { animation: anim forwards ease-out 0.25s; }
         .spin { animation-name: rotate; }
+        .quoted { animation-name: "anim"; }
         @keyframes anim { from { opacity: 0 } to { opacity: 1 } }
         @keyframes rotate { to { transform: rotate(360deg) } }
       `,
@@ -135,6 +136,9 @@ describe("css", () => {
 
       // The `animation-name` longhand references the SAME scoped keyframes name.
       expect(css).toContain(`animation-name: ${rotateKeyframes![1]}`);
+
+      // The quoted-string form scopes to the same hash as the ident form.
+      expect(css).toContain(`animation-name: ${animKeyframes![1]}`);
 
       // The bare (unscoped) names must not survive as animation references.
       expect(css).not.toMatch(/animation:[^;]*\banim\b/);

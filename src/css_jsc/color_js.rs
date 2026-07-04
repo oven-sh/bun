@@ -557,9 +557,15 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                                 _ => break 'formatted,
                             };
 
+                            // Saturation and lightness are stored as 0..1 but hsl()
+                            // takes percentages. An achromatic color has no hue, and
+                            // NaN is not a number hsl() accepts.
+                            let hue = if hsl.h.is_nan() { 0.0 } else { hsl.h };
                             break 'color BunString::create_format(format_args!(
-                                "hsl({}, {}, {})",
-                                hsl.h, hsl.s, hsl.l
+                                "hsl({}, {}%, {}%)",
+                                hue,
+                                hsl.s * 100.0,
+                                hsl.l * 100.0
                             ));
                         }
                         OutputColorFormat::Lab => {
@@ -573,9 +579,13 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                                 _ => break 'formatted,
                             };
 
+                            // lab() is space-separated and takes lightness as a
+                            // percentage, matching what the CSS printer emits.
                             break 'color BunString::create_format(format_args!(
-                                "lab({}, {}, {})",
-                                lab.l, lab.a, lab.b
+                                "lab({}% {} {})",
+                                lab.l * 100.0,
+                                lab.a,
+                                lab.b
                             ));
                         }
                     }

@@ -395,16 +395,43 @@ describe("css string output parses back to the same color", () => {
     }
   });
 
-  // `hsl(0, 1, 0.5)` is near-black as CSS: saturation and lightness must be
-  // percentages. Bun cannot parse its own hsl output back.
-  test.failing("hsl round-trips", () => {
-    expect(color(color("red", "hsl") as string, "hex")).toBe("#ff0000");
+  test("hsl round-trips", () => {
+    for (const input of [...inputs, "#808080", "lime", "rebeccapurple"]) {
+      expect(color(color(input, "hsl") as string, "hex")).toBe(color(input, "hex"));
+    }
   });
 
-  // `lab()` takes L in 0..100 and is space-separated, so `lab(0.54, 80.8, 69.9)`
-  // is neither the right lightness nor valid syntax.
+  test("hsl round-trips across the color cube", () => {
+    withoutAggressiveGC(() => {
+      for (let r = 0; r < 256; r += 37) {
+        for (let g = 0; g < 256; g += 53) {
+          for (let b = 0; b < 256; b += 61) {
+            const back = color(color({ r, g, b }, "hsl") as string, "hex");
+            if (back !== color({ r, g, b }, "hex")) {
+              throw new Error(`hsl(${r},${g},${b}) round-tripped to ${back}`);
+            }
+          }
+        }
+      }
+    });
+  });
+
+  // An achromatic color has no hue, and `hsl(NaN, ...)` is not parseable.
+  test("hsl of a grey has a zero hue", () => {
+    expect(color("#808080", "hsl")).toBe("hsl(0, 0%, 50.196083%)");
+    expect(color("#000000", "hsl")).toBe("hsl(0, 0%, 0%)");
+  });
+
+  test("lab output is CSS that Bun can parse back", () => {
+    for (const input of [...inputs, "#808080", "lime", "rebeccapurple"]) {
+      expect(color(color(input, "lab") as string, "hex")).not.toBeNull();
+    }
+  });
+
+  // Not a formatting problem: `Bun.color("lab(19.5% 53.2 -87.3)", "hex")` is off by
+  // the same amount, so the lab <-> sRGB conversion itself loses saturated blues.
   test.failing("lab round-trips", () => {
-    expect(color(color("red", "lab") as string, "hex")).toBe("#ff0000");
+    expect(color(color("#0000f8", "lab") as string, "hex")).toBe("#0000f8");
   });
 });
 

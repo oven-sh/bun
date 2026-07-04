@@ -185,11 +185,11 @@ impl EasingFunction {
                         steps.position.to_css(dest)?;
                         dest.write_char(b')')
                     }
-                    EasingFunction::Linear
-                    | EasingFunction::Ease
-                    | EasingFunction::EaseIn
-                    | EasingFunction::EaseOut
-                    | EasingFunction::EaseInOut => unreachable!(),
+                    EasingFunction::Linear => dest.write_str("linear"),
+                    EasingFunction::Ease => dest.write_str("ease"),
+                    EasingFunction::EaseIn => dest.write_str("ease-in"),
+                    EasingFunction::EaseOut => dest.write_str("ease-out"),
+                    EasingFunction::EaseInOut => dest.write_str("ease-in-out"),
                 }
             }
         }

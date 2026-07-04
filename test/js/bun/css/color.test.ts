@@ -301,3 +301,115 @@ test.skipIf(isDebug)("fuzz ansi256", () => {
     }
   });
 });
+
+// These assert the documented contract rather than snapshotting whatever the
+// implementation currently emits. https://bun.com/docs/runtime/color
+describe("ansi output is a well-formed SGR sequence", () => {
+  const sgr = /^\u001b\[[\d;]+m$/;
+
+  test.each(["ansi-16", "ansi-256", "ansi-16m"])("%s", format => {
+    for (const input of ["black", "red", "lime", "blue", "white", "magenta", "cyan", "yellow", "#336699"]) {
+      const escape = color(input, format as any);
+      expect(typeof escape).toBe("string");
+      expect(escape).toMatch(sgr);
+    }
+  });
+
+  // 30..=37 for the first eight colors, 90..=97 for their bright variants.
+  // https://github.com/oven-sh/bun/issues/22161
+  test("ansi-16 uses the 16-color SGR parameters", () => {
+    expect(color("black", "ansi-16")).toBe("\u001b[30m");
+    expect(color("green", "ansi-16")).toBe("\u001b[32m");
+    expect(color("gray", "ansi-16")).toBe("\u001b[37m");
+    expect(color("red", "ansi-16")).toBe("\u001b[91m");
+    expect(color("lime", "ansi-16")).toBe("\u001b[92m");
+    expect(color("blue", "ansi-16")).toBe("\u001b[94m");
+    expect(color("magenta", "ansi-16")).toBe("\u001b[95m");
+    expect(color("white", "ansi-16")).toBe("\u001b[97m");
+  });
+
+  test("ansi-16 never emits a 256-color escape", () => {
+    for (let r = 0; r < 256; r += 51) {
+      for (let g = 0; g < 256; g += 51) {
+        for (let b = 0; b < 256; b += 51) {
+          expect(color({ r, g, b }, "ansi-16")).toMatch(/^\u001b\[(3[0-7]|9[0-7])m$/);
+        }
+      }
+    }
+  });
+
+  test("ansi-256 and ansi-16m keep their documented shapes", () => {
+    expect(color("red", "ansi-256")).toBe("\u001b[38;5;196m");
+    expect(color("red", "ansi-16m")).toBe("\u001b[38;2;255;0;0m");
+  });
+
+  // A terminal skips the whole escape, so the printed width is just the text.
+  test.each(["ansi-16", "ansi-256", "ansi-16m"])("%s occupies no columns", format => {
+    expect(Bun.stringWidth(color("red", format as any) + "hello")).toBe(5);
+  });
+
+  test("every 24-bit color produces a well-formed ansi-16 sequence", () => {
+    withoutAggressiveGC(() => {
+      for (let r = 0; r < 256; r += 17) {
+        for (let g = 0; g < 256; g += 17) {
+          for (let b = 0; b < 256; b += 17) {
+            const escape = color({ r, g, b }, "ansi-16");
+            if (!sgr.test(escape!)) throw new Error(`color(${r},${g},${b}, "ansi-16") = ${JSON.stringify(escape)}`);
+          }
+        }
+      }
+    });
+  });
+});
+
+describe("css string output parses back to the same color", () => {
+  const inputs = ["red", "#336699", "rgb(1, 2, 3)", "#000000", "#ffffff"];
+
+  test.each(["css", "hex", "HEX", "rgb", "rgba"])("%s round-trips", format => {
+    for (const input of inputs) {
+      expect(color(color(input, format as any) as string, "hex")).toBe(color(input, "hex"));
+    }
+  });
+
+  // `hsl(0, 1, 0.5)` is near-black as CSS: saturation and lightness must be
+  // percentages. Bun cannot parse its own hsl output back.
+  test.failing("hsl round-trips", () => {
+    expect(color(color("red", "hsl") as string, "hex")).toBe("#ff0000");
+  });
+
+  // `lab()` takes L in 0..100 and is space-separated, so `lab(0.54, 80.8, 69.9)`
+  // is neither the right lightness nor valid syntax.
+  test.failing("lab round-trips", () => {
+    expect(color(color("red", "lab") as string, "hex")).toBe("#ff0000");
+  });
+});
+
+describe("input forms", () => {
+  test.each([
+    ["a named color", "red"],
+    ["3-digit hex", "#f00"],
+    ["6-digit hex", "#ff0000"],
+    ["8-digit hex", "#ff0000ff"],
+    ["rgb()", "rgb(255, 0, 0)"],
+    ["rgba()", "rgba(255, 0, 0, 1)"],
+    ["hsl() with percentages", "hsl(0, 100%, 50%)"],
+    ["a number", 0xff0000],
+    ["an object", { r: 255, g: 0, b: 0 }],
+    ["an array", [255, 0, 0]],
+  ])("%s resolves to red", (_name, input) => {
+    expect(color(input as any, "hex")).toBe("#ff0000");
+  });
+
+  test("an unparseable color is null", () => {
+    expect(color("notacolor", "hex")).toBeNull();
+    expect(color("", "hex")).toBeNull();
+    expect(color("#gg0000", "hex")).toBeNull();
+  });
+
+  test("alpha survives the object and array forms", () => {
+    expect(color("#f00", "{rgba}")).toEqual({ r: 255, g: 0, b: 0, a: 1 });
+    expect(color("#f00", "[rgba]")).toEqual([255, 0, 0, 255]);
+    expect(color("#f00", "{rgb}")).toEqual({ r: 255, g: 0, b: 0 });
+    expect(color("#f00", "[rgb]")).toEqual([255, 0, 0]);
+  });
+});

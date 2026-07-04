@@ -484,27 +484,26 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                                     ));
                                 }
                                 OutputColorFormat::Ansi16 => {
-                                    let ansi_16_color = ansi256::get16(
+                                    let index = ansi256::get16(
                                         rgba.red as u32,
                                         rgba.green as u32,
                                         rgba.blue as u32,
                                     );
-                                    // 16-color ansi, foreground text color
-                                    break 'color BunString::clone_latin1(&[
-                                        // 0x1b is the escape character
-                                        // 38 is the foreground color code
-                                        // 5 is the 16-color mode
-                                        // {d} is the color index
-                                        0x1b,
-                                        b'[',
-                                        b'3',
-                                        b'8',
-                                        b';',
-                                        b'5',
-                                        b';',
-                                        ansi_16_color,
-                                        b'm',
-                                    ]);
+                                    // Foreground text color as a 16-color SGR parameter:
+                                    // 30..=37 for the first eight, 90..=97 for their
+                                    // bright variants. The 38;5;{index} form only a
+                                    // 256-color terminal understands is what ansi-256 is
+                                    // for.
+                                    let sgr = if index < 8 { 30 + index } else { 82 + index };
+                                    let mut buf = [0u8; 8];
+                                    buf[0..2].copy_from_slice(b"\x1b[");
+                                    let extra_len = {
+                                        let mut cursor = &mut buf[2..];
+                                        let before = cursor.len();
+                                        write!(cursor, "{}m", sgr).expect("unreachable");
+                                        before - cursor.len()
+                                    };
+                                    break 'color BunString::clone_latin1(&buf[0..2 + extra_len]);
                                 }
                                 OutputColorFormat::Ansi16m => {
                                     // true color ansi

@@ -329,9 +329,9 @@ describe("ansi output is a well-formed SGR sequence", () => {
   });
 
   test("ansi-16 never emits a 256-color escape", () => {
-    for (let r = 0; r < 256; r += 51) {
-      for (let g = 0; g < 256; g += 51) {
-        for (let b = 0; b < 256; b += 51) {
+    for (let r = 0; r < 256; r += r < 8 ? 1 : 51) {
+      for (let g = 0; g < 256; g += g < 8 ? 1 : 51) {
+        for (let b = 0; b < 256; b += b < 8 ? 1 : 51) {
           expect(color({ r, g, b }, "ansi-16")).toMatch(/^\u001b\[(3[0-7]|9[0-7])m$/);
         }
       }
@@ -343,6 +343,30 @@ describe("ansi output is a well-formed SGR sequence", () => {
     expect(color("red", "ansi-16m")).toBe("\u001b[38;2;255;0;0m");
   });
 
+  // The palette only has 256 entries, so a valid-looking `38;5;429496961m` is
+  // still a broken escape. The grey ramp is where the index arithmetic underflows.
+  test("ansi-256 never emits an index outside the palette", () => {
+    withoutAggressiveGC(() => {
+      for (let value = 0; value < 256; value++) {
+        for (const rgb of [
+          { r: value, g: value, b: value },
+          { r: 0, g: 0, b: value },
+          { r: value, g: 0, b: 0 },
+        ]) {
+          const index = Number(color(rgb, "ansi-256")!.match(/38;5;(\d+)m/)![1]);
+          if (index > 255) throw new Error(`color(${JSON.stringify(rgb)}, "ansi-256") = index ${index}`);
+        }
+      }
+    });
+  });
+
+  // https://github.com/tmux/tmux/blob/master/colour.c
+  test("near-black colors land on black, not on a wrapped grey index", () => {
+    expect(color("#020202", "ansi-256")).toBe("\u001b[38;5;16m");
+    expect(color("#020202", "ansi-16")).toBe("\u001b[30m");
+    expect(color("#000004", "ansi-256")).toBe("\u001b[38;5;16m");
+  });
+
   // A terminal skips the whole escape, so the printed width is just the text.
   test.each(["ansi-16", "ansi-256", "ansi-16m"])("%s occupies no columns", format => {
     expect(Bun.stringWidth(color("red", format as any) + "hello")).toBe(5);
@@ -350,9 +374,9 @@ describe("ansi output is a well-formed SGR sequence", () => {
 
   test("every 24-bit color produces a well-formed ansi-16 sequence", () => {
     withoutAggressiveGC(() => {
-      for (let r = 0; r < 256; r += 17) {
-        for (let g = 0; g < 256; g += 17) {
-          for (let b = 0; b < 256; b += 17) {
+      for (let r = 0; r < 256; r += r < 8 ? 1 : 17) {
+        for (let g = 0; g < 256; g += g < 8 ? 1 : 17) {
+          for (let b = 0; b < 256; b += b < 8 ? 1 : 17) {
             const escape = color({ r, g, b }, "ansi-16");
             if (!sgr.test(escape!)) throw new Error(`color(${r},${g},${b}, "ansi-16") = ${JSON.stringify(escape)}`);
           }

@@ -129,7 +129,10 @@ pub mod ansi256 {
         let grey_idx = if grey_avg > 238 {
             23
         } else {
-            (grey_avg.wrapping_sub(3)) / 10
+            // tmux does this in signed int, where (2 - 3) / 10 truncates to 0.
+            // Wrapping on u32 would send the palette index into the hundreds of
+            // millions for any average below 3.
+            grey_avg.saturating_sub(3) / 10
         };
         let grey = 8u32.wrapping_add(10u32.wrapping_mul(grey_idx));
 

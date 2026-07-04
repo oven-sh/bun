@@ -4876,11 +4876,13 @@ pub mod testing_apis {
                 fi::CONNECT
             } else if syscall_str.eql_comptime(b"accept") {
                 fi::ACCEPT
+            } else if syscall_str.eql_comptime(b"ssl_loop_buffer") {
+                fi::SSL_LOOP_BUFFER
             } else {
                 // socket/close/shutdown have enum slots but no bsd.c hooks;
                 // accepting them would arm rules that can never fire.
                 return Err(global.throw(format_args!(
-                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept"
+                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer"
                 )));
             };
 

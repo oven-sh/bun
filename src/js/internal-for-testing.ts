@@ -276,8 +276,20 @@ export const setSocketOptions: setSocketOptionsFn = $newRustFunction(
   3,
 );
 
-/** Only the syscalls instrumented in bsd.c; arming anything else is rejected. */
-export type SocketFaultSyscall = "recv" | "send" | "writev" | "sendmsg" | "recvmsg" | "connect" | "accept";
+/**
+ * The syscalls instrumented in bsd.c, plus "ssl_loop_buffer" — not a syscall,
+ * but the per-loop TLS plaintext buffer allocation, whose failure path is
+ * unreachable on an overcommitting kernel. Arming anything else is rejected.
+ */
+export type SocketFaultSyscall =
+  | "recv"
+  | "send"
+  | "writev"
+  | "sendmsg"
+  | "recvmsg"
+  | "connect"
+  | "accept"
+  | "ssl_loop_buffer";
 
 export type SocketFaultRule = {
   syscall: SocketFaultSyscall;

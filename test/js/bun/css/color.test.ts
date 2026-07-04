@@ -428,10 +428,16 @@ describe("css string output parses back to the same color", () => {
     }
   });
 
-  // Not a formatting problem: `Bun.color("lab(19.5% 53.2 -87.3)", "hex")` is off by
-  // the same amount, so the lab <-> sRGB conversion itself loses saturated blues.
+  // https://github.com/oven-sh/bun/issues/33331
   test.failing("lab round-trips", () => {
-    expect(color(color("#0000f8", "lab") as string, "hex")).toBe("#0000f8");
+    expect(color(color("#0000ff", "lab") as string, "hex")).toBe("#0000ff");
+  });
+
+  // The forward direction is exact, so the inverse is the broken one.
+  test("lab of a primary matches the CIELAB D50 reference", () => {
+    expect(color("#ff0000", "lab")).toBe("lab(54.290546% 80.80492 69.89099)");
+    expect(color("#00ff00", "lab")).toBe("lab(87.81854% -79.27111 80.994606)");
+    expect(color("#0000ff", "lab")).toBe("lab(29.5683% 68.287384 -112.02972)");
   });
 });
 

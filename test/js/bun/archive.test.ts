@@ -2381,8 +2381,9 @@ describe("Bun.Archive", () => {
 
     // The sibling of the test above: a getReader() consumer leaves ByteStream by a
     // different branch than the buffered one, and it has already taken a chunk, so
-    // the failure arrives after the stream has started producing.
-    test("a failed append fails a getReader() consumer that already took a chunk", async () => {
+    // the failure arrives after the stream has started producing. The awaiting loop
+    // body is the point: the consumer is between reads when the append fails.
+    test.each([false, true])("a failed append fails a getReader() consumer (awaiting body: %p)", async awaits => {
       using dir = tempDir("archive-stream-fail-reader", {});
       const archive = new Bun.Archive();
       const reader = archive.stream().getReader();
@@ -2395,6 +2396,7 @@ describe("Bun.Archive", () => {
           if (done) return "clean done";
           received += value.length;
           gotChunk.resolve();
+          if (awaits) await barriers(1);
         }
       })();
 

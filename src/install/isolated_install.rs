@@ -2105,14 +2105,15 @@ pub(crate) fn install_isolated_packages(
             {
                 let mut unsafe_folder_name: Option<&[u8]> = None;
                 let name = pkg_name.slice(string_buf);
-                if !name.is_empty() && !crate::dependency::is_safe_install_folder_name(name) {
+                if !name.is_empty() && !crate::package_installer::alias_is_safe_install_target(name)
+                {
                     unsafe_folder_name = Some(name);
                 } else {
                     for dep in entry_dependencies[entry_id.get() as usize].slice() {
                         let dep_name = lockfile_ro.buffers.dependencies[dep.dep_id as usize]
                             .name
                             .slice(string_buf);
-                        if !crate::dependency::is_safe_install_folder_name(dep_name) {
+                        if !crate::package_installer::alias_is_safe_install_target(dep_name) {
                             unsafe_folder_name = Some(dep_name);
                             break;
                         }

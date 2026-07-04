@@ -585,6 +585,34 @@ it("recursion throws stack overflow", () => {
   }
 });
 
+it("onResolve callbacks registered while a path is resolving only apply to later resolutions", () => {
+  Bun.plugin({
+    name: "registers another onResolve while resolving",
+    setup(builder) {
+      builder.onResolve({ filter: /.*/, namespace: "regduring" }, () => {
+        Bun.plugin({
+          name: "registered during resolution",
+          setup(inner) {
+            inner.onResolve({ filter: /.*/, namespace: "regduring" }, ({ path }) => ({
+              path,
+              namespace: "regduring",
+            }));
+          },
+        });
+        return undefined;
+      });
+
+      builder.onLoad({ filter: /.*/, namespace: "regduring" }, ({ path }) => ({
+        contents: `export default ${JSON.stringify(path)};`,
+        loader: "js",
+      }));
+    },
+  });
+
+  expect(() => require("regduring:first")).toThrow();
+  expect(require("regduring:second").default).toBe("second");
+});
+
 it("recursion throws stack overflow at entry point", () => {
   const result = Bun.spawnSync({
     cmd: [bunExe(), "--preload=./plugin-recursive-fixture.ts", "plugin-recursive-fixture-run.ts"],

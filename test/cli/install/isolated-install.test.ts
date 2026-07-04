@@ -2027,6 +2027,33 @@ test("rejects dependency aliases that traverse outside node_modules", async () =
   expect(exitCode).not.toBe(0);
 });
 
+test("rejects a dependency alias with more than one path component", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-pkg-nested-alias",
+      dependencies: {
+        "somepkg/lib": "npm:no-deps@1.0.0",
+      },
+    }),
+  );
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(`"somepkg/lib" is not a valid install folder name`);
+  expect(() => lstatSync(join(packageDir, "node_modules", "somepkg", "lib"))).toThrow();
+  expect(exitCode).not.toBe(0);
+});
+
 test("invalid --linker value is echoed back in the error", async () => {
   using dir = tempDir("install-linker-err", {
     "package.json": JSON.stringify({ name: "t" }),

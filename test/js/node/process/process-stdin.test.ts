@@ -104,9 +104,11 @@ test("stdin with 'data' event handler should NOT receive data when paused", asyn
 
   const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
 
-  expect(await proc.stdout.text()).toMatchInlineSnapshot(`""`);
+  expect(stdout).toMatchInlineSnapshot(`""`);
   expect(await proc.stderr.text()).toMatchInlineSnapshot(`""`);
-  expect(proc.exitCode).toBe(1);
+  // Reusing the already-consumed stdout stream now rejects (the stream is disturbed).
+  await expect(proc.stdout.text()).rejects.toThrow("ReadableStream has already been used");
+  expect(exitCode).toBe(1);
 });
 
 // Drains the child; its stderr joins the comparison only when it failed, so a

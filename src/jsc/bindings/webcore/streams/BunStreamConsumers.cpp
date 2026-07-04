@@ -271,13 +271,21 @@ static JSC::JSUint8Array* encodeStringToUint8Array(JSC::VM& vm, JSGlobalObject* 
     auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::String string = stringValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    WTF::CString utf8 = string.utf8();
+    // The same simdutf sizer/writer pair the chunk appender uses: one sizing pass, one
+    // encode straight into the result (no intermediate CString copy). The result is
+    // buffer-backed from birth so a later `.buffer` access never has to change modes.
+    size_t byteLength = utf8ByteLengthWithReplacement(string);
+    RefPtr<JSC::ArrayBuffer> resultBuffer = JSC::ArrayBuffer::tryCreateUninitialized(byteLength, 1);
+    if (!resultBuffer) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    if (byteLength) {
+        size_t written = writeUTF8(string, { static_cast<uint8_t*>(resultBuffer->data()), byteLength });
+        ASSERT_UNUSED(written, written == byteLength);
+    }
     auto* structure = globalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>();
-    auto* result = JSC::JSUint8Array::createUninitialized(globalObject, structure, utf8.length());
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    if (utf8.length())
-        memcpy(result->typedVector(), utf8.data(), utf8.length());
-    return result;
+    RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(resultBuffer), 0, byteLength));
 }
 
 static bool appendChunkBytes(JSC::VM& vm, JSGlobalObject* globalObject, JSValue chunk, WTF::Vector<uint8_t>& bytes)
@@ -358,7 +366,7 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
     if (!anyString)
         RELEASE_AND_RETURN(scope, JSValue::decode(Bun::flattenArrayOfBuffersIntoArrayBufferOrUint8Array(globalObject, chunks, std::numeric_limits<size_t>::max(), asUint8Array)));
 
-    if (total.hasOverflowed() || exceedsStringLimit(total.value())) [[unlikely]] {
+    if (total.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
     }
@@ -388,12 +396,14 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
         }
     }
     if (asUint8Array) {
+        // Buffer-backed from birth: a later `.buffer` access never has to change modes.
+        RefPtr<JSC::ArrayBuffer> resultBuffer = JSC::ArrayBuffer::tryCreate(bytes.span());
+        if (!resultBuffer) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
         auto* structure = globalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>();
-        auto* result = JSC::JSUint8Array::createUninitialized(globalObject, structure, bytes.size());
-        RETURN_IF_EXCEPTION(scope, {});
-        if (bytes.size())
-            memcpy(result->typedVector(), bytes.span().data(), bytes.size());
-        return result;
+        RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(resultBuffer), 0, bytes.size()));
     }
     auto buffer = JSC::ArrayBuffer::tryCreate(bytes.span());
     if (!buffer) [[unlikely]] {

@@ -22,56 +22,47 @@ using namespace JSC;
 
 // Keep this list sorted.
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
-    macro(abort) \
+    macro($$typeof) \
     macro(AbortSignal) \
-    macro(arrayBuffer) \
-    macro(asUint8Array) \
-    macro(blob) \
     macro(Buffer) \
-    macro(bytes) \
-    macro(drain) \
-    macro(encode) \
-    macro(flush) \
-    macro(json) \
     macro(Loader) \
-    macro(min) \
-    macro(onClose) \
-    macro(onDrain) \
-    macro(preventAbort) \
-    macro(preventCancel) \
-    macro(preventClose) \
     macro(ReadableByteStreamController) \
     macro(ReadableStream) \
     macro(ReadableStreamBYOBReader) \
     macro(ReadableStreamBYOBRequest) \
     macro(ReadableStreamDefaultController) \
     macro(ReadableStreamDefaultReader) \
-    macro(readableType) \
-    macro(setHandlers) \
     macro(SQL) \
-    macro(text) \
     macro(TextEncoderStreamEncoder) \
-    macro(transform) \
     macro(TransformStream) \
     macro(TransformStreamDefaultController) \
-    macro(updateRef) \
     macro(WritableStream) \
     macro(WritableStreamDefaultController) \
     macro(WritableStreamDefaultWriter) \
+    macro(_debugInfo) \
+    macro(_debugStack) \
+    macro(_debugTask) \
     macro(_events) \
+    macro(_owner) \
+    macro(_store) \
+    macro(abort) \
     macro(addAbortAlgorithmToSignal) \
+    macro(arrayBuffer) \
+    macro(asUint8Array) \
     macro(atimeMs) \
     macro(attributes) \
     macro(autoAllocateChunkSize) \
     macro(basename) \
     macro(birthtimeMs) \
+    macro(blob) \
     macro(body) \
     macro(bunNativePtr) \
     macro(bunNativeType) \
     macro(byobRequest) \
+    macro(bytes) \
     macro(cancel) \
-    macro(checks) \
     macro(checkBufferRead) \
+    macro(checks) \
     macro(cloneArrayBuffer) \
     macro(close) \
     macro(cmd) \
@@ -89,9 +80,15 @@ using namespace JSC;
     macro(dirname) \
     macro(disturbed) \
     macro(domain) \
+    macro(drain) \
+    macro(encode) \
     macro(encoding) \
     macro(end) \
     macro(errno) \
+    macro(esmLoadSync) \
+    macro(esmNamespaceForCjs) \
+    macro(esmRegistryDelete) \
+    macro(esmRegistryEvaluatedKeys) \
     macro(evaluateCommonJSModule) \
     macro(evictIsolationSourceProviderCache) \
     macro(expires) \
@@ -101,12 +98,9 @@ using namespace JSC;
     macro(fatal) \
     macro(fd) \
     macro(filename) \
+    macro(flush) \
     macro(format) \
     macro(fulfillModuleSync) \
-    macro(esmNamespaceForCjs) \
-    macro(esmRegistryDelete) \
-    macro(esmRegistryEvaluatedKeys) \
-    macro(esmLoadSync) \
     macro(handleEvent) \
     macro(headers) \
     macro(highWaterMark) \
@@ -122,6 +116,8 @@ using namespace JSC;
     macro(isAbortSignal) \
     macro(isAbsolute) \
     macro(join) \
+    macro(json) \
+    macro(key) \
     macro(lazy) \
     macro(lineText) \
     macro(loadEsmIntoCjs) \
@@ -131,14 +127,17 @@ using namespace JSC;
     macro(makeErrorWithCode) \
     macro(makeGetterTypeError) \
     macro(maxAge) \
-    macro(method) \
     macro(metafileJson) \
+    macro(method) \
+    macro(min) \
     macro(mockedFunction) \
     macro(mode) \
     macro(mtimeMs) \
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \
     macro(normalize) \
+    macro(onClose) \
+    macro(onDrain) \
     macro(originalColumn) \
     macro(originalLine) \
     macro(overridableRequire) \
@@ -151,10 +150,15 @@ using namespace JSC;
     macro(pokePromiseAsHandled) \
     macro(port) \
     macro(post) \
+    macro(preventAbort) \
+    macro(preventCancel) \
+    macro(preventClose) \
     macro(processBindingConstants) \
+    macro(props) \
     macro(pull) \
     macro(read) \
     macro(readable) \
+    macro(readableType) \
     macro(redirect) \
     macro(relative) \
     macro(removeAbortAlgorithmFromSignal) \
@@ -167,6 +171,7 @@ using namespace JSC;
     macro(sameSite) \
     macro(secure) \
     macro(self) \
+    macro(setHandlers) \
     macro(signal) \
     macro(size) \
     macro(specifier) \
@@ -178,12 +183,17 @@ using namespace JSC;
     macro(stream) \
     macro(structuredCloneForStream) \
     macro(syscall) \
+    macro(text) \
     macro(textDecoder) \
     macro(textDecoderStreamDecoder) \
     macro(textEncoderStreamEncoder) \
     macro(toClass) \
     macro(toNamespacedPath) \
+    macro(transform) \
+    macro(type) \
+    macro(updateRef) \
     macro(url) \
+    macro(validated) \
     macro(view) \
     macro(vmErrorDecorated) \
     macro(warning) \
@@ -192,16 +202,6 @@ using namespace JSC;
     macro(write) \
     macro(writer) \
     macro(written) \
-    macro($$typeof) \
-    macro(type) \
-    macro(key) \
-    macro(props) \
-    macro(validated) \
-    macro(_store) \
-    macro(_owner) \
-    macro(_debugInfo) \
-    macro(_debugStack) \
-    macro(_debugTask) \
     BUN_ADDITIONAL_BUILTIN_NAMES(macro)
 // --- END of BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME ---
 

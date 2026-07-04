@@ -34,8 +34,8 @@ public:
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
     DECLARE_INFO;
-    // visitChildrenImpl MUST visit ALL THREE barriers: m_stream, m_arrayBufferSink,
-    // m_capabilityPromise. No barrier container ⇒ no cellLock needed.
+    // visitChildrenImpl MUST visit ALL FOUR barriers: m_stream, m_arrayBufferSink,
+    // m_capabilityPromise, m_closeFunction. No barrier container ⇒ no cellLock needed.
     DECLARE_VISIT_CHILDREN;
 
     template<typename, JSC::SubspaceAccess mode>

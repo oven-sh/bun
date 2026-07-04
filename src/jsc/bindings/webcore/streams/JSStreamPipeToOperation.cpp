@@ -142,7 +142,7 @@ static void pipeToLoopStep(JSGlobalObject* globalObject, JSStreamPipeToOperation
 }
 
 // The pipe's signal abort algorithm: START both actions back-to-back, then wait for ALL of
-// them. The wait-for-all latch is an InternalFieldTuple{op, remaining fulfillments};
+// The wait-for-all latch is `op->m_pendingShutdownActions`; the last settlement proceeds.
 // the FIRST rejection finalizes with its reason (finalize is idempotent).
 static void startPipeAbortBothActions(JSC::VM& vm, JSGlobalObject* globalObject, JSStreamPipeToOperation* op, JSValue error)
 {

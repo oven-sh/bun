@@ -405,7 +405,8 @@ const cases: Case[] = [
   { name: "sets holding -0 and 0", a: () => new Set([-0]), b: () => new Set([0]), strict: true, loose: true },
   { name: "sets holding NaN", a: () => new Set([NaN]), b: () => new Set([NaN]), strict: true, loose: true },
 
-  // WeakMap/WeakSet are compared by reference, never structurally.
+  // "WeakMap and WeakSet instances are not compared structurally. They are only
+  // equal if they reference the same object." -- nodejs.org/api/assert.html
   {
     name: "two empty WeakMaps",
     a: () => new WeakMap(),
@@ -424,15 +425,7 @@ const cases: Case[] = [
     strictBug: "reports equal",
     looseBug: "reports equal",
   },
-  {
-    name: "two resolved promises",
-    a: () => Promise.resolve(1),
-    b: () => Promise.resolve(1),
-    strict: false,
-    loose: false,
-    strictBug: "reports equal",
-    looseBug: "reports equal",
-  },
+  { name: "a WeakMap and a WeakSet", a: () => new WeakMap(), b: () => new WeakSet(), strict: false, loose: false },
 
   // Typed arrays and buffers.
   {

@@ -3408,18 +3408,6 @@ pub mod serializer {
                         }
                     }
                 }
-                if matches!(field, PackageField::Scripts) {
-                    // Registry packages never persist lifecycle scripts in the
-                    // lockfile (they are read from the installed package.json),
-                    // so drop any that a stored lockfile claims to have.
-                    let len = sliced.items::<"scripts", Scripts>().len();
-                    for i in 0..len {
-                        let tag = sliced.items::<"resolution", Resolution<SemverIntType>>()[i].tag;
-                        if matches!(tag, ResolutionTag::Npm) {
-                            sliced.items_mut::<"scripts", Scripts>()[i] = Scripts::default();
-                        }
-                    }
-                }
             } else if matches!(field, PackageField::Scripts) {
                 bytes.fill(0);
             } else {

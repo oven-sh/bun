@@ -315,53 +315,6 @@ it("rejects a binary lockfile whose package scripts flag byte is out of range", 
   expect(code).toBe(0);
   expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(true);
 });
-
-it("reads a registry package's lifecycle scripts from its package.json, not the binary lockfile", async () => {
-  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
-
-  await write(
-    packageJson,
-    JSON.stringify({
-      name: "lockb-npm-scripts",
-      version: "1.0.0",
-      dependencies: {
-        "lifecycle-postinstall": "1.0.0",
-      },
-      trustedDependencies: ["lifecycle-postinstall"],
-    }),
-  );
-
-  await runBunInstall(env, packageDir);
-  const lockbPath = join(packageDir, "bun.lockb");
-  const postinstallOutput = join(packageDir, "node_modules", "lifecycle-postinstall", "postinstall.txt");
-  expect(await file(postinstallOutput).text()).toBe("postinstall!");
-
-  const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
-  const offsets = packageScriptsFilledOffsets(lockb);
-  expect(offsets.length).toBe(2);
-  expect(lockb[offsets[1]]).toBe(0);
-  lockb[offsets[1]] = 1;
-  await write(lockbPath, lockb);
-
-  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--no-progress"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
-  const err = stderrForInstall(rawErr);
-
-  expect(err).not.toContain("Ignoring lockfile");
-  expect(out).toContain("lifecycle-postinstall@1.0.0");
-  expect(await exists(postinstallOutput)).toBe(true);
-  expect(await file(postinstallOutput).text()).toBe("postinstall!");
-  expect(code).toBe(0);
-});
-
 it("rejects a binary lockfile whose git resolved tag contains path separators", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
 

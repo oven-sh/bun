@@ -72,10 +72,29 @@ function argumentsObject(...values: unknown[]) {
 }
 
 const cases: Case[] = [
-  // Numbers and boxed primitives.
+  // Loose mode compares primitives with ==, strict mode with Object.is.
   { name: "0 and -0", a: () => 0, b: () => -0, strict: false, loose: true, looseBug: "reports not equal" },
   { name: "NaN and NaN", a: () => NaN, b: () => NaN, strict: true, loose: true },
   { name: "[0] and [-0]", a: () => [0], b: () => [-0], strict: false, loose: true, looseBug: "reports not equal" },
+  { name: "'1' and 1", a: () => "1", b: () => 1, strict: false, loose: true, looseBug: "reports not equal" },
+  { name: "['1'] and [1]", a: () => ["1"], b: () => [1], strict: false, loose: true, looseBug: "reports not equal" },
+  {
+    name: "'+00000000' and false",
+    a: () => "+00000000",
+    b: () => false,
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  { name: "'' and false", a: () => "", b: () => false, strict: false, loose: true, looseBug: "reports not equal" },
+  {
+    name: "null and undefined",
+    a: () => null,
+    b: () => undefined,
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
+  },
   {
     name: "{ a: -0 } and { a: 0 }",
     a: () => ({ a: -0 }),
@@ -555,37 +574,34 @@ function caught(fn: () => void): (Error & { code?: string }) | null {
   }
 }
 
-describe("assert.deepStrictEqual", () => {
-  for (const testCase of cases) {
-    const label = `${testCase.strict ? "accepts" : "rejects"} ${testCase.name}`;
-    const run = testCase.strictBug ? test.failing : test;
-    run(testCase.strictBug ? `${label} (Bun ${testCase.strictBug})` : label, () => {
-      const error = caught(() => assert.deepStrictEqual(testCase.a(), testCase.b()));
-      if (testCase.strict) {
-        expect(error?.message ?? null).toBeNull();
-      } else {
-        expect(error?.code).toBe("ERR_ASSERTION");
-      }
-      expect(caught(() => assert.notDeepStrictEqual(testCase.a(), testCase.b())) === null).toBe(!testCase.strict);
-    });
-  }
-});
+function describeMatrix(
+  suite: string,
+  mode: "strict" | "loose",
+  bugField: "strictBug" | "looseBug",
+  equal: (actual: unknown, expected: unknown) => void,
+  notEqual: (actual: unknown, expected: unknown) => void,
+) {
+  describe(suite, () => {
+    for (const testCase of cases) {
+      const expected = testCase[mode];
+      const bug = testCase[bugField];
+      const label = `${expected ? "accepts" : "rejects"} ${testCase.name}`;
+      const run = bug ? test.failing : test;
+      run(bug ? `${label} (Bun ${bug})` : label, () => {
+        const error = caught(() => equal(testCase.a(), testCase.b()));
+        if (expected) {
+          expect(error?.message ?? null).toBeNull();
+        } else {
+          expect(error?.code).toBe("ERR_ASSERTION");
+        }
+        expect(caught(() => notEqual(testCase.a(), testCase.b())) === null).toBe(!expected);
+      });
+    }
+  });
+}
 
-describe("assert.deepEqual", () => {
-  for (const testCase of cases) {
-    const label = `${testCase.loose ? "accepts" : "rejects"} ${testCase.name}`;
-    const run = testCase.looseBug ? test.failing : test;
-    run(testCase.looseBug ? `${label} (Bun ${testCase.looseBug})` : label, () => {
-      const error = caught(() => assert.deepEqual(testCase.a(), testCase.b()));
-      if (testCase.loose) {
-        expect(error?.message ?? null).toBeNull();
-      } else {
-        expect(error?.code).toBe("ERR_ASSERTION");
-      }
-      expect(caught(() => assert.notDeepEqual(testCase.a(), testCase.b())) === null).toBe(!testCase.loose);
-    });
-  }
-});
+describeMatrix("assert.deepStrictEqual", "strict", "strictBug", assert.deepStrictEqual, assert.notDeepStrictEqual);
+describeMatrix("assert.deepEqual", "loose", "looseBug", assert.deepEqual, assert.notDeepEqual);
 
 describe("util.isDeepStrictEqual", () => {
   for (const testCase of cases) {

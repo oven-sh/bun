@@ -1925,7 +1925,6 @@ describe("text consumers reject strings over the string allocation limit", () =>
   });
 });
 
-
 // A source pull() that runs inside the pipe's in-place drain and synchronously errors the
 // destination and aborts the pipe's signal must not touch the released writer afterwards.
 // https://github.com/oven-sh/bun/pull/33193
@@ -1965,7 +1964,6 @@ it("pipeTo survives a pull() that errors the destination and aborts mid-drain", 
     ),
   ).toBe("rejected:Error");
 });
-
 
 // For a pull-driven source, readMany must return chunks the pull pipeline enqueued while the
 // previous wake settled (the drain runs after the controller's follow-up pull, not before).

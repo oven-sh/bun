@@ -136,6 +136,11 @@ export interface DevServerTest {
    * Avoid if possible, this is to reproduce specific bugs.
    */
   mainDir?: string;
+  /**
+   * Extra environment variables for the dev server process.
+   * Avoid if possible, this is to reproduce specific bugs.
+   */
+  env?: Record<string, string>;
 
   skip?: ("win32" | "darwin" | "linux" | "ci")[];
   /**
@@ -1971,6 +1976,7 @@ function testImpl<T extends DevServerTest>(
           // BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
           // BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
           BUN_ASSUME_PERFECT_INCREMENTAL: "0",
+          ...options.env,
         },
       ]),
       stdio: ["pipe", "pipe", "pipe"],

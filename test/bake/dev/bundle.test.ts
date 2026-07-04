@@ -871,16 +871,20 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
 // path starts with "../") used to borrow path bytes out of the per-build
 // bundle arena instead of cloning them. DevServer frees that arena when the
 // build finishes, so a later watch event for the file made the watcher thread
-// read freed memory instead of hot-reloading. The rebuild loop below churns a
-// few more per-build arenas so the freed pages are recycled before the
-// outside-root file is touched, which turns the stale read into a SEGV on an
-// unfixed build (the watcher-thread crash seen in production).
+// read freed memory instead of hot-reloading.
+//
+// The rebuild loop frees a few more per-build arenas before the outside-root
+// file is touched, and MIMALLOC_PURGE_DELAY=0 makes mimalloc hand those freed
+// pages straight back to the OS instead of parking them in its segment cache
+// (which is what let the stale read silently return the right bytes). Together
+// they turn the dangling read into the SEGV seen in production.
 devTest("hot reload of a file imported from outside the project root", {
   // The Windows watcher is a single recursive ReadDirectoryChangesW rooted at
   // the project root and refuses outside-root paths outright ("will not be
   // watched"), so the dev.write below would never produce a watch event there
   // (and the dangling-borrow bug was POSIX-only: Windows always cloned).
   skip: ["win32"],
+  env: { MIMALLOC_PURGE_DELAY: "0", MIMALLOC_ABANDONED_PAGE_PURGE: "1" },
   files: {
     "../outside-root-dep/db.ts": `export const abc = "123";`,
     "routes/index.ts": `

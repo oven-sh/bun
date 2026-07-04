@@ -418,7 +418,7 @@ describe("css string output parses back to the same color", () => {
 
   // An achromatic color has no hue, and `hsl(NaN, ...)` is not parseable.
   test("hsl of a grey has a zero hue", () => {
-    expect(color("#808080", "hsl")).toBe("hsl(0, 0%, 50.196083%)");
+    expect(color("#808080", "hsl")).toMatch(/^hsl\(0, 0%, 50\.19\d*%\)$/);
     expect(color("#000000", "hsl")).toBe("hsl(0, 0%, 0%)");
   });
 
@@ -433,11 +433,27 @@ describe("css string output parses back to the same color", () => {
     expect(color(color("#0000ff", "lab") as string, "hex")).toBe("#0000ff");
   });
 
-  // The forward direction is exact, so the inverse is the broken one.
-  test("lab of a primary matches the CIELAB D50 reference", () => {
-    expect(color("#ff0000", "lab")).toBe("lab(54.290546% 80.80492 69.89099)");
-    expect(color("#00ff00", "lab")).toBe("lab(87.81854% -79.27111 80.994606)");
-    expect(color("#0000ff", "lab")).toBe("lab(29.5683% 68.287384 -112.02972)");
+  // The forward direction is exact, so the inverse is the broken one. It goes
+  // through cbrt, so the last f32 digit varies by platform; compare numerically.
+  test.each([
+    ["#ff0000", [54.29, 80.8, 69.89]],
+    ["#00ff00", [87.82, -79.27, 80.99]],
+    ["#0000ff", [29.57, 68.29, -112.03]],
+  ])("lab of %s matches the CIELAB D50 reference", (input, reference) => {
+    const components = (color(input as string, "lab") as string).match(/-?[\d.]+/g)!.map(Number);
+    expect(components).toHaveLength(3);
+    for (let i = 0; i < 3; i++) {
+      expect(components[i]).toBeCloseTo((reference as number[])[i], 1);
+    }
+  });
+
+  // A `none` component is a zero value outside of interpolation, and `NaN` is not
+  // a token any CSS parser accepts.
+  test("a none component does not leak NaN into the output", () => {
+    expect(color("hsl(120 none 50%)", "hsl")).toBe("hsl(120, 0%, 50%)");
+    expect(color("lab(none 40 30)", "lab")).toBe("lab(0% 40 30)");
+    expect(color("lab(50% none 30)", "lab")).toBe("lab(50% 0 30)");
+    expect(color(color("hsl(120 none 50%)", "hsl") as string, "hex")).not.toBeNull();
   });
 });
 

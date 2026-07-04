@@ -189,6 +189,13 @@ pub mod ansi256 {
     }
 }
 
+/// A missing color component (CSS Color 4's `none`, or the hue of an achromatic
+/// color) is stored as NaN, and behaves as zero outside of interpolation. Printing
+/// it as `NaN` would produce a string no CSS parser accepts.
+fn zero_if_none(component: f32) -> f32 {
+    if component.is_nan() { 0.0 } else { component }
+}
+
 pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_ast::symbol::Map as SymbolMap;
     use bun_core::ZigStringSlice;
@@ -556,14 +563,13 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                             };
 
                             // Saturation and lightness are stored as 0..1 but hsl()
-                            // takes percentages. An achromatic color has no hue, and
-                            // NaN is not a number hsl() accepts.
-                            let hue = if hsl.h.is_nan() { 0.0 } else { hsl.h };
+                            // takes percentages. A missing component (an achromatic
+                            // hue, or `none`) is a zero value in a concrete color.
                             break 'color BunString::create_format(format_args!(
                                 "hsl({}, {}%, {}%)",
-                                hue,
-                                hsl.s * 100.0,
-                                hsl.l * 100.0
+                                zero_if_none(hsl.h),
+                                zero_if_none(hsl.s) * 100.0,
+                                zero_if_none(hsl.l) * 100.0
                             ));
                         }
                         OutputColorFormat::Lab => {
@@ -581,9 +587,9 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                             // percentage, matching what the CSS printer emits.
                             break 'color BunString::create_format(format_args!(
                                 "lab({}% {} {})",
-                                lab.l * 100.0,
-                                lab.a,
-                                lab.b
+                                zero_if_none(lab.l) * 100.0,
+                                zero_if_none(lab.a),
+                                zero_if_none(lab.b)
                             ));
                         }
                     }

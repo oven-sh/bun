@@ -338,22 +338,20 @@ impl<D> DimensionPercentage<D> {
         }
 
         match (a, b) {
-            (Self::Calc(a_calc), b)
-                if matches!(*a_calc, Calc::Value(_)) && !matches!(b, Self::Calc(_)) =>
-            {
-                let Calc::Value(v) = *a_calc else {
-                    unreachable!()
-                };
-                v.add_impl(b)
-            }
-            (a, Self::Calc(b_calc))
-                if matches!(*b_calc, Calc::Value(_)) && !matches!(a, Self::Calc(_)) =>
-            {
-                let Calc::Value(v) = *b_calc else {
-                    unreachable!()
-                };
-                a.add_impl(*v)
-            }
+            (Self::Calc(a_calc), b) if !matches!(b, Self::Calc(_)) => match *a_calc {
+                Calc::Value(v) => v.add_impl(b),
+                a_calc => Self::Calc(Box::new(Calc::Sum {
+                    left: Box::new(a_calc),
+                    right: Box::new(b.into_calc()),
+                })),
+            },
+            (a, Self::Calc(b_calc)) if !matches!(a, Self::Calc(_)) => match *b_calc {
+                Calc::Value(v) => a.add_impl(*v),
+                b_calc => Self::Calc(Box::new(Calc::Sum {
+                    left: Box::new(a.into_calc()),
+                    right: Box::new(b_calc),
+                })),
+            },
             (a, b) => Self::Calc(Box::new(Calc::Sum {
                 left: Box::new(a.into_calc()),
                 right: Box::new(b.into_calc()),

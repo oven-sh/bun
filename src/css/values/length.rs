@@ -500,21 +500,25 @@ impl Length {
         }
 
         match (a, b) {
-            (Self::Calc(ca), b) if matches!(*ca, Calc::Value(_)) && !matches!(b, Self::Calc(_)) => {
-                let Calc::Value(v) = *ca else { unreachable!() };
-                v.add__(b)
-            }
-            (a, Self::Calc(cb)) if matches!(*cb, Calc::Value(_)) && !matches!(a, Self::Calc(_)) => {
-                let Calc::Value(v) = *cb else { unreachable!() };
-                a.add__(*v)
-            }
+            (Self::Calc(ca), b) if !matches!(b, Self::Calc(_)) => match *ca {
+                Calc::Value(v) => v.add__(b),
+                ca => Self::Calc(Box::new(Calc::Sum {
+                    left: Box::new(ca),
+                    right: Box::new(b.into_calc()),
+                })),
+            },
+            (a, Self::Calc(cb)) if !matches!(a, Self::Calc(_)) => match *cb {
+                Calc::Value(v) => a.add__(*v),
+                cb => Self::Calc(Box::new(Calc::Sum {
+                    left: Box::new(a.into_calc()),
+                    right: Box::new(cb),
+                })),
+            },
             (a, b) => Self::Calc(Box::new(Calc::Sum {
                 left: Box::new(a.into_calc()),
                 right: Box::new(b.into_calc()),
             })),
         }
-        // For borrowck this needs
-        // to move out of the Box, so the conditions are folded into match guards.
     }
 
     fn try_add(&self, other: &Length) -> Option<Length> {

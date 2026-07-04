@@ -93,10 +93,8 @@ pub trait QueryCondition: Sized + ToCss {
 
     /// Serialize a variant that isn't `Feature`/`Not`/`Operation`
     /// (e.g. `ContainerCondition::Style`). Implementors with no extra
-    /// variants leave the default.
-    fn extra_to_css(&self, _dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        unreachable!("QueryCondition: no extra variants")
-    }
+    /// variants return `Ok(())`.
+    fn extra_to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>;
 
     /// Provided: shared `ToCss` body for the `Feature`/`Not`/`Operation`
     /// lattice (+ `extra_to_css` fallback). Mirrors the three hand-rolled
@@ -826,6 +824,9 @@ impl QueryCondition for MediaCondition {
     fn feature_to_css(f: &MediaFeature, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         f.to_css(dest)
     }
+    fn extra_to_css(&self, _dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        Ok(())
+    }
 
     fn parse_feature(input: &mut Parser) -> Result<Self> {
         let feature = MediaFeature::parse(input)?;
@@ -1441,11 +1442,8 @@ impl MediaList {
 
             match input.next() {
                 Ok(tok) => {
-                    if !matches!(tok, css::Token::Comma) {
-                        unreachable!(
-                            "expected a comma after parsing a MediaQuery — bug in CSS parser"
-                        );
-                    }
+                    debug_assert!(matches!(tok, css::Token::Comma));
+                    let _ = tok;
                 }
                 Err(_) => break,
             }

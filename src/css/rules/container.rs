@@ -143,6 +143,9 @@ impl QueryCondition for StyleQuery {
     fn feature_to_css(f: &Property, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         f.to_css(dest, false)
     }
+    fn extra_to_css(&self, _dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        Ok(())
+    }
 
     fn parse_feature(input: &mut css::Parser) -> css::Result<Self> {
         let property_id = crate::properties::PropertyId::parse(input)?;
@@ -252,12 +255,17 @@ impl QueryCondition for ContainerCondition {
         f.to_css(dest)
     }
     fn extra_to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        let Self::Style(query) = self else {
-            unreachable!()
-        };
-        dest.write_str("style(")?;
-        query.to_css(dest)?;
-        dest.write_char(b')')
+        match self {
+            Self::Style(query) => {
+                dest.write_str("style(")?;
+                query.to_css(dest)?;
+                dest.write_char(b')')
+            }
+            Self::Feature(_) | Self::Not(_) | Self::Operation { .. } => {
+                debug_assert!(false);
+                Ok(())
+            }
+        }
     }
 
     fn parse_feature(input: &mut css::Parser) -> css::Result<Self> {

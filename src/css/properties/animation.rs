@@ -6,6 +6,7 @@ use crate::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
 use crate::css_values::number::{CSSNumber, CSSNumberFns};
 use crate::css_values::size::Size2D;
 use crate::css_values::time::Time;
+use crate::generics::CssEql;
 use crate::{Parser, PrintErr, Printer, SmallList};
 use bun_core::strings;
 
@@ -16,6 +17,7 @@ pub type AnimationList = SmallList<Animation, 1>;
 pub type AnimationNameList = SmallList<AnimationName, 1>;
 
 /// A value for the [animation](https://drafts.csswg.org/css-animations/#animation) shorthand property.
+#[derive(CssEql)]
 pub struct Animation {
     /// The animation name.
     pub name: AnimationName,
@@ -38,20 +40,6 @@ pub struct Animation {
 }
 
 impl Animation {
-    // Field-wise (not `#[derive]`) because `AnimationName` carries a raw
-    // `*const [u8]` arena pointer; a derived `PartialEq` would compare by pointer.
-    pub(crate) fn eql(&self, other: &Self) -> bool {
-        self.name.eql(&other.name)
-            && self.duration == other.duration
-            && self.timing_function == other.timing_function
-            && self.iteration_count == other.iteration_count
-            && self.direction == other.direction
-            && self.play_state == other.play_state
-            && self.delay == other.delay
-            && self.fill_mode == other.fill_mode
-            && self.timeline == other.timeline
-    }
-
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         Animation {
             name: self.name.deep_clone(bump),
